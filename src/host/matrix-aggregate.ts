@@ -13,6 +13,7 @@ import {
   MATRIX_ARTIFACT_RECOVERY_MAX_MS,
   type MatrixArtifactRequestV1,
   type MatrixArtifactTransportV1,
+  MatrixArtifactUnavailableError,
 } from "./matrix-artifact-port.ts";
 import {
   closedCWaveHandledReservations,
@@ -208,6 +209,9 @@ export async function runActionsMatrixAggregateCycles(
   if (!read.ok || read.value.status !== "found") {
     throw new Error("matrix aggregate cannot read authoritative state");
   }
+  // #183: progress comments compare against the state before this job's
+  // ingestion, so a park or publication made while consuming cells reports.
+  const progressBaseline = read.value.snapshot.work;
   if (closedCWaveNeedsRecovery(read.value.snapshot)) {
     if (!host.readExecution) {
       throw new Error("C recovery native proof reader unavailable");
@@ -287,22 +291,36 @@ export async function runActionsMatrixAggregateCycles(
     const unresolved = new Set(
       requests.map((request) => request.reservationId),
     );
-    const waves = await recoverWithHistoricalIsolation(input, transport, {
-      requests,
-      runtimeSha: input.controllerSha,
-      launcherSha: host.run.launcherSha,
-      consumerRun: host.run,
-      // The initial scan still runs when there is no polling window left:
-      // bounded by the consumer's own window even when the review cutoff is
-      // near or spent, else by the actual run deadline, and one shared
-      // transport budget. Subsequent scans and retries never renew that
-      // polling window.
-      deadline: Math.min(
-        input.deadline,
-        scanRecoveryBound(initialScan, consumer, input.deadline, input.clock),
-      ),
-      ...(carrier === undefined ? {} : { currentRun: host.run }),
-    });
+    let waves: Awaited<ReturnType<typeof recoverWithHistoricalIsolation>>;
+    try {
+      waves = await recoverWithHistoricalIsolation(input, transport, {
+        requests,
+        runtimeSha: input.controllerSha,
+        launcherSha: host.run.launcherSha,
+        consumerRun: host.run,
+        // The initial scan still runs when there is no polling window left:
+        // bounded by the consumer's own window even when the review cutoff is
+        // near or spent, else by the actual run deadline, and one shared
+        // transport budget. Subsequent scans and retries never renew that
+        // polling window.
+        deadline: Math.min(
+          input.deadline,
+          scanRecoveryBound(initialScan, consumer, input.deadline, input.clock),
+        ),
+        ...(carrier === undefined ? {} : { currentRun: host.run }),
+      });
+    } catch (error) {
+      // GitHub kept answering a server error: nothing was authenticated or
+      // ingested, so every charge stays unresolved exactly as for late
+      // artifacts, and the ordinary lifecycle below still runs.
+      if (!(error instanceof MatrixArtifactUnavailableError)) throw error;
+      console.log(JSON.stringify({
+        kind: "sentinel_matrix_artifacts_unavailable",
+        scan: initialScan ? "initial" : "own",
+        requests: requests.length,
+      }));
+      break;
+    }
     let progressed = false;
     for (const wave of waves) {
       if (
@@ -387,5 +405,6 @@ export async function runActionsMatrixAggregateCycles(
     ...input,
     modelStartsEnabled: lifecycleModelStarts,
     externalImplementations: true,
+    progressBaseline: input.progressBaseline ?? progressBaseline,
   });
 }

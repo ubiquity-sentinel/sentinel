@@ -216,3 +216,32 @@ Deno.test("checkpoint: repeated cooldown-only losses stop after the bounded atte
   assert.equal(losses, 3, "three bounded attempts, then fail closed");
   assert.equal(state.repair!.work[0].nextStep, "work");
 });
+
+Deno.test("checkpoint: a proof-bound CAS lost to a cooldown write defers at once (#206)", async () => {
+  const { state, deps, context } = await rig();
+  const proof = state.repairHead as GitSha;
+  loseNextCas(state, (current) => ({
+    ...current,
+    githubCooldowns: [COOLDOWN],
+  }), SHA2);
+  let reads = 0;
+  const read = state.readRepair.bind(state);
+  state.readRepair = () => {
+    reads++;
+    return read();
+  };
+  const result = await persistTransition(deps, context, (draft) => {
+    draft.work = draft.work.map((record) => ({
+      ...record,
+      nextStep: "blocked",
+      blocker: { kind: "other", message: "parked", since: T0 + 10_000 },
+    }));
+  }, proof);
+  assert.deepEqual(result, {
+    kind: "deferred",
+    detail: "state head moved after the trusted proof was established",
+  });
+  assert.equal(reads, 1, "no recomputation read after the lost CAS");
+  assert.equal(state.repairWrites, 2, "seed and the one lost CAS only");
+  assert.equal(state.repair!.work[0].nextStep, "work", "nothing applied");
+});

@@ -3,6 +3,7 @@ import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 import {
   HOSTED_RUNTIME_ID,
   type HostedExecutionIntentV1,
+  isHostedReleaseTerminal,
 } from "../src/contracts/hosted-supervisor.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
@@ -51,6 +52,16 @@ const CURRENT_MATRIX_WALK_BUDGET_MS = 300_000;
  * far back that traversal reads, never how long a producer pass may take.
  */
 const BLOCKER_WALK_RESERVE_MS = 30_000;
+
+/**
+ * The same traversal's reserve while in-flight work is pending: half the walk
+ * budget stays for the ordinary walk, whose newest producer's recovery
+ * (artifact, receipt and custody proofs for every cell) needs far more than
+ * 30 s. Live 2026-10-24 (run 40097996543): two parked rows naming a producer
+ * whose plan had expired 1031 history steps back consumed the walk on every
+ * pass, and the 26-cell wave behind them was never recovered.
+ */
+const BLOCKER_WALK_INFLIGHT_RESERVE_MS = CURRENT_MATRIX_WALK_BUDGET_MS / 2;
 
 /** Reservations owned by the fixed historical passes, never by this walk. */
 export function dedicatedMatrixReservations(
@@ -114,7 +125,7 @@ export async function recoverHostedCurrentMatrix(
   if (
     runtime.execution !== null ||
     current.snapshot.hostedReleases.some((row) =>
-      !["accepted", "rolled_back", "cancelled"].includes(row.phase)
+      !isHostedReleaseTerminal(row.phase)
     )
   ) {
     onDeferred();
@@ -348,7 +359,11 @@ export async function recoverHostedCurrentMatrix(
           return Promise.resolve(parked.size === 0);
         },
         () => {
-          reserved = deps.clock.now() >= deadlineAt - BLOCKER_WALK_RESERVE_MS;
+          reserved = deps.clock.now() >=
+            deadlineAt -
+              (inFlight
+                ? BLOCKER_WALK_INFLIGHT_RESERVE_MS
+                : BLOCKER_WALK_RESERVE_MS);
           return !reserved;
         },
       );

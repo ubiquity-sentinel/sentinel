@@ -13,6 +13,7 @@ import { planHostedRetirements } from "../../ops/hosted-autonomy-closures.ts";
 import { hostedIssueKey } from "../../ops/hosted-autonomy-policy.ts";
 import { repairSnapshot } from "../host/hosted-autonomy-rig.ts";
 import { parkSelfMergeRefusal } from "../../src/repair/loop-merge.ts";
+import { markTerminalBlocked } from "../../src/repair/transitions.ts";
 import { selfMergeFixture } from "../github/self-merge-fixture.ts";
 import { T0, workRecord } from "../state/helpers.ts";
 import { LOCAL_SENTINEL_REPO } from "./loop-rig.ts";
@@ -111,6 +112,52 @@ Deno.test("self merge park: the hosted retirement pass never clears a kept proof
       planHostedRetirements(snapshot, closedIssues, new Set([kept.id])),
       [],
     );
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("self merge receipt: a terminal block of a self-merged record keeps its bound PR", async () => {
+  // Live run 40081911304 (generation 98): a self-merged record whose release
+  // receipt was terminal reached blockRelease, markTerminalBlocked cleared
+  // `target.pr`, the self-merge receipt binding rejected it, and the throw
+  // failed the whole repair cycle on every run that reached the record.
+  const rig = await selfMergeFixture();
+  try {
+    const result = await rig.port.mergePullRequest(rig.request, rig.execution);
+    assert.ok(result.ok && result.value.outcome === "merged");
+    const receipt = result.ok ? result.value.selfMerge : undefined;
+    assert.equal(receipt?.stage, "issue_closed");
+    if (receipt === undefined) return;
+    const delivered = workRecord(receipt.taskId, {
+      repository: LOCAL_SENTINEL_REPO,
+      source: {
+        kind: "issue",
+        id: String(receipt.issueNumber),
+        revision: receipt.base,
+      },
+      related: { incidentId: null, issueNumber: receipt.issueNumber },
+      target: {
+        base: receipt.base,
+        branch: receipt.headRef,
+        checkpoint: null,
+        head: receipt.head,
+        pr: receipt.pr,
+        selfMerge: receipt,
+      },
+      nextStep: "delivery",
+      counters: { attempts: 1, retries: 0, reviewRounds: 1 },
+    });
+    const blocked = markTerminalBlocked(
+      delivered,
+      "other",
+      "release rolled_back",
+      T0 + 10_000,
+    );
+    assert.equal(blocked.nextStep, "blocked");
+    assert.equal(blocked.target.pr, receipt.pr);
+    assert.deepEqual(blocked.target.selfMerge, receipt);
+    assert.equal(blocked.intent, null);
   } finally {
     await rig.cleanup();
   }

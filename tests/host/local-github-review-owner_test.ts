@@ -204,7 +204,7 @@ Deno.test("local GitHub review owner: explicit self capability reaches native re
       activated
         ? []
         : name === "ai.ubq.fi"
-        ? [`GET ${rulesPath}`, "POST /graphql", `GET ${pullPath}`]
+        ? [`GET ${rulesPath}`, `GET ${pullPath}`]
         : [`GET ${pullPath}`],
       JSON.stringify(result),
     );

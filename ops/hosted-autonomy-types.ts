@@ -161,6 +161,13 @@ export interface HostedAutonomyGitHubV1 {
     branch: string,
   ): Promise<readonly HostedAutonomyHeadPullV1[] | null>;
   /**
+   * Every path pull request `number` changes, a rename's previous path
+   * included, or null when the listing cannot be read and proven complete
+   * (GitHub lists at most 3000 files). Optional: a fixture surface without
+   * it skips the merge gate's protected-path check (issue #158).
+   */
+  listPullFiles?(number: number): Promise<readonly string[] | null>;
+  /**
    * True when the source issue is open, false when it is closed or missing,
    * null when that cannot be read. Only a definitive false stops a retry.
    */

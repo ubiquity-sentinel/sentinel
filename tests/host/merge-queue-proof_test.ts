@@ -480,7 +480,7 @@ Deno.test("fixture proof: active delivery consumer requires a pinned exact synth
   }
 });
 
-Deno.test("fixture proof: compiled active floor rejects legacy direct despite fixture false", async () => {
+Deno.test("fixture proof: dormant compiled floor accepts exact legacy direct; queue custody still refuses it", async () => {
   const facts = await directProofFacts();
   const { resolveHostedDelivery } = await import(
     "../../ops/hosted-autonomy-delivery-proof.ts"
@@ -511,36 +511,41 @@ Deno.test("fixture proof: compiled active floor rejects legacy direct despite fi
         : facts.task,
     },
   });
-  const proof = await resolveHostedDelivery(
-    {
-      snapshot: liveSnapshot([facts.record], [facts.receipt]),
-      observedHead: SHA1,
-      deps: {
-        state: new MemoryState(),
-        githubFor: () => surface,
-        clock: { now: () => T0 },
-        queueCustody: {
-          ready: true,
-          proofActivated: false,
-          protectedRecordIds: new Set(),
-          resolveDelivery: () =>
-            Promise.resolve({
-              status: "legacy_direct",
-              binding: facts.binding,
-              revision: facts.revision!,
-            }),
+  const resolve = (protectedRecordIds: ReadonlySet<string>) =>
+    resolveHostedDelivery(
+      {
+        snapshot: liveSnapshot([facts.record], [facts.receipt]),
+        observedHead: SHA1,
+        deps: {
+          state: new MemoryState(),
+          githubFor: () => surface,
+          clock: { now: () => T0 },
+          queueCustody: {
+            ready: true,
+            proofActivated: false,
+            protectedRecordIds,
+            resolveDelivery: () =>
+              Promise.resolve({
+                status: "legacy_direct",
+                binding: facts.binding,
+                revision: facts.revision!,
+              }),
+          },
         },
       },
-    },
-    facts.record,
-    {
-      repository: facts.record.repository,
-      key: "fixture",
-      surface,
-      baseBranch: "development",
-    },
-    pull,
-    "delivery",
-  );
-  assert.equal(proof, null);
+      facts.record,
+      {
+        repository: facts.record.repository,
+        key: "fixture",
+        surface,
+        baseBranch: "development",
+      },
+      pull,
+      "delivery",
+    );
+  // Owner directive 2026-10-24 (#180): the shipped floor is dormant.
+  const proof = await resolve(new Set());
+  assert.equal(proof?.kind, "legacy");
+  assert.equal(proof?.head, facts.binding.head);
+  assert.equal(await resolve(new Set([facts.record.id])), null);
 });
