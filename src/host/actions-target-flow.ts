@@ -58,17 +58,22 @@ export function createActionsTargetFlow(
   const notify = () => {
     for (const listener of [...listeners]) listener();
   };
-  const wake = (config: RepositoryConfigV1, ids: readonly string[]) => {
+  /** False when that target's cycle ended (or never existed): nothing woke. */
+  const wake = (
+    config: RepositoryConfigV1,
+    ids: readonly string[],
+  ): boolean => {
     const slot = slots.find((entry) =>
       entry.config.repository.owner === config.repository.owner &&
       entry.config.repository.name === config.repository.name &&
       entry.config.repository.installationId ===
         config.repository.installationId
     );
-    if (slot === undefined || slot.status === "done") return;
+    if (slot === undefined || slot.status === "done") return false;
     for (const id of ids) slot.wake.add(id);
     if (slot.status === "waiting") slot.status = "ready";
     notify();
+    return true;
   };
   const advance = async (): Promise<boolean> => {
     if (advancing || finalized !== null) {
