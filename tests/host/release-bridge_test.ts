@@ -358,6 +358,28 @@ Deno.test("release bridge: installed target/state/controller/driver scope is fix
   assert.equal(RELEASE_BRIDGE_STATE_REF, "refs/heads/sentinel-state/release");
 });
 
+Deno.test("release bridge: accepts current id-qualified installation subject", async () => {
+  const { pin } = await authRig();
+  const subject =
+    `repo:ubiquity-sentinel@${pin.source.ownerId}/sentinel@${pin.source.repositoryId}:environment:sentinel-release-bridge`;
+  const accepted = parseReleaseBridgeInstallation({
+    ...pin,
+    source: { ...pin.source, subject },
+  });
+  assert.equal(accepted.source.subject, subject);
+  assert.throws(
+    () =>
+      parseReleaseBridgeInstallation({
+        ...pin,
+        source: {
+          ...pin.source,
+          subject: subject.replace("ubiquity-sentinel", "ubiquity"),
+        },
+      }),
+    /installation_rejected/,
+  );
+});
+
 Deno.test("release bridge: real RS256 signed check-run authenticates exact native job and source", async () => {
   const rig = await authRig(), input = await rig.input();
   const proof = await authenticateReleaseBridgeJob(
