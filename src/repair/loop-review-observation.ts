@@ -13,6 +13,7 @@ import {
   REVIEW_BOUND_MS,
   REVIEW_POLL_MS,
 } from "./loop-bounds.ts";
+import { existingHeadContinuationShape } from "./loop-eligibility.ts";
 import { retireClosedPublication } from "./loop-records.ts";
 import {
   isUnboundReviewObservation,
@@ -159,6 +160,16 @@ export async function observeReview(
       // transition: without it, intent.pr would resurrect the closed PR on the
       // next run and the reconcile -> review -> retire cycle would spin (the
       // issue-140 livelock).
+      // Without a preserved descriptor, the closed PR number is the durable
+      // replacement authority. Keep it until work re-verifies the closed PR
+      // and its branch; clearing it would strand the published head forever.
+      if (existingHeadContinuationShape(record)) {
+        return persistWork(
+          deps,
+          context,
+          clearIntent({ ...record, nextStep: "work", updatedAt: now }, now),
+        );
+      }
       return persistWork(
         deps,
         context,

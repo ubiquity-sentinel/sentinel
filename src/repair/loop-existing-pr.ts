@@ -20,6 +20,7 @@ import {
 import { checkGithubCooldown } from "./loop-bounds.ts";
 import { holdQueueRecord } from "./loop-queue-guard.ts";
 import { isNativeQueueTarget } from "../github/native-queue-guard.ts";
+import { configFor } from "./loop-records.ts";
 import { persistTransition, persistWork } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -293,6 +294,7 @@ async function releaseExistingPrHolds(
 ): Promise<StepResultV1 | null> {
   const ids = new Set(
     context.snapshot.work.filter((record) =>
+      configFor(deps, record.repository) !== null &&
       releasableExistingPrHold(record) &&
       (githubFor === undefined ? deps.github : githubFor(record))
           .existingPrTakeover?.coordinationActivated !== true
@@ -326,7 +328,10 @@ export async function reconcileExistingPrs(
   const released = await releaseExistingPrHolds(deps, context, githubFor);
   if (released !== null) return released;
   for (const record of context.snapshot.work) {
+    // Retained state can include unavailable targets or an old installation.
+    // Do not resolve their ports or change their custody outside this scope.
     if (
+      configFor(deps, record.repository) === null ||
       record.source.kind !== "issue" || record.nextStep === "done" ||
       attempted.has(record.id) ||
       (record.target.pr !== null && !hasTakeoverCustody(record))

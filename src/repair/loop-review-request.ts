@@ -19,6 +19,7 @@ import {
   runBoundsProofRef,
 } from "./loop-bounds.ts";
 import { gateReviewOnCi } from "./loop-ci-first.ts";
+import { existingHeadContinuationShape } from "./loop-eligibility.ts";
 import { retireClosedPublication } from "./loop-records.ts";
 import { reviewRoundCeilingGate } from "./loop-review-round-cap.ts";
 import {
@@ -122,11 +123,14 @@ export async function requestReviewFor(
     // target head, the base and every counter stay exactly as they were, so
     // the next publish step creates the replacement pull request for the same
     // reviewed bytes. No model, review or merge effect happens here.
-    return persistWork(
-      deps,
-      context,
-      retireClosedPublication(record, deps.clock.now()),
-    );
+    // A descriptor-less published head needs the closed PR number as durable
+    // replacement authority. Work will re-read it and verify the branch before
+    // opening a replacement; do not erase the only closed-publication evidence.
+    const retiredAt = deps.clock.now();
+    const retired = existingHeadContinuationShape(record)
+      ? { ...record, nextStep: "work" as const, updatedAt: retiredAt }
+      : retireClosedPublication(record, retiredAt);
+    return persistWork(deps, context, retired);
   }
   if (freshness !== null) return freshness;
   // CI first (owner decision 2026-10-16): the exact fresh head is reviewed
