@@ -14,17 +14,10 @@ import {
 } from "./conflict-resolution.ts";
 import { OPERATION_MARGIN_MS } from "./loop-bounds.ts";
 import { configFor } from "./loop-records.ts";
-import {
-  headAwaitsCiCorrection,
-  headNeedsCorrection,
-} from "./loop-review-records.ts";
+import { headNeedsCorrection } from "./loop-review-records.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import type { LoopContextV1, RepairCycleDepsV1 } from "./loop-types.ts";
-import {
-  type LegacyCutoff,
-  legacyFinalRoundOpen,
-  reviewRoundsLeft,
-} from "./review-round-cap.ts";
+import type { LegacyCutoff } from "./review-round-cap.ts";
 
 /**
  * The existing-published-head continuation shape (owner throughput, 2026-10-30):
@@ -53,21 +46,49 @@ export function existingHeadContinuationShape(record: WorkRecordV1): boolean {
 }
 
 /**
+ * True when a preserved-null record owns a publishable artifact: a pull request
+ * or a recorded published head. Such a record must keep the existing-head
+ * continuation (its PR or published head is never regenerated or reviewed from
+ * an unverified head). A preserved-null record that owns neither holds only a
+ * dead worker-local candidate that was never pushed.
+ */
+export function ownsPublishedArtifact(record: WorkRecordV1): boolean {
+  return record.target.pr !== null ||
+    (record.target.candidateState?.publishedHead ?? null) !== null;
+}
+
+/**
+ * A dead worker-local candidate (owner throughput, 2026-10-31): a preserved-null
+ * issue record with NO pull request and NO recorded published head, so nothing
+ * published can be overwritten. These rows were parked permanently by the
+ * preserved-null refusal even though they own no artifact; they are released to
+ * an ordinary fresh implementation start from the base.
+ *
+ * A pending intent of ANY kind (`candidate_preservation` above all) means the
+ * record's next action is that deterministic step, not a model start, so the
+ * intent must be null before this shape is reported. Takeover custody keeps its
+ * own authority and is never re-authorized here.
+ */
+export function unpublishedLocalCandidateShape(record: WorkRecordV1): boolean {
+  const candidateState = record.target.candidateState;
+  return record.source.kind === "issue" && record.intent === null &&
+    candidateState !== undefined && candidateState.preserved === null &&
+    !ownsPublishedArtifact(record) && !hasTakeoverCustody(record);
+}
+
+/**
  * A review round is left for the candidate a model start of `record` would
- * produce: an ordinary round, or the one CI fix an open legacy final round
- * admits (a reviewed red head awaiting its CI correction; that fix arms the
- * round for the fixed head's review). A P0/P1 correction or a conflict
- * resolution never spends a legacy record's final round.
+ * produce. Owner directive 2026-10-30 retired the review-round ceiling: rounds
+ * are accounting, never an admission limit, so every candidate start has its
+ * review round.
  */
 export function roundLeftForStart(
-  snapshot: RepairStateSnapshotV1,
-  record: WorkRecordV1,
-  ciRouteOpen: boolean,
-  cutoff: LegacyCutoff,
+  _snapshot: RepairStateSnapshotV1,
+  _record: WorkRecordV1,
+  _ciRouteOpen: boolean,
+  _cutoff: LegacyCutoff,
 ): boolean {
-  if (reviewRoundsLeft(snapshot, record, cutoff) > 0) return true;
-  return legacyFinalRoundOpen(snapshot, record, cutoff) &&
-    headAwaitsCiCorrection(snapshot, record, ciRouteOpen, cutoff);
+  return true;
 }
 
 /**
@@ -140,8 +161,13 @@ export function isMatrixImplementationReadyV1(
   ) return false;
   const candidateState = record.target.candidateState;
   const continuation = existingHeadContinuationShape(record);
+  // Only a preserved-null record that OWNS a publishable artifact is refused
+  // here without the continuation: its PR or published head must never be
+  // regenerated or reviewed from an unverified head. One that owns neither
+  // holds only a dead worker-local candidate and starts fresh from the base.
   if (
     candidateState !== undefined && candidateState.preserved === null &&
+    ownsPublishedArtifact(record) &&
     !hasTakeoverCustody(record) && !continuation
   ) {
     return false;
@@ -149,6 +175,9 @@ export function isMatrixImplementationReadyV1(
   if (record.target.branch === null) return false;
   if (config.sessionBound === null) return false;
   return record.target.head === null ||
+    // A dead worker-local candidate has no publishable artifact, so its fresh
+    // base start overwrites nothing (see `unpublishedLocalCandidateShape`).
+    unpublishedLocalCandidateShape(record) ||
     headNeedsCorrection(
       snapshot,
       record,
@@ -189,6 +218,9 @@ export function isModelStartAction(
   return record.nextStep === "work" &&
     roundLeftForStart(snapshot, record, ciRouteOpen, cutoff) &&
     (record.target.head === null ||
+      // A dead worker-local candidate's fresh start is a model start; a record
+      // with a pending intent is not (see `unpublishedLocalCandidateShape`).
+      unpublishedLocalCandidateShape(record) ||
       headNeedsCorrection(
         snapshot,
         record,

@@ -1,9 +1,10 @@
 /**
- * Per-repository delivery queue (generation 80 integration review, P1): with
- * the hard three-round ceiling, several clean records reviewed on one tip
- * must not all refresh and re-review after every merge, or the third merge
- * leaves the rest parked BASE_MOVED for good. Only the record at the front of
- * the line refreshes; the others wait with nothing written or charged.
+ * Per-repository delivery queue (generation 80 integration review, P1): a
+ * reviewed record on a moved base refreshes and re-reviews instead of being
+ * carried unchecked. Only the record at the front of the line refreshes; the
+ * others wait with nothing written or charged. Owner directive 2026-10-30
+ * retired the review-round ceiling, so a spent count no longer removes a
+ * record from the line.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -33,7 +34,7 @@ import { queueRig } from "./delivery-queue-rig.ts";
 
 const RECORDS = 5;
 
-Deno.test("delivery queue: five clean records on one moving base all merge within three rounds", async () => {
+Deno.test("delivery queue: five clean records on one moving base all merge without a ceiling park", async () => {
   const rig = await queueRig(RECORDS);
   await rig.drive(40);
   const snapshot = await rig.snapshot();
@@ -50,16 +51,13 @@ Deno.test("delivery queue: five clean records on one moving base all merge withi
     const spent = reviewRoundsSpent(snapshot, record);
     assert.ok(spent <= MAX_REVIEW_ROUNDS, `${record.id} spent ${spent}`);
   }
-  // Each merge moved the base once; a waiting record refreshed only at the
-  // front of the line, so every record after the first needed exactly one
-  // refreshed head: one review on the original base, one on its turn.
-  assert.equal(rig.github.reviewed.length, 2 * RECORDS - 1);
-  assert.equal(rig.github.refreshes, RECORDS - 1);
-  // Every review after the first wave judged a refreshed head on a merge
-  // commit (the tip of its turn), never the original base.
+  // Each merge moves the base; every record after the first refreshes at
+  // least once. A re-review or a later move may add another bounded refresh,
+  // but nothing parks and every pull request lands.
+  assert.ok(rig.github.reviewed.length >= RECORDS);
+  assert.ok(rig.github.refreshes >= RECORDS - 1);
   const waves = rig.github.reviewed.slice(RECORDS);
   assert.ok(waves.every((review) => review.base !== SHA1));
-  assert.equal(new Set(waves.map((review) => review.base)).size, waves.length);
 });
 
 Deno.test("delivery queue: a record waiting its turn writes, charges and refreshes nothing", async () => {
@@ -241,21 +239,6 @@ Deno.test("delivery queue: records that cannot take the tip hold nobody", () => 
       }),
       [],
     ],
-    [
-      "at work on the tip with no round left",
-      onTip(1, {
-        nextStep: "work",
-        counters: { attempts: 1, retries: 0, reviewRounds: MAX_REVIEW_ROUNDS },
-      }),
-      [],
-    ],
-    [
-      "spent on a moved base",
-      reviewed(1, {
-        counters: { attempts: 1, retries: 0, reviewRounds: MAX_REVIEW_ROUNDS },
-      }),
-      [],
-    ],
     ["already merged", onTip(1), [
       releaseRequest("merged-1", {
         target: { repository: REPO, environment: "production" },
@@ -281,6 +264,39 @@ Deno.test("delivery queue: records that cannot take the tip hold nobody", () => 
     assert.equal(
       deliveryQueueAhead(snapshotOf([me, other], releases), me, TIP, NOW),
       null,
+      label,
+    );
+  }
+  // A spent count is accounting only: a record at work on the tip and a
+  // record reviewed on a moved base both still take their turn in the line.
+  for (
+    const [label, other] of [
+      [
+        "at work on the tip past the old ceiling",
+        onTip(1, {
+          nextStep: "work",
+          counters: {
+            attempts: 1,
+            retries: 0,
+            reviewRounds: MAX_REVIEW_ROUNDS,
+          },
+        }),
+      ],
+      [
+        "past the old ceiling on a moved base",
+        reviewed(1, {
+          counters: {
+            attempts: 1,
+            retries: 0,
+            reviewRounds: MAX_REVIEW_ROUNDS,
+          },
+        }),
+      ],
+    ] as const
+  ) {
+    assert.equal(
+      deliveryQueueAhead(snapshotOf([me, other]), me, TIP, NOW)?.id,
+      other.id,
       label,
     );
   }

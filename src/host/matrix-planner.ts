@@ -38,7 +38,9 @@ import {
 } from "../repair/conflict-resolution.ts";
 import {
   existingHeadContinuationShape,
+  ownsPublishedArtifact,
   roundLeftForStart,
+  unpublishedLocalCandidateShape,
 } from "../repair/loop-eligibility.ts";
 import type { LegacyCutoff } from "../repair/review-round-cap.ts";
 import { rankEligibleWork } from "../repair/selection.ts";
@@ -230,10 +232,12 @@ export function explainMatrixNotReady(
   }
   const candidateState = record.target.candidateState;
   // A published head with no descriptor is admitted through the
-  // existing-published-head continuation, so it is not a refusal reason.
+  // existing-published-head continuation, and a preserved-null record that owns
+  // no publishable artifact at all (no PR, no published head) is released to a
+  // fresh base start, so neither is a refusal reason.
   if (
     candidateState !== undefined && candidateState.preserved === null &&
-    !existingHeadContinuationShape(record)
+    ownsPublishedArtifact(record) && !existingHeadContinuationShape(record)
   ) {
     return "candidateState.preserved=null";
   }
@@ -243,7 +247,9 @@ export function explainMatrixNotReady(
   if (config.sessionBound === null) {
     return "config.sessionBound=null";
   }
-  if (record.target.head !== null) {
+  if (
+    record.target.head !== null && !unpublishedLocalCandidateShape(record)
+  ) {
     // A continuation record is eligible on its snapshot shape; its exact head
     // is re-proved against the live pull request and its CI at admission, so a
     // refused one is named by this start kind, never by a missing head.

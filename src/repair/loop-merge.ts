@@ -425,8 +425,12 @@ export interface MergedDeliveryBookkeepingV1 {
  * The post-merge delivery bookkeeping shared by a Sentinel merge and a merge
  * observed outside its trusted path: release request where the target has one,
  * and the ordinary delivery step owns release acceptance and issue closure.
- * Every merge, including an outside merge, first proves native queue custody;
- * an outside merge may complete in this write once that request is durable.
+ * A trusted Sentinel merge first proves native queue custody. A human merge
+ * observed outside that path has no Sentinel queue delivery to prove: asking
+ * for one wrote the permanent `backoff`/`until: null` custody hold, so the
+ * record could never be selected again and the owner rule that a human merge
+ * is a completed delivery was never carried out. That path therefore skips the
+ * queue-delivery guard entirely; its provenance is the human-merge evidence.
  */
 export async function persistMergedDelivery(
   deps: RepairCycleDepsV1,
@@ -438,7 +442,7 @@ export async function persistMergedDelivery(
 ): Promise<StepResultV1> {
   const now = deps.clock.now();
   const outside = options.outsideMerge;
-  const queueGuard = await guardQueueDelivery(
+  const queueGuard = outside !== undefined ? null : await guardQueueDelivery(
     deps,
     context,
     record,
@@ -808,12 +812,13 @@ export async function reconcileMergeIntent(
   // A merge sent within the last poll window may still be landing (an
   // ambiguous response is reconciled immediately), and its own merge would
   // move the base; only an intent at least one poll old is treated as stale.
-  // At the hard review-round ceiling the refreshed head could never be
-  // reviewed: the reviewed head's CI is read with the stale merge intent
-  // cleared, and only a green head its latest review authorizes refreshes
-  // mechanically to carry that review (anything else parks, a red one with
-  // the merge gate's own CI blocker). Every refresh waits its turn in the
-  // repository's delivery line, the merge intent kept until it is replaced.
+  // A spent, cleanly reviewed head (`reviewRoundsSpentOut`) is delivered by a
+  // carried refresh: its CI is read with the stale merge intent cleared, and
+  // only a green head its latest review authorizes refreshes mechanically to
+  // carry that review (anything else parks precisely, a red one with the merge
+  // gate's own CI blocker). Any other reviewed head takes the ordinary
+  // refresh-and-review. Every refresh waits its turn in the repository's
+  // delivery line, the merge intent kept until it is replaced.
   if (
     record.source.kind === "issue" &&
     deps.github.prepareBaseRefresh !== undefined &&

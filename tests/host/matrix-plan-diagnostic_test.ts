@@ -1,7 +1,7 @@
 /**
- * Issue #159 item 2: the zero-cell plan diagnostic mirrors the readiness
- * predicate's review-round check, so a spent record at `work` is explained
- * as `review_rounds_spent` instead of being counted as ready.
+ * The zero-cell plan diagnostic no longer treats a spent review-round count
+ * as a refusal (owner directive 2026-10-30): the count is accounting and the
+ * record stays eligible for its next implementation start.
  */
 import assert from "node:assert/strict";
 import type { RepositoryConfigV1 } from "../../src/contracts/repository-config.ts";
@@ -32,7 +32,7 @@ function record(reviewRounds: number) {
   });
 }
 
-Deno.test("plan diagnostic: a spent record at work names review_rounds_spent", () => {
+Deno.test("plan diagnostic: a spent count does not refuse a record at work", () => {
   const spent = record(CEILING);
   const snapshot = seededSnapshot([spent]);
   assert.equal(
@@ -46,12 +46,12 @@ Deno.test("plan diagnostic: a spent record at work names review_rounds_spent", (
       false,
       null,
     ),
-    false,
-    "the predicate refuses a record with no review round left",
+    true,
+    "the spent count is accounting only",
   );
   assert.equal(
     explainMatrixNotReady(spent, CONFIG, snapshot, true, null),
-    "review_rounds_spent",
+    null,
   );
 });
 

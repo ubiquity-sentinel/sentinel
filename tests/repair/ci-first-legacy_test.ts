@@ -450,9 +450,11 @@ Deno.test("legacy exception: each of the 28 live records may take a CI fix at it
       true,
       `issue ${row[0]} at its pin`,
     );
-    // No cutoff (no CI-first runtime): nothing is legacy.
-    assert.equal(ciCorrectable(record, ledger, null), false);
-    // A review admitted after the cutoff spends the one final round.
+    // No cutoff (no CI-first runtime): nothing is legacy, but the CI fix
+    // route stays open because the counts are accounting only.
+    assert.equal(ciCorrectable(record, ledger, null), true);
+    // A review admitted after the cutoff spends the old final round; that is
+    // accounting, never a reason to close the CI fix route.
     const spent = legacyRecord(row, {
       counters: { ...record.counters, reviewRounds: row[2] + 1 },
     });
@@ -460,7 +462,7 @@ Deno.test("legacy exception: each of the 28 live records may take a CI fix at it
       ciCorrectable(spent, {
         reservations: [...ledger.reservations, lateReview(spent, row[2] + 1)],
       }, CUT),
-      false,
+      true,
       `issue ${row[0]} past its pin`,
     );
     const exhausted = legacyRecord(row, {
@@ -468,8 +470,8 @@ Deno.test("legacy exception: each of the 28 live records may take a CI fix at it
     });
     assert.equal(
       ciCorrectable(exhausted, ledger, CUT),
-      false,
-      `issue ${row[0]} fixed 3x`,
+      true,
+      `issue ${row[0]} past the old three-fix count`,
     );
   }
   // The same shape whose rounds were all admitted after the cutoff is new
@@ -482,16 +484,16 @@ Deno.test("legacy exception: each of the 28 live records may take a CI fix at it
         lateReview(other, attempt)
       ),
     }, CUT),
-    false,
-    "1583 is new",
+    true,
+    "1583 is new and still fixable",
   );
   const foreign = legacyRecord(LIVE[0], {
     repository: { ...AIUBQ, installationId: 7 },
   });
   assert.equal(
     ciCorrectable(foreign, oldLedger(foreign), CUT),
-    false,
-    "another installation",
+    true,
+    "the gate is about CI shape and accounting, not the old legacy list",
   );
 });
 
@@ -545,13 +547,24 @@ function plan(runtime: string, generation: number, ciFirst: string[]) {
   );
 }
 
-Deno.test("legacy exception: the launcher re-admits the 28 only under an allowlisted CI-first runtime", () => {
-  // Under R79 (CI corrections, but no CI-first gate) a re-admitted legacy
-  // record would spend its one final review on a still-red refreshed head.
+Deno.test("legacy exception: the launcher re-admits the 28 under any runtime; rounds are accounting", () => {
+  // Owner directive 2026-10-30 retired the review-round ceiling and the
+  // legacy compatibility gate: a spent legacy count never withholds the
+  // re-admission, under R79 (CI corrections, no CI-first gate) or any later
+  // runtime. The runtime then iterates on the refreshed head.
   const r79 = OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION;
   assert.ok(HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES.has(r79));
-  assert.deepEqual(plan(r79, 79, []), [], "inert under R79");
-  assert.deepEqual(plan(R80, 80, []), [], "inert until R80 is pinned");
+  const all = LIVE.map(([issue]) => `issue-ubiquity-ai.ubq.fi-${issue}`).sort();
+  assert.deepEqual(
+    plan(r79, 79, []).map((p) => p.id).sort(),
+    all,
+    "re-admitted under R79",
+  );
+  assert.deepEqual(
+    plan(R80, 80, []).map((p) => p.id).sort(),
+    all,
+    "re-admitted under an unpinned R80",
+  );
   const plans = plan(R80, 80, [R80]);
   assert.deepEqual(
     plans.map((p) => p.id).sort(),
@@ -580,7 +593,10 @@ const GIT_ENV = {
 async function stateAvailable(commit: string): Promise<boolean> {
   try {
     const probe = await new Deno.Command("git", {
-      args: ["-C", ROOT, "cat-file", "-e", `${commit}^{commit}`],
+      // Probe a required blob, not just the commit: a partial clone can have
+      // the commit object while the state tree needs a read-only promisor
+      // fetch, which would otherwise fail later in `git archive`.
+      args: ["-C", ROOT, "cat-file", "-e", `${commit}:manifest.json`],
       clearEnv: true,
       env: GIT_ENV,
       stdout: "null",
@@ -840,15 +856,12 @@ Deno.test("legacy exception: a red legacy head is fixed, refreshed and reviewed 
   }
 });
 
-Deno.test("legacy exception: an already-green legacy head spends no round: it is refreshed to carry its review and handed to the launcher's merge", async () => {
+Deno.test("legacy exception: an already-green legacy head is refreshed to carry its reviewed patch", async () => {
   // 618/698/879: green after their flake re-run; the base still moved. The
-  // owner's exception is for red CI only: a green head is merged like every
-  // spent record whose latest review authorizes it, through one mechanical
-  // refresh that carries that review once its patch is proven identical and
-  // the refreshed head is green. The runtime never merges it (its port
-  // refuses every merge on live ai.ubq.fi): it waits for the launcher's
-  // delivery pass, which merges the refreshed head at that exact tip.
-  // Its latest review accepted the live task (the blanket fake issue text).
+  // historical spent count with a clean accepted review keeps the carried
+  // path: the runtime refreshes mechanically and waits for the launcher's
+  // merge. It still never merges here (the port refuses every merge on live
+  // ai.ubq.fi); delivery stays with the launcher.
   const accepted = completedReceipt(7, SHA3, SHA1, {
     id: "review-receipt:618-latest",
     repository: AIUBQ,
@@ -897,7 +910,7 @@ Deno.test("legacy exception: an already-green legacy head spends no round: it is
       rig.clock.advance(5 * 60_000 + 1);
     }
     assert.equal(rig.model.requests.length, 0, "no fix for a green head");
-    assert.deepEqual(rig.github.reviewRequestIdentities, [], "no review");
+    assert.deepEqual(rig.github.reviewRequestIdentities, [], "no new review");
     assert.equal(
       rig.github.calls.filter((call) => call === "merge").length,
       0,
@@ -908,6 +921,7 @@ Deno.test("legacy exception: an already-green legacy head spends no round: it is
     assert.equal(work.target.head, PREP3);
     assert.equal(work.target.base, SHA2);
     assert.equal(work.wait?.reason, "backoff");
+    assert.equal(work.blocker, null);
     const snapshot = await rig.snapshot();
     assert.equal(work.counters.reviewRounds, 7, "no round spent");
     assert.equal(work.counters.retries, 0);

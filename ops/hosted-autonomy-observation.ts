@@ -66,11 +66,19 @@ export async function runSelfObservationPass(input: {
       actions.push(`self-observation:skipped:run=${run.id}:jobs_unavailable`);
       continue;
     }
+    // Cancellation can be intentional (paused admission or a superseded run)
+    // or a fail-fast side effect. Prefer the actual failure and never treat
+    // cancellation alone as a repairable defect.
     const job = jobs.find((entry) =>
+      entry.conclusion === "failure" || entry.conclusion === "timed_out" ||
+      entry.conclusion === "startup_failure"
+    ) ?? jobs.find((entry) =>
       entry.conclusion !== null && entry.conclusion !== "success" &&
-      entry.conclusion !== "skipped"
+      entry.conclusion !== "skipped" && entry.conclusion !== "cancelled"
     );
-    if (job === undefined) continue;
+    if (job === undefined) {
+      continue;
+    }
     let log: string | null = null;
     try {
       log = await observation.readJobLog({

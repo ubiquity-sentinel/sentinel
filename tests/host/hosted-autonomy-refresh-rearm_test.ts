@@ -310,9 +310,10 @@ Deno.test("refresh re-arm: a closed issue's refused refresh is never re-armed wh
   assert(!result.actions.some((action) => action.startsWith("refresh:")));
 });
 
-Deno.test("refresh re-arm: a record with no review round left stays blocked without a remote read (hard ceiling)", async () => {
-  // Re-armed, the runtime would refresh onto the moved base and the refreshed
-  // head would need a fourth review round (owner decision 2026-10-16).
+Deno.test("refresh re-arm: a spent review-round count never blocks the re-arm", async () => {
+  // Re-armed, the runtime refreshes onto the moved base and the refreshed
+  // head is reviewed again. Review rounds are accounting, never an admission
+  // limit (owner directive 2026-10-30), so a spent count re-arms the record.
   const record = await refusedRefresh();
   const charges = [1, 2, 3].map((attempt) =>
     reservation(`${"e".repeat(62)}0${attempt}`, {
@@ -359,13 +360,13 @@ Deno.test("refresh re-arm: a record with no review round left stays blocked with
         refreshRearmRuntimes: [pin(R77)],
       }),
     );
-    assert.equal(state.writes, 0, JSON.stringify(result));
-    assert.equal(canonicalStringify(state.snapshot), before);
+    assert.notEqual(canonicalStringify(state.snapshot), before);
+    assert.equal(state.writes, 1, JSON.stringify(result));
     assert(
-      result.actions.includes(`refresh:${ID}:retained:review_rounds_spent`),
+      result.actions.includes(`refresh:${ID}:rearmed:1012`),
       JSON.stringify(result),
     );
-    assert.equal(listings, 0, "no pull request is listed for it");
+    assert.equal(listings, 1, "the exact pull request is verified once");
   }
 });
 
