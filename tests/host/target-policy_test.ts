@@ -79,22 +79,42 @@ Deno.test("target policy: the gateway's Bun configuration keeps the Deno-era pro
   ) assert.ok(config.protectedPaths.includes(path), path);
 });
 
-Deno.test("target policy: Sentinel policy and non-gateway trusted templates stay unchanged", () => {
-  for (const name of ["sentinel", "another-repo"]) {
-    const owner = name === "sentinel" ? "ubiquity-sentinel" : "ubiquity";
+Deno.test("target policy: only Sentinel keeps the named template", () => {
+  const self = createTargetConfigV1(template, {
+    slug: "ubiquity-sentinel/sentinel",
+    owner: "ubiquity-sentinel",
+    name: "sentinel",
+  }, "main");
+  assert.deepEqual(self.commands, template.commands);
+  assert.deepEqual(self.commandRegistry, template.commandRegistry);
+  assert.deepEqual(self.protectedPaths, template.protectedPaths);
+
+  // Every other identity, including a foreign ai.ubq.fi spoof, is generic:
+  // facts-less here, so no local verify and the generic credential boundary.
+  for (
+    const [owner, name] of [
+      ["ubiquity", "another-repo"],
+      ["foreign", "ai.ubq.fi"],
+    ] as const
+  ) {
     const config = createTargetConfigV1(template, {
       slug: `${owner}/${name}`,
       owner,
       name,
     }, "main");
-    assert.deepEqual(config.commands, template.commands);
-    assert.deepEqual(config.commandRegistry, template.commandRegistry);
-    assert.deepEqual(config.protectedPaths, template.protectedPaths);
+    assert.equal(config.commands.test, "no_local_verify", name);
+    assert.equal(
+      config.commandRegistry.commands[config.commands.test].executable,
+      "false",
+      name,
+    );
+    assert.notDeepEqual(config.commandRegistry, template.commandRegistry);
+    assert.ok(config.protectedPaths.includes(".git/"), name);
+    assert.ok(config.protectedPaths.includes(".npmrc"), name);
+    assert.equal(
+      config.protectedPaths.includes("src/host/local-config.ts"),
+      false,
+      "a generic identity never inherits Sentinel custody",
+    );
   }
-  const spoof = createTargetConfigV1(template, {
-    slug: "ubiquity/ai.ubq.fi",
-    owner: "foreign",
-    name: "ai.ubq.fi",
-  }, "main");
-  assert.deepEqual(spoof.commandRegistry, template.commandRegistry);
 });

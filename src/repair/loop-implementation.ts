@@ -60,7 +60,8 @@ import {
 import { existingHeadContinuationShape } from "./loop-eligibility.ts";
 import { verifyNoLiveLocalCandidateBranch } from "./loop-local-candidate.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
-import { readBase, readIssueForModel } from "./loop-task-context.ts";
+import { RETIRED_TARGET_MESSAGE } from "./selection.ts";
+import { observeIssueForModel, readBase } from "./loop-task-context.ts";
 import type {
   LoopContextV1,
   PreparedImplementationV1,
@@ -291,12 +292,29 @@ export async function prepareImplementationStart(
   // gate): an unavailable issue returns a wait with ZERO reservation/model and
   // never an ambiguous unsent model intent. The value is kept for the model
   // invocation below.
-  const issue = await readIssueForModel(deps, record);
-  if (issue === "unavailable") {
-    // Prerequisite gating (closed/absent issue, unknown relations, parent or
-    // open native blocker) defers to the next hour with ZERO reservation and
-    // zero model start: a dependency that closes by then, or a source that
-    // recovers, is re-read on that poll. Not an indefinite wait.
+  const observation = await observeIssueForModel(deps, record);
+  if (observation.kind === "unavailable") {
+    // A source observed closed or absent is terminal: retire it with the
+    // existing source-closed blocker BEFORE the conflict-resolution start
+    // (this read happens before the charged admission below), instead of
+    // re-parking it on an hour-long unavailable prerequisite wait that keeps
+    // a dead base-refresh record holding the same-repository refresh line.
+    // The terminal fact comes from this single read; a gated/unreadable
+    // source is not re-read and keeps the prerequisite wait.
+    if (observation.sourceClosed) {
+      return persistWork(
+        deps,
+        context,
+        clearIntent(
+          markBlocked(record, "other", RETIRED_TARGET_MESSAGE, now),
+          now,
+        ),
+      );
+    }
+    // Prerequisite gating (unknown relations, parent or open native blocker)
+    // defers to the next hour with ZERO reservation and zero model start: a
+    // dependency that closes by then, or a source that recovers, is re-read
+    // on that poll. Not an indefinite wait.
     return persistWork(
       deps,
       context,
@@ -311,6 +329,7 @@ export async function prepareImplementationStart(
       ),
     );
   }
+  const issue = observation.kind === "issue" ? observation.issue : null;
 
   // Recheck the latest shared gate and the run bounds after this awaited
   // prerequisite: a newly discovered rate limit must never consume an
