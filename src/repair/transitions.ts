@@ -718,6 +718,9 @@ export function updateSnapshot(
     evidence: [...snapshot.evidence],
     work: [...snapshot.work],
     reservations: [...snapshot.reservations],
+    ...(snapshot.reservationArchive === undefined ? {} : {
+      reservationArchive: [...snapshot.reservationArchive],
+    }),
     reviews: [...snapshot.reviews],
     replays: [...snapshot.replays],
     releaseRequests: [...snapshot.releaseRequests],

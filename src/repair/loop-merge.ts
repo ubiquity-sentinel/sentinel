@@ -1,4 +1,5 @@
 import { queueDeliveryProvenanceRef } from "../github/queue-delivery-provenance.ts";
+import { allReservationsV1 } from "../contracts/state-snapshots.ts";
 import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 import { prepareExistingPrEffect } from "./loop-existing-pr.ts";
 import {
@@ -228,7 +229,9 @@ export async function executeMerge(
     reviewOperationKey(record.target.pr!, record.target.head!),
     record.target.head!,
   );
-  const attemptedReviews = context.snapshot.reservations.filter((charge) =>
+  const attemptedReviews = allReservationsV1(context.snapshot).filter((
+    charge,
+  ) =>
     sameRepositoryIdentity(charge.repository, record.repository) &&
     charge.taskId === record.id && charge.head === record.target.head &&
     charge.purpose === "review_request" &&

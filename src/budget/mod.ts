@@ -7,7 +7,12 @@ import type {
   StateWriteResultV1,
 } from "../contracts/ports.ts";
 import { expectRestrictedRef } from "../contracts/shared.ts";
+import {
+  allReservationsV1,
+  findReservationV1,
+} from "../contracts/state-snapshots.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import { RESERVATION_SNAPSHOT_REFUSED_REASON } from "./budget-types.ts";
 import {
   deriveReservationId,
   earliestRetryAt,
@@ -162,7 +167,8 @@ export class RollingStartBudget extends BudgetStateContext
     // identity (a derivation/hash collision) is an invalid collision, never a
     // reconciliation-needed duplicate; the same identity under a different id
     // is likewise invalid.
-    const sameId = prior?.reservations.find((r) => r.id === id) ?? null;
+    const reservations = prior === null ? [] : allReservationsV1(prior);
+    const sameId = reservations.find((r) => r.id === id) ?? null;
     if (
       sameId !== null &&
       sameLogicalIdentity(
@@ -184,7 +190,7 @@ export class RollingStartBudget extends BudgetStateContext
       );
     }
     if (
-      prior?.reservations.some((r) =>
+      reservations.some((r) =>
         sameLogicalIdentity(
           r,
           identity,
@@ -246,8 +252,10 @@ export class RollingStartBudget extends BudgetStateContext
 
     let retryAt: number;
     try {
+      // Archived charges still count: compaction may only move rows out of
+      // the live collection, never out of the rolling accounting windows.
       retryAt = earliestRetryAt(
-        prior?.reservations ?? [],
+        reservations,
         now,
         policy.limits,
       );
@@ -289,6 +297,19 @@ export class RollingStartBudget extends BudgetStateContext
       return { status: "ambiguous", currentHead: null };
     }
     if (!write.ok) {
+      if (write.error.kind === "invalid") {
+        // Capacity/contract refusal: the writer rejected the snapshot itself.
+        // Report it as a distinct, non-transient status so the caller writes a
+        // precise bounded wait/park with the reason instead of looping.
+        return {
+          status: "rejected",
+          reason: RESERVATION_SNAPSHOT_REFUSED_REASON,
+          detail: write.error.detail ===
+              "state snapshot failed contract validation"
+            ? "state writer refused the reservation snapshot (capacity or contract validation); no permission granted"
+            : `${write.error.detail}; no permission granted`,
+        };
+      }
       return unavailable(
         `state write failed (${write.error.kind}); no permission granted`,
       );
@@ -371,7 +392,7 @@ export class RollingStartBudget extends BudgetStateContext
       };
     }
 
-    const prior = snapshot.reservations.find((r) => r.id === request.id);
+    const prior = findReservationV1(snapshot, request.id);
     if (prior === undefined) {
       return invalid("no reservation with that id exists");
     }
@@ -389,6 +410,13 @@ export class RollingStartBudget extends BudgetStateContext
         };
       }
       return invalid("settled proof ref cannot change");
+    }
+
+    // Rows moved to the durable archive are immutable retention records: an
+    // equal repeated settlement is idempotent above, and anything else fails
+    // closed rather than claiming a mutation the archive cannot record.
+    if (snapshot.reservationArchive?.some((r) => r.id === prior.id) === true) {
+      return invalid("archived settled reservation is immutable");
     }
 
     if (prior.outcome === "reserved") {

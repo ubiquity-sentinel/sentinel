@@ -163,6 +163,9 @@ Deno.test("plan diagnostic: the child line closes every variable reason part", (
     waveId: "w",
     cause: "planner",
     prepared: 0,
+    attempted: 0,
+    deferred: 0,
+    deferredByReason: {},
     totalRecords: 9,
     repositories: [{
       repository: "ubiquity/passport.ubq.fi",
@@ -200,6 +203,9 @@ function childDiagnostic(waveId: string, extra: Record<string, unknown> = {}) {
     waveId,
     cause: "planner",
     prepared: 0,
+    attempted: 0,
+    deferred: 0,
+    deferredByReason: {},
     totalRecords: 61,
     repositories: [{
       repository: "ubiquity/passport.ubq.fi",
@@ -240,6 +246,9 @@ Deno.test("plan diagnostic: the launcher re-emits one sanitized line after the u
       waveId: rig.execution.id,
       cause: "planner",
       prepared: 0,
+      attempted: 0,
+      deferred: 0,
+      deferredByReason: {},
       totalRecords: 61,
       repositories: [{
         repository: "ubiquity/passport.ubq.fi",

@@ -8,7 +8,10 @@ import type {
   SkippedIssueV1,
   StateReadView,
 } from "../contracts/ports.ts";
-import { parseRepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  parseRepairStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import {
   sanitizeIssueSourceContext,
@@ -563,20 +566,25 @@ async function summarizeHostedRuntime(
       ? undefined
       : await readSummaryState(input.state);
     const before = observation.before;
-    const retainedAdmissions = new Set(
-      (after?.reservations ?? []).map((row) => row.id),
-    );
+    // A full ledger moves its oldest terminal rows into the durable archive;
+    // retention and counts must still see them or a healthy run reports
+    // unknown.
+    const beforeRows = before === null || before === undefined
+      ? []
+      : allReservationsV1(before);
+    const afterRows = after === null || after === undefined
+      ? []
+      : allReservationsV1(after);
+    const retainedAdmissions = new Set(afterRows.map((row) => row.id));
     // Missing history, a regressing snapshot or removed admissions cannot prove zero.
     const comparable = observation.run?.settled === true &&
       before !== undefined && after !== undefined &&
       (before === null ||
         (after !== null && after.sequence >= before.sequence &&
-          before.reservations.every((row) => retainedAdmissions.has(row.id))));
-    const prior = new Map(
-      (before?.reservations ?? []).map((row) => [row.id, row]),
-    );
+          beforeRows.every((row) => retainedAdmissions.has(row.id))));
+    const prior = new Map(beforeRows.map((row) => [row.id, row]));
     const admitted = comparable
-      ? (after?.reservations ?? []).filter((row) => !prior.has(row.id))
+      ? afterRows.filter((row) => !prior.has(row.id))
       : null;
     summary.targets = targets.map((repository) => ({
       repository,
@@ -592,7 +600,7 @@ async function summarizeHostedRuntime(
       summary.admittedWorkCount = new Set(admitted.map((row) =>
         `${row.repository.owner}/${row.repository.name}:${row.taskId}`
       )).size;
-      const pendingBefore = (before?.reservations ?? []).some((row) =>
+      const pendingBefore = beforeRows.some((row) =>
         row.outcome === "reserved"
       );
       // Ambiguous and pending starts remain unknown, never refunded or assumed started.
