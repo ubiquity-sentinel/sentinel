@@ -86,6 +86,11 @@ export async function runHostedRollbackChild(input: {
     );
     await runtime.runActionsRepairHost({
       state,
+      // The same issue-only scoping as the ordinary child (actions.ts): the
+      // rollback child never supplies a gateway runtime, so ai.ubq.fi is read
+      // through the GitHub adapter here too (issue #201). A prior runtime
+      // that predates the option ignores it.
+      issueOnly: true,
       runTargetCycles: (input: ActionsTargetCyclesInputV1) =>
         matrix.runActionsMatrixAggregateCycles(
           input,

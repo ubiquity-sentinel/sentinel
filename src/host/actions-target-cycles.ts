@@ -125,9 +125,10 @@ export function scopeTargetConfigV1(
       ...config,
       repository: { ...config.repository, installationId },
     };
-  // An issue-only repair host reads every target through the GitHub adapter;
-  // the gateway adapter belongs to the plan/cell path, which composes its own
-  // incident source.
+  // An issue-only repair host reads every target through the GitHub adapter.
+  // Every Actions entrypoint (the ordinary and rollback repair children and
+  // the matrix plan/cell host) is issue-only; the gateway adapter is kept only
+  // for a host that supplies its own gateway runtime (`src/host/repair.ts`).
   return options.issueOnly === true && scoped.adapter.kind === "gateway"
     ? { ...scoped, adapter: { kind: "github" } }
     : scoped;

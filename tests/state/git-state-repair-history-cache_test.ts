@@ -513,3 +513,44 @@ Deno.test("state tree memo: exact bytes, two-entry bound, oversized bypass and c
   }, snapshot);
   assert.equal(memo.read("repair:large", proof).status, "miss");
 });
+
+Deno.test("repair history cache: a warm read that ends past the window keeps its result", async () => {
+  // Issue #200: a read entered one second before expiry that finishes after
+  // it is still current (the caller's ls-remote checks prove that); only the
+  // entry is retired, and the next read fetches the history again.
+  const { ctx } = await fixture("history-cache-straddle");
+  const savedNow = Date.now;
+  let now = savedNow();
+  Date.now = () => now;
+  try {
+    const cache = new RepairHistoryCache(ctx.tmp);
+    let initializations = 0;
+    const initialize = () => {
+      initializations += 1;
+      return Promise.resolve(portOk(null));
+    };
+    const first = await cache.use(
+      "a",
+      initialize,
+      () => Promise.resolve(portOk("cold")),
+    );
+    assert(first.ok, JSON.stringify(first));
+    now += 120_000 - 1_000;
+    const straddling = await cache.use("a", initialize, () => {
+      now += 2_000;
+      return Promise.resolve(portOk("warm"));
+    });
+    assert.deepEqual(straddling, portOk("warm"));
+    assert.equal(initializations, 1);
+    const next = await cache.use(
+      "a",
+      initialize,
+      () => Promise.resolve(portOk("fresh")),
+    );
+    assert.deepEqual(next, portOk("fresh"));
+    assert.equal(initializations, 2);
+  } finally {
+    Date.now = savedNow;
+    await ctx.cleanup();
+  }
+});

@@ -53,7 +53,18 @@ export interface GitHubPort {
   readPullRequest(
     number: number,
   ): Promise<PortResultV1<GitHubPullRequestV1 | null>>;
-  readChecks(head: GitSha): Promise<PortResultV1<GitHubChecksV1>>;
+  /**
+   * The strict check runs and commit statuses of `head`. With `names`, only
+   * the runs and statuses carrying one of those exact names are parsed and
+   * returned; every other one is skipped unread. A caller attributing given
+   * head failures against a base passes their names, so an unrelated base run
+   * (sentinel `development` carries 78-character `matrix_cell (<cellId>)`
+   * runs over the label bound) never refuses the read.
+   */
+  readChecks(
+    head: GitSha,
+    names?: ReadonlySet<string>,
+  ): Promise<PortResultV1<GitHubChecksV1>>;
   /**
    * The check runs of `head` reduced to name and check suite, for the
    * required-CI coverage rule's read of a base only (`absentExpectedChecks`).

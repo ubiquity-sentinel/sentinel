@@ -31,6 +31,7 @@ import type { StateReadView } from "../contracts/ports-state.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { HttpResponseV1, HttpTransportV1 } from "../github/http.ts";
+import { classifyGitHubRateLimit } from "../github/rate-limit.ts";
 import { parseHostedAppMintGrant } from "./hosted-app-grant.ts";
 import { premergeCiPolicyV1 } from "./target-policy.ts";
 
@@ -61,6 +62,7 @@ export interface PremergeCiReportV1 {
     | "grant_refused"
     | "state_unavailable"
     | "cooldown"
+    | "rate_limited"
     | "nothing_pending"
     | "dispatched"
     | "dispatch_refused";
@@ -74,6 +76,18 @@ export interface PremergeCiReportV1 {
 export const PREMERGE_CI_MARGIN_MS = 60_000;
 
 type Row = Record<string, unknown>;
+
+/**
+ * Why a request was not answered by GitHub: the run deadline (issue #199),
+ * a cooldown refusal of the gate, or a rate limit GitHub just answered and
+ * the gate recorded (issue #198). Each ends the pass.
+ */
+type Stop = "deadline" | "refused" | "rate_limited";
+
+function isStop(value: unknown): value is Stop {
+  return value === "deadline" || value === "refused" ||
+    value === "rate_limited";
+}
 
 function row(value: unknown): Row | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -153,18 +167,21 @@ export async function dispatchPremergeCi(
   if (pending.length === 0) return report("nothing_pending");
 
   const base = deps.apiBaseUrl ?? "https://api.github.com";
+  const stop = (reason: Stop) =>
+    report(reason === "refused" ? "cooldown" : reason);
   const api = async (
     method: "GET" | "POST",
     path: string,
     body: Row | null,
-  ): Promise<HttpResponseV1 | "refused" | "transport"> => {
-    if (!withinDeadline()) return "refused";
+  ): Promise<HttpResponseV1 | Stop | "transport"> => {
+    if (!withinDeadline()) return "deadline";
     const admitted = await deps.gate.beforeRequest(
       config.repository.installationId,
     );
     if (!admitted.ok) return "refused";
+    let response: HttpResponseV1;
     try {
-      return await deps.http({
+      response = await deps.http({
         method,
         url: `${base}/repos/${repository}${path}`,
         headers: new Map([
@@ -180,16 +197,25 @@ export async function dispatchPremergeCi(
     } catch {
       return "transport";
     }
+    // The gate contract: an observed limit is persisted before any later
+    // request, and the pass ends instead of reading the next record.
+    const limit = await classifyGitHubRateLimit(response, deps.clock.now());
+    if (limit !== null) {
+      await deps.gate.recordRateLimit(config.repository.installationId, limit);
+      return "rate_limited";
+    }
+    return response;
   };
   const runsOnHead = async (
     head: string,
-  ): Promise<number | null> => {
+  ): Promise<number | null | Stop> => {
     const response = await api(
       "GET",
       `/actions/workflows/${policy.workflowFile}/runs?head_sha=${head}&per_page=100`,
       null,
     );
-    if (typeof response === "string" || response.status !== 200) return null;
+    if (isStop(response)) return response;
+    if (response === "transport" || response.status !== 200) return null;
     let parsed: unknown;
     try {
       parsed = JSON.parse(response.bodyText);
@@ -206,7 +232,7 @@ export async function dispatchPremergeCi(
     const pr = record.target.pr!;
     const head = record.target.head!;
     const pull = await api("GET", `/pulls/${pr}`, null);
-    if (pull === "refused") return report("cooldown");
+    if (isStop(pull)) return stop(pull);
     if (pull === "transport" || pull.status !== 200) {
       decisions.push(`${pr}:pull_unavailable`);
       continue;
@@ -234,6 +260,7 @@ export async function dispatchPremergeCi(
       continue;
     }
     const existing = await runsOnHead(head);
+    if (isStop(existing)) return stop(existing);
     if (existing === null) {
       decisions.push(`${pr}:runs_unreadable`);
       continue;
@@ -254,7 +281,7 @@ export async function dispatchPremergeCi(
         },
       },
     );
-    if (dispatched === "refused") return report("cooldown");
+    if (isStop(dispatched)) return stop(dispatched);
     if (dispatched === "transport" || dispatched.status !== 204) {
       decisions.push(
         `${pr}:dispatch_refused:${
@@ -266,7 +293,8 @@ export async function dispatchPremergeCi(
     // One read after the POST: a run bound to the exact head confirms the
     // request; its absence proves nothing yet (GitHub lists runs after a
     // delay) and a run on another SHA means the ref moved first.
-    const confirmed = await runsOnHead(head);
+    const read = await runsOnHead(head);
+    const confirmed = isStop(read) ? null : read;
     decisions.push(
       `${pr}:dispatched:${
         confirmed === null

@@ -256,7 +256,7 @@ export function parseReleaseBridgeInstallation(
     if (
       ![
         `repo:ubiquity-sentinel/sentinel:${suffix}`,
-        `repo:ubiquity@${ownerId}/sentinel@${repositoryId}:${suffix}`,
+        `repo:ubiquity-sentinel@${ownerId}/sentinel@${repositoryId}:${suffix}`,
       ].includes(subject)
     ) refuse("installation_rejected");
     return {

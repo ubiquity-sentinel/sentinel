@@ -144,3 +144,22 @@ Deno.test("hosted rollback: legacy repair writes preserve newer journals and cha
     await rig.close();
   }
 });
+
+Deno.test("hosted rollback: the repair child scopes ai.ubq.fi issue-only like the ordinary child", async () => {
+  // Issue #201: without the option the rollback child kept ai.ubq.fi on the
+  // gateway adapter, ran an unavailable incident scan and reported
+  // source_error for a run the ordinary child reports healthy.
+  const source = await Deno.readTextFile(
+    new URL("../../src/host/hosted-runtime-rollback.ts", import.meta.url),
+  );
+  const call = source.slice(source.indexOf("runtime.runActionsRepairHost({"));
+  assert.ok(call.length > 0, "the rollback child calls runActionsRepairHost");
+  assert.match(
+    call.slice(0, call.indexOf("runTargetCycles")),
+    /issueOnly: true,/,
+  );
+  const ordinary = await Deno.readTextFile(
+    new URL("../../src/host/actions.ts", import.meta.url),
+  );
+  assert.match(ordinary, /issueOnly: true,/);
+});

@@ -8,6 +8,10 @@
  */
 import assert from "node:assert/strict";
 import type { SelfMergeProofV1 } from "../../src/contracts/self-merge.ts";
+import { parseSelfMergeProof } from "../../src/contracts/self-merge.ts";
+import { planHostedRetirements } from "../../ops/hosted-autonomy-closures.ts";
+import { hostedIssueKey } from "../../ops/hosted-autonomy-policy.ts";
+import { repairSnapshot } from "../host/hosted-autonomy-rig.ts";
 import { parkSelfMergeRefusal } from "../../src/repair/loop-merge.ts";
 import { selfMergeFixture } from "../github/self-merge-fixture.ts";
 import { T0, workRecord } from "../state/helpers.ts";
@@ -77,6 +81,36 @@ Deno.test("self merge park: a refusal after the remote writes began keeps the pr
     assert.equal(cleared.nextStep, "blocked");
     assert.equal(cleared.intent, null);
     assert.equal(cleared.blocker?.message, REFUSAL);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("self merge park: the hosted retirement pass never clears a kept proof", async () => {
+  // Held-fix review finding: a self merge whose PR the protocol closed itself
+  // (prState closed) and whose issue is closed is closed-unmerged to the
+  // launcher's retirement pass, which cleared the kept proof with the intent.
+  const rig = await selfMergeFixture();
+  try {
+    rig.state.wrongCloseIdentity = true;
+    await rig.port.mergePullRequest(rig.request, rig.execution);
+    const applied = rig.execution.proof;
+    assert.ok(applied !== null);
+    const closed = parseSelfMergeProof({
+      ...applied,
+      stage: "pr_closed",
+      prState: "closed",
+    });
+    const kept = parkSelfMergeRefusal(recordWith(closed), REFUSAL, T0 + 10_000);
+    assert.equal(kept.intent?.selfMerge?.stage, "pr_closed");
+    const snapshot = repairSnapshot([kept], [], [], []);
+    const closedIssues = new Set([
+      hostedIssueKey(kept.repository, closed.issueNumber),
+    ]);
+    assert.deepEqual(
+      planHostedRetirements(snapshot, closedIssues, new Set([kept.id])),
+      [],
+    );
   } finally {
     await rig.cleanup();
   }
