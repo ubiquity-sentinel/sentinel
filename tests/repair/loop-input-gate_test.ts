@@ -34,6 +34,7 @@ import { runRepairCycle } from "../../src/repair/loop.ts";
 import { PASS_SUMMARY_LINE_KIND } from "../../src/repair/pass-summary-line.ts";
 import { STEP_INPUTS_MAX_SKIP_MS } from "../../src/repair/step-inputs.ts";
 import { STEP_LINE_KIND } from "../../src/repair/step-line.ts";
+import { orderRecords } from "../../src/state/state-records.ts";
 import { repositoryConfig } from "../budget/helpers.ts";
 import {
   FakeClock,
@@ -277,6 +278,51 @@ Deno.test("input gate: one batch per repository, then only changed records are s
   assert.deepEqual(third.stepped, []);
   assert.equal(third.summary.recordsSkipped, 74);
   assert.equal(rig.state.repairHead, head, "a skipped record costs no write");
+});
+
+Deno.test("input gate: durable row ordering does not wake 60 unchanged records", async () => {
+  const rig = makeRig(
+    Array.from({ length: 60 }, (_, index) => pendingArtifact(REPOS[0], index)),
+  );
+  const first = await pass(rig);
+  assert.equal(first.summary.recordsStepped, 60);
+  assert.equal(stamped(rig), 60);
+  const head = rig.state.repairHead;
+  const writes = rig.state.repairWrites;
+  // Intake appends in discovery order; the Git snapshot decoder reloads by ID.
+  rig.state.repair!.work = orderRecords<WorkRecordV1>(
+    rig.state.repair!.work.map((row) => ({ id: row.id, value: row })),
+  );
+  rig.clock.advance(5 * MINUTE);
+  const reloaded = await pass(rig);
+  assert.equal(
+    reloaded.summary.recordsStepped,
+    0,
+    "row order is not a changed input",
+  );
+  assert.deepEqual(reloaded.stepped, []);
+  assert.equal(reloaded.summary.recordsRead, 60);
+  assert.equal(reloaded.summary.recordsSkipped, 60);
+  assert.deepEqual(reloaded.summary.skipReasons, {
+    unchanged_inputs: 60,
+    waiting: 0,
+  });
+  assert.equal(rig.state.repairHead, head, "a reordered reload costs no write");
+  assert.equal(rig.state.repairWrites, writes);
+
+  // A real sibling head change must still invalidate the conservative digest.
+  const record = rig.state.repair!.work[0];
+  rig.state.repair!.work[0] = {
+    ...record,
+    target: { ...record.target, head: SHA2 },
+  };
+  rig.clock.advance(5 * MINUTE);
+  const changed = await pass(rig);
+  assert.equal(changed.summary.recordsStepped, 60);
+  assert.equal(changed.summary.recordsSkipped, 0);
+  assert.equal(rig.github.batchesOf(REPOS[0].name), 3, "one batch per pass");
+  assert.deepEqual(rig.github.calls, [], "no per-record fallback or effects");
+  assert.deepEqual(rig.state.repair!.reservations, [], "no model charge");
 });
 
 Deno.test("input gate: the clock passing a wait or stamp deadline steps the record again", async () => {
