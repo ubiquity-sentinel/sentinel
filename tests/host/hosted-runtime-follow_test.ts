@@ -473,6 +473,53 @@ Deno.test("follow applies installation and supervisor gates after a stale execut
   assert.equal(active.mutations, 0);
 });
 
+Deno.test("follow proceeds when the maintenance-index ref is verified absent (#287)", async () => {
+  const api = new FollowFake();
+  const result = await api.follow();
+  assert.equal(result.journal.decision, "advanced");
+  assert.equal(api.mutations, 1);
+  assert.equal(api.launcher, OLDER);
+  assert.ok(
+    api.requests.some((request) =>
+      new URL(request.url).pathname.endsWith(
+        "/git/matching-refs/heads/sentinel-state/maintenance-index",
+      )
+    ),
+  );
+});
+
+Deno.test("follow fails closed on unreadable maintenance-index refs (#287)", async (t) => {
+  const cases = [
+    ["transport", new Error("unavailable maintenance index")],
+    ...[401, 403, 404, 429, 500].map((status) =>
+      [String(status), response({ message: "Unavailable" }, status)] as const
+    ),
+    ["malformed", response({})],
+    ["null", response(null)],
+    [
+      "wrong ref",
+      response([{
+        ref: "refs/heads/sentinel-state/maintenance-index-other",
+        object: { type: "commit", sha: P },
+      }]),
+    ],
+  ] as const;
+  for (const [name, outcome] of cases) {
+    await t.step(name, async () => {
+      const api = new FollowFake();
+      api.intercept = (_request, url) => {
+        if (!url.pathname.endsWith("/maintenance-index")) return;
+        if (outcome instanceof Error) throw outcome;
+        return outcome;
+      };
+      const result = await api.follow();
+      assert.equal(result.journal.decision, "deferred");
+      assert.equal(api.mutations, 0);
+      assert.equal(api.launcher, L);
+    });
+  }
+});
+
 Deno.test("follow holds while the installed runtime's matrix wave is unsettled and proceeds once it settles", async () => {
   const api = new FollowFake();
   const reservations = Array.from(

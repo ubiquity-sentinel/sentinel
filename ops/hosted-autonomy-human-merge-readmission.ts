@@ -70,7 +70,7 @@ export interface HumanMergeCandidateV1 {
   branch: string;
   /** The exact reviewed head the record keeps unchanged. */
   head: GitSha;
-  /** The retained pull identity; null for the head-mismatch park. */
+  /** The retained pull identity, when the parked record still names it. */
   pullRequest: number | null;
   /** Which shape wrote the record; the merge-actor gate depends on it. */
   parkedBy: HumanMergeParkV1;
@@ -134,11 +134,22 @@ export function planHumanMergeHeadReadmissions(
   return candidates;
 }
 
+/** A retained PR disambiguates older publications on the same branch. */
+function pullsForCandidate(
+  candidate: HumanMergeCandidateV1,
+  pulls: readonly HostedAutonomyHeadPullV1[],
+): readonly HostedAutonomyHeadPullV1[] {
+  return candidate.pullRequest === null
+    ? pulls
+    : pulls.filter((pull) => pull.number === candidate.pullRequest);
+}
+
 /**
  * Pure remote verification of one candidate against the exact-branch pull
  * listing. The pull must be the one merged publication of the record's own
- * branch: a readable listing whose every entry is on that branch, exactly one
- * pull, merged, by a trusted author and based on the scope's base branch. An
+ * branch: a readable listing whose every entry is on that branch, one pull
+ * matching the retained PR number (or exactly one pull when no PR is retained),
+ * merged, by a trusted author and based on the scope's base branch. An
  * unreadable listing, an open pull (the standing review owns it) and a pull
  * on another base all refuse without a write. A record parked by the off-base
  * message is only re-admitted when the same pull read names its merger and
@@ -163,21 +174,22 @@ export function decideHumanMergeHeadReadmission(
   if (pulls.some((pull) => pull.headRef !== candidate.branch)) {
     return { kind: "refused", reason: "pr_listing_mismatch" };
   }
-  if (pulls.length !== 1) {
+  const matching = pullsForCandidate(candidate, pulls);
+  if (matching.length === 0 && pulls.length > 0) {
+    return { kind: "refused", reason: "pr_identity_mismatch" };
+  }
+  if (matching.length !== 1) {
     return {
       kind: "refused",
-      reason: pulls.length === 0 ? "pr_not_found" : "pr_ambiguous",
+      reason: matching.length === 0 ? "pr_not_found" : "pr_ambiguous",
     };
   }
-  const pull = pulls[0];
+  const pull = matching[0];
   if (pull.merged !== true || pull.state !== "closed") {
     return { kind: "refused", reason: "pr_not_merged" };
   }
   if (pull.baseRef !== baseBranch) {
     return { kind: "refused", reason: "pr_base_mismatch" };
-  }
-  if (candidate.pullRequest !== null && pull.number !== candidate.pullRequest) {
-    return { kind: "refused", reason: "pr_identity_mismatch" };
   }
   if (
     pull.author === null ||
@@ -255,9 +267,12 @@ export async function verifyHumanMergeHeadReadmissions(
     } catch {
       pulls = null;
     }
+    const matching = pulls === null
+      ? null
+      : pullsForCandidate(candidate, pulls);
     const mergedBy = candidate.parkedBy !== "head_mismatch" &&
-        pulls !== null && pulls.length === 1
-      ? await readMergedBy(surface, pulls[0].number, scope.baseBranch)
+        matching !== null && matching.length === 1
+      ? await readMergedBy(surface, matching[0].number, scope.baseBranch)
       : undefined;
     const decision = decideHumanMergeHeadReadmission(
       candidate,

@@ -15,6 +15,7 @@ import {
 } from "./validation.ts";
 import {
   HOSTED_ACTIONS_CLOCK_TOLERANCE_MS,
+  HOSTED_ACTIONS_POSITIVE_SKEW_MS,
   HOSTED_SUPERVISOR_REF,
   HOSTED_SUPERVISOR_REPOSITORY,
   HOSTED_SUPERVISOR_WORKFLOW_ID,
@@ -207,6 +208,7 @@ export function parseHostedRunProofV1(
   const logDigest = expectSha256Hex(obj.logDigest, `${path}.logDigest`);
 
   const tolerance = HOSTED_ACTIONS_CLOCK_TOLERANCE_MS;
+  const platformTolerance = tolerance + HOSTED_ACTIONS_POSITIVE_SKEW_MS;
   if (startedAt + tolerance < execution.createdAt) {
     fail(
       `${path}.startedAt`,
@@ -221,17 +223,19 @@ export function parseHostedRunProofV1(
       "finishedAt cannot precede startedAt",
     );
   }
-  if (observedAt + tolerance < finishedAt) {
+  if (observedAt + platformTolerance < finishedAt) {
     fail(
       `${path}.observedAt`,
       "invalid_lifecycle",
-      "observedAt precedes finishedAt beyond clock tolerance",
+      "platform finish exceeds the bounded positive clock skew",
     );
   }
   if (
     terminalAt !== null &&
-    (terminalAt + tolerance < startedAt ||
-      terminalAt > finishedAt + tolerance)
+    (terminalAt + platformTolerance < startedAt ||
+      terminalAt > finishedAt + tolerance ||
+      // Failed no-terminal proofs use the native step completion instant.
+      (outcome === "healthy" && terminalAt > observedAt + tolerance))
   ) {
     fail(
       `${path}.terminalAt`,
@@ -349,6 +353,7 @@ export function parseHostedNotStartedProofV1(
     `${path}.evidenceDigest`,
   );
   const tolerance = HOSTED_ACTIONS_CLOCK_TOLERANCE_MS;
+  const platformTolerance = tolerance + HOSTED_ACTIONS_POSITIVE_SKEW_MS;
   if (finishedAt + tolerance < execution.createdAt) {
     fail(
       `${path}.finishedAt`,
@@ -356,11 +361,11 @@ export function parseHostedNotStartedProofV1(
       "finishedAt precedes the execution intent beyond clock tolerance",
     );
   }
-  if (observedAt + tolerance < finishedAt) {
+  if (observedAt + platformTolerance < finishedAt) {
     fail(
       `${path}.observedAt`,
       "invalid_lifecycle",
-      "observedAt precedes finishedAt beyond clock tolerance",
+      "platform finish exceeds the bounded positive clock skew",
     );
   }
   return {

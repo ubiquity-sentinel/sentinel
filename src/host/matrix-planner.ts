@@ -45,6 +45,8 @@ import {
   roundLeftForStart,
   unpublishedLocalCandidateShape,
 } from "../repair/loop-eligibility.ts";
+import { recoverClosedExistingHead } from "../repair/loop-existing-head-continuation.ts";
+import type { StepResultV1 } from "../repair/loop-types.ts";
 import type { LegacyCutoff } from "../repair/review-round-cap.ts";
 import { rankEligibleWork } from "../repair/selection.ts";
 import {
@@ -384,8 +386,15 @@ function buildPlanDiagnostic(
     return byRepository[key] ??= { skippedByReason: {}, notReadyByReason: {} };
   };
   for (const [id, reason] of Object.entries(ranked.skipped)) {
+    const record = workById.get(id);
+    // These parked records are counted under their specific reason below.
+    if (
+      record?.blocker?.message.startsWith(NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER)
+    ) {
+      continue;
+    }
     skippedByReason[reason] = (skippedByReason[reason] ?? 0) + 1;
-    const counts = countsOf(workById.get(id));
+    const counts = countsOf(record);
     if (counts !== null) {
       counts.skippedByReason[reason] = (counts.skippedByReason[reason] ?? 0) +
         1;
@@ -464,6 +473,7 @@ export async function planMatrixWave(
   );
   const attemptedIds = new Set<string>();
   const takeoverAttempted = new Set<string>();
+  const publicationAttempted = new Set<string>();
   const takeoverRefused = new Set<string>();
   const cells: MatrixCellPlanV1[] = [];
   const manifest = (entries: MatrixCellPlanV1[]): MatrixPlanV1 => ({
@@ -525,6 +535,34 @@ export async function planMatrixWave(
       continue;
     }
     const ranked = rankEligibleWork(context.snapshot, deps.configs, now);
+    // Closed own publications need deterministic recovery, not an implementation
+    // grant. Run it before readiness filtering, including preserved-null rows
+    // that have no recorded published head and cannot be continuations yet.
+    let publication: StepResultV1 | null = null;
+    for (const id of ranked.ordered) {
+      if (publicationAttempted.has(id)) continue;
+      const row = context.snapshot.work.find((work) => work.id === id);
+      if (
+        row?.nextStep !== "work" ||
+        row.target.candidateState?.preserved !== null
+      ) continue;
+      publicationAttempted.add(id);
+      publication = await recoverClosedExistingHead(
+        options.githubForRepository === undefined
+          ? deps
+          : { ...deps, github: options.githubForRepository(row.repository) },
+        context,
+        row,
+      );
+      if (publication !== null) break;
+    }
+    if (publication !== null) {
+      if (publication.kind === "state_error" || publication.kind === "margin") {
+        break;
+      }
+      if (publication.kind === "deferred") deferred++;
+      continue;
+    }
     // At most HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE resolutions in flight, on
     // this fresh read (this wave's grants, earlier cells, kept receipts): a
     // rollback isolates every one still unconsumed at `work`; one it already

@@ -7,9 +7,9 @@
  * objects then say whether every cell settled. This is a read-only probe: it
  * never writes, charges or settles anything.
  *
- * An absent index (an older state branch) proves no wave. Once a recent plan
- * for the installed revision is found, an unreadable repair state fails
- * closed so the launcher does not advance on missing evidence.
+ * A verified absent index (an older state branch) proves no wave. Unreadable
+ * index or repair state fails closed so the launcher does not advance on
+ * missing evidence.
  */
 import {
   MAINTENANCE_INDEX_PATH,
@@ -74,14 +74,20 @@ async function treeOf(
 }
 
 async function readMaintenanceIndex(api: HostedRuntimeFollowApi) {
-  let head: string;
-  try {
-    head = await api.ref(MAINTENANCE_INDEX_REF);
-  } catch {
-    // No index (or an unreadable lookup) proves no recorded plan wave.
-    return null;
-  }
-  const entries = await treeOf(api, head);
+  // Matching refs returns a successful empty array for a verified absence;
+  // the exact-ref reader cannot distinguish a 404 from another read failure.
+  const refs = await api.get(
+    `/git/matching-refs/${MAINTENANCE_INDEX_REF.slice(5)}`,
+  );
+  if (!Array.isArray(refs)) throw new FollowError("invalid_maintenance_index");
+  if (refs.length === 0) return null;
+  const matches = refs.map(record).filter((ref) =>
+    ref.ref === MAINTENANCE_INDEX_REF
+  );
+  if (matches.length !== 1) throw new FollowError("ref_identity_mismatch");
+  const object = record(matches[0].object);
+  if (object.type !== "commit") throw new FollowError("ref_identity_mismatch");
+  const entries = await treeOf(api, sha(object.sha));
   const manifest = entries.find((entry) =>
     entry.path === MAINTENANCE_INDEX_PATH
   );
