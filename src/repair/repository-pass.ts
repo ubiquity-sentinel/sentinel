@@ -25,8 +25,10 @@
  * (a hidden front once let each of them attempt its own refresh and be handed
  * back in turn). A kept interval therefore never reserves, charges, settles,
  * publishes, merges, reviews or closes anything. A delegated record deferred
- * to the trusted writer loses its step stamp in the delta, so the next plan
- * leaves it with the trusted serial pass, which performs the effect.
+ * to the trusted writer has no row in the delta, whose base digest binds only
+ * the records the cell kept: the trusted path owns it from then on, and
+ * finalize drops its step stamp, so the next plan leaves it with the trusted
+ * serial pass, which performs the effect.
  */
 import { canonicalStringify } from "../contracts/canonical.ts";
 import {
@@ -321,15 +323,9 @@ export async function runRepositoryRepairPass(
       ? undefined
       : finalRows.get(record.id);
     if (after === undefined) {
-      // Handed back: without its stamp the next plan keeps it trusted.
+      // Handed back: the trusted path owns it from here (the serial pass may
+      // step it in this run); finalize drops its stamp.
       deferred.add(record.id);
-      if (record.stepInputs !== undefined) {
-        const { stepInputs: _dropped, ...unstamped } = record;
-        transitions.push({
-          before: await canonicalDigestV1(record),
-          after: unstamped as WorkRecordV1,
-        });
-      }
       continue;
     }
     if (canonicalStringify(after) === canonicalStringify(record)) continue;
@@ -338,17 +334,18 @@ export async function runRepositoryRepairPass(
   transitions.sort((left, right) =>
     left.after.id < right.after.id ? -1 : left.after.id > right.after.id ? 1 : 0
   );
+  // The delegated scope less its hand-backs, exactly as the trusted writer
+  // derives it from the plan and `deferredToTrusted`.
+  const kept = new Set([...delegated].filter((id) => !deferred.has(id)));
   const envelope = await sealRepairDeltaV1({
     version: "v1",
     kind: "repair_delta",
     repository: input.repository,
     binding: input.binding,
     baseHead: read.head,
-    baseDigest: await repairProjectionDigestV1(
-      base,
-      input.repository,
-      delegated,
-    ),
+    // Bound to what the cell kept: a handed-back record moving under the
+    // trusted pass leaves the delta valid.
+    baseDigest: await repairProjectionDigestV1(base, input.repository, kept),
     transitions,
     deferredToTrusted: [...deferred].sort(),
     startedAt,

@@ -1,5 +1,9 @@
 /** Bounded authenticated matrix recovery interleaved with serial delivery. */
 import { delegatedRecordsOfRun } from "./repair-fanout-host.ts";
+import {
+  REPAIR_HANDBACK_WAIT_MS,
+  startRepairHandbackTakeover,
+} from "./repair-handback-takeover.ts";
 import { HOSTED_RECORD_WAIT_CAUSES } from "../repair/loop-wait-cause.ts";
 import { createActionsTargetFlow } from "./actions-target-flow.ts";
 import { matrixDigestV1 } from "../contracts/matrix.ts";
@@ -326,6 +330,27 @@ export async function runActionsMatrixAggregateCycles(
       prepared.add(key);
     },
   }, { matrixIntakeOwnsBranches: true });
+  // #328: a record a repository cell of this run hands back (its step needs a
+  // trusted effect) is stepped by this pass in this run once that cell
+  // completed, instead of by the next plan's serial pass.
+  const takeover = startRepairHandbackTakeover({
+    transport,
+    planDigest: carrier?.repairPlanDigest,
+    exclude: excludeRecords,
+    configs: input.configs,
+    request: {
+      run: host.run,
+      runtime: {
+        revision: input.controllerSha,
+        generation: host.execution.generation,
+      },
+      until: Math.min(
+        consumer.window,
+        input.clock.now() + REPAIR_HANDBACK_WAIT_MS,
+      ),
+    },
+    wake: flow.wake,
+  });
   // Allow every configured target to start while bounding ordinary observations,
   // plus one reconciliation slot per pending intent. Native consumers fully drain.
   const advanceLimit = Math.max(input.configs.length, DEFAULT_STEP_LIMIT) +
@@ -467,6 +492,7 @@ export async function runActionsMatrixAggregateCycles(
       // Hydrate every available bundle in this authenticated scan before any
       // target retries preservation; a later target may belong to another wave.
       // Ready work still advances before waiting for any missing producer.
+      takeover?.poll();
       while (
         await advance()
       ) { /* existing work also advances on empty scans */ }
@@ -500,7 +526,12 @@ export async function runActionsMatrixAggregateCycles(
           },
         );
         do {
-          await Promise.race([poll, flow.waitForReady(waiting.signal)]);
+          await Promise.race([
+            poll,
+            flow.waitForReady(waiting.signal),
+            ...(takeover === null ? [] : [takeover.arrival()]),
+          ]);
+          takeover?.poll();
           while (await advance()) { /* event-driven target work */ }
         } while (!polled);
       } finally {
@@ -510,7 +541,12 @@ export async function runActionsMatrixAggregateCycles(
     while (await advance()) {
       /* include the mandatory empty initial scan */
     }
+    // The cells' hand-backs, once they completed (bounded): stepped now.
+    if (takeover !== null && await takeover.settle()) {
+      while (await advance()) { /* the handed-back records */ }
+    }
   } catch (error) {
+    takeover?.close();
     // Producers remain owned on artifact/provenance failure; settle all of them
     // without replacing that failure with a successful target outcome.
     try {
@@ -518,5 +554,6 @@ export async function runActionsMatrixAggregateCycles(
     } catch { /* preserve the original failure */ }
     throw error;
   }
+  takeover?.close();
   return await flow.finish();
 }

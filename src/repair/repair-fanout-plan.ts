@@ -13,8 +13,10 @@
  * repository cell steps exactly its delegated records; the trusted serial pass
  * skips them and keeps every other record (intake, new work, effects). A
  * delegated record whose step turns out to need an effect is handed back: its
- * cell's delta drops the record's stamp, so the next plan leaves it with the
- * trusted path.
+ * cell's delta carries no row of it and does not bind it, the serial pass may
+ * step it in the same run once that cell completed
+ * (`src/host/repair-handback-takeover.ts`), and finalize drops its stamp, so
+ * the next plan leaves it with the trusted path.
  *
  * The plan is bound to the run, its attempt and the planning head by a
  * canonical digest; every delta a cell returns names that digest, so the

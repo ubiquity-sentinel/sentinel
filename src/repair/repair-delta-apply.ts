@@ -3,20 +3,26 @@
  * (issue #328).
  *
  * Every delta is opened (sealed, bound to this run, attempt, plan and its
- * repository) and validated against the CURRENT authoritative head: its
- * repository projection there must still be exactly the one it was planned
- * on (`repairProjectionDigestV1`), each replaced row must still be its
- * recorded `before`, and every transition must satisfy the shared rule. All
- * accepted deltas land together in ONE expected-head, non-force write through
- * the existing repair-state writer (`persistTransition`), so the hot/cold
- * layout, intent persistence and the maintenance index stay its own. A
- * rejected delta contributes nothing (no partial write); its repository is
- * recomputed by the next pass. A lost compare-and-swap re-reads and
- * re-validates every delta before trying again, bounded.
+ * repository) and validated against the CURRENT authoritative head: the
+ * projection of the records its cell kept (`repairProjectionDigestV1`; the
+ * records it handed back belong to the trusted path, which may already have
+ * stepped them) must still be exactly the one it was planned on, each
+ * replaced row must still be its recorded `before`, and every transition must
+ * satisfy the shared rule. A delta sealed before hand-backs left its binding
+ * binds the whole delegated scope and is validated as before, except that its
+ * row of a handed-back record may only drop that record's stamp (the one row
+ * such a cell emitted for a hand-back). All accepted deltas land together in
+ * ONE expected-head, non-force write through the existing repair-state writer
+ * (`persistTransition`), so the hot/cold layout, intent persistence and the
+ * maintenance index stay its own. A rejected delta contributes nothing (no
+ * partial write); its repository is recomputed by the next pass. A lost
+ * compare-and-swap re-reads and re-validates every delta before trying again,
+ * bounded.
  *
  * Nothing here reserves, charges, settles, refunds or creates a record.
  */
 import type { GitSha } from "../contracts/brands.ts";
+import { canonicalStringify } from "../contracts/canonical.ts";
 import {
   canonicalDigestV1,
   openRepairDeltaV1,
@@ -25,6 +31,7 @@ import {
 } from "../contracts/repair-delta.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { persistTransition } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -88,8 +95,9 @@ export interface RepairDeltaApplyResultV1 {
   applyMs: number;
   /**
    * Delegated records of every cell whose delta was not applied (missing,
-   * refused, rejected or stale) whose step stamp this write removed, so the
-   * next plan leaves them with the trusted serial pass (no record starves).
+   * refused, rejected or stale), and records an applied delta handed back,
+   * whose step stamp this write removed, so the next plan leaves them with
+   * the trusted serial pass (no record starves).
    */
   handedBack: number;
   /** Per-kind counts of every opened delta's step summary (advisory). */
@@ -122,23 +130,64 @@ interface OpenedDeltaV1 {
   scope: ReadonlySet<string>;
 }
 
-async function validate(
+/**
+ * The records a delta's base digest binds: the delegated scope less the
+ * records the cell handed back, which the trusted path owns from then on (the
+ * serial pass may already have stepped them), or, for a delta sealed before
+ * hand-backs left its binding (`whole`), the whole delegated scope. Null when
+ * neither projection is the one the cell read: something it read has moved.
+ */
+async function boundScope(
   { delta, scope }: OpenedDeltaV1,
   snapshot: RepairStateSnapshotV1,
+): Promise<{ records: ReadonlySet<string>; whole: boolean } | null> {
+  const back = new Set(delta.deferredToTrusted);
+  const kept = new Set([...scope].filter((id) => !back.has(id)));
+  const digest = (bound: ReadonlySet<string>) =>
+    repairProjectionDigestV1(snapshot, delta.repository, bound);
+  if (await digest(kept) === delta.baseDigest) {
+    return { records: kept, whole: false };
+  }
+  if (kept.size < scope.size && await digest(scope) === delta.baseDigest) {
+    return { records: scope, whole: true };
+  }
+  return null;
+}
+
+/** `after` is exactly the stamped `before` without its step stamp. */
+function dropsOnlyStamp(before: WorkRecordV1, after: WorkRecordV1): boolean {
+  if (before.stepInputs === undefined) return false;
+  const { stepInputs: _stamp, ...unstamped } = before;
+  return canonicalStringify(unstamped) === canonicalStringify(after);
+}
+
+async function validate(
+  entry: OpenedDeltaV1,
+  snapshot: RepairStateSnapshotV1,
 ): Promise<RepairDeltaRejectionV1 | null> {
+  const { delta, scope } = entry;
   if (delta.transitions.some((row) => !scope.has(row.after.id))) {
     return "transition_refused";
   }
-  if (
-    await repairProjectionDigestV1(snapshot, delta.repository, scope) !==
-      delta.baseDigest
-  ) return "base_moved";
+  const bound = await boundScope(entry, snapshot);
+  if (bound === null) return "base_moved";
+  // A record is either kept or handed back, never both.
+  if (delta.transitions.some((row) => !bound.records.has(row.after.id))) {
+    return "transition_refused";
+  }
+  const back = new Set(delta.deferredToTrusted);
   for (const transition of delta.transitions) {
     const current = snapshot.work.find((row) => row.id === transition.after.id);
     if (current === undefined) return "base_moved";
     if (await canonicalDigestV1(current) !== transition.before) {
       return "base_moved";
     }
+    // A whole-scope delta's row of a handed-back record is only the stamp
+    // drop an earlier cell emitted for it, never any other change.
+    if (
+      bound.whole && back.has(current.id) &&
+      !dropsOnlyStamp(current, transition.after)
+    ) return "transition_refused";
     if (
       repairTransitionRefusalV1(current, transition.after, delta.repository) !==
         null
@@ -244,14 +293,23 @@ export async function applyRepairDeltas(
       )
     );
     // Every planned cell whose delta is not applied hands its delegated
-    // records back: only their advisory stamp is removed (never a charge,
-    // lifecycle or identity change), so the next plan keeps them trusted.
-    const appliedRepositories = new Set(
-      accepted.map((delta) => key(delta.repository)),
+    // records back, and an applied delta the records its cell handed back:
+    // only their advisory stamp is removed (never a charge, lifecycle or
+    // identity change; a handed-back record keeps whatever row the trusted
+    // pass gave it), so the next plan keeps them trusted.
+    const handedBack = new Map(
+      accepted.map((delta) => [
+        key(delta.repository),
+        new Set(delta.deferredToTrusted),
+      ]),
     );
     const handback = input.plan.cells
-      .filter((cell) => !appliedRepositories.has(key(cell.repository)))
-      .flatMap((cell) => cell.records)
+      .flatMap((cell) => {
+        const back = handedBack.get(key(cell.repository));
+        return back === undefined
+          ? cell.records
+          : cell.records.filter((id) => back.has(id));
+      })
       .flatMap((id) => {
         const row = snapshot.work.find((record) => record.id === id);
         if (row?.stepInputs === undefined) return [];

@@ -57,6 +57,7 @@ import {
   findReservationV1,
 } from "../contracts/state-snapshots.ts";
 import { resolvedConflictCandidate } from "./matrix-conflict-candidate.ts";
+import { readRepairHandbacks } from "./repair-handback-reader.ts";
 
 export function createActionsMatrixArtifactHttpTransport(
   fetchFn: FetchLikeV1 = globalThis.fetch as unknown as FetchLikeV1,
@@ -436,6 +437,8 @@ export function createActionsMatrixArtifactTransport(
     },
   };
   return {
+    // #328: the serial job's read of its own run's cell hand-backs.
+    repairHandbacks: (request) => readRepairHandbacks(options, request),
     async confirmCompletedExecution(execution) {
       return (await recovery.run({
         requests: [],
