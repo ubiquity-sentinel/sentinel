@@ -2,6 +2,7 @@
 
 import type {
   GitHubBranchProtectionsV1,
+  GitHubChecksReadOptionsV1,
   GitHubCheckSuitesV1,
   GitHubChecksV1,
   GitHubCheckV1,
@@ -61,6 +62,66 @@ import {
  */
 export const PENDING_STATUS_GRACE_MS = 30 * 60_000;
 
+/** Workflow-run event reads one observation may spend. */
+export const MAX_WORKFLOW_EVENT_READS = 8;
+
+/** Trusted workflow-event shape; an untrusted value is never carried. */
+const WORKFLOW_EVENT_PATTERN = /^[a-z][a-z_]{0,39}$/;
+
+/**
+ * The exact Actions run/job identity of a check run, from its GitHub-owned
+ * `details_url` (`.../{owner}/{name}/actions/runs/{run_id}/job/{job_id}`).
+ * The check run id must be the URL's job id and the app must be GitHub
+ * Actions: a third-party check run or a different job cannot lend a run's
+ * event. Any other URL is unproven and leaves the event absent.
+ */
+function workflowRunId(
+  input: unknown,
+  owner: string,
+  name: string,
+): number | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return null;
+  }
+  const check = input as Record<string, unknown>;
+  const app = check.app;
+  if (
+    typeof app !== "object" || app === null || Array.isArray(app) ||
+    (app as Record<string, unknown>).slug !== "github-actions"
+  ) return null;
+  const jobId = check.id;
+  const details = check.details_url;
+  if (
+    typeof jobId !== "number" || !Number.isSafeInteger(jobId) || jobId < 1 ||
+    typeof details !== "string" || details.length > 2048
+  ) return null;
+  let url: URL;
+  try {
+    url = new URL(details);
+  } catch {
+    return null;
+  }
+  if (
+    url.protocol !== "https:" || url.hostname !== "github.com" ||
+    url.port !== "" || url.username !== "" || url.password !== "" ||
+    url.search !== "" || url.hash !== ""
+  ) return null;
+  const parts = url.pathname.split("/").filter((part) => part.length > 0);
+  if (parts.length !== 7 || parts[2] !== "actions" || parts[3] !== "runs") {
+    return null;
+  }
+  const same = (left: string, right: string) =>
+    left.toLowerCase() === right.toLowerCase();
+  const runId = Number(parts[4]);
+  const urlJobId = Number(parts[6]);
+  if (
+    !same(parts[0], owner) || !same(parts[1], name) || parts[5] !== "job" ||
+    !Number.isSafeInteger(runId) || runId < 1 ||
+    !Number.isSafeInteger(urlJobId) || urlJobId !== jobId
+  ) return null;
+  return runId;
+}
+
 function headStatuses(
   runs: readonly GitHubCheckV1[],
   statuses: readonly GitHubCheckV1[],
@@ -106,6 +167,67 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
     } catch {
       return null;
     }
+  }
+
+  /** One workflow run's exact event, or undefined when it cannot be proven. */
+  private async readWorkflowEvent(
+    runId: number,
+    sha: GitSha,
+  ): Promise<string | undefined> {
+    try {
+      const response = await this.request(
+        "GET",
+        `/repos/${repoPath(this.repository)}/actions/runs/${runId}`,
+      );
+      if (!response.ok || response.value.status !== 200) return undefined;
+      const value: unknown = JSON.parse(response.value.bodyText);
+      if (
+        typeof value !== "object" || value === null || Array.isArray(value)
+      ) return undefined;
+      const run = value as Record<string, unknown>;
+      if (run.id !== runId || run.head_sha !== sha) return undefined;
+      return typeof run.event === "string" &&
+          WORKFLOW_EVENT_PATTERN.test(run.event)
+        ? run.event
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Attach each Actions run's proven event, once per distinct run. */
+  private async enrichCheckEvents(
+    sha: GitSha,
+    items: readonly unknown[],
+    checks: readonly GitHubCheckV1[],
+    options: GitHubChecksReadOptionsV1 | undefined,
+  ): Promise<GitHubCheckV1[]> {
+    if (options?.events !== true) return [...checks];
+    const cache = new Map<number, Promise<string | undefined>>();
+    const enriched = [...checks];
+    let reads = 0;
+    const eventOf = (runId: number): Promise<string | undefined> => {
+      const previous = cache.get(runId);
+      if (previous !== undefined) return previous;
+      if (reads >= MAX_WORKFLOW_EVENT_READS) {
+        return Promise.resolve(undefined);
+      }
+      reads++;
+      const read = this.readWorkflowEvent(runId, sha);
+      cache.set(runId, read);
+      return read;
+    };
+    for (let index = 0; index < items.length; index++) {
+      const runId = workflowRunId(
+        items[index],
+        this.repository.owner,
+        this.repository.name,
+      );
+      if (runId === null) continue;
+      const event = await eventOf(runId);
+      if (event !== undefined) enriched[index] = { ...checks[index], event };
+    }
+    return enriched;
   }
 
   /** The backup CI consumer's reads over this client, or null (§11.2). */
@@ -248,6 +370,7 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
   async readChecks(
     sha: GitSha,
     names?: ReadonlySet<string>,
+    options?: GitHubChecksReadOptionsV1,
   ): Promise<PortResultV1<GitHubChecksV1>> {
     const collected = await this.collectCheckRuns(sha);
     if (!collected.ok) return collected;
@@ -290,6 +413,11 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
     for (const index of neverStarted) {
       checks[index] = { ...checks[index], neverStarted: true };
     }
+    checks.splice(
+      0,
+      checks.length,
+      ...await this.enrichCheckEvents(sha, items, checks, options),
+    );
     const statusesCollected = await this.collectPages(
       `/repos/${repoPath(this.repository)}/commits/${sha}/statuses`,
       { per_page: String(this.perPage) },

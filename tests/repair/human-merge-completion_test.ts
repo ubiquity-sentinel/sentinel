@@ -419,17 +419,100 @@ Deno.test("human merge: only the latest completed review can authorize delivery"
   }
 });
 
-Deno.test("human merge: a merged head that differs from the reviewed head never completes delivery", async () => {
-  const merged = mergedPr(SHA2);
-  const id = asWorkItemId("issue-1");
-  const rig = await makeRig("human-merge-head-mismatch", {
-    summaries: false,
-    localScope: true,
-    github: {
-      candidateLifecycle: {
-        refs: { [`refs/heads/${candidateBranch(id)}`]: SHA3 },
-        pullRequests: [merged],
-      },
+/** The head a human merged after pushing further onto the reviewed PR. */
+const MERGED_HEAD = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432" as GitSha;
+
+Deno.test("human merge: a merged head that moved past the reviewed head completes without a receipt", async () => {
+  const merged = mergedPr(MERGED_HEAD);
+  const rig = await closedIssueRig("human-merge-head-moved", merged);
+  Object.defineProperty(rig.github, "readCommitParents", {
+    value: () => Promise.resolve(portOk([SHA1, MERGED_HEAD])),
+  });
+  try {
+    const record = humanMergeRecord();
+    // A clean review of the reviewed head exists, and its admission is still
+    // reserved: neither may be bound to the head the review never covered.
+    const receipt = localReceipt();
+    const admission = reservation("human-merge-moved-review", {
+      taskId: record.id,
+      repository: LOCAL_SENTINEL_REPO,
+      head: SHA3,
+      attempt: record.counters.reviewRounds + 1,
+      purpose: "review_request",
+      outcome: "reserved",
+      settledAt: null,
+    });
+    const written = await rig.store.writeRepair(
+      seededSnapshot([record], {
+        reviews: [receipt],
+        reservations: [admission],
+      }),
+      null,
+    );
+    assert.ok(written.ok && written.value.status === "applied");
+
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    const state = await rig.snapshot();
+    const work = state.work[0]!;
+    assert.equal(
+      work.nextStep,
+      "done",
+      "a human merge is a completed delivery even off the reviewed head",
+    );
+    assert.equal(work.blocker, null);
+    assert.equal(work.intent, null);
+    assert.equal(work.target.pr, 7, "the delivered PR identity is retained");
+    assert.equal(work.target.head, SHA3, "the reviewed head is retained");
+    assert.deepEqual(
+      work.evidence,
+      [{
+        kind: "review_receipt",
+        ref:
+          `artifact:review-receipt/human-merge-v1/7/${MERGED_HEAD}/${SHA2}/${HUMAN_MERGE_ACTOR}`,
+      }],
+      "the provenance names the head that was merged",
+    );
+    assert.deepEqual(
+      state.reservations,
+      [{ ...admission, outcome: "ambiguous", settledAt: T0 }],
+      "the outstanding admission is settled once, never re-charged",
+    );
+    assert.equal(state.releaseRequests.length, 1);
+    assert.equal(state.releaseRequests[0]!.revision, SHA2);
+    assert.equal(
+      state.releaseRequests[0]!.source.head,
+      SHA3,
+      "the release request keeps the record's own reviewed head",
+    );
+    assert.equal(
+      state.releaseRequests[0]!.source.reviewRequestId,
+      admission.id,
+    );
+    assert.equal(
+      state.releaseRequests[0]!.source.reviewReceiptId,
+      null,
+      "no review receipt is bound to a head the review never covered",
+    );
+    assert.equal(rig.model.requests.length, 0);
+    assert.equal(
+      rig.github.calls.filter((call) => call === "merge").length,
+      0,
+      "the completed human merge is never merged again",
+    );
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("human merge: a moved head merged onto another base stays refused", async () => {
+  const merged = mergedPr(MERGED_HEAD);
+  const rig = await closedIssueRig("human-merge-head-moved-off-base", merged);
+  const reads: string[] = [];
+  Object.defineProperty(rig.github, "readCommitParents", {
+    value: (sha: GitSha) => {
+      reads.push(sha);
+      return Promise.resolve(portOk([SHA2, MERGED_HEAD]));
     },
   });
   try {
@@ -442,15 +525,17 @@ Deno.test("human merge: a merged head that differs from the reviewed head never 
 
     const outcome = await rig.run();
     assert.equal(outcome.status, "idle", JSON.stringify(outcome));
-    const work = (await rig.snapshot()).work[0]!;
+    const state = await rig.snapshot();
+    const work = state.work[0]!;
+    assert.deepEqual(reads, [SHA2], "the observed merge commit was checked");
     assert.equal(work.nextStep, "blocked");
     assert.equal(
       work.blocker?.message,
-      "observed merged head identity mismatch",
-      "an unobserved revision is never recorded as this task's delivery",
+      `${MERGED_OFF_TIP_PREFIX}merge ${SHA2} has parents ${SHA2},${MERGED_HEAD}, not ${SHA1},${MERGED_HEAD}`,
+      "a merge that landed off the record's own base is never booked",
     );
     assert.deepEqual(work.evidence, []);
-    assert.deepEqual((await rig.snapshot()).releaseRequests, []);
+    assert.deepEqual(state.releaseRequests, []);
   } finally {
     await rig.ctx.cleanup();
   }

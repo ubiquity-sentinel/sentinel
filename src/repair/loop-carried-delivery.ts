@@ -75,11 +75,13 @@ import {
   ciCheckLabels,
   failedChecks,
   latestChecks,
+  readCiChecks,
   unattributedDetail,
 } from "./ci-rejection.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
+import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 import {
   observeHeadFailure,
   RED_BASE_RECHECK_MS,
@@ -209,11 +211,15 @@ export async function spentOnMovedBase(
   if (cooling.kind === "deferred") {
     return { kind: "deferred", detail: cooling.detail };
   }
-  const observed = await deps.github.readChecks(head);
+  const observed = await readCiChecks(deps.github, head);
   if (!observed.ok) {
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
-  const decision = decideCiGate(observed.value.checks);
+  const gating = selectMergeGateChecksV1(
+    record.repository,
+    observed.value.checks,
+  ).checks;
+  const decision = decideCiGate(gating);
   if (decision === "wait") {
     return boundedWait(
       deps,
@@ -222,7 +228,7 @@ export async function spentOnMovedBase(
       "ci_pending",
       CHECK_POLL_MS,
       `${REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX}${
-        pendingLabels(observed.value.checks)
+        pendingLabels(gating)
       }`,
     );
   }
@@ -236,7 +242,7 @@ export async function spentOnMovedBase(
         deps,
         context,
         record,
-        observed.value.checks,
+        gating,
         observedBase,
       );
       if (held !== "generic") return held;
@@ -370,11 +376,13 @@ async function holdUncorrectableLegacyHead(
   const park = observed.kind === "base_red"
     ? baseRedDetail(failed)
     : unattributedDetail(failed);
-  const tip = await deps.github.readChecks(observedBase);
+  const tip = await readCiChecks(deps.github, observedBase);
   if (!tip.ok) {
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
-  const tipGate = decideCiGate(tip.value.checks);
+  const tipGate = decideCiGate(
+    selectMergeGateChecksV1(record.repository, tip.value.checks).checks,
+  );
   if (tipGate !== "proceed") {
     return boundedWait(
       deps,
@@ -523,11 +531,15 @@ export async function executeCarriedDelivery(
   // `CARRIED_REFRESH_LIMIT` times). A red the base caused, or one no base
   // evidence attributes yet, may still be cured by a refresh onto a moved tip,
   // so it keeps that path (review finding, upheld 3 of 3).
-  const checks = await deps.github.readChecks(head);
+  const checks = await readCiChecks(deps.github, head);
   if (!checks.ok) {
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
-  const decision = decideCiGate(checks.value.checks);
+  const gating = selectMergeGateChecksV1(
+    record.repository,
+    checks.value.checks,
+  ).checks;
+  const decision = decideCiGate(gating);
   if (decision !== "proceed" && decision !== "wait") {
     const observed = await observeHeadFailure(deps, record);
     if (observed === null) {
@@ -538,7 +550,7 @@ export async function executeCarriedDelivery(
         deps,
         context,
         record,
-        checks.value.checks,
+        gating,
         decision,
       );
     }
@@ -567,7 +579,7 @@ export async function executeCarriedDelivery(
       deps,
       context,
       record,
-      checks.value.checks,
+      gating,
       decision,
     );
   }
@@ -578,7 +590,7 @@ export async function executeCarriedDelivery(
   const absent = await absentExpectedChecks(
     deps,
     record,
-    checks.value.checks,
+    gating,
   );
   if (absent === null || absent.length > 0) {
     return boundedWait(
@@ -620,7 +632,7 @@ export async function executeCarriedDelivery(
   // restarts its `since` on every poll (that keeps its shape exact), so the
   // bound counts from the refreshed head's own CI completion instead.
   const now = deps.clock.now();
-  const green = ciCompletedAt(checks.value.checks);
+  const green = ciCompletedAt(gating);
   if (green === null || now - green >= CARRIED_WAIT_BOUND_MS) {
     return persistWork(
       deps,

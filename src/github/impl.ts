@@ -186,7 +186,7 @@ export class GitHubPortImpl extends GitHubPortMerge implements GitHubPort {
       if (
         checks.value.head !== head ||
         checks.value.checks.some((check) => check.head !== head) ||
-        decideCiGate(checks.value.checks) !== "proceed"
+        decideCiGate(checks.value.checks, record.repository) !== "proceed"
       ) {
         return portError(
           "unavailable",
