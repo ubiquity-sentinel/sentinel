@@ -29,12 +29,11 @@ import {
   ciCorrectionFinding,
   ciCorrectionRouteOpen,
   type CiDispositionV1,
-  ciFixExhaustedDetail,
   failedChecks,
   readCiChecks,
   unattributedDetail,
 } from "./ci-rejection.ts";
-import { ciFixesLeft, RED_BASE_RECHECK_MS } from "./ci-first-policy.ts";
+import { RED_BASE_RECHECK_MS } from "./ci-first-policy.ts";
 import { CHECK_POLL_MS } from "./loop-bounds.ts";
 import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 import {
@@ -164,24 +163,9 @@ export async function routeFailedDeliveryChecks(
     !ciCorrectionRouteOpen(deps) ||
     !ciCorrectable(record, context.snapshot, legacyCutoff(context))
   ) {
-    // A head the runtime would correct but for its spent CI fixes parks with
-    // the exact exhausted detail, which no launcher rule re-admits.
-    const exhausted = ciCorrectionRouteOpen(deps) && !ciFixesLeft(record) &&
-      ciCorrectable(
-        {
-          ...record,
-          counters: { ...record.counters, retries: 0 },
-        },
-        context.snapshot,
-        legacyCutoff(context),
-      );
-    return persistBlocked(
-      deps,
-      context,
-      record,
-      exhausted ? ciFixExhaustedDetail(failed) : legacyDetail,
-      now,
-    );
+    // Owner directive 2026-10-30 retired the CI-fix attempt cap: a spent fix
+    // count never parks the head, so only the legacy detail remains.
+    return persistBlocked(deps, context, record, legacyDetail, now);
   }
   const disposition = await attributeAgainstBase(deps, record, failed);
   // Transient: mutate nothing; the next turn re-observes both revisions.

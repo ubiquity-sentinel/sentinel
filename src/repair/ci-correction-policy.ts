@@ -160,8 +160,14 @@ export function isCiCorrectionFinding(
 
 /**
  * The record shape a candidate-caused CI failure may correct: an issue task
- * holding its exact publication, on a durably described candidate, with a CI
- * fix and a review round left.
+ * holding its exact publication, on a durably described candidate (a
+ * candidate state without its preserved descriptor can never resume a
+ * correction, exactly as the launcher excludes it), with a CI fix and a
+ * review round available for the fixed head. Owner directive 2026-10-30
+ * retired the CI-fix cap and the review-round ceiling: both counts are
+ * accounting only (`ciFixesLeft`, `reviewRoundAvailable` always admit), so a
+ * lowered or lagging counter never withholds a correction. CI fixes never
+ * count as review rounds.
  */
 export function ciCorrectionShape(
   record: WorkRecordV1,

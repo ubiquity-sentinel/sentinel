@@ -42,8 +42,8 @@ Deno.test("park summary names every blocked task including new and unknown owner
   assert.match(summary, /task acceptance needs a decision/);
   assert.match(summary, /repeated identical implementation failures/);
   assert.match(summary, /trusted validation refused the base refresh/);
-  assert.match(summary, /Review rounds spent/);
-  assert.match(summary, /CI fix attempts spent/);
+  assert.match(summary, /Legacy review-round park/);
+  assert.match(summary, /Legacy CI fix-exhausted park/);
 });
 
 Deno.test("park summary fits every allowed row without a silent detail-count cap", () => {

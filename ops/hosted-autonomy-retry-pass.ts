@@ -586,8 +586,6 @@ export async function runHostedRetryPass(
       (denial) => {
         actions.push(`retry:${denial.id}:denied:${denial.reason}`);
       },
-      ciFirst,
-      legacyCutoff,
     ).filter((plan) => !settled(plan.id)),
     scopeFor,
     actions,

@@ -2,6 +2,12 @@ import { guardQueueDelivery } from "./loop-queue-guard.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 import { isNativeQueueTarget } from "../github/native-queue-guard.ts";
 import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "./review-round-cap.ts";
+
+/**
+ * A pull request that reports a head this record never published: the carried
+ * patch can be neither proved nor merged, and no retry changes a foreign head.
+ */
+const FOREIGN_HEAD_PREFIX = "the pull request reports a foreign head ";
 /**
  * Repair loop internals: spent records on a moved base (owner decision
  * 2026-10-16 (2), "the 3 rounds are spent with no unresolved P0/P1, the PR
@@ -511,11 +517,23 @@ export async function executeCarriedDelivery(
   if (observed.head !== head) {
     // GitHub reports a pull request's new head asynchronously after a push:
     // the head this one was refreshed from (or the reviewed head) is a lag,
-    // waited out (bounded); any other head is foreign and parks.
+    // waited out (bounded); any other head is foreign and parks precisely
+    // (not a spent round count, and no retry can change it).
     if (
       observed.head !== proof.value.refreshedFrom &&
       observed.head !== receipt.pullRequest.head
-    ) return null;
+    ) {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(
+          record,
+          "other",
+          `${FOREIGN_HEAD_PREFIX}${observed.head}, not ${head}`,
+          deps.clock.now(),
+        ),
+      );
+    }
     return boundedWait(
       deps,
       context,

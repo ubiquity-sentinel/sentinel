@@ -11,22 +11,13 @@ import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { candidateBranch, pullRequestIntentKey } from "./keys.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { requestReviewFor } from "./loop-review-request.ts";
-import {
-  parkAtReviewRoundCeiling,
-  reviewRoundsSpentOut,
-} from "./loop-review-round-cap.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
   StepResultV1,
 } from "./loop-types.ts";
-import {
-  clearIntent,
-  markTerminalBlocked,
-  setIntent,
-  setWait,
-} from "./transitions.ts";
+import { markTerminalBlocked, setIntent, setWait } from "./transitions.ts";
 
 /** Continue an exactly proved publication: request review or create the PR. */
 export async function continuePublication(
@@ -70,13 +61,9 @@ export async function createPullRequestFor(
     };
   }
   const now = deps.clock.now();
-  // Hard review-round ceiling: no first or replacement pull request is opened
-  // for a candidate that can never be reviewed. Every caller has proved the
-  // publication (or that no PR exists for its saved PR intent), so the
-  // finished publish intent is cleared and the record parks.
-  if (reviewRoundsSpentOut(context, record)) {
-    return parkAtReviewRoundCeiling(deps, context, clearIntent(record, now));
-  }
+  // Owner directive 2026-10-30: a spent review-round count no longer parks a
+  // publication. The candidate keeps unbounded rounds, so its first or
+  // replacement pull request is opened and reviewed on its ordinary path.
   const head = record.target.head!;
   const branch = candidateBranch(record.id);
   // PR creation is a GitHub write: gate before the PR intent is written (a

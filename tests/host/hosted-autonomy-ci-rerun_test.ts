@@ -923,9 +923,21 @@ Deno.test("ci re-run: a correction waits for the head's once-per-head re-run to 
     },
   );
   await t.step("only a correction-eligible head is considered", async () => {
-    for (
-      const record of [
-        gatewayRecord("blocked"),
+    // A spent review-round count no longer withholds the correction route
+    // (owner directive 2026-10-30): the head's re-run is read and settled.
+    const spent = await settledFor(
+      blockedSnapshot([gatewayRecord("blocked")]),
+      fakeSurface({ runs: [] }).surface,
+    );
+    assert.deepEqual(
+      spent.settled,
+      new Set([ciGreenHeadKey(GATEWAY, HEAD)]),
+    );
+    assert.equal(spent.listings, 1);
+    // A failure the base never ran proves no candidate defect: never
+    // correction-eligible, never listed.
+    const unattributed = await settledFor(
+      blockedSnapshot([
         correctable({
           blocker: {
             ...CI_BLOCKER,
@@ -933,15 +945,11 @@ Deno.test("ci re-run: a correction waits for the head's once-per-head re-run to 
               "CI checks failed without base evidence: validate(failure)",
           },
         }),
-      ]
-    ) {
-      const { settled, listings } = await settledFor(
-        blockedSnapshot([record]),
-        fakeSurface({ runs: [] }).surface,
-      );
-      assert.deepEqual(settled, new Set());
-      assert.equal(listings, 0);
-    }
+      ]),
+      fakeSurface({ runs: [] }).surface,
+    );
+    assert.deepEqual(unattributed.settled, new Set());
+    assert.equal(unattributed.listings, 0);
     const closed = await settledFor(
       snapshot,
       fakeSurface({ runs: [] }).surface,
@@ -1034,12 +1042,24 @@ Deno.test("ci re-run: a head past GitHub's re-run window is settled and never re
     );
     assert.deepEqual(closed.settled, new Set(), "a closed issue is skipped");
     assert.equal(closed.listings, 0);
-    const spent = await settledFor(
-      blockedSnapshot([gatewayRecord("blocked")]),
+    const unattributed = await settledFor(
+      blockedSnapshot([
+        correctable({
+          blocker: {
+            ...CI_BLOCKER,
+            message:
+              "CI checks failed without base evidence: validate(failure)",
+          },
+        }),
+      ]),
       fakeSurface({ runs: [aged(EXPIRED)] }).surface,
     );
-    assert.deepEqual(spent.settled, new Set(), "no correction is possible");
-    assert.equal(spent.listings, 0);
+    assert.deepEqual(
+      unattributed.settled,
+      new Set(),
+      "no correction is possible",
+    );
+    assert.equal(unattributed.listings, 0);
   });
   await t.step("the re-run pass skips it before any other read", async () => {
     const reads: string[] = [];

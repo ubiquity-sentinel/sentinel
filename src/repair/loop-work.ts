@@ -17,7 +17,7 @@ import {
   MATRIX_IMPLEMENTATION_DEFERRED,
 } from "./loop-bounds.ts";
 import { ciCorrectionRouteOpen } from "./ci-rejection.ts";
-import { preReviewCiFixRouteOpen } from "./ci-first-policy.ts";
+import { isCiFixMarker, preReviewCiFixRouteOpen } from "./ci-first-policy.ts";
 import {
   conflictResolutionAdmissible,
   conflictResolutionRouteOpen,
@@ -32,6 +32,7 @@ import {
   settleFailedImplementation,
 } from "./loop-implementation-result.ts";
 import { prepareImplementationStart } from "./loop-implementation.ts";
+import { existingHeadContinuationShape } from "./loop-eligibility.ts";
 import { executeMerge, reconcileMergeIntent } from "./loop-merge.ts";
 import { executeCandidatePreservation } from "./loop-preservation.ts";
 import { executePublishStep } from "./loop-publication.ts";
@@ -46,11 +47,7 @@ import {
   headNeedsCorrection,
 } from "./loop-review-records.ts";
 import { recoverClosedReviewWait } from "./loop-review-recovery.ts";
-import {
-  legacyCutoff,
-  parkAtReviewRoundCeiling,
-  reviewRoundsSpentOut,
-} from "./loop-review-round-cap.ts";
+import { legacyCutoff, reviewRoundsSpentOut } from "./loop-review-round-cap.ts";
 import { deliveryQueueDeferral } from "./loop-delivery-queue.ts";
 import {
   executeCarriedDelivery,
@@ -139,12 +136,22 @@ export async function executeWorkStep(
   // regenerated, never published and never reviewed from an unverified head.
   const candidateState = record.target.candidateState;
   if (candidateState !== undefined && candidateState.preserved === null) {
-    if (existingPr.status !== "custody_ready") {
+    // A custody_ready takeover needs its live custody proof; the
+    // existing-published-head continuation (exact published head, no
+    // descriptor) instead re-proves that exact PR head in the review
+    // freshness gate below before any reservation.
+    if (
+      existingPr.status !== "custody_ready" &&
+      !existingHeadContinuationShape(record)
+    ) {
       return {
         kind: "deferred",
         detail: "candidate preservation descriptor unavailable",
       };
     }
+    // The continuation's durable fix marker is its admission to the
+    // correction start, not a review request: the exact published head is
+    // re-verified and its live failure re-derived at implementation admission.
     if (
       record.intent === null && !headNeedsCorrection(
         context.snapshot,
@@ -152,7 +159,8 @@ export async function executeWorkStep(
         ciCorrectionRouteOpen(deps),
         preReviewCiFixRouteOpen(deps),
         legacyCutoff(context),
-      )
+      ) &&
+      !(existingHeadContinuationShape(record) && isCiFixMarker(record.wait))
     ) return await requestReviewFor(deps, context, record, record.target.pr!);
   }
 
@@ -180,23 +188,21 @@ export async function executeWorkStep(
     return executeBaseRefreshIntent(deps, context, record);
   }
 
-  // Hard review-round ceiling: with no round left no candidate this step
-  // could implement, correct, publish or open a replacement PR for can ever
-  // be reviewed, so nothing is charged or pushed and the record parks. An
-  // operation already in flight finishes first (above, or in the publication
-  // reconciliation, whose review request parks at the same ceiling). Two
-  // exceptions: a legacy record whose one final round is still open takes the
-  // CI fix of its reviewed red head (below; the fix arms that round), and a
-  // refreshed head that carries its earlier review's exact patch is handed,
-  // once its own CI is green, to the launcher's carried merge under that
-  // review (`loop-carried-delivery.ts`).
+  // A spent, cleanly reviewed head (`spentReviewedHead`, via
+  // `reviewRoundsSpentOut`) needs no new review: it is carried, once green, to
+  // the launcher's merge under that review (`loop-carried-delivery.ts`). Owner
+  // directive 2026-10-30: a spent review-round count never parks a record, so a
+  // carry that cannot complete here falls through to the ordinary path below
+  // (its CI correction, refresh or next review) instead of a permanent ceiling
+  // park. An operation already in flight finishes first (above). A legacy
+  // record whose one final round is still open takes the CI fix of its reviewed
+  // red head instead (below; the fix arms that round).
   if (
     record.intent === null && reviewRoundsSpentOut(context, record) &&
     !legacyCiFixPending(deps, context, record)
   ) {
     const carried = await executeCarriedDelivery(deps, context, record);
     if (carried !== null) return carried;
-    return parkAtReviewRoundCeiling(deps, context, record);
   }
 
   // Deterministic branch identity before any model work.
@@ -299,6 +305,11 @@ export async function executeImplementationStep(
     context,
     record,
     config,
+    undefined,
+    // The serial lane authorizes the same existing-published-head
+    // continuation the matrix planner does, so its exact live head and CI
+    // are re-proved before a marker write or correction start.
+    { existingHeadContinuation: existingHeadContinuationShape(record) },
   );
   if (prepared.kind !== "prepared") return prepared;
   const submitGuard = await guardQueueOperation(
@@ -413,11 +424,12 @@ export async function refreshMovedBaseBeforeMerge(
   ) return null;
   // A reviewed head whose own change already broke its checks is corrected
   // before it could be refreshed onto the moved base (a legacy record whose
-  // final round is open included: that CI fix is its exception). At the
-  // hard ceiling the reviewed head's CI is read first and only a green head
-  // whose latest review authorizes it refreshes, mechanically, to carry
-  // that review (`spentOnMovedBase`; anything else parks). Every refresh
-  // waits its turn in the repository's delivery line.
+  // final round is open included: that CI fix is its exception). A spent,
+  // cleanly reviewed head reads its own CI first: only a green head whose
+  // latest review authorizes it refreshes, mechanically, to carry that review
+  // (`spentOnMovedBase`; anything else parks precisely). Every other reviewed
+  // head refreshes and is reviewed again on its new head, after its turn in the
+  // repository's delivery line.
   return await ensureBaseRefreshIntent(
     deps,
     context,

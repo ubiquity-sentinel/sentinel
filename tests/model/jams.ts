@@ -176,7 +176,6 @@ const OWNER_GATES: ReadonlySet<string> = new Set([
  */
 const MUST_PROGRESS: ReadonlyMap<string, string> = new Map([
   ["ceil.reviewed@spent", "rounds spent, no P0/P1 left: the PR merges"],
-  ["ceil.base_moved@spent", "rounds spent, no P0/P1 left: the PR merges"],
   ["ci.pre_review_red@legacy", "legacy records get CI fixes and one review"],
   ["delivery.review_pending_null", "a clean, green review merges"],
 ]);
@@ -472,7 +471,6 @@ export const KNOWN_JAMS: readonly string[] = [
   // These waits are not blocked records, so visibility alone cannot fix them.
   "J1:wait:work.manual",
   "J1:logged:ceil.reviewed@spent",
-  "J1:logged:ceil.base_moved@spent",
   "J1:logged:delivery.review_pending_null",
   // An adversarial environment can keep CI or merge gates unavailable.
   "J2:adv:delivery.merge:merge_refused_again",
@@ -489,6 +487,17 @@ export const KNOWN_JAMS: readonly string[] = [
   "J2:human:work.noted+work.published:pr_closed_by_owner+preserved_published",
   // The per-pass per-repository merge count is retired: a refused or merged
   // record no longer keeps its repository's next candidate out of the pass.
+  // Review rounds and CI-fix attempts are accounting only (owner directive
+  // 2026-10-30): with no permanent cap, an adversarial world that keeps
+  // returning unattributable CI, missing task acceptance, a lost review
+  // submission or a candidate-caused failure lets the record keep iterating.
+  // These are the documented unbounded-retry residuals, not reason to
+  // reinstate a park.
+  "J2:adv:blocked:del.ci_unattributed+delivery.gate:ci_red_unattributed+launcher_readmission",
+  "J2:adv:delivery.base_red+delivery.gate+review.requested+work.fresh+work.impl+work.noted+work.published:cell_completed+ci_green:review_requested+ci_red_base_red+ci_red_candidate:correction+matrix_grant+preserved_published+review_clean",
+  "J2:adv:review.intent_unbound+review.requested+work.published:ci_green:review_requested+expired_intent_recovered+review_submission_lost",
+  "J2:adv:review.requested:review_acceptance_missing",
+  "J2:adv:work.base_red+work.fresh+work.impl+work.noted+work.published:cell_completed+ci_red_base_red+ci_red_candidate+matrix_grant+preserved_published",
   "J3:runtime:state-error-abort",
 ];
 

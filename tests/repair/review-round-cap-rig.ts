@@ -72,6 +72,7 @@ export type ReviewMode =
   | "clean"
   | "no_verdict"
   | "pending"
+  | "p0"
   | "p1"
   | "missing_acceptance";
 
@@ -257,13 +258,13 @@ export class ChurnGithub extends FakeGithub {
       reviewer: this.reviewerIdentity,
       resultId: `result-${bound.requestId}`,
       completedAt: at,
-      findings: this.reviewMode === "p1"
+      findings: this.reviewMode === "p1" || this.reviewMode === "p0"
         ? [{
           id: "github-review-1-finding-0",
           fingerprint: "f".repeat(64),
-          severity: "P1",
+          severity: this.reviewMode === "p0" ? "P0" : "P1",
           path: "src/app.ts",
-          message: "P1 finding",
+          message: `${this.reviewMode.toUpperCase()} finding`,
           resolutionEvidence: null,
           resolved: false,
         }]

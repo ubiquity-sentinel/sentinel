@@ -255,6 +255,8 @@ Deno.test("ci correctability matches the launcher: an undescribed candidate is n
     ),
     false,
   );
+  // Review rounds are accounting only (owner directive 2026-10-30): a spent
+  // counter never withholds a correction.
   assert.equal(
     ciCorrectable(
       reviewed({
@@ -263,7 +265,7 @@ Deno.test("ci correctability matches the launcher: an undescribed candidate is n
       }),
       NO_LEDGER,
     ),
-    false,
+    true,
   );
   assert.equal(
     ciCorrectable(
@@ -400,26 +402,50 @@ Deno.test("a reviewed head back at work awaits its live CI correction only in th
     },
   );
 
-  await t.step("an undescribed candidate never awaits a correction", () => {
-    const undescribed = reviewed({
-      target: {
-        ...record.target,
-        candidateState: { preserved: null, publishedHead: SHA3 },
-      },
-    });
-    const view = snapshotFor(undescribed);
-    assert.equal(headAwaitsCiCorrection(view, undescribed), false);
-    assert.equal(
-      isMatrixImplementationReadyV1(undescribed, view, config, T0),
-      false,
-    );
-  });
-  await t.step("spent review rounds keep the head out of correction", () => {
-    const spent = reviewed({
-      counters: { attempts: 1, retries: 0, reviewRounds: 3 },
-    });
-    assert.equal(headAwaitsCiCorrection(snapshotFor(spent), spent), false);
-  });
+  await t.step(
+    "an undescribed candidate never awaits an ordinary correction but is matrix-eligible at its published head",
+    () => {
+      // The shared publication shape (delivery gate, launcher) keeps refusing
+      // an undescribed candidate: no ordinary CI correction is admitted.
+      const published = reviewed({
+        target: {
+          ...record.target,
+          candidateState: { preserved: null, publishedHead: SHA3 },
+        },
+      });
+      const publishedView = snapshotFor(published);
+      assert.equal(headAwaitsCiCorrection(publishedView, published), false);
+      // The SEPARATE existing-published-head continuation shape admits only
+      // the matrix cell that corrects this exact head.
+      assert.equal(
+        isMatrixImplementationReadyV1(published, publishedView, config, T0),
+        true,
+      );
+      // A recorded published head that is not the target head holds an
+      // unverified candidate: it is never eligible either way.
+      const unpublished = reviewed({
+        target: {
+          ...record.target,
+          candidateState: { preserved: null, publishedHead: SHA2 },
+        },
+      });
+      const view = snapshotFor(unpublished);
+      assert.equal(headAwaitsCiCorrection(view, unpublished), false);
+      assert.equal(
+        isMatrixImplementationReadyV1(unpublished, view, config, T0),
+        false,
+      );
+    },
+  );
+  await t.step(
+    "spent review rounds are accounting: the head still awaits its correction",
+    () => {
+      const spent = reviewed({
+        counters: { attempts: 1, retries: 0, reviewRounds: 3 },
+      });
+      assert.equal(headAwaitsCiCorrection(snapshotFor(spent), spent), true);
+    },
+  );
   await t.step("the head must hold its own clean review on this base", () => {
     assert.equal(
       headAwaitsCiCorrection(snapshotFor(record, []), record),

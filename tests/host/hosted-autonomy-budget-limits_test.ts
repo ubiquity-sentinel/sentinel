@@ -178,7 +178,7 @@ Deno.test("hosted autonomy: foreign charges cannot raise our floor or authorize 
 });
 
 Deno.test(
-  "hosted autonomy: no attempt-ceiling grant is spent once the review budget is spent",
+  "hosted autonomy: a spent review-round count never withholds an attempt grant",
   () => {
     const record = blockedRecord({
       blocker: {
@@ -189,13 +189,13 @@ Deno.test(
       counters: { attempts: 4, retries: 1, reviewRounds: 3 },
     });
     const snapshot = repairSnapshot([record], [authorizingReceipt()]);
-    // Every review round is spent, so another implementation run can never
-    // become a reviewed verdict: the grant is provably futile.
+    // Owner directive 2026-10-30: a spent review-round count is accounting,
+    // never an admission gate, so the grant is planned whatever the count.
     assert.equal(
       planHostedRetries(snapshot, T0 + 5000, ATTEMPT_RUNTIME).length,
-      0,
+      1,
     );
-    // With a review round left the same blocker is still retryable.
+    // With a review round left the same blocker is planned the same way.
     const earlier = repairSnapshot(
       [blockedRecord({
         blocker: {
@@ -256,7 +256,7 @@ Deno.test(
 );
 
 Deno.test(
-  "hosted autonomy: a work-returning grant is never planned once the review budget is spent",
+  "hosted autonomy: a work-returning grant is planned whatever the spent review count",
   () => {
     const target = {
       base: BASE,
@@ -265,7 +265,7 @@ Deno.test(
       head: HEAD,
       pr: 51,
     };
-    // The transient (non-budget) work rule is retryable while a review round is
+    // The transient (non-budget) work rule is retryable with a review round
     // left, even at the attempt ceiling with every identity charged...
     const earlier = repairSnapshot(
       [blockedRecord({
@@ -281,8 +281,8 @@ Deno.test(
         .length,
       1,
     );
-    // ...but once every review round is spent another implementation run can
-    // never become a reviewed verdict: no grant, base advance included.
+    // ...and a spent count is accounting only (owner directive 2026-10-30):
+    // the same grant is still planned, base advance included.
     const spent = repairSnapshot(
       [blockedRecord({
         counters: { attempts: 4, retries: 0, reviewRounds: 3 },
@@ -295,12 +295,12 @@ Deno.test(
     assert.equal(
       planHostedRetries(spent, T0 + 5000, ATTEMPT_RUNTIME, selfTips(SHA1))
         .length,
-      0,
+      1,
     );
     assert.equal(
       planHostedRetries(spent, T0 + 5000, ATTEMPT_RUNTIME, selfTips(BASE))
         .length,
-      0,
+      1,
     );
   },
 );
@@ -340,10 +340,10 @@ Deno.test(
       ),
     );
 
-    // Review rounds are spent and the only review admission at this head is
-    // still `reserved`: the in-flight identity and its charge stay protected,
-    // and under the hard review-round ceiling (owner decision 2026-10-16) no
-    // base advance may buy a refreshed head another round either.
+    // The current head already holds its completed accepted review, so no new
+    // review is spent on it: the delivery pass owns the record's receipt, and
+    // the only review admission at this head (still `reserved`) and its charge
+    // stay exactly as they were.
     const reviewRecord = blockedRecord({
       blocker: {
         kind: "review_quota",
@@ -380,7 +380,7 @@ Deno.test(
       (denial) => denied.push(denial.reason),
     );
     assert.deepEqual(reviewPlans, []);
-    assert.deepEqual(denied, ["review_rounds_spent"]);
+    assert.deepEqual(denied, ["review_terminal_left_to_delivery"]);
     assert.deepEqual(
       applyHostedRetries(reviewSnapshot, SHA1, reviewPlans, T0 + 5000)
         .reservations,

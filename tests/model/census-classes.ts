@@ -418,8 +418,8 @@ export const PARK_CLASSES: ParkClassV1[] = [
     message: `${CI_FIX_EXHAUSTED_PREFIX}validate(failure)`,
     kind: "other",
     writer: W(
-      "src/repair/loop-ci-first.ts",
-      'markBlocked(record, "other", ciFixExhaustedDetail(checks), now)',
+      "src/repair/ci-first-policy.ts",
+      'export const CI_FIX_EXHAUSTED_PREFIX = "CI fix attempts exhausted (3 of 3): ";',
       "w.ci.fix_exhausted",
     ),
     trigger: "pipeline",

@@ -36,7 +36,6 @@ import type {
   PreparedStructuredReviewV1,
   StructuredReviewOutcomeV1,
 } from "../github/codex-reviewer.ts";
-import { reviewRoundsLeft } from "../repair/review-round-cap.ts";
 import { ownerSuccessorBindingFor } from "./owner-successor-acceptance-binding.ts";
 import type { OwnerSuccessorCustody } from "./owner-successor-acceptance-custody.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
@@ -169,7 +168,10 @@ export async function produceOwnerSuccessorAcceptance(input: {
     }
     return existing.phase === "failed" ? "failed" : "pending";
   }
-  if (reviewRoundsLeft(repair.value.snapshot, work) < 1) return "pending";
+  // The review-round ceiling is retired (owner directive 2026-10-30): a
+  // spent count never withholds the successor acceptance's own review, which
+  // is admitted on its own current-head binding above. A round count is
+  // accounting; it is not the fact `currentHeadReviewTerminal` reports.
   if (typeof input.ports === "function") {
     const ports = await input.ports();
     // Preparation may take time; admit only against freshly read state.

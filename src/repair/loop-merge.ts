@@ -808,12 +808,13 @@ export async function reconcileMergeIntent(
   // A merge sent within the last poll window may still be landing (an
   // ambiguous response is reconciled immediately), and its own merge would
   // move the base; only an intent at least one poll old is treated as stale.
-  // At the hard review-round ceiling the refreshed head could never be
-  // reviewed: the reviewed head's CI is read with the stale merge intent
-  // cleared, and only a green head its latest review authorizes refreshes
-  // mechanically to carry that review (anything else parks, a red one with
-  // the merge gate's own CI blocker). Every refresh waits its turn in the
-  // repository's delivery line, the merge intent kept until it is replaced.
+  // A spent, cleanly reviewed head (`reviewRoundsSpentOut`) is delivered by a
+  // carried refresh: its CI is read with the stale merge intent cleared, and
+  // only a green head its latest review authorizes refreshes mechanically to
+  // carry that review (anything else parks precisely, a red one with the merge
+  // gate's own CI blocker). Any other reviewed head takes the ordinary
+  // refresh-and-review. Every refresh waits its turn in the repository's
+  // delivery line, the merge intent kept until it is replaced.
   if (
     record.source.kind === "issue" &&
     deps.github.prepareBaseRefresh !== undefined &&
