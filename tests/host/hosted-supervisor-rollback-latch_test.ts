@@ -198,9 +198,26 @@ Deno.test("rollback latch: stops only its own failed candidate; a new CI-green l
     );
 
     await t.step("the failed candidate still cannot reinstall", async () => {
+      // Settle the fresh install so no in-flight record masks the candidate bar.
+      const bootstrap = (await rig.snapshot()).hostedRuntimes[0].execution;
+      assert.ok(bootstrap);
+      await settle(rig, bootstrap, "healthy");
       const before = await rig.snapshot();
+      assert.equal(before.hostedInstallations?.[1].phase, "accepted");
+      assert.equal(before.hostedRuntimes[0].execution, null);
+      // Refuse before CI checks, not via duplicate-record validation.
+      let ciChecks = 0;
+      Object.assign(rig.evidence, {
+        // Keep ordinary work unavailable during this installation-only probe.
+        verifyMatrixOrdinaryRevision: undefined,
+        verifyLauncherCi: (revision: GitSha) => {
+          ciChecks++;
+          return Promise.resolve(portOk({ revision, checkRunId: 91 }));
+        },
+      });
       const outcome = await rig.prepare(launcherRun(7));
       assert.equal(outcome.status, "pending");
+      assert.equal(ciChecks, 0);
       const after = await rig.snapshot();
       assert.equal(after.hostedInstallations?.length, 2);
       assert.equal(

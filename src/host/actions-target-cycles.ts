@@ -201,6 +201,8 @@ export interface ActionsTargetCyclesInputV1 {
   runOrigin?: number;
   stepLimit: number;
   modelStartsEnabled: boolean;
+  /** The model-disabled bootstrap execution: maintenance and health only. */
+  bootstrap?: boolean;
   externalImplementations?: boolean;
   /**
    * The one-time legacy review class's cutoff the launcher handed this run
