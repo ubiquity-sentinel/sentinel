@@ -7,7 +7,8 @@
  *   R80's parsers accept it and R80's own loop starts the same correction
  *   with the same first finding, never the merge-gate path that would refuse
  *   the acceptance with a state error on every run;
- * - the B6b owner-gated park: parsed, and idle under R80;
+ * - the B6b owner-gated park when a full receipt cannot carry the acceptance
+ *   finding: parsed, and idle under R80;
  * - the launcher's B6a re-admission (`review`, blocker cleared): R80
  *   re-observes the standing verdict and blocks it again, uncharged (the
  *   launcher therefore re-admits only under a proven correction runtime).
@@ -15,9 +16,11 @@
  * Ignored in a checkout without R80 (CI checkouts are shallow).
  */
 import assert from "node:assert/strict";
+import { asFindingFingerprint } from "../../src/contracts/brands.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type * as Snapshots from "../../src/contracts/state-snapshots.ts";
+import { MaxItems } from "../../src/contracts/validation.ts";
 import {
   TASK_ACCEPTANCE_FINDING_ID,
   TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
@@ -69,9 +72,36 @@ async function loadR80() {
 type R80 = Awaited<ReturnType<typeof loadR80>>;
 
 /** One generation-81 hosted run over the live round shape; its snapshot. */
-async function gen81State(name: string, rounds: number) {
+async function gen81State(
+  name: string,
+  rounds: number,
+  fullReceipt = false,
+) {
   const rig = await acceptanceRig(`b6-r80-${name}`, rounds, true);
   try {
+    if (fullReceipt) {
+      // Round counts no longer park a record. Exercise the remaining owner gate
+      // through the real review consumer: there is no room for its acceptance
+      // finding, so the receipt must be retained and the record parked.
+      const observation = rig.github.reviewObservationsByKey.get(
+        rig.operationKey,
+      );
+      assert.ok(observation);
+      rig.github.reviewObservationsByKey.set(rig.operationKey, {
+        ...observation,
+        findings: Array.from({ length: MaxItems.findings }, (_, index) => ({
+          id: `existing-finding-${index}`,
+          severity: "P3" as const,
+          path: null,
+          message: "Existing review finding",
+          fingerprint: asFindingFingerprint(
+            index.toString(16).padStart(64, "0"),
+          ),
+          resolved: false,
+          resolutionEvidence: null,
+        })),
+      });
+    }
     await rig.run();
     return {
       snapshot: await rig.snapshot(),
@@ -281,7 +311,11 @@ Deno.test({
       );
 
       await t.step("B6b owner-gated park: parsed and idle", async () => {
-        const state = await gen81State("park", 3);
+        const state = await gen81State("park", 3, true);
+        assert.equal(
+          state.snapshot.reviews[0]!.findings.length,
+          MaxItems.findings,
+        );
         parsesUnderR80(r80, state.snapshot);
         const record = state.snapshot.work[0]!;
         assert.equal(
