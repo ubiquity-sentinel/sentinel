@@ -203,3 +203,44 @@ Deno.test("self observation: arbitrary diagnostic text never enters issue titles
     );
   }
 });
+
+Deno.test("self observation: current CI errors file sanitized reports and deduplicate legacy names", async () => {
+  const marker = "SYNTHETIC_PRIVATE_MARKER";
+  const log = `2026-10-27T20:06:18.1234567Z error: ${marker} /private/path\n`;
+  const first = fakeSurface({
+    runs: [FAILED_RUNS[0]!],
+    jobs: [{ id: 11, name: "test-shards (modules, 4)", conclusion: "failure" }],
+    logs: { 11: log },
+    bodies: [],
+  });
+  const now = Date.parse("2026-09-23T19:00:00Z");
+  const actions = await runSelfObservationPass({ github: first.surface, now });
+  assert.deepEqual(actions, ["self-observation:filed:901:1x"]);
+  assert.equal(first.filed.length, 1);
+  const issue = first.filed[0]!;
+  assert.equal(
+    issue.title,
+    "Sentinel self-observation: the job reported an error",
+  );
+  assert.ok(
+    issue.body.includes(
+      "sentinel:self-observation:sentinel-ci:test-shards:error:observed",
+    ),
+  );
+  assert.ok(issue.body.includes("- job: `test-shards`"));
+  assert.ok(!JSON.stringify(issue).includes(marker));
+  assert.ok(!JSON.stringify(issue).includes("/private/"));
+
+  const second = fakeSurface({
+    runs: [FAILED_RUNS[0]!],
+    jobs: [{ id: 11, name: "test-shards (modules)", conclusion: "failure" }],
+    logs: { 11: "error: another private diagnostic\n" },
+    bodies: [issue.body],
+  });
+  const nextActions = await runSelfObservationPass({
+    github: second.surface,
+    now,
+  });
+  assert.equal(second.filed.length, 0);
+  assert.deepEqual(nextActions, ["self-observation:no_change"]);
+});

@@ -1,7 +1,9 @@
 /**
  * A self-merge refusal the trusted port answers before any write (CI pipeline
- * identity, preserved CI binding or tested tree mismatch) parks the record for
- * the owner; a transport failure keeps the bounded unavailable wait.
+ * identity, preserved CI binding or tested tree mismatch) is an ordinary
+ * invalid merge result: the record keeps its merge intent and re-arms the same
+ * bounded unavailable wait every other target gets. A transport failure does
+ * exactly the same.
  */
 import assert from "node:assert/strict";
 import { portError } from "../../src/contracts/ports.ts";
@@ -41,7 +43,7 @@ async function refusalRig(name: string, error: ReturnType<typeof portError>) {
   return { rig, merges: () => merges };
 }
 
-Deno.test("self merge: a pre-write trusted validation refusal parks the record for the owner", async () => {
+Deno.test("self merge: a pre-write trusted validation refusal re-arms the ordinary bounded wait", async () => {
   const { rig, merges } = await refusalRig(
     "self-merge-refusal",
     portError("invalid", "self merge trusted CI pipeline changed"),
@@ -50,13 +52,14 @@ Deno.test("self merge: a pre-write trusted validation refusal parks the record f
     await rig.run();
     const state = await rig.snapshot();
     assert.equal(merges(), 1);
-    assert.equal(state.work[0].nextStep, "blocked");
-    assert.equal(state.work[0].wait, null);
-    assert.equal(state.work[0].intent, null);
+    assert.equal(state.work[0].nextStep, "delivery");
+    assert.equal(state.work[0].blocker, null);
+    assert.equal(state.work[0].wait?.reason, "unavailable");
     assert.equal(
-      state.work[0].blocker?.message,
-      "self merge refused by trusted validation; owner action required: self merge trusted CI pipeline changed",
+      (state.work[0].wait?.until ?? 0) - (state.work[0].wait?.since ?? 0),
+      CHECK_POLL_MS,
     );
+    assert.equal(state.work[0].intent?.kind, "merge");
   } finally {
     await rig.ctx.cleanup();
   }

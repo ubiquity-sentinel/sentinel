@@ -84,9 +84,9 @@ for (const hosted of [false, true]) {
       assert.equal(work.nextStep, "work");
       assert.equal(work.blocker, null);
       assert.equal(work.wait?.reason, "ci_pending", JSON.stringify(work.wait));
-      assert.equal(work.wait!.until, work.wait!.since + 5 * 60_000);
+      assert.equal(work.wait!.until, work.wait!.since + 2 * 60_000);
       const since = work.wait!.since;
-      rig.clock.advance(5 * 60_000 + 1);
+      rig.clock.advance(2 * 60_000 + 1);
       await rig.run();
       work = taskRecord(await rig.snapshot());
       assert.equal(work.wait?.reason, "ci_pending");

@@ -13,10 +13,14 @@ import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 import {
   attributeFailedChecks,
+  checkPending,
+  ciCheckLabels,
   ciCorrectable,
   ciCorrectionFinding,
   decideCiDisposition,
+  failedChecks,
   isCiCorrectionFinding,
+  readCiChecks,
   trustedCheckName,
   UNTRUSTED_CHECK_NAME,
 } from "../../src/repair/ci-rejection.ts";
@@ -36,6 +40,7 @@ import {
   workRecord,
 } from "../state/helpers.ts";
 import { repairConfigs } from "./helpers.ts";
+import { ciFirstRig, taskRecord } from "./ci-first-rig.ts";
 import { seededSnapshot } from "./loop-rig.ts";
 
 /** No review charge: the round count is the record's own counter. */
@@ -452,22 +457,127 @@ Deno.test("a reviewed head back at work awaits its live CI correction only in th
   });
 });
 
-Deno.test("the CI correction decision files are protected from model-authored candidates", () => {
+Deno.test("CI correction launcher files are ordinary work; the CI verdict dependency and merge/credential authority stay protected", () => {
   const protectedPaths = createLocalRepositoryConfig().protectedPaths;
   for (
     const path of [
+      "src/host/supervisor-dispatch.ts",
+      "src/host/actions-premerge-ci.ts",
+      "src/github/port-evidence.ts",
+      "src/github/port-merge-policy.ts",
+      "src/github/port-merge.ts",
+      "src/repair/loop-checks.ts",
       "src/repair/ci-rejection.ts",
+      "src/repair/ci-correction-policy.ts",
+      "src/host/hosted-app-credentials.ts",
+      "src/host/local-release.ts",
+    ]
+  ) assert.ok(protectedPaths.includes(path), path);
+  for (
+    const path of [
       "src/repair/loop-ci-correction.ts",
       "ops/hosted-autonomy-ci-retries.ts",
-      // The launcher files that apply the CI re-admission gate, supply the
-      // authenticated runtime record it trusts and define its blocker prefix
-      // and review-round ceiling.
       "ops/hosted-autonomy-retries.ts",
       "ops/hosted-autonomy-retry-pass.ts",
       "ops/hosted-autonomy-policy.ts",
-      // The flake re-run decides whether a parked head's correction waits
-      // for its once-per-head re-run, and re-runs it.
       "ops/hosted-autonomy-ci-rerun.ts",
     ]
-  ) assert.ok(protectedPaths.includes(path), path);
+  ) assert.ok(!protectedPaths.includes(path), path);
+});
+
+/** A check carrying the workflow event its transport observed (in memory only). */
+function evented(value: GitHubCheckV1, event: string): GitHubCheckV1 {
+  return { ...value, event };
+}
+
+Deno.test("ci attribution: a green base under another workflow event is still the candidate's", () => {
+  // The event is carried as record evidence, but attribution is by check
+  // name: an event mismatch alone is not configuration evidence (round-2
+  // review rejected that classification).
+  const attribution = attributeFailedChecks(
+    [evented(check("validate", "failure"), "pull_request")],
+    [evented(base("validate", "success"), "push")],
+  );
+  assert.deepEqual(names(attribution.candidate), ["validate"]);
+  const disposition = decideCiDisposition(attribution);
+  assert.equal(disposition.kind, "candidate");
+  assert.equal((disposition as { reason?: string }).reason, undefined);
+});
+
+Deno.test("ci attribution: a never-started check is not_started, never a failed or configuration defect", () => {
+  const neverStarted: GitHubCheckV1 = {
+    ...check("validate", "failure"),
+    neverStarted: true,
+  };
+  assert.deepEqual(failedChecks([neverStarted]), []);
+  assert.equal(checkPending(neverStarted), true);
+  assert.equal(ciCheckLabels([neverStarted]), "validate(not_started)");
+  // A caller that still hands it to attribution gets the non-charging
+  // secondary bucket, never `candidate` and never a configuration block.
+  const disposition = decideCiDisposition(
+    attributeFailedChecks([neverStarted], [base("validate", "success")]),
+  );
+  assert.equal(disposition.kind, "unattributed");
+  assert.equal((disposition as { reason?: string }).reason, undefined);
+  assert.deepEqual(
+    (disposition as { checks: GitHubCheckV1[] }).checks.map((value) =>
+      value.name
+    ),
+    ["validate"],
+  );
+});
+
+Deno.test("ci first: a never-started head check starts no CI fix and reserves nothing", async () => {
+  const neverStarted: GitHubCheckV1 = {
+    ...check("deno", "failure"),
+    neverStarted: true,
+  };
+  const { rig, charges } = await ciFirstRig("cf-ns-safe", {
+    checks: {
+      [SHA3]: [neverStarted],
+      [SHA1]: [check("deno", "success", T0, "completed", SHA1)],
+    },
+  });
+  try {
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    assert.equal(rig.model.requests.length, 0, "no CI fix started");
+    const state = await rig.snapshot();
+    const work = taskRecord(state);
+    assert.equal(work.nextStep, "work");
+    assert.equal(work.wait?.reason, "ci_pending", JSON.stringify(work.wait));
+    assert.equal(work.counters.retries, 0, "no CI fix retry charged");
+    assert.deepEqual(state.reservations, charges, "nothing reserved");
+    assert.equal(rig.github.calls.includes("requestReview"), false);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("the attribution read is the plain check read: no workflow-event enrichment", async () => {
+  const calls: {
+    head: GitSha;
+    names?: ReadonlySet<string>;
+    options?: unknown;
+  }[] = [];
+  const github = {
+    readChecks: (
+      head: GitSha,
+      nameSet?: ReadonlySet<string>,
+      options?: unknown,
+    ) => {
+      calls.push({ head, names: nameSet, options });
+      return Promise.resolve({
+        ok: true as const,
+        value: { head, checks: [] as GitHubCheckV1[] },
+      });
+    },
+  };
+  const plain = await readCiChecks(github, SHA3);
+  const named = await readCiChecks(github, SHA1, new Set(["quality"]));
+  assert.ok(plain.ok && named.ok);
+  assert.deepEqual(calls, [
+    { head: SHA3, names: undefined, options: undefined },
+    { head: SHA1, names: new Set(["quality"]), options: undefined },
+  ]);
 });

@@ -9,6 +9,7 @@ import {
   missingExpectedChecks,
 } from "../src/repair/ci-coverage.ts";
 import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
+import { isPassportDeployCheck } from "../src/repair/merge-gate-checks.ts";
 import { HOSTED_AUTONOMY_REQUIRED_CHECK } from "./hosted-autonomy-policy.ts";
 import { createHostedMismatchDispositionObservations } from "./hosted-autonomy-mismatch-github.ts";
 import type {
@@ -222,6 +223,16 @@ export function createHostedAutonomyGitHub(
       : await substituteBackupRuns(backup, head, runs);
   }
 
+  /**
+   * Deployment observations are evidence, never gates (owner directive
+   * 2026-10-30): Passport's dispatch-only deploy checks stay in the complete
+   * read above but are left out of every gate decision below.
+   */
+  const gatingRuns = (runs: readonly Record<string, unknown>[]) =>
+    runs.filter((run) =>
+      !isPassportDeployCheck(repository, String(run["name"]))
+    );
+
   /** Complete workflow-run listing for exactly one commit. */
   const readHeadRuns = (head: string) =>
     readCompleteListing(
@@ -297,10 +308,11 @@ export function createHostedAutonomyGitHub(
       );
     },
     async hasAllChecksGreen(head: string, base?: string) {
-      const runs = await readCompleteCheckRuns(head);
+      const complete = await readCompleteCheckRuns(head);
       // An unreadable, incomplete, drifted or malformed listing is no
       // evidence either way: unreadable (null), never green and never red.
-      if (runs === null) return null;
+      if (complete === null) return null;
+      const runs = gatingRuns(complete);
       // Only the runs reported on the exact head count, and the listing was
       // already proven complete and bound to this head. Zero runs is not
       // green: a foreign repository's own completed CI is the only
@@ -322,16 +334,17 @@ export function createHostedAutonomyGitHub(
       if (!green || base === undefined) return green;
       // The runs that exist are green; a job GitHub creates late (`needs:`)
       // must exist too, by the base's own check suites (issue #154).
-      const baseRuns = await readCompleteCheckRuns(base);
-      if (baseRuns === null) return null;
-      const expected = suitedChecks(baseRuns);
+      const baseComplete = await readCompleteCheckRuns(base);
+      if (baseComplete === null) return null;
+      const expected = suitedChecks(gatingRuns(baseComplete));
       if (expected === null) return null;
       const reported = runs.map((run) => ({ name: String(run["name"]) }));
       return missingExpectedChecks(reported, expected).length === 0;
     },
     async failedChecks(head: string, conclusions: readonly string[]) {
-      const runs = await readCompleteCheckRuns(head);
-      if (runs === null) return null;
+      const complete = await readCompleteCheckRuns(head);
+      if (complete === null) return null;
+      const runs = gatingRuns(complete);
       // A job that never started (a billing stop) is no failing check; a
       // red backup result standing in for one is (spec §11.5), within the
       // conclusions the caller asks for.
@@ -751,11 +764,12 @@ export function createHostedAutonomyGitHub(
     retryLabel: createHostedRetryLabel(request, repository),
     ciOutageTracker: createHostedOutageTracker(request, repository),
     async classifyTipStart(tip: string) {
-      // The outage notice describes the target's own CI: native runs only.
-      const runs = await readCompleteCheckRuns(tip, false);
-      if (runs === null) return null;
+      // The outage notice describes the target's own CI: native CI runs only,
+      // never a deployment job.
+      const complete = await readCompleteCheckRuns(tip, false);
+      if (complete === null) return null;
       return classifyTipChecks(
-        runs.map((run) => ({
+        gatingRuns(complete).map((run) => ({
           id: Number(run["id"]),
           name: String(run["name"]),
           status: String(run["status"]),

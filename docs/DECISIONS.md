@@ -2,19 +2,71 @@
 
 ## Passport work trial (2026-10-30)
 
-The owner explicitly authorized the independent stability controller's Passport-only trial: remove ordinary product-path restrictions and attempt-count holds while retaining successful current CI and completed native review before merge. Positive task acceptance, exact head/base, authenticated original-candidate and intent custody, current ownership, durable reservations/accounting, credentials/workflow authority isolation and all other independent merge gates remain. Counters/history are preserved, not reset; protocol/provider backoff and finite operation/session/deadline safeguards are unchanged. This is a separate authorized trial, not a resumption of the paused manual PR 221/m16 work or the original goal's status.
+The owner explicitly authorized the independent stability controller's
+Passport-only trial: remove ordinary product-path restrictions and attempt-count
+holds while retaining successful current CI and completed native review before
+merge. Positive task acceptance, exact head/base, authenticated
+original-candidate and intent custody, current ownership, durable
+reservations/accounting, credentials/workflow authority isolation and all other
+independent merge gates remain. Counters/history are preserved, not reset;
+protocol/provider backoff and finite operation/session/deadline safeguards are
+unchanged. This is a separate authorized trial, not a resumption of the paused
+manual PR 221/m16 work or the original goal's status.
 
-Use one exact-target predicate and the existing trusted maintenance/CAS readmission paths. Other repositories keep their original policy. A historical attempt allowance cannot substitute for an authentic original candidate/ref, a unique settled current charge, or absence of unfinished work; missing-custody records remain held. Published stale protected candidates are not dropped or silently replaced by their current PR head. The new controller-owned helper remains protected against self-modification, without inheriting that controller inventory as a renewed Passport product-path ban. Failed/unreviewed/task-unaccepted merges, generic blocker clearing, refunds and credential/provider changes are not authorized.
+Use one exact-target predicate and the existing trusted maintenance/CAS
+readmission paths. Other repositories keep their original policy. A historical
+attempt allowance cannot substitute for an authentic original candidate/ref, a
+unique settled current charge, or absence of unfinished work; missing-custody
+records remain held. Published stale protected candidates are not dropped or
+silently replaced by their current PR head. The new controller-owned helper
+remains protected against self-modification, without inheriting that controller
+inventory as a renewed Passport product-path ban.
+Failed/unreviewed/task-unaccepted merges, generic blocker clearing, refunds and
+credential/provider changes are not authorized.
 
-The frozen source and all live trial gates belong in the sole build ledger. Captured local eligibility projections are not live admissions or delivery. Publication waits for native findings disposition and exact canonical CI; installation retains exact prior rollback and is followed by one ordinary-cycle observation with current task/head/ref/CI evidence and explicit remaining holds. Release remains disabled. The independent stability controller owns its isolated m19 writer and reserved native review, while the primary retains integration and live publication ownership.
+The frozen source and all live trial gates belong in the sole build ledger.
+Captured local eligibility projections are not live admissions or delivery.
+Publication waits for native findings disposition and exact canonical CI;
+installation retains exact prior rollback and is followed by one ordinary-cycle
+observation with current task/head/ref/CI evidence and explicit remaining holds.
+Release remains disabled. The independent stability controller owns its isolated
+m19 writer and reserved native review, while the primary retains integration and
+live publication ownership.
 
 ## Local production telemetry archive (2026-10-30)
 
-The owner requested a quick local tool reporting exact deployed commit hashes, production timeframes, run counts, percentage of good runs and delivery velocity to inform rollback choices, then explicitly required saving and consolidating observations on every invocation because GitHub Actions logs expire. This telemetry-only work does not resume the paused manual throughput goal or PR 221/m16. Preserve that work and every existing gate; no rollback or runtime behavior change is authorized by this request.
+The owner requested a quick local tool reporting exact deployed commit hashes,
+production timeframes, run counts, percentage of good runs and delivery velocity
+to inform rollback choices, then explicitly required saving and consolidating
+observations on every invocation because GitHub Actions logs expire. This
+telemetry-only work does not resume the paused manual throughput goal or PR
+221/m16. Preserve that work and every existing gate; no rollback or runtime
+behavior change is authorized by this request.
 
-The first delivery is an on-demand read-only GitHub collector and local offline report. Save fetched metadata, immutable run-attempt logs and relevant source-bound runtime/install/delivery receipts in a private ignored `.sentinel/telemetry/` archive. Retain observation time, endpoint/run/attempt/source identity and content hashes; never replace prior evidence with a later missing/expired response. Consolidate idempotently, retain prior attempts and distinguish unknown evidence from zero. No automatic deletion, expiry, upload, telemetry service, cron or credential storage is introduced. The user explicitly authorizes this local archival storage; raw provider/model artifacts outside the scorecard's evidence scope are not implicitly collected.
+The first delivery is an on-demand read-only GitHub collector and local offline
+report. Save fetched metadata, immutable run-attempt logs and relevant
+source-bound runtime/install/delivery receipts in a private ignored
+`.sentinel/telemetry/` archive. Retain observation time,
+endpoint/run/attempt/source identity and content hashes; never replace prior
+evidence with a later missing/expired response. Consolidate idempotently, retain
+prior attempts and distinguish unknown evidence from zero. No automatic
+deletion, expiry, upload, telemetry service, cron or credential storage is
+introduced. The user explicitly authorizes this local archival storage; raw
+provider/model artifacts outside the scorecard's evidence scope are not
+implicitly collected.
 
-Separate native ordinary health from workflow success and useful delivery. Full runtime SHA/generation and production intervals come from actual execution and journal proof, not default-branch or launcher substitution. Report health numerator/denominator and evidence coverage, separate bootstrap/cancellation/pending/unstarted attempts, preserve rerun history and repeated deployments, and show fresh autonomous merge velocity separately from owner/manual/existing/reconciled merges. If fresh merge provenance is unavailable, show the limitation instead of inferring autonomy from the App actor. Current exact journal prior is evidence for a potential rollback, not permission to roll back or proof that a short idle sample is safest. No new producer events or merge-path instrumentation are part of the first local archive tool.
+Separate native ordinary health from workflow success and useful delivery. Full
+runtime SHA/generation and production intervals come from actual execution and
+journal proof, not default-branch or launcher substitution. Report health
+numerator/denominator and evidence coverage, separate
+bootstrap/cancellation/pending/unstarted attempts, preserve rerun history and
+repeated deployments, and show fresh autonomous merge velocity separately from
+owner/manual/existing/reconciled merges. If fresh merge provenance is
+unavailable, show the limitation instead of inferring autonomy from the App
+actor. Current exact journal prior is evidence for a potential rollback, not
+permission to roll back or proof that a short idle sample is safest. No new
+producer events or merge-path instrumentation are part of the first local
+archive tool.
 
 These are current owner decisions for Sentinel. [AGENTS.md](../AGENTS.md)
 governs execution, [MASTER-PLAN.md](../MASTER-PLAN.md) defines scope and
@@ -25,61 +77,243 @@ continuation.
 
 ## Merge policy clarification (2026-10-29)
 
-Owner correction at 23:14–23:15 UTC: wanted work must not be discarded. Content equivalence alone does not authorize closing an unmerged wanted PR as redundant; preserve its branch and commits and use the authorized review/fix/backlog/merge path. The owner revoked the coordinator's closure of PR 211 and issue 207 and explicitly requested a native review loop for PR 211, attempting fixes for every substantiated problem, tracking unresolved findings as issues, and merging when no unresolved P0 remains and all independent gates pass. PR 211 and issue 207 were reopened with their original head preserved. This owner-requested PR loop is tracked separately from the consumed throughput development reviews; it does not reset or erase any prior review, runtime reservation, retry or charge.
+Owner correction at 23:14–23:15 UTC: wanted work must not be discarded. Content
+equivalence alone does not authorize closing an unmerged wanted PR as redundant;
+preserve its branch and commits and use the authorized review/fix/backlog/merge
+path. The owner revoked the coordinator's closure of PR 211 and issue 207 and
+explicitly requested a native review loop for PR 211, attempting fixes for every
+substantiated problem, tracking unresolved findings as issues, and merging when
+no unresolved P0 remains and all independent gates pass. PR 211 and issue 207
+were reopened with their original head preserved. This owner-requested PR loop
+is tracked separately from the consumed throughput development reviews; it does
+not reset or erase any prior review, runtime reservation, retry or charge.
 
-The owner reaffirmed that P0 is the only severity-based merge blocker; P1 and lower findings do not block merges and must be retained and backlogged as issues through the existing authorized issue workflow. The earlier P0-and-P1 selection was accidental and withdrawn. This preserves the 2026-10-24 P0-only runtime policy and does not require a severity-code change.
+The owner reaffirmed that P0 is the only severity-based merge blocker; P1 and
+lower findings do not block merges and must be retained and backlogged as issues
+through the existing authorized issue workflow. The earlier P0-and-P1 selection
+was accidental and withdrawn. This preserves the 2026-10-24 P0-only runtime
+policy and does not require a severity-code change.
 
-This clarification supersedes every earlier P0/P1 merge, rejection or correction threshold in this document and contradictory task instructions. Dated earlier thresholds below remain historical evidence, not current authority. Current-head CI, completed native review, positive task acceptance, custody, durable accounting and all other existing gates remain unchanged. Lower-severity findings alone do not authorize another correction round, and existing review ceilings remain intact.
+This clarification supersedes every earlier P0/P1 merge, rejection or correction
+threshold in this document and contradictory task instructions. Dated earlier
+thresholds below remain historical evidence, not current authority. Current-head
+CI, completed native review, positive task acceptance, custody, durable
+accounting and all other existing gates remain unchanged. Lower-severity
+findings alone do not authorize another correction round, and existing review
+ceilings remain intact.
 
-Resume the original production-throughput goal and canonical module identities with serial `gpt-6.1-sol/max` implementation, preserving the separate AI Rust owner and keeping `sentinel-release` disabled. The acceptance ledger distinguishes reviewed source, hosted CI, publication, installation and live delivery; this clarification establishes no new runtime or delivery receipt.
+Resume the original production-throughput goal and canonical module identities
+with serial `gpt-6.1-sol/max` implementation, preserving the separate AI Rust
+owner and keeping `sentinel-release` disabled. The acceptance ledger
+distinguishes reviewed source, hosted CI, publication, installation and live
+delivery; this clarification establishes no new runtime or delivery receipt.
 
 ## Documentation interpretation (2026-10-29)
 
-Current documentation interpretation (2026-10-29): native Codex review mode owns reviewer selection, rubric and output protocol; a gateway model alias alone does not establish invocation mode or a runtime defect. Auto-follow defaults on in current source, and explicit off is a separate configured hold. Branch rules/rulesets are not required to exist; effective configured checks and approvals remain honoured. Backup CI substitutes only verified never-started target checks and never overrides a check that ran and failed. The current primary role owner is recorded in the build ledger, separately from actual model identity. Dated handoffs, redesign/spec snapshots and retained artifacts preserve their original source/times and grant no current ownership, permissions or acceptance. Queue proof remains dormant; the owner-run canary contract grants no production activation. Retained ceremony modules remain until their consumers are replaced and the integration owner supplies an approved dependency order; DESIGN.md is absent from this checkout.
+Current documentation interpretation (2026-10-29): native Codex review mode owns
+reviewer selection, rubric and output protocol; a gateway model alias alone does
+not establish invocation mode or a runtime defect. Auto-follow defaults on in
+current source, and explicit off is a separate configured hold. Branch
+rules/rulesets are not required to exist; effective configured checks and
+approvals remain honoured. Backup CI substitutes only verified never-started
+target checks and never overrides a check that ran and failed. The current
+primary role owner is recorded in the build ledger, separately from actual model
+identity. Dated handoffs, redesign/spec snapshots and retained artifacts
+preserve their original source/times and grant no current ownership, permissions
+or acceptance. Queue proof remains dormant; the owner-run canary contract grants
+no production activation. Retained ceremony modules remain until their consumers
+are replaced and the integration owner supplies an approved dependency order;
+DESIGN.md is absent from this checkout.
 
 ## Runtime and dispatch
 
 ### Maintenance throughput contract (2026-10-28)
 
-The reconstructible maintenance index may retain the complete positive reservation membership of an authenticated immutable producer plan. Membership binds the exact execution, fresh source proof fingerprint, plan digest and planner job. A fresh scan may avoid full recovery only when every current exact pending reservation is disjoint from that complete membership. Matching, new, unknown, missing, partial or invalid evidence retains ordinary recovery and late-result handling. Contradictory metadata disables acceleration safely; it cannot authorize absence, settlement, refunds, admission or authoritative state writes. Reuse the existing matrix-cell bound without truncation and preserve unknown sidecars, CAS/readback and older readers' full-recovery fallback.
+The reconstructible maintenance index may retain the complete positive
+reservation membership of an authenticated immutable producer plan. Membership
+binds the exact execution, fresh source proof fingerprint, plan digest and
+planner job. A fresh scan may avoid full recovery only when every current exact
+pending reservation is disjoint from that complete membership. Matching, new,
+unknown, missing, partial or invalid evidence retains ordinary recovery and
+late-result handling. Contradictory metadata disables acceleration safely; it
+cannot authorize absence, settlement, refunds, admission or authoritative state
+writes. Reuse the existing matrix-cell bound without truncation and preserve
+unknown sidecars, CAS/readback and older readers' full-recovery fallback.
 
-Retirement may use an optional narrow pull-request status capability carrying only the observed number, open/closed state and an explicit merged boolean. The production capability uses one strict authenticated GET; it grants no ancestry or delivery authority. An absent capability may project the existing full reader's observed identity, while a present capability's refusal never falls back. The final non-Gateway closure pass filters impossible exact review receipts after historical publication reconstruction and before task reads. Eligible final task rereads, full delivery ancestry, review, CI, ownership, custody, accounting, CAS/readback and Gateway carried authorization remain required.
+Retirement may use an optional narrow pull-request status capability carrying
+only the observed number, open/closed state and an explicit merged boolean. The
+production capability uses one strict authenticated GET; it grants no ancestry
+or delivery authority. An absent capability may project the existing full
+reader's observed identity, while a present capability's refusal never falls
+back. The final non-Gateway closure pass filters impossible exact review
+receipts after historical publication reconstruction and before task reads.
+Eligible final task rereads, full delivery ancestry, review, CI, ownership,
+custody, accounting, CAS/readback and Gateway carried authorization remain
+required.
 
-Existing current-matrix walk diagnostics expose numeric membership hits/skips and source checks alongside steps and producer recovery attempts. The completed outcome requires ordinary iterator exhaustion or the existing all-current-requests-covered stop after applied/deferred fences; parked, applied-result and possible-write fences retain their original early-stop behavior. Completion describes that pass's eligible request scope, while historical cursor coverage, result settlement and delivery remain separate evidence. Logical source checks are distinguished from underlying network I/O. Controlled local consumer tests establish causal request reductions; exact hosted inputs, state identities and phase timings establish operational behavior separately. Keep the existing event-driven schedule, original deadlines, protected installation and exact-prior rollback; measured bookkeeping work is not new issue delivery or billed savings. Actual acceptance belongs in the sole build-status ledger.
+Existing current-matrix walk diagnostics expose numeric membership hits/skips
+and source checks alongside steps and producer recovery attempts. The completed
+outcome requires ordinary iterator exhaustion or the existing
+all-current-requests-covered stop after applied/deferred fences; parked,
+applied-result and possible-write fences retain their original early-stop
+behavior. Completion describes that pass's eligible request scope, while
+historical cursor coverage, result settlement and delivery remain separate
+evidence. Logical source checks are distinguished from underlying network I/O.
+Controlled local consumer tests establish causal request reductions; exact
+hosted inputs, state identities and phase timings establish operational behavior
+separately. Keep the existing event-driven schedule, original deadlines,
+protected installation and exact-prior rollback; measured bookkeeping work is
+not new issue delivery or billed savings. Actual acceptance belongs in the sole
+build-status ledger.
 
 ### Production throughput implementation contract (2026-10-27)
 
-CI scheduling weights use conservative same-worker file-marker intervals from successful native Linux runs, with retained source/file-blob/toolchain provenance. These are historical scheduling costs, not current import-graph execution proof, CPU time or billed savings; changed or unmeasured files keep the existing fallback. The planner, worker count, private HOME/DENO_DIR isolation and full-suite aggregate remain unchanged. Quality retains its exact Deno static commands and runs in parallel with the shards; its unused Node/npm setup is removed after an actual credential-free consumer proof, while every shard keeps its pinned tools and dependencies. Cache seeding and incremental/no-check validation are not adopted without measured benefit and equivalent complete isolation/receipt evidence.
+CI scheduling weights use conservative same-worker file-marker intervals from
+successful native Linux runs, with retained source/file-blob/toolchain
+provenance. These are historical scheduling costs, not current import-graph
+execution proof, CPU time or billed savings; changed or unmeasured files keep
+the existing fallback. The planner, worker count, private HOME/DENO_DIR
+isolation and full-suite aggregate remain unchanged. Quality retains its exact
+Deno static commands and runs in parallel with the shards; its unused Node/npm
+setup is removed after an actual credential-free consumer proof, while every
+shard keeps its pinned tools and dependencies. Cache seeding and
+incremental/no-check validation are not adopted without measured benefit and
+equivalent complete isolation/receipt evidence.
 
-Consumed conflict results require a complete restart path, not only duplicate detection. An at-work marked resolved `base_refresh` may derive one exact original submitted and settled retry from its current task/repository/attempt/base and retained publication descriptor, while preserving the existing failure limit, timing and run deadlines. Its full-row-bound routing identity supplies the existing reservation to maintenance membership/discovery and the ordinary authenticated artifact reader; it is not artifact or write authority. Revalidate the original checkout/merge base, operation/result, native source/plan/job/archive/receipt/bundle and custody, hydrate exact M, then preserve M through the existing validator, create-only operation ref and fresh-store proof before scratch teardown. A third fresh runtime must fetch that durable M and pass ordinary publication, CI and native-review gates. Duplicate maintenance creates no new state, settlement, charge or ref effect; terminal, ambiguous, stale, dedicated or otherwise excluded work stays excluded. The new trusted predicate is included in the existing authority-protected source inventory.
+Consumed conflict results require a complete restart path, not only duplicate
+detection. An at-work marked resolved `base_refresh` may derive one exact
+original submitted and settled retry from its current
+task/repository/attempt/base and retained publication descriptor, while
+preserving the existing failure limit, timing and run deadlines. Its
+full-row-bound routing identity supplies the existing reservation to maintenance
+membership/discovery and the ordinary authenticated artifact reader; it is not
+artifact or write authority. Revalidate the original checkout/merge base,
+operation/result, native source/plan/job/archive/receipt/bundle and custody,
+hydrate exact M, then preserve M through the existing validator, create-only
+operation ref and fresh-store proof before scratch teardown. A third fresh
+runtime must fetch that durable M and pass ordinary publication, CI and
+native-review gates. Duplicate maintenance creates no new state, settlement,
+charge or ref effect; terminal, ambiguous, stale, dedicated or otherwise
+excluded work stays excluded. The new trusted predicate is included in the
+existing authority-protected source inventory.
 
-The normal three-failure autonomous bound remains unchanged. A separately prepared exact coordinator intervention for already-produced historical work may use the existing dated state-write/retry grant, but must retain every failed attempt, charge and original timing, authenticate the complete historical/current binding, serialize effects and rehearse crash/CAS/refusal recovery before live use. Restoring a pre-terminal intent verbatim would erase its final failed attempt and is prohibited. This permits neither generic terminal re-admission nor a new model start, deadline reset, counter refund or stale-proof merge. Source, installed and live acceptance remain separate ledger facts.
+The normal three-failure autonomous bound remains unchanged. A separately
+prepared exact coordinator intervention for already-produced historical work may
+use the existing dated state-write/retry grant, but must retain every failed
+attempt, charge and original timing, authenticate the complete
+historical/current binding, serialize effects and rehearse crash/CAS/refusal
+recovery before live use. Restoring a pre-terminal intent verbatim would erase
+its final failed attempt and is prohibited. This permits neither generic
+terminal re-admission nor a new model start, deadline reset, counter refund or
+stale-proof merge. Source, installed and live acceptance remain separate ledger
+facts.
 
-The owner requested the current source be released as v1 before implementing all five findings from the production throughput audit. Annotated tag v1 preserves f731b9602af55e54b7789e26134b1ce42eb3e7bd; it does not change the installed runtime or claim exact-head CI acceptance. The implementation contract is docs/plans/production-throughput-20261027.md and the current acceptance ledger remains build-status.md.
+The owner requested the current source be released as v1 before implementing all
+five findings from the production throughput audit. Annotated tag v1 preserves
+f731b9602af55e54b7789e26134b1ce42eb3e7bd; it does not change the installed
+runtime or claim exact-head CI acceptance. The implementation contract is
+docs/plans/production-throughput-20261027.md and the current acceptance ledger
+remains build-status.md.
 
-Unchanged publication and CI-wait observations must not generate repeated authoritative state writes or retain a runner through repeated selection. A genuine persisted wait may yield its record while retaining progress accounting; preserve the original CI deadline, exact head/base, current reads, reservations and all failure paths. Completion notifications prompt trusted observation and never constitute CI or review evidence themselves.
+Unchanged publication and CI-wait observations must not generate repeated
+authoritative state writes or retain a runner through repeated selection. A
+genuine persisted wait may yield its record while retaining progress accounting;
+preserve the original CI deadline, exact head/base, current reads, reservations
+and all failure paths. Completion notifications prompt trusted observation and
+never constitute CI or review evidence themselves.
 
-Backup CI prioritizes current, delivery-relevant exact-head demand using stable ordering and the existing capacity bounds. Base refreshes reuse delivery readiness so background refreshes do not invalidate proof faster than it can be consumed. Only newly accepted result entries committed and read back through expected-head CAS emit receipt_advanced; planning, in-flight, calibration and unchanged stores cannot produce wake loops. Preserve native target CI priority, real failures, calibrated backup fidelity and the target's closed/manual Actions policy.
+Backup CI prioritizes current, delivery-relevant exact-head demand using stable
+ordering and the existing capacity bounds. Base refreshes reuse delivery
+readiness so background refreshes do not invalidate proof faster than it can be
+consumed. Only newly accepted result entries committed and read back through
+expected-head CAS emit receipt_advanced; planning, in-flight, calibration and
+unchanged stores cannot produce wake loops. Preserve native target CI priority,
+real failures, calibrated backup fidelity and the target's closed/manual Actions
+policy.
 
-Ordinary backup candidates advance in durable least-recently-observed rounds using existing commit-file updatedAt metadata. Current-head priority and oldest-wait order break ties inside a round; confirmation and calibration retain absolute precedence. An observation-only row records an attempted read, grants no coverage/result, and cannot advance receipts. This preserves fairness past an unplannable urgent prefix without increasing the twelve-read bound or permanently caching unavailable evidence. Both PR identity checks use the existing trusted publication-author policy, including supported legacy authors.
+Ordinary backup candidates advance in durable least-recently-observed rounds
+using existing commit-file updatedAt metadata. Current-head priority and
+oldest-wait order break ties inside a round; confirmation and calibration retain
+absolute precedence. An observation-only row records an attempted read, grants
+no coverage/result, and cannot advance receipts. This preserves fairness past an
+unplannable urgent prefix without increasing the twelve-read bound or
+permanently caching unavailable evidence. Both PR identity checks use the
+existing trusted publication-author policy, including supported legacy authors.
 
-Historical producer discovery may use a reconstructible derived index in sentinel-state/maintenance-index, separate from strict repair/release records. It binds the controller and release identity, verified anchor/cursor ranges and immutable producer proof locations. Every selected producer still passes fresh custody, artifact and accounting checks. Missing or corrupt acceleration cannot authorize skipped evidence; no negative artifact cache, retention change, new credential or model-visible authority is introduced.
+Historical producer discovery may use a reconstructible derived index in
+sentinel-state/maintenance-index, separate from strict repair/release records.
+It binds the controller and release identity, verified anchor/cursor ranges and
+immutable producer proof locations. Every selected producer still passes fresh
+custody, artifact and accounting checks. Missing or corrupt acceleration cannot
+authorize skipped evidence; no negative artifact cache, retention change, new
+credential or model-visible authority is introduced.
 
-Cached producer reads pass the same traversal-budget check as uncached reads, including unavailable/error paths, so parked recovery cannot consume the reserve for ordinary in-flight work. Concurrent native drains are joined individually: one coordinator runs each settled target's continuation immediately, while retaining ownership of every unfinished sibling and collecting failures until all drains settle. Final dispositions preserve configured target order.
+Cached producer reads pass the same traversal-budget check as uncached reads,
+including unavailable/error paths, so parked recovery cannot consume the reserve
+for ordinary in-flight work. Concurrent native drains are joined individually:
+one coordinator runs each settled target's continuation immediately, while
+retaining ownership of every unfinished sibling and collecting failures until
+all drains settle. Final dispositions preserve configured target order.
 
-Readiness reuses the existing exact releaseRequestMatchesDelivery predicate to exclude already-booked deliveries, including release-disabled targets; unmatched requests cannot free a live contender. Matrix consumption hydrates every available bundle in one authenticated scan before advancing target lifecycles, then advances ready work before the next protocol observation wait. This preserves hydration-before-preservation without restoring the old all-producer or twenty-minute barrier.
+Readiness reuses the existing exact releaseRequestMatchesDelivery predicate to
+exclude already-booked deliveries, including release-disabled targets; unmatched
+requests cannot free a live contender. Matrix consumption hydrates every
+available bundle in one authenticated scan before advancing target lifecycles,
+then advances ready work before the next protocol observation wait. This
+preserves hydration-before-preservation without restoring the old all-producer
+or twenty-minute barrier.
 
-The live C3 backup completion event did not propagate for native-token-dispatched legs. The trusted backup parent now uses the existing official self App installation's scoped actions:write token solely for the fixed backup-leg dispatch POST. Native read/ref/store/receipt-wake operations remain separate, the untrusted leg VM retains read-only permissions, and its execution/result bytes and runner revision remain unchanged. Native observations accept the exact official App bot identity and the historical GitHub Actions actor only with all existing plan/unit/repository/ref/SHA/attempt/job bindings. Missing dispatch authority refuses before new ref/admission effects; there is no native-token dispatch fallback. No App registration, permission grant, secret, calibration reset or result schema is changed.
+The live C3 backup completion event did not propagate for
+native-token-dispatched legs. The trusted backup parent now uses the existing
+official self App installation's scoped actions:write token solely for the fixed
+backup-leg dispatch POST. Native read/ref/store/receipt-wake operations remain
+separate, the untrusted leg VM retains read-only permissions, and its
+execution/result bytes and runner revision remain unchanged. Native observations
+accept the exact official App bot identity and the historical GitHub Actions
+actor only with all existing plan/unit/repository/ref/SHA/attempt/job bindings.
+Missing dispatch authority refuses before new ref/admission effects; there is no
+native-token dispatch fallback. No App registration, permission grant, secret,
+calibration reset or result schema is changed.
 
-The review-owner channel observes its reply promise immediately, before awaiting atomic request publication. An owner may reply after rename but before publication resolves; synchronous observation prevents a transient unhandled rejection while preserving publication-error precedence and rethrowing the original custody refusal to the caller. No custody predicate, timeout or caller-visible outcome is weakened.
+The review-owner channel observes its reply promise immediately, before awaiting
+atomic request publication. An owner may reply after rename but before
+publication resolves; synchronous observation prevents a transient unhandled
+rejection while preserving publication-error precedence and rethrowing the
+original custody refusal to the caller. No custody predicate, timeout or
+caller-visible outcome is weakened.
 
-Development delivery retains its scoped local and hosted gates after the three completed native review rounds; no fourth review is requested and no native verdict is claimed for the final transport correction. The owner-directed direct-development policy is distinct from autonomous target repair review, which still requires exact current-head native evidence under the current P0-only severity policy, with positive task acceptance, current CI and all other gates retained. This records the scope of existing policy rather than waiving a runtime merge gate.
+Development delivery retains its scoped local and hosted gates after the three
+completed native review rounds; no fourth review is requested and no native
+verdict is claimed for the final transport correction. The owner-directed
+direct-development policy is distinct from autonomous target repair review,
+which still requires exact current-head native evidence under the current
+P0-only severity policy, with positive task acceptance, current CI and all other
+gates retained. This records the scope of existing policy rather than waiving a
+runtime merge gate.
 
-Independent target producers and native reviewers may overlap while one coordinator serializes authoritative lifecycle advances and every owned session is settled. Authenticated controller completion events request protected ingestion and reconciliation; active-run requests coalesce into the existing handoff. Foreign target events have no implicit controller ingress, so the existing bounded recovery remains until an actual authenticated event path exists. Keep original deadlines, exact integrated CI/native review/merge gates and exclusive promotion ownership; sentinel-release stays disabled.
+Independent target producers and native reviewers may overlap while one
+coordinator serializes authoritative lifecycle advances and every owned session
+is settled. Authenticated controller completion events request protected
+ingestion and reconciliation; active-run requests coalesce into the existing
+handoff. Foreign target events have no implicit controller ingress, so the
+existing bounded recovery remains until an actual authenticated event path
+exists. Keep original deadlines, exact integrated CI/native review/merge gates
+and exclusive promotion ownership; sentinel-release stays disabled.
 
-The shared drain replaces earlier-target serial drains. Matrix observation therefore removes only the obsolete two-drain reservation for three targets; it retains the full twenty-minute review bound, existing five-minute operation margins, per-target preparation lead and original absolute deadline. A three-target fifty-five-minute local consumer case proves a ten-minute observation window without renewing tokens, resetting invocation origin or lowering configured safeguards.
+The shared drain replaces earlier-target serial drains. Matrix observation
+therefore removes only the obsolete two-drain reservation for three targets; it
+retains the full twenty-minute review bound, existing five-minute operation
+margins, per-target preparation lead and original absolute deadline. A
+three-target fifty-five-minute local consumer case proves a ten-minute
+observation window without renewing tokens, resetting invocation origin or
+lowering configured safeguards.
 
-Ordinary CI runs automatically for PRs and canonical master/development pushes. Explicit workflow dispatch supports branch checks; automatic codex/** pushes are redundant and removed. Event-qualified concurrency prevents a branch run from cancelling the PR-only native receipt producer, while preserving development-run protection. These decisions are an implementation contract; actual local, hosted, installed and live acceptance belongs only in the ledger.
+Ordinary CI runs automatically for PRs and canonical master/development pushes.
+Explicit workflow dispatch supports branch checks; automatic codex/** pushes are
+redundant and removed. Event-qualified concurrency prevents a branch run from
+cancelling the PR-only native receipt producer, while preserving development-run
+protection. These decisions are an implementation contract; actual local,
+hosted, installed and live acceptance belongs only in the ledger.
 
 ### Gateway pre-merge CI dispatch and authority inventory (2026-10-23)
 
@@ -302,7 +536,10 @@ https://learn.chatgpt.com/docs/app-server#review.
 
 ### Owner grant, scope and acceptance (2026-10-20 UTC)
 
-The dated grant remains in force for this effort. Its two-target acceptance scope was expanded by the 2026-10-23 three-target directive; current severity policy is the 2026-10-29 clarification, while all independent gates and historical receipts remain.
+The dated grant remains in force for this effort. Its two-target acceptance
+scope was expanded by the 2026-10-23 three-target directive; current severity
+policy is the 2026-10-29 clarification, while all independent gates and
+historical receipts remain.
 
 For this Sentinel autonomy effort, the owner grants the orchestrator blanket
 authority to dispatch, rerun, cancel, enable and disable hosted Sentinel
@@ -318,9 +555,9 @@ authoritative state writes and promotion authority never reach model workers;
 (2) record exact revision SHAs and never select by time or list order; (3)
 durable admission/reservation precedes every model start and settlement follows
 it; (4) autonomous merge requires current CI and a completed internal structured
-review from native Codex review mode, with no unresolved P0 and receipt-bound issue follow-ups for P1 and lower; (5) the
-deterministic Deno controller exclusively owns promotion and `sentinel-release`
-stays disabled.
+review from native Codex review mode, with no unresolved P0 and receipt-bound
+issue follow-ups for P1 and lower; (5) the deterministic Deno controller
+exclusively owns promotion and `sentinel-release` stays disabled.
 
 Runtime implementation uses `gpt-reserve` with the existing HTTP 429 fallback to
 `gpt-6-luna`, both at max reasoning; this supersedes the former `gpt-5.6-luna`
@@ -791,14 +1028,16 @@ deadlines; do not rerun the unchanged failed candidate.
 ### Integration ownership after Muse retirement
 
 On 2026-10-13, the owner stated that Muse is retired and directed the current
-coordinator to take over Sentinel. The then-current GPT-6.1 Sol coordinator received integration ownership; the current primary role owner is recorded in the authoritative build ledger. Independent milestone audits use a fresh GPT-6.1 Sol/max agent. This replaces the Astra-specific development ownership
-and auditor restriction, not runtime model/review policy, credential custody,
-CI, source/target identity or promotion ownership. Preserve existing dirty work
-and recorded lane identities; only the primary writes the authoritative
-build-status ledger. The owner reaffirmed the recorded takeover for this
-continuation on 2026-10-14; actual coordinator model/effort is reported
-separately from role ownership in the ledger and does not change the selected
-execution route.
+coordinator to take over Sentinel. The then-current GPT-6.1 Sol coordinator
+received integration ownership; the current primary role owner is recorded in
+the authoritative build ledger. Independent milestone audits use a fresh GPT-6.1
+Sol/max agent. This replaces the Astra-specific development ownership and
+auditor restriction, not runtime model/review policy, credential custody, CI,
+source/target identity or promotion ownership. Preserve existing dirty work and
+recorded lane identities; only the primary writes the authoritative build-status
+ledger. The owner reaffirmed the recorded takeover for this continuation on
+2026-10-14; actual coordinator model/effort is reported separately from role
+ownership in the ledger and does not change the selected execution route.
 
 Sentinel runs in GitHub Actions. Per the owner directive of 2026-10-07 (commit
 `5aac94da8`, "Make it fully autonomous"), `supervisor-dispatch.yml` runs every
@@ -1074,14 +1313,27 @@ safeguards.
 
 ## Runtime model policy and trusted route configuration
 
-The declared 2026-10-18/20 implementation policy is `gpt-reserve` primary with the existing HTTP-429 `gpt-6-luna` failover, at max reasoning. The resolver default is `gpt-reserve`; the supervisor workflow supplies `vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol'`. The captured repository override at 2026-10-29 20:22:45 UTC is `gpt-6.1-sol`, so configured submission selection differs from the declared policy. These are separate policy, source-default and configuration facts; none proves an actual executed model/provider/effort without bound execution evidence. Documentation maintenance does not change that override, either default, credentials or production routing.
+The declared 2026-10-18/20 implementation policy is `gpt-reserve` primary with
+the existing HTTP-429 `gpt-6-luna` failover, at max reasoning. The resolver
+default is `gpt-reserve`; the supervisor workflow supplies
+`vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol'`. The captured
+repository override at 2026-10-29 20:22:45 UTC is `gpt-6.1-sol`, so configured
+submission selection differs from the declared policy. These are separate
+policy, source-default and configuration facts; none proves an actual executed
+model/provider/effort without bound execution evidence. Documentation
+maintenance does not change that override, either default, credentials or
+production routing.
 
 Owner decision 2026-10-18 supersedes the earlier runtime model selections below:
 use `gpt-reserve` as the runtime implementation primary and `gpt-6-luna` for the
-existing HTTP 429 failover, both with max reasoning. That decision directed the trusted `SENTINEL_IMPLEMENTATION_MODEL_ID` repository override to `gpt-reserve`; it is historical policy provenance, not an instruction to overwrite later configured values during documentation maintenance. Retain the existing `gpt-6-luna` failover default, endpoint, credentials, execution deadlines and durable admission/accounting. Preserve
-the supported route interfaces below. Local coding-agent routing or a
-task-scoped worker model does not change production routing, and this decision
-alone does not prove the live route.
+existing HTTP 429 failover, both with max reasoning. That decision directed the
+trusted `SENTINEL_IMPLEMENTATION_MODEL_ID` repository override to `gpt-reserve`;
+it is historical policy provenance, not an instruction to overwrite later
+configured values during documentation maintenance. Retain the existing
+`gpt-6-luna` failover default, endpoint, credentials, execution deadlines and
+durable admission/accounting. Preserve the supported route interfaces below.
+Local coding-agent routing or a task-scoped worker model does not change
+production routing, and this decision alone does not prove the live route.
 
 The trusted route configuration in
 [src/host/model-route.ts](../src/host/model-route.ts) also supports the gateway
@@ -1090,17 +1342,21 @@ configuration and the previously owner-authorized DeepSeek-direct route selected
 by `SENTINEL_MODEL_FALLBACK=deepseek` with the existing scoped key. Those
 interfaces are retained; this consolidation neither selects a route nor asserts
 which route is live. Reconcile the approved policy and actual installed
-configuration before a future route change. Trusted configuration retains its existing consumer validation and route-resolution refusal/fallback behaviour, and receipts bind the submitted model/provider to actual
-thread/turn/routing evidence. Max reasoning remains required.
+configuration before a future route change. Trusted configuration retains its
+existing consumer validation and route-resolution refusal/fallback behaviour,
+and receipts bind the submitted model/provider to actual thread/turn/routing
+evidence. Max reasoning remains required.
 
-Historical configuration provenance: on 2026-10-17 the owner chose `gpt-6.1-sol` on the ai.ubq.fi gateway as the
-implementation model, once generation 80 had six consecutive clean supervisor
-runs. The supervisor workflow binds `SENTINEL_MODEL_ID` to
-`vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol'` in the plan, cell and
-repair jobs alike, so a nonempty `SENTINEL_IMPLEMENTATION_MODEL_ID` repository
-variable overrides it. The older `SENTINEL_MODEL_ID` repository variable, which
-held `gpt-reserve`, is no longer read and can be deleted. Reasoning stays `max`,
-the 429 failover stays `gpt-6-luna`. Reviewer model naming does not establish invocation mode: the current actual path uses native Codex review, with selection owned by Codex.
+Historical configuration provenance: on 2026-10-17 the owner chose `gpt-6.1-sol`
+on the ai.ubq.fi gateway as the implementation model, once generation 80 had six
+consecutive clean supervisor runs. The supervisor workflow binds
+`SENTINEL_MODEL_ID` to `vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol'`
+in the plan, cell and repair jobs alike, so a nonempty
+`SENTINEL_IMPLEMENTATION_MODEL_ID` repository variable overrides it. The older
+`SENTINEL_MODEL_ID` repository variable, which held `gpt-reserve`, is no longer
+read and can be deleted. Reasoning stays `max`, the 429 failover stays
+`gpt-6-luna`. Reviewer model naming does not establish invocation mode: the
+current actual path uses native Codex review, with selection owned by Codex.
 
 ## Review and development delivery
 
@@ -1136,10 +1392,19 @@ target PRs. Those PRs use native Codex review mode through the internal review
 service, with reviewer selection delegated to Codex as clarified above. A model
 alias and a normal review-prompted turn do not meet that contract. Silence, a
 reaction or absence of comments does not establish a completed review. No
-unresolved P0 may pass the severity gate; P1 and lower findings remain in their original receipts and use the existing authorized issue-backlog workflow. Positive task acceptance and every independent gate remain required; changed candidate bytes need matching evidence. The separate development-review preference above does not satisfy this
-runtime gate.
+unresolved P0 may pass the severity gate; P1 and lower findings remain in their
+original receipts and use the existing authorized issue-backlog workflow.
+Positive task acceptance and every independent gate remain required; changed
+candidate bytes need matching evidence. The separate development-review
+preference above does not satisfy this runtime gate.
 
-Current runtime task ceilings are selected by `reviewRoundCeilingFor`: five for eligible CI-first-era records, three for legacy or unknown-era records; historical legacy exceptions remain as implemented. This production-throughput development loop has consumed its three rounds and has no fourth. The dated mechanics below preserve their original source; their severity thresholds, universal-three-round claims and branch-protection-existence requirements are superseded by the 2026-10-24/29 decisions.
+Current runtime task ceilings are selected by `reviewRoundCeilingFor`: five for
+eligible CI-first-era records, three for legacy or unknown-era records;
+historical legacy exceptions remain as implemented. This production-throughput
+development loop has consumed its three rounds and has no fourth. The dated
+mechanics below preserve their original source; their severity thresholds,
+universal-three-round claims and branch-protection-existence requirements are
+superseded by the 2026-10-24/29 decisions.
 
 ### Historical 2026-10-16–17 review and carried-delivery record
 
@@ -1490,13 +1755,17 @@ The historical reviewer vendors `openai/codex` tag `rust-v0.162.0`,
 `codex-rs/prompts/templates/review/rubric.md`, SHA-256
 `ec60e7f36a1d1c2679ce095c0205ecc56f7dd8fb57707a13ef362072390f219f`. Do not edit
 the vendored constant in
-[src/github/codex-review-rubric.ts](../src/github/codex-review-rubric.ts).
-The pin/hash and read-only boundary remain provenance. Native review mode owns its rubric and output protocol; the former ordinary-turn adapter's schema override is superseded. A model alias alone does not establish invocation mode. A re-sync still requires a new upstream pin/hash and current-candidate validation;
+[src/github/codex-review-rubric.ts](../src/github/codex-review-rubric.ts). The
+pin/hash and read-only boundary remain provenance. Native review mode owns its
+rubric and output protocol; the former ordinary-turn adapter's schema override
+is superseded. A model alias alone does not establish invocation mode. A re-sync
+still requires a new upstream pin/hash and current-candidate validation;
 [the alignment note](codex-review-rubric-alignment-2026-10-08.md) gives
 verification details.
 
 Never add Sentinel branch protection rules or rulesets, or recreate deleted
-rules. Effective configured target checks and approvals remain honoured; branch rules and rulesets are not required to exist.
+rules. Effective configured target checks and approvals remain honoured; branch
+rules and rulesets are not required to exist.
 
 ## GitHub identity and target scope
 
@@ -1579,7 +1848,12 @@ restore a spent round or authorize a merge.
 
 ## Blocked-work recovery and decomposition (2026-10-15)
 
-Historical source/generation record. Its P0/P1 severity thresholds and then-current review ceilings do not govern current operation; apply the current P0-only severity decision. Positive task acceptance remains an independent gate, and original findings, blockers, counters and charges remain unchanged. The old 200-reservation and six-reservation descriptions below are dated behaviour, not current admission limits.
+Historical source/generation record. Its P0/P1 severity thresholds and
+then-current review ceilings do not govern current operation; apply the current
+P0-only severity decision. Positive task acceptance remains an independent gate,
+and original findings, blockers, counters and charges remain unchanged. The old
+200-reservation and six-reservation descriptions below are dated behaviour, not
+current admission limits.
 
 Only unresolved P0/P1 findings reject a reviewed head, send it to correction,
 fail task-acceptance recovery or qualify a historical correction review for a
@@ -1926,7 +2200,10 @@ is reported `ingested` and never defers the launcher's producer walk.
 
 ## Spent-round delivery and review follow-ups (2026-10-16, launcher only)
 
-Historical source/generation record. Its P0/P1 severity thresholds and then-current review ceilings do not govern current operation; apply the current P0-only severity decision. Positive task acceptance remains an independent gate, and original findings, blockers, counters and charges remain unchanged.
+Historical source/generation record. Its P0/P1 severity thresholds and
+then-current review ceilings do not govern current operation; apply the current
+P0-only severity decision. Positive task acceptance remains an independent gate,
+and original findings, blockers, counters and charges remain unchanged.
 
 Owner decision 2026-10-16: review rounds are capped at three, CI comes before
 review, a PR merges once its latest completed current-head review has no
@@ -2077,7 +2354,10 @@ no state and no matrix cell.
 
 ## Generation 80 installation (2026-10-17)
 
-Historical source/generation record. Its P0/P1 severity thresholds and then-current review ceilings do not govern current operation; apply the current P0-only severity decision. Positive task acceptance remains an independent gate, and original findings, blockers, counters and charges remain unchanged.
+Historical source/generation record. Its P0/P1 severity thresholds and
+then-current review ceilings do not govern current operation; apply the current
+P0-only severity decision. Positive task acceptance remains an independent gate,
+and original findings, blockers, counters and charges remain unchanged.
 
 Generation 80 is R80 e48e7e110, the live launcher 413f9eff6 plus the reviewed
 generation-80 lanes: the hard three-round review ceiling on every review path
@@ -2329,7 +2609,10 @@ annotations with the reason `forbidden_actions_read`.
 
 ## Generation 81 task acceptance corrections (2026-10-17, JAM B6)
 
-Historical source/generation record. Its P0/P1 severity thresholds and then-current review ceilings do not govern current operation; apply the current P0-only severity decision. Positive task acceptance remains an independent gate, and original findings, blockers, counters and charges remain unchanged.
+Historical source/generation record. Its P0/P1 severity thresholds and
+then-current review ceilings do not govern current operation; apply the current
+P0-only severity decision. Positive task acceptance remains an independent gate,
+and original findings, blockers, counters and charges remain unchanged.
 
 Owner rules: an unaccepted candidate never merges and only P0/P1 block a merge,
 so a completed review whose only refusal is a `not_fulfilled` task acceptance,
@@ -3823,3 +4106,49 @@ The owner requested faster CI with lower runner use.
 - A newer run does not cancel running `development` CI.
 
 PR #217 and its measured CI results are recorded in `build-status.md`.
+
+## 2026-10-31: no per-pass, per-repository merge count in the delivery pass
+
+Owner directive (2026-10-31, throughput): deliveries per hour must rise. The
+launcher delivery pass used to merge at most once per repository per pass while
+a maintenance pass takes 25-55 minutes.
+
+- Supersedes the delivery-pass bullets of "2026-10-25: maintenance throughput
+  caps and the `retried` status" (`docs/DECISIONS.md:3378-3385`: "The delivery
+  pass calls merge at most once per repository per pass (a set of scope keys) …
+  every later open pull request of that repository is `merge_deferred` for the
+  pass") and of "Spent-round delivery and review follow-ups (2026-10-16,
+  launcher only)" (`docs/DECISIONS.md:1973-1982`: "calls merge at most once …
+  every later open pull request in that pass is `merge_deferred` before any gate
+  is read"). The `mergedRepositories` set, the `merge_deferred` action and the
+  count they enforced are gone.
+- Records are visited oldest first (`createdAt`, then the record id as the
+  tie-break), never list position, so two passes over the same snapshot attempt
+  the same candidates in the same sequence.
+- Every merge keeps every gate unchanged: current-head CI on the exact head not
+  red, the completed current-head native review with no unresolved P0, task
+  acceptance, queue custody, the exact reviewed head and the merge-commit parent
+  check. Durable admission and settlement (reservations, charges, accounting
+  rows) stay per merge.
+- The replaced count is base re-verification. A merge call, whatever it answers
+  (merged, refused, lost or thrown), may have moved that repository's tip, so
+  the pass drops its cached `deliveryTips` and `tipGreen` entries for the scope
+  at the call, and the next candidate re-reads its own repository's tip and re-
+  reads it uncached immediately before its merge call. A candidate whose
+  reviewed base is not that tip is refused by the existing `base_moved` (or
+  `carried_base_moved`) gate and waits for a later pass; it never merges onto a
+  commit whose CI nobody checked. Candidates in different repositories are
+  independent, and a refused merge no longer defers its own repository's other
+  candidates.
+- The only per-pass bound left in this phase is the run window: the deadline
+  check at the top of every iteration, which defers the rest instead of an
+  artificial count.
+- Unchanged: a Gateway or self merge/booking still writes delivery state and
+  ends the delivery phase for that pass, so it is still one delivery write per
+  pass on those targets (the correction in the 2026-10-25 entry); that write
+  owns the release request and is not another count.
+- Model check: `mergeSlotFairness` in `tests/model/fleet.ts` no longer anchors a
+  merge slot. It pins the cache invalidation that replaces it and shows the
+  refused record's sibling merging in the same pass, and
+  `J3:delivery:no-merge-slot` is no longer a known jam. The moved-tip refusal is
+  proved by `tests/host/hosted-autonomy-merge-per-repository_test.ts`.

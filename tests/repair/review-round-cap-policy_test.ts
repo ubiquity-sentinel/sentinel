@@ -642,8 +642,18 @@ Deno.test("round cap policy: only the BASE_MOVED and REVIEWED parks are delivera
   assert.equal(isDeliverableReviewRoundCeilingPark(task(3)), false);
 });
 
-Deno.test("round cap policy: a model-authored candidate can never weaken the ceiling", () => {
+Deno.test("round cap policy: the ceiling is ordinary model work; only credential, dispatch, merge-gate and promotion authority stay protected", () => {
   const { protectedPaths } = createLocalRepositoryConfig();
+  for (
+    const path of [
+      "src/host/supervisor-dispatch.ts",
+      "src/host/actions-premerge-ci.ts",
+      "src/github/port-evidence.ts",
+      "src/github/port-merge-policy.ts",
+      "src/host/hosted-app-credentials.ts",
+      "src/host/local-release.ts",
+    ]
+  ) assert.ok(protectedPaths.includes(path), path);
   for (
     const path of [
       "src/repair/review-round-cap.ts",
@@ -663,7 +673,7 @@ Deno.test("round cap policy: a model-authored candidate can never weaken the cei
       "ops/hosted-autonomy-refresh-rearm.ts",
       "ops/hosted-autonomy-base-refresh-retries.ts",
     ]
-  ) assert.ok(protectedPaths.includes(path), path);
+  ) assert.ok(!protectedPaths.includes(path), path);
 });
 
 Deno.test("round cap policy: a CI-first-era record may spend five rounds (owner decision 2026-10-24)", () => {
