@@ -38,8 +38,16 @@ function fixture(compatible = false) {
     runtime: runtimeRecord({
       revision: compatible ? NEXT : PRIOR,
       generation: compatible ? 80 : 79,
-      healthyProof: healthyProof(PRIOR, 79, 501),
-      executionProof: healthyProof(PRIOR, 79, 501),
+      healthyProof: healthyProof(
+        compatible ? NEXT : PRIOR,
+        compatible ? 80 : 79,
+        501,
+      ),
+      executionProof: healthyProof(
+        compatible ? NEXT : PRIOR,
+        compatible ? 80 : 79,
+        501,
+      ),
     }),
   });
   const repair = retainedRepairHistory().original;

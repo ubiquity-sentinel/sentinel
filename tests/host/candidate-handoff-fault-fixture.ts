@@ -4,7 +4,6 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import { portError } from "../../src/contracts/ports.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import {
-  createLocalRepositoryConfig,
   createPrepareBaseRefresh,
   unavailableIncidents,
   unavailableReplay,
@@ -21,6 +20,7 @@ import { candidateBranch, workItemIdForIssue } from "../../src/repair/keys.ts";
 import { createRepairStateStore } from "../../src/state/mod.ts";
 import { FakeAuthProvider, FakeReviewService } from "../github/helpers.ts";
 import { FakeClock } from "../repair/helpers.ts";
+import { repairReadThrough } from "./hosted-autonomy-rig.ts";
 import {
   gitRun,
   reservation,
@@ -37,6 +37,7 @@ import {
   BASE_BRANCH,
   expectOk,
   gitEnv,
+  handoffRepositoryConfig,
   hasObject,
   head,
   ISSUE_NUMBER,
@@ -254,6 +255,10 @@ export async function setupCandidateFaultFixture(
     scratchDir: `${tmp}/state-scratch`,
     remoteUrl: `${tmp}/state.git`,
   });
+  state.readRepair = repairReadThrough(
+    state.readRepair.bind(state),
+    `${tmp}/state.git`,
+  );
   let ackRejections = 0;
   if (options.interceptPreservationAcknowledgement === true) {
     const original = state.writeRepair.bind(state);
@@ -376,7 +381,7 @@ export async function setupCandidateFaultFixture(
 
   const clock = new FakeClock(NOW);
   const gate = new DurableGitHubCooldownGate({ state, clock });
-  const config = createLocalRepositoryConfig();
+  const config = handoffRepositoryConfig();
   const http = makeRefReadingTransport({
     repository: REPOSITORY,
     pullRequestNumber: PR_NUMBER,

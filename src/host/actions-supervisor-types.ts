@@ -33,6 +33,13 @@ export interface HostedSupervisorEvidencePortV1 {
     execution: HostedExecutionIntentV1,
   ): Promise<boolean>;
   verifyRevision(revision: GitSha): Promise<PortResultV1<boolean>>;
+  verifyAncestor?(
+    ancestor: GitSha,
+    descendant: GitSha,
+  ): Promise<PortResultV1<boolean>>;
+  verifyLauncherCi?(
+    revision: GitSha,
+  ): Promise<PortResultV1<{ revision: GitSha; checkRunId: number } | null>>;
   /** Ordinary-only proof of the exact admitted revision's native matrix entrypoint. */
   verifyMatrixOrdinaryRevision?(
     revision: GitSha,

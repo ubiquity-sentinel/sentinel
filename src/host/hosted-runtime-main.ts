@@ -21,6 +21,8 @@ import { APP_TOKEN_MINTED_NOT_BEFORE_ENV } from "./hosted-app-token-window.ts";
 import { HOSTED_APP_MINT_GRANT_ENV } from "./hosted-app-grant.ts";
 import { reviewCommandItemRefusalLines } from "./hosted-runtime-status.ts";
 import { runHostedRuntimeWithReviewCustody } from "./review-owner-host.ts";
+import { fallbackHostedRuntimeSummary } from "./hosted-runtime-launcher.ts";
+import type { HostedRuntimeSummaryV1 } from "../contracts/hosted-execution.ts";
 
 /**
  * The exact process inputs the launcher reads besides the native identity.
@@ -145,7 +147,7 @@ function logHostedDiagnostic(diagnostic: HostedModelDiagnosticV1): void {
 }
 
 export function emitHostedRuntimeCliResult(
-  result: HostedRuntimeLauncherResultV1,
+  result: HostedRuntimeLauncherResultV1 & { summary?: HostedRuntimeSummaryV1 },
 ): 0 | 1 {
   for (const settlement of result.reviewOwnerSettlements ?? []) {
     console.log(JSON.stringify(settlement));
@@ -171,6 +173,10 @@ export function emitHostedRuntimeCliResult(
     console.log(JSON.stringify(result.launcherRejection));
   }
   printReviewCommandRefusals(result);
+  // Exactly one advisory summary, after all child evidence; terminal readers are unchanged.
+  console.log(
+    JSON.stringify(result.summary ?? fallbackHostedRuntimeSummary(result)),
+  );
   if (result.status !== "healthy") {
     console.error(result.detail);
     return 1;

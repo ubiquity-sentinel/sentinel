@@ -1,10 +1,7 @@
 import { DORMANT_HOSTED_SUPERVISOR_POLICY as dormant } from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
-import { parseHostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
-import { ReviewOwnerCustodyBroker } from "../../src/host/review-owner-custody.ts";
 import { runHostedRuntimeLauncher } from "../../src/host/hosted-runtime-launcher.ts";
-import { HOSTED_RUNTIME_CHILD_ENTRYPOINT } from "../../src/host/hosted-runtime-identity.ts";
 import { runOwnerDevelopmentInstallMain } from "../../src/host/owner-install-run.ts";
 import { planOwnerDevelopmentInstall } from "../../src/host/owner-install-plan.ts";
 import { buildOwnerDevelopmentInstallSnapshot } from "../../src/host/owner-install-snapshot.ts";
@@ -191,87 +188,31 @@ Deno.test("queue runtime capability: owner snapshot builder cannot bypass the pl
   );
 });
 
-Deno.test("queue runtime capability: actual launcher blocks all purposes and matrix replay before child or review custody starts", async (t) => {
-  const cases = [
-    ["repair", "ordinary"],
-    ["repair", "bootstrap"],
-    ["repair", "prior"],
-    ["repair", "candidate"],
-    ["repair", "rollback"],
-    ["matrix_plan", "ordinary"],
-    ["matrix_cell", "ordinary"],
-  ] as const;
-  for (const [job, purpose] of cases) {
-    await t.step(`${job}/${purpose}`, async () => {
-      const rig = await makeRig();
-      try {
-        rig.execution = parseHostedExecutionIntentV1({
-          ...rig.execution,
-          purpose,
-          releaseId: ["prior", "candidate", "rollback"].includes(purpose)
-            ? "release-fixture"
-            : null,
-        });
-        await seedRelease(rig);
-        const before = await rig.release.readRelease();
-        let custodyStarts = 0;
-        const broker = purpose === "ordinary"
-          ? new ReviewOwnerCustodyBroker(rig.execution, [{
-            repository: {
-              owner: "ubiquity",
-              name: "sentinel",
-              installationId: 0,
-            },
-            provider: "fixture",
-            model: "fixture",
-            permissionProfile: "fixture",
-            session: {
-              command: ["never-start"],
-              cwd: rig.runtimeDir,
-              env: {},
-              operationDeadlineMs: 1000,
-            },
-          }])
-          : undefined;
-        if (broker !== undefined) {
-          broker.start = () => {
-            custodyStarts++;
-            return Promise.reject(new Error("custody must not start"));
-          };
-        }
-        const result = await runHostedRuntimeLauncher({
-          state: rig.release,
-          clock: rig.clock,
-          env: { ...rig.env, GITHUB_JOB: job },
-          launcherDir: rig.launcherDir,
-          runtimeDir: rig.runtimeDir,
-          denoExecutable: Deno.execPath(),
-          process: rig.process,
-          reviewCustody: broker,
-        }, {
-          ...policy([OTHER_REVISION]),
-          ownerInstallMigrations: [{
-            fromRevision: rig.execution.revision,
-            fromGeneration: 1,
-            toRevision: OTHER_REVISION,
-            toGeneration: 2,
-          }],
-        }, dormant.custody);
-        assert.equal(result.status, "unavailable");
-        assert.equal(result.terminal, null);
-        assert.equal(
-          rig.process.calls.filter((call) =>
-            call.args.includes(HOSTED_RUNTIME_CHILD_ENTRYPOINT) ||
-            call.args.includes("src/host/matrix-actions.ts")
-          ).length,
-          0,
-        );
-        assert.equal(custodyStarts, 0);
-        assert.deepEqual(await rig.release.readRelease(), before);
-      } finally {
-        await rig.cleanup();
-      }
-    });
+Deno.test("queue runtime admission: exact saved ordinary execution ignores retired queue floors", async () => {
+  const rig = await makeRig();
+  try {
+    await seedRelease(rig);
+    const before = await rig.release.readRelease();
+    rig.process.child = exited(childLine(rig.execution));
+    const result = await runHostedRuntimeLauncher(
+      {
+        state: rig.release,
+        clock: rig.clock,
+        env: rig.env,
+        launcherDir: rig.launcherDir,
+        runtimeDir: rig.runtimeDir,
+        denoExecutable: Deno.execPath(),
+        process: rig.process,
+      },
+      policy([OTHER_REVISION]),
+      dormant.custody,
+    );
+    assert.equal(result.status, "healthy", JSON.stringify(result));
+    assert.equal(rig.process.childCalls().length, 1);
+    assert.deepEqual(result.terminal?.execution, rig.execution);
+    assert.deepEqual(await rig.release.readRelease(), before);
+  } finally {
+    await rig.cleanup();
   }
 });
 

@@ -243,7 +243,7 @@ export class CopyingRepairState
 }
 
 /**
- * Test-local, multiwave-only read-through view of the REAL release store.
+ * Test-local read-through view of immutable snapshots from the REAL Git store.
  * Every read first proves the actual current authoritative remote head with a
  * cheap native `git ls-remote` against the fixture's own real bare remote, and
  * returns the cloned cached snapshot only when that fresh head exactly equals
@@ -252,18 +252,19 @@ export class CopyingRepairState
  * identity or a moved head always falls through to the real read, so a stale
  * cache is never returned; writes and readReleaseAt stay fully real/uncached.
  */
-export function releaseReadThrough(
-  delegate: () => ReturnType<StateReadView["readRelease"]>,
+function snapshotReadThrough<T>(
+  delegate: () => Promise<PortResultV1<StateReadResultV1<T>>>,
   remoteUrl: string,
-): StateReadView["readRelease"] {
+  ref: string,
+): () => Promise<PortResultV1<StateReadResultV1<T>>> {
   let cached: {
     head: GitSha;
-    value: Awaited<ReturnType<StateReadView["readRelease"]>>;
+    value: Awaited<ReturnType<typeof delegate>>;
   } | null = null;
   return async () => {
     const probe = await gitRun(
       remoteUrl,
-      ["ls-remote", remoteUrl, "refs/heads/sentinel-state/release"],
+      ["ls-remote", remoteUrl, ref],
       ENV,
     );
     const nativeHead = probe.ok
@@ -286,6 +287,29 @@ export function releaseReadThrough(
   };
 }
 
+export function releaseReadThrough(
+  delegate: StateReadView["readRelease"],
+  remoteUrl: string,
+): StateReadView["readRelease"] {
+  return snapshotReadThrough(
+    delegate,
+    remoteUrl,
+    "refs/heads/sentinel-state/release",
+  );
+}
+
+/** Real repair writes and every fresh native head probe remain uncached. */
+export function repairReadThrough(
+  delegate: StateReadView["readRepair"],
+  remoteUrl: string,
+): StateReadView["readRepair"] {
+  return snapshotReadThrough(
+    delegate,
+    remoteUrl,
+    "refs/heads/sentinel-state/repair",
+  );
+}
+
 export async function makeRig(
   prefix: string,
   options: {
@@ -302,6 +326,8 @@ export async function makeRig(
      * the same instance.
      */
     releaseReadThrough?: boolean;
+    /** Cache only immutable snapshots after a fresh exact repair-ref read. */
+    repairReadThrough?: boolean;
     /** Scoped archive fixtures use the repository's existing CI read scope. */
     fixtureDir?: string;
     release?: ReleaseStateSnapshotV1;
@@ -333,6 +359,9 @@ export async function makeRig(
     };
   } = {},
 ): Promise<{ rig: RigV1; github: HostedAutonomyGitHubV1 }> {
+  if (options.repairReadThrough && options.repairState !== undefined) {
+    throw new Error("repair read-through requires the real Git state store");
+  }
   const tmp = await Deno.makeTempDir({
     prefix: `sentinel-${prefix}-`,
     dir: options.fixtureDir,
@@ -401,7 +430,9 @@ export async function makeRig(
   const rig: RigV1 = {
     tmp,
     state: {
-      readRepair: () => repairState.readRepair(),
+      readRepair: options.repairReadThrough
+        ? repairReadThrough(() => repairState.readRepair(), ctx.remoteUrl)
+        : () => repairState.readRepair(),
       readRelease: options.releaseReadThrough
         ? releaseReadThrough(realReadRelease, `${tmp}/remote.git`)
         : realReadRelease,

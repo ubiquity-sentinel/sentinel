@@ -409,7 +409,13 @@ export async function rig(
         GITHUB_TOKEN: "fake-read-token",
         SENTINEL_SUPERVISOR_TOKEN: "fake-app-token",
         UOS_AI_TOKEN: "fake-model-token",
-        PATH: root + "/bin:" + (Deno.env.get("PATH") ?? "/usr/bin:/bin"),
+        // The protected owner requires an absolute trusted tool search path.
+        PATH: [
+          root + "/bin",
+          ...(Deno.env.get("PATH") ?? "/usr/bin:/bin").split(":").filter(
+            (part) => part.startsWith("/"),
+          ),
+        ].join(":"),
         HOME: root + "/home",
         GITHUB_OUTPUT: root + "/" + name + "/output",
         SENTINEL_COOLDOWN_MODE: "off",

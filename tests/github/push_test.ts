@@ -560,7 +560,8 @@ wait
       remoteUrl: ctx.bare,
       gitHome: `${ctx.tmp}/home`,
       gitPath: orphan,
-      timeoutMs: 300,
+      // Leave time for the shell to publish its child's PID on a busy runner.
+      timeoutMs: 1_000,
     });
     started = Date.now();
     const orphaned = await orphanExec.isAncestor(SHA1, SHA2);

@@ -18,6 +18,7 @@ import {
 import {
   bootstrapHealthy,
   driftedTask,
+  ordinaryTurn,
   persistPromotingIntent,
 } from "./actions-supervisor-lifecycle-fixture.ts";
 
@@ -70,20 +71,22 @@ Deno.test("hosted supervisor core: a persisted promote intent is re-authorized i
   const rig = await makeRig();
   try {
     await bootstrapHealthy(rig);
+    await ordinaryTurn(rig, 9001);
     const request = releaseRequest();
     await rig.seedRepair([request], [reviewReceipt(request)]);
     rig.evidence.requests.add(request.id);
     const prior = requireRun(await rig.prepare(run(2)));
     assert.equal(prior.purpose, "prior");
     rig.evidence.settlements.set(prior.id, runProof(prior, "healthy"));
+    await ordinaryTurn(rig, 9002);
     // The real core persists the intent, then its pointer write is refused:
     // the durable state is the exact resumed intent a later prepare sees.
     await persistPromotingIntent(rig, run(3));
     // The live issue text changed after the intent was persisted: the resumed
-    // prepare must not move the active revision or clear the old intent.
+    // Ordinary work may interleave, but cannot move the pointer or clear the intent.
     rig.evidence.tasks.set(ISSUE, await driftedTask(`${TASK_BODY} (edited)`));
     const before = await rig.snapshot();
-    assert.equal((await rig.prepare(run(4))).status, "pending");
+    await ordinaryTurn(rig, 4);
     const after = await rig.snapshot();
     assert.equal(after.hostedRuntimes[0].activeRevision, LAUNCHER);
     assert.equal(after.hostedRuntimes[0].generation, 1);
@@ -93,7 +96,7 @@ Deno.test("hosted supervisor core: a persisted promote intent is re-authorized i
     // An unavailable trusted read refuses the same move and keeps the intent.
     rig.evidence.tasks.delete(ISSUE);
     rig.evidence.taskFail = true;
-    assert.equal((await rig.prepare(run(5))).status, "pending");
+    await ordinaryTurn(rig, 5);
     rig.evidence.taskFail = false;
     assert.deepEqual(
       (await rig.snapshot()).hostedReleases,
@@ -118,6 +121,7 @@ Deno.test("hosted supervisor core: a supported review_quota wait survives readRe
   const rig = await makeRig();
   try {
     await bootstrapHealthy(rig);
+    await ordinaryTurn(rig, 9001);
     const request = releaseRequest();
     // The installed runtime's own bounded quota wait: nextStep review with a
     // budget-bound review_quota reason, exactly as the captured repair record

@@ -10,6 +10,7 @@ import type {
 import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
 import { FakeModel } from "../repair/helpers.ts";
 import { gitRun, T0 } from "../state/helpers.ts";
+import { createLocalRepositoryConfig } from "../../src/host/local.ts";
 import type { PreservationRefV1 } from "./candidate-handoff-fault-fixture.ts";
 
 const HERE = new URL(import.meta.url);
@@ -43,6 +44,11 @@ export const TRUSTED_REVIEWER = "chatgpt-codex-connector[bot]";
 export const PRODUCER_BRANCH = "sentinel-producer";
 
 export const NOW = T0 + 2000;
+
+/** The tiny Git fixture protects its retained file; full policy coverage lives in snapshot tests. */
+export function handoffRepositoryConfig() {
+  return { ...createLocalRepositoryConfig(), protectedPaths: ["shared.txt"] };
+}
 
 export function gitEnv(home: string): Record<string, string> {
   return {

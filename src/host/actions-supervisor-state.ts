@@ -6,7 +6,7 @@ import { parseHostedExecutionSettlementV1 } from "../contracts/hosted-supervisor
 import type {
   HostedExecutionIntentV1,
   HostedExecutionSettlementV1,
-  HostedPointerIntentV1,
+  HostedInstallationRecordV1,
   HostedReleaseRecordV1,
   HostedRuntimeRecordV1,
 } from "../contracts/hosted-supervisor.ts";
@@ -19,10 +19,8 @@ import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { ReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { tryParse } from "../contracts/validation.ts";
-import {
-  allowsHostedRuntimeMove,
-  allowsHostedRuntimeTransition,
-} from "./hosted-runtime-compatibility.ts";
+import { emptyHostedVerification } from "../contracts/hosted-supervisor-verification.ts";
+import { settleHostedInstallations } from "./actions-supervisor-installation-state.ts";
 import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
 import type { ExistingPrRuntimeCapability } from "./existing-pr-runtime-capability.ts";
 import type {
@@ -134,7 +132,7 @@ export function isTerminalPhase(
   phase: HostedReleaseRecordV1["phase"],
 ): boolean {
   return phase === "accepted" || phase === "rolled_back" ||
-    phase === "owner_superseded";
+    phase === "owner_superseded" || phase === "abandoned";
 }
 
 export function isSettledCurrentRun(
@@ -177,18 +175,10 @@ export async function commitHosted(
   cursor: SnapshotCursorV1,
   runtime: HostedRuntimeRecordV1 | null,
   releases: readonly HostedReleaseRecordV1[],
+  installations?: readonly HostedInstallationRecordV1[],
 ): Promise<"applied" | "pending"> {
   const now = input.clock.now();
   const base = cursor.snapshot;
-  if (
-    !allowsHostedRuntimeTransition(
-      base,
-      runtime,
-      releases,
-      input.queueRuntimeCapability,
-      input.existingPrRuntimeCapability,
-    )
-  ) return "pending";
   const candidate: ReleaseStateSnapshotV1 = base === null
     ? {
       version: "v1",
@@ -199,6 +189,9 @@ export async function commitHosted(
       releases: [],
       hostedRuntimes: runtime === null ? [] : [runtime],
       hostedReleases: [...releases].sort(byId),
+      ...(installations === undefined
+        ? {}
+        : { hostedInstallations: [...installations].sort(byId) }),
       githubCooldowns: [],
     }
     : {
@@ -209,6 +202,9 @@ export async function commitHosted(
       updatedAt: now,
       hostedRuntimes: runtime === null ? [] : [runtime],
       hostedReleases: [...releases].sort(byId),
+      ...(installations === undefined
+        ? {}
+        : { hostedInstallations: [...installations].sort(byId) }),
     };
   let parsed: ReleaseStateSnapshotV1;
   try {
@@ -337,40 +333,67 @@ export function sameCanonical(a: unknown, b: unknown): boolean {
 function attachReleaseSettlement(
   releases: readonly HostedReleaseRecordV1[],
   settlement: HostedExecutionSettlementV1,
-  generation: number,
   now: number,
-  capability?: QueueRuntimeCapability,
-  custodyCapability?: ExistingPrRuntimeCapability,
 ): HostedReleaseRecordV1[] {
   const releaseId = settlement.execution.releaseId;
   if (releaseId === null) return [...releases];
-  const record = releases.find((item) => item.id === releaseId);
+  let record = releases.find((item) => item.id === releaseId);
   if (record === undefined) return [...releases];
   let next = record;
   const purpose = settlement.execution.purpose;
+  if (purpose === "prior" || purpose === "candidate") {
+    const journal = record.verification?.[purpose];
+    if (
+      journal?.executionIds.includes(settlement.execution.id) &&
+      !journal.settledExecutionIds.includes(settlement.execution.id)
+    ) {
+      const value = {
+        ...journal,
+        settledExecutionIds: [
+          ...journal.settledExecutionIds,
+          settlement.execution.id,
+        ],
+        failures: journal.failures + (settlement.outcome === "healthy" ? 0 : 1),
+        lastFailure: settlement.outcome === "healthy" ? journal.lastFailure : {
+          proof: settlement,
+          reason: settlement.outcome === "failed"
+            ? "execution_failed" as const
+            : "not_started" as const,
+        },
+      };
+      record = {
+        ...record,
+        verification: {
+          prior: record.verification?.prior ?? emptyHostedVerification(),
+          candidate: record.verification?.candidate ??
+            emptyHostedVerification(),
+          [purpose]: value,
+        },
+        updatedAt: now,
+      };
+      next = record;
+    }
+  }
   if (purpose === "prior") {
     if (
       record.phase === "requested" && record.priorProof === null &&
-      settlement.outcome === "healthy" &&
-      allowsHostedRuntimeMove(
-        record.priorRevision,
-        record.request.revision,
-        capability,
-        custodyCapability,
-      )
+      settlement.outcome === "healthy"
     ) {
-      const intent: HostedPointerIntentV1 = {
-        action: "promote",
-        expectedRevision: record.priorRevision,
-        nextRevision: record.request.revision,
-        expectedGeneration: generation,
-        createdAt: now,
-      };
       next = {
         ...record,
-        phase: "promoting",
         priorProof: settlement,
-        pointerIntent: intent,
+        updatedAt: now,
+      };
+    } else if (record.verification?.prior.failures === 2) {
+      next = {
+        ...record,
+        phase: "abandoned",
+        abandonment: {
+          reason: "prior_verification_exhausted",
+          fromPhase: "requested",
+          executionIds: record.verification.prior.executionIds,
+          recordedAt: now,
+        },
         updatedAt: now,
       };
     }
@@ -390,6 +413,8 @@ function attachReleaseSettlement(
           candidateProof: settlement,
           updatedAt: now,
         };
+      } else if (record.verification?.candidate.failures === 2) {
+        next = { ...record, phase: "rollback_pending", updatedAt: now };
       }
     }
   } else if (purpose === "rollback") {
@@ -399,13 +424,24 @@ function attachReleaseSettlement(
     ) {
       next = {
         ...record,
-        phase: "rolled_back",
+        phase: "abandoned",
         rollbackProof: settlement,
+        abandonment: {
+          reason: record.candidateProof?.outcome === "failed"
+            ? "candidate_verification_failed"
+            : "candidate_verification_exhausted",
+          fromPhase: "rollback_verifying",
+          executionIds: record.verification?.candidate.executionIds ??
+            (record.candidateProof ? [record.candidateProof.execution.id] : []),
+          recordedAt: now,
+        },
         updatedAt: now,
       };
     }
   }
-  if (next === record) return [...releases];
+  if (next === releases.find((item) => item.id === releaseId)) {
+    return [...releases];
+  }
   return releases.map((item) => item.id === record.id ? next : item);
 }
 
@@ -422,6 +458,21 @@ export function settleRuntime(
   // observation time so a later workflow can retry; no budget is touched.
   const ordinaryNotStarted = settlement.outcome === "not_started" &&
     settlement.execution.purpose === "ordinary";
+  const verification = settlement.execution.purpose !== "ordinary";
+  const failureIds = [...(runtime.failedVerificationIds ?? [])];
+  if (
+    verification && settlement.outcome === "failed" && failureIds.length < 2 &&
+    !failureIds.includes(settlement.execution.id)
+  ) failureIds.push(settlement.execution.id);
+  const installations = settleHostedInstallations(
+    cursor.snapshot?.hostedInstallations ?? [],
+    settlement,
+    now,
+  );
+  const installationSettlement = installations.some((i) =>
+    i.bootstrapProof?.execution.id === settlement.execution.id ||
+    i.rollbackProof?.execution.id === settlement.execution.id
+  );
   const runtimeNext: HostedRuntimeRecordV1 = {
     ...runtime,
     execution: null,
@@ -433,16 +484,29 @@ export function settleRuntime(
       ? settlement.observedAt
       : runtime.nextOrdinaryAt,
     updatedAt: now,
+    ...(verification
+      ? {
+        verificationFailures: failureIds.length,
+        failedVerificationIds: failureIds,
+        lastVerificationId: settlement.execution.id,
+      }
+      : {}),
+    ...(settlement.execution.purpose === "rollback" || installationSettlement
+      ? { verificationBlocked: settlement.outcome !== "healthy" }
+      : {}),
   };
   const releasesNext = attachReleaseSettlement(
     releases,
     settlement,
-    runtime.generation,
     now,
-    input.queueRuntimeCapability,
-    input.existingPrRuntimeCapability,
   );
-  return commitHosted(input, cursor, runtimeNext, releasesNext);
+  return commitHosted(
+    input,
+    cursor,
+    runtimeNext,
+    releasesNext,
+    installations.length > 0 ? installations : undefined,
+  );
 }
 
 /** Consume a persisted pointer intent atomically (no execution in this CAS). */
@@ -450,8 +514,8 @@ export function planPointerRecovery(
   runtime: HostedRuntimeRecordV1,
   releases: readonly HostedReleaseRecordV1[],
   now: number,
-  capability?: QueueRuntimeCapability,
-  custodyCapability?: ExistingPrRuntimeCapability,
+  _capability?: QueueRuntimeCapability,
+  _custodyCapability?: ExistingPrRuntimeCapability,
 ): {
   runtime: HostedRuntimeRecordV1;
   releases: HostedReleaseRecordV1[];
@@ -464,18 +528,6 @@ export function planPointerRecovery(
   if (record === undefined || record.pointerIntent === null) return null;
   const intent = record.pointerIntent;
   if (
-    !allowsHostedRuntimeMove(
-      intent.expectedRevision,
-      intent.nextRevision,
-      capability,
-      custodyCapability,
-    ) ||
-    !allowsHostedRuntimeMove(
-      record.priorRevision,
-      record.request.revision,
-      capability,
-      custodyCapability,
-    ) ||
     runtime.activeRevision !== intent.expectedRevision ||
     runtime.generation !== intent.expectedGeneration
   ) {
@@ -490,6 +542,9 @@ export function planPointerRecovery(
       activeRevision: intent.nextRevision,
       generation: runtime.generation + 1,
       updatedAt: now,
+      verificationFailures: 0,
+      failedVerificationIds: [],
+      lastVerificationId: null,
     },
     releases: releases.map((item) =>
       item.id === record.id

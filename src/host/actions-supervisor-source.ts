@@ -1,9 +1,5 @@
 /** Hosted actions-supervisor-source responsibility. */
 import type { GitSha } from "../contracts/brands.ts";
-import { canonicalStringifySha256 } from "../contracts/canonical.ts";
-import { parseOwnerSuccessorReviewV1 } from "../contracts/owner-successor-review.ts";
-import { verifyReviewSnapshotDigest } from "../github/review-snapshot.ts";
-import { ownerSuccessorBindingFor } from "./owner-successor-acceptance-binding.ts";
 import {
   parseHostedExecutionIntentV1,
   parseHostedReleaseRecordV1,
@@ -26,7 +22,6 @@ import {
   executionIdOfRun,
   idle,
   isSettledCurrentRun,
-  isTerminalPhase,
   pending,
   readSettlement,
   sameCanonical,
@@ -40,16 +35,16 @@ import {
   STATIC_REQUEST_ACTIVE,
   STATIC_SOURCE,
 } from "./actions-supervisor-state.ts";
+import {
+  emptyHostedVerification,
+  hostedOrdinaryAdmissionMode,
+} from "../contracts/hosted-supervisor-verification.ts";
 import type {
   HostedSupervisorInputV1,
   HostedSupervisorOutcomeV1,
   SnapshotCursorV1,
 } from "./actions-supervisor-state.ts";
 import { HOSTED_SUPERVISOR_REVIEWER } from "./actions-supervisor-bootstrap.ts";
-import {
-  allowsHostedRuntimeMove,
-  runtimeCompatibilityRefusal,
-} from "./hosted-runtime-compatibility.ts";
 
 export async function startExecution(
   input: HostedSupervisorInputV1,
@@ -61,18 +56,6 @@ export async function startExecution(
   releaseId: string | null,
   nextOrdinaryAt?: number,
 ): Promise<HostedSupervisorOutcomeV1> {
-  if (
-    !allowsHostedRuntimeMove(
-      runtime.activeRevision,
-      revision,
-      input.queueRuntimeCapability,
-      input.existingPrRuntimeCapability,
-    )
-  ) {
-    return pending(
-      runtimeCompatibilityRefusal(input.existingPrRuntimeCapability),
-    );
-  }
   if (isSettledCurrentRun(runtime, input.run)) {
     return idle(STATIC_IDLE_SETTLED);
   }
@@ -89,13 +72,56 @@ export async function startExecution(
     createdAt: now,
   });
   if (!parsed.ok) return pending(STATIC_REFUSED);
+  const mode = purpose === "ordinary"
+    ? hostedOrdinaryAdmissionMode(runtime)
+    : null;
+  if (purpose === "ordinary" && mode === null) {
+    return pending("ordinary runtime admission is unavailable");
+  }
+  const releasesNext = releases.map((record) => {
+    if (
+      record.id !== releaseId ||
+      (purpose !== "prior" && purpose !== "candidate")
+    ) return record;
+    const journal = record.verification?.[purpose] ?? emptyHostedVerification();
+    if (journal.attempts >= 2) return record;
+    return {
+      ...record,
+      verification: {
+        prior: record.verification?.prior ?? emptyHostedVerification(),
+        candidate: record.verification?.candidate ?? emptyHostedVerification(),
+        [purpose]: {
+          ...journal,
+          attempts: journal.attempts + 1,
+          lastExecutionId: parsed.value.id,
+          executionIds: [...journal.executionIds, parsed.value.id],
+        },
+      },
+      updatedAt: now,
+    };
+  });
+  if (
+    (purpose === "prior" || purpose === "candidate") &&
+    releasesNext.find((r) => r.id === releaseId)?.verification?.[purpose]
+        .lastExecutionId !== parsed.value.id
+  ) return pending("release verification budget exhausted");
   const runtimeNext: HostedRuntimeRecordV1 = {
     ...runtime,
     execution: parsed.value,
     nextOrdinaryAt: nextOrdinaryAt ?? runtime.nextOrdinaryAt,
     updatedAt: now,
+    lastTurn: purpose === "ordinary" ? "ordinary" : "verification",
+    ...(mode === null ? {} : {
+      ordinaryAdmission: {
+        mode,
+        executionId: parsed.value.id,
+        revision,
+        generation: runtime.generation,
+        failedVerificationIds: runtime.failedVerificationIds ?? [],
+      },
+    }),
   };
-  const applied = await commitHosted(input, cursor, runtimeNext, releases);
+  const applied = await commitHosted(input, cursor, runtimeNext, releasesNext);
   if (applied !== "applied") return pending(STATIC_CONFLICT);
   return { status: "run", execution: parsed.value };
 }
@@ -107,19 +133,31 @@ export async function planReleaseWork(
   releases: readonly HostedReleaseRecordV1[],
   release: HostedReleaseRecordV1,
 ): Promise<HostedSupervisorOutcomeV1 | "written" | null> {
-  if (
-    !allowsHostedRuntimeMove(
-      release.priorRevision,
-      release.request.revision,
-      input.queueRuntimeCapability,
-      input.existingPrRuntimeCapability,
-    )
-  ) {
-    return pending(
-      runtimeCompatibilityRefusal(input.existingPrRuntimeCapability),
-    );
-  }
   const now = input.clock.now();
+  if (release.phase === "requested" && release.priorProof !== null) {
+    const authorized = await authorizePromotionSource(input, release);
+    if (!authorized.ok) return pending(authorized.detail);
+    const next: HostedReleaseRecordV1 = {
+      ...release,
+      phase: "promoting",
+      pointerIntent: {
+        action: "promote",
+        expectedRevision: release.priorRevision,
+        nextRevision: release.request.revision,
+        expectedGeneration: runtime.generation,
+        createdAt: now,
+      },
+      updatedAt: now,
+    };
+    return await commitHosted(
+        input,
+        cursor,
+        runtime,
+        releases.map((r) => r.id === release.id ? next : r),
+      ) === "applied"
+      ? "written"
+      : pending(STATIC_CONFLICT);
+  }
   if (release.phase === "requested" && release.priorProof === null) {
     return await startExecution(
       input,
@@ -345,91 +383,9 @@ export function buildRequestedReceipt(
   return parsed.ok ? parsed.value : null;
 }
 
-/** Preserve a completed charged review's native proof until the trusted App append succeeds. */
-export async function ownerSuccessorAcceptancePending(
-  input: HostedSupervisorInputV1,
-  runtime: HostedRuntimeRecordV1,
-  releases: readonly HostedReleaseRecordV1[],
-): Promise<boolean> {
-  const proof = runtime.lastExecutionProof;
-  if (
-    !proof || proof.outcome !== "healthy" ||
-    proof.execution.purpose !== "ordinary" ||
-    proof.execution.revision !== runtime.activeRevision ||
-    proof.execution.generation !== runtime.generation ||
-    !sameCanonical(proof, runtime.lastHealthyProof)
-  ) return false;
-  const candidates = [];
-  for (const receipt of releases) {
-    if (receipt.ownerAcceptance !== undefined) continue;
-    const selected = await ownerSuccessorBindingFor(
-      receipt,
-      runtime.activeRevision,
-      runtime.generation,
-    );
-    if (selected) candidates.push({ receipt, selected });
-  }
-  if (candidates.length === 0) return false;
-  try {
-    const read = await input.state.readRepair();
-    if (!read.ok || read.value.status !== "found") return true;
-    const repair = read.value.snapshot;
-    for (const { receipt, selected } of candidates) {
-      const i = selected.binding;
-      const reviews = repair.ownerSuccessorReviews?.filter((r) =>
-        r.phase === "completed" && r.binding.releaseId === receipt.id &&
-        r.binding.ownerBindingId === selected.id &&
-        r.binding.ownerBindingSha256 === selected.sha256
-      ) ?? [];
-      if (reviews.length !== 1) {
-        continue;
-      }
-      const parsed = tryParse(parseOwnerSuccessorReviewV1, reviews[0]);
-      if (!parsed.ok) {
-        continue;
-      }
-      const review = parsed.value, b = review.binding;
-      if (
-        sameCanonical(b.nativeOwner, proof.execution) &&
-        b.successorRevision === runtime.activeRevision &&
-        b.successorGeneration === runtime.generation &&
-        b.intentSha256 === i.intentSha256 &&
-        b.requestSha256 === i.requestSha256 &&
-        b.taskSha256 === i.taskSha256 && b.issueNumber === i.issueNumber &&
-        b.workId === i.workId &&
-        b.snapshot.base === i.acceptanceBaseRevision &&
-        review.updatedAt <= input.clock.now() &&
-        sameCanonical(
-          repair.releaseRequests.find((r) =>
-            r.id === receipt.id
-          ),
-          receipt.request,
-        ) &&
-        repair.work.some((w) =>
-          w.id === i.workId && w.nextStep === "delivery" &&
-          w.related.issueNumber === i.issueNumber
-        ) &&
-        sameCanonical(
-          repair.reservations.find((r) => r.id === review.reservation.id),
-          review.reservation,
-        ) &&
-        review.result?.taskAcceptance?.verdict === "fulfilled" &&
-        review.result.taskAcceptance.taskDigest === i.taskSha256 &&
-        review.result.taskAcceptance.issueNumber === i.issueNumber &&
-        !review.result.findings.some((f) => f.priority <= 1) &&
-        review.resultSha256 === await canonicalStringifySha256(review.result) &&
-        await verifyReviewSnapshotDigest(b.snapshot)
-      ) return true;
-    }
-    return false;
-  } catch {
-    return true;
-  }
-}
-
 /**
- * Ordinary work is due once every release is terminal and the active
- * revision/generation carries a healthy settled proof. A persisted
+ * Ordinary work uses current health or durable degraded admission, regardless of
+ * unrelated pending releases. A persisted
  * `nextOrdinaryAt` is retained as schema/identity bookkeeping only and never
  * throttles admission: provider and platform limits govern scheduling, while
  * the active-execution and same-run guards still prevent a second execution.
@@ -438,11 +394,12 @@ export function ordinaryDue(
   runtime: HostedRuntimeRecordV1,
   releases: readonly HostedReleaseRecordV1[],
 ): boolean {
-  if (!releases.every((item) => isTerminalPhase(item.phase))) return false;
-  const healthy = runtime.lastHealthyProof;
-  return healthy !== null &&
-    healthy.execution.revision === runtime.activeRevision &&
-    healthy.execution.generation === runtime.generation;
+  if (
+    releases.some((r) =>
+      r.phase === "rollback_pending" || r.phase === "rollback_verifying"
+    )
+  ) return false;
+  return hostedOrdinaryAdmissionMode(runtime) !== null;
 }
 
 /** One model-disabled recovery of the fixed old-controller ordinary failure. */
@@ -570,28 +527,8 @@ export async function settleWithPreflight(
   releases: readonly HostedReleaseRecordV1[],
   settlement: HostedExecutionSettlementV1,
 ): Promise<"applied" | "pending" | { refused: string }> {
-  if (
-    settlement.execution.purpose === "prior" &&
-    settlement.execution.releaseId !== null && settlement.outcome === "healthy"
-  ) {
-    const record = releases.find((item) =>
-      item.id === settlement.execution.releaseId
-    );
-    if (record === undefined) return { refused: STATIC_REQUEST };
-    // Old executions may settle, but cannot create a promotion intent in the
-    // activated era. attachReleaseSettlement applies the same capability gate.
-    if (
-      allowsHostedRuntimeMove(
-        record.priorRevision,
-        record.request.revision,
-        input.queueRuntimeCapability,
-        input.existingPrRuntimeCapability,
-      )
-    ) {
-      const authorized = await authorizePromotionSource(input, record);
-      if (!authorized.ok) return { refused: authorized.detail };
-    }
-  }
+  // Settlement must never depend on release-local source availability. Source
+  // authorization happens separately before persisting and consuming promotion.
   const applied = await settleRuntime(
     input,
     cursor,

@@ -252,14 +252,19 @@ export class GitReviewSnapshot extends GitSnapshotCapture {
     // Exact protected-entry identity: for every newly exposed commit, each
     // configured protected path and each of its ancestors is read as one
     // literal `ls-tree` entry instead of inferring identity from a diff.
-    // Trusted base entries are immutable for this invocation and are read at
-    // most once. Absence is proven only by exit-0 empty output; malformed,
+    // Entries are immutable within each commit: shared ancestors and entries
+    // are read at most once per commit in this invocation. Absence is proven
+    // only by exit-0 empty output; malformed,
     // multiple or over-bound output fails closed.
     const trustedProtectedEntries = new Map<string, ProtectedTreeEntryV1>();
+    const protectedEntries = new Map<string, ProtectedTreeEntryV1>();
     const readProtectedEntry = async (
       commit: string,
       path: string,
     ): Promise<PortResultV1<ProtectedTreeEntryV1>> => {
+      const key = `${commit}:${path}`;
+      const cached = protectedEntries.get(key);
+      if (cached !== undefined) return portOk(cached);
       const read = await readTracked(
         ["ls-tree", "-z", "--full-tree", commit, "--", path],
         [0],
@@ -280,6 +285,7 @@ export class GitReviewSnapshot extends GitSnapshotCapture {
       if (entry === null) {
         return fail(PUBLICATION_PROTECTED_DETAIL);
       }
+      protectedEntries.set(key, entry);
       return portOk(entry);
     };
     const readTrustedProtectedEntry = async (

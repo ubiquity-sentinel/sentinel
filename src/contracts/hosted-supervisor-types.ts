@@ -32,7 +32,66 @@ export type HostedReleasePhaseV1 =
   | "rollback_pending"
   | "rollback_verifying"
   | "rolled_back"
+  | "abandoned"
   | "owner_superseded";
+
+/** Admissions and exact settlements; absent journals mean zero attempts. */
+export interface HostedVerificationJournalV1 {
+  attempts: number;
+  failures: number;
+  lastExecutionId: string | null;
+  lastFailure: {
+    proof: HostedExecutionSettlementV1;
+    reason: "execution_failed" | "not_started";
+  } | null;
+  executionIds: string[];
+  settledExecutionIds: string[];
+}
+export interface HostedAbandonmentV1 {
+  reason:
+    | "prior_verification_exhausted"
+    | "candidate_verification_exhausted"
+    | "candidate_verification_failed"
+    | "included_in_successor";
+  fromPhase: HostedReleasePhaseV1;
+  executionIds: string[];
+  successorRevision?: GitSha;
+  recordedAt: number;
+}
+export interface HostedOrdinaryAdmissionV1 {
+  mode: "healthy" | "degraded";
+  executionId: string;
+  revision: GitSha;
+  generation: number;
+  failedVerificationIds: string[];
+}
+
+/** Separate from maintenance requests: an exact CI-backed launcher installation. */
+export interface HostedInstallationRecordV1 {
+  version: "v1";
+  kind: "hosted_installation";
+  id: string;
+  candidateRevision: GitSha;
+  previousRevision: GitSha;
+  previousGeneration: number;
+  previousHealthyProof: HostedRunProofV1 | null;
+  ci: { revision: GitSha; checkRunId: number };
+  phase:
+    | "requested"
+    | "bootstrapping"
+    | "accepted"
+    | "rollback_pending"
+    | "rollback_verifying"
+    | "rolled_back"
+    | "rollback_failed";
+  pointerIntent: HostedPointerIntentV1 | null;
+  bootstrapExecutionId: string | null;
+  bootstrapProof: HostedExecutionSettlementV1 | null;
+  rollbackExecutionId: string | null;
+  rollbackProof: HostedExecutionSettlementV1 | null;
+  createdAt: number;
+  updatedAt: number;
+}
 export interface HostedOwnerSupersessionIntentV1 {
   releaseId: string;
   requestSha256: string;
@@ -199,6 +258,12 @@ export interface HostedRuntimeRecordV1 {
   execution: HostedExecutionIntentV1 | null;
   createdAt: number;
   updatedAt: number;
+  verificationFailures?: number;
+  failedVerificationIds?: string[];
+  lastVerificationId?: string | null;
+  lastTurn?: "ordinary" | "verification";
+  ordinaryAdmission?: HostedOrdinaryAdmissionV1;
+  verificationBlocked?: boolean;
 }
 
 /** Persisted-before-effect pointer intent (promote or rollback). */
@@ -215,8 +280,8 @@ export interface HostedPointerIntentV1 {
  * request is stored in full (strict ReleaseRequestV1). Proofs are immutable
  * once present; the pointer intent is the only promotable movement authority.
  * `priorProof`/`rollbackProof` are healthy-only: a failed prior or rollback
- * execution is recorded solely in the runtime `lastExecutionProof` and leaves
- * the release in `requested`/`rollback_verifying` for a deterministic retry.
+ * execution retains the real runtime settlement and its bounded verification
+ * journal; failed rollback never authorizes ordinary model starts.
  * `candidateProof` records the FIRST exact candidate result, healthy or failed.
  */
 export interface HostedReleaseRecordV1 {
@@ -226,6 +291,11 @@ export interface HostedReleaseRecordV1 {
   request: ReleaseRequestV1;
   priorRevision: GitSha;
   phase: HostedReleasePhaseV1;
+  verification?: {
+    prior: HostedVerificationJournalV1;
+    candidate: HostedVerificationJournalV1;
+  };
+  abandonment?: HostedAbandonmentV1;
   priorProof: HostedRunProofV1 | null;
   candidateProof: HostedRunProofV1 | null;
   rollbackProof: HostedRunProofV1 | null;

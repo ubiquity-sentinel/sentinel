@@ -1,0 +1,32 @@
+name: Follow the CI-green hosted runtime
+description: Fast-forward the launcher with exact CI and ancestry proofs, then record its readback.
+inputs:
+  token:
+    description: Native repository GITHUB_TOKEN (contents write and actions write).
+    required: true
+  auto-follow:
+    description: Repository variable SENTINEL_AUTO_FOLLOW; only on enables writes.
+    default: "off"
+outputs:
+  launcher-sha:
+    description: Exact launcher SHA for dispatch verification.
+    value: ${{ steps.follow.outputs.launcher-sha }}
+  follow-ready:
+    description: Whether the subsequent dispatch can verify the observed launcher.
+    value: ${{ steps.follow.outputs.follow-ready }}
+  decision:
+    description: Structured follow decision, also recorded in the step summary.
+    value: ${{ steps.follow.outputs.decision }}
+runs:
+  using: composite
+  steps:
+    # Option B admits only exact CI-green successors to the launcher. Each
+    # subsequent launcher runs code already validated by CI at that same SHA.
+    # Execute this checked-out dispatcher commit; fetch no moving control action.
+    - name: Follow the newest eligible development ancestor
+      id: follow
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        SENTINEL_AUTO_FOLLOW: ${{ inputs.auto-follow }}
+      run: deno task follow:run

@@ -10,34 +10,38 @@ Use isolated concurrent issue workers across configured targets, with one truste
 
 The implementation is Deno and TypeScript. Model workers receive credential-free checkouts and bounded evidence; they cannot write authoritative state, change live admission policy, select credentials, merge unverified work or promote releases. Runtime model and review policies are in the decisions document and must not be changed by local worker selection.
 
+The 2026-10-20 owner decision sets runtime implementation to `gpt-reserve` with the existing HTTP 429 fallback to `gpt-6-luna`, both at max reasoning, superseding the former `gpt-5.6-luna` runtime text. Development/orchestration workers use `gpt-6.1-sol`.
+
+This effort's acceptance is green scheduled supervisor cycles plus at least one autonomous issue → PR → completed internal review → merge in each of `ubiquity/sentinel` and `ubiquity/ai.ubq.fi`. The ai.ubq.fi scope is issue repairs only for now. The original gateway capture/deployment and extended observation requirements below remain separate scope, with `sentinel-release` disabled.
+
 Current work, readiness and hosted receipts belong in the ledger. The separately owned [memory and self-healing plan](docs/sentinel-memory-plan.md) retains its active implementation contract; this cleanup does not transfer that ownership or establish new live proof.
 
 ## Canonical goal identity
 
 The original goal identifier remains stable after development moved to the VPS. Reconcile exact branches, worktrees, dirty state, active writers and accepted ancestry before assigning or resuming work; a recorded identity does not authorize creating, switching or deleting a lane.
 
-| Field | Recorded value |
-| --- | --- |
-| Original goal ID | `/Users/nv/repos/ubiquity/sentinel/MASTER-PLAN.md` |
-| Canonical plan | `/home/codex/repos/ubiquity/sentinel/.codex-worktrees/master-plan-gfa795549e5/MASTER-PLAN.md` |
-| Repository root | `/home/codex/repos/ubiquity/sentinel` |
-| Goal slug / suffix | `master-plan` / `gfa795549e5` |
-| Canonical worktree | `master-plan-gfa795549e5` |
-| Canonical worktree path | `/home/codex/repos/ubiquity/sentinel/.codex-worktrees/master-plan-gfa795549e5` |
-| Canonical branch | `codex/master-plan-gfa795549e5` |
-| Initialization base | `development` / `ec4bd82df4adfdb962e10332607ee4fbf539cdeb` |
-| Integration ownership | Current primary integration owner, recorded in `docs/build-status.md` |
+| Field                   | Recorded value                                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------- |
+| Original goal ID        | `/Users/nv/repos/ubiquity/sentinel/MASTER-PLAN.md`                                            |
+| Canonical plan          | `/home/codex/repos/ubiquity/sentinel/.codex-worktrees/master-plan-gfa795549e5/MASTER-PLAN.md` |
+| Repository root         | `/home/codex/repos/ubiquity/sentinel`                                                         |
+| Goal slug / suffix      | `master-plan` / `gfa795549e5`                                                                 |
+| Canonical worktree      | `master-plan-gfa795549e5`                                                                     |
+| Canonical worktree path | `/home/codex/repos/ubiquity/sentinel/.codex-worktrees/master-plan-gfa795549e5`                |
+| Canonical branch        | `codex/master-plan-gfa795549e5`                                                               |
+| Initialization base     | `development` / `ec4bd82df4adfdb962e10332607ee4fbf539cdeb`                                    |
+| Integration ownership   | Current primary integration owner, recorded in `docs/build-status.md`                         |
 
 Preserve the recorded module identities below. Sentinel worktree paths use `<repository root>/.codex-worktrees/<lane>` and branches use `codex/<lane>`. The gateway module belongs to its own repository; its original recorded root is `/Users/nv/repos/ubiquity/ai.ubq.fi`, and current target ownership/path must be reconciled independently before work. Exact starting bases and current dispositions are ledger facts, not moving branch guesses.
 
-| Module | Repository | Recorded lane | Surface |
-| --- | --- | --- | --- |
-| m01-github | `ubiquity/sentinel` | `master-plan-m01-github-a86bd3790da` | `src/github/**`, `tests/github/**` |
-| m02-evidence | `ubiquity/sentinel` | `master-plan-m02-evidence-afb9652dea8` | `src/adapters/gateway/**`, corresponding tests |
-| m03-replay | `ubiquity/sentinel` | `master-plan-m03-replay-ac17fc34d9a` | `src/replay/**`, `tests/replay/**` |
-| m04-repair | `ubiquity/sentinel` | `master-plan-m04-repair-ac50ee9a0a3` | `src/repair/**`, `tests/repair/**` |
-| m05-release | `ubiquity/sentinel` | `master-plan-m05-release-a2ebf3089f9` | `src/release/**`, `tests/release/**` |
-| m06-gateway | `ubiquity/ai.ubq.fi` | `master-plan-m06-gateway-ad0aef5cd31` | Incident/capture/replay producer and exact build/receipt seams |
+| Module       | Repository           | Recorded lane                          | Surface                                                        |
+| ------------ | -------------------- | -------------------------------------- | -------------------------------------------------------------- |
+| m01-github   | `ubiquity/sentinel`  | `master-plan-m01-github-a86bd3790da`   | `src/github/**`, `tests/github/**`                             |
+| m02-evidence | `ubiquity/sentinel`  | `master-plan-m02-evidence-afb9652dea8` | `src/adapters/gateway/**`, corresponding tests                 |
+| m03-replay   | `ubiquity/sentinel`  | `master-plan-m03-replay-ac17fc34d9a`   | `src/replay/**`, `tests/replay/**`                             |
+| m04-repair   | `ubiquity/sentinel`  | `master-plan-m04-repair-ac50ee9a0a3`   | `src/repair/**`, `tests/repair/**`                             |
+| m05-release  | `ubiquity/sentinel`  | `master-plan-m05-release-a2ebf3089f9`  | `src/release/**`, `tests/release/**`                           |
+| m06-gateway  | `ubiquity/ai.ubq.fi` | `master-plan-m06-gateway-ad0aef5cd31`  | Incident/capture/replay producer and exact build/receipt seams |
 
 ## Architecture and runtime order
 
@@ -52,6 +56,10 @@ One absolute execution deadline spans coordinated work. Reserve enough time for 
 The deterministic release controller reconciles durable requests, identifies an exact candidate and proven healthy prior revision, records intent, promotes, monitors, and accepts or restores the exact prior revision. It uses no model. Repair workers cannot write release state; release controllers cannot edit application code or repair accounting.
 
 The protected hosted supervisor separates preparation, model repair and finalization capabilities. Only trusted controller stages receive supervisor/state authority. Hosted runtime pointer and execution proofs are distinct from target deployment receipts. Bootstrap health alone does not prove autonomous issue delivery.
+
+Under the 2026-10-20 fix-forward decision, release verification is bounded to N=2 per phase with reasoned terminal `abandoned` records. Ordinary work interleaves with pending self-release verification and can use durable degraded admission after two failed verifications of its installed generation; a fresh install still requires healthy bootstrap. Preserve settlement, exact proof identities and every charge.
+
+Ordinary runtime updates now use launcher self-install and dispatcher auto-follow, replacing rollout rows, owner supersessions, custody revision floors and LF materialization. The dispatcher selects the newest CI-green development ancestor by exact first-parent ancestry and complete CI evidence, then fast-forwards `sentinel-supervisor`. Launcher = runtime = that exact SHA at generation+1; bootstrap is model-disabled. Failed bootstrap restores only the journaled previous revision at a higher generation and verifies restoration; failed SHAs cannot reinstall. `SENTINEL_AUTO_FOLLOW` defaults off until the first controlled advance and self-install are verified. Keep compatible historical readers and actual task custody/accounting. Owner-install modules remain unreferenced from prepare, pending deletion in DESIGN.md §4 dependency order; native CI, compatible rollback and hosted acceptance remain separate gates recorded in the ledger.
 
 ## Contracts and durable state
 
@@ -73,7 +81,7 @@ Finite retention/storage bounds, an existing scoped key source and objective sta
 
 ## Review, merge and release safety
 
-Runtime code changes require the internal structured reviewer's completed current-head receipt with no unresolved P0/P1, current deterministic CI and applicable target branch protections before expected-head merge. Missing, stale, malformed or unavailable review evidence cannot pass. Local development requires no development PR or Codex review; external hosted Codex review requests are retired.
+Runtime code changes require the gateway `codex-auto-review` internal structured reviewer's completed current-head receipt with no unresolved P0/P1, current deterministic CI and applicable target branch protections before expected-head merge. Missing, stale, malformed or unavailable review evidence cannot pass. GitHub `@codex review` reviewer statements are retired for autonomous runtime PRs. Development needs no PR for every edit; the 2026-10-20 owner preference for development review is GitHub `@codex review` first, then local `codex review` / `codex-u review` as fallback.
 
 Base movement requires validation of the current integrated candidate. Changed bytes require matching current-head evidence. Human-owned PRs stay untouched unless delegated. Issue-backed repair PR bodies are exactly `Resolves #N`; delivery acceptance still requires its own receipts.
 
@@ -92,6 +100,8 @@ Shared foundation owns contracts, state, accounting and toolchain. Module writer
 Cross-module integration owns actual entrypoints, workflow/config permissions, trusted host composition and connected acceptance. Tests exercise production consumers with fake external services, real temporary Git/state and injected clocks. They contain no paid/model calls, GitHub writes or deployments. Reconcile and freeze writers before final checks; accepted worker tips must remain ancestors of canonical and the shipped branch.
 
 Use the focused local sequence and 300-second command bounds in AGENTS.md. Documentation changes need documentation checks. Whole-repository local sweeps require explicit authorization. Continue authorized hosted work under AGENTS.md through protected publication, verification and necessary corrected candidates or retries without repeated approval; reuse existing evidence on unchanged inputs.
+
+The default per-attempt hosted approval boundary remains for future efforts without equivalent authorization. For this effort, the 2026-10-20 owner grant supersedes it: the orchestrator may dispatch/rerun/cancel/enable/disable Sentinel workflows, push directly to `development`, update launcher pins/runtime pointers, write state branches and merge gated autonomous PRs. The 0x4007 PAT may set secrets as a stopgap. Exact evidence, five invariants and workers' narrower assignment limits still apply.
 
 Operational acceptance requires exact source/candidate/fixture identities, before/after regressions, PR head/review/CI/merge evidence, installed runtime/deployment receipts and observed delivery. Keep local, merged, installed and live evidence separate. Original gateway completion requires two distinct previously undelivered eligible tasks, including a captured-request regression, continued eligible selection, interruption recovery, exact isolated rollback and six observed hours after activation. Old prototype #136 does not count as a new delivery; preserved terminal work is not reset to manufacture throughput.
 

@@ -26,6 +26,7 @@ import {
 import {
   advanceToCandidate,
   bootstrapHealthy,
+  ordinaryTurn,
 } from "./actions-supervisor-lifecycle-fixture.ts";
 
 Deno.test("hosted supervisor core: bootstrap is written once, replayed and settled exactly", async () => {
@@ -317,12 +318,14 @@ Deno.test("hosted supervisor core: healthy prior promotes and a healthy candidat
     const request = releaseRequest();
     await rig.seedRepair([request], [reviewReceipt(request)]);
     rig.evidence.requests.add(request.id);
+    await ordinaryTurn(rig, 9001);
     const prior = requireRun(await rig.prepare(run(2)));
     let state = await rig.snapshot();
     assert.equal(state.hostedReleases[0].phase, "requested");
     assert.equal(state.hostedReleases[0].priorRevision, LAUNCHER);
     const receiptCreatedAt = state.hostedReleases[0].createdAt;
     rig.evidence.settlements.set(prior.id, runProof(prior, "healthy"));
+    await ordinaryTurn(rig, 9002);
     const candidate = requireRun(await rig.prepare(run(3)));
     assert.equal(candidate.purpose, "candidate");
     assert.equal(candidate.revision, CANDIDATE);
@@ -391,7 +394,11 @@ Deno.test("hosted supervisor core: failed candidate rolls back exactly and a lat
     const settledOrdinary = requireRun(await rig.prepare(run(6)));
     assert.equal(settledOrdinary.purpose, "ordinary");
     state = await rig.snapshot();
-    assert.equal(state.hostedReleases[0].phase, "rolled_back");
+    assert.equal(state.hostedReleases[0].phase, "abandoned");
+    assert.equal(
+      state.hostedReleases[0].abandonment?.reason,
+      "candidate_verification_failed",
+    );
     assert.equal(
       state.hostedReleases[0].rollbackProof?.execution.id,
       retry.id,

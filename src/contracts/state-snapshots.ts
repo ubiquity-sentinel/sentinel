@@ -16,10 +16,12 @@ import type { BudgetReservationV1 } from "./budget-reservation.ts";
 import { parseGitHubCooldownV1 } from "./github-cooldown.ts";
 import type { GitHubCooldownV1 } from "./github-cooldown.ts";
 import {
+  parseHostedInstallationRecordV1,
   parseHostedReleaseRecordV1,
   parseHostedRuntimeRecordV1,
 } from "./hosted-supervisor.ts";
 import type {
+  HostedInstallationRecordV1,
   HostedReleaseRecordV1,
   HostedRuntimeRecordV1,
 } from "./hosted-supervisor.ts";
@@ -104,6 +106,7 @@ export interface ReleaseStateSnapshotV1 {
    */
   hostedRuntimes: HostedRuntimeRecordV1[];
   hostedReleases: HostedReleaseRecordV1[];
+  hostedInstallations?: HostedInstallationRecordV1[];
   /**
    * Durable GitHub cooldowns observed by the release role (the hosted
    * supervisor records its own scope-0 hold here). Repair-role cooldowns stay
@@ -279,9 +282,12 @@ export function parseReleaseStateSnapshotV1(
   const obj = expectRecord(input, "$");
   expectExactKeys(
     obj,
-    Object.hasOwn(obj, "vpsReleases")
-      ? [...RELEASE_KEYS, "vpsReleases"]
-      : RELEASE_KEYS,
+    [
+      ...RELEASE_KEYS,
+      ...["vpsReleases", "hostedInstallations"].filter((key) =>
+        Object.hasOwn(obj, key)
+      ),
+    ],
     "$",
   );
   expectVersion(obj.version, "$.version");
@@ -318,6 +324,17 @@ export function parseReleaseStateSnapshotV1(
     parseHostedReleaseRecordV1,
   );
   expectUniqueIds(hostedReleases, "$.hostedReleases");
+  const hostedInstallations = Object.hasOwn(obj, "hostedInstallations")
+    ? expectArray(
+      obj.hostedInstallations,
+      "$.hostedInstallations",
+      MaxItems.snapshotRecords,
+      parseHostedInstallationRecordV1,
+    )
+    : undefined;
+  if (hostedInstallations) {
+    expectUniqueIds(hostedInstallations, "$.hostedInstallations");
+  }
   const githubCooldowns = expectArray(
     obj.githubCooldowns,
     "$.githubCooldowns",
@@ -347,6 +364,7 @@ export function parseReleaseStateSnapshotV1(
     ...(vpsReleases === undefined ? {} : { vpsReleases }),
     hostedRuntimes,
     hostedReleases,
+    ...(hostedInstallations === undefined ? {} : { hostedInstallations }),
     githubCooldowns,
   };
 }

@@ -56,7 +56,7 @@ export type HostedReceiptPhaseV1 =
   | "requested"
   | "verifying"
   | "accepted"
-  | "rolled_back";
+  | "abandoned";
 
 export interface PersistHostedReceiptInputV1 {
   /** Real release store: actual CAS writes and the persisted record. */
@@ -100,7 +100,9 @@ export async function persistHostedReceipt(
   input: PersistHostedReceiptInputV1,
 ): Promise<HostedReleaseRecordV1> {
   const state = fixtureState(input);
-  const evidence = fixtureEvidence(input);
+  const installed = (await readSnapshot(input.release)).hostedRuntimes[0]
+    ?.activeRevision ?? input.priorRevision;
+  const evidence = fixtureEvidence(input, installed);
   let runId = input.runIdStart ?? 1;
   for (let step = 0; step < MAX_STEPS; step++) {
     const snapshot = await readSnapshot(input.release);
@@ -132,7 +134,13 @@ export async function persistHostedReceipt(
       `hosted receipt fixture step ${step}: ${JSON.stringify(outcome)}`,
     );
   }
-  throw new Error("hosted receipt fixture bound reached");
+  const snapshot = await readSnapshot(input.release);
+  throw new Error(`hosted receipt fixture bound reached: ${
+    JSON.stringify({
+      phase: snapshot.hostedReleases[0]?.phase ?? null,
+      execution: snapshot.hostedRuntimes[0]?.execution?.purpose ?? null,
+    })
+  }`);
 }
 
 /** Read-only repair view: the exact request + matching completed review. */
@@ -174,6 +182,7 @@ function fixtureState(
 /** Injected external evidence only; the repair view above is the authority. */
 function fixtureEvidence(
   input: PersistHostedReceiptInputV1,
+  installed: GitSha,
 ): HostedSupervisorEvidencePortV1 {
   return {
     readExecution: (saved: HostedExecutionIntentV1) =>
@@ -182,7 +191,7 @@ function fixtureEvidence(
     verifyMatrixOrdinaryRevision: (revision) =>
       Promise.resolve(
         portOk(
-          revision === input.priorRevision ||
+          revision === installed || revision === input.priorRevision ||
             revision === input.request.revision,
         ),
       ),
@@ -255,7 +264,7 @@ function fixtureProof(
   saved: HostedExecutionIntentV1,
   phase: HostedReceiptPhaseV1,
 ): HostedRunProofV1 {
-  const healthy = !(saved.purpose === "candidate" && phase === "rolled_back");
+  const healthy = !(saved.purpose === "candidate" && phase === "abandoned");
   return parseHostedRunProofV1({
     execution: saved,
     workflowId: 357012162,

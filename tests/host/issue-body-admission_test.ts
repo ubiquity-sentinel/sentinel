@@ -42,22 +42,43 @@ Deno.test("issue body wire: preserves the complete raw range beyond the review l
   assert.equal(empty.value?.body, "");
 });
 
-Deno.test("issue body wire: the finite raw ceiling still refuses incomplete reads", async () => {
+Deno.test("issue body wire: the finite raw ceiling refuses a direct read and reports an isolated listing row", async () => {
   const body = "x".repeat(MAX_WIRE_TEXT + 1);
   const read = await readPort(body).port.readIssue(7);
   assert.equal(read.ok, false);
   if (!read.ok) assert.equal(read.error.kind, "unavailable");
-  const { port } = makePort({
+  const { port, transport } = makePort({
     repository: REPO,
     script: [
       httpRespond("GET", `${ISSUES}?state=open&per_page=100&page=1`, 200, [
         issueWire({ number: 1 }),
         issueWire({ number: 2, body }),
+      ], {
+        link:
+          `<https://api.github.com${ISSUES}?state=open&per_page=100&page=2>; rel="next"`,
+      }),
+      httpRespond("GET", `${ISSUES}?state=open&per_page=100&page=2`, 200, [
+        issueWire({ number: 3, body: "complete final body" }),
       ]),
     ],
   });
   const listed = await port.listOpenIssues();
-  assert.equal(listed.ok, false, "overflow cannot return a partial issue list");
+  assert.ok(listed.ok, JSON.stringify(listed));
+  assert.deepEqual(listed.value.map((row) => row.number), [1, 3]);
+  assert.equal(listed.value[1].body, "complete final body");
+  assert.ok("skippedIssues" in listed);
+  assert.deepEqual(listed.skippedIssues, [{
+    number: 2,
+    code: "bound_exceeded",
+    validationPath: "$[1].body",
+    limit: MAX_WIRE_TEXT,
+    observedLength: MAX_WIRE_TEXT + 1,
+  }]);
+  assert.equal(
+    transport.requests.length,
+    2,
+    "the skipped row cannot stop pagination",
+  );
 });
 
 Deno.test("issue body admission: real REST scope and mixed matrix retain unsupported work without a grant", async (t) => {

@@ -164,7 +164,7 @@ Deno.test("actions release: the persisted accepted receipt binds exactly and is 
   }
 });
 
-Deno.test("actions release: the persisted rolled_back receipt carries the exact failed chain", async () => {
+Deno.test("actions release: abandonment preserves the failed chain and historical rollback receipts stay readable", async () => {
   const rig = await makeRig();
   try {
     const held = request();
@@ -173,9 +173,13 @@ Deno.test("actions release: the persisted rolled_back receipt carries the exact 
       clock: rig.clock,
       request: held,
       priorRevision: PRIOR,
-      phase: "rolled_back",
+      phase: "abandoned",
     });
-    assert.equal(persisted.phase, "rolled_back");
+    assert.equal(persisted.phase, "abandoned");
+    assert.equal(
+      persisted.abandonment?.reason,
+      "candidate_verification_failed",
+    );
     assert.equal(persisted.priorProof?.outcome, "healthy");
     assert.equal(persisted.candidateProof?.outcome, "failed");
     assert.equal(persisted.rollbackProof?.outcome, "healthy");
@@ -183,8 +187,36 @@ Deno.test("actions release: the persisted rolled_back receipt carries the exact 
     const result = await readHostedReleaseReceipt({ state: rig.store }, held);
     assert.ok(result.ok && result.value !== null, JSON.stringify(result));
     if (!result.ok || result.value === null) throw new Error("unreachable");
-    assert.equal(result.value.phase, "rolled_back");
+    assert.equal(result.value.phase, "abandoned");
     assert.ok(hostedReceiptBindsRequest(result.value, held));
+    const read = await rig.store.readRelease();
+    assert.ok(read.ok && read.value.status === "found");
+    // Replay the historical serialized shape through the real reader, without
+    // asking the current controller to produce the retired terminal phase.
+    const legacy: Record<string, unknown> = {
+      ...persisted,
+      phase: "rolled_back",
+    };
+    delete legacy.abandonment;
+    delete legacy.verification;
+    const snapshot = parseReleaseStateSnapshotV1({
+      ...read.value.snapshot,
+      hostedReleases: [legacy],
+    });
+    const historical = await readHostedReleaseReceipt({
+      state: fakeState(() =>
+        Promise.resolve(portOk({
+          ...read.value,
+          snapshot,
+        }))
+      ),
+    }, held);
+    assert.ok(
+      historical.ok && historical.value !== null,
+      JSON.stringify(historical),
+    );
+    assert.equal(historical.value.phase, "rolled_back");
+    assert.ok(hostedReceiptBindsRequest(historical.value, held));
   } finally {
     await rig.cleanup();
   }

@@ -258,7 +258,7 @@ Deno.test("hosted matrix CLI: unavailable result emits rejection receipt before 
   };
   const failed = capture(unavailable);
   assert.equal(failed.exit, 1, "unavailable still exits nonzero");
-  assert.equal(failed.stdout.length, 1, JSON.stringify(failed));
+  assert.equal(failed.stdout.length, 2, JSON.stringify(failed));
   const emitted = JSON.parse(failed.stdout[0]) as typeof receipt;
   assert.equal(emitted.kind, "hosted_runtime_matrix_launcher_rejection");
   assert.equal(emitted.condition, "child_unsettled");
@@ -266,6 +266,8 @@ Deno.test("hosted matrix CLI: unavailable result emits rejection receipt before 
   assert.equal(emitted.exitCode, 1);
   assert.equal(emitted.settled, false);
   assert.equal(emitted.truncated, false);
+  assert.equal(JSON.parse(failed.stdout[1]).kind, "hosted_runtime_summary");
+  assert.equal(JSON.parse(failed.stdout[1]).outcome, "unavailable");
   assert.ok(
     failed.stderr.some((line) =>
       line.includes(HOSTED_RUNTIME_UNAVAILABLE_DETAIL)
@@ -279,7 +281,12 @@ Deno.test("hosted matrix CLI: unavailable result emits rejection receipt before 
     diagnostics: [],
   });
   assert.equal(plain.exit, 1);
-  assert.equal(plain.stdout.length, 0, "no receipt, no extra stdout");
+  assert.equal(
+    plain.stdout.length,
+    1,
+    "one summary without a rejection receipt",
+  );
+  assert.equal(JSON.parse(plain.stdout[0]).kind, "hosted_runtime_summary");
   const healthy = capture({
     status: "healthy",
     terminal: null,
@@ -288,6 +295,8 @@ Deno.test("hosted matrix CLI: unavailable result emits rejection receipt before 
   });
   assert.equal(healthy.exit, 0);
   assert.equal(healthy.stderr.length, 0);
+  assert.equal(healthy.stdout.length, 1);
+  assert.equal(JSON.parse(healthy.stdout[0]).kind, "hosted_runtime_summary");
 });
 
 Deno.test("hosted matrix plan: producer emits exact consumer carrier schema", async () => {

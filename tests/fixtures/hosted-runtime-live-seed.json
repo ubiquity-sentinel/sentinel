@@ -1,0 +1,122 @@
+{
+  "runtime": {
+    "activeRevision": "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+    "createdAt": 1789358128122,
+    "execution": null,
+    "generation": 81,
+    "id": "ubiquity/sentinel:0:production",
+    "kind": "hosted_runtime",
+    "lastExecutionProof": {
+      "baseSha": "a1ba60d67b1599a8def2ba2aa3026e172d14c78e",
+      "execution": {
+        "createdAt": 1792482123465,
+        "generation": 81,
+        "id": "39388158283:1:repair",
+        "launcherSha": "00b6649eeff51a9754bf3748f793137db9bf8605",
+        "purpose": "prior",
+        "releaseId": "release:f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5",
+        "revision": "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+        "runAttempt": 1,
+        "runId": 39388158283
+      },
+      "finishedAt": 1792482202000,
+      "jobId": 118513250593,
+      "logDigest": "0bae4e492136f8aaaf58b8204f224cb809a3318511dcec9d25d5df0eed6853a7",
+      "observedAt": 1792482214865,
+      "outcome": "failed",
+      "ref": "refs/heads/sentinel-supervisor",
+      "repository": "ubiquity/sentinel",
+      "settled": true,
+      "startedAt": 1792482131000,
+      "startupReady": true,
+      "terminalAt": 1792482199829,
+      "workflowId": 357012162,
+      "workflowPath": ".github/workflows/supervisor.yml"
+    },
+    "lastHealthyProof": {
+      "baseSha": "674f8cc324946f9577e96a73b2722ca3db16ca7c",
+      "execution": {
+        "createdAt": 1792338699950,
+        "generation": 81,
+        "id": "39141849736:1:repair",
+        "launcherSha": "00b6649eeff51a9754bf3748f793137db9bf8605",
+        "purpose": "ordinary",
+        "releaseId": null,
+        "revision": "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+        "runAttempt": 1,
+        "runId": 39141849736
+      },
+      "finishedAt": 1792338889000,
+      "jobId": 117719555020,
+      "logDigest": "9b2c4fe3cd90c41a65c30ee40ae14d061e272d1e0df45d7445a76a6024696bd9",
+      "observedAt": 1792338900172,
+      "outcome": "healthy",
+      "ref": "refs/heads/sentinel-supervisor",
+      "repository": "ubiquity/sentinel",
+      "settled": true,
+      "startedAt": 1792338785000,
+      "startupReady": true,
+      "terminalAt": 1792338886548,
+      "workflowId": 357012162,
+      "workflowPath": ".github/workflows/supervisor.yml"
+    },
+    "nextOrdinaryAt": 1792345065148,
+    "updatedAt": 1792482215894,
+    "version": "v1"
+  },
+  "release": {
+    "candidateProof": null,
+    "createdAt": 1792346315799,
+    "id": "release:f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5",
+    "kind": "hosted_release",
+    "phase": "requested",
+    "pointerIntent": null,
+    "priorProof": null,
+    "priorRevision": "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+    "request": {
+      "createdAt": 1792346211718,
+      "failureReason": null,
+      "id": "release:f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5",
+      "kind": "release_request",
+      "revision": "1838df313105bab219d71602695a7f758a65125e",
+      "source": {
+        "base": "9b9d74c99eb5bafcf8fe9941fdedd1f940fdef8a",
+        "head": "eb8c7b74badd43b8c03a23583a8c630319603a1c",
+        "pullRequest": 172,
+        "reviewReceiptId": "review-receipt:54f730f49c786ae6c3d8142644e5b274778bb09d11428ccff90b6f3a434806a4",
+        "reviewRequestId": "review-review:172:eb8c7b74badd43b8c03a23583a8c630319603a1c:attempt-3"
+      },
+      "status": "open",
+      "target": {
+        "environment": "production",
+        "repository": {
+          "installationId": 0,
+          "name": "sentinel",
+          "owner": "ubiquity"
+        }
+      },
+      "version": "v1"
+    },
+    "rollbackProof": null,
+    "updatedAt": 1792346315799,
+    "version": "v1"
+  },
+  "reservation": {
+    "attempt": 2,
+    "createdAt": 1791020756260,
+    "head": "4305d2b9e5db5dc7ed84691e362042cfd3d0db0c",
+    "id": "c929b840daf05d0ee7f66ea8f2b420c3d94fb506ae13540cebefad50efbe2627",
+    "kind": "budget_reservation",
+    "outcome": "submitted",
+    "proofRef": null,
+    "purpose": "retry",
+    "repository": {
+      "installationId": 155687488,
+      "name": "ai.ubq.fi",
+      "owner": "ubiquity"
+    },
+    "settledAt": 1791020951087,
+    "taskId": "issue-ubiquity-ai.ubq.fi-396",
+    "version": "v1"
+  }
+}

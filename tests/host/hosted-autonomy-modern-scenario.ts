@@ -39,7 +39,6 @@ import { prepareModernHistory } from "./hosted-autonomy-modern-history-fixtures.
 import { expectProtectedRefusal } from "./hosted-autonomy-modern-results.ts";
 import { captureHostedAutonomyMain } from "./hosted-autonomy-rig.ts";
 import { candidatePreservationRef } from "../../src/repair/keys.ts";
-import { createHostedCandidateRecoveryPort } from "../../ops/hosted-autonomy-candidate-port.ts";
 import { isInflightPreservation } from "../../ops/hosted-autonomy-blocked-candidate.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
 import {
@@ -88,6 +87,7 @@ async function modernRecoveryScenarioInGraph(
   const { createActionsMatrixArtifactTransport } = await graph
     .matrixArtifacts();
   const { createHostedClosedMatrixRecovery } = await graph.matrixAdapters();
+  const { createHostedCandidateRecoveryPort } = await graph.candidatePort();
   const targetRoot = await Deno.makeTempDir({
     prefix: "sentinel-modern-target-",
     dir: decodeURIComponent(new URL("../../", import.meta.url).pathname),
@@ -289,8 +289,10 @@ async function modernRecoveryScenarioInGraph(
                 ...actual,
                 ...(blockedCandidate
                   ? {
-                    cycleFor: (config: typeof actual.configs[number]) => ({
-                      ...actual.cycleFor(config),
+                    cycleFor: (
+                      targetConfig: typeof actual.configs[number],
+                    ) => ({
+                      ...actual.cycleFor(targetConfig),
                       github: recoveryPort = (() => {
                         const port = createHostedCandidateRecoveryPort({
                           state,
@@ -301,8 +303,14 @@ async function modernRecoveryScenarioInGraph(
                           }),
                           // The candidate edits a path the target protects.
                           config: blockedCandidate === "protected-refusal"
-                            ? { ...config, protectedPaths: ["repair.txt"] }
-                            : config,
+                            ? {
+                              ...targetConfig,
+                              protectedPaths: ["repair.txt"],
+                            }
+                            : {
+                              ...targetConfig,
+                              protectedPaths: config.protectedPaths,
+                            },
                           token: "offline-native-token",
                           http: recoveryHttp,
                           sourcePath: mirror,

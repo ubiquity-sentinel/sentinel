@@ -124,7 +124,7 @@ Deno.test(
 );
 
 Deno.test(
-  "hosted release: a rolled_back persisted receipt blocks without closure",
+  "hosted release: an abandoned persisted receipt blocks without closure",
   async () => {
     const rig = await makeRig("hostedrollback", {
       summaries: false,
@@ -133,18 +133,27 @@ Deno.test(
     try {
       const request = localDeliveryRequest("release-hosted-1", SHA3);
       await seedActionsDelivery(rig, request);
-      await seedHostedReceipt(rig, request, "rolled_back");
+      const before = await rig.snapshot();
+      const receipt = await seedHostedReceipt(rig, request, "abandoned");
+      assert.equal(
+        receipt.abandonment?.reason,
+        "candidate_verification_failed",
+      );
+      assert.equal(receipt.rollbackProof?.outcome, "healthy");
       wireHostedReader(rig);
       const run = await rig.entry();
       assert.equal(run.status, "idle", JSON.stringify(run));
       const state = await rig.snapshot();
-      assert.equal(state.work[0].nextStep, "blocked");
       assert.equal(
         rig.github.calls.filter((call) => call.startsWith("closeIssue"))
           .length,
         0,
-        "no closure for a rolled-back hosted receipt",
+        "no closure for an abandoned hosted receipt",
       );
+      assert.deepEqual(state.reservations, before.reservations);
+      assert.deepEqual(state.releaseRequests, before.releaseRequests);
+      assert.deepEqual(state.work[0].target, before.work[0].target);
+      assert.equal(state.work[0].nextStep, "blocked");
     } finally {
       await rig.ctx.cleanup();
     }

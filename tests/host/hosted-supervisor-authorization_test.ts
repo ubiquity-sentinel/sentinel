@@ -17,6 +17,7 @@ import {
 import {
   bootstrapHealthy,
   driftedTask,
+  ordinaryTurn,
   variantRequest,
 } from "./actions-supervisor-lifecycle-fixture.ts";
 
@@ -57,11 +58,13 @@ Deno.test("hosted supervisor core: promotion preflight requires the exact frozen
   const rig = await makeRig();
   try {
     await bootstrapHealthy(rig);
+    await ordinaryTurn(rig, 9001);
     const request = releaseRequest();
     await rig.seedRepair([request], [reviewReceipt(request)]);
     rig.evidence.requests.add(request.id);
     const prior = requireRun(await rig.prepare(run(2)));
     rig.evidence.settlements.set(prior.id, runProof(prior, "healthy"));
+    await ordinaryTurn(rig, 9002);
     // The repair-side source is cancelled; the frozen hosted request no
     // longer canonical-equals it, so the promote intent must not persist.
     const cancelled = releaseRequest({
@@ -70,10 +73,10 @@ Deno.test("hosted supervisor core: promotion preflight requires the exact frozen
     });
     await rig.seedRepair([cancelled], [reviewReceipt(cancelled)]);
     const before = await rig.snapshot();
-    assert.equal((await rig.prepare(run(3))).status, "pending");
+    await ordinaryTurn(rig, 3);
     const after = await rig.snapshot();
     assert.deepEqual(after.hostedReleases, before.hostedReleases);
-    assert.equal(after.hostedRuntimes[0].execution?.id, prior.id);
+    assert.equal(after.hostedRuntimes[0].execution, null);
     assert.equal(after.hostedRuntimes[0].activeRevision, LAUNCHER);
     assert.equal(after.hostedRuntimes[0].generation, 1);
   } finally {
@@ -194,26 +197,28 @@ Deno.test("hosted supervisor core: promotion preflight rechecks the trusted acce
   const rig = await makeRig();
   try {
     await bootstrapHealthy(rig);
+    await ordinaryTurn(rig, 9001);
     const request = releaseRequest();
     await rig.seedRepair([request], [reviewReceipt(request)]);
     rig.evidence.requests.add(request.id);
     const prior = requireRun(await rig.prepare(run(2)));
     assert.equal(prior.purpose, "prior");
     rig.evidence.settlements.set(prior.id, runProof(prior, "healthy"));
+    await ordinaryTurn(rig, 9002);
     // The live issue text moved after the prior verification: the frozen
     // request no longer binds the current task and the promote intent must not
     // be persisted.
     rig.evidence.tasks.set(ISSUE, await driftedTask(`${TASK_BODY} (edited)`));
     const before = await rig.snapshot();
-    assert.equal((await rig.prepare(run(3))).status, "pending");
+    await ordinaryTurn(rig, 3);
     const after = await rig.snapshot();
     assert.deepEqual(after.hostedReleases, before.hostedReleases);
-    assert.equal(after.hostedRuntimes[0].execution?.id, prior.id);
+    assert.equal(after.hostedRuntimes[0].execution, null);
     assert.equal(after.hostedRuntimes[0].activeRevision, LAUNCHER);
     // An unavailable trusted read refuses the same promotion: the frozen
     // receipt and request records stay untouched and no intent is persisted.
     rig.evidence.tasks.set(ISSUE, null);
-    assert.equal((await rig.prepare(run(4))).status, "pending");
+    await ordinaryTurn(rig, 4);
     assert.deepEqual(
       (await rig.snapshot()).hostedReleases,
       before.hostedReleases,
@@ -237,12 +242,14 @@ Deno.test("hosted supervisor core: issue text that drifts while the source verif
   const rig = await makeRig();
   try {
     await bootstrapHealthy(rig);
+    await ordinaryTurn(rig, 9001);
     const request = releaseRequest();
     await rig.seedRepair([request], [reviewReceipt(request)]);
     rig.evidence.requests.add(request.id);
     const prior = requireRun(await rig.prepare(run(2)));
     assert.equal(prior.purpose, "prior");
     rig.evidence.settlements.set(prior.id, runProof(prior, "healthy"));
+    await ordinaryTurn(rig, 9002);
     // The live issue text changes exactly WHILE the trusted source verifier is
     // in flight: the authorization that permits the pointer move is the read
     // taken after that verifier settles, so this drift must refuse the
@@ -260,11 +267,11 @@ Deno.test("hosted supervisor core: issue text that drifts while the source verif
       return verify(request);
     };
     const before = await rig.snapshot();
-    assert.equal((await rig.prepare(run(3))).status, "pending");
+    await ordinaryTurn(rig, 3);
     assert.equal(driftedDuringVerify, true);
     const after = await rig.snapshot();
     assert.deepEqual(after.hostedReleases, before.hostedReleases);
-    assert.equal(after.hostedRuntimes[0].execution?.id, prior.id);
+    assert.equal(after.hostedRuntimes[0].execution, null);
     assert.equal(after.hostedRuntimes[0].activeRevision, LAUNCHER);
     assert.equal(after.hostedRuntimes[0].generation, 1);
     // The exact unchanged positive still promotes normally.

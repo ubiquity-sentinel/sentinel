@@ -1,10 +1,35 @@
 import assert from "node:assert/strict";
-import { runNativeCiWrapper } from "../../ops/native-ci-proof.ts";
+import {
+  nativeCiAggregateStatus,
+  runNativeCiWrapper,
+} from "../../ops/native-ci-proof.ts";
 import {
   NATIVE_CI_MARKER,
   parseNativeCiProof,
 } from "../../src/contracts/native-ci.ts";
 import { SHA1, SHA2, SHA3 } from "../github/helpers.ts";
+
+Deno.test("native CI aggregate: every prerequisite must exist and complete successfully", () => {
+  const successful = {
+    quality: { result: "success", outputs: {} },
+    "test-shards": { result: "success", outputs: {} },
+  };
+  assert.equal(nativeCiAggregateStatus(successful), 0);
+  for (const name of Object.keys(successful)) {
+    for (const result of ["failure", "cancelled", "skipped", "", null]) {
+      assert.equal(
+        nativeCiAggregateStatus({ ...successful, [name]: { result } }),
+        1,
+      );
+    }
+    const missing = { ...successful } as Record<string, unknown>;
+    delete missing[name];
+    assert.equal(nativeCiAggregateStatus(missing), 1);
+  }
+  for (const value of [null, [], {}, "success", { ...successful, extra: {} }]) {
+    assert.equal(nativeCiAggregateStatus(value), 1);
+  }
+});
 
 Deno.test("native CI wrapper: emits immutable tested checkout only after a successful hermetic harness", async (t) => {
   for (const mode of ["success", "failed", "changed", "push"] as const) {
