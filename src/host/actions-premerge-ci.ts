@@ -21,15 +21,34 @@
  *   name the target repository and carry `actions: write`.
  * - `workflow_dispatch` takes a ref, not a SHA, so the head verified here can
  *   move before GitHub resolves the ref. A run on another SHA is harmless to
- *   correctness (evidence is keyed by exact head) and is reported as
- *   `head_moved`; it is never retried in the same pass.
+ *   correctness (evidence is keyed by exact head); the confirming read is
+ *   keyed by that head, so it is reported as `pending_visibility`, and it is
+ *   never retried in the same pass.
  * - Every GitHub read/write passes the shared cooldown gate first and stops at
  *   the absolute run deadline.
+ *
+ * Base evidence (2026-10-24): the CI-first gate attributes a red head check
+ * by the same-name check on the record's base, but `Gateway CI` on a closed
+ * pull request reports on the PR head, so a `development` merge commit has no
+ * check run and every red gateway head stays `unattributed` until the
+ * pre-review bound parks it. When no head needs a dispatch this pass, the
+ * pass's one dispatch may instead go to the base branch for a bound head that
+ * already has a run, when the record base is the live pull request base and
+ * that base has no run of the workflow (any event, any status) and is still
+ * the base branch tip; its `scope_base` is the tip's first parent, and an
+ * unreadable tip or parent skips it. The same request-only, binding, grant, gate and deadline rules
+ * apply; a base ref that moved first yields a run on another SHA, which is
+ * reported as `pending_visibility` and never retried in the pass. Like-for-like
+ * attribution also needs the owner's ai.ubq.fi change tracked in Sentinel
+ * issue #181 (the complete check set for an opted-in dispatch); until then the
+ * base run is scoped by its first-parent diff, so a head check the base run
+ * skips stays unattributed exactly as before.
  */
 import type { Clock, GitHubCooldownGateV1 } from "../contracts/ports.ts";
 import type { StateReadView } from "../contracts/ports-state.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { isGitSha } from "../contracts/brands.ts";
 import type { HttpResponseV1, HttpTransportV1 } from "../github/http.ts";
 import { classifyGitHubRateLimit } from "../github/rate-limit.ts";
 import { CI_PRE_REVIEW_PENDING_PREFIX } from "../repair/ci-first-policy.ts";
@@ -66,10 +85,17 @@ export interface PremergeCiReportV1 {
     | "rate_limited"
     | "nothing_pending"
     | "dispatched"
+    | "base_dispatched"
     | "dispatch_refused";
-  /** The pull request the single dispatch targeted, when one was sent. */
+  /**
+   * The pull request the single dispatch targeted (its head, or the base it
+   * requested evidence for), when one was sent.
+   */
   pr: number | null;
-  /** Per-record decisions, in pull request order. */
+  /**
+   * Per-record decisions, in pull request order; base-evidence decisions
+   * (`<pr>:base_*`) follow the head decisions.
+   */
   decisions: string[];
 }
 
@@ -98,6 +124,15 @@ function row(value: unknown): Row | null {
 
 function text(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/** Parsed JSON, or undefined for a body that is not JSON. */
+function json(bodyText: string): unknown {
+  try {
+    return JSON.parse(bodyText);
+  } catch {
+    return undefined;
+  }
 }
 
 function slugOf(config: RepositoryConfigV1): string {
@@ -230,27 +265,82 @@ export async function dispatchPremergeCi(
     }
     return response;
   };
-  const runsOnHead = async (
-    head: string,
-  ): Promise<number | null | Stop> => {
+  /** Runs of the workflow bound to the exact SHA (any event, any status). */
+  const runsOn = async (sha: string): Promise<number | null | Stop> => {
     const response = await api(
       "GET",
-      `/actions/workflows/${policy.workflowFile}/runs?head_sha=${head}&per_page=100`,
+      `/actions/workflows/${policy.workflowFile}/runs?head_sha=${sha}&per_page=100`,
       null,
     );
     if (isStop(response)) return response;
     if (response === "transport" || response.status !== 200) return null;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(response.bodyText);
-    } catch {
-      return null;
-    }
-    const page = row(parsed);
+    const page = row(json(response.bodyText));
     const runs = page === null ? null : page.workflow_runs;
     if (!Array.isArray(runs)) return null;
-    return runs.filter((run) => row(run)?.head_sha === head).length;
+    return runs.filter((run) => row(run)?.head_sha === sha).length;
   };
+  /**
+   * First parent of the base branch tip, read through the branch itself: the
+   * dispatch takes the branch as its ref, so it is sent only while that tip
+   * is still the exact base (`moved` otherwise, so a moved branch never
+   * draws one dispatch per pass for a run that lands on another SHA). Null
+   * when the tip cannot be read or has no parent.
+   */
+  const tipParent = async (
+    sha: string,
+  ): Promise<string | "moved" | null | Stop> => {
+    const response = await api("GET", `/commits/${config.baseBranch}`, null);
+    if (isStop(response)) return response;
+    if (response === "transport" || response.status !== 200) return null;
+    const commit = row(json(response.bodyText));
+    if (commit === null || !isGitSha(commit.sha)) return null;
+    if (commit.sha !== sha) return "moved";
+    if (!Array.isArray(commit.parents)) return null;
+    const parent = row(commit.parents[0])?.sha;
+    return isGitSha(parent) ? parent : null;
+  };
+  /**
+   * The pass's one POST, then one read keyed by the exact SHA: a run there
+   * confirms the request; its absence proves nothing yet (GitHub lists runs
+   * after a delay) or means the ref moved first.
+   */
+  const dispatch = async (
+    ref: string,
+    sha: string,
+    scopeBase: string,
+  ): Promise<Stop | { refused: string } | { sent: string }> => {
+    const posted = await api(
+      "POST",
+      `/actions/workflows/${policy.workflowFile}/dispatches`,
+      {
+        ref,
+        inputs: {
+          [policy.baseRefInput]: config.baseBranch,
+          [policy.authorInput]: deps.trustedAuthor,
+          [policy.scopeBaseInput]: scopeBase,
+        },
+      },
+    );
+    if (isStop(posted)) return posted;
+    if (posted === "transport" || posted.status !== 204) {
+      return {
+        refused: posted === "transport" ? "transport" : `http_${posted.status}`,
+      };
+    }
+    const read = await runsOn(sha);
+    const confirmed = isStop(read) ? null : read;
+    return {
+      sent: confirmed === null
+        ? "unconfirmed"
+        : confirmed > 0
+        ? "confirmed"
+        : "pending_visibility",
+    };
+  };
+
+  // Bases that may need evidence, first pull request per distinct SHA; read
+  // only after every pending head has been offered the pass's dispatch.
+  const bases: { pr: number; sha: string }[] = [];
 
   for (const record of pending) {
     const pr = record.target.pr!;
@@ -283,7 +373,7 @@ export async function dispatchPremergeCi(
       decisions.push(`${pr}:pull_mismatch`);
       continue;
     }
-    const existing = await runsOnHead(head);
+    const existing = await runsOn(head);
     if (isStop(existing)) return stop(existing);
     if (existing === null) {
       decisions.push(`${pr}:runs_unreadable`);
@@ -291,44 +381,53 @@ export async function dispatchPremergeCi(
     }
     if (existing > 0) {
       decisions.push(`${pr}:run_exists`);
+      // The gate reads the record's base; evidence for any other SHA would
+      // not attribute this head.
+      if (record.target.base !== baseSha) {
+        decisions.push(`${pr}:base_stale`);
+      } else if (!bases.some((entry) => entry.sha === baseSha)) {
+        bases.push({ pr, sha: baseSha });
+      }
       continue;
     }
-    const dispatched = await api(
-      "POST",
-      `/actions/workflows/${policy.workflowFile}/dispatches`,
-      {
-        ref: record.target.branch,
-        inputs: {
-          [policy.baseRefInput]: config.baseBranch,
-          [policy.authorInput]: deps.trustedAuthor,
-          [policy.scopeBaseInput]: baseSha,
-        },
-      },
-    );
-    if (isStop(dispatched)) return stop(dispatched);
-    if (dispatched === "transport" || dispatched.status !== 204) {
-      decisions.push(
-        `${pr}:dispatch_refused:${
-          dispatched === "transport" ? "transport" : `http_${dispatched.status}`
-        }`,
-      );
+    const sent = await dispatch(record.target.branch!, head, baseSha);
+    if (isStop(sent)) return stop(sent);
+    if ("refused" in sent) {
+      decisions.push(`${pr}:dispatch_refused:${sent.refused}`);
       return report("dispatch_refused", pr);
     }
-    // One read after the POST: a run bound to the exact head confirms the
-    // request; its absence proves nothing yet (GitHub lists runs after a
-    // delay) and a run on another SHA means the ref moved first.
-    const read = await runsOnHead(head);
-    const confirmed = isStop(read) ? null : read;
-    decisions.push(
-      `${pr}:dispatched:${
-        confirmed === null
-          ? "unconfirmed"
-          : confirmed > 0
-          ? "confirmed"
-          : "pending_visibility"
-      }`,
-    );
+    decisions.push(`${pr}:dispatched:${sent.sent}`);
     return report("dispatched", pr);
+  }
+  for (const { pr, sha } of bases) {
+    const existing = await runsOn(sha);
+    if (isStop(existing)) return stop(existing);
+    if (existing === null) {
+      decisions.push(`${pr}:base_runs_unreadable`);
+      continue;
+    }
+    if (existing > 0) {
+      decisions.push(`${pr}:base_run_exists`);
+      continue;
+    }
+    const parent = await tipParent(sha);
+    if (isStop(parent)) return stop(parent);
+    if (parent === "moved") {
+      decisions.push(`${pr}:base_moved`);
+      continue;
+    }
+    if (parent === null) {
+      decisions.push(`${pr}:base_parent_unreadable`);
+      continue;
+    }
+    const sent = await dispatch(config.baseBranch, sha, parent);
+    if (isStop(sent)) return stop(sent);
+    if ("refused" in sent) {
+      decisions.push(`${pr}:base_dispatch_refused:${sent.refused}`);
+      return report("dispatch_refused", pr);
+    }
+    decisions.push(`${pr}:base_dispatched:${sent.sent}`);
+    return report("base_dispatched", pr);
   }
   return report("nothing_pending");
 }

@@ -182,6 +182,9 @@ export class FollowFake {
     "normal";
   intercept?: (request: HttpRequestV1, url: URL) => HttpResponseV1 | undefined;
   treeTruncated = false;
+  /** Commit → its `.github/workflows` tree id (default shared by all). */
+  workflowTrees = new Map<string, string>();
+  private sourceTrees = new Map<string, { path: string; sha: string }>();
   private mutationCalls = 0;
   private dispatchCalls = 0;
 
@@ -272,6 +275,34 @@ export class FollowFake {
     }
     if (path === `/git/commits/${this.stateHead}`) {
       return response({ sha: this.stateHead, tree: { sha: TREE } });
+    }
+    // Source commits: root tree → `.github` → `workflows`, whose id is the
+    // commit's entry in `workflowTrees` (one shared default otherwise).
+    const commitTree = /^\/git\/commits\/([0-9a-f]{40})$/.exec(path);
+    if (commitTree !== null) {
+      const commit = commitTree[1];
+      const root = ("a" + commit).slice(0, 40);
+      const github = ("b" + commit).slice(0, 40);
+      this.sourceTrees.set(root, {
+        path: ".github",
+        sha: github,
+      });
+      this.sourceTrees.set(github, {
+        path: "workflows",
+        sha: this.workflowTrees.get(commit) ?? "e".repeat(40),
+      });
+      return response({ sha: commit, tree: { sha: root } });
+    }
+    const sourceTree = /^\/git\/trees\/([0-9a-f]{40})$/.exec(path);
+    const entry = sourceTree === null
+      ? undefined
+      : this.sourceTrees.get(sourceTree[1]);
+    if (sourceTree !== null && entry !== undefined) {
+      return response({
+        sha: sourceTree[1],
+        truncated: false,
+        tree: [{ ...entry, type: "tree", mode: "040000" }],
+      });
     }
     if (path === `/git/trees/${TREE}`) {
       return response({

@@ -33,11 +33,13 @@ instructions and their routed procedures still apply.
   bootstrap at generation+1 and exact recorded-prior rollback at a higher
   generation. Failed SHAs cannot reinstall. Dispatcher auto-follow fast-forwards
   `sentinel-supervisor` by verified CI and ancestry; `SENTINEL_AUTO_FOLLOW`
-  defaults off until the first controlled advance and installation are verified.
-  Rollout rows, owner supersessions, custody revision floors and LF
-  materialization are retired for these updates; actual custody, accounting and
-  compatible historical readers remain required. Retained ceremony modules await
-  deletion in DESIGN.md §4 order.
+  defaults on (owner directive 2026-10-24, "make it end to end autonomous"), and
+  the repository variable set to `off` disables it. A candidate whose workflow
+  files differ from the launcher still needs a manual advance. Rollout rows,
+  owner supersessions, custody revision floors and LF materialization are
+  retired for these updates; actual custody, accounting and compatible
+  historical readers remain required. Retained ceremony modules await deletion
+  in DESIGN.md §4 order.
 - Keep credentials, authoritative state writes, live admission changes and
   promotion authority out of model workers. Use the existing trusted supervisor
   and exact execution/pointer proofs.

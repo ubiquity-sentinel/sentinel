@@ -59,7 +59,10 @@ export interface GitHubPort {
    * returned; every other one is skipped unread. A caller attributing given
    * head failures against a base passes their names, so an unrelated base run
    * (sentinel `development` carries 78-character `matrix_cell (<cellId>)`
-   * runs over the label bound) never refuses the read.
+   * runs over the label bound) never refuses the read. Without `names`, a
+   * status context whose latest status is pending is advisory and left out
+   * once at least one check run exists and every check run has completed
+   * (sentinel issue #192).
    */
   readChecks(
     head: GitSha,

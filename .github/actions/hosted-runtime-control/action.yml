@@ -5,7 +5,7 @@ inputs:
     description: Native repository GITHUB_TOKEN (contents write and actions write).
     required: true
   auto-follow:
-    description: Repository variable SENTINEL_AUTO_FOLLOW; only on enables writes.
+    description: Repository variable SENTINEL_AUTO_FOLLOW (the dispatcher defaults it to on); only on enables writes.
     default: "off"
 outputs:
   launcher-sha:

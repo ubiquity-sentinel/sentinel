@@ -312,3 +312,32 @@ Deno.test("follow refuses an active supervisor and bounded first-parent scans", 
   );
   assert.equal(api.mutations, 0);
 });
+
+Deno.test("follow skips a candidate whose workflow files differ from the launcher and advances to an older one", async () => {
+  // The native dispatcher token cannot move a ref onto changed workflow
+  // files: the newest green D changes them, so the follow takes OLDER.
+  const api = new FollowFake();
+  api.ci.set(D, [ciRun(D, 5)]);
+  api.ci.set(OLDER, [ciRun(OLDER, 6)]);
+  api.workflowTrees.set(D, "d".repeat(40));
+  const result = await api.follow();
+  assert.equal(result.journal.decision, "advanced");
+  assert.equal(result.journal.candidateSha, OLDER);
+  assert.equal(api.launcher, OLDER);
+  assert.equal(api.mutations, 1);
+});
+
+Deno.test("follow defers without a ref write when every candidate changes workflow files", async () => {
+  const api = new FollowFake();
+  api.ci.set(D, [ciRun(D, 5)]);
+  api.ci.set(OLDER, [ciRun(OLDER, 6)]);
+  api.workflowTrees.set(D, "d".repeat(40));
+  api.workflowTrees.set(OLDER, "d".repeat(40));
+  const result = await api.follow();
+  assert.equal(result.journal.decision, "deferred");
+  assert.equal(result.journal.reason, "workflow_change_needs_owner_advance");
+  assert.equal(api.mutations, 0);
+  assert.equal(api.launcher, L);
+  assert.equal(result.exitCode, 0, "a deferral never fails the dispatcher");
+  assert.equal(result.safeToDispatch, true, "the current launcher still runs");
+});

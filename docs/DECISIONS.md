@@ -2781,3 +2781,84 @@ standing approval above. Applied as follows.
   protected-write authority (#188).
 - Live, the read failed on every maintenance pass from 16:43 UTC, so no closure,
   retry, delivery or follow-up pass ran for any target.
+
+## 2026-10-24: gateway base CI evidence for check attribution
+
+- `ubiquity/ai.ubq.fi` runs `Gateway CI` only on `pull_request: [closed]` and
+  `workflow_dispatch`, and a closed-PR run reports its check runs on the PR
+  head, not on the merge commit. The `development` tip (`3393df1e`, the merge of
+  PR 1258) had no check run, so the CI-first gate (`attributeFailedChecks` in
+  `src/repair/ci-rejection.ts`) found no same-name check on the record base,
+  every red gateway head stayed `unattributed` and waited `ci_pending` until the
+  6-hour pre-review bound parked it (live: PRs 1295 and 1256).
+- The trusted pre-merge dispatcher (`src/host/actions-premerge-ci.ts`) now also
+  requests base evidence. When no pending head needs a dispatch in the pass, the
+  pass's single dispatch may go to `ref: development` for a bound head that
+  already has a run, when its record base equals the live pull request base and
+  that base SHA has no run of the workflow (any event or status). The inputs are
+  `base_ref: development`, the App login and `scope_base` set to the base
+  commit's first parent. The pass reads the parent through the branch
+  (`GET /commits/development`) and dispatches only while that tip is still the
+  exact base, so a branch that already moved (`<pr>:base_moved`) never draws a
+  dispatch on every pass; an unreadable tip or parent skips the base. Head
+  dispatches keep priority, a base SHA that has any run is never dispatched
+  again, and the same grant, cooldown gate, deadline and refusal-ends-the-pass
+  rules apply. Decisions are `<pr>:base_stale`, `<pr>:base_run_exists`,
+  `<pr>:base_runs_unreadable`, `<pr>:base_moved`, `<pr>:base_parent_unreadable`,
+  `<pr>:base_dispatch_refused:<reason>` and
+  `<pr>:base_dispatched:confirmed|pending_visibility|unconfirmed`; the pass
+  reports `base_dispatched`.
+- A dispatch is a request for evidence, never evidence: it writes no record,
+  wait, counter or receipt. A base branch that moves before GitHub resolves the
+  ref yields a run on another SHA, which is reported as `pending_visibility` and
+  never retried in the pass.
+- Like-for-like attribution additionally needs the owner's ai.ubq.fi change
+  tracked in Sentinel issue #181 (the complete check set for an opted-in
+  dispatch run). Until then the base run is scoped by its first-parent diff, so
+  a head check the base run skips stays unattributed exactly as before.
+
+## 2026-10-24: a pending commit status no longer holds a finished head's CI (#192)
+
+- The head CI read (`readChecks` in `src/github/client-reads.ts`) still folds
+  the head's commit statuses into its check runs, and each status context is
+  judged by its latest status (newest `created_at`). A context whose latest
+  status is `pending` is advisory once the head reports at least one check run,
+  every check run has completed, and the last run completed at least 30 minutes
+  ago (`PENDING_STATUS_GRACE_MS`): it is then left out of the read. The grace
+  keeps waiting for a status that resolves shortly after the runs, so one that
+  is about to fail still blocks review and merge. A third-party status that
+  never reports, such as a stale integration or a preview deployment, therefore
+  no longer holds the CI-first gate in `ci_pending` until the six-hour park, nor
+  the delivery and merge gates that read the same list.
+- A failed or errored status still counts as a failure, and a successful one
+  still passes. A pending status still waits while any check run is running, and
+  when the head has no check run at all, because the statuses are then the only
+  CI. Leaving a status out adds no observation, so it never turns a red check
+  run green.
+- A name-filtered read (the base attribution of given head failures) returns its
+  statuses as recorded. A required check a target's own branch rules name stays
+  required (`requiredChecksState`): an omitted pending context reads as absent,
+  which is pending. No target configuration names required status contexts. The
+  launcher's `hasAllChecksGreen` reads check runs only and is unchanged.
+
+## 2026-10-24: dispatcher auto-follow on by default
+
+- Owner directive (2026-10-24): "make it end to end autonomous". The
+  dispatcher's `auto-follow` input now defaults to `on`
+  (`vars.SENTINEL_AUTO_FOLLOW || 'on'`); setting the repository variable to
+  `off` turns it off again. The condition for enabling it (a verified controlled
+  advance and self-install) has held since generation 100: every manual advance
+  today bootstrapped and ran green.
+- Without auto-follow, every Sentinel self-merge left a `requested` hosted
+  release that only a manual launcher advance cleared, so the runtime never
+  installed its own merged fixes.
+- The 2026-10-22 reason for keeping it off was that the native dispatcher token
+  cannot move a ref onto a commit whose workflow files differ. The follow now
+  compares the `.github/workflows` tree id of the launcher and of each candidate
+  (git trees API) and skips a differing candidate, taking an older eligible one
+  or deferring as `workflow_change_needs_owner_advance`. It never attempts a ref
+  write GitHub would refuse, so the dispatcher stays green and keeps dispatching
+  the current launcher. A workflow change still needs one manual advance.
+- Unchanged: exact first-parent ancestry, complete CI evidence for the exact
+  SHA, failed-bootstrap exclusion, the expected-old non-force ref update and its
+  readback, and the model-disabled bootstrap at generation+1.

@@ -87,7 +87,7 @@ jobs:
         uses: ./.github/actions/hosted-runtime-control
         with:
           token: ${{ github.token }}
-          auto-follow: ${{ vars.SENTINEL_AUTO_FOLLOW || 'off' }}
+          auto-follow: ${{ vars.SENTINEL_AUTO_FOLLOW || 'on' }}
       - name: Recover one bounded stale run, then dispatch the exact protected ref
         env:
           GH_TOKEN: ${{ github.token }}
