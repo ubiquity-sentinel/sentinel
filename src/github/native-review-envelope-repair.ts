@@ -27,9 +27,7 @@
  * the native findings cross-check. A text no rewrite recovers keeps the fixed
  * sanitized `json_syntax` rejection.
  */
-import { fail } from "../contracts/validation.ts";
 import { expectStrictJson, parseJsonStrict } from "./journal-json.ts";
-import { STRICT_JSON_ISSUE_MESSAGE } from "./review-result-contracts.ts";
 
 const SIMPLE_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t"]);
 
@@ -204,13 +202,4 @@ export function expectEnvelopeJson(text: string, path: string): EnvelopeJsonV1 {
     } catch { /* next rewrite */ }
   }
   return { value: expectStrictJson(text, path), recovered: false };
-}
-
-/**
- * Throw the fixed strict-JSON issue at `path`: a recovered envelope that a
- * later check refuses was still an escaping failure, so it keeps the
- * `json_syntax` category rather than the shape the rewrite produced.
- */
-export function refuseAsJsonSyntax(path: string): never {
-  fail(path, "invalid_value", STRICT_JSON_ISSUE_MESSAGE);
 }
