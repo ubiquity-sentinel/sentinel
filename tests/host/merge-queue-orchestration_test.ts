@@ -395,6 +395,126 @@ Deno.test("queue dequeue: durable intent prevents replay after ambiguity, except
   }
 });
 
+Deno.test("queue dequeue: complete native removal is a guarded durable disposition", async (t) => {
+  async function pendingDequeue() {
+    const f = await orchestrationRig();
+    f.queue.config.mode = "on";
+    f.rules({ status: "complete", value: true });
+    f.onEnqueue(() => f.join());
+    await runHostedQueueCustody(f.deps, f.now() + 60000);
+    f.auth.pathsDisjoint = false;
+    f.queue.surface.dequeue = () => {
+      f.calls.push("dequeue");
+      f.leave();
+      return Promise.resolve({ status: "submitted" as const });
+    };
+    await runHostedQueueCustody(f.deps, f.now() + 60000);
+    assert.equal(
+      parseQueueIntent(f.state.repair!.work[0])?.stage,
+      "dequeue_pending",
+    );
+    return f;
+  }
+
+  await t.step(
+    "wrong entry and missing or delayed timeline stay held",
+    async () => {
+      const f = await pendingDequeue();
+      let complete = false;
+      f.queue.authorization.readRemoval = () =>
+        Promise.resolve(
+          complete
+            ? {
+              status: "complete",
+              value: { classification: "other", eventId: "REM_7" },
+            }
+            : { status: "unavailable", reason: "incomplete" },
+        );
+      const foreign = nativeEntry();
+      foreign.id = "MQE_FOREIGN";
+      foreign.enqueuer = {
+        type: "User",
+        nodeId: "U_foreign",
+        login: "foreign",
+      };
+      f.join(foreign);
+      const held = await runHostedQueueCustody(f.deps, f.now() + 60000);
+      assert.equal(held.ready, true);
+      assert.equal(
+        parseQueueIntent(f.state.repair!.work[0])?.stage,
+        "dequeue_pending",
+      );
+      assert.equal(f.calls.filter((call) => call === "dequeue").length, 1);
+      f.leave();
+      const unavailable = await runHostedQueueCustody(f.deps, f.now() + 60000);
+      assert.equal(unavailable.ready, true);
+      assert.equal(
+        parseQueueIntent(f.state.repair!.work[0])?.stage,
+        "dequeue_pending",
+      );
+      complete = true;
+      f.auth.pathsDisjoint = true;
+      f.queue.config.mode = "observe";
+      const reconciled = await runHostedQueueCustody(f.deps, f.now() + 60000);
+      assert.equal(reconciled.ready, true);
+      assert.equal(
+        parseQueueIntent(f.state.repair!.work[0])?.stage,
+        "dequeue_complete",
+      );
+      assert.ok(f.state.repair!.work[0].intent?.key.endsWith(":d1"));
+    },
+  );
+
+  await t.step(
+    "completion CAS movement keeps the marker and never replays",
+    async () => {
+      const f = await pendingDequeue();
+      f.auth.pathsDisjoint = true;
+      f.queue.authorization.readRemoval = () =>
+        Promise.resolve({
+          status: "complete" as const,
+          value: { classification: "other" as const, eventId: "REM_7" },
+        });
+      f.state.conflictRepairNext = true;
+      const result = await runHostedQueueCustody(f.deps, f.now() + 60000);
+      assert.equal(result.ready, false);
+      assert.equal(
+        parseQueueIntent(f.state.repair!.work[0])?.stage,
+        "dequeue_pending",
+      );
+      assert.equal(f.calls.filter((call) => call === "dequeue").length, 1);
+      assert.equal(f.calls.filter((call) => call === "enqueue").length, 1);
+    },
+  );
+
+  await t.step(
+    "proof survives a ninety-day restart and permits one re-entry",
+    async () => {
+      const f = await pendingDequeue();
+      const charges = canonicalStringify(f.state.repair!.reservations);
+      f.auth.pathsDisjoint = true;
+      f.queue.authorization.readRemoval = () =>
+        Promise.resolve({
+          status: "complete" as const,
+          value: { classification: "other" as const, eventId: "REM_7" },
+        });
+      f.queue.config.mode = "observe";
+      await runHostedQueueCustody(f.deps, f.now() + 60000);
+      f.advance(90 * 24 * 60 * 60 * 1000);
+      f.queue.config.mode = "on";
+      f.onEnqueue(() => f.join());
+      await runHostedQueueCustody(f.deps, f.now() + 60000);
+      assert.equal(f.calls.filter((call) => call === "dequeue").length, 1);
+      assert.equal(f.calls.filter((call) => call === "enqueue").length, 2);
+      assert.notEqual(
+        parseQueueIntent(f.state.repair!.work[0])?.stage,
+        "dequeue_pending",
+      );
+      assert.equal(canonicalStringify(f.state.repair!.reservations), charges);
+    },
+  );
+});
+
 Deno.test("queue summary: every closed owner action is named without raw diagnostics", async () => {
   const f = await orchestrationRig();
   f.state.repair!.work[0] = queueHold(f.state.repair!.work[0], f.now());
@@ -409,6 +529,7 @@ Deno.test("queue summary: every closed owner action is named without raw diagnos
       "foreign_hold_absent_owner_action",
       "removal_unproven_owner_action",
       "dequeue_pending_owner_action",
+      "dequeue_complete_entry_owner_action",
     ]
   ) {
     const summary = renderHostedParkSummary(f.state.repair!, [

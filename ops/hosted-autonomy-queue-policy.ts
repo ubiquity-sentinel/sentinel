@@ -88,6 +88,20 @@ export function queueCustodyRequired(input: {
     );
 }
 
+/**
+ * A removal classified as `other` is the pinned native outcome for an owned
+ * dequeue.  The authority supplying this value has already checked the exact
+ * intent, pull head, admission actor and complete timeline; every other
+ * removal classification remains an ejection or an unavailable outcome.
+ */
+export function isProvenQueueDequeueRemoval(input: {
+  classification: "ci_failed" | "timeout" | "other" | "none";
+  eventId: string | null;
+}): boolean {
+  return input.classification === "other" &&
+    typeof input.eventId === "string" && input.eventId.length > 0;
+}
+
 export interface QueueAuthorizationFacts {
   binding: QueueBinding;
   membership: QueueRead<QueueMembership>;

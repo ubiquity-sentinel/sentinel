@@ -27,6 +27,7 @@ const STAGES = [
   "ejected_ci_failed",
   "ejected_timeout",
   "dequeue_ambiguous",
+  "dequeue_complete",
   "owner_park",
 ] as const;
 export type QueueIntentStage =
@@ -101,6 +102,9 @@ export function parseQueueIntent(
   const admission = key[4] === undefined ? 0 : 1;
   if (
     failure.kind !== "merge_queue_v1" || detail === undefined ||
+    (detail.stage === "dequeue_complete" &&
+      (key[5] === undefined || intent.requestId !== null ||
+        intent.resultId === null)) ||
     (failure.atMs < intent.startedAt &&
       !(admission === 1 && detail.queueFailures >= 1)) ||
     (admission === 1 && detail.queueFailures < 1) ||
@@ -112,7 +116,11 @@ export function parseQueueIntent(
     intent,
     bindingDigest: key[3],
     ...detail,
-    stage: key[5] === undefined ? detail.stage : "dequeue_pending",
+    stage: key[5] === undefined
+      ? detail.stage
+      : detail.stage === "dequeue_complete"
+      ? "dequeue_complete"
+      : "dequeue_pending",
     admission,
   };
 }
@@ -224,5 +232,47 @@ export function queueFailure(
       atMs: failedExecution ? now : intent.failure!.atMs,
       attempts,
     },
+  }, "$queue");
+}
+
+/**
+ * Record complete native proof after the d1 marker.  The marker stays in the
+ * key and the bounded disposition is durable, so a restart cannot issue the
+ * dequeue again while the owner is waiting to re-enter the queue.
+ */
+export function queueDequeueComplete(
+  state: QueueIntentState,
+  now: number,
+): IncompleteOperationV1 {
+  if (
+    state.stage !== "dequeue_pending" ||
+    !state.intent.key.endsWith(":d1")
+  ) throw new TypeError("queue dequeue completion requires a pending marker");
+  return queueFailure(
+    { ...state.intent, requestId: null },
+    "dequeue_complete",
+    state.refusals,
+    state.queueFailures,
+    now,
+    true,
+  );
+}
+
+/** Start a new admission only after the d1 completion proof is persisted. */
+export function queueReentryIntent(
+  state: QueueIntentState,
+  now: number,
+): IncompleteOperationV1 {
+  if (
+    state.stage !== "dequeue_complete" ||
+    !state.intent.key.endsWith(":d1")
+  ) throw new TypeError("queue re-entry requires a completed dequeue");
+  const { failure: _failure, ...withoutFailure } = state.intent;
+  return parseIntent({
+    ...withoutFailure,
+    key: withoutFailure.key.replace(/(?::a1)?:d1$/, ""),
+    startedAt: now,
+    requestId: null,
+    resultId: null,
   }, "$queue");
 }

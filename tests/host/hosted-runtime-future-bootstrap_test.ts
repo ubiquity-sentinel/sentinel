@@ -24,6 +24,9 @@ import {
   runtimeRecord,
 } from "./owner-install-fixture-proofs.ts";
 import { NOW } from "./owner-install-fixture-constants.ts";
+import { planOwnerDevelopmentInstall } from "../../src/host/owner-install-plan.ts";
+import { buildOwnerDevelopmentInstallSnapshot } from "../../src/host/owner-install-snapshot.ts";
+import { futureNativeSettlement } from "./owner-install-future-recovery-fixtures.ts";
 
 const OTHER = "f".repeat(40) as GitSha;
 const pin = {
@@ -45,7 +48,156 @@ function installed() {
   });
 }
 
-Deno.test("future bootstrap source priority: only exact healthy-predecessor target admits; unhealthy or restored tuples never gain bootstrap authority", () => {
+Deno.test("future rollback actual controller: restored bootstrap precedes unrelated source selection", async (t) => {
+  for (const outcome of ["healthy", "failed"] as const) {
+    await t.step(outcome, async () => {
+      const rig = await makeRig();
+      try {
+        rig.clock.advance(NOW - rig.clock.now());
+        const pins = {
+          ...HOSTED_RUNTIME_ROLLOUT,
+          installs: [{
+            fromRevision: CANDIDATE,
+            fromGeneration: 82,
+            toRevision: OTHER,
+            toGeneration: 83,
+            rollbackToPrior: true,
+          }],
+        };
+        const floors = {
+          queue: {
+            proofActivated: true,
+            revisions: [CANDIDATE, OTHER, LAUNCHER],
+          },
+          custody: {
+            custodyActivated: true,
+            revisions: [CANDIDATE, OTHER, LAUNCHER],
+          },
+        };
+        const failed = releaseSnapshot({
+          runtime: runtimeRecord({
+            revision: OTHER,
+            generation: 83,
+            healthyProof: healthyProof(CANDIDATE, 82),
+            executionProof: failedProof(OTHER, 83),
+          }),
+        });
+        const plan = planOwnerDevelopmentInstall(
+          failed,
+          NOW,
+          undefined,
+          undefined,
+          floors.queue,
+          floors.custody,
+          pins,
+        );
+        assert.equal(plan.status, "rollback");
+        assert.ok(plan.status === "rollback");
+        const restored = buildOwnerDevelopmentInstallSnapshot(
+          failed,
+          "a".repeat(40) as GitSha,
+          plan.move,
+          NOW,
+          undefined,
+          undefined,
+          floors.queue,
+          floors.custody,
+        );
+        assert.equal(
+          restored.hostedRuntimes[0].lastHealthyProof?.execution.generation,
+          82,
+        );
+        await rig.seedCapturedRelease({
+          ...restored,
+          stateHead: null,
+          sequence: 1,
+        });
+        const request = releaseRequest({
+          revision: LAUNCHER,
+          source: {
+            pullRequest: 5,
+            reviewRequestId: "review-req-1",
+            reviewReceiptId: "review-receipt-1",
+            head: LAUNCHER,
+            base: CANDIDATE,
+          },
+        });
+        await rig.seedRepair([request], [reviewReceipt(request)]);
+        rig.evidence.requests.add(request.id);
+        const core = {
+          clock: rig.clock,
+          state: rig.release,
+          evidence: rig.evidence,
+          run: run(902),
+          queueRuntimeCapability: floors.queue,
+          existingPrRuntimeCapability: floors.custody,
+          runtimeRollout: pins,
+        };
+        const prepared = await runHostedSupervisorPrepare(core);
+        assert.equal(
+          rig.evidence.taskCalls,
+          0,
+          "restored own-health must precede unrelated source reads",
+        );
+        const execution = requireRun(prepared);
+        assert.equal(execution.purpose, "bootstrap");
+        assert.equal(execution.revision, CANDIDATE);
+        assert.equal(execution.generation, 84);
+        assert.equal(
+          (await rig.snapshot()).hostedRuntimes[0].lastHealthyProof?.execution
+            .generation,
+          82,
+        );
+        rig.evidence.settlements.set(
+          execution.id,
+          await futureNativeSettlement(execution, outcome),
+        );
+        rig.clock.advance(10_000);
+        await runHostedSupervisorFinalize(core);
+        const settled = await rig.snapshot();
+        const active = settled.hostedRuntimes[0];
+        assert.equal(active.execution, null);
+        if (outcome === "healthy") {
+          assert.equal(active.lastHealthyProof?.execution.generation, 84);
+          assert.equal(
+            planOwnerDevelopmentInstall(
+              settled,
+              rig.clock.now(),
+              undefined,
+              undefined,
+              floors.queue,
+              floors.custody,
+              pins,
+            ).status,
+            "no_change",
+          );
+        } else {
+          assert.equal(active.lastHealthyProof?.execution.generation, 82);
+          assert.equal(
+            hostedRuntimeBootstrapDisposition(
+              active,
+              floors.queue,
+              floors.custody,
+              pins,
+            ),
+            "hold",
+          );
+          const held = await runHostedSupervisorPrepare({
+            ...core,
+            run: run(903),
+          });
+          assert.equal(held.status, "pending");
+          assert.deepEqual(await rig.snapshot(), settled);
+          assert.equal(rig.evidence.taskCalls, 0);
+        }
+      } finally {
+        await rig.cleanup();
+      }
+    });
+  }
+});
+
+Deno.test("future bootstrap source priority: only exact healthy-predecessor target admits; unhealthy or unrelated tuples never gain bootstrap authority", () => {
   const runtime = installed();
   const disposition = (value = runtime, data = rollout) =>
     hostedRuntimeBootstrapDisposition(value, queue, custody, data);
