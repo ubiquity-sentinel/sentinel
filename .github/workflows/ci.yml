@@ -21,8 +21,13 @@ concurrency:
   group: sentinel-ci-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/heads/development') }}
 
+# Private deployment (GitHub Free, docs/DECISIONS.md 2026-11-22): only a push
+# to `development` runs here, once per weekly fast-forward, so its launcher
+# install has its own green `test-local`; pull requests and other branches
+# are skipped there. On the public repository every condition is unchanged.
 jobs:
   quality:
+    if: github.repository == 'ubiquity-sentinel/sentinel' || (github.event_name == 'push' && github.ref == 'refs/heads/development')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -39,6 +44,7 @@ jobs:
         run: deno run --frozen --allow-env=PATH --allow-run=git,deno --allow-write test-local.ts --checks
 
   test-shards:
+    if: github.repository == 'ubiquity-sentinel/sentinel' || (github.event_name == 'push' && github.ref == 'refs/heads/development')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -89,7 +95,7 @@ jobs:
           /usr/local/bin/deno run --frozen --allow-read=tests --allow-run=deno --allow-env=PATH,SENTINEL_TEST_JOBS ops/ci-shards.ts "${{ matrix.shard }}"
 
   test-local:
-    if: ${{ always() }}
+    if: ${{ always() && (github.repository == 'ubiquity-sentinel/sentinel' || (github.event_name == 'push' && github.ref == 'refs/heads/development')) }}
     needs: [quality, test-shards]
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -1,4 +1,5 @@
 /** Review-capable runtime producer. It has repair authority and no release-writing port. */
+import { isPublicControllerScopeV1 } from "../contracts/hosted-controller-deployment.ts";
 import {
   canonicalStringify,
   canonicalStringifySha256,
@@ -86,11 +87,7 @@ export async function runOwnerSuccessorReviewPhase(
   enabled: boolean,
 ): Promise<boolean> {
   if (!enabled) return false;
-  const self = configs.find((c) =>
-    c.repository.owner === "ubiquity-sentinel" &&
-    c.repository.name === "sentinel" &&
-    c.repository.installationId === 0
-  );
+  const self = configs.find((c) => isPublicControllerScopeV1(c.repository));
   if (!self) return false;
   return await produceOwnerSuccessorAcceptance({
     ...input,

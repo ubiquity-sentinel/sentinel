@@ -408,7 +408,11 @@ Deno.test("hosted runtime: the real host hands its origin-anchored deadline to t
           clock.advance(setupSpentMs);
           return Promise.resolve(checkoutSha);
         },
-        resolveDefaultBranch: () => Promise.resolve("development"),
+        resolveRepository: () =>
+          Promise.resolve({
+            defaultBranch: "development",
+            visibility: "public",
+          }),
         resolveTreeFacts: () =>
           Promise.resolve({
             files: ["deno.json"],

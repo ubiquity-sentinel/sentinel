@@ -9,11 +9,7 @@
  * again at the next pass: sustained edits gave 288 issues in a day, and each
  * deletion gave one more. The daily brake counts every issue the App opened
  * in the target since the UTC day's start (less the skew margin), whatever
- * its title or body, and a trusted creator's marked issue. In the strict
- * bound policy (`fileUnder("strict", ...)`) the hard bound counts every App
- * issue created within `BASE_REPAIR_ISSUE_WINDOW_MS` too; the relaxed
- * policy, the default, has its own tests
- * (hosted-autonomy-base-repair-policy_test.ts).
+ * its title or body, and a trusted creator's marked issue.
  *
  * One run attempts at most one create per repository and UTC day, whatever
  * GitHub answered and under however many installation ids its records are
@@ -28,7 +24,6 @@ import {
   appIssue,
   DAY,
   type FakeItem,
-  fileUnder,
   H1,
   H2,
   held,
@@ -57,43 +52,18 @@ function onTip(tip: string, now: number): WorkRecordV1[] {
   ];
 }
 
-/** A new red tip of ai.ubq.fi that its held head fails too. */
-function redTip(target: ReturnType<typeof redTargets>[string], tip: string) {
-  target.tip = tip;
-  target.failed[tip] = ["validate"];
-}
-
-const tipAt = (index: number) => index.toString(16).padStart(2, "e").repeat(20);
-
-Deno.test("base repair content: strict, a rewritten title and first line file no second issue that day, nor within 14 days", async () => {
+Deno.test("base repair content: a rewritten, closed issue still holds its own UTC day", async () => {
   const targets = redTargets();
   const ai = targets[AI];
-  const first = await fileUnder("strict", onTip(ai.tip, NOW), targets);
+  const first = await maintain(onTip(ai.tip, NOW), targets);
   assert.deepEqual(first.baseRepair, [`${TAG}:filed=#9000`]);
-  // A person rewrites both: neither the marker nor the title is left.
   const issue = ai.items.find((item) => item.number === 9000)!;
   issue.title = "Investigating the development build";
   issue.firstLine = "Looking into this, see the linked branch.";
-  // The same tip, pass after pass that day: the App's issue still holds.
-  for (const minutes of [5, 60, 600]) {
-    const now = NOW + minutes * MINUTE;
-    const pass = await fileUnder("strict", onTip(ai.tip, now), targets, now);
-    assert.deepEqual(pass.baseRepair, [`${TAG}:recent=#9000`], `${minutes}`);
-  }
-  // New red tips on later days, the issue closed on the way: still held.
-  for (const [index, days] of [1, 7, 14].entries()) {
-    if (days === 7) issue.state = "closed";
-    redTip(ai, tipAt(index + 1));
-    const now = NOW + days * DAY;
-    const pass = await fileUnder("strict", onTip(ai.tip, now), targets, now);
-    assert.deepEqual(pass.baseRepair, [`${TAG}:recent=#9000`], `day ${days}`);
-  }
-  assert.equal(ai.created.length, 1, "one issue in the 14-day window");
-  // Past the window the next red tip files exactly one more.
-  const later = NOW + 14 * DAY + MINUTE;
-  const after = await fileUnder("strict", onTip(ai.tip, later), targets, later);
-  assert.deepEqual(after.baseRepair, [`${TAG}:filed=#9001`]);
-  assert.equal(ai.created.length, 2);
+  issue.state = "closed";
+  const second = await maintain(onTip(ai.tip, NOW), targets);
+  assert.deepEqual(second.baseRepair, [`${TAG}:filed_today=#9000`]);
+  assert.equal(ai.created.length, 1);
 });
 
 Deno.test("base repair content: a deleted issue allows at most one more that UTC day", async () => {
@@ -116,29 +86,28 @@ Deno.test("base repair content: a deleted issue allows at most one more that UTC
   assert.equal(ai.created.length, 2, "one more after the deletion");
 });
 
-Deno.test("base repair content: strict, any issue the App opened in the target holds filing, whatever it says", async () => {
+Deno.test("base repair content: an unrelated App issue holds filing on its own UTC day", async () => {
   // Another Sentinel issue (a review follow-up) the App opened.
   const followUp = (createdAt: number): FakeItem =>
     appIssue(88, "<!-- sentinel:follow-up:ubiquity/ai.ubq.fi#5176 -->", {
       title: "Follow up a review finding",
       createdAt,
     });
-  const opened: [string, number][] = [
-    ["today", NOW - 2 * HOUR],
-    ["ten days ago", NOW - 10 * DAY],
+  const opened: [string, number, string][] = [
+    ["today", NOW - 2 * HOUR, `${TAG}:filed_today=#88`],
+    ["ten days ago", NOW - 10 * DAY, `${TAG}:filed=#9000`],
   ];
-  for (const [label, createdAt] of opened) {
+  for (const [label, createdAt, expected] of opened) {
     const targets = redTargets({ issues: [followUp(createdAt)] });
-    const pass = await fileUnder(
-      "strict",
-      onTip(targets[AI].tip, NOW),
-      targets,
+    const pass = await maintain(onTip(targets[AI].tip, NOW), targets);
+    assert.deepEqual(pass.baseRepair, [expected], label);
+    assert.equal(
+      targets[AI].created.length,
+      expected.endsWith("#9000") ? 1 : 0,
+      label,
     );
-    assert.deepEqual(pass.baseRepair, [`${TAG}:recent=#88`], label);
-    assert.equal(targets[AI].created.length, 0, label);
   }
-  // In either mode: a listing blind to the App's issues, and the daily brake
-  // still sees today's.
+  // A listing blind to the App's issues still sees today's through the daily brake.
   const blind = redTargets({ issues: [followUp(NOW - 2 * HOUR)] });
   blind[AI].appListing = (app) => app.filter((item) => item.pullRequest);
   const braked = await maintain(onTip(blind[AI].tip, NOW), blind);

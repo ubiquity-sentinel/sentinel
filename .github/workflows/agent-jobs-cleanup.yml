@@ -1,0 +1,120 @@
+# An operator provides a file listing dedicated agent-job result branches.
+# The protected delete job only acts on the trusted plan for that push.
+name: sentinel-agent-jobs-cleanup
+run-name: sentinel-agent-jobs-cleanup ${{ github.sha }}
+
+on:
+  push:
+    branches:
+      - development
+    paths:
+      - "jobs/cleanup/*.json"
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    if: >-
+      github.repository == 'ubiquity-sentinel/sentinel' &&
+      github.ref == 'refs/heads/development' &&
+      github.event.sender.type == 'User' &&
+      github.event.sender.login == github.actor &&
+      !endsWith(github.actor, '[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has-work: ${{ steps.plan.outputs.has-work }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      artifact-id: ${{ steps.plan-artifact.outputs.artifact-id }}
+      control-sha: ${{ steps.control.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/heads/sentinel-supervisor
+          path: control
+          persist-credentials: false
+      - name: Bind the protected control checkout
+        id: control
+        working-directory: control
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse --verify HEAD)
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          path: request
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - name: Plan the cleanup
+        id: plan
+        working-directory: control
+        env:
+          AGENT_JOBS_REQUEST_CHECKOUT: ${{ github.workspace }}/request
+          AGENT_JOBS_PREP_DIR: ${{ runner.temp }}/agent-job-cleanup
+        run: >-
+          deno run --frozen
+          --allow-read="$GITHUB_EVENT_PATH"
+          --allow-write="$AGENT_JOBS_PREP_DIR,$GITHUB_OUTPUT"
+          --allow-run=git --allow-net=api.github.com
+          --allow-env=PATH,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_ACTOR,GITHUB_EVENT_NAME,GITHUB_EVENT_PATH,GITHUB_SHA,GITHUB_OUTPUT,AGENT_JOBS_PREP_DIR,AGENT_JOBS_REQUEST_CHECKOUT
+          ops/agent-jobs-prepare.ts cleanup
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: plan-artifact
+        if: steps.plan.outputs.has-work == 'true'
+        with:
+          name: agent-jobs-cleanup-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/agent-job-cleanup/plan.json
+          if-no-files-found: error
+          retention-days: 7
+
+  delete:
+    name: delete (${{ matrix.owner }})
+    needs: plan
+    if: github.repository == 'ubiquity-sentinel/sentinel' && needs.plan.outputs.has-work == 'true' && needs.plan.outputs.control-sha != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ vars.SENTINEL_AGENT_JOBS_ENVIRONMENT || 'sentinel-supervisor' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.plan.outputs.control-sha }}
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.plan.outputs.artifact-id }}
+          path: ${{ runner.temp }}/agent-job-cleanup
+          merge-multiple: true
+      - name: Mint the cleanup App token
+        id: write-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ${{ matrix.owner }}
+          repositories: ${{ matrix.repositories }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Delete admitted agent branches
+        env:
+          AGENT_JOBS_CLEANUP_PLAN: ${{ runner.temp }}/agent-job-cleanup/plan.json
+          AGENT_JOBS_CLEANUP_OWNER: ${{ matrix.owner }}
+          AGENT_JOBS_WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
+        run: >-
+          deno run --frozen
+          --allow-read="$AGENT_JOBS_CLEANUP_PLAN" --allow-write="$GITHUB_STEP_SUMMARY"
+          --allow-net=api.github.com
+          --allow-env=AGENT_JOBS_CLEANUP_OWNER,AGENT_JOBS_WRITE_TOKEN,GITHUB_STEP_SUMMARY
+          ops/agent-jobs-cleanup.ts delete "$AGENT_JOBS_CLEANUP_PLAN"

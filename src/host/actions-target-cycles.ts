@@ -28,7 +28,11 @@ import type { MatrixArtifactTransportV1 } from "./matrix-artifact-port.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
 import type { runRepairEntrypoint } from "../main.ts";
 import type { ActionsCiApprovalSummaryV1 } from "./actions-ci.ts";
-import type { TargetSlugV1, TargetTreeFactsV1 } from "./targets.ts";
+import type {
+  TargetRepositoryReadV1,
+  TargetSlugV1,
+  TargetTreeFactsV1,
+} from "./targets.ts";
 import type { ModelRouteV1 } from "./model-route.ts";
 import type { CiEvidenceReaderV1 } from "../repair/ci-evidence-types.ts";
 
@@ -387,10 +391,14 @@ export interface ActionsRepairHostDepsV1 {
   stateRemoteUrl?: string;
   /** Refresh the sentinel self mirror and return its base SHA; defaults to the production fetch. */
   refreshSelf?: (sourcePath: string) => Promise<string>;
-  /** Resolve one target's default branch; defaults to the trusted GitHub read. */
-  resolveDefaultBranch?: (
+  /**
+   * Read one target's default branch and visibility; defaults to the trusted
+   * GitHub repository read. A target is worked only when its visibility is
+   * public (`src/repair/target-visibility.ts`).
+   */
+  resolveRepository?: (
     target: TargetSlugV1,
-  ) => Promise<string | null>;
+  ) => Promise<TargetRepositoryReadV1 | null>;
   /** Resolve one target's tree facts; defaults to the trusted GitHub read. */
   resolveTreeFacts?: (
     target: TargetSlugV1,

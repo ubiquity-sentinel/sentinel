@@ -162,7 +162,11 @@ async function runWiring(extraEnv: Record<string, string>): Promise<WiringV1> {
           clock.advance(4 * 60_000);
           return Promise.resolve(checkoutSha);
         },
-        resolveDefaultBranch: () => Promise.resolve("development"),
+        resolveRepository: () =>
+          Promise.resolve({
+            defaultBranch: "development",
+            visibility: "public",
+          }),
         resolveTreeFacts: () =>
           Promise.resolve({
             files: ["deno.json"],

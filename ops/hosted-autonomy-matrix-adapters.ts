@@ -10,7 +10,8 @@ import {
 import { CLOSED_C_WAVE } from "../src/host/modern-matrix-recovery.ts";
 import { createGitBundleImporter } from "../src/host/matrix-git.ts";
 import {
-  createDefaultBranchResolver,
+  createDeploymentTargetHostV1,
+  createTargetRepositoryResolver,
   createTargetTreeFactsResolver,
   loadTargetConfigsV1,
 } from "../src/host/targets.ts";
@@ -20,7 +21,9 @@ import {
 } from "../src/host/actions.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import { RollingStartBudget } from "../src/budget/mod.ts";
-import { HOSTED_CONTROLLER_SELF } from "../src/contracts/hosted-controller-deployment.ts";
+import {
+  HOSTED_CONTROLLER_SELF,
+} from "../src/contracts/hosted-controller-deployment.ts";
 import { GitHubApiClient } from "../src/github/client.ts";
 import {
   createDeadline,
@@ -86,10 +89,12 @@ export async function createHostedClosedMatrixRecovery(input: {
   const artifactHttp = input.artifactHttp ??
     createActionsMatrixArtifactHttpTransport();
   const template = createLocalRepositoryConfig();
-  // Each target's default branch is read with the credential that reaches it.
+  // Each target's repository (default branch and visibility) is read with the
+  // credential that reaches it. Late cells use the same host visibility
+  // rule as the planner that made their reservations.
   const resolvers = {
-    self: createDefaultBranchResolver({ http, token: input.token }),
-    foreign: createDefaultBranchResolver({ http, token: input.apiToken }),
+    self: createTargetRepositoryResolver({ http, token: input.token }),
+    foreign: createTargetRepositoryResolver({ http, token: input.apiToken }),
   };
   const factsResolvers = {
     self: createTargetTreeFactsResolver({ http, token: input.token }),
@@ -98,7 +103,8 @@ export async function createHostedClosedMatrixRecovery(input: {
   const targets = await loadTargetConfigsV1({
     template,
     root: input.sourceDir,
-    resolveDefaultBranch: (target) =>
+    host: createDeploymentTargetHostV1({ http, token: input.token }),
+    resolveRepository: (target) =>
       (target.owner === template.repository.owner &&
           target.name === template.repository.name
         ? resolvers.self

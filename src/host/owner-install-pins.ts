@@ -1,11 +1,12 @@
 import type { GitSha } from "../contracts/brands.ts";
-import {
-  HOSTED_SUPERVISOR_REPOSITORY,
-} from "../contracts/hosted-supervisor.ts";
 
-/** The only repository this operation may touch; fixed, never configurable. */
+/**
+ * The only repository this operation may touch; fixed, never configurable.
+ * Public deployment history only: on the private deployment its identity
+ * check refuses (`identity_rejected`) before any read.
+ */
 export const OWNER_DEVELOPMENT_INSTALL_REPOSITORY =
-  HOSTED_SUPERVISOR_REPOSITORY;
+  "ubiquity-sentinel/sentinel";
 /** The only remote the release-state store may read; fixed. */
 export const OWNER_DEVELOPMENT_INSTALL_REMOTE_URL =
   "https://github.com/ubiquity-sentinel/sentinel.git";

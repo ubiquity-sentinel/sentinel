@@ -179,6 +179,9 @@ export function ciRefreshAhead(
   const candidates = snapshot.work.filter((other) =>
     other.id !== record.id &&
     sameRepositoryIdentity(other.repository, record.repository) &&
+    // Once the owner's merge is the next action, this head cannot refresh.
+    // Owner-bound heads still take part while their own CI or review runs.
+    !(other.ownerLanding !== undefined && other.wait?.reason === "manual") &&
     publishedCiCandidate(other) && actionable(other, tip, now) &&
     !snapshot.releaseRequests.some((request) =>
       releaseRequestMatchesDelivery(request, other)

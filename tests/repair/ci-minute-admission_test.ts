@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import {
+  retiredBasis,
+  retiredCiMinutePolicy,
+} from "../state/retired-ci-minute-policy.ts";
+import {
   CalendarCiMinutes,
   createCiMinuteController,
   proposedCiMinutePolicy,
-  verifyCiMinuteSchedulingBasis,
 } from "../../src/budget/ci-minutes.ts";
 import {
-  acceptedCiMinutePolicy,
   ciJobMinutes,
   ciMinuteDigest,
   ciMonth,
@@ -383,7 +385,7 @@ function fixture(limit = 40, now = EPOCH, sourcePolicy?: CiMinutePolicyV1) {
       authorized
         ? sourcePolicy === undefined
           ? Promise.resolve(true)
-          : verifyCiMinuteSchedulingBasis(basis, deadline, facts)
+          : retiredBasis(basis, deadline, facts)
         : Promise.resolve(false),
     resolve(e) {
       const target = policy.targets.find((row) =>
@@ -391,7 +393,7 @@ function fixture(limit = 40, now = EPOCH, sourcePolicy?: CiMinutePolicyV1) {
       )!;
       const profile = sourcePolicy === undefined
         ? undefined
-        : acceptedCiMinutePolicy().targets.find((row) =>
+        : retiredCiMinutePolicy().targets.find((row) =>
           row.repositoryId === target.repositoryId
         );
       return Promise.resolve({
@@ -1060,9 +1062,9 @@ Deno.test("CI acceptance reconciled base refresh can finish native state while o
 });
 
 Deno.test("CI pacing accepted source basis binds every exact authenticated profile field", async () => {
-  const policy = acceptedCiMinutePolicy();
+  const policy = retiredCiMinutePolicy();
   assert.equal(
-    await verifyCiMinuteSchedulingBasis(policy, EPOCH + 60000),
+    await retiredBasis(policy, EPOCH + 60000),
     true,
   );
   for (const target of policy.targets) {
@@ -1079,7 +1081,7 @@ Deno.test("CI pacing accepted source basis binds every exact authenticated profi
       effectState: "not_applied",
     };
     assert.equal(
-      await verifyCiMinuteSchedulingBasis(policy, EPOCH + 60000, facts),
+      await retiredBasis(policy, EPOCH + 60000, facts),
       true,
     );
     for (
@@ -1095,7 +1097,7 @@ Deno.test("CI pacing accepted source basis binds every exact authenticated profi
       ]
     ) {
       assert.equal(
-        await verifyCiMinuteSchedulingBasis(policy, EPOCH + 60000, {
+        await retiredBasis(policy, EPOCH + 60000, {
           ...facts,
           ...changed,
         }),
@@ -1116,7 +1118,7 @@ Deno.test("CI pacing accepted source basis binds every exact authenticated profi
     ]
   ) {
     assert.equal(
-      await verifyCiMinuteSchedulingBasis(
+      await retiredBasis(
         { ...policy, ...changed } as CiMinutePolicyV1,
         EPOCH + 60000,
       ),
@@ -1130,7 +1132,7 @@ Deno.test("CI pacing accepted source basis binds every exact authenticated profi
 });
 
 Deno.test("CI pacing native driver bootstraps an unknown month as a persisted floor and resumes without an effect", async () => {
-  const policy = acceptedCiMinutePolicy();
+  const policy = retiredCiMinutePolicy();
   const f = fixture(1450, EPOCH, policy);
   f.months.clear();
   let observations = 0;
@@ -1172,7 +1174,7 @@ Deno.test("CI pacing native driver bootstraps an unknown month as a persisted fl
 });
 
 Deno.test("CI pacing explicit started-zero proofs retain 25 and 35 estimated minutes and close only their proven month", async () => {
-  const f = fixture(1450, EPOCH, acceptedCiMinutePolicy());
+  const f = fixture(1450, EPOCH, retiredCiMinutePolicy());
   const first = await f.reserve(managedEffect());
   const second = await f.reserve(managedEffect("passport.ubq.fi"));
   assert.equal(first.kind, "admitted");
@@ -1220,7 +1222,7 @@ Deno.test("CI pacing explicit started-zero proofs retain 25 and 35 estimated min
 });
 
 Deno.test("CI pacing authenticated terminal never-started work is zero and cannot replay the same effect", async () => {
-  const f = fixture(1450, EPOCH, acceptedCiMinutePolicy());
+  const f = fixture(1450, EPOCH, retiredCiMinutePolicy());
   const reservation = await f.reserve();
   assert.equal(reservation.kind, "admitted");
   if (reservation.kind !== "admitted") return;
@@ -1240,7 +1242,7 @@ Deno.test("CI pacing authenticated terminal never-started work is zero and canno
 });
 
 Deno.test("CI pacing cross-boundary and unresolved work carry while a late prior-month terminal proof closes exposure", async () => {
-  const f = fixture(1450, EPOCH, acceptedCiMinutePolicy());
+  const f = fixture(1450, EPOCH, retiredCiMinutePolicy());
   const first = await f.reserve();
   const second = await f.reserve(managedEffect("passport.ubq.fi"));
   assert.equal(first.kind, "admitted");
@@ -1302,7 +1304,7 @@ Deno.test("CI pacing cross-boundary and unresolved work carry while a late prior
 });
 
 Deno.test("CI pacing rollover resumes the same bounded initial-discovery cursor", async () => {
-  const f = fixture(1450, EPOCH, acceptedCiMinutePolicy());
+  const f = fixture(1450, EPOCH, retiredCiMinutePolicy());
   f.ledger().watermark = null;
   f.ledger().progress = {
     month: "2028-01",

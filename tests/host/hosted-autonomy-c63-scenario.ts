@@ -294,6 +294,7 @@ export async function historicalC63Scenario(
           return reply({
             full_name: "ubiquity/ai.ubq.fi",
             default_branch: "main",
+            private: false,
           });
         }
         if (

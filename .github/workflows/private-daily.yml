@@ -1,0 +1,120 @@
+# Private deployment only (ubiquity-sentinel-private/sentinel, GitHub Free:
+# 2,000 Actions minutes a month, spending limit $0). Check every six hours
+# for a supervisor dispatch within the accrued UTC monthly allowance.
+# The public deployment skips this job (no runner, 0 billed minutes).
+# A guard refusal ends green with one log line.
+name: sentinel-private-daily
+
+on:
+  schedule:
+    # Off-peak UTC, keeping the 03:41 slot after the Sunday 02:17 sync's CI.
+    - cron: "41 3,9,15,21 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  checks: read
+  contents: read
+
+jobs:
+  daily:
+    if: github.repository == 'ubiquity-sentinel-private/sentinel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    concurrency:
+      group: sentinel-private-daily
+      cancel-in-progress: false
+    steps:
+      - name: Check out the launcher source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: sentinel-supervisor
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.7
+      # The committed binding refuses at module load while either private
+      # workflow id is null (`workflow_ids_unfilled`): the day ends here,
+      # green, before any supervisor job.
+      - name: Refuse unless the committed private binding starts
+        id: binding
+        run: |
+          set -euo pipefail
+          if deno run --frozen --no-prompt --allow-env=GITHUB_REPOSITORY src/contracts/hosted-controller-deployment.ts 2> "$RUNNER_TEMP/binding.txt"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          elif grep -q "hosted controller binding refused: workflow_ids_unfilled" "$RUNNER_TEMP/binding.txt"; then
+            echo "private deployment not bound yet (workflow ids unfilled); no cycle today"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$RUNNER_TEMP/binding.txt" >&2
+            exit 1
+          fi
+      # Dispatch only when there is no active supervisor, the launcher's own
+      # test-local is green and the month-to-date estimate is below allowance.
+      - name: Start a supervisor cycle within the accrued allowance
+        if: steps.binding.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        # Every listing is captured before it is used, and a failed read (an
+        # HTTP error with or without a body, a timeout, a failed later page)
+        # or a non-numeric answer ends the check green with one line.
+        run: |
+          set -euo pipefail
+          none() {
+            echo "no cycle: $1"
+            exit 0
+          }
+          number() {
+            [[ "$1" =~ ^(0|[1-9][0-9]*)$ ]] || none "unreadable $2"
+          }
+          require_idle_supervisor() {
+            local status active
+            # Read queued first to catch runs transitioning to in_progress.
+            for status in queued in_progress; do
+              active=$(gh api "repos/$GH_REPO/actions/workflows/supervisor.yml/runs?status=$status&per_page=1" --jq .total_count 2>/dev/null) || none "$status supervisor runs are unreadable"
+              number "$active" "$status supervisor run count"
+              if [ "$active" != 0 ]; then
+                none "a supervisor run is $status"
+              fi
+            done
+          }
+          today=$(date -u +%F 2>/dev/null) || none "the UTC date is unreadable"
+          [[ "$today" =~ ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$ ]] || none "the UTC date is unreadable"
+          month="${today%-*}-01"
+          day="${today##*-}"
+          allowance=$((60 * 10#$day))
+          if [ "$allowance" -gt 1800 ]; then
+            allowance=1800
+          fi
+          require_idle_supervisor
+          launcher=$(git rev-parse HEAD)
+          ci=$(gh api "repos/$GH_REPO/commits/$launcher/check-runs?check_name=test-local&filter=latest&per_page=100" --jq '[.check_runs[] | select(.app.slug == "github-actions")] | if length > 0 and all(.status == "completed" and .conclusion == "success") then "green" else "not_green" end' 2>/dev/null) || none "the launcher's checks are unreadable"
+          if [ "$ci" != green ]; then
+            none "launcher $launcher has no green test-local yet (running, red or absent)"
+          fi
+          used=0
+          for workflow in supervisor.yml ci.yml; do
+            ids=$(gh api --paginate "repos/$GH_REPO/actions/workflows/$workflow/runs?created=%3E%3D$month&per_page=100" --jq '.workflow_runs[].id' 2>/dev/null) || none "this month's $workflow runs are unreadable"
+            for run in $ids; do
+              number "$run" "$workflow run id"
+              durations=$(gh api --paginate "repos/$GH_REPO/actions/runs/$run/jobs?filter=all&per_page=100" --jq '.jobs[] | select(.started_at != null and .completed_at != null) | (((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601) + 59) / 60 | floor)' 2>/dev/null) || none "the jobs of run $run are unreadable"
+              for minutes in $durations; do
+                number "$minutes" "job minutes of run $run"
+                used=$((used + minutes))
+              done
+            done
+          done
+          for workflow in private-daily.yml private-sync.yml; do
+            runs=$(gh api "repos/$GH_REPO/actions/workflows/$workflow/runs?created=%3E%3D$month&per_page=1" --jq .total_count 2>/dev/null) || none "this month's $workflow runs are unreadable"
+            number "$runs" "$workflow run count"
+            used=$((used + runs))
+          done
+          budget="month-to-date billed minutes (estimate): used=$used allowance=$allowance"
+          if [ "$used" -ge "$allowance" ]; then
+            none "$budget decision=hold"
+          fi
+          # Billing listings can take time. Recheck before dispatch.
+          require_idle_supervisor
+          echo "$budget decision=dispatch"
+          gh workflow run supervisor.yml --repo "$GH_REPO" --ref sentinel-supervisor

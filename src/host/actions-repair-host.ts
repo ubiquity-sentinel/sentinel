@@ -1,4 +1,5 @@
 /** Hosted actions-repair-host responsibility. */
+import { isPublicControllerScopeV1 } from "../contracts/hosted-controller-deployment.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import { hostedOrdinaryAdmitted } from "../contracts/hosted-supervisor-verification.ts";
 import { DenoReplayRuntime, type ReplayRuntimeV1 } from "../replay/runtime.ts";
@@ -48,8 +49,10 @@ import { createActionsCandidateRestorer } from "./actions-candidates.ts";
 import type { ActionsCandidateRestorerV1 } from "./actions-candidates.ts";
 import type { ReleaseRequestV1 } from "../contracts/release.ts";
 import {
+  createDeploymentTargetHostV1,
   createGitHubTargetResolvers,
   loadTargetConfigsV1,
+  privateTargetsLineV1,
   STATIC_TARGETS_EMPTY,
   unavailableTargetCountsV1,
 } from "./targets.ts";
@@ -114,6 +117,11 @@ import { createActionsTargetBindings } from "./actions-target-bindings.ts";
 import { createActionsTargetPreparation } from "./actions-target-preparation.ts";
 import { readHostedSelfDependencyPreparer } from "./hosted-self-dependencies.ts";
 import { createPassportDependencyPreparer } from "./passport-dependencies.ts";
+import {
+  grantTokenScopeV1,
+  scopedTargetResolverV1,
+  tokenScopeLineV1,
+} from "./target-token-scope.ts";
 import {
   ensureRepairStateSeed,
   optionalEnv,
@@ -373,22 +381,44 @@ export async function runActionsRepairHost(
   const gitExecutable = await resolveExecutable("git", trustedPath);
   const templateConfig = createLocalRepositoryConfig();
   const readObserver = createTargetReadObserverV1({ now: () => clock.now() });
+  const resolvers = createGitHubTargetResolvers({
+    ...deps,
+    http,
+    token: writeToken,
+    readGate: gate,
+    installationId: targetInstallationId ?? DEFAULT_APP_INSTALLATION_ID,
+    readObserver,
+  });
+  // A listed target the tolerant mint dropped from this token is excluded
+  // before any read (`target-token-scope.ts`), even when it is public.
+  const outOfScope: string[] = [];
   const targets = await loadTargetConfigsV1({
     template: templateConfig,
     // The setting lives in this run's own checkout, exactly as before.
     root: sourceDir,
+    // Bind the self credential to the selected controller, including for the matrix planner.
+    host: createDeploymentTargetHostV1({ http, token: selfWriteToken }),
     // Private targets need the App token; reads share the cooldown gate.
-    ...createGitHubTargetResolvers({
-      ...deps,
-      http,
-      token: writeToken,
-      readGate: gate,
-      installationId: targetInstallationId ?? DEFAULT_APP_INSTALLATION_ID,
-      readObserver,
-    }),
+    ...resolvers,
+    resolveRepository: scopedTargetResolverV1(
+      resolvers.resolveRepository,
+      grantTokenScopeV1(
+        readEnv(HOSTED_APP_MINT_GRANT_ENV),
+        clock.now(),
+        targetInstallationId ?? DEFAULT_APP_INSTALLATION_ID,
+      ),
+      outOfScope,
+    ),
   });
+  const scopeLine = tokenScopeLineV1(outOfScope);
+  if (scopeLine !== null) console.log(JSON.stringify(scopeLine));
+  // Report opposite-visibility targets separately from unavailable reads.
+  const privateLine = privateTargetsLineV1(targets);
+  if (privateLine !== null) console.log(JSON.stringify(privateLine));
   // Listed targets that were all unreadable defer (or fail as unavailable);
-  // only a setting that lists no repository is the empty-setting refusal.
+  // only a setting that lists no repository is the empty-setting refusal. A
+  // private target is never a read failure; a setting whose every target is
+  // private configures none and refuses as empty.
   const unavailable = unavailableTargetCountsV1(targets, readObserver);
   if (unavailable !== null) {
     const host = {
@@ -537,9 +567,7 @@ export async function runActionsRepairHost(
       ownerSettlement: {
         read: (input) => nativeSelf.readReviewOwnerSettlement(input),
       },
-      selfMergeEnabled: config.repository.owner === "ubiquity-sentinel" &&
-        config.repository.name === "sentinel" &&
-        config.repository.installationId === 0,
+      selfMergeEnabled: isPublicControllerScopeV1(config.repository),
       stateRoot,
       sourcePath: mirrorPathFor(config),
       scratch,

@@ -16,6 +16,7 @@ import {
   type StateReadView,
 } from "../contracts/ports.ts";
 import { parseRepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import { isHostedControllerRepository } from "../contracts/hosted-controller-deployment.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
 import { composeLocalGitHub, type LocalGitHubInputV1 } from "./local-github.ts";
@@ -38,6 +39,7 @@ import {
   CI_MINUTE_PRIVATE_REMOTE,
   CI_MINUTE_REF,
   ciMinuteDigest,
+  ciMinutePolicyInactive,
   ciMonth,
 } from "../contracts/ci-minute-budget.ts";
 import type {
@@ -103,7 +105,9 @@ export function composePrivateCiMinutes(input: {
     facts?: CiEffectFactsV1,
   ): Promise<boolean>;
 }): CiMinuteCoordinatorV1 {
-  if (input.policy.activated === false) return INACTIVE_CI_MINUTES;
+  // A policy with no target row manages nothing: no capability, store,
+  // read or write (the special policy is removed, owner 2026-11-23).
+  if (ciMinutePolicyInactive(input.policy)) return INACTIVE_CI_MINUTES;
   let nativeDeadline = input.deadlineAt;
   let scope: string | null = null;
   let observation: Promise<CiMinuteObservationV1 | null> | null = null;
@@ -753,9 +757,7 @@ export function composeHostedAppGitHub(
     throw new Error("hosted App principal context unavailable");
   }
   const repository = Object.freeze({ ...input.repository });
-  const selfController = repository.installationId === 0 &&
-    repository.owner === "ubiquity-sentinel" &&
-    repository.name === "sentinel";
+  const selfController = isHostedControllerRepository(repository);
   if (
     !selfController &&
     (repository.owner !== "ubiquity" ||

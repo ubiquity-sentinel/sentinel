@@ -293,7 +293,7 @@ async function acceptanceFixture(installed?: GitSha) {
     if (value !== null) return response(value);
     if (url.pathname.includes("/rules/branches/")) return response([]);
     if (/^\/repos\/[^/]+\/[^/]+$/.test(url.pathname)) {
-      return response({ default_branch: "main" });
+      return response({ default_branch: "main", private: false });
     }
     if (url.pathname.endsWith("/git/ref/heads/main")) {
       return response({ ref: "refs/heads/main", object: { sha: BASE } });

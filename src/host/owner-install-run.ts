@@ -1,3 +1,4 @@
+import { deploymentRunsServiceV1 } from "../contracts/hosted-controller-deployment.ts";
 import { isGitSha } from "../contracts/brands.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import { HOSTED_SUPERVISOR_REF } from "../contracts/hosted-supervisor.ts";
@@ -107,7 +108,7 @@ export async function runOwnerDevelopmentInstallMain(input?: {
   const sha = Deno.env.get("GITHUB_SHA");
   const workflowSha = Deno.env.get("GITHUB_WORKFLOW_SHA");
   if (
-    repository !== OWNER_DEVELOPMENT_INSTALL_REPOSITORY ||
+    !deploymentRunsServiceV1(repository, "ownerDevelopmentInstall") ||
     ref !== HOSTED_SUPERVISOR_REF ||
     job !== "prepare" ||
     !isGitSha(sha) ||

@@ -12,6 +12,8 @@ import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { GitHubCheckV1 } from "../../src/contracts/ports.ts";
 import { isCiFixMarker } from "../../src/repair/ci-first-policy.ts";
+import { BASE_RED_WAIT_CAUSE } from "../../src/repair/loop-wait-cause.ts";
+import { progressChanges } from "../../src/host/progress-comments.ts";
 import { SHA1, SHA3 } from "../state/helpers.ts";
 import {
   check,
@@ -121,7 +123,8 @@ Deno.test("CI first backup: a red stand-in on a base whose stand-in is green is 
 });
 
 Deno.test("CI first backup: red stand-ins on head and base back off as base_red, uncharged", async () => {
-  const { rig, charges } = await ciFirstRig("cf-bk-red-red", {
+  const { rig, record, charges } = await ciFirstRig("cf-bk-red-red", {
+    recordWaitCauses: true,
     checks: {
       [SHA3]: [standIn(SHA3, "timed_out")],
       [SHA1]: [standIn(SHA1, "failure")],
@@ -134,6 +137,10 @@ Deno.test("CI first backup: red stand-ins on head and base back off as base_red,
     assert.equal(work.nextStep, "work");
     assert.equal(work.wait?.reason, "backoff");
     assert.equal(work.wait!.until! - work.wait!.since, 30 * 60_000);
+    assert.deepEqual(work.wait?.cause, BASE_RED_WAIT_CAUSE);
+    const [change] = progressChanges([record], [work], record.repository);
+    assert.equal(change.commentOn, 7);
+    assert.equal(change.stage.key, `base_red:7:${SHA1}`);
     assert.equal(work.counters.retries, 0);
     assert.equal(rig.model.requests.length, 0);
     assert.deepEqual(after.reservations, charges);

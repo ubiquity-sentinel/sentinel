@@ -142,6 +142,7 @@ export async function makeRig(
     localScope?: boolean;
     /** Run the cycle as a hosted (matrix) run does. */
     externalImplementations?: boolean;
+    recordWaitCauses?: boolean;
     /** The legacy review cutoff the launcher would hand the runtime. */
     legacyReviewCutoff?: number;
     ciMinutes?:
@@ -203,6 +204,7 @@ export async function makeRig(
       model,
       budget,
       ciMinutes: options.ciMinutes ?? INACTIVE_CI_MINUTES,
+      recordWaitCauses: options.recordWaitCauses,
       ...(options.externalImplementations === undefined
         ? {}
         : { externalImplementations: options.externalImplementations }),

@@ -112,15 +112,23 @@ export async function runHostedRepairTierStep(
     // The same point after which no continued phase may start.
     deadlineAt: startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS -
       HOSTED_AUTONOMY_PHASE_RESERVE_MS,
-    protect: (snapshot) => ({
-      workIds: new Set([
-        ...closedWaveTasks,
-        ...snapshot.work.filter((row) =>
-          queueRecordProtected(row, deps.queueCustody)
-        ).map((row) => row.id),
-      ]),
-      reservationIds,
-    }),
+    // Rows the private-target gate hid (2026-11-18) are never moved either.
+    protect: (snapshot) => {
+      const hidden = deps.privateTargets?.hiddenIds();
+      return {
+        workIds: new Set([
+          ...closedWaveTasks,
+          ...snapshot.work.filter((row) =>
+            queueRecordProtected(row, deps.queueCustody)
+          ).map((row) => row.id),
+          ...(hidden?.workIds ?? []),
+        ]),
+        reservationIds: new Set([
+          ...reservationIds,
+          ...(hidden?.reservationIds ?? []),
+        ]),
+      };
+    },
     demotionBudget: tiers.demotionBudget ?? HOSTED_REPAIR_TIER_BUDGET,
   });
   actions.push(outcome.action);

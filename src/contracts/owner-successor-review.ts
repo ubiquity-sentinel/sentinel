@@ -1,4 +1,5 @@
 /** Non-PR owner successor review journal, carried only by trusted repair state. */
+import { isPublicControllerScopeV1 } from "./hosted-controller-deployment.ts";
 import type { GitSha } from "./brands.ts";
 import { canonicalStringify } from "./canonical.ts";
 import {
@@ -357,9 +358,7 @@ export function parseOwnerSuccessorReviewV1(
     createdAt > updatedAt || reservation.taskId !== binding.workId ||
     reservation.head !== binding.successorRevision ||
     reservation.purpose !== "review_request" ||
-    reservation.repository.owner !== "ubiquity-sentinel" ||
-    reservation.repository.name !== "sentinel" ||
-    reservation.repository.installationId !== 0 ||
+    !isPublicControllerScopeV1(reservation.repository) ||
     (execution !== null &&
       (execution.ownerRunId !== binding.nativeOwner.id ||
         execution.invocationId !== binding.invocationId)) ||

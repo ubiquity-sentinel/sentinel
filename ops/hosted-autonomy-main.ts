@@ -11,6 +11,7 @@ import {
   writeUpkeepDeferralOutput,
 } from "./hosted-autonomy-queue-output.ts";
 import { createHostedQueueCoordinator } from "./hosted-autonomy-queue-host.ts";
+import { createPrivateTargetGateV1 } from "./hosted-autonomy-private-targets.ts";
 import { createMaintenancePublicationFor } from "../src/host/maintenance-existing-pr-publication.ts";
 import { DurableGitHubCooldownGate } from "../src/repair/github-cooldown.ts";
 import {
@@ -24,10 +25,7 @@ import { githubGitAuthEnv } from "../src/host/local.ts";
 import { createRepairStateStore, DenoGitRunner } from "../src/state/mod.ts";
 import { GitMaintenanceIndex } from "../src/state/maintenance-index.ts";
 import type { StateReadView } from "../src/contracts/ports.ts";
-import {
-  HOSTED_CONTROLLER_REMOTE,
-  isHostedControllerMaintenanceIdentity,
-} from "../src/contracts/hosted-controller-deployment.ts";
+import { HOSTED_CONTROLLER_REMOTE, isHostedControllerMaintenanceIdentity, HOSTED_CONTROLLER_PROFILE, isDeploymentSelfSlugV1, verifyDeploymentTargetScopeV1 } from "../src/contracts/hosted-controller-deployment.ts";
 import { runHostedAutonomy } from "./hosted-autonomy-runner.ts";
 import { GitDeliveryTrainStore } from "../src/state/delivery-train-store.ts";
 import { createVerifiedTrainLandingReader } from "../src/host/hosted-repair-state.ts";
@@ -84,10 +82,18 @@ import {
 import { repeatFailureRouteIdentity } from "./hosted-autonomy-repeat-failure.ts";
 import {
   CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE,
+  HOSTED_AUTONOMY_SELF_SCOPE,
   hostedRepositoryKey,
   isDeferredCurrentMatrixHistoryBudget,
   isHostedSelf,
 } from "./hosted-autonomy-policy.ts";
+import { readTargetSlugsV1 } from "../src/host/targets.ts";
+import {
+  reportedTokenScopeV1,
+  scopedVisibilityReaderV1,
+  tokenScopeLineV1,
+  UNAVAILABLE_TARGETS_ENV,
+} from "../src/host/target-token-scope.ts";
 import type {
   HostedAutonomyDepsV1,
   HostedAutonomyGitHubV1,
@@ -466,7 +472,6 @@ async function runHostedAutonomyMainResult(
               hostedRepositoryKey(effect.repository),
             )?.(effect.head as GitSha, limit) ?? Promise.resolve(null),
       });
-      await ciMinutes.reconcile(nativeTurnDeadline);
       const githubFor = (
         repository: RepositoryIdentityV1,
       ): HostedAutonomyGitHubV1 => {
@@ -482,6 +487,35 @@ async function runHostedAutonomyMainResult(
         surfaces.set(key, created);
         return created;
       };
+      // Owner decision 2026-11-18: one gate for the whole run. The runner
+      // routes every pass through it; the queue coordinator and its
+      // publication get the gated state and surfaces here.
+      // A listed target the tolerant mint dropped from this job's token is
+      // hidden for the run without a read (`target-token-scope.ts`), even
+      // when it is public; an unset report hides nothing.
+      const reported = env(UNAVAILABLE_TARGETS_ENV);
+      const listed = await readTargetSlugsV1({ root: Deno.cwd() });
+      const outOfScope = reported === null ? [] : reportedTokenScopeV1(
+        listed.map((target) => target.slug),
+        reported,
+      );
+      const scopeLine = tokenScopeLineV1(outOfScope);
+      if (scopeLine !== null) console.log(JSON.stringify(scopeLine));
+      const privateTargets = createPrivateTargetGateV1({
+        readVisibility: scopedVisibilityReaderV1(
+          async (repository) =>
+            await githubFor(repository).readVisibility?.() ?? "unknown",
+          outOfScope,
+        ),
+        profile: await verifyDeploymentTargetScopeV1(
+          HOSTED_CONTROLLER_PROFILE,
+          listed.some((target) => isDeploymentSelfSlugV1(HOSTED_CONTROLLER_PROFILE, target.slug)),
+          async () => await githubFor(HOSTED_AUTONOMY_SELF_SCOPE).readVisibility?.() ?? "unknown",
+        ),
+      });
+      const gatedState = privateTargets.wrapState(state);
+      const gatedGithubFor = privateTargets.githubFor(githubFor);
+      await ciMinutes.reconcile(nativeTurnDeadline);
       const artifactRoot = await Deno.makeTempDir({
         prefix: "sentinel-maintenance-matrix-",
       });
@@ -489,6 +523,7 @@ async function runHostedAutonomyMainResult(
         result = await runFromVerifiedSource({
           ciMinutes,
           state,
+          privateTargets,
           currentMatrixIndex: new GitMaintenanceIndex({
             scratchDir: `${scratch}/maintenance-index`,
             remoteUrl: HOSTED_CONTROLLER_REMOTE,
@@ -501,14 +536,14 @@ async function runHostedAutonomyMainResult(
           clock: { now: () => Date.now() },
           queue: createHostedQueueCoordinator({
             queueMode: env("SENTINEL_MERGE_QUEUE"),
-            state,
-            githubFor,
+            state: gatedState,
+            githubFor: gatedGithubFor,
             token: apiToken,
             clock: { now: () => Date.now() },
             publicationFor: createMaintenancePublicationFor({
               sourceDir: Deno.cwd(),
               scratch,
-              state,
+              state: gatedState,
               clock: { now: () => Date.now() },
               token: apiToken,
               gate: new DurableGitHubCooldownGate({

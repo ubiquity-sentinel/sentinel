@@ -106,7 +106,7 @@ Deno.test(
         ? { ref: `refs/heads/${FOREIGN_BRANCH}`, object: { sha: BASE } }
         : url.includes("/issues/")
         ? { state: "open" }
-        : { default_branch: FOREIGN_BRANCH };
+        : { default_branch: FOREIGN_BRANCH, private: false };
       return Promise.resolve(jsonResponse(payload));
     }) as typeof fetch;
     try {
@@ -219,6 +219,7 @@ function stubGreenForeign(
       }
       : {
         default_branch: FOREIGN_BRANCH,
+        private: false,
         // The target forbids squash (#331): the merge keeps its commit.
         allow_squash_merge: false,
         allow_merge_commit: true,

@@ -6,7 +6,7 @@ import {
 } from "../../src/host/target-tree-facts.ts";
 import {
   createGitHubTargetResolvers,
-  loadTargetConfigsV1,
+  loadPublicTargetConfigsV1,
 } from "../../src/host/targets.ts";
 import { createLocalRepositoryConfig } from "../../src/host/local.ts";
 
@@ -264,14 +264,18 @@ Deno.test("tree facts: 27-target config reload lifecycle reuses facts and refuse
     Array.from({ length: 27 }, (_, index) => `example/generic-${index}`),
   );
   const load = () =>
-    loadTargetConfigsV1({
+    loadPublicTargetConfigsV1({
       template,
       readFile: () => Promise.resolve(setting),
       // Default hosted loads recreate transports as well as their resolvers.
       ...createGitHubTargetResolvers({
         http: (request) => api.http(request),
         token: api.token,
-        resolveDefaultBranch: () => Promise.resolve("main"),
+        resolveRepository: () =>
+          Promise.resolve({
+            defaultBranch: "main",
+            visibility: "public" as const,
+          }),
       }),
     });
   const first = await load();

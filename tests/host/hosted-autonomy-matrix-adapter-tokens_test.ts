@@ -119,7 +119,10 @@ Deno.test("current-matrix recovery binds each target's candidate port and branch
         return Promise.resolve({
           status: 200,
           headers: new Headers(),
-          bodyText: JSON.stringify({ default_branch: "development" }),
+          bodyText: JSON.stringify({
+            default_branch: "development",
+            private: false,
+          }),
         });
       }
       if (path.includes("/git/ref/")) {

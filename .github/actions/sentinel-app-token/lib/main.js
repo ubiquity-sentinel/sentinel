@@ -1,6 +1,7 @@
 import pRetry from "p-retry";
 import isNetworkError from "is-network-error";
 import { serializeMintGrant } from "./mint-grant.js";
+import { getTolerantTokenFromRepository } from "./tolerant-mint.js";
 // @ts-check
 
 /**
@@ -14,6 +15,8 @@ import { serializeMintGrant } from "./mint-grant.js";
  * @param {import("@octokit/auth-app").createAppAuth} createAppAuth
  * @param {import("@octokit/request").request} request
  * @param {boolean} skipTokenRevoke
+ * @param {boolean} [tolerateInaccessible]
+ * @param {string} [knownUnavailable]
  */
 export async function main(
   clientId,
@@ -26,6 +29,8 @@ export async function main(
   createAppAuth,
   request,
   skipTokenRevoke,
+  tolerateInaccessible = false,
+  knownUnavailable = "",
 ) {
   // Validate mutual exclusivity of enterprise with owner/repositories
   if (enterprise && (owner || repositories.length > 0)) {
@@ -47,10 +52,23 @@ export async function main(
     request,
   });
 
-  const { authentication, installationId, appSlug, appId } = await pRetry(
-    () => getTokenFromTarget(request, auth, target, permissions),
-    createTokenRetryOptions(core, getTokenRetryDescription(target)),
-  );
+  const { authentication, installationId, appSlug, appId, unavailable } =
+    await pRetry(
+      () =>
+        tolerateInaccessible && target.type === "repository"
+          ? getTolerantTokenFromRepository(
+            request,
+            auth,
+            target.owner,
+            target.repositories,
+            permissions,
+            createInstallationAuthResult,
+            core,
+            knownUnavailable,
+          )
+          : getTokenFromTarget(request, auth, target, permissions),
+      createTokenRetryOptions(core, getTokenRetryDescription(target)),
+    );
 
   // Register the token with the runner as a secret to ensure it is masked in logs
   core.setSecret(authentication.token);
@@ -58,6 +76,16 @@ export async function main(
   core.setOutput("token", authentication.token);
   core.setOutput("installation-id", installationId);
   core.setOutput("app-slug", appSlug);
+  if (Array.isArray(unavailable) && unavailable.length > 0) {
+    const dropped = unavailable.map((name) => `${target.owner}/${name}`);
+    core.setOutput("unavailable-repositories", dropped.join(","));
+    // One text-free line: a closed reason, the counts and listed names only.
+    core.warning(
+      `repositories_unavailable: ${dropped.length} of ${target.repositories.length} listed repositories dropped from this token: ${
+        dropped.join(",")
+      }`,
+    );
+  }
 
   // Make token accessible to post function (so we can invalidate it)
   if (!skipTokenRevoke) {

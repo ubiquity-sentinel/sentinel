@@ -4,9 +4,8 @@
  * and every bound fails toward not filing:
  *
  * - the complete listing of every issue and pull request the App created
- *   in the target (`listingHold`): an issue marked for this very tip, an open
- *   base-repair issue, and the hard bound over the last 14 days, whose count
- *   `BASE_REPAIR_BOUND_POLICY` sets (an open owner decision);
+ *   in the target (`listingHold`): an issue marked for this very tip or an
+ *   open base-repair issue;
  * - GitHub's created-since listing, which has no `creator` filter
  *   (`recentHold`): the daily brake and the open ceiling, which also count
  *   what the App listing cannot show (a create GitHub answered under another
@@ -15,10 +14,9 @@
  * Issue text is untrusted. The daily brake and the open ceiling, which bound
  * the filing rate and the open issues, count every App issue whatever it
  * says (the ceiling leaves out only the App's review follow-ups, by their
- * own marker); elsewhere text only recognises a base-repair issue (a marker
- * or the exact title), which adds a hold, and in the relaxed policy decides
- * which issues the hard bound counts, so there a rewrite can lift the hard
- * bound down to those two.
+ * own marker). In the App listing, the marker and exact title identify a
+ * base-repair issue and can hold filing. A closed repair for a different tip
+ * does not carry a hold into another UTC day.
  */
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import {
@@ -34,46 +32,6 @@ import type {
 } from "./hosted-autonomy-types.ts";
 
 const DAY_MS = 24 * 60 * 60_000;
-
-/**
- * Hard filing bound per target (2026-11-16, after the review of the
- * 2026-11-15 enablement): nothing is filed while the complete listing of the
- * App's issues in the target holds `BASE_REPAIR_ISSUE_LIMIT` issues that
- * `BASE_REPAIR_BOUND_POLICY` counts (never a pull request), open or closed,
- * created within the last `BASE_REPAIR_ISSUE_WINDOW_MS`: at most one issue
- * per target per 14 days, so a flaky check that re-reds the base after each
- * merged fix waits the window out. K = 2 overall was not chosen: it still
- * re-files once right after a person closes the first issue, and after its
- * second issue the target could never be repaired again without a code
- * change.
- */
-export const BASE_REPAIR_ISSUE_LIMIT = 1;
-export const BASE_REPAIR_ISSUE_WINDOW_MS = 14 * 24 * 60 * 60_000;
-
-/**
- * Which issues the hard bound counts: an OPEN OWNER DECISION (2026-11-16),
- * one named switch with two modes.
- *
- * - `"strict"` (the second review's bound): EVERY issue the App opened in
- *   the target, whatever its title or body. A person rewriting both the
- *   marker line and the title of the filed issue (288 issues in a day under
- *   the bound before it) never lifts it within the window. The cost, found
- *   by the third review: the App opens other issues there too (one review
- *   follow-up per finding), and on ai.ubq.fi's history the window would have
- *   left filing possible for about 7 hours a month.
- * - `"relaxed"` (the default until the owner decides): only the App's
- *   base-repair issues (`isBaseRepairListed`: the marker on the first line,
- *   or the exact title once a person edited the marker away). Unrelated App
- *   issues no longer hold filing. A person who rewrites BOTH title and first
- *   line lifts this bound for that issue; the bounds that need no
- *   recognition still hold: one filing per UTC day (`recentHold`'s daily
- *   brake) and no third issue while two are open (the open ceiling).
- *
- * Every other hold is the same in both modes. Production never passes
- * another mode; the pass takes one only so that tests can run both.
- */
-export type BaseRepairBoundPolicyV1 = "strict" | "relaxed";
-export const BASE_REPAIR_BOUND_POLICY: BaseRepairBoundPolicyV1 = "relaxed";
 
 /**
  * Daily brake (2026-11-16): at most one filing per target per UTC day,
@@ -157,42 +115,25 @@ export function isBaseRepairListed(
 }
 
 /**
- * Why the complete App listing holds a new issue for `branch` at `tip`, as
- * the action suffix, or null when it holds none. In order: an issue marked
- * for this very tip, open or closed (one issue per red tip); the lowest open
- * base-repair issue (one open at a time per target, 2026-11-15, even when
- * its repair is parked or done; the merge of its own fix closes it); the
- * newest issue `policy` counts within the hard bound's window
- * (`BASE_REPAIR_ISSUE_LIMIT` within `BASE_REPAIR_ISSUE_WINDOW_MS` of `now`,
- * open or closed; an issue dated after `now` counts). The first two
- * recognise base-repair issues by their content and only ever add holds.
+ * Why the complete App listing holds a new issue. A marker for the exact
+ * branch and tip takes precedence, even on a closed issue. Otherwise the
+ * lowest-numbered open base-repair issue holds filing until it closes.
  */
 export function listingHold(
   issues: readonly HostedAppIssueV1[],
   branch: string,
   tip: string,
-  now: number,
-  policy: BaseRepairBoundPolicyV1,
 ): string | null {
   const marker = baseRepairMarker(branch, tip);
   const same = issues.find((issue) =>
     !issue.pullRequest && issue.firstLine === marker
   );
   if (same !== undefined) return `filed_before=#${same.number}`;
-  const repairs = issues.filter(isBaseRepairListed)
-    .sort((a, b) => a.number - b.number);
-  const open = repairs.find((issue) => issue.state === "open");
-  if (open !== undefined) return `open=#${open.number}`;
-  // Anything but the relaxed mode counts every App issue.
-  const counted = policy === "relaxed"
-    ? repairs
-    : issues.filter((issue) => !issue.pullRequest);
-  const recent = counted.filter((issue) =>
-    issue.createdAt >= now - BASE_REPAIR_ISSUE_WINDOW_MS
-  ).sort((a, b) => a.number - b.number);
-  return recent.length >= BASE_REPAIR_ISSUE_LIMIT
-    ? `recent=#${recent[recent.length - 1].number}`
-    : null;
+  const open =
+    issues.filter((issue) =>
+      issue.state === "open" && isBaseRepairListed(issue)
+    ).sort((a, b) => a.number - b.number)[0];
+  return open === undefined ? null : `open=#${open.number}`;
 }
 
 /**

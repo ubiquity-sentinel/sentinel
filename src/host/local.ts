@@ -13,6 +13,7 @@
  * to mode-0600 files outside every checkout and never reach a model child
  * environment or a log line.
  */
+import { isPublicControllerScopeV1 } from "../contracts/hosted-controller-deployment.ts";
 
 import {
   portError,
@@ -22,10 +23,10 @@ import {
 } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import {
-  createDefaultBranchResolver,
   createGatedTargetReadTransport,
+  createTargetRepositoryResolver,
   createTargetTreeFactsResolver,
-  loadTargetConfigsV1,
+  loadPublicTargetConfigsV1,
   STATIC_TARGETS_EMPTY,
   STATIC_TARGETS_UNSUPPORTED,
 } from "./targets.ts";
@@ -248,9 +249,9 @@ export async function runLocalRepairHost(
       gate,
       installationId: localTemplate.repository.installationId,
     });
-    const localTargets = await loadTargetConfigsV1({
+    const localTargets = await loadPublicTargetConfigsV1({
       template: localTemplate,
-      resolveDefaultBranch: createDefaultBranchResolver({
+      resolveRepository: createTargetRepositoryResolver({
         http,
         token: input.githubToken,
       }),
@@ -305,10 +306,7 @@ export async function runLocalRepairHost(
       trustedPath: input.trustedPath,
       codexExecutable: input.codexExecutable,
       tracker,
-      selfMergeEnabled:
-        appliedConfig.repository.owner === "ubiquity-sentinel" &&
-        appliedConfig.repository.name === "sentinel" &&
-        appliedConfig.repository.installationId === 0,
+      selfMergeEnabled: isPublicControllerScopeV1(appliedConfig.repository),
     });
     const model = new LocalCheckoutModelPort({
       stateRoot: input.stateRoot,

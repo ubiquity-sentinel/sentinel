@@ -1,4 +1,5 @@
 /** Repair loop internals: legacy loss. */
+import { isPublicControllerScopeV1 } from "../contracts/hosted-controller-deployment.ts";
 import type {
   LegacyBaseRefreshLossProofV1,
   PortResultV1,
@@ -47,9 +48,7 @@ export type LegacyLossBridgeResultV1 =
 
 /** Exact self scope-0 identity: `ubiquity-sentinel/sentinel` under the no-App scope. */
 export function isSelfScopeZero(repository: RepositoryIdentityV1): boolean {
-  return repository.installationId === 0 &&
-    repository.owner === "ubiquity-sentinel" &&
-    repository.name === "sentinel";
+  return isPublicControllerScopeV1(repository);
 }
 
 /**

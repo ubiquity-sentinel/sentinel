@@ -58,7 +58,7 @@ export const A = {
   acceptanceCorrection: anchor(
     "p.acceptanceCorrection",
     "src/repair/loop-review-result.ts",
-    "if (refusal === TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL) {",
+    "const corrected = await withAcceptanceFinding(receipt);",
   ),
   releaseDeferred: anchor(
     "p.releaseDeferred",

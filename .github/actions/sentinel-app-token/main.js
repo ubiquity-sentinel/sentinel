@@ -39,6 +39,11 @@ async function run() {
     .filter((x) => x !== "");
 
   const skipTokenRevoke = core.getBooleanInput("skip-token-revoke");
+  // Sentinel adaptation: unset (or anything but "true") is the upstream mint.
+  const tolerateInaccessible =
+    core.getInput("tolerate-inaccessible-repositories") === "true";
+  // Only removes listed names, and only for a tolerant mint.
+  const knownUnavailable = core.getInput("known-unavailable");
 
   const permissions = getPermissionsFromInputs(process.env);
 
@@ -53,6 +58,8 @@ async function run() {
     createAppAuth,
     request,
     skipTokenRevoke,
+    tolerateInaccessible,
+    knownUnavailable,
   );
 }
 

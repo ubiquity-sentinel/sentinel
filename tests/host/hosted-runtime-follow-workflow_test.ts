@@ -121,7 +121,7 @@ Deno.test("follow workflow uses only the checked-out dispatcher action before fi
   );
   assert.equal(
     deno.tasks["follow:run"],
-    "deno run --allow-net=api.github.com --allow-write --allow-env=GITHUB_TOKEN,SENTINEL_AUTO_FOLLOW,GITHUB_OUTPUT,GITHUB_STEP_SUMMARY src/host/hosted-runtime-follow-main.ts",
+    "deno run --allow-net=api.github.com --allow-write --allow-env=GITHUB_TOKEN,SENTINEL_AUTO_FOLLOW,GITHUB_OUTPUT,GITHUB_STEP_SUMMARY,GITHUB_REPOSITORY src/host/hosted-runtime-follow-main.ts",
   );
   assert.ok(!deno.tasks["follow:run"].includes("--allow-run"));
 });

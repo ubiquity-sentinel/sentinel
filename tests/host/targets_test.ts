@@ -13,7 +13,7 @@ import {
   createGatedTargetReadTransport,
   createTargetConfigV1,
   createTargetTreeFactsResolver,
-  loadTargetConfigsV1,
+  loadPublicTargetConfigsV1,
   parseTargetSlugsV1,
   readTargetSlugsV1,
   STATIC_TARGETS_INVALID,
@@ -78,11 +78,15 @@ Deno.test("targets: the shipped setting is a plain array", async () => {
   assert.ok(Array.isArray(parsed), "the setting is a plain array");
 });
 
-/** The 2026-11-01 owner directive: every active ubiquity code repository. */
+/**
+ * The 2026-11-01 owner directive: every active ubiquity code repository.
+ * `ubiquity/passport.ubq.fi` left on 2026-11-22: the name no longer exists,
+ * and one name the App installation cannot resolve fails every token mint
+ * built from this list (docs/DECISIONS.md, 2026-11-22).
+ */
 const SHIPPED_TARGETS = [
   "ubiquity-sentinel/sentinel",
   "ubiquity/ai.ubq.fi",
-  "ubiquity/passport.ubq.fi",
   "ubiquity/prospector",
   "ubiquity/prospector-chrome-extension",
   "ubiquity/ubiquity-dollar",
@@ -110,6 +114,16 @@ const SHIPPED_TARGETS = [
   "ubiquity/notifications.ubq.fi",
   "ubiquity/github-labels-processor",
   "ubiquity/card-issuance",
+  // The renamed Passport (2026-11-22, owner): private, so only the private
+  // deployment works it; the public host reads it private and skips it.
+  "ubiquity/auth.ubq.fi",
+  // Owner, 2026-11-23: every non-archived private ubiquity repository is a
+  // target of the private deployment ("App installed to all"). The public
+  // host reads each private and skips it. `ubiquity/.github-private` is left
+  // out: the committed slug rule refuses a name that starts with a dot.
+  "ubiquity/google-apps-script",
+  "ubiquity/arbitrage-uusd",
+  "ubiquity/ubiquibot-config",
 ];
 
 Deno.test("targets: the shipped setting names every active ubiquity repository", async () => {
@@ -183,13 +197,13 @@ Deno.test("targets: the 64-target setting resolves in order without resolver fan
     (_unused, index) => `ubiquity/repo-${index}`,
   );
   const reads: string[] = [];
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve(JSON.stringify(targets)),
-    resolveDefaultBranch: async (target) => {
+    resolveRepository: async (target) => {
       reads.push(`branch:${target.slug}`);
       await Promise.resolve();
-      return "main";
+      return { defaultBranch: "main", visibility: "public" };
     },
     resolveTreeFacts: async (target, branch) => {
       assert.equal(branch, "main");
@@ -220,10 +234,10 @@ Deno.test("targets: 65 entries fail closed before resolving any repository", asy
     { length: 65 },
     (_unused, index) => `ubiquity/repo-${index}`,
   );
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve(JSON.stringify(targets)),
-    resolveDefaultBranch: () => {
+    resolveRepository: () => {
       assert.fail("over-limit settings must not resolve default branches");
     },
     resolveTreeFacts: () => {
@@ -234,6 +248,7 @@ Deno.test("targets: 65 entries fail closed before resolving any repository", asy
     targets: [],
     configs: [],
     skipped: [],
+    privateTargets: [],
     factsUnavailable: [],
   });
 });
@@ -317,12 +332,16 @@ Deno.test("targets: a slug can only change identity and base branch", () => {
 });
 
 Deno.test("targets: a target whose default branch is unavailable is skipped", async () => {
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () =>
       Promise.resolve('["ubiquity-sentinel/sentinel", "ubiquity/other"]'),
-    resolveDefaultBranch: (target) =>
-      Promise.resolve(target.name === "sentinel" ? "development" : null),
+    resolveRepository: (target) =>
+      Promise.resolve(
+        target.name === "sentinel"
+          ? { defaultBranch: "development", visibility: "public" }
+          : null,
+      ),
     resolveTreeFacts: () => Promise.resolve({ files: [], hasCiWorkflow: true }),
   });
   assert.deepEqual(
@@ -335,10 +354,11 @@ Deno.test("targets: a target whose default branch is unavailable is skipped", as
 });
 
 Deno.test("targets: a bun target with CI gets the bun verify policy", async () => {
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve('["ubiquity/prospector"]'),
-    resolveDefaultBranch: () => Promise.resolve("development"),
+    resolveRepository: () =>
+      Promise.resolve({ defaultBranch: "development", visibility: "public" }),
     resolveTreeFacts: () =>
       Promise.resolve({
         files: ["bun.lock", "package.json"],
@@ -406,10 +426,11 @@ Deno.test("targets: prospector mixed manifests select the declared package manag
     const tree = await resolveTreeFacts(slug("ubiquity", "prospector"), "main");
     assert.ok(tree);
     assert.equal(tree.packageManager, packageManager);
-    const loaded = await loadTargetConfigsV1({
+    const loaded = await loadPublicTargetConfigsV1({
       template: TEMPLATE,
       readFile: () => Promise.resolve('["ubiquity/prospector"]'),
-      resolveDefaultBranch: () => Promise.resolve("main"),
+      resolveRepository: () =>
+        Promise.resolve({ defaultBranch: "main", visibility: "public" }),
       resolveTreeFacts,
     });
     assert.deepEqual(loaded.skipped, []);
@@ -429,10 +450,11 @@ Deno.test("targets: prospector mixed manifests select the declared package manag
 });
 
 Deno.test("targets: Deno without package-manager markers keeps its task names separate", async () => {
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve('["ubiquity/prospector"]'),
-    resolveDefaultBranch: () => Promise.resolve("main"),
+    resolveRepository: () =>
+      Promise.resolve({ defaultBranch: "main", visibility: "public" }),
     resolveTreeFacts: () =>
       Promise.resolve({
         // With no package-manager declaration or lockfile, only a Deno task may run.
@@ -448,10 +470,11 @@ Deno.test("targets: Deno without package-manager markers keeps its task names se
 });
 
 Deno.test("targets: no CI and no local verify carries the no-evidence park", async () => {
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve('["ubiquity/empty-repo"]'),
-    resolveDefaultBranch: () => Promise.resolve("main"),
+    resolveRepository: () =>
+      Promise.resolve({ defaultBranch: "main", visibility: "public" }),
     resolveTreeFacts: () =>
       Promise.resolve({ files: ["README.md"], hasCiWorkflow: false }),
   });
@@ -466,11 +489,12 @@ Deno.test("targets: no CI and no local verify carries the no-evidence park", asy
 });
 
 Deno.test("targets: unreadable tree facts skip the target like a bad branch", async () => {
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () =>
       Promise.resolve('["ubiquity-sentinel/sentinel", "ubiquity/offline"]'),
-    resolveDefaultBranch: () => Promise.resolve("development"),
+    resolveRepository: () =>
+      Promise.resolve({ defaultBranch: "development", visibility: "public" }),
     resolveTreeFacts: (target) =>
       Promise.resolve(
         target.name === "offline" ? null : {
@@ -529,10 +553,11 @@ Deno.test("targets: a malformed sentinel.protected skips the target", async () =
     http: treeFactsHttp(root, routes),
     token: "token-value",
   });
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve('["ubiquity/protected"]'),
-    resolveDefaultBranch: () => Promise.resolve("main"),
+    resolveRepository: () =>
+      Promise.resolve({ defaultBranch: "main", visibility: "public" }),
     resolveTreeFacts: resolver,
   });
   assert.deepEqual(loaded.configs, []);
@@ -542,13 +567,14 @@ Deno.test("targets: a malformed sentinel.protected skips the target", async () =
 
 Deno.test("targets: named policies never spend a tree-facts read", async () => {
   const asked: string[] = [];
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () =>
       Promise.resolve(
         '["ubiquity-sentinel/sentinel", "ubiquity/passport.ubq.fi", "ubiquity/ai.ubq.fi", "ubiquity/prospector"]',
       ),
-    resolveDefaultBranch: () => Promise.resolve("development"),
+    resolveRepository: () =>
+      Promise.resolve({ defaultBranch: "development", visibility: "public" }),
     resolveTreeFacts: (target) => {
       asked.push(target.slug);
       return Promise.resolve({
@@ -566,11 +592,12 @@ Deno.test("targets: named policies never spend a tree-facts read", async () => {
 });
 
 Deno.test("targets: an omitted facts resolver keeps the generic boundary", async () => {
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: TEMPLATE,
     readFile: () =>
       Promise.resolve('["ubiquity-sentinel/sentinel", "ubiquity/prospector"]'),
-    resolveDefaultBranch: () => Promise.resolve("development"),
+    resolveRepository: () =>
+      Promise.resolve({ defaultBranch: "development", visibility: "public" }),
   });
   assert.deepEqual([...loaded.skipped], []);
   assert.deepEqual(

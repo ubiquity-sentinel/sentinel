@@ -22,8 +22,6 @@ import type {
 import type { ReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { RED_BASE_RECHECK_MS } from "../../src/repair/ci-first-policy.ts";
 import { candidateBranch } from "../../src/repair/keys.ts";
-import type { BaseRepairBoundPolicyV1 } from "../../ops/hosted-autonomy-base-repair-bounds.ts";
-import { runHostedBaseRepairPass } from "../../ops/hosted-autonomy-base-repair.ts";
 import { isHostedSelf } from "../../ops/hosted-autonomy-policy.ts";
 import { runHostedAutonomy } from "../../ops/hosted-autonomy-runner.ts";
 import type {
@@ -482,26 +480,4 @@ export async function maintain(
     options,
   );
   return await runMaintenance(deps, state);
-}
-
-/**
- * The base-repair pass alone under the bound `policy`, over the deps of one
- * maintenance run at `now` (fresh deps): its actions. The maintenance pass
- * always runs it under `BASE_REPAIR_BOUND_POLICY`; this runs either mode.
- */
-export async function fileUnder(
-  policy: BaseRepairBoundPolicyV1,
-  records: WorkRecordV1[],
-  targets: Readonly<Record<string, FakeTarget>>,
-  now = NOW,
-  options: MaintenanceOptions = {},
-): Promise<{ baseRepair: string[] }> {
-  const { deps } = await maintenanceDeps(records, targets, now, options);
-  return {
-    baseRepair: await runHostedBaseRepairPass(
-      deps,
-      Number.POSITIVE_INFINITY,
-      policy,
-    ),
-  };
 }

@@ -1,5 +1,6 @@
+import { PUBLIC_CONTROLLER_PROFILE } from "../src/contracts/hosted-controller-deployment.ts";
 /** Local advisory evidence; none of these records grants runtime authority. */
-export const CONTROLLER = "ubiquity-sentinel/sentinel";
+export const CONTROLLER = PUBLIC_CONTROLLER_PROFILE.repository;
 export const TARGETS = [
   CONTROLLER,
   "ubiquity/ai.ubq.fi",

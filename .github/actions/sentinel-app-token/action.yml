@@ -28,6 +28,14 @@ inputs:
     description: "If true, the token will not be revoked when the current job is complete"
     required: false
     default: "false"
+  tolerate-inaccessible-repositories:
+    description: "Sentinel adaptation: if true, a repository list GitHub refuses as not accessible to the installation is narrowed to its reachable names (never widened; at most 3 and at most a quarter of the list dropped); unset keeps the upstream mint"
+    required: false
+    default: "false"
+  known-unavailable:
+    description: "Sentinel adaptation, tolerant mints only: an earlier job's unavailable-repositories; it may only remove listed names before the first request and counts toward the drop bound"
+    required: false
+    default: ""
   # Make GitHub API configurable to support non-GitHub Cloud use cases
   # see https://github.com/actions/create-github-app-token/issues/77
   github-api-url:
@@ -152,6 +160,8 @@ outputs:
     description: "GitHub App slug"
   mint-grant:
     description: "Bounded nonsecret metadata from the same installation token mint; not standalone authority"
+  unavailable-repositories:
+    description: "Sentinel adaptation: comma-separated owner/name of listed repositories a tolerant mint dropped; unset when none"
 runs:
   using: "node24"
   main: "main.js"

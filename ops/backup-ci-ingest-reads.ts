@@ -10,6 +10,7 @@
  * exactly one regular entry `result.json`, declared and streamed size at
  * most 64 KiB.
  */
+import { PUBLIC_CONTROLLER_PROFILE } from "../src/contracts/hosted-controller-deployment.ts";
 import {
   BACKUP_CI_LEG_WORKFLOW_PATH,
   BACKUP_CI_MAX_RESULT_BYTES,
@@ -19,7 +20,7 @@ import {
   backupCiCompleteListing,
 } from "./backup-ci-plan-reads.ts";
 
-export const BACKUP_CI_SENTINEL_REPOSITORY = "ubiquity-sentinel/sentinel";
+export const BACKUP_CI_SENTINEL_REPOSITORY = PUBLIC_CONTROLLER_PROFILE.repository;
 export const BACKUP_CI_LOG_MAX_BYTES = 8 * 2 ** 20;
 const LEG_WORKFLOW = BACKUP_CI_LEG_WORKFLOW_PATH.slice(
   BACKUP_CI_LEG_WORKFLOW_PATH.lastIndexOf("/") + 1,

@@ -20,6 +20,10 @@ import {
   type HostedAutonomyPassContextV1,
 } from "./hosted-autonomy-scopes.ts";
 import { HOSTED_AUTONOMY_SELF_SCOPE } from "./hosted-autonomy-policy.ts";
+import {
+  HOSTED_CONTROLLER_PROFILE,
+  PRIVATE_DEPLOYMENT_REASON,
+} from "../src/contracts/hosted-controller-deployment.ts";
 import type {
   HostedAutonomyDepsV1,
   HostedAutonomyGitHubV1,
@@ -51,6 +55,10 @@ import { runHostedRetiredPullPass } from "./hosted-autonomy-retired-pulls.ts";
 import { runHostedOutageObservationPass } from "./hosted-autonomy-outage-observation.ts";
 import { runHostedQueueCustody } from "./hosted-autonomy-queue-pass.ts";
 import { protectQueueState } from "./hosted-autonomy-queue-state.ts";
+import {
+  checkPrivateTargetViewV1,
+  gateHostedAutonomyDepsV1,
+} from "./hosted-autonomy-private-targets.ts";
 import type {
   HostedQueueCustodyContext,
   QueueCustodyResult,
@@ -121,6 +129,34 @@ function integrityFault(error: unknown): boolean {
  * pass instead of running past the job's own limit.
  */
 export async function runHostedAutonomy(
+  deps: HostedAutonomyDepsV1,
+): Promise<HostedAutonomyResultV1> {
+  // Owner decision 2026-11-18: every pass below reads and writes state and
+  // resolves surfaces through the private-target gate, then one text-free
+  // line counts what it hid (`hosted-autonomy-private-targets.ts`).
+  try {
+    const checked = await checkPrivateTargetViewV1(
+      gateHostedAutonomyDepsV1(deps),
+    );
+    if (checked.invalid) {
+      // A view the contract refuses: fail closed before any pass runs.
+      await deps.onQueueCustodyReady?.(false);
+      return skipped("snapshot_invalid", null, [
+        "private_targets:view_invalid",
+      ]);
+    }
+    return await runGatedHostedAutonomy(checked.deps);
+  } finally {
+    try {
+      const line = deps.privateTargets?.line() ?? null;
+      if (line !== null) console.log(JSON.stringify(line));
+    } catch {
+      // Advisory only.
+    }
+  }
+}
+
+async function runGatedHostedAutonomy(
   deps: HostedAutonomyDepsV1,
 ): Promise<HostedAutonomyResultV1> {
   deps = withHostedOpenIssueCache(deps);
@@ -528,6 +564,12 @@ async function runHostedAutonomyChain(
   // any refusal inside it is reported as an action rather than a failure. The
   // normal repair loop then works those issues like any other. A pass that
   // wrote state never runs it.
+  // The private deployment files nothing in its own tracker (owner,
+  // 2026-11-18): both notice passes report the closed reason and read nothing.
+  if (!HOSTED_CONTROLLER_PROFILE.selfObservation) {
+    actions.push(`self-observation:skipped:${PRIVATE_DEPLOYMENT_REASON}`);
+    return skippedAfterObservation(actions, observedHead);
+  }
   let selfSurface: HostedAutonomyGitHubV1 | null = null;
   const finishObservation = beginMaintenanceProgress("self_observation");
   try {
@@ -571,7 +613,14 @@ async function runHostedAutonomyChain(
   } finally {
     finishObservation();
   }
+  return skippedAfterObservation(actions, observedHead);
+}
 
+/** The run's no-write outcome, classified by the actions it recorded. */
+function skippedAfterObservation(
+  actions: string[],
+  observedHead: string | null,
+): HostedAutonomyResultV1 {
   const suffix = (value: string) =>
     actions.some((action) => action.endsWith(value));
   // A read-only retry line (a repeated denial or skip) is not a retry: only a
