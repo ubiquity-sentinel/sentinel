@@ -201,6 +201,7 @@ export type {
 export type {
   ReleaseHistoryViewV1,
   ReleaseStateWriter,
+  RepairHistoryViewV1,
   RepairStateWriter,
   StateReadResultV1,
   StateReadView,

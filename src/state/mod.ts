@@ -31,6 +31,7 @@ import { MANIFEST_KIND } from "./state-records.ts";
 import type { StateKind, StateManifestV1 } from "./state-records.ts";
 import { recordFiles } from "./state-codec.ts";
 import { validateSnapshotTransition } from "./state-transition.ts";
+import { RepairHistoryCache } from "./state-repair-history-cache.ts";
 
 /**
  * GitStateStore: the production state-storage implementation for the two
@@ -66,6 +67,7 @@ import { validateSnapshotTransition } from "./state-transition.ts";
  */
 
 export class GitStateStore extends StateGitTransport implements StateStore {
+  private readonly repairHistory = new RepairHistoryCache(this.scratchDir);
   // -------------------------------------------------------------------------
   // Reads: both roles read both fixed refs.
   // -------------------------------------------------------------------------
@@ -121,18 +123,21 @@ export class GitStateStore extends StateGitTransport implements StateStore {
   readRepairAt(input: { commit: GitSha; expectedHead: GitSha }): Promise<
     PortResultV1<StateReadResultV1<RepairStateSnapshotV1>>
   > {
-    return this.withOpDir(async (op) => {
-      if (
-        !/^[0-9a-f]{40}$/.test(input.commit) ||
-        !/^[0-9a-f]{40}$/.test(input.expectedHead)
-      ) {
-        return portError("invalid", "historical repair identity is malformed");
-      }
+    if (
+      !/^[0-9a-f]{40}$/.test(input.commit) ||
+      !/^[0-9a-f]{40}$/.test(input.expectedHead)
+    ) {
+      return Promise.resolve(
+        portError("invalid", "historical repair identity is malformed"),
+      );
+    }
+    return this.repairHistory.use(input.expectedHead, async (op) => {
       const loaded = await this.loadRemote(
         op,
         REPAIR_REF,
         "repair",
         "complete",
+        input.expectedHead,
       );
       if (!loaded.ok) return loaded;
       if (
@@ -144,19 +149,65 @@ export class GitStateStore extends StateGitTransport implements StateStore {
           "historical repair head changed or is absent",
         );
       }
-      const ancestor = await this.git(op, [
+      return loaded;
+    }, async (op, cold) => {
+      if (!cold) {
+        const lookup = await this.git(op, ["ls-remote", "origin", REPAIR_REF]);
+        if (!lookup.ok) {
+          return this.gitFailure(
+            this.classifyGitError(lookup),
+            "ls-remote",
+            lookup,
+          );
+        }
+        const current = this.parseLsRemote(lookup.stdout, REPAIR_REF);
+        if (current.status !== "found" || current.head !== input.expectedHead) {
+          return portError(
+            "conflict",
+            "historical repair head changed or is absent",
+          );
+        }
+      }
+      // The private fetched objects are immutable. Settle every independent read
+      // before interpreting failures or allowing cache cleanup to remove its cwd.
+      const currentRead = cold
+        ? Promise.resolve(portOk(null))
+        : this.readCommitTree(op, input.expectedHead, "repair");
+      const ancestorRead = this.git(op, [
         "merge-base",
         "--is-ancestor",
         input.commit,
         input.expectedHead,
       ]);
-      if (!ancestor.ok) {
+      const historicalRead = cold
+        ? ancestorRead.then((ancestor) =>
+          ancestor.ok
+            ? this.readCommitTree(op, input.commit, "repair")
+            : portError(
+              "invalid",
+              "historical repair commit is missing or not an ancestor",
+            )
+        )
+        : this.readCommitTree(op, input.commit, "repair");
+      const [current, ancestor, historical] = await Promise.allSettled([
+        currentRead,
+        ancestorRead,
+        historicalRead,
+      ]);
+      if (current.status === "rejected") {
+        return portError("unavailable", "current repair tree read failed");
+      }
+      if (!current.value.ok) return current.value;
+      if (ancestor.status === "rejected" || !ancestor.value.ok) {
         return portError(
           "invalid",
           "historical repair commit is missing or not an ancestor",
         );
       }
-      const snapshot = await this.readCommitTree(op, input.commit, "repair");
+      if (historical.status === "rejected") {
+        return portError("unavailable", "historical repair tree read failed");
+      }
+      const snapshot = historical.value;
       if (!snapshot.ok) return snapshot;
       const lookup = await this.git(op, ["ls-remote", "origin", REPAIR_REF]);
       if (!lookup.ok) {

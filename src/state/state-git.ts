@@ -2,6 +2,7 @@ import type {
   PortErrorV1,
   PortResultV1,
   ReleaseHistoryViewV1,
+  RepairHistoryViewV1,
 } from "../contracts/ports.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import type {
@@ -11,7 +12,11 @@ import type {
 import type { GitSha } from "../contracts/brands.ts";
 import type { StateKind } from "./state-records.ts";
 import { readCommitTree } from "./state-codec.ts";
-import { openReleaseHistoryView } from "./state-history.ts";
+import {
+  openReleaseHistoryView,
+  openRepairHistoryView,
+} from "./state-history.ts";
+import type { StateTreeMemo } from "./state-repair-history-cache.ts";
 
 /** The two fixed state refs; roles read both, each role writes only its own. */
 export const REPAIR_STATE_REF = "refs/heads/sentinel-state/repair";
@@ -148,6 +153,7 @@ export const RELEASE_REF = RELEASE_STATE_REF;
 
 export interface OpContext {
   directory: string;
+  treeMemo?: StateTreeMemo;
 }
 
 /** Local plumbing failure while forming the candidate state commit. */
@@ -285,6 +291,7 @@ export class StateGitTransport {
     ref: string,
     kind: StateKind,
     history: "latest" | "complete" = "latest",
+    expectedHead?: GitSha,
   ): Promise<PortResultV1<LoadedState>> {
     const init = await this.git(op, ["init", "-q"]);
     if (!init.ok) return this.gitFailure("unavailable", "init", init);
@@ -315,6 +322,12 @@ export class StateGitTransport {
       );
     }
     const head = lookupParsed.head;
+    if (expectedHead !== undefined && head !== expectedHead) {
+      return portError(
+        "conflict",
+        "historical repair head changed or is absent",
+      );
+    }
     if (!/^[0-9a-f]{40}$/.test(head)) {
       return portError("invalid", "remote state ref has a malformed commit id");
     }
@@ -348,6 +361,26 @@ export class StateGitTransport {
       head: fetched as GitSha,
       snapshot: snapshot.value,
     });
+  }
+
+  /** Pinned repair history; the consumer revalidates live state after closing. */
+  openRepairHistory(
+    input: { expectedHead: GitSha },
+  ): Promise<PortResultV1<RepairHistoryViewV1>> {
+    return openRepairHistoryView({
+      scratchDir: this.scratchDir,
+      ref: REPAIR_REF,
+      loadComplete: (op) =>
+        this.loadRemote(
+          op,
+          REPAIR_REF,
+          "repair",
+          "complete",
+          input.expectedHead,
+        ),
+      git: (op, args) => this.git(op, args),
+      readTree: (op, commit) => this.readCommitTree(op, commit, "repair"),
+    }, input.expectedHead);
   }
 
   /** One bounded local view of the fixed release history (state-history.ts). */

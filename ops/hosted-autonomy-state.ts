@@ -78,6 +78,81 @@ export class HistoricalQuarantineIncomplete extends Error {
     super("historical matrix quarantine incomplete");
   }
 }
+
+const MAINTENANCE_PROGRESS_PHASES = [
+  "preflight",
+  "queue_custody",
+  "matrix_baseline",
+  "closed_matrix_prepare",
+  "closed_matrix_ingest",
+  "existing_candidate_refs",
+  "current_matrix",
+  "current_matrix_scan",
+  "current_matrix_history_close",
+  "historical_c63",
+  "historical_quarantine",
+  "matrix_uncertainty",
+  "context_closure_delivery",
+  "closure_delivery",
+  "context_retry",
+  "retry",
+  "context_delivery",
+  "delivery",
+  "context_closure",
+  "closure",
+  "self_observation",
+  "followup",
+  "summary_memory",
+  "summary_park",
+  "artifact_cleanup",
+] as const;
+export type MaintenanceProgressPhase =
+  typeof MAINTENANCE_PROGRESS_PHASES[number];
+const progressPhases = new Set<string>(MAINTENANCE_PROGRESS_PHASES);
+
+function progressNow(): number | null {
+  try {
+    const value = performance.now();
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Payload-free observation only; never accepts work, state or authority. */
+export function beginMaintenanceProgress(
+  phase: MaintenanceProgressPhase,
+): () => void {
+  if (!progressPhases.has(phase)) return () => {};
+  const started = progressNow();
+  const emit = (event: "start" | "finish", elapsedMs: number | null) => {
+    try {
+      console.log(JSON.stringify({
+        kind: "sentinel_maintenance_progress",
+        version: 1,
+        phase,
+        event,
+        elapsedMs,
+      }));
+    } catch {
+      // A diagnostic sink cannot change maintenance behavior.
+    }
+  };
+  emit("start", started === null ? null : 0);
+  let finished = false;
+  return () => {
+    if (finished) return;
+    finished = true;
+    const now = progressNow();
+    const elapsed = started !== null && now !== null && now >= started
+      ? Math.floor(now - started)
+      : null;
+    emit(
+      "finish",
+      elapsed !== null && Number.isSafeInteger(elapsed) ? elapsed : null,
+    );
+  };
+}
 /** Map any thrown maintenance error to one fixed, payload-free category. */
 export function maintenanceFailureCategory(
   error: unknown,

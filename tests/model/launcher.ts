@@ -72,10 +72,10 @@ export const SUMMARY_ANCHOR = anchor(
   "launcher.parkSummary",
   "ops/hosted-autonomy-main.ts",
   `await emitHostedParkSummary(
-          state,
-          env("GITHUB_STEP_SUMMARY"),
-          summaryActions,
-        );`,
+            state,
+            env("GITHUB_STEP_SUMMARY"),
+            summaryActions,
+          );`,
 );
 
 export const FAVORABLE: LauncherWorldV1 = {

@@ -9,12 +9,14 @@
  */
 import type { GitSha } from "../contracts/brands.ts";
 import type { PortResultV1, ReleaseHistoryViewV1 } from "../contracts/ports.ts";
+import type { RepairHistoryViewV1 } from "../contracts/ports.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import type {
   ReleaseStateSnapshotV1,
   RepairStateSnapshotV1,
 } from "../contracts/state-snapshots.ts";
 import type { GitRunResultV1, LoadedState, OpContext } from "./state-git.ts";
+import { StateTreeMemo } from "./state-repair-history-cache.ts";
 
 /** The store's own bound transport operations for its fixed release ref. */
 export interface ReleaseHistoryOpsV1 {
@@ -26,6 +28,114 @@ export interface ReleaseHistoryOpsV1 {
     op: OpContext,
     commit: string,
   ): Promise<PortResultV1<RepairStateSnapshotV1 | ReleaseStateSnapshotV1>>;
+}
+
+/** Repair uses the same bound read operations; its stronger close lifecycle is private. */
+export async function openRepairHistoryView(
+  ops: ReleaseHistoryOpsV1,
+  expectedHead: GitSha,
+): Promise<PortResultV1<RepairHistoryViewV1>> {
+  if (!/^[0-9a-f]{40}$/.test(expectedHead)) {
+    return portError("invalid", "historical repair identity is malformed");
+  }
+  let directory: string;
+  try {
+    directory = await Deno.makeTempDir({
+      prefix: "state-history-repair-",
+      dir: ops.scratchDir,
+    });
+  } catch {
+    return portError("unavailable", "repair history directory unavailable");
+  }
+  const op: OpContext = { directory, treeMemo: new StateTreeMemo() };
+  let closed = false;
+  let closing: Promise<void> | null = null;
+  const active = new Set<Promise<unknown>>();
+  const close = () => {
+    closed = true;
+    return closing ??= (async () => {
+      await Promise.allSettled([...active]);
+      await Deno.remove(directory, { recursive: true });
+    })();
+  };
+  try {
+    await Deno.chmod(directory, 0o700);
+    const loaded = await ops.loadComplete(op);
+    if (
+      !loaded.ok || loaded.value.status !== "found" ||
+      loaded.value.head !== expectedHead
+    ) {
+      await close();
+      return !loaded.ok
+        ? loaded
+        : portError("conflict", "historical repair head changed or is absent");
+    }
+    if (loaded.value.snapshot.kind !== "repair_state_snapshot") {
+      await close();
+      return portError("invalid", "repair history snapshot kind mismatch");
+    }
+    return portOk({
+      close,
+      readAt: (commit: GitSha) => {
+        if (closed) {
+          return Promise.resolve(
+            portError("unavailable", "historical repair view is closed"),
+          );
+        }
+        if (!/^[0-9a-f]{40}$/.test(commit)) {
+          return Promise.resolve(
+            portError("invalid", "historical repair identity is malformed"),
+          );
+        }
+        const reading = Promise.resolve().then(async () => {
+          try {
+            const ancestor = await ops.git(op, [
+              "merge-base",
+              "--is-ancestor",
+              commit,
+              expectedHead,
+            ]);
+            if (!ancestor.ok) {
+              return portError(
+                "invalid",
+                "historical repair commit is missing or not an ancestor",
+              );
+            }
+            const snapshot = await ops.readTree(op, commit);
+            if (!snapshot.ok) return snapshot;
+            if (snapshot.value.kind !== "repair_state_snapshot") {
+              return portError(
+                "invalid",
+                "repair history snapshot kind mismatch",
+              );
+            }
+            return portOk({
+              status: "found" as const,
+              snapshot: structuredClone(snapshot.value),
+              head: commit,
+              ref: ops.ref,
+            });
+          } catch {
+            return portError(
+              "unavailable",
+              "historical repair view read unavailable",
+            );
+          }
+        });
+        active.add(reading);
+        void reading.then(
+          () => active.delete(reading),
+          () => active.delete(reading),
+        );
+        return reading;
+      },
+    });
+  } catch {
+    try {
+      await close();
+    } catch { /* No success or proof survives failed initialization. */ }
+    return portError("unavailable", "repair history view unavailable");
+  }
 }
 
 export async function openReleaseHistoryView(

@@ -20,6 +20,7 @@ import type {
   HostedAutonomyResultV1,
 } from "./hosted-autonomy-types.ts";
 import { HISTORICAL_C63 } from "./hosted-autonomy-matrix-bindings.ts";
+import { beginMaintenanceProgress } from "./hosted-autonomy-state.ts";
 import {
   blockedRecoveryBinding,
   blockedRecoveryMatchesProducer,
@@ -406,12 +407,21 @@ export async function recoverHostedCurrentMatrix(
     }, () => true);
     return walked.result;
   };
+  const finishScan = beginMaintenanceProgress("current_matrix_scan");
   try {
     return await scan();
   } catch (error) {
     if (isDeferredCurrentMatrixHistoryBudget(error)) report("deferred_budget");
     throw error;
   } finally {
-    await history.view?.close();
+    finishScan();
+    const finishClose = beginMaintenanceProgress(
+      "current_matrix_history_close",
+    );
+    try {
+      await history.view?.close();
+    } finally {
+      finishClose();
+    }
   }
 }

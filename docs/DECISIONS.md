@@ -185,6 +185,77 @@ retry charge is already submitted, but only through the same authenticated
 result and ordinary idempotent settlement; it preserves the existing charge and
 timestamp.
 
+Individual `readRepairAt` calls may reuse one private, bounded fetched
+repository per state-store instance. Every such call still requires fresh entry
+and exit checks of the exact expected remote head, ancestry proof, and complete
+current and historical state validation. Validated decoding may be reused only
+after exact fresh byte equality; returned state must remain independently
+cloned. Expiry, corruption, ref movement and failed initialization invalidate
+retained state, and cleanup is limited to the owned cache directory.
+
+Independent read-only state proofs may run concurrently when all operations
+settle before return and the original error precedence is preserved. This
+optimization changes neither the public state port nor the recovery walk's
+120-second and 256-ancestor limits. Local throughput evidence does not establish
+live maintenance or autonomous delivery acceptance.
+
+The ordinary latest-repair cache experiment (`1faffea` and `786685f4`) remains
+preserved in Git history but is not accepted for shipping. Candidate `d60aa9c8`
+introduced one candidate-publication state-read failure and four
+matrix-uncertainty custody failures in native CI; the same unchanged cases
+passed on `2081f978`, and the exact local publication reproduction passed
+without exposing an underlying error. Return ordinary state reading to the
+byte-exact known-green `2081f978` implementation instead of adding an unproved
+patch or relaxing guards. This does not revert the accepted repair-history cache
+or anchored history view. Retain the necessary task-acceptance prefilters and
+the documented bounded-upkeep deadline fix. Reintroducing ordinary reuse would
+require separate demonstrated lifecycle/custody compatibility and native
+acceptance; the failed profiles are not delivery proof.
+
+Bulk original-candidate recovery may use a separately named optional anchored
+repair-history view. Its anchor is the authoritative read result's head, never
+the payload's parent `snapshot.stateHead`. The view validates one complete fetch
+and strict immutable ancestor records locally; all reads settle and the view
+closes on every exit. Before returning any proof, a fresh complete repair read
+must match both the original observed head and full snapshot within the
+unchanged 120-second/256-ancestor budget. Existing `readRepairAt` semantics
+remain intact. Only an absent view capability uses the old method; a supported
+view's failure is not bypassed. Final restoration still requires fresh
+ownership/ref checks and expected-head CAS/readback.
+
+Delivery may reject proven no-op work before expensive reads. CI approval
+excludes only exact terminal retired-source records and exact rejected,
+unpublished protected-path candidates; a blocked state or head mismatch alone is
+insufficient. Strict Gateway booking may return null early for an exactly
+matching release request or a missing/dirty latest completed App review, using
+the same immutable input snapshot as the eventual authority predicate. A cheap
+positive check never authorizes delivery. All later
+current-head/full-snapshot/row checks, review/task/CI proofs and CAS guards
+remain required, and a refreshed pass considers newly valid reviews normally.
+
+The existing maintenance admission cutoff applies to no-write passes as well as
+continuation after a write. Delivery and CI-rerun loops must check the same
+absolute cutoff before admitting another record, read batch or effect. An
+admitted operation and its mandatory verification/readback finish before
+deferral; no whole-phase promise race or abandoned effects are permitted. A
+no-write deadline exit is the existing no-change/deferred outcome so protected
+prepare and repair can continue; prior applied state writes retain their
+aggregate result. Unvisited records and charges remain untouched and eligible
+next pass. The existing pass deadline and phase reserve are unchanged; checks
+are cooperative and do not claim cancellation of unbounded Git operations.
+
+Queue booking may also refuse an issue-backed receipt before expensive reads
+when its task acceptance is absent, names another issue, or is not fulfilled.
+These are necessary failures of the existing later authorization predicate.
+Carried head/base identity and live task-digest verification remain unchanged; a
+positive early check never authorizes a merge.
+
+Maintenance progress diagnostics use a closed set of fixed phase names,
+start/finish events and observational monotonic elapsed time, bounded to 50
+records per invocation. They expose no state, identifiers, errors, URLs or
+credentials and never read a business clock. A finish event means the boundary
+exited, including an error, and cannot establish health, settlement or delivery.
+
 ### Explicit prepromotion owner supersession (historical; superseded 2026-10-20)
 
 The following ceremony records historical contracts and receipt semantics. The

@@ -32,6 +32,10 @@ export interface StateReadView {
     commit: GitSha;
     expectedHead: GitSha;
   }): Promise<PortResultV1<StateReadResultV1<RepairStateSnapshotV1>>>;
+  /** Pinned read-only history; callers must revalidate live repair state before using proofs. */
+  openRepairHistory?(input: {
+    expectedHead: GitSha;
+  }): Promise<PortResultV1<RepairHistoryViewV1>>;
   readRelease(): Promise<
     PortResultV1<StateReadResultV1<ReleaseStateSnapshotV1>>
   >;
@@ -73,6 +77,19 @@ export interface StateReadView {
   readHostedRelease?(
     request: ReleaseRequestV1,
   ): Promise<PortResultV1<HostedReleaseRecordV1 | null>>;
+}
+
+/**
+ * One pinned repair-history view with strict immutable ancestor validation.
+ * Before using its proofs, consumers revalidate the live repair head and the
+ * entire captured snapshot; the view itself does not recheck remote freshness.
+ */
+export interface RepairHistoryViewV1 {
+  readAt(
+    commit: GitSha,
+  ): Promise<PortResultV1<StateReadResultV1<RepairStateSnapshotV1>>>;
+  /** Settles active reads and removes only the owned directory; later reads refuse. */
+  close(): Promise<void>;
 }
 
 /**

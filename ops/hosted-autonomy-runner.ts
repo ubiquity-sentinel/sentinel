@@ -1,5 +1,6 @@
 import { runSelfObservationPass } from "./hosted-autonomy-observation.ts";
 import {
+  beginMaintenanceProgress,
   HistoricalQuarantineIncomplete,
   maintenanceFailureCategory,
   readReleaseSafely,
@@ -31,6 +32,7 @@ import {
   continuationLate,
   createPassWrites,
   HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+  HOSTED_AUTONOMY_PHASE_RESERVE_MS,
   type HostedAutonomyContinuationStopV1,
   type HostedAutonomyPhaseV1,
   settledSince,
@@ -113,10 +115,16 @@ export async function runHostedAutonomy(
   await deps.onQueueCustodyReady?.(false);
   const startedAt = deps.clock.now();
   try {
-    const custody = await runHostedQueueCustody(
-      deps,
-      startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
-    );
+    let custody: QueueCustodyResult;
+    const finishCustody = beginMaintenanceProgress("queue_custody");
+    try {
+      custody = await runHostedQueueCustody(
+        deps,
+        startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+      );
+    } finally {
+      finishCustody();
+    }
     if (!custody.ready) {
       return custody.write ??
         skipped("no_change", custody.observed?.head ?? null, custody.actions);
@@ -164,6 +172,7 @@ export async function runHostedAutonomy(
     if (result.status === "failed") return result;
     let followUps: string[];
     let followUpComplete = true;
+    const finishFollowup = beginMaintenanceProgress("followup");
     try {
       followUps = await runHostedFollowUpPass(
         scoped,
@@ -172,6 +181,8 @@ export async function runHostedAutonomy(
     } catch {
       followUps = ["followup:unexpected_error"];
       followUpComplete = false;
+    } finally {
+      finishFollowup();
     }
     await deps.onQueueCustodyReady?.(followUpComplete);
     return followUps.length === 0
@@ -235,11 +246,21 @@ async function runHostedAutonomyChain(
     failure: HostedAutonomyResultV1 | null = null,
   ) => {
     actions.push(`continuation:${phase}:${outcome}`);
-    return finish(`${phase}:${outcome}`, failure);
+    return outcome === "deferred_deadline" && !writes.applied
+      ? skipped("no_change", custody.observed?.head ?? null, actions)
+      : finish(`${phase}:${outcome}`, failure);
   };
   // Only the matrix pre-passes can write before the ordinary phases: the
   // state they started from marks the records they settled.
-  const before = deps.closedMatrix ? await readRepairSafely(deps.state) : null;
+  let before: Awaited<ReturnType<typeof readRepairSafely>> = null;
+  if (deps.closedMatrix) {
+    const finishBaseline = beginMaintenanceProgress("matrix_baseline");
+    try {
+      before = await readRepairSafely(deps.state);
+    } finally {
+      finishBaseline();
+    }
+  }
   let baseline: RepairStateSnapshotV1 | null = custody.write !== null
     ? custody.observed?.snapshot ?? null
     : null;
@@ -299,6 +320,9 @@ async function runHostedAutonomyChain(
     if (!writes.applied) baseline = found.snapshot;
     const context: HostedAutonomyPassContextV1 = {
       deps,
+      passStartedAt: startedAt,
+      deadlineAt: startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS -
+        HOSTED_AUTONOMY_PHASE_RESERVE_MS,
       actions,
       revisions,
       snapshot: found.snapshot,
@@ -325,17 +349,41 @@ async function runHostedAutonomyChain(
     const continued = writes.applied;
     let result: HostedAutonomyResultV1 | null;
     try {
-      if (continued && continuationLate(startedAt, deps.clock.now())) {
+      if (continuationLate(startedAt, deps.clock.now())) {
         return stop(phase.name, "deferred_deadline");
       }
       if (stale) {
-        const built = await build(phase.name, context);
+        const finishContext = beginMaintenanceProgress(
+          phase.name === "closure-delivery"
+            ? "context_closure_delivery"
+            : phase.name === "retry"
+            ? "context_retry"
+            : phase.name === "delivery"
+            ? "context_delivery"
+            : "context_closure",
+        );
+        let built: Awaited<ReturnType<typeof build>>;
+        try {
+          built = await build(phase.name, context);
+        } finally {
+          finishContext();
+        }
         if ("kind" in built) return built;
         context = built.context;
         releaseHead = built.releaseHead;
         stale = false;
       }
-      result = await phase.run(context!, releaseHead);
+      if (continuationLate(startedAt, deps.clock.now())) {
+        return stop(phase.name, "deferred_deadline");
+      }
+      const finishPhase = beginMaintenanceProgress(
+        phase.name === "closure-delivery" ? "closure_delivery" : phase.name,
+      );
+      try {
+        result = await phase.run(context!, releaseHead);
+      } finally {
+        finishPhase();
+      }
     } catch (error) {
       if (!continued || integrityFault(error)) throw error;
       // The same bounded deferral line the protected main prints; only the
@@ -371,17 +419,22 @@ async function runHostedAutonomyChain(
   // normal repair loop then works those issues like any other. A pass that
   // wrote state never runs it.
   let selfSurface: HostedAutonomyGitHubV1 | null = null;
+  const finishObservation = beginMaintenanceProgress("self_observation");
   try {
-    selfSurface = (await scopeFor(HOSTED_AUTONOMY_SELF_SCOPE)).surface;
-  } catch {
-    selfSurface = null;
+    try {
+      selfSurface = (await scopeFor(HOSTED_AUTONOMY_SELF_SCOPE)).surface;
+    } catch {
+      selfSurface = null;
+    }
+    actions.push(
+      ...await runSelfObservationPass({
+        github: selfSurface,
+        now: deps.clock.now(),
+      }),
+    );
+  } finally {
+    finishObservation();
   }
-  actions.push(
-    ...await runSelfObservationPass({
-      github: selfSurface,
-      now: deps.clock.now(),
-    }),
-  );
 
   const suffix = (value: string) =>
     actions.some((action) => action.endsWith(value));

@@ -94,6 +94,9 @@ export function createHostedAutonomyScopes(deps: HostedAutonomyDepsV1) {
  */
 export interface HostedAutonomyPassContextV1 {
   deps: HostedAutonomyDepsV1;
+  /** Existing maintenance cutoff; absent for standalone callers. */
+  deadlineAt?: number;
+  passStartedAt?: number;
   actions: string[];
   revisions: string[];
   snapshot: RepairStateSnapshotV1;
@@ -113,4 +116,22 @@ export interface HostedAutonomyPassContextV1 {
   scopeFor: ReturnType<typeof createHostedAutonomyScopes>["scopeFor"];
   readTip: ReturnType<typeof createHostedAutonomyScopes>["readTip"];
   readPull: ReturnType<typeof createHostedAutonomyScopes>["readPull"];
+}
+
+/** Admission only: an already-started operation still settles before return. */
+export function hostedPassDeadlineReached(
+  context: HostedAutonomyPassContextV1,
+): boolean {
+  if (context.deadlineAt === undefined) return false;
+  try {
+    const now = context.deps.clock.now();
+    return !Number.isSafeInteger(context.deadlineAt) ||
+      !Number.isSafeInteger(now) ||
+      (context.passStartedAt !== undefined &&
+        (!Number.isSafeInteger(context.passStartedAt) ||
+          now < context.passStartedAt)) ||
+      now > context.deadlineAt;
+  } catch {
+    return true;
+  }
 }

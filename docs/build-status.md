@@ -9,10 +9,228 @@ ownership, authority or acceptance.
 
 ## Active task register
 
-Snapshot: 2026-10-20 19:19 UTC; current Codex coordinator resumed native Claude
-session `6fec4968-1e6c-4836-a897-d75f9cc3e1f3` after its quota interruption. The
-fresh observations below supersede the older W15 source snapshot retained in Git
-history. Two-target acceptance remains pending.
+Snapshot: 2026-10-21 04:47 UTC. Candidate
+`d60aa9c875968be4bf2737548b97f4adbec15950` passed six connected local cases and
+independent evidence review, but native CI `39544252863:1` failed modules and
+host-2; it was not installed. The healthy generation-85 runtime at `2081f978`,
+restored repair `ab2d93`, and all reservation evidence remain preserved. New
+dispatcher admissions remain paused; restoration is required after the corrected
+candidate is ready.
+
+- The unchanged missing-candidate lifecycle case returned `state_error` instead
+  of `idle`; four unchanged matrix-uncertainty cases rejected custody. Their
+  exact counterparts passed on green `2081f978`. The single local publication
+  reproduction passed, disproving the proposed missing-parent/readiness
+  explanation; the constructor initializes both directories synchronously. The
+  underlying native state error remains unidentified, so no speculative
+  initialization or fixture patch is authorized.
+- The ordinary latest-read cache experiment is being backed out of the shipping
+  candidate while retaining its commits and branches. Module
+  `recovery-latest-repair-backout-20261021`, owner `bootstrap_repro`, owns
+  exactly the three state files and ordinary-cache-specific tests/hunks. The
+  three source files must match `2081f978` exactly; accepted historical
+  caching/anchored views, task-acceptance filters and deadline behavior are
+  retained. Existing failed cases and positive deadline/booking consumers will
+  validate the corrected candidate.
+- Quality, integration, host-1 and host-3 passed on `d60aa9c8`; required
+  aggregate `test-local` failed. All original logs and green comparisons are
+  retained. Native CI, installation, ordinary current-head reviews, scheduled
+  operation and autonomous merges on both targets remain pending; neither the
+  backout nor local checks alone establish those outcomes.
+
+### Prior checkpoint at 04:19 UTC
+
+Snapshot: 2026-10-21 04:19 UTC. Generation 85 and the five original-candidate
+restorations remain verified on `2081f978`; current ordinary delivery is still
+blocked. New dispatcher admissions remain paused after the ordinary timeout,
+with restoration required after the locally prepared correction passes its
+gates.
+
+- Local tips `1faffea793481cf4099531c6f0c71536396b562e` and
+  `786685f46f325e8f2fb4e5cb57dc7caa20d99fef` implement ordinary repair-read
+  object/validated-decoding reuse, then remove redundant warm acquisition. Warm
+  reads retain exactly two fresh ref observations, complete byte validation,
+  clones and all cooldown/authority/CAS calls, with no repeated setup/fetch.
+  Focused consumer/safety/history/CAS controls and scoped static checks passed;
+  independent receipt/input verification passed. Canonical profiling
+  demonstrated material data reuse but did not complete the full historical
+  delivery scan within the 300-second diagnostic process bound. Both timeouts
+  remain failed full-scan acceptance, not live delivery proof.
+- The final saved-context profile completed eleven of twelve started resolutions
+  and then timed out, with no effects. The two oldest slow candidates, AI issues
+  117 and 263, already lack required task acceptance; issue 120 also lacks it,
+  and issue 421 records nonfulfillment. Tip
+  `62552c59bd1227b13d18a44558b47d42eab31bda` moves exactly these existing
+  necessary refusals before expensive reads. Five variants reproduced
+  unnecessary reads before the fix; the repaired and
+  positive/current-head/carried-review consumers passed. Later live authority,
+  carried identities and digest checks are unchanged.
+- Control-flow diagnosis found the existing maintenance cutoff was gated by
+  `writes.applied`, and delivery had no cutoff in its context. This contradicts
+  the recorded bounded-upkeep deferral intent and permits no-write historical
+  scans to prevent prepare/repair indefinitely. Isolated module
+  `recovery-delivery-deadline-20261021`, owner `bootstrap_repro`, now enforces
+  the existing absolute pass-deadline-minus-reserve admission cutoff across
+  no-write passes and delivery/rerun loops. It introduces no numeric limit,
+  model cap or cursor. Focused regressions reproduced post-cutoff reads/effects
+  and now pass; final consumer/readback/error-propagation and existing
+  continuation-fixture checks remain pending.
+- The final candidate must demonstrate supported safe deferral, retained prior
+  writes, unchanged unvisited work/accounting and ordinary prepare eligibility.
+  Scanning the entire historical table inside a five-minute diagnostic profile
+  is not a product requirement. Failed profile receipts remain diagnostic
+  evidence; exact combined local checks, independent evidence audit, native CI
+  and real ordinary reviewed delivery on both targets are still required.
+
+### Prior checkpoint at 03:25 UTC
+
+Snapshot: 2026-10-21 03:25 UTC. The same Claude continuation remains active.
+Generation 85 installation and original-candidate restoration are verified;
+ordinary delivery on both targets remains unproved. This checkpoint supersedes
+dated snapshots below.
+
+- Canonical and remote development are
+  `2081f9784184864bf09601d2c939e45d789db37f`; all seven CI jobs passed in
+  `39529875171:1`, including required `test-local` check `118997634824`.
+  Auto-follow advanced the launcher and authenticated supervisor
+  `39531530288:1`; maintenance succeeded in 3m21s. Release
+  `36be2bef4863729d30c3a5c90aeaca9752402cc6` records accepted generation 85 with
+  the exact model-disabled bootstrap proof and cleared execution. Repair
+  `ab2d93fac87f827dad3e92567ad1a06ebd0bf752` restores the five original AI PR
+  candidates. Independent immutable tree/blob comparisons prove all 1,526
+  reservation blobs and unrelated work fields unchanged.
+- Controlled ordinary tick `39533128859:1` dispatched supervisor `39533153236:1`
+  on the installed revision. It hit the existing 15-minute maintenance limit
+  before prepare/repair. Complete native logs correct the partial browser
+  attribution: `existing_candidate_refs` finished in 1,914ms; the sole unmatched
+  phase was `delivery` from 02:30:13.737 UTC until cancellation. The primary
+  paused new dispatcher admissions at 02:43:59 UTC; restoration remains required
+  after the correction is ready. Auto-follow remains on; `sentinel-release`
+  remains disabled.
+- The scheduler configuration is active on default branch `development` with
+  `*/5 * * * *`, but no schedule event after 23:46:46 UTC was found in the
+  bounded audit. Manual dispatch works. No repository-side cause or provider
+  incident was established; do not claim scheduled acceptance from manual ticks.
+- Read-only profiling uses complete hash-verified ab2d93/36be2bef fixtures, all
+  321 work rows and 1,526 reservations, actual delivery/queue/cooldown/state
+  consumers and a strict GET/read-only-query GitHub bridge. Initial
+  evidence-capture auth isolation caused a setup failure; no conclusions rely on
+  it. The corrected profile reached delivery after 113.115s, completed 50
+  approval listings in 21.829s, then made 98 ordinary full repair reads with
+  131.238s union wall time. Two queue resolvers hit their existing approximately
+  60s deadline; the third remained active at the 300s process limit. All 391
+  HTTP responses were successful; no effects or model starts were attempted.
+  This identifies repeated ordinary state reads as material cost, not a fix or
+  native-delivery proof.
+- Current isolated writer: `authority_protection_triage`, module
+  `recovery-latest-repair-cache-20261020`, base `2081f978`, lane
+  `.codex-worktrees/master-plan-recovery-latest-repair-cache-20261020-a8474d54c6b`.
+  Owns three state source files and two focused test files under the approved
+  latest-read cache contract. Cache only Git objects and validated decoding;
+  retain every fresh cooldown/authority read, complete raw-byte validation,
+  cloned returns, strict ref checks, independent writer/history directories and
+  final CAS. Implementation/local checks, canonical profile, independent
+  evidence audit, exact CI and corrected native delivery remain pending.
+- Nine clean task-created integrated worktrees were removed without force after
+  fresh identity/dirt/ownership and local/live-remote ancestry checks. Local
+  branches and all evidence were retained; four lanes with ignored
+  `.sentinel-artifacts/` and all unrelated/preexisting worktrees were excluded.
+  Removal manifest: task workspace
+  `work/final-cleanup/20261021T023406Z-removal/manifest.json`.
+
+### Prior checkpoint at 01:44 UTC
+
+Snapshot: 2026-10-21 01:44 UTC. The Claude continuation remains active. Native
+maintenance completion, generation-85 installation and autonomous delivery on
+both targets are still unproved. This checkpoint supersedes the dated
+observations below.
+
+- Remote development and launcher are
+  `b5125b37141478aabd2e15a9e3ae20520d362068`, with all seven CI jobs passed in
+  `39521873440:1`. Diagnostic successor `39523409148:1` timed out at the native
+  15-minute maintenance boundary. Its trace proves current-matrix scanning
+  finished in 11.386 seconds, context construction in 64.481 seconds, retry in
+  121.249 seconds, and delivery remained active for over ten minutes. The trace
+  identifies delivery as the unresolved phase, not an exact inner await.
+- Release `95233ab893da51db0b846aa845b79ac4bb3d7538` and repair
+  `2772fc5f8fd7c050ec894b74f3dc5a058399d885` stayed unchanged. Generation 84
+  remains healthy at `25b24cdc7a09c2f871ff2d37093e6ea8d7f6e701` with execution
+  clear and no candidate installation journal. The primary paused new
+  `supervisor-dispatch.yml` admissions at 01:03 UTC; restoration is required
+  after the corrected candidate is ready. Auto-follow remains on and
+  `sentinel-release` remains disabled. No manual target merge can count as
+  autonomous acceptance.
+- An anonymous remote-read diagnostic reproduced the retry throughput limit: 140
+  successful ancestors, zero proofs and 121.021 seconds; 282 fresh-ref calls
+  consumed 93.467 seconds. Foundation tip
+  `7d1bf934bc0d652dfdc32af51a3ecbde6dc7897d` now provides an optional anchored
+  read-only repair-history view, preserving individual `readRepairAt` semantics.
+  It validates immutable history, closes on every exit, then rechecks exact live
+  head and full snapshot before returning proofs; restoration CAS is unchanged.
+  The exact remote 2772 fixture returned all five bindings across 195 ancestors
+  in 44.982 seconds, using two ref checks and preserving all 321 work records
+  and 1,526 reservations. Receipt: `a8c35f4c-d0b9-4fbb-beb2-1bd4b63f70f0`. Local
+  controls passed 14 tests and 24 steps. Tip
+  `4620fdcdafd90f08586a2ec183eef360f9ae22b3` only clarifies the view comments.
+- Delivery tip `eb0015325483e5cba320560703fb5a560feddfa7` moves proven no-op
+  refusals before expensive reads: exact approval candidates reduce from 72 to
+  45, and strict Gateway booking candidates from 103 to 39. These are
+  necessary-guard counts, not successful effects. It preserves unresolved
+  preservation work, all positive authority/CI/review/task checks, diagnostics
+  and final CAS. Ten actual consumer cases/eight steps plus scoped statics
+  passed, receipt `778f21e2-78bc-4c9d-8256-abaadd822168`. Protection tip
+  `4fb6425dd3edcfb097599a08a6086c49647870df` adds exactly the queue-booking
+  helper to self-policy. All three changes are locally integrated with ancestry
+  preserved; no source writer remains active.
+- Final combined consumer validation, independent evidence acceptance,
+  exact-candidate CI, automatic launcher advancement, native maintenance and
+  both target deliveries remain pending. The snapshot's embedded `stateHead` is
+  its parent `aad7887c5260f13d44ffc255823e43443b3d33d5`; the live head anchor is
+  the read result's `2772fc5f8fd7c050ec894b74f3dc5a058399d885`. Never substitute
+  the parent as the live anchor or relax the 120-second/256-ancestor bounds.
+
+### Earlier continuation checkpoints
+
+Snapshot: 2026-10-20 22:57 UTC; the current Codex coordinator continues native
+Claude session `6fec4968-1e6c-4836-a897-d75f9cc3e1f3`. This checkpoint
+supersedes the earlier observations retained below. Two-target autonomous
+delivery acceptance remains pending.
+
+- Canonical development and launcher name
+  `f0d3a8410c672a03a614a333568704ad568cf38c`, with passing CI `39504650114:1`.
+  Generation 84 remains installed at `25b24cdc7a09c2f871ff2d37093e6ea8d7f6e701`;
+  release `95233ab893da51db0b846aa845b79ac4bb3d7538` retains the healthy
+  scheduled ordinary proof and cleared execution. Auto-follow is on;
+  `sentinel-release` remains disabled.
+- Automatic launcher advancement is verified. Supervisor `39506623439:1` settled
+  the historical AI retry but timed out in maintenance before generation-85
+  prepare. Successor `39509826829:1` also exceeded the native maintenance limit.
+  New run `39511914411:1` was active at 22:59 UTC and is preserved. The primary
+  paused `supervisor-dispatch.yml` at that time to prevent further repeated
+  admissions while the measured history correction is validated; restoration is
+  required after the corrected candidate is ready. Auto-follow stays on. An
+  empty runtime slot does not establish an idle workflow boundary.
+- Current implementation owner: `sentinel_state`, module
+  `recovery-state-history-20261020`, worktree
+  `.codex-worktrees/master-plan-recovery-state-history-20261020-a1ef197afa7`,
+  branch `codex/master-plan-recovery-state-history-20261020-a1ef197afa7`, exact
+  base `f0d3a8410c672a03a614a333568704ad568cf38c`. Owned paths are
+  `src/state/mod.ts`, `src/state/state-git.ts`, `src/state/state-codec.ts`, new
+  `src/state/state-repair-history-cache.ts`, and new
+  `tests/state/git-state-repair-history-cache_test.ts`. The measured 120-second
+  recovery walk reached only 32 of the required 194 ancestors, returning no
+  proofs; repeated complete fetches dominated cost. The bounded internal cache
+  must retain fresh expected-head checks, full integrity validation, accounting
+  and existing public interfaces. Its five-record probe, local integration, CI
+  and live maintenance acceptance are pending.
+- State-history worker acceptance: the unchanged captured 194-ancestor fixture
+  returned all five exact original/rejected bindings in 72.173 seconds with no
+  120-second expiry, receipt `56e43107-4da2-4e93-a3d4-23f36bbd13d9`. The prior
+  147- and 169-ancestor attempts remain failed measurements. Current/history
+  read concurrency preserves complete fresh byte validation, deterministic
+  failure precedence and settlement of all child operations. Canonical
+  integration capture, exact-SHA hosted CI, installation, maintenance completion
+  and both target deliveries remain pending.
 
 - Continuation ownership: `/Users/nv/repos/ubiquity/sentinel`, branch
   `development`, exact base `e05ba64f1142710e4a902a9ae088593a1ca411f5`; preserve
@@ -244,6 +462,29 @@ implementation; they do not override the current observations above.
   `w6/report.md` (old installer no-go, not the executed unblock); `w8/DESIGN.md`
   §4 (deletion order); `w10/W10-REPORT.md`; `w11/report.md`; `w12/report.md` and
   `w12/VALIDATION.md`; `w7/report.md` and `w7/W7-evidence.md`.
+
+- Live controlled installation is verified: launcher CAS and run `39500033477:1`
+  at `25b24cdc7a09c2f871ff2d37093e6ea8d7f6e701` settled the original
+  generation-83 bootstrap, installed generation 84, and accepted its
+  model-disabled healthy bootstrap. Exact state
+  `288b1ddbfc2df4833e4bfea838402b15ddf0efd7` has no saved execution and matching
+  healthy/bootstrap proofs; the prepared proof file records nine passed
+  assertions. Scheduled run `39500468389:1` admitted ordinary generation 84. Its
+  maintenance then deferred with native frames `7:9 → 102:67 → 416:15`:
+  production staging was inside the source checkout while the artifact transport
+  correctly forbids that location. Source correction
+  `f27db314ebf1e9432dc4af8f17814225c46bbbcf` removes only the checkout directory
+  argument from secure host-temporary allocation; real main-composition,
+  success/error cleanup and containment regressions passed. The guard remains
+  intact. No fourth review round was run; the one-line hosted correction
+  requires fresh CI and actual maintenance acceptance before completion.
+- Ordinary matrix planning completed with zero isolated implementation cells,
+  which alone is not a failure or delivery proof. Self issue #173 / PR #174 is
+  eligible for the serial existing-PR refresh/CI/internal-review path;
+  authoritative work is not blocked and its exact published head is preserved.
+  AI PR #1260 for issue #1249 is human-owned and excluded from autonomous
+  acceptance. Both target deliveries and automatic advancement remain pending;
+  auto-follow stays off and `sentinel-release` disabled.
 
 ## Earlier checkpoints (historical)
 

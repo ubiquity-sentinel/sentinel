@@ -30,6 +30,7 @@ import type {
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { VpsReleaseRecordV1 } from "../contracts/vps-release.ts";
 import type { OpContext, StateGitOps } from "./state-git.ts";
+import type { ValidatedMemoRecord } from "./state-repair-history-cache.ts";
 import { parseBlobBatch } from "./state-batch.ts";
 import {
   collectionDirectory,
@@ -119,18 +120,22 @@ export async function readCommitTree(
   commitSha: string,
   kind: StateKind,
 ): Promise<PortResultV1<RepairStateSnapshotV1 | ReleaseStateSnapshotV1>> {
-  const parents = await io.git(op, [
-    "rev-list",
-    "--parents",
-    "-n",
-    "1",
-    commitSha,
+  const [parentRead, treeRead] = await Promise.allSettled([
+    io.git(op, ["rev-list", "--parents", "-n", "1", commitSha]),
+    io.git(op, ["ls-tree", "-r", commitSha]),
   ]);
+  if (parentRead.status === "rejected") {
+    return portError("unavailable", "state parent read failed");
+  }
+  const parents = parentRead.value;
   if (!parents.ok) return io.gitFailure("unavailable", "rev-list", parents);
   const parentTokens = parents.stdout.trim().split(/\s+/).filter(Boolean);
   const parentsOfCommit = parentTokens.slice(1);
 
-  const tree = await io.git(op, ["ls-tree", "-r", commitSha]);
+  if (treeRead.status === "rejected") {
+    return portError("unavailable", "state tree read failed");
+  }
+  const tree = treeRead.value;
   if (!tree.ok) return io.gitFailure("unavailable", "ls-tree", tree);
 
   interface Entry {
@@ -187,6 +192,17 @@ export async function readCommitTree(
   if (!(batch.stdoutBytes instanceof Uint8Array)) {
     return portError("invalid", "state blob batch has no raw output");
   }
+  const proof = {
+    parents: parents.stdout,
+    tree: tree.stdout,
+    bytes: batch.stdoutBytes,
+  };
+  const memoKey = `${kind}:${commitSha}`;
+  const memo = op.treeMemo?.read(memoKey, proof);
+  if (memo?.status === "mismatch") {
+    return portError("invalid", "validated state tree bytes changed");
+  }
+  if (memo?.status === "hit") return portOk(memo.snapshot);
   const blobs = parseBlobBatch(batch.stdoutBytes, requested);
   if (!blobs.ok) return blobs;
   const manifestText = blobs.value[entries.indexOf(manifestEntry)];
@@ -257,6 +273,7 @@ export async function readCommitTree(
   // Parse and validate every record file; the filename must be the SHA-256
   // of the record id, preventing duplication or misplacement.
   const records: Record<string, { id: string; value: unknown }[]> = {};
+  const memoRecords: Record<string, ValidatedMemoRecord> = {};
   for (const collection of collections) records[collection.directory] = [];
   for (const collection of collections) {
     for (
@@ -265,6 +282,16 @@ export async function readCommitTree(
       )
     ) {
       const expectedHex = fileName.slice(0, 64);
+      const path = `${collection.directory}/${fileName}`;
+      const remembered = op.treeMemo?.record(path, text);
+      if (remembered) {
+        memoRecords[path] = remembered;
+        records[collection.directory].push({
+          id: remembered.id,
+          value: remembered.value,
+        });
+        continue;
+      }
       let record: RecordIdentitySource;
       try {
         record = collection.parse(JSON.parse(text));
@@ -296,6 +323,7 @@ export async function readCommitTree(
         );
       }
       records[collection.directory].push({ id: identity, value: record });
+      memoRecords[path] = { text, id: identity, value: record };
     }
   }
 
@@ -366,5 +394,6 @@ export async function readCommitTree(
   } catch {
     return portError("invalid", "state snapshot failed validation");
   }
+  op.treeMemo?.put(memoKey, proof, snapshot, memoRecords);
   return portOk(snapshot);
 }

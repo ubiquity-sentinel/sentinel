@@ -107,15 +107,24 @@ async function matchTransition(
 
 /** One shared bounded walk; every ancestor read is anchored to the same live head. */
 export async function readProtectedOriginalCandidates(input: {
-  state: Pick<StateReadView, "readRepairAt">;
+  state: Partial<
+    Pick<StateReadView, "readRepairAt" | "readRepair" | "openRepairHistory">
+  >;
   snapshot: RepairStateSnapshotV1;
   expectedHead: GitSha;
   records: readonly WorkRecordV1[];
   clock: { now(): number };
   deadlineAt: number;
 }): Promise<ProtectedOriginalCandidateV1[]> {
-  const readAt = input.state.readRepairAt?.bind(input.state);
-  if (!readAt) return [];
+  const freshRead = input.state.readRepair?.bind(input.state);
+  if (!freshRead) return [];
+  let view: import("../src/contracts/ports.ts").RepairHistoryViewV1 | null =
+    null;
+  let closeOk = true;
+  const startedAt = input.clock.now();
+  if (!Number.isSafeInteger(startedAt) || startedAt >= input.deadlineAt) {
+    return [];
+  }
   const pending = new Map(
     input.records.filter(protectedOriginalCandidateShape).map((r) => [r.id, r]),
   );
@@ -123,59 +132,108 @@ export async function readProtectedOriginalCandidates(input: {
   const seen = new Set<GitSha>();
   let snapshot = input.snapshot;
   let commit = input.expectedHead;
-  const startedAt = input.clock.now();
-  for (
-    let count = 0;
-    count < ORIGINAL_CANDIDATE_HISTORY_LIMIT && pending.size > 0;
-    count++
-  ) {
+  if (pending.size === 0) return [];
+  try {
+    let readAt = input.state.readRepairAt?.bind(input.state);
+    if (input.state.openRepairHistory !== undefined) {
+      if (typeof input.state.openRepairHistory !== "function") return [];
+      const opened = await input.state.openRepairHistory({
+        expectedHead: input.expectedHead,
+      });
+      if (!opened.ok) return [];
+      view = opened.value;
+      if (
+        !view || typeof view.readAt !== "function" ||
+        typeof view.close !== "function"
+      ) return [];
+      readAt = ({ commit }) => view!.readAt(commit);
+    }
+    if (!readAt) return [];
+    for (
+      let count = 0;
+      count < ORIGINAL_CANDIDATE_HISTORY_LIMIT && pending.size > 0;
+      count++
+    ) {
+      const now = input.clock.now();
+      if (
+        !Number.isSafeInteger(now) || now < startedAt || now >= input.deadlineAt
+      ) return [];
+      if (seen.has(commit)) return [];
+      seen.add(commit);
+      const parent = snapshot.stateHead;
+      if (parent === null || parent === commit) break;
+      let read;
+      try {
+        read = await readAt({
+          commit: parent,
+          expectedHead: input.expectedHead,
+        });
+      } catch {
+        return [];
+      }
+      if (
+        !read.ok || read.value.status !== "found" ||
+        read.value.head !== parent ||
+        read.value.snapshot.sequence >= snapshot.sequence
+      ) return [];
+      const previous = read.value.snapshot;
+      for (const [id, current] of pending) {
+        const rejected = snapshot.work.find((r) => r.id === id);
+        const prior = previous.work.find((r) => r.id === id);
+        if (!rejected || !prior || !same(rejected, current)) {
+          pending.delete(id);
+          continue;
+        }
+        if (same(prior, current)) continue;
+        pending.delete(id);
+        if (
+          await matchTransition(
+            current,
+            rejected,
+            prior,
+            input.snapshot,
+            previous,
+          )
+        ) {
+          found.push({
+            current,
+            original: prior,
+            rejectedStateHead: commit,
+            originalStateHead: parent,
+          });
+        }
+      }
+      snapshot = previous;
+      commit = parent;
+    }
+  } catch {
+    return [];
+  } finally {
+    if (view) {
+      try {
+        await view.close();
+      } catch {
+        closeOk = false;
+      }
+    }
+  }
+  if (!closeOk) return [];
+  try {
+    const before = input.clock.now();
+    if (
+      !Number.isSafeInteger(before) || before < startedAt ||
+      before >= input.deadlineAt
+    ) return [];
+    const fresh = await freshRead();
     const now = input.clock.now();
     if (
+      !fresh.ok || fresh.value.status !== "found" ||
+      fresh.value.head !== input.expectedHead ||
+      !same(fresh.value.snapshot, input.snapshot) ||
       !Number.isSafeInteger(now) || now < startedAt || now >= input.deadlineAt
     ) return [];
-    if (seen.has(commit)) return [];
-    seen.add(commit);
-    const parent = snapshot.stateHead;
-    if (parent === null || parent === commit) break;
-    let read;
-    try {
-      read = await readAt({ commit: parent, expectedHead: input.expectedHead });
-    } catch {
-      return [];
-    }
-    if (
-      !read.ok || read.value.status !== "found" || read.value.head !== parent ||
-      read.value.snapshot.sequence >= snapshot.sequence
-    ) return [];
-    const previous = read.value.snapshot;
-    for (const [id, current] of pending) {
-      const rejected = snapshot.work.find((r) => r.id === id);
-      const prior = previous.work.find((r) => r.id === id);
-      if (!rejected || !prior || !same(rejected, current)) {
-        pending.delete(id);
-        continue;
-      }
-      if (same(prior, current)) continue;
-      pending.delete(id);
-      if (
-        await matchTransition(
-          current,
-          rejected,
-          prior,
-          input.snapshot,
-          previous,
-        )
-      ) {
-        found.push({
-          current,
-          original: prior,
-          rejectedStateHead: commit,
-          originalStateHead: parent,
-        });
-      }
-    }
-    snapshot = previous;
-    commit = parent;
+    return found;
+  } catch {
+    return [];
   }
-  return found;
 }
