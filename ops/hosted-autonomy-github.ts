@@ -345,6 +345,22 @@ export function createHostedAutonomyGitHub(
     runNeverStarted: (id: number, head: string) =>
       jobReads.runNeverStarted(id, head),
     readPull,
+    async readPullStatus(number: number) {
+      if (!Number.isSafeInteger(number) || number <= 0) return null;
+      const pull = await request("GET", `/repos/${scope}/pulls/${number}`);
+      if (pull === null || typeof pull !== "object" || Array.isArray(pull)) {
+        return null;
+      }
+      const object = pull as Record<string, unknown>;
+      const state = object["state"];
+      const merged = object["merged"];
+      if (
+        object["number"] !== number ||
+        (state !== "open" && state !== "closed") ||
+        typeof merged !== "boolean"
+      ) return null;
+      return { number, state, merged };
+    },
     async listPullsByHeadRef(branch: string) {
       // One bounded page filtered by GitHub to this repository's exact head
       // ref; the parser refuses a full page (unprovable completeness), a fork

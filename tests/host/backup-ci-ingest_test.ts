@@ -250,6 +250,33 @@ Deno.test("a verified leg becomes a result entry bound to its unit", async () =>
   assert.equal(e.ingestedAt, s.now);
 });
 
+Deno.test("the exact official App actor and legacy actor use the same result proof", async () => {
+  for (
+    const actor of [
+      { login: "github-actions[bot]" },
+      { login: "ubiquity-sentinel[bot]", id: 319834869, type: "Bot" },
+    ]
+  ) {
+    const s = await scenario();
+    s.runs[0].triggering_actor = actor;
+    s.attempt!.triggering_actor = actor;
+    assert.equal((await outcome(s)).kind, "result");
+  }
+  for (
+    const actor of [
+      { login: "ubiquity-sentinel[bot]", id: 1, type: "Bot" },
+      { login: "someone[bot]", id: 319834869, type: "Bot" },
+      { login: "ubiquity-sentinel[bot]", id: 319834869, type: "User" },
+      { login: "ubiquity-sentinel[bot]" },
+    ]
+  ) {
+    const s = await scenario();
+    s.runs[0].triggering_actor = actor;
+    s.attempt!.triggering_actor = actor;
+    assert.equal(await reason(s), "binding_mismatch");
+  }
+});
+
 Deno.test("leg lookup: missing, duplicated or foreign runs", async () => {
   const s = await scenario();
   s.runs = [];

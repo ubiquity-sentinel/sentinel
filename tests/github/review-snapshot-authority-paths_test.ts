@@ -7,30 +7,56 @@ import {
   withRepo,
 } from "./review-snapshot-helpers.ts";
 
-// Independent inventory of the extracted pointer, admission and dispatch authority.
+// Owner directive 2026-10-30: the published set is exactly the credential,
+// token-dispatch, merge-gate and promotion authority.
 const authorityPaths = [
-  "src/contracts/hosted-supervisor-installation.ts",
-  "src/contracts/hosted-supervisor-verification.ts",
-  "src/host/actions-supervisor-install-api.ts",
-  "src/host/actions-supervisor-installation-state.ts",
-  "src/host/actions-supervisor-installation.ts",
-  "src/host/actions-supervisor-ordinary.ts",
-  "src/host/hosted-runtime-follow-api.ts",
+  "src/host/hosted-authority-protected-paths.ts",
+  "src/contracts/hosted-controller-deployment.ts",
+  "src/host/supervisor-dispatch.ts",
+  "src/host/actions-premerge-ci.ts",
+  "src/host/hosted-runtime-follow.ts",
   "src/host/hosted-runtime-follow-ci.ts",
   "src/host/hosted-runtime-follow-dispatch.ts",
-  "src/host/hosted-runtime-follow-main.ts",
+  // The auto-follow API's token and `updateRefs` mutation, the installed and
+  // failed revision state, and the adapter that reads `GITHUB_TOKEN`.
+  "src/host/hosted-runtime-follow-api.ts",
   "src/host/hosted-runtime-follow-state.ts",
-  "src/host/hosted-runtime-follow.ts",
-  "src/host/hosted-runtime-rollback-state.ts",
-  "src/host/hosted-runtime-rollback.ts",
+  "src/host/hosted-runtime-follow-main.ts",
   ".github/actions/hosted-runtime-control/action.yml",
-  "ops/hosted-autonomy-original-candidate.ts",
-  "ops/hosted-autonomy-original-candidate-pass.ts",
-  "src/host/matrix-blocked-candidate.ts",
-  "ops/hosted-autonomy-current-recovery.ts",
-  "ops/hosted-autonomy-producer-requests.ts",
-  "ops/hosted-autonomy-producer-recovery.ts",
-  "src/github/codex-reviewer.ts",
+  "src/github/port-evidence.ts",
+  "src/github/port-merge-policy.ts",
+  "src/github/port-merge.ts",
+  // Gate dependencies: a candidate that edits only one of these must still be
+  // refused; `port-merge-policy.ts` imports `ci-rejection.ts`, and
+  // `port-merge.ts` imports `loop-checks.ts`, which imports `ci-rejection.ts`.
+  "src/repair/loop-checks.ts",
+  "src/repair/ci-rejection.ts",
+  "src/host/hosted-app-credentials.ts",
+  ".github/actions/sentinel-app-token/action.yml",
+  "src/host/actions-target-bindings.ts",
+  "src/host/hosted-app-grant.ts",
+  "src/host/actions-target-cycles.ts",
+  // Host composition that selects and binds the credentials, and the hosted
+  // admission predicate that admits model work.
+  "src/host/actions-repair-host.ts",
+  "src/host/actions-supervisor-host.ts",
+  "src/host/hosted-app-principal.ts",
+  "src/contracts/hosted-supervisor-verification.ts",
+  // The unchanged `touchesProtected` predicate: if it could be edited, the
+  // whole boundary could return false after merge.
+  "src/repair/loop-records.ts",
+  "src/host/local-config.ts",
+  "src/host/local-release.ts",
+  "src/host/local-supervisor-release.ts",
+  "src/host/actions-supervisor-installation.ts",
+  // The hosted promotion callers and installation parsers that choose and
+  // verify revisions before the protected pointer writer applies them.
+  "src/host/local-supervisor.ts",
+  "src/host/actions-supervisor-source.ts",
+  "src/host/actions-supervisor-controller.ts",
+  "src/host/actions-supervisor-install-api.ts",
+  "src/contracts/local-release.ts",
+  ".github/workflows/ci.yml",
 ];
 
 async function writeFile(repo: string, path: string, text: string) {
@@ -43,12 +69,7 @@ async function writeFile(repo: string, path: string, text: string) {
 for (const path of authorityPaths) {
   Deno.test(`publication: extracted hosted authority refuses ${path}`, async () => {
     await withRepo(async (repo) => {
-      // The protected caller remains byte-identical; imported files need their own protection.
-      await writeFile(
-        repo,
-        "src/host/actions-supervisor-controller.ts",
-        'export { planLauncherInstallation } from "./actions-supervisor-installation.ts";\n',
-      );
+      // A protected file needs no caller to refuse a model-authored edit.
       await writeFile(repo, path, "trusted authority fixture\n");
       const base = await commitAll(repo, "trusted base");
       await writeFile(repo, path, "candidate changed authority fixture\n");
@@ -74,6 +95,9 @@ Deno.test("publication: ordinary source and local action edits retain the produc
     const paths = [
       "src/host/ordinary-feature.ts",
       ".github/actions/ordinary-action/main.js",
+      // Formerly protected review and queue files are ordinary work again.
+      "src/github/codex-reviewer.ts",
+      "src/repair/loop-review-result.ts",
     ];
     for (const path of paths) await writeFile(repo, path, "ordinary fixture\n");
     const base = await commitAll(repo, "ordinary base");

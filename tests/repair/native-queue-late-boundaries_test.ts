@@ -10,7 +10,10 @@ import type {
 import type { NativeQueueGuardV1 } from "../../src/github/native-queue-guard.ts";
 import { conflictMarker } from "../../src/repair/conflict-resolution.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
-import { baseRefreshIntentKey } from "../../src/repair/keys.ts";
+import {
+  baseRefreshIntentKey,
+  implementationIntentKey,
+} from "../../src/repair/keys.ts";
 import { executeBaseRefreshIntent } from "../../src/repair/loop-base-refresh.ts";
 import {
   executePublishStep,
@@ -334,7 +337,30 @@ Deno.test("queue custody during admission or intent writes prevents new sessions
         assert.equal(admitted.reservations.length, 2);
         assert.equal(admitted.reservations.at(-1)?.outcome, "reserved");
         assert.deepEqual(admitted.work[0].target, record.target);
-        if (barrier === "reserved") {
+        if (kind === "implementation") {
+          // Admission now counts and binds the implementation in the same CAS.
+          const charge = admitted.reservations.at(-1)!;
+          assert.equal(charge.taskId, record.id);
+          assert.deepEqual(charge.repository, record.repository);
+          assert.equal(charge.head, record.target.base);
+          assert.equal(charge.attempt, record.counters.attempts + 1);
+          assert.deepEqual(admitted.work[0].counters, {
+            ...record.counters,
+            attempts: charge.attempt,
+          });
+          assert.deepEqual(admitted.work[0].intent, {
+            kind: "implementation",
+            key: implementationIntentKey(charge.id),
+            startedAt: charge.createdAt,
+            branch: record.target.branch,
+            expectedHead: null,
+            observedBase: charge.head,
+            pr: null,
+            requestId: charge.id,
+            resultId: null,
+            failure: conflictMarker(SHA3, charge.createdAt),
+          });
+        } else if (barrier === "reserved") {
           assert.deepEqual(admitted.work[0].intent, record.intent);
         } else assert.equal(admitted.work[0].intent?.kind, kind);
         assertPreserved(rig, admitted);

@@ -23,6 +23,7 @@ import {
   recoverFromNoVerdictReview,
   requestReviewFor,
 } from "./loop-review-request.ts";
+import { completeHumanMerge } from "./human-merge.ts";
 import { applyObservedReview } from "./loop-review-result.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
@@ -30,7 +31,6 @@ import type {
   RepairCycleDepsV1,
   StepResultV1,
 } from "./loop-types.ts";
-import { RETIRED_MERGED_MESSAGE } from "./selection.ts";
 import {
   clearIntent,
   clearWait,
@@ -144,10 +144,10 @@ export async function observeReview(
     return { kind: "deferred", detail: cooling.detail };
   }
   // The record's own pull request is observed BEFORE the review: a closed
-  // unmerged pull request can never produce another verdict, and a pull
-  // request merged outside the trusted review path is a human disposition the
-  // runtime must never treat as its own delivery. Foreign or unreadable
-  // observations change nothing and fall through to the standing review.
+  // unmerged pull request can never produce another verdict, and a merged pull
+  // request is a completed delivery by whoever GitHub reports merged it.
+  // Foreign or unreadable observations change nothing and fall through to the
+  // standing review.
   const pull = await deps.github.readPullRequest(pr);
   if (!pull.ok) {
     return { kind: "deferred", detail: "review PR observation unavailable" };
@@ -167,10 +167,30 @@ export async function observeReview(
       );
     }
     if (pull.value.state === "merged") {
-      return persistWork(
+      if (pull.value.mergeSha === null) {
+        return {
+          kind: "deferred",
+          detail: "merged pull request observation has no merge SHA",
+        };
+      }
+      if (pull.value.head !== head) {
+        return persistWork(
+          deps,
+          context,
+          markTerminalBlocked(
+            record,
+            "other",
+            "observed merged head identity mismatch",
+            now,
+          ),
+        );
+      }
+      return await completeHumanMerge(
         deps,
         context,
-        markTerminalBlocked(record, "other", RETIRED_MERGED_MESSAGE, now),
+        record,
+        pull.value,
+        pull.value.mergeSha,
       );
     }
   }

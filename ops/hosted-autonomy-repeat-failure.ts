@@ -54,6 +54,10 @@ import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import { MaxText } from "../src/contracts/validation.ts";
 import { ATTEMPT_TRANSIENT_DECAY_MS } from "../src/repair/attempt-policy.ts";
 import { sameRepository } from "./hosted-autonomy-policy.ts";
+import {
+  isPassportWorkTrial,
+  passportTrialCanReconsider,
+} from "../src/repair/passport-work-trial.ts";
 
 /** Identical consecutive outcomes that park a record (see module doc). */
 export const REPEAT_FAILURE_PARK_THRESHOLD = 3;
@@ -252,7 +256,7 @@ export type RepeatFailureVerdictV1 =
   | {
     kind: "rearm";
     park: RepeatFailureParkV1;
-    trigger: "issue_edited" | "route_changed";
+    trigger: "issue_edited" | "route_changed" | "passport_trial";
   };
 
 function issueBaseline(
@@ -276,6 +280,14 @@ export function repeatFailureVerdict(
   context?: RepeatFailureContextV1,
 ): RepeatFailureVerdictV1 {
   const parked = parseRepeatFailurePark(record.blocker);
+  if (isPassportWorkTrial(record.repository)) {
+    return parked !== null &&
+        passportTrialCanReconsider(record, snapshot.reservations)
+      ? { kind: "rearm", park: parked, trigger: "passport_trial" }
+      : parked === null
+      ? { kind: "none" }
+      : { kind: "parked", park: parked };
+  }
   const route = context?.route ?? REPEAT_FAILURE_DEFAULT_ROUTE;
   if (parked !== null) {
     if (context !== undefined && parked.route !== route) {
@@ -310,6 +322,7 @@ export function repeatFailureNeedsIssue(
   snapshot: RepairStateSnapshotV1,
   record: WorkRecordV1,
 ): boolean {
+  if (isPassportWorkTrial(record.repository)) return false;
   if (record.nextStep !== "blocked" || record.related.issueNumber === null) {
     return false;
   }

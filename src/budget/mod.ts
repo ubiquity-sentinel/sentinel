@@ -202,6 +202,27 @@ export class RollingStartBudget extends BudgetStateContext
       );
     }
 
+    const transition = request.implementationTransition;
+    if (
+      transition !== undefined &&
+      (!transition || typeof transition !== "object")
+    ) {
+      return invalid("implementation transition is invalid");
+    }
+    if (
+      transition !== undefined && transition.expectedStateHead !== expectedHead
+    ) {
+      return { status: "conflict", currentHead: expectedHead };
+    }
+    const implementation = transition === undefined
+      ? null
+      : this.implementationWork(request, id, prior, now);
+    if (transition !== undefined && implementation === null) {
+      return invalid(
+        "implementation transition does not match the exact work admission",
+      );
+    }
+
     const reservation: BudgetReservationV1 = {
       version: "v1",
       kind: "budget_reservation",
@@ -257,6 +278,7 @@ export class RollingStartBudget extends BudgetStateContext
       now,
       reservation,
       sequence,
+      implementation,
     );
     let write: PortResultV1<StateWriteResultV1>;
     try {

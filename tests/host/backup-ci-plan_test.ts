@@ -1,6 +1,6 @@
 /**
  * The planner's pure rules (docs/backup-ci-spec.md §9.3): the record set
- * through `greenReadmissionCandidate`; priority classes p0-p8 with the
+ * through CI evidence shapes and `greenReadmissionCandidate`; priority classes p0-p8 with the
  * fair class scan cursor; the §5 observation groups; dedupe (final, in flight,
  * backoff, unsupported) with shadow results absent in `on`; free slots
  * (`p - inflight`, p from supervisor matrix cells read through the Actions
@@ -9,7 +9,13 @@
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
-import { CI_PRE_REVIEW_RED_PREFIX } from "../../src/repair/ci-first-policy.ts";
+import {
+  CI_FIX_EXHAUSTED_PREFIX,
+  CI_PRE_REVIEW_PENDING_PREFIX,
+  CI_PRE_REVIEW_RED_PREFIX,
+} from "../../src/repair/ci-first-policy.ts";
+import { preReviewGateParked } from "../../ops/hosted-autonomy-ci-first.ts";
+import { greenReadmissionCandidate } from "../../ops/hosted-autonomy-green-readmission.ts";
 import { createBackupCiLegReads } from "../../ops/backup-ci-ingest-reads.ts";
 import {
   backupCiCandidates,
@@ -109,6 +115,133 @@ Deno.test("the record set: published heads in flight and green re-admission cand
     r,
   ) => r.id);
   assert.deepEqual(ids, ["w", "r", "d", "parked"]);
+});
+
+Deno.test("CI evidence demand does not grant Passport model readmission", () => {
+  for (
+    const prefix of [
+      CI_PRE_REVIEW_RED_PREFIX,
+      CI_PRE_REVIEW_PENDING_PREFIX,
+      CI_FIX_EXHAUSTED_PREFIX,
+    ]
+  ) {
+    const record = rec("parked", {
+      nextStep: "blocked",
+      related: { incidentId: null, issueNumber: 1 },
+      blocker: { kind: "other", message: `${prefix}deno`, since: T0 },
+    });
+    const state = snapshot([record]);
+    const before = structuredClone(state);
+    assert.equal(preReviewGateParked(state, record), false);
+    assert.equal(greenReadmissionCandidate(state, record), false);
+    const records = backupCiRecords(state, "ubiquity/passport.ubq.fi");
+    assert.deepEqual(records, [record]);
+    const candidates = backupCiCandidates({
+      records,
+      baseTip: record.target.base,
+      defaultBranch: "main",
+      calibrationCommits: [],
+      calibrated: true,
+      files: new Map(),
+      mode: "on",
+      runnerId: RUNNER,
+    }).filter((candidate) => candidate.recordId === record.id);
+    assert.equal(candidates.length, 1);
+    assert.deepEqual(
+      candidates.map((candidate) => [
+        candidate.commit,
+        candidate.pullRequest,
+        candidate.base,
+        candidate.branch,
+        candidate.priority,
+      ]),
+      [[
+        record.target.head,
+        record.target.pr,
+        record.target.base,
+        record.target.branch,
+        8,
+      ]],
+    );
+    assert.deepEqual(
+      state,
+      before,
+      "selection cannot mutate custody or charges",
+    );
+    assert.equal(preReviewGateParked(state, record), false);
+  }
+});
+
+Deno.test("CI evidence demand retains publication exclusions and other-target rules", () => {
+  const valid = rec("parked", {
+    nextStep: "blocked",
+    related: { incidentId: null, issueNumber: 1 },
+    blocker: {
+      kind: "other",
+      message: `${CI_PRE_REVIEW_RED_PREFIX}deno`,
+      since: T0,
+    },
+  });
+  const variants = [
+    { nextStep: "done" },
+    { related: { incidentId: null, issueNumber: null } },
+    { blocker: null },
+    { blocker: { kind: "other", message: "unknown CI park", since: T0 } },
+    { target: { ...valid.target, head: null } },
+    { target: { ...valid.target, pr: null } },
+    { target: { ...valid.target, branch: null } },
+    { target: { ...valid.target, head: valid.target.base } },
+    {
+      target: {
+        ...valid.target,
+        candidateState: {
+          preserved: null,
+          publishedHead: valid.target.head,
+        },
+      },
+    },
+    {
+      target: {
+        ...valid.target,
+        candidateState: {
+          preserved: {},
+          publishedHead: sha("c"),
+        },
+      },
+    },
+  ];
+  for (const over of variants) {
+    const record = { ...valid, ...over } as typeof valid;
+    assert.deepEqual(
+      backupCiRecords(snapshot([record]), "ubiquity/passport.ubq.fi"),
+      [],
+      JSON.stringify(over),
+    );
+  }
+  for (
+    const repository of [
+      { owner: "ubiquity", name: "ai.ubq.fi", installationId: 7 },
+      { owner: "ubiquity-sentinel", name: "sentinel", installationId: 0 },
+    ]
+  ) {
+    const record = { ...valid, repository };
+    const state = snapshot([record]);
+    assert.equal(preReviewGateParked(state, record), true);
+    assert.deepEqual(
+      backupCiRecords(state, `${repository.owner}/${repository.name}`),
+      [record],
+    );
+    assert.deepEqual(backupCiRecords(state, "ubiquity/passport.ubq.fi"), []);
+    record.blocker = {
+      ...record.blocker!,
+      message: `${CI_FIX_EXHAUSTED_PREFIX}deno`,
+    };
+    assert.equal(preReviewGateParked(state, record), true);
+    assert.deepEqual(
+      backupCiRecords(state, `${repository.owner}/${repository.name}`),
+      [record],
+    );
+  }
 });
 
 Deno.test("candidates come in priority order p0 to p8", () => {

@@ -1,5 +1,7 @@
 import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 import assert from "node:assert/strict";
+import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy-github.ts";
+import { readHostedPullStatus } from "../../ops/hosted-autonomy-scopes.ts";
 import {
   applyHostedRetirements,
   HOSTED_AUTONOMY_RETIRED,
@@ -24,6 +26,129 @@ import {
   zombieRecord,
 } from "./hosted-autonomy-fixtures.ts";
 import { makeRig, repairSnapshot, run } from "./hosted-autonomy-rig.ts";
+
+Deno.test("hosted autonomy: retirement status preserves real state and accounting outcomes", async (t) => {
+  const cases = [
+    {
+      name: "closed unmerged",
+      body: { number: 63, state: "closed", merged: false },
+      retires: true,
+    },
+    { name: "open", body: { number: 63, state: "open", merged: false } },
+    { name: "merged", body: { number: 63, state: "closed", merged: true } },
+    {
+      name: "wrong number",
+      body: { number: 64, state: "closed", merged: false },
+    },
+    { name: "missing merged", body: { number: 63, state: "closed" } },
+    {
+      name: "malformed",
+      body: { number: 63, state: "unknown", merged: false },
+    },
+    { name: "unavailable", body: null },
+  ];
+  for (const entry of cases) {
+    await t.step(entry.name, async () => {
+      const originalRecord = zombieRecord({ intent: zombieIntent() });
+      const charges = zombieCharges();
+      const { rig, github } = await makeRig("retirement-status", {
+        repair: repairSnapshot([originalRecord], [], [], charges),
+        issueOpen: false,
+      });
+      const original = globalThis.fetch;
+      const requests: string[] = [];
+      const status = createHostedAutonomyGitHub("fixture-token", SELF_REPO);
+      assert.ok(status.readPullStatus);
+      github.readPullStatus = status.readPullStatus;
+      github.readPull = () => {
+        throw new Error("retirement must not request delivery ancestry");
+      };
+      globalThis.fetch = ((input: string | URL | Request) => {
+        requests.push(String(input));
+        return Promise.resolve(
+          new Response(JSON.stringify(entry.body), {
+            status: entry.body === null ? 503 : 200,
+          }),
+        );
+      }) as typeof fetch;
+      try {
+        const result = await run(rig, github);
+        const after = await rig.state.readRepair();
+        if (!after.ok || after.value.status !== "found") {
+          throw new Error("unreadable repair state");
+        }
+        assert.equal(rig.writes, entry.retires ? 1 : 0);
+        assert.equal(rig.merges, 0);
+        assert.deepEqual(rig.closed, []);
+        assert.deepEqual(after.value.snapshot.reservations, charges);
+        assert.deepEqual(
+          after.value.snapshot.work[0].counters,
+          originalRecord.counters,
+        );
+        if (entry.retires) {
+          assert.equal(result.reason, "retired_records");
+          assert.equal(
+            after.value.snapshot.work[0].blocker?.message,
+            HOSTED_AUTONOMY_RETIRED,
+          );
+          assert.equal(after.value.snapshot.work[0].intent, null);
+        } else {
+          assert.deepEqual(after.value.snapshot.work[0], originalRecord);
+        }
+        assert.deepEqual(requests, [
+          "https://api.github.com/repos/ubiquity-sentinel/sentinel/pulls/63",
+        ]);
+      } finally {
+        globalThis.fetch = original;
+        await Deno.remove(rig.tmp, { recursive: true });
+      }
+    });
+  }
+});
+
+Deno.test("hosted autonomy: legacy status projection retains the observed pull identity", async () => {
+  const { rig, github } = await makeRig("retirement-status-legacy", {
+    pull: pullFacts({ number: 63, state: "closed", merged: false }),
+  });
+  const scope = {
+    repository: SELF_REPO,
+    key: "self",
+    surface: github,
+    baseBranch: "development",
+  };
+  try {
+    assert.equal(github.readPullStatus, undefined, "exercise the legacy port");
+    assert.deepEqual(await readHostedPullStatus(scope, 63), {
+      number: 63,
+      state: "closed",
+      merged: false,
+    });
+    assert.equal(await readHostedPullStatus(scope, 64), null);
+    github.readPull = () => Promise.resolve(null);
+    assert.equal(await readHostedPullStatus(scope, 63), null);
+    let fullReads = 0;
+    github.readPull = () => {
+      fullReads++;
+      return Promise.resolve(pullFacts({ number: 63 }));
+    };
+    github.readPullStatus = () => Promise.resolve(null);
+    assert.equal(await readHostedPullStatus(scope, 63), null);
+    assert.equal(
+      fullReads,
+      0,
+      "a refused status never falls back to another read",
+    );
+    github.readPullStatus = () => Promise.reject(new Error("unavailable"));
+    assert.equal(await readHostedPullStatus(scope, 63), null);
+    assert.equal(
+      fullReads,
+      0,
+      "a failed status never falls back to another read",
+    );
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
 
 Deno.test(
   "hosted autonomy: a working record whose source issue closed is parked, never retried",

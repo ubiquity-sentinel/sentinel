@@ -229,6 +229,13 @@ export class ReviewOwnerChannelClient
       }, REVIEW_CHANNEL_DEADLINE_MS);
       this.pending.set(id, { resolve, reject, timer });
     });
+    // The owner can answer as soon as the request is renamed, before that
+    // publication await resumes. Observe either outcome now, while retaining
+    // the original rejection for the caller after publication settles.
+    const observed = result.then(
+      (value) => ({ accepted: true as const, value }),
+      (error: unknown) => ({ accepted: false as const, error }),
+    );
     try {
       await writeReviewChannelFile(
         this.descriptor.directory + "/request-" + id + ".json",
@@ -241,10 +248,12 @@ export class ReviewOwnerChannelClient
         this.pending.delete(id);
         entry.reject(new Error("review custody channel write failed"));
       }
-      await result.catch(() => {});
+      await observed;
       throw error;
     }
-    return await result;
+    const outcome = await observed;
+    if (!outcome.accepted) throw outcome.error;
+    return outcome.value;
   }
 
   async close(): Promise<void> {

@@ -278,6 +278,12 @@ Deno.test("plan, dispatch, leg, ingest, store: a receipt the stand-in rule accep
         runId: 9001,
         now: () => now,
         api,
+        legDispatcher: {
+          dispatch(body) {
+            dispatches.push(body);
+            return Promise.resolve(true);
+          },
+        },
         repository: "ubiquity-sentinel/sentinel",
         writeStore: (mutate) =>
           writeBackupCiStore({
@@ -421,7 +427,11 @@ Deno.test("plan, dispatch, leg, ingest, store: a receipt the stand-in rule accep
       head_sha: LAUNCHER,
       head_repository: { full_name: "ubiquity-sentinel/sentinel" },
       repository: { full_name: "ubiquity-sentinel/sentinel" },
-      triggering_actor: { login: "github-actions[bot]" },
+      triggering_actor: {
+        login: "ubiquity-sentinel[bot]",
+        id: 319834869,
+        type: "Bot",
+      },
       status: "completed",
       run_attempt: 1,
     };

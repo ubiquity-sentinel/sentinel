@@ -1,4 +1,5 @@
 import type { ClosedCWaveRecoveryDepsV1 } from "../src/host/modern-matrix-recovery.ts";
+import type { GitSha } from "../src/contracts/brands.ts";
 import type { runMatrixUncertaintyMaintenance } from "../src/host/matrix-uncertainty-maintenance.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { ReviewTaskStatementV1 } from "../src/contracts/review-receipt.ts";
@@ -75,6 +76,13 @@ export interface HostedAutonomyPullV1 {
    * surface that does not report it, which never proves mergeability.
    */
   mergeable?: boolean | null;
+}
+
+/** Fresh pull status only; never a merged-delivery or ancestry proof. */
+export interface HostedAutonomyPullStatusV1 {
+  readonly number: number;
+  readonly state: "open" | "closed";
+  readonly merged: boolean;
 }
 
 /**
@@ -181,6 +189,14 @@ export interface HostedAutonomyGitHubV1 {
     number: number,
     baseBranch: string | null,
   ): Promise<HostedAutonomyPullV1 | null>;
+  /**
+   * Exact current pull status for retirement only. No ancestry is read or
+   * authorized. Malformed or unavailable evidence cannot retire. A surface
+   * without this capability retains its existing full-reader path.
+   */
+  readPullStatus?(
+    number: number,
+  ): Promise<HostedAutonomyPullStatusV1 | null>;
   /**
    * Every pull request (any state) whose head is exactly `branch` of THIS
    * repository, or null when that listing cannot be read and proven complete.
@@ -517,6 +533,8 @@ export interface HostedAutonomyDepsV1 {
    * HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES.
    */
   acceptanceCorrectionRuntimes?: ReadonlySet<string>;
+  /** Clean native-verified executing source; stamped only by protected main. */
+  acceptanceCorrectionSourceRevision?: GitSha;
   /**
    * `repeatFailureRouteIdentity` of the non-secret model-route selector this
    * maintenance job was handed; a change re-arms a repeat-failure park.

@@ -28,6 +28,9 @@ instructions and their routed procedures still apply.
 - The 2026-10-20 owner decision supersedes the former `gpt-5.6-luna` runtime
   policy. Development/orchestration workers use `gpt-6.1-sol`; runtime routing
   remains separate.
+
+- Documented implementation policy, resolver defaults, configured hosted overrides and actual execution routes are separate facts; their current discrepancy and evidence are recorded in DECISIONS.md. Local worker selection never changes production settings or proves a live route.
+
 - Ordinary hosted runtime updates use launcher self-install: launcher and
   runtime equal the exact CI-green development SHA, with a model-disabled
   bootstrap at generation+1 and exact recorded-prior rollback at a higher
@@ -38,8 +41,7 @@ instructions and their routed procedures still apply.
   files differ from the launcher still needs a manual advance. Rollout rows,
   owner supersessions, custody revision floors and LF materialization are
   retired for these updates; actual custody, accounting and compatible
-  historical readers remain required. Retained ceremony modules await deletion
-  in DESIGN.md §4 order.
+  historical readers remain required. Retained ceremony modules remain until their consumers are replaced and the integration owner supplies an approved dependency order; DESIGN.md is absent from this checkout.
 - Keep credentials, authoritative state writes, live admission changes and
   promotion authority out of model workers. Use the existing trusted supervisor
   and exact execution/pointer proofs.
@@ -94,6 +96,8 @@ pull request merge tree, and its verified result stands in for exactly those
 never-started checks. Backup CI never overrides a check that ran and failed.
 Missing/stale/unavailable evidence cannot pass. Development reviews follow the
 separate owner preference above.
+
+Owner clarification, 2026-10-29: P0 is the only severity-based merge blocker; P1 and lower findings do not block merges and must be retained and backlogged as issues through the existing authorized issue workflow. The earlier P0-and-P1 selection was accidental and withdrawn. This supersedes contradictory severity thresholds in earlier task instructions without changing current-head CI, native-review, task-acceptance, custody, accounting or other existing gates. Preserve historical decisions and charges; no new review round is authorized by this clarification.
 
 Do not edit the vendored upstream rubric constant in
 `src/github/codex-review-rubric.ts`. Its former harness output-schema override
@@ -199,8 +203,7 @@ and continuations.
 `docs/build-status.md` is the single authoritative task and acceptance ledger.
 Only the current primary integration owner may edit it or change scope, status,
 acceptance, evidence disposition or write ownership. The owner directive of
-2026-10-13 retires Muse and transfers this role to the current GPT-6.1 Sol
-coordinator. Other workers return evidence and proposed updates; they do not
+2026-10-13 retired Muse and transferred this role to the then-current coordinator; the current primary integration owner is recorded in the authoritative ledger. Other workers return evidence and proposed updates; they do not
 create another authoritative task list.
 
 A fresh integration owner reads the active register first and reconciles exact

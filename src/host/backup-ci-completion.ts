@@ -8,6 +8,7 @@ import {
 } from "../contracts/backup-ci.ts";
 import { HOSTED_CONTROLLER_REPOSITORY } from "../contracts/hosted-controller-deployment.ts";
 import { HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR } from "../../ops/hosted-autonomy-policy.ts";
+import { backupCiLegActorBinds } from "../../ops/backup-ci-ingest-verify.ts";
 
 export const BACKUP_COMPLETION_REPOSITORY = HOSTED_CONTROLLER_REPOSITORY;
 const ROOT = `/repos/${BACKUP_COMPLETION_REPOSITORY}`;
@@ -124,7 +125,7 @@ export async function routeBackupCiCompletion(
         "sentinel-backup-legs",
         observed.head_sha,
       ) || native.status !== "completed" || latest.status !== "completed" ||
-      row(native.triggering_actor)?.login !== "github-actions[bot]"
+      !backupCiLegActorBinds(native.triggering_actor)
     ) return ignored("attempt_binding");
     const title = /^sentinel-backup-ci-leg ([0-9a-f]{24})$/.exec(
       String(native.display_title),

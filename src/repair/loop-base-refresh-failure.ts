@@ -30,6 +30,7 @@ import type {
   StepResultV1,
 } from "./loop-types.ts";
 import { clearIntent, markBlocked, setIntent, setWait } from "./transitions.ts";
+import { isPassportWorkTrial } from "./passport-work-trial.ts";
 
 /**
  * Consecutive failed executions of one exact base-refresh intent that are
@@ -235,7 +236,10 @@ export function failBaseRefresh(
     : intent.failure;
   const attempts = (intent.failure?.attempts ?? 0) + 1;
   const failures = marker === undefined ? attempts : attempts - 1;
-  if (failures >= MAX_BASE_REFRESH_FAILURES) {
+  if (
+    failures >= MAX_BASE_REFRESH_FAILURES &&
+    !isPassportWorkTrial(record.repository)
+  ) {
     return persistWork(
       deps,
       context,

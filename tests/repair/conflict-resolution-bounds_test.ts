@@ -76,7 +76,7 @@ function charges(state: RepairStateSnapshotV1) {
   );
 }
 
-Deno.test("conflict resolution: the hosted route is open, the round ceiling is the review ceiling and the decision files are protected", () => {
+Deno.test("conflict resolution: the hosted route is open, the round ceiling is the review ceiling and conflict decisions are ordinary work", () => {
   assert.equal(HOSTED_CONFLICT_RESOLUTIONS, true);
   assert.equal(
     CONFLICT_RESOLUTION_REVIEW_ROUNDS,
@@ -85,12 +85,20 @@ Deno.test("conflict resolution: the hosted route is open, the round ceiling is t
   const protectedPaths = createLocalRepositoryConfig().protectedPaths;
   for (
     const path of [
+      "src/host/supervisor-dispatch.ts",
+      "src/github/port-evidence.ts",
+      "src/github/port-merge-policy.ts",
+      "src/host/hosted-app-credentials.ts",
+    ]
+  ) assert.ok(protectedPaths.includes(path), path);
+  for (
+    const path of [
       "src/repair/conflict-resolution.ts",
       "src/repair/loop-conflict-resolution.ts",
       "src/repair/model-port-checkout.ts",
       "ops/hosted-autonomy-conflict-retries.ts",
     ]
-  ) assert.ok(protectedPaths.includes(path), path);
+  ) assert.ok(!protectedPaths.includes(path), path);
 });
 
 Deno.test(

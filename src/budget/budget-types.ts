@@ -11,6 +11,7 @@ import type {
 } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import type { WorkRecordV1 } from "../contracts/work-record.ts";
 
 export interface ReserveModelStartRequestV1 {
   repository: RepositoryIdentityV1;
@@ -20,6 +21,12 @@ export interface ReserveModelStartRequestV1 {
   /** One-based attempt; a genuinely new retry uses its own incremented attempt. */
   attempt: number;
   purpose: ReservationPurposeV1;
+  /** Count and bind one exact implementation in the reservation's snapshot CAS. */
+  implementationTransition?: {
+    expectedStateHead: GitSha;
+    expectedWork: WorkRecordV1;
+    nextWork: WorkRecordV1;
+  };
 }
 
 export type DeferredReasonV1 = "cap_limit" | "clock_regression";

@@ -33,6 +33,7 @@ export type QueueGuardReason =
   | "rule_unavailable"
   | "observation_unavailable"
   | "inactive_observation_unavailable"
+  | "authorization_unavailable"
   | "custody"
   | "member"
   | "identity_drift"

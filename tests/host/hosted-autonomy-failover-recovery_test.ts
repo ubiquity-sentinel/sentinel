@@ -61,12 +61,13 @@ Deno.test("failover recovery: the launcher failover id is the runtime route's ow
     resolveModelRoute({}).failoverModel,
   );
   assert.equal(RECOVERY_ROUTE_FAILOVER_MODEL, "gpt-6-luna");
-  // The resolver that decides the accepted failover id is protected from
-  // model-produced candidates.
-  assert.ok(
+  // Owner directive 2026-10-30: the model-route resolver is ordinary work
+  // again; the reduced set protects credentials, dispatch, merge and promotion.
+  assert.equal(
     createLocalRepositoryConfig().protectedPaths.includes(
       "src/host/model-route.ts",
     ),
+    false,
   );
 });
 

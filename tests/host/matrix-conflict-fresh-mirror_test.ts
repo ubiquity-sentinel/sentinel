@@ -22,6 +22,7 @@ import assert from "node:assert/strict";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import {
   CONFLICT_MERGE_PRESERVE_WINDOW_MS,
+  conflictMarker,
   conflictMarkerBase,
   conflictResolutionInFlight,
   resolvedConflictResolution,
@@ -29,9 +30,13 @@ import {
 import {
   baseRefreshIntentKey,
   candidatePreservationRef,
+  implementationIntentKey,
 } from "../../src/repair/keys.ts";
 import { REPO } from "../state/helpers.ts";
 import { PR, TASK } from "../repair/conflict-resolution-rig.ts";
+import { MAX_BASE_REFRESH_FAILURES } from "../../src/repair/loop-base-refresh-failure.ts";
+import { resolvedConflictCandidate } from "../../src/host/matrix-conflict-candidate.ts";
+import { isMatrixRecoveryPending } from "../../src/host/matrix-blocked-candidate.ts";
 import {
   chargedCell,
   composeMirrorPreservation,
@@ -60,6 +65,183 @@ async function refreshRef(rig: HostedConflictRigV1): Promise<string> {
     baseRefreshIntentKey(PR, rig.ctx.head, rig.ctx.base),
   );
 }
+
+Deno.test("hosted conflict resolution: a consumed result rehydrates its exact bundle after restart before ordinary publication", async () => {
+  const rig = await hostedConflictRig();
+  try {
+    const first = await jobMirror(rig, "first");
+    const later = await jobMirror(rig, "later");
+    const job = { current: { dir: first, fail: "not_found" } as JobV1 };
+    const calls = composeMirrorPreservation(rig, job);
+    const cell = await chargedCell(rig);
+    assert.equal((await ingestIn(rig, first, cell)).ingested, 1);
+    const before = await snapshotOf(rig);
+    assert.equal(before.snapshot.work[0].intent?.resultId, cell.merge);
+    assert.equal(before.snapshot.reservations[0].outcome, "submitted");
+    job.current = { dir: later };
+    assert.equal(await present(rig, later, cell.merge), false);
+
+    for (let replay = 0; replay < 2; replay++) {
+      const report = await ingestIn(rig, later, cell);
+      assert.equal(report.ingested, 0);
+      assert.equal(report.entries[0].disposition, "duplicate");
+      assert.equal(await present(rig, later, cell.merge), true);
+      assert.deepEqual(await snapshotOf(rig), before);
+      assert.equal(calls.length, 1, "rehydration never publishes or preserves");
+    }
+
+    const published = await rig.runLoop();
+    assert.notEqual(published.status, "state_error", JSON.stringify(published));
+    const after = (await snapshotOf(rig)).snapshot;
+    assert.equal(after.work[0].target.head, cell.merge);
+    assert.equal(after.work[0].target.base, rig.ctx.base);
+    assert.equal(after.work[0].target.pr, PR);
+    assert.equal(
+      after.work[0].target.candidateState?.publishedHead,
+      cell.merge,
+    );
+    assert.equal(await remoteRef(rig, await refreshRef(rig)), cell.merge);
+    assert.deepEqual(
+      after.reservations.filter((row) => row.purpose !== "review_request"),
+      before.snapshot.reservations,
+      "ordinary publication buys no new implementation and never refunds",
+    );
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("hosted conflict resolution: consumed-result hydration refuses stale bindings and unavailable bundles without effects", async (t) => {
+  const rig = await hostedConflictRig();
+  try {
+    const first = await jobMirror(rig, "first");
+    const calls = composeMirrorPreservation(rig, {
+      current: { dir: first, fail: "not_found" },
+    });
+    const original = await chargedCell(rig);
+    assert.equal((await ingestIn(rig, first, original)).ingested, 1);
+    const baseline = (await snapshotOf(rig)).snapshot;
+    type Input = {
+      state: RepairStateSnapshotV1;
+      cell: typeof original;
+    };
+    const controls: [string, (input: Input) => void, string][] = [
+      ["terminal record", ({ state }) => {
+        state.work[0].nextStep = "blocked";
+        state.work[0].blocker = {
+          kind: "other",
+          message:
+            "base refresh failed 3 consecutive times: not_found candidate could not be preserved",
+          since: rig.hosted.clock.now(),
+        };
+        state.work[0].intent = null;
+      }, "duplicate"],
+      ["wrong operation", ({ cell }) => {
+        const key = implementationIntentKey("f".repeat(64));
+        cell.plan.cells[0].intentKey = key;
+        cell.result.intentKey = key;
+      }, "binding_mismatch"],
+      ["wrong refresh PR", ({ state }) => {
+        state.work[0].intent!.pr = PR + 1;
+      }, "binding_mismatch"],
+      ["wrong refresh base", ({ state }) => {
+        state.work[0].intent!.observedBase = rig.ctx.head;
+        state.work[0].intent!.failure = conflictMarker(
+          rig.ctx.head,
+          rig.hosted.clock.now(),
+        );
+      }, "binding_mismatch"],
+      ["moved published head", ({ state }) => {
+        state.work[0].target.head = rig.ctx.base;
+      }, "binding_mismatch"],
+      ["wrong result head", ({ cell }) => {
+        cell.result.receipt!.candidate!.head = rig.ctx.head;
+      }, "binding_mismatch"],
+      ["unproven original ref", ({ state }) => {
+        state.work[0].target.candidateState!.preserved!.ref =
+          `refs/heads/sentinel-candidates/${"f".repeat(64)}`;
+      }, "binding_mismatch"],
+      ["ambiguous charge", ({ state }) => {
+        state.reservations[0].outcome = "ambiguous";
+      }, "binding_mismatch"],
+      ["duplicate current charge", ({ state }) => {
+        state.reservations.push({
+          ...state.reservations[0],
+          id: "e".repeat(64),
+        });
+      }, "binding_mismatch"],
+      ["unsettled submitted charge", ({ state }) => {
+        state.reservations[0].settledAt = null;
+      }, "binding_mismatch"],
+      ["wrong charge source", ({ state }) => {
+        state.reservations[0].head = rig.ctx.base;
+      }, "binding_mismatch"],
+      ["charge after resolved operation", ({ state }) => {
+        state.reservations[0].createdAt = state.work[0].intent!.startedAt + 1;
+        state.reservations[0].settledAt = state.reservations[0].createdAt;
+      }, "binding_mismatch"],
+      ["spent failure budget", ({ state }) => {
+        state.work[0].intent!.failure!.attempts = MAX_BASE_REFRESH_FAILURES + 1;
+      }, "binding_mismatch"],
+      ["newer attempt", ({ state }) => {
+        state.work[0].counters.attempts++;
+      }, "binding_mismatch"],
+      ["foreign result", ({ cell }) => {
+        cell.result.repository = { ...REPO, name: "other" };
+      }, "binding_mismatch"],
+      ["missing bundle", ({ cell }) => {
+        cell.result.bundle = null;
+      }, "candidate_unavailable"],
+      ["corrupt bundle digest", ({ cell }) => {
+        cell.result.bundle!.digest = "f".repeat(64);
+      }, "candidate_unavailable"],
+    ];
+    const exact = await resolvedConflictCandidate(
+      baseline.work[0],
+      baseline.reservations,
+    );
+    assert(exact !== null);
+    assert.equal(isMatrixRecoveryPending(baseline.work[0], exact), true);
+    const stale = structuredClone(baseline.work[0]);
+    stale.intent!.resultId = rig.ctx.head;
+    assert.equal(
+      isMatrixRecoveryPending(stale, exact),
+      false,
+      "a typed hint must bind this exact row",
+    );
+    assert.equal(
+      isMatrixRecoveryPending(baseline.work[0], {
+        ...exact,
+        candidate: { ...exact.candidate, head: rig.ctx.head },
+      }),
+      false,
+      "a typed hint cannot substitute its tuple",
+    );
+    for (const [name, mutate, expected] of controls) {
+      await t.step(name, async () => {
+        const input = {
+          state: structuredClone(baseline),
+          cell: structuredClone(original),
+        };
+        mutate(input);
+        rig.hosted.state.repair = input.state;
+        const before = await snapshotOf(rig);
+        const mirror = await jobMirror(
+          rig,
+          `control-${name.replaceAll(" ", "-")}`,
+        );
+        const report = await ingestIn(rig, mirror, input.cell);
+        assert.equal(report.ingested, 0);
+        assert.equal(report.entries[0].disposition, expected);
+        assert.equal(await present(rig, mirror, original.merge), false);
+        assert.deepEqual(await snapshotOf(rig), before);
+        assert.equal(calls.length, 1, "no publication or preservation effect");
+      });
+    }
+  } finally {
+    await rig.cleanup();
+  }
+});
 
 Deno.test("hosted conflict resolution: the ingest preserves M before consuming the receipt; a later job publishes M from an empty mirror", async () => {
   const rig = await hostedConflictRig();

@@ -8,9 +8,17 @@ import {
   sha,
 } from "./hosted-runtime-follow-api.ts";
 
+/** The exact dispatched run bound into the runtime's active execution slot. */
+export interface FollowExecution {
+  runId: number;
+  runAttempt: number;
+  launcherSha: string;
+}
+
 export interface FollowState {
   head: string;
   installedRevision: string;
+  execution: FollowExecution | null;
   executionInFlight: boolean;
   installationUnresolved: boolean;
   failedRevisions: Set<string>;
@@ -141,10 +149,16 @@ export async function readFollowState(
       throw new FollowError("invalid_installation_journal");
     }
   }
+  const execution = runtime.execution === null ? null : {
+    runId: runtime.execution.runId,
+    runAttempt: runtime.execution.runAttempt,
+    launcherSha: runtime.execution.launcherSha,
+  };
   return {
     head,
     installedRevision: runtime.activeRevision,
-    executionInFlight: runtime.execution !== null,
+    execution,
+    executionInFlight: execution !== null,
     installationUnresolved,
     failedRevisions,
   };
