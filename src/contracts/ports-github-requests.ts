@@ -63,6 +63,8 @@ export interface GitHubPullRequestV1 {
   createdAt: number;
   updatedAt: number;
   mergedAt: number | null;
+  /** Merge actor login; absent on older records, null when unavailable. */
+  mergedBy?: string | null;
   reviewDecision: GitHubReviewDecisionV1;
 }
 

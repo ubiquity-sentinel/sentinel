@@ -80,7 +80,7 @@ const PASSPORT_PROTECTED_PATHS = [
 ] as const;
 
 export function isPassportTarget(
-  repository: Pick<RepositoryIdentityV1, "owner" | "name"> | undefined,
+  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
 ): boolean {
   return isPassportWorkTrial(repository);
 }

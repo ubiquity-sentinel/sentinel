@@ -77,9 +77,8 @@ export function humanMergeRequestId(
 }
 
 /**
- * The merge actor when the port observed it (string or `{ login }`). The
- * frozen pull contract currently omits `merged_by`, so a live read that does
- * not carry it records `unknown` rather than guessing from the PR author.
+ * The merge actor when the port observed it (string or legacy `{ login }`).
+ * Missing actor data records `unknown` rather than guessing from the PR author.
  */
 function observedMergedBy(pull: GitHubPullRequestV1): string | null {
   const candidate = pull as GitHubPullRequestV1 & {

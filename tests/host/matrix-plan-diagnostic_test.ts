@@ -110,6 +110,29 @@ Deno.test("plan diagnostic: a live continuation refusal keeps its own key", () =
   );
 });
 
+Deno.test("plan diagnostic: a no-test-evidence target keeps its own closed reason", () => {
+  const noEvidence = record(0);
+  const config = {
+    ...CONFIG,
+    commands: { test: "no_ci_and_no_local_verify" },
+  } as unknown as RepositoryConfigV1;
+  assert.equal(
+    explainMatrixNotReady(
+      noEvidence,
+      config,
+      seededSnapshot([noEvidence]),
+      true,
+      null,
+    ),
+    "no_ci_and_no_local_verify",
+  );
+  assert.equal(
+    planNotReadyKey("no_ci_and_no_local_verify"),
+    "no_ci_and_no_local_verify",
+    "the planner's own park reason is registered, not collapsed to other",
+  );
+});
+
 Deno.test("plan diagnostic: attempted/deferred counts carry a closed outcome histogram", () => {
   assert.equal(
     planDeferredKey({ kind: "deferred", detail: "ledger capacity" }),
