@@ -270,25 +270,26 @@ export class PassLiveInputs {
     try {
       const baseTip = await this.fallbackTip(record, config.baseBranch);
       if (baseTip === "failed") return null;
-      let issue: RecordLiveInputsV1["issue"] = "none";
-      if (record.related.issueNumber !== null) {
-        const read = await this.deps.github.readIssue(
-          record.related.issueNumber,
-        );
-        if (!read.ok) return null;
-        issue = read.value?.state ?? null;
-      }
-      let pull: RecordLiveInputsV1["pull"] = "none";
-      const number = pullNumber(record);
-      if (number !== null) {
-        const read = await this.deps.github.readPullRequest(number);
-        if (!read.ok) return null;
-        if (read.value === null) {
-          pull = null;
-        } else {
+      // Issue state and the PR/check chain are independent. Overlap them
+      // inside each of the four record slots (at most eight API reads), but
+      // drain both even after a throw so a failed read cannot leak a slot.
+      const [issue, pull] = await Promise.allSettled([
+        (async (): Promise<RecordLiveInputsV1["issue"] | undefined> => {
+          if (record.related.issueNumber === null) return "none";
+          const read = await this.deps.github.readIssue(
+            record.related.issueNumber,
+          );
+          return read.ok ? read.value?.state ?? null : undefined;
+        })(),
+        (async (): Promise<RecordLiveInputsV1["pull"] | undefined> => {
+          const number = pullNumber(record);
+          if (number === null) return "none";
+          const read = await this.deps.github.readPullRequest(number);
+          if (!read.ok) return undefined;
+          if (read.value === null) return null;
           const checks = await this.deps.github.readChecks(read.value.head);
-          if (!checks.ok) return null;
-          pull = {
+          if (!checks.ok) return undefined;
+          return {
             state: read.value.state,
             head: read.value.head,
             base: read.value.base,
@@ -296,9 +297,18 @@ export class PassLiveInputs {
             checks: reduceChecks(checks.value.checks),
             latestReview: null,
           };
-        }
-      }
-      return { source: "fallback", issue, pull, baseTip };
+        })(),
+      ]);
+      if (
+        issue.status !== "fulfilled" || pull.status !== "fulfilled" ||
+        issue.value === undefined || pull.value === undefined
+      ) return null;
+      return {
+        source: "fallback",
+        issue: issue.value,
+        pull: pull.value,
+        baseTip,
+      };
     } catch {
       return null;
     }
