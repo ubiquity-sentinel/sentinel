@@ -436,14 +436,17 @@ Deno.test(
 Deno.test(
   "candidate lifecycle: a released dead candidate refuses uncharged when its branch is live",
   async () => {
+    const id = asWorkItemId("issue-1");
+    const branchRef = `refs/heads/${candidateBranch(id)}`;
     const rig = await makeRig("candidate-descriptor-live", {
       summaries: false,
       // A worker pushed the candidate but died before recording it: the
       // deterministic branch exists while publishedHead is still null.
-      github: { branchRefSha: SHA3 },
+      github: {
+        candidateLifecycle: { refs: { [branchRef]: SHA3 } },
+      },
     });
     try {
-      const id = asWorkItemId("issue-1");
       const record = deadLocalCandidate(id);
       const before = canonicalStringify(record);
       const written = await rig.store.writeRepair(
@@ -455,6 +458,10 @@ Deno.test(
       const outcome = await rig.run();
       assert.equal(outcome.status, "margin", JSON.stringify(outcome));
       const state = await rig.snapshot();
+      assert.ok(
+        rig.github.calls.includes(`readRef:${branchRef}`),
+        "the exact candidate branch is read",
+      );
       assert.equal(state.sequence, 1, "an uncharged refusal writes nothing");
       assert.equal(canonicalStringify(state.work[0]), before);
       assert.equal(state.reservations.length, 0);
