@@ -173,6 +173,23 @@ Deno.test("Passport trial: an unsettled or unbound retained intent is still deni
   );
 });
 
+Deno.test("Passport trial: a settled submitted charge must match the retained intent requestId", () => {
+  const record = parked();
+  const charges = [charge("submitted", 1793421752327)];
+  assert.equal(passportTrialCanReconsider(record, charges), true);
+
+  const unbound = {
+    ...record,
+    intent: { ...record.intent!, requestId: "f".repeat(64) },
+  };
+  assert.equal(
+    passportTrialCanReconsider(unbound, charges),
+    false,
+    "a settled charge cannot settle a different retained request",
+  );
+  assert.equal(passportTrialCandidateBinding(unbound, charges), null);
+});
+
 Deno.test("Passport trial: only a reserved row of the current attempt denies", () => {
   const record = parked();
   const current = charge("submitted", 1793421752327);

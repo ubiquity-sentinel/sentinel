@@ -4673,3 +4673,62 @@ When a current month has no ledger, recovery reads the latest earlier calendar l
 Full-catalog refreshes span bounded existing native turns. Incomplete slices hold managed effects until a complete pass is available, which can delay admission across many turns. A ready observation may serve later reserves only within its native composition's fixed deadline, policy and UTC month; every reserve still revalidates effect facts and current CAS debits. No updated-since API, retirement cutoff or atomic organization-wide snapshot is assumed.
 
 Source publication, canonical CI, deterministic installation and live guard acceptance are separate gates. The scoped CI integration coordinator reconciles concurrent source by ancestry-preserving fast-forward publication; the existing release controller retains exclusive pointer installation and exact-prior rollback authority. Publication requires verified sanitized task history with the same final tree as the accepted source; preserve original private preparation tips outside the publication graph and verify their sanitized counterparts. Other owners' work and runtime model policy remain unchanged.
+
+## 2026-11-14: hand-backs stepped in the same run
+
+A repository cell's delta now carries no row of a record it hands back, and
+its base digest binds only the records it kept; finalize drops the stamps of
+an applied delta's hand-backs itself. Once every `repair_cell` job of the run
+attempt has completed, the serial repair job reads the cells' deltas,
+authenticated exactly as finalize authenticates them, and wakes each
+handed-back record the plan delegated to that cell, so its step runs in the
+same run instead of on the next plan (about 33 minutes later). The read is
+bounded (the consumer window or ten minutes, at most four authenticated
+reads); one advisory `sentinel_repair_handback` line counts the records
+woken. Every effect stays in the serial trusted path, with every CI, review,
+refresh-line, custody, accounting and CI-minute gate unchanged. A hand-back
+not read in time, not authenticated, or of a target whose cycle already ended
+falls back to finalize's hand-back and the next plan, as before.
+
+Version skew: a finalize from before this change rejects a delta carrying
+hand-backs through the existing path (`base_moved`; that cell's records are
+unstamped and handed back). A delta sealed by an earlier cell (whole-scope
+digest, stamp drop as a transition) still applies while that scope is
+unchanged; its row of a handed-back record may only drop that record's stamp.
+Known limits: a review started by a takeover can extend that run's serial job
+by up to one review, and in a rare window a cell keeps a `base_refresh` or
+`merge` intent while the takeover steps the front of the same line. The
+serial job's no-delegation line now carries `outcome` instead of `status`,
+which the launcher's child-status scan read as a second result record.
+
+Made under the owner's 2026-11-12 throughput grant; this supersedes only the
+"next plan" timing in the 2026-11-05 repository-cells entry. Rollback: revert
+these commits; no repair-state format changed.
+
+## 2026-11-14: refresh line front is the oldest record that can act
+
+The per-repository refresh line that a published head on a moved base asks
+before its review (`ciRefreshAhead`, `src/repair/ci-readiness.ts`) now takes as
+its front the first record in line order (oldest `createdAt`, then id) that can
+act, no longer the one whose leftover wait ranks first: a moved-base head asks
+the line before its CI gate and its deferral writes nothing, so its wait is an
+earlier step's (live sentinel 2026-11-13/14: 271, 386 and 398 refreshed ahead of
+268 and 397). Every head behind the front defers (`ci_line`) and writes, charges
+and refreshes nothing.
+
+Bounds: the six-hour pre-review CI bound and the stall rule (12 executions
+without progress) release only a head on the tip; on a moved base both describe
+an earlier tip and the next step is the refresh, so the head keeps its place by
+age. A head whose wait never ends (a native queue-custody hold) and that nothing
+has written for two hours (`DELIVERY_QUEUE_IDLE_MS`) holds nobody. Idleness
+alone releases no other front: a head idle only because the line held it looks
+the same, and releasing one let a younger head refresh first and the older one
+beside it (ai.ubq.fi 1176 and 1211).
+
+Unchanged: one record per repository at a time through the refresh line, the
+delivery line, current-head CI, native review with no unresolved P0, custody and
+accounting; no state shape, write, charge or refund is added. Known gap, also
+unchanged: a review request on the tip consults no line, so a candidate
+published on the tip, or an older head that refreshes beside a younger front
+once its hold ends, can still take a charged review on the front's tip.
+Rollback: revert these commits; no repair-state format changed.
