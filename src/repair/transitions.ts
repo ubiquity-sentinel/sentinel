@@ -184,7 +184,9 @@ export function createIssueWork(
     counters: { attempts: 0, retries: 0, reviewRounds: 0 },
     evidence: [],
     intent: null,
-    firstSeenAt: issue.createdAt,
+    // A platform timestamp ahead of the trusted clock (observed +3600 s on
+    // 2026-11-01) must not fail the frozen lifecycle parse; clamp, never skip.
+    firstSeenAt: Math.min(issue.createdAt, context.now),
     createdAt: context.now,
     updatedAt: context.now,
   };

@@ -3,6 +3,7 @@ import type { GitSha } from "../contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { isRedBaseHold, PRE_REVIEW_CI_BOUND_MS } from "./ci-first-policy.ts";
+import { CONFLICT_MARKER_KIND } from "./conflict-resolution.ts";
 import {
   DELIVERY_QUEUE_IDLE_MS,
   DELIVERY_QUEUE_STALL_LIMIT,
@@ -65,6 +66,24 @@ function live(record: WorkRecordV1, now: number): boolean {
 }
 
 /**
+ * A base refresh holds the line only while it can still act. A closed/absent
+ * source issue is retired by the implementation step and its prerequisite wait
+ * is `unavailable`; a conflict-marked refresh parks on that same hourly
+ * prerequisite wait until the marker is resolved or retired. Neither can make
+ * progress from the queue, so counting it as validating would freeze every
+ * same-repository refresh behind it indefinitely.
+ */
+function baseRefreshCanAct(record: WorkRecordV1, tip: GitSha): boolean {
+  const intent = record.intent;
+  if (intent?.kind !== "base_refresh" || intent.observedBase !== tip) {
+    return false;
+  }
+  return (intent.resultId !== null ||
+    intent.failure?.kind !== CONFLICT_MARKER_KIND) &&
+    record.wait?.reason !== "unavailable";
+}
+
+/**
  * Preserve validation already admitted on the tip, then reuse the delivery
  * line and oldest ready refresh. No new count limit, state or wait is added.
  * Existing idle/stall/CI bounds release a head that can no longer advance.
@@ -87,8 +106,7 @@ export function ciRefreshAhead(
     )
   ).sort(compareCiReadiness);
   const validating = candidates.find((other) =>
-    (other.intent?.kind === "base_refresh" &&
-      other.intent.observedBase === tip) ||
+    baseRefreshCanAct(other, tip) ||
     (other.target.base === tip &&
       (other.wait?.reason === "ci_pending" || other.nextStep === "review" ||
         other.intent?.kind === "review_request"))

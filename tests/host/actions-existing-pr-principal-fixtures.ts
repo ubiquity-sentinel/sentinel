@@ -338,6 +338,12 @@ export async function actionsExistingPrincipalFixture(
       ]);
     },
     resolveDefaultBranch: () => Promise.resolve("development"),
+    resolveTreeFacts: () =>
+      Promise.resolve({
+        files: ["deno.json"],
+        scripts: ["test"],
+        hasCiWorkflow: true,
+      }),
     preflight: () => Promise.resolve(),
     composeGithub: (_config, production) => {
       composed = production;
