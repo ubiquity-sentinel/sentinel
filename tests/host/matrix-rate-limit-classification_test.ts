@@ -80,6 +80,7 @@ function modelReturning(result: PortResultV1<ModelRunReceiptV1>) {
 async function wave(
   rig: RigV1,
   model: { modelId: string; runModel: () => Promise<unknown> },
+  legacyCell = false,
 ) {
   const planned = await planMatrixWave(rig.deps, rig.planOptions());
   assert.equal(planned.prepared, 1, JSON.stringify(planned));
@@ -93,6 +94,9 @@ async function wave(
     ACTUAL,
     rig.clock.now(),
   );
+  // Older cells carried no closed failure detail. Keep their compatibility
+  // coverage separate from current cells, which intentionally enrich the park.
+  if (legacyCell) result.detail = null;
   await rig.transfer([result], [ctx]);
   const report = await ingestMatrixResults(
     rig.deps,
@@ -199,7 +203,7 @@ Deno.test(
 );
 
 Deno.test(
-  "matrix 429: an ordinary failed receipt keeps its unchanged no-progress settlement",
+  "matrix 429: a legacy failed receipt without detail keeps its unchanged no-progress settlement",
   async () => {
     const rig = await makeRig([990431], 1);
     try {
@@ -210,6 +214,7 @@ Deno.test(
       const { result, report } = await wave(
         rig,
         modelReturning(portOk(receipt)).port,
+        true,
       );
       assert.equal(result.status, "completed");
       assert.equal(result.receipt?.error, "runtime_error");

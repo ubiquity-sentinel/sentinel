@@ -8,11 +8,13 @@ import { type GitHubPort, portError } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import {
   baseResultSatisfied,
+  baseResultWorkNeeded,
   type BaseTaskReviewPortV1,
   parseBaseReviewEvidenceRef,
 } from "../github/base-review-evidence.ts";
 import {
   BASE_REVIEW_HOLD_MS,
+  BASE_REVIEW_NOT_ESTABLISHED,
   baseReviewHoldExpired,
   baseReviewOrigin,
   holdNoChange,
@@ -51,9 +53,7 @@ export type BaseTaskReviewGitHubV1 = GitHubPort & {
 export const BASE_REVIEW_HOLD_EXPIRED =
   "base review did not complete within its hold bound";
 
-/** A completed review gave neither satisfied acceptance nor "work needed". */
-export const BASE_REVIEW_NOT_ESTABLISHED =
-  "base review did not establish already-satisfied task acceptance";
+export { BASE_REVIEW_NOT_ESTABLISHED };
 
 /**
  * A review found work still needed after `MAX_NO_CHANGE_BASE_REVIEWS`
@@ -326,12 +326,8 @@ export async function resumeBaseSatisfaction(
     updatedAt: deps.clock.now(),
   };
   const result = outcome.value.result;
-  const task = result.taskAcceptance ?? null;
   // The review answered that work is still needed at this exact base.
-  const workNeeded = result.verdict !== "unavailable" && task !== null &&
-    task.issueNumber === binding.issueNumber &&
-    task.taskDigest === binding.taskDigest &&
-    (task.verdict === "not_fulfilled" || task.verdict === "uncertain");
+  const workNeeded = baseResultWorkNeeded(result, binding);
   const outcomes = noChangeOutcomes(fresh.snapshot, record);
   const at = withProof.updatedAt;
   const next = baseResultSatisfied(result, binding)

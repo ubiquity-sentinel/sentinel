@@ -72,6 +72,7 @@ import {
 import {
   existingHeadContinuationShape,
   isRetirableStaleImplementationIntent,
+  unpublishedLocalCandidateShape,
 } from "./loop-eligibility.ts";
 import { verifyNoLiveLocalCandidateBranch } from "./loop-local-candidate.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
@@ -391,17 +392,18 @@ export async function prepareImplementationStart(
     return { kind: "deferred", detail: admissionCooling.detail };
   }
   let observedBase: GitSha | undefined;
-  // Queued issue work has no saved candidate, checkpoint, PR or open intent:
-  // its target base is only the development tip captured at intake, so it may
-  // have gone stale while the work waited. Refresh it through the same
-  // configured-ref read before any model reservation, so admission and the
-  // model request use the CURRENT development base instead of an obsolete one.
+  // Queued issue work, including a released dead worker-local candidate,
+  // has no recoverable artifact, PR or open intent. Its target base is only the
+  // development tip captured at intake, so it may have gone stale while the
+  // work waited. Refresh it through the same configured-ref read before any
+  // model reservation, so admission and the model request use the CURRENT
+  // development base instead of an obsolete one.
   // A base read fault keeps the record, counters and history untouched and
   // defers with the existing bounded unavailable wait (zero reservation).
   if (
     record.source.kind === "issue" &&
-    record.target.head === null &&
-    record.target.checkpoint === null &&
+    ((record.target.head === null && record.target.checkpoint === null) ||
+      unpublishedLocalCandidateShape(record)) &&
     record.target.pr === null &&
     record.intent === null
   ) {

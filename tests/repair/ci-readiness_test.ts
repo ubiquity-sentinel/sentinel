@@ -100,9 +100,9 @@ async function freshness(record: WorkRecordV1, other: WorkRecordV1) {
   return { outcome, before, after: after.value.snapshot };
 }
 
-Deno.test("pre-review refresh preserves another current-tip head's pending validation", async () => {
-  const record = published("issue-1");
-  const validating = published("issue-2", SHA2, 8);
+Deno.test("pre-review refresh preserves an EARLIER current-tip head's pending validation", async () => {
+  const record = published("issue-2");
+  const validating = published("issue-1", SHA2, 8);
   validating.wait = { reason: "ci_pending", since: T0, until: T0 + 300_000 };
   const out = await freshness(record, validating);
   assert.ok(out.outcome !== "closed_unmerged");
@@ -112,6 +112,49 @@ Deno.test("pre-review refresh preserves another current-tip head's pending valid
     out.before,
     "deferral writes no refresh, wait or charge",
   );
+});
+
+Deno.test("a later current-tip head awaiting its CI no longer starves an earlier green head", async () => {
+  // Live sentinel 2026-11-13: PRs 387, 389, 390, 391 and 392 were green and
+  // mergeable from 01:40Z; record issue-ubiquity-sentinel-393, created the
+  // same morning and published on the tip, stood in `work` awaiting its CI and
+  // held every one of them on every pass for more than ten hours.
+  const record = published("issue-1");
+  const later = published("issue-2", SHA2, 8);
+  later.wait = { reason: "ci_pending", since: T0, until: T0 + 300_000 };
+  const out = await freshness(record, later);
+  assert.ok(out.outcome !== "closed_unmerged");
+  assert.equal(out.outcome?.kind, "progress");
+  assert.equal(out.after.work[0].intent?.kind, "base_refresh");
+});
+
+Deno.test("a later head whose charged review is in flight still holds an earlier green head", async () => {
+  const record = published("issue-1");
+  for (
+    const inFlight of [
+      { nextStep: "review" as const },
+      {
+        intent: {
+          kind: "review_request" as const,
+          key: "review:8:head:1",
+          startedAt: T0,
+          branch: candidateBranch(asWorkItemId("issue-2")),
+          expectedHead: SHA3,
+          observedBase: SHA2,
+          pr: 8,
+          requestId: "req-1",
+          resultId: null,
+        },
+      },
+    ]
+  ) {
+    const later = published("issue-2", SHA2, 8);
+    Object.assign(later, inFlight);
+    const out = await freshness(record, later);
+    assert.ok(out.outcome !== "closed_unmerged");
+    assert.equal(out.outcome?.kind, "deferred", Object.keys(inFlight)[0]);
+    assert.deepEqual(out.after, out.before);
+  }
 });
 
 Deno.test("pre-review refresh does not wait behind a foreign target's validation", async () => {
@@ -148,8 +191,8 @@ Deno.test("pre-review refresh is not held by a base refresh that can never act",
 });
 
 Deno.test("a live validating base refresh still holds the line", () => {
-  const record = published("issue-1");
-  const other = published("issue-2", SHA1, 8);
+  const record = published("issue-2");
+  const other = published("issue-1", SHA1, 8);
   other.intent = {
     kind: "base_refresh",
     key: baseRefreshIntentKey(8, SHA3, SHA2),
@@ -182,8 +225,8 @@ Deno.test("a live validating base refresh still holds the line", () => {
 });
 
 Deno.test("readiness releases expired, superseded and old-base waits", () => {
-  const record = published("issue-1");
-  const other = published("issue-2", SHA2, 8);
+  const record = published("issue-2");
+  const other = published("issue-1", SHA2, 8);
   other.wait = { reason: "ci_pending", since: T0, until: T0 + 300_000 };
   assert.equal(currentCiValidation(other, SHA2), true);
   assert.equal(
