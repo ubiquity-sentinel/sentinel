@@ -60,6 +60,7 @@ import {
   createMergeBaseTreeChanges,
   createReadBlob,
 } from "./hosted-autonomy-github-trees.ts";
+import { createReadIssueComment } from "./hosted-autonomy-base-review-verdicts.ts";
 import { createTargetTreeFactsResolver } from "../src/host/target-tree-facts.ts";
 import { fetchHttpTransport } from "../src/github/http.ts";
 import { createHostedDeliveryReads } from "./hosted-autonomy-github-delivery.ts";
@@ -839,6 +840,7 @@ export function createHostedAutonomyGitHub(
     },
     mergeBaseTreeChanges: createMergeBaseTreeChanges(request, scope),
     readBlob: createReadBlob(rawRead, scope),
+    readIssueComment: createReadIssueComment(request, scope),
     async comparePatchDigest(base: string, head: string) {
       // The merge-base diff GitHub renders for `base...head`, hashed as raw
       // bytes: the carried merge's evidence line only. Its abbreviated blob
