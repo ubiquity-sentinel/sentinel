@@ -5,8 +5,8 @@ import type {
   HostedExecutionSettlementV1,
   HostedNotStartedProofV1,
 } from "../contracts/hosted-supervisor.ts";
-import type { PortResultV1 } from "../contracts/ports.ts";
-import { portError, portOk } from "../contracts/ports.ts";
+import type { Clock, PortResultV1 } from "../contracts/ports.ts";
+import { portError, portOk, SystemClock } from "../contracts/ports.ts";
 import { tryParse } from "../contracts/validation.ts";
 import {
   HOSTED_ACTIONS_CLOCK_TOLERANCE_MS,
@@ -58,7 +58,7 @@ import {
   trustedActionsLogUrl,
 } from "./client-hosted-log-wire.ts";
 
-/** Optional deterministic wait seam for the bounded jobs-page re-read. */
+/** Optional wait seam on the client options or its injected clock. */
 export interface HostedExecutionWaitOptionsV1 {
   sleep?: (milliseconds: number) => Promise<void>;
 }
@@ -340,12 +340,19 @@ export abstract class GitHubClientHostedExecution
     }, parseHostedNotStartedProofV1);
   }
 
-  /** One finite timer; tests inject `sleep` and advance their clock instead. */
+  /** Custom clocks must own their wait; only SystemClock uses real timers. */
   protected async hostedExecutionWait(ms: number): Promise<void> {
     const sleep = (this.options as
       & GitHubApiClientOptionsV1
       & HostedExecutionWaitOptionsV1).sleep;
     if (sleep !== undefined) return sleep(ms);
+    const clock = this.options.clock as Clock & HostedExecutionWaitOptionsV1;
+    if (clock.sleep !== undefined) return clock.sleep(ms);
+    if (!(clock instanceof SystemClock)) {
+      throw new Error(
+        "hosted execution wait requires a sleep seam for custom clocks",
+      );
+    }
     await new Promise<void>((resolve) => setTimeout(resolve, ms));
   }
 

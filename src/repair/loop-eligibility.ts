@@ -15,7 +15,7 @@ import {
 import { OPERATION_MARGIN_MS } from "./loop-bounds.ts";
 import { configFor } from "./loop-records.ts";
 import { headNeedsCorrection } from "./loop-review-records.ts";
-import { legacyCutoff } from "./loop-review-round-cap.ts";
+import { legacyCutoff, reviewRoundsSpentOut } from "./loop-review-round-cap.ts";
 import type { LoopContextV1, RepairCycleDepsV1 } from "./loop-types.ts";
 import type { LegacyCutoff } from "./review-round-cap.ts";
 
@@ -278,4 +278,76 @@ export function declaredOperationFits(
     }
   }
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Matrix-owned serial pass: records whose only action is matrix admission.
+// ---------------------------------------------------------------------------
+
+/**
+ * Every record of `context` whose ONLY remaining action is the matrix
+ * admission the planner owns (owner throughput, 2026-11-01, issue #297).
+ *
+ * This is deliberately narrower than the planner's admission shape
+ * (`isMatrixImplementationReadyV1`): that shape also admits records whose
+ * serial step still has an ordinary action, and such a record must never be
+ * skipped. A record is matrix-admission-only only when its serial work step
+ * would reach `executeImplementationStep` with nothing else to do:
+ *
+ * - no pending intent (candidate preservation, implementation uncertainty or
+ *   base refresh/conflict resolution each have their own serial step);
+ * - no spent reviewed head (`executeCarriedDelivery` is delivery bookkeeping);
+ * - `nextStep === "work"` (review observation and delivery stay serial);
+ * - no takeover custody (custody reconciliation stays serial); and
+ * - no head of its own, or only a dead worker-local candidate whose fresh
+ *   base start owns nothing publishable.
+ *
+ * Every record that owns a head keeps its serial/planner lifecycle: a green
+ * existing-head continuation reaches `requestReviewFor` in `loop-work.ts`, a
+ * reviewed red head reaches its CI correction gate, and a publishable head
+ * reaches publication. Those are never matrix-admission-only. A non-matrix
+ * run returns an empty set: its serial lane is the implementer.
+ */
+export function matrixAdmissionOnlyIds(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+): ReadonlySet<string> {
+  const ids = new Set<string>();
+  if (deps.externalImplementations !== true) return ids;
+  const now = deps.clock.now();
+  const ciRouteOpen = ciCorrectionRouteOpen(deps);
+  const conflictRouteOpen = conflictResolutionRouteOpen(deps);
+  const preReviewRouteOpen = preReviewCiFixRouteOpen(deps);
+  const cutoff = legacyCutoff(context);
+  for (const record of context.snapshot.work) {
+    if (record.nextStep !== "work") continue;
+    const config = configFor(deps, record.repository);
+    if (config === null) continue;
+    if (
+      !isMatrixImplementationReadyV1(
+        record,
+        context.snapshot,
+        config,
+        now,
+        ciRouteOpen,
+        conflictRouteOpen,
+        preReviewRouteOpen,
+        cutoff,
+      )
+    ) continue;
+    // Every intent has its own deterministic serial reconciliation.
+    if (record.intent !== null) continue;
+    // Takeover custody keeps its own serial reconciliation authority.
+    if (hasTakeoverCustody(record)) continue;
+    // A spent, cleanly reviewed head still has carried-delivery bookkeeping.
+    if (reviewRoundsSpentOut(context, record)) continue;
+    // Any record that owns a head has another serial or planner lifecycle
+    // (review request, CI correction gate, publication). Only a fresh start
+    // (no head) or a dead worker-local candidate is matrix-admission-only.
+    if (
+      record.target.head !== null && !unpublishedLocalCandidateShape(record)
+    ) continue;
+    ids.add(record.id);
+  }
+  return ids;
 }

@@ -36,6 +36,7 @@ import {
   existingHeadContinuationShape,
   unpublishedLocalCandidateShape,
 } from "./loop-eligibility.ts";
+import { recoverClosedExistingHead } from "./loop-existing-head-continuation.ts";
 import { executeMerge, reconcileMergeIntent } from "./loop-merge.ts";
 import { executeCandidatePreservation } from "./loop-preservation.ts";
 import { executePublishStep } from "./loop-publication.ts";
@@ -133,6 +134,12 @@ export async function executeWorkStep(
     }
     return handleImplementationUncertainty(deps, context, record);
   }
+
+  // A closed own PR cannot continue or produce a verdict. Reuse its exact
+  // live published branch (or restart if deleted) before the preserved-null
+  // refusal; this also reconciles a replacement PR's durable create intent.
+  const replacement = await recoverClosedExistingHead(deps, context, record);
+  if (replacement !== null) return replacement;
 
   // A new-format record without a preserved descriptor (and without the
   // pending preservation intent handled above) must stop safely: it is never
@@ -265,6 +272,7 @@ export async function executeWorkStep(
   if (
     record.target.head === null ||
     localOnlyCandidate ||
+    (existingHeadContinuationShape(record) && isCiFixMarker(record.wait)) ||
     headNeedsCorrection(
       context.snapshot,
       record,
