@@ -26,7 +26,6 @@
  * must NOT be wired in.
  */
 
-import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import {
   reviewTaskAcceptanceRefusal,
@@ -41,6 +40,7 @@ import {
 } from "../contracts/review-receipt.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { decideReviewDisposition } from "./review-disposition.ts";
 
 /** Static, sanitized fail-closed detail for a refused merge. */
 export const MERGE_WITHOUT_REVIEW_DETAIL =
@@ -143,12 +143,6 @@ function checkSharedReviewGuards(
   ) {
     return "reviewer mismatch";
   }
-  if (receipt.findingsUncounted !== 0) return "uncounted findings";
-  if (
-    hasBlockingSeverity(receipt.unresolvedSeverities)
-  ) {
-    return "blocking findings";
-  }
   return null;
 }
 
@@ -174,12 +168,19 @@ export function classifyReviewTerminalDisposition(
     return { kind: "refused", reason: guardRefusal };
   }
   const trustedReceipt = receipt as ReviewReceiptV1;
-  const refusal = taskAcceptanceRefusal(trustedReceipt, record, task);
-  if (refusal === null) return { kind: "qualified_new_repair" };
-  if (refusal === TASK_ACCEPTANCE_ALREADY_SATISFIED_DETAIL) {
-    return { kind: "qualified_already_satisfied" };
+  const decision = decideReviewDisposition(trustedReceipt, {
+    issueNumber: record.related.issueNumber,
+    task,
+    acceptance: trustedReceipt.taskAcceptance,
+  });
+  switch (decision.kind) {
+    case "accept":
+      return { kind: "qualified_new_repair" };
+    case "already_satisfied":
+      return { kind: "qualified_already_satisfied" };
+    default:
+      return { kind: "refused", reason: decision.reason };
   }
-  return { kind: "refused", reason: refusal };
 }
 /**
  * The one and only authorization for a merge. Returns true only for a durable
@@ -195,18 +196,13 @@ export function reviewAuthorizesMerge(
   expectedReviewer: string | null = null,
   task: ReviewTaskStatementV1 | null | "unavailable" = "unavailable",
 ): boolean {
-  if (receipt === null || receipt === undefined) return false;
-  if (checkSharedReviewGuards(receipt, record, expectedReviewer) !== null) {
-    return false;
-  }
-  // Task completion is a SEPARATE proof from a clean code review: an
-  // issue-backed delivery additionally requires the reviewer's positive task
-  // acceptance, exactly bound to this record's source issue AND to the trusted
-  // live task statement. A nonempty diff and a code-quality-only pass never
-  // establish completion, and a receipt the model echoed back never binds the
-  // live context by itself.
-  if (taskAcceptanceRefusal(receipt, record, task) !== null) return false;
-  return true;
+  return classifyReviewTerminalDisposition(
+    receipt,
+    record,
+    expectedReviewer,
+    task,
+  )
+    .kind === "qualified_new_repair";
 }
 
 /**

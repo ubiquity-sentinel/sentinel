@@ -695,7 +695,7 @@ export interface HostedAutonomyDepsV1 {
   /**
    * The private-target gate (owner decision 2026-11-18): `runHostedAutonomy`
    * reads and writes state, and resolves surfaces, only through it, so no
-   * pass sees, writes or touches a repository not proven public. The
+   * pass touches a foreign repository outside the verified target class. The
    * production maintenance composition (`hosted-autonomy-main.ts`) always
    * sets it; a test composition without it runs ungated.
    */

@@ -12,6 +12,30 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     // Trusted controller placement: a candidate must never retarget the
     // controller repository, branches or workflows.
     "src/contracts/hosted-controller-deployment.ts",
+    // The operator lane's workflow entrypoints are covered by the local
+    // workflows prefix below. Its request directories can start a job or a
+    // cleanup when merged into development. The exact source paths control
+    // request admission, token-bearing steps, review decisions and writes.
+    "jobs/inbox/",
+    "jobs/cleanup/",
+    "ops/agent-jobs-admission.ts",
+    "ops/agent-jobs-cell.ts",
+    "ops/agent-jobs-cleanup.ts",
+    "ops/agent-jobs-correct.ts",
+    "ops/agent-jobs-git.ts",
+    "ops/agent-jobs-intake.ts",
+    "ops/agent-jobs-native-review.ts",
+    "ops/agent-jobs-plan.ts",
+    "ops/agent-jobs-prepare.ts",
+    "ops/agent-jobs-progress.mjs",
+    "ops/agent-jobs-publish-github.ts",
+    "ops/agent-jobs-publish.ts",
+    "ops/agent-jobs-review-contract.ts",
+    "ops/agent-jobs-review-git.ts",
+    "ops/agent-jobs-review.ts",
+    "ops/agent-jobs-trace-proxy.ts",
+    "src/repair/review-disposition.ts",
+    "src/repair/review-feedback.ts",
     // Token-bearing scheduled entrypoint (`supervisor-dispatch.yml` runs the
     // default branch every five minutes with `actions: write` and
     // `contents: write`) and the pre-merge CI dispatch on the target token.
@@ -147,9 +171,8 @@ export const LOCAL_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
   ]);
 
 /**
- * Sentinel's own authority (owner decision 2026-10-30): every entry above.
- * A configured protected change to one of these stays forbidden AND
- * unpublished; it never becomes an owner-landing publication.
+ * Sentinel's own authority: the configured protected paths that use
+ * owner landing, including the workflows held before publication.
  */
 export const SENTINEL_AUTHORITY_PATHS: readonly string[] = Object.freeze([
   ...HOSTED_AUTHORITY_PROTECTED_PATHS,

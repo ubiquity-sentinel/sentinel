@@ -24,6 +24,7 @@
  * `ubiquity-sentinel/sentinel` with `installationId` 0 (the explicit no-App owner
  * credential scope) and the `production` environment.
  */
+import { isPublicControllerScopeV1 } from "./hosted-controller-deployment.ts";
 
 import { canonicalStringify } from "./canonical.ts";
 import type { GitSha } from "./brands.ts";
@@ -163,9 +164,7 @@ export function isLocalReleasePendingPhase(
 export function isLocalSentinelRepository(
   repository: ReleaseRequestV1["target"]["repository"],
 ): boolean {
-  return repository.owner === "ubiquity-sentinel" &&
-    repository.name === "sentinel" &&
-    repository.installationId === 0;
+  return isPublicControllerScopeV1(repository);
 }
 
 /** Exact request identity: any field difference is a different request. */

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { neverMergedChange } from "../../src/github/merge-content-gate.ts";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 import { HOSTED_AUTHORITY_PROTECTED_PATHS } from "../../src/host/hosted-authority-protected-paths.ts";
 import { touchesProtected } from "../../src/repair/loop-records.ts";
@@ -44,12 +45,13 @@ const REDUCED_AUTHORITY_PATHS = [
 ] as const;
 
 const FORBIDDEN_CANDIDATES = [
-  ...HOSTED_AUTHORITY_PROTECTED_PATHS,
-  ...LOCAL_AUTHORITY_PATHS,
+  ...REDUCED_AUTHORITY_PATHS.filter((path) => !path.endsWith("/")),
   ".github/workflows/ci.yml",
   // A concrete file inside each protected directory prefix.
   ".github/actions/sentinel-app-token/action.yml",
   ".github/actions/hosted-runtime-control/action.yml",
+  "jobs/inbox/request.json",
+  "jobs/cleanup/request.json",
 ] as const;
 
 /** Sentinel's own repository (the self installation of the repair rig). */
@@ -207,6 +209,31 @@ Deno.test("hosted authority: a protected merge-gate dependency edit lands only f
   ) {
     await t.step(path, () => assertOwnerLandingCandidate(path));
   }
+});
+
+Deno.test("hosted agent-job authority: self code and request changes require the owner", async () => {
+  const foreign = { owner: "ubiquity", name: "example", installationId: 9 };
+  for (
+    const path of [
+      "ops/agent-jobs-git.ts",
+      "ops/agent-jobs-review.ts",
+      "ops/agent-jobs-publish-github.ts",
+      "ops/agent-jobs-cleanup.ts",
+      "ops/agent-jobs-native-review.ts",
+      "src/repair/review-disposition.ts",
+      "src/repair/review-feedback.ts",
+      "jobs/inbox/request.json",
+      "jobs/cleanup/request.json",
+      ".github/workflows/agent-jobs-delivery.yml",
+    ]
+  ) {
+    assert.equal(neverMergedChange(SELF, [path]), true, path);
+    assert.equal(neverMergedChange(foreign, [path]), false, path);
+  }
+  for (const path of ["jobs/README.md", "ops/agent-jobs-unrelated.ts"]) {
+    assert.equal(neverMergedChange(SELF, [path]), false, path);
+  }
+  await assertOwnerLandingCandidate("ops/agent-jobs-git.ts");
 });
 
 Deno.test("hosted authority: review, queue, retention, notification, base-review and repository policy files are ordinary work", () => {

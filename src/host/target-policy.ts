@@ -1,4 +1,5 @@
 /** Trusted repository policy; slugs never carry executable configuration. */
+import { isPublicControllerNameV1 } from "../contracts/hosted-controller-deployment.ts";
 import { asCommandId } from "../contracts/brands.ts";
 import { parseCommandRegistryV1 } from "../contracts/command-registry.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
@@ -101,7 +102,7 @@ export function isGenericTargetRepositoryV1(
   const owner = repository.owner.toLowerCase();
   const name = repository.name.toLowerCase();
   if (owner === "ubiquity" && name === "ai.ubq.fi") return false;
-  if (owner === "ubiquity-sentinel" && name === "sentinel") return false;
+  if (isPublicControllerNameV1(owner, name)) return false;
   return true;
 }
 
@@ -163,8 +164,10 @@ export function selectTrustedTargetPolicyV1(
     // predicate and promotion files) must never be replaced by a target-tree
     // policy.
     if (
-      repository.owner.toLowerCase() === "ubiquity-sentinel" &&
-      repository.name.toLowerCase() === "sentinel"
+      isPublicControllerNameV1(
+        repository.owner.toLowerCase(),
+        repository.name.toLowerCase(),
+      )
     ) {
       return {
         adapter: template.adapter,

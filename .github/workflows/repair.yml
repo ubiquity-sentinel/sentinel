@@ -26,6 +26,7 @@ concurrency:
 
 jobs:
   dispatch:
+    if: github.repository == 'ubiquity-sentinel/sentinel'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

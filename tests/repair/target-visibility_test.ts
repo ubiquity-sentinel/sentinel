@@ -1,10 +1,11 @@
+import {
+  deploymentWorksTargetV1,
+  PUBLIC_CONTROLLER_PROFILE,
+} from "../../src/contracts/hosted-controller-deployment.ts";
 import assert from "node:assert/strict";
+import { repositoryVisibilityV1 } from "../../src/repair/target-visibility.ts";
 import {
-  repositoryVisibilityV1,
-  sentinelWorksRepositoryV1,
-} from "../../src/repair/target-visibility.ts";
-import {
-  loadTargetConfigsV1,
+  loadPublicTargetConfigsV1,
   privateTargetsLineV1,
   unavailableTargetCountsV1,
 } from "../../src/host/targets.ts";
@@ -34,9 +35,18 @@ Deno.test("target visibility: only GitHub's explicit public answer is public", (
   ) {
     assert.equal(repositoryVisibilityV1(body), expected, JSON.stringify(body));
   }
-  assert.equal(sentinelWorksRepositoryV1("public"), true);
-  assert.equal(sentinelWorksRepositoryV1("private"), false);
-  assert.equal(sentinelWorksRepositoryV1("unknown"), false);
+  assert.equal(
+    deploymentWorksTargetV1(PUBLIC_CONTROLLER_PROFILE, "public"),
+    true,
+  );
+  assert.equal(
+    deploymentWorksTargetV1(PUBLIC_CONTROLLER_PROFILE, "private"),
+    false,
+  );
+  assert.equal(
+    deploymentWorksTargetV1(PUBLIC_CONTROLLER_PROFILE, "unknown"),
+    false,
+  );
 });
 
 Deno.test("target visibility: the load configures public targets only; private is never a read failure", async () => {
@@ -46,7 +56,7 @@ Deno.test("target visibility: the load configures public targets only; private i
     "ubiquity/unknown-c": "unknown",
     "ubiquity/gone-d": null,
   };
-  const loaded = await loadTargetConfigsV1({
+  const loaded = await loadPublicTargetConfigsV1({
     template: createLocalRepositoryConfig(),
     readFile: () => Promise.resolve(JSON.stringify(Object.keys(visibility))),
     resolveRepository: (target) => {

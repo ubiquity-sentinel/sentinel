@@ -3,6 +3,7 @@
  * excluded for the run even when it is public (`target-token-scope.ts`): the
  * runtime never configures, reads or plans it, and the launcher gate hides it.
  */
+import { PUBLIC_CONTROLLER_PROFILE } from "../../src/contracts/hosted-controller-deployment.ts";
 import assert from "node:assert/strict";
 import { ensureRepairStateSeed } from "../../src/host/actions-host-io.ts";
 import { runActionsRepairHost } from "../../src/host/actions-repair-host.ts";
@@ -13,7 +14,6 @@ import {
   tokenScopeLineV1,
 } from "../../src/host/target-token-scope.ts";
 import type { HttpTransportV1 } from "../../src/github/http.ts";
-import { resolveSentinelHostV1 } from "../../src/repair/target-visibility.ts";
 import { createPrivateTargetGateV1 } from "../../ops/hosted-autonomy-private-targets.ts";
 import { rig } from "./matrix-actions-fixtures.ts";
 import {
@@ -205,6 +205,7 @@ Deno.test("token scope (launcher gate): a reported public target is hidden witho
     "ubiquity/ai.ubq.fi",
   ];
   const gate = createPrivateTargetGateV1({
+    profile: PUBLIC_CONTROLLER_PROFILE,
     readVisibility: scopedVisibilityReaderV1(
       (repository: { owner: string; name: string }) => {
         reads.push(`${repository.owner}/${repository.name}`);
@@ -212,12 +213,6 @@ Deno.test("token scope (launcher gate): a reported public target is hidden witho
       },
       reportedTokenScopeV1(listed, "ubiquity/prospector"),
     ),
-    host: async () =>
-      await resolveSentinelHostV1({
-        repository: "ubiquity-sentinel/sentinel",
-        listed,
-        readVisibility: () => Promise.reject(new Error("never read")),
-      }),
   });
   const repository = (name: string) => ({
     owner: "ubiquity",

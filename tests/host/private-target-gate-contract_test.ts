@@ -8,6 +8,7 @@
  * store's transition rules), and the hidden rows come back byte-identical.
  * A view the parser refuses is never handed to a pass.
  */
+import { PUBLIC_CONTROLLER_PROFILE } from "../../src/contracts/hosted-controller-deployment.ts";
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import {
@@ -69,6 +70,7 @@ function settled(id: string, repository: typeof PRIVATE) {
 
 function gate(validateView?: (view: RepairStateSnapshotV1) => unknown) {
   return createPrivateTargetGateV1({
+    profile: PUBLIC_CONTROLLER_PROFILE,
     readVisibility: (repository) =>
       repository.name === PRIVATE.name
         ? Promise.resolve("private")

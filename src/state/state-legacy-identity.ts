@@ -4,16 +4,17 @@
  * alternative to the current canonical form; the parsed record still exposes
  * the current identity to every consumer.
  */
+import { PUBLIC_CONTROLLER_PROFILE } from "../contracts/hosted-controller-deployment.ts";
 import {
   HOSTED_RUNTIME_ID,
   RETIRED_HOSTED_RUNTIME_ID,
   RETIRED_HOSTED_SUPERVISOR_REPOSITORY,
 } from "../contracts/hosted-supervisor-types.ts";
 
-const CURRENT_OWNER = "ubiquity-sentinel";
+const CURRENT_OWNER = PUBLIC_CONTROLLER_PROFILE.selfTokenOwner;
 const RETIRED_OWNER = "ubiquity";
 const REPOSITORY_NAME = "sentinel";
-const CURRENT_REPOSITORY = "ubiquity-sentinel/sentinel";
+const CURRENT_REPOSITORY = PUBLIC_CONTROLLER_PROFILE.repository;
 
 export function legacyIdentityRecordMatches(
   collection: string,

@@ -93,6 +93,7 @@ import {
 import { existingHeadContinuationShape } from "./loop-eligibility.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { persistWork } from "./loop-state.ts";
+import { BASE_RED_WAIT_CAUSE, causedWait } from "./loop-wait-cause.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
@@ -366,11 +367,16 @@ export async function gateReviewOnCi(
       return persistWork(
         deps,
         context,
-        holdForCi(context, record, {
-          reason: "backoff",
-          since: waitSince(record, "backoff", now),
-          until: deps.clock.now() + RED_BASE_RECHECK_MS,
-        }, now),
+        holdForCi(
+          context,
+          record,
+          causedWait(deps, {
+            reason: "backoff",
+            since: waitSince(record, "backoff", now),
+            until: deps.clock.now() + RED_BASE_RECHECK_MS,
+          }, BASE_RED_WAIT_CAUSE),
+          now,
+        ),
       );
     case "unattributed":
       // No base evidence (a cancelled, absent or inconclusive base check, or
@@ -438,11 +444,15 @@ export async function confirmPreReviewCiFix(
       return persistWork(
         deps,
         context,
-        atWork(record, {
-          reason: "backoff",
-          since: now,
-          until: now + RED_BASE_RECHECK_MS,
-        }, now),
+        atWork(
+          record,
+          causedWait(deps, {
+            reason: "backoff",
+            since: now,
+            until: now + RED_BASE_RECHECK_MS,
+          }, BASE_RED_WAIT_CAUSE),
+          now,
+        ),
       );
   }
 }

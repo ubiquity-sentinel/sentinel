@@ -5,7 +5,7 @@ import { tryParseMatrixCellResultV1 } from "../../src/contracts/matrix.ts";
 import { resolveMatrixLauncherResult } from "../../src/host/hosted-runtime-matrix.ts";
 import { writeResult } from "../../src/host/matrix-actions-shared.ts";
 import { runActionsMatrixHost } from "../../src/host/matrix-actions.ts";
-import { portOk } from "../../src/contracts/ports.ts";
+import { type ModelRunReceiptV1, portOk } from "../../src/contracts/ports.ts";
 import {
   ingestMatrixResults,
   planMatrixWave,
@@ -23,8 +23,10 @@ import {
   WAVE,
 } from "./matrix-runtime-fixtures.ts";
 
-for (const mode of ["throw", "reject"] as const) {
-  Deno.test(`matrix cell: a model ${mode} emits a sanitized, ingestible failure`, async () => {
+for (
+  const mode of ["throw", "reject", "completed without candidate"] as const
+) {
+  Deno.test(`matrix cell: ${mode} from the model port emits a sanitized, ingestible failure`, async () => {
     const rig = await makeRig([386], 1);
     try {
       const seeded = await rig.store.writeRepair(
@@ -53,6 +55,26 @@ for (const mode of ["throw", "reject"] as const) {
             runModel: () => {
               starts++;
               rig.clock.advance(25);
+              if (mode === "completed without candidate") {
+                return Promise.resolve(portOk<ModelRunReceiptV1>({
+                  invocationId: "missing-candidate-invocation",
+                  outcome: "completed",
+                  actual: {
+                    evidenceKind: "request-runtime",
+                    provider: "sentinel-host",
+                    threadId: "missing-candidate-thread",
+                    turnId: "missing-candidate-turn",
+                    terminalOrigin: "runtime",
+                    observedTerminalStatus: "completed",
+                    observedModel: cell.request.model,
+                    observedReasoning: cell.request.reasoning,
+                    durationMs: 25,
+                    outputChars: 1,
+                  },
+                  candidate: null,
+                  error: null,
+                }));
+              }
               const error = new Error("PRIVATE_MODEL_FAILURE_386");
               if (mode === "throw") throw error;
               return Promise.reject(error);
@@ -76,12 +98,18 @@ for (const mode of ["throw", "reject"] as const) {
       );
       assert.equal(bundles, 0);
       assert.equal(result.status, "failed");
-      assert.equal(result.detail, "model run failed (unavailable)");
+      assert.equal(
+        result.detail,
+        mode === "completed without candidate"
+          ? "model run failed (missing candidate outcome)"
+          : "model run failed (unavailable)",
+      );
       assert.equal(result.receipt, null);
       assert.equal(result.bundle, null);
       assert.equal(result.completedAt, rig.clock.now());
       const wire = await Deno.readTextFile(resultPath);
-      assert.ok(tryParseMatrixCellResultV1(JSON.parse(wire)).ok);
+      const parsed = tryParseMatrixCellResultV1(JSON.parse(wire));
+      assert.ok(parsed.ok);
       assert.equal(wire.includes("PRIVATE_MODEL_FAILURE_386"), false);
       assert.deepEqual(await snapshot(rig), before, "the cell is read-only");
 
@@ -130,12 +158,18 @@ for (const mode of ["throw", "reject"] as const) {
       const ingested = await ingestMatrixResults(
         rig.deps,
         planned.plan,
-        [result],
+        [parsed.value],
         rig.ingestOptions(),
       );
       assert.equal(ingested.ingested, 1);
       const after = await snapshot(rig);
       assert.equal(after.reservations.length, before.reservations.length);
+      assert.equal(after.reservations[0].id, cell.reservationId);
+      assert.equal(after.reservations[0].taskId, cell.taskId);
+      assert.equal(
+        after.reservations[0].attempt,
+        before.reservations[0].attempt,
+      );
       assert.equal(after.reservations[0].outcome, "ambiguous");
       assert.notEqual(after.reservations[0].settledAt, null);
       const attempt = after.attemptMemory[0].entries.at(-1)!;
@@ -149,6 +183,7 @@ for (const mode of ["throw", "reject"] as const) {
       );
       assert.equal(replay.ingested, 0);
       assert.deepEqual(await snapshot(rig), after);
+      assert.equal(starts, 1);
     } finally {
       await rig.cleanup();
     }

@@ -25,7 +25,10 @@ import {
   BackupCiListingCache,
 } from "../github/backup-ci-observations.ts";
 import { createBackupCiReader } from "../github/backup-ci-reader.ts";
-import { HOSTED_CONTROLLER_ROLE } from "../contracts/hosted-controller-deployment.ts";
+import {
+  HOSTED_CONTROLLER_PROFILE,
+  isPublicControllerSlugV1,
+} from "../contracts/hosted-controller-deployment.ts";
 import type { GitRunnerV1, GitRunResultV1 } from "../state/state-git.ts";
 
 /** The workflow variable (and child environment key) of the mode. */
@@ -36,9 +39,6 @@ export const BACKUP_CI_TARGETS_FILE_NAME = "sentinel.backup-ci-targets.json";
 
 /** Per git command bound of the store reader. */
 export const BACKUP_CI_GIT_TIMEOUT_MS = 20_000;
-
-/** Sentinel's own repository is never a backup target. */
-const SELF_REPOSITORY = "ubiquity-sentinel/sentinel";
 
 /** The mode, lower-only: an unreadable, unset or invalid value is `off`. */
 export function readBackupCiMode(
@@ -60,12 +60,14 @@ export async function readBackupCiTargets(
   readFile: (path: string) => Promise<string> = (path) =>
     Deno.readTextFile(path),
 ): Promise<BackupCiTargetV1[]> {
-  if (HOSTED_CONTROLLER_ROLE !== "public") return [];
+  if (!HOSTED_CONTROLLER_PROFILE.backupCi) return [];
   try {
     const targets = parseBackupCiTargets(
       JSON.parse(await readFile(`${root}/${BACKUP_CI_TARGETS_FILE_NAME}`)),
     );
-    return targets.filter((target) => target.repository !== SELF_REPOSITORY);
+    return targets.filter((target) =>
+      !isPublicControllerSlugV1(target.repository)
+    );
   } catch {
     return [];
   }

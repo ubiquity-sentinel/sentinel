@@ -12,6 +12,10 @@ import {
 } from "./review-round-cap.ts";
 import { isAcceptanceFinding } from "./acceptance-correction.ts";
 import {
+  boundedCorrectionFindings,
+  MAX_CORRECTION_HISTORY_RECEIPTS,
+} from "./review-feedback.ts";
+import {
   releaseRequestMatchesDelivery,
   sameRepositoryIdentity,
 } from "./loop-records.ts";
@@ -202,14 +206,11 @@ export function headNeedsCorrection(
     headAwaitsPreReviewCiFix(snapshot, record, preReviewRouteOpen, cutoff);
 }
 
-/** Bounded batch of the exact unresolved findings a correction must resolve. */
-export const MAX_CORRECTION_FINDINGS = 8;
-
-/** Bound of one finding message carried into the correction prompt. */
-export const MAX_CORRECTION_FINDING_CHARS = 2_000;
-
-/** Bound of earlier rejection receipts folded into one correction prompt. */
-export const MAX_CORRECTION_HISTORY_RECEIPTS = 3;
+export {
+  MAX_CORRECTION_FINDING_CHARS,
+  MAX_CORRECTION_FINDINGS,
+  MAX_CORRECTION_HISTORY_RECEIPTS,
+} from "./review-feedback.ts";
 
 export function correctionFindings(
   snapshot: RepairStateSnapshotV1,
@@ -238,28 +239,12 @@ export function correctionFindings(
     )
     .sort((a, b) => b.observedAt - a.observedAt)
     .slice(0, MAX_CORRECTION_HISTORY_RECEIPTS);
-  const seen = new Set<string>();
-  const findings: { severity: string; path: string | null; message: string }[] =
-    ciFinding === null ? [] : [ciFinding];
-  for (const review of current === null ? [] : [current, ...history]) {
-    for (const finding of review.findings) {
-      if (finding.resolved) continue;
-      const message = finding.message.slice(0, MAX_CORRECTION_FINDING_CHARS);
-      const key = `${finding.severity}\u0000${
-        finding.path ?? ""
-      }\u0000${message}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      findings.push({
-        severity: finding.severity,
-        path: finding.path,
-        message,
-      });
-      if (findings.length >= MAX_CORRECTION_FINDINGS) {
-        return findings;
-      }
-    }
-  }
+  const findings = boundedCorrectionFindings(
+    current === null
+      ? []
+      : [current, ...history].map((review) => review.findings),
+    ciFinding,
+  );
   return findings.length === 0 ? null : findings;
 }
 

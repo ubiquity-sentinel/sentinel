@@ -21,6 +21,7 @@
  * - A changed path no predicate can classify (`unsafeChangedPath`: quoted,
  *   escaped, absolute or not normalised) is unpublishable everywhere.
  */
+import { isPublicControllerNameV1 } from "../contracts/hosted-controller-deployment.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
@@ -91,8 +92,10 @@ export function unpublishablePath(path: string): boolean {
 export function ownerMergesProtectedChanges(
   repository: Pick<RepositoryIdentityV1, "owner" | "name">,
 ): boolean {
-  return repository.owner.toLowerCase() === "ubiquity-sentinel" &&
-    repository.name.toLowerCase() === "sentinel";
+  return isPublicControllerNameV1(
+    repository.owner.toLowerCase(),
+    repository.name.toLowerCase(),
+  );
 }
 
 /** How one candidate's change set meets its target's protected paths. */

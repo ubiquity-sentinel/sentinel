@@ -1,3 +1,4 @@
+import { isPublicControllerNameV1 } from "../contracts/hosted-controller-deployment.ts";
 import { guardCiMinuteEffect } from "./loop-types.ts";
 import { queueDeliveryProvenanceRef } from "../github/queue-delivery-provenance.ts";
 import { allReservationsV1 } from "../contracts/state-snapshots.ts";
@@ -84,8 +85,7 @@ async function holdAdoptedSelfMerge(
 ): Promise<StepResultV1 | null> {
   if (
     !hasTakeoverCustody(record) ||
-    record.repository.owner !== "ubiquity-sentinel" ||
-    record.repository.name !== "sentinel"
+    !isPublicControllerNameV1(record.repository.owner, record.repository.name)
   ) return null;
   const detail = "existing PR hold: self_merge_requires_owner";
   return record.blocker?.message === detail

@@ -1,15 +1,11 @@
-/**
- * The deployment rule (`src/repair/target-visibility.ts`): only a host
- * GitHub answers is private, and that does not list its own repository,
- * works private targets, and then only those. Every other host loads
- * exactly what the public-only load loads, with the same reads.
- */
+import {
+  HOSTED_CONTROLLER_PROFILES,
+  HostedControllerVisibilityRefusalV1,
+} from "../../src/contracts/hosted-controller-deployment.ts";
 import assert from "node:assert/strict";
 import {
   PRIVATE_TARGET_REASON,
   PUBLIC_TARGET_REASON,
-  resolveSentinelHostV1,
-  sentinelWorksRepositoryV1,
   type TargetVisibilityV1,
 } from "../../src/repair/target-visibility.ts";
 import {
@@ -57,113 +53,56 @@ async function load(
 const configured = (result: Awaited<ReturnType<typeof load>>["result"]) =>
   result.configs.map((c) => `${c.repository.owner}/${c.repository.name}`);
 
-Deno.test("private host: the predicate flips only on a host proven private that does not work itself", () => {
-  const privateHost = { visibility: "private" as const, worksItself: false };
-  for (const visibility of ["public", "private", "unknown"] as const) {
-    assert.equal(
-      sentinelWorksRepositoryV1(visibility),
-      visibility === "public",
-    );
-    for (
-      const host of [
-        { visibility: "public" as const, worksItself: false },
-        { visibility: "unknown" as const, worksItself: false },
-        { visibility: "private" as const, worksItself: true },
-      ]
-    ) {
-      assert.equal(
-        sentinelWorksRepositoryV1(visibility, host),
-        sentinelWorksRepositoryV1(visibility),
-        `${visibility} on ${JSON.stringify(host)}`,
-      );
-    }
-    assert.equal(
-      sentinelWorksRepositoryV1(visibility, privateHost),
-      visibility === "private",
-    );
-  }
+const [publicProfile, privateProfile] = HOSTED_CONTROLLER_PROFILES;
+
+Deno.test("a hosted target load requires an explicit host at compile time", () => {
+  type Options = Parameters<typeof loadTargetConfigsV1>[0];
+  const optional: Omit<Options, "host"> extends Options ? true : false = false;
+  assert.equal(optional, false);
 });
 
-Deno.test("private host: a host that lists itself is never read; a bad repository or a failed read is unknown", async () => {
-  let reads = 0;
-  const readVisibility = () => {
-    reads++;
-    return Promise.resolve("private" as const);
-  };
-  assert.deepEqual(
-    await resolveSentinelHostV1({
-      repository: "Ubiquity-Sentinel/Sentinel",
-      listed: ["ubiquity-sentinel/sentinel", "ubiquity/prospector"],
-      readVisibility,
+Deno.test("a contradictory listed self read refuses before even the first foreign target", async () => {
+  const asked: string[] = [];
+  await assert.rejects(
+    loadTargetConfigsV1({
+      template: createLocalRepositoryConfig(),
+      readFile: () =>
+        Promise.resolve(JSON.stringify([...SETTING, publicProfile.repository])),
+      host: {
+        profile: publicProfile,
+        readVisibility: () => Promise.resolve("public"),
+      },
+      resolveRepository: (target) => {
+        asked.push(target.slug);
+        return Promise.resolve({
+          defaultBranch: "development",
+          visibility: "private",
+        });
+      },
     }),
-    { visibility: "unknown", worksItself: true },
+    { reason: "deployment_visibility_mismatch" },
   );
-  for (const repository of [undefined, null, "", "sentinel", "a/b/c", " a/b"]) {
-    assert.deepEqual(
-      await resolveSentinelHostV1({ repository, listed: [], readVisibility }),
-      { visibility: "unknown", worksItself: false },
-    );
-  }
-  assert.equal(reads, 0, "never read for a listed or malformed host");
-  assert.deepEqual(
-    await resolveSentinelHostV1({
-      repository: "ubiquity-sentinel-private/sentinel",
-      listed: ["ubiquity-sentinel/sentinel"],
-      readVisibility: () => Promise.reject(new Error("unreadable")),
-    }),
-    { visibility: "unknown", worksItself: false },
-  );
+  assert.deepEqual(asked, [publicProfile.repository]);
 });
 
-Deno.test("private host: a public host, an unknown host and a self-listed host load exactly the public-only load", async () => {
-  const baseline = await load(undefined);
-  assert.deepEqual(configured(baseline.result), ["ubiquity/ai.ubq.fi"]);
-  for (
-    const [name, host, setting] of [
-      ["public host", {
-        repository: "ubiquity-sentinel/sentinel",
-        readVisibility: () => Promise.resolve("public" as const),
-      }, SETTING],
-      ["unreadable host", {
-        repository: "ubiquity-sentinel/sentinel",
-        readVisibility: () => Promise.reject(new Error("503")),
-      }, SETTING],
-      ["unstated host", {
-        repository: "ubiquity-sentinel/sentinel",
-        readVisibility: () => Promise.resolve("unknown" as const),
-      }, SETTING],
-      ["no repository", {
-        repository: undefined,
-        readVisibility: () => Promise.resolve("private" as const),
-      }, SETTING],
-    ] as const
-  ) {
-    const loaded = await load(host, setting);
-    assert.deepEqual(loaded.result, baseline.result, name);
-    assert.deepEqual(loaded.reads, baseline.reads, name);
-    assert.deepEqual(
-      privateTargetsLineV1(loaded.result),
-      privateTargetsLineV1(baseline.result),
-      name,
-    );
-  }
-  // The production shape: the public deployment lists itself. GitHub's
-  // answer about it is never asked, even one that would say private.
-  const selfListed = ["ubiquity-sentinel/sentinel", ...SETTING];
-  const plain = await load(undefined, selfListed);
+Deno.test("the bound public deployment reuses its listed target read and cannot switch target classes", async () => {
+  const setting = [publicProfile.repository, ...SETTING];
   let hostReads = 0;
-  const listed = await load({
-    repository: "ubiquity-sentinel/sentinel",
+  const host = {
+    profile: publicProfile,
     readVisibility: () => {
       hostReads++;
-      return Promise.resolve("private");
+      return Promise.resolve("unknown" as const);
     },
-  }, selfListed);
+  };
+  const { result, reads } = await load(host, setting);
+  assert.deepEqual(configured(result), [
+    publicProfile.repository,
+    "ubiquity/ai.ubq.fi",
+  ]);
+  assert.deepEqual(reads, setting);
   assert.equal(hostReads, 0);
-  assert.deepEqual(listed.result, plain.result);
-  assert.deepEqual(listed.reads, plain.reads);
-  assert.equal(listed.result.publicTargets, undefined);
-  assert.deepEqual(privateTargetsLineV1(listed.result), {
+  assert.deepEqual(privateTargetsLineV1(result), {
     kind: "sentinel_private_targets",
     reason: PRIVATE_TARGET_REASON,
     skipped: 1,
@@ -172,10 +111,48 @@ Deno.test("private host: a public host, an unknown host and a self-listed host l
   });
 });
 
+Deno.test("mismatched or unproven private hosts refuse before reading foreign targets", async () => {
+  for (
+    const [profile, observed, reason] of [
+      [publicProfile, "private", "deployment_visibility_mismatch"],
+      [privateProfile, "public", "deployment_visibility_mismatch"],
+      [privateProfile, "unknown", "deployment_visibility_unavailable"],
+    ] as const
+  ) {
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (line) => lines.push(line);
+    try {
+      await assert.rejects(
+        load({ profile, readVisibility: () => Promise.resolve(observed) }),
+        (error: unknown) =>
+          error instanceof HostedControllerVisibilityRefusalV1 &&
+          error.reason === reason,
+      );
+    } finally {
+      console.log = original;
+    }
+    assert.deepEqual(lines.map((line) => JSON.parse(line)), [{
+      kind: "sentinel_deployment_refused",
+      reason,
+      repository: profile.repository,
+      expected: profile.targetVisibility,
+      observed,
+    }]);
+  }
+  await assert.rejects(
+    load({
+      profile: privateProfile,
+      readVisibility: () => Promise.resolve("private"),
+    }, [privateProfile.repository, ...SETTING]),
+    { reason: "private_controller_self_listed" },
+  );
+});
+
 Deno.test("private host: private targets are configured, public ones are left to the public deployment, unknown is skipped", async () => {
   let hostReads = 0;
   const { result, reads } = await load({
-    repository: "ubiquity-sentinel-private/sentinel",
+    profile: privateProfile,
     readVisibility: () => {
       hostReads++;
       return Promise.resolve("private");
@@ -198,7 +175,7 @@ Deno.test("private host: private targets are configured, public ones are left to
   assert.deepEqual(parsePrivateTargetsLine(line), line);
   // A public skip is never a read failure.
   const publicOnly = await load({
-    repository: "ubiquity-sentinel-private/sentinel",
+    profile: privateProfile,
     readVisibility: () => Promise.resolve("private"),
   }, ["ubiquity/ai.ubq.fi"]);
   assert.deepEqual(publicOnly.result.configs, []);

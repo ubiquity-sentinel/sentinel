@@ -1,4 +1,5 @@
 /** Trusted issue-only review and closure; no pull request capability is used. */
+import { isPublicControllerNameV1 } from "../contracts/hosted-controller-deployment.ts";
 import {
   canonicalStringify,
   canonicalStringifySha256,
@@ -79,8 +80,7 @@ export interface BaseTaskReviewOptionsV1 {
  */
 function requiredChecks(repository: RepositoryIdentityV1): readonly string[] {
   if (
-    repository.owner === "ubiquity-sentinel" &&
-    repository.name === "sentinel"
+    isPublicControllerNameV1(repository.owner, repository.name)
   ) return ["test-local"];
   if (repository.owner !== "ubiquity") return [];
   if (repository.name === "passport.ubq.fi") return ["deno"];

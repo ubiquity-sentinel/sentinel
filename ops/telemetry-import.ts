@@ -1,3 +1,4 @@
+import { isPublicControllerSlugV1 } from "../src/contracts/hosted-controller-deployment.ts";
 import { dirname, resolve } from "node:path";
 import { type Archive, safeError } from "./telemetry-store.ts";
 import { decoder, digest, list, object, time } from "./telemetry-types.ts";
@@ -13,7 +14,7 @@ export function allowedEndpoint(input: string): boolean {
   if (!match) return false;
   const resource = match[2];
   const known = /^pulls(?:\/\d+)?$/.test(resource) ||
-    match[1].toLowerCase() === "ubiquity-sentinel/sentinel" &&
+    isPublicControllerSlugV1(match[1].toLowerCase()) &&
       (/^git\/ref\/heads\/(?:sentinel-state\/release|sentinel-supervisor|development)$/
         .test(resource) ||
         /^git\/(?:trees|blobs)\/[a-f0-9]{40}$/.test(resource) ||

@@ -17,6 +17,10 @@
  *   `BACKUP_CI_READ_BUDGET_MS` is `unavailable`, so a slow store never holds
  *   a gate, and any non-`ok` read substitutes nothing.
  */
+import {
+  deploymentWorksTargetV1,
+  PUBLIC_CONTROLLER_PROFILE,
+} from "../contracts/hosted-controller-deployment.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type {
   BackupCiCommitFileV1,
@@ -353,7 +357,7 @@ export async function selectBackupCiForCommit(
   // stands in or peers for a target its own listing does not show public
   // now; a committed id or an enrolment pin decides nothing here.
   const visibility = backupCiRunsVisibility(runs);
-  if (visibility !== "public") {
+  if (!deploymentWorksTargetV1(PUBLIC_CONTROLLER_PROFILE, visibility)) {
     return {
       file,
       selection: {
@@ -361,9 +365,9 @@ export async function selectBackupCiForCommit(
         peers: new Map(),
         shadow: [],
         refusals: [
-          visibility === "private"
-            ? "private_repository"
-            : "visibility_unknown",
+          visibility === "unknown"
+            ? "visibility_unknown"
+            : "private_repository",
         ],
       },
     };

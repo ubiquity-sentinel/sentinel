@@ -10,7 +10,7 @@
  * The launcher re-emits it into the job log (`scanStepLines`) only after this
  * strict re-parse. Advisory only.
  *
- * On a host proven private (`target-visibility.ts`) the same line counts the
+ * On the verified private deployment the same line counts the
  * public targets it skipped, with the closed reason `public_repository`.
  */
 import {

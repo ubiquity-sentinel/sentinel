@@ -1,4 +1,8 @@
 /** Authenticated native Actions CI, never a model-supplied check receipt. */
+import {
+  isPublicControllerScopeV1,
+  isPublicControllerSlugV1,
+} from "../contracts/hosted-controller-deployment.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import {
   NATIVE_CI_MARKER,
@@ -46,9 +50,7 @@ export abstract class GitHubClientNativeCi extends GitHubClientReviewOwner {
     input: NativeCiReadV1,
   ): Promise<PortResultV1<NativeCiEvidenceV1>> {
     if (
-      this.repository.owner !== "ubiquity-sentinel" ||
-      this.repository.name !== "sentinel" ||
-      this.repository.installationId !== 0
+      !isPublicControllerScopeV1(this.repository)
     ) return portError("invalid", "native CI self scope mismatch");
     const deadline = createDeadline(this.requestDeadlineMs);
     const get = async (path: string): Promise<Row> => {
@@ -120,7 +122,7 @@ export abstract class GitHubClientNativeCi extends GitHubClientReviewOwner {
         run.event !== "pull_request" || run.status !== "completed" ||
         run.conclusion !== "success" || typeof run.path !== "string" ||
         run.path.split("@")[0] !== ".github/workflows/ci.yml" ||
-        repository.full_name !== "ubiquity-sentinel/sentinel"
+        !isPublicControllerSlugV1(repository.full_name)
       ) throw new Error();
       const repositoryId = count(repository.id);
       const attempt = count(run.run_attempt);

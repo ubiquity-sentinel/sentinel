@@ -1,10 +1,8 @@
-/**
- * The launcher gate under the deployment rule (`target-visibility.ts`): a
- * host proven private shows its private repositories' rows and surfaces and
- * hides public and unknown ones; a host that lists itself, a host that is
- * public, unknown or unreadable, and no host at all are the public-only gate,
- * read for read and row for row.
- */
+import {
+  HOSTED_CONTROLLER_PROFILES,
+  type HostedControllerProfileV1,
+  verifyDeploymentTargetScopeV1,
+} from "../../src/contracts/hosted-controller-deployment.ts";
 import assert from "node:assert/strict";
 import { portOk } from "../../src/contracts/ports.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
@@ -12,8 +10,6 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import {
   PRIVATE_TARGET_REASON,
   PUBLIC_TARGET_REASON,
-  resolveSentinelHostV1,
-  type SentinelHostV1,
   type TargetVisibilityV1,
 } from "../../src/repair/target-visibility.ts";
 import { createPrivateTargetGateV1 } from "../../ops/hosted-autonomy-private-targets.ts";
@@ -65,7 +61,7 @@ const store = {
   writeRepair: () => Promise.reject(new Error("unused")),
 };
 
-async function run(host?: () => Promise<SentinelHostV1>) {
+async function run(profile: HostedControllerProfileV1) {
   const reads: string[] = [];
   const gate = createPrivateTargetGateV1({
     validateView: () => {},
@@ -73,7 +69,7 @@ async function run(host?: () => Promise<SentinelHostV1>) {
       reads.push(repository.name);
       return Promise.resolve(ANSWERS[repository.name] ?? "unknown");
     },
-    ...(host === undefined ? {} : { host }),
+    profile,
   });
   const read = await gate.wrapState(
     store as unknown as Parameters<typeof gate.wrapState>[0],
@@ -88,29 +84,16 @@ async function run(host?: () => Promise<SentinelHostV1>) {
   };
 }
 
-const hostOf = (
-  listed: readonly string[],
-  answer: TargetVisibilityV1 | Error,
-  hostReads: string[],
-) =>
-() =>
-  resolveSentinelHostV1({
-    repository: "ubiquity-sentinel/sentinel",
-    listed,
-    readVisibility: () => {
-      hostReads.push("host");
-      return answer instanceof Error
-        ? Promise.reject(answer)
-        : Promise.resolve(answer);
-    },
-  });
+const [publicProfile, privateProfile] = HOSTED_CONTROLLER_PROFILES;
 
-Deno.test("private host gate: a host proven private shows private rows and surfaces, hides public and unknown ones", async () => {
-  const hostReads: string[] = [];
+Deno.test("private host gate: the confirmed private profile shows only private foreign rows and surfaces", async () => {
   const gated = await run(
-    hostOf(["ubiquity/prospector"], "private", hostReads),
+    await verifyDeploymentTargetScopeV1(
+      privateProfile,
+      false,
+      () => Promise.resolve("private"),
+    ),
   );
-  assert.deepEqual(hostReads, ["host"], "one host read per run");
   assert.deepEqual(gated.visible, ["prospector", "sentinel"]);
   assert.deepEqual(gated.surfaces, [null, "prospector", null, "sentinel"]);
   assert.deepEqual(gated.reads, ["ai.ubq.fi", "prospector", "unstated"]);
@@ -124,31 +107,18 @@ Deno.test("private host gate: a host proven private shows private rows and surfa
   });
 });
 
-Deno.test("private host gate: a self-listed, public, unknown or unreadable host is the public-only gate", async () => {
-  const baseline = await run();
-  assert.deepEqual(baseline.visible, ["ai.ubq.fi", "sentinel"]);
-  assert.equal(baseline.line?.reason, PRIVATE_TARGET_REASON);
-  for (
-    const [name, listed, answer, expectedHostReads] of [
-      [
-        "self-listed, answered private",
-        ["ubiquity-sentinel/sentinel"],
-        "private",
-        0,
-      ],
-      ["public", [], "public", 1],
-      ["unknown", [], "unknown", 1],
-      ["unreadable", [], new Error("503"), 1],
-    ] as const
-  ) {
-    const hostReads: string[] = [];
-    const gated = await run(hostOf(listed, answer, hostReads));
-    assert.equal(hostReads.length, expectedHostReads, name);
-    assert.deepEqual(gated, baseline, name);
+Deno.test("public host gate: unavailable visibility cannot widen the public target class", async () => {
+  const expected = await run(publicProfile);
+  assert.deepEqual(expected.visible, ["ai.ubq.fi", "sentinel"]);
+  assert.equal(expected.line?.reason, PRIVATE_TARGET_REASON);
+  for (const listed of [true, false]) {
+    const gated = await run(
+      await verifyDeploymentTargetScopeV1(
+        publicProfile,
+        listed,
+        () => Promise.reject(new Error("503")),
+      ),
+    );
+    assert.deepEqual(gated, expected);
   }
-  // A host decision that throws is no host at all.
-  assert.deepEqual(
-    await run(() => Promise.reject(new Error("no setting"))),
-    baseline,
-  );
 });

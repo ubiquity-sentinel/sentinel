@@ -7,6 +7,7 @@
  * nothing is written; visibility is one read per repository per run, unknown
  * is hidden, and Sentinel's own repository is never read or hidden.
  */
+import { PUBLIC_CONTROLLER_PROFILE } from "../../src/contracts/hosted-controller-deployment.ts";
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import {
@@ -142,6 +143,7 @@ class RecordingState implements StateReadView, RepairStateWriter {
 function gate(answers: Record<string, TargetVisibilityV1 | Error>) {
   const reads: string[] = [];
   const instance = createPrivateTargetGateV1({
+    profile: PUBLIC_CONTROLLER_PROFILE,
     // These synthetic rows are not contract rows; the contract parser over
     // real rows is `private-target-gate-contract_test.ts`.
     validateView: () => {},

@@ -27,5 +27,9 @@
   "ubiquity/partner.ubq.fi",
   "ubiquity/notifications.ubq.fi",
   "ubiquity/github-labels-processor",
-  "ubiquity/card-issuance"
+  "ubiquity/card-issuance",
+  "ubiquity/auth.ubq.fi",
+  "ubiquity/google-apps-script",
+  "ubiquity/arbitrage-uusd",
+  "ubiquity/ubiquibot-config"
 ]

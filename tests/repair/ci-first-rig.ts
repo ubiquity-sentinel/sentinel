@@ -81,6 +81,7 @@ export interface CiFirstRigOptions {
   heads?: GitSha[];
   /** Run the loop as a hosted (matrix) run does. */
   hosted?: boolean;
+  recordWaitCauses?: boolean;
   /** The legacy review cutoff the launcher hands the runtime. */
   legacyReviewCutoff?: number;
   /** The record's severity (default: the helper's own). */
@@ -106,6 +107,7 @@ export async function ciFirstRig(prefix: string, options: CiFirstRigOptions) {
   const refreshes: PrepareBaseRefreshRequestV1[] = [];
   const rig = await makeRig(prefix, {
     summaries: false,
+    recordWaitCauses: options.recordWaitCauses,
     ...(options.hosted === true ? { externalImplementations: true } : {}),
     ...(options.legacyReviewCutoff === undefined
       ? {}

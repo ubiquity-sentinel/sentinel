@@ -1,4 +1,5 @@
 /** Bounded one-shot canary, with no repair/release state or model capability. */
+import { deploymentRunsServiceV1 } from "../src/contracts/hosted-controller-deployment.ts";
 import { isGitSha } from "../src/contracts/brands.ts";
 import {
   canonicalStringify,
@@ -175,7 +176,7 @@ export async function runQueueCanary(input: {
     return evidence;
   };
   if (
-    host.repository !== "ubiquity-sentinel/sentinel" ||
+    !deploymentRunsServiceV1(host.repository, "queueCanary") ||
     host.ref !== CANARY_REF ||
     !isGitSha(host.sha) || host.sha !== host.workflowSha ||
     host.sha !== host.expectedSha ||

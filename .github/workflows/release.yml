@@ -29,6 +29,7 @@ concurrency:
 
 jobs:
   release:
+    if: github.repository == 'ubiquity-sentinel/sentinel'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

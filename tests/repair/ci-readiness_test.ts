@@ -281,6 +281,45 @@ Deno.test("only the oldest ready moved-base candidate refreshes before validatio
   assert.equal(ciRefreshAhead(snapshot, first, SHA2, T0 + 1000), null);
 });
 
+Deno.test("an older owner-held PR yields the moved-base refresh without losing its own CI eligibility", async () => {
+  const record = published("issue-2");
+  const owner = published("issue-1", SHA1, 8);
+  owner.nextStep = "delivery";
+  owner.ownerLanding = { paths: ["src/auth/"], since: T0 };
+  owner.wait = { reason: "manual", since: T0, until: T0 + 300_000 };
+  record.wait = { reason: "ci_pending", since: T0, until: T0 + 1000 };
+
+  const out = await freshness(record, owner);
+  assert.ok(out.outcome !== "closed_unmerged");
+  assert.equal(out.outcome?.kind, "progress");
+  assert.equal(
+    out.after.work.find((row) => row.id === record.id)?.intent?.kind,
+    "base_refresh",
+  );
+  assert.deepEqual(
+    out.after.work.find((row) => row.id === owner.id),
+    out.before.work.find((row) => row.id === owner.id),
+  );
+
+  const validating: WorkRecordV1 = {
+    ...owner,
+    nextStep: "work",
+    target: { ...owner.target, base: SHA2 },
+    wait: { reason: "ci_pending", since: T0, until: T0 + 300_000 },
+  };
+  assert.equal(currentCiValidation(validating, SHA2), true);
+  assert.equal(
+    ciRefreshAhead(
+      seededSnapshot([record, validating]),
+      record,
+      SHA2,
+      T0 + 1000,
+    )
+      ?.id,
+    owner.id,
+  );
+});
+
 Deno.test("a stalled head on a moved base keeps its place in line; stuck on the tip it holds nobody", () => {
   // Its no-progress count is what its steps on an earlier tip left (12
   // re-arms of a red base's 30-minute hold); on a moved base its next step is

@@ -21,7 +21,7 @@ import {
 } from "./hosted-autonomy-scopes.ts";
 import { HOSTED_AUTONOMY_SELF_SCOPE } from "./hosted-autonomy-policy.ts";
 import {
-  HOSTED_CONTROLLER_ROLE,
+  HOSTED_CONTROLLER_PROFILE,
   PRIVATE_DEPLOYMENT_REASON,
 } from "../src/contracts/hosted-controller-deployment.ts";
 import type {
@@ -566,7 +566,7 @@ async function runHostedAutonomyChain(
   // wrote state never runs it.
   // The private deployment files nothing in its own tracker (owner,
   // 2026-11-18): both notice passes report the closed reason and read nothing.
-  if (HOSTED_CONTROLLER_ROLE !== "public") {
+  if (!HOSTED_CONTROLLER_PROFILE.selfObservation) {
     actions.push(`self-observation:skipped:${PRIVATE_DEPLOYMENT_REASON}`);
     return skippedAfterObservation(actions, observedHead);
   }

@@ -1,4 +1,5 @@
 /** Read-only App collector. Native capture acceptance remains a separate owner step. */
+import { deploymentRunsServiceV1 } from "../src/contracts/hosted-controller-deployment.ts";
 import { isGitSha } from "../src/contracts/brands.ts";
 import { canonicalStringifySha256 } from "../src/contracts/canonical.ts";
 import {
@@ -222,7 +223,7 @@ export async function readQueueRulesProjection(input: {
     const targets = captureCopy(input.targets) as QueueRulesProjectionTarget[];
     requireProjection(validProjectionTargets(targets), "invalid_targets");
     requireProjection(
-      source.repository === "ubiquity-sentinel/sentinel" &&
+      deploymentRunsServiceV1(source.repository, "queueCanary") &&
         source.ref === CANARY_REF &&
         isGitSha(source.sha) && source.sha === source.workflowSha &&
         source.sha === source.expectedSha &&

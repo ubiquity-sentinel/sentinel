@@ -1,3 +1,4 @@
+import { isPublicControllerScopeV1 } from "./hosted-controller-deployment.ts";
 import { parseOwnerLandingV1 } from "./owner-landing.ts";
 import {
   asIncidentFingerprint,
@@ -239,9 +240,7 @@ export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
   for (const proof of [intent?.selfMerge, target.selfMerge]) {
     if (
       proof !== undefined &&
-      (repository.owner !== "ubiquity-sentinel" ||
-        repository.name !== "sentinel" ||
-        repository.installationId !== 0 || proof.taskId !== id ||
+      (!isPublicControllerScopeV1(repository) || proof.taskId !== id ||
         proof.issueNumber !== issueNumber)
     ) {
       fail(

@@ -1,3 +1,4 @@
+import { isPublicControllerNameV1 } from "../contracts/hosted-controller-deployment.ts";
 // port merge.
 
 import type {
@@ -67,8 +68,8 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     const queued = await this.queueEffect(queueInput);
     if (!queued.ok) return queued;
     if (
-      takeover !== undefined && this.repository.owner === "ubiquity-sentinel" &&
-      this.repository.name === "sentinel"
+      takeover !== undefined &&
+      isPublicControllerNameV1(this.repository.owner, this.repository.name)
     ) {
       return portError("unavailable", "existing PR self merge requires owner");
     }

@@ -1,4 +1,8 @@
 /** Restricted private-stdin boundary for the deterministic VPS release owner. */
+import {
+  deploymentRunsServiceV1,
+  PUBLIC_CONTROLLER_PROFILE,
+} from "../contracts/hosted-controller-deployment.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type {
   PortResultV1,
@@ -526,8 +530,8 @@ export async function authenticateReleaseBridgeJob(
     if (
       claims.iss !== RELEASE_BRIDGE_ISSUER ||
       claims.aud !== RELEASE_BRIDGE_AUDIENCE || claims.sub !== source.subject ||
-      claims.repository !== "ubiquity-sentinel/sentinel" ||
-      claims.repository_owner !== "ubiquity-sentinel" ||
+      !deploymentRunsServiceV1(claims.repository, "release") ||
+      claims.repository_owner !== PUBLIC_CONTROLLER_PROFILE.selfTokenOwner ||
       claims.repository_id !== String(source.repositoryId) ||
       claims.repository_owner_id !== String(source.ownerId) ||
       claims.ref !== REF || claims.ref_type !== "branch" ||
@@ -617,7 +621,7 @@ export async function assertReleaseBridgeJobAlive(
     run.head_branch !== "sentinel-supervisor" ||
     run.event !== "workflow_dispatch" || run.status !== "in_progress" ||
     repository.id !== pin.source.repositoryId ||
-    repository.full_name !== "ubiquity-sentinel/sentinel"
+    !deploymentRunsServiceV1(repository.full_name, "release")
   ) refuse("authentication_rejected");
   const nativeJob = await read(`/actions/jobs/${job.jobId}`);
   if (

@@ -4,7 +4,7 @@ import { isPassportDeployCheck } from "../../src/repair/merge-gate-checks.ts";
 import {
   createTargetConfigV1,
   createTargetRepositoryResolver,
-  loadTargetConfigsV1,
+  loadPublicTargetConfigsV1,
 } from "../../src/host/targets.ts";
 import { ReplayPortImpl } from "../../src/replay/port.ts";
 import type { ReplayCommandInputV1 } from "../../src/replay/runtime.ts";
@@ -41,7 +41,7 @@ const TARGET = {
 const template = createLocalRepositoryConfig();
 
 Deno.test("Passport policy: actual target loading resolves main and replaces Sentinel commands", async () => {
-  const result = await loadTargetConfigsV1({
+  const result = await loadPublicTargetConfigsV1({
     template,
     readFile: () => Promise.resolve(JSON.stringify([TARGET.slug])),
     // The named policy is loaded as for a public answer; a private answer

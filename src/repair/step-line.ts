@@ -14,6 +14,10 @@
  * never at risk; the launcher re-parses at most `MAX_REEMITTED_STEP_LINES`
  * lines with `parseStepLine` and re-emits them in the job log.
  */
+import {
+  DEPLOYMENT_REFUSAL_KIND,
+  parseDeploymentRefusalLineV1,
+} from "../contracts/hosted-controller-deployment.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { StepResultV1 } from "./loop-types.ts";
 import { CI_VALIDATION_DEFERRED_PREFIX } from "./ci-readiness.ts";
@@ -246,6 +250,7 @@ export type AdvisoryLogLineV1 =
   | TargetTimingLineV1
   | TargetsDeferralLineV1
   | StartupPreflightLineV1
+  | NonNullable<ReturnType<typeof parseDeploymentRefusalLineV1>>
   | PrivateTargetsLineV1;
 
 const MATRIX_SKIP_KEYS = ["detail", "kind", "records"].join();
@@ -283,6 +288,7 @@ const ADVISORY_KINDS = [
   TARGETS_DEFERRAL_KIND,
   STARTUP_PREFLIGHT_KIND,
   PRIVATE_TARGETS_KIND,
+  DEPLOYMENT_REFUSAL_KIND,
 ];
 
 /**
@@ -310,7 +316,8 @@ export function scanStepLines(stdout: string): AdvisoryLogLineV1[] {
       parsePassSummaryLine(value) ?? parseRepairHandbackLine(value) ??
       parseRepairFanoutDelegationLine(value) ?? parseHostPhaseLine(value) ??
       parseTargetTimingLine(value) ?? parseTargetsDeferralLine(value) ??
-      parseStartupPreflightLine(value) ?? parsePrivateTargetsLine(value);
+      parseStartupPreflightLine(value) ?? parsePrivateTargetsLine(value) ??
+      parseDeploymentRefusalLineV1(value);
     if (line !== null) lines.push(line);
   }
   return lines;
