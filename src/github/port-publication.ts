@@ -1,6 +1,7 @@
 // port publication.
 
 import type { GitSha } from "../contracts/brands.ts";
+import type { TakeoverEffectAuthorization } from "../contracts/existing-pr-takeover.ts";
 import type {
   GitHubPullRequestV1,
   PortResultV1,
@@ -21,6 +22,7 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
     ref: string,
     sha: GitSha,
     expectedRef: GitSha | null,
+    takeover?: TakeoverEffectAuthorization,
   ): Promise<PortResultV1<WriteOutcomeV1>> {
     const queueInput = {
       operation: "publication" as const,
@@ -58,7 +60,15 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
     // the prior publication is proven by that observation alone. No local
     // ancestry check, no push and no model work; a conflicting or absent ref
     // was already rejected above.
-    if (current.value === sha) return await applied();
+    if (current.value === sha) {
+      const custody = await this.takeoverEffect({
+        kind: "push",
+        ref,
+        head: sha,
+        expectedRef,
+      }, takeover);
+      return custody.ok ? await applied() : custody;
+    }
     // 3. Ordinary fast-forward only: the candidate must descend from the
     // current head when the branch exists.
     if (current.value !== null) {
@@ -73,6 +83,13 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
     // a remote movement after this precheck is rejected, never applied.
     const beforePush = await this.queueEffect(queueInput);
     if (!beforePush.ok) return beforePush;
+    const custody = await this.takeoverEffect({
+      kind: "push",
+      ref,
+      head: sha,
+      expectedRef,
+    }, takeover);
+    if (!custody.ok) return custody;
     const pushed = await this.gatedRemoteCall(() =>
       this.git.push(ref, sha, expectedRef)
     );
@@ -139,6 +156,8 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
     const queued = await this.queueEffect(queueInput);
     if (!queued.ok) return queued;
     // A created, reused or reconciled PR must describe the same publication.
+    const custody = await this.takeoverEffect({ kind: "create", request });
+    if (!custody.ok) return custody;
     // The response may race an external edit even after the branch precheck.
     const matchesPublication = (pull: GitHubPullRequestV1): boolean =>
       pull.state === "open" && pull.mergeSha === null &&
@@ -205,6 +224,8 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
     // the HTTP status.
     const beforeCreate = await this.queueEffect(queueInput);
     if (!beforeCreate.ok) return beforeCreate;
+    const finalCustody = await this.takeoverEffect({ kind: "create", request });
+    if (!finalCustody.ok) return finalCustody;
     const created = await this.client.createPull({
       title: request.title,
       headRef: request.headRef,

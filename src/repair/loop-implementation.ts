@@ -1,3 +1,5 @@
+import { checkExistingPrCustody, routeExistingPr } from "./loop-existing-pr.ts";
+import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: implementation. */
 import type { GitSha } from "../contracts/brands.ts";
@@ -75,6 +77,17 @@ export async function prepareImplementationStart(
 ): Promise<StepResultV1 | PreparedImplementationV1> {
   const queueGuard = await guardQueueOperation(deps, context, record, "resume");
   if (queueGuard !== null) return queueGuard;
+  const existingPr = await routeExistingPr(deps, context, record);
+  if (existingPr.status === "step") return existingPr.step;
+  if (existingPr.status === "custody_ready") {
+    const custody = await checkExistingPrCustody(
+      deps,
+      context,
+      record,
+      "correct",
+    );
+    if (custody !== null) return custody;
+  }
   // No NEW model work after the 90-minute cutoff (or at/after the total run
   // deadline): the start is rejected before any reservation is made (nothing
   // is charged), and the record stays exactly as it was so a later run inside
@@ -276,6 +289,12 @@ export async function prepareImplementationStart(
     preReviewOpen,
     legacyCutoff(context),
   );
+  if (hasTakeoverCustody(record) && conflict === null && !rejectedHead) {
+    return {
+      kind: "deferred",
+      detail: "existing PR has no authorized correction",
+    };
+  }
   const findings = conflict !== null
     ? null
     : correctionFindings(context.snapshot, record, ciFinding);
@@ -332,6 +351,13 @@ export async function prepareImplementationStart(
     "resume",
   );
   if (queueBeforeAdmission !== null) return queueBeforeAdmission;
+  const custodyBeforeAdmission = await checkExistingPrCustody(
+    deps,
+    context,
+    record,
+    "correct",
+  );
+  if (custodyBeforeAdmission !== null) return custodyBeforeAdmission;
   const reservation = await deps.budget.reserveModelStart({
     repository: record.repository,
     taskId: record.id,
@@ -405,6 +431,13 @@ export async function prepareImplementationStart(
     "resume",
   );
   if (admittedGuard !== null) return admittedGuard;
+  const admittedCustody = await checkExistingPrCustody(
+    deps,
+    fresh,
+    current,
+    "correct",
+  );
+  if (admittedCustody !== null) return admittedCustody;
 
   // A CI fix (of a reviewed head or a never-reviewed one) is charged in
   // `counters.retries` as well as `attempts` and never counts a review round;
@@ -543,6 +576,15 @@ export async function prepareImplementationStart(
     "resume",
   );
   if (submitGuard !== null) return submitGuard;
+  // Admission and intent are already durable. A revoked/moved custody proof
+  // holds that charge and intent; it never emits a replacement cell/model grant.
+  const submitCustody = await checkExistingPrCustody(
+    deps,
+    fresh,
+    withIntent,
+    "correct",
+  );
+  if (submitCustody !== null) return submitCustody;
 
   return {
     kind: "prepared",
@@ -562,7 +604,9 @@ export function implementationIntent(
     kind: "implementation" as const,
     key: implementationIntentKey(reservationId),
     startedAt: now,
-    branch: candidateBranch(record.id),
+    branch: hasTakeoverCustody(record)
+      ? record.target.branch
+      : candidateBranch(record.id),
     expectedHead: null,
     observedBase: record.target.base,
     pr: null,

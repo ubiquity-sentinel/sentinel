@@ -460,7 +460,7 @@ Deno.test("hosted runtime: the repair child learns when its one App token stops 
   }
 });
 
-Deno.test("hosted runtime: only the repair job reads or forwards the App-token mint bound", async () => {
+Deno.test("hosted runtime: only repair and planner read or forward App mint evidence", async () => {
   const workflow = await Deno.readTextFile(
     `${ROOT}/.github/workflows/supervisor.yml`,
   );
@@ -493,13 +493,16 @@ Deno.test("hosted runtime: only the repair job reads or forwards the App-token m
     }
     assert.equal(
       asked.includes("SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE"),
-      job === "repair",
-      `${job} reads the mint bound only in repair`,
+      job !== "matrix_cell",
+      `${job} reads the mint bound only in repair/planner`,
     );
     assert.deepEqual(Object.keys(scoped).sort(), [...asked].sort());
 
-    // Cells and the planner keep their own windows even if a bound is given.
-    if (job === "repair") continue;
+    assert.equal(
+      asked.includes("SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT"),
+      job !== "matrix_cell",
+    );
+    // Cells never receive takeover metadata, even if handed a forged grant.
     const child = buildChildEnvironment(
       {
         PATH: "/usr/bin:/bin",
@@ -507,13 +510,76 @@ Deno.test("hosted runtime: only the repair job reads or forwards the App-token m
         UOS_AI_TOKEN: "test-model-token",
         SENTINEL_SUPERVISOR_TOKEN: APP_TOKEN,
         SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: String(T0 - 60_000),
-        GITHUB_OUTPUT: "/tmp/github-output",
+        SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: "fixture-inert-mint-grant",
+        GITHUB_OUTPUT: "/fixture/github-output",
       },
       { runId: RUN_ID, runAttempt: 1, launcherSha: OTHER_REVISION, job },
-      { home: "/tmp/home", tmp: "/tmp/tmp", denoDir: "/tmp/deno" },
+      { home: "/fixture/home", tmp: "/fixture/tmp", denoDir: "/fixture/deno" },
       T0,
     );
-    assert.equal("SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER" in child, false, job);
+    assert.equal(
+      "SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER" in child,
+      job !== "matrix_cell",
+      job,
+    );
+    assert.equal(
+      "SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT" in child,
+      job !== "matrix_cell",
+      job,
+    );
     assert.equal(child.SENTINEL_SUPERVISOR_TOKEN, APP_TOKEN, job);
+  }
+});
+
+Deno.test("hosted runtime: optional mint metadata requires its App/window and stays bounded", () => {
+  const base = {
+    PATH: "/usr/bin:/bin",
+    GITHUB_TOKEN: "fixture-native",
+    UOS_AI_TOKEN: "fixture-model",
+    SENTINEL_SUPERVISOR_TOKEN: APP_TOKEN,
+    SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: String(T0),
+    SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: "fixture-inert-grant",
+    GITHUB_OUTPUT: "/fixture/output",
+  };
+  for (const job of ["repair", "matrix_plan"] as const) {
+    const identity = {
+      runId: RUN_ID,
+      runAttempt: 1,
+      launcherSha: OTHER_REVISION,
+      job,
+    };
+    const dirs = {
+      home: "/fixture/home",
+      tmp: "/fixture/tmp",
+      denoDir: "/fixture/deno",
+    };
+    for (
+      const patch of [
+        { SENTINEL_SUPERVISOR_TOKEN: "" },
+        { SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: "" },
+        { SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: "" },
+        { SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: "x".repeat(16_385) },
+        { SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: "€".repeat(6000) },
+      ]
+    ) {
+      const child = buildChildEnvironment(
+        { ...base, ...patch },
+        identity,
+        dirs,
+        T0,
+      );
+      assert.equal("SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT" in child, false, job);
+      assert.equal(child.GITHUB_TOKEN, base.GITHUB_TOKEN);
+    }
+    assert.throws(
+      () =>
+        buildChildEnvironment(
+          { ...base, SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: "invalid" },
+          identity,
+          dirs,
+          T0,
+        ),
+      /hosted runtime launcher credentials are unavailable/,
+    );
   }
 });

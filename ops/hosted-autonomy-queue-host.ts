@@ -17,7 +17,10 @@ import {
   type QueueRuntimeConfiguration,
   resolveQueueRuntimeConfiguration,
 } from "../src/github/queue-runtime-policy.ts";
-import { createHostedQueueAuthority } from "./hosted-autonomy-queue-authority.ts";
+import {
+  createHostedQueueAuthority,
+  type HostedQueueAuthorityOptions,
+} from "./hosted-autonomy-queue-authority.ts";
 import type { HostedAutonomyDepsV1 } from "./hosted-autonomy-types.ts";
 import type { HostedQueueCoordinatorDeps } from "./hosted-autonomy-queue-contracts.ts";
 
@@ -26,6 +29,8 @@ export function createHostedQueueCoordinator(input: {
   clock: Clock;
   token: string;
   githubFor: HostedAutonomyDepsV1["githubFor"];
+  existingPrFor?: HostedQueueAuthorityOptions["existingPrFor"];
+  publicationFor?: HostedQueueAuthorityOptions["publicationFor"];
   /** Protected repository variable, never a target PR or workflow input. */
   queueMode?: unknown;
   /** Trusted transport seam; production uses authenticated native fetch. */

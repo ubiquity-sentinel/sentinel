@@ -1,3 +1,6 @@
+import type { TakeoverPublicationProof } from "../contracts/existing-pr-takeover.ts";
+import { hasTakeoverCustody } from "./existing-pr-takeover-provenance.ts";
+import { takeoverPublicationMatches } from "./existing-pr-publication-proof.ts";
 import { hasQueueDeliveryProvenance } from "./queue-delivery-provenance.ts";
 /** One authenticated fact collector shared by launcher and native delivery guards. */
 import type { GitSha } from "../contracts/brands.ts";
@@ -72,6 +75,10 @@ export interface QueueDeliveryReaderOptions {
   clock: Clock;
   client: GitHubQueueDeliveryClient;
   policy: QueueProofPolicy;
+  /** Read-only retained publication identity; this never supplies effect authority. */
+  publication?: (
+    input: QueueReaderRequest & { revision: GitSha },
+  ) => Promise<QueueRead<TakeoverPublicationProof>>;
   /** Strict coordinator codec binds native events to the retained admission, never list order. */
   provenance?: (
     input: QueueReaderRequest & {
@@ -86,6 +93,9 @@ export interface QueueDeliveryReaderOptions {
   ) => Promise<QueueRead<DirectMergeWitness | null>>;
 }
 export interface QueueDeliveryReader {
+  readPublication?(
+    input: QueueReaderRequest & { revision: GitSha },
+  ): Promise<QueueRead<TakeoverPublicationProof | null>>;
   readBinding(
     input: QueueReaderRequest,
   ): Promise<QueueRead<QueueBindingObservation>>;
@@ -126,6 +136,16 @@ export function createQueueDeliveryReader(
     } finally {
       deadline.dispose();
     }
+  }
+  async function readPublication(
+    input: QueueReaderRequest & { revision: GitSha },
+  ): Promise<QueueRead<TakeoverPublicationProof | null>> {
+    if (!hasTakeoverCustody(input.record)) {
+      return { status: "complete", value: null };
+    }
+    return options.publication === undefined
+      ? unavailable()
+      : await options.publication(input);
   }
   async function readBinding(
     input: QueueReaderRequest,
@@ -326,6 +346,17 @@ export function createQueueDeliveryReader(
         revision: input.revision,
       });
     if (witness.status !== "complete") return witness;
+    const publication = await readPublication(input);
+    if (publication.status !== "complete") return publication;
+    if (
+      hasTakeoverCustody(input.record) &&
+      !takeoverPublicationMatches(
+        publication.value ?? undefined,
+        input.record,
+        input.revision,
+        pull.value.author,
+      )
+    ) return unavailable("drift");
     // Re-read mutable source/PR after expensive tree/evidence collection. No stale observation grants a write.
     const final = await basis(input);
     if (final.status !== "complete") return final;
@@ -347,6 +378,9 @@ export function createQueueDeliveryReader(
         optedOut,
         pull: initial.value.pull,
         publicationAuthor: pull.value.author,
+        ...(publication.value === null
+          ? {}
+          : { publicationProof: publication.value }),
         revision: input.revision,
         mergedBy: pull.value.mergedBy,
         commit: commit.value,
@@ -373,6 +407,8 @@ export function createQueueDeliveryReader(
     };
   }
   return {
+    readPublication: (input) =>
+      bounded(input.deadline, () => readPublication(input)),
     readBinding: (input) => bounded(input.deadline, () => readBinding(input)),
     readAuthorizationBasis: (input) =>
       bounded(input.deadline, () => basis(input)),

@@ -1,3 +1,4 @@
+import { reconcileExistingPrs } from "./loop-existing-pr.ts";
 /** Repair loop internals: intake. */
 import type { GitSha } from "../contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
@@ -67,12 +68,33 @@ export async function prepareMatrixIntakeV1(
       detail: "matrix intake deadline reached after source reads",
     };
   }
+  const takeoverAttempted = new Set<string>();
+  const takeoverRefused = new Set<string>();
+  for (;;) {
+    const takeover = await reconcileExistingPrs(
+      deps,
+      context,
+      takeoverAttempted,
+      takeoverRefused,
+    );
+    if (takeover === null) break;
+    if (takeover.kind === "state_error") {
+      return { status: "state_error", detail: takeover.detail };
+    }
+    if (deps.clock.now() >= bounds.runDeadline) {
+      return {
+        status: "margin",
+        detail: "existing PR intake deadline reached",
+      };
+    }
+  }
   const ranked = rankEligibleWork(
     context.snapshot,
     deps.configs,
     deps.clock.now(),
   );
   const freshIds = new Set(ranked.ordered.filter((id) => {
+    if (takeoverRefused.has(id)) return false;
     const record = context.snapshot.work.find((row) => row.id === id);
     return record !== undefined && record.source.kind === "issue" &&
       record.nextStep === "work" && record.intent === null &&

@@ -99,6 +99,7 @@ Deno.test("hosted runtime: bootstrap-only real child empty stdin aggregate", asy
     `
 import assert from "node:assert/strict";
 import { runActionsRepairHost } from "./frozen/src/host/actions.ts";
+import { QUEUE_SNAPSHOT_QUERY } from "./frozen/src/github/merge-queue-wire.ts";
 import { readMatrixNativeCarrier, runActionsMatrixAggregateCycles } from "./frozen/src/host/matrix-actions.ts";
 import { parseHostedExecutionIntentV1, HOSTED_RUNTIME_ID } from "./frozen/src/contracts/hosted-supervisor.ts";
 import { parseRepairStateSnapshotV1, parseReleaseStateSnapshotV1 } from "./frozen/src/contracts/state-snapshots.ts";
@@ -229,6 +230,7 @@ const github = new FakeGithub({ baseSha: revision, openIssues: [] });
 const gatewayGithub = new FakeGithub({ baseSha: gatewaySha, openIssues: [] });
 const preparedTargets = [];
 let modelCalls = 0, httpCalls = 0, artifactHttpCalls = 0, preflightCalls = 0;
+const queueReads: string[] = [];
 const carrier = await readMatrixNativeCarrier(false, true);
 assert.equal(carrier, undefined);
 let result, failure;
@@ -256,7 +258,25 @@ try { result = await runActionsRepairHost({
   gateway,
   composeGithub: (config) => config.repository.name === "sentinel" ? github : gatewayGithub,
   model: { modelId: "gpt-reserve", runModel: () => { modelCalls++; throw Error("bootstrap must not start a model"); } },
-  http: () => { httpCalls++; throw Error("fixture must not request external HTTP"); },
+  http: (request) => {
+    const url = new URL(request.url);
+    if (url.origin === "https://api.github.com") {
+      if (request.method === "GET" && url.pathname === "/repos/ubiquity/ai.ubq.fi/rules/branches/development") {
+        queueReads.push("rules");
+        return Promise.resolve({ status: 200, headers: new Headers(), bodyText: "[]" });
+      }
+      if (request.method === "POST" && url.pathname === "/graphql") {
+        let body: unknown;
+        try { body = JSON.parse(request.body ?? "null"); } catch { body = null; }
+        if (canonicalStringify(body) === canonicalStringify({ query: QUEUE_SNAPSHOT_QUERY, variables: { owner: "ubiquity", name: "ai.ubq.fi", branch: "development", ref: "refs/heads/development", after: null } })) {
+          queueReads.push("queue");
+          return Promise.resolve({ status: 200, headers: new Headers(), bodyText: JSON.stringify({ data: { repository: { name: "ai.ubq.fi", owner: { login: "ubiquity" }, ref: { name: "development", target: { __typename: "Commit", oid: gatewaySha } }, mergeQueue: null } } }) });
+        }
+      }
+    }
+    httpCalls++;
+    throw Error("fixture must not request external HTTP");
+  },
   artifactHttp: () => { artifactHttpCalls++; throw Error("empty recovery must not request artifacts"); },
   runTargetCycles: (input) => runActionsMatrixAggregateCycles(input, undefined, carrier),
 }); } catch (error) { failure = error; }
@@ -269,7 +289,7 @@ assert.equal(repair.value.head, repairSeed.value.head);
 assert.equal(modelCalls, 0);
 assert.equal(httpCalls, 0);
 assert.equal(artifactHttpCalls, 0);
-console.log(JSON.stringify({ kind: "bootstrap_fixture_state", stateUnchanged: true, modelCalls, httpCalls, artifactHttpCalls, preflightCalls, error: failure?.message ?? null }));
+console.log(JSON.stringify({ kind: "bootstrap_fixture_state", stateUnchanged: true, modelCalls, httpCalls, queueReads, artifactHttpCalls, preflightCalls, error: failure?.message ?? null }));
 if (failure) throw failure;
 assert.equal(result.status, "ran");
 assert.equal(result.startupReady, true);
@@ -281,6 +301,9 @@ assert.equal(preflightCalls, 1);
 assert.equal(modelCalls, 0);
 assert.equal(httpCalls, 0);
 assert.equal(artifactHttpCalls, 0);
+// A frozen predecessor has no host prelude; when present, only this complete
+// negative native observation is allowed. Every other HTTP request stays fatal.
+if (queueReads.length > 0) assert.deepEqual(queueReads, ["rules", "queue", "queue", "rules"]);
 assert.ok(github.calls.includes("listOpenIssues"));
 assert.ok(gatewayGithub.calls.includes("listOpenIssues"));
 assert.deepEqual(preparedTargets, ["ubiquity/sentinel", "ubiquity/ai.ubq.fi"]);
@@ -289,7 +312,7 @@ gatewayTransport.assertReadOnly(["/admin/sentinel/incidents"]);
 gatewayTransport.assertNoWriteEndpoints();
 assert.equal(gatewayTransport.requests[0].headers.get("authorization"), "Bearer synthetic-bootstrap-only-token");
 assert.deepEqual(await Array.fromAsync(Deno.readDir(gatewayRoot + "/retained/entries")), []);
-console.log(JSON.stringify({ kind: "bootstrap_fixture", result, modelCalls, httpCalls, artifactHttpCalls, preflightCalls }));
+console.log(JSON.stringify({ kind: "bootstrap_fixture", result, modelCalls, httpCalls, queueReads, artifactHttpCalls, preflightCalls }));
 `,
     { mode: 0o600 },
   );

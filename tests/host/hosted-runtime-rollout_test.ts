@@ -1,0 +1,224 @@
+import assert from "node:assert/strict";
+import type { GitSha } from "../../src/contracts/brands.ts";
+import {
+  HOSTED_RUNTIME_ROLLOUT,
+  parseHostedRuntimeRollout,
+} from "../../src/host/hosted-runtime-rollout.ts";
+import {
+  ciCorrectionRuntimeProven,
+  HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES,
+} from "../../ops/hosted-autonomy-ci-retries.ts";
+import {
+  ciFirstFixRuntimeProven,
+  ciFirstRuntimeProven,
+  HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+  HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
+} from "../../ops/hosted-autonomy-ci-first.ts";
+import {
+  HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES,
+  refreshFixActivation,
+} from "../../ops/hosted-autonomy-refresh-rearm.ts";
+import {
+  conflictResolutionRuntimeProven,
+  HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES,
+} from "../../ops/hosted-autonomy-conflict-retries.ts";
+import {
+  healthyProof,
+  releaseSnapshot,
+  runtimeRecord,
+} from "./owner-install-fixture-proofs.ts";
+
+const PRIOR = "da98f5f49c45b57cfa97a45fe647c36b1021f302" as GitSha;
+const NEXT = "f".repeat(40) as GitSha;
+const THIRD = "e".repeat(40) as GitSha;
+const rung = {
+  fromRevision: PRIOR,
+  fromGeneration: 81,
+  toRevision: NEXT,
+  toGeneration: 82,
+  rollbackToPrior: false,
+};
+
+function data() {
+  return {
+    version: 1,
+    installs: [{ ...rung }],
+    ciCorrection: [NEXT],
+    refreshRearm: [{ revision: NEXT, activatedNotBefore: 1 }],
+    conflictResolution: [{ revision: NEXT, activatedNotBefore: 1 }],
+    ciFirst: [NEXT],
+    ciFirstFix: [NEXT],
+  };
+}
+
+function rejected(value: unknown) {
+  assert.throws(() => parseHostedRuntimeRollout(value), {
+    name: "Error",
+    message: "invalid hosted runtime rollout",
+  });
+}
+
+Deno.test("runtime rollout: empty source preserves all five historical maintenance lists", () => {
+  assert.deepEqual(HOSTED_RUNTIME_ROLLOUT, {
+    version: 1,
+    installs: [],
+    ciCorrection: [],
+    refreshRearm: [],
+    conflictResolution: [],
+    ciFirst: [],
+    ciFirstFix: [],
+  });
+  for (
+    const rows of [
+      HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES,
+      HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
+      HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+      new Set(HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES.map((r) => r.revision)),
+      new Set(
+        HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES.map((r) => r.revision),
+      ),
+    ]
+  ) {
+    assert.equal(rows.has(PRIOR), true);
+    assert.equal(rows.has(NEXT), false);
+  }
+  assert.ok(Object.isFrozen(HOSTED_RUNTIME_ROLLOUT));
+  for (const value of Object.values(HOSTED_RUNTIME_ROLLOUT)) {
+    if (Array.isArray(value)) assert.ok(Object.isFrozen(value));
+  }
+});
+
+Deno.test("runtime rollout: malformed source cannot add a pin or an install", () => {
+  for (const value of [null, [], {}, 1, "source", { ...data(), extra: true }]) {
+    rejected(value);
+  }
+  for (const field of Object.keys(data())) {
+    const missing: Record<string, unknown> = data();
+    delete missing[field];
+    rejected(missing);
+  }
+  for (const version of [0, "1", 2, undefined]) {
+    rejected({ ...data(), version });
+  }
+  for (const key of ["ciCorrection", "ciFirst", "ciFirstFix"] as const) {
+    for (
+      const pins of [
+        null,
+        NEXT,
+        ["*"],
+        [NEXT.slice(1)],
+        [NEXT.toUpperCase()],
+        [NEXT, NEXT],
+        Array(1),
+        Object.assign([NEXT], { extra: true }),
+        Array.from(
+          { length: 1025 },
+          (_, i) => i.toString(16).padStart(40, "0"),
+        ),
+      ]
+    ) rejected({ ...data(), [key]: pins });
+  }
+  for (const key of ["refreshRearm", "conflictResolution"] as const) {
+    for (
+      const row of [
+        null,
+        {},
+        { revision: "*", activatedNotBefore: 1 },
+        { revision: NEXT, activatedNotBefore: 0 },
+        { revision: NEXT, activatedNotBefore: 1.5 },
+        { revision: NEXT, activatedNotBefore: "1" },
+        { revision: NEXT, activatedNotBefore: Number.MAX_SAFE_INTEGER + 1 },
+        { revision: NEXT, activatedNotBefore: 1, extra: true },
+      ]
+    ) rejected({ ...data(), [key]: [row] });
+    rejected({ ...data(), [key]: [data()[key][0], data()[key][0]] });
+  }
+  rejected({
+    ...data(),
+    conflictResolution: [{ revision: NEXT, activatedNotBefore: 2 }],
+  });
+  for (
+    const row of [
+      null,
+      {},
+      { ...rung, extra: true },
+      { ...rung, fromRevision: "*" },
+      { ...rung, toRevision: PRIOR },
+      { ...rung, fromGeneration: 0 },
+      { ...rung, fromGeneration: 81.5 },
+      { ...rung, toGeneration: "82" },
+      { ...rung, toGeneration: 83 },
+      { ...rung, rollbackToPrior: "false" },
+      {
+        ...rung,
+        fromGeneration: Number.MAX_SAFE_INTEGER - 1,
+        toGeneration: Number.MAX_SAFE_INTEGER,
+      },
+    ]
+  ) rejected({ ...data(), installs: [row] });
+  for (
+    const second of [
+      rung,
+      { ...rung, toRevision: THIRD },
+      { ...rung, fromRevision: THIRD },
+      { ...rung, fromGeneration: 83, toGeneration: 84 },
+      {
+        ...rung,
+        fromRevision: THIRD,
+        fromGeneration: 82,
+        toRevision: PRIOR,
+        toGeneration: 83,
+      },
+    ]
+  ) rejected({ ...data(), installs: [rung, second] });
+});
+
+Deno.test("runtime rollout: copied future data reaches maintenance gates only with exact own health", () => {
+  const input = data();
+  const parsed = parseHostedRuntimeRollout(input);
+  input.installs[0].rollbackToPrior = true;
+  input.refreshRearm[0].activatedNotBefore = 2;
+  input.ciFirst.push(PRIOR);
+  assert.equal(parsed.installs[0].rollbackToPrior, false);
+  assert.equal(parsed.refreshRearm[0].activatedNotBefore, 1);
+  assert.deepEqual(parsed.ciFirst, [NEXT]);
+  assert.ok(Object.isFrozen(parsed.installs[0]));
+  assert.ok(Object.isFrozen(parsed.refreshRearm[0]));
+  const proof = healthyProof(NEXT, 82, 501);
+  const runtime = runtimeRecord({
+    revision: NEXT,
+    generation: 82,
+    healthyProof: proof,
+    executionProof: proof,
+  });
+  const ci = new Set(parsed.ciCorrection);
+  const first = new Set(parsed.ciFirst);
+  const fix = new Set(parsed.ciFirstFix);
+  assert.equal(ciCorrectionRuntimeProven(runtime), false);
+  assert.equal(ciCorrectionRuntimeProven(runtime, ci), true);
+  assert.equal(ciFirstRuntimeProven(runtime, first), true);
+  assert.equal(ciFirstFixRuntimeProven(runtime, fix, first), true);
+  assert.equal(
+    conflictResolutionRuntimeProven(runtime, parsed.conflictResolution),
+    true,
+  );
+  assert.equal(
+    refreshFixActivation(releaseSnapshot({ runtime }), parsed.refreshRearm),
+    1,
+  );
+  const wrong = { ...runtime, lastHealthyProof: healthyProof(PRIOR, 81, 501) };
+  assert.equal(ciCorrectionRuntimeProven(wrong, ci), false);
+  assert.equal(ciFirstRuntimeProven(wrong, first), false);
+  assert.equal(ciFirstFixRuntimeProven(wrong, fix, first), false);
+  assert.equal(
+    conflictResolutionRuntimeProven(wrong, parsed.conflictResolution),
+    false,
+  );
+  assert.equal(
+    refreshFixActivation(releaseSnapshot({ runtime }), [{
+      revision: NEXT,
+      activatedNotBefore: proof.execution.createdAt + 1,
+    }]),
+    null,
+  );
+});

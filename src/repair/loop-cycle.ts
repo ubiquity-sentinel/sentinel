@@ -1,3 +1,4 @@
+import { reconcileExistingPrs } from "./loop-existing-pr.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: cycle. */
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
@@ -71,6 +72,8 @@ export async function runRepairCycle(
   // is attached to its record BEFORE cap enforcement, so a real PR is never
   // skipped as over-cap.
   const orphanAttempted = new Set<string>();
+  const takeoverAttempted = new Set<string>();
+  const takeoverRefused = new Set<string>();
   const missingTaskReviewAttempted = new Set<string>();
   // One run-local re-observation per historical already-satisfied block.
   const alreadySatisfiedAttempted = new Set<string>();
@@ -160,6 +163,22 @@ export async function runRepairCycle(
     if (tracking.steps >= stepLimit) {
       return { status: "step_limit", steps: tracking.steps };
     }
+
+    const takeover = await reconcileExistingPrs(
+      deps,
+      context,
+      takeoverAttempted,
+      takeoverRefused,
+    );
+    if (takeover?.kind === "state_error") {
+      return { status: "state_error", detail: takeover.detail };
+    }
+    if (takeover?.kind === "progress") {
+      didWork = true;
+      tracking.steps++;
+      continue;
+    }
+    if (takeover?.kind === "deferred") continue;
 
     const baseReview = await resumeBaseSatisfaction(
       deps,
@@ -305,7 +324,7 @@ export async function runRepairCycle(
     let selected: WorkRecordV1 | null = null;
     let cannotFit: string | null = null;
     for (const id of rank.ordered) {
-      if (deferred.has(id)) continue;
+      if (deferred.has(id) || takeoverRefused.has(id)) continue;
       const record = context.snapshot.work.find(
         (work) => work.id === id,
       );

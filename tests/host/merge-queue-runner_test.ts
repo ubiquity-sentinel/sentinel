@@ -83,7 +83,7 @@ Deno.test("queue runner: native gate file starts closed and changes only after c
   }
 });
 
-Deno.test("queue workflow: missing, false, or nonliteral readiness cannot admit prepare or workers", async () => {
+Deno.test("queue workflow: matrix workers require ordinary custody readiness", async () => {
   const source = await Deno.readTextFile(".github/workflows/supervisor.yml");
   const jobs = new Map(
     [...source.matchAll(
@@ -97,7 +97,7 @@ Deno.test("queue workflow: missing, false, or nonliteral readiness cannot admit 
   );
   assert.match(jobs.get("maintenance")!, /id: autonomy/);
   assert.match(jobs.get("maintenance")!, /--allow-env=GITHUB_OUTPUT,/);
-  for (const name of ["prepare", "matrix_plan", "matrix_cell", "repair"]) {
+  for (const name of ["matrix_plan", "matrix_cell"]) {
     const job = jobs.get(name)!;
     assert.match(job, /needs: (?:maintenance|\[[^\]\n]*maintenance[^\]\n]*\])/);
     const condition = /^ {4}if: (.*)$/m.exec(job)?.[1];

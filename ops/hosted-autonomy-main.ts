@@ -1,6 +1,14 @@
+import type { GitSha } from "../src/contracts/brands.ts";
+import {
+  type HostedMaintenanceCompatibilityFixture,
+  preflightHostedMaintenance,
+  writeHostedMigrationOutput,
+} from "./hosted-autonomy-compatibility.ts";
 import { emitHostedParkSummary } from "./hosted-autonomy-summary.ts";
 import { writeQueueCustodyOutput } from "./hosted-autonomy-queue-output.ts";
 import { createHostedQueueCoordinator } from "./hosted-autonomy-queue-host.ts";
+import { createMaintenancePublicationFor } from "../src/host/maintenance-existing-pr-publication.ts";
+import { DurableGitHubCooldownGate } from "../src/repair/github-cooldown.ts";
 import {
   createMatrixUncertaintyMaintenance,
   runMatrixUncertaintyMaintenance,
@@ -107,11 +115,13 @@ export async function runHostedAutonomyMain(input?: {
   /** Trusted in-process test transport; native checkout identity remains mandatory. */
   env: Readonly<Record<string, string | undefined>>;
   deps: HostedAutonomyDepsV1;
+  compatibility?: HostedMaintenanceCompatibilityFixture;
 }): Promise<number> {
   const env = (key: string) =>
     input === undefined ? readEnv(key) : input.env[key] ?? null;
   // Missing output and every failure before custody are closed at the workflow boundary.
   await writeQueueCustodyOutput(env("GITHUB_OUTPUT"), false);
+  await writeHostedMigrationOutput(env("GITHUB_OUTPUT"), null);
   const onQueueCustodyReady = async (ready: boolean) => {
     await writeQueueCustodyOutput(env("GITHUB_OUTPUT"), ready);
     await input?.deps.onQueueCustodyReady?.(ready);
@@ -142,15 +152,33 @@ export async function runHostedAutonomyMain(input?: {
   ) {
     return report(failed("identity_rejected", null));
   }
+  const compatibility = (
+    state: StateReadView,
+    clock: HostedAutonomyDepsV1["clock"],
+  ) =>
+    preflightHostedMaintenance({
+      state,
+      clock,
+      nativeToken: stateToken,
+      queueToken: apiToken,
+      run: {
+        runId: Number(env("GITHUB_RUN_ID")),
+        runAttempt: Number(env("GITHUB_RUN_ATTEMPT")),
+        launcherSha: facts.head as GitSha,
+      },
+      output: env("GITHUB_OUTPUT"),
+      fixture: input?.compatibility,
+    });
   let result: HostedAutonomyResultV1;
   let summaryActions: readonly string[] = [];
   try {
     if (input) {
       try {
-        result = await runHostedAutonomy({
-          ...input.deps,
-          onQueueCustodyReady,
-        });
+        result = await compatibility(input.deps.state, input.deps.clock) ??
+          await runHostedAutonomy({
+            ...input.deps,
+            onQueueCustodyReady,
+          });
         summaryActions = result.actions;
       } finally {
         await emitHostedParkSummary(
@@ -171,6 +199,15 @@ export async function runHostedAutonomyMain(input?: {
         remoteUrl: ISSUE48_QUOTA_REMOTE_URL,
         runner,
       });
+      const disposition = await compatibility(state, { now: () => Date.now() });
+      if (disposition !== null) {
+        await emitHostedParkSummary(
+          state,
+          env("GITHUB_STEP_SUMMARY"),
+          disposition.actions,
+        );
+        return report(disposition);
+      }
       // One surface per exact repository identity: the durable snapshot may
       // carry work for several repositories, and each record is delivered under
       // its OWN repository, never under the self repository.
@@ -200,6 +237,17 @@ export async function runHostedAutonomyMain(input?: {
             githubFor,
             token: apiToken,
             clock: { now: () => Date.now() },
+            publicationFor: createMaintenancePublicationFor({
+              sourceDir: Deno.cwd(),
+              scratch,
+              state,
+              clock: { now: () => Date.now() },
+              token: apiToken,
+              gate: new DurableGitHubCooldownGate({
+                state,
+                clock: { now: () => Date.now() },
+              }),
+            }),
           }),
           onQueueCustodyReady,
           // Route selector names only, never a key: a changed model route

@@ -50,7 +50,14 @@ import {
   testLocalCheckSucceeded,
 } from "./owner-install-api.ts";
 import { failedResult, report, waitingResult } from "./owner-install-result.ts";
+import {
+  EXISTING_PR_RUNTIME_CAPABILITY,
+  type ExistingPrRuntimeCapability,
+} from "./existing-pr-runtime-capability.ts";
+import { readHostedWriterQuiescence } from "./hosted-writer-quiescence.ts";
+import { canonicalStringify } from "../contracts/canonical.ts";
 import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
+import type { HostedRuntimeRollout } from "./hosted-runtime-rollout.ts";
 
 /**
  * Fixed production entry point. Reads only the named native identity and
@@ -70,6 +77,9 @@ export async function runOwnerDevelopmentInstallMain(input?: {
   startupWitness?: GitSha;
   /** Trusted in-process fixture only; never read from the environment. */
   queueRuntimeCapability?: QueueRuntimeCapability;
+  existingPrRuntimeCapability?: ExistingPrRuntimeCapability;
+  /** Trusted fixture only; production uses reviewed source data. */
+  rollout?: HostedRuntimeRollout;
 }): Promise<number> {
   const repository = Deno.env.get("GITHUB_REPOSITORY");
   const ref = Deno.env.get("GITHUB_REF");
@@ -86,8 +96,12 @@ export async function runOwnerDevelopmentInstallMain(input?: {
   ) {
     return report(failedResult("identity_rejected"), 1);
   }
+  const custodyCapability = input?.existingPrRuntimeCapability ??
+    EXISTING_PR_RUNTIME_CAPABILITY;
+  const custodyActive = custodyCapability.custodyActivated === true;
+  let fenceRun: OwnerStartupRecoveryAuthorityV1["run"] | undefined;
   let startupRun: OwnerStartupRecoveryAuthorityV1["run"] | undefined;
-  if (input?.startupRecovery === true) {
+  if (input?.startupRecovery === true || custodyActive) {
     const runId = Number(Deno.env.get("GITHUB_RUN_ID"));
     const runAttempt = Number(Deno.env.get("GITHUB_RUN_ATTEMPT"));
     if (
@@ -106,7 +120,8 @@ export async function runOwnerDevelopmentInstallMain(input?: {
     } catch {
       return report(failedResult("startup_source_rejected"), 1);
     }
-    startupRun = { runId, runAttempt, launcherSha: sha };
+    fenceRun = { runId, runAttempt, launcherSha: sha };
+    if (input?.startupRecovery === true) startupRun = fenceRun;
   }
   const nativeToken = Deno.env.get("GITHUB_TOKEN");
   const appToken = Deno.env.get("SENTINEL_SUPERVISOR_TOKEN");
@@ -241,6 +256,8 @@ export async function runOwnerDevelopmentInstallMain(input?: {
     recovery,
     startup,
     input?.queueRuntimeCapability,
+    input?.existingPrRuntimeCapability,
+    input?.rollout,
   );
   if (plan.status === "waiting" || plan.status === "no_change") {
     return report({
@@ -250,6 +267,44 @@ export async function runOwnerDevelopmentInstallMain(input?: {
   }
 
   const move = plan.move;
+  const repairBefore = custodyActive ? await state.readRepair() : null;
+  const drainDeadline = Date.now() + 120_000;
+  const revalidateDrain = async (): Promise<boolean> => {
+    if (!custodyActive) return true;
+    if (
+      fenceRun === undefined || !repairBefore?.ok ||
+      repairBefore.value.status !== "found"
+    ) return false;
+    const native = await readHostedWriterQuiescence({
+      token: nativeToken,
+      run: fenceRun,
+      phase: "prepare",
+      clock: { now: () => Date.now() },
+      deadline: drainDeadline,
+    }, custodyCapability);
+    if (native.status !== "ready") return false;
+    const [repair, release] = await Promise.all([
+      state.readRepair(),
+      state.readRelease(),
+    ]);
+    return repair.ok && repair.value.status === "found" &&
+      repair.value.head === repairBefore.value.head &&
+      canonicalStringify(repair.value.snapshot) ===
+        canonicalStringify(repairBefore.value.snapshot) &&
+      release.ok && release.value.status === "found" &&
+      release.value.head === current.head &&
+      canonicalStringify(release.value.snapshot) ===
+        canonicalStringify(current.snapshot);
+  };
+  if (!await revalidateDrain()) {
+    return report(
+      waitingResult(
+        "hosted writer compatibility drain unavailable",
+        current.snapshot,
+        current.head,
+      ),
+    );
+  }
   if (plan.status === "install") {
     const verified = await verifyOwnerDevelopmentInstallRevision(
       nativeToken,
@@ -312,6 +367,7 @@ export async function runOwnerDevelopmentInstallMain(input?: {
       recovery,
       startup,
       input?.queueRuntimeCapability,
+      input?.existingPrRuntimeCapability,
     );
     files = await ownerDevelopmentInstallFiles(planned, current.head);
     message = ownerDevelopmentInstallCommitMessage({
@@ -339,11 +395,12 @@ export async function runOwnerDevelopmentInstallMain(input?: {
     planned,
     files,
     message,
-    startup === undefined
+    !custodyActive && startup === undefined
       ? undefined
       : async () =>
-        await ownerStartupRepairUnchanged(state, startup!) &&
-        await ownerStartupNativeQuiescent(nativeToken, startup!.run),
+        await revalidateDrain() && (startup === undefined ||
+          (await ownerStartupRepairUnchanged(state, startup) &&
+            await ownerStartupNativeQuiescent(nativeToken, startup.run))),
   );
   if (written.status !== "confirmed") {
     return report({

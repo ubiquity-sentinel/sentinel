@@ -4,6 +4,7 @@ import {
   type QueueMode,
 } from "../../ops/hosted-autonomy-queue-policy.ts";
 import type { QueueProofPolicy } from "../../ops/hosted-autonomy-queue-proof.ts";
+import { HOSTED_CUSTODY_CAPABILITY } from "../host/hosted-custody-capability.ts";
 import type { QueueActor } from "./merge-queue-types.ts";
 
 /** Populated only by a reviewed, accepted canary configuration. */
@@ -31,7 +32,8 @@ export const QUEUE_MODE_CEILING: QueueMode = "off";
  * This is independent of the enqueue kill switch. Once activated, a later
  * mode="off" keeps queue custody and strict delivery verification enabled.
  */
-export const QUEUE_PROOF_ACTIVATED = false;
+export const QUEUE_PROOF_ACTIVATED =
+  HOSTED_CUSTODY_CAPABILITY.queue.proofActivated;
 
 /**
  * Only an accepted App-identity canary and exact historical witness inventory

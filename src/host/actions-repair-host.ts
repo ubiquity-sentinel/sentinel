@@ -1,7 +1,7 @@
 /** Hosted actions-repair-host responsibility. */
 import { canonicalStringify } from "../contracts/canonical.ts";
 import { asGitSha } from "../contracts/brands.ts";
-import { DenoReplayRuntime } from "../replay/runtime.ts";
+import { DenoReplayRuntime, type ReplayRuntimeV1 } from "../replay/runtime.ts";
 import { ReviewOwnerChannelClient } from "./review-owner-channel.ts";
 import { reviewOwnerChildInput } from "./review-owner-child-input.ts";
 import { parseCarrier } from "./matrix-actions-shared.ts";
@@ -37,6 +37,10 @@ import { GitHubApiClient } from "../github/client.ts";
 import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { fetchHttpTransport } from "../github/http.ts";
 import { runActionsPreflight } from "./actions-preflight.ts";
+import {
+  prepareActionsQueueCustody,
+  QUEUE_CUSTODY_IDLE_DETAIL,
+} from "./actions-queue-custody.ts";
 import { runActionsCiApproval } from "./actions-ci.ts";
 import { readHostedReleaseReceipt } from "./actions-release.ts";
 import { createActionsCandidateRestorer } from "./actions-candidates.ts";
@@ -94,6 +98,14 @@ import {
   APP_TOKEN_NOT_AFTER_ENV,
   parseAppTokenNotAfterV1,
 } from "./hosted-app-token-window.ts";
+import { HOSTED_APP_MINT_GRANT_ENV } from "./hosted-app-grant.ts";
+import {
+  composeHostedAppGitHub,
+  createHostedAppPrincipalContext,
+  type HostedAppGitHubInput,
+} from "./hosted-app-principal.ts";
+import { readHostedAppTakeoverRouting } from "./hosted-app-takeover-routing.ts";
+import { readHostedSelfDependencyPreparer } from "./hosted-self-dependencies.ts";
 import {
   ensureRepairStateSeed,
   optionalEnv,
@@ -347,6 +359,51 @@ export async function runActionsRepairHost(
 
   const tracker = new LocalSessionTracker();
   const http = deps.http ?? fetchHttpTransport();
+  // The private context binds the actual App token to clean protected source,
+  // native job facts and the already verified saved execution. Metadata alone
+  // never grants takeover authority; cells cannot request this capability.
+  const sourceRuntime = new DenoReplayRuntime(denoExecutable);
+  const sourceProcess: ReplayRuntimeV1 = {
+    run: (command) => {
+      const remaining = deadline - clock.now();
+      if (!Number.isSafeInteger(remaining) || remaining <= 0) {
+        return Promise.reject(new Error("hosted App source deadline expired"));
+      }
+      return sourceRuntime.run({
+        ...command,
+        maxDurationMs: Math.min(command.maxDurationMs, remaining),
+      });
+    },
+  };
+  const takeoverSource = {
+    launcherDir: joinPath(sourceDir, "..", "launcher"),
+    runtimeDir: sourceDir,
+    identity,
+    execution,
+    process: sourceProcess,
+  };
+  // Source routing is independent of whether a valid App mint is available.
+  // Active or unknown configured admission must discover/hold an existing PR;
+  // this does not grant a principal, Contents access or any effect capability.
+  const takeoverRouting = await readHostedAppTakeoverRouting(
+    takeoverSource,
+    deps.hostedAppSourceProfiles,
+  );
+  const takeoverContext = identity.job !== "matrix_cell" &&
+      appToken !== undefined
+    ? await createHostedAppPrincipalContext({
+      source: takeoverSource,
+      state,
+      clock,
+      gate,
+      http,
+      nativeToken: githubToken,
+      appToken,
+      mintGrant: readEnv(HOSTED_APP_MINT_GRANT_ENV),
+      appTokenNotAfter: readEnv(APP_TOKEN_NOT_AFTER_ENV),
+      deadline,
+    }, deps.hostedAppSourceProfiles)
+    : null;
   const gitExecutable = await resolveExecutable("git", trustedPath);
 
   // The committed target setting is the ONLY source of target repositories.
@@ -456,15 +513,9 @@ export async function runActionsRepairHost(
   // handed to every target cycle unchanged; it is never recomputed.
   // The port is composed per target: the REST client, review service, trusted
   // git remote and cooldown scope all address exactly that repository.
-  const composeProductionGithub = (config: RepositoryConfigV1): GitHubPort =>
-    scopeLocalRepairIssues(composeLocalGitHub({
+  const composeProductionGithub = (config: RepositoryConfigV1): GitHubPort => {
+    const common: HostedAppGitHubInput = {
       queueMode,
-      clock,
-      state,
-      gate,
-      http,
-      token: writeToken,
-      login,
       invocationId: nativeReviewOwner ? execution.id : crypto.randomUUID(),
       ...(nativeReviewOwner
         ? { ownerExecution: execution, ownerCustody: custodyFor() }
@@ -491,12 +542,39 @@ export async function runActionsRepairHost(
       reviewModelId,
       repository: config.repository,
       baseBranch: config.baseBranch,
-    }));
-  const composeTargetGithub = (config: RepositoryConfigV1): GitHubPort => {
-    const production = composeProductionGithub(config);
+    };
     return scopeLocalRepairIssues(
+      takeoverContext === null
+        ? composeLocalGitHub(
+          {
+            ...common,
+            clock,
+            state,
+            gate,
+            http,
+            token: writeToken,
+            login,
+          },
+          undefined,
+          { activated: takeoverRouting.status !== "inactive" },
+        )
+        : composeHostedAppGitHub(takeoverContext, common),
+    );
+  };
+  const targetPorts = new Map<string, GitHubPort>();
+  const composeTargetGithub = (config: RepositoryConfigV1): GitHubPort => {
+    const key = canonicalStringify({
+      repository: config.repository,
+      baseBranch: config.baseBranch,
+    });
+    const cached = targetPorts.get(key);
+    if (cached !== undefined) return cached;
+    const production = composeProductionGithub(config);
+    const port = scopeLocalRepairIssues(
       deps.composeGithub?.(config, production) ?? production,
     );
+    targetPorts.set(key, port);
+    return port;
   };
   const model = deps.model ?? new LocalCheckoutModelPort({
     stateRoot,
@@ -512,6 +590,12 @@ export async function runActionsRepairHost(
     modelId: modelRoute.model,
     failoverModelId: modelRoute.failoverModel,
     localIteration: false,
+    prepareCheckoutDependencies: await readHostedSelfDependencyPreparer({
+      runtimeDir: sourceDir,
+      launcherSha: identity.launcherSha,
+      executionLauncherSha: execution.launcherSha,
+      trustedPath,
+    }),
     // Both capabilities resolve from the REQUESTED repository, not from the
     // sentinel self-identity: the checkout and the candidate import must use
     // the target's own mirror, and candidate restoration must read the
@@ -585,10 +669,8 @@ export async function runActionsRepairHost(
       readHostedReleaseReceipt({ state }, request),
   });
 
-  // Model startup availability is proved once, in-process, before the
-  // deterministic pass. The probe already logs its bounded dummy-only failure;
-  // a failed probe must not prevent deterministic bookkeeping, it only refuses
-  // new model starts for this run.
+  // This bounded availability probe starts no model session. Its actual result
+  // remains the runtime-health signal even when queue custody holds this pass.
   let startupReady = false;
   try {
     await (deps.preflight ?? runActionsPreflight)(modelRoute);
@@ -607,6 +689,7 @@ export async function runActionsRepairHost(
    * failed rather than treating it as addressed.
    */
   const capabilitiesByConfig = new Map<string, TargetRepairCapabilitiesV1>();
+  const preparedTargets = new Set<string>();
   const prepareTarget = async (config: RepositoryConfigV1): Promise<void> => {
     const slug = `${config.repository.owner}/${config.repository.name}`;
     const committed = targetConfigs.find((entry) =>
@@ -616,6 +699,7 @@ export async function runActionsRepairHost(
       committed === undefined ||
       sourcePathBySlug.get(slug) !== mirrorPathFor(config)
     ) throw new Error(STATIC_TARGET_UNKNOWN);
+    if (preparedTargets.has(canonicalStringify(config))) return;
     if (deps.prepareTarget !== undefined) {
       await deps.prepareTarget(config, mirrorPathFor(config));
     } else if (mirrorPathFor(config) !== sourcePath) {
@@ -693,6 +777,7 @@ export async function runActionsRepairHost(
       }
     }
     capabilitiesByConfig.set(canonicalStringify(config), capabilities);
+    preparedTargets.add(canonicalStringify(config));
   };
 
   // An ordinary execution without current health is a deterministic verification.
@@ -704,116 +789,136 @@ export async function runActionsRepairHost(
   const runtime =
     parseReleaseStateSnapshotV1(releaseRead.value.snapshot).hostedRuntimes[0];
   const healthy = runtime?.lastHealthyProof;
-  const modelStartsEnabled = startupReady && execution.purpose === "ordinary" &&
+  const healthyOrdinaryExecution = execution.purpose === "ordinary" &&
     runtime?.activeRevision === execution.revision &&
     runtime.generation === execution.generation &&
     canonicalStringify(runtime.execution) === canonicalStringify(execution) &&
     healthy?.execution.revision === execution.revision &&
     healthy.execution.generation === execution.generation;
 
+  let queueReady = deps.job === "matrix_cell";
   let outcome: RepairCycleOutcomeV1 | null = null;
   let failure: unknown = null;
   try {
-    const runTargetCycles = deps.runTargetCycles ??
-      (async (input: ActionsTargetCyclesInputV1) => {
-        const { runActionsMatrixAggregateCycles } = await import(
-          "./matrix-actions.ts"
-        );
-        return runActionsMatrixAggregateCycles(input);
+    if (!queueReady) {
+      queueReady = await prepareActionsQueueCustody({
+        state,
+        clock,
+        token: writeToken,
+        http,
+        queueMode,
+        deadline,
+        purpose: execution.purpose,
+        configs: targetConfigs,
+        prepareTarget,
+        composeGithub: composeTargetGithub,
       });
-    const cycles = await runTargetCycles({
-      clock,
-      state,
-      configs: targetConfigs,
-      controllerSha,
-      githubCooldown: gate,
-      // Legacy callers retain a closed pair; each prepared target resolves its own pair below.
-      incidents: unavailableIncidents,
-      replay: unavailableReplay,
-      resolveTargetCapabilities: (config) =>
-        capabilitiesByConfig.get(canonicalStringify(config)) ??
-          unavailableTargetCapabilities(),
-      model,
-      budget,
-      deadline,
-      runOrigin,
-      stepLimit: execution.purpose === "bootstrap"
-        ? DEFAULT_STEP_LIMIT
-        : STEP_LIMIT,
-      // Only an ordinary hosted execution may start a model. Bootstrap, prior,
-      // candidate and rollback runs execute the deterministic entrypoint with
-      // no model starts while keeping every budget, limit and source behavior.
-      modelStartsEnabled,
-      externalImplementations: deps.job !== undefined,
-      // The legacy review class's cutoff, handed over by the launcher that
-      // pinned it for exactly this runtime (`review-round-cap.ts`); a missing
-      // or malformed value grants no legacy round (fails closed).
-      legacyReviewCutoff: parseLegacyReviewCutoffEnv(
-        optionalEnv(readEnv, LEGACY_REVIEW_CUTOFF_ENV),
-      ),
-      host: {
-        execution,
-        run: {
-          runId: identity.runId,
-          runAttempt: identity.runAttempt,
-          launcherSha: identity.launcherSha,
-        },
-        artifactRoot: joinPath(sourceDir, "..", ".sentinel-matrix"),
-        sourcePathFor: mirrorPathFor,
-        expectedProvider: modelRoute.provider,
-        // The failover the port above was constructed with (same resolution).
-        failoverModel: modelRoute.failoverModel,
-        ...(matrixCarrier === undefined ? {} : { matrixCarrier }),
-        readExecution: (execution) => nativeSelf.readHostedExecution(execution),
-        createArtifactTransport: async (producerState) => {
-          const {
-            createActionsMatrixArtifactTransport,
-            createActionsMatrixArtifactHttpTransport,
-          } = await import("./matrix-artifacts.ts");
-          return createActionsMatrixArtifactTransport({
-            state: producerState ?? {
-              readRepair: () => state.readRepair(),
-              readRelease: () => state.readRelease(),
-            },
-            token: githubToken,
-            http: deps.artifactHttp ??
-              createActionsMatrixArtifactHttpTransport(),
-            clock,
-            artifactRoot: joinPath(sourceDir, "..", ".sentinel-matrix"),
-          });
-        },
-      },
-      prepareTarget,
-      composeGithub: composeTargetGithub,
-      // A matrix cell reads its CI correction's failure evidence with its own
-      // scoped read-only App token (`cellCiEvidenceReader`). The reader never
-      // reaches the model worker: only the rendered, fenced text does.
-      ...(deps.job === "matrix_cell"
-        ? {
-          composeCiEvidence: (config: RepositoryConfigV1) =>
-            cellCiEvidenceReader({
-              repository: config.repository,
-              http,
+    }
+    if (!queueReady) {
+      outcome = { status: "idle", detail: QUEUE_CUSTODY_IDLE_DETAIL };
+    } else {
+      const runTargetCycles = deps.runTargetCycles ??
+        (async (input: ActionsTargetCyclesInputV1) => {
+          const { runActionsMatrixAggregateCycles } = await import(
+            "./matrix-actions.ts"
+          );
+          return runActionsMatrixAggregateCycles(input);
+        });
+      const cycles = await runTargetCycles({
+        clock,
+        state,
+        configs: targetConfigs,
+        controllerSha,
+        githubCooldown: gate,
+        // Legacy callers retain a closed pair; each prepared target resolves its own pair below.
+        incidents: unavailableIncidents,
+        replay: unavailableReplay,
+        resolveTargetCapabilities: (config) =>
+          capabilitiesByConfig.get(canonicalStringify(config)) ??
+            unavailableTargetCapabilities(),
+        model,
+        budget,
+        deadline,
+        runOrigin,
+        stepLimit: execution.purpose === "bootstrap"
+          ? DEFAULT_STEP_LIMIT
+          : STEP_LIMIT,
+        // Only an ordinary hosted execution may start a model. Bootstrap, prior,
+        // candidate and rollback runs execute the deterministic entrypoint with
+        // no model starts while keeping every budget, limit and source behavior.
+        modelStartsEnabled: startupReady && healthyOrdinaryExecution,
+        externalImplementations: deps.job !== undefined,
+        // The legacy review class's cutoff, handed over by the launcher that
+        // pinned it for exactly this runtime (`review-round-cap.ts`); a missing
+        // or malformed value grants no legacy round (fails closed).
+        legacyReviewCutoff: parseLegacyReviewCutoffEnv(
+          optionalEnv(readEnv, LEGACY_REVIEW_CUTOFF_ENV),
+        ),
+        host: {
+          execution,
+          run: {
+            runId: identity.runId,
+            runAttempt: identity.runAttempt,
+            launcherSha: identity.launcherSha,
+          },
+          artifactRoot: joinPath(sourceDir, "..", ".sentinel-matrix"),
+          sourcePathFor: mirrorPathFor,
+          expectedProvider: modelRoute.provider,
+          // The failover the port above was constructed with (same resolution).
+          failoverModel: modelRoute.failoverModel,
+          ...(matrixCarrier === undefined ? {} : { matrixCarrier }),
+          readExecution: (execution) =>
+            nativeSelf.readHostedExecution(execution),
+          createArtifactTransport: async (producerState) => {
+            const {
+              createActionsMatrixArtifactTransport,
+              createActionsMatrixArtifactHttpTransport,
+            } = await import("./matrix-artifacts.ts");
+            return createActionsMatrixArtifactTransport({
+              state: producerState ?? {
+                readRepair: () => state.readRepair(),
+                readRelease: () => state.readRelease(),
+              },
+              token: githubToken,
+              http: deps.artifactHttp ??
+                createActionsMatrixArtifactHttpTransport(),
               clock,
-              token: writeToken,
-              gate,
-            }),
-        }
-        : {}),
-      // The one advisory line reports every committed target as addressed or
-      // skipped (an unavailable default branch, or out of time). It carries no
-      // `status` property, so the launcher can never read it as a child record.
-      report: (result) => {
-        if (targets.targets.length > 1) {
-          console.log(JSON.stringify(targetsDiagnosticV1({
-            addressed: result.addressed,
-            skipped: [...targets.skipped, ...result.skipped],
-            failed: result.failed,
-          })));
-        }
-      },
-    });
-    outcome = cycles.outcome;
+              artifactRoot: joinPath(sourceDir, "..", ".sentinel-matrix"),
+            });
+          },
+        },
+        prepareTarget,
+        composeGithub: composeTargetGithub,
+        // A matrix cell reads its CI correction's failure evidence with its own
+        // scoped read-only App token (`cellCiEvidenceReader`). The reader never
+        // reaches the model worker: only the rendered, fenced text does.
+        ...(deps.job === "matrix_cell"
+          ? {
+            composeCiEvidence: (config: RepositoryConfigV1) =>
+              cellCiEvidenceReader({
+                repository: config.repository,
+                http,
+                clock,
+                token: writeToken,
+                gate,
+              }),
+          }
+          : {}),
+        // The one advisory line reports every committed target as addressed or
+        // skipped (an unavailable default branch, or out of time). It carries no
+        // `status` property, so the launcher can never read it as a child record.
+        report: (result) => {
+          if (targets.targets.length > 1) {
+            console.log(JSON.stringify(targetsDiagnosticV1({
+              addressed: result.addressed,
+              skipped: [...targets.skipped, ...result.skipped],
+              failed: result.failed,
+            })));
+          }
+        },
+      });
+      outcome = cycles.outcome;
+    }
   } catch (error) {
     failure = error;
   } finally {
@@ -833,7 +938,7 @@ export async function runActionsRepairHost(
   // the loop and the tracker drain, even when model startup was unavailable.
   // The helper is bounded and never throws, so an approval failure cannot
   // prevent deterministic bookkeeping or change the original error semantics.
-  const ciApproval = deps.job === undefined
+  const ciApproval = deps.job === undefined && queueReady
     ? await runActionsCiApproval({
       state,
       gate,

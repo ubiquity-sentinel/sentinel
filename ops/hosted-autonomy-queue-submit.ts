@@ -1,5 +1,6 @@
 /** Before-effects intent/hold, fresh native authorization, then one async queue submission. */
 import { canonicalStringify } from "../src/contracts/canonical.ts";
+import { hasTakeoverCustody } from "../src/github/existing-pr-takeover-provenance.ts";
 import type {
   QueueBinding,
   QueuePullIdentity,
@@ -123,6 +124,21 @@ export async function submitQueueAdmission(
       canonicalStringify(writer.observed.snapshot)
   ) return stop();
   let outcome;
+  if (hasTakeoverCustody(record)) {
+    const allowed = await queue.authorization.authorizeEnqueue?.({
+      snapshot: writer.observed.snapshot,
+      observedHead: writer.observed.head,
+      record,
+      binding,
+      queue: scan.value,
+      deadline: input.deadline,
+    });
+    if (!allowed?.ok) {
+      writer.actions.push(`${tag}:existing_pr_enqueue_custody_unavailable`);
+      return stop();
+    }
+  }
+  if (deps.clock.now() >= input.deadline) return stop();
   try {
     outcome = await queue.surface.enqueue(pull);
   } catch {

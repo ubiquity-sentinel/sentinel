@@ -579,6 +579,8 @@ Deno.test("hosted workflow: prepare saves the bootstrap intent and exact output 
     assert.deepEqual(rig.output, [
       "run=true",
       `revision=${rig.launcherSha}`,
+      "executionPurpose=bootstrap",
+      "generation=1",
       "modelStartsEnabled=false",
     ]);
 
@@ -755,6 +757,8 @@ Deno.test(
       assert.deepEqual(rig.output, [
         "run=true",
         `revision=${rig.launcherSha}`,
+        "executionPurpose=ordinary",
+        "generation=1",
         "modelStartsEnabled=true",
       ]);
       assert.equal(
@@ -868,6 +872,8 @@ Deno.test("hosted workflow: ordinary work starts on the next dispatch after sett
     assert.deepEqual(rig.output, [
       "run=true",
       `revision=${rig.launcherSha}`,
+      "executionPurpose=ordinary",
+      "generation=1",
       "modelStartsEnabled=true",
     ]);
 
@@ -973,7 +979,11 @@ Deno.test("hosted workflow: the shared cooldown gate blocks a new native request
     const result = await rig.run("prepare", RUN_ID);
     assert.equal(result.run, false, JSON.stringify(result));
     assert.equal(result.status, "pending");
-    assert.deepEqual(rig.output, ["run=false"]);
+    assert.deepEqual(rig.output, [
+      "run=false",
+      "executionPurpose=",
+      "generation=",
+    ]);
     assert.equal(
       rig.http.calls.length,
       0,
@@ -1029,7 +1039,8 @@ function namedStepRange(job: readonly string[], name: string): BlockV1 {
 /** The one App-token mint step inside a job, up to the next step. */
 function mintStepRange(job: readonly string[]): BlockV1 {
   const uses = job.findIndex((line) =>
-    line.startsWith("        uses: actions/create-github-app-token@")
+    line.startsWith("        uses: actions/create-github-app-token@") ||
+    line === "        uses: ./launcher/.github/actions/sentinel-app-token"
   );
   if (uses < 0) throw new Error("the App-token mint step is missing");
   let start = uses;
@@ -1054,7 +1065,10 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
     "the deleted supervisor App client id is gone",
   );
   assert.equal(
-    workflow.split("uses: actions/create-github-app-token@").length - 1,
+    workflow.split("uses: actions/create-github-app-token@").length - 1 +
+      workflow.split("uses: ./launcher/.github/actions/sentinel-app-token")
+        .length -
+      1,
     6,
     "the coordinators and isolated cells mint scoped installation tokens",
   );
@@ -1071,6 +1085,11 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
   ) {
     const lines = jobLines(workflow, job);
     const mint = blockText(lines, mintStepRange(lines));
+    assert.equal(
+      mint.includes("uses: ./launcher/.github/actions/sentinel-app-token"),
+      job === "matrix_plan" || job === "repair",
+      `${job} uses the metadata-producing action only for trusted coordination`,
+    );
     assert.ok(
       mint.includes("client-id: Iv23liHUJNXds9mU3j7Q"),
       `${job} mints from the surviving ubiquity-sentinel client id`,
@@ -1152,7 +1171,7 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
   }
 });
 
-Deno.test("hosted workflow: the repair runtime learns a lower bound on its App token mint", async () => {
+Deno.test("hosted workflow: trusted coordination learns a lower bound on its App token mint", async () => {
   // An installation token expires one hour after it is minted while the repair
   // job may run for two (live: ai.ubq.fi 641 and 653 terminally blocked after
   // three `auth_failed` reads of their own still-open pull requests). The
@@ -1161,43 +1180,51 @@ Deno.test("hosted workflow: the repair runtime learns a lower bound on its App t
   const workflow = await Deno.readTextFile(
     `${ROOT}/.github/workflows/supervisor.yml`,
   );
-  const lines = jobLines(workflow, "repair");
-  const record = namedStepRange(lines, "Record the App token mint lower bound");
-  const mint = mintStepRange(lines);
-  const runtime = namedStepRange(lines, "Run selected Sentinel runtime");
-  // Recorded IMMEDIATELY before the mint, so the instant can only precede the
-  // token's creation; the runtime runs after both.
-  assert.equal(record.end, mint.start, "no step runs between bound and mint");
-  assert.ok(mint.end <= runtime.start);
-  const recordText = blockText(lines, record);
-  assert.ok(recordText.includes("        id: token-window"));
-  assert.ok(
-    recordText.includes(
-      'echo "mintedNotBefore=$(date +%s%3N)" >> "$GITHUB_OUTPUT"',
-    ),
-    "the bound is the runner's epoch milliseconds before the mint",
-  );
-  assert.ok(!/secrets\.|steps\.app-token|env:/.test(recordText));
-  const runtimeText = blockText(lines, runtime);
-  assert.ok(
-    runtimeText.includes(
-      "SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: ${{ steps.token-window.outputs.mintedNotBefore }}",
-    ),
-    "the runtime step receives the recorded bound",
-  );
-  assert.ok(
-    /--allow-env=\S*SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE/.test(
-      runtimeText,
-    ),
-    "the launcher may read the recorded bound",
-  );
-  // Only the repair consumer is bounded: cells and the planner run model
-  // sessions that never need the App token late and must keep their windows.
+  for (
+    const [job, step] of [["repair", "Run selected Sentinel runtime"], [
+      "matrix_plan",
+      "Plan isolated issue matrix",
+    ]]
+  ) {
+    const lines = jobLines(workflow, job);
+    const record = namedStepRange(
+      lines,
+      "Record the App token mint lower bound",
+    );
+    const mint = mintStepRange(lines);
+    const runtime = namedStepRange(lines, step);
+    // Recorded IMMEDIATELY before the mint, so the instant can only precede the
+    // token's creation; the runtime runs after both.
+    assert.equal(record.end, mint.start, "no step runs between bound and mint");
+    assert.ok(mint.end <= runtime.start);
+    const recordText = blockText(lines, record);
+    assert.ok(recordText.includes("        id: token-window"));
+    assert.ok(
+      recordText.includes(
+        'echo "mintedNotBefore=$(date +%s%3N)" >> "$GITHUB_OUTPUT"',
+      ),
+      "the bound is the runner's epoch milliseconds before the mint",
+    );
+    assert.ok(!/secrets\.|steps\.app-token|env:/.test(recordText));
+    const runtimeText = blockText(lines, runtime);
+    assert.ok(
+      runtimeText.includes(
+        "SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: ${{ steps.token-window.outputs.mintedNotBefore }}",
+      ),
+      "the runtime step receives the recorded bound",
+    );
+    assert.ok(
+      /--allow-env=\S*SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE/.test(
+        runtimeText,
+      ),
+      "the launcher may read the recorded bound",
+    );
+  }
+  // Only trusted coordination receives this bound; cells have no takeover authority.
   for (
     const job of [
       "maintenance",
       "prepare",
-      "matrix_plan",
       "matrix_cell",
       "finalize",
     ]

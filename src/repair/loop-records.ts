@@ -1,3 +1,4 @@
+import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 /** Repair loop internals: records. */
 import type { GitSha } from "../contracts/brands.ts";
 import type { ReleaseRequestV1 } from "../contracts/release.ts";
@@ -9,7 +10,7 @@ import type {
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { RepairCycleDepsV1 } from "./loop-types.ts";
-import { clearIntent, setCandidateState } from "./transitions.ts";
+import { clearIntent, markBlocked, setCandidateState } from "./transitions.ts";
 
 /**
  * Exact repository identity match: owner, name AND GitHub App installation id
@@ -104,6 +105,12 @@ export function retireClosedPublication(
   now: number,
   nextStep: WorkRecordV1["nextStep"] = record.nextStep,
 ): WorkRecordV1 {
+  if (hasTakeoverCustody(record)) {
+    const message = "existing PR hold: closed_publication";
+    return record.blocker?.message === message
+      ? record
+      : markBlocked(record, "other", message, now);
+  }
   return {
     ...record,
     nextStep,

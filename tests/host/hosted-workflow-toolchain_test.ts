@@ -138,3 +138,63 @@ Deno.test("hosted workflow: jobs that start no target model session install no B
     assert.match(line, /oven-sh\/setup-bun@[0-9a-f]{40} # v/);
   }
 });
+
+Deno.test("hosted workflow: self-test dependencies are prepared without credentials before mint", () => {
+  const nodeVersion = /node-version: (\S+)/.exec(CI)?.[1];
+  assert.equal(nodeVersion, "24.19.0");
+  for (const job of ["matrix_plan", "matrix_cell", "repair"]) {
+    const steps = jobSteps(SUPERVISOR, job);
+    const node = stepIndex(steps, /uses: actions\/setup-node@/);
+    assert.ok(steps[node].includes(`node-version: ${nodeVersion}`));
+    const expose = stepIndex(
+      steps,
+      /- name: Expose the pinned Node to the model sandbox$/m,
+    );
+    assert.ok(
+      steps[expose].includes(
+        'sudo install -m755 "$(command -v node)" /usr/local/bin/node',
+      ),
+    );
+    assert.ok(steps[expose].includes(`= "v${nodeVersion}"`));
+    const setup = stepIndex(
+      steps,
+      /- name: Install locked self-test dependencies$/m,
+    );
+    const mint = stepIndex(
+      steps,
+      /- name: Mint the scoped sentinel App token$/m,
+    );
+    const seal = stepIndex(
+      steps,
+      /- name: Seal trusted self-test dependencies$/m,
+    );
+    assert.ok(
+      node < expose && expose < setup && setup < seal && seal < mint,
+      job,
+    );
+    assert.ok(steps[setup].includes("working-directory: launcher"));
+    assert.ok(
+      steps[setup].includes(
+        "npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token",
+      ),
+    );
+    assert.ok(!/env:|secrets\.|outputs\.token/.test(steps[setup]));
+    assert.ok(steps[seal].includes("working-directory: launcher"));
+    assert.ok(steps[seal].includes("ops/hosted-autonomy-self-dependencies.ts"));
+    assert.ok(steps[seal].includes("--allow-env=PATH,NODE_V8_COVERAGE"));
+    assert.ok(!/secrets\.|outputs\.token|--allow-net/.test(steps[seal]));
+    const lines = jobLines(SUPERVISOR, job).join("\n");
+    assert.equal(
+      lines.includes("SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT"),
+      job !== "matrix_cell",
+    );
+  }
+  for (const job of ["maintenance", "prepare", "finalize"]) {
+    assert.equal(
+      jobLines(SUPERVISOR, job).join("\n").includes(
+        "SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT",
+      ),
+      false,
+    );
+  }
+});

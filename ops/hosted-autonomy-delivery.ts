@@ -1,3 +1,6 @@
+import type { TakeoverPublicationProof } from "../src/contracts/existing-pr-takeover.ts";
+import { hasTakeoverCustody } from "../src/github/existing-pr-takeover-provenance.ts";
+import { takeoverPublicationMatches } from "../src/github/existing-pr-publication-proof.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
 import { QUEUE_PROOF_ACTIVATED } from "../src/github/queue-runtime-policy.ts";
@@ -193,6 +196,7 @@ export function verifiedMergedDelivery(
   pull: HostedAutonomyPullV1,
   baseBranch: string | null,
   custody?: HostedQueueCustodyContext,
+  publicationProof?: TakeoverPublicationProof,
 ): HostedMergedDeliveryV1 | null {
   if (
     isGatewayVpsRepository(record.repository) &&
@@ -206,7 +210,14 @@ export function verifiedMergedDelivery(
   if (pull.headSha !== head) return null;
   if (
     typeof pull.author !== "string" ||
-    !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author)
+    (hasTakeoverCustody(record)
+      ? !takeoverPublicationMatches(
+        publicationProof,
+        record,
+        pull.mergeCommitSha,
+        pull.author,
+      )
+      : !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author))
   ) {
     return null;
   }

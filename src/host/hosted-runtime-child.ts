@@ -20,6 +20,10 @@ import {
 import type { HostedRuntimeIdentityV1 } from "./hosted-runtime-identity.ts";
 import { LEGACY_REVIEW_CUTOFF_ENV } from "./legacy-review-cutoff-env.ts";
 import {
+  HOSTED_APP_GRANT_MAX_BYTES,
+  HOSTED_APP_MINT_GRANT_ENV,
+} from "./hosted-app-grant.ts";
+import {
   APP_TOKEN_MINTED_NOT_BEFORE_ENV,
   APP_TOKEN_NOT_AFTER_ENV,
   deriveAppTokenNotAfterV1,
@@ -122,11 +126,11 @@ export function buildChildEnvironment(
     if (!isNonEmptyText(output)) throw new Error(HOSTED_RUNTIME_STATIC_ENV);
     child.GITHUB_OUTPUT = output;
   }
-  // Only the repair consumer is bounded by its one App token: cells and the
-  // planner keep their own windows. Without an App token every write uses the
+  // Repair and planner share the same conservative App lifetime. Without an
+  // App token every write uses the
   // job-lifetime native token, so there is nothing to bound. A malformed or
   // future mint bound refuses here, before any child exists.
-  if (identity.job === "repair" && isNonEmptyText(appToken)) {
+  if (identity.job !== "matrix_cell" && isNonEmptyText(appToken)) {
     let notAfter: number | undefined;
     try {
       notAfter = deriveAppTokenNotAfterV1(
@@ -138,6 +142,17 @@ export function buildChildEnvironment(
     }
     if (notAfter !== undefined) {
       child[APP_TOKEN_NOT_AFTER_ENV] = String(notAfter);
+    }
+    // Inert metadata follows only its own App token into trusted host children.
+    // The private principal factory repeats source/native/scope checks. It
+    // refuses missing or malformed metadata without disabling ordinary work.
+    const grant = env[HOSTED_APP_MINT_GRANT_ENV];
+    if (
+      notAfter !== undefined && typeof grant === "string" && grant.length > 0 &&
+      grant.length <= HOSTED_APP_GRANT_MAX_BYTES &&
+      new TextEncoder().encode(grant).length <= HOSTED_APP_GRANT_MAX_BYTES
+    ) {
+      child[HOSTED_APP_MINT_GRANT_ENV] = grant;
     }
   }
   return child;
