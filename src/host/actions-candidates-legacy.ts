@@ -6,7 +6,10 @@ import type {
   StateReadResultV1,
 } from "../contracts/ports.ts";
 import { portError, portOk } from "../contracts/ports.ts";
-import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  type RepairStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
 import { hasCandidateState } from "../contracts/work-record.ts";
 import { baseRefreshIntentKey, candidateBranch } from "../repair/keys.ts";
 import { DenoReplayRuntime } from "../replay/runtime.ts";
@@ -189,7 +192,7 @@ export function createLegacyBaseRefreshLossProver(
     //    current attempt bound to the task, the full repository and B0. No
     //    spare attempt is required: loss can be recorded even when none
     //    remains.
-    const reservations = snapshot.reservations.filter((entry) =>
+    const reservations = allReservationsV1(snapshot).filter((entry) =>
       entry.taskId === record.id &&
       sameRepository(entry.repository, record.repository) &&
       entry.attempt === record.counters.attempts &&

@@ -26,6 +26,7 @@ import {
 } from "../contracts/attempt-memory.ts";
 import { candidateBranch } from "../repair/keys.ts";
 import { baseReviewOrigin } from "../repair/base-satisfaction-marker.ts";
+import { allReservationsV1 } from "../contracts/state-snapshots.ts";
 import { resolvedConflictCandidate } from "./matrix-conflict-candidate.ts";
 import type { MatrixBundleImporterV1 } from "./matrix-git.ts";
 import { resetCellTimeouts } from "./matrix-ingest-state.ts";
@@ -66,7 +67,7 @@ export async function replayConsumedConflict(
   const candidate = result.receipt?.candidate;
   const binding = await resolvedConflictCandidate(
     record,
-    context.snapshot.reservations,
+    allReservationsV1(context.snapshot),
   );
   if (
     binding === null || binding.reservationId !== cell.reservationId ||

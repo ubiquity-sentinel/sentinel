@@ -31,6 +31,10 @@ import { MANIFEST_KIND } from "./state-records.ts";
 import type { StateKind, StateManifestV1 } from "./state-records.ts";
 import { recordFiles } from "./state-codec.ts";
 import { validateSnapshotTransition } from "./state-transition.ts";
+import {
+  compactReservationLedgerV1,
+  ReservationLedgerCapacityError,
+} from "./state-reservation-archive.ts";
 import { RepairHistoryCache } from "./state-repair-history-cache.ts";
 
 /**
@@ -329,16 +333,25 @@ export class GitStateStore extends StateGitTransport implements StateStore {
     kind: StateKind,
     ref: string,
   ): Promise<PortResultV1<StateWriteResultV1>> {
-    // Validate the caller's snapshot before any Git mutation.
+    // Compact the live reservation ledger before validation: a full ledger
+    // moves its oldest settled rows into the durable archive so the next
+    // admission still fits. Every other collection is validated unchanged.
+    let snapshot = next;
     try {
       if (kind === "repair") {
-        parseRepairStateSnapshotV1(next);
+        snapshot = compactReservationLedgerV1(next as RepairStateSnapshotV1);
+        parseRepairStateSnapshotV1(snapshot);
       } else {
         parseReleaseStateSnapshotV1(next);
       }
-    } catch {
+    } catch (error) {
       return Promise.resolve(
-        portError("invalid", "state snapshot failed contract validation"),
+        portError(
+          "invalid",
+          error instanceof ReservationLedgerCapacityError
+            ? error.message
+            : "state snapshot failed contract validation",
+        ),
       );
     }
 
@@ -357,7 +370,7 @@ export class GitStateStore extends StateGitTransport implements StateStore {
 
       const transitionMessage = validateSnapshotTransition(
         prior,
-        next,
+        snapshot,
         expectedHead,
       );
       if (transitionMessage !== null) {
@@ -372,7 +385,7 @@ export class GitStateStore extends StateGitTransport implements StateStore {
       try {
         candidate = await this.buildAndPush(
           op,
-          next,
+          snapshot,
           expectedHead,
           kind,
           ref,

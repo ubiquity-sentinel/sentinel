@@ -73,6 +73,7 @@ export function recordFiles(
     add("incident_evidence", repair.evidence);
     add("work", repair.work);
     add("budget_reservation", repair.reservations);
+    add("reservation_archive", repair.reservationArchive ?? []);
     add("review_receipt", repair.reviews);
     add("owner_successor_review", repair.ownerSuccessorReviews ?? []);
     add("replay_result", repair.replays);
@@ -361,6 +362,11 @@ export async function readCommitTree(
         reservations: orderRecords(
           records.reservations,
         ) as BudgetReservationV1[],
+        ...(records.reservationArchive.length === 0 ? {} : {
+          reservationArchive: orderRecords(
+            records.reservationArchive,
+          ) as BudgetReservationV1[],
+        }),
         reviews: orderRecords(records.reviews) as ReviewReceiptV1[],
         ...(records.ownerSuccessorReviews.length === 0 ? {} : {
           ownerSuccessorReviews: orderRecords(records.ownerSuccessorReviews),

@@ -58,6 +58,9 @@ Deno.test("Passport policy: actual target loading resolves main and replaces Sen
         });
       },
     }),
+    // Passport keeps its named policy regardless of tree facts.
+    resolveTreeFacts: () =>
+      Promise.resolve({ files: ["package.json"], hasCiWorkflow: true }),
   });
   assert.equal(result.configs.length, 1);
   const config = result.configs[0];
@@ -106,11 +109,20 @@ Deno.test("Passport policy: exact identity defeats slug and template command spo
     ],
   );
   assert.equal(selected.baseBranch, "trunk");
+  // A foreign identity that merely reuses Passport's name is generic, never
+  // Passport's named verify policy.
   const foreign = createTargetConfigV1(template, {
     ...TARGET,
     owner: "foreign",
   }, "main");
-  assert.deepEqual(foreign.commandRegistry, template.commandRegistry);
+  assert.equal(foreign.commands.test, "no_local_verify");
+  assert.equal(
+    foreign.commandRegistry.commands[foreign.commands.test].executable,
+    "false",
+  );
+  assert.notDeepEqual(foreign.commandRegistry, template.commandRegistry);
+  assert.ok(foreign.protectedPaths.includes(".git/"));
+  assert.ok(foreign.protectedPaths.includes(".secrets"));
 });
 
 Deno.test("Passport policy: real verification consumer executes only the named native check", async () => {

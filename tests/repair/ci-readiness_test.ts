@@ -9,7 +9,11 @@ import type {
   LoopContextV1,
   RepairCycleDepsV1,
 } from "../../src/repair/loop-types.ts";
-import { candidateBranch } from "../../src/repair/keys.ts";
+import {
+  baseRefreshIntentKey,
+  candidateBranch,
+} from "../../src/repair/keys.ts";
+import { conflictMarker } from "../../src/repair/conflict-resolution.ts";
 import {
   ciRefreshAhead,
   currentCiValidation,
@@ -117,6 +121,62 @@ Deno.test("pre-review refresh does not wait behind a foreign target's validation
   assert.ok(out.outcome !== "closed_unmerged");
   assert.equal(out.outcome?.kind, "progress");
   assert.equal(out.after.work[0].intent?.kind, "base_refresh");
+});
+
+Deno.test("pre-review refresh is not held by a base refresh that can never act", async () => {
+  const record = published("issue-1");
+  const other = published("issue-2", SHA1, 8);
+  other.intent = {
+    kind: "base_refresh",
+    key: baseRefreshIntentKey(8, SHA3, SHA2),
+    startedAt: T0,
+    branch: other.target.branch,
+    expectedHead: SHA3,
+    observedBase: SHA2,
+    pr: 8,
+    requestId: null,
+    resultId: null,
+    failure: conflictMarker(SHA2, T0),
+  };
+  other.wait = { reason: "unavailable", since: T0, until: T0 + 3_600_000 };
+  const out = await freshness(record, other);
+  assert.ok(out.outcome !== "closed_unmerged");
+  assert.equal(out.outcome?.kind, "progress");
+  assert.equal(out.after.work[0].intent?.kind, "base_refresh");
+});
+
+Deno.test("a live validating base refresh still holds the line", () => {
+  const record = published("issue-1");
+  const other = published("issue-2", SHA1, 8);
+  other.intent = {
+    kind: "base_refresh",
+    key: baseRefreshIntentKey(8, SHA3, SHA2),
+    startedAt: T0,
+    branch: other.target.branch,
+    expectedHead: SHA3,
+    observedBase: SHA2,
+    pr: 8,
+    requestId: null,
+    resultId: null,
+  };
+  assert.equal(
+    ciRefreshAhead(seededSnapshot([record, other]), record, SHA2, T0 + 1000)
+      ?.id,
+    other.id,
+  );
+  other.wait = { reason: "unavailable", since: T0, until: T0 + 3_600_000 };
+  assert.equal(
+    ciRefreshAhead(seededSnapshot([record, other]), record, SHA2, T0 + 1000),
+    null,
+    "an unavailable prerequisite wait cannot hold the line",
+  );
+  other.wait = null;
+  other.intent.failure = conflictMarker(SHA2, T0);
+  assert.equal(
+    ciRefreshAhead(seededSnapshot([record, other]), record, SHA2, T0 + 1000),
+    null,
+    "a conflict marker cannot hold the line",
+  );
 });
 
 Deno.test("readiness releases expired, superseded and old-base waits", () => {

@@ -15,6 +15,7 @@ import {
   reviewTaskStatementDigest,
   type ReviewTaskStatementV1,
 } from "../contracts/review-receipt.ts";
+import { findReservationV1 } from "../contracts/state-snapshots.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { decideCiGate } from "../repair/loop-checks.ts";
@@ -95,9 +96,7 @@ export class BaseTaskReviewService implements BaseTaskReviewPortV1 {
     const current = read.value.snapshot.work.find((row) =>
       row.id === record.id
     );
-    const charge = read.value.snapshot.reservations.find((row) =>
-      row.id === admission
-    );
+    const charge = findReservationV1(read.value.snapshot, admission);
     return current !== undefined &&
       canonicalStringify(current) === canonicalStringify(record) &&
       baseReviewOrigin(record, read.value.snapshot) !== null &&

@@ -406,6 +406,7 @@ function parseWait(input: unknown, path: string): WorkWaitV1 {
       "review_pending",
       "review_quota",
       "ci_pending",
+      "ledger_capacity",
       "backoff",
       "unavailable",
       "manual",

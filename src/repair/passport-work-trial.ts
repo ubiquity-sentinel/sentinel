@@ -18,26 +18,59 @@ export function passportTrialCanReconsider(
   record: WorkRecordV1,
   reservations: readonly BudgetReservationV1[],
 ): boolean {
-  if (!isPassportWorkTrial(record.repository) || record.intent !== null) {
-    return false;
-  }
+  if (!isPassportWorkTrial(record.repository)) return false;
+  // A retained implementation intent is the attempt that parked the record.
+  // `markBlocked` never clears it, so it is in flight only while that attempt's
+  // charge is unsettled (proved below); requiring `intent === null` made a
+  // settled park permanently unre-admittable. Any other intent kind is still
+  // an unfinished publication or review operation and stays protected.
+  const intent = record.intent;
+  if (intent !== null && intent.kind !== "implementation") return false;
   const charges = reservations.filter((row) =>
     row.taskId === record.id &&
     row.repository.owner === record.repository.owner &&
     row.repository.name === record.repository.name &&
     row.repository.installationId === record.repository.installationId
   );
-  if (charges.some((row) => row.outcome === "reserved")) return false;
+  // A `reserved` row is only in flight for a live attempt: an older attempt's
+  // leaked row (passport-83's 2026-10-24 attempt-2 start) was already
+  // superseded by later settlement and must not deny the current one. Review
+  // reservations carry a review-round number in `attempt`, not an
+  // implementation attempt, so they are never live implementation starts.
+  if (
+    charges.some((row) =>
+      row.purpose !== "review_request" &&
+      row.outcome === "reserved" &&
+      row.attempt >= record.counters.attempts
+    )
+  ) return false;
   const current = charges.filter((row) =>
     row.purpose !== "review_request" &&
     row.attempt === record.counters.attempts
   );
+  const charge = current[0];
   if (
-    current.length !== 1 || current[0].outcome !== "submitted" ||
-    current[0].settledAt === null || current[0].purpose !==
+    current.length !== 1 || charge.settledAt === null ||
+    charge.purpose !==
       (record.counters.attempts === 1 ? "implementation" : "retry")
   ) return false;
-  if (current[0].head === record.target.base) return true;
+  // A charge proves the retained attempt reached a settled end when it is a
+  // confirmed `submitted`, or when an `ambiguous` charge of the current
+  // attempt parked the record: the blocked record is that attempt's terminal
+  // disposition. Timestamps cannot prove this order (`settleAndBlock` settles
+  // from its own clock before blocking with the caller's earlier one), so the
+  // attempt identity plus the terminal park is the invariant. The outcome
+  // stays `ambiguous` (no refund, no new charge); a charge from an older
+  // attempt, or a provably unsubmitted attempt, is not a settled model run.
+  const settledAmbiguous = charge.outcome === "ambiguous" &&
+    charge.attempt === record.counters.attempts &&
+    charge.purpose ===
+      (record.counters.attempts === 1 ? "implementation" : "retry") &&
+    charge.settledAt !== null &&
+    record.nextStep === "blocked" && record.blocker !== null;
+  if (charge.outcome !== "submitted" && !settledAmbiguous) return false;
+  if (intent !== null && intent.requestId !== charge.id) return false;
+  if (charge.head === record.target.base) return true;
   const candidate = record.target.candidateState;
   const preserved = candidate?.preserved;
   if (
