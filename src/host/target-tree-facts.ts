@@ -174,17 +174,24 @@ function stripJsoncExtras(text: string): string {
   return out;
 }
 
-/** Task/script names of one manifest; malformed text carries no scripts. */
-function manifestNames(text: string, field: "scripts" | "tasks"): string[] {
+/** Manifest fields; malformed text carries no declarations. */
+function parseManifest(text: string): Record<string, unknown> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripJsoncExtras(text.replace(/^\uFEFF/, "")));
   } catch {
-    return [];
+    return {};
   }
-  if (typeof parsed !== "object" || parsed === null) return [];
-  const record = parsed as Record<string, unknown>;
-  const entries = record[field];
+  if (typeof parsed !== "object" || parsed === null) return {};
+  return parsed as Record<string, unknown>;
+}
+
+/** Task/script names of one manifest. */
+function manifestNames(
+  manifest: Record<string, unknown>,
+  field: "scripts" | "tasks",
+): string[] {
+  const entries = manifest[field];
   if (typeof entries !== "object" || entries === null) return [];
   return Object.keys(entries);
 }
@@ -266,6 +273,7 @@ export function createTargetTreeFactsResolver(options: {
     // Keep each manifest's names separate: verify must run only a name the
     // detected toolchain's own manifest declares.
     const manifestScripts: { package?: string[]; deno?: string[] } = {};
+    let packageManager: string | undefined;
     if (roots.has("package.json")) {
       const text = await readContentsText(
         options.http,
@@ -273,7 +281,11 @@ export function createTargetTreeFactsResolver(options: {
         contentsUrl(target, revision, "package.json"),
       );
       if (text === null) return null;
-      manifestScripts.package = manifestNames(text, "scripts");
+      const manifest = parseManifest(text);
+      manifestScripts.package = manifestNames(manifest, "scripts");
+      if (typeof manifest.packageManager === "string") {
+        packageManager = manifest.packageManager;
+      }
     }
     const denoTasks = new Set<string>();
     for (const manifest of ["deno.json", "deno.jsonc"]) {
@@ -284,7 +296,9 @@ export function createTargetTreeFactsResolver(options: {
         contentsUrl(target, revision, manifest),
       );
       if (text === null) return null;
-      for (const name of manifestNames(text, "tasks")) denoTasks.add(name);
+      for (const name of manifestNames(parseManifest(text), "tasks")) {
+        denoTasks.add(name);
+      }
     }
     if (roots.has("deno.json") || roots.has("deno.jsonc")) {
       manifestScripts.deno = [...denoTasks];
@@ -316,6 +330,7 @@ export function createTargetTreeFactsResolver(options: {
       files,
       hasCiWorkflow,
       manifestScripts,
+      ...(packageManager === undefined ? {} : { packageManager }),
       ...(sentinelProtected === undefined ? {} : { sentinelProtected }),
     };
   }
