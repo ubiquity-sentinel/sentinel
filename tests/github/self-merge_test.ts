@@ -213,6 +213,139 @@ Deno.test("self merge: a forged workflow or emitter source identity cannot autho
   }
 });
 
+/**
+ * sentinel-246 (PR #256): the source write landed and GitHub merged the PR
+ * with exactly the proof's merge and closed issue #246, but the run stopped
+ * before recording the closure. GitHub then drops the PR from its CI run's
+ * `pull_requests`, so every resumed native CI read failed and the merge
+ * intent waited `unavailable` 852 times.
+ */
+async function resumedAfterNativeMerge(failPersist: string) {
+  const rig = await selfMergeFixture();
+  rig.state.nativeMerge = true;
+  rig.state.failPersist = failPersist;
+  const first = await rig.port.mergePullRequest(rig.request, rig.execution);
+  assert.equal(first.ok, false);
+  assert.deepEqual(
+    await rig.executor.readRemoteRef("refs/heads/development"),
+    { ok: true, value: rig.merge },
+  );
+  return { rig, resumedFrom: rig.calls.length };
+}
+
+function nativeCiReads(urls: URL[]): number {
+  return urls.filter((url) =>
+    url.pathname.endsWith("/actions/runs/500") ||
+    url.searchParams.get("check_name") === "test-local"
+  ).length;
+}
+
+Deno.test("self merge: a recorded source write settles once GitHub merged the PR and dropped its CI run link", async () => {
+  const { rig, resumedFrom } = await resumedAfterNativeMerge("pr_closed");
+  try {
+    assert.equal(rig.execution.proof?.stage, "source_applied");
+    const second = await rig.port.mergePullRequest(rig.request, rig.execution);
+    assert.ok(second.ok, JSON.stringify(second));
+    if (!second.ok || second.value.outcome !== "merged") {
+      throw new Error(JSON.stringify(second));
+    }
+    assert.equal(second.value.mergeSha, rig.merge);
+    assert.equal(second.value.head, rig.head);
+    assert.equal(second.value.selfMerge?.stage, "issue_closed");
+    assert.equal(second.value.selfMerge?.prState, "merged");
+    assert.deepEqual(second.value.selfMerge?.ci, rig.state.saved[0].ci);
+    const resumed = rig.calls.slice(resumedFrom).map((call) =>
+      new URL(call.url)
+    );
+    // The unreadable PR-bound run is never re-read; current-head CI still is.
+    assert.equal(nativeCiReads(resumed), 0);
+    assert.ok(
+      resumed.some((url) =>
+        url.pathname.endsWith(`/commits/${rig.head}/check-runs`) &&
+        !url.searchParams.has("check_name")
+      ),
+    );
+    assert.equal(
+      rig.state.pushes.filter((ref) => ref === "refs/heads/development")
+        .length,
+      1,
+    );
+    assert.equal(rig.calls.some((call) => call.method === "PATCH"), false);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("self merge: a resumed source write still needs green current-head CI and objects that match its proof", async (t) => {
+  await t.step("red current-head CI", async () => {
+    const { rig } = await resumedAfterNativeMerge("pr_closed");
+    try {
+      rig.state.failedCi = true;
+      const second = await rig.port.mergePullRequest(
+        rig.request,
+        rig.execution,
+      );
+      assert.equal(second.ok, false);
+      if (!second.ok) {
+        assert.equal(second.error.detail, "self merge current CI unavailable");
+      }
+      assert.equal(rig.execution.proof?.stage, "source_applied");
+    } finally {
+      await rig.cleanup();
+    }
+  });
+  await t.step("recorded CI tree contradicting the head", async () => {
+    const { rig } = await resumedAfterNativeMerge("pr_closed");
+    try {
+      const proof = structuredClone(rig.execution.proof!);
+      proof.tree = rig.base;
+      proof.ci.proof.testedTree = rig.base;
+      rig.execution.proof = proof;
+      const second = await rig.port.mergePullRequest(
+        rig.request,
+        rig.execution,
+      );
+      assert.equal(second.ok, false);
+      if (!second.ok) {
+        assert.equal(
+          second.error.detail,
+          "self merge tested tree or trusted source mismatch",
+        );
+      }
+    } finally {
+      await rig.cleanup();
+    }
+  });
+});
+
+Deno.test("self merge: a proof that never recorded its source write still re-reads native CI", async () => {
+  const { rig, resumedFrom } = await resumedAfterNativeMerge("source_applied");
+  try {
+    assert.equal(rig.execution.proof?.stage, "preserved");
+    const second = await rig.port.mergePullRequest(rig.request, rig.execution);
+    assert.equal(second.ok, false);
+    if (!second.ok) {
+      assert.equal(
+        second.error.detail,
+        "native CI evidence unavailable or mismatched",
+      );
+    }
+    assert.ok(
+      nativeCiReads(
+        rig.calls.slice(resumedFrom).map((call) => new URL(call.url)),
+      ) > 0,
+    );
+    assert.equal(rig.execution.proof?.stage, "preserved");
+    assert.equal(
+      rig.state.pushes.filter((ref) => ref === "refs/heads/development")
+        .length,
+      1,
+    );
+  } finally {
+    await rig.cleanup();
+  }
+});
+
 Deno.test("self merge: wrong PR closure identity preserves source proof", async () => {
   const rig = await selfMergeFixture();
   try {

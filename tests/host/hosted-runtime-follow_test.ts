@@ -16,7 +16,7 @@ import {
 } from "./hosted-runtime-follow-fixtures.ts";
 import { FOLLOW_MATRIX_WAVE_DEADLINE_MS } from "../../src/host/hosted-runtime-follow-matrix.ts";
 import {
-  FOLLOW_LIST_ATTEMPTS,
+  FOLLOW_SCAN_RETRY,
   FollowError,
   HostedRuntimeFollowApi,
 } from "../../src/host/hosted-runtime-follow-api.ts";
@@ -270,9 +270,9 @@ Deno.test("follow never treats incomplete CI pagination as an older-candidate fa
   assert.equal(result.journal.reason, "incomplete_pagination");
   assert.equal(api.mutations, 0);
   // Persistent inconsistency is re-listed from page 1 a bounded number of
-  // times, then refused exactly as before.
-  assert.equal(ciListings(api), FOLLOW_LIST_ATTEMPTS);
-  assert.equal(api.listPauses, FOLLOW_LIST_ATTEMPTS - 1);
+  // times with backoff, then refused exactly as before.
+  assert.equal(ciListings(api), FOLLOW_SCAN_RETRY.listAttempts);
+  assert.deepEqual(api.pauses, [1_000, 2_000, 4_000, 8_000]);
 });
 
 function ciListings(api: FollowFake): number {
@@ -293,7 +293,7 @@ Deno.test("follow re-lists a transiently inconsistent CI listing and proceeds", 
   assert.equal(result.journal.decision, "advanced");
   assert.equal(api.launcher, OLDER);
   assert.equal(api.mutations, 1);
-  assert.equal(api.listPauses, 1);
+  assert.deepEqual(api.pauses, [1_000]);
   // D: one inconsistent and one complete listing; OLDER: one listing.
   assert.equal(ciListings(api), 3);
 });

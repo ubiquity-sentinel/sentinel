@@ -61,6 +61,7 @@ const SELF_DEFECT_JOBS = [
   "prepare",
   "matrix_plan",
   "matrix_cell",
+  "repair_cell",
   "repair",
   "finalize",
   "bootstrap",
@@ -92,6 +93,7 @@ function safeJob(value: string): string {
   if (SELF_DEFECT_JOBS.some((job) => job === value)) return value;
   // Supervisor matrix display names contain only the opaque 64-hex cell ID.
   if (/^matrix_cell \([0-9a-f]{64}\)$/.test(value)) return "matrix_cell";
+  if (/^repair_cell \([0-9a-f]{64}\)$/.test(value)) return "repair_cell";
   // The Actions API appends the fixed shard and worker matrix values.
   return SELF_DEFECT_TEST_SHARD_NAMES.some((job) => job === value)
     ? "test-shards"

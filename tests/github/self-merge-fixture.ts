@@ -147,7 +147,8 @@ export async function selfMergeFixture() {
   };
   const calls: HttpRequestV1[] = [];
   let prState: "open" | "closed" = "open",
-    issueState: "open" | "closed" = "open";
+    issueState: "open" | "closed" = "open",
+    nativelyMerged = false;
   const state = {
     ci,
     missingCi: false,
@@ -158,6 +159,11 @@ export async function selfMergeFixture() {
     race: false,
     ancestorRace: false,
     wrongCloseIdentity: false,
+    /**
+     * GitHub marks the PR merged once `development` holds its exact merge and
+     * closes the `Resolves #N` issue (live PR #256, issue #246).
+     */
+    nativeMerge: false,
     pushes: [] as string[],
   };
   const originalPush = executor.push.bind(executor);
@@ -195,7 +201,15 @@ export async function selfMergeFixture() {
         base,
       ]);
     }
-    return originalPush(ref, sha, expected);
+    const pushed = await originalPush(ref, sha, expected);
+    if (
+      state.nativeMerge && pushed.ok && ref === "refs/heads/development" &&
+      sha === built.value
+    ) {
+      nativelyMerged = true;
+      issueState = "closed";
+    }
+    return pushed;
   };
   const http = async (request: HttpRequestV1): Promise<HttpResponseV1> => {
     calls.push(request);
@@ -217,7 +231,9 @@ export async function selfMergeFixture() {
       const target = await executor.readRemoteRef("refs/heads/development");
       body = pullWire({
         number: state.wrongCloseIdentity && prState === "closed" ? 2 : 1,
-        state: prState,
+        state: nativelyMerged ? "closed" : prState,
+        merged_at: nativelyMerged ? new Date(T0 + 160_000).toISOString() : null,
+        merge_commit_sha: nativelyMerged ? built.value : null,
         body: "Resolves #7",
         head: { ref: "sentinel/fix-1", sha: head },
         base: { ref: "development", sha: target.ok ? target.value : base },
@@ -261,7 +277,9 @@ export async function selfMergeFixture() {
         conclusion: "success",
         path: ".github/workflows/ci.yml@refs/pull/1/merge",
         repository: { id: 17, full_name: "ubiquity-sentinel/sentinel" },
-        pull_requests: [{
+        // A run lists open pull requests only: once PR #256 merged, its CI
+        // run 41472559552 reported `pull_requests: []`.
+        pull_requests: nativelyMerged || prState !== "open" ? [] : [{
           number: 1,
           head: { sha: head, ref: "sentinel/fix-1", repo: { id: 17 } },
           base: { sha: base, ref: "development", repo: { id: 17 } },
