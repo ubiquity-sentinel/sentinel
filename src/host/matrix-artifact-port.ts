@@ -71,6 +71,19 @@ export interface MatrixRejectedWaveV1 {
   cells: readonly MatrixRejectedCellEvidenceV1[];
 }
 
+/**
+ * GitHub's Actions API kept answering a server error (5xx) for a listing or
+ * metadata read after bounded retries. Nothing was authenticated or
+ * ingested; the matrix consumer leaves every charge unresolved and continues
+ * the ordinary lifecycle (live 2026-10-24: a persistent 502 on one run's job
+ * listing crashed two repair jobs). It is never a provenance verdict.
+ */
+export class MatrixArtifactUnavailableError extends Error {
+  constructor() {
+    super("matrix artifact API unavailable");
+  }
+}
+
 /** Refusal remains fatal except for the trusted per-record quarantine consumer. */
 export class MatrixMissingCellArtifactError extends Error {
   constructor(

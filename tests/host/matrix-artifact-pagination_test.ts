@@ -220,3 +220,65 @@ Deno.test("matrix artifacts: ordinary current-run launcher mismatch still refuse
     await Deno.remove(rig.tmp, { recursive: true });
   }
 });
+
+Deno.test("matrix artifacts: a listing whose count shifts between pages lists again", async () => {
+  const rig = await fixture(true);
+  try {
+    rig.pagination.numeric = true;
+    rig.artifacts.push(
+      ...Array.from(
+        { length: 6 },
+        (_, i) => ({ id: i + 3000, name: `extra-${i}` }),
+      ),
+    );
+    // Another run uploads one artifact while page 2 of the first listing is
+    // requested, as live run 40113229034 saw.
+    let uploaded = false;
+    rig.pagination.onPage = (key, page) => {
+      if (key === "artifacts" && page === 2 && !uploaded) {
+        uploaded = true;
+        rig.artifacts.push({ id: 3999, name: "concurrent-upload" });
+      }
+    };
+    const { currentRun: _oldRun, ...input } = rig.input;
+    const waves = await rig.transport.recover(input);
+    assert.equal(waves.length, 1);
+    assert.equal(waves[0].results.length, 1);
+    assert.ok(
+      rig.calls.filter((call) =>
+        call.url.includes("/artifacts?per_page=100&page=1")
+      ).length >= 2,
+      "the listing restarted from page 1",
+    );
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
+
+Deno.test("matrix artifacts: a count that never settles still refuses", async () => {
+  const rig = await fixture(true);
+  try {
+    rig.pagination.numeric = true;
+    rig.artifacts.push(
+      ...Array.from(
+        { length: 6 },
+        (_, i) => ({ id: i + 3000, name: `extra-${i}` }),
+      ),
+    );
+    let next = 5000;
+    rig.pagination.onPage = (key, page) => {
+      if (key === "artifacts" && page === 2) {
+        rig.artifacts.push({ id: next++, name: `upload-${next}` });
+      }
+    };
+    const before = canonicalStringify([rig.repair, rig.release]);
+    const { currentRun: _oldRun, ...input } = rig.input;
+    await assert.rejects(
+      () => rig.transport.recover(input),
+      /provenance unavailable or conflicting/,
+    );
+    assert.equal(canonicalStringify([rig.repair, rig.release]), before);
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
