@@ -13,6 +13,7 @@ import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
   parseReviewReceiptV1,
   type ReviewReceiptV1,
+  reviewTaskStatementDigest,
   type ReviewTaskStatementV1,
 } from "../../src/contracts/review-receipt.ts";
 import {
@@ -23,11 +24,8 @@ import {
   parseRepairStateSnapshotV1,
   type RepairStateSnapshotV1,
 } from "../../src/contracts/state-snapshots.ts";
-import { runHostedAutonomy } from "../../ops/hosted-autonomy-runner.ts";
-import { createHostedAutonomyScopes } from "../../ops/hosted-autonomy-scopes.ts";
+import { latestPullReview } from "../../src/repair/carried-review.ts";
 import type { HostedAutonomyPassContextV1 } from "../../ops/hosted-autonomy-scopes.ts";
-import { readHostedClosedIssues } from "../../ops/hosted-autonomy-retry-pass.ts";
-import { runHostedDeliveryPass } from "../../ops/hosted-autonomy-delivery-pass.ts";
 import type {
   HostedAutonomyDepsV1,
   HostedAutonomyGitHubV1,
@@ -37,8 +35,22 @@ import type {
 import { makeRig, type RigV1 } from "./hosted-autonomy-rig.ts";
 import {
   darkQueueCoordinatorFixture,
-  darkQueueFixture,
+  historicalDarkQueueFixture,
+  pinFixtureDirectMerge,
 } from "./hosted-autonomy-dark-queue-fixture.ts";
+
+import {
+  DORMANT_HOSTED_SUPERVISOR_POLICY,
+  type HostedPolicyGraph,
+  withHostedProductionPolicy,
+} from "./hosted-supervisor-policy-fixture.ts";
+
+/** Explicit preactivation semantics; never active F/LF evidence. */
+export function withHistoricalAutonomy<T>(
+  consume: (graph: HostedPolicyGraph) => Promise<T>,
+): Promise<T> {
+  return withHostedProductionPolicy(DORMANT_HOSTED_SUPERVISOR_POLICY, consume);
+}
 
 const LIVE = JSON.parse(
   await Deno.readTextFile(
@@ -48,6 +60,38 @@ const LIVE = JSON.parse(
     ),
   ),
 );
+
+/** Historical shapes use new, explicit synthetic task text; original captures stay untouched. */
+const SYNTHETIC_TASKS = new Map<number, ReviewTaskStatementV1>(
+  await Promise.all([
+    ...new Set<number>(
+      (LIVE.reviews as { taskAcceptance?: { issueNumber: number } | null }[])
+        .flatMap((row) =>
+          row.taskAcceptance == null ? [] : [row.taskAcceptance.issueNumber]
+        ),
+    ),
+  ].map(async (issueNumber) => {
+    const text = {
+      issueNumber,
+      title: `Synthetic delivery task ${issueNumber}`,
+      body: "Deliver the exact synthetic reviewed patch.",
+    };
+    return [issueNumber, {
+      ...text,
+      digest: await reviewTaskStatementDigest(text),
+    }] as const;
+  })),
+);
+function syntheticReceipt(row: unknown): ReviewReceiptV1 {
+  const receipt = parseReviewReceiptV1(row);
+  const task = receipt.taskAcceptance == null
+    ? null
+    : SYNTHETIC_TASKS.get(receipt.taskAcceptance.issueNumber);
+  return task == null ? receipt : {
+    ...receipt,
+    taskAcceptance: { ...receipt.taskAcceptance!, taskDigest: task.digest },
+  };
+}
 
 export const APP = "ubiquity-sentinel[bot]";
 /** The live Gateway installation identity. */
@@ -83,7 +127,7 @@ export function liveRecord(
 
 /** Every live receipt bound to the record's current PR/head/base. */
 export function liveReceipts(record: WorkRecordV1): ReviewReceiptV1[] {
-  return (LIVE.reviews as unknown[]).map((row) => parseReviewReceiptV1(row))
+  return (LIVE.reviews as unknown[]).map(syntheticReceipt)
     .filter((review) =>
       review.repository.name === record.repository.name &&
       review.repository.installationId === record.repository.installationId &&
@@ -104,7 +148,7 @@ export function liveRequest(pullRequest: number): ReleaseRequestV1 {
 
 /** Every live receipt (all records and both follow-up candidates). */
 export function allLiveReceipts(): ReviewReceiptV1[] {
-  return (LIVE.reviews as unknown[]).map((row) => parseReviewReceiptV1(row));
+  return (LIVE.reviews as unknown[]).map(syntheticReceipt);
 }
 
 /** One live PR fact, read 23:25-23:35Z. */
@@ -125,12 +169,10 @@ export function liveTask(
   const digest = receipts.find((receipt) =>
     receipt.taskAcceptance?.issueNumber === issueNumber
   )?.taskAcceptance?.taskDigest;
-  return digest === undefined ? null : {
-    issueNumber,
-    title: `issue ${issueNumber}`,
-    body: "",
-    digest,
-  };
+  const task = SYNTHETIC_TASKS.get(issueNumber);
+  return digest === undefined || task === undefined
+    ? null
+    : { ...task, digest };
 }
 
 /** A live-shaped repair snapshot at the live instant. */
@@ -192,7 +234,7 @@ export function mergedPull(
   onto: string,
   overrides: Partial<HostedAutonomyPullV1> = {},
 ): HostedAutonomyPullV1 {
-  return openPull(record, {
+  const pull = openPull(record, {
     state: "closed",
     merged: true,
     mergeCommitSha: mergeSha(record.target.pr!),
@@ -202,6 +244,18 @@ export function mergedPull(
     baseAncestorOfRevision: true,
     ...overrides,
   });
+  const receipt = latestPullReview(
+    liveSnapshot([record], allLiveReceipts()),
+    record,
+    APP,
+  );
+  const task = receipt === null
+    ? null
+    : liveTask(record.related.issueNumber!, [receipt]);
+  if (receipt !== null && task !== null) {
+    pinFixtureDirectMerge(pull, record, receipt, task.digest);
+  }
+  return pull;
 }
 
 export interface LiveSurfaceOptionsV1 {
@@ -302,13 +356,17 @@ export async function runAt(
   now = NOW,
   extra: SpentDepsV1 = {},
 ): Promise<HostedAutonomyResultV1> {
-  return await runHostedAutonomy({
-    state: rig.state,
-    githubFor: rig.githubFor,
-    clock: { now: () => now },
-    queueCustody: darkQueueFixture(rig),
-    queue: await darkQueueCoordinatorFixture(rig),
-    ...extra,
+  return await withHistoricalAutonomy(async (graph) => {
+    const { runHostedAutonomy } = await graph.runner();
+    const custody = historicalDarkQueueFixture(rig);
+    return await runHostedAutonomy({
+      state: rig.state,
+      githubFor: rig.githubFor,
+      clock: { now: () => now },
+      queueCustody: custody,
+      queue: await darkQueueCoordinatorFixture(rig, custody),
+      ...extra,
+    });
   });
 }
 
@@ -318,34 +376,40 @@ export async function deliveryOnly(
   now = NOW,
   extra: SpentDepsV1 = {},
 ): Promise<{ result: HostedAutonomyResultV1 | null; actions: string[] }> {
-  const read = await rig.state.readRepair();
-  assert.ok(read.ok && read.value.status === "found");
-  const release = await rig.state.readRelease();
-  assert.ok(release.ok && release.value.status === "found");
-  const deps: HostedAutonomyDepsV1 = {
-    state: rig.state,
-    githubFor: rig.githubFor,
-    clock: { now: () => now },
-    queueCustody: darkQueueFixture(rig),
-    queue: await darkQueueCoordinatorFixture(rig),
-    ...extra,
-  };
-  const actions: string[] = [];
-  const context: HostedAutonomyPassContextV1 = {
-    deps,
-    actions,
-    revisions: [],
-    snapshot: read.value.snapshot,
-    observedHead: read.value.head,
-    initialHead: read.value.head,
-    releaseSnapshot: release.value.snapshot,
-    closedIssues: new Set(),
-    foreignMerged: new Map(),
-    dedicatedReservations: new Set<string>(),
-    ...createHostedAutonomyScopes(deps),
-  };
-  await readHostedClosedIssues(context);
-  return { result: await runHostedDeliveryPass(context), actions };
+  return await withHistoricalAutonomy(async (graph) => {
+    const { createHostedAutonomyScopes } = await graph.scopes();
+    const { readHostedClosedIssues } = await graph.closedIssues();
+    const { runHostedDeliveryPass } = await graph.deliveryPass();
+    const read = await rig.state.readRepair();
+    assert.ok(read.ok && read.value.status === "found");
+    const release = await rig.state.readRelease();
+    assert.ok(release.ok && release.value.status === "found");
+    const custody = historicalDarkQueueFixture(rig);
+    const deps: HostedAutonomyDepsV1 = {
+      state: rig.state,
+      githubFor: rig.githubFor,
+      clock: { now: () => now },
+      queueCustody: custody,
+      queue: await darkQueueCoordinatorFixture(rig, custody),
+      ...extra,
+    };
+    const actions: string[] = [];
+    const context: HostedAutonomyPassContextV1 = {
+      deps,
+      actions,
+      revisions: [],
+      snapshot: read.value.snapshot,
+      observedHead: read.value.head,
+      initialHead: read.value.head,
+      releaseSnapshot: release.value.snapshot,
+      closedIssues: new Set(),
+      foreignMerged: new Map(),
+      dedicatedReservations: new Set<string>(),
+      ...createHostedAutonomyScopes(deps),
+    };
+    await readHostedClosedIssues(context);
+    return { result: await runHostedDeliveryPass(context), actions };
+  });
 }
 
 /** The rig's current authoritative repair snapshot. */

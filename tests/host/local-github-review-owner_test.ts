@@ -7,6 +7,7 @@ import { FakeClock, MemoryState } from "../repair/helpers.ts";
 import { seededSnapshot } from "../repair/loop-rig.ts";
 import { renderReviewJournalBody } from "../../src/github/review-journal.ts";
 import { mergeRequest } from "../github/merge-helpers.ts";
+import { membershipWire } from "../github/merge-queue-fixtures.ts";
 import { reviewWire } from "../github/helpers.ts";
 import type { HttpTransportV1 } from "../../src/github/http.ts";
 import type { ReviewOwnerRegistrationV1 } from "../../src/github/review-owner-evidence.ts";
@@ -137,8 +138,8 @@ Deno.test("local GitHub review owner: explicit self capability reaches native re
     const repository = { owner: "ubiquity", name, installationId };
     request.review = { ...request.review, repository };
     const input = localInput();
-    // A present empty snapshot and a successful empty rule read prove the queue
-    // is inactive. Absent state or a 404 rule response must keep refusing.
+    // Empty state and rules plus a complete native non-membership observation
+    // let the ordinary merge reach its own pull-request lookup.
     input.state.repair = seededSnapshot([]);
     const requests: string[] = [];
     const rulesPath = `/repos/ubiquity/${name}/rules/branches/development`;
@@ -152,6 +153,34 @@ Deno.test("local GitHub review owner: explicit self capability reaches native re
       http: (read) => {
         const path = new URL(read.url).pathname;
         requests.push(`${read.method} ${path}`);
+        if (path === "/graphql") {
+          assert.equal(read.method, "POST");
+          const query = JSON.parse(read.body ?? "{}");
+          assert.match(query.query, /^query\(/);
+          assert.match(query.query, /pullRequest\(number:\$number\)/);
+          assert.deepEqual(query.variables, {
+            owner: repository.owner,
+            name: repository.name,
+            number: request.pullRequestNumber,
+          });
+          return Promise.resolve({
+            status: 200,
+            headers: new Headers(),
+            bodyText: JSON.stringify(membershipWire(null, {
+              id: "PR_1",
+              number: request.pullRequestNumber,
+              headRefName: "sentinel/fix-1",
+              headRefOid: request.expectedHead,
+              baseRefOid: request.expectedBase,
+              author: {
+                __typename: "Bot",
+                id: "BOT_SYNTHETIC_AUTHOR",
+                login: request.review.expectedReviewer,
+              },
+              mergedBy: null,
+            })),
+          });
+        }
         const rules = path === rulesPath;
         return Promise.resolve({
           status: rules ? 200 : 404,
@@ -174,7 +203,7 @@ Deno.test("local GitHub review owner: explicit self capability reaches native re
       activated
         ? []
         : name === "ai.ubq.fi"
-        ? [`GET ${rulesPath}`, `GET ${pullPath}`]
+        ? [`GET ${rulesPath}`, "POST /graphql", `GET ${pullPath}`]
         : [`GET ${pullPath}`],
       JSON.stringify(result),
     );

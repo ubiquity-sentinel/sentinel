@@ -34,6 +34,7 @@ import {
 } from "../../src/contracts/state-snapshots.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { buildOwnerDevelopmentInstallSnapshot } from "../../src/host/owner-install-snapshot.ts";
+import { DORMANT_HOSTED_SUPERVISOR_POLICY } from "./hosted-supervisor-policy-fixture.ts";
 import {
   releaseAt,
   settlementProof,
@@ -548,6 +549,10 @@ function ownerInstalledAndBootstrapped(at: number): ReleaseStateSnapshotV1 {
       priorHealthyProof: g76.hostedRuntimes[0]!.lastHealthyProof!,
     },
     at + 60_000,
+    undefined,
+    undefined,
+    DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+    DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
   );
   const boot = settlementProof({
     revision: R77,

@@ -20,6 +20,10 @@
  */
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
+import {
+  DORMANT_HOSTED_SUPERVISOR_POLICY,
+  withHostedProductionPolicy,
+} from "./hosted-supervisor-policy-fixture.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type {
   RepairStateWriter,
@@ -50,7 +54,6 @@ import {
   applyHostedRetries,
   type HostedAutonomyGitHubV1,
   planHostedRetries,
-  runHostedAutonomy,
 } from "../../ops/hosted-autonomy.ts";
 import { hostedRepositoryKey } from "../../ops/hosted-autonomy-policy.ts";
 import {
@@ -385,7 +388,31 @@ function surface(pullState: "open" | "closed"): HostedAutonomyGitHubV1 {
   } as HostedAutonomyGitHubV1;
 }
 
-async function maintain(state: TransitionState, pullState: "open" | "closed") {
+type HistoricalRunner =
+  typeof import("../../ops/hosted-autonomy-runner.ts").runHostedAutonomy;
+
+function historicalMaintenanceTest(
+  name: string,
+  scenario: (run: HistoricalRunner) => Promise<void>,
+) {
+  Deno.test(
+    name,
+    () =>
+      withHostedProductionPolicy(
+        DORMANT_HOSTED_SUPERVISOR_POLICY,
+        async (graph) => {
+          const { runHostedAutonomy } = await graph.runner();
+          await scenario(runHostedAutonomy);
+        },
+      ),
+  );
+}
+
+async function maintain(
+  state: TransitionState,
+  pullState: "open" | "closed",
+  runHostedAutonomy: HistoricalRunner,
+) {
   return runHostedAutonomy(
     await withDarkQueueAuthority({
       state: state as unknown as StateReadView & RepairStateWriter,
@@ -407,36 +434,41 @@ const installed = () =>
     },
   });
 
-Deno.test("conflict guard: the full maintenance pass re-pends a moved-base record on its open PR only", async () => {
-  const record = await marked();
-  const charges = [charge("ambiguous")];
-  const before = snapshotOf([record], charges);
-  const open = new TransitionState(before, installed());
-  const result = await maintain(open, "open");
-  assert.equal(result.status, "applied", JSON.stringify(result));
-  assert.ok(
-    result.actions.some((action) => action.startsWith(`retry:${ID}:grant=0:`)),
-    JSON.stringify(result.actions),
-  );
-  const work = open.snapshot.work[0];
-  assert.equal(work.nextStep, "work");
-  assert.equal(work.intent?.kind, "base_refresh");
-  assert.equal(work.intent?.observedBase, TIP);
-  assert.equal(conflictMarkerBase(work.intent), null);
-  assert.equal(work.target.pr, PR);
-  assert.deepEqual(open.snapshot.reservations, before.reservations);
+historicalMaintenanceTest(
+  "conflict guard: the full maintenance pass re-pends a moved-base record on its open PR only",
+  async (runHostedAutonomy) => {
+    const record = await marked();
+    const charges = [charge("ambiguous")];
+    const before = snapshotOf([record], charges);
+    const open = new TransitionState(before, installed());
+    const result = await maintain(open, "open", runHostedAutonomy);
+    assert.equal(result.status, "applied", JSON.stringify(result));
+    assert.ok(
+      result.actions.some((action) =>
+        action.startsWith(`retry:${ID}:grant=0:`)
+      ),
+      JSON.stringify(result.actions),
+    );
+    const work = open.snapshot.work[0];
+    assert.equal(work.nextStep, "work");
+    assert.equal(work.intent?.kind, "base_refresh");
+    assert.equal(work.intent?.observedBase, TIP);
+    assert.equal(conflictMarkerBase(work.intent), null);
+    assert.equal(work.target.pr, PR);
+    assert.deepEqual(open.snapshot.reservations, before.reservations);
 
-  const closed = new TransitionState(
-    snapshotOf([record], charges),
-    installed(),
-  );
-  const skipped = await maintain(closed, "closed");
-  assert.deepEqual(closed.snapshot.work[0], record, "a closed PR is left");
-  assert.ok(
-    skipped.actions.includes(`retry:${ID}:skipped:pr_not_open`),
-    JSON.stringify(skipped.actions),
-  );
-});
+    const closed = new TransitionState(
+      snapshotOf([record], charges),
+      installed(),
+    );
+    const skipped = await maintain(closed, "closed", runHostedAutonomy);
+    assert.deepEqual(closed.snapshot.work[0], record, "a closed PR is left");
+    assert.ok(
+      skipped.actions.includes(`retry:${ID}:skipped:pr_not_open`),
+      JSON.stringify(skipped.actions),
+    );
+  },
+);
 
 Deno.test("conflict guard: at a moved tip only a class the table retries re-pends; a protected or other terminal resolution stays with the owner", async () => {
   // A resolution blocked for touching a protected path (or any class the
@@ -523,70 +555,73 @@ async function markedTask(i: number) {
   return { id, record, spent };
 }
 
-Deno.test("conflict guard: one maintenance pass re-pends every moved-base record with an open pull request", async () => {
-  assert.equal(
-    HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS,
-    Number.MAX_SAFE_INTEGER,
-  );
-  const tasks = await Promise.all([1, 2, 3, 4, 5, 6].map(markedTask));
-  const closedPr = tasks[0].record.target.pr;
-  const reads: number[] = [];
-  const state = new TransitionState(
-    snapshotOf(tasks.map((task) => task.record), tasks.map((t) => t.spent)),
-    installed(),
-  );
-  const result = await runHostedAutonomy(
-    await withDarkQueueAuthority({
-      state: state as unknown as StateReadView & RepairStateWriter,
-      githubFor: () => ({
-        ...surface("open"),
-        readBaseTip: (branch: string) =>
-          Promise.resolve(branch === "development" ? TIP : HEAD),
-        readPull: (number: number) => {
-          reads.push(number);
-          return Promise.resolve({
-            number,
-            state: number === closedPr ? "closed" : "open",
-            merged: false,
-            mergeCommitSha: null,
-            headSha: HEAD,
-            baseRef: "development",
-            baseSha: B0,
-            author: "ubiquity-sentinel[bot]",
-            parents: [],
-            revisionOnBaseBranch: false,
-            baseAncestorOfRevision: false,
-          });
-        },
-      } as HostedAutonomyGitHubV1),
-      clock: { now: () => NOW },
-    }),
-  );
-  assert.equal(result.status, "applied", JSON.stringify(result));
-  const granted = result.actions.filter((action) =>
-    action.endsWith(":conflict_resolution:base-advance")
-  );
-  const capped = result.actions.filter((action) =>
-    action.endsWith(":skipped:conflict_resolution_cap")
-  );
-  assert.equal(granted.length, 5, JSON.stringify(result.actions));
-  assert.equal(capped.length, 0, JSON.stringify(result.actions));
-  assert.ok(
-    result.actions.includes(`retry:${tasks[0].id}:skipped:pr_not_open`),
-    "a closed pull request holds no slot",
-  );
-  assert.equal(reads.length, 6, "all records are verified");
-  const repended = state.snapshot.work.filter((work) =>
-    work.nextStep === "work"
-  );
-  assert.equal(repended.length, 5);
-  for (const work of repended) {
-    assert.equal(work.intent?.observedBase, TIP);
-    assert.equal(conflictMarkerBase(work.intent), null);
-  }
-  assert.deepEqual(
-    state.snapshot.reservations,
-    tasks.map((task) => task.spent),
-    "every spent charge stays charged",
-  );
-});
+historicalMaintenanceTest(
+  "conflict guard: one maintenance pass re-pends every moved-base record with an open pull request",
+  async (runHostedAutonomy) => {
+    assert.equal(
+      HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS,
+      Number.MAX_SAFE_INTEGER,
+    );
+    const tasks = await Promise.all([1, 2, 3, 4, 5, 6].map(markedTask));
+    const closedPr = tasks[0].record.target.pr;
+    const reads: number[] = [];
+    const state = new TransitionState(
+      snapshotOf(tasks.map((task) => task.record), tasks.map((t) => t.spent)),
+      installed(),
+    );
+    const result = await runHostedAutonomy(
+      await withDarkQueueAuthority({
+        state: state as unknown as StateReadView & RepairStateWriter,
+        githubFor: () => ({
+          ...surface("open"),
+          readBaseTip: (branch: string) =>
+            Promise.resolve(branch === "development" ? TIP : HEAD),
+          readPull: (number: number) => {
+            reads.push(number);
+            return Promise.resolve({
+              number,
+              state: number === closedPr ? "closed" : "open",
+              merged: false,
+              mergeCommitSha: null,
+              headSha: HEAD,
+              baseRef: "development",
+              baseSha: B0,
+              author: "ubiquity-sentinel[bot]",
+              parents: [],
+              revisionOnBaseBranch: false,
+              baseAncestorOfRevision: false,
+            });
+          },
+        } as HostedAutonomyGitHubV1),
+        clock: { now: () => NOW },
+      }),
+    );
+    assert.equal(result.status, "applied", JSON.stringify(result));
+    const granted = result.actions.filter((action) =>
+      action.endsWith(":conflict_resolution:base-advance")
+    );
+    const capped = result.actions.filter((action) =>
+      action.endsWith(":skipped:conflict_resolution_cap")
+    );
+    assert.equal(granted.length, 5, JSON.stringify(result.actions));
+    assert.equal(capped.length, 0, JSON.stringify(result.actions));
+    assert.ok(
+      result.actions.includes(`retry:${tasks[0].id}:skipped:pr_not_open`),
+      "a closed pull request holds no slot",
+    );
+    assert.equal(reads.length, 6, "all records are verified");
+    const repended = state.snapshot.work.filter((work) =>
+      work.nextStep === "work"
+    );
+    assert.equal(repended.length, 5);
+    for (const work of repended) {
+      assert.equal(work.intent?.observedBase, TIP);
+      assert.equal(conflictMarkerBase(work.intent), null);
+    }
+    assert.deepEqual(
+      state.snapshot.reservations,
+      tasks.map((task) => task.spent),
+      "every spent charge stays charged",
+    );
+  },
+);

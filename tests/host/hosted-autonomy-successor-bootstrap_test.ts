@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DORMANT_HOSTED_POLICIES } from "./actions-supervisor-fixture.ts";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import {
@@ -45,6 +46,7 @@ Deno.test("historical malformed wave: successor bootstrap overwrites proof and a
       verifyRequest: () => Promise.resolve(portOk(false)),
     };
     const settled = await runHostedSupervisorFinalize({
+      ...DORMANT_HOSTED_POLICIES,
       state: release,
       clock: f.clock,
       run: f.nativeRun,
@@ -57,6 +59,7 @@ Deno.test("historical malformed wave: successor bootstrap overwrites proof and a
       launcherSha: "3".repeat(40) as GitSha,
     };
     const prepared = await runHostedSupervisorPrepare({
+      ...DORMANT_HOSTED_POLICIES,
       state: release,
       clock: f.clock,
       run: successorRun,
@@ -384,6 +387,7 @@ Deno.test("historical malformed wave: successor bootstrap overwrites proof and a
       }),
     });
     const finalized = await runHostedSupervisorFinalize({
+      ...DORMANT_HOSTED_POLICIES,
       state: release,
       clock: f.clock,
       run: successorRun,

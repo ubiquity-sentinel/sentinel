@@ -31,9 +31,11 @@ import {
 import { persistWork } from "./loop-state.ts";
 import {
   deliveryTaskRefusal,
+  readDeliveryTaskContext,
   releaseRequestReceipt,
   semanticRefusalKind,
 } from "./loop-task-context.ts";
+import { ownerSuccessorAcceptanceBinds } from "../host/owner-successor-acceptance-proof.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
@@ -266,6 +268,31 @@ export async function observeHostedReleaseAcceptance(
     return waitRelease(deps, context, record, now);
   }
   if (!hostedReceiptBindsRequest(receipt, request)) {
+    return waitRelease(deps, context, record, now);
+  }
+  if (receipt.phase === "owner_superseded") {
+    const acceptance = receipt.ownerAcceptance;
+    if (
+      acceptance !== undefined &&
+      await ownerSuccessorAcceptanceBinds(receipt) &&
+      acceptance.review.binding.workId === record.id &&
+      acceptance.review.binding.issueNumber === record.related.issueNumber
+    ) {
+      const [current, task] = await Promise.all([
+        deps.state.readRelease(),
+        readDeliveryTaskContext(deps, record),
+      ]);
+      const pointer = current.ok && current.value.status === "found"
+        ? current.value.snapshot.hostedRuntimes[0]
+        : undefined;
+      if (
+        pointer?.activeRevision ===
+          acceptance.review.binding.successorRevision &&
+        pointer.generation === acceptance.review.binding.successorGeneration &&
+        task !== null && task !== "unavailable" &&
+        task.digest === acceptance.review.binding.taskSha256
+      ) return acceptRelease(deps, context, record, request, now);
+    }
     return waitRelease(deps, context, record, now);
   }
   if (receipt.phase === "accepted") {

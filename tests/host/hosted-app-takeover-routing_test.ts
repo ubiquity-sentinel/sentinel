@@ -15,7 +15,8 @@ Deno.test("hosted takeover routing: intentional unconfigured runtime stays inert
         },
       },
     };
-    assert.deepEqual(await readHostedAppTakeoverRouting(source), {
+    // Model the intentional unconfigured deployment independently of shipped profiles.
+    assert.deepEqual(await readHostedAppTakeoverRouting(source, []), {
       status: "inactive",
     });
     assert.equal(sourceReads, 0);

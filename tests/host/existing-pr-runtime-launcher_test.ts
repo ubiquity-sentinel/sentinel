@@ -1,3 +1,4 @@
+import { DORMANT_HOSTED_SUPERVISOR_POLICY as dormant } from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { parseHostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
@@ -76,7 +77,7 @@ Deno.test("existing PR runtime fence: actual launcher blocks all purposes and ma
             process: rig.process,
             reviewCustody: broker,
           },
-          undefined,
+          dormant.queue,
           {
             ...policy([OTHER_REVISION]),
             ownerInstallMigrations: [{
@@ -121,7 +122,7 @@ Deno.test("existing PR runtime fence: exact accepted runtime runs from a differe
         denoExecutable: Deno.execPath(),
         process: rig.process,
       },
-      undefined,
+      dormant.queue,
       policy([rig.execution.revision]),
     );
     assert.equal(result.status, "healthy");
@@ -160,11 +161,18 @@ Deno.test("existing PR runtime fence: fresh authority rejects dormant policy, ch
       controllerSha: rig.execution.revision,
       deadline: rig.clock.now() + 1000,
     };
-    assert.equal((await revalidateHostedRuntimeCompatibility(input)).ok, false);
+    assert.equal(
+      (await revalidateHostedRuntimeCompatibility(
+        input,
+        dormant.queue,
+        dormant.custody,
+      )).ok,
+      false,
+    );
     assert.equal(
       (await revalidateHostedRuntimeCompatibility(
         { ...input, state: rig.release },
-        undefined,
+        dormant.queue,
         policy([rig.execution.revision]),
       )).ok,
       false,
@@ -173,7 +181,7 @@ Deno.test("existing PR runtime fence: fresh authority rejects dormant policy, ch
     assert.equal(
       (await revalidateHostedRuntimeCompatibility(
         input,
-        undefined,
+        dormant.queue,
         policy([rig.execution.revision]),
       )).ok,
       true,
@@ -181,7 +189,7 @@ Deno.test("existing PR runtime fence: fresh authority rejects dormant policy, ch
     assert.equal(
       (await revalidateHostedRuntimeCompatibility(
         { ...input, execution: { ...rig.execution, purpose: "bootstrap" } },
-        undefined,
+        dormant.queue,
         policy([rig.execution.revision]),
       )).ok,
       false,
@@ -195,7 +203,7 @@ Deno.test("existing PR runtime fence: fresh authority rejects dormant policy, ch
             runAttempt: rig.identity.runAttempt + 1,
           },
         },
-        undefined,
+        dormant.queue,
         policy([rig.execution.revision]),
       )).ok,
       false,
@@ -203,7 +211,7 @@ Deno.test("existing PR runtime fence: fresh authority rejects dormant policy, ch
     assert.equal(
       (await revalidateHostedRuntimeCompatibility(
         { ...input, identity: { ...rig.identity, job: "matrix_cell" } },
-        undefined,
+        dormant.queue,
         policy([rig.execution.revision]),
       )).ok,
       false,
@@ -227,7 +235,7 @@ Deno.test("existing PR runtime fence: fresh authority rejects dormant policy, ch
     assert.equal(
       (await revalidateHostedRuntimeCompatibility(
         raced,
-        undefined,
+        dormant.queue,
         policy([rig.execution.revision]),
       )).ok,
       false,

@@ -59,6 +59,7 @@ export interface OwnerDevelopmentInstallFileV1 {
 export interface OwnerDevelopmentInstallFilesV1 {
   manifest: OwnerDevelopmentInstallFileV1;
   record: OwnerDevelopmentInstallFileV1;
+  releaseRecord?: OwnerDevelopmentInstallFileV1;
 }
 
 /**

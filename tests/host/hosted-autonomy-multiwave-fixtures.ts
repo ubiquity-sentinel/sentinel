@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DORMANT_HOSTED_POLICIES } from "./actions-supervisor-fixture.ts";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import {
@@ -43,6 +44,7 @@ export async function historicalMultiWaveRig(
   };
   assert.equal(
     (await runHostedSupervisorFinalize({
+      ...DORMANT_HOSTED_POLICIES,
       state: release,
       clock: f.clock,
       run: f.nativeRun,
@@ -420,6 +422,7 @@ export async function historicalMultiWaveRig(
   if (finalizeCurrent) {
     assert.equal(
       (await runHostedSupervisorFinalize({
+        ...DORMANT_HOSTED_POLICIES,
         state: release,
         clock: f.clock,
         run,

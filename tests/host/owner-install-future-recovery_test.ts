@@ -8,11 +8,11 @@ import {
 } from "../../src/host/owner-install-future-recovery.ts";
 import {
   runHostedSupervisorFinalize,
-  runHostedSupervisorHost,
   runHostedSupervisorPrepare,
 } from "../../src/host/actions-supervisor.ts";
 import { DenoReplayRuntime } from "../../src/replay/runtime.ts";
 import { FakeEvidence } from "./actions-supervisor-fixture.ts";
+import { runHostedSupervisorWithPolicy } from "./hosted-supervisor-policy-fixture.ts";
 import {
   FUTURE,
   futureNativeSettlement,
@@ -70,7 +70,11 @@ Deno.test("future recovery actual owner: failed-first pointer atomically starts 
     assert.deepEqual(prepared.execution, runtime.execution);
     assert.equal(evidence.matrixCalls.length, 0);
     const outputs = new Map<string, string>();
-    await runHostedSupervisorHost({
+    await runHostedSupervisorWithPolicy({
+      queue: rig.queue,
+      custody: rig.custody,
+      rollout: rig.rollout,
+    }, {
       sourceDir: rig.source.launcher,
       clock: core.clock,
       state: rig.state,

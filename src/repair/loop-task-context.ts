@@ -164,6 +164,14 @@ export async function readIssueForModel(
       return "unavailable";
     }
   }
+  const text = {
+    issueNumber: issue.number,
+    title: issue.title,
+    body: issue.body,
+  };
+  const digest = await reviewTaskStatementDigest(text);
+  const checked = await checkReviewTaskStatement({ ...text, digest });
+  if (!checked.ok) return "unavailable";
   return {
     number: issue.number,
     title: issue.title,

@@ -387,6 +387,11 @@ export async function seedRelease(rig: RigV1): Promise<void> {
   );
 }
 
+// Terminal/child fixtures explicitly model dormant proof floors. Activated-floor
+// fixtures supply their own exact policies through the production launcher seam.
+const DORMANT_QUEUE_CAPABILITY = { proofActivated: false, revisions: [] };
+const DORMANT_CUSTODY_CAPABILITY = { custodyActivated: false, revisions: [] };
+
 function launchInput(rig: RigV1): HostedRuntimeLauncherInputV1 {
   return {
     state: rig.release,
@@ -403,7 +408,11 @@ export function launch(
   rig: RigV1,
   overrides: Partial<HostedRuntimeLauncherInputV1> = {},
 ): Promise<HostedRuntimeLauncherResultV1> {
-  return runHostedRuntimeLauncher({ ...launchInput(rig), ...overrides });
+  return runHostedRuntimeLauncher(
+    { ...launchInput(rig), ...overrides },
+    DORMANT_QUEUE_CAPABILITY,
+    DORMANT_CUSTODY_CAPABILITY,
+  );
 }
 
 /**
@@ -417,6 +426,8 @@ export function launchWithSink(
 ): Promise<HostedRuntimeLauncherResultV1> {
   return runHostedRuntimeLauncher(
     Object.assign({}, launchInput(rig), { onDiagnostic: sink }),
+    DORMANT_QUEUE_CAPABILITY,
+    DORMANT_CUSTODY_CAPABILITY,
   );
 }
 

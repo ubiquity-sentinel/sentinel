@@ -396,6 +396,7 @@ export async function assertRollbackReads(log: readonly WriteLogV1[]) {
  */
 export async function captureMain(
   deps: HostedAutonomyDepsV1,
+  runMain: typeof runHostedAutonomyMain = runHostedAutonomyMain,
 ): Promise<{ exit: number; lines: Record<string, unknown>[] }> {
   // Inside the repository: the CI test tier reads only `.`, /usr and /bin.
   const checkout = await Deno.makeTempDir({
@@ -419,7 +420,7 @@ export async function captureMain(
       lines.push(JSON.parse(String(values[0])));
     };
     const sha = head.stdout.trim();
-    const exit = await runHostedAutonomyMain({
+    const exit = await runMain({
       env: {
         GITHUB_REPOSITORY: "ubiquity/sentinel",
         GITHUB_REF: "refs/heads/sentinel-supervisor",

@@ -130,7 +130,12 @@ export async function principalLauncherFixture(
     ...rig,
     process,
     input,
-    launch: () => runHostedRuntimeLauncher(input),
+    launch: () =>
+      runHostedRuntimeLauncher(
+        input,
+        rig.capability.queue,
+        rig.capability.existingPr,
+      ),
     childCalls: () =>
       process.calls.filter((call) => call.executable === Deno.execPath()),
   };

@@ -1,3 +1,7 @@
+import {
+  DORMANT_HOSTED_SUPERVISOR_POLICY as dormant,
+  runHostedSupervisorWithPolicy,
+} from "./hosted-supervisor-policy-fixture.ts";
 /**
  * Real protected hosted composition: `runHostedSupervisorHost` over the actual
  * core, the authenticated native GitHub client, real temporary source and
@@ -27,7 +31,6 @@ import type {
   HttpResponseV1,
   HttpTransportV1,
 } from "../../src/github/http.ts";
-import { runHostedSupervisorHost } from "../../src/host/actions-supervisor.ts";
 import type { HostedSupervisorHostResultV1 } from "../../src/host/actions-supervisor.ts";
 import { DenoReplayRuntime } from "../../src/replay/runtime.ts";
 import {
@@ -301,7 +304,7 @@ async function makeRig(): Promise<RigV1> {
       return read.value.status === "found" ? read.value.head : null;
     },
     run: (job, runId, overrides = {}) =>
-      runHostedSupervisorHost({
+      runHostedSupervisorWithPolicy(dormant, {
         env: hostEnv(launcherSha, job, runId, overrides),
         sourceDir,
         clock,
@@ -933,7 +936,7 @@ Deno.test("hosted workflow: prepare without an output sink is refused before any
     const before = await rig.releaseSnapshot();
     scriptCompare(rig);
     await assert.rejects(
-      runHostedSupervisorHost({
+      runHostedSupervisorWithPolicy(dormant, {
         env: hostEnv(rig.launcherSha, "prepare", RUN_ID),
         sourceDir: rig.sourceDir,
         clock: rig.clock,

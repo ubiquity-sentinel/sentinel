@@ -1306,7 +1306,9 @@ for (const [name, midPass, next, nextDispositions] of MID_PASS) {
  * one that can never reach an output-bound cell's charge: the consumer's
  * own (it refuses this receipt), the serial work step (never with external
  * implementations), the review settlements (review charges only, including
- * the three exact-base review admission settlements), the
+ * three exact-base review admission settlements and the owner-successor
+ * review, whose newly reserved review_request charge cannot alias this
+ * implementation/retry charge), the
  * historical quarantine (dedicated charges, never requested here) and the
  * uncertainty quarantine (its fixed generation-63 charges, only while
  * generation 63 is active). A new or moved one changes this table: before
@@ -1318,6 +1320,7 @@ const AUDITED_SETTLERS = {
   "src/host/matrix-ingest.ts": 2,
   "src/host/matrix-quarantine-state.ts": 1,
   "src/host/matrix-uncertainty-maintenance.ts": 1,
+  "src/host/owner-successor-acceptance.ts": 1,
   "src/repair/loop-accounting.ts": 2,
   "src/repair/loop-base-satisfaction.ts": 3,
   "src/repair/loop-conflict-resolution.ts": 1,

@@ -1,3 +1,7 @@
+import {
+  DORMANT_HOSTED_SUPERVISOR_POLICY,
+  withHostedProductionPolicy,
+} from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import { createMaintenancePublicationFor } from "../../src/host/maintenance-existing-pr-publication.ts";
 import { DEFAULT_APP_INSTALLATION_ID } from "../../src/host/actions-target-cycles.ts";
@@ -9,7 +13,6 @@ import {
 import { nativeLifecycleRig } from "../repair/existing-pr-lifecycle-fixtures.ts";
 import { routeExistingPr } from "../../src/repair/loop-existing-pr.ts";
 import { takeoverPublicationMatches } from "../../src/github/existing-pr-publication-proof.ts";
-import { verifiedMergedDelivery } from "../../ops/hosted-autonomy-delivery.ts";
 import { commitIn, gitRun } from "./actions-candidates-fixture.ts";
 import { persistTransition } from "../../src/repair/loop-state.ts";
 import { completedReceipt } from "../repair/loop-review-fixtures.ts";
@@ -28,8 +31,12 @@ const REPOSITORY = {
 };
 const REMOTE = "https://github.com/ubiquity/ai.ubq.fi.git";
 
-async function fixture() {
-  const r = await nativeLifecycleRig(REPOSITORY);
+async function fixture(
+  createTakeover?: Parameters<typeof nativeLifecycleRig>[1],
+  createPublication: typeof createMaintenancePublicationFor =
+    createMaintenancePublicationFor,
+) {
+  const r = await nativeLifecycleRig(REPOSITORY, createTakeover);
   let context = await r.reload();
   for (let phase = 0; phase < 3; phase++) {
     const step = await routeExistingPr(
@@ -93,7 +100,7 @@ async function fixture() {
     },
   };
   const makeFor = () =>
-    createMaintenancePublicationFor({
+    createPublication({
       sourceDir,
       scratch,
       state,
@@ -179,129 +186,157 @@ async function fixture() {
 }
 
 Deno.test("maintenance publication: real native custody reaches merged-delivery consumer without effects", async (t) => {
-  const f = await fixture();
-  const { r } = f;
-  try {
-    const request = await f.merge();
-    const before = await r.reload();
-    const pushes = r.pushes.length;
-    const principalCalls = r.controls.principalCalls;
-    const publicationFor = f.makeFor();
-    assert.equal(
-      publicationFor({ ...REPOSITORY, installationId: 0 }),
-      undefined,
-    );
-    const port = publicationFor(REPOSITORY)!;
-    assert.deepEqual(Object.keys(port), ["resolvePublication"]);
-    assert.ok(Object.isFrozen(port));
-    assert.equal(f.commands.length, 0);
-    assert.equal(f.requests.length, 0);
-    const proof = await port.resolvePublication(request);
-    assert.ok(proof.ok, JSON.stringify(proof));
-    const pull = {
-      number: 7,
-      state: "closed",
-      merged: true,
-      mergeCommitSha: request.revision,
-      headSha: request.record.target.head,
-      baseSha: request.record.target.base,
-      baseRef: "development",
-      author: "human-owner",
-      parents: [request.record.target.base, request.record.target.head!],
-      revisionOnBaseBranch: true,
-      baseAncestorOfRevision: true,
-    };
-    assert.equal(
-      verifiedMergedDelivery(request.record, pull, "development"),
-      null,
-    );
-    assert.deepEqual(
-      verifiedMergedDelivery(
-        request.record,
-        pull,
-        "development",
-        undefined,
-        proof.value,
-      ),
-      { revision: request.revision },
-    );
-    assert.equal(
-      verifiedMergedDelivery(
-        request.record,
-        pull,
-        "development",
-        undefined,
-        structuredClone(proof.value),
-      ),
-      null,
-    );
-    assert.equal(request.record.target.candidateState?.preserved, null);
-    assert.equal(
-      f.commands.filter((command) =>
-        command.args.includes("init") &&
-        command.cwd.startsWith(`${f.scratch}/sentinel-maintenance-publication-`)
-      ).length,
-      1,
-    );
-    assert.ok(f.commands.some((command) => command.args.includes(REMOTE)));
-    assert.ok(!f.commands.some((command) => command.args.includes("clone")));
-    for (
-      const field of ["author", "body", "head", "base", "mergeSha"] as const
-    ) {
-      await t.step(`changed ${field}`, async () => {
-        const saved = r.nativeControls[field];
-        if (field === "author") r.nativeControls.author = "different-owner";
-        else if (field === "body") r.nativeControls.body = "changed issue";
-        else r.nativeControls[field] = r.ctx.base;
-        if (field === "base") {
-          const changed = {
-            ...request,
-            record: {
-              ...request.record,
-              target: { ...request.record.target, base: r.ctx.head },
-            },
-          };
-          assert.equal((await port.resolvePublication(changed)).ok, false);
-        } else assert.equal((await port.resolvePublication(request)).ok, false);
-        Object.assign(r.nativeControls, { [field]: saved });
-      });
-    }
-    for (
-      const field of ["missingHistory", "missingRef", "rateLimited"] as const
-    ) {
-      await t.step(field, async () => {
-        f.controls[field] = true;
+  // Historical direct publication keeps its genuine producer and consumer together.
+  await withHostedProductionPolicy(
+    DORMANT_HOSTED_SUPERVISOR_POLICY,
+    async (graph) => {
+      const [takeover, publication, matcher, delivery] = await Promise.all([
+        graph.existingPrTakeover(),
+        graph.maintenancePublication(),
+        graph.publicationProof(),
+        graph.deliveryFacts(),
+      ]);
+      const { takeoverPublicationMatches } = matcher;
+      const { verifiedMergedDelivery } = delivery;
+      const f = await fixture(
+        takeover.createExistingPrTakeover,
+        publication.createMaintenancePublicationFor,
+      );
+      const { r } = f;
+      try {
+        const request = await f.merge();
+        const before = await r.reload();
+        const pushes = r.pushes.length;
+        const principalCalls = r.controls.principalCalls;
+        const publicationFor = f.makeFor();
+        assert.equal(
+          publicationFor({ ...REPOSITORY, installationId: 0 }),
+          undefined,
+        );
+        const port = publicationFor(REPOSITORY)!;
+        assert.deepEqual(Object.keys(port), ["resolvePublication"]);
+        assert.ok(Object.isFrozen(port));
+        assert.equal(f.commands.length, 0);
+        assert.equal(f.requests.length, 0);
+        const proof = await port.resolvePublication(request);
+        assert.ok(proof.ok, JSON.stringify(proof));
+        const pull = {
+          number: 7,
+          state: "closed",
+          merged: true,
+          mergeCommitSha: request.revision,
+          headSha: request.record.target.head,
+          baseSha: request.record.target.base,
+          baseRef: "development",
+          author: "human-owner",
+          parents: [request.record.target.base, request.record.target.head!],
+          revisionOnBaseBranch: true,
+          baseAncestorOfRevision: true,
+        };
+        assert.equal(
+          verifiedMergedDelivery(request.record, pull, "development"),
+          null,
+        );
+        assert.deepEqual(
+          verifiedMergedDelivery(
+            request.record,
+            pull,
+            "development",
+            undefined,
+            proof.value,
+          ),
+          { revision: request.revision },
+        );
+        assert.equal(
+          verifiedMergedDelivery(
+            request.record,
+            pull,
+            "development",
+            undefined,
+            structuredClone(proof.value),
+          ),
+          null,
+        );
+        assert.equal(request.record.target.candidateState?.preserved, null);
+        assert.equal(
+          f.commands.filter((command) =>
+            command.args.includes("init") &&
+            command.cwd.startsWith(
+              `${f.scratch}/sentinel-maintenance-publication-`,
+            )
+          ).length,
+          1,
+        );
+        assert.ok(f.commands.some((command) => command.args.includes(REMOTE)));
+        assert.ok(
+          !f.commands.some((command) => command.args.includes("clone")),
+        );
+        for (
+          const field of ["author", "body", "head", "base", "mergeSha"] as const
+        ) {
+          await t.step(`changed ${field}`, async () => {
+            const saved = r.nativeControls[field];
+            if (field === "author") r.nativeControls.author = "different-owner";
+            else if (field === "body") r.nativeControls.body = "changed issue";
+            else r.nativeControls[field] = r.ctx.base;
+            if (field === "base") {
+              const changed = {
+                ...request,
+                record: {
+                  ...request.record,
+                  target: { ...request.record.target, base: r.ctx.head },
+                },
+              };
+              assert.equal((await port.resolvePublication(changed)).ok, false);
+            } else {assert.equal(
+                (await port.resolvePublication(request)).ok,
+                false,
+              );}
+            Object.assign(r.nativeControls, { [field]: saved });
+          });
+        }
+        for (
+          const field of [
+            "missingHistory",
+            "missingRef",
+            "rateLimited",
+          ] as const
+        ) {
+          await t.step(field, async () => {
+            f.controls[field] = true;
+            assert.equal((await port.resolvePublication(request)).ok, false);
+            f.controls[field] = false;
+          });
+        }
+        assert.equal(f.controls.writes, 0);
+        assert.equal(f.controls.rateWrites, 0);
+        assert.equal(r.pushes.length, pushes);
+        assert.equal(r.controls.principalCalls, principalCalls);
+        assert.deepEqual(await r.reload(), before);
+        assert.ok(
+          f.requests.every((read) =>
+            read.method === "GET" ||
+            (read.method === "POST" && !read.body!.includes("mutation"))
+          ),
+        );
+        r.clock.advance(240_001);
+        const counts = [f.commands.length, f.requests.length];
         assert.equal((await port.resolvePublication(request)).ok, false);
-        f.controls[field] = false;
-      });
-    }
-    assert.equal(f.controls.writes, 0);
-    assert.equal(f.controls.rateWrites, 0);
-    assert.equal(r.pushes.length, pushes);
-    assert.equal(r.controls.principalCalls, principalCalls);
-    assert.deepEqual(await r.reload(), before);
-    assert.ok(
-      f.requests.every((read) =>
-        read.method === "GET" ||
-        (read.method === "POST" && !read.body!.includes("mutation"))
-      ),
-    );
-    r.clock.advance(240_001);
-    const counts = [f.commands.length, f.requests.length];
-    assert.equal((await port.resolvePublication(request)).ok, false);
-    assert.deepEqual([f.commands.length, f.requests.length], counts);
-    assert.equal(
-      takeoverPublicationMatches(
-        proof.value,
-        request.record,
-        request.revision,
-        "human-owner",
-      ),
-      false,
-    );
-  } finally {
-    await r.ctx.cleanup();
-  }
+        assert.deepEqual([f.commands.length, f.requests.length], counts);
+        assert.equal(
+          takeoverPublicationMatches(
+            proof.value,
+            request.record,
+            request.revision,
+            "human-owner",
+          ),
+          false,
+        );
+      } finally {
+        await r.ctx.cleanup();
+      }
+    },
+  );
 });
 
 Deno.test("maintenance publication: unmarked, expired, unconfigured and cooled work cannot prepare Git", async () => {

@@ -1,6 +1,6 @@
 import {
   darkQueueCoordinatorFixture,
-  darkQueueFixture,
+  historicalDarkQueueFixture,
 } from "./hosted-autonomy-dark-queue-fixture.ts";
 /**
  * Review follow-up issues (owner decision 2026-10-16: merge with the
@@ -25,13 +25,13 @@ import {
   type ReleaseRequestV1,
 } from "../../src/contracts/release.ts";
 import type {
+  HostedAutonomyDepsV1,
   HostedAutonomyPullV1,
   HostedFollowUpIssuesV1,
   HostedIssueListingItemV1,
   HostedIssueOriginV1,
 } from "../../ops/hosted-autonomy-types.ts";
 import { HOSTED_AUTONOMY_PASS_DEADLINE_MS } from "../../ops/hosted-autonomy-continuation.ts";
-import { runHostedFollowUpPass } from "../../ops/hosted-autonomy-follow-up-pass.ts";
 import { planFollowUpCandidates } from "../../ops/hosted-autonomy-follow-ups.ts";
 import {
   carriedCalls,
@@ -59,7 +59,16 @@ import {
   readSnapshot,
   runAt,
   TIP,
+  withHistoricalAutonomy,
 } from "./hosted-autonomy-spent-fixtures.ts";
+
+/** This suite preserves historical preactivation follow-up semantics. */
+function runHistoricalFollowUps(deps: HostedAutonomyDepsV1): Promise<string[]> {
+  return withHistoricalAutonomy(async (graph) => {
+    const { runHostedFollowUpPass } = await graph.followUpPass();
+    return await runHostedFollowUpPass(deps);
+  });
+}
 
 const FIRST_LINE_1052 =
   "<!-- sentinel:review-followup:v1 repo=ubiquity/ai.ubq.fi pr=1052 receipt=review-receipt:171aed7474c3730b3b721967dcbe14d7623da6f67e5e70e6a48e0967ba602eb7 depth=1 -->";
@@ -222,14 +231,17 @@ async function followUpRun(
       results.push(
         options.now === undefined
           ? await runAt(rig)
-          : await (await import("../../ops/hosted-autonomy-runner.ts"))
-            .runHostedAutonomy({
+          : await withHistoricalAutonomy(async (graph) => {
+            const { runHostedAutonomy } = await graph.runner();
+            const custody = historicalDarkQueueFixture(rig);
+            return await runHostedAutonomy({
               state: rig.state,
               githubFor: rig.githubFor,
-              clock: { now: options.now },
-              queueCustody: darkQueueFixture(rig),
-              queue: await darkQueueCoordinatorFixture(rig),
-            }),
+              clock: { now: options.now! },
+              queueCustody: custody,
+              queue: await darkQueueCoordinatorFixture(rig, custody),
+            });
+          }),
       );
     }
     return { results, writes: rig.writes };
@@ -701,16 +713,16 @@ Deno.test("follow-ups F10: a real off-tip carried park files its retained review
             state: rig.state,
             githubFor: rig.githubFor,
             clock: { now: () => NOW },
-            queueCustody: darkQueueFixture(rig),
+            queueCustody: historicalDarkQueueFixture(rig),
           };
-          const actions = await runHostedFollowUpPass(deps);
+          const actions = await runHistoricalFollowUps(deps);
           const tag = `followup:${candidate.request.id}:pr=1071`;
           assert.deepEqual(actions, [
             `${tag}:${trusted ? "filed=#5001" : "merge_unverified"}`,
           ]);
           assert.equal(issues.created.length, trusted ? 1 : 0);
           if (trusted) {
-            assert.deepEqual(await runHostedFollowUpPass(deps), [
+            assert.deepEqual(await runHistoricalFollowUps(deps), [
               `${tag}:exists=#5001`,
             ]);
             assert.ok(issues.created[0].body.includes(candidate.receipt.id));

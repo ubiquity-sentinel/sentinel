@@ -1,5 +1,9 @@
 /** Hosted actions-supervisor-source responsibility. */
 import type { GitSha } from "../contracts/brands.ts";
+import { canonicalStringifySha256 } from "../contracts/canonical.ts";
+import { parseOwnerSuccessorReviewV1 } from "../contracts/owner-successor-review.ts";
+import { verifyReviewSnapshotDigest } from "../github/review-snapshot.ts";
+import { ownerSuccessorBindingFor } from "./owner-successor-acceptance-binding.ts";
 import {
   parseHostedExecutionIntentV1,
   parseHostedReleaseRecordV1,
@@ -339,6 +343,88 @@ export function buildRequestedReceipt(
     updatedAt: now,
   });
   return parsed.ok ? parsed.value : null;
+}
+
+/** Preserve a completed charged review's native proof until the trusted App append succeeds. */
+export async function ownerSuccessorAcceptancePending(
+  input: HostedSupervisorInputV1,
+  runtime: HostedRuntimeRecordV1,
+  releases: readonly HostedReleaseRecordV1[],
+): Promise<boolean> {
+  const proof = runtime.lastExecutionProof;
+  if (
+    !proof || proof.outcome !== "healthy" ||
+    proof.execution.purpose !== "ordinary" ||
+    proof.execution.revision !== runtime.activeRevision ||
+    proof.execution.generation !== runtime.generation ||
+    !sameCanonical(proof, runtime.lastHealthyProof)
+  ) return false;
+  const candidates = [];
+  for (const receipt of releases) {
+    if (receipt.ownerAcceptance !== undefined) continue;
+    const selected = await ownerSuccessorBindingFor(
+      receipt,
+      runtime.activeRevision,
+      runtime.generation,
+    );
+    if (selected) candidates.push({ receipt, selected });
+  }
+  if (candidates.length === 0) return false;
+  try {
+    const read = await input.state.readRepair();
+    if (!read.ok || read.value.status !== "found") return true;
+    const repair = read.value.snapshot;
+    for (const { receipt, selected } of candidates) {
+      const i = selected.binding;
+      const reviews = repair.ownerSuccessorReviews?.filter((r) =>
+        r.phase === "completed" && r.binding.releaseId === receipt.id &&
+        r.binding.ownerBindingId === selected.id &&
+        r.binding.ownerBindingSha256 === selected.sha256
+      ) ?? [];
+      if (reviews.length !== 1) {
+        continue;
+      }
+      const parsed = tryParse(parseOwnerSuccessorReviewV1, reviews[0]);
+      if (!parsed.ok) {
+        continue;
+      }
+      const review = parsed.value, b = review.binding;
+      if (
+        sameCanonical(b.nativeOwner, proof.execution) &&
+        b.successorRevision === runtime.activeRevision &&
+        b.successorGeneration === runtime.generation &&
+        b.intentSha256 === i.intentSha256 &&
+        b.requestSha256 === i.requestSha256 &&
+        b.taskSha256 === i.taskSha256 && b.issueNumber === i.issueNumber &&
+        b.workId === i.workId &&
+        b.snapshot.base === i.acceptanceBaseRevision &&
+        review.updatedAt <= input.clock.now() &&
+        sameCanonical(
+          repair.releaseRequests.find((r) =>
+            r.id === receipt.id
+          ),
+          receipt.request,
+        ) &&
+        repair.work.some((w) =>
+          w.id === i.workId && w.nextStep === "delivery" &&
+          w.related.issueNumber === i.issueNumber
+        ) &&
+        sameCanonical(
+          repair.reservations.find((r) => r.id === review.reservation.id),
+          review.reservation,
+        ) &&
+        review.result?.taskAcceptance?.verdict === "fulfilled" &&
+        review.result.taskAcceptance.taskDigest === i.taskSha256 &&
+        review.result.taskAcceptance.issueNumber === i.issueNumber &&
+        !review.result.findings.some((f) => f.priority <= 1) &&
+        review.resultSha256 === await canonicalStringifySha256(review.result) &&
+        await verifyReviewSnapshotDigest(b.snapshot)
+      ) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 /**

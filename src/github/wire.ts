@@ -42,10 +42,11 @@ import {
   MaxText,
 } from "../contracts/validation.ts";
 
-export const MAX_ISSUE_BODY = MaxText.body;
-export const MAX_PULL_BODY = MaxText.body;
 /** Wire-level sanity bound; contract bounds are applied at normalization. */
 export const MAX_WIRE_TEXT = 1_000_000;
+/** Complete issue text is read before opt-out and model admission checks. */
+export const MAX_ISSUE_BODY = MAX_WIRE_TEXT;
+export const MAX_PULL_BODY = MaxText.body;
 
 // ---------------------------------------------------------------------------
 // Shared primitives

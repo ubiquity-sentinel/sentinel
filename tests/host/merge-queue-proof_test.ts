@@ -399,3 +399,148 @@ Deno.test("queue proof requires the reviewed workflow bytes at exact M", async (
     assert.notEqual(result.status, "verified", variant);
   }
 });
+
+Deno.test("fixture proof: active delivery consumer requires a pinned exact synthetic operation", async (t) => {
+  const { darkQueueFixture } = await import(
+    "./hosted-autonomy-dark-queue-fixture.ts"
+  );
+  const {
+    liveRecord,
+    liveReceipts,
+    liveTask,
+    liveSnapshot,
+    liveSurface,
+    mergedPull,
+  } = await import("./hosted-autonomy-spent-fixtures.ts");
+  const { MemoryState } = await import("../repair/helpers.ts");
+  const { resolveHostedDelivery } = await import(
+    "../../ops/hosted-autonomy-delivery-proof.ts"
+  );
+  for (
+    const variant of [
+      "exact",
+      "unwitnessed",
+      "wrong task",
+      "wrong head",
+      "wrong receipt",
+      "wrong actor",
+      "wrong parent",
+      "held",
+    ]
+  ) {
+    await t.step(variant, async () => {
+      const record = liveRecord(618);
+      const receipts = liveReceipts(record);
+      const receipt = receipts[0];
+      const task = liveTask(618, receipts)!;
+      let pull = mergedPull(record, record.target.base!);
+      if (variant === "unwitnessed") pull = structuredClone(pull);
+      if (variant === "wrong task") task.body += " changed after review";
+      if (variant === "wrong head") pull.headSha = SHA4;
+      if (variant === "wrong actor") pull.mergedBy = "owner";
+      if (variant === "wrong parent") {
+        pull.parents = [SHA4, record.target.head!];
+      }
+      if (variant === "wrong receipt") receipt.id += "-foreign";
+      if (variant === "held") {
+        record.wait = { reason: "backoff", since: T0, until: null };
+      }
+      const snapshot = liveSnapshot([record], receipts);
+      const { surface } = liveSurface({
+        pulls: { [record.target.pr!]: pull },
+        tasks: { 618: task },
+      });
+      const state = new MemoryState();
+      const deps = {
+        state,
+        githubFor: () => surface,
+        clock: { now: () => T0 },
+      };
+      const proof = await resolveHostedDelivery(
+        {
+          deps: { ...deps, queueCustody: darkQueueFixture(deps) },
+          snapshot,
+          observedHead: SHA1,
+        },
+        record,
+        {
+          repository: record.repository,
+          key: "fixture",
+          surface,
+          baseBranch: "development",
+        },
+        pull,
+        "delivery",
+      );
+      if (variant === "exact") {
+        assert.equal(proof?.kind, "direct");
+        assert.equal(proof?.head, record.target.head);
+      } else assert.equal(proof, null, variant);
+    });
+  }
+});
+
+Deno.test("fixture proof: compiled active floor rejects legacy direct despite fixture false", async () => {
+  const facts = await directProofFacts();
+  const { resolveHostedDelivery } = await import(
+    "../../ops/hosted-autonomy-delivery-proof.ts"
+  );
+  const { liveSnapshot, liveSurface } = await import(
+    "./hosted-autonomy-spent-fixtures.ts"
+  );
+  const { MemoryState } = await import("../repair/helpers.ts");
+  const pull: HostedAutonomyPullV1 = {
+    number: facts.binding.pullRequest,
+    state: "closed",
+    merged: true,
+    mergeCommitSha: facts.revision,
+    headSha: facts.binding.head,
+    baseRef: "development",
+    baseSha: facts.binding.base,
+    author: APP.login,
+    mergedBy: APP.login,
+    parents: [facts.binding.base, facts.binding.head],
+    revisionOnBaseBranch: true,
+    baseAncestorOfRevision: true,
+  };
+  const { surface } = liveSurface({
+    pulls: { [pull.number]: pull },
+    tasks: {
+      [facts.record.related.issueNumber!]: facts.task === "unavailable"
+        ? null
+        : facts.task,
+    },
+  });
+  const proof = await resolveHostedDelivery(
+    {
+      snapshot: liveSnapshot([facts.record], [facts.receipt]),
+      observedHead: SHA1,
+      deps: {
+        state: new MemoryState(),
+        githubFor: () => surface,
+        clock: { now: () => T0 },
+        queueCustody: {
+          ready: true,
+          proofActivated: false,
+          protectedRecordIds: new Set(),
+          resolveDelivery: () =>
+            Promise.resolve({
+              status: "legacy_direct",
+              binding: facts.binding,
+              revision: facts.revision!,
+            }),
+        },
+      },
+    },
+    facts.record,
+    {
+      repository: facts.record.repository,
+      key: "fixture",
+      surface,
+      baseBranch: "development",
+    },
+    pull,
+    "delivery",
+  );
+  assert.equal(proof, null);
+});

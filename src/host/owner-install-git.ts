@@ -60,12 +60,25 @@ export async function writeOwnerDevelopmentInstallCommit(
   if (!recordBlob.ok) {
     return notConfirmed(null, "runtime record blob could not be created");
   }
+  const releaseBlob = files.releaseRecord === undefined
+    ? undefined
+    : await createOwnerDevelopmentInstallBlob(
+      appToken,
+      files.releaseRecord.text,
+    );
+  if (releaseBlob !== undefined && !releaseBlob.ok) {
+    return notConfirmed(
+      null,
+      "hosted release record blob could not be created",
+    );
+  }
   const tree = await createOwnerDevelopmentInstallTree(
     appToken,
     baseTree.value,
     files,
     manifestBlob.value,
     recordBlob.value,
+    releaseBlob?.ok ? releaseBlob.value : undefined,
   );
   if (!tree.ok) return notConfirmed(null, "state tree could not be created");
   const commit = await createOwnerDevelopmentInstallCommit(
@@ -104,6 +117,7 @@ export async function writeOwnerDevelopmentInstallCommit(
     appToken,
     commit.value,
     planned,
+    files,
   );
   if (!confirmed) {
     return notConfirmed(
@@ -119,12 +133,46 @@ export async function confirmOwnerDevelopmentInstall(
   appToken: string,
   commit: GitSha,
   planned: ReleaseStateSnapshotV1,
+  files?: OwnerDevelopmentInstallFilesV1,
 ): Promise<boolean> {
   const ref = await readOwnerDevelopmentInstallRef(appToken);
   if (!ref.ok || ref.value !== commit) return false;
   const read = await readOwnerDevelopmentInstallState(state);
   if (read.status !== "found" || read.head !== commit) return false;
-  return canonicalStringify(read.snapshot) === canonicalStringify(planned);
+  if (canonicalStringify(read.snapshot) !== canonicalStringify(planned)) {
+    return false;
+  }
+  if (files?.releaseRecord !== undefined) {
+    for (const file of [files.manifest, files.record, files.releaseRecord]) {
+      const response = await ownerDevelopmentInstallApi(
+        appToken,
+        "GET",
+        `/repos/${OWNER_DEVELOPMENT_INSTALL_REPOSITORY}/contents/${file.path}?ref=${commit}`,
+      );
+      if (!response.ok || response.value.status !== 200) return false;
+      const body = response.value.value as {
+        encoding?: unknown;
+        content?: unknown;
+        type?: unknown;
+      };
+      if (
+        body?.type !== "file" || body.encoding !== "base64" ||
+        typeof body.content !== "string"
+      ) return false;
+      try {
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(
+          Uint8Array.from(
+            atob(body.content.replaceAll("\n", "")),
+            (c) => c.charCodeAt(0),
+          ),
+        );
+        if (text !== file.text) return false;
+      } catch {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 export async function readOwnerDevelopmentInstallCommitTree(
@@ -168,6 +216,7 @@ export async function createOwnerDevelopmentInstallTree(
   files: OwnerDevelopmentInstallFilesV1,
   manifestBlob: GitSha,
   recordBlob: GitSha,
+  releaseBlob?: GitSha,
 ): Promise<PortResultV1<GitSha>> {
   const response = await ownerDevelopmentInstallApi(
     token,
@@ -188,6 +237,14 @@ export async function createOwnerDevelopmentInstallTree(
           type: "blob",
           sha: recordBlob,
         },
+        ...(files.releaseRecord === undefined || releaseBlob === undefined
+          ? []
+          : [{
+            path: files.releaseRecord.path,
+            mode: "100644",
+            type: "blob",
+            sha: releaseBlob,
+          }]),
       ],
     },
   );

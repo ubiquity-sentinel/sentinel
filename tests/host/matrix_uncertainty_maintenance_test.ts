@@ -978,20 +978,31 @@ Deno.test("uncertainty maintenance defers missing, unknown, queued and drifting 
             assert.equal(url.pathname, "/graphql");
             assert.equal(request.method, "POST");
             assert.ok(!request.body?.includes("mutation"));
+            const query = JSON.parse(request.body ?? "{}");
+            assert.match(query.query, /^query\(/);
+            assert.deepEqual(query.variables, {
+              owner: REPO.owner,
+              name: REPO.name,
+              number: 7,
+            });
             queueReads++;
             return Promise.resolve(response(pullFactsWire({
+              baseRefOid: SHA1,
               headRefName: branch,
               headRefOid: SHA2,
               merged: false,
               mergedBy: null,
               mergeCommit: null,
-              isInMergeQueue: true,
-              mergeQueueEntry: entryWire({
-                pullRequest: pullWire({
-                  headRefName: branch,
-                  headRefOid: SHA2,
-                }),
-              }),
+              isInMergeQueue: mode === "queued",
+              mergeQueueEntry: mode === "queued"
+                ? entryWire({
+                  baseCommit: { oid: SHA1 },
+                  pullRequest: pullWire({
+                    headRefName: branch,
+                    headRefOid: SHA2,
+                  }),
+                })
+                : null,
             })));
           },
         });
@@ -1037,7 +1048,17 @@ Deno.test("uncertainty maintenance defers missing, unknown, queued and drifting 
           assert.deepEqual(after, before, "no charge, intent or wait changes");
         }
         assert.deepEqual(await f.state.readRelease(), release);
-        assert.equal(queueReads, mode === "queued" ? 13 : 0);
+        assert.equal(
+          queueReads,
+          {
+            missing: 0,
+            unavailable: 0,
+            queued: 13,
+            state_drift: 13,
+            observation_lost: 1,
+            no_rule: 39,
+          }[mode],
+        );
         assert.equal(ruleReads > 0, mode !== "missing");
       } finally {
         await f.cleanup();
@@ -1051,35 +1072,62 @@ Deno.test("uncertainty maintenance retains a charged partial settlement when nat
   try {
     const before = await f.state.readRepair();
     assert(before.ok && before.value.status === "found");
-    let rules = 0;
+    const chargeId = f.records[0].intent!.requestId;
+    let charged = false;
+    let outageReads = 0;
+    const state: typeof f.state = {
+      ...f.state,
+      async writeRepair(next, expectedHead) {
+        const written = await f.state.writeRepair(next, expectedHead);
+        const charge = next.reservations.find((row) => row.id === chargeId);
+        if (
+          written.ok && written.value.status === "applied" &&
+          charge?.outcome === "ambiguous" && charge.settledAt !== null
+        ) {
+          assert.equal(charged, false, "the charge transition is applied once");
+          charged = true;
+        }
+        return written;
+      },
+    };
     const native = createMatrixUncertaintyMaintenance({
-      state: f.state,
+      state,
       clock,
       token: "fixture-state-token",
       apiToken: "fixture-target-token",
       artifactRoot: f.root + "/queue-artifacts",
       http: (request) => {
         assert.equal(request.method, "GET");
-        assert.equal(
-          new URL(request.url).pathname,
-          "/repos/ubiquity/ai.ubq.fi/rules/branches/development",
-        );
-        // Preflight and entry observe no rule. After the charge CAS the final
-        // work transition cannot establish native custody anymore.
-        return Promise.resolve(response([], ++rules < 3 ? 200 : 503));
+        const path = new URL(request.url).pathname;
+        if (path === "/repos/ubiquity/ai.ubq.fi/rules/branches/development") {
+          // The outage follows the successful charge CAS, independently of how
+          // many authenticated observations preflight and entry require.
+          if (charged) {
+            outageReads++;
+            return Promise.resolve(response({}, 503));
+          }
+          return Promise.resolve(response([]));
+        }
+        // These unpublished branches have no PR. Complete empty discovery
+        // proves native absence before charging the ambiguous admission.
+        assert.equal(path, "/repos/ubiquity/ai.ubq.fi/pulls");
+        assert.ok(new URL(request.url).searchParams.get("head"));
+        return Promise.resolve(response([]));
       },
     });
     const held = await runMatrixUncertaintyMaintenance({
       ...f.deps,
+      state,
       nativeQueueFor: native.nativeQueueFor,
     });
     assert.equal(held.quarantined, 0);
+    assert.equal(charged, true);
+    assert.ok(outageReads > 0, "native custody is lost after the charge CAS");
     const after = await f.state.readRepair();
     assert(after.ok && after.value.status === "found");
     assert.notEqual(after.value.head, before.value.head);
     assert.equal(held.appliedHead, after.value.head);
     assert.deepEqual(after.value.snapshot.work, before.value.snapshot.work);
-    const chargeId = f.records[0].intent!.requestId;
     assert.deepEqual(
       after.value.snapshot.reservations,
       before.value.snapshot.reservations.map((charge) =>

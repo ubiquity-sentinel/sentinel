@@ -12,6 +12,7 @@ import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
   parseReviewReceiptV1,
   type ReviewReceiptV1,
+  reviewTaskStatementDigest,
 } from "../../src/contracts/review-receipt.ts";
 import {
   deliveryOnly,
@@ -152,6 +153,16 @@ Deno.test("spent delivery S10: the moved-base merge (D3) ships disabled: a spent
  * Live 618 and a sibling (same head and base, its own issue, PR and bound
  * receipt) ordered after it, both green at their exact reviewed base.
  */
+const SIBLING_TASK_TEXT = {
+  issueNumber: 9000,
+  title: "Deliver the exact synthetic sibling candidate",
+  body: "Deliver the reviewed synthetic patch for issue 9000.",
+};
+const SIBLING_TASK = {
+  ...SIBLING_TASK_TEXT,
+  digest: await reviewTaskStatementDigest(SIBLING_TASK_TEXT),
+};
+
 function exactSiblings(): {
   first: WorkRecordV1;
   second: WorkRecordV1;
@@ -169,7 +180,11 @@ function exactSiblings(): {
     ...receipt,
     id: `review-receipt:${"8".repeat(64)}`,
     pullRequest: { ...receipt.pullRequest, number: 9100 },
-    taskAcceptance: { ...receipt.taskAcceptance!, issueNumber: 9000 },
+    taskAcceptance: {
+      ...receipt.taskAcceptance!,
+      issueNumber: 9000,
+      taskDigest: SIBLING_TASK.digest,
+    },
   });
   return { first, second, receipts: [receipt, sibling] };
 }
@@ -190,7 +205,7 @@ function siblingOptions(
       1071: mergedPull(first, base),
       9100: mergedPull(second, mergeSha(1071)),
     },
-    tasks: { 618: liveTask(618, receipts), 9000: liveTask(9000, receipts) },
+    tasks: { 618: liveTask(618, receipts), 9000: { ...SIBLING_TASK } },
   };
 }
 

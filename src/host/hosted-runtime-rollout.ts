@@ -1,6 +1,14 @@
 /** Future rollout data is separate from the frozen code profile that reads it. */
 import { type GitSha, isGitSha, isSha256Hex } from "../contracts/brands.ts";
 import source from "./hosted-runtime-rollout.json" with { type: "json" };
+import {
+  parseHostedOwnerSuccessorTaskBindingV1,
+  parseHostedOwnerSupersessionIntentV1,
+} from "../contracts/hosted-supervisor-release.ts";
+import type {
+  HostedOwnerSuccessorTaskBindingV1,
+  HostedOwnerSupersessionIntentV1,
+} from "../contracts/hosted-supervisor-types.ts";
 
 export interface HostedRuntimeRolloutInstall {
   readonly fromRevision: GitSha;
@@ -36,6 +44,9 @@ export interface HostedRuntimeRollout {
   readonly acceptanceCorrection: readonly GitSha[];
   readonly legacyReview: readonly GitSha[];
   readonly recoveries: readonly HostedRuntimeRecovery[];
+  readonly ownerSupersessions: readonly HostedOwnerSupersessionIntentV1[];
+  readonly ownerSuccessorTaskBindings:
+    readonly HostedOwnerSuccessorTaskBindingV1[];
 }
 
 const INVALID = "invalid hosted runtime rollout";
@@ -46,7 +57,7 @@ export function parseHostedRuntimeRollout(
   value: unknown,
 ): HostedRuntimeRollout {
   try {
-    const row = object(value, [
+    const keys = [
       "version",
       "installs",
       "ciCorrection",
@@ -57,6 +68,12 @@ export function parseHostedRuntimeRollout(
       "acceptanceCorrection",
       "legacyReview",
       "recoveries",
+    ];
+    const row = object(value, [
+      ...keys,
+      ...["ownerSupersessions", "ownerSuccessorTaskBindings"].filter((key) =>
+        value !== null && typeof value === "object" && Object.hasOwn(value, key)
+      ),
     ]);
     if (row.version !== 1) throw new Error(INVALID);
     const installs = array(row.installs).map(install);
@@ -76,6 +93,31 @@ export function parseHostedRuntimeRollout(
     const refreshRearm = activations(row.refreshRearm);
     const conflictResolution = activations(row.conflictResolution);
     const recoveries = array(row.recoveries).map(recovery);
+    const ownerSupersessions = (Object.hasOwn(row, "ownerSupersessions")
+      ? array(row.ownerSupersessions)
+      : []).map((value) =>
+        parseHostedOwnerSupersessionIntentV1(value)
+      );
+    const ownerSuccessorTaskBindings =
+      (Object.hasOwn(row, "ownerSuccessorTaskBindings")
+        ? array(row.ownerSuccessorTaskBindings)
+        : []).map((value) => parseHostedOwnerSuccessorTaskBindingV1(value));
+    if (
+      new Set(
+        ownerSuccessorTaskBindings.map((b) =>
+          `${b.releaseId}:${b.successorRevision}:${b.successorGeneration}`
+        ),
+      ).size !== ownerSuccessorTaskBindings.length
+    ) throw new Error(INVALID);
+    if (
+      new Set(ownerSupersessions.map((i) => i.releaseId)).size !==
+        ownerSupersessions.length ||
+      new Set(
+          ownerSupersessions.map((i) =>
+            `${i.fromRevision}:${i.fromGeneration}`
+          ),
+        ).size !== ownerSupersessions.length
+    ) throw new Error(INVALID);
     if (
       new Set(recoveries.map((r) => `${r.fromRevision}:${r.fromGeneration}`))
           .size !== recoveries.length ||
@@ -101,6 +143,8 @@ export function parseHostedRuntimeRollout(
       acceptanceCorrection: revisions(row.acceptanceCorrection),
       legacyReview: revisions(row.legacyReview),
       recoveries: Object.freeze(recoveries),
+      ownerSupersessions: Object.freeze(ownerSupersessions),
+      ownerSuccessorTaskBindings: Object.freeze(ownerSuccessorTaskBindings),
     });
   } catch {
     throw new Error(INVALID);

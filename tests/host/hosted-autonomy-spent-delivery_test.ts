@@ -10,8 +10,14 @@
  */
 import assert from "node:assert/strict";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
-import { parseReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
-import type { ReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
+import {
+  parseReviewReceiptV1,
+  reviewTaskStatementDigest,
+} from "../../src/contracts/review-receipt.ts";
+import type {
+  ReviewReceiptV1,
+  ReviewTaskStatementV1,
+} from "../../src/contracts/review-receipt.ts";
 import { TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL } from "../../src/repair/review-gate.ts";
 import {
   authorizingReceipt,
@@ -693,10 +699,30 @@ Deno.test("spent delivery S9: an ordinary delivery record keeps today's write", 
   );
 });
 
+/** Only these ten synthetic clones receive these explicit source statements. */
+const CLONED_SPENT_TASKS = new Map(
+  await Promise.all(
+    [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009]
+      .map(async (issueNumber) => {
+        const text = {
+          issueNumber,
+          title: `Deliver synthetic spent candidate ${issueNumber}`,
+          body:
+            `Deliver the exact reviewed synthetic patch for issue ${issueNumber}.`,
+        };
+        return [issueNumber, {
+          ...text,
+          digest: await reviewTaskStatementDigest(text),
+        }] as const;
+      }),
+  ),
+);
+
 /** Ten spent copies of live 618, each with its own PR, issue and receipt. */
 function tenSpentRecords(): {
   records: WorkRecordV1[];
   reviews: ReviewReceiptV1[];
+  tasks: Record<number, ReviewTaskStatementV1>;
 } {
   const base = liveRecord(618);
   const receipt = liveReceipts(base)[0];
@@ -719,21 +745,25 @@ function tenSpentRecords(): {
       ...receipt,
       id: `review-receipt:${index.toString(16).padStart(64, "0")}`,
       pullRequest: { ...receipt.pullRequest, number: pr },
-      taskAcceptance: { ...receipt.taskAcceptance!, issueNumber: 3000 + index },
+      taskAcceptance: {
+        ...receipt.taskAcceptance!,
+        issueNumber: 3000 + index,
+        taskDigest: CLONED_SPENT_TASKS.get(3000 + index)!.digest,
+      },
     }));
   }
-  return { records, reviews };
+  return { records, reviews, tasks: Object.fromEntries(CLONED_SPENT_TASKS) };
 }
 
 Deno.test("spent delivery: every eligible spent record is read on each pass", async () => {
-  const { records, reviews } = tenSpentRecords();
+  const { records, reviews, tasks } = tenSpentRecords();
   const seen = new Set<string>();
   for (const now of [NOW, NOW + 300_000]) {
     await withRig(
       `cap-${now}`,
       records,
       reviews,
-      { tip: TIP, green: {} },
+      { tip: TIP, green: {}, tasks },
       async (rig, calls) => {
         const { actions } = await deliveryOnly(rig, now);
         const deferred = actions.filter((action) =>

@@ -47,7 +47,12 @@ import {
   workRecord,
 } from "../state/helpers.ts";
 import { assertGen80Parses, gen80Available } from "../state/gen77-contracts.ts";
-import { APP, queueRig } from "./delivery-queue-rig.ts";
+import {
+  APP,
+  historicalDeliveryScenario,
+  queueRig,
+} from "./delivery-queue-rig.ts";
+import type { HostedPolicyGraph } from "../host/hosted-supervisor-policy-fixture.ts";
 import { completedReceipt } from "./loop-review-fixtures.ts";
 import { sha } from "./review-round-cap-rig.ts";
 import {
@@ -103,7 +108,10 @@ async function cleanReview(record: WorkRecordV1): Promise<ReviewReceiptV1> {
 }
 
 /** One spent, cleanly reviewed record on B0 = SHA1 with the tip at T = SHA2. */
-async function spentRig(repository: RepositoryIdentityV1 = REPO) {
+async function spentRig(
+  repository: RepositoryIdentityV1 = REPO,
+  historicalLauncher?: HostedPolicyGraph,
+) {
   const base = await queueRig(1, { repository });
   const spent = base.records.map((record) =>
     workRecord(record.id, {
@@ -114,6 +122,7 @@ async function spentRig(repository: RepositoryIdentityV1 = REPO) {
   );
   const reviews = await Promise.all(spent.map(cleanReview));
   return queueRig(1, {
+    historicalLauncher,
     tip: SHA2,
     shape: () => spent,
     reservations: spent.flatMap(spentCharges),
@@ -149,101 +158,110 @@ async function assertRollbackParses(rig: Rig) {
   for (const written of rig.writes) await assertGen80Parses(written);
 }
 
-Deno.test("carried coverage: a refreshed head in the live verify-artifact gap holds no merge marker; it merges once GitHub creates verify-artifact", async () => {
-  const rig = await spentRig();
-  const charges = (await rig.snapshot()).reservations.length;
-  rig.github.checksByHead.set(SHA2, liveGapChecks("tip", SHA2, T0));
-  rig.github.checksByHead.set(H1, liveGapChecks("gap", H1, T0));
-  await runOnce(rig);
-  await runOnce(rig);
-  let [record] = (await rig.snapshot()).work;
-  assert.equal(record.target.head, H1, "refreshed once onto T");
-  assert.equal(record.target.base, SHA2);
-  assert.equal(record.nextStep, "work");
-  assert.equal(record.wait?.reason, "ci_pending");
-  assert.equal(isCarriedMergeMarker(record.wait), false, "no merge marker");
-  const since = record.wait!.since;
-  await rig.launcher();
-  assert.equal(rig.github.launcherMerges.length, 0, "nothing merged in gap");
-  // GitHub creates verify-artifact: the marker, then the launcher's merge.
-  rig.github.checksByHead.set(H1, liveGapChecks("complete", H1, T0));
-  rig.clock.advance(5 * 60_000);
-  await runOnce(rig);
-  [record] = (await rig.snapshot()).work;
-  assert.ok(isCarriedMergeMarker(record.wait), JSON.stringify(record.wait));
-  assert.ok(record.wait!.since > since);
-  await rig.launcher();
-  assert.equal(rig.github.launcherMerges.length, 1);
-  assert.equal(rig.github.launcherMerges[0].head, H1);
-  assert.equal(rig.github.launcherMerges[0].onto, SHA2);
-  assert.equal(rig.github.refreshes, 1);
-  await assertNothingSpent(rig, charges);
-  await assertRollbackParses(rig);
-});
-
-Deno.test("carried coverage: a refreshed head that never gets its expected check parks after the bound, naming it", async () => {
-  const rig = await spentRig();
-  const charges = (await rig.snapshot()).reservations.length;
-  rig.github.checksByHead.set(SHA2, liveGapChecks("tip", SHA2, T0));
-  rig.github.checksByHead.set(H1, liveGapChecks("gap", H1, T0));
-  await runOnce(rig);
-  await runOnce(rig);
-  let [record] = (await rig.snapshot()).work;
-  assert.equal(record.wait?.reason, "ci_pending");
-  for (let elapsed = 0; elapsed <= CARRIED_WAIT_BOUND_MS; elapsed += HOUR) {
-    rig.clock.advance(HOUR);
+Deno.test(
+  "carried coverage: a refreshed head in the live verify-artifact gap holds no merge marker; it merges once GitHub creates verify-artifact",
+  historicalDeliveryScenario(async (graph) => {
+    const rig = await spentRig(undefined, graph);
+    const charges = (await rig.snapshot()).reservations.length;
+    rig.github.checksByHead.set(SHA2, liveGapChecks("tip", SHA2, T0));
+    rig.github.checksByHead.set(H1, liveGapChecks("gap", H1, T0));
+    await runOnce(rig);
+    await runOnce(rig);
+    let [record] = (await rig.snapshot()).work;
+    assert.equal(record.target.head, H1, "refreshed once onto T");
+    assert.equal(record.target.base, SHA2);
+    assert.equal(record.nextStep, "work");
+    assert.equal(record.wait?.reason, "ci_pending");
+    assert.equal(isCarriedMergeMarker(record.wait), false, "no merge marker");
+    const since = record.wait!.since;
     await rig.launcher();
+    assert.equal(rig.github.launcherMerges.length, 0, "nothing merged in gap");
+    // GitHub creates verify-artifact: the marker, then the launcher's merge.
+    rig.github.checksByHead.set(H1, liveGapChecks("complete", H1, T0));
+    rig.clock.advance(5 * 60_000);
     await runOnce(rig);
     [record] = (await rig.snapshot()).work;
-    if (record.nextStep === "blocked") break;
-  }
-  assert.equal(record.nextStep, "blocked");
-  assert.equal(
-    record.blocker!.message,
-    `${REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX}verify-artifact(absent)`,
-  );
-  assert.ok(record.blocker!.message.startsWith(REVIEW_ROUND_CEILING_PREFIX));
-  assert.equal(rig.github.launcherMerges.length, 0);
-  await assertNothingSpent(rig, charges);
-  await assertRollbackParses(rig);
-});
+    assert.ok(isCarriedMergeMarker(record.wait), JSON.stringify(record.wait));
+    assert.ok(record.wait!.since > since);
+    await rig.launcher();
+    assert.equal(rig.github.launcherMerges.length, 1);
+    assert.equal(rig.github.launcherMerges[0].head, H1);
+    assert.equal(rig.github.launcherMerges[0].onto, SHA2);
+    assert.equal(rig.github.refreshes, 1);
+    await assertNothingSpent(rig, charges);
+    await assertRollbackParses(rig);
+  }),
+);
 
-Deno.test("carried coverage: the launcher refuses a carried-merge marker written in the gap (R80 reads no base)", async () => {
-  const rig = await spentRig();
-  // R80's carried step judges H1's existing runs alone, so in the gap it
-  // holds the marker; an empty listing for T gives this runtime the same
-  // view (no suite to require a name from).
-  rig.github.checksByHead.set(SHA2, []);
-  rig.github.checksByHead.set(H1, liveGapChecks("gap", H1, T0));
-  await runOnce(rig);
-  await runOnce(rig);
-  let [record] = (await rig.snapshot()).work;
-  assert.equal(record.target.head, H1);
-  assert.ok(isCarriedMergeMarker(record.wait), JSON.stringify(record.wait));
-  // GitHub reports T's own four runs, as it did throughout.
-  rig.github.checksByHead.set(SHA2, liveGapChecks("tip", SHA2, T0));
-  const actions = await rig.launcher();
-  assert.equal(
-    rig.github.launcherMerges.length,
-    0,
-    JSON.stringify(actions),
-  );
-  assert.ok(
-    actions.includes(`delivery:${record.id}:checks_pending`),
-    JSON.stringify(actions),
-  );
-  // Once verify-artifact exists the same marker merges H1 at exactly T.
-  rig.github.checksByHead.set(H1, liveGapChecks("complete", H1, T0));
-  rig.clock.advance(60_000);
-  await runOnce(rig);
-  [record] = (await rig.snapshot()).work;
-  assert.ok(isCarriedMergeMarker(record.wait));
-  await rig.launcher();
-  assert.equal(rig.github.launcherMerges.length, 1);
-  assert.equal(rig.github.launcherMerges[0].head, H1);
-  assert.equal(rig.github.launcherMerges[0].onto, SHA2);
-  await assertRollbackParses(rig);
-});
+Deno.test(
+  "carried coverage: a refreshed head that never gets its expected check parks after the bound, naming it",
+  historicalDeliveryScenario(async (graph) => {
+    const rig = await spentRig(undefined, graph);
+    const charges = (await rig.snapshot()).reservations.length;
+    rig.github.checksByHead.set(SHA2, liveGapChecks("tip", SHA2, T0));
+    rig.github.checksByHead.set(H1, liveGapChecks("gap", H1, T0));
+    await runOnce(rig);
+    await runOnce(rig);
+    let [record] = (await rig.snapshot()).work;
+    assert.equal(record.wait?.reason, "ci_pending");
+    for (let elapsed = 0; elapsed <= CARRIED_WAIT_BOUND_MS; elapsed += HOUR) {
+      rig.clock.advance(HOUR);
+      await rig.launcher();
+      await runOnce(rig);
+      [record] = (await rig.snapshot()).work;
+      if (record.nextStep === "blocked") break;
+    }
+    assert.equal(record.nextStep, "blocked");
+    assert.equal(
+      record.blocker!.message,
+      `${REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX}verify-artifact(absent)`,
+    );
+    assert.ok(record.blocker!.message.startsWith(REVIEW_ROUND_CEILING_PREFIX));
+    assert.equal(rig.github.launcherMerges.length, 0);
+    await assertNothingSpent(rig, charges);
+    await assertRollbackParses(rig);
+  }),
+);
+
+Deno.test(
+  "carried coverage: the launcher refuses a carried-merge marker written in the gap (R80 reads no base)",
+  historicalDeliveryScenario(async (graph) => {
+    const rig = await spentRig(undefined, graph);
+    // R80's carried step judges H1's existing runs alone, so in the gap it
+    // holds the marker; an empty listing for T gives this runtime the same
+    // view (no suite to require a name from).
+    rig.github.checksByHead.set(SHA2, []);
+    rig.github.checksByHead.set(H1, liveGapChecks("gap", H1, T0));
+    await runOnce(rig);
+    await runOnce(rig);
+    let [record] = (await rig.snapshot()).work;
+    assert.equal(record.target.head, H1);
+    assert.ok(isCarriedMergeMarker(record.wait), JSON.stringify(record.wait));
+    // GitHub reports T's own four runs, as it did throughout.
+    rig.github.checksByHead.set(SHA2, liveGapChecks("tip", SHA2, T0));
+    const actions = await rig.launcher();
+    assert.equal(
+      rig.github.launcherMerges.length,
+      0,
+      JSON.stringify(actions),
+    );
+    assert.ok(
+      actions.includes(`delivery:${record.id}:checks_pending`),
+      JSON.stringify(actions),
+    );
+    // Once verify-artifact exists the same marker merges H1 at exactly T.
+    rig.github.checksByHead.set(H1, liveGapChecks("complete", H1, T0));
+    rig.clock.advance(60_000);
+    await runOnce(rig);
+    [record] = (await rig.snapshot()).work;
+    assert.ok(isCarriedMergeMarker(record.wait));
+    await rig.launcher();
+    assert.equal(rig.github.launcherMerges.length, 1);
+    assert.equal(rig.github.launcherMerges[0].head, H1);
+    assert.equal(rig.github.launcherMerges[0].onto, SHA2);
+    await assertRollbackParses(rig);
+  }),
+);
 
 Deno.test("carried coverage: a spent reviewed head on a moved base is refreshed only once it reports every check of its reviewed base", async () => {
   const rig = await spentRig();
@@ -413,29 +431,32 @@ Deno.test("carried coverage: a spent reviewed head whose reviewed base cannot be
   await assertRollbackParses(rig);
 });
 
-Deno.test("carried coverage: a refreshed head whose T cannot be read holds no merge marker and parks after the bound naming it", async () => {
-  const rig = await spentRig();
-  const charges = (await rig.snapshot()).reservations.length;
-  rig.github.checksByHead.set(SHA2, liveGapChecks("tip", SHA2, T0));
-  rig.github.checksByHead.set(H1, liveGapChecks("complete", H1, T0));
-  unreadableBase(rig, SHA2);
-  await runOnce(rig);
-  await runOnce(rig);
-  let [record] = (await rig.snapshot()).work;
-  assert.equal(record.target.head, H1, "refreshed once onto T");
-  assert.equal(
-    record.wait?.reason,
-    "ci_pending",
-    "a bounded wait, not silence",
-  );
-  assert.equal(isCarriedMergeMarker(record.wait), false, "no merge marker");
-  record = await pollUntilParked(rig, true);
-  assert.equal(record.nextStep, "blocked");
-  assert.equal(
-    record.blocker!.message,
-    `${REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX}base checks unreadable`,
-  );
-  assert.equal(rig.github.launcherMerges.length, 0);
-  await assertNothingSpent(rig, charges);
-  await assertRollbackParses(rig);
-});
+Deno.test(
+  "carried coverage: a refreshed head whose T cannot be read holds no merge marker and parks after the bound naming it",
+  historicalDeliveryScenario(async (graph) => {
+    const rig = await spentRig(undefined, graph);
+    const charges = (await rig.snapshot()).reservations.length;
+    rig.github.checksByHead.set(SHA2, liveGapChecks("tip", SHA2, T0));
+    rig.github.checksByHead.set(H1, liveGapChecks("complete", H1, T0));
+    unreadableBase(rig, SHA2);
+    await runOnce(rig);
+    await runOnce(rig);
+    let [record] = (await rig.snapshot()).work;
+    assert.equal(record.target.head, H1, "refreshed once onto T");
+    assert.equal(
+      record.wait?.reason,
+      "ci_pending",
+      "a bounded wait, not silence",
+    );
+    assert.equal(isCarriedMergeMarker(record.wait), false, "no merge marker");
+    record = await pollUntilParked(rig, true);
+    assert.equal(record.nextStep, "blocked");
+    assert.equal(
+      record.blocker!.message,
+      `${REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX}base checks unreadable`,
+    );
+    assert.equal(rig.github.launcherMerges.length, 0);
+    await assertNothingSpent(rig, charges);
+    await assertRollbackParses(rig);
+  }),
+);

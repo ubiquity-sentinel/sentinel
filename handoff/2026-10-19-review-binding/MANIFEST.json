@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "rawRuntimeLogsOrStateIncluded": false,
+  "preparationHelpersExecuted": false,
+  "files": [
+    {
+      "path": "retained/CONTRACT.md",
+      "sha256": "01b901d456344e2e96543f2de9d7d9329fd535a9dbf82a8cf3fc5dbe3fffcfb6",
+      "bytes": 8128
+    },
+    {
+      "path": "retained/SCOPE-1.md",
+      "sha256": "25d715e2b907bebedb1a9a0b3ea2e2ae9cc955b11ec631dd94deb2d70a851a7a",
+      "bytes": 846
+    },
+    {
+      "path": "retained/SCOPE-2.md",
+      "sha256": "b8a65814e640d2b5017cc18dd46347bc222c1ef6b91efc6dc473585e008208d4",
+      "bytes": 699
+    },
+    {
+      "path": "retained/SCOPE-4.md",
+      "sha256": "75d878957eb9f77c8b0bdf2fa4bf64431b154815626b17ab45a5ffee0e140937",
+      "bytes": 1905
+    },
+    {
+      "path": "retained/SCOPE-5.md",
+      "sha256": "f0c2a1139d1ad926294f7219bec82d977b1c9d2d25c9214496977d43a2e8d804",
+      "bytes": 2035
+    },
+    {
+      "path": "retained/SCOPE-9.md",
+      "sha256": "b428c8e7937614d99a0b43cb09f67d964a1746a4924c9d3dca8f10ae026d20c4",
+      "bytes": 638
+    },
+    {
+      "path": "retained/SCOPE-11.md",
+      "sha256": "a125e4a55e300d5499031c2dc348a019e4b3d1cf67e94ff5a4cf070f32ea89d7",
+      "bytes": 1899
+    },
+    {
+      "path": "retained/SEMANTICS-3.md",
+      "sha256": "ae8fd04767464df9163f62ddae6d925e860060ebd1abe1b191ea54eee54a91ad",
+      "bytes": 6522
+    },
+    {
+      "path": "retained/SEMANTICS-6.md",
+      "sha256": "5658db0570e664a02e38cafbc644698146e25b88c3cf3d09ac3107f7130a50a3",
+      "bytes": 3727
+    },
+    {
+      "path": "retained/SEMANTICS-7.md",
+      "sha256": "c6d891adb79a41d2e0c6988b02a792cd20a6281162439e1c6a9611fb53fbce46",
+      "bytes": 2554
+    },
+    {
+      "path": "retained/SEMANTICS-8.md",
+      "sha256": "070ac028236bd44d8052ba82d8b057f7940ae8a05c77283472459af9bd8c5c25",
+      "bytes": 3101
+    },
+    {
+      "path": "retained/SEMANTICS-10.md",
+      "sha256": "97cfb3c26f4ccc778f02baef188270f23c3cf616e730aa4002dc4a6098c3cef0",
+      "bytes": 1920
+    },
+    {
+      "path": "retained/rollout-order.md",
+      "sha256": "5b75f30b683f59eeb974751b7c84ec29f5fc2aaebf167f6813994411b8133dce",
+      "bytes": 10754
+    },
+    {
+      "path": "retained/resume-rollout-20261019/rollout-preparation.md",
+      "sha256": "fd766eb10eb46538155d2a0211c35d16664cf2d8b63c8f83ae27970ae6701cf2",
+      "bytes": 17333
+    },
+    {
+      "path": "retained/resume-rollout-20261019/profile-check-plan.md",
+      "sha256": "96ad4256a4409c394e774ab57522b45590a7e6e6b197af91aa8bf7aca9523945",
+      "bytes": 16524
+    },
+    {
+      "path": "retained/resume-audit-20261019/acceptance.json",
+      "sha256": "713ea0b0f9fc3bc5107e8ad7325f41f6bca435de1f6724bba1c29001d9e7e78c",
+      "bytes": 2280
+    },
+    {
+      "path": "retained/resume-audit-20261019/F-profile-acceptance.json",
+      "sha256": "4ec2de5fd81498526cff74dd200390cf32ae6d6c141c9cc9379571a3a4317358",
+      "bytes": 8210
+    },
+    {
+      "path": "retained/LF-preparation/README.md",
+      "sha256": "72652b8d3689aa5e3b1141421f4387c3ba55e094c2fe8ccf8b02aa84f83c7512",
+      "bytes": 10446
+    },
+    {
+      "path": "retained/LF-preparation/materialize-lf-proposal.ts",
+      "sha256": "e23f9e3ac6d572fda7ab7c0c6bc8e6c50510b13c030651f75dadb4fdc375d020",
+      "bytes": 18690
+    },
+    {
+      "path": "retained/LF-preparation/collect-lf-inputs.ts",
+      "sha256": "87cd46871416988a4e7bb27d400d5530fde98d8db13b47ef0d52ec30f7809d0f",
+      "bytes": 11302
+    },
+    {
+      "path": "retained/LF-preparation/input.root.template.json",
+      "sha256": "724873408ff044de285d125e11653d2bdecd86275248dde5f789d37d0915eef1",
+      "bytes": 544
+    },
+    {
+      "path": "retained/LF-preparation/register-request.json",
+      "sha256": "b7e2481c9cffe0095009843513430beeabc7d85f36b9f4e22a0e7f7d4b492b4c",
+      "bytes": 1318
+    }
+  ]
+}

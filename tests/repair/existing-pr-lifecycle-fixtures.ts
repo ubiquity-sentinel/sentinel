@@ -161,6 +161,7 @@ import {
 /** Real immutable Git object and state history; only native API/principal responses are offline ports. */
 export async function nativeLifecycleRig(
   repository: RepositoryIdentityV1 = SELF_REPO,
+  createTakeover: typeof createExistingPrTakeover = createExistingPrTakeover,
 ) {
   const native = await nativeFixture(undefined, undefined, repository);
   const { ctx, clock } = native;
@@ -197,7 +198,7 @@ export async function nativeLifecycleRig(
     afterPrincipal: async () => {},
   };
   const composeTakeover = () =>
-    createExistingPrTakeover({
+    createTakeover({
       ...native.factoryInput,
       state,
       async ensureLocalCandidate(_taskId, head) {

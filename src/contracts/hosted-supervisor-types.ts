@@ -1,5 +1,6 @@
 import type { GitSha } from "./brands.ts";
 import type { ReleaseRequestV1 } from "./release.ts";
+import type { OwnerSuccessorTaskAcceptanceV1 } from "./owner-successor-review.ts";
 
 /** Fixed runtime record id of the one hosted self production runtime. */
 export const HOSTED_RUNTIME_ID = "ubiquity/sentinel:0:production";
@@ -30,7 +31,77 @@ export type HostedReleasePhaseV1 =
   | "accepted"
   | "rollback_pending"
   | "rollback_verifying"
-  | "rolled_back";
+  | "rolled_back"
+  | "owner_superseded";
+export interface HostedOwnerSupersessionIntentV1 {
+  releaseId: string;
+  requestSha256: string;
+  sourceSha256: string;
+  taskSha256: string;
+  workId: string;
+  workSha256: string;
+  issueNumber: number;
+  repairHead: GitSha;
+  releaseHead: GitSha;
+  repairSnapshotSha256: string;
+  releaseSnapshotSha256: string;
+  fromRevision: GitSha;
+  fromGeneration: number;
+  authorizedAt: number;
+  toRevision: GitSha;
+  toGeneration: number;
+  controllerSourceRevision: GitSha;
+  acceptanceBaseRevision: GitSha;
+  controllerCodeSha256: string;
+  ciRevision: GitSha;
+  requiredAncestors: readonly GitSha[];
+  failedProofSha256: string;
+  retainedHealthyProofSha256: string;
+  healthyWitnessHead: GitSha;
+  originalFailedPriorExecution: HostedExecutionIntentV1;
+  originalFailedPriorJobId: number;
+  /** Immutable native fingerprint excluding only the fresh observation time. */
+  originalFailedPriorNativeSha256: string;
+}
+
+/** Explicit owner intent, independently authenticated; never a release proof. */
+export interface HostedOwnerDispositionV1 {
+  version: "v1";
+  kind: "owner_supersession";
+  intent: HostedOwnerSupersessionIntentV1;
+  intentSha256: string;
+  controllerRevision: GitSha;
+  controllerCiRevision: GitSha;
+  failedPriorProof: HostedRunProofV1;
+  originalFailedPriorProof: HostedRunProofV1;
+  retainedHealthyProof: HostedRunProofV1;
+}
+
+export interface HostedOwnerSuccessorTaskBindingV1 {
+  releaseId: string;
+  requestSha256: string;
+  intentSha256: string;
+  successorRevision: GitSha;
+  successorGeneration: number;
+  taskSha256: string;
+  issueNumber: number;
+  workId: string;
+  acceptanceBaseRevision: GitSha;
+  controllerSourceRevision: GitSha;
+  controllerCodeSha256: string;
+  ciRevision: GitSha;
+}
+export interface HostedOwnerSuccessorBindingV1 {
+  id: string;
+  binding: HostedOwnerSuccessorTaskBindingV1;
+  bindingSha256: string;
+  controllerRevision: GitSha;
+  recoveryFromRevision: GitSha;
+  recoveryFromGeneration: number;
+  movement: "recovery" | "install" | "rollback";
+  movementProof: HostedRunProofV1;
+  movementProofSha256: string;
+}
 export type HostedPointerActionV1 = "promote" | "rollback";
 
 /**
@@ -159,6 +230,10 @@ export interface HostedReleaseRecordV1 {
   candidateProof: HostedRunProofV1 | null;
   rollbackProof: HostedRunProofV1 | null;
   pointerIntent: HostedPointerIntentV1 | null;
+  /** Present only on the distinct immutable owner_superseded terminal. */
+  ownerDisposition?: HostedOwnerDispositionV1;
+  ownerAcceptance?: OwnerSuccessorTaskAcceptanceV1;
+  ownerSuccessorBindings?: HostedOwnerSuccessorBindingV1[];
   createdAt: number;
   updatedAt: number;
 }

@@ -47,6 +47,7 @@ import {
   authorizePromotionSource,
   buildRequestedReceipt,
   ordinaryDue,
+  ownerSuccessorAcceptancePending,
   planReleaseWork,
   samePointerRecovery,
   selectSourceRequest,
@@ -334,6 +335,9 @@ export async function runHostedSupervisorPrepare(
       );
     }
 
+    if (await ownerSuccessorAcceptancePending(input, runtime, releases)) {
+      return pending("owner successor task acceptance append is pending");
+    }
     const selected = await selectSourceRequest(input, releases, runtime);
     if (selected.kind === "pending") return pending(selected.detail);
     if (selected.kind === "found") {

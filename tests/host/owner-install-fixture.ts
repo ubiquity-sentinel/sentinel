@@ -23,6 +23,7 @@ import {
 } from "./owner-install-fixture-constants.ts";
 import { rawSha256 } from "./owner-install-fixture-proofs.ts";
 import { STARTUP_NOW } from "./owner-install-fixture-startup.ts";
+import { DORMANT_HOSTED_SUPERVISOR_POLICY } from "./hosted-supervisor-policy-fixture.ts";
 import { createOwnerInstallTransport } from "./owner-install-fixture-transport.ts";
 
 export type OwnerInstallRefusal =
@@ -408,18 +409,21 @@ export async function concurrencyInstallerFixture(
       requests,
       reports,
       run: () =>
-        runOwnerDevelopmentInstallMain(
-          startupRecovery !== undefined
+        runOwnerDevelopmentInstallMain({
+          queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+          existingPrRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+          rollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
+          ...(startupRecovery !== undefined
             ? { startupRecovery: true, startupWitness: initialHead }
             : recoveryBinding === undefined
-            ? undefined
+            ? {}
             : {
               ...(matrixRecovery?.useSourcePin
                 ? {}
                 : { matrixRecoveryRevision: candidateRevision }),
               matrixRecoveryBinding: recoveryBinding,
-            },
-        ),
+            }),
+        }),
       patches,
       head: () => git([...gitArgs, "rev-parse", ref]),
       read: () => store.readRelease(),

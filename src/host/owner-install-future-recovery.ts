@@ -9,6 +9,11 @@ import type { HostedRunProofV1 } from "../contracts/hosted-supervisor.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import type { StateReadView } from "../contracts/ports.ts";
 import type { ReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  parseReleaseStateSnapshotV1,
+  parseRepairStateSnapshotV1,
+  type RepairStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
 import { GitHubApiClient } from "../github/client.ts";
 import { fetchHttpTransport } from "../github/http.ts";
 import { DenoReplayRuntime } from "../replay/runtime.ts";
@@ -17,6 +22,7 @@ import {
   readHostedAppSourceManifest,
 } from "./hosted-app-principal-source.ts";
 import { allowsHostedRuntimeMove } from "./hosted-runtime-compatibility.ts";
+import { parseHostedCustodyCapability } from "./hosted-custody-capability.ts";
 import {
   HOSTED_RUNTIME_ROLLOUT,
   parseHostedRuntimeRollout,
@@ -24,11 +30,25 @@ import {
 import type {
   HostedRuntimeRecovery,
   HostedRuntimeRollout,
+  HostedRuntimeRolloutInstall,
 } from "./hosted-runtime-rollout.ts";
-import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
-import type { ExistingPrRuntimeCapability } from "./existing-pr-runtime-capability.ts";
+import {
+  QUEUE_RUNTIME_CAPABILITY,
+  type QueueRuntimeCapability,
+  type QueueRuntimeMigration,
+} from "./queue-runtime-capability.ts";
+import {
+  EXISTING_PR_RUNTIME_CAPABILITY,
+  type ExistingPrRuntimeCapability,
+} from "./existing-pr-runtime-capability.ts";
+import {
+  OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_GEN81_GENERATION,
+  OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+} from "./owner-install-runtime-pins.ts";
 import { movePlan, waiting } from "./owner-install-plan-proof.ts";
 import type {
+  OwnerDevelopmentInstallMoveV1,
   OwnerDevelopmentInstallPlanV1,
   OwnerDevelopmentInstallStateReadV1,
 } from "./owner-install-types.ts";
@@ -53,7 +73,7 @@ type Run = {
   readonly launcherSha: GitSha;
 };
 type Current = Extract<OwnerDevelopmentInstallStateReadV1, { status: "found" }>;
-type ReadInput = {
+export type ReadInput = {
   state: StateReadView;
   token: string;
   current: Current;
@@ -64,6 +84,11 @@ type ReadInput = {
 };
 type Verified = {
   row: HostedRuntimeRecovery;
+  classification: { kind: "future" } | {
+    kind: "legacy_first";
+    install: HostedRuntimeRolloutInstall;
+  };
+  capability: { sha256: string; policies: string } | null;
   snapshot: string;
   releaseHead: GitSha;
   repairHead: GitSha;
@@ -73,6 +98,83 @@ type Verified = {
 };
 const issued = new WeakMap<OwnerFutureRecoveryAuthority, Verified>();
 const detail = "exact future recovery authority is unavailable";
+
+/** The immutable legacy tuple is classified before generic future eligibility. */
+function classify(
+  row: HostedRuntimeRecovery,
+  pins: HostedRuntimeRollout,
+  queue: QueueRuntimeCapability,
+  custody: ExistingPrRuntimeCapability,
+): Verified["classification"] | undefined {
+  if (queue.proofActivated !== true || custody.custodyActivated !== true) {
+    return;
+  }
+  if (row.fromRevision === OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION) return;
+  if (row.fromRevision !== OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION) {
+    return allowsHostedRuntimeMove(
+        row.fromRevision,
+        row.toRevision,
+        queue,
+        custody,
+      )
+      ? { kind: "future" }
+      : undefined;
+  }
+  const exact = (pin: QueueRuntimeMigration) =>
+    pin.fromRevision === row.fromRevision &&
+    pin.fromGeneration === row.fromGeneration &&
+    pin.toRevision === row.toRevision && pin.toGeneration === row.toGeneration;
+  const old = [
+    OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
+    OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+  ];
+  const install = pins.installs.find((pin) =>
+    exact(pin) && !pin.rollbackToPrior
+  );
+  if (
+    row.fromGeneration !== OWNER_DEVELOPMENT_INSTALL_GEN81_GENERATION ||
+    row.toGeneration !== OWNER_DEVELOPMENT_INSTALL_GEN81_GENERATION + 1 ||
+    old.includes(row.toRevision) || !install ||
+    [queue, custody].some((policy) =>
+      !policy.revisions.includes(row.toRevision) || old.some((revision) =>
+        policy.revisions.includes(revision)
+      ) ||
+      !policy.ownerInstallMigrations?.some(exact)
+    )
+  ) return;
+  return { kind: "legacy_first", install };
+}
+
+/** Pure consumer guard, bound to the issued row, state, exact move and source policy. */
+export function allowsOwnerFutureRecoveryMove(
+  snapshot: ReleaseStateSnapshotV1,
+  move: OwnerDevelopmentInstallMoveV1,
+  authority: OwnerFutureRecoveryAuthority,
+  queue: QueueRuntimeCapability = QUEUE_RUNTIME_CAPABILITY,
+  custody: ExistingPrRuntimeCapability = EXISTING_PR_RUNTIME_CAPABILITY,
+  rollout: HostedRuntimeRollout = HOSTED_RUNTIME_ROLLOUT,
+): boolean {
+  try {
+    const proof = issued.get(authority);
+    if (!proof) return false;
+    const plan = planOwnerFutureRecovery(snapshot, authority, rollout);
+    return plan.status === "install" &&
+      canonicalStringify(plan.move) === canonicalStringify(move) &&
+      canonicalStringify(
+          classify(
+            proof.row,
+            parseHostedRuntimeRollout(rollout),
+            queue,
+            custody,
+          ),
+        ) ===
+        canonicalStringify(proof.classification) &&
+      (proof.capability === null ||
+        proof.capability.policies === canonicalStringify({ queue, custody }));
+  } catch {
+    return false;
+  }
+}
 
 /** Row equality and snapshot equality are required in addition to opaque issuance. */
 export function planOwnerFutureRecovery(
@@ -121,7 +223,7 @@ export function ownerFutureRecoveryBootstrap(
   });
 }
 
-async function sourceData(path: string): Promise<string> {
+export async function sourceData(path: string): Promise<string> {
   const root = await Deno.realPath(Deno.cwd());
   const file = `${root}/${path}`;
   const info = await Deno.lstat(file);
@@ -157,7 +259,88 @@ async function sourceData(path: string): Promise<string> {
   return text;
 }
 
-async function sourceApproved(
+/** Inert maintenance routing only; full native issuance remains mandatory in prepare. */
+export async function readOwnerLegacyFirstRecoveryTarget(input: {
+  snapshot: ReleaseStateSnapshotV1;
+  repair: RepairStateSnapshotV1;
+  launcherSha: GitSha;
+  now: number;
+  queue?: QueueRuntimeCapability;
+  custody?: ExistingPrRuntimeCapability;
+  rollout?: HostedRuntimeRollout;
+}): Promise<{ revision: GitSha; generation: number } | undefined> {
+  try {
+    const { now } = input;
+    if (!Number.isSafeInteger(now) || now < 0) return;
+    const snapshot = parseReleaseStateSnapshotV1(input.snapshot);
+    const repair = parseRepairStateSnapshotV1(input.repair);
+    const pins = parseHostedRuntimeRollout(
+      input.rollout ?? HOSTED_RUNTIME_ROLLOUT,
+    );
+    const queue = input.queue ?? QUEUE_RUNTIME_CAPABILITY;
+    const custody = input.custody ?? EXISTING_PR_RUNTIME_CAPABILITY;
+    const runtime = snapshot.hostedRuntimes.length === 1
+      ? snapshot.hostedRuntimes[0]
+      : undefined;
+    const row = pins.recoveries.find((row) =>
+      row.fromRevision === runtime?.activeRevision &&
+      row.fromGeneration === runtime.generation
+    );
+    if (
+      !runtime || !row || runtime.execution !== null ||
+      classify(row, pins, queue, custody)?.kind !== "legacy_first" ||
+      snapshot.updatedAt > now || repair.updatedAt > now ||
+      snapshot.hostedReleases.some((release) =>
+        release.pointerIntent !== null ||
+        !["accepted", "rolled_back"].includes(release.phase)
+      ) ||
+      [...snapshot.githubCooldowns, ...repair.githubCooldowns].some((hold) =>
+        hold.retryNotBefore === null || now < hold.retryNotBefore
+      )
+    ) return;
+    const failed = parseHostedRunProofV1(runtime.lastExecutionProof);
+    const healthy = parseHostedRunProofV1(runtime.lastHealthyProof);
+    if (
+      failed.outcome !== "failed" || failed.execution.purpose !== "ordinary" ||
+      failed.execution.releaseId !== null ||
+      failed.execution.revision !== row.fromRevision ||
+      failed.execution.generation !== row.fromGeneration ||
+      healthy.outcome !== "healthy" ||
+      healthy.execution.purpose !== "ordinary" ||
+      healthy.execution.releaseId !== null ||
+      healthy.execution.revision !== row.fromRevision ||
+      healthy.execution.generation !== row.fromGeneration ||
+      healthy.finishedAt > failed.startedAt || failed.observedAt > now ||
+      healthy.observedAt > now ||
+      await sha256HexText(canonicalStringify(failed)) !==
+        row.failedProofSha256 ||
+      await sha256HexText(canonicalStringify(healthy)) !==
+        row.retainedHealthyProofSha256 ||
+      await ownerStartupSourceHead() !== input.launcherSha
+    ) return;
+    const sourcePins = parseHostedRuntimeRollout(
+      JSON.parse(await sourceData("src/host/hosted-runtime-rollout.json")),
+    );
+    const source = parseHostedCustodyCapability(
+      JSON.parse(await sourceData("src/host/hosted-custody-capability.json")),
+    );
+    if (
+      canonicalStringify(sourcePins) !== canonicalStringify(pins) ||
+      canonicalStringify({
+          queue: source.queue,
+          custody: source.existingPr,
+        }) !== canonicalStringify({ queue, custody })
+    ) return;
+    return Object.freeze({
+      revision: row.toRevision,
+      generation: row.toGeneration,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+export async function sourceApproved(
   input: ReadInput,
   row: HostedRuntimeRecovery,
   now: number,
@@ -217,7 +400,7 @@ async function sourceApproved(
 }
 
 /** Full generic native proof comparison; observation freshness never changes saved digest identity. */
-async function nativeProof(
+export async function nativeProof(
   client: GitHubApiClient,
   saved: HostedRunProofV1,
 ): Promise<boolean> {
@@ -248,17 +431,20 @@ export async function readOwnerFutureRecoveryAuthority(
       row.fromRevision === runtime?.activeRevision &&
       row.fromGeneration === runtime.generation
     );
+    const classification = row === undefined ? undefined : classify(
+      row,
+      pins,
+      input.queue ?? QUEUE_RUNTIME_CAPABILITY,
+      input.custody ?? EXISTING_PR_RUNTIME_CAPABILITY,
+    );
     if (
       !runtime || !row || runtime.execution !== null ||
       !input.state.readReleaseAt ||
-      input.queue?.proofActivated !== true ||
-      input.custody?.custodyActivated !== true ||
-      !allowsHostedRuntimeMove(
-        row.fromRevision,
-        row.toRevision,
-        input.queue,
-        input.custody,
-      )
+      input.current.snapshot.hostedReleases.some((release) =>
+        release.pointerIntent !== null ||
+        !["accepted", "rolled_back"].includes(release.phase)
+      ) ||
+      !classification
     ) return undefined;
     const failed = parseHostedRunProofV1(runtime.lastExecutionProof);
     const healthy = parseHostedRunProofV1(runtime.lastHealthyProof);
@@ -269,6 +455,14 @@ export async function readOwnerFutureRecoveryAuthority(
       failed.execution.generation !== row.fromGeneration ||
       failed.execution.releaseId !== null ||
       !["bootstrap", "ordinary"].includes(failed.execution.purpose) ||
+      (classification.kind === "legacy_first" &&
+        (failed.execution.purpose !== "ordinary" ||
+          healthy.execution.purpose !== "ordinary" ||
+          healthy.execution.releaseId !== null ||
+          healthy.execution.revision !==
+            OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION ||
+          healthy.execution.generation !==
+            OWNER_DEVELOPMENT_INSTALL_GEN81_GENERATION)) ||
       healthy.finishedAt > failed.startedAt || failed.observedAt > now ||
       input.current.snapshot.updatedAt > now ||
       await sha256HexText(canonicalStringify(failed)) !==
@@ -330,6 +524,23 @@ export async function readOwnerFutureRecoveryAuthority(
         },
       },
     });
+    let capability: Verified["capability"] = null;
+    if (classification.kind === "legacy_first") {
+      const text = await sourceData("src/host/hosted-custody-capability.json");
+      const source = parseHostedCustodyCapability(JSON.parse(text));
+      const policies = canonicalStringify({
+        queue: source.queue,
+        custody: source.existingPr,
+      });
+      if (
+        policies !==
+          canonicalStringify({ queue: input.queue, custody: input.custody })
+      ) return;
+      capability = Object.freeze({
+        sha256: await sha256HexText(text),
+        policies,
+      });
+    }
     if (
       !await headsUnchanged() || !await sourceApproved(input, row, now) ||
       !await nativeProof(client, healthy) ||
@@ -342,6 +553,8 @@ export async function readOwnerFutureRecoveryAuthority(
       authority,
       Object.freeze({
         row,
+        classification: Object.freeze(classification),
+        capability,
         snapshot,
         releaseHead: input.current.head,
         repairHead: repair.value.head,

@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import {
   runHostedSupervisorFinalize,
-  runHostedSupervisorHost,
   runHostedSupervisorPrepare,
 } from "../../src/host/actions-supervisor.ts";
-import { HOSTED_RUNTIME_ROLLOUT } from "../../src/host/hosted-runtime-rollout.ts";
+import {
+  DORMANT_HOSTED_SUPERVISOR_POLICY,
+  runHostedSupervisorWithPolicy,
+} from "./hosted-supervisor-policy-fixture.ts";
 import { hostedRuntimeBootstrapDisposition } from "../../src/host/hosted-runtime-bootstrap.ts";
 import {
   CANDIDATE,
@@ -36,7 +38,10 @@ const pin = {
   toGeneration: 82,
   rollbackToPrior: false,
 };
-const rollout = { ...HOSTED_RUNTIME_ROLLOUT, installs: [pin] };
+const rollout = {
+  ...DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
+  installs: [pin],
+};
 const custody = { custodyActivated: true, revisions: [CANDIDATE] };
 const queue = { proofActivated: true, revisions: [CANDIDATE] };
 function installed() {
@@ -55,7 +60,7 @@ Deno.test("future rollback actual controller: restored bootstrap precedes unrela
       try {
         rig.clock.advance(NOW - rig.clock.now());
         const pins = {
-          ...HOSTED_RUNTIME_ROLLOUT,
+          ...DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
           installs: [{
             fromRevision: CANDIDATE,
             fromGeneration: 82,
@@ -202,7 +207,15 @@ Deno.test("future bootstrap source priority: only exact healthy-predecessor targ
   const disposition = (value = runtime, data = rollout) =>
     hostedRuntimeBootstrapDisposition(value, queue, custody, data);
   assert.equal(disposition(), "bootstrap");
-  assert.equal(hostedRuntimeBootstrapDisposition(runtime), "ordinary");
+  assert.equal(
+    hostedRuntimeBootstrapDisposition(
+      runtime,
+      DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+      DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+      DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
+    ),
+    "ordinary",
+  );
   assert.equal(disposition(runtime, { ...rollout, installs: [] }), "ordinary");
   assert.equal(disposition({ ...runtime, generation: 83 }), "ordinary");
   assert.equal(disposition({ ...runtime, lastHealthyProof: null }), "hold");
@@ -280,7 +293,11 @@ Deno.test("future bootstrap actual controller: source-pinned own-health wins ove
             "pending",
           );
           const outputs = new Map<string, string>();
-          const host = await runHostedSupervisorHost({
+          const host = await runHostedSupervisorWithPolicy({
+            queue,
+            custody,
+            rollout,
+          }, {
             sourceDir: Deno.cwd(),
             clock: rig.clock,
             state: rig.release,

@@ -1,3 +1,4 @@
+import { DORMANT_HOSTED_SUPERVISOR_POLICY } from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import {
   parseHostedExecutionIntentV1,
@@ -243,6 +244,9 @@ Deno.test(
         assert.equal(nativeReads, 2);
         assert.equal(completionReads, 2);
         const prepared = await runHostedSupervisorPrepare({
+          queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+          existingPrRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+          runtimeRollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
           state: release,
           clock: { now: () => NOW + 100 },
           run: {

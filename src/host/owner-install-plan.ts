@@ -43,7 +43,6 @@ import {
 import { planOwnerInstallMemory } from "./owner-install-plan-memory.ts";
 import {
   allowsHostedOwnerInstallMove,
-  allowsHostedRuntimeMove,
   runtimeCompatibilityRefusal,
 } from "./hosted-runtime-compatibility.ts";
 import {
@@ -57,9 +56,14 @@ import {
 import type { HostedRuntimeRollout } from "./hosted-runtime-rollout.ts";
 import { planOwnerInstallRollout } from "./owner-install-plan-rollout.ts";
 import {
+  allowsOwnerFutureRecoveryMove,
   type OwnerFutureRecoveryAuthority,
   planOwnerFutureRecovery,
 } from "./owner-install-future-recovery.ts";
+import {
+  type OwnerSupersessionAuthority,
+  planOwnerSupersession,
+} from "./owner-install-supersession.ts";
 
 /**
  * Pure planning boundary. The snapshot is re-validated, so an unparsed or
@@ -76,7 +80,34 @@ export function planOwnerDevelopmentInstall(
   custodyCapability?: ExistingPrRuntimeCapability,
   rollout?: HostedRuntimeRollout,
   future?: OwnerFutureRecoveryAuthority,
+  supersession?: OwnerSupersessionAuthority,
 ): OwnerDevelopmentInstallPlanV1 {
+  if (supersession !== undefined) {
+    if (
+      future !== undefined || startup !== undefined || recovery !== undefined
+    ) return waiting("conflicting owner recovery modes");
+    const parsed = tryParse(parseReleaseStateSnapshotV1, snapshot);
+    if (
+      !parsed.ok || !Number.isSafeInteger(now) || now < 0 ||
+      parsed.value.hostedRuntimes.length !== 1 ||
+      parsed.value.hostedRuntimes[0].execution !== null ||
+      parsed.value.githubCooldowns.some((c) =>
+        c.retryNotBefore === null || now < c.retryNotBefore
+      )
+    ) return waiting("owner supersession state is unavailable");
+    const plan = planOwnerSupersession(
+      parsed.value,
+      supersession,
+      capability,
+      custodyCapability,
+      rollout,
+    );
+    if (
+      (plan.status === "install" || plan.status === "rollback") &&
+      !allowsHostedOwnerInstallMove(plan.move, capability, custodyCapability)
+    ) return waiting(runtimeCompatibilityRefusal(custodyCapability));
+    return plan;
+  }
   if (future !== undefined) {
     const queue = capability ?? QUEUE_RUNTIME_CAPABILITY;
     const custody = custodyCapability ?? EXISTING_PR_RUNTIME_CAPABILITY;
@@ -95,11 +126,13 @@ export function planOwnerDevelopmentInstall(
   if (
     future !== undefined &&
     (plan.status === "install" || plan.status === "rollback") &&
-    !allowsHostedRuntimeMove(
-      plan.move.priorRevision,
-      plan.move.nextRevision,
+    !allowsOwnerFutureRecoveryMove(
+      snapshot,
+      plan.move,
+      future,
       capability,
       custodyCapability,
+      rollout,
     )
   ) return waiting(runtimeCompatibilityRefusal(custodyCapability));
   if (

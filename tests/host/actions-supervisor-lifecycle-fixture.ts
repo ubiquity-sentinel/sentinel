@@ -23,6 +23,7 @@ import type {
 } from "../../src/host/actions-supervisor.ts";
 import {
   CANDIDATE,
+  DORMANT_HOSTED_POLICIES,
   ISSUE,
   LAUNCHER,
   releaseRequest,
@@ -133,6 +134,7 @@ export async function persistPromotingIntent(
     },
   };
   const outcome = await runHostedSupervisorPrepare({
+    ...DORMANT_HOSTED_POLICIES,
     clock: rig.clock,
     state,
     run: identity,

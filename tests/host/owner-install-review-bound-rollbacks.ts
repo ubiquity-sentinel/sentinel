@@ -1,6 +1,7 @@
+import { DORMANT_HOSTED_SUPERVISOR_POLICY } from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
-import { planOwnerDevelopmentInstall } from "../../src/host/owner-development-install.ts";
+import { planOwnerDevelopmentInstall as productionPlanOwnerDevelopmentInstall } from "../../src/host/owner-development-install.ts";
 import {
   ASSIGN_FIRST_REVISION,
   CHILD_DEADLINE_GENERATION,
@@ -302,4 +303,21 @@ export function assertReviewBoundRollbacks(
   // rolling back only to the exact previously proven closed-PR head revision
   // with a monotonic generation 45, authorized by its retained healthy
   // proof.
+}
+
+/** Keep explicit policy/refusal inputs; only historical omissions use fixture policy. */
+function planOwnerDevelopmentInstall(
+  ...args: Parameters<typeof productionPlanOwnerDevelopmentInstall>
+): ReturnType<typeof productionPlanOwnerDevelopmentInstall> {
+  return productionPlanOwnerDevelopmentInstall(
+    args[0],
+    args[1],
+    args[2],
+    args[3],
+    args[4] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.queue : args[4],
+    args[5] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.custody : args[5],
+    args[6] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.rollout : args[6],
+    args[7],
+    args[8],
+  );
 }

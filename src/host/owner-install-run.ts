@@ -70,6 +70,14 @@ import {
   ownerFutureRecoveryUnchanged,
   readOwnerFutureRecoveryAuthority,
 } from "./owner-install-future-recovery.ts";
+import {
+  type OwnerSupersessionAuthority,
+  ownerSupersessionUnchanged,
+  readOwnerSupersededNormalAuthority,
+  readOwnerSupersededRecoveryAuthority,
+  readOwnerSupersessionAuthority,
+} from "./owner-install-supersession.ts";
+import { runOwnerSuccessorAcceptanceAppend } from "./owner-successor-acceptance-run.ts";
 
 /**
  * Fixed production entry point. Reads only the named native identity and
@@ -118,7 +126,7 @@ export async function runOwnerDevelopmentInstallMain(input?: {
   let startupRun: OwnerStartupRecoveryAuthorityV1["run"] | undefined;
   if (
     input?.startupRecovery === true || custodyActive ||
-    rollout.recoveries.length > 0
+    rollout.recoveries.length > 0 || rollout.ownerSupersessions.length > 0
   ) {
     const runId = Number(Deno.env.get("GITHUB_RUN_ID"));
     const runAttempt = Number(Deno.env.get("GITHUB_RUN_ATTEMPT"));
@@ -278,7 +286,65 @@ export async function runOwnerDevelopmentInstallMain(input?: {
     rollout,
   };
   let future: OwnerFutureRecoveryAuthority | undefined;
+  if (futureInput !== undefined && pointer?.execution === null) {
+    const appended = await runOwnerSuccessorAcceptanceAppend(
+      futureInput,
+      appToken,
+    );
+    if (appended === "appended") {
+      return report({
+        ...waitingResult(
+          "owner successor task acceptance appended; installed health and original request preserved",
+          current.snapshot,
+          current.head,
+        ),
+        status: "no_change",
+      });
+    }
+  }
+  let supersession: OwnerSupersessionAuthority | undefined;
+  const supersessionSelected =
+    rollout.ownerSupersessions.some((row) =>
+      row.fromRevision === pointer?.activeRevision &&
+      row.fromGeneration === pointer.generation
+    ) &&
+    current.snapshot.hostedReleases.some((r) => r.phase === "requested");
+  const supersededRecoverySelected =
+    current.snapshot.hostedReleases.some((r) =>
+      r.phase === "owner_superseded" &&
+      (r.ownerDisposition?.intent.toRevision === pointer?.activeRevision &&
+          r.ownerDisposition.intent.toGeneration === pointer.generation ||
+        r.ownerSuccessorBindings?.some((b) =>
+          b.binding.successorRevision === pointer?.activeRevision &&
+          b.binding.successorGeneration === pointer.generation
+        ))
+    ) &&
+    rollout.recoveries.some((row) =>
+      row.fromRevision === pointer?.activeRevision &&
+      row.fromGeneration === pointer.generation
+    );
+  if (supersessionSelected || supersededRecoverySelected) {
+    supersession = futureInput === undefined
+      ? undefined
+      : await (supersessionSelected
+        ? readOwnerSupersessionAuthority
+        : readOwnerSupersededRecoveryAuthority)(futureInput);
+    if (supersession === undefined) {
+      return report(
+        waitingResult(
+          "exact owner supersession custody is unavailable",
+          current.snapshot,
+          current.head,
+        ),
+      );
+    }
+  }
   if (
+    supersession === undefined && futureInput !== undefined &&
+    current.snapshot.hostedReleases.some((r) => r.phase === "owner_superseded")
+  ) supersession = await readOwnerSupersededNormalAuthority(futureInput);
+  if (
+    supersession === undefined &&
     rollout.recoveries.some((row) =>
       row.fromRevision === pointer?.activeRevision &&
       row.fromGeneration === pointer.generation
@@ -306,6 +372,7 @@ export async function runOwnerDevelopmentInstallMain(input?: {
     input?.existingPrRuntimeCapability,
     rollout,
     future,
+    supersession,
   );
   if (plan.status === "waiting" || plan.status === "no_change") {
     return report({
@@ -407,25 +474,37 @@ export async function runOwnerDevelopmentInstallMain(input?: {
   let files: OwnerDevelopmentInstallFilesV1;
   let message: string;
   try {
+    const intendedAt = supersession === undefined ? now : Date.now();
     planned = buildOwnerDevelopmentInstallSnapshot(
       current.snapshot,
       current.head,
       move,
-      now,
+      intendedAt,
       recovery,
       startup,
       input?.queueRuntimeCapability,
       input?.existingPrRuntimeCapability,
       future,
       rollout,
+      supersession,
     );
-    files = await ownerDevelopmentInstallFiles(planned, current.head);
+    const changedRelease = planned.hostedReleases.find((r) =>
+      canonicalStringify(r) !==
+        canonicalStringify(
+          current.snapshot.hostedReleases.find((p) => p.id === r.id),
+        )
+    );
+    files = await ownerDevelopmentInstallFiles(
+      planned,
+      current.head,
+      changedRelease?.id,
+    );
     message = ownerDevelopmentInstallCommitMessage({
       version: "v1",
       kind: "owner_development_install",
       authority: "owner",
       action: move.action,
-      authorizedAt: now,
+      authorizedAt: intendedAt,
       priorRevision: move.priorRevision,
       priorGeneration: move.priorGeneration,
       nextRevision: move.nextRevision,
@@ -445,7 +524,8 @@ export async function runOwnerDevelopmentInstallMain(input?: {
     planned,
     files,
     message,
-    !custodyActive && startup === undefined && future === undefined
+    !custodyActive && startup === undefined && future === undefined &&
+      supersession === undefined
       ? undefined
       : async () =>
         await revalidateDrain() && (startup === undefined ||
@@ -453,7 +533,10 @@ export async function runOwnerDevelopmentInstallMain(input?: {
             await ownerStartupNativeQuiescent(nativeToken, startup.run))) &&
         (future === undefined ||
           (futureInput !== undefined &&
-            await ownerFutureRecoveryUnchanged(futureInput, future))),
+            await ownerFutureRecoveryUnchanged(futureInput, future))) &&
+        (supersession === undefined ||
+          (futureInput !== undefined &&
+            await ownerSupersessionUnchanged(futureInput, supersession))),
   );
   if (written.status !== "confirmed") {
     return report({

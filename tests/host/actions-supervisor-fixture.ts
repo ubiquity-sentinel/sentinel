@@ -32,6 +32,7 @@ import {
 } from "../../src/host/actions-supervisor.ts";
 import type {
   HostedSupervisorEvidencePortV1,
+  HostedSupervisorInputV1,
   HostedSupervisorOutcomeV1,
   HostedSupervisorRunIdentityV1,
 } from "../../src/host/actions-supervisor.ts";
@@ -47,6 +48,7 @@ import {
   testGitEnv,
 } from "../state/helpers.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
+import { parseHostedRuntimeRollout } from "../../src/host/hosted-runtime-rollout.ts";
 
 const HERE = new URL(import.meta.url);
 
@@ -61,6 +63,38 @@ export const LAUNCHER = "1".repeat(40) as GitSha;
 export const CANDIDATE = "2".repeat(40) as GitSha;
 
 export const DIGEST = "a".repeat(64);
+
+// Counterfactual pre-activation policies for synthetic legacy lifecycle tests.
+// Active-floor tests override the relevant explicit policy through existing ports.
+export const DORMANT_HOSTED_POLICIES = {
+  queueRuntimeCapability: {
+    proofActivated: false,
+    revisions: [],
+    ownerInstallMigrations: [],
+  },
+  existingPrRuntimeCapability: {
+    custodyActivated: false,
+    revisions: [],
+    ownerInstallMigrations: [],
+  },
+  runtimeRollout: parseHostedRuntimeRollout({
+    version: 1,
+    installs: [],
+    ciCorrection: [],
+    refreshRearm: [],
+    conflictResolution: [],
+    ciFirst: [],
+    ciFirstFix: [],
+    acceptanceCorrection: [],
+    legacyReview: [],
+    recoveries: [],
+    ownerSupersessions: [],
+    ownerSuccessorTaskBindings: [],
+  }),
+} as const satisfies Pick<
+  HostedSupervisorInputV1,
+  "queueRuntimeCapability" | "existingPrRuntimeCapability" | "runtimeRollout"
+>;
 
 export const RECOVERY_REVISION =
   "c79b2b87a6a2dd0adc201895af10806ef7a9c600" as GitSha;
@@ -388,6 +422,7 @@ export async function makeRig(): Promise<RigV1> {
     repair,
     prepare: (identity) =>
       runHostedSupervisorPrepare({
+        ...DORMANT_HOSTED_POLICIES,
         clock,
         state: release,
         run: identity,
@@ -395,6 +430,7 @@ export async function makeRig(): Promise<RigV1> {
       }),
     finalize: (identity) =>
       runHostedSupervisorFinalize({
+        ...DORMANT_HOSTED_POLICIES,
         clock,
         state: release,
         run: identity,

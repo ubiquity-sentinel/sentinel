@@ -1,10 +1,12 @@
+import { DORMANT_HOSTED_SUPERVISOR_POLICY } from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import { parseHostedReleaseRecordV1 } from "../../src/contracts/hosted-supervisor.ts";
 import {
-  buildOwnerDevelopmentInstallSnapshot,
+  buildOwnerDevelopmentInstallSnapshot
+    as productionBuildOwnerDevelopmentInstallSnapshot,
   OWNER_DEVELOPMENT_INSTALL_ORIGINAL_GENERATION,
-  planOwnerDevelopmentInstall,
+  planOwnerDevelopmentInstall as productionPlanOwnerDevelopmentInstall,
 } from "../../src/host/owner-development-install.ts";
 import {
   AGGREGATE,
@@ -532,3 +534,39 @@ Deno.test(
     );
   },
 );
+
+/** Keep explicit policy/refusal inputs; only historical omissions use fixture policy. */
+function planOwnerDevelopmentInstall(
+  ...args: Parameters<typeof productionPlanOwnerDevelopmentInstall>
+): ReturnType<typeof productionPlanOwnerDevelopmentInstall> {
+  return productionPlanOwnerDevelopmentInstall(
+    args[0],
+    args[1],
+    args[2],
+    args[3],
+    args[4] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.queue : args[4],
+    args[5] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.custody : args[5],
+    args[6] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.rollout : args[6],
+    args[7],
+    args[8],
+  );
+}
+
+/** Snapshot validation uses the same historical policy as its real planner. */
+function buildOwnerDevelopmentInstallSnapshot(
+  ...args: Parameters<typeof productionBuildOwnerDevelopmentInstallSnapshot>
+): ReturnType<typeof productionBuildOwnerDevelopmentInstallSnapshot> {
+  return productionBuildOwnerDevelopmentInstallSnapshot(
+    args[0],
+    args[1],
+    args[2],
+    args[3],
+    args[4],
+    args[5],
+    args[6] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.queue : args[6],
+    args[7] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.custody : args[7],
+    args[8],
+    args[9] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.rollout : args[9],
+    args[10],
+  );
+}

@@ -1,3 +1,4 @@
+import { DORMANT_HOSTED_SUPERVISOR_POLICY as dormant } from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { readHostedWriterQuiescence } from "../../src/host/hosted-writer-quiescence.ts";
@@ -47,7 +48,7 @@ Deno.test("hosted writer drain: same accepted source pending dispatch is attaina
     "ready",
   );
   assert.equal(
-    (await readHostedWriterQuiescence(input(native))).status,
+    (await readHostedWriterQuiescence(input(native), dormant.custody)).status,
     "blocked",
     "dormant source cannot grant queued source compatibility",
   );

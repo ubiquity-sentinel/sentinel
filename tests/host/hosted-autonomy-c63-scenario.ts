@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import {
@@ -21,15 +20,12 @@ import { portError, portOk } from "../../src/contracts/ports.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { implementationIntentKey } from "../../src/repair/keys.ts";
 import { createReleaseStateStore } from "../../src/state/mod.ts";
-import {
-  createHostedClosedMatrixRecovery,
-  createHostedHistoricalMatrixQuarantine,
-  runHostedAutonomy,
-} from "../../ops/hosted-autonomy.ts";
 import { gitRun, pushRawTree, sha256Hex } from "../state/helpers.ts";
 import { ENV, SELF_REPO } from "./hosted-autonomy-fixtures.ts";
-import { historicalMalformedRig } from "./hosted-autonomy-historical-fixtures.ts";
-import { recoverHostedHistoricalC63 } from "../../ops/hosted-autonomy-historical-recovery.ts";
+import {
+  historicalMalformedRig,
+  historicalMatrixQuarantineFixture as createHostedHistoricalMatrixQuarantine,
+} from "./hosted-autonomy-historical-fixtures.ts";
 
 export async function historicalC63Scenario(
   firstPass: boolean,
@@ -417,13 +413,16 @@ export async function historicalC63Scenario(
       latestProof = observed.value;
       f.historicalMatrix.readExecution = (saved) =>
         client.readHostedExecution(saved);
-      f.historicalMatrix.transport = createActionsMatrixArtifactTransport({
+      const currentTransportInput = {
         state: f.rig.state,
         clock: f.clock,
         token: "offline-native-token",
         artifactRoot: f.rig.tmp + "/mixed-history",
         http: currentHttp,
-      });
+      };
+      f.historicalMatrix.transport = createActionsMatrixArtifactTransport(
+        currentTransportInput,
+      );
       const sourceDir = f.rig.tmp + "/current-source";
       await Deno.mkdir(sourceDir);
       await Deno.writeTextFile(
@@ -434,12 +433,21 @@ export async function historicalC63Scenario(
         const previous = Deno.cwd();
         Deno.chdir(f.checkout);
         try {
-          await runHostedAutonomy(
-            await withDarkQueueAuthority({
-              state: f.rig.state,
-              clock: f.clock,
-              githubFor: f.rig.githubFor,
-              historicalMatrix: f.historicalMatrix,
+          await f.withHistoricalGraph(async (graph, deps) => {
+            const { runHostedAutonomy } = await graph.runner();
+            const { createHostedClosedMatrixRecovery } = await graph
+              .matrixAdapters();
+            const { createActionsMatrixArtifactTransport } = await graph
+              .matrixArtifacts();
+            assert(deps.historicalMatrix);
+            await runHostedAutonomy({
+              ...deps,
+              historicalMatrix: {
+                ...deps.historicalMatrix,
+                transport: createActionsMatrixArtifactTransport(
+                  currentTransportInput,
+                ),
+              },
               closedMatrix: async (state = f.rig.state) => {
                 const actual = await createHostedClosedMatrixRecovery({
                   state,
@@ -463,8 +471,8 @@ export async function historicalC63Scenario(
                   },
                 };
               },
-            }),
-          );
+            });
+          });
           return 0;
         } catch {
           return 1;
@@ -549,7 +557,12 @@ export async function historicalC63Scenario(
         f.historicalMatrix.nativeQueueFor = phase === "missing"
           ? undefined
           : nativeMaintenance.nativeQueueFor;
-        const held = await recoverHostedHistoricalC63(f.historicalMatrix);
+        const held = await f.withHistoricalGraph(async (graph, deps) => {
+          const { recoverHostedHistoricalC63 } = await graph
+            .historicalRecovery();
+          assert(deps.historicalMatrix);
+          return await recoverHostedHistoricalC63(deps.historicalMatrix);
+        });
         assert.deepEqual(held, { ingested: 0, deferred: true }, phase);
         assert.deepEqual(
           await f.rig.state.readRepair(),

@@ -9,6 +9,79 @@ continuation.
 
 ## Runtime and dispatch
 
+### Explicit prepromotion owner supersession
+
+`SEMANTICS-10.md` preserves a genuinely completed and charged successor review
+when the trusted acceptance append is deferred. Prepare holds read-only while
+that exact review's native settlement proof is needed; it cannot start an
+ordinary run that overwrites the proof. Finalization may retry the authenticated
+append, and normal preparation resumes after independent readback of acceptance.
+Initial bootstrap/review and authenticated capable correction/recovery remain on
+their existing paths; no forged review, health proof or delivery is admitted.
+
+`SEMANTICS-8.md` requires truthful owner_successor registration, durable
+running-readback, arm and settlement through the existing native review-owner
+channel and custody broker. Normal PR and base-task semantics stay unchanged; a
+merged delivery-pending task cannot use a false PR or already_satisfied_at_base
+envelope. Production-composition proof must include the actual local GitHub
+factory, channel, broker, reviewer and durable acceptance consumers, faking only
+external session/API ports. No unregistered reviewer path or alternate
+credential/model route is accepted.
+
+A distinct committed, source-authenticated owner-supersession intent is required
+for the still-wanted requested release f437. Issue closure, age, failure,
+ancestry or an install marker supplies no cancellation authority. The frozen
+owner-supersession contract and `SEMANTICS-3.md`, `SEMANTICS-6.md` and
+`SEMANTICS-7.md` require a distinct private authority ahead of both generic
+nonterminal recovery refusals; generic future recovery retains its phase
+restrictions and authentication predicates.
+
+One trusted non-force expected-head App transaction persists the immutable owner
+disposition and installs accepted capable F with the real prepare-bound
+model-disabled bootstrap only after all source, CI, profile, custody,
+native-drain and unchanged-head gates pass. Preserve the original request, proof
+slots, disposition history, reservations and charges. The release remains
+truthfully `owner_superseded`; pointer movement or bootstrap success alone does
+not discharge its delivery obligation. No unsupported state may reach an R81
+reader.
+
+Native `39167387867:1:repair` remains failed, settled PRIOR bound to the
+original release. If its old saved-state `observedAt` is unavailable, the
+existing native proof reader may authenticate a genuine fresh full observation:
+exclude only `observedAt` from the immutable fingerprint, retain the actual
+first fresh observation, and require immutable-field equality and monotonic
+observation on revalidation. Never reconstruct an old saved receipt or
+reclassify the original PRIOR. The latest active failure and historical healthy
+witness retain their exact full saved-proof, digest and head bindings and all
+existing native/source/CI/custody gates.
+
+Task delivery requires a fresh, reserved, charged and settled actual internal
+structured review of the installed successor against the unchanged source task,
+bound to its exact snapshot, native execution, health, CI and accounting.
+Persist the intent/running/completed owner-review journal in the distinct
+optional `ownerSuccessorReviews` collection through the existing repair
+expected-head writer; normal PR review receipts remain unchanged. The trusted
+release/App controller verifies the produced evidence, appends a separate
+immutable `ownerAcceptance` receipt through normal App CAS and full readback,
+and the original task consumes it through existing delivery bookkeeping. A
+successor link, old PR review, prior successor review, bootstrap or pointer
+alone cannot authorize delivery.
+
+First-F bootstrap failure stays failed and held unless the distinct
+supersession-aware route reaches the existing full source-authenticated issuer
+for an exact CI-verified capable recovery successor. Carrying the wanted task to
+F2 or a healthy corrected successor requires positive exact source
+successor/task intent and an immutable binding appended in the same capable
+pointer/bootstrap transaction. Each successor waits for its own health and
+produces its own fresh structured task review; missing binding and ancestry
+alone cannot inherit acceptance. Preserve the original disposition, proof/review
+history and accounting. An old supersession record must not permanently block
+authenticated normal capable correction or exact healthy-capable rollback and
+restoration. Direct R81 rollback remains refused.
+
+Credential routes, runtime model configuration, generic recovery refusals and
+release health rules remain unchanged.
+
 ### Standing approval for the migration rollout
 
 On 2026-10-18 at 13:33–13:34 UTC, the owner explicitly approved the prepared
@@ -23,6 +96,87 @@ custody floors, trusted App/state/promotion controls, readiness and exact
 rollback checks before the corresponding effects. The App permission grant is
 already complete. This authorization does not itself establish any execution or
 acceptance result.
+
+At 20:39 UTC on 2026-10-18, after the coordinator reported the later Mac
+coordination approval hold, the owner explicitly replied: "Why the fuck is it
+blocked. You’re approved". This clears the pending exact e16 source-CI attempt
+and reaffirms continuation of the already authorized migration rollout. Do not
+turn the earlier coordination-only hold into repeated generic approval requests.
+Record each concrete workflow, target, candidate, expected duration and
+assertion before execution, and continue the authorized publication,
+verification, corrections and guarded rollout. Missing real processing evidence
+remains an evidence problem to resolve, not an unanswered approval; source,
+credential, custody, accounting, CI, readiness, promotion and rollback gates
+still apply.
+
+### First-fixture UOS processing evidence
+
+The approved safeguard requires the same first PR to survive real UOS processing
+before more fixtures; it does not require the original opened event's private
+log, a particular historical delivery ID or a literal304 receipt. Independent
+provenance audit `uos-current-audit-2041/decision.md` identifies
+original-event-only as an added interpretation, superseding that restriction in
+the older canary gate assessment. A genuine later edited invocation on the same
+PR may establish the safeguard after an observable truthful handler outcome is
+available. Preserve its head/base/author, non-closing body, manual task custody
+and current OPEN readback. Silence, elapsed time or CI alone still cannot prove
+actual processing. The narrow necessary receipt change belongs to the existing
+UOS ownership handler and its tests, with idempotence, safe App-owned comment
+handling, preserved role/start/close rules and no new
+credential/workflow/flag/environment interface. Reconcile and verify the
+existing main/Deno producer deployment before one meaningful non-closing title
+edit; Azure is a disabled legacy route. Do not fabricate historical results or
+start further fixtures before real same-PR processing is accepted.
+
+### Raw issue discovery and model admission bounds
+
+The live R81 issue reader rejects an entire valid response when one issue body
+exceeds the shared 16,384-unit review-statement bound. Reproduction on
+2026-10-18 isolates AI issue1213 at 23,807 units; HTTP and transport-size gates
+pass and the other issues parse. Separate only the raw GitHub issue-read ceiling
+using the existing finite wire-text bound. Preserve full text and complete
+pagination; keep shared `MaxText.body`, pull-request bounds and frozen
+review/receipt/matrix/stdout contracts unchanged. Before any implementation
+reservation, validate the already-read full issue with the existing review-task
+statement validator and digest. Unsupported statements use the existing retained
+bounded unavailable wait, so other work remains selectable and no unsupported
+model start, charge reset, truncation or fabricated statement occurs. This
+source fix needs its own connected local/native and installed evidence; the
+current failure cannot be attributed to the new development base merely by
+timing.
+
+### Failed legacy predecessor recovery
+
+The primary accepts the bounded first-transition recovery contract under
+`production-cutover-preparation/legacy-first-recovery-contract/proposal.md` in
+the migration evidence workspace. Reuse the existing seven-key source-only
+recovery row and private issuer for exact immutable R81/generation81 to one
+accepted capable successor/generation82, requiring both explicit matching
+migration grants, both active custody floors, the exact nonrollback install
+rung, and exclusion of R80/R81 from both accepted lists. Authenticate committed
+capability data and revalidate the privately issued move at planning, snapshot
+and immediately before trusted App CAS. Retain strict future-runtime membership
+for every other recovery, full native failure/earlier own-health/witness
+evidence, chronology, source/CI/ancestry/drain and accounting. Preserve all
+schemas and default empty recovery data. Persist only the monotonic successor
+pointer and actual-prepare-bound model-disabled bootstrap; genuine successor
+health remains required. The newest failure and active execution must be freshly
+reconciled after quiescence before any live row is prepared; older snapshots are
+historical. This decision authorizes isolated implementation and validation, not
+a fabricated health reset or an old-runtime execution/fallback exception.
+
+The independent contract audit additionally requires revision-first refusal: the
+future recovery issuer always rejects R80, and R81 at any generation except the
+exact legacy transition cannot fall through to generic recovery. Maintenance may
+emit the existing migration-only target only after authenticating exact clean
+source, committed rollout/capability data, both grants/floors, matching
+failure/earlier own-health digests and idle/drained unchanged state. That
+read-only output carries no movement authority or health. The existing trusted
+prepare issuer must still authenticate full native
+failure/health/witness/CI/source evidence before App CAS; existing workflow
+predicates restrict the eventual repair child to the same exact model-disabled
+successor bootstrap. No workflow, schema, flag or default activation changes are
+needed.
 
 ### Isolated canary ref namespace
 

@@ -5,6 +5,7 @@ import {
   MAX_TASK_ACCEPTANCE_EVIDENCE,
   MAX_TASK_ACCEPTANCE_EVIDENCE_CHARS,
   type ReviewTaskAcceptanceV1,
+  type ReviewTaskStatementV1,
 } from "../contracts/review-receipt.ts";
 
 // ---------------------------------------------------------------------------
@@ -211,6 +212,33 @@ export const REVIEW_RESULT_OUTPUT_SCHEMA = {
     },
   },
 } as const;
+
+/** Constrain model output to the trusted task already validated at preparation. */
+export function reviewResultOutputSchema(task: ReviewTaskStatementV1 | null) {
+  const schema = structuredClone(REVIEW_RESULT_OUTPUT_SCHEMA);
+  if (task === null) return schema;
+  const acceptance = schema.properties.taskAcceptance;
+  return {
+    ...schema,
+    properties: {
+      ...schema.properties,
+      taskAcceptance: {
+        ...acceptance,
+        properties: {
+          ...acceptance.properties,
+          issueNumber: {
+            ...acceptance.properties.issueNumber,
+            enum: [task.issueNumber],
+          },
+          taskDigest: {
+            ...acceptance.properties.taskDigest,
+            enum: [task.digest],
+          },
+        },
+      },
+    },
+  };
+}
 
 export const RESULT_KEYS = ["verdict", "summary", "findings"] as const;
 

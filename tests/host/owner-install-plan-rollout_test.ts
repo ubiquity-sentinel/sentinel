@@ -3,7 +3,6 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import { planOwnerDevelopmentInstall } from "../../src/host/owner-install-plan.ts";
 import { runOwnerDevelopmentInstallMain } from "../../src/host/owner-install-run.ts";
 import {
-  HOSTED_RUNTIME_ROLLOUT,
   parseHostedRuntimeRollout,
 } from "../../src/host/hosted-runtime-rollout.ts";
 import type { QueueRuntimeCapability } from "../../src/host/queue-runtime-capability.ts";
@@ -16,6 +15,7 @@ import {
 } from "./owner-install-fixture-proofs.ts";
 import { concurrencyInstallerFixture } from "./owner-install-fixture.ts";
 import { NOW } from "./owner-install-fixture-constants.ts";
+import { DORMANT_HOSTED_SUPERVISOR_POLICY } from "./hosted-supervisor-policy-fixture.ts";
 import {
   installNativeWriterFixture,
   retainedRepairHistory,
@@ -34,7 +34,7 @@ const rung = {
 };
 const rollout = (rollbackToPrior = false, successor = false) =>
   parseHostedRuntimeRollout({
-    ...HOSTED_RUNTIME_ROLLOUT,
+    ...DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
     installs: [
       { ...rung, rollbackToPrior },
       ...(successor
@@ -68,8 +68,9 @@ function source(
 function plan(
   snapshot = source(),
   pins = rollout(),
-  queue?: QueueRuntimeCapability,
-  custody?: ExistingPrRuntimeCapability,
+  queue: QueueRuntimeCapability = DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+  custody: ExistingPrRuntimeCapability =
+    DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
 ) {
   return planOwnerDevelopmentInstall(
     snapshot,
@@ -177,7 +178,12 @@ Deno.test("future install: real installer retains exact CI, ancestry and expecte
       try {
         const beforeRepair = await fixture.readRepair();
         assert.equal(
-          await runOwnerDevelopmentInstallMain({ rollout: rollout() }),
+          await runOwnerDevelopmentInstallMain({
+            queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+            existingPrRuntimeCapability:
+              DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+            rollout: rollout(),
+          }),
           0,
         );
         if (refusal === undefined) {
@@ -194,7 +200,12 @@ Deno.test("future install: real installer retains exact CI, ancestry and expecte
             read.value.snapshot.hostedRuntimes[0].lastHealthyProof,
             source().hostedRuntimes[0].lastHealthyProof,
           );
-          await runOwnerDevelopmentInstallMain({ rollout: rollout() });
+          await runOwnerDevelopmentInstallMain({
+            queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+            existingPrRuntimeCapability:
+              DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+            rollout: rollout(),
+          });
           assert.equal(fixture.reports.at(-1)?.status, "waiting");
           assert.equal(fixture.patches(), 1);
         } else {
@@ -270,7 +281,11 @@ Deno.test("future install: production rollback cannot bypass explicit opt-in", a
         PRIOR,
       );
       try {
-        await runOwnerDevelopmentInstallMain({ rollout: rollout(allowed) });
+        await runOwnerDevelopmentInstallMain({
+          queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+          existingPrRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+          rollout: rollout(allowed),
+        });
         assert.equal(
           fixture.reports.at(-1)?.status,
           allowed ? "rolled_back" : "waiting",
@@ -284,7 +299,12 @@ Deno.test("future install: production rollback cannot bypass explicit opt-in", a
             PRIOR,
           );
           assert.equal(read.value.snapshot.hostedRuntimes[0].generation, 83);
-          await runOwnerDevelopmentInstallMain({ rollout: rollout(allowed) });
+          await runOwnerDevelopmentInstallMain({
+            queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+            existingPrRuntimeCapability:
+              DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+            rollout: rollout(allowed),
+          });
           assert.equal(fixture.patches(), 1);
         }
       } finally {

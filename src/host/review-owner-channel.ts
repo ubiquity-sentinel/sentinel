@@ -16,6 +16,14 @@ import {
   parseBaseReviewOwnerSettled,
 } from "../github/base-review-owner.ts";
 import { parseReviewChannelNotification } from "./review-owner-channel-event.ts";
+import {
+  type OwnerSuccessorCustody,
+  type OwnerSuccessorCustodyArm,
+  type OwnerSuccessorCustodyRegistration,
+  parseOwnerSuccessorCustodyArm,
+  parseOwnerSuccessorCustodyRegistration,
+  parseOwnerSuccessorCustodySettled,
+} from "./owner-successor-acceptance-custody.ts";
 import type {
   BaseReviewOwnerArmV1,
   BaseReviewOwnerCustodyV1,
@@ -69,7 +77,10 @@ export async function readReviewChannelFile(path: string): Promise<unknown> {
 
 /** One bounded RPC client; no executable, PID, credentials or model route is sent. */
 export class ReviewOwnerChannelClient
-  implements ReviewOwnerCustodyV1, BaseReviewOwnerCustodyV1 {
+  implements
+    ReviewOwnerCustodyV1,
+    BaseReviewOwnerCustodyV1,
+    OwnerSuccessorCustody {
   private readonly watcher: Deno.FsWatcher;
   private readonly pending = new Map<
     string,
@@ -164,6 +175,23 @@ export class ReviewOwnerChannelClient
 
   async settledBaseReview(input: { requestId: string }): Promise<void> {
     await this.call("settledBaseReview", parseBaseReviewOwnerSettled(input));
+  }
+  async registerOwnerSuccessor(
+    input: OwnerSuccessorCustodyRegistration,
+  ): Promise<void> {
+    await this.call(
+      "registerOwnerSuccessor",
+      parseOwnerSuccessorCustodyRegistration(input),
+    );
+  }
+  async armOwnerSuccessor(input: OwnerSuccessorCustodyArm): Promise<void> {
+    await this.call("armOwnerSuccessor", parseOwnerSuccessorCustodyArm(input));
+  }
+  async settledOwnerSuccessor(input: { requestId: string }): Promise<void> {
+    await this.call(
+      "settledOwnerSuccessor",
+      parseOwnerSuccessorCustodySettled(input),
+    );
   }
 
   openSession(

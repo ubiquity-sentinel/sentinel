@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DORMANT_HOSTED_POLICIES } from "./actions-supervisor-fixture.ts";
 import { matrixDigestV1 } from "../../src/contracts/matrix.ts";
 import {
   HISTORICAL_MATRIX_QUARANTINE,
@@ -14,10 +15,7 @@ import {
   implementationIntentKey,
 } from "../../src/repair/keys.ts";
 import { createReleaseStateStore } from "../../src/state/mod.ts";
-import {
-  createHostedHistoricalMatrixQuarantine,
-  runHostedAutonomy,
-} from "../../ops/hosted-autonomy.ts";
+import { runHostedAutonomy } from "../../ops/hosted-autonomy.ts";
 import { reservation, T0, workRecord } from "../state/helpers.ts";
 import {
   BASE,
@@ -26,7 +24,10 @@ import {
   SELF_REPO,
   TARGET,
 } from "./hosted-autonomy-fixtures.ts";
-import { historicalMalformedRig } from "./hosted-autonomy-historical-fixtures.ts";
+import {
+  historicalMalformedRig,
+  historicalMatrixQuarantineFixture as createHostedHistoricalMatrixQuarantine,
+} from "./hosted-autonomy-historical-fixtures.ts";
 import { historicalWithNewerCurrent } from "./hosted-autonomy-newer-current-fixtures.ts";
 
 Deno.test("historical missing-cell quarantine: strict leaf, retained ambiguous charge and idempotent maintenance", async () => {
@@ -56,6 +57,7 @@ Deno.test("historical missing-cell quarantine: strict leaf, retained ambiguous c
     });
     assert.equal(
       (await runHostedSupervisorFinalize({
+        ...DORMANT_HOSTED_POLICIES,
         state: release,
         clock: f.clock,
         run: f.nativeRun,

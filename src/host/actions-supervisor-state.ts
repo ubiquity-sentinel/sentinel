@@ -133,7 +133,8 @@ function byId<T extends { id: string }>(a: T, b: T): number {
 export function isTerminalPhase(
   phase: HostedReleaseRecordV1["phase"],
 ): boolean {
-  return phase === "accepted" || phase === "rolled_back";
+  return phase === "accepted" || phase === "rolled_back" ||
+    phase === "owner_superseded";
 }
 
 export function isSettledCurrentRun(

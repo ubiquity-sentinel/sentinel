@@ -8,6 +8,10 @@
  * or written for it, and the full gate runs again for a request the release
  * ref records. Live record, request and receipt shapes.
  */
+import {
+  DORMANT_HOSTED_SUPERVISOR_POLICY,
+  withHostedProductionPolicy,
+} from "./hosted-supervisor-policy-fixture.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import { makeRig } from "./hosted-autonomy-rig.ts";
@@ -27,9 +31,28 @@ import { persistVpsDelivery } from "../repair/vps-delivery-fixtures.ts";
 import { createReleaseStateStore } from "../../src/state/mod.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { reviewTaskStatementDigest } from "../../src/contracts/review-receipt.ts";
-import { runHostedAutonomy } from "../../ops/hosted-autonomy.ts";
 import type { HostedAutonomyGitHubV1 } from "../../ops/hosted-autonomy.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
+
+/** Preserve B12's historical closure gate under explicit preactivation policy. */
+type HistoricalRunner =
+  typeof import("../../ops/hosted-autonomy-runner.ts").runHostedAutonomy;
+function historicalTest(
+  name: string,
+  check: (run: HistoricalRunner) => Promise<void>,
+) {
+  Deno.test(
+    name,
+    () =>
+      withHostedProductionPolicy(
+        DORMANT_HOSTED_SUPERVISOR_POLICY,
+        async (graph) => {
+          const runner = await graph.runner();
+          await check(runner.runHostedAutonomy);
+        },
+      ),
+  );
+}
 
 const NOW = LIVE_UPDATED_AT + 600_000;
 
@@ -96,13 +119,20 @@ async function sequence(
   return read.value.snapshot.sequence;
 }
 
-Deno.test("B12 launcher: merged Gateway deliveries without a release record are counted once and cost no gate read", async () => {
-  for (const [shape, work] of SHAPES) {
-    await deferredPasses(shape, work);
-  }
-});
+historicalTest(
+  "B12 launcher: merged Gateway deliveries without a release record are counted once and cost no gate read",
+  async (runHostedAutonomy) => {
+    for (const [shape, work] of SHAPES) {
+      await deferredPasses(runHostedAutonomy, shape, work);
+    }
+  },
+);
 
-async function deferredPasses(shape: string, work: readonly WorkRecordV1[]) {
+async function deferredPasses(
+  runHostedAutonomy: HistoricalRunner,
+  shape: string,
+  work: readonly WorkRecordV1[],
+) {
   const { rig, github } = await makeRig("b12-launcher-deferred", {
     repair: liveRepair(work),
     issueOpen: false,
@@ -147,84 +177,90 @@ async function deferredPasses(shape: string, work: readonly WorkRecordV1[]) {
   }
 }
 
-Deno.test("B12 launcher: a request the release ref records gets the full closure gate again", async () => {
-  const { rig, github, request, now } = await recordedRig("monitoring");
-  try {
-    const { surface, reads } = countingSurface(github);
-    const result = await runHostedAutonomy(
-      await withDarkQueueAuthority({
-        state: rig.state,
-        githubFor: () => surface,
-        clock: { now: () => now + 300_000 },
-      }),
-    );
-    assert.deepEqual(
-      result.actions.filter((action) => action.startsWith("release-")),
-      ["release-deferred:count=2:release_path=queued"],
-      JSON.stringify(result.actions),
-    );
-    const resumed = recordFor(request);
-    assert.ok(
-      result.actions.includes(`delivery:${resumed.id}:release_unavailable`),
-      JSON.stringify(result.actions),
-    );
-    assert.ok(reads.includes(`pull:${resumed.target.pr}`));
-    for (const record of LIVE_RECORDS) {
-      if (record.id === resumed.id) continue;
-      assert.equal(reads.includes(`pull:${record.target.pr}`), false);
-    }
-    assert.deepEqual(rig.closed, []);
-  } finally {
-    await Deno.remove(rig.tmp, { recursive: true });
-  }
-});
-
-Deno.test("B12 launcher: an accepted release closes out a record the runtime left deferred, so the obligation survives any runtime", async () => {
-  const { rig, github, request, now } = await recordedRig(
-    "accepted",
-    deferredLiveRecords(LIVE_UPDATED_AT),
-  );
-  try {
-    const { surface } = countingSurface(github);
-    const resumed = recordFor(request);
-    const pass = async (offset: number) =>
-      runHostedAutonomy(
+historicalTest(
+  "B12 launcher: a request the release ref records gets the full closure gate again",
+  async (runHostedAutonomy) => {
+    const { rig, github, request, now } = await recordedRig("monitoring");
+    try {
+      const { surface, reads } = countingSurface(github);
+      const result = await runHostedAutonomy(
         await withDarkQueueAuthority({
           state: rig.state,
           githubFor: () => surface,
-          clock: { now: () => now + offset },
+          clock: { now: () => now + 300_000 },
         }),
       );
-    const first = await pass(300_000);
-    assert.ok(
-      first.actions.includes(`intent:${resumed.id}:issue_closure`),
-      JSON.stringify(first.actions),
-    );
-    const second = await pass(600_000);
-    assert.ok(
-      second.actions.includes(`reconcile:${resumed.id}:already_closed`),
-      JSON.stringify(second.actions),
-    );
-    const read = await rig.state.readRepair();
-    assert.ok(read.ok && read.value.status === "found");
-    const after = read.value.snapshot;
-    for (const record of after.work) {
-      if (record.id === resumed.id) {
-        assert.equal(record.nextStep, "done");
-        assert.equal(record.wait, null);
-      } else {
-        assert.equal(record.nextStep, "delivery", record.id);
-        assert.equal(record.wait?.until, null, record.id);
+      assert.deepEqual(
+        result.actions.filter((action) => action.startsWith("release-")),
+        ["release-deferred:count=2:release_path=queued"],
+        JSON.stringify(result.actions),
+      );
+      const resumed = recordFor(request);
+      assert.ok(
+        result.actions.includes(`delivery:${resumed.id}:release_unavailable`),
+        JSON.stringify(result.actions),
+      );
+      assert.ok(reads.includes(`pull:${resumed.target.pr}`));
+      for (const record of LIVE_RECORDS) {
+        if (record.id === resumed.id) continue;
+        assert.equal(reads.includes(`pull:${record.target.pr}`), false);
       }
+      assert.deepEqual(rig.closed, []);
+    } finally {
+      await Deno.remove(rig.tmp, { recursive: true });
     }
-    assert.equal(after.releaseRequests.length, LIVE_REQUESTS.length);
-    // The platform already closed the issue: no duplicate close, no merge.
-    assert.deepEqual(rig.closed, []);
-    assert.equal(rig.merges, 0);
-  } finally {
-    await Deno.remove(rig.tmp, { recursive: true });
-  }
-});
+  },
+);
+
+historicalTest(
+  "B12 launcher: an accepted release closes out a record the runtime left deferred, so the obligation survives any runtime",
+  async (runHostedAutonomy) => {
+    const { rig, github, request, now } = await recordedRig(
+      "accepted",
+      deferredLiveRecords(LIVE_UPDATED_AT),
+    );
+    try {
+      const { surface } = countingSurface(github);
+      const resumed = recordFor(request);
+      const pass = async (offset: number) =>
+        runHostedAutonomy(
+          await withDarkQueueAuthority({
+            state: rig.state,
+            githubFor: () => surface,
+            clock: { now: () => now + offset },
+          }),
+        );
+      const first = await pass(300_000);
+      assert.ok(
+        first.actions.includes(`intent:${resumed.id}:issue_closure`),
+        JSON.stringify(first.actions),
+      );
+      const second = await pass(600_000);
+      assert.ok(
+        second.actions.includes(`reconcile:${resumed.id}:already_closed`),
+        JSON.stringify(second.actions),
+      );
+      const read = await rig.state.readRepair();
+      assert.ok(read.ok && read.value.status === "found");
+      const after = read.value.snapshot;
+      for (const record of after.work) {
+        if (record.id === resumed.id) {
+          assert.equal(record.nextStep, "done");
+          assert.equal(record.wait, null);
+        } else {
+          assert.equal(record.nextStep, "delivery", record.id);
+          assert.equal(record.wait?.until, null, record.id);
+        }
+      }
+      assert.equal(after.releaseRequests.length, LIVE_REQUESTS.length);
+      // The platform already closed the issue: no duplicate close, no merge.
+      assert.deepEqual(rig.closed, []);
+      assert.equal(rig.merges, 0);
+    } finally {
+      await Deno.remove(rig.tmp, { recursive: true });
+    }
+  },
+);
 
 /** The record a live request belongs to. */
 function recordFor(request: (typeof LIVE_REQUESTS)[number]): WorkRecordV1 {

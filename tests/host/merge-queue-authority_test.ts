@@ -4,6 +4,10 @@ import { decideQueuePolicy } from "../../ops/hosted-autonomy-queue-policy.ts";
 import { buildHostedReleaseRequest } from "../../ops/hosted-autonomy-delivery.ts";
 import { queueDeliveryProvenanceRef } from "../../src/github/queue-delivery-provenance.ts";
 import { closureIntentKey } from "../../src/repair/keys.ts";
+import {
+  QUEUE_AUTHORITY_PINS,
+  QUEUE_PROOF_POLICY,
+} from "../../src/github/queue-runtime-policy.ts";
 import { persistVpsDelivery } from "../repair/vps-delivery-fixtures.ts";
 import { authorityRig } from "./merge-queue-authority-fixtures.ts";
 import { SHA1, SHA3, SHA4 } from "./merge-queue-proof-fixtures.ts";
@@ -12,7 +16,15 @@ Deno.test("queue authority remains dark with absent source pins and uses REST-on
   const rig = await authorityRig();
   rig.toggles.merged = true;
   rig.toggles.rule = false;
-  const dark = createHostedQueueAuthority(rig.options);
+  const dark = createHostedQueueAuthority({
+    ...rig.options,
+    configuration: {
+      mode: "off",
+      proofActivated: false,
+      policy: QUEUE_PROOF_POLICY,
+      pins: QUEUE_AUTHORITY_PINS,
+    },
+  });
   assert.equal(
     (await dark.authorization.readAuthorization(rig.request())).status,
     "unavailable",
@@ -28,6 +40,21 @@ Deno.test("queue authority remains dark with absent source pins and uses REST-on
     "unavailable",
   );
   assert.equal(rig.nativeReads, 0);
+});
+
+Deno.test("actual LF queue authority refuses legacy direct delivery with admission off", async () => {
+  const rig = await authorityRig();
+  rig.toggles.merged = true;
+  rig.toggles.rule = false;
+  const authority = createHostedQueueAuthority(rig.options);
+  assert.equal(
+    (await authority.authorization.readAuthorization(rig.request())).status,
+    "unavailable",
+  );
+  assert.equal(
+    (await authority.resolveDelivery(rig.deliveryRequest())).status,
+    "unavailable",
+  );
 });
 
 Deno.test("queue authorization derives accepted facts and holds on changed workflow, rule, paths, CI and mergeability", async (t) => {

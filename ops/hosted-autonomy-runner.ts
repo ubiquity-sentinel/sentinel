@@ -288,7 +288,8 @@ async function runHostedAutonomyChain(
       releaseRead === null || !releaseRead.ok ||
       releaseRead.value.status !== "found" ||
       releaseRead.value.snapshot.hostedReleases.some((release) =>
-        release.phase !== "accepted" && release.phase !== "rolled_back"
+        release.phase !== "accepted" && release.phase !== "rolled_back" &&
+        release.phase !== "owner_superseded"
       )
     ) {
       return writes.applied
