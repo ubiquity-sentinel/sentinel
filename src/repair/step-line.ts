@@ -3,7 +3,10 @@
  *
  * `runRepairCycle` prints one `sentinel_step` line per selected runtime step:
  * the record id, the step it was selected for (`nextStep`), the step result's
- * kind and the elapsed monotonic wall time (never the injected run clock).
+ * kind, the elapsed monotonic wall time (never the injected run clock) and,
+ * for a deferral the line recognizes, its reason as one closed code
+ * (`STEP_LINE_REASONS`; fixed text only, never a detail, record id or payload
+ * from the step itself).
  * The line is advisory only: it is printed after the step settled, a failure
  * to print is swallowed, it carries no `status` property (the launcher's
  * child-status scan never reads it) and nothing reads it back as evidence. A cycle prints at most
@@ -13,6 +16,8 @@
  */
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { StepResultV1 } from "./loop-types.ts";
+import { CI_VALIDATION_DEFERRED_PREFIX } from "./ci-readiness.ts";
+import { DELIVERY_QUEUE_DEFERRED_PREFIX } from "./loop-delivery-queue.ts";
 import {
   parsePassSummaryLine,
   PASS_SUMMARY_LINE_KIND,
@@ -45,17 +50,49 @@ export const STEP_LINE_OUTCOMES: readonly StepResultV1["kind"][] = [
   "deferred",
 ];
 
+/**
+ * Closed vocabulary of the per-step deferral reasons the line reports. A
+ * deferral that is not one of these carries no reason, and no free text, raw
+ * detail or payload ever reaches the line.
+ */
+export const STEP_LINE_REASONS: readonly string[] = [
+  /** Held by its repository's delivery line (`deliveryQueueDeferral`). */
+  "delivery_line",
+  /** Held by another record's validation (`ciRefreshAhead`). */
+  "ci_line",
+];
+
+/** The closed reason code of one deferral detail, or null for anything else. */
+export function stepLineReason(detail: string | undefined): string | null {
+  if (typeof detail !== "string") return null;
+  if (detail.startsWith(DELIVERY_QUEUE_DEFERRED_PREFIX)) return "delivery_line";
+  if (detail.startsWith(CI_VALIDATION_DEFERRED_PREFIX)) return "ci_line";
+  return null;
+}
+
 export interface StepLineV1 {
   kind: typeof STEP_LINE_KIND;
   recordId: string;
   step: string;
   outcome: StepResultV1["kind"];
   elapsedMs: number;
+  /** A recognized deferral reason (`STEP_LINE_REASONS`); absent otherwise. */
+  reason?: string;
 }
 
 const RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9._:#/+-]{0,199}$/;
 const MAX_ELAPSED_MS = 24 * 60 * 60_000;
 const KEYS = ["elapsedMs", "kind", "outcome", "recordId", "step"].join();
+const REASON_KEYS = [
+  "elapsedMs",
+  "kind",
+  "outcome",
+  "reason",
+  "recordId",
+  "step",
+]
+  .sort()
+  .join();
 
 /** The strictly re-parsed line, or null for anything else. */
 export function parseStepLine(value: unknown): StepLineV1 | null {
@@ -63,12 +100,17 @@ export function parseStepLine(value: unknown): StepLineV1 | null {
     return null;
   }
   const line = value as Record<string, unknown>;
+  const keys = Object.keys(line).sort().join();
+  const reasoned = keys === REASON_KEYS;
   if (
-    Object.keys(line).sort().join() !== KEYS ||
+    (!reasoned && keys !== KEYS) ||
     line.kind !== STEP_LINE_KIND ||
     typeof line.recordId !== "string" || !RECORD_ID.test(line.recordId) ||
     typeof line.step !== "string" || !STEP_LINE_STEPS.includes(line.step) ||
     !STEP_LINE_OUTCOMES.includes(line.outcome as StepResultV1["kind"]) ||
+    (reasoned &&
+      (typeof line.reason !== "string" ||
+        !STEP_LINE_REASONS.includes(line.reason))) ||
     !Number.isSafeInteger(line.elapsedMs) ||
     (line.elapsedMs as number) < 0 ||
     (line.elapsedMs as number) > MAX_ELAPSED_MS
@@ -79,6 +121,7 @@ export function parseStepLine(value: unknown): StepLineV1 | null {
     step: line.step,
     outcome: line.outcome as StepResultV1["kind"],
     elapsedMs: line.elapsedMs as number,
+    ...(reasoned ? { reason: line.reason as string } : {}),
   };
 }
 
@@ -93,17 +136,21 @@ export function createStepLog(
   record: Pick<WorkRecordV1, "id" | "nextStep">,
   outcome: StepResultV1["kind"],
   elapsedMs: number,
+  /** The step's own detail; only a recognized reason code is printed. */
+  detail?: string,
 ) => void {
   let printed = 0;
-  return (record, outcome, elapsedMs) => {
+  return (record, outcome, elapsedMs, detail) => {
     if (printed >= limit) return;
     try {
+      const reason = stepLineReason(detail);
       const line = parseStepLine({
         kind: STEP_LINE_KIND,
         recordId: record.id,
         step: record.nextStep,
         outcome,
         elapsedMs: Math.max(0, Math.min(elapsedMs, MAX_ELAPSED_MS)),
+        ...(reason === null ? {} : { reason }),
       });
       if (line === null) return;
       printed += 1;

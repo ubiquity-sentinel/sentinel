@@ -561,6 +561,7 @@ async function* advanceSerialPass(
       selected,
       result.kind,
       Math.round(performance.now() - stepStartedAt),
+      result.kind === "deferred" ? result.detail : undefined,
     );
     await gate.settle(context, selected.id, result, selected);
     if (result.kind === "deferred") {

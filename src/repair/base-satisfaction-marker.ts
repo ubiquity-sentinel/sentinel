@@ -34,6 +34,15 @@ function exactNoChangeFailure(record: WorkRecordV1): boolean {
     record.blocker.message.replace(prefix, "") === ATTEMPT_DETAIL_NO_CHANGE;
 }
 
+/**
+ * Park of a completed base review that gave neither satisfied acceptance nor
+ * "work needed". Until 2026-11-12 it also parked every work-needed review;
+ * the launcher's one-time historical re-arm takes those back
+ * (`ops/hosted-autonomy-historical-rearms.ts`).
+ */
+export const BASE_REVIEW_NOT_ESTABLISHED =
+  "base review did not establish already-satisfied task acceptance";
+
 /** How long a no-change record waits for its base review before parking. */
 export const BASE_REVIEW_HOLD_MS = 24 * 60 * 60 * 1000;
 
