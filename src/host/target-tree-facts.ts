@@ -1,7 +1,7 @@
 /**
  * Trusted target-tree fact reads (owner directive 2026-11-01: repair every
- * ubiquity repository). One bounded GitHub contents read proves the target's
- * toolchain markers, per-manifest script/task names and whether its own CI runs
+ * ubiquity repository). Bounded, revision-pinned contents reads prove toolchain
+ * markers, per-manifest script/task names and whether the target's own CI runs
  * on pull requests. A read that cannot prove its answer returns `null`, and the
  * loader skips that generic target exactly like an unreadable default branch: a
  * policy is never rebuilt from an assumed tree. An owner-declared
@@ -47,7 +47,17 @@ interface ContentsAnswerV1 {
 }
 
 /** At most this many workflow files are read to find a pull_request trigger. */
-const MAX_WORKFLOW_FILES = 50;
+const MAX_WORKFLOW_FILES = 10;
+
+interface CachedTreeFactsV1 {
+  readonly sha: string;
+  readonly facts: Promise<TargetTreeFactsV1 | null>;
+}
+
+// Hosted config loads recreate both transports and resolvers within a run.
+// Share facts for this process only, keeping the latest SHA per API, credential
+// and target. Every lookup must still prove the current head with that credential.
+const treeFactsByRun = new Map<string, CachedTreeFactsV1>();
 
 function treeFactsHeaders(token: string): ReadonlyMap<string, string> {
   return new Map([
@@ -180,8 +190,9 @@ function manifestNames(text: string, field: "scripts" | "tasks"): string[] {
 }
 
 /**
- * Resolve one target's tree facts from its exact default branch through the
- * trusted GitHub read port. Any read that cannot prove an answer returns
+ * Resolve one target's tree facts from its exact default-branch SHA through the
+ * trusted GitHub read port. Successful facts are shared within this run; every
+ * lookup rechecks the branch head. Any read that cannot prove an answer returns
  * `null` and the loader skips the target; it never defaults a policy from a
  * missing checkout. A declared `sentinel.protected` list that is unreadable or
  * malformed throws `TargetTreeFactsRefusedV1` so its protections are never
@@ -221,9 +232,8 @@ export function createTargetTreeFactsResolver(options: {
     const entries = contentsEntries(listing.body);
     if (entries === null) return null;
     const workflows = entries
-      .filter((entry) => entry.type === "file" && /\.ya?ml$/i.test(entry.name))
-      .slice(0, MAX_WORKFLOW_FILES);
-    for (const workflow of workflows) {
+      .filter((entry) => entry.type === "file" && /\.ya?ml$/i.test(entry.name));
+    for (const workflow of workflows.slice(0, MAX_WORKFLOW_FILES)) {
       const text = await readContentsText(
         options.http,
         options.token,
@@ -232,14 +242,19 @@ export function createTargetTreeFactsResolver(options: {
       if (text === null) return null;
       if (workflowHasPullRequestTriggerV1(text) === true) return true;
     }
-    return false;
+    // Exhausting the read budget is not proof that the remaining files have
+    // no PR trigger. Skip this target rather than defaulting its CI policy.
+    return workflows.length > MAX_WORKFLOW_FILES ? null : false;
   }
 
-  return async (target, defaultBranch) => {
+  async function resolveFacts(
+    target: TargetCoordinatesV1,
+    revision: string,
+  ): Promise<TargetTreeFactsV1 | null> {
     const root = await readContents(
       options.http,
       options.token,
-      contentsUrl(target, defaultBranch, ""),
+      contentsUrl(target, revision, ""),
     );
     if (root === null || root.status !== 200) return null;
     const entries = contentsEntries(root.body);
@@ -255,7 +270,7 @@ export function createTargetTreeFactsResolver(options: {
       const text = await readContentsText(
         options.http,
         options.token,
-        contentsUrl(target, defaultBranch, "package.json"),
+        contentsUrl(target, revision, "package.json"),
       );
       if (text === null) return null;
       manifestScripts.package = manifestNames(text, "scripts");
@@ -266,7 +281,7 @@ export function createTargetTreeFactsResolver(options: {
       const text = await readContentsText(
         options.http,
         options.token,
-        contentsUrl(target, defaultBranch, manifest),
+        contentsUrl(target, revision, manifest),
       );
       if (text === null) return null;
       for (const name of manifestNames(text, "tasks")) denoTasks.add(name);
@@ -279,7 +294,7 @@ export function createTargetTreeFactsResolver(options: {
       const text = await readContentsText(
         options.http,
         options.token,
-        contentsUrl(target, defaultBranch, SENTINEL_PROTECTED_LIST_FILE),
+        contentsUrl(target, revision, SENTINEL_PROTECTED_LIST_FILE),
       );
       if (text === null) {
         throw new TargetTreeFactsRefusedV1(
@@ -295,7 +310,7 @@ export function createTargetTreeFactsResolver(options: {
         );
       }
     }
-    const hasCiWorkflow = await detectCiWorkflow(target, defaultBranch);
+    const hasCiWorkflow = await detectCiWorkflow(target, revision);
     if (hasCiWorkflow === null) return null;
     return {
       files,
@@ -303,5 +318,40 @@ export function createTargetTreeFactsResolver(options: {
       manifestScripts,
       ...(sentinelProtected === undefined ? {} : { sentinelProtected }),
     };
+  }
+
+  return async (target, defaultBranch) => {
+    const head = await readContents(
+      options.http,
+      options.token,
+      `${base}/repos/${target.owner}/${target.name}/commits/${
+        encodeURIComponent(defaultBranch)
+      }`,
+    );
+    if (head === null || head.status !== 200) return null;
+    if (typeof head.body !== "object" || head.body === null) return null;
+    const sha = (head.body as Record<string, unknown>).sha;
+    if (typeof sha !== "string" || !/^[0-9a-f]{40}$/.test(sha)) return null;
+
+    const key = JSON.stringify([
+      base,
+      options.token,
+      target.owner,
+      target.name,
+    ]);
+    const cached = treeFactsByRun.get(key);
+    if (cached?.sha === sha) return cached.facts;
+    const entry = { sha, facts: resolveFacts(target, sha) };
+    treeFactsByRun.set(key, entry);
+    try {
+      const facts = await entry.facts;
+      if (facts === null && treeFactsByRun.get(key) === entry) {
+        treeFactsByRun.delete(key);
+      }
+      return facts;
+    } catch (error) {
+      if (treeFactsByRun.get(key) === entry) treeFactsByRun.delete(key);
+      throw error;
+    }
   };
 }

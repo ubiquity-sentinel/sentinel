@@ -16,7 +16,7 @@ type Reviews = Pick<RepairStateSnapshotV1, "reviews">;
  * Length of the carried-merge marker's wait (4 minutes). No other wait any
  * runtime writes (generation 79 or 80) is a `backoff` this long: the CI fix
  * marker is zero-length, the merge port's refusal backoff (at `delivery`) is
- * `CHECK_POLL_MS` (5 minutes) and every red-base backoff ends at least
+ * `CHECK_POLL_MS` (2 minutes) and every red-base backoff ends at least
  * `RED_BASE_RECHECK_MS` (30 minutes) after its start.
  */
 export const CARRIED_MERGE_MARKER_MS = 4 * 60_000;
