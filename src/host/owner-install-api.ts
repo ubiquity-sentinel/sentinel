@@ -167,6 +167,9 @@ export function requireStatus(
  * Strict positive compare parse mirroring the hosted revision verifier: the
  * requested revision must be the compare base and merge base, and only
  * `ahead`/`identical` counters prove ancestry of the current development ref.
+ * `total_commits` counts GitHub's BASE..HEAD listing, which also lists base
+ * ancestors when commit dates are skewed (2026-11-14: 12 ahead, 18 listed), so
+ * it is never equated with `ahead_by + behind_by`; `ahead` needs it non-empty.
  */
 export function compareConfirmsAncestor(
   value: unknown,
@@ -181,9 +184,10 @@ export function compareConfirmsAncestor(
   const total = readCountField(obj, "total_commits");
   if (base !== revision || merge !== revision) return false;
   if (ahead === null || behind === null || total === null) return false;
-  if (total !== ahead + behind) return false;
-  if (obj.status === "identical") return ahead === 0 && behind === 0;
-  if (obj.status === "ahead") return ahead > 0 && behind === 0;
+  if (obj.status === "identical") {
+    return ahead === 0 && behind === 0 && total === 0;
+  }
+  if (obj.status === "ahead") return ahead > 0 && behind === 0 && total > 0;
   return false;
 }
 

@@ -149,8 +149,12 @@ export function hostedSelfRequest(request: ReleaseRequestV1): boolean {
 
 /**
  * Compare wire (real GitHub shape, no head_commit): the requested SHA must be
- * the compare base AND the merge base, counters must be consistent, and only
- * ahead/identical are positive; behind/diverged are definitive negatives.
+ * the compare base AND the merge base, and only ahead/identical are positive;
+ * behind/diverged are definitive negatives. `ahead_by`/`behind_by` count exact
+ * reachability, but `total_commits` counts GitHub's BASE..HEAD listing, a
+ * date-ordered walk that also lists commits the base already reaches when
+ * dates are skewed (2026-11-14: 12 ahead, 18 listed). It is never equated with
+ * the other counters; only a listing missing every commit ahead is inconsistent.
  */
 export function parseHostedCompare(value: unknown, revision: GitSha): boolean {
   const obj = expectRecord(value, "$");
@@ -169,7 +173,7 @@ export function parseHostedCompare(value: unknown, revision: GitSha): boolean {
   const aheadBy = expectCount(obj.ahead_by, "$.ahead_by");
   const behindBy = expectCount(obj.behind_by, "$.behind_by");
   const totalCommits = expectCount(obj.total_commits, "$.total_commits");
-  if (totalCommits !== aheadBy + behindBy) {
+  if (aheadBy > 0 && totalCommits === 0) {
     fail(
       "$.total_commits",
       "invalid_value",

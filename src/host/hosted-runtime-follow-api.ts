@@ -363,6 +363,14 @@ export class HostedRuntimeFollowApi {
     return tree;
   }
 
+  /**
+   * Ancestry of two exact SHAs: the base must be the compare base and the
+   * merge base, with nothing behind it. `ahead_by`/`behind_by` count exact
+   * reachability, but `total_commits` counts the compare's commit listing, a
+   * date-ordered walk that also lists commits the base already reaches when
+   * dates are skewed (2026-11-14: epoch-dated base-refresh merges made a true
+   * descendant list 13 commits with 7 ahead). It is only bounded, never equated.
+   */
   async ancestor(base: string, head: string): Promise<boolean> {
     if (base === head) return true;
     const value = record(
@@ -380,7 +388,8 @@ export class HostedRuntimeFollowApi {
     }
     return record(value.base_commit).sha === base &&
       record(value.merge_base_commit).sha === base && behind === 0 &&
-      ((value.status === "ahead" && (ahead as number) > 0 && total === ahead) ||
+      ((value.status === "ahead" && (ahead as number) > 0 &&
+        (total as number) > 0) ||
         (value.status === "identical" && ahead === 0 && total === 0));
   }
 
