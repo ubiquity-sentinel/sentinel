@@ -52,7 +52,7 @@ Matrix planning reserves the existing five-minute operation margin for native jo
 
 ## Runtime model policy and trusted route configuration
 
-Preserve the runtime implementation policy `gpt-5.6-luna` with max reasoning. Local coding-agent routing or a task-scoped worker model does not change production routing.
+Owner decision 2026-10-18 supersedes the earlier runtime model selections below: use `gpt-reserve` as the runtime implementation primary and `gpt-6-luna` for the existing HTTP 429 failover, both with max reasoning. Set the existing trusted `SENTINEL_IMPLEMENTATION_MODEL_ID` repository override to `gpt-reserve`; retain `SENTINEL_MODEL_FAILOVER_ID`'s existing `gpt-6-luna` default, the same endpoint and credentials, execution deadlines and durable admission/accounting. Preserve the supported route interfaces below. Local coding-agent routing or a task-scoped worker model does not change production routing, and this decision alone does not prove the live route.
 
 The trusted route configuration in [src/host/model-route.ts](../src/host/model-route.ts) also supports the gateway alias `gpt-reserve`, explicit `SENTINEL_MODEL_BASE_URL`/`SENTINEL_MODEL_ID` configuration and the previously owner-authorized DeepSeek-direct route selected by `SENTINEL_MODEL_FALLBACK=deepseek` with the existing scoped key. Those interfaces are retained; this consolidation neither selects a route nor asserts which route is live. Reconcile the approved policy and actual installed configuration before a future route change. Invalid/incomplete configuration refuses, and receipts bind the submitted model/provider to actual thread/turn/routing evidence. Max reasoning remains required.
 
