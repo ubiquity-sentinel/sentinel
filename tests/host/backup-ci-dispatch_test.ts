@@ -512,7 +512,9 @@ Deno.test("calibration commits are exact SHAs per target", async () => {
   const committed = parseBackupCiCalibrationCommits(
     JSON.parse(await Deno.readTextFile("ops/backup-ci-calibration.json")),
   );
-  assert.deepEqual([...committed.keys()], ["ubiquity/passport.ubq.fi"]);
+  // Passport's eight calibration commits are gone (owner decision
+  // 2026-11-18, "no private repos"): no private target is ever calibrated.
+  assert.deepEqual([...committed.keys()], []);
   const parsed = parseBackupCiCalibrationCommits({
     version: 1,
     targets: { "ubiquity/passport.ubq.fi": [H, H] },

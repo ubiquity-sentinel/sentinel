@@ -37,8 +37,11 @@ export function passportCiFixture(
   native = false,
   mode: BackupCiModeV1 | null = "on",
 ) {
+  // The stand-in mechanism, exercised as if this target were public: a
+  // private one (the live Passport, owner decision 2026-11-18) gets no
+  // stand-in (tests/host/backup-ci-private-standin_test.ts).
   const run = workflowRun(PUSH_SUITE, "push", {
-    repository: { full_name: "ubiquity/passport.ubq.fi" },
+    repository: { full_name: "ubiquity/passport.ubq.fi", private: false },
     head_repository: { full_name: "ubiquity/passport.ubq.fi" },
     head_commit: { id: head, tree_id: TREE },
     conclusion: native ? "success" : "failure",

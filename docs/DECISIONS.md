@@ -6424,3 +6424,45 @@ provenance trust landed. Integrated onto them (2026-11-18):
 Rollback: revert this commit; the release then gates on the earlier shapes,
 which the final source does not carry, so it holds every release
 (`runtime_without_policy`).
+
+## 2026-11-18: no private repositories in backup CI (owner decision)
+
+- Owner decision (2026-11-18), after being told that a backup leg publishes a
+  private target's whole tree as a one-day public Actions artifact and full
+  public job logs in this public repository: "So moving forward let's simplify
+  the logic: no private repos. Ci must run on the private repo I guess."
+- This supersedes, for backup CI, the 2026-10-23 Passport visibility
+  acceptance (three-target scope) and the Passport use of the 2026-10-24
+  backup decision, and withdraws the 2026-11-18 committed-id exemption
+  ("keep Passport's committed visibility decision on the re-check",
+  `59098d4c23`). There are no exceptions.
+- Private targets get CI evidence only from their own repository's CI. While
+  their organization has no Actions minutes, their pull requests wait (a
+  never-started check reads as no evidence, never as red). Sentinel still
+  writes, reviews and merges their pull requests under the unchanged gates.
+- Trusted pass (`ops/backup-ci-pass.ts`): every target, committed id or
+  enrolment pin, has its visibility read on every pass with the repository
+  read the planner already makes; private plans nothing (no stand-in,
+  confirm, peer or calibration leg, no tree materialised or uploaded) and logs
+  `backup-ci:<repo>:private_repository`; an unreadable answer plans nothing
+  (`repository_unavailable`). A committed id is identity only. Ingest of legs
+  already dispatched is unchanged and harmless: their results stand in for
+  nothing.
+- Stand-in rule (`selectBackupCiForCommit`, shared by the supervisor's check
+  read and the runtime's): the target's own workflow-run listing, which the
+  rule already reads for the suite map, carries GitHub's current
+  `repository.private`. A stand-in or peer needs every run to say `false`;
+  `true` refuses the commit with the closed code `private_repository`, and a
+  missing or malformed field with `visibility_unknown`. No new read, store
+  file or state field; the store is neither deleted nor rewritten, so
+  Passport's older receipts stay on the branch and are inert.
+- Configuration: `sentinel.backup-ci-targets.json` keeps every ubiquity
+  target listed (the two-file sync with `sentinel.targets.json` holds), so
+  a private target's never-started runs keep reading as no evidence instead
+  of red; Passport keeps its committed id as identity only. Passport's eight
+  calibration commits are removed from `ops/backup-ci-calibration.json`.
+  Prospector and every other private `id: null` row stay refused at
+  enrolment as before.
+
+Rollback: revert the commits; Passport then plans legs again and its older
+receipts stand in again, which this decision forbids.

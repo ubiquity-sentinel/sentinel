@@ -128,6 +128,25 @@ function instant(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/**
+ * The target's visibility as its own workflow-run listing (`GET
+ * /actions/runs?head_sha`, which the stand-in rule reads anyway for the suite
+ * map) reports it: each run's `repository.private`. Any `true` is private;
+ * public only when there is a run and every run says `false`; anything else
+ * (no run, a missing or non-boolean field) is unknown.
+ */
+export function backupCiRunsVisibility(
+  runs: readonly unknown[],
+): "public" | "private" | "unknown" {
+  let visibility: "public" | "unknown" = runs.length > 0 ? "public" : "unknown";
+  for (const raw of runs) {
+    const flag = row(row(raw)?.repository)?.private;
+    if (flag === true) return "private";
+    if (flag !== false) visibility = "unknown";
+  }
+  return visibility;
+}
+
 /** A raw check run's id, or null when it has no usable one. */
 export function rawCheckRunId(raw: unknown): number | null {
   return positiveId(row(raw)?.id);
@@ -316,7 +335,9 @@ export interface BackupCiCommitSelectionV1 {
 /**
  * The shared stand-in rule over one commit's live observations: null (no
  * substitution) when the store holds no file for the commit, when any listing
- * is unreadable, or when any observation is malformed or bound elsewhere.
+ * is unreadable, or when any observation is malformed or bound elsewhere; an
+ * empty selection refused `private_repository` or `visibility_unknown` when
+ * the target's run listing does not show it public (`backupCiRunsVisibility`).
  */
 export async function selectBackupCiForCommit(
   input: BackupCiCommitInputV1,
@@ -327,6 +348,26 @@ export async function selectBackupCiForCommit(
   if (all === null) return null;
   const runs = await input.listRuns();
   if (runs === null) return null;
+  // Owner decision 2026-11-18, "no private repos": a private repository's CI
+  // evidence comes only from its own CI. No receipt (an old one included)
+  // stands in or peers for a target its own listing does not show public
+  // now; a committed id or an enrolment pin decides nothing here.
+  const visibility = backupCiRunsVisibility(runs);
+  if (visibility !== "public") {
+    return {
+      file,
+      selection: {
+        standIns: new Map(),
+        peers: new Map(),
+        shadow: [],
+        refusals: [
+          visibility === "private"
+            ? "private_repository"
+            : "visibility_unknown",
+        ],
+      },
+    };
+  }
   const statusContexts = await input.statusContexts();
   if (statusContexts === null) return null;
   const names = new Set<string>();

@@ -8,8 +8,9 @@
  * target's own repository read, and only when that read returns exactly the
  * configured full name (a renamed or transferred repository answers through
  * a redirect under another name) and a public repository (backup legs
- * publish the target tree and logs in a public repository; only Passport
- * carries a recorded visibility decision, as its committed id). The id is
+ * publish the target tree and logs in a public repository). No row is
+ * exempt (owner decision 2026-11-18, "no private repos"): a committed id is
+ * identity only, and every pass re-reads visibility before planning. The id is
  * then pinned in the store (`enrolment.json`, written by the commit step) and
  * every later pass, ingest included, takes it from there without a read. A
  * calibration or check file naming another id refuses the target. Only
