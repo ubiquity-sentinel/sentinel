@@ -186,7 +186,142 @@ class RepositoryTrain extends TrainRun {
   }
 
   async publish(): Promise<Outcome> {
-    const train = this.train;
+    let train = this.train;
+    let tip: string | null = null;
+    try {
+      tip = await this.context.readTip(this.scope);
+    } catch { /* unavailable */ }
+    if (this.late()) return "deferred";
+    if (tip === null || !/^[0-9a-f]{40}$/.test(tip)) {
+      this.act(`train:${train.operationId}:base_unreadable`);
+      return "done";
+    }
+    if (tip !== train.tip) return await this.end("dissolved:base_moved");
+    for (const member of train.members) {
+      const record = this.context.snapshot.work.find((row) =>
+        row.id === member.recordId &&
+        hostedRepositoryKey(row.repository) ===
+          hostedRepositoryKey(this.scope.repository)
+      );
+      if (
+        !record || record.target.head === null || record.target.base === null ||
+        record.target.pr === null
+      ) {
+        this.act(`train:${train.operationId}:member_unavailable`);
+        return "done";
+      }
+      if (
+        record.target.head !== member.head ||
+        record.target.base !== member.base ||
+        record.target.pr !== member.pullRequest
+      ) return await this.end("dissolved:member_changed");
+      if (!trainShaped(this.context, record)) {
+        this.act(`train:${train.operationId}:member_unavailable`);
+        return "done";
+      }
+      let refusal: string | null = "member_unavailable";
+      try {
+        const gate = await trainMemberGate(
+          this.context,
+          this.scope,
+          record,
+          member.receiptId,
+        );
+        refusal = gate.refusal ??
+          await trainAdmissionRefusal(this.scope, record);
+      } catch { /* unavailable never proves a mismatch */ }
+      if (this.late()) return "deferred";
+      if (refusal !== null) {
+        this.act(`train:${train.operationId}:member_revalidation:${refusal}`);
+        return "done";
+      }
+    }
+    let dispatchAlreadyApplied = false;
+    const ci = this.context.deps.ciMinutes;
+    if (ci === undefined) {
+      this.act(`train:${train.operationId}:ci_capability_missing`);
+      return "done";
+    }
+    if (ci.active) {
+      if (this.context.deadlineAt === undefined) return "done";
+      // Publishing intents can outlive their job's private object directory.
+      // Regenerate only from persisted reviewed identities before admission.
+      let restored = null;
+      try {
+        restored = await this.composer.compose({
+          tip: train.tip,
+          members: train.members.map((member) => ({
+            head: member.head,
+            base: member.base,
+          })),
+        });
+      } catch {
+        restored = null;
+      }
+      if (this.late()) return "deferred";
+      if (
+        restored === null || restored.length !== train.members.length ||
+        restored.some((step) => step.status !== "joined")
+      ) {
+        this.act(`train:${train.operationId}:restore_unavailable`);
+        return "done";
+      }
+      const final = restored.at(-1);
+      if (
+        final?.status !== "joined" || final.commit !== train.sha ||
+        restored.some((step, index) =>
+          step.status !== "joined" ||
+          step.commit !== train.members[index].commit ||
+          step.patch !== train.members[index].patch
+        )
+      ) {
+        this.act(`train:${train.operationId}:restore_identity_mismatch`);
+        return "done";
+      }
+      const admission = await ci.reserve({
+        repository: this.scope.repository,
+        kind: "train_push",
+        head: train.sha,
+        base: train.tip,
+        ref: train.ref,
+        pr: null,
+      }, this.context.deadlineAt);
+      if (
+        admission.kind !== "admitted" && admission.kind !== "inactive" &&
+        admission.kind !== "reconciled"
+      ) {
+        this.act(`train:${train.operationId}:ci_minute_hold`);
+        return "done";
+      }
+      // Reserve the explicit dispatch before advancing the persisted phase:
+      // a budget hold must leave it on the ordinary publishing/retry path.
+      if (this.composer.triggerCi !== undefined) {
+        const dispatch = await ci.reserve({
+          repository: this.scope.repository,
+          kind: "train_dispatch",
+          head: train.sha,
+          base: train.tip,
+          ref: train.ref,
+          pr: null,
+        }, this.context.deadlineAt);
+        if (dispatch.kind === "reconciled") dispatchAlreadyApplied = true;
+        else if (dispatch.kind !== "admitted" && dispatch.kind !== "inactive") {
+          this.act(`train:${train.operationId}:ci_minute_hold`);
+          return "done";
+        }
+      }
+    }
+    // Calendar holds leave this null. Journal the first effect attempt before
+    // writing remotely; an ambiguous response/restart must not refresh it.
+    if (train.ciStartedAt === null) {
+      if (
+        !await this.persist({
+          ...this.ledger,
+          train: { ...train, ciStartedAt: this.context.deps.clock.now() },
+        })
+      ) return "done";
+      train = this.train;
+    }
     let outcome: "applied" | "rejected" | "ambiguous";
     try {
       outcome = await this.composer.publish({ ref: train.ref, sha: train.sha });
@@ -206,7 +341,7 @@ class RepositoryTrain extends TrainRun {
       })
     ) return "done";
     this.act(`train:${train.operationId}:published:ref=${train.ref}`);
-    if (this.composer.triggerCi !== undefined) {
+    if (this.composer.triggerCi !== undefined && !dispatchAlreadyApplied) {
       let requested = false;
       try {
         requested = await this.composer.triggerCi({
@@ -249,7 +384,10 @@ class RepositoryTrain extends TrainRun {
     }
     if (verdict.kind === "red") return await this.red(verdict);
     const now = this.context.deps.clock.now();
-    if (!(now - train.createdAt <= DELIVERY_TRAIN_CI_WAIT_MS)) {
+    // Legacy records have no attempt proof: retain their original conservative
+    // clock instead of manufacturing a current timestamp during an upgrade.
+    const ciStartedAt = train.ciStartedAt ?? train.createdAt;
+    if (!(now - ciStartedAt <= DELIVERY_TRAIN_CI_WAIT_MS)) {
       // Never red: the members fall back to the per-record path, and train
       // again only on a moved tip or a new head.
       return await this.end(

@@ -21,7 +21,9 @@ const FOREIGN_HEAD_PREFIX = "the pull request reports a foreign head ";
  * model, no reservation, never a review round or a CI fix attempt). The
  * refreshed head H1 carries H0's review only while the pull request's own
  * patch is byte-identical (`proveCarriedPatch`: the merge-base patch of H0
- * against B0 equals that of H1 against T, binary-safe, by SHA-256), re-derived
+ * against B0 equals that of H1 against T, binary-safe, by SHA-256) or, outside
+ * a native queue target, its reviewed hunks are carried verbatim across base
+ * drift beside them (`driftCarried`, `github/carried-drift.ts`), re-derived
  * from git on every step; once H1's OWN required CI is green (every existing
  * run green and every expected check present: each check name of T's check
  * suites that share a name with H1, `absentExpectedChecks`, sentinel issue
@@ -63,11 +65,12 @@ const FOREIGN_HEAD_PREFIX = "the pull request reports a foreign head ";
  */
 import type { GitSha } from "../contracts/brands.ts";
 import {
-  carriedPatchHolds,
+  carriedChangeHolds,
   type CarriedPatchProofV1,
   type CarriedPatchRequestV1,
   type GitHubCheckV1,
 } from "../contracts/ports.ts";
+import { carriedDriftAllowed } from "../github/carried-drift.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
 import {
@@ -490,7 +493,15 @@ export async function executeCarriedDelivery(
       `${REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX}patch proof ${proof.error.kind}`,
     );
   }
-  if (!carriedPatchHolds(request, proof.value)) {
+  // The reviewed change must be carried: the exact patch, or, where every
+  // carried consumer decides base drift, the same hunks across it (#304).
+  if (
+    !carriedChangeHolds(
+      request,
+      proof.value,
+      carriedDriftAllowed(record.repository),
+    )
+  ) {
     return persistWork(
       deps,
       context,

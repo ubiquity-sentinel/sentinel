@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
@@ -58,6 +59,7 @@ export async function driveOwnerTaskAcceptance(
     ) => readHostedReleaseReceipt({ state: rig.state }, request),
   });
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state,
     clock,
     configs,

@@ -9,6 +9,7 @@
  * marked issue, and any unreadable read file nothing. The pass writes no
  * state.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { baseRepairMarker } from "../../src/repair/base-repair.ts";
 import {
@@ -121,6 +122,7 @@ async function pass(options: PassOptions) {
   try {
     const actions = await runHostedBaseRepairPass(
       {
+        ciMinutes: INACTIVE_CI_MINUTES,
         state: rig.state,
         githubFor: rig.githubFor,
         clock: { now: () => NOW },

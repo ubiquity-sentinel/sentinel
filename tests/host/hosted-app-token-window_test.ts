@@ -1,4 +1,5 @@
 /** The repair child never plans GitHub work past its one App token's life. */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { parseHostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
 import { HOSTED_RUNTIME_ID } from "../../src/contracts/hosted-supervisor.ts";
@@ -282,6 +283,7 @@ async function runLaterTarget(deadline: number, remaining: number) {
   const prepared: { slug: string; at: number; until: number }[] = [];
   const cycles: string[] = [];
   const result = await runActionsTargetCycles({
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state: capability,
     configs: [self, foreign],
@@ -364,6 +366,7 @@ Deno.test("hosted app token window: the first target is still addressed when set
   const clock = new FakeClock(T0);
   const prepared: string[] = [];
   const result = await runActionsTargetCycles({
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state: {} as never,
     configs: [self],

@@ -58,6 +58,18 @@ export function ownsPublishedArtifact(record: WorkRecordV1): boolean {
 }
 
 /**
+ * Pristine issue starts belong to the matrix planner, including its batched
+ * branch assignment and live admission checks. Never skip an intent, candidate,
+ * incident replay or published artifact: those still need serial reconciliation.
+ */
+export function matrixOwnsFreshImplementation(record: WorkRecordV1): boolean {
+  return record.source.kind === "issue" && record.nextStep === "work" &&
+    record.intent === null && record.target.head === null &&
+    record.target.pr === null && record.target.checkpoint === null &&
+    record.target.candidateState === undefined && !hasTakeoverCustody(record);
+}
+
+/**
  * A dead worker-local candidate (owner throughput, 2026-10-31): a preserved-null
  * issue record with NO pull request and NO recorded published head, so nothing
  * published can be overwritten. These rows were parked permanently by the
@@ -121,6 +133,23 @@ export function isStaleImplementationIntent(
   if (intent.kind !== "implementation") return false;
   if (intent.resultId !== null) return false;
   return intent.startedAt <= now - STALE_IMPLEMENTATION_INTENT_TTL_MS;
+}
+
+/**
+ * True for a stale implementation intent that only names its dead admission:
+ * a charged `requestId` and no carried marker. A conflict-resolution or
+ * base-review marker (`failure`) and a self-merge binding belong to their own
+ * routes and are never retired here. Admission requires a null intent
+ * (`admittedImplementationWork`), so such an intent must be retired before the
+ * next start or the budget refuses it `invalid`.
+ */
+export function isRetirableStaleImplementationIntent(
+  intent: IncompleteOperationV1 | null,
+  now: number,
+): boolean {
+  return intent !== null && isStaleImplementationIntent(intent, now) &&
+    intent.requestId !== null && intent.failure === undefined &&
+    intent.selfMerge === undefined;
 }
 
 export function isMatrixImplementationReadyV1(

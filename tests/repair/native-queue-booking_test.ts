@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Queue delivery proof is consumed atomically with durable release custody. */
 import assert from "node:assert/strict";
 import { createQueueIntent } from "../../ops/hosted-autonomy-queue-intent.ts";
@@ -105,6 +106,7 @@ async function bookingRig() {
     repository: record.repository,
   })];
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     github,

@@ -15,6 +15,11 @@ import {
   supervisorRun,
 } from "./hosted-runtime-follow-fixtures.ts";
 import { FOLLOW_MATRIX_WAVE_DEADLINE_MS } from "../../src/host/hosted-runtime-follow-matrix.ts";
+import {
+  FOLLOW_LIST_ATTEMPTS,
+  FollowError,
+  HostedRuntimeFollowApi,
+} from "../../src/host/hosted-runtime-follow-api.ts";
 
 Deno.test("follow selects the ancestry-maximal green SHA despite reversed CI ordering", async () => {
   const api = new FollowFake();
@@ -119,6 +124,21 @@ Deno.test("follow defers when the captured launcher is outside the first-parent 
   assert.equal(result.journal.reason, "launcher_diverged");
   assert.equal(api.launcher, L);
   assert.equal(api.mutations, 0);
+});
+
+Deno.test("follow advances across an integration merge that carries the launcher as its second parent", async () => {
+  // development was fast-forwarded to a merge made on the feature branch, so
+  // the launcher is an ancestor of the tip but off its first-parent line.
+  const api = new FollowFake();
+  const side = "5".repeat(40);
+  api.installed = L;
+  api.parents.set(OLDER, [side, L]);
+  api.parents.set(side, [P]);
+  const result = await api.follow();
+  assert.equal(result.journal.decision, "advanced", result.journal.reason);
+  assert.equal(result.launcherSha, OLDER);
+  assert.equal(api.launcher, OLDER);
+  assert.equal(api.mutations, 1);
 });
 
 Deno.test("follow rejects green commits that do not descend from the installed revision", async () => {
@@ -249,6 +269,61 @@ Deno.test("follow never treats incomplete CI pagination as an older-candidate fa
   const result = await api.follow();
   assert.equal(result.journal.reason, "incomplete_pagination");
   assert.equal(api.mutations, 0);
+  // Persistent inconsistency is re-listed from page 1 a bounded number of
+  // times, then refused exactly as before.
+  assert.equal(ciListings(api), FOLLOW_LIST_ATTEMPTS);
+  assert.equal(api.listPauses, FOLLOW_LIST_ATTEMPTS - 1);
+});
+
+function ciListings(api: FollowFake): number {
+  return api.requests.filter((request) =>
+    new URL(request.url).pathname.endsWith("/353613034/runs")
+  ).length;
+}
+
+Deno.test("follow re-lists a transiently inconsistent CI listing and proceeds", async () => {
+  const api = new FollowFake();
+  let missed = false;
+  api.intercept = (_request, url) => {
+    if (!url.pathname.endsWith("/353613034/runs") || missed) return undefined;
+    missed = true;
+    return response({ total_count: 2, workflow_runs: [ciRun(D, 30)] });
+  };
+  const result = await api.follow();
+  assert.equal(result.journal.decision, "advanced");
+  assert.equal(api.launcher, OLDER);
+  assert.equal(api.mutations, 1);
+  assert.equal(api.listPauses, 1);
+  // D: one inconsistent and one complete listing; OLDER: one listing.
+  assert.equal(ciListings(api), 3);
+});
+
+Deno.test("follow listing retry pauses never outlive the overall deadline", async () => {
+  let requests = 0;
+  const api = new HostedRuntimeFollowApi(
+    () => {
+      requests++;
+      return Promise.resolve({
+        status: 200,
+        headers: new Headers(),
+        bodyText: JSON.stringify({ total_count: 1, workflow_runs: [] }),
+      });
+    },
+    "synthetic",
+    50,
+    undefined,
+    () => new Promise<void>(() => {}),
+  );
+  try {
+    await assert.rejects(
+      api.list("/actions/workflows/supervisor.yml/runs", "workflow_runs"),
+      (error) =>
+        error instanceof FollowError && error.reason === "follow_deadline",
+    );
+    assert.equal(requests, 1);
+  } finally {
+    api.dispose();
+  }
 });
 
 Deno.test("follow page bound and truncated state tree defer rather than accepting partial reads", async () => {

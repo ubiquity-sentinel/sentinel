@@ -13,6 +13,7 @@
  * The REAL surface runs over a stubbed `fetch`; the REAL base-repair pass
  * then files nothing for a base whose only failure never started.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import {
   CANDIDATE_CONCLUSIONS,
@@ -231,6 +232,7 @@ Deno.test("base repair pass: a base whose only failure never started files nothi
   const runPass = () =>
     runHostedBaseRepairPass(
       {
+        ciMinutes: INACTIVE_CI_MINUTES,
         state: rig.state,
         githubFor: rig.githubFor,
         clock: { now: () => NOW },

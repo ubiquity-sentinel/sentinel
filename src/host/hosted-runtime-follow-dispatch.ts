@@ -39,7 +39,13 @@ export async function dispatchFollowedSupervisor(
   dispatch: () => Promise<FollowDispatchOutcome>,
 ): Promise<FollowDispatchOutcome> {
   const log = deps.log ?? ((line) => console.log(JSON.stringify(line)));
-  const api = new HostedRuntimeFollowApi(deps.http, deps.token, 30_000);
+  const api = new HostedRuntimeFollowApi(
+    deps.http,
+    deps.token,
+    30_000,
+    undefined,
+    deps.pause,
+  );
   try {
     if (!deps.ready) throw new FollowError("follow_not_ready");
     const expected = sha(deps.expectedSha);

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import type { WorkItemId } from "../../src/contracts/brands.ts";
 import { resolveHostedDelivery } from "../../ops/hosted-autonomy-delivery-proof.ts";
@@ -221,7 +222,12 @@ Deno.test(
       const { rig } = await makeRig("autonomy-foreign-green", {
         repair: repairSnapshot([foreignRecord()], [foreignReceipt()]),
         resolver: (repository) =>
-          createHostedAutonomyGitHub("fixture-token", repository),
+          createHostedAutonomyGitHub(
+            "fixture-token",
+            repository,
+            undefined,
+            INACTIVE_CI_MINUTES,
+          ),
       });
       const result = await run(rig);
       assert.equal(result.status, "applied", JSON.stringify(result));
@@ -436,6 +442,7 @@ Deno.test(
       pull: foreignPullFacts(),
     });
     const proofDeps = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: proofRig.rig.state,
       githubFor: proofRig.rig.githubFor,
       clock: { now: () => 0 },

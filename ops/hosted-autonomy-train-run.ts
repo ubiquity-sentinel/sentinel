@@ -100,6 +100,7 @@ export function newTrain(
     phase: "publishing",
     pendingMerge: null,
     createdAt: now,
+    ciStartedAt: null,
   };
 }
 

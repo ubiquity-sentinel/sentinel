@@ -7,10 +7,12 @@
  * heads when every failed job of its latest attempt never started, at most
  * once per run per 30 minutes (the run's own completion time, no state) and
  * within per-pass bounds. During a stop (no listed run ran a job recently)
- * the wait doubles per attempt up to 12 hours, and a run at attempt 40 is
+ * the wait doubles per attempt up to 24 hours, and a run at attempt 40 is
  * never asked again, so GitHub's 50 re-runs per run are not spent (stage-1
- * review, 2026-10-25). The pass writes no state.
+ * review, 2026-10-25) and a run never reaches attempt 40 inside GitHub's
+ * 30-day re-run window (2026-11-12). The pass writes no state.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import {
   ciResumeActive,
@@ -25,12 +27,14 @@ import {
   HOSTED_CI_RESUME_RERUNS_PER_PASS,
   runHostedCiResumePass,
 } from "../../ops/hosted-autonomy-ci-resume.ts";
+import { ciRerunExpired } from "../../ops/hosted-autonomy-ci-rerun.ts";
 import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy-github.ts";
 import type {
   HostedAutonomyGitHubV1,
   HostedAutonomyHeadRunV1,
 } from "../../ops/hosted-autonomy-types.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
+import { CopyingRepairState, makeRig } from "./hosted-autonomy-rig.ts";
 import {
   GATEWAY,
   liveRecord,
@@ -116,9 +120,9 @@ Deno.test("CI resume: during a stop the wait doubles per attempt and a run near 
     ciResumeInterval(headRun(1, TIP, { runAttempt }), active);
   assert.deepEqual(
     [1, 2, 3, 4, 5, 6, 7, 39].map((attempt) => at(attempt) / MINUTE),
-    [30, 60, 120, 240, 480, 720, 720, 720],
+    [30, 60, 120, 240, 480, 960, 1440, 1440],
   );
-  assert.equal(HOSTED_CI_RESUME_MAX_BACKOFF_MS, 12 * HOUR);
+  assert.equal(HOSTED_CI_RESUME_MAX_BACKOFF_MS, 24 * HOUR);
   assert.equal(at(9, true), HOSTED_CI_RESUME_INTERVAL_MS, "Actions runs again");
   const third = headRun(1, TIP, { runAttempt: 3 });
   assert.equal(ciResumeDue(third, NOW), false, "ended 31 minutes ago");
@@ -132,6 +136,30 @@ Deno.test("CI resume: during a stop the wait doubles per attempt and a run near 
   assert.equal(
     ciResumeDue(headRun(1, TIP, { runAttempt: 39 }), NOW, true),
     true,
+  );
+});
+
+Deno.test("CI resume: a run asked whenever due during a stop stays below the attempt cap for GitHub's whole re-run window", () => {
+  // Passes every 30 minutes from the run's creation until GitHub refuses a
+  // re-run; every attempt never starts. The run must stay askable to the end,
+  // so the minutes returning on any day of the window still re-run it.
+  const run = headRun(1, TIP, {
+    createdAt: NOW,
+    attemptStartedAt: NOW - 2_000,
+    updatedAt: NOW,
+  });
+  let last = NOW;
+  for (let now = NOW; !ciRerunExpired(run, now); now += 30 * MINUTE) {
+    last = now;
+    if (!ciResumeDue(run, now)) continue;
+    run.runAttempt += 1;
+    run.attemptStartedAt = now;
+    run.updatedAt = now + 2_000;
+  }
+  assert.ok(last - NOW > 29 * 24 * HOUR, "the whole window was simulated");
+  assert.ok(
+    run.runAttempt < HOSTED_CI_RESUME_MAX_RUN_ATTEMPT,
+    `attempt ${run.runAttempt} reached the cap inside the window`,
   );
 });
 
@@ -251,6 +279,7 @@ async function resume(work: WorkRecordV1[], fake: Fake) {
   const rig = await liveRig("ci-resume", liveSnapshot(work, []), fake.surface);
   try {
     const actions = await runHostedCiResumePass({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       githubFor: rig.githubFor,
       clock: { now: () => NOW },
@@ -493,4 +522,111 @@ Deno.test("CI resume pass: the base tip is the canary; once its re-run ran, wait
   assert.deepEqual((await resume([record], restored)).actions, [
     "ci-resume:ubiquity/ai.ubq.fi:run=20:sent",
   ]);
+});
+
+/**
+ * GitHub's side of a long Actions stop: every attempt of `runs` ends two
+ * seconds after it is requested with no job started, until `restoredAt`;
+ * from then on a re-run starts its jobs. A re-run adds one attempt, as
+ * GitHub does, and is recorded in `started` once its jobs start.
+ */
+function stoppedActions(
+  runs: HostedAutonomyHeadRunV1[],
+  restoredAt: number,
+  clock: () => number,
+) {
+  const started = new Map<number, number>();
+  const surface: HostedAutonomyGitHubV1 = {
+    ...liveSurface({ tip: TIP }).surface,
+    listHeadRuns: (head) =>
+      Promise.resolve(
+        runs.filter((run) => run.headSha === head).map((run) => ({ ...run })),
+      ),
+    runNeverStarted: (id) => Promise.resolve(!started.has(id)),
+    rerunFailedJobs: (id) => {
+      const run = runs.find((candidate) => candidate.id === id)!;
+      const now = clock();
+      run.runAttempt += 1;
+      run.attemptStartedAt = now;
+      if (now >= restoredAt) {
+        started.set(id, now);
+        run.status = "in_progress";
+        run.conclusion = null;
+        run.updatedAt = now;
+      } else run.updatedAt = now + 2_000;
+      return Promise.resolve(true);
+    },
+  };
+  return { surface, started };
+}
+
+Deno.test("CI resume pass: a pre-review park whose CI never started for 24 days is re-run within a day of Actions starting jobs again", async () => {
+  // Live 2026-11: the Actions minutes of private Prospector and Passport ran
+  // out (outage notices #349/#350 from 2026-11-05) and the owner pays for no
+  // CI, so the stop ends at the next monthly reset. Fourteen Prospector heads
+  // published on 2026-11-07 and Passport PR 215 parked on
+  // `<check>(not_started)`. On an unchanged base such a park is re-admitted
+  // only by CI evidence for its exact head; without backup CI coverage that
+  // is a fresh run, so the resume pass must still be able to ask for one when
+  // the minutes return: a run that reached the attempt cap during the stop is
+  // never asked again and its park would never recover.
+  const DAY = 24 * HOUR;
+  const parked = liveRecord(618, {
+    blocker: {
+      kind: "other",
+      message:
+        "CI did not finish before review within 6 hours: deno(not_started)",
+      since: NOW + 6 * HOUR,
+    },
+  });
+  const head = parked.target.head!;
+  const published = NOW;
+  const restoredAt = published + 24 * DAY;
+  const runs = [
+    headRun(10, TIP, {
+      createdAt: published - 2 * DAY,
+      attemptStartedAt: published - 2 * DAY - 2_000,
+      updatedAt: published - 2 * DAY,
+    }),
+    headRun(20, head, {
+      createdAt: published,
+      attemptStartedAt: published - 2_000,
+      updatedAt: published,
+    }),
+  ];
+  let now = published;
+  const github = stoppedActions(runs, restoredAt, () => now);
+  // The real seeded rig; the pass only reads repair state, here from the
+  // rig's in-memory copy so 1,200 passes stay within the test budget.
+  const { rig } = await makeRig("ci-resume-long-stop", {
+    repair: liveSnapshot([parked], []),
+    repairState: new CopyingRepairState(),
+  });
+  rig.githubFor = () => github.surface;
+  let highest = 0;
+  try {
+    // One maintenance pass every 30 minutes, as the five-minute supervisor
+    // dispatch completes them, until a day after the minutes return.
+    for (; now <= restoredAt + 25 * HOUR; now += 30 * MINUTE) {
+      await runHostedCiResumePass({
+        ciMinutes: INACTIVE_CI_MINUTES,
+        state: rig.state,
+        githubFor: rig.githubFor,
+        clock: { now: () => now },
+      });
+      if (now < restoredAt) {
+        highest = Math.max(highest, ...runs.map((run) => run.runAttempt));
+      }
+      if (github.started.has(20)) break;
+    }
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+  assert.ok(
+    highest < HOSTED_CI_RESUME_MAX_RUN_ATTEMPT,
+    `the stop spent the re-run budget: attempt ${highest}`,
+  );
+  const rerun = github.started.get(20);
+  assert.ok(rerun !== undefined, "the parked head's CI never ran again");
+  assert.ok(rerun <= restoredAt + 25 * HOUR, "re-run within a day");
 });

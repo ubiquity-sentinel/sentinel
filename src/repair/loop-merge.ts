@@ -1,3 +1,4 @@
+import { guardCiMinuteEffect } from "./loop-types.ts";
 import { queueDeliveryProvenanceRef } from "../github/queue-delivery-provenance.ts";
 import { allReservationsV1 } from "../contracts/state-snapshots.ts";
 import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
@@ -359,6 +360,8 @@ export async function executeMerge(
     requestId: receipt.requestId,
     resultId: receipt.resultId,
   };
+  const ciAdmission = await guardCiMinuteEffect(deps, context, record, "merge");
+  if (ciAdmission !== null) return ciAdmission;
   const withIntent = setIntent(record, intent, now);
   const persisted = await persistWork(deps, context, withIntent);
   if (persisted.kind !== "progress") return persisted;
@@ -655,6 +658,13 @@ export async function reconcileMergeIntent(
       };
     }
     const self = selfMergeExecution(deps, context, record);
+    const ciAdmission = await guardCiMinuteEffect(
+      deps,
+      context,
+      record,
+      "merge",
+    );
+    if (ciAdmission !== null) return ciAdmission;
     const result = await deps.github.mergePullRequest({
       pullRequestNumber: record.target.pr,
       expectedHead: record.target.head,

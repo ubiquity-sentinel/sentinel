@@ -1,5 +1,26 @@
 # Sentinel decisions
 
+## ai.ubq.fi source, auth, ops and tooling are ordinary work (2026-11-05)
+
+Owner directive (2026-11-05, "remove the policy"): the gateway's protected-path
+list no longer covers its source, authentication code (`src/auth/`,
+`src/api-keys.ts`, `src/api-key-policy.ts`, `src/codex/auth*.ts`,
+`src/config.ts`, `src/runtime-config.ts`, `src/kv.ts`), operations scripts
+(`ops/`, `scripts/verify.sh` and the other verification scripts, `tools/lint/`)
+or tooling configuration (`deno.json`, `deno.lock`, `package.json`, `bun.lock`,
+`bunfig.toml`, `tsconfig*.json`, `knip.json`, `.prettierrc*`,
+`file-size-baseline.json`). A Sentinel candidate changing them merges
+autonomously once it has a completed current-head native review with no
+unresolved P0 and green current-head CI, like any other change. Still
+protected for ai.ubq.fi: `.env`, `.data/`, `.release/`, `.kv-migration/`,
+`.github/workflows/`, `AGENTS.md`, `docs/DECISIONS.md`, the replay consumer
+scripts, `tests/helpers/sentinel-recorded-upstream.ts`, `src/sentinel/` and
+`src/codex/supervisor-secret.ts`; those publish as owner-landing PRs (or park
+unpublished for workflows) under the entry below. The 2026-10-24 basis for
+approving held CI runs is unchanged: workflows stay protected, and the gateway
+workflow runs with `contents: read` and no secrets. Passport and the generic
+template lists are unchanged.
+
 ## Hanging target pull requests: six delivery defects corrected (2026-11-05)
 
 Audit of the eight open Sentinel pull requests on `ubiquity/ai.ubq.fi` (#1329,
@@ -50,7 +71,7 @@ candidate recorded in the build ledger. Policy consequences:
   issues this shape cost four review rounds and up to eight retry charges each.
 - **A repeat-failure park re-arms once per implementer prompt change.** The
   "repeated identical failure; owner action required" park now records the
-  implementer prompt template digest (` prompt=<12 hex>`); a changed digest, or
+  implementer prompt template digest (`prompt=<12 hex>`); a changed digest, or
   a legacy park with none, grants exactly one counted retry. An identical
   failure re-parks under the new digest. Issue-edit and route-change re-arms
   are unchanged. Installs that keep the same prompt never re-arm.
@@ -3780,7 +3801,15 @@ standing approval above. Applied as follows.
   again, every waiting head is asked at the plain 30 minutes. Every run of a
   head is now re-run, not only the newest per workflow, because the launcher's
   green read needs every check run green and a Passport head has a pull_request
-  run and two push runs of one workflow. It writes no state.
+  run and two push runs of one workflow. It writes no state. Corrected
+  2026-11-12: the wait now doubles up to 24 hours. At 12 hours a run reached
+  attempt 40 after about 18 days, inside GitHub's 30-day window, and was never
+  asked again, so a stop that lasted until the monthly minute reset (Prospector
+  and Passport from 2026-11-05; the owner pays for no CI) left every pre-review
+  park on `<check>(not_started)` without a fresh run on its exact head, which
+  the green and CI-fix rules need to re-admit it. At 24 hours a run ends the
+  window near attempt 35; the 40-attempt cap, the per-pass bounds and the
+  CI-minute admission of each re-run are unchanged.
 - Unchanged: the merge gate's required-check verdict (`requiredChecksState`, a
   protected path) still never treats a never-started run as green; the
   launcher's green read (`hasAllChecksGreen`) is unchanged; every CI fix is
@@ -4612,3 +4641,35 @@ elapsed counts and the delegated/serial-owned record counts on
 `sentinel_repair_fanout`, and the metrics record carries optional
 `fanoutDelegated`/`serialOwned`. Transition rule, accounting, deadline and
 margin are unchanged.
+
+## 2026-11-05: closed issues retire records with open Sentinel pulls
+
+Live defect: #324–#339 were closed while Sentinel's own candidate pulls
+#341–#358 stayed open, because retirement required a closed-unmerged pull and
+the retired-pull pass required a retirement. The closure pass now retires a
+record on any unmerged pull (closed or open), keeping the queue-custody,
+unsettled-implementation-intent, self-merge and preservation-uncertainty
+guards and every charge and counter. The next maintenance pass closes
+Sentinel's own pull under the existing one-write-per-cycle rule; a reopened
+issue returns the record to `work`. A `pullProbe` stamp alone does not settle
+a record within a pass, and a probe no later than the retirement does not
+delay the first retired-pull read. Intake now reports every open issue it
+lists but leaves without a record as a `skippedIssues` row `not_admitted`
+with a reason (`ci_outage_notice`, `native_parent`, `native_open_blockers`,
+`github_cooldown`, `base_unavailable`, `run_deadline`); the run-deadline case
+no longer stops silently. Issues opted out by the skip marker or label are
+still filtered before intake.
+
+## 2026-11-06: conservative private CI pacing with no paid usage
+
+The owner requested that private CI stay within a 2,000-minute monthly scheduling budget, authorized deployment and explicitly rejected paying for CI. The accepted source policy allocates 1,450 managed minutes, 150 security minutes and 400 minutes for other or unknown activity per UTC calendar month. Existing correctness, current-head/base, review, custody and merge gates remain required; calendar holds preserve produced work. The independent provider zero-paid-spend budget remains the spending backstop. This policy does not promise uninterrupted availability against unmanaged organization activity or a measured full-month result.
+
+The supported standard Linux jobs reserve 25 or 35 minutes as conservative execution estimates. These are not proved billing ceilings. Started jobs retain their estimated debit when consumed-minute metering is unavailable or unqualified; a timing response reporting zero is not a refund. Authenticated never-started proof is distinct. Proven terminal earlier-month execution retains its historical estimated charge without being treated as unresolved execution forever; incomplete, ambiguous and cross-month exposure remains carried. Increased exposure is recorded as debt rather than clamped away. Timestamps may identify execution periods or increase a clearly labelled estimate; they do not establish billed quantities.
+
+The policy is accepted in protected source and checked against authenticated workflow, job, runner and timeout facts. Both trusted runtime and maintenance compositions share the existing private state-only CAS ledger and retain their existing authority checks. Initial accounting conservatively withholds the current month's allowance rather than inventing unused minutes. Durable bounded discovery and reconciliation continue through existing native turns; no new workflow, scheduler, daemon, runner, environment flag, token or permission scope is introduced. State branches have no PR and contain no application history; private proofs, cursors and usage stay outside public artifacts and logs.
+
+When a current month has no ledger, recovery reads the latest earlier calendar ledger from the same validated current private state tree, including across skipped months. It preserves unresolved identities and debt until authenticated terminal evidence closes their exposure. The existing finite tree and byte bounds remain; corrupt, unreadable or unknown tree rows refuse recovery rather than becoming empty accounting. Recovery does not traverse commit history or invent an age cutoff.
+
+Full-catalog refreshes span bounded existing native turns. Incomplete slices hold managed effects until a complete pass is available, which can delay admission across many turns. A ready observation may serve later reserves only within its native composition's fixed deadline, policy and UTC month; every reserve still revalidates effect facts and current CAS debits. No updated-since API, retirement cutoff or atomic organization-wide snapshot is assumed.
+
+Source publication, canonical CI, deterministic installation and live guard acceptance are separate gates. The scoped CI integration coordinator reconciles concurrent source by ancestry-preserving fast-forward publication; the existing release controller retains exclusive pointer installation and exact-prior rollback authority. Publication requires verified sanitized task history with the same final tree as the accepted source; preserve original private preparation tips outside the publication graph and verify their sanitized counterparts. Other owners' work and runtime model policy remain unchanged.

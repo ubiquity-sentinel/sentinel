@@ -2,6 +2,8 @@ import {
   checkReviewTaskStatement,
   reviewTaskStatementDigest,
 } from "../src/contracts/review-receipt.ts";
+import type { CiMinuteControllerV1 } from "../src/contracts/ci-minute-budget.ts";
+import { REFUSING_CI_MINUTES } from "../src/budget/ci-minutes.ts";
 import { isGreenConclusion } from "../src/repair/ci-rejection.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import {
@@ -54,7 +56,11 @@ import {
   SENTINEL_BACKUP_FIELD,
   substituteBackupRuns,
 } from "./hosted-autonomy-backup-ci-read.ts";
-import { createMergeBaseTreeChanges } from "./hosted-autonomy-github-trees.ts";
+import {
+  createMergeBaseTreeChanges,
+  createReadBlob,
+} from "./hosted-autonomy-github-trees.ts";
+import { createReadIssueComment } from "./hosted-autonomy-base-review-verdicts.ts";
 import { createTargetTreeFactsResolver } from "../src/host/target-tree-facts.ts";
 import { fetchHttpTransport } from "../src/github/http.ts";
 import { createHostedDeliveryReads } from "./hosted-autonomy-github-delivery.ts";
@@ -127,6 +133,7 @@ export function createHostedAutonomyGitHub(
   repository: RepositoryIdentityV1,
   /** Backup CI consumer (docs/backup-ci-spec.md §11.4); absent: native. */
   backupCi?: BackupCiConsumerV1,
+  ciMinutes: CiMinuteControllerV1 = REFUSING_CI_MINUTES,
 ): HostedAutonomyGitHubV1 {
   const scope = `${repository.owner}/${repository.name}`;
 
@@ -556,7 +563,30 @@ export function createHostedAutonomyGitHub(
       }
       return parsed;
     },
-    rerunFailedJobs(id: number) {
+    async rerunFailedJobs(id: number) {
+      if (ciMinutes.active) {
+        const run = await request("GET", `/repos/${scope}/actions/runs/${id}`);
+        if (run === null || typeof run !== "object") return false;
+        const r = run as Record<string, unknown>;
+        if (
+          r.id !== id || !COMMIT_SHA.test(String(r.head_sha)) ||
+          !Number.isSafeInteger(r.run_attempt) || Number(r.run_attempt) < 1 ||
+          typeof r.head_branch !== "string"
+        ) return false;
+        const admission = await ciMinutes.reserve({
+          repository,
+          kind: "rerun",
+          head: String(r.head_sha),
+          base: null,
+          ref: `refs/heads/${r.head_branch}`,
+          pr: null,
+          runId: id,
+          attempt: Number(r.run_attempt) + 1,
+        }, Date.now() + REQUEST_TIMEOUT_MS);
+        if (admission.kind !== "admitted" && admission.kind !== "inactive") {
+          return false;
+        }
+      }
       return effect(
         "POST",
         `/repos/${scope}/actions/runs/${id}/rerun-failed-jobs`,
@@ -809,6 +839,8 @@ export function createHostedAutonomyGitHub(
         revisionIntegratedIntoBase(compare, base);
     },
     mergeBaseTreeChanges: createMergeBaseTreeChanges(request, scope),
+    readBlob: createReadBlob(rawRead, scope),
+    readIssueComment: createReadIssueComment(request, scope),
     async comparePatchDigest(base: string, head: string) {
       // The merge-base diff GitHub renders for `base...head`, hashed as raw
       // bytes: the carried merge's evidence line only. Its abbreviated blob
@@ -884,6 +916,24 @@ export function createHostedAutonomyGitHub(
         message,
       );
       if (body === null) return null;
+      if (ciMinutes.active) {
+        const pull = await readPull(number, null);
+        if (
+          pull === null || pull.headSha !== head || pull.baseRef === null ||
+          pull.baseSha === null
+        ) return null;
+        const admission = await ciMinutes.reserve({
+          repository,
+          kind: "merge",
+          head,
+          base: pull.baseSha,
+          ref: `refs/heads/${pull.baseRef}`,
+          pr: number,
+        }, Date.now() + REQUEST_TIMEOUT_MS);
+        if (admission.kind !== "admitted" && admission.kind !== "inactive") {
+          return null;
+        }
+      }
       const response = await request(
         "PUT",
         `/repos/${scope}/pulls/${number}/merge`,

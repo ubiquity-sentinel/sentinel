@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Batched live reads and the unchanged-input gate of the serial pass
  * (issue #326).
@@ -27,6 +28,8 @@ import type { RepositoryConfigV1 } from "../../src/contracts/repository-config.t
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
+import { GitHubApiClient } from "../../src/github/client.ts";
+import { FakeAuthProvider, FakeCooldownGate } from "../github/helpers.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
 import { PASS_SUMMARY_LINE_KIND } from "../../src/repair/pass-summary-line.ts";
 import { STEP_INPUTS_MAX_SKIP_MS } from "../../src/repair/step-inputs.ts";
@@ -144,6 +147,7 @@ function makeRig(work: WorkRecordV1[]) {
   );
   const github = new BatchGithub({ baseSha: SHA1, openIssues: [] });
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,
@@ -340,6 +344,140 @@ Deno.test("input gate: a failed batch falls back to per-record reads and is repo
   assert.equal(reads(), 24);
 });
 
+Deno.test("input gate: unavailable batches bound fallback latency across a hot tier", async () => {
+  const rig = makeRig(fleet());
+  rig.github.failBatch = true;
+  const readIssue = rig.github.readIssue.bind(rig.github);
+  let active = 0;
+  let peak = 0;
+  let waves = 0;
+  const waiting: (() => void)[] = [];
+  // Advance one second per simultaneous wave, never sleep in real time.
+  rig.github.readIssue = async (number) => {
+    active++;
+    peak = Math.max(peak, active);
+    await new Promise<void>((resolve) => {
+      if (waiting.length === 0) {
+        queueMicrotask(() => {
+          waves++;
+          rig.clock.advance(1_000);
+          for (const resume of waiting.splice(0)) resume();
+        });
+      }
+      waiting.push(resolve);
+    });
+    active--;
+    return await readIssue(number);
+  };
+
+  const first = await pass(rig);
+  assert.equal(new Set(first.stepped).size, 74);
+  assert.equal(stamped(rig), 74);
+  assert.equal(first.summary.batchUnavailable, 3);
+  assert.equal(first.summary.recordsRead, 74);
+  assert.equal(peak, 4, "fallback reads must overlap but stay bounded");
+  assert.equal(waves, 20, "25 + 25 + 24 records take 7 + 7 + 6 waves");
+  assert.equal(
+    rig.github.calls.filter((call) => call.startsWith("readRef:")).length,
+    3,
+    "concurrent records share one base-tip read per repository",
+  );
+
+  rig.clock.advance(5 * MINUTE);
+  waves = 0;
+  const again = await pass(rig);
+  assert.deepEqual(again.stepped, []);
+  assert.equal(again.summary.recordsSkipped, 74);
+  assert.equal(again.summary.batchUnavailable, 3);
+  assert.equal(waves, 20, "unchanged records retain the bounded fallback");
+  assert.deepEqual(rig.state.repair!.reservations, [], "no model charge");
+});
+
+Deno.test("input gate: failed fallback issue reads never count as unchanged", async () => {
+  const rig = makeRig(
+    Array.from({ length: 8 }, (_, index) => pendingArtifact(REPOS[0], index)),
+  );
+  rig.github.failBatch = true;
+  await pass(rig);
+  assert.equal(stamped(rig), 8);
+
+  const readIssue = rig.github.readIssue.bind(rig.github);
+  rig.github.readIssue = (number) => {
+    if (number === 100) {
+      return Promise.resolve(portError("unavailable", "lost"));
+    }
+    if (number === 101) throw new Error("lost response");
+    return readIssue(number);
+  };
+  rig.clock.advance(5 * MINUTE);
+  const again = await pass(rig);
+  assert.deepEqual(again.stepped.sort(), ["issue-alpha-0", "issue-alpha-1"]);
+  assert.equal(again.summary.recordsRead, 6);
+  assert.equal(again.summary.recordsSkipped, 6);
+  assert.equal(again.summary.batchUnavailable, 1);
+  assert.deepEqual(rig.state.repair!.reservations, []);
+});
+
+Deno.test("input gate: concurrent fallbacks share failed base-tip observations", async () => {
+  for (const throws of [false, true]) {
+    const rig = makeRig(
+      Array.from({ length: 8 }, (_, index) => pendingArtifact(REPOS[0], index)),
+    );
+    rig.github.failBatch = true;
+    let reads = 0;
+    rig.github.readRef = () => {
+      reads++;
+      if (throws) throw new Error("lost response");
+      return Promise.resolve(portError("unavailable", "lost"));
+    };
+    const first = await pass(rig);
+    assert.equal(
+      reads,
+      1,
+      "a failed shared read must not become a request storm",
+    );
+    assert.equal(first.stepped.length, 8);
+    assert.equal(first.summary.recordsRead, 0);
+    assert.equal(first.summary.batchUnavailable, 1);
+    assert.equal(
+      stamped(rig),
+      0,
+      "failed inputs are not empty successful inputs",
+    );
+    assert.equal(
+      rig.github.calls.filter((call) => call.startsWith("readIssue:")).length,
+      0,
+    );
+    assert.deepEqual(rig.state.repair!.reservations, []);
+  }
+});
+
+Deno.test("input gate: fallback prefetch stops admitting reads at the run deadline", async () => {
+  const rig = makeRig(fleet());
+  rig.github.failBatch = true;
+  const readIssue = rig.github.readIssue.bind(rig.github);
+  let expire = true;
+  rig.github.readIssue = async (number) => {
+    await Promise.resolve();
+    if (expire) {
+      expire = false;
+      rig.clock.advance(90 * MINUTE);
+    }
+    return await readIssue(number);
+  };
+
+  const result = await pass(rig);
+  assert.equal(
+    rig.github.calls.filter((call) => call.startsWith("readIssue:")).length,
+    4,
+    "only already-started fallback reads settle after the deadline",
+  );
+  assert.equal(rig.github.batches.length, 1, "no later repository read starts");
+  assert.deepEqual(result.stepped, []);
+  assert.equal(stamped(rig), 0, "no closing stamp write past the deadline");
+  assert.deepEqual(rig.state.repair!.reservations, []);
+});
+
 Deno.test("input gate: a historical record without a stamp still parses and is stepped", async () => {
   const legacy = pendingArtifact(REPOS[1], 7);
   assert.equal("stepInputs" in legacy, false);
@@ -352,4 +490,253 @@ Deno.test("input gate: a historical record without a stamp still parses and is s
   assert.equal(stamp.deadline, T0 + STEP_INPUTS_MAX_SKIP_MS);
   // The stamp never moves the record's update time.
   assert.equal(rig.state.repair!.work[0].updatedAt, legacy.updatedAt);
+});
+
+Deno.test("input gate: independent repository batches overlap without extra steps or writes", async () => {
+  const rig = makeRig(fleet());
+  const read = rig.github.readLiveInputs.bind(rig.github);
+  let active = 0;
+  let peak = 0;
+  rig.github.readLiveInputs = async (request) => {
+    peak = Math.max(peak, ++active);
+    const readyAt = rig.clock.now() + MINUTE;
+    await Promise.resolve();
+    rig.clock.advance(Math.max(0, readyAt - rig.clock.now()));
+    active--;
+    return await read(request);
+  };
+
+  const startedAt = rig.clock.now();
+  const first = await pass(rig);
+  assert.equal(
+    rig.clock.now() - startedAt,
+    2 * MINUTE,
+    "probe plus one read round, not three serial rounds",
+  );
+  assert.equal(peak, 2, "remaining repository reads overlap after the probe");
+  assert.equal(first.summary.batchReads, 3);
+  assert.equal(first.summary.recordsStepped, 74);
+  assert.equal(stamped(rig), 74);
+  assert.equal(rig.state.repair!.reservations.length, 0);
+
+  rig.clock.advance(5 * MINUTE);
+  const head = rig.state.repairHead;
+  const again = await pass(rig);
+  assert.equal(again.summary.recordsSkipped, 74);
+  assert.deepEqual(again.stepped, []);
+  assert.equal(
+    rig.state.repairHead,
+    head,
+    "unchanged inputs still cost no write",
+  );
+  assert.equal(rig.state.repair!.reservations.length, 0);
+});
+
+Deno.test("input gate: repository batches and outage fallbacks each share a four-read bound", async () => {
+  const repos = Array.from({ length: 9 }, (_, index) => ({
+    ...REPOS[0],
+    name: `repository-${index}`,
+  }));
+  const rig = makeRig(
+    repos.flatMap((repo, slot) =>
+      Array.from(
+        { length: 4 },
+        (_, index) => pendingArtifact(repo, slot * 100 + index),
+      )
+    ),
+  );
+  const config = rig.deps.configs[0];
+  rig.deps.configs.splice(
+    0,
+    rig.deps.configs.length,
+    ...repos.map((repository) => ({ ...config, repository })),
+  );
+  const firstRepository = repos[0].name;
+  rig.github.readLiveInputs = (request) => {
+    rig.github.failBatch = request.repository.name !== firstRepository;
+    return BatchGithub.prototype.readLiveInputs.call(rig.github, request);
+  };
+  const readBatch = rig.github.readLiveInputs.bind(rig.github);
+  const readIssue = rig.github.readIssue.bind(rig.github);
+  let activeBatches = 0;
+  let peakBatches = 0;
+  let activeFallbacks = 0;
+  let peakFallbacks = 0;
+  rig.github.readLiveInputs = async (request) => {
+    assert.equal(
+      activeFallbacks,
+      0,
+      "fallbacks do not multiply batch concurrency",
+    );
+    peakBatches = Math.max(peakBatches, ++activeBatches);
+    const readyAt = rig.clock.now() + MINUTE;
+    await Promise.resolve();
+    rig.clock.advance(Math.max(0, readyAt - rig.clock.now()));
+    activeBatches--;
+    return await readBatch(request);
+  };
+  rig.github.readIssue = async (number) => {
+    assert.equal(
+      activeBatches,
+      0,
+      "fallbacks share one pool after batches settle",
+    );
+    peakFallbacks = Math.max(peakFallbacks, ++activeFallbacks);
+    const readyAt = rig.clock.now() + MINUTE;
+    await Promise.resolve();
+    rig.clock.advance(Math.max(0, readyAt - rig.clock.now()));
+    activeFallbacks--;
+    return await readIssue(number);
+  };
+
+  const startedAt = rig.clock.now();
+  const outcome = await pass(rig);
+  assert.equal(peakBatches, 4);
+  assert.equal(peakFallbacks, 4);
+  assert.equal(
+    rig.clock.now() - startedAt,
+    11 * MINUTE,
+    "three batch rounds plus eight bounded repository fallback rounds",
+  );
+  assert.equal(outcome.summary.batchUnavailable, 8);
+  assert.equal(outcome.summary.batchReads, 1);
+  assert.equal(outcome.summary.recordsRead, 36);
+  assert.equal(
+    outcome.summary.recordsStepped,
+    36,
+    "failed batches are not empty successes",
+  );
+  assert.equal(stamped(rig), 36);
+  assert.equal(rig.state.repair!.reservations.length, 0);
+});
+
+Deno.test("input gate: concurrent batch admission stops at the run deadline", async () => {
+  const repos = Array.from({ length: 9 }, (_, index) => ({
+    ...REPOS[0],
+    name: `repository-${index}`,
+  }));
+  const rig = makeRig(repos.map((repo, index) => pendingArtifact(repo, index)));
+  const config = rig.deps.configs[0];
+  rig.deps.configs.splice(
+    0,
+    rig.deps.configs.length,
+    ...repos.map((repository) => ({ ...config, repository })),
+  );
+  const read = rig.github.readLiveInputs.bind(rig.github);
+  rig.github.readLiveInputs = async (request) => {
+    const result = read(request);
+    if (request.repository.name !== repos[0].name) {
+      const readyAt = rig.clock.now() + 90 * MINUTE;
+      await Promise.resolve();
+      rig.clock.advance(Math.max(0, readyAt - rig.clock.now()));
+    }
+    return await result;
+  };
+
+  const result = await pass(rig);
+  assert.equal(
+    rig.github.batches.length,
+    5,
+    "only the probe and four in-flight batches start",
+  );
+  assert.deepEqual(result.stepped, []);
+  assert.equal(stamped(rig), 0, "no closing stamp write past the deadline");
+  assert.deepEqual(rig.state.repair!.reservations, []);
+});
+
+Deno.test("input gate: full-width review IDs avoid fleet-wide fallback and preserve skips", async () => {
+  const work = Array.from({ length: 60 }, (_, index) => {
+    const record = pendingArtifact(REPOS[0], index);
+    return {
+      ...record,
+      target: { ...record.target, head: SHA2, pr: 1_000 + index },
+    };
+  });
+  const rig = makeRig(work);
+  let reviewId = 2 ** 31 + 17;
+  let requests = 0;
+  const client = new GitHubApiClient({
+    repository: REPOS[0],
+    apiBaseUrl: "https://api.github.com",
+    auth: new FakeAuthProvider(),
+    cooldownGate: new FakeCooldownGate(),
+    clock: rig.clock,
+    http: (request) => {
+      requests++;
+      const { query } = JSON.parse(request.body ?? "{}");
+      const repository: Record<string, unknown> = {};
+      for (
+        const [, alias, number] of query.matchAll(
+          /(i\d+): issue\(number: (\d+)\)/g,
+        )
+      ) repository[alias] = { number: Number(number), state: "OPEN" };
+      for (
+        const [, alias, number] of query.matchAll(
+          /(p\d+): pullRequest\(number: (\d+)\)/g,
+        )
+      ) {
+        repository[alias] = {
+          number: Number(number),
+          state: "OPEN",
+          headRefOid: SHA2,
+          baseRefOid: SHA1,
+          baseRefName: "main",
+          commits: {
+            nodes: [{
+              commit: { oid: SHA2, statusCheckRollup: { state: "SUCCESS" } },
+            }],
+          },
+          reviews: {
+            nodes: [
+              query.includes("fullDatabaseId")
+                ? { fullDatabaseId: String(reviewId) }
+                : { databaseId: null },
+            ],
+          },
+        };
+      }
+      for (const [, alias] of query.matchAll(/(b\d+): ref\(/g)) {
+        repository[alias] = { target: { oid: SHA1 } };
+      }
+      return Promise.resolve({
+        status: 200,
+        headers: new Headers(),
+        bodyText: JSON.stringify({ data: { repository } }),
+      });
+    },
+  });
+  rig.github.readLiveInputs = client.readLiveInputs.bind(client);
+
+  const first = await pass(rig);
+  assert.equal(first.summary.batchUnavailable, 0);
+  assert.equal(first.summary.batchReads, 1);
+  assert.equal(first.summary.recordsRead, 60);
+  assert.equal(first.summary.recordsStepped, 60);
+  assert.equal(stamped(rig), 60);
+  assert.equal(requests, 2, "121 items use two exhaustive GraphQL chunks");
+  assert.equal(
+    rig.github.calls.filter((call) =>
+      /^(readIssue|readPullRequest|readChecks|readRef):/.test(call)
+    ).length,
+    0,
+    "a nullable legacy ID must not trigger per-record REST fallback",
+  );
+
+  rig.clock.advance(5 * MINUTE);
+  const head = rig.state.repairHead;
+  const unchanged = await pass(rig);
+  assert.deepEqual(unchanged.stepped, []);
+  assert.equal(unchanged.summary.recordsSkipped, 60);
+  assert.equal(unchanged.summary.batchUnavailable, 0);
+  assert.equal(requests, 4);
+  assert.equal(rig.state.repairHead, head, "unchanged inputs cost no write");
+
+  // A new full-width ID is still a changed input, never a permanent skip.
+  reviewId++;
+  rig.clock.advance(5 * MINUTE);
+  const changed = await pass(rig);
+  assert.equal(changed.summary.recordsStepped, 60);
+  assert.equal(changed.summary.recordsSkipped, 0);
+  assert.equal(requests, 6);
+  assert.deepEqual(rig.state.repair!.reservations, [], "no model charge");
 });

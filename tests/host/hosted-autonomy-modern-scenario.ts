@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { DORMANT_HOSTED_POLICIES } from "./actions-supervisor-fixture.ts";
 import {
@@ -55,6 +56,24 @@ export type {
   InflightCaseV1,
   InflightStateV1,
 } from "./hosted-autonomy-modern-scenario-fixtures.ts";
+
+/**
+ * One native-evidence fault: a refused provenance or completion still stops
+ * the run, while an exact producer whose artifact listing holds no wave defers
+ * only the walk, as its history budget does. Neither writes anything.
+ */
+async function nativeControl(
+  fault: "auth" | "pending" | "missing",
+  run: () => Promise<HostedAutonomyResultV1>,
+) {
+  if (fault !== "missing") {
+    await assert.rejects(run);
+    return;
+  }
+  const deferred = await run();
+  assert.equal(deferred.status, "skipped", JSON.stringify(deferred));
+  assert(deferred.actions.includes("matrix-history:deferred"));
+}
 
 export async function modernRecoveryScenario(
   history = false,
@@ -267,6 +286,7 @@ async function modernRecoveryScenarioInGraph(
       Deno.chdir(f.checkout);
       try {
         const deps: HostedAutonomyDepsV1 = {
+          ciMinutes: INACTIVE_CI_MINUTES,
           state: f.rig.state,
           clock: f.clock,
           githubFor: f.rig.githubFor,
@@ -392,6 +412,7 @@ async function modernRecoveryScenarioInGraph(
               clock: f.clock,
               configs: [config],
               cycleFor: () => ({
+                ciMinutes: INACTIVE_CI_MINUTES,
                 ...cycle,
                 state,
                 budget,
@@ -747,6 +768,7 @@ async function modernRecoveryScenarioInGraph(
         });
         assert.notEqual(consumerRevision, f.execution.revision);
         const published = await runRepairCycle({
+          ciMinutes: INACTIVE_CI_MINUTES,
           ...cycle,
           controllerSha: consumerRevision,
           github: publication,
@@ -984,7 +1006,7 @@ async function modernRecoveryScenarioInGraph(
       for (const fault of ["auth", "pending", "missing"] as const) {
         f.setFault(fault);
         try {
-          await assert.rejects(run);
+          await nativeControl(fault, run);
         } finally {
           f.setFault(null);
         }
@@ -1067,7 +1089,7 @@ async function modernRecoveryScenarioInGraph(
     if (!history) {
       for (const fault of ["auth", "pending", "missing"] as const) {
         f.setFault(fault);
-        await assert.rejects(run);
+        await nativeControl(fault, run);
         f.setFault(null);
         assert.deepEqual(await f.rig.state.readRepair(), before);
         assert.deepEqual(await f.rig.state.readRelease(), releaseBefore);

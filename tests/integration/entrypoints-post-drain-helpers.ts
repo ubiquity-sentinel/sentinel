@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import {
   makeRepairRig,
   repairConfigs,
@@ -415,6 +416,7 @@ export async function postDrainTaskScenario(
       });
       const outcome = matrixOwned
         ? await runRepairEntrypoint({
+          ciMinutes: INACTIVE_CI_MINUTES,
           clock: rig.clock,
           state: rig.store,
           configs,

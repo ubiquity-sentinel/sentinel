@@ -4,6 +4,7 @@
  * re-emitted plan diagnostic carries it, and finalize folds it and the
  * end-of-cycle wait causes into the throughput metrics record.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
@@ -51,6 +52,7 @@ function planner(
   state.repairHead = SHA1;
   const configs = repairConfigs({ sessionBound: SESSION });
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

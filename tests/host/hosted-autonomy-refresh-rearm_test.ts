@@ -5,6 +5,7 @@
  * installed, only for a refusal written before that runtime's activation, and
  * only from its exact native publication. Nothing is charged or refunded.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
@@ -186,6 +187,7 @@ async function runAt(
 ): Promise<HostedAutonomyResultV1> {
   return runHostedAutonomy(
     await withDarkQueueAuthority({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: state as unknown as StateReadView & RepairStateWriter,
       githubFor: () => surface(facts),
       clock: { now: () => now },
@@ -341,6 +343,7 @@ Deno.test("refresh re-arm: a spent review-round count never blocks the re-arm", 
     let listings = 0;
     const result = await runHostedAutonomy(
       await withDarkQueueAuthority({
+        ciMinutes: INACTIVE_CI_MINUTES,
         state: state as unknown as StateReadView & RepairStateWriter,
         githubFor: () => {
           const github = surface();

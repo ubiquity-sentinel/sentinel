@@ -1,4 +1,5 @@
 /** Real repair-startup preservation maintenance coverage. */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import type { WorkItemId } from "../../src/contracts/brands.ts";
@@ -427,6 +428,7 @@ Deno.test("preservation maintenance: real repair startup skips five blocked cand
     assert.ok(before.ok && before.value.status === "found");
     await runHostedAutonomy(
       await withDarkQueueAuthority({
+        ciMinutes: INACTIVE_CI_MINUTES,
         state,
         clock: r.clock,
         githubFor: () => {

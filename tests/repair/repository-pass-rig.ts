@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Shared rig of the fan-out repository pass tests (issue #328): the ACTUAL
  * step loop over in-memory state, a fake multi-repository GitHub port with
@@ -163,6 +164,7 @@ export function makeRig(
   );
   const github = new BatchGithub({ baseSha: SHA1, openIssues: [], ...options });
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

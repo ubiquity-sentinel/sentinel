@@ -1,3 +1,4 @@
+import { guardCiMinuteEffect } from "./loop-types.ts";
 import {
   holdQueueRecord,
   queueEffectRefused,
@@ -232,6 +233,17 @@ export async function executePublishStep(
     requestId: null,
     resultId: null,
   };
+  const ciAdmission = await guardCiMinuteEffect(
+    deps,
+    context,
+    record,
+    "head_push",
+    {
+      head,
+      ref: `refs/heads/${branch}`,
+    },
+  );
+  if (ciAdmission !== null) return ciAdmission;
   const withIntent = setIntent(record, pushIntent, now);
   const persisted = await persistWork(deps, context, withIntent);
   if (persisted.kind !== "progress") return persisted;
@@ -580,7 +592,10 @@ export async function reconcilePublishIntent(
       return persistWork(
         deps,
         afterSettlement,
-        clearIntent(retireClosedPublication(current, now, "work"), now),
+        clearIntent(
+          retireClosedPublication(current, now, "work", prNumber),
+          now,
+        ),
       );
     }
     const withPr = {

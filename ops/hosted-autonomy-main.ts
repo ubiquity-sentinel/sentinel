@@ -30,6 +30,31 @@ import {
 } from "../src/contracts/hosted-controller-deployment.ts";
 import { runHostedAutonomy } from "./hosted-autonomy-runner.ts";
 import { GitDeliveryTrainStore } from "../src/state/delivery-train-store.ts";
+import { createVerifiedTrainLandingReader } from "../src/host/hosted-repair-state.ts";
+import { verifyCiMinuteSchedulingBasis } from "../src/budget/ci-minutes.ts";
+import {
+  ciStateGitArgs,
+  composePrivateCiMinutes,
+  type HostedPrivateCiCapabilities,
+} from "../src/host/hosted-app-principal.ts";
+import {
+  acceptedCiMinutePolicy,
+  CI_MINUTE_PRIVATE_REMOTE,
+} from "../src/contracts/ci-minute-budget.ts";
+import {
+  HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+  HOSTED_AUTONOMY_PHASE_RESERVE_MS,
+} from "./hosted-autonomy-continuation.ts";
+import {
+  APP_TOKEN_MINTED_NOT_BEFORE_ENV,
+  APP_TOKEN_NOT_AFTER_ENV,
+  deriveAppTokenNotAfterV1,
+  parseAppTokenNotAfterV1,
+} from "../src/host/hosted-app-token-window.ts";
+import { readHostedPrivateCiData } from "../src/host/hosted-app-principal-native.ts";
+import { fetchHttpTransport } from "../src/github/http.ts";
+import { readHostedMaintenanceCompatibility } from "./hosted-autonomy-runtime-compatibility.ts";
+import { readHostedMaintenanceQueueObservation } from "./hosted-autonomy-compatibility-queue.ts";
 import {
   deliveryCountsFromActions,
   writeDeliveryCountsOutput,
@@ -39,6 +64,7 @@ import {
   writeTierCountsOutput,
 } from "../src/host/tier-counts-output.ts";
 import { createTrainComposerFor } from "./hosted-autonomy-train-git.ts";
+import type { PreparedWorkflowBlobV1 } from "../src/github/review-snapshot.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 import { ClosedCWaveRecoveryIntegrityFailure } from "../src/host/modern-matrix-recovery.ts";
 import {
@@ -174,6 +200,20 @@ async function runHostedAutonomyMainResult(
   input: HostedAutonomyMainInputV1 | undefined,
   env: (key: string) => string | null,
 ): Promise<HostedAutonomyResultV1> {
+  const nativeTurnOrigin = Date.now();
+  const tokenDeadline = Math.min(
+    parseAppTokenNotAfterV1(env(APP_TOKEN_NOT_AFTER_ENV) ?? undefined) ??
+      Infinity,
+    deriveAppTokenNotAfterV1(
+      env(APP_TOKEN_MINTED_NOT_BEFORE_ENV) ?? undefined,
+      nativeTurnOrigin,
+    ) ?? Infinity,
+  );
+  const nativeTurnDeadline = Math.min(
+    nativeTurnOrigin + HOSTED_AUTONOMY_PASS_DEADLINE_MS -
+      HOSTED_AUTONOMY_PHASE_RESERVE_MS,
+    tokenDeadline,
+  );
   // Missing output and every failure before custody are closed at the workflow boundary.
   await writeQueueCustodyOutput(env("GITHUB_OUTPUT"), false);
   await writeHostedMigrationOutput(env("GITHUB_OUTPUT"), null);
@@ -300,6 +340,133 @@ async function runHostedAutonomyMainResult(
       // carry work for several repositories, and each record is delivered under
       // its OWN repository, never under the self repository.
       const surfaces = new Map<string, HostedAutonomyGitHubV1>();
+      const ciClock = { now: () => Date.now() };
+      const ciScratch = `${scratch}/ci-minutes-private`;
+      // Derived only here: the production branch has passed native identity,
+      // clean source and ordinary maintenance custody. Test input cannot mint it.
+      const privateCiAuthority = async (
+        limit: number,
+      ): Promise<HostedPrivateCiCapabilities | null> => {
+        const foreign = env("SENTINEL_SUPERVISOR_TOKEN");
+        if (
+          foreign === null || foreign.trim() === "" || ciClock.now() >= limit
+        ) return null;
+        const gate = new DurableGitHubCooldownGate({ state, clock: ciClock });
+        const http = fetchHttpTransport();
+        const request = (path: string, deadline: number) =>
+          readHostedPrivateCiData({
+            http,
+            token: foreign,
+            clock: ciClock,
+            gate,
+            deadline,
+          }, path);
+        const verify = async (deadline: number) => {
+          const current = await readCheckoutFacts();
+          if (
+            !current.clean || current.head !== facts.head ||
+            ciClock.now() >= deadline
+          ) return false;
+          const custody = await readHostedMaintenanceCompatibility({
+            state,
+            clock: ciClock,
+            native: {
+              token: stateToken,
+              run: {
+                runId: Number(env("GITHUB_RUN_ID")),
+                runAttempt: Number(env("GITHUB_RUN_ATTEMPT")),
+                launcherSha: facts.head as GitSha,
+              },
+              deadline,
+            },
+            readQueueReady: () =>
+              readHostedMaintenanceQueueObservation({
+                state,
+                clock: ciClock,
+                token: foreign,
+                deadline,
+              }),
+          });
+          if (custody.status !== "ordinary") return false;
+          const repo = await request("/repos/ubiquity/prospector", deadline) as
+            | Record<string, unknown>
+            | null;
+          return repo?.id === 1337190500 &&
+            repo.full_name === "ubiquity/prospector" && repo.private === true &&
+            ciClock.now() < deadline;
+        };
+        if (!await verify(limit)) return null;
+        await Deno.mkdir(ciScratch, { recursive: true, mode: 0o700 });
+        if (
+          (await Deno.lstat(ciScratch)).isSymlink ||
+          await Deno.realPath(ciScratch) !== ciScratch
+        ) return null;
+        await Deno.chmod(ciScratch, 0o700);
+        const ciRunner = new DenoGitRunner(
+          ciScratch,
+          githubGitAuthEnv(foreign, CI_MINUTE_PRIVATE_REMOTE),
+        );
+        return Object.freeze({
+          verify,
+          request,
+          async runGit(
+            args: string[],
+            options: Parameters<HostedPrivateCiCapabilities["runGit"]>[1],
+          ) {
+            if (
+              ciClock.now() >= limit ||
+              !options.cwd.startsWith(ciScratch + "/") ||
+              options.cwd.split("/").includes("..") ||
+              !ciStateGitArgs(args) ||
+              (args[0] === "push" && !await verify(limit))
+            ) {
+              return { ok: false, code: -1, stdout: "", stderr: "" };
+            }
+            const env = Object.fromEntries(
+              Object.entries(options.env ?? {}).filter(([key]) =>
+                [
+                  "GIT_AUTHOR_NAME",
+                  "GIT_AUTHOR_EMAIL",
+                  "GIT_COMMITTER_NAME",
+                  "GIT_COMMITTER_EMAIL",
+                ].includes(key)
+              ),
+            );
+            return await ciRunner.runGit(args, { ...options, env });
+          },
+        });
+      };
+      const preparedWorkflowReaders = new Map<
+        string,
+        (
+          head: GitSha,
+          deadline: number,
+        ) => Promise<PreparedWorkflowBlobV1 | null>
+      >();
+      const trainJournal = new GitDeliveryTrainStore({
+        scratchDir: `${scratch}/delivery-trains`,
+        remoteUrl: HOSTED_CONTROLLER_REMOTE,
+        runner,
+      });
+      const ciMinutes = composePrivateCiMinutes({
+        policy: acceptedCiMinutePolicy(),
+        clock: ciClock,
+        scratch: ciScratch,
+        deadlineAt: nativeTurnDeadline,
+        authority: privateCiAuthority,
+        billingBasis: verifyCiMinuteSchedulingBasis,
+        readVerifiedTrainLanding: createVerifiedTrainLandingReader(
+          trainJournal,
+          ciClock,
+        ),
+        readPreparedWorkflow: (effect, limit) =>
+          effect.head === null
+            ? Promise.resolve(null)
+            : preparedWorkflowReaders.get(
+              hostedRepositoryKey(effect.repository),
+            )?.(effect.head as GitSha, limit) ?? Promise.resolve(null),
+      });
+      await ciMinutes.reconcile(nativeTurnDeadline);
       const githubFor = (
         repository: RepositoryIdentityV1,
       ): HostedAutonomyGitHubV1 => {
@@ -310,6 +477,7 @@ async function runHostedAutonomyMainResult(
           isHostedSelf(repository) ? selfToken : apiToken,
           repository,
           backupCi,
+          ciMinutes,
         );
         surfaces.set(key, created);
         return created;
@@ -319,6 +487,7 @@ async function runHostedAutonomyMainResult(
       });
       try {
         result = await runFromVerifiedSource({
+          ciMinutes,
           state,
           currentMatrixIndex: new GitMaintenanceIndex({
             scratchDir: `${scratch}/maintenance-index`,
@@ -354,14 +523,17 @@ async function runHostedAutonomyMainResult(
           // delivery pass); each target's composer is its own git store,
           // fetch and push over the target token.
           deliveryTrain: {
-            journal: new GitDeliveryTrainStore({
-              scratchDir: `${scratch}/delivery-trains`,
-              remoteUrl: HOSTED_CONTROLLER_REMOTE,
-              runner,
-            }),
+            journal: trainJournal,
             composerFor: createTrainComposerFor({
               scratch,
               tokenFor: () => apiToken,
+              now: ciClock.now,
+              onPreparedWorkflowReader: (repository, reader) => {
+                preparedWorkflowReaders.set(
+                  hostedRepositoryKey(repository),
+                  reader,
+                );
+              },
             }),
           },
           // #338: the pass's in-process collector, filled by the delivery and

@@ -1,4 +1,5 @@
 /** Historical retry artifacts over fake authenticated HTTP and real local Git. */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -234,6 +235,7 @@ export async function blockedRetryRig() {
   const clock = { now: () => now };
   let imports = 0;
   const deps: HostedAutonomyDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: shared,
     clock,
     githubFor: () => null,
@@ -243,6 +245,7 @@ export async function blockedRetryRig() {
         clock,
         configs: [config],
         cycleFor: () => ({
+          ciMinutes: INACTIVE_CI_MINUTES,
           state: passState,
           clock,
           configs: [config],

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Closed-unmerged review intents are released and republished. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -165,6 +166,7 @@ Deno.test(
         sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
       });
       const outcome = await runRepairCycle({
+        ciMinutes: INACTIVE_CI_MINUTES,
         clock: rig.clock,
         state: rig.store,
         configs,

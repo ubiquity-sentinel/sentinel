@@ -14,6 +14,7 @@
  * every later pass without a read or a write. Nothing is charged, refunded,
  * pushed, merged, reviewed, closed or deleted.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import type {
@@ -158,6 +159,7 @@ async function pass(
   const calls: Calls = { listings: 0, pullReads: 0, merges: 0, closes: 0 };
   // The production allowlist and the live release custody: R80 installed.
   const result = await runHostedAutonomy({
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: state as unknown as StateReadView & RepairStateWriter,
     githubFor: () => surface(facts, calls),
     clock: { now: () => now },
