@@ -386,8 +386,15 @@ function buildPlanDiagnostic(
     return byRepository[key] ??= { skippedByReason: {}, notReadyByReason: {} };
   };
   for (const [id, reason] of Object.entries(ranked.skipped)) {
+    const record = workById.get(id);
+    // These parked records are counted under their specific reason below.
+    if (
+      record?.blocker?.message.startsWith(NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER)
+    ) {
+      continue;
+    }
     skippedByReason[reason] = (skippedByReason[reason] ?? 0) + 1;
-    const counts = countsOf(workById.get(id));
+    const counts = countsOf(record);
     if (counts !== null) {
       counts.skippedByReason[reason] = (counts.skippedByReason[reason] ?? 0) +
         1;
