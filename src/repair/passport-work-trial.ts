@@ -18,9 +18,14 @@ export function passportTrialCanReconsider(
   record: WorkRecordV1,
   reservations: readonly BudgetReservationV1[],
 ): boolean {
-  if (!isPassportWorkTrial(record.repository) || record.intent !== null) {
-    return false;
-  }
+  if (!isPassportWorkTrial(record.repository)) return false;
+  // A retained implementation intent is the attempt that parked the record.
+  // `markBlocked` never clears it, so it is in flight only while that attempt's
+  // charge is unsettled (proved below); requiring `intent === null` made a
+  // settled park permanently unre-admittable. Any other intent kind is still
+  // an unfinished publication or review operation and stays protected.
+  const intent = record.intent;
+  if (intent !== null && intent.kind !== "implementation") return false;
   const charges = reservations.filter((row) =>
     row.taskId === record.id &&
     row.repository.owner === record.repository.owner &&
@@ -33,10 +38,16 @@ export function passportTrialCanReconsider(
     row.attempt === record.counters.attempts
   );
   if (
-    current.length !== 1 || current[0].outcome !== "submitted" ||
-    current[0].settledAt === null || current[0].purpose !==
+    current.length !== 1 || current[0].settledAt === null ||
+    current[0].purpose !==
       (record.counters.attempts === 1 ? "implementation" : "retry")
   ) return false;
+  // Only a confirmed `submitted` charge proves the retained attempt ran to a
+  // settled end. An `ambiguous` charge may still have a live run behind it, so
+  // it stays protected (no refund, no re-admission); a provably unsubmitted
+  // attempt is not a settled model run either.
+  if (current[0].outcome !== "submitted") return false;
+  if (intent !== null && intent.requestId !== current[0].id) return false;
   if (current[0].head === record.target.base) return true;
   const candidate = record.target.candidateState;
   const preserved = candidate?.preserved;
