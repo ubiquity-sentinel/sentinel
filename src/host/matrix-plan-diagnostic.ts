@@ -58,6 +58,7 @@ export const MATRIX_PLAN_NOT_READY_REASONS: readonly string[] = [
   "candidateState.preserved=null",
   "target.branch=null",
   "config.sessionBound=null",
+  "no_ci_and_no_local_verify",
   "target.head-not-null",
   "existing_head_continuation_live",
   "config=null",
@@ -89,11 +90,11 @@ export function planDeferredKey(
   outcome: { kind: string; detail?: string },
   waitReason?: string | null,
 ): string {
-  // A capacity refusal persists a bounded `ledger_capacity` wait and reports
-  // `progress` (the wait was written), so the wait reason keeps the planner's
-  // closed histogram precise instead of collapsing it to `progress`.
-  if (waitReason === "ledger_capacity") return "admission_capacity";
-  if (outcome.kind === "progress") return "progress";
+  if (outcome.kind === "progress") {
+    // A capacity refusal writes a bounded wait and reports `progress`. A stale
+    // wait must not override the reason of a current deferral or failure.
+    return waitReason === "ledger_capacity" ? "admission_capacity" : "progress";
+  }
   if (outcome.kind === "blocked") return "blocked";
   if (outcome.kind === "state_error") return "state_error";
   if (outcome.kind !== "deferred") return "other";

@@ -42,14 +42,18 @@ export interface IssueSourceErrorContextV1 {
   issueNumber?: number;
 }
 
-/** One positively identified issue excluded by a finite wire-contract bound. */
-export interface SkippedIssueV1 {
+/** One positively identified issue excluded by wire or work-record validation. */
+export type SkippedIssueV1 = {
   number: number;
   code: "bound_exceeded";
   validationPath: string;
   limit: number | null;
   observedLength: number | null;
-}
+} | {
+  number: number;
+  code: "record_parse_error";
+  reason: ParseIssueCode;
+};
 
 export interface PortErrorV1 {
   kind: PortErrorKindV1;
