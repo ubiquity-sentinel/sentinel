@@ -40,7 +40,7 @@ import { CI_CORRECTION_REVIEW_ROUNDS } from "./ci-rejection.ts";
 import { baseRefreshIntentKey, candidateBranch } from "./keys.ts";
 import { releaseRequestMatchesDelivery } from "./loop-records.ts";
 import { headRejectedByReview } from "./loop-review-records.ts";
-import { type LegacyCutoff, reviewRoundsLeft } from "./review-round-cap.ts";
+import type { LegacyCutoff } from "./review-round-cap.ts";
 
 /**
  * Whether a HOSTED run may open a conflict resolution. A hosted resolution
@@ -70,13 +70,10 @@ export function conflictResolutionRouteOpen(
 }
 
 /**
- * Review rounds after which a refresh conflict keeps its terminal block: a
- * resolved merge needs a review round of its own. Equal to the CI-correction
- * ceiling, the hard review-round ceiling, which a test pins to
- * `HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS`. The shape counts it exactly as every
- * other review path does (`reviewRoundsLeft` over the durable ledger), so a
- * legacy record keeps its one final review for the resolved merge of
- * its CI-fixed head (ai.ubq.fi 597 and 668 conflict on refresh).
+ * Retained compatibility pin for the CI-correction review count. Review
+ * rounds are accounting and never limit a resolved merge (owner directive
+ * 2026-10-30): a refresh conflict is resolved and its head reviewed again
+ * whatever the count.
  */
 export const CONFLICT_RESOLUTION_REVIEW_ROUNDS = CI_CORRECTION_REVIEW_ROUNDS;
 
@@ -236,8 +233,8 @@ export function resolvedConflictResolution(
 export function conflictResolutionShape(
   record: WorkRecordV1,
   snapshot: RepairStateSnapshotV1,
-  /** The legacy cutoff this run evaluates under (`review-round-cap.ts`). */
-  cutoff?: LegacyCutoff,
+  /** Retained signature: the shape no longer reads a review round. */
+  _cutoff?: LegacyCutoff,
 ): boolean {
   const { head, pr, branch, base, candidateState } = record.target;
   if (
@@ -253,7 +250,6 @@ export function conflictResolutionShape(
     record.target.selfMerge !== undefined ||
     record.intent?.selfMerge !== undefined
   ) return false;
-  if (reviewRoundsLeft(snapshot, record, cutoff) === 0) return false;
   if (headRejectedByReview(snapshot, record)) return false;
   return !snapshot.releaseRequests.some((request) =>
     releaseRequestMatchesDelivery(request, record)

@@ -33,6 +33,15 @@ import type {
   ReviewSubmissionV1,
 } from "./ports-github-requests.ts";
 
+/** Optional enrichment of one strict check read. */
+export interface GitHubChecksReadOptionsV1 {
+  /**
+   * Prove each Actions check run's workflow event. One bounded extra read is
+   * made per distinct workflow run and cached for this observation.
+   */
+  events?: boolean;
+}
+
 export interface GitHubPort {
   /** Trusted issue-bound existing-PR capability; never available to model workers. */
   readonly existingPrTakeover?: ExistingPrTakeoverPort;
@@ -66,10 +75,15 @@ export interface GitHubPort {
    * while its job never started (no step, no runner) carries `neverStarted`
    * (`src/github/never-started-job.ts`: bounded job reads, an unreadable job
    * keeps the run as reported).
+   *
+   * With `options.events`, each GitHub Actions check run also carries its
+   * proven workflow `event`; a run whose event cannot be proved stays absent
+   * and attribution keeps its legacy path.
    */
   readChecks(
     head: GitSha,
     names?: ReadonlySet<string>,
+    options?: GitHubChecksReadOptionsV1,
   ): Promise<PortResultV1<GitHubChecksV1>>;
   /**
    * The check runs of `head` reduced to name and check suite, for the

@@ -25,8 +25,6 @@ import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 import { ciCorrectable } from "../../src/repair/ci-rejection.ts";
 import {
-  CI_FIRST_REVIEW_ROUNDS,
-  CI_FIX_ATTEMPTS,
   ciFixesLeft,
   reviewRoundAvailable,
 } from "../../src/repair/ci-first-policy.ts";
@@ -153,53 +151,52 @@ function lateReview(record: WorkRecordV1, attempt: number) {
   });
 }
 
-Deno.test("CI first x round cap: one legacy rule and one ledger count decide the legacy CI fix", () => {
-  assert.equal(CI_FIRST_REVIEW_ROUNDS, MAX_REVIEW_ROUNDS);
-  // The owner's twelve and the in-flight records the table could never pin
-  // (645, 657: in review on red heads at the install) alike.
+Deno.test("CI first: every published record stays fixable, whatever its round count or era", () => {
+  // The legacy records the old table pinned (645, 657: in review on red
+  // heads at the install) and a record new under the CI-first runtime all
+  // keep the CI fix route open: rounds are accounting, never a gate.
   for (
     const [issue, pin] of [[595, 4], [597, 5], [618, 7], [645, 6], [657, 6]]
   ) {
     const record = aiRecord(issue, pin);
     const atPin = { reservations: reviewCharges(record, pin) };
-    // Spent until a CI fix arms the final round; that fix is admissible.
-    assert.equal(reviewRoundsLeft(atPin, record, CUT), 0, `${issue} unarmed`);
+    assert.ok(reviewRoundsLeft(atPin, record, CUT) > 0, `${issue} unarmed`);
     assert.equal(reviewRoundAvailable(atPin, record, CUT), true);
     assert.equal(ciCorrectable(record, atPin, CUT), true, `${issue} fixable`);
+    assert.equal(ciCorrectable(record, atPin, null), true, `${issue} any era`);
     const armed = {
       reservations: [
         ...reviewCharges(record, pin),
         ...ciFixCharges(record, 1, CUT),
       ],
     };
-    assert.equal(reviewRoundsLeft(armed, record, CUT), 1, `${issue} armed`);
-    // A counter lagging the ledger never buys a fix the ceiling would then
-    // refuse to review: a review charged after the cutoff spends the round.
+    assert.ok(reviewRoundsLeft(armed, record, CUT) > 0, `${issue} armed`);
     const past = {
       reservations: [
         ...reviewCharges(record, pin),
         lateReview(record, pin + 1),
       ],
     };
-    assert.equal(reviewRoundsLeft(past, record, CUT), 0, `${issue} past pin`);
-    assert.equal(ciCorrectable(record, past, CUT), false, `${issue} spent`);
-    // A lowered counter still counts the ledger's rounds.
+    assert.ok(reviewRoundsLeft(past, record, CUT) > 0, `${issue} past pin`);
+    assert.equal(
+      ciCorrectable(record, past, CUT),
+      true,
+      `${issue} keeps fixing`,
+    );
+    // A lowered counter still counts the ledger's rounds for accounting.
     const lowered = aiRecord(issue, 0);
     assert.equal(ciCorrectable(lowered, atPin, CUT), true);
-    // No cutoff (no CI-first runtime): nothing is legacy.
-    assert.equal(ciCorrectable(record, atPin, null), false);
   }
-  // A record whose rounds all followed the cutoff is new: no legacy fix.
   const fresh = aiRecord(1596, 3);
   const after = {
     reservations: [1, 2, 3].map((attempt) => lateReview(fresh, attempt)),
   };
-  assert.equal(ciCorrectable(fresh, after, CUT), false, "new under R80");
+  assert.equal(ciCorrectable(fresh, after, CUT), true, "new under R80");
 });
 
-Deno.test("CI first x round cap: CI fixes are retry charges and never spend a review round", () => {
+Deno.test("CI first: CI fixes are retry charges and never spend a review round", () => {
   const record = aiRecord(1583, 2);
-  for (let fixes = 0; fixes <= CI_FIX_ATTEMPTS; fixes++) {
+  for (let fixes = 0; fixes <= 4; fixes++) {
     const fixed = aiRecord(1583, 2, {
       counters: { attempts: 3 + fixes, retries: fixes, reviewRounds: 2 },
     });
@@ -209,29 +206,27 @@ Deno.test("CI first x round cap: CI fixes are retry charges and never spend a re
         ...ciFixCharges(record, fixes),
       ],
     };
-    assert.equal(reviewRoundsLeft(ledger, fixed, CUT), 1, `${fixes} fixes`);
+    assert.ok(reviewRoundsLeft(ledger, fixed, CUT) > 0, `${fixes} fixes`);
     assert.equal(
       ciCorrectable(fixed, ledger, CUT),
-      fixes < CI_FIX_ATTEMPTS,
-      `${fixes} of ${CI_FIX_ATTEMPTS} fixes spent`,
+      true,
+      `${fixes} fixes spent; the route stays open`,
     );
   }
 });
 
-Deno.test("CI first x round cap: a row whose retries an older generation raised starts with those fixes spent (#155)", () => {
+Deno.test("CI first: a row whose retries an older generation raised keeps fixing (#155)", () => {
   // Live at state 719d8f30d: sentinel-61 carries retries 3, sentinel-76
-  // retries 2 and sentinel-21 retries 1, none from a CI fix. The budget is
-  // the lifetime counter (no post-activation ledger count: every later
-  // implementation admission is a `retry` charge, CI fix or not).
-  for (const [retries, left] of [[3, 0], [2, 1], [1, 2], [0, 3]] as const) {
+  // retries 2 and sentinel-21 retries 1, none from a CI fix. The lifetime
+  // counter is accounting; owner directive 2026-10-30 removed the cap, so no
+  // row starts with its fixes spent.
+  for (const retries of [3, 2, 1, 0]) {
     const record = aiRecord(1583, 2, {
       counters: { attempts: 3 + retries, retries, reviewRounds: 2 },
     });
-    // No CI fix charged since the cutoff, whatever the counter says.
     const ledger = { reservations: reviewCharges(record, 2) };
-    assert.equal(ciFixesLeft(record), left > 0, `retries ${retries}`);
-    assert.equal(CI_FIX_ATTEMPTS - record.counters.retries, left);
-    assert.equal(ciCorrectable(record, ledger, CUT), left > 0);
+    assert.equal(ciFixesLeft(record), true, `retries ${retries}`);
+    assert.equal(ciCorrectable(record, ledger, CUT), true);
   }
 });
 
@@ -311,25 +306,24 @@ Deno.test("CI first x round cap: a legacy CI-fixed head that conflicts on refres
     const spent = snapshotOf(pending, pin, "completed");
     assert.equal(
       conflictResolutionShape(pending, spent, CUT),
-      false,
-      "final spent",
+      true,
+      "a completed but unaccepted review still keeps the conflict route",
     );
-    // A final admission that ended without a verdict spends the round too:
-    // the one no-verdict re-request #155 item 2 proposed is not implemented.
     assert.equal(
       conflictResolutionShape(
         pending,
         snapshotOf(pending, pin, "no_verdict"),
         CUT,
       ),
-      false,
-      `${issue} no-verdict final spends the round`,
+      true,
+      `${issue} a no-verdict final no longer closes the route`,
     );
-    // Without a cutoff the record is no legacy record.
-    assert.equal(conflictResolutionShape(pending, snapshot, null), false);
+    // The cutoff is historical classification only; the route is open
+    // without one too.
+    assert.equal(conflictResolutionShape(pending, snapshot, null), true);
   }
-  // A record new under the CI-first runtime at the ceiling gets none: its
-  // rounds all followed the cutoff, so a CI fix arms nothing.
+  // A record new under the CI-first runtime at the old ceiling keeps the
+  // conflict route open: rounds are accounting, never a gate.
   const ordinary = conflicted(1583, MAX_REVIEW_ROUNDS);
   const fresh = seededSnapshot([ordinary], {
     reservations: [
@@ -337,7 +331,7 @@ Deno.test("CI first x round cap: a legacy CI-fixed head that conflicts on refres
       ...ciFixCharges(ordinary, 1, CUT + 100),
     ],
   });
-  assert.equal(conflictResolutionShape(ordinary, fresh, CUT), false);
+  assert.equal(conflictResolutionShape(ordinary, fresh, CUT), true);
   const below = conflicted(1583, 2);
   assert.equal(
     conflictResolutionShape(below, snapshotOf(below, 2), CUT),
@@ -397,7 +391,7 @@ Deno.test({
         isModelStartAction(snapshot, pending, true, true, false, CUT),
         true,
       );
-      assert.equal(isModelStartAction(snapshot, pending, true, true), false);
+      assert.equal(isModelStartAction(snapshot, pending, true, true), true);
       assert.equal(
         isMatrixImplementationReadyV1(
           pending,
@@ -418,8 +412,18 @@ Deno.test({
   },
 });
 
-Deno.test("CI first x round cap: the CI-first and spent-delivery authority files are protected from model-authored candidates", () => {
+Deno.test("CI first x round cap: CI-first and spent-delivery files are ordinary work; the merge and credential authority stays protected", () => {
   const protectedPaths = createLocalRepositoryConfig().protectedPaths;
+  for (
+    const path of [
+      "src/host/supervisor-dispatch.ts",
+      "src/host/actions-premerge-ci.ts",
+      "src/github/port-evidence.ts",
+      "src/github/port-merge-policy.ts",
+      "src/host/hosted-app-credentials.ts",
+      "src/host/local-release.ts",
+    ]
+  ) assert.ok(protectedPaths.includes(path), path);
   for (
     const path of [
       "src/repair/ci-first-policy.ts",
@@ -431,9 +435,6 @@ Deno.test("CI first x round cap: the CI-first and spent-delivery authority files
       "ops/hosted-autonomy-github-issues.ts",
       "ops/hosted-autonomy-follow-ups.ts",
       "ops/hosted-autonomy-follow-up-pass.ts",
-      // The carried merge (option (b)): the launcher pass that makes it, its
-      // exact Git tree proof and raw compare read, the runtime half and both
-      // patch proofs' sources.
       "ops/hosted-autonomy-delivery-pass.ts",
       "ops/hosted-autonomy-github-trees.ts",
       "ops/hosted-autonomy-github-listing.ts",
@@ -443,5 +444,5 @@ Deno.test("CI first x round cap: the CI-first and spent-delivery authority files
       "src/github/git-carried-patch.ts",
       "src/host/legacy-review-cutoff-env.ts",
     ]
-  ) assert.ok(protectedPaths.includes(path), path);
+  ) assert.ok(!protectedPaths.includes(path), path);
 });

@@ -63,7 +63,6 @@ import {
   baseRefreshRefusedMessage,
   isBaseRefreshRefusedPark,
 } from "../src/repair/loop-base-refresh.ts";
-import { reviewRoundsLeft } from "../src/repair/review-round-cap.ts";
 import {
   candidateBranch,
   candidatePreservationRef,
@@ -77,8 +76,6 @@ import {
   ciFirstRuntimeProven,
   ciFirstSelfInstalledRuntimeProven,
   launcherLegacyCutoff,
-  LEGACY_ROUND_REQUIRES_CI_FIRST,
-  legacyFinalRoundAdmissible,
 } from "./hosted-autonomy-ci-first.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import type {
@@ -350,19 +347,9 @@ async function judge(
     const pr = await verifiedPull(context, record);
     return { kind: "park", pr: typeof pr === "number" ? pr : null };
   }
-  // The re-armed delivery refreshes onto the moved base, and the refreshed
-  // head needs a review round of its own: with none left (the hard ceiling,
-  // owner decision 2026-10-16) the record stays blocked, before any read.
-  if (
-    reviewRoundsLeft(context.snapshot, record, runtime.legacyCutoff) === 0
-  ) {
-    return { kind: "retain", reason: "review_rounds_spent" };
-  }
-  // A legacy record's one final round is spent only on a green head,
-  // which only a proven CI-first runtime guarantees.
-  if (!legacyFinalRoundAdmissible(context.snapshot, record, runtime.ciFirst)) {
-    return { kind: "retain", reason: LEGACY_ROUND_REQUIRES_CI_FIRST };
-  }
+  // The re-armed delivery refreshes onto the moved base and the refreshed
+  // head is reviewed again. Review rounds are accounting, never an admission
+  // limit (owner directive 2026-10-30), so a spent count never retains it.
   if (record.target.pr !== null || !await publishedShape(record)) {
     return { kind: "retain", reason: "shape" };
   }

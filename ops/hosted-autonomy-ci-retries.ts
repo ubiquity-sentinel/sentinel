@@ -114,11 +114,11 @@ type WorkRow = RepairStateSnapshotV1["work"][number];
  *
  * The record shape is the runtime's own `ciCorrectable` predicate over the
  * same durable ledger (issue task, exact publication, a durably described
- * candidate, no operation in flight, a CI fix left and a review round left by
- * the hard ceiling's own count, `reviewRoundsLeft`: fewer than
- * `CI_CORRECTION_REVIEW_ROUNDS`, or a legacy record whose one final round is
- * still open), never a copy: a head the runtime cannot correct is blocked again by
- * its merge gate at once, so re-admitting it would only churn on every pass.
+ * candidate, no operation in flight, a CI fix left and a review round
+ * available), never a copy: a head the runtime cannot correct is blocked again
+ * by its merge gate at once, so re-admitting it would only churn on every
+ * pass. A spent review-round count is accounting, never a refusal (owner
+ * directive 2026-10-30).
  */
 export function ciRedeliveryEligible(
   snapshot: RepairStateSnapshotV1,

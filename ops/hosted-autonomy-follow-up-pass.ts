@@ -29,13 +29,13 @@ import {
   FOLLOW_UP_LISTING_PAGE_SIZE,
   FOLLOW_UP_LISTING_SKEW_MS,
   FOLLOW_UP_MAX_CANDIDATES_PER_PASS,
-  FOLLOW_UP_MAX_CREATES_PER_PASS,
   FOLLOW_UP_MAX_DEPTH,
   FOLLOW_UP_MAX_LISTING_PAGES,
   FOLLOW_UP_MAX_MERGE_CHECKS_PER_PASS,
   FOLLOW_UP_PASS_BUDGET_MS,
   type FollowUpCandidateV1,
-  markerNamesCandidate,
+  followUpFindingKey,
+  markerCoversFinding,
   parseFollowUpMarker,
   planFollowUpCandidates,
   renderFollowUpIssue,
@@ -110,14 +110,15 @@ export async function runHostedFollowUpPass(
   >();
   let looked = 0;
   let checks = 0;
-  let creates = 0;
   for (const candidate of candidates) {
     const tag = `followup:${candidate.request.id}:pr=${candidate.pullRequest}`;
     const scope = await scopeFor(candidate.repository);
     const port = scope.surface?.followUpIssues;
     // A surface without the capability files nothing and reports nothing.
     if (scope.surface === null || port === undefined) continue;
-    // 1. Already filed? One listing per repository and pass. A five-page
+    // 1. Already filed? One listing per repository and pass, matched per
+    //    finding: a v1 combined marker covers every finding of its PR and a
+    //    v2 marker covers exactly its (receipt, finding) pair. A five-page
     //    prefix proves only down to its oldest item; candidates whose clock
     //    margin crosses that horizon remain unproven instead of blocking newer ones.
     let listing = listings.get(scope.key);
@@ -148,17 +149,25 @@ export async function runHostedFollowUpPass(
       actions.push(`${tag}:listing_unproven`);
       continue;
     }
-    const existing = listing.find((item) =>
-      !item.pullRequest && item.author === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR &&
-      markerNamesCandidate(item.firstLine, candidate)
-    );
-    if (existing !== undefined) {
-      actions.push(`${tag}:exists=#${existing.number}`);
-      continue;
-    }
-    const oldestListed = listing.length >=
+    const proven = listing;
+    const seenFindings = new Set<string>();
+    const pending = candidate.findings.filter((finding) => {
+      const findingKey = followUpFindingKey(finding);
+      if (seenFindings.has(findingKey)) return false;
+      seenFindings.add(findingKey);
+      const existing = proven.find((item) =>
+        !item.pullRequest &&
+        item.author === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR &&
+        markerCoversFinding(item.firstLine, candidate, findingKey)
+      );
+      if (existing === undefined) return true;
+      actions.push(`${tag}:finding=${findingKey}:exists=#${existing.number}`);
+      return false;
+    });
+    if (pending.length === 0) continue;
+    const oldestListed = proven.length >=
         FOLLOW_UP_MAX_LISTING_PAGES * FOLLOW_UP_LISTING_PAGE_SIZE
-      ? listing.at(-1)?.createdAt ?? null
+      ? proven.at(-1)?.createdAt ?? null
       : null;
     // A missing marker is not absence proof at a capped page boundary: an
     // omitted item may share its timestamp or lie within the clock margin.
@@ -171,8 +180,7 @@ export async function runHostedFollowUpPass(
     }
     if (
       looked >= FOLLOW_UP_MAX_CANDIDATES_PER_PASS ||
-      checks >= FOLLOW_UP_MAX_MERGE_CHECKS_PER_PASS ||
-      creates >= FOLLOW_UP_MAX_CREATES_PER_PASS
+      checks >= FOLLOW_UP_MAX_MERGE_CHECKS_PER_PASS
     ) {
       actions.push(`${tag}:deferred`);
       continue;
@@ -244,39 +252,59 @@ export async function runHostedFollowUpPass(
       actions.push(`${tag}:depth_exhausted`);
       continue;
     }
-    // 4. Render, create and verify the echo.
-    const issue = renderFollowUpIssue({
-      candidate,
-      mergeRevision: candidate.request.revision,
-      depth,
-    });
-    if (issue === null) {
-      actions.push(`${tag}:render_refused`);
-      continue;
+    // 4. Render, create and verify the echo, one issue per finding.
+    //    Depth/source reads cannot turn an old proof into authority for a
+    //    changed task, so the gateway proof is refreshed once for the set.
+    //    The source read may have crossed the pass deadline, so re-check it
+    //    before this live proof refresh can start another GitHub read.
+    if (gateway) {
+      if (!inBudget()) {
+        actions.push(`${tag}:deadline`);
+        break;
+      }
+      if (await gatewayProof() === null) {
+        actions.push(`${tag}:merge_unverified`);
+        continue;
+      }
     }
-    if (!inBudget()) {
-      actions.push(`${tag}:deadline`);
-      break;
-    }
-    // Depth/source reads cannot turn an old proof into authority for a changed task.
-    if (gateway && await gatewayProof() === null) {
-      actions.push(`${tag}:merge_unverified`);
-      continue;
-    }
-    creates++;
-    let number: number | null = null;
-    try {
-      number = await port.create({
-        title: issue.title,
-        body: issue.body,
-        ...(depth === 3 ? { labels: ["sentinel:skip"] } : {}),
-      });
-    } catch {
-      number = null;
-    }
-    actions.push(
-      number === null ? `${tag}:create_unproven` : `${tag}:filed=#${number}`,
+    let stop = false;
+    const ordered = [...pending].sort((a, b) =>
+      a.severity < b.severity ? -1 : a.severity > b.severity ? 1 : 0
     );
+    for (const finding of ordered) {
+      const findingTag = `${tag}:finding=${followUpFindingKey(finding)}`;
+      if (!inBudget()) {
+        actions.push(`${findingTag}:deadline`);
+        stop = true;
+        break;
+      }
+      const issue = renderFollowUpIssue({
+        candidate,
+        finding,
+        mergeRevision: candidate.request.revision,
+        depth,
+      });
+      if (issue === null) {
+        actions.push(`${tag}:render_refused`);
+        continue;
+      }
+      let number: number | null = null;
+      try {
+        number = await port.create({
+          title: issue.title,
+          body: issue.body,
+          ...(depth === 3 ? { labels: ["sentinel:skip"] } : {}),
+        });
+      } catch {
+        number = null;
+      }
+      actions.push(
+        number === null
+          ? `${findingTag}:create_unproven`
+          : `${findingTag}:filed=#${number}`,
+      );
+    }
+    if (stop) break;
   }
   return actions;
 }

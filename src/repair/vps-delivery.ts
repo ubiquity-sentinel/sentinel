@@ -1,13 +1,17 @@
 /** Exact gateway delivery binding shared by the repair and maintenance consumers. */
+import type { GitSha } from "../contracts/brands.ts";
 import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
-import type { StateReadView } from "../contracts/ports.ts";
+import type { GitHubPort, StateReadView } from "../contracts/ports.ts";
 import {
   parseReleaseRequestV1,
   type ReleaseRequestV1,
 } from "../contracts/release.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
-import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import type {
+  EvidenceRefV1,
+  RepositoryIdentityV1,
+} from "../contracts/shared.ts";
 import {
   parseReleaseStateSnapshotV1,
   type ReleaseStateSnapshotV1,
@@ -139,6 +143,71 @@ export function gatewayReleaseDeferred(
 ): boolean {
   return request.status === "open" &&
     !(release.vpsReleases ?? []).some((item) => item.request.id === request.id);
+}
+
+/**
+ * The release path is disabled exactly while the release ref holds no VPS
+ * release record at all: the fact the launcher's closure pass reports as
+ * `release_path=disabled` (`queued` once any VPS record exists), derived from
+ * the same positively read release snapshot. Once a VPS record exists the
+ * release path is enabled for this decision, so VPS acceptance stays required.
+ */
+export function releasePathDisabled(
+  release: Pick<ReleaseStateSnapshotV1, "vpsReleases">,
+): boolean {
+  return (release.vpsReleases ?? []).length === 0;
+}
+
+/** Delivery evidence for a merged PR accepted while the release path is disabled. */
+export function mergeAcceptedReleaseDisabledRef(
+  pullRequest: number,
+  mergeSha: GitSha,
+): EvidenceRefV1 {
+  return {
+    kind: "review_receipt",
+    ref:
+      `artifact:delivery/merge-accepted-release-disabled/${pullRequest}/${mergeSha}`,
+  };
+}
+
+/**
+ * The exact fact that closes a release-disabled delivery (owner directive
+ * 2026-10-31, issue repairs end at merge): the PR is positively read as
+ * merged at the request's exact recorded merge revision, on the exact reviewed
+ * head. `refused` means the observed PR contradicts that identity and must
+ * keep waiting; `unavailable` means no such observation was made and the
+ * record is retried later. Neither ever completes the record.
+ */
+export type MergeAcceptedObservationV1 =
+  | { kind: "accepted"; mergeSha: GitSha }
+  | { kind: "refused" }
+  | { kind: "unavailable" };
+
+export async function observeMergeAcceptedDelivery(
+  github: Pick<GitHubPort, "readPullRequest">,
+  record: WorkRecordV1,
+  request: ReleaseRequestV1,
+): Promise<MergeAcceptedObservationV1> {
+  const pullRequest = record.target.pr;
+  const head = record.target.head;
+  if (pullRequest === null || head === null) return { kind: "refused" };
+  let read;
+  try {
+    read = await github.readPullRequest(pullRequest);
+  } catch {
+    return { kind: "unavailable" };
+  }
+  if (!read.ok) return { kind: "unavailable" };
+  const pull = read.value;
+  if (pull === null) return { kind: "unavailable" };
+  if (pull.state !== "merged" || pull.mergeSha === null) {
+    return { kind: "refused" };
+  }
+  if (
+    pull.number !== pullRequest || pull.head !== head ||
+    pull.mergeSha !== request.revision
+  ) return { kind: "refused" };
+  return { kind: "accepted", mergeSha: pull.mergeSha };
 }
 
 /**

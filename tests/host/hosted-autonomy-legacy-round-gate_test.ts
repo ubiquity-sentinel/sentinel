@@ -1,17 +1,10 @@
 /**
- * Generation 80 integration: the launcher hands a legacy ai.ubq.fi record its
- * one final review round (owner decision 2026-10-16: "exactly ONE final
- * current-head review on the green head") only under a proven CI-first
- * runtime, and only once a CI fix charged after the legacy cutoff armed it
- * (`review-round-cap.ts`). Every launcher re-admission counts that round
- * (pin + 1) through `reviewRoundsLeft` under the cutoff; the CI-first gate
- * withholds it from R79, the rollback target, which reviews a head before
- * its CI: the retry table's review, work and conflict re-pend grants, the
- * pre-review CI-first returns and the base-refresh re-admission all withhold
- * it (`legacy_round_requires_ci_first`) until the installed runtime is a
- * proven CI-first one, and then plan it. An unarmed legacy record (no CI fix
- * yet) has no round for any of them; a record with an ordinary round left is
- * unaffected, and a spent never-reviewed head is never returned for review.
+ * Generation 80 integration: the review-round ceiling and the legacy
+ * `legacy_round_requires_ci_first` gate are both retired (owner directive
+ * 2026-10-30). A spent or unarmed legacy count is accounting, never a park and
+ * never a re-admission denial: the retry table's review, work and conflict
+ * re-pend grants, the pre-review CI-first returns and the base-refresh
+ * re-admission all plan the record exactly as for any other count.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -42,10 +35,6 @@ import {
   ciCorrectionPlan,
   GREEN_SPENT_LEFT_TO_DELIVERY,
 } from "../../ops/hosted-autonomy-retries.ts";
-import {
-  LEGACY_ROUND_REQUIRES_CI_FIRST,
-  legacyFinalRoundAdmissible,
-} from "../../ops/hosted-autonomy-ci-first.ts";
 import { reservation, SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
 import {
   authorizingReceipt,
@@ -207,7 +196,7 @@ function plan(
   return { plans, denials: denials.map((denial) => denial.reason) };
 }
 
-Deno.test("legacy round gate: the review grant of a legacy final round waits for a CI-first runtime", () => {
+Deno.test("legacy round gate: a review grant is planned under any runtime; spent and unarmed counts never park", () => {
   const record = aiRecord(595, 4, {
     blocker: {
       kind: "other",
@@ -216,30 +205,33 @@ Deno.test("legacy round gate: the review grant of a legacy final round waits for
     },
   });
   const charges = [...reviewCharges(record, 4), fix(record)];
-  assert.deepEqual(plan(record, charges), {
-    plans: [],
-    denials: [LEGACY_ROUND_REQUIRES_CI_FIRST],
-  });
+  const plain = plan(record, charges);
+  assert.deepEqual(plain.denials, []);
+  assert.equal(plain.plans.length, 1);
+  assert.equal(plain.plans[0]!.nextStep, "review");
+  assert.equal(plain.plans[0]!.reviewRounds, 4);
   const proven = plan(record, charges, { ciFirst: true });
   assert.deepEqual(proven.denials, []);
   assert.equal(proven.plans.length, 1);
   assert.equal(proven.plans[0]!.nextStep, "review");
   assert.equal(proven.plans[0]!.reviewRounds, 4);
-  // Unarmed (no CI fix yet), the final round is not a review's to spend.
-  assert.deepEqual(
-    plan(record, reviewCharges(record, 4), { ciFirst: true }).denials,
-    ["review_rounds_spent"],
-  );
-  // Past the pin nothing is planned under any runtime.
+  // Unarmed (no CI fix yet), the historical final round is accounting only:
+  // the ordinary review is still admitted.
+  const unarmed = plan(record, reviewCharges(record, 4), { ciFirst: true });
+  assert.deepEqual(unarmed.denials, []);
+  assert.equal(unarmed.plans.length, 1);
+  assert.equal(unarmed.plans[0]!.nextStep, "review");
+  // Past the pin, the count is accounting too: nothing parks it.
   const spent = aiRecord(595, 5, { blocker: record.blocker });
-  assert.deepEqual(
-    plan(spent, [...charges, finalReview(spent, 5)], { ciFirst: true })
-      .denials,
-    ["review_rounds_spent"],
-  );
+  const past = plan(spent, [...charges, finalReview(spent, 5)], {
+    ciFirst: true,
+  });
+  assert.deepEqual(past.denials, []);
+  assert.equal(past.plans.length, 1);
+  assert.equal(past.plans[0]!.nextStep, "review");
 });
 
-Deno.test("legacy round gate: a work grant leading to the legacy final round waits for a CI-first runtime", () => {
+Deno.test("legacy round gate: a work grant past the legacy final round is planned under any runtime", () => {
   const record = aiRecord(605, 3, {
     blocker: {
       kind: "other",
@@ -249,10 +241,10 @@ Deno.test("legacy round gate: a work grant leading to the legacy final round wai
   });
   const charges = [...reviewCharges(record, 3), fix(record)];
   const tips = new Map([[hostedRepositoryKey(AI), SHA2 as string]]);
-  assert.deepEqual(plan(record, charges, { tips }), {
-    plans: [],
-    denials: [LEGACY_ROUND_REQUIRES_CI_FIRST],
-  });
+  const plain = plan(record, charges, { tips });
+  assert.deepEqual(plain.denials, []);
+  assert.equal(plain.plans.length, 1);
+  assert.equal(plain.plans[0]!.nextStep, "work");
   const proven = plan(record, charges, { ciFirst: true, tips });
   assert.equal(proven.plans.length, 1, JSON.stringify(proven.denials));
   assert.equal(proven.plans[0]!.nextStep, "work");
@@ -264,7 +256,7 @@ Deno.test("legacy round gate: a work grant leading to the legacy final round wai
   );
 });
 
-Deno.test("legacy round gate: a moved-tip conflict re-pend of a legacy record counts its final round only under a CI-first runtime", () => {
+Deno.test("legacy round gate: a moved-tip conflict re-pend is planned under any runtime; a spent count never parks", () => {
   const charge = "ab".repeat(32);
   const base = aiRecord(597, 5);
   const record = aiRecord(597, 5, {
@@ -300,23 +292,23 @@ Deno.test("legacy round gate: a moved-tip conflict re-pend of a legacy record co
       settledAt: CUT + 1000,
     }),
   ];
-  assert.deepEqual(plan(record, charges), {
-    plans: [],
-    denials: [LEGACY_ROUND_REQUIRES_CI_FIRST],
-  });
+  const plain = plan(record, charges);
+  assert.deepEqual(plain.denials, []);
+  assert.equal(plain.plans.length, 1);
+  assert.equal(plain.plans[0]!.advanceBase, true);
   const proven = plan(record, charges, { ciFirst: true });
   assert.equal(proven.plans.length, 1, JSON.stringify(proven.denials));
   assert.equal(proven.plans[0]!.advanceBase, true);
-  // One review past the pin: no resolution under any runtime.
-  assert.deepEqual(
-    plan(record, [...charges, finalReview(record, 6)], {
-      ciFirst: true,
-    }).denials,
-    ["conflict_resolution_rounds_spent"],
-  );
+  // One review past the old pin: the count is accounting, so the resolution
+  // remains admitted under a proven CI-first runtime.
+  const past = plan(record, [...charges, finalReview(record, 6)], {
+    ciFirst: true,
+  });
+  assert.deepEqual(past.denials, []);
+  assert.equal(past.plans.length, 1);
 });
 
-Deno.test("legacy round gate: a green pre-review park returns for review only with a round left and, for a legacy final round, a CI-first runtime", () => {
+Deno.test("legacy round gate: a green pre-review park returns for review under any runtime whatever the count", () => {
   const parked = (issue: number, rounds: number) =>
     aiRecord(issue, rounds, {
       blocker: { kind: "other", message: RED_PARK, since: T0 + 3000 },
@@ -326,25 +318,30 @@ Deno.test("legacy round gate: a green pre-review park returns for review only wi
   // A legacy record's CI-fixed head, green, on its unchanged base.
   const legacy = parked(668, 4);
   const armed = [...reviewCharges(legacy, 4), fix(legacy)];
-  assert.deepEqual(plan(legacy, armed, { tips }).plans, []);
+  const unproven = plan(legacy, armed, { tips }).plans;
+  assert.equal(unproven.length, 1, "a spent legacy count never withholds it");
+  assert.equal(unproven[0]!.nextStep, "work");
   const proven = plan(legacy, armed, {
     tips,
     ciFirst: true,
   });
   assert.equal(proven.plans.length, 1);
   assert.equal(proven.plans[0]!.nextStep, "work");
-  // An ordinary never-reviewed head with every round spent never returns.
+  // An ordinary never-reviewed head with every old round spent returns too:
+  // the count is accounting only.
   const spent = parked(1583, 3);
-  assert.deepEqual(
-    plan(spent, reviewCharges(spent, 3), { tips, ciFirst: true }).plans,
-    [],
-  );
+  const spentPlans = plan(spent, reviewCharges(spent, 3), {
+    tips,
+    ciFirst: true,
+  }).plans;
+  assert.equal(spentPlans.length, 1);
+  assert.equal(spentPlans[0]!.nextStep, "work");
   // One with a round left returns under any runtime, as before.
   const open = parked(1583, 1);
   assert.equal(plan(open, reviewCharges(open, 1), { tips }).plans.length, 1);
 });
 
-Deno.test("legacy round gate: a pre-review park on a moved base returns for its refresh only under a CI-first runtime with a review round left", () => {
+Deno.test("legacy round gate: a pre-review park on a moved base returns for its refresh under a CI-first runtime whatever the count", () => {
   const parked = (issue: number, rounds: number, retries: number) =>
     aiRecord(issue, rounds, {
       blocker: { kind: "other", message: RED_PARK, since: T0 + 3000 },
@@ -362,15 +359,15 @@ Deno.test("legacy round gate: a pre-review park on a moved base returns for its 
   assert.equal(refreshed[0]!.ciFixMarker, undefined);
   assert.match(refreshed[0]!.detail, /:base-moved$/);
   // A legacy record whose final round is still open (no fix charged since
-  // the cutoff) has no review round to refresh for: the runtime's ceiling
-  // gate would park it before any refresh. Its fix arms the round, so only a
-  // fix runtime returns it, with the CI fix marker.
+  // the cutoff) also refreshes: the spent/unarmed count is accounting, not a
+  // reason to park before the refresh.
   const open = parked(673, 4, 0);
   const unarmed = reviewCharges(open, 4);
-  assert.deepEqual(plan(open, unarmed, { ciFirst: true }).plans, []);
-  const fixed = plan(open, unarmed, { fix: true }).plans;
-  assert.equal(fixed.length, 1);
-  assert.equal(fixed[0]!.ciFixMarker, true);
+  const openPlans = plan(open, unarmed, { ciFirst: true }).plans;
+  assert.equal(openPlans.length, 1);
+  assert.equal(openPlans[0]!.nextStep, "work");
+  assert.equal(openPlans[0]!.ciFixMarker, undefined);
+  assert.match(openPlans[0]!.detail, /:base-moved$/);
   // An ordinary record with a round left: CI-first only, as above.
   const ordinary = parked(1583, 1, 0);
   assert.deepEqual(plan(ordinary, reviewCharges(ordinary, 1)).plans, []);
@@ -380,7 +377,7 @@ Deno.test("legacy round gate: a pre-review park on a moved base returns for its 
   );
 });
 
-Deno.test("legacy round gate: a base-refresh re-admission of a legacy final round waits for a CI-first runtime", () => {
+Deno.test("legacy round gate: a base-refresh re-admission of a spent legacy count needs no CI-first runtime", () => {
   const record = aiRecord(610, 3, {
     target: { ...aiRecord(610, 3).target, pr: null },
     blocker: {
@@ -390,7 +387,7 @@ Deno.test("legacy round gate: a base-refresh re-admission of a legacy final roun
     },
     counters: { attempts: 4, retries: 0, reviewRounds: 3 },
   });
-  const readmit = (ciFirst: boolean, armed = true) => {
+  const readmit = (armed = true) => {
     const denials: string[] = [];
     const candidates = planBaseRefreshReadmissions(
       repairSnapshot(
@@ -402,38 +399,11 @@ Deno.test("legacy round gate: a base-refresh re-admission of a legacy final roun
       SHA1,
       new Set(),
       (denial) => denials.push(denial.reason),
-      ciFirst,
-      CUT,
     );
     return { candidates: candidates.length, denials };
   };
-  assert.deepEqual(readmit(false), {
-    candidates: 0,
-    denials: [LEGACY_ROUND_REQUIRES_CI_FIRST],
-  });
-  assert.deepEqual(readmit(true), { candidates: 1, denials: [] });
-  assert.deepEqual(readmit(true, false), {
-    candidates: 0,
-    denials: ["review_rounds_spent"],
-  });
-});
-
-Deno.test("legacy round gate: the predicate passes every ordinary round and withholds exactly the legacy final ones", () => {
-  for (const [issue, pin] of [[595, 4], [618, 7], [645, 6], [1128, 5]]) {
-    const record = aiRecord(issue, pin);
-    const ledger = { reservations: reviewCharges(record, pin) };
-    assert.equal(legacyFinalRoundAdmissible(ledger, record, false), false);
-    assert.equal(legacyFinalRoundAdmissible(ledger, record, true), true);
-  }
-  const ordinary = aiRecord(1583, 2);
-  assert.equal(
-    legacyFinalRoundAdmissible(
-      { reservations: reviewCharges(ordinary, 2) },
-      ordinary,
-      false,
-    ),
-    true,
-  );
+  assert.deepEqual(readmit(), { candidates: 1, denials: [] });
+  assert.deepEqual(readmit(false), { candidates: 1, denials: [] });
 });
 
 Deno.test("legacy round gate: a spent head is a CI correction only when its CI was read and is not green; green, it is never one", () => {

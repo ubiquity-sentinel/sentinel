@@ -17,7 +17,7 @@ export const CANDIDATE_REF = `refs/heads/sentinel-candidates/${
   "ab".repeat(32)
 }`;
 export const PRODUCING_RESERVATION = "cd".repeat(32);
-export const CHECK_POLL_MS = 5 * 60_000;
+export { CHECK_POLL_MS } from "../../src/repair/loop-bounds.ts";
 /** Candidate head used by the candidate-state fixtures. */
 export const H0 = SHA2;
 export const H1 = SHA4;

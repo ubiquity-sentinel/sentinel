@@ -118,10 +118,11 @@ Deno.test(
         counters: { attempts: 1, retries: 0, reviewRounds: 14 },
       }),
     ]);
-    // Every review round the hard ceiling allows is spent (owner decision
-    // 2026-10-16: three rounds, hard): this pass fails closed, with or without
-    // a newer base, instead of zeroing a charged counter, re-using an identity
-    // or buying a refreshed head that needs a fifteenth round.
+    // A spent review-round count is accounting, never a gate (owner
+    // directive 2026-10-30). This head already holds its completed accepted
+    // review, so no new review is spent on it, with or without a newer base:
+    // the delivery pass owns the record's receipt and every charged counter
+    // and identity stays as it was.
     assert.equal(
       planHostedRetries(reviewRounds, T0 + 5000, ATTEMPT_RUNTIME).length,
       0,
@@ -136,7 +137,7 @@ Deno.test(
       (denial) => denied.push(denial.reason),
     );
     assert.deepEqual(plans, []);
-    assert.deepEqual(denied, ["review_rounds_spent"]);
+    assert.deepEqual(denied, ["review_terminal_left_to_delivery"]);
 
     const budget = repairSnapshot([
       blockedRecord({

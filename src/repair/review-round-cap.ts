@@ -1,23 +1,27 @@
 /**
- * The hard review-round ceiling (owner decision 2026-10-16: "ai.ubq.fi issue
- * 684 / PR 1059 reached 44 rounds; 44 rounds is insane, 3 round max").
+ * Review-round accounting (owner directive 2026-10-30: the review-round
+ * ceiling is not a permanent park).
  *
  * Pure policy shared by the runtime repair loop and the protected launcher:
- * no I/O or clock, so the launcher can ship it before
- * the runtime does. A task has spent the larger of its unrefunded
- * `review_request` admissions and its review-round counter less its refunds;
- * once that reaches its ceiling no further review is requested anywhere, and
- * a record that could only continue through another review parks with one of
- * the fixed messages below (its PR, head, evidence and charges kept).
+ * no I/O or clock. A task's rounds are still counted from the durable
+ * `review_request` admissions and its review-round counter less refunds: that
+ * history is accounting and is never reset. It no longer bounds admission:
+ * `reviewRoundsLeft` never returns zero, and no path parks a record because a
+ * round count is spent. A record keeps iterating (review -> fix -> review)
+ * until its current head has a completed review with no P0, or a different
+ * blocker applies. The two facts that were wrongly read off a zero are
+ * separate predicates: `currentHeadReviewTerminal` (the current head already
+ * holds the accepted review delivery needs) and `reviewedHeadCarried` (the
+ * reviewed head is delivered by a carried refresh).
+ *
+ * The fixed `REVIEW_ROUND_CEILING_*` messages and `ceilingParkMessage` remain
+ * only to recognize historical parks and the carried-delivery timeout/stall
+ * parks that share the prefix. No new ordinary review-round park is written.
  *
  * Rollback contract: nothing here is persisted except a blocker of the
- * existing `other` kind whose message starts with `REVIEW_ROUND_CEILING_PREFIX`,
- * which no generation-79 re-admission, re-arm or recovery rule matches.
- *
- * Delivery contract: a park is never handed back for review. Only the
- * REVIEWED and BASE_MOVED parks (`isDeliverableReviewRoundCeilingPark`) may be
- * merged, and only by the spent-round delivery rule, which re-verifies the
- * latest completed current-head review and the required CI itself.
+ * existing `other` kind whose message starts with `REVIEW_ROUND_CEILING_PREFIX`.
+ * The legacy cutoff helpers remain for the launcher's historical class
+ * reporting; they no longer grant or withhold a review round.
  */
 import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
@@ -28,10 +32,10 @@ import { HOSTED_RUNTIME_ROLLOUT } from "../host/hosted-runtime-rollout.ts";
 import { isPassportWorkTrial } from "./passport-work-trial.ts";
 
 /**
- * Review rounds a CI-first-era task may spend. Owner decision 2026-10-16 set
- * three; owner decision 2026-10-24 ("you can have up to five reviews") raised
- * it to five after native reviews returned unparseable results on about one
- * attempt in three, each spending a round. See `reviewRoundCeilingFor`.
+ * The last owner-set review-round ceiling (five, owner decision 2026-10-24).
+ * Retained as accounting history and for exported API compatibility; owner
+ * directive 2026-10-30 removed it as an admission limit. No path may park a
+ * record at this count.
  */
 export const MAX_REVIEW_ROUNDS = 5;
 
@@ -442,20 +446,6 @@ export function reviewRoundCeilingFor(
 }
 
 /**
- * The record's ceiling: its legacy pin + 1 once that final round is armed,
- * otherwise `reviewRoundCeilingFor`.
- */
-export function reviewRoundCeiling(
-  snapshot: ReviewedLedger,
-  record: RoundRecord,
-  cutoff?: LegacyCutoff,
-): number {
-  return legacyFinalRoundArmed(snapshot, record, cutoff)
-    ? legacyReviewRoundPin(snapshot, record, cutoff)! + 1
-    : reviewRoundCeilingFor(snapshot, record);
-}
-
-/**
  * The admission the next review request completes instead of charging anew:
  * still `reserved` at the record's next attempt on its current head while no
  * intent names it (the admission was written, its intent write was lost).
@@ -493,9 +483,10 @@ export function reviewRoundsSpent(
 }
 
 /**
- * True once the task has spent its ordinary ceiling (`reviewRoundCeilingFor`) by
- * the same count. The spent-round delivery rule qualifies a record on this: a
- * legacy record's one final round is extra, kept for a CI-fixed head.
+ * Historical accounting predicate: true once the task has passed its last
+ * owner-set ceiling (`reviewRoundCeilingFor`). Retained for the launcher's
+ * spent-delivery and diagnostic consumers; it never gates a review, a fix or
+ * a merge by itself, because `reviewRoundsLeft` no longer runs out.
  */
 export function ordinaryReviewRoundsSpent(
   snapshot: Ledger,
@@ -505,22 +496,107 @@ export function ordinaryReviewRoundsSpent(
     reviewRoundCeilingFor(snapshot, record);
 }
 
+/** No unresolved P0 and nothing uncounted: the review blocks nothing. */
+function cleanReceipt(review: ReviewReceiptV1): boolean {
+  return review.findingsUncounted === 0 &&
+    !hasBlockingSeverity(review.unresolvedSeverities);
+}
+
+/** Clean, and an issue review that accepted the task it judged. */
+function acceptedReceipt(
+  review: ReviewReceiptV1,
+  record: RoundRecord,
+): boolean {
+  return cleanReceipt(review) &&
+    (record.source.kind !== "issue" ||
+      review.taskAcceptance?.verdict === "fulfilled");
+}
+
 /**
- * Reviews this task may still request: its ceiling (`reviewRoundCeilingFor`)
- * minus the rounds spent, never below zero, or exactly the one final round of
- * a legacy record once a CI fix armed it (`legacyFinalRoundArmed`).
+ * Reviews this task may still request. The review-round ceiling is retired
+ * (owner directive 2026-10-30): a spent count is accounting, never an
+ * admission gate, so this never returns zero and no caller may read it as a
+ * terminal review. An already terminally reviewed current head is
+ * `currentHeadReviewTerminal`, and a reviewed head its refreshed publication
+ * carries is `reviewedHeadCarried`.
  */
 export function reviewRoundsLeft(
+  _snapshot: ReviewedLedger,
+  _record: RoundRecord,
+  _cutoff?: LegacyCutoff,
+): number {
+  return Number.MAX_SAFE_INTEGER;
+}
+
+/**
+ * True when the current head already holds the completed accepted review
+ * delivery needs: the record's latest completed pull request review judged
+ * the current head, left no unresolved P0 and nothing uncounted, and accepted
+ * the task (issue records). A spent round count never stands for this fact;
+ * callers that must not spend another review on such a head read it.
+ */
+export function currentHeadReviewTerminal(
   snapshot: ReviewedLedger,
   record: RoundRecord,
-  cutoff?: LegacyCutoff,
-): number {
-  if (legacyFinalRoundArmed(snapshot, record, cutoff)) return 1;
-  return Math.max(
-    0,
-    reviewRoundCeilingFor(snapshot, record) -
-      reviewRoundsSpent(snapshot, record),
-  );
+): boolean {
+  const latest = latestCompletedPullRequestReview(snapshot, record);
+  return latest !== null &&
+    latest.pullRequest.head === record.target.head &&
+    acceptedReceipt(latest, record);
+}
+
+/**
+ * True when the record's reviewed head needs no new review before its merge:
+ * the current head already holds its completed accepted review
+ * (`currentHeadReviewTerminal`), or the spent count carries it
+ * (`spentReviewedHead`). The delivery line reads this; the runtime selects its
+ * carried-delivery path on `spentReviewedHead` alone.
+ */
+export function reviewedHeadCarried(
+  snapshot: ReviewedLedger,
+  record: RoundRecord,
+): boolean {
+  return currentHeadReviewTerminal(snapshot, record) ||
+    spentReviewedHead(snapshot, record);
+}
+
+/**
+ * True when the record's historical count is spent (`ordinaryReviewRoundsSpent`,
+ * accounting only) and its latest completed review is clean and accepted: the
+ * carried-delivery rule (`spentOnMovedBase`, `executeCarriedDelivery`) delivers
+ * this head without a new review. It is the historical spent-head fact, never
+ * an admission gate: a spent count keeps iterating on its ordinary path
+ * whenever this does not hold (an unreviewed or P0 head).
+ */
+export function spentReviewedHead(
+  snapshot: ReviewedLedger,
+  record: RoundRecord,
+): boolean {
+  const latest = latestCompletedPullRequestReview(snapshot, record);
+  return latest !== null && acceptedReceipt(latest, record) &&
+    ordinaryReviewRoundsSpent(snapshot, record);
+}
+
+/**
+ * The latest completed review of the record's pull request on any head (by
+ * completion, then observation instant, then id), or null.
+ */
+export function latestCompletedPullRequestReview(
+  snapshot: { readonly reviews?: readonly ReviewReceiptV1[] },
+  record: Pick<WorkRecordV1, "repository" | "target">,
+): ReviewReceiptV1 | null {
+  const pr = record.target.pr;
+  if (pr === null) return null;
+  let latest: ReviewReceiptV1 | null = null;
+  for (const review of snapshot.reviews ?? []) {
+    if (
+      review.outcome !== "completed" ||
+      review.pullRequest.number !== pr ||
+      !sameRepository(review.repository, record.repository)
+    ) continue;
+    if (latest === null || laterReview(review, latest)) latest = review;
+  }
+  return latest;
 }
 
 /**

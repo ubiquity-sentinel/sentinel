@@ -1,12 +1,9 @@
 /**
- * Launcher side of the hard review-round ceiling (owner decision 2026-10-16:
- * "3 round max"). The protected maintenance planners only ever WITHHOLD a
- * re-admission: none of them may hand the runtime a record that would spend a
- * review round past its ceiling (three, or the one documented legacy round),
- * counted from the durable ledger as well as the counter. These rules are
- * pure and launcher-only, so they can ship before the runtime that carries
- * the ceiling; the denials are reported through the existing denial channel
- * and nothing is written for a denied record.
+ * Launcher side of review-round accounting after the owner directive
+ * 2026-10-30 retired the review-round ceiling and the legacy
+ * `legacy_round_requires_ci_first` gate: a spent count never denies a
+ * re-admission under any runtime. Counters, ledger charges and refunds remain
+ * accounting and are never reset or reinterpreted here.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -140,19 +137,44 @@ function plan(
   return { snapshot, plans, denials: denials.map((denial) => denial.reason) };
 }
 
-Deno.test("launcher round cap: no review grant once the rounds are spent, even after a base move", () => {
+Deno.test("launcher round cap: a spent count never denies a review grant under the CI-first runtime", () => {
   for (const blocker of REVIEW_BLOCKERS) {
     for (const rounds of [3, 14]) {
-      const { snapshot, plans, denials } = plan(
+      const ciFirst = plan(
+        [reviewBlocked(blocker, rounds)],
+        reviewCharges(TARGET, rounds),
+        selfTips(SHA2),
+        CI_FIRST_OPTIONS,
+      );
+      assert.deepEqual(ciFirst.denials, [], `${blocker.message} at ${rounds}`);
+      assert.equal(ciFirst.plans.length, 1);
+      assert.equal(ciFirst.plans[0]!.nextStep, "review");
+      // R79 (not proven CI-first) plans the same review: the retired legacy
+      // compatibility gate no longer withholds it.
+      const legacyRuntime = plan(
         [reviewBlocked(blocker, rounds)],
         reviewCharges(TARGET, rounds),
       );
-      assert.deepEqual(plans, [], `${blocker.message} at ${rounds}`);
-      assert.deepEqual(denials, ["review_rounds_spent"]);
-      // Nothing to apply: no base_refresh intent, no review step, no write.
-      const applied = applyHostedRetries(snapshot, SHA1, plans, NOW);
-      assert.deepEqual(applied.work, snapshot.work);
-      assert.deepEqual(applied.reservations, snapshot.reservations);
+      assert.deepEqual(legacyRuntime.denials, []);
+      assert.equal(legacyRuntime.plans.length, 1);
+      assert.equal(legacyRuntime.plans[0]!.nextStep, "review");
+      // The grant only returns the record to `review`: no counter moves, no
+      // budget round is admitted here and no charge is written.
+      const applied = applyHostedRetries(
+        legacyRuntime.snapshot,
+        SHA1,
+        legacyRuntime.plans,
+        NOW,
+      );
+      assert.equal(applied.work[0]!.nextStep, "review");
+      assert.deepEqual(
+        applied.work[0]!.counters,
+        legacyRuntime.snapshot.work[0]!.counters,
+      );
+      assert.deepEqual(
+        applied.reservations,
+        legacyRuntime.snapshot.reservations,
+      );
     }
   }
 });
@@ -171,25 +193,49 @@ Deno.test("launcher round cap: a review grant below the ceiling keeps its unused
   }
 });
 
-Deno.test("launcher round cap: charges the counter missed spend the allowance; refunds do not", () => {
+Deno.test("launcher round cap: ledger charges and counter lag stay accounting, never a denial", () => {
   // Counter 2, three unrefunded review admissions durable (live 293 / 647).
   const charged = reviewCharges(TARGET, 3);
   const review = reviewBlocked(REVIEW_BLOCKERS[0], 2);
-  assert.deepEqual(plan([review], charged).denials, ["review_rounds_spent"]);
-  // A work grant would only buy a candidate no review could ever accept.
+  const reviewPlan = plan(
+    [review],
+    charged,
+    selfTips(SHA2),
+    CI_FIRST_OPTIONS,
+  );
+  assert.deepEqual(reviewPlan.denials, []);
+  assert.equal(reviewPlan.plans.length, 1);
+  assert.equal(reviewPlan.plans[0]!.nextStep, "review");
+  // A work grant is never withheld because a counter or the ledger has spent
+  // its old allowance.
   const work = blockedRecord({
     counters: { attempts: 2, retries: 0, reviewRounds: 2 },
   });
-  assert.equal(plan([work], [], selfTips(BASE)).plans.length, 1);
-  const spent = plan([work], charged, selfTips(BASE));
-  assert.deepEqual(spent.plans, []);
-  assert.deepEqual(spent.denials, ["review_rounds_spent"]);
-  // A lowered counter (live 264: counter 0, three charges) is no exception.
+  for (const charges of [[], charged]) {
+    const planned = plan(
+      [work],
+      charges,
+      selfTips(BASE),
+      CI_FIRST_OPTIONS,
+    );
+    assert.deepEqual(planned.denials, []);
+    assert.equal(planned.plans.length, 1);
+    assert.equal(planned.plans[0]!.nextStep, "work");
+  }
+  // A lowered counter (live 264: counter 0, three charges) is accounting
+  // only, never a reason to withhold the next review.
   const lowered = blockedRecord({
     counters: { attempts: 2, retries: 0, reviewRounds: 0 },
   });
-  assert.deepEqual(plan([lowered], charged, selfTips(BASE)).plans, []);
-  // A refund bumped the counter but submitted nothing: the round is free.
+  const loweredPlan = plan(
+    [lowered],
+    charged,
+    selfTips(BASE),
+    CI_FIRST_OPTIONS,
+  );
+  assert.deepEqual(loweredPlan.denials, []);
+  assert.equal(loweredPlan.plans.length, 1);
+  // A refund still frees its accounting round without being required to.
   const refunded = [
     ...reviewCharges(TARGET, 2),
     reservation(`${TARGET}-review-3`, {
@@ -206,7 +252,10 @@ Deno.test("launcher round cap: charges the counter missed spend the allowance; r
   const freed = blockedRecord({
     counters: { attempts: 2, retries: 0, reviewRounds: 3 },
   });
-  assert.equal(plan([freed], refunded, selfTips(BASE)).plans.length, 1);
+  assert.equal(
+    plan([freed], refunded, selfTips(BASE), CI_FIRST_OPTIONS).plans.length,
+    1,
+  );
 });
 
 Deno.test("launcher round cap: a legacy-class record gets its one current-head review once a CI fix armed it, a post-cutoff record none", () => {
@@ -254,27 +303,26 @@ Deno.test("launcher round cap: a legacy-class record gets its one current-head r
     );
   const armed = legacy(595, 4);
   const armedCharges = [...reviewCharges(armed.id, 4, SHA3, AI), fix(armed)];
-  // The final round is a review of a green head, so it is granted only under
-  // a proven CI-first runtime (generation 80 integration with the CI-first
-  // lane); R79 would review the head before its CI.
-  assert.deepEqual(run(armed, armedCharges, false).denials, [
-    "legacy_round_requires_ci_first",
-  ]);
+  // The review is granted under any runtime: neither the retired legacy
+  // gate nor a spent count withholds it.
+  assert.deepEqual(run(armed, armedCharges, false).denials, []);
   const granted = run(armed, armedCharges);
   assert.deepEqual(granted.denials, []);
   assert.equal(granted.plans.length, 1);
   assert.equal(granted.plans[0]!.nextStep, "review");
   assert.equal(granted.plans[0]!.reviewRounds, 4);
   assert.equal(granted.plans[0]!.advanceBase, false, "the current head");
-  // Not armed: no CI fix since the cutoff, so no review spends the round.
-  assert.deepEqual(
-    run(armed, reviewCharges(armed.id, 4, SHA3, AI)).plans,
-    [],
-    "a review alone never spends the final round",
+  // A review no longer needs the final round armed to be requested: the
+  // ordinary count is unbounded after the owner directive.
+  assert.equal(
+    run(armed, reviewCharges(armed.id, 4, SHA3, AI)).plans.length,
+    1,
+    "an unarmed final round no longer blocks the review",
   );
-  // Spent: a review admitted after the cutoff already used it.
+  // A review admitted after the cutoff already spent the old final round;
+  // it is still accounting, not a park.
   const spent = legacy(595, 5);
-  assert.deepEqual(
+  assert.equal(
     run(spent, [
       ...reviewCharges(spent.id, 4, SHA3, AI),
       fix(spent),
@@ -288,33 +336,35 @@ Deno.test("launcher round cap: a legacy-class record gets its one current-head r
         createdAt: CUT + 20,
         settledAt: CUT + 21,
       }),
-    ]).plans,
-    [],
-    "the one round is spent",
+    ]).plans.length,
+    1,
+    "a spent final round no longer parks the record",
   );
-  // Without a pinned cutoff nothing is legacy: no record gets a fourth round.
-  assert.deepEqual(
+  // Without a pinned cutoff nothing is legacy, but the ordinary review is
+  // still admitted: there is no ceiling to run out of.
+  assert.equal(
     plan(
       [armed],
       armedCharges,
       new Map([[hostedRepositoryKey(AI), SHA1]]),
       { ...CI_FIRST_OPTIONS, legacyReviewCutoff: null },
-    ).plans,
-    [],
+    ).plans.length,
+    1,
     "cutoff unpinned",
   );
-  // A record whose rounds were all charged after the cutoff is never legacy.
+  // A record whose rounds were all charged after the cutoff is never legacy;
+  // its review is admitted anyway.
   const fresh = legacy(1600, 3);
-  assert.deepEqual(
+  assert.equal(
     run(fresh, [
       ...reviewCharges(fresh.id, 3, SHA3, AI).map((charge) => ({
         ...charge,
         createdAt: CUT + 1,
       })),
       fix(fresh),
-    ]).plans,
-    [],
-    "a generation-80 record never gets a fourth round",
+    ]).plans.length,
+    1,
+    "a generation-80 record keeps iterating",
   );
 });
 
@@ -355,9 +405,21 @@ Deno.test("launcher round cap: a moved-tip conflict re-pend counts the ledger", 
     [marked],
     [spentCharge, ...reviewCharges(TARGET, 3)],
     selfTips(SHA2),
+    CI_FIRST_OPTIONS,
   );
-  assert.deepEqual(spent.plans, []);
-  assert.deepEqual(spent.denials, ["conflict_resolution_rounds_spent"]);
+  assert.deepEqual(spent.denials, []);
+  assert.equal(spent.plans.length, 1);
+  assert.equal(spent.plans[0]!.nextStep, "work");
+  // Without a proven CI-first runtime the resolution is planned the same way:
+  // neither the retired legacy gate nor a spent count withholds it.
+  const legacyRuntime = plan(
+    [marked],
+    [spentCharge, ...reviewCharges(TARGET, 3)],
+    selfTips(SHA2),
+  );
+  assert.deepEqual(legacyRuntime.denials, []);
+  assert.equal(legacyRuntime.plans.length, 1);
+  assert.equal(legacyRuntime.plans[0]!.nextStep, "work");
 });
 
 function authBlocked(reviewRounds: number): WorkRecordV1 {
@@ -393,8 +455,11 @@ function authBlocked(reviewRounds: number): WorkRecordV1 {
   });
 }
 
-Deno.test("launcher round cap: a base-refresh re-admission is withheld once no round is left", () => {
-  const readmit = (record: WorkRecordV1, charges: unknown[] = []) => {
+Deno.test("launcher round cap: a base-refresh re-admission no longer needs a round left", () => {
+  const readmit = (
+    record: WorkRecordV1,
+    charges: unknown[] = [],
+  ) => {
     const denials: string[] = [];
     const candidates = planBaseRefreshReadmissions(
       repairSnapshot([record], [], [], charges),
@@ -405,15 +470,18 @@ Deno.test("launcher round cap: a base-refresh re-admission is withheld once no r
     return { candidates, denials };
   };
   assert.equal(readmit(authBlocked(2)).candidates.length, 1);
-  assert.deepEqual(readmit(authBlocked(3)), {
-    candidates: [],
-    denials: ["review_rounds_spent"],
-  });
+  assert.equal(readmit(authBlocked(3)).candidates.length, 1);
+  assert.deepEqual(readmit(authBlocked(3)).denials, []);
+  assert.equal(readmit(authBlocked(3)).candidates.length, 1);
   const record = authBlocked(2);
-  assert.deepEqual(readmit(record, reviewCharges(record.id, 3, SHA3, AI)), {
-    candidates: [],
-    denials: ["review_rounds_spent"],
-  }, "the ledger counts too");
+  const charged = reviewCharges(record.id, 3, SHA3, AI);
+  assert.equal(readmit(record, charged).candidates.length, 1);
+  assert.equal(
+    readmit(record, charged).candidates.length,
+    1,
+    "the ledger is accounting, not a re-admission gate",
+  );
+  assert.deepEqual(readmit(record, charged).denials, []);
 });
 
 Deno.test("launcher round cap: a parked record is a delivery candidate once its ordinary rounds are spent by the ledger", () => {

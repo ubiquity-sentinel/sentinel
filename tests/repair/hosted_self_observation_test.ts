@@ -203,3 +203,130 @@ Deno.test("self observation: arbitrary diagnostic text never enters issue titles
     );
   }
 });
+
+Deno.test("self observation: a cancelled sibling does not mask a failed job", async (t) => {
+  for (const conclusion of ["failure", "timed_out", "startup_failure"]) {
+    await t.step(conclusion, async () => {
+      const { surface, filed } = fakeSurface({
+        runs: [FAILED_RUNS[2]!],
+        jobs: [
+          { id: 11, name: "maintenance", conclusion: "cancelled" },
+          { id: 12, name: "finalize", conclusion },
+        ],
+        logs: { 11: "##[error]The operation was canceled.\n", 12: "" },
+        bodies: [],
+      });
+      const reads: number[] = [];
+      const readJobLog = surface.selfObservation!.readJobLog;
+      surface.selfObservation!.readJobLog = (request) => {
+        reads.push(request.jobId);
+        return readJobLog(request);
+      };
+
+      await runSelfObservationPass({
+        github: surface,
+        now: Date.parse("2026-09-23T19:00:00Z"),
+      });
+
+      assert.deepEqual(reads, [12], "read only the primary failure's log");
+      assert.equal(filed.length, 1);
+      assert.ok(filed[0]!.body.includes("- job: `finalize`"));
+      assert.ok(filed[0]!.body.includes(`- conclusion: \`${conclusion}\``));
+      assert.ok(!filed[0]!.title.includes("cancelled"));
+    });
+  }
+});
+
+Deno.test("self observation: cancellation without a failed sibling skips logs and filing", async (t) => {
+  for (const withFinalizer of [false, true]) {
+    await t.step(
+      withFinalizer ? "paused admission" : "lone cancellation",
+      async () => {
+        const { surface, filed } = fakeSurface({
+          runs: [{
+            id: 40583137237,
+            name: "sentinel-supervisor",
+            conclusion: "cancelled",
+            createdAt: "2026-10-27T21:01:07.000Z",
+          }],
+          jobs: [
+            { id: 11, name: "maintenance", conclusion: "cancelled" },
+            ...(withFinalizer
+              ? [
+                { id: 12, name: "prepare", conclusion: "skipped" },
+                { id: 13, name: "finalize", conclusion: "success" },
+              ]
+              : []),
+          ],
+          logs: { 11: "##[error]The operation was canceled.\n" },
+          bodies: [],
+        });
+        const reads: string[] = [];
+        surface.selfObservation!.readJobLog = () => {
+          reads.push("log");
+          return Promise.resolve("##[error]The operation was canceled.\n");
+        };
+        surface.selfObservation!.listOpenIssueBodies = () => {
+          reads.push("issues");
+          return Promise.resolve([]);
+        };
+
+        const actions = await runSelfObservationPass({
+          github: surface,
+          now: Date.parse("2026-10-27T22:00:00Z"),
+        });
+
+        assert.deepEqual(actions, [
+          "self-observation:skipped:no_readable_failure",
+        ]);
+        assert.deepEqual(
+          reads,
+          [],
+          "cancellations do not need log or issue reads",
+        );
+        assert.deepEqual(filed, []);
+      },
+    );
+  }
+});
+
+Deno.test("self observation: current CI errors file sanitized reports and deduplicate legacy names", async () => {
+  const marker = "SYNTHETIC_PRIVATE_MARKER";
+  const log = `2026-10-27T20:06:18.1234567Z error: ${marker} /private/path\n`;
+  const first = fakeSurface({
+    runs: [FAILED_RUNS[0]!],
+    jobs: [{ id: 11, name: "test-shards (modules, 4)", conclusion: "failure" }],
+    logs: { 11: log },
+    bodies: [],
+  });
+  const now = Date.parse("2026-09-23T19:00:00Z");
+  const actions = await runSelfObservationPass({ github: first.surface, now });
+  assert.deepEqual(actions, ["self-observation:filed:901:1x"]);
+  assert.equal(first.filed.length, 1);
+  const issue = first.filed[0]!;
+  assert.equal(
+    issue.title,
+    "Sentinel self-observation: the job reported an error",
+  );
+  assert.ok(
+    issue.body.includes(
+      "sentinel:self-observation:sentinel-ci:test-shards:error:observed",
+    ),
+  );
+  assert.ok(issue.body.includes("- job: `test-shards`"));
+  assert.ok(!JSON.stringify(issue).includes(marker));
+  assert.ok(!JSON.stringify(issue).includes("/private/"));
+
+  const second = fakeSurface({
+    runs: [FAILED_RUNS[0]!],
+    jobs: [{ id: 11, name: "test-shards (modules)", conclusion: "failure" }],
+    logs: { 11: "error: another private diagnostic\n" },
+    bodies: [issue.body],
+  });
+  const nextActions = await runSelfObservationPass({
+    github: second.surface,
+    now,
+  });
+  assert.equal(second.filed.length, 0);
+  assert.deepEqual(nextActions, ["self-observation:no_change"]);
+});

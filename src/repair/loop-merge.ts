@@ -12,7 +12,6 @@ import { guardQueueOperation } from "./loop-queue-guard.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import { parseMergeRequestV1 } from "../contracts/merge-request.ts";
 import { selfMergeExecution } from "./loop-self-merge.ts";
-import { isSelfScopeZero } from "./loop-legacy-loss.ts";
 import type { MergeOutcomeV1, PortErrorV1 } from "../contracts/ports.ts";
 import {
   parseReleaseRequestV1,
@@ -56,8 +55,10 @@ import {
   taskAcceptanceRefusal,
 } from "./review-gate.ts";
 import {
+  advanceToDelivery,
   clearIntent,
   markBlocked,
+  markDone,
   markTerminalBlocked,
   setIntent,
   setWait,
@@ -117,30 +118,6 @@ function emitMergePortError(
     errorKind: error.kind,
     detailCode,
   }));
-}
-
-/**
- * Self-merge refusals of the trusted port's content checks: the base and the
- * tested commit disagree on the CI pipeline identity, the preserved CI binding
- * or the tested tree. Waiting never clears them (only a new base or a new
- * candidate can), so they park for the owner instead of re-arming a five-minute
- * wait on every cycle for the life of the base. A failed git read is
- * `unavailable`, never one of these (issue #196); a refusal after the remote
- * writes began keeps the proof (`parkSelfMergeRefusal`).
- */
-const SELF_MERGE_REFUSALS: ReadonlySet<string> = new Set([
-  "self merge trusted CI pipeline changed",
-  "self merge preserved CI binding mismatch",
-  "self merge tested tree or trusted source mismatch",
-]);
-function selfMergeRefusal(
-  record: WorkRecordV1,
-  error: PortErrorV1,
-): string | null {
-  return isSelfScopeZero(record.repository) && error.kind === "invalid" &&
-      SELF_MERGE_REFUSALS.has(error.detail)
-    ? `self merge refused by trusted validation; owner action required: ${error.detail}`
-    : null;
 }
 
 const SELF_MERGE_TARGET_MOVED = "self merge target moved without exact merge";
@@ -416,14 +393,6 @@ export async function executeMerge(
       mergeRequest.pullRequestNumber,
       merged.error,
     );
-    const refusal = selfMergeRefusal(self.record, merged.error);
-    if (refusal !== null) {
-      return persistWork(
-        deps,
-        context,
-        parkSelfMergeRefusal(self.record, refusal, now),
-      );
-    }
     // The saved merge intent must stay durable: the response may have been
     // lost after the write, and the next run reconciles the exact remote PR
     // state before repeating rather than blindly retrying an ambiguous write.
@@ -440,13 +409,136 @@ export async function executeMerge(
   return handleMergeOutcome(deps, context, self.record, merged.value, receipt);
 }
 
+/** Extra bookkeeping for a merge observed outside Sentinel's trusted path. */
+export interface OutsideMergeBookkeepingV1 {
+  /** Release-request review identity when no exact receipt authorizes it. */
+  requestId: string;
+  /** Complete the record in the same write once the bookkeeping is durable. */
+  complete: boolean;
+}
+
+export interface MergedDeliveryBookkeepingV1 {
+  outsideMerge?: OutsideMergeBookkeepingV1;
+}
+
+/**
+ * The post-merge delivery bookkeeping shared by a Sentinel merge and a merge
+ * observed outside its trusted path: release request where the target has one,
+ * and the ordinary delivery step owns release acceptance and issue closure.
+ * A trusted Sentinel merge first proves native queue custody. A human merge
+ * observed outside that path has no Sentinel queue delivery to prove: asking
+ * for one wrote the permanent `backoff`/`until: null` custody hold, so the
+ * record could never be selected again and the owner rule that a human merge
+ * is a completed delivery was never carried out. That path therefore skips the
+ * queue-delivery guard entirely; its provenance is the human-merge evidence.
+ */
+export async function persistMergedDelivery(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  outcome: Extract<MergeOutcomeV1, { outcome: "merged" }>,
+  receipt: ReviewReceiptV1 | null,
+  options: MergedDeliveryBookkeepingV1 = {},
+): Promise<StepResultV1> {
+  const now = deps.clock.now();
+  const outside = options.outsideMerge;
+  const queueGuard = outside !== undefined ? null : await guardQueueDelivery(
+    deps,
+    context,
+    record,
+    receipt,
+    outcome.mergeSha,
+    (proof) => {
+      if (proof.status !== "verified" || proof.delivery.kind !== "queue") {
+        return true;
+      }
+      if (context.head === null) return false;
+      const ref = queueDeliveryProvenanceRef(
+        proof.delivery,
+        record,
+        context.head,
+      );
+      if (ref === null) return false;
+      if (
+        !record.evidence.some((item) =>
+          item.kind === ref.kind && item.ref === ref.ref
+        )
+      ) {
+        record = { ...record, evidence: [...record.evidence, ref] };
+      }
+      return true;
+    },
+  );
+  if (queueGuard !== null) return queueGuard;
+  const cleared = clearIntent(
+    outcome.selfMerge === undefined ? record : {
+      ...record,
+      target: { ...record.target, selfMerge: outcome.selfMerge },
+    },
+    now,
+  );
+  // An outside merge enters the delivery step from the review step; its exact
+  // review admission was already settled by the caller, and the source issue
+  // was verified there. Every trusted merge keeps its existing gate.
+  const staged = outside === undefined
+    ? cleared
+    : advanceToDelivery(cleared, now);
+  // GitHub may already have auto-closed the issue through the published
+  // "Resolves #N" link. The trusted read-only context still yields the same
+  // canonical title/body digest, so a successful merge is never left
+  // unreleasable; a changed digest or a non-positive verdict is an honest
+  // no-delivery: no release request is published and the task is never
+  // counted as a newly delivered repair.
+  const semantic = outside === undefined || receipt !== null
+    ? await deliveryTaskRefusal(deps, record, receipt)
+    : null;
+  if (semantic === "wait") {
+    return waitRelease(deps, context, record, now);
+  }
+  if (semantic !== null) {
+    return persistWork(
+      deps,
+      context,
+      markBlocked(cleared, semanticRefusalKind(semantic), semantic, now),
+    );
+  }
+  const request = await buildReleaseRequest(
+    deps,
+    record,
+    outcome,
+    receipt,
+    outside?.requestId ?? null,
+  );
+  if (request === null) {
+    return persistWork(
+      deps,
+      context,
+      markTerminalBlocked(
+        cleared,
+        "other",
+        "release request identity invalid",
+        now,
+      ),
+    );
+  }
+  return persistTransition(deps, context, (draft) => {
+    const index = draft.work.findIndex((work) => work.id === record.id);
+    draft.work[index] = outside?.complete === true
+      ? markDone(staged, now)
+      : { ...staged, updatedAt: now };
+    if (!draft.releaseRequests.some((item) => item.id === request.id)) {
+      draft.releaseRequests.push(request);
+    }
+  });
+}
+
 /**
  * `receipt` is the EXACT review receipt that authorized this merge: the one the
  * caller just validated with the strict predicate (the fresh merge) or the one
  * the durable merge intent references by its review request/result identity
  * (reconciliation). A receipt that merely shares PR/head never carries the
- * delivery proof, and the release request published below must reference this
- * exact record so a later acceptance can revalidate the same proof.
+ * delivery proof, and the release request published by `persistMergedDelivery`
+ * must reference this exact record so a later acceptance revalidates the proof.
  */
 export async function handleMergeOutcome(
   deps: RepairCycleDepsV1,
@@ -457,78 +549,13 @@ export async function handleMergeOutcome(
 ): Promise<StepResultV1> {
   const now = deps.clock.now();
   if (outcome.outcome === "merged") {
-    const queueGuard = await guardQueueDelivery(
+    return await persistMergedDelivery(
       deps,
       context,
       record,
+      outcome,
       receipt,
-      outcome.mergeSha,
-      (proof) => {
-        if (proof.status !== "verified" || proof.delivery.kind !== "queue") {
-          return true;
-        }
-        if (context.head === null) return false;
-        const ref = queueDeliveryProvenanceRef(
-          proof.delivery,
-          record,
-          context.head,
-        );
-        if (ref === null) return false;
-        if (
-          !record.evidence.some((item) =>
-            item.kind === ref.kind && item.ref === ref.ref
-          )
-        ) {
-          record = { ...record, evidence: [...record.evidence, ref] };
-        }
-        return true;
-      },
     );
-    if (queueGuard !== null) return queueGuard;
-    const cleared = clearIntent(
-      outcome.selfMerge === undefined ? record : {
-        ...record,
-        target: { ...record.target, selfMerge: outcome.selfMerge },
-      },
-      now,
-    );
-    // GitHub may already have auto-closed the issue through the published
-    // "Resolves #N" link. The trusted read-only context still yields the same
-    // canonical title/body digest, so a successful merge is never left
-    // unreleasable; a changed digest or a non-positive verdict is an honest
-    // no-delivery: no release request is published and the task is never
-    // counted as a newly delivered repair.
-    const semantic = await deliveryTaskRefusal(deps, record, receipt);
-    if (semantic === "wait") {
-      return waitRelease(deps, context, record, now);
-    }
-    if (semantic !== null) {
-      return persistWork(
-        deps,
-        context,
-        markBlocked(cleared, semanticRefusalKind(semantic), semantic, now),
-      );
-    }
-    const request = await buildReleaseRequest(deps, record, outcome, receipt);
-    if (request === null) {
-      return persistWork(
-        deps,
-        context,
-        markTerminalBlocked(
-          cleared,
-          "other",
-          "release request identity invalid",
-          now,
-        ),
-      );
-    }
-    return persistTransition(deps, context, (draft) => {
-      const index = draft.work.findIndex((work) => work.id === record.id);
-      draft.work[index] = { ...cleared, updatedAt: now };
-      if (!draft.releaseRequests.some((item) => item.id === request.id)) {
-        draft.releaseRequests.push(request);
-      }
-    });
   }
   if (outcome.outcome === "ambiguous") {
     return { kind: "progress" }; // reconciled via readPullRequest next run
@@ -635,14 +662,6 @@ export async function reconcileMergeIntent(
       );
     }
     const at = deps.clock.now();
-    const refusal = selfMergeRefusal(self.record, result.error);
-    if (refusal !== null) {
-      return persistWork(
-        deps,
-        context,
-        parkSelfMergeRefusal(self.record, refusal, at),
-      );
-    }
     const conflict = selfMergeConflict(self.record, result.error);
     if (conflict === null) {
       return persistWork(
@@ -793,12 +812,13 @@ export async function reconcileMergeIntent(
   // A merge sent within the last poll window may still be landing (an
   // ambiguous response is reconciled immediately), and its own merge would
   // move the base; only an intent at least one poll old is treated as stale.
-  // At the hard review-round ceiling the refreshed head could never be
-  // reviewed: the reviewed head's CI is read with the stale merge intent
-  // cleared, and only a green head its latest review authorizes refreshes
-  // mechanically to carry that review (anything else parks, a red one with
-  // the merge gate's own CI blocker). Every refresh waits its turn in the
-  // repository's delivery line, the merge intent kept until it is replaced.
+  // A spent, cleanly reviewed head (`reviewRoundsSpentOut`) is delivered by a
+  // carried refresh: its CI is read with the stale merge intent cleared, and
+  // only a green head its latest review authorizes refreshes mechanically to
+  // carry that review (anything else parks precisely, a red one with the merge
+  // gate's own CI blocker). Any other reviewed head takes the ordinary
+  // refresh-and-review. Every refresh waits its turn in the repository's
+  // delivery line, the merge intent kept until it is replaced.
   if (
     record.source.kind === "issue" &&
     deps.github.prepareBaseRefresh !== undefined &&
@@ -829,6 +849,8 @@ export async function buildReleaseRequest(
   record: WorkRecordV1,
   outcome: { head: GitSha | null; mergeSha: GitSha | null },
   receipt: ReviewReceiptV1 | null,
+  /** Deterministic review identity for a merge observed outside the path. */
+  outsideRequestId: string | null = null,
 ): Promise<ReleaseRequestV1 | null> {
   const head = outcome.head ?? record.target.head;
   const revision = outcome.mergeSha ?? head;
@@ -848,7 +870,7 @@ export async function buildReleaseRequest(
     revision,
     source: {
       pullRequest: record.target.pr,
-      reviewRequestId: receipt?.requestId ?? "",
+      reviewRequestId: receipt?.requestId ?? outsideRequestId ?? "",
       reviewReceiptId: receipt?.id ?? null,
       head,
       base: record.target.base,
