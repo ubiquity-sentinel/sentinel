@@ -181,6 +181,12 @@ export async function persistTransition(
       mutate,
       proofHead,
     );
+    // A proof bound to one exact head can never be satisfied once the head
+    // provably moved (the CAS store never rewinds), so a recomputation would
+    // only spend another read before the same stale-proof deferral (#206).
+    if (written.kind === "lost_cas" && proofHead !== undefined) {
+      return { kind: "deferred", detail: STALE_PROOF_DETAIL };
+    }
     if (written.kind !== "lost_cas" || attempt === CHECKPOINT_CAS_ATTEMPTS) {
       return written.kind === "lost_cas"
         ? { kind: "state_error", detail: CHECKPOINT_CAS_DETAIL }
@@ -191,6 +197,8 @@ export async function persistTransition(
 }
 
 const CHECKPOINT_CAS_DETAIL = "checkpoint CAS conflict or ambiguity";
+const STALE_PROOF_DETAIL =
+  "state head moved after the trusted proof was established";
 
 async function persistTransitionOnce(
   deps: RepairCycleDepsV1,
@@ -219,10 +227,7 @@ async function persistTransitionOnce(
   // movement makes the proof stale, so the mutation is refused before the
   // draft is built: no state is written and the caller defers the record.
   if (proofHead !== undefined && synchronized.head !== proofHead) {
-    return {
-      kind: "deferred",
-      detail: "state head moved after the trusted proof was established",
-    };
+    return { kind: "deferred", detail: STALE_PROOF_DETAIL };
   }
   const base = synchronized.snapshot;
   const draft: RepairStateSnapshotV1 = {

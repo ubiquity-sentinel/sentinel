@@ -7,7 +7,64 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 13:30 UTC)
+## Latest checkpoint (2026-10-24 14:40 UTC)
+
+- Launcher: `1d056586ed` (bootstrap `40100679498` and ordinary run `40101240892`
+  settled `success`), then `201c65bac5` at 14:40 UTC, an exact CI-green
+  `development` SHA (CI `40102429155`) with no workflow change. It adds the walk
+  fix and four hand fixes of reserved files.
+- Hand fixes on `development` (owner directive 3):
+  - `7c0d11b109`: with in-flight work, the parked traversal of the
+    current-matrix walk stops at half its budget. Live on `1d056586ed` the walk
+    still reported `current-matrix:unrecoverable:unlisted` for ai.ubq.fi 587 and
+    608, so Sentinel 204–208 stayed on their 09:44 implementation intents.
+  - `af475d8ec7` (#183): plain-language progress comments on worked issues,
+    posted by the trusted repair host after each target cycle, idempotent by a
+    hidden marker. Acceptance needs two live runs without duplicates.
+  - `aa67c6fd9e` (#159 item 2): the zero-cell plan diagnostic counts
+    `review_rounds_spent`. DECISIONS records the other #159 items.
+  - `da183f5d7e` (#193): one `sentinel_app_grant_handoff` line names why the
+    launcher withheld the Gateway mint grant.
+  - `201c65bac5` (#178): finalize prints one `hosted_runtime_run_summary` line
+    and a step summary.
+- CI: the host-2 failure on `7c0d11b109` (`matrix_actions_test.ts:200`) passed
+  on `af475d8ec7` with the same code. The modules shard failed on `af475d8ec7`
+  and `da183f5d7e` only on the heap bound of
+  `model-port-early-notifications_test.ts`: 33.67 and 33.81 MB against 32 MiB.
+  Same Deno 2.9.8, same 262 modules, and no change to the model port. It passed
+  on `7c0d11b109` and `201c65bac5`. Locally, alone, it measures 26–28 MiB. The
+  bound is left unchanged because it still proves the 38 MiB output is not
+  retained.
+- Passport: 23 reviewed records (PRs 138–169) wait at `delivery` since 05:06
+  UTC. The shipped delivery-line code shows candidates 43, 53 and 58 (PRs 143,
+  158, 146) on the tip, waiting for CI on the apparently red base, holding the
+  whole line. They stop holding at stall count 12, around 17:00 UTC. A green
+  Passport base is the fix, handed to the Passport agent.
+- Live on `201c65bac5` (checked 15:20 UTC):
+  - Bootstrap `40103710577` (generation 104) and ordinary run `40104416574`
+    settled `success`.
+  - The walk fix works. Bootstrap maintenance applied with
+    `current-matrix:ingested:10`. Passport 87–108 left their preservation
+    intents, and the ordinary run's repair job published PRs 196–204.
+  - Sentinel 204–208 still hold their 09:44 implementation intents, whose
+    producer run crashed. They turn stale and re-admittable at 15:44 UTC.
+  - #178: finalize printed one `hosted_runtime_run_summary` line per run (#178
+    closed).
+  - #193: `sentinel_app_grant_handoff` reads `retained` in the ordinary plan and
+    repair jobs, and `refused`/`source` in the bootstrap, as designed (#193
+    closed).
+  - #183: `ubiquity-sentinel[bot]` posted "Sentinel opened pull request #210 and
+    is waiting for CI on it." on Sentinel issue 209 at 15:03 UTC. The child's
+    report lines are not forwarded to the job log. This session cannot read
+    ai.ubq.fi or Passport issues, so comments there are unverified here. By
+    15:35 issue 209 had two comments for two real stage changes, and issue 187
+    had one: no duplicate.
+- Sentinel 209 (PR 210, green CI) parked on "self merge trusted CI pipeline
+  changed" because the candidate edits `ops/self-defects.ts`, part of the
+  trusted pipeline a model candidate may not self-merge. Its change was reviewed
+  and hand-landed as `c09192c9a9` (owner directive 3).
+
+## Prior checkpoint (2026-10-24 13:30 UTC)
 
 - Throughput restored: ordinary run `40095160777` (generation 101, launcher
   `62af807857`) admitted 26 work items in one wave (Passport 22, ai.ubq.fi 3,

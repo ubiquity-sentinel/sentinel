@@ -256,6 +256,12 @@ export interface ActionsTargetCyclesInputV1 {
     after: readonly WorkRecordV1[],
   ) => Promise<unknown>;
   /**
+   * The work records the progress reporter compares against instead of the
+   * state just before each cycle: the matrix aggregate passes the state at
+   * its own start, so ingestion's parks and publications report too.
+   */
+  progressBaseline?: readonly WorkRecordV1[];
+  /**
    * A matrix cell's read-only CI failure evidence reader for one target,
    * on the cell's scoped read token (generation 81). Absent elsewhere.
    */
@@ -390,7 +396,7 @@ export async function runActionsTargetCycles(
       const capabilities = input.resolveTargetCapabilities?.(config) ?? input;
       const before = input.progressComments === undefined
         ? null
-        : await workSnapshot(input.state);
+        : input.progressBaseline ?? await workSnapshot(input.state);
       outcome = await runCycle({
         clock: input.clock,
         state: input.state,
