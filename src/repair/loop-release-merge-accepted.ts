@@ -75,6 +75,7 @@ export async function completeMergeAccepted(
     record.repository,
     context.bounds,
   );
+  if (cooling.kind === "state_error") return cooling;
   if (cooling.kind !== "ok") return waitRelease(deps, context, record, now);
   const merge = await observeMergeAcceptedDelivery(
     deps.github,
