@@ -20,6 +20,8 @@ import {
   parseOwnerSuccessorReviewV1,
 } from "../contracts/owner-successor-review.ts";
 import {
+  allReservationsV1,
+  findReservationV1,
   parseRepairStateSnapshotV1,
   type RepairStateSnapshotV1,
 } from "../contracts/state-snapshots.ts";
@@ -58,6 +60,18 @@ export type OwnerSuccessorProduction =
   | "pending"
   | "completed"
   | "failed";
+
+/** Next owner-review attempt reads live AND archived reservations. */
+export function nextOwnerSuccessorAttemptV1(
+  snapshot: Pick<RepairStateSnapshotV1, "reservations" | "reservationArchive">,
+  workId: string,
+): number {
+  return Math.max(
+    0,
+    ...allReservationsV1(snapshot).filter((r) => r.taskId === workId)
+      .map((r) => r.attempt),
+  ) + 1;
+}
 
 /** Existing ordinary runtime admission and self-target preparation own this bounded operation. */
 export async function runOwnerSuccessorReviewPhase(
@@ -212,11 +226,7 @@ export async function produceOwnerSuccessorAcceptance(input: {
   const operationId = `owner-successor:${operationKey}`;
   const requestId = `owner-successor-request:${operationKey}`,
     invocationId = `owner-successor-invocation:${operationKey}`;
-  const attempt = Math.max(
-    0,
-    ...repair.value.snapshot.reservations.filter((r) => r.taskId === work.id)
-      .map((r) => r.attempt),
-  ) + 1;
+  const attempt = nextOwnerSuccessorAttemptV1(repair.value.snapshot, work.id);
   const admitted = await input.budget.reserveModelStart({
     repository: work.repository,
     taskId: work.id,
@@ -230,9 +240,7 @@ export async function produceOwnerSuccessorAcceptance(input: {
     !initial.ok || initial.value.status !== "found" ||
     initial.value.head !== admitted.stateHead ||
     !same(
-      initial.value.snapshot.reservations.find((r) =>
-        r.id === admitted.reservation.id
-      ),
+      findReservationV1(initial.value.snapshot, admitted.reservation.id),
       admitted.reservation,
     )
   ) return "pending";

@@ -11,6 +11,10 @@
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { isCiFixMarker } from "../../src/repair/ci-first-policy.ts";
+import {
+  NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
+  NO_TEST_EVIDENCE_COMMAND_ID,
+} from "../../src/host/target-policy-generic.ts";
 import { preReviewCiParked } from "../../ops/hosted-autonomy-ci-first.ts";
 import { ciGreenHeadKey } from "../../ops/hosted-autonomy-ci-retries.ts";
 import { hostedRepositoryKey } from "../../ops/hosted-autonomy-policy.ts";
@@ -500,6 +504,55 @@ Deno.test("CI first: a moved base is refreshed before any CI read of the stale h
     );
     assert.equal(rig.model.requests.length, 0);
     assert.equal(SHA4.length, 40);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("CI first: no CI and no local verify parks precisely, uncharged", async () => {
+  const { rig, charges } = await ciFirstRig("cf-no-evidence", {
+    checks: {},
+    configOverrides: {
+      commands: {
+        replay: "replay_capture",
+        test: NO_TEST_EVIDENCE_COMMAND_ID,
+      },
+      commandRegistry: {
+        version: "v1",
+        commands: {
+          replay_capture: {
+            executable: "deno",
+            args: ["task", "replay:capture"],
+            maxDurationMs: 600000,
+            maxOutputBytes: 1048576,
+          },
+          [NO_TEST_EVIDENCE_COMMAND_ID]: {
+            executable: "false",
+            args: [],
+            maxDurationMs: 1_800_000,
+            maxOutputBytes: 4_194_304,
+          },
+        },
+      },
+    },
+  });
+  try {
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    const after = await rig.snapshot();
+    const work = taskRecord(after);
+    assert.equal(work.nextStep, "blocked");
+    assert.equal(work.blocker?.kind, "missing_evidence");
+    assert.equal(work.blocker?.message, NO_CI_AND_NO_LOCAL_VERIFY_DETAIL);
+    assert.equal(
+      work.blocker?.message.startsWith("no_ci_and_no_local_verify"),
+      true,
+    );
+    assert.equal(rig.github.calls.includes("requestReview"), false);
+    assert.equal(reviewCharges(after).length, 0, "no review admission");
+    assert.deepEqual(after.reservations, charges, "nothing charged");
+    assert.equal(work.counters.reviewRounds, 0);
+    assert.equal(work.target.pr, 7, "the publication identity is kept");
   } finally {
     await rig.ctx.cleanup();
   }

@@ -1,17 +1,23 @@
 /** Candidate eligibility, implementation uncertainty and P0 correction. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
-import { asWorkItemId } from "../../src/contracts/brands.ts";
+import { portOk } from "../../src/contracts/ports.ts";
+import { asCommandId, asWorkItemId } from "../../src/contracts/brands.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { prepareImplementationStart } from "../../src/repair/loop-implementation.ts";
+import { NO_TEST_EVIDENCE_COMMAND_ID } from "../../src/host/target-policy-generic.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
 } from "../../src/repair/loop-types.ts";
 import {
+  baseRefreshIntentKey,
   candidateBranch,
   implementationIntentKey,
 } from "../../src/repair/keys.ts";
+import { conflictMarker } from "../../src/repair/conflict-resolution.ts";
+import { CHECK_POLL_MS } from "../../src/repair/loop-bounds.ts";
+import { RETIRED_TARGET_MESSAGE } from "../../src/repair/selection.ts";
 import {
   reservation,
   reviewReceipt,
@@ -574,3 +580,203 @@ Deno.test(
     );
   },
 );
+
+Deno.test("closed-source conflict marker retires before the conflict-resolution start", async () => {
+  const branch = candidateBranch(asWorkItemId("issue-1"));
+  const record = workRecord("issue-1", {
+    target: {
+      base: SHA1,
+      head: SHA3,
+      branch,
+      pr: 7,
+      checkpoint: null,
+      candidateState: {
+        publishedHead: SHA3,
+        preserved: {
+          operationKey: baseRefreshIntentKey(7, SHA3, SHA2),
+          base: SHA1,
+          head: SHA3,
+          ref: `refs/heads/sentinel-candidates/${"a".repeat(64)}`,
+        },
+      },
+    },
+    counters: { attempts: 1, retries: 0, reviewRounds: 0 },
+  });
+  record.intent = {
+    kind: "base_refresh",
+    key: baseRefreshIntentKey(7, SHA3, SHA2),
+    startedAt: T0,
+    branch,
+    expectedHead: SHA3,
+    observedBase: SHA2,
+    pr: 7,
+    requestId: null,
+    resultId: null,
+    failure: conflictMarker(SHA2, T0),
+  };
+  const rig = await makeRig("closed-conflict", {
+    github: {
+      baseSha: SHA2,
+      candidateLifecycle: {
+        refs: { [`refs/heads/${branch}`]: SHA3 },
+        pullRequests: [exactOpenPr(7, SHA3, branch, SHA1)],
+      },
+    },
+  });
+  try {
+    const written = await rig.store.writeRepair(
+      seededSnapshot([record]),
+      null,
+    );
+    assert.ok(written.ok && written.value.status === "applied");
+    rig.github.readIssue = () =>
+      Promise.resolve(portOk(issueRecord(1, { state: "closed" })));
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    const state = await rig.snapshot();
+    const stored = state.work.find((row) => row.id === "issue-1");
+    assert.ok(stored !== undefined, "seeded record retained");
+    assert.equal(stored.nextStep, "blocked");
+    assert.equal(stored.blocker?.message, RETIRED_TARGET_MESSAGE);
+    assert.equal(stored.intent, null);
+    assert.deepEqual(
+      state.reservations.filter((row) => row.taskId === "issue-1"),
+      [],
+      "nothing charged",
+    );
+    assert.equal(
+      rig.model.requests.filter((request) => request.taskId === "issue-1")
+        .length,
+      0,
+      "no conflict resolution start",
+    );
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("no-CI generic targets park at admission, before any reservation", async () => {
+  const record = workRecord("issue-noci");
+  const state = new MemoryState();
+  state.repair = seededSnapshot([record]);
+  state.repairHead = SHA1;
+  const clock = new FakeClock(T0);
+  const configs = repairConfigs({
+    sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
+  });
+  const config = {
+    ...configs[0]!,
+    commands: {
+      ...configs[0]!.commands,
+      test: asCommandId(NO_TEST_EVIDENCE_COMMAND_ID),
+    },
+  };
+  const deps: RepairCycleDepsV1 = {
+    clock,
+    state,
+    configs,
+    controllerSha: SHA1,
+    github: new FakeGithub(),
+    githubCooldown: new DurableGitHubCooldownGate({ state, clock }),
+    incidents: new FakeIncidents({ summaries: [] }),
+    replay: new FakeReplay(),
+    model: new FakeModel(),
+    budget: new RollingStartBudget({ clock, state, configs }),
+  };
+  const context: LoopContextV1 = {
+    snapshot: state.repair,
+    head: state.repairHead,
+    executionBaseline: record,
+    bounds: {
+      runDeadline: clock.now() + 60 * 60_000,
+      modelCutoff: clock.now() + 60 * 60_000,
+    },
+  };
+
+  const result = await prepareImplementationStart(
+    deps,
+    context,
+    record,
+    config,
+  );
+  assert.equal(result.kind, "progress", JSON.stringify(result));
+  const after = await state.readRepair();
+  assert.ok(after.ok && after.value.status === "found");
+  if (!after.ok || after.value.status !== "found") return;
+  const parked = after.value.snapshot.work.find((row) => row.id === record.id);
+  assert.equal(parked?.nextStep, "blocked");
+  assert.equal(parked?.blocker?.kind, "missing_evidence");
+  assert.match(parked?.blocker?.message ?? "", /no pull_request CI/);
+  assert.equal(
+    after.value.snapshot.reservations.length,
+    0,
+    "the park charges nothing",
+  );
+});
+
+Deno.test("a capacity-refused admission waits bounded with a precise retry reason", async () => {
+  const record = workRecord("issue-refused");
+  const state = new MemoryState();
+  state.repair = seededSnapshot([record]);
+  state.repairHead = SHA1;
+  const clock = new FakeClock(T0);
+  const configs = repairConfigs({
+    sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
+  });
+  const deps: RepairCycleDepsV1 = {
+    clock,
+    state,
+    configs,
+    controllerSha: SHA1,
+    github: new FakeGithub(),
+    githubCooldown: new DurableGitHubCooldownGate({ state, clock }),
+    incidents: new FakeIncidents({ summaries: [] }),
+    replay: new FakeReplay(),
+    model: new FakeModel(),
+    budget: {
+      reserveModelStart: () =>
+        Promise.resolve({
+          status: "rejected" as const,
+          reason: "state_snapshot_refused" as const,
+          detail: "synthetic capacity refusal",
+        }),
+      settleModelStart: () => {
+        throw new Error("no settlement in this case");
+      },
+    },
+  };
+  const context: LoopContextV1 = {
+    snapshot: state.repair,
+    head: state.repairHead,
+    executionBaseline: record,
+    bounds: {
+      runDeadline: clock.now() + 60 * 60_000,
+      modelCutoff: clock.now() + 60 * 60_000,
+    },
+  };
+
+  const result = await prepareImplementationStart(
+    deps,
+    context,
+    record,
+    configs[0]!,
+  );
+  assert.equal(result.kind, "progress", JSON.stringify(result));
+  const after = await state.readRepair();
+  assert.ok(after.ok && after.value.status === "found");
+  if (!after.ok || after.value.status !== "found") return;
+  const waiting = after.value.snapshot.work.find((row) => row.id === record.id);
+  assert.equal(
+    waiting?.nextStep,
+    "work",
+    "a capacity refusal is never terminal",
+  );
+  assert.equal(waiting?.blocker, null);
+  assert.equal(
+    waiting?.wait?.reason,
+    "ledger_capacity",
+    "the precise capacity reason stays visible",
+  );
+  assert.equal(waiting?.wait?.until, T0 + CHECK_POLL_MS);
+  assert.equal(after.value.snapshot.reservations.length, 0);
+});
