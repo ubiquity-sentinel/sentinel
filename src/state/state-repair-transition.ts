@@ -1,5 +1,11 @@
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import { findReservationV1 } from "../contracts/state-snapshots.ts";
+import { MaxItems } from "../contracts/validation.ts";
 import { ownerSuccessorReviewTransition } from "../contracts/owner-successor-review.ts";
+import {
+  isRetirableReservationV1,
+  referencedReservationIdsV1,
+} from "./state-reservation-archive.ts";
 import {
   cooldownTransitionMessage,
   sameCanonical,
@@ -35,12 +41,50 @@ export function validateRepairTransition(
       return "existing work record immutable identity changed";
     }
   }
+  // Archived rows are immutable retention records. A later write may retire
+  // one only by bounded archive retirement (the archive is at its ceiling and
+  // the row is an eligible, unreferenced terminal row past the accounting
+  // window); it may never rewrite the retained row or move it back live.
+  const retainedArchiveIds = referencedReservationIdsV1(next, true);
+  for (const priorRecord of prior.reservationArchive ?? []) {
+    const nextRecord = findReservationV1(next, priorRecord.id);
+    if (nextRecord === undefined) {
+      if (
+        (next.reservationArchive?.length ?? 0) !==
+          MaxItems.reservationArchiveRecords
+      ) {
+        return "an archived reservation cannot disappear below the archive bound";
+      }
+      if (
+        retainedArchiveIds.has(priorRecord.id) ||
+        !isRetirableReservationV1(priorRecord, next.updatedAt)
+      ) {
+        return "an archived reservation may only be retired by bounded retention";
+      }
+      continue;
+    }
+    if (next.reservations.some((record) => record.id === priorRecord.id)) {
+      return "an archived reservation cannot return to the live ledger";
+    }
+    if (!sameCanonical(priorRecord, nextRecord)) {
+      return "an archived reservation is immutable";
+    }
+  }
   for (const priorRecord of prior.reservations) {
-    const nextRecord = next.reservations.find(
-      (record) => record.id === priorRecord.id,
-    );
+    // A reservation may have moved into the durable archive at the writer's
+    // capacity compaction; it is the same row and is still preserved.
+    const nextRecord = findReservationV1(next, priorRecord.id);
     if (nextRecord === undefined) {
       return "existing reservation cannot disappear";
+    }
+    // A row moved to the archive in this commit is a retention move only: it
+    // may never change while it moves, so an unsettled reservation cannot be
+    // settled or rewritten by (ab)using the archive collection.
+    if (
+      !next.reservations.some((record) => record.id === priorRecord.id) &&
+      !sameCanonical(priorRecord, nextRecord)
+    ) {
+      return "an archived reservation cannot change while it moves";
     }
     if (
       !sameRepository(priorRecord.repository, nextRecord.repository) ||
@@ -330,7 +374,9 @@ export function validateRepairTransition(
     }
     if (
       (operation.phase === "completed" || operation.phase === "failed") &&
-      !next.reservations.some((r) => sameCanonical(r, operation.reservation))
+      ![...next.reservations, ...(next.reservationArchive ?? [])].some((r) =>
+        sameCanonical(r, operation.reservation)
+      )
     ) {
       return "terminal owner review must bind its unchanged settled reservation";
     }

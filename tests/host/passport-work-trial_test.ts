@@ -188,6 +188,12 @@ Deno.test("Passport trial: unfinished ambiguous and stale publication custody ne
     snapshot.reservations[0].settledAt = outcome === "reserved"
       ? null
       : 1793330000000;
+    // An ambiguity settled for an older attempt is not this record's current
+    // attempt charge, so the park cannot be that attempt's terminal
+    // disposition and the record stays protected.
+    if (outcome === "ambiguous") {
+      snapshot.reservations[0].attempt = record.counters.attempts - 1;
+    }
     const before = structuredClone(snapshot);
     assert.equal(planRaisedCeilingReadmission(snapshot, record, null), null);
     record.blocker!.message = CI_FIX_EXHAUSTED_PREFIX + "ci(failure)";

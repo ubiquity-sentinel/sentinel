@@ -25,6 +25,10 @@ import type { MatrixBundleExporterV1 } from "./matrix-git.ts";
 import { sameRepository } from "./matrix-identity.ts";
 import type { CiEvidenceReaderV1 } from "../repair/ci-evidence-types.ts";
 import { prepareCellCiEvidence } from "./matrix-cell-ci-evidence.ts";
+import {
+  NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER,
+  NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
+} from "./target-policy-generic.ts";
 
 export interface MatrixCellDepsV1 {
   /** Trusted fresh clock and original shared run bounds; never artifact claims. */
@@ -194,6 +198,17 @@ export async function runMatrixCell(
       "not_started",
       "planned task source/repository does not match authoritative state",
     );
+  }
+  // A deliberate admission park must settle as a result, never as an
+  // uncaught cell failure: no carrier would exist and the launcher would
+  // report carrier_count 0 for a target the planner already parked. The
+  // record transition is the planner's (read-only here); the cell only
+  // reports the settled non-start.
+  if (
+    record.blocker?.message.startsWith(NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER) ===
+      true
+  ) {
+    return refuse("not_started", NO_CI_AND_NO_LOCAL_VERIFY_DETAIL);
   }
   const intent = record.intent;
   if (

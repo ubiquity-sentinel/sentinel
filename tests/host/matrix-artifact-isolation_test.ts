@@ -1,20 +1,42 @@
 /** Authenticated historical runtime isolation and logical scan deadlines. */
 import assert from "node:assert/strict";
-import { MatrixHistoricalRuntimeMismatch } from "../../src/host/matrix-artifact-port.ts";
 import { createActionsMatrixArtifactTransport } from "../../src/host/matrix-artifacts.ts";
+import { matrixDigestV1 } from "../../src/contracts/matrix.ts";
 import { SHA2, SHA3, T0 } from "../state/helpers.ts";
 import {
+  bytes,
   fixture,
   RESERVATION,
   RUN,
   RUNTIME,
   WAVE,
+  zip,
 } from "./matrix-artifact-fixtures.ts";
+
+Deno.test("matrix artifacts: a historical wave bound to its own plan is accepted after the installed runtime moved", async () => {
+  const rig = await fixture();
+  try {
+    const waves = await rig.transport.recover({
+      ...rig.input,
+      currentRun: undefined,
+      runtimeSha: SHA3,
+      consumerRun: { ...RUN, runId: 99, runAttempt: 1 },
+    });
+    assert.equal(waves.length, 1);
+    assert.equal(waves[0].planDigest, rig.plannerMarker.planDigest);
+    assert.equal(waves[0].plan.waveId, WAVE);
+    assert.deepEqual(waves[0].provenance.run, RUN);
+    assert.equal(waves[0].results.length, 1);
+    assert.equal(waves[0].results[0].runtimeSha, RUNTIME);
+    assert.equal(waves[0].results[0].reservationId, RESERVATION);
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
 
 Deno.test("matrix artifacts: only authenticated historical runtime mismatch has a typed isolation disposition", async (t) => {
   for (
     const scenario of [
-      "historical",
       "current unscoped",
       "current scoped",
       "consumer absent",
@@ -60,42 +82,7 @@ Deno.test("matrix artifacts: only authenticated historical runtime mismatch has 
         ) => [id, content.slice()]);
         await assert.rejects(
           () => rig.transport.recover(input),
-          (error: unknown) => {
-            if (scenario === "historical") {
-              assert.ok(error instanceof MatrixHistoricalRuntimeMismatch);
-              assert.equal(error.evidence.runtimeSha, RUNTIME);
-              assert.equal(error.evidence.expectedRuntimeSha, SHA3);
-              assert.deepEqual(error.evidence.run, RUN);
-              assert.equal(
-                error.evidence.planDigest,
-                rig.plannerMarker.planDigest,
-              );
-              assert.equal(error.evidence.affected.length, 1);
-              assert.deepEqual(
-                error.evidence.affected[0].work,
-                custody.work[0],
-              );
-              assert.deepEqual(
-                error.evidence.affected[0].reservation,
-                custody.reservations[0],
-              );
-              assert.equal(
-                error.evidence.affected[0].cell.resultDigest,
-                rig.cellMarker.resultDigest,
-              );
-              assert.ok(
-                !("results" in error.evidence) &&
-                  !("bundlesDir" in error.evidence),
-              );
-            } else {
-              assert.ok(!(error instanceof MatrixHistoricalRuntimeMismatch));
-              assert.match(
-                String(error),
-                /provenance unavailable or conflicting/,
-              );
-            }
-            return true;
-          },
+          /provenance unavailable or conflicting/,
         );
         assert.deepEqual(rig.repair, custody);
         assert.deepEqual([...rig.archives], archives);
@@ -111,35 +98,53 @@ Deno.test("matrix artifacts: only authenticated historical runtime mismatch has 
   }
 });
 
-Deno.test("matrix artifacts: a historical runtime mismatch with a missing cell artifact isolates only the authenticated cells", async () => {
+Deno.test("matrix artifacts: a historical wave whose cell runtime disagrees with its plan is still refused", async () => {
+  const rig = await fixture();
+  try {
+    const plan = structuredClone(rig.plan);
+    plan.cells[0].runtimeSha = SHA2;
+    await rig.setArchive(
+      501,
+      rig.planName,
+      await zip([
+        { name: "plan.json", content: bytes(plan) },
+      ]),
+    );
+    rig.plannerMarker.planDigest = await matrixDigestV1(plan);
+    rig.logs.set(
+      401,
+      `${new Date(T0).toISOString()} ${JSON.stringify(rig.plannerMarker)}\n`,
+    );
+    await assert.rejects(
+      () =>
+        rig.transport.recover({
+          ...rig.input,
+          currentRun: undefined,
+          runtimeSha: SHA3,
+          consumerRun: { ...RUN, runId: 99, runAttempt: 1 },
+        }),
+      /provenance unavailable or conflicting/,
+    );
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
+
+Deno.test("matrix artifacts: a historical wave with a missing cell artifact accepts only the authenticated cells", async () => {
   const rig = await fixture(false, true);
   try {
-    const input: Parameters<typeof rig.transport.recover>[0] = {
+    const custody = structuredClone(rig.repair);
+    const waves = await rig.transport.recover({
       ...rig.input,
       currentRun: undefined,
       runtimeSha: SHA3,
       consumerRun: { ...RUN, runId: 99, runAttempt: 1 },
-    };
-    const custody = structuredClone(rig.repair);
-    const archives = [...rig.archives].map((
-      [id, content],
-    ) => [id, content.slice()]);
-    await assert.rejects(
-      () => rig.transport.recover(input),
-      (error: unknown) => {
-        assert.ok(error instanceof MatrixHistoricalRuntimeMismatch);
-        assert.equal(error.evidence.affected.length, 1);
-        assert.equal(error.evidence.affected[0].reservation.id, RESERVATION);
-        return true;
-      },
-    );
+    });
+    assert.equal(waves.length, 1);
+    assert.equal(waves[0].plan.cells.length, 2);
+    assert.equal(waves[0].results.length, 1);
+    assert.equal(waves[0].results[0].reservationId, RESERVATION);
     assert.deepEqual(rig.repair, custody);
-    assert.deepEqual([...rig.archives], archives);
-    assert.deepEqual(
-      [...Deno.readDirSync(rig.tmp + "/recovered")],
-      [],
-      "rejected bundles never escape transport staging",
-    );
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });
   }

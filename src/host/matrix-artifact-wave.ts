@@ -9,6 +9,10 @@ import {
   type HostedExecutionIntentV1,
 } from "../contracts/hosted-supervisor.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
+import {
+  allReservationsV1,
+  findReservationV1,
+} from "../contracts/state-snapshots.ts";
 import { isGitSha } from "../contracts/brands.ts";
 import {
   matrixCellIdV1,
@@ -29,7 +33,6 @@ import {
   type MatrixRejectedCellEvidenceV1,
   type MatrixRejectedWaveV1,
 } from "./matrix-artifact-port.ts";
-import { MatrixHistoricalRuntimeMismatch } from "./matrix-artifact-port.ts";
 import {
   bytesDigest,
   instant,
@@ -75,7 +78,6 @@ export async function recoverMatrixArtifactWaves(context: {
     options,
     input,
     snapshot,
-    repairHead,
     requested,
     saved,
     artifacts,
@@ -247,7 +249,7 @@ export async function recoverMatrixArtifactWaves(context: {
       )!;
       const resolved = await resolvedConflictCandidate(
         task,
-        snapshot.reservations,
+        allReservationsV1(snapshot),
       );
       if (task.intent?.kind === "base_refresh") {
         if (
@@ -307,8 +309,9 @@ export async function recoverMatrixArtifactWaves(context: {
                         review.outcome === "completed"
                       )))))))
       ) refuse();
-      const reservation = snapshot.reservations.find((row) =>
-        row.id === cell.reservationId
+      const reservation = findReservationV1(
+        snapshot,
+        cell.reservationId,
       )!;
       if (plan.plannedAt > options.clock.now() + TOLERANCE) refuse();
       if (reservation.createdAt > plan.plannedAt) {
@@ -489,10 +492,11 @@ export async function recoverMatrixArtifactWaves(context: {
       if (task.intent?.kind === "base_refresh") {
         const resolved = await resolvedConflictCandidate(
           task,
-          snapshot.reservations,
+          allReservationsV1(snapshot),
         );
-        const reservation = snapshot.reservations.find((row) =>
-          row.id === cell.reservationId
+        const reservation = findReservationV1(
+          snapshot,
+          cell.reservationId,
         )!;
         if (
           resolved === null || result.status !== "completed" ||
@@ -511,8 +515,9 @@ export async function recoverMatrixArtifactWaves(context: {
           result.receipt !== null || result.bundle !== null)
       ) refuse();
       if (task.intent?.kind === "candidate_preservation") {
-        const reservation = snapshot.reservations.find((row) =>
-          row.id === cell.reservationId
+        const reservation = findReservationV1(
+          snapshot,
+          cell.reservationId,
         )!;
         const checkpoint = task.target.checkpoint;
         if (
@@ -591,37 +596,19 @@ export async function recoverMatrixArtifactWaves(context: {
       });
       continue;
     }
+    // A historical wave is bound to the plan that scheduled it: the
+    // producer run/attempt, plan digest, planner job and every cell's
+    // recorded runtime were authenticated above. The installed runtime may
+    // have advanced since that plan, but that does not invalidate a result
+    // whose own binding still matches its plan. Only a wave whose binding
+    // disagrees with itself is refused; a non-historical caller keeps the
+    // strict installed-runtime identity.
     if (runtimeMismatch) {
-      if (
-        !historical || !input.consumerRun ||
-        evidence.length + missingArtifacts !== selected.length
-      ) refuse();
-      // A partially authenticated wave isolates exactly the cells with
-      // complete evidence; unprovable cells were left charged above and
-      // are never claimed.
+      if (!historical || !input.consumerRun) refuse();
+      if (evidence.length + missingArtifacts !== selected.length) refuse();
+      // Unprovable cells stay charged and are never claimed; the evidence
+      // that is complete and plan-bound is accepted with them omitted.
       if (evidence.length === 0) continue;
-      throw new MatrixHistoricalRuntimeMismatch({
-        consumerRun: input.consumerRun,
-        expectedRuntimeSha: input.runtimeSha,
-        run,
-        runtimeSha: waveRuntime,
-        generation: positive(planner.generation),
-        repairHead: repairHead,
-        planDigest,
-        planArtifactId: positive(artifact.id),
-        planArchiveDigest: String(artifact.digest),
-        plannerJobId: positive(planners[0].id),
-        affected: evidence.map((cell) => ({
-          work: snapshot.work.find((row) =>
-            row.id === cell.taskId &&
-            row.intent?.requestId === cell.reservationId
-          )!,
-          reservation: snapshot.reservations.find((row) =>
-            row.id === cell.reservationId
-          )!,
-          cell,
-        })),
-      });
     }
     recovered.push({
       plan,
