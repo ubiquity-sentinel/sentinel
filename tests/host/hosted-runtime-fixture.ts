@@ -300,7 +300,14 @@ export async function makeRig(
     prefix: "sentinel-hosted-runtime-",
     dir: ROOT,
   });
-  const env = testGitEnv(`${root}/git-home`);
+  // Summary output includes these SHAs, so fixture identities must not depend
+  // on wall time (a changing hash can even collide with hostile-output markers).
+  const commitTime = new Date(T0).toISOString();
+  const env = {
+    ...testGitEnv(`${root}/git-home`),
+    GIT_AUTHOR_DATE: commitTime,
+    GIT_COMMITTER_DATE: commitTime,
+  };
   await Deno.mkdir(`${root}/git-home`, { recursive: true });
   const launcherDir = `${root}/launcher`;
   const runtimeDir = `${root}/runtime`;

@@ -13,6 +13,11 @@ import type {
 
 export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
   const origin = input.runOrigin ?? input.clock.now();
+  // A model-disabled bootstrap execution still prepares every target (the
+  // bootstrap contract's source intake) and dispatches pre-merge CI; only the
+  // work-record walk is skipped (issue #297).
+  const bootstrap = input.bootstrap === true ||
+    input.host?.execution.purpose === "bootstrap";
   const addressed: string[] = [];
   const skipped: string[] = [];
   const failed: string[] = [];
@@ -138,6 +143,9 @@ export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
             deadline: input.deadline,
             stepLimit: input.stepLimit,
             modelStartsEnabled: input.modelStartsEnabled,
+            // A model-disabled bootstrap execution performs intake, maintenance
+            // and health only: it never walks the work queue (issue #297).
+            bootstrap,
             runStartedAt: origin,
           };
           if (input.runCycle !== undefined) {

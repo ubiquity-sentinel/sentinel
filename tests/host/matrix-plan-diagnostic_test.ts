@@ -110,6 +110,29 @@ Deno.test("plan diagnostic: a live continuation refusal keeps its own key", () =
   );
 });
 
+Deno.test("plan diagnostic: a no-test-evidence target keeps its own closed reason", () => {
+  const noEvidence = record(0);
+  const config = {
+    ...CONFIG,
+    commands: { test: "no_ci_and_no_local_verify" },
+  } as unknown as RepositoryConfigV1;
+  assert.equal(
+    explainMatrixNotReady(
+      noEvidence,
+      config,
+      seededSnapshot([noEvidence]),
+      true,
+      null,
+    ),
+    "no_ci_and_no_local_verify",
+  );
+  assert.equal(
+    planNotReadyKey("no_ci_and_no_local_verify"),
+    "no_ci_and_no_local_verify",
+    "the planner's own park reason is registered, not collapsed to other",
+  );
+});
+
 Deno.test("plan diagnostic: attempted/deferred counts carry a closed outcome histogram", () => {
   assert.equal(
     planDeferredKey({ kind: "deferred", detail: "ledger capacity" }),
@@ -175,4 +198,31 @@ Deno.test("plan diagnostic: a ledger-capacity wait keeps its admission_capacity 
     planDeferredKey({ kind: "progress" }, "ledger_capacity"),
     "admission_capacity",
   );
+});
+
+Deno.test("plan diagnostic: an expired ledger-capacity wait does not override the current outcome", () => {
+  for (
+    const [outcome, expected] of [
+      [{
+        kind: "deferred",
+        detail: "implementation start is past the model cutoff",
+      }, "bounds"],
+      [{
+        kind: "deferred",
+        detail: "implementation cannot fit its immutable dispatch artifact",
+      }, "artifact"],
+      [{ kind: "deferred", detail: "GitHub cooldown" }, "cooldown"],
+      [{
+        kind: "deferred",
+        detail: "implementation admission state is unavailable",
+      }, "admission"],
+      [{ kind: "deferred", detail: "ledger capacity" }, "admission_capacity"],
+      [{ kind: "deferred", detail: "synthetic secret xyz" }, "deferred"],
+      [{ kind: "blocked" }, "blocked"],
+      [{ kind: "state_error" }, "state_error"],
+      [{ kind: "unknown" }, "other"],
+    ] as const
+  ) {
+    assert.equal(planDeferredKey(outcome, "ledger_capacity"), expected);
+  }
 });
