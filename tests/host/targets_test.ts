@@ -164,6 +164,80 @@ Deno.test("targets: only a bounded, duplicate-free slug array is accepted", () =
   }
 });
 
+Deno.test("targets: expanded settings through 64 entries preserve their order", () => {
+  for (const length of [33, 64]) {
+    const targets = Array.from(
+      { length },
+      (_unused, index) => `ubiquity/repo-${index}`,
+    );
+    assert.deepEqual(
+      parseTargetSlugsV1(targets).map((target) => target.slug),
+      targets,
+    );
+  }
+});
+
+Deno.test("targets: the 64-target setting resolves in order without resolver fan-out", async () => {
+  const targets = Array.from(
+    { length: 64 },
+    (_unused, index) => `ubiquity/repo-${index}`,
+  );
+  const reads: string[] = [];
+  const loaded = await loadTargetConfigsV1({
+    template: TEMPLATE,
+    readFile: () => Promise.resolve(JSON.stringify(targets)),
+    resolveDefaultBranch: async (target) => {
+      reads.push(`branch:${target.slug}`);
+      await Promise.resolve();
+      return "main";
+    },
+    resolveTreeFacts: async (target, branch) => {
+      assert.equal(branch, "main");
+      reads.push(`facts:${target.slug}`);
+      await Promise.resolve();
+      return { files: [], hasCiWorkflow: true };
+    },
+  });
+  assert.deepEqual(
+    reads,
+    targets.flatMap((target) => [
+      `branch:${target}`,
+      `facts:${target}`,
+    ]),
+  );
+  assert.deepEqual(
+    loaded.configs.map((config) =>
+      `${config.repository.owner}/${config.repository.name}@${config.baseBranch}`
+    ),
+    targets.map((target) => `${target}@main`),
+  );
+  assert.deepEqual(loaded.skipped, []);
+  assert.deepEqual(loaded.factsUnavailable, []);
+});
+
+Deno.test("targets: 65 entries fail closed before resolving any repository", async () => {
+  const targets = Array.from(
+    { length: 65 },
+    (_unused, index) => `ubiquity/repo-${index}`,
+  );
+  const loaded = await loadTargetConfigsV1({
+    template: TEMPLATE,
+    readFile: () => Promise.resolve(JSON.stringify(targets)),
+    resolveDefaultBranch: () => {
+      assert.fail("over-limit settings must not resolve default branches");
+    },
+    resolveTreeFacts: () => {
+      assert.fail("over-limit settings must not resolve tree facts");
+    },
+  });
+  assert.deepEqual(loaded, {
+    targets: [],
+    configs: [],
+    skipped: [],
+    factsUnavailable: [],
+  });
+});
+
 Deno.test("targets: an unreadable or malformed setting yields no targets", async () => {
   assert.deepEqual(
     await readTargetSlugsV1({
