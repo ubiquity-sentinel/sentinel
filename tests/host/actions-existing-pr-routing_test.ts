@@ -3,10 +3,12 @@ import { portError } from "../../src/contracts/ports.ts";
 import { routeExistingPr } from "../../src/repair/loop-existing-pr.ts";
 import { prepareImplementationStart } from "../../src/repair/loop-implementation.ts";
 import { executeImplementationStep } from "../../src/repair/loop-work.ts";
-import { DenoReplayRuntime } from "../../src/replay/runtime.ts";
 import { actionsExistingPrincipalFixture } from "./actions-existing-pr-principal-fixtures.ts";
 
-Deno.test("Actions existing PR routing: active launcher cannot fall through when the App grant is absent", async () => {
+Deno.test("Actions existing PR routing: without the App grant Sentinel's own repair proceeds, no discovery or hold", async () => {
+  // Owner directive 2026-10-24: other people's pull requests never hold or
+  // divert Sentinel's own repair, so a missing grant no longer activates
+  // existing-PR discovery and its own PR creation is allowed.
   const rig = await actionsExistingPrincipalFixture(true, true);
   try {
     delete rig.env.SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT;
@@ -36,10 +38,10 @@ Deno.test("Actions existing PR routing: active launcher cannot fall through when
       assert.deepEqual(
         { route: route.status, creationAllowed: create.ok },
         {
-          route: "step",
-          creationAllowed: false,
+          route: "ordinary_new_work_allowed",
+          creationAllowed: true,
         },
-        "missing authority must retain discovery and block replacement admission",
+        "Sentinel's own work is neither held nor refused",
       );
     });
     assert.equal(
@@ -51,7 +53,7 @@ Deno.test("Actions existing PR routing: active launcher cannot fall through when
   }
 });
 
-Deno.test("Actions existing PR routing: unavailable principal cannot reserve replacement implementation", async (t) => {
+Deno.test("Actions existing PR routing: a missing principal no longer holds Sentinel's own implementation", async (t) => {
   for (
     const scenario of [
       "missing grant",
@@ -112,21 +114,28 @@ Deno.test("Actions existing PR routing: unavailable principal cannot reserve rep
           );
           const after = await input.state.readRepair();
           assert(after.ok && after.value.status === "found");
+          // Owner directive 2026-10-24: Sentinel prepares and charges its own
+          // implementation whatever the principal's state.
+          const proceeds = true;
           assert.deepEqual(
             {
               prepared: prepared.kind === "prepared",
               reservations: after.value.snapshot.reservations.length,
             },
             {
-              prepared: false,
-              reservations: read.value.snapshot.reservations.length,
+              prepared: proceeds,
+              reservations: read.value.snapshot.reservations.length +
+                (proceeds ? 1 : 0),
             },
-            "missing authority cannot prepare or charge a replacement implementation",
+            "Sentinel's own implementation is prepared with its own charge",
           );
+          const prior = read.value.snapshot.reservations;
           assert.deepEqual(
-            after.value.snapshot.reservations,
-            read.value.snapshot.reservations,
-            "refusal preserves every historical charge",
+            after.value.snapshot.reservations.filter((reservation) =>
+              prior.some((charge) => charge.id === reservation.id)
+            ),
+            prior,
+            "every historical charge is preserved",
           );
           assert.deepEqual(after.value.snapshot.work[0].target, record.target);
         });
@@ -138,7 +147,7 @@ Deno.test("Actions existing PR routing: unavailable principal cannot reserve rep
           rig.targetCalls.every((call) =>
             call.method === "GET" || call.path === "/graphql"
           ),
-          "refused replacement preparation produces no GitHub effect",
+          "implementation preparation produces no GitHub effect",
         );
       } finally {
         await rig.close();
@@ -147,7 +156,9 @@ Deno.test("Actions existing PR routing: unavailable principal cannot reserve rep
   }
 });
 
-Deno.test("Actions existing PR routing: actual implementation consumer holds missing authority before model scheduling", async (t) => {
+Deno.test("Actions existing PR routing: the actual implementation consumer runs Sentinel's own implementation whatever the source routing", async (t) => {
+  // Owner directive 2026-10-24: an activated source routing no longer holds
+  // the work; both steps start the (fake) model and charge it once.
   for (const activated of [true, false]) {
     await t.step(
       activated ? "required takeover" : "known dormant control",
@@ -194,10 +205,10 @@ Deno.test("Actions existing PR routing: actual implementation consumer holds mis
             assert.notEqual(result.kind, "state_error", JSON.stringify(result));
             const after = await input.state.readRepair();
             assert(after.ok && after.value.status === "found");
-            assert.equal(modelStarts, activated ? 0 : 1);
+            assert.equal(modelStarts, 1);
             assert.equal(
               after.value.snapshot.reservations.length,
-              read.value.snapshot.reservations.length + (activated ? 0 : 1),
+              read.value.snapshot.reservations.length + 1,
             );
             assert.deepEqual(
               after.value.snapshot.reservations.slice(
@@ -208,12 +219,10 @@ Deno.test("Actions existing PR routing: actual implementation consumer holds mis
               "the production model consumer preserves historical charges",
             );
             assert.equal(after.value.snapshot.work[0].target.pr, null);
-            if (!activated) {
-              assert.equal(
-                after.value.snapshot.reservations.at(-1)!.outcome,
-                "ambiguous",
-              );
-            }
+            assert.equal(
+              after.value.snapshot.reservations.at(-1)!.outcome,
+              "ambiguous",
+            );
           });
           assert.equal(
             rig.gitCalls.filter((call) => call.args.includes("push")).length,
@@ -223,7 +232,7 @@ Deno.test("Actions existing PR routing: actual implementation consumer holds mis
             rig.targetCalls.every((call) =>
               call.method === "GET" || call.path === "/graphql"
             ),
-            "neither the hold nor the fake failed model creates a PR or target effect",
+            "the fake failed model creates no PR or target effect",
           );
           assert.equal(await rig.native.readHead(rig.request.ref), null);
           assert.equal(
@@ -240,59 +249,24 @@ Deno.test("Actions existing PR routing: actual implementation consumer holds mis
   }
 });
 
-Deno.test("Actions existing PR routing: source reads honor the remaining host deadline", async (t) => {
-  for (const expire of [false, true]) {
-    await t.step(
-      expire ? "expires after first read" : "shrinking budget",
-      async () => {
-        const rig = await actionsExistingPrincipalFixture(true, true);
-        const originalRun = DenoReplayRuntime.prototype.run;
-        let routingRuntime: DenoReplayRuntime | undefined;
-        const deadline = rig.principal.clock.now() + 5_000;
-        const reads: Array<{ bound: number; remaining: number }> = [];
-        try {
-          delete rig.env.SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT;
-          rig.env.SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER = String(deadline);
-          DenoReplayRuntime.prototype.run = function (command) {
-            if (command.cwd === rig.principal.launcher) routingRuntime ??= this;
-            if (this === routingRuntime) {
-              reads.push({
-                bound: command.maxDurationMs,
-                remaining: deadline - rig.principal.clock.now(),
-              });
-              rig.principal.setNow(
-                expire ? deadline : rig.principal.clock.now() + 10,
-              );
-            }
-            return originalRun.call(this, command);
-          };
-          await rig.run((port) => {
-            assert.equal(port.existingPrTakeover!.coordinationActivated, true);
-            return Promise.resolve();
-          });
-          assert.equal(reads.length > 0, true);
-          assert.deepEqual(
-            reads.map((read) => read.bound),
-            reads.map((read) => read.remaining),
-            "actual source subprocesses must use the shrinking host budget",
-          );
-          if (expire) {
-            assert.equal(
-              reads.length,
-              1,
-              "expired routing launches no further source process",
-            );
-          } else assert(reads.length > 1);
-          assert.equal(
-            rig.gitCalls.filter((call) => call.args.includes("push")).length,
-            0,
-          );
-        } finally {
-          DenoReplayRuntime.prototype.run = originalRun;
-          await rig.close();
-        }
-      },
+Deno.test("Actions existing PR routing: an activated source policy keeps discovery off", async () => {
+  // Owner directive 2026-10-24: the repair host no longer reads the takeover
+  // source routing, so an activated source policy (which used to route
+  // "required") cannot switch existing-PR discovery on for the local
+  // composition, and nothing is pushed.
+  const rig = await actionsExistingPrincipalFixture(true, true);
+  try {
+    delete rig.env.SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT;
+    await rig.run((port) => {
+      assert.equal(port.existingPrTakeover!.coordinationActivated, false);
+      return Promise.resolve();
+    });
+    assert.equal(
+      rig.gitCalls.filter((call) => call.args.includes("push")).length,
+      0,
     );
+  } finally {
+    await rig.close();
   }
 });
 

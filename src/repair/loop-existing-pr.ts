@@ -20,7 +20,7 @@ import {
 import { checkGithubCooldown } from "./loop-bounds.ts";
 import { holdQueueRecord } from "./loop-queue-guard.ts";
 import { isNativeQueueTarget } from "../github/native-queue-guard.ts";
-import { persistWork } from "./loop-state.ts";
+import { persistTransition, persistWork } from "./loop-state.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
@@ -257,6 +257,64 @@ export async function routeExistingPr(
   }
 }
 
+/**
+ * The parks that existing-PR discovery wrote for an issue another pull request
+ * appeared to cover. Owner directive 2026-10-24: other people's pull requests
+ * never hold or divert Sentinel's own repair. Takeover custody parks
+ * (`closed_publication`, `self_merge_requires_owner`) are not matched.
+ */
+const RELEASABLE_EXISTING_PR_HOLD =
+  /^existing PR hold: (association_unproven|ambiguous|foreign_repository|fork_head|unwritable_branch|protected_path|candidate_divergent|head_moved|source_changed|queue_custody|principal_unavailable|custody_unproven)( \([0-9]+(,[0-9]+)*\))?$/;
+
+/**
+ * A discovery park, or the takeover queue-preflight hold, on an issue record
+ * without takeover custody or a bound PR.
+ */
+export function releasableExistingPrHold(record: WorkRecordV1): boolean {
+  if (
+    record.source.kind !== "issue" || record.target.pr !== null ||
+    hasTakeoverCustody(record)
+  ) return false;
+  if (isExistingPrQueuePreflightHold(record)) return true;
+  return record.nextStep === "blocked" && record.wait === null &&
+    record.blocker?.kind === "other" &&
+    RELEASABLE_EXISTING_PR_HOLD.test(record.blocker.message);
+}
+
+/**
+ * Return every releasable discovery park to `work` in one checked state
+ * transition, where that record's port has discovery off. Intent, target,
+ * counters, evidence and reservations are kept; nothing is charged.
+ */
+async function releaseExistingPrHolds(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  githubFor?: (record: WorkRecordV1) => RepairCycleDepsV1["github"],
+): Promise<StepResultV1 | null> {
+  const ids = new Set(
+    context.snapshot.work.filter((record) =>
+      releasableExistingPrHold(record) &&
+      (githubFor === undefined ? deps.github : githubFor(record))
+          .existingPrTakeover?.coordinationActivated !== true
+    ).map((record) => record.id),
+  );
+  if (ids.size === 0) return null;
+  const now = deps.clock.now();
+  return await persistTransition(deps, context, (draft) => {
+    draft.work = draft.work.map((record) =>
+      ids.has(record.id) && releasableExistingPrHold(record)
+        ? {
+          ...record,
+          nextStep: "work",
+          blocker: null,
+          wait: null,
+          updatedAt: now,
+        }
+        : record
+    );
+  });
+}
+
 /** One deterministic transition per call; callers reload after any progress. */
 export async function reconcileExistingPrs(
   deps: RepairCycleDepsV1,
@@ -265,6 +323,8 @@ export async function reconcileExistingPrs(
   refused: Set<string>,
   githubFor?: (record: WorkRecordV1) => RepairCycleDepsV1["github"],
 ): Promise<StepResultV1 | null> {
+  const released = await releaseExistingPrHolds(deps, context, githubFor);
+  if (released !== null) return released;
   for (const record of context.snapshot.work) {
     if (
       record.source.kind !== "issue" || record.nextStep === "done" ||

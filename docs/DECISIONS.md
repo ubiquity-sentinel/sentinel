@@ -2699,3 +2699,36 @@ internal policy is resolve all P0". Applied as follows.
   any other non-rejecting review.
 - Exact current-head CI, native review receipts, task acceptance, durable
   accounting and the custody of credentials are unchanged.
+
+## Owner directive 2026-10-24: other people's pull requests never hold Sentinel
+
+The owner directed (2026-10-24): ignore other contributors' pull requests
+completely and remove the existing-PR hold, even for the owner's own open pull
+requests. This supersedes the existing-PR takeover part of the 2026-10-18
+standing approval above. Applied as follows.
+
+- Sentinel always opens and drives its own pull request on its fixed
+  `sentinel/repair/<task>` branch. Existing-PR discovery is never activated: the
+  hosted App composition already ships `takeover.activated` false, and the local
+  composition in `src/host/actions-repair-host.ts` no longer reads the takeover
+  source routing, whose `unknown` answer used to switch discovery on. With
+  discovery off, the router and the PR-creation boundary guard stand down, so no
+  `existing PR hold` is written and Sentinel's own PR creation is never refused
+  for another pull request.
+- The parks discovery already wrote are released in one checked transition
+  (`releaseExistingPrHolds` in `src/repair/loop-existing-pr.ts`) on any record
+  whose port has discovery off: issue records without takeover custody or a
+  bound PR whose blocker is an `existing PR hold: <discovery reason>` park or
+  the takeover queue-preflight hold return to `work`. Intent, target, counters,
+  evidence and reservations are kept and nothing is charged or refunded. This
+  re-admits Passport issues 87–108 and ai.ubq.fi issues 300 and 1281–1283.
+- Sentinel's handling of its own branch, PR and head is unchanged, including
+  own-branch reuse and the author check in `src/github/port-publication.ts`. The
+  native merge-queue guard for Sentinel's own ai.ubq.fi effects stays.
+- Takeover custody parks (`closed_publication`, `self_merge_requires_owner`) and
+  records with takeover custody keep their existing handling; no live record
+  carries takeover custody. Deleting the dormant adoption and custody modules is
+  a separate cleanup.
+- Where an outside pull request and Sentinel's own both target an issue,
+  whichever merges first closes the issue, and the other Sentinel record then
+  retires as "source issue is closed".

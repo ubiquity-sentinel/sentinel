@@ -4,7 +4,10 @@ import {
   closedCWaveNeedsRecovery,
   ingestClosedCWave,
 } from "../src/host/modern-matrix-recovery.ts";
-import { HOSTED_RUNTIME_ID } from "../src/contracts/hosted-supervisor.ts";
+import {
+  HOSTED_RUNTIME_ID,
+  isHostedReleaseTerminal,
+} from "../src/contracts/hosted-supervisor.ts";
 import { runHistoricalMatrixQuarantine } from "../src/host/matrix-actions.ts";
 import {
   beginMaintenanceProgress,
@@ -77,8 +80,8 @@ export async function runHostedMatrixMaintenance(
         releaseRead.value.snapshot.hostedRuntimes.some((row) =>
           row.id === HOSTED_RUNTIME_ID
         ) &&
-        !releaseRead.value.snapshot.hostedReleases.some((row) =>
-          row.phase !== "accepted" && row.phase !== "rolled_back"
+        releaseRead.value.snapshot.hostedReleases.every((row) =>
+          isHostedReleaseTerminal(row.phase)
         ) &&
         read.ok && read.value.status === "found" && closed !== undefined &&
         closedCWaveNeedsRecovery(read.value.snapshot, closed.binding)

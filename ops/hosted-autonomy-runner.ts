@@ -28,6 +28,7 @@ import { runHostedMatrixMaintenance } from "./hosted-autonomy-maintenance.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 import { ClosedCWaveRecoveryIntegrityFailure } from "../src/host/modern-matrix-recovery.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import { isHostedReleaseTerminal } from "../src/contracts/hosted-supervisor.ts";
 import {
   continuationLate,
   createPassWrites,
@@ -308,9 +309,10 @@ async function runHostedAutonomyChain(
     if (
       releaseRead === null || !releaseRead.ok ||
       releaseRead.value.status !== "found" ||
+      // The contract's terminal set, `abandoned` included (an
+      // included_in_successor abandonment is settled custody, not in flight).
       releaseRead.value.snapshot.hostedReleases.some((release) =>
-        release.phase !== "accepted" && release.phase !== "rolled_back" &&
-        release.phase !== "owner_superseded"
+        !isHostedReleaseTerminal(release.phase)
       )
     ) {
       return writes.applied

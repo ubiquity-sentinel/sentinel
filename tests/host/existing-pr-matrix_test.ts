@@ -118,13 +118,16 @@ Deno.test("existing PR dormant coordinator: unmarked matrix intake retains ordin
   assert.deepEqual(r.calls, []);
 });
 
-Deno.test("existing PR dormant coordinator: exact preflight custody cannot receive a matrix grant", async () => {
+Deno.test("existing PR dormant coordinator: a released preflight hold receives Sentinel's own matrix grant", async () => {
+  // Owner directive 2026-10-24: the takeover preflight hold no longer keeps
+  // Sentinel's own repair out of the matrix once discovery is off.
   const r = existingPrLifecycleRig("human-owner", false);
   r.state.repair = seededSnapshot([]);
   r.state.repairHead = SHA1;
   r.queueControls.unavailable = true;
   await prepareMatrixIntakeV1(r.deps, r.options);
   const before = await r.snapshot();
+  assert.equal(before.work[0].nextStep, "blocked");
   r.takeoverControls.activated = false;
   r.queueControls.unavailable = false;
   r.calls.length = 0;
@@ -138,12 +141,14 @@ Deno.test("existing PR dormant coordinator: exact preflight custody cannot recei
     deadline: r.options.deadline,
   });
   const after = await r.snapshot();
-  assert.deepEqual(after.work, before.work);
-  assert.deepEqual(after.reservations, before.reservations);
-  assert.equal(planned.attempted, 0);
-  assert.equal(planned.plan.cells.length, 0);
-  assert.equal(r.model.requests.length, 0);
-  assert.deepEqual(r.calls, []);
+  const work = after.work[0];
+  assert.equal(work.nextStep, "work");
+  assert.equal(work.blocker, null);
+  assert.equal(work.target.branch, candidateBranch(work.id));
+  assert.equal(after.reservations.length, before.reservations.length + 1);
+  assert.equal(planned.attempted, 1);
+  assert.equal(planned.plan.cells.length, 1);
+  assert.equal(r.calls.includes("discover"), false);
 });
 
 for (const mode of ["unavailable", "throwing"] as const) {
