@@ -15,7 +15,7 @@ import {
 } from "../../src/host/matrix-actions.ts";
 import { runActionsRepairHost } from "../../src/host/actions.ts";
 import { resolveModelRoute } from "../../src/host/model-route.ts";
-import { ATTEMPT_DETAIL_INCOMPLETE } from "../../src/repair/attempt-policy.ts";
+import { IMPLEMENTATION_RECEIPT_FAILURE_DETAILS } from "../../src/repair/attempt-policy.ts";
 import { createFreshMatrixArchives } from "./matrix-actions-archive-fixtures.ts";
 import { issue, PROVIDER, rig } from "./matrix-actions-fixtures.ts";
 
@@ -88,6 +88,10 @@ Deno.test("failover host: the repair host settles a failover-named failed cell t
     assert.equal(exported.status, "completed");
     assert.equal(exported.receipt?.actual.observedModel, failover);
     assert.equal(exported.receipt?.error, "runtime_error");
+    assert.equal(
+      exported.detail,
+      IMPLEMENTATION_RECEIPT_FAILURE_DETAILS.failed,
+    );
     const archives = await createFreshMatrixArchives(
       r,
       planner,
@@ -130,7 +134,10 @@ Deno.test("failover host: the repair host settles a failover-named failed cell t
       row.id === cell.reservationId
     )!;
     assert.equal(record.nextStep, "blocked", JSON.stringify(record));
-    assert.equal(record.blocker?.message, ATTEMPT_DETAIL_INCOMPLETE);
+    assert.equal(
+      record.blocker?.message,
+      IMPLEMENTATION_RECEIPT_FAILURE_DETAILS.failed,
+    );
     assert.equal(charge.outcome, "ambiguous", "charged, never refunded");
     assert.equal(charge.proofRef, null);
     const prior = beforeCharges as typeof after.value.snapshot.reservations;

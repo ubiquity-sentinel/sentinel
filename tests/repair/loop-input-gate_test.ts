@@ -28,6 +28,8 @@ import type { RepositoryConfigV1 } from "../../src/contracts/repository-config.t
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
+import { GitHubApiClient } from "../../src/github/client.ts";
+import { FakeAuthProvider, FakeCooldownGate } from "../github/helpers.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
 import { PASS_SUMMARY_LINE_KIND } from "../../src/repair/pass-summary-line.ts";
 import { STEP_INPUTS_MAX_SKIP_MS } from "../../src/repair/step-inputs.ts";
@@ -640,4 +642,101 @@ Deno.test("input gate: concurrent batch admission stops at the run deadline", as
   assert.deepEqual(result.stepped, []);
   assert.equal(stamped(rig), 0, "no closing stamp write past the deadline");
   assert.deepEqual(rig.state.repair!.reservations, []);
+});
+
+Deno.test("input gate: full-width review IDs avoid fleet-wide fallback and preserve skips", async () => {
+  const work = Array.from({ length: 60 }, (_, index) => {
+    const record = pendingArtifact(REPOS[0], index);
+    return {
+      ...record,
+      target: { ...record.target, head: SHA2, pr: 1_000 + index },
+    };
+  });
+  const rig = makeRig(work);
+  let reviewId = 2 ** 31 + 17;
+  let requests = 0;
+  const client = new GitHubApiClient({
+    repository: REPOS[0],
+    apiBaseUrl: "https://api.github.com",
+    auth: new FakeAuthProvider(),
+    cooldownGate: new FakeCooldownGate(),
+    clock: rig.clock,
+    http: (request) => {
+      requests++;
+      const { query } = JSON.parse(request.body ?? "{}");
+      const repository: Record<string, unknown> = {};
+      for (
+        const [, alias, number] of query.matchAll(
+          /(i\d+): issue\(number: (\d+)\)/g,
+        )
+      ) repository[alias] = { number: Number(number), state: "OPEN" };
+      for (
+        const [, alias, number] of query.matchAll(
+          /(p\d+): pullRequest\(number: (\d+)\)/g,
+        )
+      ) {
+        repository[alias] = {
+          number: Number(number),
+          state: "OPEN",
+          headRefOid: SHA2,
+          baseRefOid: SHA1,
+          baseRefName: "main",
+          commits: {
+            nodes: [{
+              commit: { oid: SHA2, statusCheckRollup: { state: "SUCCESS" } },
+            }],
+          },
+          reviews: {
+            nodes: [
+              query.includes("fullDatabaseId")
+                ? { fullDatabaseId: String(reviewId) }
+                : { databaseId: null },
+            ],
+          },
+        };
+      }
+      for (const [, alias] of query.matchAll(/(b\d+): ref\(/g)) {
+        repository[alias] = { target: { oid: SHA1 } };
+      }
+      return Promise.resolve({
+        status: 200,
+        headers: new Headers(),
+        bodyText: JSON.stringify({ data: { repository } }),
+      });
+    },
+  });
+  rig.github.readLiveInputs = client.readLiveInputs.bind(client);
+
+  const first = await pass(rig);
+  assert.equal(first.summary.batchUnavailable, 0);
+  assert.equal(first.summary.batchReads, 1);
+  assert.equal(first.summary.recordsRead, 60);
+  assert.equal(first.summary.recordsStepped, 60);
+  assert.equal(stamped(rig), 60);
+  assert.equal(requests, 2, "121 items use two exhaustive GraphQL chunks");
+  assert.equal(
+    rig.github.calls.filter((call) =>
+      /^(readIssue|readPullRequest|readChecks|readRef):/.test(call)
+    ).length,
+    0,
+    "a nullable legacy ID must not trigger per-record REST fallback",
+  );
+
+  rig.clock.advance(5 * MINUTE);
+  const head = rig.state.repairHead;
+  const unchanged = await pass(rig);
+  assert.deepEqual(unchanged.stepped, []);
+  assert.equal(unchanged.summary.recordsSkipped, 60);
+  assert.equal(unchanged.summary.batchUnavailable, 0);
+  assert.equal(requests, 4);
+  assert.equal(rig.state.repairHead, head, "unchanged inputs cost no write");
+
+  // A new full-width ID is still a changed input, never a permanent skip.
+  reviewId++;
+  rig.clock.advance(5 * MINUTE);
+  const changed = await pass(rig);
+  assert.equal(changed.summary.recordsStepped, 60);
+  assert.equal(changed.summary.recordsSkipped, 0);
+  assert.equal(requests, 6);
+  assert.deepEqual(rig.state.repair!.reservations, [], "no model charge");
 });

@@ -17,7 +17,10 @@ import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts
 import { checkExistingPrCustody } from "./loop-existing-pr.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { existingHeadContinuationShape } from "./loop-eligibility.ts";
-import { ciRefreshAhead } from "./ci-readiness.ts";
+import {
+  CI_VALIDATION_DEFERRED_PREFIX,
+  ciRefreshAhead,
+} from "./ci-readiness.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { configFor } from "./loop-records.ts";
 import type {
@@ -168,7 +171,7 @@ export async function ensureReviewFreshness(
       return Promise.resolve<StepResultV1 | null>(
         ahead === null ? null : {
           kind: "deferred",
-          detail: `CI validation: ${ahead.id} goes first`,
+          detail: `${CI_VALIDATION_DEFERRED_PREFIX}${ahead.id} goes first`,
         },
       );
     });
