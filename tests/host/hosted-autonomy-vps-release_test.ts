@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import {
   DORMANT_HOSTED_SUPERVISOR_POLICY,
@@ -55,6 +56,7 @@ function historicalTest(
           await check(async (rig, github) =>
             runHostedAutonomy(
               await withHistoricalQueueAuthority({
+                ciMinutes: INACTIVE_CI_MINUTES,
                 state: rig.state,
                 githubFor: github === undefined ? rig.githubFor : () => github,
                 clock: { now: () => T0 + 5_000_000 },

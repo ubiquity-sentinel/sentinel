@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { portOk } from "../../src/contracts/ports.ts";
@@ -213,6 +214,7 @@ export async function originalCandidateRig(advanced = false) {
   const runMaintenance = async () =>
     runHostedAutonomy(
       await withDarkQueueAuthority({
+        ciMinutes: INACTIVE_CI_MINUTES,
         state: rig.store,
         githubFor: () => github,
         clock: rig.clock,

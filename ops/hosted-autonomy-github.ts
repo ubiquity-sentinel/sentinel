@@ -2,6 +2,8 @@ import {
   checkReviewTaskStatement,
   reviewTaskStatementDigest,
 } from "../src/contracts/review-receipt.ts";
+import type { CiMinuteControllerV1 } from "../src/contracts/ci-minute-budget.ts";
+import { REFUSING_CI_MINUTES } from "../src/budget/ci-minutes.ts";
 import { isGreenConclusion } from "../src/repair/ci-rejection.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import {
@@ -9,7 +11,11 @@ import {
   missingExpectedChecks,
 } from "../src/repair/ci-coverage.ts";
 import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
-import { isPassportDeployCheck } from "../src/repair/merge-gate-checks.ts";
+import {
+  isCiEvidenceConclusion,
+  isCiEvidenceSource,
+  isPassportDeployCheck,
+} from "../src/repair/merge-gate-checks.ts";
 import { HOSTED_AUTONOMY_REQUIRED_CHECK } from "./hosted-autonomy-policy.ts";
 import { createHostedMismatchDispositionObservations } from "./hosted-autonomy-mismatch-github.ts";
 import type {
@@ -47,6 +53,7 @@ import {
   backupNeverStartedRemains,
   failedNamesWithBackup,
   type HostedBackupCiReadContextV1,
+  SENTINEL_BACKUP_FIELD,
   substituteBackupRuns,
 } from "./hosted-autonomy-backup-ci-read.ts";
 import { createMergeBaseTreeChanges } from "./hosted-autonomy-github-trees.ts";
@@ -122,6 +129,7 @@ export function createHostedAutonomyGitHub(
   repository: RepositoryIdentityV1,
   /** Backup CI consumer (docs/backup-ci-spec.md §11.4); absent: native. */
   backupCi?: BackupCiConsumerV1,
+  ciMinutes: CiMinuteControllerV1 = REFUSING_CI_MINUTES,
 ): HostedAutonomyGitHubV1 {
   const scope = `${repository.owner}/${repository.name}`;
 
@@ -252,6 +260,30 @@ export function createHostedAutonomyGitHub(
       !isPassportDeployCheck(repository, String(run["name"]))
     );
 
+  /**
+   * One raw run is positive CI evidence: completed `success`, `skipped` or
+   * `neutral` from GitHub Actions, from no app (legacy/fixture shape) or a
+   * verified backup stand-in (`sentinel_backup`), the runtime's
+   * `isCiEvidenceCheck` over the wire.
+   */
+  const isCiEvidenceRun = (run: Record<string, unknown>) => {
+    if (
+      run["status"] !== "completed" ||
+      !isCiEvidenceConclusion(run["conclusion"])
+    ) {
+      return false;
+    }
+    if (run[SENTINEL_BACKUP_FIELD] !== undefined) return true;
+    const app = run["app"];
+    const slug = app === undefined || app === null
+      ? undefined
+      : typeof app === "object" && !Array.isArray(app) &&
+          typeof (app as Record<string, unknown>)["slug"] === "string"
+      ? String((app as Record<string, unknown>)["slug"])
+      : "unknown";
+    return isCiEvidenceSource(slug, String(run["name"]));
+  };
+
   /** Complete workflow-run listing for exactly one commit. */
   const readHeadRuns = (head: string) =>
     readCompleteListing(
@@ -351,7 +383,13 @@ export function createHostedAutonomyGitHub(
         typeof run["conclusion"] === "string" &&
         isGreenConclusion(run["conclusion"])
       );
-      if (!green || base === undefined) return green;
+      if (!green) return false;
+      // Positive CI evidence only (P1-2): green runs that all come from other
+      // apps (the gateway's lone skipped `CodeRabbit`, a scanner or a deploy
+      // preview, before any `Gateway CI` run) are no evidence: not green and
+      // not red (a failed one of them was already red above).
+      if (!runs.some(isCiEvidenceRun)) return null;
+      if (base === undefined) return true;
       // The runs that exist are green; a job GitHub creates late (`needs:`)
       // must exist too, by the base's own check suites (issue #154).
       const baseComplete = await readCompleteCheckRuns(base);
@@ -521,7 +559,30 @@ export function createHostedAutonomyGitHub(
       }
       return parsed;
     },
-    rerunFailedJobs(id: number) {
+    async rerunFailedJobs(id: number) {
+      if (ciMinutes.active) {
+        const run = await request("GET", `/repos/${scope}/actions/runs/${id}`);
+        if (run === null || typeof run !== "object") return false;
+        const r = run as Record<string, unknown>;
+        if (
+          r.id !== id || !COMMIT_SHA.test(String(r.head_sha)) ||
+          !Number.isSafeInteger(r.run_attempt) || Number(r.run_attempt) < 1 ||
+          typeof r.head_branch !== "string"
+        ) return false;
+        const admission = await ciMinutes.reserve({
+          repository,
+          kind: "rerun",
+          head: String(r.head_sha),
+          base: null,
+          ref: `refs/heads/${r.head_branch}`,
+          pr: null,
+          runId: id,
+          attempt: Number(r.run_attempt) + 1,
+        }, Date.now() + REQUEST_TIMEOUT_MS);
+        if (admission.kind !== "admitted" && admission.kind !== "inactive") {
+          return false;
+        }
+      }
       return effect(
         "POST",
         `/repos/${scope}/actions/runs/${id}/rerun-failed-jobs`,
@@ -849,6 +910,24 @@ export function createHostedAutonomyGitHub(
         message,
       );
       if (body === null) return null;
+      if (ciMinutes.active) {
+        const pull = await readPull(number, null);
+        if (
+          pull === null || pull.headSha !== head || pull.baseRef === null ||
+          pull.baseSha === null
+        ) return null;
+        const admission = await ciMinutes.reserve({
+          repository,
+          kind: "merge",
+          head,
+          base: pull.baseSha,
+          ref: `refs/heads/${pull.baseRef}`,
+          pr: number,
+        }, Date.now() + REQUEST_TIMEOUT_MS);
+        if (admission.kind !== "admitted" && admission.kind !== "inactive") {
+          return null;
+        }
+      }
       const response = await request(
         "PUT",
         `/repos/${scope}/pulls/${number}/merge`,

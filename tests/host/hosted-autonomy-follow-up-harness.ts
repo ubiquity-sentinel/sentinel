@@ -2,6 +2,7 @@
  * Shared harness for the review follow-up suites: the live delivered records,
  * an App-bound follow-up issue port and one full maintenance run.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import {
   darkQueueCoordinatorFixture,
   historicalDarkQueueFixture,
@@ -261,6 +262,7 @@ export async function followUpRun(
             const { runHostedAutonomy } = await graph.runner();
             const custody = historicalDarkQueueFixture(rig);
             return await runHostedAutonomy({
+              ciMinutes: INACTIVE_CI_MINUTES,
               state: rig.state,
               githubFor: rig.githubFor,
               clock: { now: options.now! },

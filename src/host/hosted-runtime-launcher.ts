@@ -744,10 +744,11 @@ function explainHostedSummary(
     : summary.outcome === "failed"
     ? "failed"
     : "could not be verified";
-  const skipped = summary.targets.reduce(
-    (count, target) => count + (target.skippedIssues?.length ?? 0),
-    0,
-  );
+  // Contract-bound rows ask the owner to correct an issue; `not_admitted`
+  // rows only name why intake left an open issue for a later run.
+  const rows = summary.targets.flatMap((target) => target.skippedIssues ?? []);
+  const skipped = rows.filter((row) => row.code !== "not_admitted").length;
+  const notAdmitted = rows.length - skipped;
   let detail = summary.admittedWorkCount === null
     ? "work counts are unavailable"
     : `admitted ${summary.admittedWorkCount} work item${
@@ -793,6 +794,11 @@ function explainHostedSummary(
     if (summary.outcome === "healthy") {
       summary.nextAction = "Correct the skipped issue fields";
     }
+  }
+  if (notAdmitted > 0) {
+    detail += `; did not admit ${notAdmitted} open issue${
+      notAdmitted === 1 ? "" : "s"
+    } (reasons in skippedIssues)`;
   }
   summary.explanation =
     `${label} on ${generation} ${outcome}: ${detail}; next: ${

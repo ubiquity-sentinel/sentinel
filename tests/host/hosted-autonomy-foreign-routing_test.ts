@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import type { WorkItemId } from "../../src/contracts/brands.ts";
 import { resolveHostedDelivery } from "../../ops/hosted-autonomy-delivery-proof.ts";
@@ -436,6 +437,7 @@ Deno.test(
       pull: foreignPullFacts(),
     });
     const proofDeps = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: proofRig.rig.state,
       githubFor: proofRig.rig.githubFor,
       clock: { now: () => 0 },

@@ -63,6 +63,8 @@ export interface DeliveryTrainV1 {
   /** Index of the member whose merge call intent is persisted, or null. */
   readonly pendingMerge: number | null;
   readonly createdAt: number;
+  /** Null before the first publication attempt; absent only on legacy records. */
+  readonly ciStartedAt?: number | null;
 }
 
 /** A verified landing: the closure's durable train evidence. */
@@ -274,6 +276,7 @@ function parseTrain(value: unknown): DeliveryTrainV1 | null {
       "phase",
       "pendingMerge",
       "createdAt",
+      ...(Object.hasOwn(row, "ciStartedAt") ? ["ciStartedAt"] : []),
     ]) || typeof row.operationId !== "string" || !OP.test(row.operationId) ||
     row.ref !== `${DELIVERY_TRAIN_REF_PREFIX}${row.operationId}` ||
     !sha(row.tip) || (row.attempt !== 1 && row.attempt !== 2) ||
@@ -283,6 +286,10 @@ function parseTrain(value: unknown): DeliveryTrainV1 | null {
     (row.phase !== "publishing" && row.phase !== "published" &&
       row.phase !== "merging") ||
     !time(row.createdAt) ||
+    (Object.hasOwn(row, "ciStartedAt") &&
+      (row.ciStartedAt === null
+        ? row.phase !== "publishing"
+        : !time(row.ciStartedAt) || row.ciStartedAt < row.createdAt)) ||
     (row.pendingMerge !== null &&
       (!Number.isSafeInteger(row.pendingMerge) ||
         (row.pendingMerge as number) < 0 ||

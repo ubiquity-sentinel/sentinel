@@ -1,4 +1,5 @@
 import type { ClosedCWaveRecoveryDepsV1 } from "../src/host/modern-matrix-recovery.ts";
+import type { CiMinuteControllerV1 } from "../src/contracts/ci-minute-budget.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import type { runMatrixUncertaintyMaintenance } from "../src/host/matrix-uncertainty-maintenance.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
@@ -178,6 +179,12 @@ export interface HostedAutonomyGitHubV1 {
    * `state_reason: "reopened"`; true when GitHub reports it open.
    */
   reopenIssue?(number: number): Promise<boolean>;
+  /**
+   * Close one pull request without merging it (its branch is kept); true
+   * only when GitHub reports it closed and unmerged. Optional: a surface
+   * without it never closes a retired record's pull request.
+   */
+  closePull?(number: number): Promise<boolean>;
   /**
    * The repository's own default branch, or null when it cannot be read. Only
    * a foreign repository consults this; the self scope keeps its recorded
@@ -548,6 +555,8 @@ export type HostedClosedMatrixDepsV1 = ClosedCWaveRecoveryDepsV1 & {
 };
 
 export interface HostedAutonomyDepsV1 {
+  /** Trusted shared CI capability; production installs the explicit inactive instance. */
+  ciMinutes: CiMinuteControllerV1;
   /** Trusted queue composition. Production gateway maintenance refuses when missing. */
   queue?:
     import("./hosted-autonomy-queue-contracts.ts").HostedQueueCoordinatorDeps;

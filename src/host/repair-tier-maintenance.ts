@@ -52,6 +52,12 @@ export interface RepairTierMaintenanceDepsV1 {
    * Absent or unreadable: no release-deferred family moves either way.
    */
   releasePath?(): Promise<PortResultV1<"disabled" | "enabled">>;
+  /**
+   * The installed runtime generation from the positively read release ref.
+   * With it, the transition owes one retired-pull cold scan per generation
+   * (`retiredPullScanGeneration`); absent or unreadable, no scan.
+   */
+  runtimeGeneration?(): Promise<PortResultV1<number>>;
   clock: { now(): number };
   /** No listing starts and no tier write is offered at or after this time. */
   deadlineAt: number;
@@ -90,6 +96,20 @@ export function hotRecordCount(snapshot: RepairStateSnapshotV1): number {
     if (Array.isArray(value)) count += value.length;
   }
   return count;
+}
+
+async function observeGeneration(
+  deps: RepairTierMaintenanceDepsV1,
+): Promise<number | undefined> {
+  if (deps.runtimeGeneration === undefined) return undefined;
+  try {
+    const read = await deps.runtimeGeneration();
+    return read.ok && Number.isSafeInteger(read.value) && read.value > 0
+      ? read.value
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function observeReleasePath(
@@ -223,6 +243,7 @@ export async function runRepairTierMaintenance(
       return result("deferred", { reason: "deadline", recordsRead });
     }
     const protectedIds = deps.protect?.(snapshot);
+    const generation = await observeGeneration(deps);
     const tier = await deps.store.tierRepair({
       expectedHead: head,
       now: deps.clock.now(),
@@ -233,6 +254,9 @@ export async function runRepairTierMaintenance(
         protectedReservationIds: protectedIds.reservationIds,
       }),
       demotionBudget: deps.demotionBudget,
+      ...(generation === undefined
+        ? {}
+        : { retiredPullScanGeneration: generation }),
       ...(releasePath === undefined ? {} : {
         releasePath,
         releaseDeferredDeliveryExcluded: isGatewayVpsRepository,

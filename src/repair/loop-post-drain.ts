@@ -9,6 +9,7 @@ import {
   releaseRequestMatchesDelivery,
   sameRepositoryIdentity,
 } from "./loop-records.ts";
+import { ownerLandingDelivery } from "./loop-owner-landing.ts";
 import { observeReleaseAcceptance } from "./loop-release.ts";
 import { observeStandingReview } from "./loop-review-observation.ts";
 import { standingReviewAttempt } from "./loop-review-records.ts";
@@ -176,10 +177,25 @@ export function createPostDrainContinuation(
             // delivery step: a base that moved since the review persists the
             // refresh intent (executed by a later run, never here) instead of
             // merging a tree no CI ran on.
-            result = release === undefined
-              ? await refreshMovedBaseBeforeMerge(deps, context, record) ??
-                await executeMerge(deps, context, record)
-              : await observeReleaseAcceptance(deps, context, record, release);
+            // An owner-landing record is never refreshed or merged by
+            // Sentinel (as in the ordinary delivery step): a base push would
+            // replace the reviewed head its owner is asked to merge.
+            if (release !== undefined) {
+              result = await observeReleaseAcceptance(
+                deps,
+                context,
+                record,
+                release,
+              );
+            } else if (record.ownerLanding !== undefined) {
+              result = await ownerLandingDelivery(deps, context, record);
+            } else {
+              result = await refreshMovedBaseBeforeMerge(
+                deps,
+                context,
+                record,
+              ) ?? await executeMerge(deps, context, record);
+            }
           }
         }
         context.executionBaseline = null;

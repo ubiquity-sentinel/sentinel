@@ -4,12 +4,17 @@ import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { DeadlineV1 } from "./http.ts";
 import type { HttpResponseV1 } from "./http.ts";
 import type {
+  IssueNotAdmittedReasonV1,
   IssueSourceErrorContextV1,
   PortErrorV1,
   PortResultV1,
   SkippedIssueV1,
 } from "../contracts/ports.ts";
-import { portError, portOk } from "../contracts/ports.ts";
+import {
+  ISSUE_NOT_ADMITTED_REASONS,
+  portError,
+  portOk,
+} from "../contracts/ports.ts";
 import { type ParseIssue, tryParse } from "../contracts/validation.ts";
 import type { RawSendResult } from "./client-contracts.ts";
 
@@ -165,6 +170,17 @@ export function sanitizeSkippedIssue(
     return null;
   }
   const row = value as Record<string, unknown>;
+  if (row.code === "not_admitted") {
+    if (
+      !positiveCount(row.number) || typeof row.reason !== "string" ||
+      !(ISSUE_NOT_ADMITTED_REASONS as readonly string[]).includes(row.reason)
+    ) return null;
+    return {
+      number: row.number as number,
+      code: "not_admitted",
+      reason: row.reason as IssueNotAdmittedReasonV1,
+    };
+  }
   if (row.code === "record_parse_error") {
     if (
       !positiveCount(row.number) || typeof row.reason !== "string" ||

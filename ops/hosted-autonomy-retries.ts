@@ -561,8 +561,9 @@ export function planHostedRetries(
     }
     const blocker = record.blocker;
     if (blocker === null) continue;
-    // A repeat-failure park is named every pass; an edited issue or a changed
-    // model route re-arms it once as an ordinary work grant.
+    // A repeat-failure park is named every pass; an edited issue, a changed
+    // model route or a changed implementer prompt re-arms it once as an
+    // ordinary work grant.
     const repeat = repeatFailureVerdict(
       snapshot,
       record,
@@ -768,8 +769,8 @@ export function planHostedRetries(
     // Durable attempt memory gate: refuse a work-returning grant whose
     // attempt would be equivalent to failures already recorded at this base
     // and runtime revision. A base advance is genuinely changed evidence, so
-    // that path is exempt, and so is a repeat-failure re-arm (an edited issue
-    // or a changed model route); a review-returning grant has its own
+    // that path is exempt, and so is a repeat-failure re-arm (an edited issue,
+    // a changed model route or prompt); a review-returning grant has its own
     // identity space and is untouched. Refusals are reported, never silent.
     if (rule.nextStep === "work") {
       const advancing = baseTip !== null && baseTip !== base;

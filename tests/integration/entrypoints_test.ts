@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Wave C integrated lifecycle acceptance through the ACTUAL production
  * entrypoints (`src/main.ts`, `src/release-main.ts`) with fake external
@@ -133,6 +134,7 @@ Deno.test(
       let fault: string | null = null;
       try {
         await runRepairEntrypoint({
+          ciMinutes: INACTIVE_CI_MINUTES,
           clock,
           state: store,
           configs,
@@ -418,6 +420,7 @@ Deno.test(
       const replay = new FakeReplay();
       const model = new FakeModel();
       const result = await runRepairEntrypoint({
+        ciMinutes: INACTIVE_CI_MINUTES,
         clock: loopClock,
         state: store,
         configs,
@@ -560,6 +563,7 @@ Deno.test(
       const replay = new FakeReplay();
       const model = new FakeModel();
       const result = await runRepairEntrypoint({
+        ciMinutes: INACTIVE_CI_MINUTES,
         clock: loopClock,
         state: store,
         configs,

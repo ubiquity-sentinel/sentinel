@@ -16,7 +16,14 @@
  * Nothing here writes repair state.
  */
 import { canonicalStringify } from "../contracts/canonical.ts";
-import { encodeRepairDeltaArtifactV1 } from "../contracts/repair-delta.ts";
+import { resolve } from "node:path";
+import {
+  canonicalDigestV1,
+  encodeRepairDeltaArtifactV1,
+  REPAIR_CELL_REFUSAL_KIND,
+  type RepairCellRefusalReasonV1,
+  type RepairCellRefusalV1,
+} from "../contracts/repair-delta.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import {
@@ -47,9 +54,13 @@ export const REPAIR_FANOUT_DIR = ".sentinel-repair";
 /** The fan-out plan file bound (the archive reader's own file bound). */
 const MAX_PLAN_BYTES = 2 * 1024 * 1024;
 
-/** `.sentinel-repair` beside the run's `.sentinel-matrix` artifact root. */
+/**
+ * `.sentinel-repair` beside the run's `.sentinel-matrix` artifact root,
+ * resolved lexically: the matrix root need not exist in a job that never
+ * downloads the matrix plan (the serial repair job, a repository cell).
+ */
 export function repairFanoutRootOf(artifactRoot: string): string {
-  return joinPath(artifactRoot, "..", REPAIR_FANOUT_DIR);
+  return resolve(artifactRoot, "..", REPAIR_FANOUT_DIR);
 }
 
 async function appendOutput(output: string, text: string): Promise<void> {
@@ -147,76 +158,127 @@ export async function readRepairFanoutPlan(
   return plan;
 }
 
-/** The records the serial pass leaves to this run's repository cells. */
+export const REPAIR_FANOUT_DELEGATION_KIND =
+  "sentinel_repair_fanout_delegation";
+
+/**
+ * The records the serial pass leaves to this run's repository cells. Total:
+ * fan-out is an optimization, so an absent, unreadable, mismatched or
+ * foreign plan means no delegation this pass (one bounded advisory line) and
+ * the serial pass steps every record exactly as before.
+ */
 export async function delegatedRecordsOfRun(
   input: ActionsTargetCyclesInputV1,
   carrier: MatrixNativeCarrierV1 | undefined,
 ): Promise<ReadonlySet<string> | undefined> {
   if (carrier?.repairPlanDigest === undefined) return undefined;
-  const host = hostOf(input);
-  const plan = await readRepairFanoutPlan(
-    host.artifactRoot,
-    carrier.repairPlanDigest,
-    host.run,
-  );
-  return delegatedRecordsV1(plan);
+  try {
+    const host = hostOf(input);
+    const plan = await readRepairFanoutPlan(
+      host.artifactRoot,
+      carrier.repairPlanDigest,
+      host.run,
+    );
+    return delegatedRecordsV1(plan);
+  } catch {
+    try {
+      console.log(JSON.stringify({
+        kind: REPAIR_FANOUT_DELEGATION_KIND,
+        status: "unavailable",
+      }));
+    } catch { /* advisory */ }
+    return undefined;
+  }
 }
 
-/** One repository cell: its pass, its sealed delta and its marker. */
+async function writeCellResult(root: string, bytes: Uint8Array) {
+  await Deno.mkdir(root, { recursive: true, mode: 0o700 });
+  await Deno.writeFile(joinPath(root, "result.json"), bytes, { mode: 0o600 });
+}
+
+/**
+ * One repository cell: its pass, its sealed delta and its marker. A cell
+ * that cannot produce a delta still writes its bounded refusal record (so
+ * its artifact always exists and finalize counts it `refused`) and settles
+ * normally; no state is touched either way.
+ */
 export async function runRepairCellTargetCycles(
   input: ActionsTargetCyclesInputV1,
   carrier: MatrixNativeCarrierV1,
 ): Promise<ActionsTargetCyclesResultV1> {
   const host = hostOf(input);
-  if (
-    carrier.repairPlanDigest === undefined || carrier.cellId === undefined
-  ) throw new Error("repair cell lacks native selection");
-  const plan = await readRepairFanoutPlan(
-    host.artifactRoot,
-    carrier.repairPlanDigest,
-    host.run,
-  );
-  const cell = plan.cells.find((entry) => entry.cellId === carrier.cellId);
-  if (cell === undefined) {
-    throw new Error("repair cell is absent from its plan");
-  }
-  const config = configured(input, cell.repository);
-  await input.prepareTarget?.(config);
-  // The cell anchors its own bounded window at this trusted child
-  // invocation, exactly like a matrix cell.
-  const origin = input.runOrigin ?? host.execution.createdAt;
-  const result = await runRepositoryRepairPass(targetDeps(input, config), {
-    repository: cell.repository,
-    binding: await repairFanoutBindingV1(plan),
-    records: cell.records,
-    deadline: Math.min(input.deadline, childRunDeadlineV1(origin)),
-    runStartedAt: origin,
-    stepLimit: input.stepLimit,
-    modelStartsEnabled: input.modelStartsEnabled,
-  });
-  if (result.status !== "sealed") {
-    throw new Error("repair cell could not read its base state");
+  const cellId = carrier.cellId;
+  const planDigest = carrier.repairPlanDigest;
+  if (planDigest === undefined || cellId === undefined) {
+    throw new Error("repair cell lacks native selection");
   }
   const root = repairFanoutRootOf(host.artifactRoot);
-  await Deno.mkdir(root, { recursive: true, mode: 0o700 });
-  await Deno.writeFile(
-    joinPath(root, "result.json"),
-    encodeRepairDeltaArtifactV1(result.envelope),
-    { mode: 0o600 },
-  );
-  console.log(JSON.stringify({
-    kind: REPAIR_CELL_MARKER_KIND,
-    run: host.run,
-    runtimeSha: input.controllerSha,
-    generation: host.execution.generation,
-    cellId: cell.cellId,
-    deltaDigest: result.envelope.digest,
-    transitions: result.envelope.delta.transitions.length,
-  }));
-  return {
-    outcome: { status: "idle", detail: "repair cell settled" },
-    addressed: [config.repository.owner + "/" + config.repository.name],
-    skipped: [],
-    failed: [],
-  };
+  const marker = (deltaDigest: string, transitions: number) =>
+    console.log(JSON.stringify({
+      kind: REPAIR_CELL_MARKER_KIND,
+      run: host.run,
+      runtimeSha: input.controllerSha,
+      generation: host.execution.generation,
+      cellId,
+      deltaDigest,
+      transitions,
+    }));
+  let reason: RepairCellRefusalReasonV1 = "plan_unavailable";
+  let addressed: string[] = [];
+  try {
+    const plan = await readRepairFanoutPlan(
+      host.artifactRoot,
+      planDigest,
+      host.run,
+    );
+    reason = "cell_unplanned";
+    const cell = plan.cells.find((entry) => entry.cellId === cellId);
+    if (cell === undefined) throw new Error("cell unplanned");
+    reason = "pass_failed";
+    const config = configured(input, cell.repository);
+    addressed = [config.repository.owner + "/" + config.repository.name];
+    await input.prepareTarget?.(config);
+    // The cell anchors its own bounded window at this trusted child
+    // invocation, exactly like a matrix cell.
+    const origin = input.runOrigin ?? host.execution.createdAt;
+    const result = await runRepositoryRepairPass(targetDeps(input, config), {
+      repository: cell.repository,
+      binding: await repairFanoutBindingV1(plan),
+      records: cell.records,
+      deadline: Math.min(input.deadline, childRunDeadlineV1(origin)),
+      runStartedAt: origin,
+      stepLimit: input.stepLimit,
+      modelStartsEnabled: input.modelStartsEnabled,
+    });
+    if (result.status !== "sealed") {
+      reason = "base_unavailable";
+      throw new Error("base unavailable");
+    }
+    await writeCellResult(root, encodeRepairDeltaArtifactV1(result.envelope));
+    marker(result.envelope.digest, result.envelope.delta.transitions.length);
+    return {
+      outcome: { status: "idle", detail: "repair cell settled" },
+      addressed,
+      skipped: [],
+      failed: [],
+    };
+  } catch {
+    const refusal: RepairCellRefusalV1 = {
+      version: "v1",
+      kind: REPAIR_CELL_REFUSAL_KIND,
+      cellId,
+      reason,
+    };
+    await writeCellResult(
+      root,
+      new TextEncoder().encode(canonicalStringify(refusal) + "\n"),
+    );
+    marker(await canonicalDigestV1(refusal), 0);
+    return {
+      outcome: { status: "idle", detail: "repair cell refused: " + reason },
+      addressed,
+      skipped: [],
+      failed: [],
+    };
+  }
 }

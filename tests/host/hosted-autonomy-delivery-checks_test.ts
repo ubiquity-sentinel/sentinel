@@ -25,6 +25,7 @@ import {
 } from "../../src/host/target-delivery-checks.ts";
 import { SHA1, T0 } from "../state/helpers.ts";
 import {
+  FOREIGN_PR,
   FOREIGN_REPO,
   FOREIGN_TARGET,
   foreignPullFacts,
@@ -161,7 +162,11 @@ Deno.test("delivery checks: a failed delivery check parks the record, keeps the 
       JSON.stringify(result.actions),
     );
     assert.equal(comments.length, 1);
-    assert.equal(comments[0].issue, 120);
+    assert.equal(
+      comments[0].issue,
+      FOREIGN_PR,
+      "the park comment goes on the merged pull request, not the issue",
+    );
     assert.ok(comments[0].body.includes("<!-- sentinel:progress "));
     assert.ok(comments[0].body.includes("98765432101"));
     // An unchanged park is neither rewritten nor commented again.
@@ -407,7 +412,17 @@ Deno.test("delivery checks: a merge-closed issue is reopened once, persisted wit
       parked.blocker?.message,
     );
     assert.equal(comments.length, 1);
-    assert.ok(comments[0].body.includes("reopened this issue"));
+    assert.equal(
+      comments[0].issue,
+      FOREIGN_PR,
+      "the reopen park comment goes on the merged pull request",
+    );
+    assert.ok(
+      comments[0].body.includes(
+        "Sentinel reopened issue #120, which the merge had closed.",
+      ),
+      comments[0].body,
+    );
     assert.deepEqual(rig.closed, []);
     // A later close by the merge commit again (or anything else) never
     // reopens twice: the persisted marker settles the park.
@@ -441,7 +456,7 @@ Deno.test("delivery checks: an issue a person closed is never reopened", async (
         parked.blocker?.message,
       );
       assert.equal(comments.length, 1);
-      assert.ok(!comments[0].body.includes("reopened this issue"));
+      assert.ok(!comments[0].body.includes("reopened issue"));
       // Unchanged on the next pass: no reopen, no comment, no write.
       const writes = rig.writes;
       await run(rig, undefined, policy([DEPLOY]));

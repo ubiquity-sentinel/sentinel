@@ -7,8 +7,9 @@
  * marked done. A still-running or not-yet-reported check keeps the record in
  * `delivery` with a bounded `deployment` wait; a failed check (or one that
  * never completed within the bound) parks the record with the check name and
- * id as the precise blocker and posts one progress comment on the issue. The
- * review and merge gates are unchanged; an empty policy changes nothing.
+ * id as the precise blocker and posts one progress comment on the merged
+ * pull request. The review and merge gates are unchanged; an empty policy
+ * changes nothing.
  */
 import { isGitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
@@ -21,6 +22,7 @@ import type { GitSha } from "../src/contracts/brands.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { targetDeliveryCheckPolicyV1 } from "../src/host/target-delivery-checks.ts";
 import {
+  progressCommentTarget,
   progressMarker,
   progressStage,
 } from "../src/host/progress-comments.ts";
@@ -197,7 +199,8 @@ export function deliveryReceiptText(
 
 interface PendingComment {
   readonly surface: HostedAutonomyGitHubV1;
-  readonly issueNumber: number;
+  /** The issue or pull request number the comment is posted on. */
+  readonly number: number;
   readonly body: string;
 }
 
@@ -356,7 +359,7 @@ export async function gateDeliveryChecks(
     if (surface !== null && stage !== null && !alreadyParked) {
       gate.comments.push({
         surface,
-        issueNumber: plan.issueNumber,
+        number: progressCommentTarget(parked, plan.issueNumber),
         body: `${
           progressMarker(record.id, stage.key)
         }\nSentinel merged pull request #${record.target.pr}, but the ${
@@ -367,7 +370,7 @@ export async function gateDeliveryChecks(
             : `ended ${decision.conclusion}`
         }${decision.id === null ? "" : ` (id ${decision.id})`}.${
           reopened === true
-            ? " Sentinel reopened this issue, which the merge had closed."
+            ? ` Sentinel reopened issue #${plan.issueNumber}, which the merge had closed.`
             : ""
         } Merge is not delivery: this repair is parked until the delivery is fixed.`,
       });
@@ -390,14 +393,14 @@ export async function postDeliveryCheckComments(
     let posted = false;
     try {
       posted = await comment.surface.commentIssue?.(
-        comment.issueNumber,
+        comment.number,
         comment.body,
       ) === true;
     } catch {
       posted = false;
     }
     context.actions.push(
-      `delivery-checks:comment:issue=${comment.issueNumber}:${
+      `delivery-checks:comment:on=${comment.number}:${
         posted ? "posted" : "unavailable"
       }`,
     );

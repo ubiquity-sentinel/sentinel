@@ -148,11 +148,13 @@ export function isHostedRetired(
  * a static reason that the retry pass refuses to clear. A record that produced
  * nothing (no pull request) is parked from a live step only, exactly as before:
  * an already blocked record keeps its own blocker. A record with a pull request
- * still has a delivery path unless that pull request is definitively closed
- * without a merge, and that verdict is evidence from any step — an already
- * blocked record whose pull can never merge is parked with the same static
- * reason. `closedUnmerged` carries the ids whose pull request is closed without
- * a merge; an open, merged or unreadable pull is not evidence. A record with a
+ * is retired once that pull request reads unmerged — closed (`closedUnmerged`)
+ * or still open (`openUnmerged`) — and that verdict is evidence from any step:
+ * an already blocked record is parked with the same static reason. An open
+ * pull on a closed issue has no task left to deliver; the retired-pull pass
+ * (`hosted-autonomy-retired-pulls.ts`) closes Sentinel's own such pull on the
+ * next pass, leaves a foreign one untouched, and returns the record to `work`
+ * if the issue reopens. A merged or unreadable pull is not evidence. A record with a
  * pull request and an UNSETTLED implementation intent is never retired: the
  * runtime's own uncertainty handler owns that intent, and only a settled
  * implementation intent may be cleared here. Non-implementation intents (the
@@ -164,6 +166,7 @@ export function planHostedRetirements(
   closedIssues: ReadonlySet<string>,
   closedUnmerged: ReadonlySet<string> = new Set(),
   custody?: HostedQueueCustodyContext,
+  openUnmerged: ReadonlySet<string> = new Set(),
 ): HostedClosurePlanV1[] {
   const plans: HostedClosurePlanV1[] = [];
   for (const record of snapshot.work) {
@@ -190,9 +193,12 @@ export function planHostedRetirements(
       plans.push({ id: record.id, issueNumber, repository: record.repository });
       continue;
     }
-    // Only a definitively closed-unmerged pull proves the task can never
-    // deliver; anything else leaves the record alone.
-    if (!closedUnmerged.has(record.id)) continue;
+    // Only a pull read unmerged (closed, or still open on the closed issue)
+    // proves the task can never deliver; anything else leaves the record
+    // alone.
+    if (!closedUnmerged.has(record.id) && !openUnmerged.has(record.id)) {
+      continue;
+    }
     // Already retired (this exact parking): planning it again would rewrite
     // the same row every pass and take a retirement slot from a record that
     // still needs one.

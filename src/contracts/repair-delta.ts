@@ -30,6 +30,7 @@ import {
   expectArray,
   expectEnum,
   expectExactKeys,
+  expectExactKeysWithOptional,
   expectGitSha,
   expectPattern,
   expectPositiveInt,
@@ -41,6 +42,10 @@ import {
   MaxItems,
 } from "./validation.ts";
 import { parseWorkRecordV1, type WorkRecordV1 } from "./work-record.ts";
+import {
+  parseRepairDeltaStepsV1,
+  type RepairDeltaStepV1,
+} from "./repair-delta-steps.ts";
 
 export const REPAIR_DELTA_KIND = "repair_delta";
 export const REPAIR_DELTA_ENVELOPE_KIND = "repair_delta_envelope";
@@ -87,6 +92,11 @@ export interface RepairDeltaV1 {
   /** Wall time of the cell's pass (advisory, for the metrics collector). */
   startedAt: number;
   finishedAt: number;
+  /**
+   * Advisory per-step summary (`repair-delta-steps.ts`); absent on deltas
+   * written before it existed.
+   */
+  steps?: RepairDeltaStepV1[];
 }
 
 export interface RepairDeltaEnvelopeV1 {
@@ -109,6 +119,7 @@ const DELTA_KEYS = [
   "startedAt",
   "finishedAt",
 ] as const;
+const DELTA_OPTIONAL_KEYS = ["steps"] as const;
 const BINDING_KEYS = ["runId", "runAttempt", "planDigest"] as const;
 const TRANSITION_KEYS = ["before", "after"] as const;
 const ENVELOPE_KEYS = ["version", "kind", "delta", "digest"] as const;
@@ -264,7 +275,7 @@ function parseBinding(input: unknown, path: string): RepairDeltaBindingV1 {
 
 export function parseRepairDeltaV1(input: unknown): RepairDeltaV1 {
   const obj = expectRecord(input, "$");
-  expectExactKeys(obj, DELTA_KEYS, "$");
+  expectExactKeysWithOptional(obj, DELTA_KEYS, DELTA_OPTIONAL_KEYS, "$");
   expectVersion(obj.version, "$.version");
   expectEnum(obj.kind, [REPAIR_DELTA_KIND], "$.kind");
   const repository = parseRepositoryIdentity(obj.repository, "$.repository");
@@ -323,6 +334,10 @@ export function parseRepairDeltaV1(input: unknown): RepairDeltaV1 {
     deferredToTrusted,
     startedAt,
     finishedAt,
+    // Absent stays absent so an older delta re-parses to exactly itself.
+    ...(obj.steps === undefined
+      ? {}
+      : { steps: parseRepairDeltaStepsV1(obj.steps, "$.steps") }),
   };
 }
 
@@ -407,4 +422,52 @@ export function decodeRepairDeltaArtifactV1(bytes: Uint8Array): unknown {
   } catch {
     return null;
   }
+}
+
+/**
+ * The bounded `result.json` of a repository cell that could not produce a
+ * delta (issue #328): its plan was unreadable, its cell was not planned, its
+ * base state was unavailable, its pass failed, or (written by the workflow
+ * itself) the cell's setup failed before its child ran. It carries no state
+ * and grants nothing: finalize only counts it and hands the cell's records
+ * back to the trusted serial pass.
+ */
+export const REPAIR_CELL_REFUSAL_KIND = "repair_cell_refusal";
+export const REPAIR_CELL_REFUSAL_REASONS = [
+  "plan_unavailable",
+  "cell_unplanned",
+  "base_unavailable",
+  "pass_failed",
+  "cell_unavailable",
+] as const;
+export type RepairCellRefusalReasonV1 =
+  typeof REPAIR_CELL_REFUSAL_REASONS[number];
+
+export interface RepairCellRefusalV1 {
+  version: "v1";
+  kind: typeof REPAIR_CELL_REFUSAL_KIND;
+  cellId: string;
+  reason: RepairCellRefusalReasonV1;
+}
+
+/** The strictly parsed refusal, or null for anything else. */
+export function parseRepairCellRefusalV1(
+  value: unknown,
+): RepairCellRefusalV1 | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  if (
+    Object.keys(row).sort().join() !== "cellId,kind,reason,version" ||
+    row.version !== "v1" || row.kind !== REPAIR_CELL_REFUSAL_KIND ||
+    typeof row.cellId !== "string" || !/^[0-9a-f]{64}$/.test(row.cellId) ||
+    !(REPAIR_CELL_REFUSAL_REASONS as readonly unknown[]).includes(row.reason)
+  ) return null;
+  return {
+    version: "v1",
+    kind: REPAIR_CELL_REFUSAL_KIND,
+    cellId: row.cellId,
+    reason: row.reason as RepairCellRefusalReasonV1,
+  };
 }

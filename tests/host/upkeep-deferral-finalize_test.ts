@@ -105,7 +105,7 @@ Deno.test("finalize host: third consecutive deferral claims one notice; a non-de
     await finalize(703, "deferred_historical_quarantine");
     assert.deepEqual(notices(), [{
       kind: "sentinel_upkeep_deferral_notice",
-      title: "Sentinel upkeep deferred three consecutive runs",
+      title: "Upkeep deferred for 3 consecutive supervisor cycles",
       reason: "deferred_historical_quarantine",
       runId: 703,
     }]);
@@ -113,10 +113,14 @@ Deno.test("finalize host: third consecutive deferral claims one notice; a non-de
     assert.doesNotMatch(summary[0], /https?:/);
     assert.equal(recorded(703).counts.ownerNoticesSent, 1);
     assert.deepEqual(port.ledger.upkeepStreak, {
-      version: 1,
+      version: 2,
       count: 3,
-      notified: true,
       lastRunId: 703,
+      noticeCount: 3,
+      runIds: [701, 702, 703],
+      reasons: ["deferred_historical_quarantine"],
+      startedAtMs: rig.clock.now(),
+      issueNumber: null,
     });
     // A rerun of run 703's finalize never claims a second notice.
     await finalize(703, "deferred_historical_quarantine");
@@ -125,15 +129,20 @@ Deno.test("finalize host: third consecutive deferral claims one notice; a non-de
     // Run 704: maintenance did not defer, so the streak resets.
     await finalize(704, "none");
     assert.deepEqual(port.ledger.upkeepStreak, {
-      version: 1,
+      version: 2,
       count: 0,
-      notified: false,
       lastRunId: 704,
+      noticeCount: null,
+      runIds: [],
+      reasons: [],
+      startedAtMs: null,
+      issueNumber: null,
     });
     assert.equal(recorded(704).counts.ownerNoticesSent, null);
     // A missing maintenance output is unobserved and leaves the streak alone.
     await finalize(705, undefined);
-    assert.equal(port.ledger.upkeepStreak?.lastRunId, 704);
+    const after: ThroughputMetricsLedgerV1 = port.ledger;
+    assert.equal(after.upkeepStreak?.lastRunId, 704);
     // A new streak needs three fresh deferrals before its own single notice.
     for (const runId of [706, 707]) {
       await finalize(runId, "deferred_matrix_history_budget");
@@ -151,7 +160,7 @@ Deno.test("finalize host: third consecutive deferral claims one notice; a non-de
     const files = encodeThroughputLedgerV1(port.ledger);
     assert.equal(
       files.get(THROUGHPUT_UPKEEP_STREAK_PATH),
-      '{"count":3,"lastRunId":708,"notified":true,"version":1}\n',
+      `{"count":3,"issueNumber":null,"lastRunId":708,"noticeCount":3,"reasons":["deferred_matrix_history_budget"],"runIds":[706,707,708],"startedAtMs":${rig.clock.now()},"version":2}\n`,
     );
   } finally {
     await rig.cleanup();

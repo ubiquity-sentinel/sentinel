@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Shared rig for the hard review-round ceiling: one issue task with an open
  * pull request run through the REAL repair loop against a scripted reviewer,
@@ -452,6 +453,7 @@ export async function capRig(options: CapRigOptionsV1 = {}) {
   };
   const model = new FakeModel({ head: SHA3, changedPaths: ["src/app.ts"] });
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

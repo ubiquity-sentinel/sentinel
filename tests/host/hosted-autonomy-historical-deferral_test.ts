@@ -65,7 +65,7 @@ Deno.test("Nov 3 regression: incomplete historical quarantine defers, exits 0 an
   const notice = {
     publish: (row: UpkeepDeferralNoticeV1) => {
       sent.push(row);
-      return Promise.resolve(true);
+      return Promise.resolve({ adapter: "log" as const, issueNumber: null });
     },
   };
   try {
@@ -127,9 +127,14 @@ Deno.test("Nov 3 regression: incomplete historical quarantine defers, exits 0 an
     }
     assert.deepEqual(notified, [false, false, true]);
     assert.deepEqual(sent, [{
-      title: "Sentinel upkeep deferred three consecutive runs",
+      title: "Upkeep deferred for 3 consecutive supervisor cycles",
       reason: "deferred_historical_quarantine",
       runId: 9003,
+      count: 3,
+      reasons: ["deferred_historical_quarantine"],
+      runIds: [9001, 9002, 9003],
+      startedAtMs: null,
+      issueNumber: null,
     }]);
     // A healthy pass reports no deferral and resets the streak.
     f.historicalMatrix.state = f.rig.state;

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Owner enqueue during awaited reads/admission must stop the final consumer. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -118,6 +119,7 @@ function rigFor(record: WorkRecordV1) {
   });
   state.repairHead = SHA1;
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     github,

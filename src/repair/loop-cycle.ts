@@ -8,6 +8,7 @@ import { resumeBaseSatisfaction } from "./loop-base-satisfaction.ts";
 import {
   declaredOperationFits,
   matrixAdmissionOnlyIds,
+  matrixOwnsFreshImplementation,
 } from "./loop-eligibility.ts";
 import { pollIntake } from "./loop-intake.ts";
 import { bridgeLegacyLoss } from "./loop-legacy-loss.ts";
@@ -492,6 +493,12 @@ async function* advanceSerialPass(
         !bootstrap && !awakened.has(id) && await gate.skips(context, record)
       ) continue;
       if (
+        deps.externalImplementations === true &&
+        matrixOwnsFreshImplementation(record) &&
+        (record.target.branch !== null ||
+          options.matrixIntakeOwnsBranches === true)
+      ) continue;
+      if (
         declaredOperationFits(deps, context, record)
       ) {
         selected = record;
@@ -555,7 +562,7 @@ async function* advanceSerialPass(
       result.kind,
       Math.round(performance.now() - stepStartedAt),
     );
-    await gate.settle(context, selected.id, result);
+    await gate.settle(context, selected.id, result, selected);
     if (result.kind === "deferred") {
       deferred.add(selected.id);
       receiveWake(yield { kind: "progress" });

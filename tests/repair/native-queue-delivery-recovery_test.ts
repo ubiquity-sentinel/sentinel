@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Real delivery guard: a transient preactivation rule read must not create queue custody. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -127,6 +128,7 @@ Deno.test("native delivery rule-read failure stays finite and recovers without q
           }),
         ];
         const deps: RepairCycleDepsV1 = {
+          ciMinutes: INACTIVE_CI_MINUTES,
           clock: f.clock,
           state,
           configs,

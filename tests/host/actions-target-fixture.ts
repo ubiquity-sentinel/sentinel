@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Shared credential-free hosted test fixtures; this module registers no tests. */
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import type { GitHubPort } from "../../src/contracts/ports.ts";
@@ -127,6 +128,7 @@ export function targetCycleInput(
   overrides: Partial<Parameters<typeof runActionsTargetCycles>[0]> = {},
 ): Parameters<typeof runActionsTargetCycles>[0] {
   return {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock: rig.clock,
     state: rig.state,
     configs: rig.configs,

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Real-Git rig for the base-refresh conflict resolution. A temporary
  * repository holds an old base B0, a published candidate H on it and a moved
@@ -395,6 +396,7 @@ export function conflictRig(
   };
   const run = (stepLimit = 16) =>
     runRepairCycle({
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state,
       configs,

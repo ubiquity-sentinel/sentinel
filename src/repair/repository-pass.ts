@@ -39,6 +39,12 @@ import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import {
+  MAX_REPAIR_DELTA_STEP_MS,
+  MAX_REPAIR_DELTA_STEPS,
+  type RepairDeltaStepV1,
+  repairStepKindV1,
+} from "../contracts/repair-delta-steps.ts";
 import { OPERATION_MARGIN_MS, REPAIR_RUN_CEILING_MS } from "./loop-bounds.ts";
 import { advanceRepairCycle } from "./loop-cycle.ts";
 import type { RepairCycleDepsV1, RepairCycleOutcomeV1 } from "./loop-types.ts";
@@ -148,21 +154,46 @@ function stampOnly(left: WorkRecordV1, right: WorkRecordV1): boolean {
 
 class IntervalJudge {
   readonly deferred = new Set<string>();
+  /** The delta's advisory step summary (`repair-delta-steps.ts`). */
+  readonly steps: RepairDeltaStepV1[] = [];
   private checkpoint: RepairForkCheckpointV1;
   /** The record the loop stepped in the open interval, if any. */
   private stepped: string | null = null;
+  private steppedKind: string | null = null;
+  private steppedAt = 0;
 
   constructor(
     private readonly fork: RepairForkState,
     private readonly fence: RepositoryPassFence,
     private readonly repository: RepositoryIdentityV1,
     private readonly delegated: ReadonlySet<string>,
+    private readonly clock: RepairCycleDepsV1["clock"],
   ) {
     this.checkpoint = fork.checkpoint();
   }
 
   step(id: string): void {
     this.stepped = id;
+    const row = this.fork.current().work.find((record) => record.id === id);
+    this.steppedKind = row === undefined ? null : repairStepKindV1(row);
+    this.steppedAt = this.clock.now();
+  }
+
+  /** Summarize the open interval's step (bounded, advisory). */
+  private summarize(disposition: RepairDeltaStepV1["disposition"]): void {
+    if (
+      this.stepped === null || this.steppedKind === null ||
+      this.steps.length >= MAX_REPAIR_DELTA_STEPS
+    ) return;
+    this.steps.push({
+      record: this.stepped,
+      kind: this.steppedKind,
+      disposition,
+      elapsedMs: Math.min(
+        MAX_REPAIR_DELTA_STEP_MS,
+        Math.max(0, this.clock.now() - this.steppedAt),
+      ),
+    });
   }
 
   /**
@@ -186,10 +217,10 @@ class IntervalJudge {
         repairTransitionRefusalV1(left, right, this.repository) !== null ||
         this.fork.leaksSyntheticHead(right);
     });
-    if (
-      force || effect || structural || refused ||
-      sharedRows(before) !== sharedRows(after)
-    ) {
+    const discard = force || effect || structural || refused ||
+      sharedRows(before) !== sharedRows(after);
+    this.summarize(discard ? "deferred" : "kept");
+    if (discard) {
       if (before !== after) this.fork.restore(this.checkpoint);
       // A write of this interval may have carried stamps other records
       // settled in earlier, kept intervals (the loop folds pending stamps into
@@ -216,6 +247,7 @@ class IntervalJudge {
       }
     }
     this.stepped = null;
+    this.steppedKind = null;
     this.checkpoint = this.fork.checkpoint();
   }
 }
@@ -244,7 +276,13 @@ export async function runRepositoryRepairPass(
     deps.state,
   );
   const fence = new RepositoryPassFence();
-  const judge = new IntervalJudge(fork, fence, input.repository, delegated);
+  const judge = new IntervalJudge(
+    fork,
+    fence,
+    input.repository,
+    delegated,
+    deps.clock,
+  );
   const passDeps = fencedRepositoryDeps(deps, fork, configs, fence);
   const excluded = new Set(
     own.filter((record) => !delegated.has(record.id)).map((record) =>
@@ -294,6 +332,7 @@ export async function runRepositoryRepairPass(
     deferredToTrusted: [...deferred].sort(),
     startedAt,
     finishedAt: Math.max(startedAt, deps.clock.now()),
+    steps: judge.steps,
   });
   return { status: "sealed", envelope, outcome };
 }

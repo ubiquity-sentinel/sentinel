@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Wave C integration test helpers.
  *
@@ -306,6 +307,7 @@ export async function makeRepairRig(
   });
   const run = (deadlineMs = 1_800_000) =>
     runRepairEntrypoint({
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state: store,
       configs,

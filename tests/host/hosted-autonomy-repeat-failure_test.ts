@@ -5,6 +5,7 @@
  * outcomes over 23 bases since 2026-10-10, every one a charged reservation)
  * and sentinel 152/155/156 (output-bound overruns).
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -39,6 +40,7 @@ import {
   repeatFailureStreak,
 } from "../../ops/hosted-autonomy-repeat-failure.ts";
 import { parseWithR80, r80Available } from "./r80-contracts.ts";
+import { implementerPromptTemplateDigest } from "../../src/repair/model-port-prompt-digest.ts";
 import { makeRig, releaseSnapshot } from "./hosted-autonomy-rig.ts";
 
 const LIVE = JSON.parse(
@@ -630,6 +632,7 @@ async function maintenance(
 ) {
   return await runHostedAutonomy(
     await withDarkQueueAuthority({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       githubFor: rig.githubFor,
       clock: { now: () => at },
@@ -674,6 +677,12 @@ Deno.test(
       const record = workOf(after, AI_300);
       assert.equal(record.nextStep, "blocked");
       assert.ok(record.blocker!.message.startsWith(REPEAT_FAILURE_PARK_PREFIX));
+      // The park records the implementer prompt it was written under, so
+      // that prompt never re-arms it (the second pass below only names it).
+      assert.equal(
+        parseRepeatFailurePark(record.blocker)?.prompt,
+        implementerPromptTemplateDigest().slice(0, 12),
+      );
       assert.equal(after.reservations.length, LIVE.reservations.length);
       // The sentinel rows were re-granted in the same write.
       for (const id of [S152, S155, S156]) {

@@ -6,6 +6,7 @@
  * through the ordinary consumer with the launcher's own trusted failover id,
  * charge nothing new, refund nothing and write only generation-76 shapes.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
@@ -252,6 +253,7 @@ async function failoverRecoveryScenario(
     const model = new FakeModel();
     const github = new FakeGithub({ baseSha: base, openIssues: [] });
     const deps: HostedAutonomyDepsV1 = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: f.rig.state,
       clock: f.clock,
       githubFor: f.rig.githubFor,
@@ -279,6 +281,7 @@ async function failoverRecoveryScenario(
           clock: f.clock,
           configs: [config],
           cycleFor: () => ({
+            ciMinutes: INACTIVE_CI_MINUTES,
             state,
             clock: f.clock,
             configs: [config],

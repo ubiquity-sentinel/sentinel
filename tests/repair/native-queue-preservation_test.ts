@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Hosted receipt and preservation consumers retain custody after owner enqueue. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -157,6 +158,7 @@ async function rigFor(consumer: Consumer, held = true, legacy = false) {
     return settle(request);
   };
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     github,

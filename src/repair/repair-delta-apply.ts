@@ -34,6 +34,11 @@ import type {
 import { repairTransitionRefusalV1 } from "./repair-delta-rules.ts";
 import { logFanoutSummary } from "./fanout-summary-line.ts";
 import {
+  type FanoutStepKindsV1,
+  fanoutStepKindsV1,
+} from "./fanout-step-kinds.ts";
+import {
+  delegatedRecordsV1,
   repairFanoutBindingV1,
   type RepairFanoutCellV1,
   type RepairFanoutPlanV1,
@@ -41,6 +46,7 @@ import {
 
 export type RepairDeltaRejectionV1 =
   | "missing"
+  | "refused"
   | "unauthenticated"
   | "invalid"
   | "duplicate"
@@ -55,6 +61,8 @@ export interface RepairDeltaArtifactV1 {
    * cell's artifact was absent or failed its authentication.
    */
   envelope: unknown;
+  /** The cell's authenticated artifact is its bounded refusal record. */
+  refused?: true;
 }
 
 export interface RepairDeltaApplyInputV1 {
@@ -78,6 +86,21 @@ export interface RepairDeltaApplyResultV1 {
   repositoryWallMs: number[];
   /** Wall time of this application (milliseconds). */
   applyMs: number;
+  /**
+   * Delegated records of every cell whose delta was not applied (missing,
+   * refused, rejected or stale) whose step stamp this write removed, so the
+   * next plan leaves them with the trusted serial pass (no record starves).
+   */
+  handedBack: number;
+  /** Per-kind counts of every opened delta's step summary (advisory). */
+  stepKinds: FanoutStepKindsV1;
+  /** Records the plan delegated to its cells. */
+  recordsDelegated: number;
+  /**
+   * Live (not done, not blocked) hot records the plan left with the trusted
+   * serial pass, at this application's first state read; null when unread.
+   */
+  recordsSerialOwned: number | null;
 }
 
 const APPLY_CAS_ATTEMPTS = 3;
@@ -140,6 +163,10 @@ export async function applyRepairDeltas(
   for (const artifact of input.artifacts) {
     const cell = cells.get(artifact.cellId);
     if (cell === undefined) continue;
+    if (artifact.refused === true) {
+      rejected.push({ repository: cell.repository, reason: "refused" });
+      continue;
+    }
     if (artifact.envelope === null) {
       rejected.push({ repository: cell.repository, reason: "missing" });
       continue;
@@ -162,11 +189,17 @@ export async function applyRepairDeltas(
   const repositoryWallMs = opened.map(({ delta }) =>
     delta.finishedAt - delta.startedAt
   ).sort((left, right) => right - left);
+  const stepKinds = fanoutStepKindsV1(
+    opened.flatMap(({ delta }) => delta.steps ?? []),
+  );
+  const delegated = delegatedRecordsV1(input.plan);
+  let recordsSerialOwned: number | null = null;
   const finish = (
     status: RepairDeltaApplyResultV1["status"],
     head: GitSha | null,
     applied: RepairDeltaV1[],
     late: RepairDeltaApplyResultV1["rejected"],
+    handedBack = 0,
   ): RepairDeltaApplyResultV1 =>
     logged({
       status,
@@ -178,6 +211,10 @@ export async function applyRepairDeltas(
       rejected: [...rejected, ...late],
       repositoryWallMs,
       applyMs: Math.max(0, deps.clock.now() - started),
+      handedBack,
+      stepKinds,
+      recordsDelegated: delegated.size,
+      recordsSerialOwned,
     });
 
   for (let attempt = 1; attempt <= APPLY_CAS_ATTEMPTS; attempt++) {
@@ -186,16 +223,42 @@ export async function applyRepairDeltas(
       return finish("state_error", null, [], []);
     }
     const { snapshot, head } = read.value;
+    recordsSerialOwned ??= snapshot.work.filter((row) =>
+      row.nextStep !== "done" && row.nextStep !== "blocked" &&
+      !delegated.has(row.id)
+    ).length;
     const accepted: RepairDeltaV1[] = [];
     const stale: RepairDeltaApplyResultV1["rejected"] = [];
     for (const entry of opened) {
       const refusal = await validate(entry, snapshot);
-      if (refusal === null) accepted.push(entry.delta);
-      else stale.push({ repository: entry.delta.repository, reason: refusal });
+      if (refusal === null) {
+        accepted.push(entry.delta);
+      } else {stale.push({
+          repository: entry.delta.repository,
+          reason: refusal,
+        });}
     }
     const rows = accepted.flatMap((delta) =>
-      delta.transitions.map((transition) => transition.after)
+      delta.transitions.map((transition) =>
+        transition.after
+      )
     );
+    // Every planned cell whose delta is not applied hands its delegated
+    // records back: only their advisory stamp is removed (never a charge,
+    // lifecycle or identity change), so the next plan keeps them trusted.
+    const appliedRepositories = new Set(
+      accepted.map((delta) => key(delta.repository)),
+    );
+    const handback = input.plan.cells
+      .filter((cell) => !appliedRepositories.has(key(cell.repository)))
+      .flatMap((cell) => cell.records)
+      .flatMap((id) => {
+        const row = snapshot.work.find((record) => record.id === id);
+        if (row?.stepInputs === undefined) return [];
+        const { stepInputs: _stamp, ...unstamped } = row;
+        return [unstamped as typeof row];
+      });
+    rows.push(...handback);
     if (rows.length === 0) return finish("none", head, accepted, stale);
     if (deps.clock.now() >= input.deadline) {
       return finish("none", head, [], [
@@ -228,7 +291,7 @@ export async function applyRepairDeltas(
       head,
     );
     if (written.kind === "progress") {
-      return finish("applied", context.head, accepted, stale);
+      return finish("applied", context.head, accepted, stale, handback.length);
     }
     if (written.kind !== "deferred") {
       return finish("state_error", head, [], []);

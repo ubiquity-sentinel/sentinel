@@ -9,6 +9,7 @@
  * store with the real snapshot and transition rules, and the consumer is the
  * ingest seam with the real consumer's dispositions.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -213,6 +214,7 @@ async function walkRig(outcome: "candidate" | "failed") {
   };
   const clock = { now: () => NOW };
   const deps: HostedAutonomyDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: state as unknown as StateReadView & RepairStateWriter,
     githubFor: github.githubFor,
     clock,
@@ -349,6 +351,7 @@ Deno.test("continuation walk: the closed-C ingest return carries the dedicated r
     },
   } as unknown as StateReadView & RepairStateWriter;
   const deps: HostedAutonomyDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     state,
     githubFor: () => null,
     clock: { now: () => NOW },

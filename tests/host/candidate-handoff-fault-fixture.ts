@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Shared credential-free hosted test fixtures; this module registers no tests. */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -496,6 +497,7 @@ export async function setupCandidateFaultFixture(
   const model = new ProducerModel(produceH1);
   const budget = new RollingStartBudget({ clock, state, configs: [config] });
   const entrypointDeps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs: [config],

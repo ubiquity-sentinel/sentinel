@@ -1,4 +1,5 @@
 /** Phase-local history expiry must leave independent guarded delivery live. */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { darkQueueCoordinatorFixture } from "./hosted-autonomy-dark-queue-fixture.ts";
 import { runHostedAutonomy } from "../../ops/hosted-autonomy-runner.ts";
@@ -98,6 +99,7 @@ async function deadlineRig() {
   );
   let now = T0 + 5000;
   const deps: HostedAutonomyDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     queue: await darkQueueCoordinatorFixture(rig),
     state: rig.state,
     githubFor: rig.githubFor,
