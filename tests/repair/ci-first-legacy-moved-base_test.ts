@@ -1,23 +1,18 @@
 /**
- * A legacy record whose final round is open, at the review-round ceiling on a
- * moved base, on a red head its own change did not break (round-2 recheck
- * P3). With the generic `CI checks failed: ...` blocker the launcher's
- * correction rule re-admitted it as a CI correction on every pass and R80's
- * delivery step declined the fix every time (no candidate attribution): one
- * correction slot per pass, no progress. The runtime keeps such a head away
- * from the correction rule and awaits a base check still running, bounded.
+ * Legacy reviewed heads on a moved base, exercised through the current repair
+ * loop and the real launcher retry planner. R80 is pinned as the CI-first
+ * runtime identity, not the code running these cases; every snapshot the loop
+ * writes parses under the generation-79 rollback runtime when it is available.
  *
- * Issue #155: the reviewed base B0 never turns green, so the head never does
- * either, and on a moved base no launcher rule re-runs or re-admits it. Once
- * the tip is complete and green the head takes the uncharged mechanical
- * refresh a green spent head takes (carrying its review); while the tip is
- * red it waits, bounded. A head its review does not authorize to carry, or
- * one still waiting at the bound, parks with a precise blocker (the red
- * reviewed base, or no base evidence) that the launcher reports every pass.
+ * Owner directive 2026-10-30: review rounds are accounting, never a park. A
+ * head whose review cannot be carried is mechanically refreshed onto the green
+ * tip and re-reviewed, even when its reviewed base is red or unattributed, or
+ * its base check is still running. The spent rounds remain counted.
  *
- * Driven through the REAL R80 loop and the REAL launcher retry planner with
- * R80 pinned as the CI-first runtime; every snapshot the loop writes parses
- * under the generation-79 rollback runtime.
+ * Issue #155's carried-delivery path remains distinct: an accepted head takes
+ * an uncharged mechanical refresh onto a complete, green tip, carrying its
+ * review to the launcher. While the tip is red it waits, bounded; a wait past
+ * the bound parks with the precise base-red blocker the launcher reports.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
