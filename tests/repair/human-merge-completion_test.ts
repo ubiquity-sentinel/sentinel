@@ -20,6 +20,11 @@ import {
 } from "../../src/repair/human-merge.ts";
 import { candidateBranch } from "../../src/repair/keys.ts";
 import { MERGED_OFF_TIP_PREFIX } from "../../src/repair/merge-off-tip.ts";
+import {
+  httpRespond,
+  makePort as makeGitHubPort,
+  pullWire,
+} from "../github/helpers.ts";
 import { reservation, SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
 import { exactOpenPr, preservedIssueWork } from "./loop-candidate-fixtures.ts";
 import { completedReceipt, deliveryRecord } from "./loop-review-fixtures.ts";
@@ -78,7 +83,27 @@ function closedIssueRig(name: string, merged: GitHubPullRequestV1) {
 
 Deno.test("human merge: a closed source issue completes delivery with provenance and a release request", async () => {
   const merged = mergedPr();
-  const rig = await closedIssueRig("human-merge-completion", merged);
+  const { port } = makeGitHubPort({
+    script: [
+      httpRespond(
+        "GET",
+        "/repos/ubiquity-sentinel/sentinel/pulls/7",
+        200,
+        pullWire({
+          number: merged.number,
+          state: "closed",
+          head: { ref: merged.headRef, sha: merged.head },
+          base: { ref: merged.baseRef, sha: merged.base },
+          merged_at: "2026-09-07T02:00:00Z",
+          merge_commit_sha: merged.mergeSha,
+          merged_by: { login: HUMAN_MERGE_ACTOR },
+        }),
+      ),
+    ],
+  });
+  const observed = await port.readPullRequest(merged.number);
+  assert.ok(observed.ok && observed.value !== null);
+  const rig = await closedIssueRig("human-merge-completion", observed.value);
   try {
     const record = humanMergeRecord();
     const charge = reservation("human-merge-review-charge", {
