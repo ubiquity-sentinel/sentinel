@@ -1,3 +1,4 @@
+import { routeExistingPr } from "./loop-existing-pr.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: work. */
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
@@ -39,6 +40,7 @@ import { observeReleaseAcceptance } from "./loop-release.ts";
 import { ensureBeforeReplay } from "./loop-replay-before.ts";
 import { candidateValidated } from "./loop-replay-validation.ts";
 import { observeReview } from "./loop-review-observation.ts";
+import { requestReviewFor } from "./loop-review-request.ts";
 import {
   headAwaitsCiCorrection,
   headNeedsCorrection,
@@ -93,6 +95,8 @@ export async function executeWorkStep(
 ): Promise<StepResultV1> {
   const queueGuard = await guardQueueOperation(deps, context, record, "resume");
   if (queueGuard !== null) return queueGuard;
+  const existingPr = await routeExistingPr(deps, context, record);
+  if (existingPr.status === "step") return existingPr.step;
   const config = configFor(deps, record.repository);
   if (config === null) {
     return persistWork(
@@ -135,10 +139,21 @@ export async function executeWorkStep(
   // regenerated, never published and never reviewed from an unverified head.
   const candidateState = record.target.candidateState;
   if (candidateState !== undefined && candidateState.preserved === null) {
-    return {
-      kind: "deferred",
-      detail: "candidate preservation descriptor unavailable",
-    };
+    if (existingPr.status !== "custody_ready") {
+      return {
+        kind: "deferred",
+        detail: "candidate preservation descriptor unavailable",
+      };
+    }
+    if (
+      record.intent === null && !headNeedsCorrection(
+        context.snapshot,
+        record,
+        ciCorrectionRouteOpen(deps),
+        preReviewCiFixRouteOpen(deps),
+        legacyCutoff(context),
+      )
+    ) return await requestReviewFor(deps, context, record, record.target.pr!);
   }
 
   // A saved base-refresh intent is reconciled wherever it is observed (the

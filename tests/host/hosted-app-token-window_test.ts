@@ -37,6 +37,8 @@ interface WiringV1 {
   /** The early advisory run window. */
   window: Record<string, unknown> | null;
   setup: string[];
+  queueReads: number;
+  unexpectedHttp: number;
   error: unknown;
 }
 
@@ -116,6 +118,8 @@ async function runWiring(extraEnv: Record<string, string>): Promise<WiringV1> {
       cycleDeadlines: [],
       window: null,
       setup: [],
+      queueReads: 0,
+      unexpectedHttp: 0,
       error: null,
     };
     const capability = {} as never;
@@ -134,6 +138,24 @@ async function runWiring(extraEnv: Record<string, string>): Promise<WiringV1> {
         },
         workDir: checkoutDir,
         stateRemoteUrl: remote.remoteUrl,
+        http: (request) => {
+          const url = new URL(request.url);
+          if (
+            request.method === "GET" &&
+            url.origin === "https://api.github.com" &&
+            url.pathname ===
+              "/repos/ubiquity/ai.ubq.fi/rules/branches/development"
+          ) {
+            wiring.queueReads++;
+            return Promise.resolve({
+              status: 200,
+              headers: new Headers(),
+              bodyText: "[]",
+            });
+          }
+          wiring.unexpectedHttp++;
+          throw new Error("fixture forbids other HTTP");
+        },
         refreshSelf: () => {
           wiring.setup.push("refresh-self");
           clock.advance(4 * 60_000);
@@ -185,6 +207,8 @@ Deno.test("hosted app token window: the real repair host stops its GitHub work b
     SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER: String(notAfter),
   });
   assert.equal(bounded.error, null, String(bounded.error));
+  assert.equal(bounded.queueReads, 1);
+  assert.equal(bounded.unexpectedHttp, 0);
   assert.deepEqual(bounded.setup, [
     "refresh-self",
     "preflight",
@@ -204,6 +228,8 @@ Deno.test("hosted app token window: the real repair host stops its GitHub work b
     SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER: String(T0 + 200 * 60_000),
   });
   assert.equal(late.error, null, String(late.error));
+  assert.equal(late.queueReads, 1);
+  assert.equal(late.unexpectedHttp, 0);
   assert.equal(late.supplied, childRunDeadlineV1(T0));
   assert.equal(late.window?.deadlineAt, childRunDeadlineV1(T0));
 
@@ -211,6 +237,8 @@ Deno.test("hosted app token window: the real repair host stops its GitHub work b
   // unchanged origin-anchored budget exactly.
   const legacy = await runWiring({ SENTINEL_SUPERVISOR_TOKEN: APP_TOKEN });
   assert.equal(legacy.error, null, String(legacy.error));
+  assert.equal(legacy.queueReads, 1);
+  assert.equal(legacy.unexpectedHttp, 0);
   assert.equal(legacy.supplied, childRunDeadlineV1(T0));
 });
 
@@ -222,6 +250,8 @@ Deno.test("hosted app token window: a malformed forwarded window refuses before 
     });
     assert.ok(refused.error instanceof Error, malformed);
     assert.deepEqual(refused.setup, [], malformed);
+    assert.equal(refused.queueReads, 0, malformed);
+    assert.equal(refused.unexpectedHttp, 0, malformed);
     assert.equal(refused.supplied, null, malformed);
     assert.equal(refused.window, null, malformed);
   }

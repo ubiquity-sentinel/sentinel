@@ -1,4 +1,6 @@
 import { queueDeliveryProvenanceRef } from "../github/queue-delivery-provenance.ts";
+import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
+import { prepareExistingPrEffect } from "./loop-existing-pr.ts";
 import {
   holdQueueRecord,
   queueEffectRefused,
@@ -71,6 +73,26 @@ const MERGE_DETAIL_CODES: readonly (readonly [string, string])[] = [
   ["ancestry check failed", "ancestry_unavailable"],
 ];
 
+/** Source-CAS self merge has a distinct closing protocol; takeover never widens it. */
+async function holdAdoptedSelfMerge(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+): Promise<StepResultV1 | null> {
+  if (
+    !hasTakeoverCustody(record) || record.repository.owner !== "ubiquity" ||
+    record.repository.name !== "sentinel"
+  ) return null;
+  const detail = "existing PR hold: self_merge_requires_owner";
+  return record.blocker?.message === detail
+    ? { kind: "deferred", detail }
+    : await persistWork(
+      deps,
+      context,
+      markBlocked(record, "other", detail, deps.clock.now()),
+    );
+}
+
 function emitMergePortError(
   event: "merge_port_error" | "merge_reconcile_read_error",
   prNumber: number,
@@ -100,6 +122,8 @@ export async function executeMerge(
 ): Promise<StepResultV1> {
   const queueGuard = await guardQueueOperation(deps, context, record, "merge");
   if (queueGuard !== null) return queueGuard;
+  const takeoverSelf = await holdAdoptedSelfMerge(deps, context, record);
+  if (takeoverSelf !== null) return takeoverSelf;
   const now = deps.clock.now();
   // Merge is a GitHub write: gate before any preparation or intent write (a
   // cooling installation never writes a merge intent it cannot act on; the
@@ -250,7 +274,9 @@ export async function executeMerge(
     kind: "merge" as const,
     key: mergeIntentKey(record.target.pr!, record.target.head!),
     startedAt: now,
-    branch: candidateBranch(record.id),
+    branch: hasTakeoverCustody(record)
+      ? record.target.branch
+      : candidateBranch(record.id),
     expectedHead: record.target.head,
     observedBase: record.target.base,
     pr: record.target.pr,
@@ -272,9 +298,19 @@ export async function executeMerge(
   }
 
   const self = selfMergeExecution(deps, context, withIntent);
+  const custody = await prepareExistingPrEffect(deps, context, withIntent, {
+    operation: "merge",
+  });
+  if (!custody.ok) {
+    return {
+      kind: "deferred",
+      detail: "existing PR merge custody unavailable",
+    };
+  }
   const merged = await deps.github.mergePullRequest(
     mergeRequest,
     self.execution,
+    custody.value,
   );
   if (self.failure !== null) return self.failure;
   if (!merged.ok) {
@@ -433,6 +469,8 @@ export async function reconcileMergeIntent(
 ): Promise<StepResultV1> {
   const queueGuard = await guardQueueOperation(deps, context, record, "merge");
   if (queueGuard !== null) return queueGuard;
+  const takeoverSelf = await holdAdoptedSelfMerge(deps, context, record);
+  if (takeoverSelf !== null) return takeoverSelf;
   if (record.intent?.selfMerge !== undefined) {
     const receipt = mergeIntentReceipt(context.snapshot.reviews, record);
     if (

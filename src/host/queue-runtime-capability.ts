@@ -7,7 +7,7 @@ import type {
   HostedRuntimeRecordV1,
 } from "../contracts/hosted-supervisor.ts";
 import type { ReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
-import { QUEUE_PROOF_ACTIVATED } from "../github/queue-runtime-policy.ts";
+import { HOSTED_CUSTODY_CAPABILITY } from "./hosted-custody-capability.ts";
 import type { OwnerDevelopmentInstallMoveV1 } from "./owner-install-types.ts";
 
 export interface QueueRuntimeMigration {
@@ -34,11 +34,8 @@ export interface QueueRuntimeCapability {
  * Its predecessor never becomes executable or eligible for rollback merely
  * because the owner may move away from it. Missing tuples refuse migration.
  */
-export const QUEUE_RUNTIME_CAPABILITY: QueueRuntimeCapability = Object.freeze({
-  proofActivated: QUEUE_PROOF_ACTIVATED,
-  revisions: Object.freeze([]),
-  ownerInstallMigrations: Object.freeze([]),
-});
+export const QUEUE_RUNTIME_CAPABILITY: QueueRuntimeCapability =
+  HOSTED_CUSTODY_CAPABILITY.queue;
 
 export const QUEUE_RUNTIME_CAPABILITY_REFUSED =
   "queue proof activation requires an accepted exact runtime capability";

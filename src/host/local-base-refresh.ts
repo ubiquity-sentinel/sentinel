@@ -3,6 +3,10 @@ import {
   type NativeQueueGuardV1,
 } from "../github/native-queue-guard.ts";
 import type { Clock } from "../contracts/ports.ts";
+import type {
+  ExistingPrTakeoverPort,
+  TakeoverEffectAuthorization,
+} from "../contracts/existing-pr-takeover.ts";
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import {
   type GitHubPullRequestV1,
@@ -23,6 +27,7 @@ import { LOCAL_REPOSITORY } from "./local-policy.ts";
 /** Narrow read-only observation the base-refresh adapter needs from the port. */
 export interface BaseRefreshObserverV1 {
   readonly nativeQueue?: NativeQueueGuardV1;
+  readonly existingPrTakeover?: ExistingPrTakeoverPort;
   readPullRequest(
     number: number,
   ): Promise<PortResultV1<GitHubPullRequestV1 | null>>;
@@ -91,6 +96,7 @@ export interface PrepareBaseRefreshAdapterInputV1 {
 
 export type PrepareBaseRefreshV1 = (
   request: PrepareBaseRefreshRequestV1,
+  takeover?: TakeoverEffectAuthorization,
 ) => Promise<PortResultV1<GitSha>>;
 
 const STATIC_BASE_REFRESH_INPUT = "base refresh request is invalid";
@@ -140,7 +146,7 @@ export function createPrepareBaseRefresh(
 ): PrepareBaseRefreshV1 {
   const baseBranch = input.baseBranch;
   const trustedPrAuthor = input.trustedPrAuthor;
-  return async (request) => {
+  return async (request, takeover) => {
     if (
       request === null || typeof request !== "object" ||
       !Number.isSafeInteger(request.pullRequestNumber) ||
@@ -193,7 +199,7 @@ export function createPrepareBaseRefresh(
     if (pull.state !== "open") {
       return portError("conflict", STATIC_BASE_REFRESH_PR);
     }
-    if (pull.author !== trustedPrAuthor) {
+    if (pull.author !== trustedPrAuthor && takeover === undefined) {
       return portError("conflict", STATIC_BASE_REFRESH_AUTHOR);
     }
     if (pull.headRef !== request.branch) {
@@ -266,6 +272,21 @@ export function createPrepareBaseRefresh(
     }
     const beforeIntegrate = await queueCheck();
     if (!beforeIntegrate.ok) return beforeIntegrate;
+    // This proof is issued and consumed by the same host port. A caller object
+    // or a foreign original PR author never substitutes for App authority.
+    const custody = input.observer.existingPrTakeover;
+    if (custody !== undefined) {
+      const allowed = await custody.authorizeBoundary({
+        kind: "refresh",
+        request,
+      }, takeover);
+      if (!allowed.ok) return allowed;
+    } else if (takeover !== undefined) {
+      return portError(
+        "unavailable",
+        "existing PR refresh custody unavailable",
+      );
+    }
     const integrated = await integrateBase(
       request.expectedHead,
       request.expectedBase,

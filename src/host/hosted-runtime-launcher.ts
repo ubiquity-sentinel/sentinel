@@ -52,10 +52,10 @@ import { canonicalStringify } from "../contracts/canonical.ts";
 import { legacyReviewCutoffForExecution } from "./legacy-review-cutoff-env.ts";
 import { runRepairOwnerWithReviewCustody } from "./review-owner-custody.ts";
 import type { HostedReviewOwnerSettlementV1 } from "../github/review-owner-evidence.ts";
-import {
-  allowsQueueExecution,
-  type QueueRuntimeCapability,
-} from "./queue-runtime-capability.ts";
+import { allowsHostedExecution } from "./hosted-runtime-compatibility.ts";
+import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
+import type { ExistingPrRuntimeCapability } from "./existing-pr-runtime-capability.ts";
+import { retainVerifiedHostedAppGrant } from "./hosted-runtime-principal-handoff.ts";
 
 /**
  * Verify the launcher and runtime checkouts as clean worktrees at their exact
@@ -68,10 +68,11 @@ export async function runHostedRuntimeLauncher(
   input: HostedRuntimeLauncherInputV1,
   /** Trusted in-process fixture only; production uses launcher source pins. */
   capability?: QueueRuntimeCapability,
+  custodyCapability?: ExistingPrRuntimeCapability,
 ): Promise<HostedRuntimeLauncherResultV1> {
   let result = unavailableResult();
   try {
-    result = await launchHostedRuntime(input, capability);
+    result = await launchHostedRuntime(input, capability, custodyCapability);
   } catch {
     result = unavailableResult();
   }
@@ -86,6 +87,7 @@ export async function runHostedRuntimeLauncher(
 async function launchHostedRuntime(
   input: HostedRuntimeLauncherInputV1,
   capability?: QueueRuntimeCapability,
+  custodyCapability?: ExistingPrRuntimeCapability,
 ): Promise<HostedRuntimeLauncherResultV1> {
   const identity = parseHostedEnvironment(
     input.env,
@@ -124,7 +126,12 @@ async function launchHostedRuntime(
   });
   if (
     execution.revision !== runtimeHead ||
-    !allowsQueueExecution(execution, release.hostedReleases, capability)
+    !allowsHostedExecution(
+      execution,
+      release.hostedReleases,
+      capability,
+      custodyCapability,
+    )
   ) {
     throw new Error(HOSTED_RUNTIME_STATIC_EXECUTION);
   }
@@ -143,6 +150,11 @@ async function launchHostedRuntime(
     { home: childHome, tmp: childTmp, denoDir: childDenoDir },
     startedAt,
     legacyReviewCutoffForExecution(execution, release),
+  );
+  await retainVerifiedHostedAppGrant(
+    input,
+    { ...dirs, identity, execution },
+    childEnv,
   );
   // Streaming is attached only here, after the exact execution identity has
   // been verified, and only to the actual child command: the bounded Git

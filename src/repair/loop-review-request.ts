@@ -4,6 +4,8 @@ import type { ReviewObservationV1 } from "../contracts/ports.ts";
 import { REVIEW_TASK_SHAPE_DETAIL } from "../contracts/review-receipt.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { candidateBranch, reviewOperationKey } from "./keys.ts";
+import { prepareExistingPrEffect } from "./loop-existing-pr.ts";
+import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 import {
   persistAfterSettlement,
   settleReviewCharge,
@@ -313,7 +315,9 @@ export async function requestReviewFor(
     kind: "review_request" as const,
     key: operationKey,
     startedAt: now,
-    branch: candidateBranch(record.id),
+    branch: hasTakeoverCustody(record)
+      ? record.target.branch
+      : candidateBranch(record.id),
     expectedHead: head,
     observedBase: current.target.base,
     pr: prNumber,
@@ -428,16 +432,22 @@ export async function requestReviewFor(
   if (submitGuard !== null) return submitGuard;
 
   // Invocation happens strictly after the durable intent exists.
-  const submitted = await deps.github.requestReview({
-    prNumber,
-    expectedHead: head,
-    expectedBase: current.target.base,
-    expectedReviewer: deps.github.reviewerIdentity,
-    operationKey,
-    latestStartAt,
-    settleBy,
-    task,
+  const custody = await prepareExistingPrEffect(deps, fresh, withIntent, {
+    operation: "review",
+    ...(task === null ? {} : { taskDigest: task.digest }),
   });
+  const submitted = custody.ok
+    ? await deps.github.requestReview({
+      prNumber,
+      expectedHead: head,
+      expectedBase: current.target.base,
+      expectedReviewer: deps.github.reviewerIdentity,
+      operationKey,
+      latestStartAt,
+      settleBy,
+      task,
+    }, custody.value)
+    : custody;
   if (!submitted.ok) {
     // The response may have been lost after submission: the start stays
     // charged as ambiguous and the saved intent makes the next run observe

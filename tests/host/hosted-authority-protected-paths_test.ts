@@ -1,0 +1,122 @@
+import assert from "node:assert/strict";
+import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
+import { positiveLifecycle } from "../repair/loop-candidate-fixtures.ts";
+import { makeRig as makeRepairRig } from "../repair/loop-rig.ts";
+import {
+  exited,
+  launch,
+  makeRig as makeHostedRig,
+  seedRelease,
+} from "./hosted-runtime-fixture.ts";
+
+Deno.test("hosted authority: actual repair keeps forbidden candidates charged and unpublished", async (t) => {
+  for (
+    const path of [
+      ".github/actions/sentinel-app-token/lib/mint-grant.js",
+      "src/host/hosted-app-source-profiles.json",
+      "src/host/hosted-app-takeover-routing.ts",
+      "src/host/actions-queue-custody.ts",
+      "src/host/maintenance-existing-pr-publication.ts",
+      "src/host/hosted-runtime-bootstrap.ts",
+      "src/host/owner-install-plan-proof.ts",
+      "src/host/self-dependency-preparation.ts",
+      "src/github/existing-pr-publication-proof.ts",
+      "src/host/hosted-authority-protected-paths.ts",
+    ]
+  ) {
+    await t.step(path, async () => {
+      const rig = await makeRepairRig("hosted-authority", {
+        model: { changedPaths: [path] },
+        github: { candidateLifecycle: positiveLifecycle() },
+        configOverrides: {
+          protectedPaths: createLocalRepositoryConfig().protectedPaths,
+        },
+      });
+      try {
+        const outcome = await rig.run();
+        assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+        const state = await rig.snapshot();
+        assert.equal(state.work[0].nextStep, "blocked");
+        assert.equal(
+          state.work[0].blocker?.message,
+          "candidate touches a protected path",
+        );
+        assert.equal(rig.model.requests.length, 1);
+        assert.equal(state.reservations.length, 1);
+        assert.equal(state.reservations[0].outcome, "submitted");
+        assert.equal(rig.github.pushes.length, 0);
+        assert.equal(rig.github.preservationRequests.length, 0);
+        assert.equal(rig.github.calls.includes("requestReview"), false);
+      } finally {
+        await rig.ctx.cleanup();
+      }
+    });
+  }
+});
+
+Deno.test("hosted authority: unrelated source and action candidates retain publication", async () => {
+  const rig = await makeRepairRig("hosted-authority-control", {
+    model: {
+      changedPaths: [
+        "src/host/ordinary-feature.ts",
+        ".github/actions/ordinary-action/main.js",
+      ],
+    },
+    github: { candidateLifecycle: positiveLifecycle() },
+    configOverrides: {
+      protectedPaths: createLocalRepositoryConfig().protectedPaths,
+    },
+  });
+  try {
+    await rig.run();
+    const state = await rig.snapshot();
+    assert.equal(state.work[0].blocker, null);
+    assert.equal(rig.model.requests.length, 1);
+    assert.equal(state.reservations[0].outcome, "submitted");
+    assert.equal(rig.github.preservationRequests.length, 1);
+    assert.equal(rig.github.pushes.length, 1);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("hosted authority: real launcher emits only closed authority frame basenames", async () => {
+  const rig = await makeHostedRig();
+  try {
+    await seedRelease(rig);
+    rig.process.child = exited("", 7, {
+      stderr: new TextEncoder().encode([
+        "error: Uncaught Error: fixture abort",
+        "    at file:///private/runtime/src/host/hosted-unknown-authority.ts:12:6",
+        "    at file:///private/runtime/src/host/synthetic-secret-value.ts:13:7",
+        "    at file:///private/launcher/src/host/hosted-app-principal-source.ts:9:3",
+        "    at file:///private/runtime/src/host/hosted-self-dependencies.ts:10:4",
+        "    at file:///private/runtime/ops/hosted-autonomy-queue-proof.ts:11:5",
+        "    at file:///private/runtime/src/host/hosted-app-takeover-routing.ts:9:3",
+        "    at file:///private/runtime/src/host/actions-queue-custody.ts:10:4",
+        "    at file:///private/runtime/src/host/maintenance-existing-pr-publication.ts:11:5",
+      ].join("\n")),
+    });
+    const result = await launch(rig);
+    assert.equal(result.status, "failed");
+    assert.equal(result.terminal?.outcome, "failed");
+    assert.deepEqual(result.earlyFailure?.frames, [
+      "hosted-app-principal-source.ts:9:3",
+      "hosted-self-dependencies.ts:10:4",
+      "hosted-autonomy-queue-proof.ts:11:5",
+      "hosted-app-takeover-routing.ts:9:3",
+      "actions-queue-custody.ts:10:4",
+      "maintenance-existing-pr-publication.ts:11:5",
+    ]);
+    const serialized = JSON.stringify(result);
+    for (
+      const forbidden of [
+        "/private/",
+        "hosted-unknown-authority",
+        "synthetic-secret-value",
+      ]
+    ) assert.equal(serialized.includes(forbidden), false);
+  } finally {
+    await rig.cleanup();
+  }
+});

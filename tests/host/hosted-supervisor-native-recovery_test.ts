@@ -148,6 +148,8 @@ for (const nativeCompletion of [false, true]) {
       }
       assert.equal(result.execution?.purpose, "bootstrap");
       assert.equal(outputs.get("modelStartsEnabled"), "false");
+      assert.equal(outputs.get("executionPurpose"), "bootstrap");
+      assert.equal(outputs.get("generation"), "59");
       assert.equal(outputs.get("revision"), RECOVERY_REVISION);
       assert.equal(result.execution?.generation, 59);
       await assert.rejects(() =>

@@ -406,6 +406,8 @@ export interface ActionsRepairHostDepsV1 {
   artifactHttp?: HttpTransportV1;
   /** Deterministic state transport injection; production always uses the Git store. */
   state?: StateReadView & RepairStateWriter;
+  /** Trusted fixture source pins only; production uses reviewed source JSON. */
+  hostedAppSourceProfiles?: unknown;
   model?: ImplementationPort;
   composeGithub?: (
     config: RepositoryConfigV1,

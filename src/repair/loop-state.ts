@@ -339,6 +339,7 @@ export function persistWork(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   next: WorkRecordV1,
+  proofHead?: GitSha,
 ): Promise<StepResultV1> {
   // Per-record no-progress budget (run fairness): ONE execution of the
   // selected record either advanced its durable shape or only re-armed state.
@@ -354,5 +355,10 @@ export function persistWork(
       deps.clock.now(),
     )
     : next;
-  return persistTransition(deps, context, replaceWorkMutation(counted));
+  return persistTransition(
+    deps,
+    context,
+    replaceWorkMutation(counted),
+    proofHead,
+  );
 }

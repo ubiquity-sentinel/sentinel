@@ -45,6 +45,9 @@ jobs:
   maintenance:
     outputs:
       queueCustodyReady: ${{ steps.autonomy.outputs.queueCustodyReady }}
+      runtimeMigrationOnly: ${{ steps.autonomy.outputs.runtimeMigrationOnly }}
+      runtimeMigrationRevision: ${{ steps.autonomy.outputs.runtimeMigrationRevision }}
+      runtimeMigrationGeneration: ${{ steps.autonomy.outputs.runtimeMigrationGeneration }}
     # The scoped generation-68 verification settled healthy, so the maintenance
     # writer is restored to its protected-ref condition; it performs bounded
     # self-upkeep (retries and reviewed-head delivery) before prepare.
@@ -144,7 +147,7 @@ jobs:
 
   prepare:
     needs: maintenance
-    if: always() && needs.maintenance.result == 'success' && needs.maintenance.outputs.queueCustodyReady == 'true' && github.ref == 'refs/heads/sentinel-supervisor'
+    if: always() && needs.maintenance.result == 'success' && (needs.maintenance.outputs.queueCustodyReady == 'true' || needs.maintenance.outputs.runtimeMigrationOnly == 'true') && github.ref == 'refs/heads/sentinel-supervisor'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The one-shot owner installation reads the fixed runtime revision's
@@ -160,6 +163,8 @@ jobs:
       run: ${{ steps.prepare.outputs.run }}
       revision: ${{ steps.prepare.outputs.revision }}
       modelStartsEnabled: ${{ steps.prepare.outputs.modelStartsEnabled }}
+      executionPurpose: ${{ steps.prepare.outputs.executionPurpose }}
+      generation: ${{ steps.prepare.outputs.generation }}
     steps:
       - name: Checkout protected supervisor source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -263,7 +268,22 @@ jobs:
           deno-version: v2.x
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: 24.19.0
+      - name: Expose the pinned Node to the model sandbox
+        run: |
+          set -euo pipefail
+          sudo install -m755 "$(command -v node)" /usr/local/bin/node
+          test "$(/usr/local/bin/node --version)" = "v24.19.0"
+      - name: Install locked self-test dependencies
+        working-directory: launcher
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
+      - name: Seal trusted self-test dependencies
+        working-directory: launcher
+        run: >-
+          deno run --no-lock
+          --allow-read --allow-write --allow-run
+          --allow-env=PATH,NODE_V8_COVERAGE
+          ops/hosted-autonomy-self-dependencies.ts
       - name: Install pinned Codex app-server
         run: npm install --global @openai/codex@0.154.0
       # GitHub-hosted Linux runners need unprivileged user namespaces for
@@ -294,9 +314,12 @@ jobs:
             exit 1
           fi
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
+      - name: Record the App token mint lower bound
+        id: token-window
+        run: echo "mintedNotBefore=$(date +%s%3N)" >> "$GITHUB_OUTPUT"
       - name: Mint the scoped sentinel App token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: ./launcher/.github/actions/sentinel-app-token
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
@@ -308,6 +331,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: ${{ steps.token-window.outputs.mintedNotBefore }}
+          SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: ${{ steps.app-token.outputs.mint-grant }}
           UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN }}
           # Installation scope of the `ubiquity-sentinel` App. A scope key, not
           # a secret: every committed target except the sentinel self-repository
@@ -336,7 +361,7 @@ jobs:
           --allow-write
           --allow-run
           --allow-net="api.github.com,*.blob.core.windows.net"
-          --allow-env=GITHUB_OUTPUT,HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB
+          --allow-env=GITHUB_OUTPUT,HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE,SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB
           src/host/hosted-runtime.ts
 
       - name: Upload immutable matrix plan
@@ -391,7 +416,7 @@ jobs:
           deno-version: v2.x
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: 24.19.0
       # ubiquity/ai.ubq.fi runs only on Bun (since d28cefa); its quality
       # wrappers refuse anything but Bun 1.4.0. Same pinned action and version
       # as the deterministic CI gate in ci.yml.
@@ -410,6 +435,21 @@ jobs:
           set -euo pipefail
           sudo install -m755 "$(command -v bun)" /usr/local/bin/bun
           test "$(/usr/local/bin/bun --version)" = "1.4.0"
+      - name: Expose the pinned Node to the model sandbox
+        run: |
+          set -euo pipefail
+          sudo install -m755 "$(command -v node)" /usr/local/bin/node
+          test "$(/usr/local/bin/node --version)" = "v24.19.0"
+      - name: Install locked self-test dependencies
+        working-directory: launcher
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
+      - name: Seal trusted self-test dependencies
+        working-directory: launcher
+        run: >-
+          deno run --no-lock
+          --allow-read --allow-write --allow-run
+          --allow-env=PATH,NODE_V8_COVERAGE
+          ops/hosted-autonomy-self-dependencies.ts
       - name: Install pinned Codex app-server
         run: npm install --global @openai/codex@0.154.0
       # GitHub-hosted Linux runners need unprivileged user namespaces for
@@ -526,7 +566,7 @@ jobs:
     # missing producers charged and unresolved. finalize still waits for every
     # cell and this consumer, so no producer is settled before its own job ends.
     needs: [maintenance, prepare, matrix_plan]
-    if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.maintenance.outputs.queueCustodyReady == 'true' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && (needs.prepare.outputs.modelStartsEnabled != 'true' || needs.matrix_plan.result == 'success') }}
+    if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && ((needs.maintenance.outputs.queueCustodyReady == 'true' && (needs.prepare.outputs.modelStartsEnabled != 'true' || needs.matrix_plan.result == 'success')) || (needs.maintenance.outputs.runtimeMigrationOnly == 'true' && needs.prepare.outputs.modelStartsEnabled == 'false' && needs.prepare.outputs.executionPurpose == 'bootstrap' && needs.prepare.outputs.revision == needs.maintenance.outputs.runtimeMigrationRevision && needs.prepare.outputs.generation == needs.maintenance.outputs.runtimeMigrationGeneration)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment:
@@ -563,7 +603,7 @@ jobs:
           deno-version: v2.x
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: 24.19.0
       # ubiquity/ai.ubq.fi runs only on Bun (since d28cefa); its quality
       # wrappers refuse anything but Bun 1.4.0. Same pinned action and version
       # as the deterministic CI gate in ci.yml.
@@ -582,6 +622,21 @@ jobs:
           set -euo pipefail
           sudo install -m755 "$(command -v bun)" /usr/local/bin/bun
           test "$(/usr/local/bin/bun --version)" = "1.4.0"
+      - name: Expose the pinned Node to the model sandbox
+        run: |
+          set -euo pipefail
+          sudo install -m755 "$(command -v node)" /usr/local/bin/node
+          test "$(/usr/local/bin/node --version)" = "v24.19.0"
+      - name: Install locked self-test dependencies
+        working-directory: launcher
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
+      - name: Seal trusted self-test dependencies
+        working-directory: launcher
+        run: >-
+          deno run --no-lock
+          --allow-read --allow-write --allow-run
+          --allow-env=PATH,NODE_V8_COVERAGE
+          ops/hosted-autonomy-self-dependencies.ts
       - name: Install pinned Codex app-server
         run: npm install --global @openai/codex@0.154.0
       # GitHub-hosted Linux runners need unprivileged user namespaces for
@@ -633,7 +688,7 @@ jobs:
       # authenticated as `ubiquity-sentinel[bot]`.
       - name: Mint the scoped sentinel App token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: ./launcher/.github/actions/sentinel-app-token
         with:
           client-id: Iv23liHUJNXds9mU3j7Q
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
@@ -645,6 +700,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
           SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: ${{ steps.token-window.outputs.mintedNotBefore }}
+          SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: ${{ steps.app-token.outputs.mint-grant }}
           UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN }}
           # Installation scope of the `ubiquity-sentinel` App. A scope key, not
           # a secret: every committed target except the sentinel self-repository
@@ -675,7 +731,7 @@ jobs:
           --allow-write \
           --allow-run \
           --allow-net="api.github.com,*.blob.core.windows.net" \
-          --allow-env=HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB \
+          --allow-env=HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE,SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB \
           src/host/hosted-runtime.ts
 
   finalize:

@@ -9,6 +9,11 @@ import type { GitSha } from "../contracts/brands.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { candidateBranch, pushIntentKey } from "./keys.ts";
+import {
+  checkExistingPrOperation,
+  prepareExistingPrEffect,
+} from "./loop-existing-pr.ts";
+import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 import { settleReviewCharge } from "./loop-accounting.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import {
@@ -72,7 +77,15 @@ export async function executePublishStep(
   if (cooling.kind === "deferred") {
     return { kind: "deferred", detail: cooling.detail };
   }
-  const branch = candidateBranch(record.id);
+  const branch = hasTakeoverCustody(record)
+    ? record.target.branch
+    : candidateBranch(record.id);
+  if (branch === null) {
+    return {
+      kind: "deferred",
+      detail: "existing PR publication branch unavailable",
+    };
+  }
 
   if (record.intent !== null) {
     return reconcilePublishIntent(deps, context, record, config);
@@ -120,10 +133,21 @@ export async function executePublishStep(
       );
     }
     if (ref.value !== null && ref.value.sha === head) {
+      const custody = await checkExistingPrOperation(deps, context, record, {
+        operation: "publish",
+        expectedHead: head,
+        nextHead: head,
+      });
+      if (custody !== null) return custody;
       // The exact candidate is already published: adopt the completed push and
       // persist the publication proof before any PR/review continuation.
       const adopted = withPublishedHead(record, head, deps.clock.now());
-      const persisted = await persistWork(deps, context, adopted);
+      const persisted = await persistWork(
+        deps,
+        context,
+        adopted,
+        hasTakeoverCustody(record) ? context.head! : undefined,
+      );
       if (persisted.kind !== "progress") return persisted;
       return continuePublication(deps, context, adopted, config);
     }
@@ -202,10 +226,22 @@ export async function executePublishStep(
     };
   }
 
+  const authority = await prepareExistingPrEffect(deps, context, withIntent, {
+    operation: "publish",
+    expectedHead: expectedRemoteHead ?? undefined,
+    nextHead: head,
+  });
+  if (!authority.ok) {
+    return {
+      kind: "deferred",
+      detail: "existing PR publication custody unavailable",
+    };
+  }
   const push = await deps.github.pushHead(
     `refs/heads/${branch}`,
     head,
     expectedRemoteHead,
+    authority.value,
   );
   if (!push.ok) {
     if (queueEffectRefused(push.error)) {
@@ -375,7 +411,18 @@ export async function reconcilePublishIntent(
       };
     }
     const proved = withPublishedHead(record, ref.value.sha, now);
-    const persisted = await persistWork(deps, context, proved);
+    const custody = await checkExistingPrOperation(deps, context, record, {
+      operation: "publish",
+      expectedHead: ref.value.sha,
+      nextHead: ref.value.sha,
+    });
+    if (custody !== null) return custody;
+    const persisted = await persistWork(
+      deps,
+      context,
+      proved,
+      hasTakeoverCustody(record) ? context.head! : undefined,
+    );
     if (persisted.kind !== "progress") return persisted;
     // The push may have succeeded immediately before the process stopped. The
     // exact ref observation above is the publication proof; continue the same

@@ -1,3 +1,4 @@
+import type { TakeoverPublicationProof } from "../src/contracts/existing-pr-takeover.ts";
 /** In-memory custody shared by every launcher phase; never a V1 wire field. */
 import type { GitSha } from "../src/contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
@@ -24,6 +25,7 @@ export interface QueueDeliveryRequest {
 /** Legacy is an explicit fresh root-authority classification, never verified queue proof. */
 export type QueueDeliveryResolution = DeliveryProofResult | {
   status: "legacy_direct";
+  publicationProof?: TakeoverPublicationProof;
   binding: QueueBinding;
   revision: GitSha;
   carried?: { reviewedBase: GitSha; reviewedHead: GitSha; patchDigest: string };

@@ -1,3 +1,4 @@
+import { hasTakeoverCustody } from "../src/github/existing-pr-takeover-provenance.ts";
 import type {
   PortResultV1,
   StateWriteResultV1,
@@ -311,7 +312,8 @@ export async function runHostedDeliveryPass(
     if (pull === null || pull.headSha !== head) continue;
     if (
       typeof pull.author !== "string" ||
-      !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author)
+      (!(hasTakeoverCustody(record) && !self && pull.merged) &&
+        !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author))
     ) {
       actions.push(`delivery:${record.id}:foreign_author`);
       continue;
@@ -332,6 +334,12 @@ export async function runHostedDeliveryPass(
     // parked record always, a review/delivery record only onto a moved base.
     let spentMerge = parked;
     if (pull.state === "open" && pull.merged === false) {
+      if (hasTakeoverCustody(record)) {
+        actions.push(
+          `delivery:${record.id}:existing_pr_requires_repair_principal`,
+        );
+        continue;
+      }
       if (gateway && deps.queueCustody?.ready !== true) {
         actions.push(`delivery:${record.id}:queue_context_unavailable`);
         continue;

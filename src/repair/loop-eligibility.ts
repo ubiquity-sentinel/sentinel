@@ -1,5 +1,6 @@
 /** Repair loop internals: eligibility. */
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
+import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type {
   IncompleteOperationV1,
@@ -112,7 +113,10 @@ export function isMatrixImplementationReadyV1(
     !isStaleImplementationIntent(record.intent, now)
   ) return false;
   const candidateState = record.target.candidateState;
-  if (candidateState !== undefined && candidateState.preserved === null) {
+  if (
+    candidateState !== undefined && candidateState.preserved === null &&
+    !hasTakeoverCustody(record)
+  ) {
     return false;
   }
   if (record.target.branch === null) return false;

@@ -11,6 +11,8 @@ import type {
   WorkRecordV1,
 } from "../contracts/work-record.ts";
 import { candidateBranch, implementationIntentKey } from "./keys.ts";
+import { prepareExistingPrEffect } from "./loop-existing-pr.ts";
+import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
@@ -136,11 +138,31 @@ export async function executeCandidatePreservation(
     "publication",
   );
   if (effectGuard !== null) return effectGuard;
+  const authority = publishedHead === null && hasTakeoverCustody(record)
+    ? {
+      ok: false as const,
+      error: {
+        kind: "unavailable" as const,
+        message: "existing PR predecessor unavailable",
+      },
+    }
+    : await prepareExistingPrEffect(deps, context, record, {
+      operation: "preserve_successor",
+      expectedHead: publishedHead ?? undefined,
+      nextHead: head,
+      candidate,
+    });
+  if (!authority.ok) {
+    return {
+      kind: "deferred",
+      detail: "existing PR preservation custody unavailable",
+    };
+  }
   const preserved = await deps.github.preserveCandidate({
     taskId: record.id,
     candidate,
     publishedHead,
-  });
+  }, authority.value);
   if (!preserved.ok && queueEffectRefused(preserved.error)) {
     return holdQueueRecord(
       deps,
@@ -187,7 +209,7 @@ export async function executeCandidatePreservation(
       // Local/remote Git absence does not prove archived artifact loss. Preserve
       // ambiguous modern serial rows too; the separately proven legacy bridge
       // remains the authority for its own historical loss cases.
-      if (deps.externalImplementations === true) {
+      if (deps.externalImplementations === true || hasTakeoverCustody(record)) {
         return persistWork(
           deps,
           context,

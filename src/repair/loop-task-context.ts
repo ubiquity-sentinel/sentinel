@@ -9,6 +9,8 @@ import {
 } from "../contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
+import { checkExistingPrCustody } from "./loop-existing-pr.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { configFor } from "./loop-records.ts";
 import type {
@@ -62,8 +64,10 @@ export async function ensureReviewFreshness(
   if (candidateState !== undefined) {
     const preserved = candidateState.preserved;
     if (
-      preserved === null || candidateState.publishedHead !== head ||
-      preserved.head !== head || preserved.base !== record.target.base
+      candidateState.publishedHead !== head ||
+      (preserved === null
+        ? !hasTakeoverCustody(record)
+        : preserved.head !== head || preserved.base !== record.target.base)
     ) {
       return {
         kind: "deferred",
@@ -128,7 +132,7 @@ export async function ensureReviewFreshness(
   if (base.value.sha !== record.target.base) {
     return await ensureBaseRefreshIntent(deps, context, record);
   }
-  return null;
+  return await checkExistingPrCustody(deps, context, record, "review");
 }
 
 export async function readIssueForModel(

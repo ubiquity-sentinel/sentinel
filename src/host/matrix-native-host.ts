@@ -1,4 +1,6 @@
 /** Native matrix planner and cell executable composition. */
+import { parseMatrixPlanV1 } from "../contracts/matrix.ts";
+import { QUEUE_CUSTODY_IDLE_DETAIL } from "./actions-queue-custody.ts";
 import type {
   MatrixCellGrantV1,
   MatrixCellResultV1,
@@ -13,6 +15,7 @@ import {
   type MatrixPlanReportV1,
   runMatrixCell,
   runMatrixPlanEntrypoint,
+  writeMatrixPlanReport,
 } from "./matrix.ts";
 import { createGitBundleExporter } from "./matrix-git.ts";
 import {
@@ -46,7 +49,7 @@ export async function runActionsMatrixHost(
     | (MatrixPlanReportV1 & { planDigest: string })
     | MatrixCellResultV1
     | null = null;
-  await runActionsRepairHost({
+  const hosted = await runActionsRepairHost({
     ...deps,
     job,
     runTargetCycles: async (input) => {
@@ -208,6 +211,60 @@ export async function runActionsMatrixHost(
       };
     },
   });
+  if (
+    result === null && job === "matrix_plan" &&
+    hosted.outcome.status === "idle" &&
+    hosted.outcome.detail === QUEUE_CUSTODY_IDLE_DETAIL
+  ) {
+    // The actual host verified this execution and started no ordinary cycle.
+    // An empty manifest records zero grants; it claims no successful queue read.
+    const execution = hosted.execution;
+    const plan = parseMatrixPlanV1({
+      version: "v1",
+      kind: "matrix_plan",
+      waveId: execution.id,
+      run: {
+        runId: execution.runId,
+        runAttempt: execution.runAttempt,
+        launcherSha: execution.launcherSha,
+      },
+      plannedAt: deps.clock?.now() ?? Date.now(),
+      cells: [],
+    });
+    const root = (deps.workDir ?? Deno.cwd()) + "/../.sentinel-matrix";
+    result = await writeMatrixPlanReport({
+      plan,
+      attempted: 0,
+      prepared: 0,
+      notReady: 0,
+      deferred: 0,
+      memoryRefused: 0,
+    }, root + "/plan.json");
+    const output = deps.env === undefined
+      ? Deno.env.get("GITHUB_OUTPUT")
+      : deps.env.GITHUB_OUTPUT;
+    if (output === undefined || output.length === 0) {
+      throw new Error("native matrix planner output is unavailable");
+    }
+    await Deno.writeTextFile(
+      output,
+      'matrix={"include":[]}\nplanDigest=' + result.planDigest +
+        "\nhasCells=false\n",
+      { append: true },
+    );
+    console.log(
+      JSON.stringify(
+        matrixPlanCarrierOf({
+          waveId: plan.waveId,
+          run: plan.run,
+          controllerSha: hosted.controllerSha,
+          generation: execution.generation,
+          planDigest: result.planDigest,
+          prepared: 0,
+        }),
+      ),
+    );
+  }
   if (result === null) throw new Error("matrix executable produced no result");
   return result;
 }

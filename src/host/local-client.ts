@@ -60,6 +60,9 @@ const COMMAND_LINE_TOOLS_GIT_CORE =
  */
 export const SANDBOX_BUN_EXECUTABLE = "/usr/local/bin/bun";
 
+/** Fixed real Node binary installed by the trusted supervisor for offline self tests. */
+export const SANDBOX_NODE_EXECUTABLE = "/usr/local/bin/node";
+
 /**
  * Render the per-client Codex configuration: the route's provider over its
  * configured endpoint, top-level approval/login/permission defaults, the proved
@@ -103,6 +106,7 @@ export function renderLocalCodexConfig(input: LocalCodexConfigInputV1): string {
     `${toml(input.codexDistributionDir)} = "read"`,
     `${toml(input.denoExecutable)} = "read"`,
     `${toml(SANDBOX_BUN_EXECUTABLE)} = "read"`,
+    `${toml(SANDBOX_NODE_EXECUTABLE)} = "read"`,
   ];
   if (profile === "sentinel-local") {
     for (const grant of input.writeGrants) {

@@ -6,6 +6,7 @@ import type {
   PortResultV1,
 } from "../contracts/ports.ts";
 import type { SelfMergeExecutionV1 } from "../contracts/self-merge.ts";
+import type { TakeoverEffectAuthorization } from "../contracts/existing-pr-takeover.ts";
 import { executeSelfMerge } from "./port-self-merge.ts";
 import { decideCiGate } from "../repair/loop-checks.ts";
 import { tryParse } from "../contracts/validation.ts";
@@ -36,6 +37,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
   async mergePullRequest(
     request: MergeRequestV1,
     execution?: SelfMergeExecutionV1,
+    takeover?: TakeoverEffectAuthorization,
   ): Promise<PortResultV1<MergeOutcomeV1>> {
     // 1. Strict parse against the trusted adapter policy: the request can
     // never name another repository or select the trusted reviewer.
@@ -58,8 +60,19 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     };
     const queued = await this.queueEffect(queueInput);
     if (!queued.ok) return queued;
-    const native = () =>
-      executeSelfMerge(
+    if (
+      takeover !== undefined && this.repository.owner === "ubiquity" &&
+      this.repository.name === "sentinel"
+    ) {
+      return portError("unavailable", "existing PR self merge requires owner");
+    }
+    const native = async () => {
+      const custody = await this.takeoverEffect({
+        kind: "merge",
+        request: merge,
+      }, takeover);
+      if (!custody.ok) return custody;
+      return await executeSelfMerge(
         {
           client: this.client,
           git: this.git,
@@ -72,6 +85,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
         merge,
         execution,
       );
+    };
     if (
       this.selfMergeEnabled && execution?.proof !== null &&
       execution?.proof !== undefined
@@ -88,6 +102,11 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       }
       const afterQueue = await this.queueEffect(queueInput);
       if (!afterQueue.ok) return afterQueue;
+      const custody = await this.takeoverEffect({
+        kind: "merge",
+        request: merge,
+      }, takeover);
+      if (!custody.ok) return custody;
       return portOk({
         outcome: "merged",
         head: pull.value.head,
@@ -104,7 +123,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       return blocked("base_mismatch", pull.value.head);
     }
     // Never merge human-owned/unassigned target work.
-    if (pull.value.author !== this.trustedPrAuthor) {
+    if (pull.value.author !== this.trustedPrAuthor && takeover === undefined) {
       return blocked("conflict", pull.value.head);
     }
     // 3. Re-observe the authoritative current review by exact request id; the
@@ -248,6 +267,11 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     // precheck; a rejection is reconciled against the re-observed PR.
     const beforeMerge = await this.queueEffect(queueInput);
     if (!beforeMerge.ok) return beforeMerge;
+    const custody = await this.takeoverEffect(
+      { kind: "merge", request: merge },
+      takeover,
+    );
+    if (!custody.ok) return custody;
     const merged = await this.client.mergePull(
       merge.pullRequestNumber,
       merge.expectedHead,
