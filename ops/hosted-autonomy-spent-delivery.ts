@@ -72,6 +72,7 @@ import type {
   HostedAutonomyPassContextV1,
   HostedAutonomyScopeV1,
 } from "./hosted-autonomy-scopes.ts";
+import { OWNER_MERGE_REQUIRED } from "../src/repair/owner-landing.ts";
 
 /**
  * Decision D3 (2026-10-16, launcher only), DISABLED: the coordinator chose
@@ -489,6 +490,10 @@ export async function preMergeGate(input: {
   tipGreen: Map<string, boolean>;
 }): Promise<{ refusal: string | null; spent: boolean }> {
   const { context, scope, record, receipt, pull, baseTip } = input;
+  // A protected-path change is merged only by its repository owner.
+  if (record.ownerLanding !== undefined) {
+    return { refusal: OWNER_MERGE_REQUIRED, spent: false };
+  }
   const { head, base } = record.target;
   const surface = scope.surface;
   if (surface === null || head === null || base === null) {
@@ -885,6 +890,10 @@ export async function carriedMergeGate(input: {
   baseTip: string;
 }): Promise<{ refusal: string | null; proof: CarriedMergeProofV1 | null }> {
   const { context, scope, record, receipt, pull, baseTip } = input;
+  // A protected-path change is merged only by its repository owner.
+  if (record.ownerLanding !== undefined) {
+    return { refusal: OWNER_MERGE_REQUIRED, proof: null };
+  }
   const { head, base } = record.target;
   const surface = scope.surface;
   if (surface === null || head === null || base === null) {

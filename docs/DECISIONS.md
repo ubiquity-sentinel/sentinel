@@ -1,5 +1,90 @@
 # Sentinel decisions
 
+## Hanging target pull requests: six delivery defects corrected (2026-11-05)
+
+Audit of the eight open Sentinel pull requests on `ubiquity/ai.ubq.fi` (#1329,
+#1330, #1331, #1345, #1346, #1347, #1349, #1350; state branch
+`sentinel-state/repair` at `05cd91b0`, supervisor runs 41974809569 and
+41980261187) found no PR waiting on a review request or a merge step. Each was
+held by a defect in Sentinel's own lifecycle, all corrected on the integrated
+candidate recorded in the build ledger. Policy consequences:
+
+- **A review bot's check run is not CI evidence.** Since 2026-10-27 every
+  ai.ubq.fi head carries a CodeRabbit check run concluded `skipped`, which
+  `decideCiGate` read as green. Review was requested at once, no `ci_pending`
+  wait was ever written, so the dispatch-based pre-merge CI never fired, and
+  PRs #1348, #1353 and #1354 merged with no CI run on their heads (post-merge
+  Gateway CI then failed on `development`). A head is now green only on positive
+  evidence: at least one completed check concluded `success`, `skipped` or
+  `neutral` from the GitHub Actions app (the target's own or dispatched
+  workflow, whose skipped/neutral jobs are a CI decision per the 2026-10-24
+  directive), from no app (legacy shape), or a verified backup-CI stand-in, and
+  nothing failed. Checks from any other app
+  (review bots, scanners, deploy previews) never make a head green; a failed
+  one still blocks. A head with only such checks waits `ci_pending`, which is
+  what makes the dispatch-based pre-merge CI fire; the launcher reads it as
+  neither green nor red.
+- **Protected-path candidates are published for the owner to merge.** A
+  candidate changing a configured protected path (ai.ubq.fi `src/auth/`,
+  `ops/`) used to park before publication; the only exit, `sentinel:retry`,
+  re-ran the record from base and dropped the candidate, so paid work was never
+  landable. The implementer prompt now says to make a required protected fix
+  in place and never to substitute tests, an unapplied `.patch`/`.diff` file,
+  a copy or a no-op. Such a candidate is pushed, CI-gated and natively reviewed
+  like any other, carries the additive record flag `ownerLanding: { paths,
+  since }`, and is never merged by Sentinel: the runtime merge gate writes no
+  merge intent and polls the PR every 15 minutes (`manual` wait, cause
+  `owner_merge`), and the launcher delivery pass, `preMergeGate`, carried gate
+  and train members refuse `owner_merge_required`. One progress comment per
+  ready head says the PR is ready for the owner; the owner's merge completes
+  the record through the 2026-10-30 human-merge rule. A candidate touching
+  `.github/`, `.git/`, env files, act/npm configuration or `sentinel.protected`
+  still parks unpublished, preserving the 2026-10-24 basis for approving held
+  CI runs. This supersedes the prompt wording and the "no exit" finding of the
+  2026-10-25 protected-path entry.
+- **An unapplied patch file is refused before review.** A candidate whose only
+  non-test change is a `*.patch`/`*.diff` or `patches/` file is not reviewed:
+  its implementation start settles ambiguous (charged, never refunded), the
+  closed detail `ATTEMPT_DETAIL_UNAPPLIED_PATCH` is recorded and shown to the
+  next start, and ordinary retry accounting applies. On the four affected
+  issues this shape cost four review rounds and up to eight retry charges each.
+- **A repeat-failure park re-arms once per implementer prompt change.** The
+  "repeated identical failure; owner action required" park now records the
+  implementer prompt template digest (` prompt=<12 hex>`); a changed digest, or
+  a legacy park with none, grants exactly one counted retry. An identical
+  failure re-parks under the new digest. Issue-edit and route-change re-arms
+  are unchanged. Installs that keep the same prompt never re-arm.
+- **A lost matrix cell is settled, not waited on forever.** A charged
+  conflict-resolution cell whose run completed without its authenticated
+  artifact (ai.ubq.fi 1176: launcher rejection `carrier_count`, charge
+  `bdcee952…` reserved since 2026-11-01) settles `ambiguous` in the producer
+  pass once the run is complete and the listing is authenticated, or after the
+  8-day evidence expiry in the serial work step; the record returns to its
+  pending base-refresh intent and the planner may re-grant. Never refunded.
+  Each loss is recorded in attempt memory under the conflict's merge base; a
+  second loss on the same merge base parks the record like a spent resolution
+  (no third charge until the base moves), and losses count toward the 3x
+  repeat-failure park.
+- **A retired record's own open pull request is closed.** When a record retires
+  because its source issue closed and its own unmerged `sentinel/repair/<task>`
+  PR is still open, the maintenance pass closes the PR with one comment and
+  records `retiredPullClosure`; the branch is kept. Foreign, merged or already
+  closed PRs are untouched. Cold records in that shape are promoted by one
+  bounded cold-tier scan per installed generation (`tierScans` row). A `work`
+  or `blocked` record whose own PR a person merged is re-admitted to `review`
+  and completes `done` through the human-merge rule, settling any reserved
+  charge ambiguous. A retired record whose issue was reopened returns to
+  `work` (outcome `reopened`, PR and charges kept). Probes that settle nothing
+  stamp `pullProbe` and back off six hours, least recently probed first, so no
+  record can starve the pass or cost a GitHub read every cycle.
+- **The planner names every deferral.** The plan diagnostic carries
+  `deferredByReason` on every pass and a bounded `deferredRecords` list.
+
+Rollback: runtimes older than this candidate cannot read records carrying
+`ownerLanding`, `retiredPullClosure`, `pullProbe` or the `tierScans` row (the additive-field
+trade-off already taken for `stepInputs` and wait causes). `GATEWAY_PROTECTED_PATHS`
+is unchanged; narrowing it remains an owner security decision.
+
 ## Human merges complete the record; the self-merge owner park is retired (2026-10-30/31)
 
 Owner directive (2026-10-30): a pull request merged by a human is a completed
@@ -3497,7 +3582,9 @@ standing approval above. Applied as follows.
   prefixes of the requested repository (deduplicated, sorted, JSON-quoted, at
   most 60 within 4,000 characters, the rest counted) and says to fix the issue
   without changing them where it can, since a candidate that changes one is
-  parked for the repository owner to land. (Corrected 2026-10-25 by the stage-1
+  parked for the repository owner to land. (Superseded 2026-11-05: a required
+  protected fix is made in place and published for the owner to merge; see the
+  entry at the top of this document.) (Corrected 2026-10-25 by the stage-1
   review: the first wording, "make no change and say
   `OWNER_LANDING_REQUIRED:
   <paths>`", sent a compliant run into the no-change

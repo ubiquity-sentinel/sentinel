@@ -179,6 +179,12 @@ export interface HostedAutonomyGitHubV1 {
    */
   reopenIssue?(number: number): Promise<boolean>;
   /**
+   * Close one pull request without merging it (its branch is kept); true
+   * only when GitHub reports it closed and unmerged. Optional: a surface
+   * without it never closes a retired record's pull request.
+   */
+  closePull?(number: number): Promise<boolean>;
+  /**
    * The repository's own default branch, or null when it cannot be read. Only
    * a foreign repository consults this; the self scope keeps its recorded
    * `development` constant.

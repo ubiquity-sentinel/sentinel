@@ -82,6 +82,7 @@ import {
   acceptanceOwnerGated,
 } from "./hosted-autonomy-acceptance.ts";
 import { retryWritten } from "./hosted-autonomy-retry-actions.ts";
+import { OWNER_MERGE_REQUIRED } from "../src/repair/owner-landing.ts";
 import {
   finishDeliveryPassCounts,
   runDeliveryTrains,
@@ -487,6 +488,11 @@ async function deliveryPass(
     // parked record always, a review/delivery record only onto a moved base.
     let spentMerge = parked;
     if (pull.state === "open" && pull.merged === false) {
+      // A protected-path change is merged only by its repository owner.
+      if (record.ownerLanding !== undefined) {
+        actions.push(`delivery:${record.id}:${OWNER_MERGE_REQUIRED}`);
+        continue;
+      }
       if (hasTakeoverCustody(record)) {
         actions.push(
           `delivery:${record.id}:existing_pr_requires_repair_principal`,

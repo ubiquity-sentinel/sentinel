@@ -20,6 +20,7 @@ const MAX_COUNT = 100_000;
 
 export interface FanoutRejectionsV1 {
   missing: number;
+  refused: number;
   unauthenticated: number;
   invalid: number;
   duplicate: number;
@@ -34,6 +35,7 @@ export interface FanoutSummaryLineV1 {
   deltasRejected: FanoutRejectionsV1;
   repositoryWallMs: number[];
   applyMs: number;
+  recordsHandedBack: number;
 }
 
 const KEYS = [
@@ -41,6 +43,7 @@ const KEYS = [
   "deltasApplied",
   "deltasRejected",
   "kind",
+  "recordsHandedBack",
   "repositoryWallMs",
   "transitionsApplied",
 ].join();
@@ -49,6 +52,7 @@ const REASONS = [
   "duplicate",
   "invalid",
   "missing",
+  "refused",
   "transition_refused",
   "unauthenticated",
 ] as const;
@@ -78,6 +82,7 @@ export function parseFanoutSummaryLine(
     !bounded(line.deltasApplied, MAX_COUNT) ||
     !bounded(line.transitionsApplied, MAX_COUNT) ||
     !bounded(line.applyMs, MAX_DURATION_MS) ||
+    !bounded(line.recordsHandedBack, MAX_COUNT) ||
     !Array.isArray(walls) || walls.length > MAX_FANOUT_REPOSITORIES ||
     !walls.every((wall) => bounded(wall, MAX_DURATION_MS)) ||
     walls.some((wall, index) => index > 0 && walls[index - 1] < wall)
@@ -91,6 +96,7 @@ export function parseFanoutSummaryLine(
     ) as unknown as FanoutRejectionsV1,
     repositoryWallMs: [...walls] as number[],
     applyMs: line.applyMs as number,
+    recordsHandedBack: line.recordsHandedBack as number,
   };
 }
 
@@ -100,6 +106,7 @@ export function fanoutSummaryLine(
 ): string | null {
   const rejected: FanoutRejectionsV1 = {
     missing: 0,
+    refused: 0,
     unauthenticated: 0,
     invalid: 0,
     duplicate: 0,
@@ -117,6 +124,7 @@ export function fanoutSummaryLine(
     deltasRejected: rejected,
     repositoryWallMs: result.repositoryWallMs.slice(0, MAX_FANOUT_REPOSITORIES),
     applyMs: result.applyMs,
+    recordsHandedBack: result.handedBack,
   });
   return line === null ? null : JSON.stringify(line);
 }

@@ -92,6 +92,7 @@ Deno.test("fan-out summary line: strict, bounded and count-only", () => {
     rejected: [{ repository: BETA, reason: "base_moved" }],
     repositoryWallMs: [900, 400],
     applyMs: 120,
+    handedBack: 2,
   });
   assert.ok(line !== null);
   const parsed = parseFanoutSummaryLine(JSON.parse(line));
@@ -101,6 +102,7 @@ Deno.test("fan-out summary line: strict, bounded and count-only", () => {
     transitionsApplied: 3,
     deltasRejected: {
       missing: 0,
+      refused: 0,
       unauthenticated: 0,
       invalid: 0,
       duplicate: 0,
@@ -109,6 +111,7 @@ Deno.test("fan-out summary line: strict, bounded and count-only", () => {
     },
     repositoryWallMs: [900, 400],
     applyMs: 120,
+    recordsHandedBack: 2,
   });
   assert.equal(line.includes("alpha"), false, "no repository name");
   const value = JSON.parse(line);

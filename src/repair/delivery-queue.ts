@@ -148,6 +148,9 @@ function contender(
   if (
     pr === null || head === null || base === null ||
     other.source.kind !== "issue" ||
+    // Only its owner merges an owner-landing record: it never moves the tip
+    // by Sentinel's hand, so it holds nobody's line.
+    other.ownerLanding !== undefined ||
     (other.counters.stalled ?? 0) >= DELIVERY_QUEUE_STALL_LIMIT ||
     !(now - other.updatedAt < DELIVERY_QUEUE_IDLE_MS)
   ) return false;

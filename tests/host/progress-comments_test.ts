@@ -77,7 +77,10 @@ Deno.test("progress: the stage table speaks plain words with short SHAs", () => 
   );
   const park = progressStage(parked)!;
   assert.match(park.words, /^Parked: candidate touches a protected path/);
-  assert.match(park.words, /A person needs to fix this one\.$/);
+  assert.match(
+    park.words,
+    /Sentinel never merges; the repository owner needs to land this change\.$/,
+  );
   assert.doesNotMatch(park.words, /[0-9a-f]{11,}/);
   const closed = workRecord("issue-1", {
     nextStep: "blocked",

@@ -152,6 +152,7 @@ const MAINTENANCE_PROGRESS_PHASES = [
   "summary_park",
   "artifact_cleanup",
   "target_capability",
+  "retired_pulls",
 ] as const;
 export type MaintenanceProgressPhase =
   typeof MAINTENANCE_PROGRESS_PHASES[number];

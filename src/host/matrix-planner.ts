@@ -29,7 +29,11 @@ import {
   type RepairCycleDepsV1,
 } from "../repair/loop.ts";
 import { attemptEquivalenceRefusalForRecordV1 } from "../repair/attempt-policy.ts";
-import { planDeferredKey } from "./matrix-plan-diagnostic.ts";
+import {
+  type MatrixPlanDeferredRecordV1,
+  MAX_PLAN_DEFERRED_RECORDS,
+  planDeferredKey,
+} from "./matrix-plan-diagnostic.ts";
 import {
   classifyMatrixPlanRefusalV1,
   type MatrixPlanRefusalV1,
@@ -113,6 +117,17 @@ export interface MatrixPlanReportV1 {
   memoryRefused: number;
   /** Closed refusal reason and ready-unplanned count of this pass (#335). */
   refusal?: MatrixPlanRefusalV1;
+  /**
+   * Closed per-reason histogram of every deferral this pass counted in
+   * `deferred` (takeover, closed-publication recovery and admission), on
+   * every pass, not only a zero-cell one (#335).
+   */
+  deferredByReason?: Record<string, number>;
+  /**
+   * The deferred and memory-refused records of this pass, in order, each
+   * with its closed key (#335), bounded by `MAX_PLAN_DEFERRED_RECORDS`.
+   */
+  deferredRecords?: MatrixPlanDeferredRecordV1[];
 
   /**
    * Diagnostic breakdown of why records were filtered. Present when the
@@ -512,6 +527,26 @@ export async function planMatrixWave(
   let deferred = 0;
   let notReady = 0;
   const deferredByReason: Record<string, number> = {};
+  const deferredRecords: MatrixPlanDeferredRecordV1[] = [];
+  // Count one deferral under its closed key and name its record (#335).
+  const noteDeferred = (
+    record: WorkRecordV1 | undefined,
+    reason: string,
+  ) => {
+    if (reason !== "memory_refused") {
+      deferred++;
+      deferredByReason[reason] = (deferredByReason[reason] ?? 0) + 1;
+    }
+    if (
+      record !== undefined && deferredRecords.length < MAX_PLAN_DEFERRED_RECORDS
+    ) {
+      deferredRecords.push({
+        taskId: record.id,
+        repository: `${record.repository.owner}/${record.repository.name}`,
+        reason,
+      });
+    }
+  };
   // Diagnostic: captured from the last planner iteration for zero-cell runs.
   let lastDiagnostic: MatrixPlanDiagnosticV1 | null = null;
   let memoryRefused = 0;
@@ -553,6 +588,7 @@ export async function planMatrixWave(
       stoppedByDeadline = true;
       break;
     }
+    const refusedBefore = new Set(takeoverRefused);
     const takeover = await reconcileExistingPrs(
       deps,
       context,
@@ -564,7 +600,15 @@ export async function planMatrixWave(
     );
     if (takeover !== null) {
       if (takeover.kind === "state_error" || takeover.kind === "margin") break;
-      if (takeover.kind === "deferred") deferred++;
+      if (takeover.kind === "deferred") {
+        const refusedId = [...takeoverRefused].find((id) =>
+          !refusedBefore.has(id)
+        );
+        noteDeferred(
+          context.snapshot.work.find((work) => work.id === refusedId),
+          planDeferredKey(takeover),
+        );
+      }
       continue;
     }
     const ranked = rankEligibleWork(context.snapshot, deps.configs, now);
@@ -572,6 +616,7 @@ export async function planMatrixWave(
     // grant. Run it before readiness filtering, including preserved-null rows
     // that have no recorded published head and cannot be continuations yet.
     let publication: StepResultV1 | null = null;
+    let publicationRecord: WorkRecordV1 | undefined;
     for (const id of ranked.ordered) {
       if (publicationAttempted.has(id)) continue;
       const row = context.snapshot.work.find((work) => work.id === id);
@@ -580,6 +625,7 @@ export async function planMatrixWave(
         row.target.candidateState?.preserved !== null
       ) continue;
       publicationAttempted.add(id);
+      publicationRecord = row;
       publication = await recoverClosedExistingHead(
         options.githubForRepository === undefined
           ? deps
@@ -593,7 +639,9 @@ export async function planMatrixWave(
       if (publication.kind === "state_error" || publication.kind === "margin") {
         break;
       }
-      if (publication.kind === "deferred") deferred++;
+      if (publication.kind === "deferred") {
+        noteDeferred(publicationRecord, planDeferredKey(publication));
+      }
       continue;
     }
     // At most HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE resolutions in flight, on
@@ -726,6 +774,7 @@ export async function planMatrixWave(
       }).refuse
     ) {
       memoryRefused++;
+      noteDeferred(record, "memory_refused");
       continue;
     }
     const outcome = await prepareImplementationStart(
@@ -773,12 +822,10 @@ export async function planMatrixWave(
       { existingHeadContinuation: true },
     );
     if (outcome.kind !== "prepared") {
-      deferred++;
       const waitReason = context.snapshot.work.find((entry) =>
         entry.id === record.id
       )?.wait?.reason;
-      const reason = planDeferredKey(outcome, waitReason);
-      deferredByReason[reason] = (deferredByReason[reason] ?? 0) + 1;
+      noteDeferred(record, planDeferredKey(outcome, waitReason));
       // An ordinary fresh-base refresh is progress, not a failed admission.
       // Reconsider that same task against its persisted current base.
       if (outcome.kind === "progress") {
@@ -840,6 +887,8 @@ export async function planMatrixWave(
       }
       : {}),
     memoryRefused,
+    deferredByReason,
+    deferredRecords,
     refusal: classifyMatrixPlanRefusalV1({
       prepared: cells.length,
       readyIds: lastReadyIds,

@@ -290,6 +290,20 @@ Deno.test("base satisfaction: historical exact repeat-failure park enters the he
   };
   delete blocked.intent!.failure;
   assert.equal(baseReviewOrigin(blocked, state), ORIGIN);
+  // A park that also records its prompt digest is the same exact wrapper.
+  assert.equal(
+    baseReviewOrigin({
+      ...blocked,
+      blocker: {
+        ...blocked.blocker!,
+        message: blocked.blocker!.message.replace(
+          "route=abcdef012345: ",
+          "route=abcdef012345 prompt=0123456789ab: ",
+        ),
+      },
+    }, state),
+    ORIGIN,
+  );
   assert.equal(
     baseReviewOrigin({
       ...blocked,
