@@ -30,7 +30,11 @@ import { checkGithubCooldown } from "./loop-bounds.ts";
 import { createPullRequestFor } from "./loop-publication-state.ts";
 import { reconcilePublishIntent } from "./loop-publication.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
-import { configFor, withPublishedHead } from "./loop-records.ts";
+import {
+  configFor,
+  retireClosedPublication,
+  withPublishedHead,
+} from "./loop-records.ts";
 import { persistWork } from "./loop-state.ts";
 import { clearWait } from "./transitions.ts";
 import { gateReviewOnCi } from "./loop-ci-first.ts";
@@ -187,8 +191,12 @@ export async function recoverClosedExistingHead(
     });
   }
   const proved = clearWait(withPublishedHead(record, head, now), now);
-  return createPullRequestFor(deps, context, {
-    ...proved,
-    target: { ...proved.target, pr: null },
-  }, config);
+  // Retire the verified PR before deriving the replacement intent and CI effect.
+  // This also advances an older marker when the same head is republished again.
+  return createPullRequestFor(
+    deps,
+    context,
+    retireClosedPublication(proved, now),
+    config,
+  );
 }
