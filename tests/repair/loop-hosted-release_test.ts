@@ -349,56 +349,85 @@ Deno.test(
 
 Deno.test(
   "hosted release: a foreign scope never reaches the hosted capability",
-  async () => {
-    const rig = await makeRig("hosted-foreign", {
-      summaries: false,
-      localScope: true,
-    });
-    try {
-      const request = releaseRequest("release-gateway-1", {
-        target: { repository: REPO, environment: "production" },
-        revision: SHA3,
-        source: {
-          pullRequest: 12,
-          reviewRequestId: "review-req-gateway-1",
-          reviewReceiptId: "review-receipt-gateway-1",
-          head: SHA1,
-          base: SHA2,
+  async (t) => {
+    for (const exactReview of [false, true]) {
+      await t.step(
+        exactReview ? "bound delivery" : "missing delivery proof",
+        async () => {
+          const rig = await makeRig(`hosted-foreign-${exactReview}`, {
+            summaries: false,
+            localScope: true,
+          });
+          try {
+            const request = releaseRequest("release-gateway-1", {
+              target: { repository: REPO, environment: "production" },
+              revision: SHA3,
+              source: {
+                pullRequest: 12,
+                reviewRequestId: "review-req-gateway-1",
+                reviewReceiptId: "review-receipt-gateway-1",
+                head: SHA1,
+                base: SHA2,
+              },
+              createdAt: T0,
+            });
+            // Foreign scope never gains hosted authority. With its exact review
+            // the no-rule fixture reaches the Deno release wait; without one,
+            // the earlier queue delivery guard retains a non-expiring hold.
+            const record = gatewayDeliveryRecord();
+            await seedActionsDelivery(
+              rig,
+              request,
+              record,
+              exactReview
+                ? [
+                  referencedDeliveryReceipt(
+                    request,
+                    record,
+                    LOCAL_DELIVERY_TASK_DIGEST,
+                  ),
+                ]
+                : [],
+            );
+            let hostedReads = 0;
+            Object.assign(rig.store, {
+              readHostedRelease: () => {
+                hostedReads++;
+                return Promise.resolve(portOk(null));
+              },
+            });
+            const run = await rig.entry();
+            assert.equal(run.status, "idle", JSON.stringify(run));
+            const state = await rig.snapshot();
+            assert.equal(state.work[0].nextStep, "delivery");
+            assert.equal(
+              state.work[0].wait?.reason,
+              exactReview ? "unavailable" : "backoff",
+            );
+            if (exactReview) {
+              assert.ok(state.work[0].wait!.until! > rig.clock.now());
+            } else {
+              assert.equal(state.work[0].wait?.until, null);
+            }
+            assert.equal(
+              hostedReads,
+              0,
+              "the hosted capability never attests another scope",
+            );
+            assert.equal(
+              rig.github.calls.filter((call) => call.startsWith("closeIssue"))
+                .length,
+              0,
+              "no closure for a foreign scope",
+            );
+          } finally {
+            await rig.ctx.cleanup();
+          }
         },
-        createdAt: T0,
-      });
-      // The matching FOREIGN work record: repository REPO (installation 7),
-      // not the Sentinel local scope, so the Deno release path applies.
-      await seedActionsDelivery(rig, request, gatewayDeliveryRecord());
-      let hostedReads = 0;
-      Object.assign(rig.store, {
-        readHostedRelease: () => {
-          hostedReads++;
-          return Promise.resolve(portOk(null));
-        },
-      });
-      const run = await rig.entry();
-      assert.equal(run.status, "idle", JSON.stringify(run));
-      const state = await rig.snapshot();
-      assert.equal(state.work[0].nextStep, "delivery");
-      assert.equal(state.work[0].wait?.reason, "unavailable");
-      assert.equal(
-        hostedReads,
-        0,
-        "the hosted capability never attests another scope",
       );
-      assert.equal(
-        rig.github.calls.filter((call) => call.startsWith("closeIssue"))
-          .length,
-        0,
-        "no closure for a foreign scope",
-      );
-    } finally {
-      await rig.ctx.cleanup();
     }
   },
 );
-
 // ---------------------------------------------------------------------------
 // Exact candidate lifecycle fixtures shared by the bounded production-loop
 // recovery cases. Preservation success is always an explicit per-test opt-in.

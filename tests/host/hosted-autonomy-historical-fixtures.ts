@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
+import { inactiveNativeQueueFixture } from "../github/native-queue-fixture.ts";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import {
@@ -568,6 +570,7 @@ export async function historicalMalformedRig(
   } = {
     state: rig.state,
     clock,
+    nativeQueueFor: () => inactiveNativeQueueFixture(),
     // Default closed: only a test (or the trusted production route) that
     // explicitly enables authenticated not-started revalidation reconciles
     // already-quarantined records.
@@ -630,7 +633,10 @@ export async function historicalMalformedRig(
       const prior = Deno.cwd();
       Deno.chdir(checkout);
       try {
-        return await runHostedAutonomyMain({ env: mainEnv, deps });
+        return await runHostedAutonomyMain({
+          env: mainEnv,
+          deps: await withDarkQueueAuthority(deps),
+        });
       } finally {
         Deno.chdir(prior);
       }
@@ -639,7 +645,7 @@ export async function historicalMalformedRig(
       const prior = Deno.cwd();
       Deno.chdir(checkout);
       try {
-        return await runHostedAutonomy(deps);
+        return await runHostedAutonomy(await withDarkQueueAuthority(deps));
       } finally {
         Deno.chdir(prior);
       }

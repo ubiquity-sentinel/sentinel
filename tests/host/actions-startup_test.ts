@@ -22,7 +22,11 @@ Deno.test("hosted startup: cold actions entrypoint can load its artifact transpo
     dir: ROOT.pathname,
   });
   try {
-    await copyTree(new URL("src/", ROOT), `${root}/src`);
+    // Hosted runtime checkouts include both tracked module trees. The actions
+    // graph also reaches ops through the queue delivery provenance reader.
+    for (const tree of ["src", "ops"]) {
+      await copyTree(new URL(`${tree}/`, ROOT), `${root}/${tree}`);
+    }
     await Deno.copyFile(new URL("deno.json", ROOT), `${root}/deno.json`);
     await Deno.copyFile(new URL("deno.lock", ROOT), `${root}/deno.lock`);
     const entrypoint = `${root}/src/host/actions.ts`;

@@ -34,6 +34,12 @@ import {
 import { markBlocked } from "../repair/transitions.ts";
 import { HostedRepairCooldownGate } from "./hosted-cooldown.ts";
 import {
+  createMaintenanceNativeQueue,
+  type MaintenanceNativeQueueFactory,
+  MaintenanceQueueCustodyUnavailable,
+  maintenanceQueueOnlyPort,
+} from "./maintenance-native-queue.ts";
+import {
   createActionsMatrixArtifactHttpTransport,
   createActionsMatrixArtifactTransport,
 } from "./matrix-artifacts.ts";
@@ -82,6 +88,7 @@ export const MATRIX_UNCERTAINTY_BINDING: MatrixUncertaintyBindingV1 = {
 export interface MatrixUncertaintyMaintenanceDepsV1 {
   /** External native custody excludes both the work row and its charged admission. */
   protectedRecordIds?: ReadonlySet<string>;
+  nativeQueueFor?: MaintenanceNativeQueueFactory;
   state: StateReadView & RepairStateWriter;
   clock: Clock;
   confirmCompletedExecution(
@@ -100,6 +107,8 @@ export function createMatrixUncertaintyMaintenance(input: {
   state: StateReadView & RepairStateWriter;
   clock: Clock;
   token: string;
+  /** Target-repository reads use the App token, separate from artifact authority. */
+  apiToken?: string;
   artifactRoot: string;
   http?: HttpTransportV1;
 }): MatrixUncertaintyMaintenanceDepsV1 {
@@ -126,6 +135,17 @@ export function createMatrixUncertaintyMaintenance(input: {
   return {
     state: input.state,
     clock: input.clock,
+    ...(input.apiToken === undefined ? {} : {
+      nativeQueueFor: (repository, state) =>
+        createMaintenanceNativeQueue({
+          repository,
+          state,
+          clock: input.clock,
+          gate: new HostedRepairCooldownGate({ state, clock: input.clock }),
+          token: input.apiToken!,
+          http,
+        }),
+    }),
     confirmCompletedExecution: (execution) =>
       transport.confirmCompletedExecution!(execution),
     readExecution: (execution) => client.readHostedExecution(execution),
@@ -543,7 +563,6 @@ export async function runMatrixUncertaintyMaintenance(
     clock: deps.clock,
     configs: [],
     controllerSha: binding.runtimeSha,
-    github: denied<RepairCycleDepsV1["github"]>(),
     githubCooldown: denied<RepairCycleDepsV1["githubCooldown"]>(),
     incidents: denied<RepairCycleDepsV1["incidents"]>(),
     replay: denied<RepairCycleDepsV1["replay"]>(),
@@ -554,7 +573,7 @@ export async function runMatrixUncertaintyMaintenance(
       configs: [],
     }),
     externalImplementations: true,
-  } as RepairCycleDepsV1;
+  } as Omit<RepairCycleDepsV1, "github">;
   let quarantined = 0;
   for (const id of binding.reservationIds) {
     if (
@@ -614,24 +633,45 @@ export async function runMatrixUncertaintyMaintenance(
     ) continue;
     if (!same(row, saved)) refuse();
     await custody();
+    const nativeQueue = deps.nativeQueueFor?.(row.repository, guarded);
+    if (nativeQueue === undefined) continue;
+    const deadline = deps.clock.now() + 180_000;
+    if (
+      (await nativeQueue.inspect({
+        record: row,
+        operation: "resume",
+        deadline,
+      })).status !== "allow"
+    ) continue;
     activeId = id;
     activeTask = row.id;
     const context = {
       head: expected.head,
       snapshot: expected.snapshot,
       bounds: {
-        runDeadline: deps.clock.now() + 180_000,
+        runDeadline: deadline,
         modelCutoff: deps.clock.now(),
       },
       executionBaseline: null,
     };
-    const step = await settleFailedImplementation(
-      cycle,
-      context,
-      row,
-      id,
-      MATRIX_UNCERTAINTY_DETAIL,
-    );
+    let step;
+    try {
+      step = await settleFailedImplementation(
+        { ...cycle, github: maintenanceQueueOnlyPort(nativeQueue) },
+        context,
+        row,
+        id,
+        MATRIX_UNCERTAINTY_DETAIL,
+      );
+    } catch (error) {
+      if (!(error instanceof MaintenanceQueueCustodyUnavailable)) throw error;
+      await custody();
+      return {
+        beforeHead: first.value.head,
+        appliedHead: expected.head,
+        quarantined,
+      };
+    }
     if (step.kind !== "progress") refuse();
     const readback = await deps.state.readRepair();
     if (
@@ -721,6 +761,15 @@ export async function runMatrixUncertaintyMaintenance(
     ) continue;
     if (!same(row, saved)) refuse();
     await custody();
+    const nativeQueue = deps.nativeQueueFor?.(row.repository, guarded);
+    if (nativeQueue === undefined) continue;
+    if (
+      (await nativeQueue.inspect({
+        record: row,
+        operation: "resume",
+        deadline: deps.clock.now() + 180_000,
+      })).status !== "allow"
+    ) continue;
     activeId = id;
     activeTask = row.id;
     activePreservation = true;

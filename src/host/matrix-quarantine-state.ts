@@ -25,6 +25,7 @@ import { implementationIntentKey } from "../repair/keys.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import { HISTORICAL_MATRIX_QUARANTINE } from "./matrix-artifact-port.ts";
+import type { MaintenanceNativeQueueFactory } from "./maintenance-native-queue.ts";
 
 export const HISTORICAL_MATRIX_QUARANTINE_UNPROVABLE =
   "authenticated historical matrix artifact missing under rejection proof; absence unproven; model outcome uncertain";
@@ -91,6 +92,7 @@ export function historicalNotStartedProven(
 export interface HistoricalMatrixQuarantineDepsV1 {
   /** Custody owned by another trusted coordinator; never settled or quarantined here. */
   protectedRecordIds?: ReadonlySet<string>;
+  nativeQueueFor?: MaintenanceNativeQueueFactory;
   state: StateReadView & RepairStateWriter;
   clock: Clock;
   budget: Pick<BudgetControllerV1, "settleModelStart">;

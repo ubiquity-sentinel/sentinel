@@ -5,7 +5,7 @@
  * (a) Re-retiring already retired records (fixed in 01f482529): the
  *     retirement fairness harness (`fleet.ts`) over the verbatim pre-fix
  *     planner (`fixtures/closures-pre-01f482529.ts`), whose body is pinned
- *     here to be the current planner minus exactly the fix's block.
+ *     here to the immutable historical source, independently of later guards.
  * (b) The base_moved delivery loop (fixed in 180769ef4 and d3f2f7158): the
  *     lifecycle model with `preFixMergeReconcile` (`pipeline.ts`).
  * (c) The output-bound overrun (fixed in 63143fb92, torn re-entry refined in
@@ -58,8 +58,12 @@ function functionBody(text: string, name: string): string {
 }
 
 /**
- * True when the fixture's planner is the current planner with the fix's
- * block removed (and nothing else changed).
+ * Pin the historical function body even in shallow checkouts. The digest is
+ * from `01f482529^:ops/hosted-autonomy-closures.ts`; imports are intentionally
+ * re-pointed in the fixture. Later queue custody guards change the current
+ * body, but must neither rewrite this positive nor remove the retirement fix.
+ * The paired fairness test executes both planners, so merely retaining the
+ * fix's text cannot establish that the current planner makes progress.
  */
 export async function preFixFixtureFaithful(): Promise<boolean> {
   const current = functionBody(
@@ -70,8 +74,15 @@ export async function preFixFixtureFaithful(): Promise<boolean> {
     await read("tests/model/fixtures/closures-pre-01f482529.ts"),
     "planHostedRetirements",
   );
+  const digest = Array.from(
+    new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(fixture)),
+    ),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
   return current.includes(RETIREMENT_FIX_BLOCK) &&
-    current.replace(RETIREMENT_FIX_BLOCK, "") === fixture;
+    digest ===
+      "c4cc69ac2afd28a0f7dcb2994069a4a933062ee5d827c9eb8d913eaa20369aab";
 }
 
 // ------------------------------------------------- (c) output-bound overrun

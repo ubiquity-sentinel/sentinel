@@ -5,6 +5,7 @@
  * installed, only for a refusal written before that runtime's activation, and
  * only from its exact native publication. Nothing is charged or refunded.
  */
+import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import type {
@@ -175,19 +176,21 @@ function surface(facts: Facts = {}): HostedAutonomyGitHubV1 {
   };
 }
 
-function runAt(
+async function runAt(
   state: TransitionState,
   facts: Facts,
   now: number,
   /** null runs the production allowlist. */
   runtimes: readonly HostedRefreshRearmRuntimeV1[] | null = [pin(R77)],
 ): Promise<HostedAutonomyResultV1> {
-  return runHostedAutonomy({
-    state: state as unknown as StateReadView & RepairStateWriter,
-    githubFor: () => surface(facts),
-    clock: { now: () => now },
-    ...(runtimes === null ? {} : { refreshRearmRuntimes: runtimes }),
-  });
+  return runHostedAutonomy(
+    await withDarkQueueAuthority({
+      state: state as unknown as StateReadView & RepairStateWriter,
+      githubFor: () => surface(facts),
+      clock: { now: () => now },
+      ...(runtimes === null ? {} : { refreshRearmRuntimes: runtimes }),
+    }),
+  );
 }
 
 const CHARGE = reservation("d".repeat(64), {
@@ -334,25 +337,27 @@ Deno.test("refresh re-arm: a record with no review round left stays blocked with
     );
     const before = canonicalStringify(state.snapshot);
     let listings = 0;
-    const result = await runHostedAutonomy({
-      state: state as unknown as StateReadView & RepairStateWriter,
-      githubFor: () => {
-        const github = surface();
-        const listing = github.mismatchDisposition!;
-        return {
-          ...github,
-          mismatchDisposition: {
-            ...listing,
-            listPullsByHead: (branch: string) => {
-              listings++;
-              return listing.listPullsByHead(branch);
+    const result = await runHostedAutonomy(
+      await withDarkQueueAuthority({
+        state: state as unknown as StateReadView & RepairStateWriter,
+        githubFor: () => {
+          const github = surface();
+          const listing = github.mismatchDisposition!;
+          return {
+            ...github,
+            mismatchDisposition: {
+              ...listing,
+              listPullsByHead: (branch: string) => {
+                listings++;
+                return listing.listPullsByHead(branch);
+              },
             },
-          },
-        };
-      },
-      clock: { now: () => T0 + 2 * DAY },
-      refreshRearmRuntimes: [pin(R77)],
-    });
+          };
+        },
+        clock: { now: () => T0 + 2 * DAY },
+        refreshRearmRuntimes: [pin(R77)],
+      }),
+    );
     assert.equal(state.writes, 0, JSON.stringify(result));
     assert.equal(canonicalStringify(state.snapshot), before);
     assert(
