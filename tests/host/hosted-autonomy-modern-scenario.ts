@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import { createActionsMatrixArtifactTransport } from "../../src/host/matrix-artifacts.ts";
 import { GitHubApiClient } from "../../src/github/client.ts";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -389,9 +390,10 @@ export async function modernRecoveryScenario(
             });
           },
         };
-        if (!main) return await runHostedAutonomy(deps);
+        const authorized = await withDarkQueueAuthority(deps);
+        if (!main) return await runHostedAutonomy(authorized);
         const head = await checked(f.checkout, ["rev-parse", "HEAD"]);
-        const captured = await captureHostedAutonomyMain(deps, head);
+        const captured = await captureHostedAutonomyMain(authorized, head);
         mainExit = captured.exit;
         return captured.result;
       } finally {
@@ -602,7 +604,10 @@ export async function modernRecoveryScenario(
         ) {
           assert.deepEqual(
             (result as HostedAutonomyResultV1).actions,
-            [`existing-ref:${recovered.id}:preserved`],
+            [
+              "queue:inactive_no_rule",
+              `existing-ref:${recovered.id}:preserved`,
+            ],
           );
           // The existing ref keeps its single original update: re-proved,
           // never rewritten.
@@ -616,9 +621,10 @@ export async function modernRecoveryScenario(
             candidate,
           );
         } else if (inflight) {
+          // The explicit dormant queue observation precedes preservation.
           assert.deepEqual(
             (result as HostedAutonomyResultV1).actions,
-            ["current-matrix:ingested:1"],
+            ["queue:inactive_no_rule", "current-matrix:ingested:1"],
           );
         }
         assert.equal(
@@ -785,6 +791,7 @@ export async function modernRecoveryScenario(
         // charged, and its producer's next (duplicate) visit finishes it.
         assert(!(result instanceof Error), String(result));
         assert.deepEqual((result as HostedAutonomyResultV1).actions, [
+          "queue:inactive_no_rule",
           "current-matrix:ingested:1",
         ]);
         assert.equal(casRefused, 1, "the same pass must reach its CAS");
@@ -799,7 +806,10 @@ export async function modernRecoveryScenario(
         assert.equal(charge.outcome, "submitted");
         f.rig.state.writeRepair = originalWrite;
         const revisited = await run();
-        assert.deepEqual(revisited.actions, ["current-matrix:ingested:1"]);
+        assert.deepEqual(revisited.actions, [
+          "queue:inactive_no_rule",
+          "current-matrix:ingested:1",
+        ]);
         const finished = await f.rig.state.readRepair();
         assert(finished.ok && finished.value.status === "found");
         const preserved = finished.value.snapshot.work.find((row) =>
@@ -1250,6 +1260,7 @@ export async function modernRecoveryScenario(
     assert.equal(replay.status, "applied");
     assert.equal(replay.reason, "retried");
     assert.deepEqual(replay.actions, [
+      "queue:inactive_no_rule",
       `retry:${failed.id}:grant=0:other:model run did not complete with a trusted candidate`,
     ]);
     assert.equal(replay.beforeHead, after.value.head);

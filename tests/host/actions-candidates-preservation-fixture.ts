@@ -99,13 +99,21 @@ export async function remoteSha(
   return line === "" ? null : line.split("\t")[0]!.trim() as GitSha;
 }
 
-/** Fake external HTTP transport over the REAL remote ref state. */
+/** No queue rule; every remote ref read still observes the REAL fixture remote. */
 export class RealRefHttp {
   readonly paths: string[] = [];
   constructor(private readonly reader: DenoGitExecutor) {}
   readonly transport: HttpTransportV1 = (request) => {
     const pathname = new URL(request.url).pathname;
     this.paths.push(pathname);
+    assert.equal(request.method, "GET");
+    if (pathname === "/repos/ubiquity/ai.ubq.fi/rules/branches/development") {
+      return Promise.resolve({
+        status: 200,
+        headers: new Headers(),
+        bodyText: "[]",
+      });
+    }
     const marker = "/git/ref/";
     const index = pathname.indexOf(marker);
     if (index === -1) {

@@ -37,7 +37,7 @@ Deno.test("maintenance retires every closed-source record without a five-record 
     ...original(repository)!,
     readIssueOpen: () => Promise.resolve(false),
   });
-  const result = await runHostedAutonomy(passDeps(state, github));
+  const result = await runHostedAutonomy(await passDeps(state, github));
   assert.equal(result.status, "applied", JSON.stringify(result));
   assert.equal(
     result.actions.filter((action) => action.startsWith("retire:")).length,
@@ -105,7 +105,7 @@ Deno.test("maintenance closes every proven foreign delivery without a five-recor
       return Promise.resolve(true);
     },
   });
-  const result = await runHostedAutonomy(passDeps(state, github));
+  const result = await runHostedAutonomy(await passDeps(state, github));
   assert.equal(result.status, "applied", JSON.stringify(result));
   assert.deepEqual([...closed].sort(), tasks.map((task) => task.issueNumber));
   assert.ok(state.snapshot.work.every((row) => row.nextStep === "done"));

@@ -215,6 +215,7 @@ export async function runHostedAutonomyMain(input?: {
                 state: guardedState,
                 clock: { now: () => Date.now() },
                 token: stateToken,
+                apiToken,
                 artifactRoot,
               }),
               protectedRecordIds,
@@ -236,6 +237,7 @@ export async function runHostedAutonomyMain(input?: {
             state,
             clock: { now: () => Date.now() },
             token: stateToken,
+            apiToken,
             artifactRoot,
             cooldownMode: env("SENTINEL_COOLDOWN_MODE") ?? undefined,
             // The trusted production maintenance route is the one caller that

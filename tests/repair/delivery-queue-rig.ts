@@ -49,6 +49,7 @@ import type {
   HostedAutonomyPullV1,
 } from "../../ops/hosted-autonomy-types.ts";
 import { releaseSnapshot } from "../host/hosted-autonomy-rig.ts";
+import { darkQueueFixture } from "../host/hosted-autonomy-dark-queue-fixture.ts";
 import { REPO, SHA1, T0, workRecord } from "../state/helpers.ts";
 import {
   FakeClock,
@@ -561,6 +562,7 @@ export async function queueRig(
       state,
       githubFor: () => surface,
       clock,
+      queueCustody: darkQueueFixture({ state, githubFor: () => surface }),
     } as unknown as HostedAutonomyDepsV1;
     const context = {
       deps: hosted,

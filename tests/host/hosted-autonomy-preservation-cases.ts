@@ -2,6 +2,7 @@
  * The two closed parked-preservation classes the disposition pass owns, their
  * native repository surface and one real hosted maintenance run.
  */
+import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import { deriveReservationId } from "../../src/budget/mod.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
@@ -211,16 +212,18 @@ function surface(facts: Facts = {}): HostedAutonomyGitHubV1 {
   };
 }
 
-export function runAt(
+export async function runAt(
   state: TransitionState,
   facts: Facts,
   now: number,
 ): Promise<HostedAutonomyResultV1> {
-  return runHostedAutonomy({
-    state: state as unknown as StateReadView & RepairStateWriter,
-    githubFor: () => surface(facts),
-    clock: { now: () => now },
-  });
+  return runHostedAutonomy(
+    await withDarkQueueAuthority({
+      state: state as unknown as StateReadView & RepairStateWriter,
+      githubFor: () => surface(facts),
+      clock: { now: () => now },
+    }),
+  );
 }
 
 /**

@@ -9,6 +9,7 @@
  * store with the real snapshot and transition rules, and the consumer is the
  * ingest seam with the real consumer's dispositions.
  */
+import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { portOk } from "../../src/contracts/ports.ts";
@@ -235,7 +236,7 @@ async function walkRig(outcome: "candidate" | "failed") {
         readExecution: () => Promise.resolve(portOk(proof)),
       } as never),
   };
-  return { state, github, deps, calls };
+  return { state, github, deps: await withDarkQueueAuthority(deps), calls };
 }
 
 const late = (snapshot: { work: readonly WorkRecordV1[] }) =>

@@ -19,6 +19,22 @@ import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { validateRepairTransition } from "../../src/state/state-repair-transition.ts";
 import { healthyProof, releaseSnapshot } from "./hosted-autonomy-rig.ts";
 import { SHA1, T0 } from "../state/helpers.ts";
+import type { HostedAutonomyDepsV1 } from "../../ops/hosted-autonomy-types.ts";
+import {
+  darkQueueCoordinatorFixture,
+  darkQueueFixture,
+} from "./hosted-autonomy-dark-queue-fixture.ts";
+
+/** Explicit offline no-rule authority; unexpected native queue effects still fail. */
+export async function withDarkQueueAuthority(
+  deps: HostedAutonomyDepsV1,
+): Promise<HostedAutonomyDepsV1> {
+  return {
+    ...deps,
+    queueCustody: darkQueueFixture(deps),
+    queue: await darkQueueCoordinatorFixture(deps),
+  };
+}
 
 export function snapshotOf(
   records: WorkRecordV1[],

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import {
@@ -28,6 +29,7 @@ import {
 import { gitRun, pushRawTree, sha256Hex } from "../state/helpers.ts";
 import { ENV, SELF_REPO } from "./hosted-autonomy-fixtures.ts";
 import { historicalMalformedRig } from "./hosted-autonomy-historical-fixtures.ts";
+import { recoverHostedHistoricalC63 } from "../../ops/hosted-autonomy-historical-recovery.ts";
 
 export async function historicalC63Scenario(
   firstPass: boolean,
@@ -127,23 +129,45 @@ export async function historicalC63Scenario(
     const witnessed = retained.value.snapshot.hostedRuntimes[0]
       .lastExecutionProof!;
     assert(witnessed.outcome !== "not_started");
+    let queueReadFailureAt = Infinity;
+    let queueReads = 0;
+    const nativeMaintenance = createHostedHistoricalMatrixQuarantine({
+      state: f.rig.state,
+      clock: f.clock,
+      token: "offline-native-token",
+      apiToken: "offline-target-token",
+      artifactRoot: f.rig.tmp + "/c63-witness-artifacts",
+      http: (request) => {
+        if (
+          new URL(request.url).pathname ===
+            "/repos/ubiquity/ai.ubq.fi/rules/branches/development"
+        ) {
+          assert.equal(request.method, "GET");
+          assert.equal(
+            request.headers.get("authorization"),
+            "Bearer offline-target-token",
+          );
+          return Promise.resolve({
+            status: ++queueReads >= queueReadFailureAt ? 503 : 200,
+            headers: new Headers(),
+            bodyText: "[]",
+          });
+        }
+        return f.http(request);
+      },
+      artifactHttp: f.http,
+      historicalReleaseWitnesses: [{
+        commit: retained.value.head,
+        executionId: f.execution.id,
+        logDigest: witnessed.logDigest,
+        reservationIds: f.records.slice(0, 19).map((record) =>
+          record.intent!.requestId!
+        ),
+      }],
+    });
     f.historicalMatrix.historicalReleaseWitnesses =
-      createHostedHistoricalMatrixQuarantine({
-        state: f.rig.state,
-        clock: f.clock,
-        token: "offline-native-token",
-        artifactRoot: f.rig.tmp + "/c63-witness-artifacts",
-        http: f.http,
-        artifactHttp: f.http,
-        historicalReleaseWitnesses: [{
-          commit: retained.value.head,
-          executionId: f.execution.id,
-          logDigest: witnessed.logDigest,
-          reservationIds: f.records.slice(0, 19).map((record) =>
-            record.intent!.requestId!
-          ),
-        }],
-      }).historicalReleaseWitnesses;
+      nativeMaintenance.historicalReleaseWitnesses;
+    f.historicalMatrix.nativeQueueFor = nativeMaintenance.nativeQueueFor;
     // Sanitized native proof captured at3361797: a newer healthy confirmation
     // replaced the old singular slot. It is preserved, never rebound to C63.
     let genericTransportReads = 0;
@@ -410,35 +434,37 @@ export async function historicalC63Scenario(
         const previous = Deno.cwd();
         Deno.chdir(f.checkout);
         try {
-          await runHostedAutonomy({
-            state: f.rig.state,
-            clock: f.clock,
-            githubFor: f.rig.githubFor,
-            historicalMatrix: f.historicalMatrix,
-            closedMatrix: async (state = f.rig.state) => {
-              const actual = await createHostedClosedMatrixRecovery({
-                state,
-                clock: f.clock,
-                token: "offline-native-token",
-                apiToken: "offline-native-token",
-                sourceDir,
-                scratch: f.rig.tmp + "/current-scratch",
-                artifactRoot: f.rig.tmp + "/mixed-current",
-                appInstallationId: "155687488",
-                http: currentHttp,
-                artifactHttp: currentHttp,
-              });
-              return {
-                ...actual,
-                transportFor: () => {
-                  genericTransportReads++;
-                  throw new Error(
-                    "offline unrelated ordinary proof has no matrix",
-                  );
-                },
-              };
-            },
-          });
+          await runHostedAutonomy(
+            await withDarkQueueAuthority({
+              state: f.rig.state,
+              clock: f.clock,
+              githubFor: f.rig.githubFor,
+              historicalMatrix: f.historicalMatrix,
+              closedMatrix: async (state = f.rig.state) => {
+                const actual = await createHostedClosedMatrixRecovery({
+                  state,
+                  clock: f.clock,
+                  token: "offline-native-token",
+                  apiToken: "offline-native-token",
+                  sourceDir,
+                  scratch: f.rig.tmp + "/current-scratch",
+                  artifactRoot: f.rig.tmp + "/mixed-current",
+                  appInstallationId: "155687488",
+                  http: currentHttp,
+                  artifactHttp: currentHttp,
+                });
+                return {
+                  ...actual,
+                  transportFor: () => {
+                    genericTransportReads++;
+                    throw new Error(
+                      "offline unrelated ordinary proof has no matrix",
+                    );
+                  },
+                };
+              },
+            }),
+          );
           return 0;
         } catch {
           return 1;
@@ -514,6 +540,27 @@ export async function historicalC63Scenario(
       latestProof,
     );
     const requestedRecords = f.records.slice(partial ? 1 : 0, 3);
+    if (!firstPass && !currentFactory && !partial) {
+      for (
+        const phase of ["missing", "unavailable", "observation_lost"] as const
+      ) {
+        queueReads = 0;
+        queueReadFailureAt = phase === "observation_lost" ? 4 : 1;
+        f.historicalMatrix.nativeQueueFor = phase === "missing"
+          ? undefined
+          : nativeMaintenance.nativeQueueFor;
+        const held = await recoverHostedHistoricalC63(f.historicalMatrix);
+        assert.deepEqual(held, { ingested: 0, deferred: true }, phase);
+        assert.deepEqual(
+          await f.rig.state.readRepair(),
+          before,
+          phase + ": original charges and intents retained",
+        );
+        assert.deepEqual(await f.rig.state.readRelease(), releaseBefore);
+      }
+      f.historicalMatrix.nativeQueueFor = nativeMaintenance.nativeQueueFor;
+      queueReadFailureAt = Infinity;
+    }
     const selectedIds = new Set(requestedRecords.map((record) => record.id));
     const requests = requestedRecords.map((record) => ({
       taskId: record.id,

@@ -44,7 +44,7 @@ export async function holdQueueRecord(
     };
   }
   // Bypass fairness counters: observing external custody is not a failed execution.
-  return await persistTransition(deps, context, (draft) => {
+  const held = await persistTransition(deps, context, (draft) => {
     const index = draft.work.findIndex((row) => row.id === record.id);
     if (index < 0) throw new Error("queue hold work identity missing");
     draft.work[index] = {
@@ -61,6 +61,11 @@ export async function holdQueueRecord(
       updatedAt: now,
     };
   });
+  // Keep the existing loop progress semantics. This private result marker is
+  // attached only after the state write and cannot enter JSON/stdout carriers.
+  return held.kind === "progress"
+    ? Object.defineProperty(held, "queueHold", { value: true })
+    : held;
 }
 export async function guardQueueOperation(
   deps: RepairCycleDepsV1,

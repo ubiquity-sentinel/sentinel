@@ -42,6 +42,7 @@ import {
 } from "../src/host/local.ts";
 import { HOSTED_HISTORICAL_RELEASE_WITNESSES } from "./hosted-autonomy-matrix-bindings.ts";
 import { createHostedCandidateRecoveryPort } from "./hosted-autonomy-candidate-port.ts";
+import { createMaintenanceNativeQueue } from "../src/host/maintenance-native-queue.ts";
 
 /** The maintenance slice has no implementation, review or publication capability. */
 export async function createHostedClosedMatrixRecovery(input: {
@@ -238,6 +239,7 @@ export function createHostedHistoricalMatrixQuarantine(input: {
   state: StateReadView & RepairStateWriter;
   clock: { now(): number };
   token: string;
+  apiToken?: string;
   artifactRoot: string;
   http?: HttpTransportV1;
   artifactHttp?: HttpTransportV1;
@@ -276,6 +278,17 @@ export function createHostedHistoricalMatrixQuarantine(input: {
   return {
     state: input.state,
     clock: input.clock,
+    ...(input.apiToken === undefined ? {} : {
+      nativeQueueFor: (repository, state) =>
+        createMaintenanceNativeQueue({
+          repository,
+          state,
+          clock: input.clock,
+          gate: new HostedRepairCooldownGate({ state, clock: input.clock }),
+          token: input.apiToken!,
+          http: input.http ?? fetchHttpTransport(),
+        }),
+    }),
     revalidateNotStarted: input.revalidateNotStarted === true,
     budget: new RollingStartBudget({
       state: input.state,

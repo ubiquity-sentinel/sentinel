@@ -1,3 +1,4 @@
+import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import { deriveReservationId } from "../../src/budget/mod.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
@@ -587,11 +588,13 @@ function hostedSurface(
 Deno.test("hosted autonomy main disposes an evidenced runtime mismatch in one write", async () => {
   const f = await fixture();
   const state = new FakeState(f.snapshot);
-  const result = await runHostedAutonomy({
-    state,
-    githubFor: () => hostedSurface({ mismatchDisposition: observations() }),
-    clock: { now: () => T0 + 5 },
-  });
+  const result = await runHostedAutonomy(
+    await withDarkQueueAuthority({
+      state,
+      githubFor: () => hostedSurface({ mismatchDisposition: observations() }),
+      clock: { now: () => T0 + 5 },
+    }),
+  );
   assert.equal(result.kind, "hosted_autonomy");
   assert.equal(result.status, "applied");
   assert.equal(result.reason, "dispositioned");

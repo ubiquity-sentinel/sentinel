@@ -31,6 +31,7 @@
  * this one can tear.
  */
 import assert from "node:assert/strict";
+import { inactiveNativeQueueFixture } from "../github/native-queue-fixture.ts";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
@@ -78,6 +79,7 @@ import {
 import {
   outputBoundCells,
   outputBoundOverrun,
+  settleOutputBoundCells,
 } from "../../ops/hosted-autonomy-output-bound.ts";
 import {
   CurrentMatrixRecoveryIntegrityFailure,
@@ -460,6 +462,7 @@ async function producerRig(variant: VariantV1 = {}) {
   };
   const refs = new Map<string, string>();
   const github = {
+    nativeQueue: inactiveNativeQueueFixture(),
     preserveCandidate: (
       request: { candidate: { ref: string; head: string } },
     ) => {
@@ -556,6 +559,8 @@ async function producerRig(variant: VariantV1 = {}) {
     state.snapshot.reservations.find((item) => item.id === id)!;
   return {
     state,
+    github,
+    ports,
     before,
     beforeHead,
     refuse,
@@ -918,6 +923,64 @@ Deno.test("output bound: the live producer pass settles 1127 as the runtime's in
   });
   assert.equal(rig.state.head, head);
   assert.equal(rig.writes.length, 5);
+});
+
+Deno.test("output bound: native queue holds remain unconsumed until a no-rule observation settles the original charge", async (t) => {
+  for (
+    const reason of ["member", "inactive_observation_unavailable"] as const
+  ) {
+    await t.step(reason, async () => {
+      const rig = await producerRig();
+      const cell = PLAN.cells.find((item) => item.taskId === OVER)!;
+      let absent = false;
+      const cycle = {
+        ...rig.ports(rig.state).cycleFor(),
+        github: {
+          ...rig.github,
+          nativeQueue: {
+            ...inactiveNativeQueueFixture(),
+            inspect: () =>
+              Promise.resolve(
+                absent
+                  ? {
+                    status: "allow" as const,
+                    basis: "inactive_no_rule" as const,
+                  }
+                  : { status: "hold" as const, reason, pull: null },
+              ),
+          },
+        },
+      } as unknown as Parameters<typeof settleOutputBoundCells>[0];
+      const settle = () =>
+        settleOutputBoundCells(
+          cycle,
+          [cell],
+          new Set([cell.cellId]),
+          NOW + 300_000,
+          structuredClone(rig.state.snapshot),
+        );
+      const originalCharge = structuredClone(rig.charge(OVER_CHARGE));
+      const originalIntent = structuredClone(rig.row(OVER).intent);
+      assert.equal(
+        await settle(),
+        false,
+        "fresh custody hold is not settlement",
+      );
+      assert.equal(
+        await settle(),
+        false,
+        "retained custody hold is not settlement",
+      );
+      assert.deepEqual(rig.charge(OVER_CHARGE), originalCharge);
+      assert.deepEqual(rig.row(OVER).intent, originalIntent);
+      assert.equal(rig.row(OVER).nextStep, "work");
+      assert.deepEqual(rig.calls.imported, []);
+      assert.deepEqual(rig.calls.preserved, []);
+      absent = true;
+      assert.equal(await settle(), true);
+      assertInterruptedBound(rig, OVER, OVER_CHARGE);
+    });
+  }
 });
 
 Deno.test("output bound: the current-matrix walk applies the live pass once, then finds nothing pending", async () => {

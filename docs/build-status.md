@@ -35,12 +35,44 @@ the authoritative proof at release state
 checks pass. Evidence: `/workspace/evidence/gen81-live/runtime-proof.json` and
 `installation-receipt.json` in that directory. No manual state change occurred.
 
-The first ordinary R81 supervisor, 39107544246, has started; its completion and
-delivery effects remain pending. Bootstrap health is not an autonomous issue
-delivery claim. L81's committed depth-1 tests passed 57 tests / 38 steps; merged
-input checks passed 32 tests / 38 steps plus static gates. Its exact native CI,
-39106152644, remains separately in progress. Dormant queue source is prepared
-for development-only publication; sentinel-supervisor stays exact L81.
+The first ordinary R81 supervisor, 39107544246 attempt 1, completed
+successfully. Its repair job 117617394608 and own settled, startup-ready healthy
+proof agree at release state `a257db61cd8d4036c15db06ec8b243f8e3613cee`. All
+sixteen independent gates pass; reverified log digest is
+`25f7d13a0709e8a3e0758b72975afb8217c54210cac6d855dc3efde6b5e4da67`. Root
+accepted `/workspace/evidence/gen81-live/ordinary-runtime-proof.json` in
+`ordinary-root-acceptance.json`. Generation integration issue #163 is now closed
+with all thirteen checklist items complete. This does not close the related
+issues' distinct remaining scopes or establish autonomous delivery.
+
+L81's exact native CI, 39106152644 / job 117612305851, passed 3,000 tests / 798
+steps. Its ordinary maintenance rearmed 26 records without new admissions.
+Unmodified R80 production parsers accepted the resulting release/repair state;
+this proves parser compatibility, not R80 execution after queue activation.
+Evidence: `/workspace/evidence/gen81-live-rollback-compatibility/summary.json`.
+The completed runtime log contains only the health terminal, no exact child
+write or PR effect attribution. Thirteen observed PR merges were independently
+attributed to owner 0x4007, not R81. Evidence:
+`/workspace/evidence/gen81-live/ordinary-delivery-final-receipt.json`.
+
+The next exact L81/R81 run, 39111321102, completed successfully: thirteen jobs,
+including all eight isolated candidate cells. Every request retained the
+thirty-minute session bound and `Number.MAX_SAFE_INTEGER` output limit; no cell
+was interrupted. Root independently verified the serial repair log digest
+`b49867cc751f3b58008b1074686dd8b4506a9a4f2f3a5391e9216d179d66c2e4` and all
+sixteen healthy, settled, startup-ready proof gates at release state
+`fa6f1586bdc1854f05ffbfde49dfd7594cafecb7`. Evidence:
+`/workspace/evidence/gen81-live/run39111321102/root-runtime-acceptance.json`.
+The six ai.ubq.fi tasks retain their original bot PRs with exact native
+head/state agreement and no duplicate closing associations. #169 and #170 have
+candidate progress but no PR at the final observation. Two AI tasks have active
+base-refresh conflicts; none of these eight has an owner-gated park. The log
+does not attribute child writes or issue delivery; those remain separate claims.
+
+Dormant queue source `433305649937fab57a11e33a70aef0178061ea48` is published
+only to development. Its native CI failed ten fixture cases, as detailed below;
+it is not installed or accepted for launcher promotion. Sentinel-supervisor
+remains exact L81 and the installed live runtime remains healthy R81/81.
 
 `sentinel-release` remains disabled. The pre-existing Sentinel ruleset 23197448
 protects only `sentinel-state/release`; it was not added or changed by this
@@ -65,10 +97,31 @@ yielding `624466337a9e92e9f36385d8801b29807e41ccb9`. Only deno-deploy.yml
 changed: development runs are not cancelled, merge_group checks run, and only
 development pushes deploy. All four checks passed in 39096740114; postmerge
 development run 39098081444 also passed all four without cancellation. Evidence:
-`/workspace/evidence/ci-base-runs/final-5b080ea0/`. A separate deterministic
-quota clock fixture correction remains prepared and unpublished.
+`/workspace/evidence/ci-base-runs/final-5b080ea0/`. Three subsequent pinned base
+runs passed without cancellation, but later owner changes introduced conditional
+job admission. Their skipped checks do not meet Sentinel's strict success
+policy. The current compatibility correction preserves dependency-scoped tests,
+selected-test native eligibility, real native/artifact jobs, and one before-SHA
+across wrappers. It admits the real jobs for protected contexts, development
+pushes and CI-policy PRs without deploying from CI.
 
-### Generation 81: merged, installed and bootstrap healthy
+Existing PR #1207 was normally merged with SHA-pinned head
+`1ade164ef78e7fa919ec5a502a6f3c42864e790c` as
+`730218b0c89d479b141c4a2fa17ad5ee363f161a`. Its exact tree
+`d7959c13e3546fc39a1f519c3cb22509510ff717` and ordered parents 6414/1ade match
+the tested carrier `65e9ff8ed8424cc26d0a8fe31c1213eb0f7b25bf`. Native run
+39114035828 passed all seven actual jobs/checks. Fresh post-CI independent
+source assessment passed with no findings; the unavailable local Codex review
+mode was not claimed complete. Immediately before merge, native
+head/base/carrier, all seven checks and issue #1206's assignment to
+authenticated 0x4007 were reverified. The issue closed by the accepted merge,
+retaining its assignment; no branch was deleted. Postmerge development CI is
+separately observed and remains pending. Evidence:
+`/workspace/evidence/ci-required-checks/current-base-6414/merge/acceptance.json`.
+Earlier heads and CI runs are historical evidence. A separate deterministic
+quota-clock fixture correction remains unpublished.
+
+### Generation 81: integrated, installed and ordinary run healthy
 
 R81 is frozen at `da98f5f49c45b57cfa97a45fe647c36b1021f302` in
 `/workspace/worktrees/gen81-integration`. It retains all eleven rebased lane
@@ -105,7 +158,7 @@ current-head review passed with no P0/P1, and all 275 local result/log hashes
 were verified. Evidence: `/workspace/evidence/gen81-hosted/final-receipt.json`,
 `/workspace/evidence/gen81-pr165/native-ci/final-receipt.json` and
 `/workspace/evidence/gen81-pr165/final-input-audit/receipt.json`. The PR body
-stayed `Resolves #163`; the issue remains manually owned until live acceptance.
+stayed `Resolves #163`; the issue closed after exact ordinary live acceptance.
 
 L81's fourteen-file pin patch is prepared and independently audited, SHA-256
 `477728957d4a81d351a03a0c8575b04c152a7cd99f52e0eaf516dba83fd62de1`. It installs
@@ -119,13 +172,93 @@ patch and this ledger. Final merged installer checks pass 32 tests / 38 steps
 plus scoped format, lint, type and size checks. The primary published L81 by
 fast-forward to development and sentinel-supervisor. The protected controller
 installed exact R81/81, whose own bootstrap is settled and healthy as recorded
-above. Ordinary supervisor completion and autonomous delivery remain separate
-acceptance gates. Procedure and proof boundaries:
+above. The first ordinary supervisor also passed; autonomous issue delivery
+remains a separate acceptance boundary. Procedure and proof boundaries:
 `/workspace/evidence/gen81-install/README.md`.
 
-### Queue: dormant source accepted, native activation remains gated
+### Queue: native fixture correction prepared; promotion remains blocked
 
-Canonical queue publication work is
+Development-only publication `de496e6d3c71cb4794153e4876e51f1da2acf2df` failed
+native run 39108047074 attempt 1 / job 117618050671: 3,078 tests / 1,279 steps
+passed and 131 tests failed. Exact checkout and normalized log digest
+`5d25ce19ab455bd16e68d3d0ce0e04d42d368cd6e15c90e493b033210b4058c3` are retained
+under `/workspace/evidence/merge-queue/final-publication/native-ci/`. Local
+focused acceptance below does not replace this failed native gate.
+
+The canonical correction tree is now
+`/workspace/worktrees/queue-native-ci-correction`, based on exact de496. Root
+owns integration, source scope and this ledger. Disjoint workers own launcher
+coordinator fixtures, native ingest/preservation fixtures, delivery/model
+fixtures, and cold-start/workflow/shallow contracts. The complete 131-case
+inventory and file ownership are in
+`/workspace/evidence/pr160-continuation/native-ci/correction-scope-proposal.json`.
+Missing queue authority must be supplied truthfully in fixtures, never converted
+to permissive production defaults; existing effect and accounting assertions
+remain binding. The cold-start test omitted tracked ops modules although actual
+runtime checkouts include them; corrected cold evaluation and real depth-1
+compatibility checks now pass. Launcher, delivery and model fixture corrections
+also pass their scoped suites without new known jams.
+
+The native-ingest investigation found real restricted-port composition defects:
+candidate recovery, matrix uncertainty settlement and historical C63 recovery
+lacked the new native queue capability; generic denied proxies returned a
+function where the guard expected an object. These sites now bind real trusted
+read-only custody, retain effect restrictions and reservation accounting, and
+refuse unavailable/queued custody. The independent audit also searched related
+restricted ports. Held matrix cells were falsely counted ingested; all three
+settlement paths and the output-bound consumer now recognize a private in-memory
+hold marker without changing persisted or stdout contracts. The runner preserves
+producer-supplied release/deadline state guards when adding queue custody.
+Original zero-write custody/expiry tests bind that correction. All five groups
+are now frozen: launcher fixtures pass 135 tests / 11 steps; delivery/model
+checks pass 47 tests / two steps; startup checks pass 20 in full history and 19
+with one historical-source skip at depth one; native maintenance/preservation
+checks pass 55 tests / nine steps plus cold startup; matrix hold regressions
+pass six tests / nine steps and their existing boundary passes 26 / 61. These
+scopes overlap and their counts are not summed. The exact old-source matrix
+regression reproduces five failures; the same test bytes pass corrected. All
+recorded final source, accounting and custody assertions remain intact. Root
+verified all forty-two frozen hashes and all six final combined jobs: whole-repo
+formatting, scoped lint/types, size, diff, and 62 consumer tests / 25 steps. The
+prior fresh independent Sol/max audit passed the reviewed production correction
+and matched all 131 original names to recorded passing logs. It also proved
+restricted authority, fresh-state custody and R80 serialization. Its report is
+retained, SHA-256
+`efb209031b1741a786de4f41ade649050dc9fcfe3e6b4e43ddcd74fa9d419f9a`. The reviewed
+tree was committed as `994ffe1b`; the ledger-only descendant
+`433305649937fab57a11e33a70aef0178061ea48` was published to development.
+
+Exact native run 39113299822 / job 117633805305 then passed 3,208 tests / 1,298
+steps and failed ten tests. Nine action arrays omitted the newly reported
+`queue:inactive_no_rule` observation. The remaining matrix-startup fixture
+omitted the native queue authority needed by the corrected maintenance consumer.
+Its old local pass preceded the final production changes and bound only fixture
+hashes; the later consumer batch omitted that case. This coverage gap is
+explicitly retained in `publication/native-ci/prior-coverage-gap.json` under
+`/workspace/evidence/merge-queue/native-ci-correction/`. The native log digest
+is `6bd51265afe66d90011c76beec6ab75761684118704b216f59e74d99de81f47e`.
+
+Root and the fixture worker reproduced all ten failures on exact 433. The
+three-file correction changes only test fixtures: retain the exact ordered queue
+observation in two shared helpers and supply explicit inactive native authority
+to the direct maintenance fixture. Every original state, reservation, ref,
+recovery and no-effect assertion remains. The three affected suites pass 31
+tests, their R78 consumers pass three, and the full matrix-startup file passes
+four. All 530 production/config/workflow files still equal 433. Source and
+receipts are frozen under
+`/workspace/evidence/merge-queue/native-ci-second-correction/`. The fresh
+independent Sol/max correction audit passed with no open findings and reran all
+38 affected cases, including the three genuine R78 consumers, against the
+complete frozen 1,289-file graph. Every tracked input remained unchanged before
+and after the probe. This closes the launcher receipts' fixture-only binding gap
+while preserving the original evidence. Audit report SHA-256:
+`7ae604ab17bdf72d1243b619288be94a2a33ce2f40204d1562bfb702b6d98510`. Root
+accepted the report in `publication/root-audit-acceptance.json`; new exact
+native CI remains pending and is mandatory. No queue runtime, fixture, grant,
+ruleset or activation is installed or authorized by this local correction.
+Sentinel-supervisor stays L81.
+
+The previous canonical queue publication work is
 `/workspace/worktrees/merge-queue-publication`, merging accepted queue source
 `8d68a3ca57321dacf4d2caffd402c43d3acaab3e` onto L81 with both ancestries
 preserved. The frozen queue source remains at
@@ -196,10 +329,10 @@ witness pin or authoritative state changed. The acceptance artifact is
 Refresh live inventory before strict-runtime publication or activation.
 Evidence:
 `/workspace/evidence/merge-queue/historical-inventory/operation-receipts/`. Two
-prior P2 conservative holds remain for follow-up: definitely-unsent admission
-after refusal, and completed dequeue markers pending reconciliation. Existing
-follow-ups #1147/#1148 are not duplicated. Genuine VPS delivery acceptance
-remains pending under its existing boundary.
+prior P2 conservative holds are now filed as Sentinel #169 (definitely-unsent
+admission after refusal) and #170 (completed dequeue marker reconciliation).
+Existing ai.ubq.fi follow-ups #1147/#1148 are not duplicated. Genuine VPS
+delivery acceptance remains pending under its existing boundary.
 
 The owner confirmed runtime App 4682172 / installation 155687488 has Merge
 queues read/write granted and accepted. Do not ask again. After healthy R81,
@@ -214,29 +347,34 @@ profile/witness acceptance, future exact runtime/launcher CI, installation and
 live delivery remain separate gates. Owner packet:
 `/workspace/evidence/merge-queue/canary-owner-packet.md`.
 
-Existing PR #160 / issue #157 is additional protected manual work. The R81
-refresh-detach lane preserves its binding but does not include the PR's five
-follow-up-scanning behavior changes. It remains open on original head
-`784e233ec22eae4d29c8eb951c1f42bafc06121f`, with issue #157 assigned to 0x4007
-and manually skipped before any new branch writes. Historical native CI failed
-six stale ordering/depth assertions after 2,711 passing tests. One narrow P2
-listing-boundary duplicate was reproduced through the real HTTP reader and
-planner/pass; no P0/P1 is found. The existing-head continuation is locally
-corrected at `bba1f4971547c1540f0ccb58e579ef4399159194`: incomplete newest-first
-listings cannot prove an unseen marker absent at or beyond the ten-minute
-creation-skew boundary; observed matching markers still settle existing work.
-All 23 affected tests / 60 steps and scoped static checks pass. Refresh once
-against the final published source, then fast-forward the existing branch for
-exact native CI, current-head review and normal SHA-pinned merge. Evidence:
-`/workspace/evidence/gen81-pr160-reconciliation/` and
-`/workspace/evidence/pr160-continuation/root-acceptance.json`.
+Existing PR #160 / issue #157 remains protected manual work on its original
+branch, retaining original head `784e233ec22eae4d29c8eb951c1f42bafc06121f`.
+Current published head `f82e4e6187ccbe234e9780eb08d1767d19e9764c` normally
+merges corrected base 433 and preserves all eight non-ledger PR blobs from f23.
+The body stays `Resolves #157`; issue #157 is assigned to 0x4007 and manually
+skipped. Authoritative task custody remains owner-blocked with null intent, zero
+runtime review rounds and one settled charged implementation reservation. Exact
+native run 39113598607 / job 117634717794 passed 3,215 tests / 1,305 steps and
+failed the same ten base cases; all twenty-two follow-up cases passed. Receipt:
+`/workspace/evidence/pr160-continuation/corrected-base-validation/native-ci/summary.json`.
+After the scoped fixture correction is accepted, merge that base into this same
+PR, pass current native CI, obtain fresh review, then merge normally SHA-pinned.
+No replacement PR or force push; no historical runtime target/state rewrite.
 
-General cross-branch runtime PR adoption is only separately prepared work in
-`/workspace/worktrees/existing-pr-integration` and
-`/workspace/worktrees/open-pr-native`. It remains disabled and unpublished;
-lifecycle/fence integration is unassigned. It does not delay R81 or queue
-rollout and is not claimed as current runtime behavior. The current task already
-preserves and reuses PR #165.
+General cross-branch runtime PR adoption is separate, inactive work in
+`/workspace/worktrees/existing-pr-integration`. Root committed validated
+baseline `19f5b0903c9a092c628f8b3f4703d534c53b54c8`, preserving foundation 86173
+and queue 433 ancestry plus exact native patch 62de. Its 48 tests / 152 steps
+and scoped checks pass. Root owns integration and acceptance; the
+shared-contract worker owns the explicitly frozen lifecycle/API paths. Three
+actual serial and matrix regressions now prove the old duplicate-admission
+behavior before the new routing work. The contract requires authenticated App
+authority, retained original PR identity, V1 native custody, genuine
+successor/refresh/delivery proofs and an independent old-runtime fence. Human
+self-assignment remains the manual alternative. The baseline and ongoing
+implementation are unpublished; all activation/pins/grants remain off. It does
+not delay queue rollout and is not claimed as current live behavior. Evidence:
+`/workspace/evidence/existing-pr-lifecycle-integration/`.
 
 Owner cleanup remains deletion of stale `SENTINEL_MODEL_ID` and closure of
 superseded ai.ubq.fi PRs #1057, #1060 and #1116. Remaining owner queue steps are
