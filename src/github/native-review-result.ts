@@ -6,13 +6,12 @@ import {
   fail,
   RecordParseError,
 } from "../contracts/validation.ts";
+import { expectEnvelopeJson } from "./native-review-envelope-repair.ts";
 import {
-  expectEnvelopeJson,
-  refuseAsJsonSyntax,
-} from "./native-review-envelope-repair.ts";
-import {
+  classifyReviewResultRejection,
   expectJournalExactKeys,
   parseReviewResultV1,
+  type ReviewResultRejectionCategoryV1,
 } from "./review-result-parser.ts";
 import {
   MAX_JOURNAL_BYTES,
@@ -23,6 +22,47 @@ import type { ReviewSnapshotV1 } from "./review-snapshot.ts";
 
 export const NATIVE_REVIEW_OPEN = "<SENTINEL_NATIVE_REVIEW_V1>";
 export const NATIVE_REVIEW_CLOSE = "</SENTINEL_NATIVE_REVIEW_V1>";
+
+type NativeReviewRejectionStage =
+  | "native_envelope"
+  | "native_binding"
+  | "result"
+  | "native_findings";
+
+type NativeReviewCandidateRejectionCategory =
+  | ReviewResultRejectionCategoryV1
+  | Exclude<NativeReviewRejectionStage, "result">;
+
+/** Closed diagnostics only: never retain or publish the rejected native text. */
+export type NativeReviewRejectionCategoryV1 =
+  | NativeReviewCandidateRejectionCategory
+  | `recovered_${NativeReviewCandidateRejectionCategory}`;
+
+class NativeReviewValidationError extends RecordParseError {
+  constructor(
+    error: RecordParseError,
+    readonly recovered: boolean,
+    readonly stage: NativeReviewRejectionStage,
+  ) {
+    super(error.issues);
+  }
+}
+
+/**
+ * Preserve the strict issue and recovery/check stage without exposing its text.
+ * `recovered_` means a JSON candidate parsed, never that a verdict was valid.
+ */
+export function classifyNativeReviewRejection(
+  error: unknown,
+): NativeReviewRejectionCategoryV1 {
+  const category = classifyReviewResultRejection(error);
+  if (
+    !(error instanceof NativeReviewValidationError) ||
+    category === "bound_exceeded"
+  ) return category;
+  const rejected = error.stage === "result" ? category : error.stage;
+  return error.recovered ? `recovered_${rejected}` : rejected;
+}
 
 export function nativeReviewBinding(
   snapshot: ReviewSnapshotV1,
@@ -111,15 +151,15 @@ export function parseNativeReviewResult(
     text.slice(NATIVE_REVIEW_OPEN.length, end),
     "$",
   );
-  try {
-    return checkNativeEnvelope(parsed.value, text, end, snapshot, task, cwd);
-  } catch (error) {
-    if (
-      parsed.recovered && error instanceof RecordParseError &&
-      error.issues[0]?.code !== "bound_exceeded"
-    ) refuseAsJsonSyntax("$");
-    throw error;
-  }
+  return checkNativeEnvelope(
+    parsed.value,
+    text,
+    end,
+    snapshot,
+    task,
+    cwd,
+    parsed.recovered,
+  );
 }
 
 function checkNativeEnvelope(
@@ -129,32 +169,44 @@ function checkNativeEnvelope(
   snapshot: ReviewSnapshotV1,
   task: ReviewTaskStatementV1 | null,
   cwd: string,
+  recovered: boolean,
 ): ReviewResultV1 {
-  const envelope = expectRecord(value, "$");
-  expectJournalExactKeys(envelope, ["binding", "result"], "$");
-  const binding = expectRecord(envelope.binding, "$.binding");
-  expectJournalExactKeys(binding, [
-    "head",
-    "base",
-    "snapshotDigest",
-    "taskDigest",
-  ], "$.binding");
-  expectSha256Hex(binding.snapshotDigest, "$.binding.snapshotDigest");
-  if (
-    binding.head !== snapshot.head || binding.base !== snapshot.base ||
-    binding.snapshotDigest !== snapshot.digest ||
-    binding.taskDigest !== (task?.digest ?? null)
-  ) fail("$.binding", "invalid_value", "native result binding mismatch");
-  const result = parseReviewResultV1(envelope.result);
-  if (
-    text.slice(end + NATIVE_REVIEW_CLOSE.length) !==
-      nativeFindingSuffix(result, cwd)
-  ) {
-    fail(
-      "$",
-      "invalid_value",
-      "native findings contradict the structured result",
-    );
+  let stage: NativeReviewRejectionStage = "native_envelope";
+  try {
+    const envelope = expectRecord(value, "$");
+    expectJournalExactKeys(envelope, ["binding", "result"], "$");
+    stage = "native_binding";
+    const binding = expectRecord(envelope.binding, "$.binding");
+    expectJournalExactKeys(binding, [
+      "head",
+      "base",
+      "snapshotDigest",
+      "taskDigest",
+    ], "$.binding");
+    expectSha256Hex(binding.snapshotDigest, "$.binding.snapshotDigest");
+    if (
+      binding.head !== snapshot.head || binding.base !== snapshot.base ||
+      binding.snapshotDigest !== snapshot.digest ||
+      binding.taskDigest !== (task?.digest ?? null)
+    ) fail("$.binding", "invalid_value", "native result binding mismatch");
+    stage = "result";
+    const result = parseReviewResultV1(envelope.result);
+    stage = "native_findings";
+    if (
+      text.slice(end + NATIVE_REVIEW_CLOSE.length) !==
+        nativeFindingSuffix(result, cwd)
+    ) {
+      fail(
+        "$",
+        "invalid_value",
+        "native findings contradict the structured result",
+      );
+    }
+    return result;
+  } catch (error) {
+    if (error instanceof RecordParseError) {
+      throw new NativeReviewValidationError(error, recovered, stage);
+    }
+    throw error;
   }
-  return result;
 }

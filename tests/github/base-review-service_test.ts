@@ -1,5 +1,10 @@
 /** Trusted issue-only service over fake APIs and the real native reviewer. */
 import assert from "node:assert/strict";
+import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
+import {
+  PASSPORT,
+  passportCiFixture,
+} from "./base-review-passport-fixtures.ts";
 import { canonicalStringifySha256 } from "../../src/contracts/canonical.ts";
 import {
   type GitHubChecksV1,
@@ -56,7 +61,10 @@ const CHECKS = [
 ];
 const R80 = await r80Available();
 
-async function rig() {
+async function rig(
+  repository: RepositoryIdentityV1 = REPO,
+  checkNames = CHECKS,
+) {
   const issue: GitHubIssueV1 = {
     number: 300,
     title: "Reject negative deposits",
@@ -80,6 +88,7 @@ async function rig() {
     }),
   };
   const record = workRecord("issue-300", {
+    repository,
     source: { kind: "issue", id: "300", revision: SHA1 },
     related: { incidentId: null, issueNumber: 300 },
     target: {
@@ -109,11 +118,13 @@ async function rig() {
   state.repair = parseRepairStateSnapshotV1(seededSnapshot([record], {
     reservations: [
       reservation(ORIGIN, {
+        repository,
         taskId: record.id,
         outcome: "ambiguous",
         settledAt: T0,
       }),
       reservation(ADMISSION, {
+        repository,
         taskId: record.id,
         purpose: "review_request",
         attempt: 1,
@@ -129,7 +140,7 @@ async function rig() {
     base: SHA1,
     checks: {
       head: SHA1,
-      checks: CHECKS.map((name) => ({
+      checks: checkNames.map((name) => ({
         name,
         head: SHA1,
         status: "completed" as const,
@@ -183,7 +194,7 @@ async function rig() {
     },
     readBaseReviewChecks(head, names) {
       assert.equal(head, SHA1);
-      assert.deepEqual(names, CHECKS);
+      assert.deepEqual(names, checkNames);
       events.push("checks/read");
       return Promise.resolve(portOk(data.checks));
     },
@@ -217,7 +228,7 @@ async function rig() {
   };
   const options: BaseTaskReviewOptionsV1 = {
     client,
-    repository: REPO,
+    repository,
     baseBranch: "development",
     publisher: PUBLISHER,
     clock,
@@ -621,4 +632,176 @@ Deno.test({
       );
     });
   },
+});
+
+/** Real service + authenticated CI reader, persisted state and fake native mode. */
+async function passportRig(native = false) {
+  const h = await rig(PASSPORT, ["deno"]);
+  const ci = passportCiFixture(SHA1, native);
+  h.options.client.readBaseReviewChecks = ci.client.readBaseReviewChecks.bind(
+    ci.client,
+  );
+  // Keep persisted state inside the harness's workspace-scoped read grant.
+  const root = await Deno.makeTempDir({
+    dir: Deno.cwd(),
+    prefix: "passport-base-review-",
+  });
+  const path = `${root}/repair.json`;
+  const persist = () =>
+    Deno.writeTextFile(path, JSON.stringify(h.state.repair));
+  await persist();
+  h.options.state = {
+    async readRepair() {
+      return portOk({
+        status: "found" as const,
+        head: SHA1,
+        ref: null,
+        snapshot: parseRepairStateSnapshotV1(
+          JSON.parse(await Deno.readTextFile(path)),
+        ),
+      });
+    },
+    readRelease: () => h.state.readRelease(),
+  };
+  return {
+    h,
+    ci,
+    persist,
+    cleanup: () => Deno.remove(root, { recursive: true }),
+  };
+}
+
+Deno.test("Passport base service: exact native/backup CI reaches native review and issue-only closure after restart", async () => {
+  for (const native of [true, false]) {
+    const f = await passportRig(native);
+    const { h, ci } = f;
+    try {
+      const original = structuredClone(h.state.repair!);
+      const inspected = await h.service.inspect({
+        record: h.record,
+        deadline: T0 + 60_000,
+      });
+      assert.deepEqual(inspected, portOk(h.task));
+      const close = await ready(h);
+      await f.persist();
+      assert.equal(h.session.turnStarts(), 1);
+      assert.equal(h.comments.size, 3);
+      assert.deepEqual(
+        await new BaseTaskReviewService(h.options).close(close),
+        portOk("closed"),
+      );
+      assert.equal(h.data.closeCalls, 1);
+      assert.deepEqual(
+        h.state.repair!.reservations[0],
+        original.reservations[0],
+      );
+      assert.equal(h.state.repair!.reservations[0].outcome, "ambiguous");
+      assert.deepEqual(h.record, original.work[0]);
+      assert.deepEqual(
+        h.state.repair!.work[0].counters,
+        original.work[0].counters,
+      );
+      assert.equal(
+        h.state.repair!.work[0].intent!.key,
+        original.work[0].intent!.key,
+      );
+      assert.deepEqual(
+        await new BaseTaskReviewService(h.options).close(close),
+        portOk("already_closed"),
+      );
+      assert.equal(h.data.closeCalls, 1);
+      assert.ok(ci.requests.every((path) => !path.includes("/pulls")));
+    } finally {
+      await f.cleanup();
+    }
+  }
+});
+
+Deno.test("Passport base service: stale task/base or untrusted CI cannot start review or close with saved evidence", async (t) => {
+  type F = Awaited<ReturnType<typeof passportRig>>;
+  const cases: [string, (f: F) => void][] = [
+    ["stale base", ({ h }) => h.data.base = SHA2],
+    ["stale task", ({ h }) => h.data.issue.body += " Changed requirement."],
+    [
+      "open dependency",
+      ({ h }) =>
+        h.data.issue.relations!.openBlockers.push({
+          owner: "ubiquity",
+          name: "passport.ubq.fi",
+          number: 9,
+        }),
+    ],
+    ["absent CI", ({ ci }) => ci.data.checks = []],
+    [
+      "wrong producer",
+      ({ ci }) => ci.data.checks[0].app = { id: 99, slug: "github-actions" },
+    ],
+    [
+      "wrong workflow",
+      ({ ci }) => ci.data.runs[0].path = ".github/workflows/other.yml",
+    ],
+    [
+      "wrong execution tree",
+      ({ ci }) => ci.data.runs[0].head_commit = { id: SHA1, tree_id: SHA2 },
+    ],
+    ["raw billing no-start", ({ ci }) => {
+      if (ci.data.store.kind === "ok") ci.data.store.file = null;
+    }],
+    ["red CI that ran", ({ ci }) => {
+      ci.data.jobs[0].steps = [{
+        number: 1,
+        name: "test",
+        status: "completed",
+      }];
+      ci.data.jobs[0].runner_id = 4;
+    }],
+  ];
+  for (const [label, mutate] of cases) {
+    await t.step(label, async () => {
+      const f = await passportRig();
+      const { h } = f;
+      try {
+        const original = structuredClone(h.state.repair!);
+        mutate(f);
+        assert.equal((await h.run()).ok, false);
+        assert.equal(h.session.turnStarts(), 0);
+        assert.equal(h.comments.size, 0);
+        assert.equal(h.data.closeCalls, 0);
+        assert.deepEqual(h.state.repair, original);
+      } finally {
+        await f.cleanup();
+      }
+      const saved = await passportRig();
+      try {
+        const close = await ready(saved.h);
+        await saved.persist();
+        mutate(saved);
+        assert.equal(
+          (await new BaseTaskReviewService(saved.h.options).close(close)).ok,
+          false,
+        );
+        assert.equal(saved.h.data.closeCalls, 0);
+        assert.equal(saved.h.session.turnStarts(), 1);
+      } finally {
+        await saved.cleanup();
+      }
+    });
+  }
+  const f = await passportRig();
+  try {
+    f.h.options.repository = { ...PASSPORT, name: "unsupported" };
+    const inspected = await f.h.service.inspect({
+      record: f.h.record,
+      deadline: T0 + 60_000,
+    });
+    assert.ok(!inspected.ok);
+    assert.equal(
+      inspected.error.detail,
+      "base review target CI policy unavailable",
+    );
+    assert.equal(f.h.session.turnStarts(), 0);
+    assert.equal(f.h.data.closeCalls, 0);
+  } finally {
+    await f.cleanup();
+  }
 });

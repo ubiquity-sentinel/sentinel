@@ -425,8 +425,12 @@ export interface MergedDeliveryBookkeepingV1 {
  * The post-merge delivery bookkeeping shared by a Sentinel merge and a merge
  * observed outside its trusted path: release request where the target has one,
  * and the ordinary delivery step owns release acceptance and issue closure.
- * Every merge, including an outside merge, first proves native queue custody;
- * an outside merge may complete in this write once that request is durable.
+ * A trusted Sentinel merge first proves native queue custody. A human merge
+ * observed outside that path has no Sentinel queue delivery to prove: asking
+ * for one wrote the permanent `backoff`/`until: null` custody hold, so the
+ * record could never be selected again and the owner rule that a human merge
+ * is a completed delivery was never carried out. That path therefore skips the
+ * queue-delivery guard entirely; its provenance is the human-merge evidence.
  */
 export async function persistMergedDelivery(
   deps: RepairCycleDepsV1,
@@ -438,7 +442,7 @@ export async function persistMergedDelivery(
 ): Promise<StepResultV1> {
   const now = deps.clock.now();
   const outside = options.outsideMerge;
-  const queueGuard = await guardQueueDelivery(
+  const queueGuard = outside !== undefined ? null : await guardQueueDelivery(
     deps,
     context,
     record,

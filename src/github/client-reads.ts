@@ -38,6 +38,7 @@ import { GitHubClientIssues } from "./client-issues.ts";
 import { parseWire, parseWith, repoPath } from "./client-response.ts";
 import { REVIEW_DECISION_QUERY } from "./client-issue-wire.ts";
 import { neverStartedRunIndexes } from "./never-started-job.ts";
+import { readPassportBaseReviewChecks } from "./base-review-ci.ts";
 import {
   applyBackupCiToChecks,
   type BackupCiClientReadsV1,
@@ -262,6 +263,7 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
     const collected = await this.collectCheckRuns(sha);
     if (!collected.ok) return collected;
     const checks = [];
+    const raws = [];
     for (const item of collected.value) {
       if (
         typeof item !== "object" || item === null ||
@@ -279,6 +281,41 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
         return portError("unavailable", "base CI head mismatch");
       }
       checks.push(parsed.value);
+      raws.push(item);
+    }
+    if (
+      this.repository.owner === "ubiquity" &&
+      this.repository.name === "passport.ubq.fi"
+    ) {
+      return readPassportBaseReviewChecks({
+        sha,
+        names,
+        raws,
+        checks,
+        backup: this.backupCiReads(),
+        read: async (path, query) => {
+          const response = await this.request(
+            "GET",
+            `/repos/${repoPath(this.repository)}${path}`,
+            query,
+          );
+          return response.ok
+            ? parseWire(response.value, (value) => value)
+            : response;
+        },
+        pages: (path, query, key) =>
+          this.collectPages(
+            `/repos/${repoPath(this.repository)}${path}`,
+            { ...query, per_page: String(this.perPage) },
+            (body) =>
+              expectArray(
+                key === null ? body : expectRecord(body, "$")[key],
+                "$",
+                this.maxItems,
+                (value) => value,
+              ) as unknown[],
+          ),
+      });
     }
     return portOk({ head: sha, checks });
   }

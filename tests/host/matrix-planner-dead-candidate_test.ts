@@ -180,6 +180,51 @@ Deno.test(
   },
 );
 
+Deno.test(
+  "matrix planner: a released dead candidate with a live branch is refused uncharged",
+  async () => {
+    const r = await rig();
+    try {
+      const memory = new MemoryState();
+      const release = await r.store.readRelease();
+      assert.ok(release.ok && release.value.status === "found");
+      memory.setRelease(release.value.snapshot);
+      // A worker pushed the candidate but died before recording it: the
+      // deterministic branch exists while publishedHead is still null.
+      const liveHead = shaOf("9", 3);
+      const seeded = record(r.sha, 3, {
+        head: liveHead,
+        pr: null,
+        publishedHead: null,
+      });
+      await seed(memory, [seeded], r.clock.now());
+      const source = r.github.get("ubiquity-sentinel/sentinel")!;
+      source.listOpenIssues = () => Promise.resolve(portOk([]));
+      source.readIssue = () => Promise.resolve(portOk(issue(3)));
+      source.candidateRefs.set(
+        `refs/heads/${candidateBranch(asWorkItemId(seeded.id))}`,
+        liveHead,
+      );
+      r.github.get("ubiquity/ai.ubq.fi")!.listOpenIssues = () =>
+        Promise.resolve(portOk([]));
+      const planned = await runActionsMatrixHost({
+        ...await r.job("dead-candidate-live", "matrix_plan"),
+        state: memory,
+        model: noModel,
+      });
+      assert.ok("plan" in planned);
+      assert.equal(planned.prepared, 0);
+      assert.equal(planned.plan.cells.length, 0);
+      const state = memory.repair!;
+      assert.equal(state.reservations.length, 0, "nothing charged");
+      assert.equal(state.work[0]!.intent, null, "nothing written");
+      assert.equal(state.work[0]!.target.head, liveHead);
+    } finally {
+      await r.cleanup();
+    }
+  },
+);
+
 /** A parsed snapshot holding exactly `records`, for eligibility unit checks. */
 function snapshotOf(records: ReturnType<typeof workRecord>[]) {
   const parsed = parseRepairStateSnapshotV1({
