@@ -84,6 +84,65 @@ Deno.test("watchdog guardrail: in-flight exclusion is per threshold", async () =
   assert.equal(entry(metrics, "repair_median").issue, 102);
 });
 
+Deno.test("watchdog guardrail: another threshold's open issue or PR never blocks (live #359/#360 shape)", async () => {
+  // Both maintenance+repair and repair (>= 60 live records) are missed.
+  const records = cycles(30, () => ({
+    maintenanceMin: 8,
+    repairMin: 6,
+    recordsRead: 70,
+  }));
+  const marked = (number: number, id: string, title: string) => ({
+    number,
+    title: `Throughput: ${title} missed (17.6 min vs <= 5.0 min)`,
+    body: `Sentinel throughput watchdog: \`${id}\` is missed.\n` +
+      `<!-- sentinel:throughput-watchdog:${id} -->\n`,
+    labels: ["priority:2"],
+    state: "open" as const,
+    author: APP,
+    pull: false,
+  });
+  // Only repair_median's issue is open, plus a PR naming it: the other
+  // threshold must still be filed.
+  const issues = fakeTracker([
+    marked(360, "repair_median", "repair phase median at >= 60 live records"),
+    {
+      number: 361,
+      title:
+        "Throughput: repair phase median at >= 60 live records missed (fix)",
+      body: "Resolves #360",
+      labels: [],
+      state: "open",
+      author: APP,
+      pull: true,
+    },
+  ]);
+  const metrics = fakeMetrics(records);
+  const only = await run(metrics, issues, 1);
+  assert.deepEqual(only.result.missed, [
+    "maintenance_repair_median",
+    "repair_median",
+  ]);
+  assert.deepEqual(only.result.issues, [100]);
+  assert.equal(
+    issues.creates[0].body.split("\n")[1],
+    "<!-- sentinel:throughput-watchdog:maintenance_repair_median -->",
+  );
+  assert.deepEqual(only.result.blocked, {
+    repair_median: "open_watchdog_issue",
+  });
+  // The live shape: an older open issue for maintenance+repair (#359) holds
+  // exactly that threshold; repair is filed.
+  const live = fakeTracker([
+    marked(359, "maintenance_repair_median", "maintenance+repair phase median"),
+  ]);
+  live.next = 360;
+  const liveRun = await run(fakeMetrics(records), live, 2);
+  assert.deepEqual(liveRun.result.issues, [360]);
+  assert.deepEqual(liveRun.result.blocked, {
+    maintenance_repair_median: "open_watchdog_issue",
+  });
+});
+
 Deno.test("watchdog guardrail: outcome check waits for 10 cycles on a newer runtime", async () => {
   const metrics = fakeMetrics(slow(10));
   const issues = fakeTracker();

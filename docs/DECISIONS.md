@@ -1,5 +1,26 @@
 # Sentinel decisions
 
+## ai.ubq.fi source, auth, ops and tooling are ordinary work (2026-11-05)
+
+Owner directive (2026-11-05, "remove the policy"): the gateway's protected-path
+list no longer covers its source, authentication code (`src/auth/`,
+`src/api-keys.ts`, `src/api-key-policy.ts`, `src/codex/auth*.ts`,
+`src/config.ts`, `src/runtime-config.ts`, `src/kv.ts`), operations scripts
+(`ops/`, `scripts/verify.sh` and the other verification scripts, `tools/lint/`)
+or tooling configuration (`deno.json`, `deno.lock`, `package.json`, `bun.lock`,
+`bunfig.toml`, `tsconfig*.json`, `knip.json`, `.prettierrc*`,
+`file-size-baseline.json`). A Sentinel candidate changing them merges
+autonomously once it has a completed current-head native review with no
+unresolved P0 and green current-head CI, like any other change. Still
+protected for ai.ubq.fi: `.env`, `.data/`, `.release/`, `.kv-migration/`,
+`.github/workflows/`, `AGENTS.md`, `docs/DECISIONS.md`, the replay consumer
+scripts, `tests/helpers/sentinel-recorded-upstream.ts`, `src/sentinel/` and
+`src/codex/supervisor-secret.ts`; those publish as owner-landing PRs (or park
+unpublished for workflows) under the entry below. The 2026-10-24 basis for
+approving held CI runs is unchanged: workflows stay protected, and the gateway
+workflow runs with `contents: read` and no secrets. Passport and the generic
+template lists are unchanged.
+
 ## Hanging target pull requests: six delivery defects corrected (2026-11-05)
 
 Audit of the eight open Sentinel pull requests on `ubiquity/ai.ubq.fi` (#1329,
@@ -4612,3 +4633,21 @@ elapsed counts and the delegated/serial-owned record counts on
 `sentinel_repair_fanout`, and the metrics record carries optional
 `fanoutDelegated`/`serialOwned`. Transition rule, accounting, deadline and
 margin are unchanged.
+
+## 2026-11-05: closed issues retire records with open Sentinel pulls
+
+Live defect: #324–#339 were closed while Sentinel's own candidate pulls
+#341–#358 stayed open, because retirement required a closed-unmerged pull and
+the retired-pull pass required a retirement. The closure pass now retires a
+record on any unmerged pull (closed or open), keeping the queue-custody,
+unsettled-implementation-intent, self-merge and preservation-uncertainty
+guards and every charge and counter. The next maintenance pass closes
+Sentinel's own pull under the existing one-write-per-cycle rule; a reopened
+issue returns the record to `work`. A `pullProbe` stamp alone does not settle
+a record within a pass, and a probe no later than the retirement does not
+delay the first retired-pull read. Intake now reports every open issue it
+lists but leaves without a record as a `skippedIssues` row `not_admitted`
+with a reason (`ci_outage_notice`, `native_parent`, `native_open_blockers`,
+`github_cooldown`, `base_unavailable`, `run_deadline`); the run-deadline case
+no longer stops silently. Issues opted out by the skip marker or label are
+still filtered before intake.

@@ -424,32 +424,119 @@ Deno.test(
   },
 );
 
-Deno.test(
-  "hosted autonomy: a closed issue with an open pull is not retired",
-  async () => {
-    const { rig, github } = await makeRig("autonomy-retire-open", {
-      repair: repairSnapshot([zombieRecord()]),
-      pull: pullFacts({
-        number: 63,
-        state: "open",
-        merged: false,
-        mergeCommitSha: null,
-      }),
-    });
-    github.readIssueOpen = () => Promise.resolve(false);
-    const result = await run(rig, github);
-    assert.equal(rig.writes, 0);
-    assert.ok(!result.actions.some((action) => action.startsWith("retire:")));
-    const read = await rig.state.readRepair();
-    if (!read.ok || read.value.status !== "found") {
-      throw new Error("unreadable");
-    }
-    const record = read.value.snapshot.work[0];
-    assert.equal(record.nextStep, "delivery");
-    assert.equal(record.blocker, null);
-    await Deno.remove(rig.tmp, { recursive: true });
-  },
-);
+// Live 2026-11-05 (run 42097043887): issues #324-#339 closed at 19:33 UTC
+// while their records still held Sentinel's own open pull requests #341-#358.
+// Retirement waited for a closed pull and the retired-pull pass waited for a
+// retirement, so neither ever fired. A closed issue now retires the record in
+// the pass that reads it, whatever its step or intent, and the next pass
+// closes Sentinel's own pull request.
+for (
+  const entry of [
+    { name: "delivery, no intent", overrides: {} },
+    {
+      name: "work, pending base_refresh intent",
+      overrides: {
+        nextStep: "work",
+        intent: {
+          kind: "base_refresh",
+          key: "base-refresh:z-2",
+          startedAt: T0 + 1000,
+          branch: "sentinel/repair/issue-ubiquity-sentinel-61",
+          expectedHead: HEAD,
+          observedBase: BASE,
+          pr: 63,
+          requestId: null,
+          resultId: null,
+        },
+      },
+    },
+  ]
+) {
+  Deno.test(
+    `hosted autonomy: a closed issue with an open pull retires the record and the next pass closes it (${entry.name})`,
+    async () => {
+      const original = zombieRecord(entry.overrides);
+      const charges = zombieCharges();
+      const { rig, github } = await makeRig("autonomy-retire-open", {
+        repair: repairSnapshot([original], [], [], charges),
+        pull: pullFacts({
+          number: 63,
+          state: "open",
+          merged: false,
+          mergeCommitSha: null,
+        }),
+      });
+      github.readIssueOpen = () => Promise.resolve(false);
+      let pullState: "open" | "closed" = "open";
+      const closes: number[] = [];
+      const comments: number[] = [];
+      github.listPullsByHeadRef = (branch: string) =>
+        Promise.resolve([{
+          number: 63,
+          state: pullState,
+          merged: false,
+          headSha: HEAD,
+          headRef: branch,
+          baseRef: "development",
+          author: "ubiquity-sentinel[bot]",
+        }]);
+      github.closePull = (number: number) => {
+        closes.push(number);
+        pullState = "closed";
+        return Promise.resolve(true);
+      };
+      github.commentIssue = (number: number) => {
+        comments.push(number);
+        return Promise.resolve(true);
+      };
+      const first = await run(rig, github);
+      assert.ok(
+        first.actions.includes(`retire:${ZOMBIE}:issue=61`),
+        first.actions.join(","),
+      );
+      // The retiring pass never reads, closes or comments on the pull.
+      assert.deepEqual(closes, []);
+      const read = await rig.state.readRepair();
+      if (!read.ok || read.value.status !== "found") {
+        throw new Error("unreadable");
+      }
+      const retired = read.value.snapshot.work[0];
+      assert.equal(retired.nextStep, "blocked");
+      assert.equal(retired.blocker?.message, HOSTED_AUTONOMY_RETIRED);
+      assert.equal(retired.intent, null);
+      assert.equal(retired.wait, null);
+      // The pull, head, counters and every charge are kept.
+      assert.deepEqual(retired.target, original.target);
+      assert.deepEqual(retired.counters, original.counters);
+      assert.deepEqual(read.value.snapshot.reservations, charges);
+      // Terminal: no retry rule takes the retirement.
+      assert.equal(
+        planHostedRetries(read.value.snapshot, T0 + 900000, ATTEMPT_RUNTIME)
+          .length,
+        0,
+      );
+
+      const second = await run(rig, github, {
+        clock: { now: () => T0 + 6_000_000 },
+      });
+      assert.deepEqual(closes, [63]);
+      assert.deepEqual(comments, [63]);
+      assert.ok(
+        second.actions.includes(`retired-pull:${ZOMBIE}:pr=63:closed`),
+        second.actions.join(","),
+      );
+      const after = await rig.state.readRepair();
+      if (!after.ok || after.value.status !== "found") {
+        throw new Error("unreadable");
+      }
+      const settled = after.value.snapshot.work[0];
+      assert.equal(settled.retiredPullClosure?.outcome, "closed");
+      assert.equal(settled.retiredPullClosure?.pr, 63);
+      assert.deepEqual(after.value.snapshot.reservations, charges);
+      await Deno.remove(rig.tmp, { recursive: true });
+    },
+  );
+}
 
 Deno.test(
   "hosted autonomy: a closed issue with a merged pull is not retired",

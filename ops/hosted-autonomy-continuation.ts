@@ -62,12 +62,24 @@ export function continuationLate(startedAt: number, now: number): boolean {
 }
 
 /**
+ * A row's lifecycle identity: the row without its `pullProbe` read stamp.
+ * A probe records only that a pull was read and nothing followed; it settles
+ * no lifecycle fact, so a later phase still decides that record in the same
+ * pass (live 2026-11-05: the stale-step probe of a record whose issue had
+ * closed deferred its retirement, and so its pull's closure, by a pass).
+ */
+function lifecycleRow(row: RepairStateSnapshotV1["work"][number]): string {
+  const { pullProbe: _probe, ...rest } = row;
+  return canonicalStringify(rest);
+}
+
+/**
  * Work ids an applied write of this pass touched: every row that differs
- * canonically from the pass baseline (or is new), and the task of every
- * charge that does. A later phase leaves these records to the next pass,
- * exactly as the pass that returned on its first write did; every other
- * record gets the decision a no-write pass would make on the same fresh
- * state.
+ * canonically from the pass baseline (or is new) in more than its
+ * `pullProbe` stamp, and the task of every charge that does. A later phase
+ * leaves these records to the next pass, exactly as the pass that returned
+ * on its first write did; every other record gets the decision a no-write
+ * pass would make on the same fresh state.
  */
 export function settledSince(
   baseline: RepairStateSnapshotV1,
@@ -75,10 +87,10 @@ export function settledSince(
 ): Set<string> {
   const settled = new Set<string>();
   const rows = new Map<string, string>(
-    baseline.work.map((row) => [row.id, canonicalStringify(row)]),
+    baseline.work.map((row) => [row.id, lifecycleRow(row)]),
   );
   for (const row of current.work) {
-    if (rows.get(row.id) !== canonicalStringify(row)) settled.add(row.id);
+    if (rows.get(row.id) !== lifecycleRow(row)) settled.add(row.id);
   }
   const charges = new Map<string, string>(
     baseline.reservations.map((row) => [row.id, canonicalStringify(row)]),
