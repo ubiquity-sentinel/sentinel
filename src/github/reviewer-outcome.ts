@@ -1,14 +1,16 @@
 // reviewer outcome.
 
 import {
-  classifyReviewResultRejection,
   isJournalBoundExceeded,
   type ReviewJournalReadyExecutionV1,
   type ReviewJournalRuntimeActualV1,
   type ReviewResultV1,
 } from "./review-journal.ts";
 import { portOk, type PortResultV1 } from "../contracts/ports.ts";
-import { parseNativeReviewResult } from "./native-review-result.ts";
+import {
+  classifyNativeReviewRejection,
+  parseNativeReviewResult,
+} from "./native-review-result.ts";
 import { PreparedReviewEvents } from "./reviewer-events.ts";
 import {
   COMMAND_UNSETTLED_DETAIL,
@@ -135,9 +137,9 @@ export abstract class PreparedReviewOutcome extends PreparedReviewEvents {
         return unavailable(RESULT_BOUND_DETAIL);
       }
       // The existing malformed detail carries only the fixed closed category
-      // derived from the first static parser issue; raw model text, parser
-      // messages, paths and indexes never reach the sanitized disposition.
-      const category = classifyReviewResultRejection(error);
+      // derived from the parser issue and native recovery/check stage; raw
+      // model text, parser messages, paths and indexes never reach publication.
+      const category = classifyNativeReviewRejection(error);
       return unavailable(`${RESULT_MALFORMED_DETAIL} [${category}]`);
     }
     const location = validateFindingLocations(result, this.snapshot);
