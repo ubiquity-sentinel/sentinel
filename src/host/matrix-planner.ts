@@ -22,11 +22,13 @@ import {
   createRunBounds,
   isMatrixImplementationReadyV1,
   loadRepairContext,
+  type LoopContextV1,
   OPERATION_MARGIN_MS,
   prepareImplementationStart,
   type RepairCycleDepsV1,
 } from "../repair/loop.ts";
 import { attemptEquivalenceRefusalForRecordV1 } from "../repair/attempt-policy.ts";
+import { planDeferredKey } from "./matrix-plan-diagnostic.ts";
 import { ciCorrectionRouteOpen } from "../repair/ci-rejection.ts";
 import { preReviewCiFixRouteOpen } from "../repair/ci-first-policy.ts";
 import {
@@ -38,6 +40,7 @@ import {
 } from "../repair/conflict-resolution.ts";
 import {
   existingHeadContinuationShape,
+  isStaleImplementationIntent,
   ownsPublishedArtifact,
   roundLeftForStart,
   unpublishedLocalCandidateShape,
@@ -47,8 +50,18 @@ import { rankEligibleWork } from "../repair/selection.ts";
 import {
   createDecompositionChildren,
   isDecompositionChildId,
+  markBlocked,
 } from "../repair/transitions.ts";
+import {
+  persistTransition,
+  replaceWorkMutation,
+} from "../repair/loop-state.ts";
 import { configForRepository } from "./matrix-identity.ts";
+import {
+  isNoTestEvidenceTargetV1,
+  NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER,
+  NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
+} from "./target-policy-generic.ts";
 
 export interface MatrixPlanOptionsV1 {
   waveId: string;
@@ -108,6 +121,12 @@ export interface MatrixPlanDiagnosticV1 {
   notReadyByReason: Record<string, number>;
   /** Sample record IDs for each not-ready reason (max 3 per reason). */
   notReadySamples: Record<string, string[]>;
+  /** Records whose preparation was attempted on the last iteration. */
+  attempted?: number;
+  /** Attempted records whose preparation returned a step instead of a cell. */
+  deferred?: number;
+  /** Closed per-reason histogram of those preparation outcomes. */
+  deferredByReason?: Record<string, number>;
   /**
    * Present when the conflict-resolution cap was full on the last read, so
    * every pending resolution was held back (`notReadyByReason` counts them as
@@ -221,8 +240,19 @@ export function explainMatrixNotReady(
   if (record.source.kind !== "issue") {
     return `source.kind=${record.source.kind}`;
   }
+  // A record this planner already parked for missing test evidence keeps that
+  // closed reason in every later diagnostic instead of reporting the parked
+  // next step it now has.
+  if (record.blocker?.message.startsWith(NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER)) {
+    return NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER;
+  }
   if (record.nextStep !== "work") {
     return `nextStep=${record.nextStep}`;
+  }
+  // The target's own evidence policy is the reason it is never planned, with
+  // or without a retained intent; report it before the intent/round filters.
+  if (isNoTestEvidenceConfig(config)) {
+    return NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER;
   }
   if (!roundLeftForStart(snapshot, record, ciRouteOpen, cutoff)) {
     return "review_rounds_spent";
@@ -260,6 +290,79 @@ export function explainMatrixNotReady(
   return null;
 }
 
+/** Defensive read: some callers pass a partial config to the explainer. */
+function isNoTestEvidenceConfig(config: RepositoryConfigV1): boolean {
+  return config.commands !== undefined && isNoTestEvidenceTargetV1(config);
+}
+
+/**
+ * Trusted planner-side park for a target with no merge test evidence. Such a
+ * record must never become a matrix cell: its admission would park it before
+ * any carrier exists, failing the cell and the whole supervisor run. The park
+ * is written here, before any reservation, in ONE state transition; it is
+ * uncharged and carries the same blocker/detail the admission would have
+ * written. Returns the number of records parked and whether the state write
+ * failed closed.
+ */
+async function parkNoTestEvidenceRecords(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  ordered: readonly string[],
+  now: number,
+  attemptedIds: Set<string>,
+  ciRouteOpen: boolean,
+  conflictRouteOpen: boolean,
+  preReviewRouteOpen: boolean,
+): Promise<{ parked: number; stateError: boolean }> {
+  const parked: WorkRecordV1[] = [];
+  for (const id of ordered) {
+    if (attemptedIds.has(id)) continue;
+    const record = context.snapshot.work.find((work) => work.id === id);
+    if (record === undefined) continue;
+    // A live intent keeps its own owner. A stale implementation intent (a run
+    // that died after reserving and never settled) is parkable exactly like
+    // the admission park, and `markBlocked` keeps it for audit as it does for
+    // every other park; otherwise this target would idle at `work` forever.
+    if (
+      record.intent !== null && !isStaleImplementationIntent(record.intent, now)
+    ) continue;
+    const config = configForRepository(deps, record.repository);
+    if (config === null || !isNoTestEvidenceConfig(config)) continue;
+    if (
+      !isMatrixImplementationReadyV1(
+        record,
+        context.snapshot,
+        config,
+        now,
+        ciRouteOpen,
+        conflictRouteOpen,
+        preReviewRouteOpen,
+        context.legacyReviewCutoff ?? null,
+      )
+    ) continue;
+    parked.push(
+      markBlocked(
+        record,
+        "missing_evidence",
+        NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
+        now,
+      ),
+    );
+  }
+  if (parked.length === 0) return { parked: 0, stateError: false };
+  const written = await persistTransition(deps, context, (draft) => {
+    for (const record of parked) replaceWorkMutation(record)(draft);
+  });
+  for (const record of parked) attemptedIds.add(record.id);
+  if (written.kind !== "progress") {
+    return { parked: 0, stateError: true };
+  }
+  return { parked: parked.length, stateError: false };
+}
+
+/** The closed reason a parked no-test-evidence record is counted under. */
+const NO_TEST_EVIDENCE_REASON = NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER;
+
 /**
  * Builds a diagnostic breakdown of why the planner filtered records.
  * `explainNotReady` returns the specific filter reason for a record in
@@ -290,18 +393,35 @@ function buildPlanDiagnostic(
   }
   const notReadyByReason: Record<string, number> = {};
   const notReadySamples: Record<string, string[]> = {};
-  for (const id of ranked.ordered) {
-    const record = workById.get(id);
-    if (record === undefined) continue;
-    const reason = explainNotReady(record);
-    if (reason === null) continue;
+  const counted = new Set<string>();
+  const countNotReady = (record: WorkRecordV1, reason: string) => {
+    counted.add(record.id);
     notReadyByReason[reason] = (notReadyByReason[reason] ?? 0) + 1;
     const counts = countsOf(record)!;
     counts.notReadyByReason[reason] = (counts.notReadyByReason[reason] ?? 0) +
       1;
     const samples = notReadySamples[reason] ?? [];
-    if (samples.length < 3) samples.push(id);
+    if (samples.length < 3) samples.push(record.id);
     notReadySamples[reason] = samples;
+  };
+  for (const id of ranked.ordered) {
+    const record = workById.get(id);
+    if (record === undefined) continue;
+    const reason = explainNotReady(record);
+    if (reason === null) continue;
+    countNotReady(record, reason);
+  }
+  // A no-test-evidence record this planner parked is ranked as `blocked` on
+  // the next iteration. Keep it counted under its own closed reason so an
+  // all-parked plan still says why it planned no cell.
+  for (const record of snapshot.work) {
+    if (counted.has(record.id)) continue;
+    if (
+      !record.blocker?.message.startsWith(NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER)
+    ) {
+      continue;
+    }
+    countNotReady(record, NO_TEST_EVIDENCE_REASON);
   }
   return {
     totalRecords: snapshot.work.length,
@@ -357,9 +477,11 @@ export async function planMatrixWave(
   let attempted = 0;
   let deferred = 0;
   let notReady = 0;
+  const deferredByReason: Record<string, number> = {};
   // Diagnostic: captured from the last planner iteration for zero-cell runs.
   let lastDiagnostic: MatrixPlanDiagnosticV1 | null = null;
   let memoryRefused = 0;
+  let noTestEvidenceParked = 0;
   // A CI correction is granted only where its cell survives a rollback
   // (`ciCorrectionRouteOpen`): in process, and in hosted runs from generation
   // 78, whose rollback target isolates the cell.
@@ -438,6 +560,22 @@ export async function planMatrixWave(
         inFlight: conflictResolutionsInFlightIds(context.snapshot, now),
       };
     }
+    // A no-test-evidence target can never produce merge evidence. Park it in
+    // the trusted planner before any reservation/cell exists instead of
+    // admitting a cell whose own admission would only park it (issue #282).
+    const parkOutcome = await parkNoTestEvidenceRecords(
+      deps,
+      context,
+      ranked.ordered,
+      now,
+      attemptedIds,
+      ciRouteOpen,
+      conflictRouteOpen,
+      preReviewRouteOpen,
+    );
+    attempted += parkOutcome.parked;
+    noTestEvidenceParked += parkOutcome.parked;
+    if (parkOutcome.stateError) break;
     const nextId = ranked.ordered.find((id) => {
       if (attemptedIds.has(id) || takeoverRefused.has(id)) return false;
       const record = context.snapshot.work.find((work) => work.id === id);
@@ -451,7 +589,7 @@ export async function planMatrixWave(
         return false;
       }
       const config = configForRepository(deps, record.repository);
-      return config !== null &&
+      return config !== null && !isNoTestEvidenceConfig(config) &&
         isMatrixImplementationReadyV1(
           record,
           context.snapshot,
@@ -471,6 +609,7 @@ export async function planMatrixWave(
     if (config === null) continue;
     attempted++;
     if (
+      isNoTestEvidenceConfig(config) ||
       !isMatrixImplementationReadyV1(
         record,
         context.snapshot,
@@ -560,6 +699,11 @@ export async function planMatrixWave(
     );
     if (outcome.kind !== "prepared") {
       deferred++;
+      const waitReason = context.snapshot.work.find((entry) =>
+        entry.id === record.id
+      )?.wait?.reason;
+      const reason = planDeferredKey(outcome, waitReason);
+      deferredByReason[reason] = (deferredByReason[reason] ?? 0) + 1;
       // An ordinary fresh-base refresh is progress, not a failed admission.
       // Reconsider that same task against its persisted current base.
       if (outcome.kind === "progress") {
@@ -603,8 +747,22 @@ export async function planMatrixWave(
     notReady,
     deferred,
     // Include the diagnostic when no cells were prepared; it explains why.
-    ...(cells.length === 0 && lastDiagnostic !== null
-      ? { diagnostic: lastDiagnostic }
+    ...((cells.length === 0 || noTestEvidenceParked > 0) &&
+        lastDiagnostic !== null
+      ? {
+        diagnostic: memoryRefused === 0
+          ? { ...lastDiagnostic, attempted, deferred, deferredByReason }
+          : {
+            ...lastDiagnostic,
+            attempted,
+            deferred,
+            deferredByReason: {
+              ...deferredByReason,
+              memory_refused: (deferredByReason.memory_refused ?? 0) +
+                memoryRefused,
+            },
+          },
+      }
       : {}),
     memoryRefused,
   };

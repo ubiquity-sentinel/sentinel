@@ -19,7 +19,10 @@ import type {
 } from "../contracts/repository-config.ts";
 import { parseRepositoryIdentity } from "../contracts/shared.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
-import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  type RepairStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
 import {
   parseWorkRecordV1,
   type WorkRecordV1,
@@ -147,7 +150,7 @@ export class BudgetStateContext {
     now: number,
   ): number | null {
     let latest = snapshot.updatedAt;
-    for (const reservation of snapshot.reservations) {
+    for (const reservation of allReservationsV1(snapshot)) {
       if (reservation.createdAt > latest) latest = reservation.createdAt;
       if (
         reservation.settledAt !== null && reservation.settledAt > latest
@@ -446,6 +449,7 @@ function sameNonCooldownState(
     evidence: value.evidence,
     work: value.work,
     reservations: value.reservations,
+    reservationArchive: value.reservationArchive ?? [],
     reviews: value.reviews,
     replays: value.replays,
     releaseRequests: value.releaseRequests,

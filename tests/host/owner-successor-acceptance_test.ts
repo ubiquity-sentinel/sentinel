@@ -8,11 +8,13 @@ import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 import { composeLocalGitHub } from "../../src/host/local-github.ts";
 import { LocalSessionTracker } from "../../src/host/local-client.ts";
 import {
+  nextOwnerSuccessorAttemptV1,
   produceOwnerSuccessorAcceptance,
   runOwnerSuccessorReviewPhase,
 } from "../../src/host/owner-successor-acceptance.ts";
 import { FakeClock, MemoryState } from "../repair/helpers.ts";
 import { seededSnapshot } from "../repair/loop-rig.ts";
+import { reservation, T0, workRecord } from "../state/helpers.ts";
 import {
   clock,
   installedSupersession,
@@ -33,6 +35,34 @@ import { parseHostedReleaseRecordV1 } from "../../src/contracts/hosted-superviso
 import { ownerSuccessorAcceptanceBinds } from "../../src/host/owner-successor-acceptance-proof.ts";
 import { parseHostedRuntimeRollout } from "../../src/host/hosted-runtime-rollout.ts";
 import { ownerInstall } from "./owner-install-supersession-fixtures.ts";
+
+Deno.test("owner successor next attempt reads archived reservations", () => {
+  const work = workRecord("issue-owner-attempt");
+  const snapshot = seededSnapshot([work], {
+    reservations: [
+      reservation("r:live", {
+        taskId: work.id,
+        attempt: 2,
+        outcome: "submitted",
+        settledAt: T0,
+      }),
+    ],
+    reservationArchive: [
+      reservation("r:archived", {
+        taskId: work.id,
+        attempt: 5,
+        createdAt: T0 - 2_000,
+        outcome: "submitted",
+        settledAt: T0 - 1_000,
+      }),
+    ],
+  });
+  assert.equal(
+    nextOwnerSuccessorAttemptV1(snapshot, work.id),
+    6,
+    "an archived owner-review attempt still advances the next attempt",
+  );
+});
 
 Deno.test("owner successor genuine structured review produces charged durable acceptance and delivers original task once", async () => {
   const rig = await installedSupersession();

@@ -11,7 +11,10 @@ import {
   type PortResultV1,
   type StateReadView,
 } from "../contracts/ports.ts";
-import { parseRepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  parseRepairStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
 import {
   readTakeoverAnchor,
   TAKEOVER_EVIDENCE_NAMESPACE,
@@ -80,7 +83,7 @@ export function createTakeoverProducerReader(input: {
         if (publishedHead !== undefined) {
           const binding = await resolveCandidatePreservationBinding(
             producer,
-            snapshot.reservations,
+            allReservationsV1(snapshot),
             candidate,
             publishedHead,
           );

@@ -73,6 +73,9 @@ export const MaxItems: {
   managedHeaders: number;
   limitations: number;
   snapshotRecords: number;
+  /** Bounded retention index for settled reservations moved out of the live
+   * ledger; accounting readers still consult it. */
+  reservationArchiveRecords: number;
   changedPaths: number;
   incidentRefs: number;
   commandArgs: number;
@@ -94,6 +97,7 @@ export const MaxItems: {
   managedHeaders: 16,
   limitations: 16,
   snapshotRecords: 2048,
+  reservationArchiveRecords: 16384,
   changedPaths: 256,
   incidentRefs: 64,
   commandArgs: 32,

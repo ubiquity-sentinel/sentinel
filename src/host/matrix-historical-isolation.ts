@@ -1,5 +1,6 @@
 /** Fail closed per authenticated historical wave without refunding its admission. */
 import { canonicalStringify } from "../contracts/canonical.ts";
+import { findReservationV1 } from "../contracts/state-snapshots.ts";
 import type {
   Clock,
   RepairStateWriter,
@@ -66,8 +67,9 @@ export async function recoverWithHistoricalIsolation(
           canonicalStringify(row.repository) ===
             canonicalStringify(entry.work.repository)
         );
-        const reservation = read.value.snapshot.reservations.find((row) =>
-          row.id === entry.reservation.id
+        const reservation = findReservationV1(
+          read.value.snapshot,
+          entry.reservation.id,
         );
         if (
           !request || request.taskId !== entry.work.id ||
