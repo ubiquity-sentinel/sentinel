@@ -72,6 +72,47 @@ const FAILED_RUNS = [
   },
 ];
 
+Deno.test("self observation: maintenance token-mint annotations file once without raw diagnostics", async () => {
+  const now = Date.parse("2026-11-22T16:00:00Z");
+  const bodies: string[] = [];
+  const { surface, filed } = fakeSurface({
+    runs: [501, 502].map((id) => ({
+      id,
+      name: "sentinel-supervisor",
+      conclusion: "failure",
+      createdAt: "2026-11-22T15:53:52.000Z",
+    })),
+    jobs: [{ id: 701, name: "maintenance", conclusion: "failure" }],
+    logs: {
+      701:
+        "2026-11-22T15:53:52.000Z ##[error]There is at least one repository that does not exist or is not accessible to the parent installation - SYNTHETIC_PRIVATE_MARKER /private/path\n",
+    },
+    bodies,
+  });
+  assert.deepEqual(await runSelfObservationPass({ github: surface, now }), [
+    "self-observation:filed:901:2x",
+  ]);
+  assert.equal(filed.length, 1);
+  assert.equal(
+    filed[0].title,
+    "Sentinel self-observation: the App token mint could not access a configured repository",
+  );
+  assert.match(
+    filed[0].body,
+    /<!-- sentinel:self-observation:sentinel-supervisor:maintenance:app-token:repository-access -->/,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(filed),
+    /SYNTHETIC_PRIVATE_MARKER|private\/path/,
+  );
+  bodies.push(filed[0].body);
+  assert.deepEqual(
+    await runSelfObservationPass({ github: surface, now: now + 60_000 }),
+    ["self-observation:no_change"],
+  );
+  assert.equal(filed.length, 1);
+});
+
 Deno.test("self observation: absent capability skips every read and write", async () => {
   const { surface, filed } = fakeSurface({
     runs: FAILED_RUNS,

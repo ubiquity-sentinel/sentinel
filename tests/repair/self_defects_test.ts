@@ -210,6 +210,43 @@ Deno.test("self defects: timestamped Actions errors retain their signature", () 
   }
 });
 
+Deno.test("self defects: App token repository access errors have a closed signature", () => {
+  const context = {
+    ...RUN,
+    workflow: "sentinel-supervisor",
+    job: "maintenance",
+  };
+  for (const prefix of ["", "2026-11-22T15:53:52.000Z "]) {
+    const signature = extractSelfFailureSignature(
+      `${prefix}##[error]There is at least one repository that does not exist or is not accessible to the parent installation - SYNTHETIC_PRIVATE_MARKER /private/path\n`,
+      context,
+    );
+    assert.deepEqual(signature, {
+      key: "sentinel-supervisor:maintenance:app-token:repository-access",
+      summary: "the App token mint could not access a configured repository",
+    });
+  }
+});
+
+Deno.test("self defects: Actions error annotations are sanitized without an error prefix", () => {
+  const expected = extractSelfFailureSignature("error: Test failed\n", RUN);
+  for (const prefix of ["", "2026-11-22T15:53:52.000Z "]) {
+    assert.deepEqual(
+      extractSelfFailureSignature(
+        `${prefix}##[error]SYNTHETIC_PRIVATE_MARKER /private/path\n`,
+        RUN,
+      ),
+      expected,
+    );
+  }
+  for (const level of ["warning", "notice"]) {
+    assert.match(
+      extractSelfFailureSignature(`##[${level}]message\n`, RUN).key,
+      /:job:observed$/,
+    );
+  }
+});
+
 Deno.test("self defects: assertion and generic error lines are extracted", () => {
   const assertion = extractSelfFailureSignature(
     "error: AssertionError: unexpected github calls: readRef, createPr\n",
