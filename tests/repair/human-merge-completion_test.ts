@@ -537,6 +537,70 @@ Deno.test("human merge: a merged head that moved past the reviewed head complete
   }
 });
 
+Deno.test("human merge: merge intent recovery completes a moved head without binding its prior review", async () => {
+  const merged = mergedPr(MERGED_HEAD);
+  const rig = await closedIssueRig("human-merge-intent-head-moved", merged);
+  Object.defineProperty(rig.github, "readCommitParents", {
+    value: () => Promise.resolve(portOk([SHA2, MERGED_HEAD])),
+  });
+  try {
+    const record = humanMergeRecord();
+    const receipt = localReceipt();
+    const recovering = {
+      ...record,
+      nextStep: "delivery" as const,
+      intent: {
+        kind: "merge" as const,
+        key: `merge:7:${SHA3}`,
+        startedAt: T0,
+        branch: record.target.branch,
+        expectedHead: SHA3,
+        observedBase: SHA1,
+        pr: 7,
+        requestId: receipt.requestId,
+        resultId: receipt.id,
+      },
+    };
+    const written = await rig.store.writeRepair(
+      seededSnapshot([recovering], { reviews: [receipt] }),
+      null,
+    );
+    assert.ok(written.ok && written.value.status === "applied");
+
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    const state = await rig.snapshot();
+    const work = state.work[0]!;
+    assert.equal(work.nextStep, "done");
+    assert.equal(work.blocker, null);
+    assert.equal(work.intent, null);
+    assert.deepEqual(
+      work.target,
+      record.target,
+      "the reviewed identity is retained",
+    );
+    assert.deepEqual(work.evidence, [
+      humanMergeProvenanceRef(7, MERGED_HEAD, SHA2, HUMAN_MERGE_ACTOR),
+    ]);
+    assert.equal(state.releaseRequests.length, 1);
+    assert.equal(state.releaseRequests[0]!.revision, SHA2);
+    assert.equal(state.releaseRequests[0]!.source.reviewReceiptId, null);
+    assert.equal(rig.model.requests.length, 0);
+    assert.equal(rig.github.calls.filter((call) => call === "merge").length, 0);
+
+    await rig.run();
+    const restarted = await rig.snapshot();
+    assert.deepEqual(
+      restarted.work[0],
+      work,
+      "recovery is durable across restart",
+    );
+    assert.deepEqual(restarted.releaseRequests, state.releaseRequests);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
 Deno.test("human merge: a moved head merged after the base branch moved completes without a receipt", async () => {
   // Both the reviewed head and the base branch moved on: the merge's first
   // parent is the branch's newer tip and its own head is the merged head.

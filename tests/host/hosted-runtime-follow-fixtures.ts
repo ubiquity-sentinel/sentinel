@@ -6,6 +6,7 @@ import type {
   HttpTransportV1,
 } from "../../src/github/http.ts";
 import { FOLLOW_CI_WORKFLOW_ID } from "../../src/host/hosted-runtime-follow-ci.ts";
+import { sha256Hex } from "../../src/state/state-records.ts";
 import {
   type HostedRuntimeFollowJournal,
   runHostedRuntimeFollow,
@@ -18,7 +19,14 @@ export const P = "1".repeat(40);
 export const STATE = "2".repeat(40);
 const TREE = "3".repeat(40);
 const BLOB = "4".repeat(40);
+const INDEX_COMMIT = "6".repeat(40);
+const INDEX_TREE = "7".repeat(40);
+const INDEX_BLOB = "8".repeat(40);
+const REPAIR_COMMIT = "9".repeat(40);
+const REPAIR_TREE = "0".repeat(40);
 export const NOW = Date.parse("2026-10-20T08:00:00Z");
+const reservationBlob = async (id: string) =>
+  (await sha256Hex(id)).slice(0, 40);
 const ROOT = CONTROLLER.apiPath;
 export const repository = {
   id: 101,
@@ -208,6 +216,59 @@ export function retriedInstallation(
   };
 }
 
+/** A valid maintenance index naming one producer plan for the follow guard. */
+export function matrixWaveIndex(
+  execution: Record<string, unknown>,
+  reservationIds: readonly string[],
+  sequence = 10,
+) {
+  return {
+    version: "v1",
+    kind: "current_matrix_index",
+    controller: CONTROLLER.fullName,
+    releaseRef: "refs/heads/sentinel-state/release",
+    anchor: { head: STATE, sequence },
+    ranges: [{
+      from: { head: STATE, sequence },
+      through: { head: STATE, sequence: 1 },
+      next: null,
+    }],
+    producers: [{
+      head: "f".repeat(40),
+      sequence,
+      execution,
+      proofFingerprint: "a".repeat(64),
+      plan: {
+        planDigest: "b".repeat(64),
+        plannerJobId: 1,
+        reservationIds,
+      },
+    }],
+  };
+}
+
+/** A valid reservation row for the follow guard's settle probe. */
+export function matrixWaveReservation(
+  id: string,
+  createdAt: number,
+  outcome: "reserved" | "submitted",
+) {
+  return {
+    version: "v1",
+    kind: "budget_reservation",
+    repository: { owner: "ubiquity", name: "sentinel", installationId: 1 },
+    id,
+    taskId: "issue-ubiquity-sentinel-1",
+    attempt: 1,
+    head: "a".repeat(40),
+    purpose: "implementation",
+    createdAt,
+    outcome,
+    settledAt: outcome === "submitted" ? createdAt + 1000 : null,
+    proofRef: null,
+  };
+}
+
 /** Production consumers see only this fake external HTTP boundary. */
 export class FollowFake {
   development = D;
@@ -215,6 +276,9 @@ export class FollowFake {
   installed = P;
   stateHead = STATE;
   execution: unknown = null;
+  matrixIndex: unknown = null;
+  repairReservations = new Map<string, Record<string, unknown>>();
+  now = NOW + 60_000;
   parents = new Map<string, string[]>([[D, [OLDER]], [OLDER, [L]], [L, [P]], [
     P,
     [],
@@ -248,6 +312,7 @@ export class FollowFake {
       token: "fake-token",
       flag,
       ...options,
+      clock: { now: () => this.now },
       log: (journal) => this.journals.push(journal),
     });
   }
@@ -317,8 +382,12 @@ export class FollowFake {
         ? this.launcher
         : name === "heads/sentinel-state/release"
         ? this.stateHead
+        : name === "heads/sentinel-state/maintenance-index"
+        ? (this.matrixIndex === null ? null : INDEX_COMMIT)
+        : name === "heads/sentinel-state/repair"
+        ? (this.repairReservations.size === 0 ? null : REPAIR_COMMIT)
         : null;
-      assert.notEqual(value, null);
+      if (value === null) return response({ message: "Not Found" }, 404);
       return response({
         ref: `refs/${name}`,
         object: { type: "commit", sha: value },
@@ -326,6 +395,12 @@ export class FollowFake {
     }
     if (path === `/git/commits/${this.stateHead}`) {
       return response({ sha: this.stateHead, tree: { sha: TREE } });
+    }
+    if (path === `/git/commits/${INDEX_COMMIT}`) {
+      return response({ sha: INDEX_COMMIT, tree: { sha: INDEX_TREE } });
+    }
+    if (path === `/git/commits/${REPAIR_COMMIT}`) {
+      return response({ sha: REPAIR_COMMIT, tree: { sha: REPAIR_TREE } });
     }
     // Source commits: root tree → `.github` → `workflows`, whose id is the
     // commit's entry in `workflowTrees` (one shared default otherwise).
@@ -355,6 +430,32 @@ export class FollowFake {
         tree: [{ ...entry, type: "tree", mode: "040000" }],
       });
     }
+    if (path === `/git/trees/${INDEX_TREE}`) {
+      return response({
+        sha: INDEX_TREE,
+        truncated: false,
+        tree: [{
+          path: "current-matrix.json",
+          sha: INDEX_BLOB,
+          type: "blob",
+          mode: "100644",
+        }],
+      });
+    }
+    if (path === `/git/trees/${REPAIR_TREE}`) {
+      return response({
+        sha: REPAIR_TREE,
+        truncated: false,
+        tree: await Promise.all(
+          [...this.repairReservations.keys()].map(async (id) => ({
+            path: `reservations/${await sha256Hex(id)}.json`,
+            sha: await reservationBlob(id),
+            type: "blob",
+            mode: "100644",
+          })),
+        ),
+      });
+    }
     if (path === `/git/trees/${TREE}`) {
       return response({
         sha: TREE,
@@ -377,6 +478,27 @@ export class FollowFake {
     }
     if (path.startsWith("/git/blobs/")) {
       const identity = path.slice("/git/blobs/".length);
+      if (identity === INDEX_BLOB) {
+        return response({
+          sha: identity,
+          encoding: "base64",
+          content: btoa(JSON.stringify(this.matrixIndex)),
+        });
+      }
+      const repair = await Promise.all(
+        [...this.repairReservations].map(async ([id, value]) => ({
+          sha: await reservationBlob(id),
+          value,
+        })),
+      );
+      const reservation = repair.find((row) => row.sha === identity);
+      if (reservation !== undefined) {
+        return response({
+          sha: identity,
+          encoding: "base64",
+          content: btoa(JSON.stringify(reservation.value)),
+        });
+      }
       const value = identity === BLOB
         ? {
           version: "v1",

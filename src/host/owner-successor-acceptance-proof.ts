@@ -10,6 +10,7 @@ import {
 } from "../contracts/owner-successor-review.ts";
 import { parseHostedRunProofV1 } from "../contracts/hosted-supervisor.ts";
 import type { HostedReleaseRecordV1 } from "../contracts/hosted-supervisor.ts";
+import { findReservationV1 } from "../contracts/state-snapshots.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import { GitHubApiClient } from "../github/client.ts";
 import { fetchHttpTransport } from "../github/http.ts";
@@ -175,8 +176,9 @@ export async function readOwnerSuccessorAcceptanceAuthority(
     }
     const review = parseOwnerSuccessorReviewV1(operations[0]);
     const b = review.binding,
-      reservation = repairSnapshot.reservations.find((r) =>
-        r.id === review.reservation.id
+      reservation = findReservationV1(
+        repairSnapshot,
+        review.reservation.id,
       );
     if (
       review.phase !== "completed" || review.updatedAt > Date.now() ||
