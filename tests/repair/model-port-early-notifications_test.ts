@@ -96,7 +96,7 @@ for await (const chunk of Deno.stdin.readable) {
 `;
 }
 
-async function runScenario(scenario: Scenario) {
+export async function runScenario(scenario: Scenario) {
   const dir = await Deno.makeTempDir({
     dir: Deno.cwd(),
     prefix: "sentinel-early-notifications-",
@@ -123,6 +123,7 @@ async function runScenario(scenario: Scenario) {
     return response;
   };
   let retainedEvidenceBytes = 0;
+  (globalThis as unknown as { gc?: () => void }).gc?.();
   const before = Deno.memoryUsage().heapUsed;
   let peak = before;
   const sampler = setInterval(() => {
@@ -168,8 +169,39 @@ async function runScenario(scenario: Scenario) {
   }
 }
 
+async function runLargeScenarioInFreshProcess() {
+  const probe = [
+    `import { runScenario } from ${JSON.stringify(import.meta.url)};`,
+    'console.log(JSON.stringify(await runScenario("large")));',
+  ].join("\n");
+  const result = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "eval",
+      "--v8-flags=--expose-gc",
+      "--allow-read=.,/usr,/bin," + Deno.execPath(),
+      "--allow-run",
+      "--allow-write",
+      "--allow-env=PATH,NODE_V8_COVERAGE",
+      probe,
+    ],
+    cwd: Deno.cwd(),
+    clearEnv: true,
+    env: { PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (!result.success) {
+    throw new Error(
+      `heap probe failed: ${new TextDecoder().decode(result.stderr)}`,
+    );
+  }
+  return JSON.parse(new TextDecoder().decode(result.stdout).trim()) as Awaited<
+    ReturnType<typeof runScenario>
+  >;
+}
+
 Deno.test("model early notifications: >32 MiB before turn/start response completes with bounded custody", async () => {
-  const run = await runScenario("large");
+  const run = await runLargeScenarioInFreshProcess();
   assert.ok(run.result.ok, JSON.stringify(run.result));
   if (!run.result.ok) return;
   assert.equal(run.result.value.outcome, "completed");
