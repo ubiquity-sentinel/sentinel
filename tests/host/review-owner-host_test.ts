@@ -5,6 +5,7 @@ import {
 } from "../../src/host/review-owner-host.ts";
 import { reviewOwnerChildInput } from "../../src/host/review-owner-child-input.ts";
 import { emitHostedRuntimeCliResult } from "../../src/host/hosted-runtime-main.ts";
+import { snapshot } from "./actions-candidates-fixture.ts";
 import {
   childLine,
   exited,
@@ -186,9 +187,14 @@ const response = (status, value) => Promise.resolve({ status, headers: new Heade
 const custody = new ReviewOwnerChannelClient(descriptor);
 const tracker = new LocalSessionTracker();
 tracker.open = () => { throw new Error("native reviewer must stay in the parent"); };
+const repairSnapshot = ${JSON.stringify(snapshot([]))};
+let repairReads = 0, rulesReads = 0;
 const port = composeLocalGitHub({
   clock: { now: () => Date.now() }, state: {
-    readRepair: () => { throw new Error("no repair state authority expected"); },
+    readRepair: () => {
+      repairReads++;
+      return Promise.resolve({ ok: true, value: { status: "found", snapshot: repairSnapshot, head, ref: null } });
+    },
     readRelease: () => { throw new Error("no release state authority expected"); },
     writeRepair: () => { throw new Error("no repair write authority expected"); }
   }, gate: { beforeRequest: () => Promise.resolve({ ok: true, value: undefined }), recordRateLimit: () => Promise.resolve({ ok: true, value: undefined }) },
@@ -200,6 +206,9 @@ const port = composeLocalGitHub({
   ownerExecution: execution, ownerCustody: custody,
   http: (request) => {
     const path = new URL(request.url).pathname;
+    if (request.method === "GET" && path.endsWith("/rules/branches/development")) {
+      rulesReads++; return response(200, []);
+    }
     if (path.endsWith("/pulls/55")) return response(200, {
       number: 55, title: "Synthetic review", body: "Synthetic bounded task", state: "open",
       head: { ref: "sentinel/synthetic", sha: head }, base: { ref: "development", sha: base },
@@ -224,6 +233,7 @@ const result = await port.requestReview({
   expectedReviewer: login, latestStartAt: Date.now() + 60000, settleBy: Date.now() + 1200000
 });
 if (!result.ok || result.value.outcome !== "applied") throw new Error("synthetic composed review refused");
+if (repairReads === 0 || rulesReads === 0) throw new Error("synthetic queue observation missing");
 console.log("synthetic composed reviewer opened");
 Deno.kill(Deno.pid, "SIGKILL");
 `;

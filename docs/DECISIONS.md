@@ -9,6 +9,71 @@ continuation.
 
 ## Runtime and dispatch
 
+### Standing approval for the migration rollout
+
+On 2026-10-18 at 13:33–13:34 UTC, the owner explicitly approved the prepared
+isolated queue canary, then directed: "Always approved" and "Finish the job you
+can always cut over production". For this resumed Sentinel stability,
+outstanding-issue repair, existing-PR takeover and merge-queue job, the
+coordinator has standing approval for the canary and production cutover and must
+not request those approvals again. This supersedes the earlier pending canary
+and separate production approval steps for this task. Complete the required
+current CI, source audit, exact runtime/launcher binding, queue and existing-PR
+custody floors, trusted App/state/promotion controls, readiness and exact
+rollback checks before the corresponding effects. The App permission grant is
+already complete. This authorization does not itself establish any execution or
+acceptance result.
+
+### Future runtime pins before the queue fallback freeze
+
+The queue rollout must finish moving future runtime identities into the existing
+reviewed rollout-data mechanism before freezing F. Add independent required
+`acceptanceCorrection` and `legacyReview` revision arrays to source-only
+`HostedRuntimeRollout` version 1, using its bounded, unique, lowercase Git-SHA
+parser and deep freezing; both shipped defaults are empty. The
+acceptance-correction default combines existing R81 with only
+`acceptanceCorrection`; the legacy cutoff combines existing R80/R81 with only
+`legacyReview` and retains the single immutable cutoff `1792256700000`. Missing
+or malformed fields refuse, and one feature list never implies another. Later
+LF/LA revision pin updates must change authenticated data rather than TypeScript
+source, preserving the previously accepted F/A launcher code profiles. This
+source preparation does not activate a floor, admission, queue or installation.
+F-first failure recovery must be proved through an existing trusted controller
+path before cutover; the old-runtime execution fence cannot be weakened to
+provide a rollback.
+
+### Future recovery and complete native CI
+
+Failed first-F installation has no executable fix-forward path. A later
+connected controller probe corrected the initial helper-only rollback
+assessment: a generic fresh-generation bootstrap producer exists, but restored
+tuples can reach unrelated source selection first and failed restored tuples can
+fall through to another generic bootstrap. Before strict F installation, add
+explicit reviewed source-only recovery rows that bind the exact failed
+pointer/execution proof, genuine historical healthy proof and authoritative
+witness ancestor to one exact CI-verified successor. Normal preplanned F-to-A
+admission remains blocked after failure. Reuse the existing trusted state-writer
+identity, expected-head CAS and serialized shapes; atomically persist only a
+model-disabled bootstrap execution, never invented health or refunded charges.
+Give exact restored tuples bootstrap priority and failed-restored holds,
+preserving the existing generic producer, both custody floors and the
+old-runtime fence. The original contract is
+`production-cutover-preparation/recovery-module-contract.md` under migration
+evidence, SHA-256
+`61856f7334597f576c69939833b4ca0cf5e56eb9bbb4c72f779e2fdf8e344fe7`; its approved
+addendum and connected-consumer correction take precedence over the original
+missing-producer wording.
+
+Native source CI `39131885021` exhausted its 45-minute job limit while tests
+were still progressing: its log records 2,892 successful top-level cases, three
+failures and 72 ignores before the final repair-module start, without a terminal
+aggregate. The failures took 2 ms, 1 ms and 668 ms and did not cause the
+timeout; 607 cases completed after the last failure. Repair the three exact
+cases locally and increase only the credential-free source-CI job bound from 45
+to 60 minutes so the expanded harness can finish. Preserve the full harness,
+required `test-local` identity, every assertion and all supervisor/model/session
+deadlines; do not rerun the unchanged failed candidate.
+
 ### Integration ownership after Muse retirement
 
 On 2026-10-13, the owner stated that Muse is retired and directed the current
