@@ -4,6 +4,7 @@
  * completed review a spent record's refreshed head may carry. No I/O, no
  * clock; the patch proof itself is git's (`proveCarriedPatch`).
  */
+import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
@@ -80,9 +81,7 @@ export function latestPullReview(
 /** No unresolved P0/P1 and nothing uncounted: the review blocks nothing. */
 export function cleanReview(review: ReviewReceiptV1): boolean {
   return review.findingsUncounted === 0 &&
-    !review.unresolvedSeverities.some((severity) =>
-      severity === "P0" || severity === "P1"
-    );
+    !hasBlockingSeverity(review.unresolvedSeverities);
 }
 
 /** The record as of the identity its review binds (authorization only). */

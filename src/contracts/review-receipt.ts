@@ -97,6 +97,20 @@ export interface ReviewReceiptV1 {
   observedAt: number;
 }
 
+/**
+ * The review severities that block an autonomous merge. Owner directive
+ * 2026-10-24: branch protection rules are not a merge requirement and the only
+ * internal policy is that every P0 is resolved; unresolved P1/P2/P3 findings
+ * never block delivery (and so never spend a correction round).
+ */
+export const BLOCKING_SEVERITIES: readonly SeverityV1[] = ["P0"];
+
+export function hasBlockingSeverity(
+  severities: readonly SeverityV1[],
+): boolean {
+  return severities.some((severity) => BLOCKING_SEVERITIES.includes(severity));
+}
+
 const KEYS = [
   "version",
   "kind",

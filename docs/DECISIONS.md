@@ -14,18 +14,26 @@ continuation.
 `ubiquity/ai.ubq.fi` runs `Gateway CI` (`.github/workflows/deno-deploy.yml`)
 only on a closed pull request or a manual `workflow_dispatch` (its 2026-10-21
 Actions-quota decision), and the workflow exposes `base_ref`,
-`sentinel_pr_author` and `scope_base` inputs that select the complete check set
-for a Sentinel App pull request. Sentinel refuses to review or merge without
-current-head CI, so the trusted repair host now sends at most one
-`workflow_dispatch` per target per pass for a published head whose record waits
-on `ci_pending` (`src/host/actions-premerge-ci.ts`): the live pull request must
-be open, authored by the App login, on the target's own repository, at the
-recorded head SHA, head ref and configured base; any existing run of the
-workflow on that exact head (any event or status) skips it; the dispatching
-token's mint grant must name the repository with `actions: write`; every request
-passes the shared cooldown gate and the absolute run deadline. A dispatch is a
-request for evidence, never evidence: it writes no record, wait, counter or
-receipt, and the delivery gate keeps reading the check runs of the exact head.
+`sentinel_pr_author` and `scope_base` inputs meant to select the complete check
+set for a Sentinel App pull request (correction 2026-10-23 23:00 UTC: at
+`31ba5a15` the workflow maps those inputs onto `GITHUB_BASE_REF` and
+`GITHUB_PR_AUTHOR` only, while `scripts/test-scope.ts` grants the complete set
+for `merge_group`, `push` to `development` and `pull_request` events alone; a
+dispatched run therefore executes the scoped set and reports the other jobs as
+`skipped`, which Sentinel's required-CI gate reads as failed. Extending that
+rule to an opted-in `workflow_dispatch` is an `ubiquity/ai.ubq.fi` change for
+the owner, recorded in Sentinel issue #181; Sentinel does not relax `skipped` to
+green). Sentinel refuses to review or merge without current-head CI, so the
+trusted repair host now sends at most one `workflow_dispatch` per target per
+pass for a published head whose record waits on `ci_pending`
+(`src/host/actions-premerge-ci.ts`): the live pull request must be open,
+authored by the App login, on the target's own repository, at the recorded head
+SHA, head ref and configured base; any existing run of the workflow on that
+exact head (any event or status) skips it; the dispatching token's mint grant
+must name the repository with `actions: write`; every request passes the shared
+cooldown gate and the absolute run deadline. A dispatch is a request for
+evidence, never evidence: it writes no record, wait, counter or receipt, and the
+delivery gate keeps reading the check runs of the exact head.
 `workflow_dispatch` takes a ref, so a head that moves before GitHub resolves it
 yields a run on another SHA, which the exact-head gate ignores and the next pass
 re-dispatches. Only the gateway carries this policy; Passport's CI runs on its
@@ -44,6 +52,51 @@ any kind makes a native review unavailable (Codex owns reviewer selection; a
 gateway failover onto an implementation route is the forbidden substitution),
 and review custody refuses `baseInstructions`/`developerInstructions` on
 `thread/start`.
+
+Launcher handoff correction (2026-10-23 23:00 UTC): the 2026-10-21 migration
+bound the child's grant parse to the live `SENTINEL_TARGET_INSTALLATION_ID` but
+left the launcher's parent-side verification
+(`src/host/hosted-runtime-principal-handoff.ts`) on the durable default, so
+every live grant (installation `173913802`) failed that parse and the grant
+never crossed into the runtime child: the hosted App principal context was never
+composed after the migration and the dispatcher would answer `grant_refused`.
+The launcher now binds the handoff to the same live installation the child reads
+(absent keeps the durable default; a malformed value refuses the grant), and
+`composeHostedAppGitHub` compares a foreign target's durable scope with
+`SENTINEL_APP_INSTALLATION_ID`, as the native membership proof already does,
+instead of with the grant's live installation.
+
+Gateway delivery under activated queue proof (finding 2026-10-23 23:10 UTC,
+owner decision open, Sentinel issue #180):
+`src/host/hosted-custody-capability.json` ships `queue.proofActivated: true`
+since the 2026-10-18 standing approval for the queue canary and production
+cutover, but the canary was never accepted, the queue authority pins are empty,
+`QUEUE_MODE_CEILING` is `off` and `ai.ubq.fi` `development` carries no
+`merge_queue` rule. Under activated proof every gateway record is strict: the
+launcher's delivery pass routes it into the queue booking draft and never
+reaches `preMergeGate` or the merge; a direct merge by any actor cannot be
+booked (`direct_provenance_missing`) and the runtime turns it into a permanent
+custody hold; a strict observation failure parks a record permanently. No
+autonomous ai.ubq.fi merge can complete until the owner either deactivates the
+proof until the canary lands or finishes the queue rollout. Sentinel does not
+change that custody boundary on its own.
+
+Self-path corrections (2026-10-23 23:55 UTC, review round 1): `ci.yml`'s
+`test-local` has been a `needs: [quality, test-shards]` aggregate since
+`b19882bb8c` (2026-10-20), so GitHub creates its check run only once those jobs
+finish; the self CI-first gate used to read no expectation for the self scope
+and could admit a review in that gap. It still reads no base (the tip's
+supervisor and dispatcher listings are large) but now expects `test-local` on a
+head whose own `ci.yml` jobs (`quality`, `test-shards (…)`) already report,
+waiting like running CI until the aggregate exists; a head without those jobs
+keeps the old rule. The self merge port's pre-write refusals (CI pipeline
+identity, preserved CI binding, tested tree or trusted source mismatch) used to
+re-arm a five-minute `unavailable` wait on every cycle for the life of the base;
+they now park the record for the owner with the port's own detail and clear the
+merge intent, since only a new base or candidate can clear them. Transport
+failures keep the bounded wait and the durable intent. The earlier "one named
+`test-local` job (ci.yml, no `needs:`)" wording in this document is superseded
+by the aggregate description above.
 
 Passport cannot merge under the existing gate: its private repository on the
 current GitHub plan cannot carry branch rules (`/rules/branches/main` answers
@@ -2572,3 +2625,61 @@ silently disappear from the summary. Only closed reason labels are emitted,
 never raw blocker diagnostics. The summary is a read of final repair state and
 grants no admission or state-write authority; unavailable state is reported
 explicitly, and a summary failure cannot interrupt the live pipeline.
+
+## Maintenance candidate recovery uses each target's own credential
+
+Finding (2026-10-24): every matrix-produced candidate for the Sentinel
+repository itself had stayed in flight (`candidate_preservation` intent,
+`preserved: null`, no ref) since 2026-10-18, while foreign targets' candidates
+from the same waves were preserved. The maintenance current-matrix walk
+([ops/hosted-autonomy-matrix-adapters.ts](../ops/hosted-autonomy-matrix-adapters.ts))
+built every target's candidate-recovery port, mirror refresh and default-branch
+read with the `ubiquity` installation token, which cannot read or push
+`ubiquity-sentinel/sentinel`. The runtime repair job reads only its own run's
+artifacts by design, so its preservation of such a record finds no objects and
+waits `unavailable` forever; maintenance is the only pass that can finish it.
+
+Decision: a maintenance pass binds each committed target to the credential that
+reaches it, `maintenanceTargetToken`: the self scope uses the self token, every
+foreign target keeps the App token. Unfinished preservations are no longer
+silent: the trusted tail logs `sentinel_candidate_preservation_unfinished` (task
+id plus the preserver's static verdict) and the pass reports
+`current-matrix:preservation-unfinished:<n>`. No charge, custody or review
+boundary changes. Correction (02:10 UTC): the Passport retry successors
+(42/49/50/53/59) that looked wedged were preserved by the 00:41 UTC maintenance
+run once its walk reached their producer wave (`current-matrix:ingested:9`), so
+the published-head ancestry theory recorded for #184 was wrong; #184 is closed
+as not a defect and the delay belongs to the walk budget. Also open (issue
+#185): the walk's 300-second history budget (`deferred_budget`, 975 snapshots
+read per pass) limits each maintenance run to roughly one producer wave.
+
+## Owner directive 2026-10-24: no branch-rule requirement, only P0 blocks
+
+The owner directed (2026-10-24 02:50 UTC): "remove branch rules; the only
+internal policy is resolve all P0". Applied as follows.
+
+- An autonomous merge requires a completed native review receipt for the exact
+  current head with no unresolved P0 finding (`hasBlockingSeverity`,
+  `BLOCKING_SEVERITIES = ["P0"]` in `src/contracts/review-receipt.ts`), the
+  positive task acceptance already required, and current-head CI that is not
+  red. Unresolved P1/P2/P3 findings never block a merge and never spend a
+  correction round.
+- Branch protection rules and rulesets are not required on any target
+  (`src/github/port-merge.ts`): the active rules are still read so required
+  checks and approvals a target does configure are honoured, but an unreadable,
+  empty, unsupported, merge-queue or bypassable policy is treated as no
+  protections (`noEffectiveProtections`) and never refuses a merge. The self
+  path no longer requires authenticated empty rules.
+- A check the target's own CI did not run (`skipped`) or marked `neutral` is
+  green (`GREEN_CONCLUSIONS` in `src/repair/ci-rejection.ts`, used by
+  `failedChecks`, `requiredChecksState` and the launcher's `hasAllChecksGreen`);
+  failure, timed_out, cancelled, action_required and stale stay red; pending
+  still waits. This supersedes the 2026-10-23 note that Sentinel reads
+  ai.ubq.fi's skipped dispatched jobs as failed (#181 becomes an ai.ubq.fi-side
+  improvement, not a Sentinel blocker).
+- The activated merge-queue proof (`queue.proofActivated` in
+  `src/host/hosted-custody-capability.json`, #180) is not part of this policy
+  either; the session's permission layer refuses that one-line edit as a custody
+  weakening, so it remains the owner's edit until it lands.
+- Exact current-head CI, native review receipts, task acceptance, durable
+  accounting and the custody of credentials are unchanged.

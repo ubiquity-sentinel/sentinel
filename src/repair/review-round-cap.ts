@@ -19,6 +19,7 @@
  * merged, and only by the spent-round delivery rule, which re-verifies the
  * latest completed current-head review and the required CI itself.
  */
+import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
@@ -499,9 +500,7 @@ export function ceilingParkMessage(
   if (latest === null) return REVIEW_ROUND_CEILING_UNREVIEWED;
   if (
     latest.findingsUncounted !== 0 ||
-    latest.unresolvedSeverities.some((severity) =>
-      severity === "P0" || severity === "P1"
-    )
+    hasBlockingSeverity(latest.unresolvedSeverities)
   ) return REVIEW_ROUND_CEILING_REJECTED;
   if (
     record.source.kind === "issue" &&

@@ -12,6 +12,7 @@ import { guardQueueOperation } from "./loop-queue-guard.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import { parseMergeRequestV1 } from "../contracts/merge-request.ts";
 import { selfMergeExecution } from "./loop-self-merge.ts";
+import { isSelfScopeZero } from "./loop-legacy-loss.ts";
 import type { MergeOutcomeV1, PortErrorV1 } from "../contracts/ports.ts";
 import {
   parseReleaseRequestV1,
@@ -114,6 +115,28 @@ function emitMergePortError(
     errorKind: error.kind,
     detailCode,
   }));
+}
+
+/**
+ * Self-merge refusals the trusted port answers before any write: the base and
+ * the tested commit disagree on the CI pipeline identity, the preserved CI
+ * binding or the tested tree. Waiting never clears them (only a new base or a
+ * new candidate can), so they park for the owner instead of re-arming a
+ * five-minute wait on every cycle for the life of the base.
+ */
+const SELF_MERGE_REFUSALS: ReadonlySet<string> = new Set([
+  "self merge trusted CI pipeline changed",
+  "self merge preserved CI binding mismatch",
+  "self merge tested tree or trusted source mismatch",
+]);
+function selfMergeRefusal(
+  record: WorkRecordV1,
+  error: PortErrorV1,
+): string | null {
+  return isSelfScopeZero(record.repository) && error.kind === "invalid" &&
+      SELF_MERGE_REFUSALS.has(error.detail)
+    ? `self merge refused by trusted validation; owner action required: ${error.detail}`
+    : null;
 }
 
 export async function executeMerge(
@@ -328,6 +351,14 @@ export async function executeMerge(
       mergeRequest.pullRequestNumber,
       merged.error,
     );
+    const refusal = selfMergeRefusal(self.record, merged.error);
+    if (refusal !== null) {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(clearIntent(self.record, now), "other", refusal, now),
+      );
+    }
     // The saved merge intent must stay durable: the response may have been
     // lost after the write, and the next run reconciles the exact remote PR
     // state before repeating rather than blindly retrying an ambiguous write.
@@ -492,14 +523,23 @@ export async function reconcileMergeIntent(
     }, self.execution);
     if (self.failure !== null) return self.failure;
     if (!result.ok) {
+      const at = deps.clock.now();
+      const refusal = selfMergeRefusal(self.record, result.error);
+      if (refusal !== null) {
+        return persistWork(
+          deps,
+          context,
+          markBlocked(clearIntent(self.record, at), "other", refusal, at),
+        );
+      }
       return persistWork(
         deps,
         context,
         setWait(self.record, {
           reason: "unavailable",
-          since: deps.clock.now(),
-          until: deps.clock.now() + CHECK_POLL_MS,
-        }, deps.clock.now()),
+          since: at,
+          until: at + CHECK_POLL_MS,
+        }, at),
       );
     }
     return handleMergeOutcome(

@@ -1,4 +1,9 @@
-// merge protections_test.
+// mergePullRequest protections suite. Owner directive 2026-10-24: branch
+// protection rules are not a merge requirement and the only internal policy
+// is that every P0 is resolved. The active rules are still read so that the
+// required checks and approvals a target does configure are honoured; an
+// empty, unsupported, bypassable, contradictory or unreadable rule policy no
+// longer blocks. All fixtures are synthetic.
 
 import {
   checkRunWire,
@@ -26,6 +31,7 @@ import {
   commentsRead,
   defaultRules,
   happyScript,
+  type mergeCall,
   mergedPort,
   mergeRequest,
   pullEntry,
@@ -37,11 +43,24 @@ import {
   trustedService,
 } from "./merge-helpers.ts";
 
-Deno.test("mergePullRequest: effective protections require active strict non-bypassable rules", async () => {
-  const cases: { name: string; rules?: unknown[]; rulesets?: unknown[] }[] = [
+Deno.test("mergePullRequest: branch rules are not a merge requirement; required checks they define still bind", async () => {
+  // Every rule shape that formerly blocked as `protection_required` (no
+  // active rules, non-strict or empty required checks, no pull_request rule,
+  // an unsupported or merge-queue rule, a configured/unknown bypass policy, a
+  // ruleset missing from the list, required thread resolution) now merges
+  // exactly once on the exact head. Where the readable rules bind `ci` as a
+  // required check, a failing `ci` still blocks with zero merge writes.
+  const cases: {
+    name: string;
+    rules?: unknown[];
+    rulesets?: unknown[];
+    /** Whether the readable rules bind `ci` as a required check. */
+    requiresCi: boolean;
+  }[] = [
     {
       name: "no-active-rules",
       rules: [],
+      requiresCi: false,
     },
     {
       name: "non-strict-up-to-date",
@@ -54,6 +73,7 @@ Deno.test("mergePullRequest: effective protections require active strict non-byp
         }),
         pullRequestRuleWire(),
       ],
+      requiresCi: true,
     },
     {
       name: "empty-required-checks",
@@ -66,10 +86,12 @@ Deno.test("mergePullRequest: effective protections require active strict non-byp
         }),
         pullRequestRuleWire(),
       ],
+      requiresCi: false,
     },
     {
       name: "no-pull-request-rule",
       rules: [statusChecksRuleWire(), nonFastForwardRuleWire()],
+      requiresCi: true,
     },
     {
       name: "unknown-rule-type",
@@ -77,6 +99,7 @@ Deno.test("mergePullRequest: effective protections require active strict non-byp
         ...defaultRules(),
         { type: "required_linear_history", id: 14, ruleset_id: 10 },
       ],
+      requiresCi: true,
     },
     {
       name: "merge-queue-rule",
@@ -84,6 +107,7 @@ Deno.test("mergePullRequest: effective protections require active strict non-byp
         ...defaultRules(),
         { type: "merge_queue", id: 15, ruleset_id: 10 },
       ],
+      requiresCi: true,
     },
     {
       name: "bypass-actor-configured",
@@ -94,10 +118,12 @@ Deno.test("mergePullRequest: effective protections require active strict non-byp
           bypass_mode: "always",
         }],
       })],
+      requiresCi: true,
     },
     {
       name: "caller-can-bypass",
       rulesets: [rulesetWire({ current_user_can_bypass: "always" })],
+      requiresCi: true,
     },
     {
       name: "bypass-policy-omitted",
@@ -105,10 +131,12 @@ Deno.test("mergePullRequest: effective protections require active strict non-byp
         bypass_actors: null,
         current_user_can_bypass: null,
       })],
+      requiresCi: true,
     },
     {
       name: "ruleset-missing-from-list",
       rulesets: [],
+      requiresCi: true,
     },
     {
       name: "thread-resolution-required",
@@ -125,20 +153,45 @@ Deno.test("mergePullRequest: effective protections require active strict non-byp
           },
         }),
       ],
+      requiresCi: true,
     },
   ];
+  const mergePut = httpRespond(
+    "PUT",
+    "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
+    200,
+    mergeResponseWire(SHA3),
+  );
   for (const item of cases) {
-    const { port, transport } = mergedPort(happyScript({
+    const green = mergedPort(happyScript({
       rules: item.rules,
       rulesets: item.rulesets,
+      extra: [mergePut],
     }));
-    const result = await port.mergePullRequest(mergeRequest());
-    assert.equal(blockedReason(result), "protection_required", item.name);
-    assert.equal(putCount(transport), 0, item.name);
+    const merged = await green.port.mergePullRequest(mergeRequest());
+    assert.ok(merged.ok, `${item.name}: ${JSON.stringify(merged)}`);
+    if (!merged.ok) continue;
+    assert.deepEqual(
+      merged.value,
+      { outcome: "merged", head: SHA1, mergeSha: SHA3 },
+      item.name,
+    );
+    assert.equal(putCount(green.transport), 1, item.name);
+
+    if (!item.requiresCi) continue;
+    const red = mergedPort(happyScript({
+      rules: item.rules,
+      rulesets: item.rulesets,
+      checks: [checkRunWire({ conclusion: "failure" })],
+      extra: [mergePut],
+    }));
+    const failed = await red.port.mergePullRequest(mergeRequest());
+    assert.equal(blockedReason(failed), "checks_failed", item.name);
+    assert.equal(putCount(red.transport), 0, item.name);
   }
 });
 
-Deno.test("mergePullRequest: unidentified or contradicting ruleset evidence blocks with zero merge writes", async () => {
+Deno.test("mergePullRequest: unidentified or contradicting ruleset evidence no longer blocks the merge", async () => {
   const detailUrl = `/repos/ubiquity-sentinel/sentinel/rulesets/${RULESET_ID}`;
   const withoutKeys = (keys: string[]) =>
     defaultRules().map((rule) => {
@@ -155,7 +208,7 @@ Deno.test("mergePullRequest: unidentified or contradicting ruleset evidence bloc
     {
       name: "active-rule-identity-missing",
       // Every effective rule omits its ruleset_id: no evidence can be bound
-      // to its bypass policy and the merge must never proceed.
+      // to its bypass policy (unknown policy, which formerly blocked).
       rules: withoutKeys(["ruleset_id"]),
       rulesets: [rulesetWire()],
     },
@@ -315,20 +368,38 @@ Deno.test("mergePullRequest: unidentified or contradicting ruleset evidence bloc
       rulesets: [rulesetWire({ enforcement: "disabled" })],
     },
   ];
+  // Owner directive 2026-10-24: a bypass policy that is unknown, contradicted
+  // or bypassable is not a merge requirement. Every shape merges exactly once
+  // on the exact head; the rules' required `ci` check (green here) stays
+  // bound, see the previous test for the failing-check block.
   for (const item of cases) {
     const { port, transport } = mergedPort(happyScript({
       rules: item.rules ?? defaultRules(),
       rulesets: item.rulesets ?? [rulesetWire()],
-      extra: item.extra ?? [],
+      extra: [
+        ...(item.extra ?? []),
+        httpRespond(
+          "PUT",
+          "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
+          200,
+          mergeResponseWire(SHA3),
+        ),
+      ],
     }));
     const result = await port.mergePullRequest(mergeRequest());
-    assert.equal(blockedReason(result), "protection_required", item.name);
-    assert.equal(putCount(transport), 0, item.name);
+    assert.ok(result.ok, `${item.name}: ${JSON.stringify(result)}`);
+    if (!result.ok) continue;
+    assert.deepEqual(
+      result.value,
+      { outcome: "merged", head: SHA1, mergeSha: SHA3 },
+      item.name,
+    );
+    assert.equal(putCount(transport), 1, item.name);
   }
 
   // The exact detail (matching id, source binding and active enforcement)
   // with no bypass actors resolves the omitted list policy: the exact
-  // positive path is preserved.
+  // positive path is unchanged.
   const positive = mergedPort(happyScript({
     rulesets: [
       rulesetWire({ bypass_actors: null, current_user_can_bypass: null }),
@@ -661,9 +732,31 @@ Deno.test("mergePullRequest: malformed merge response is invalid, rejected maps 
   assert.equal(putCount(rejected.transport), 1);
 });
 
-Deno.test("mergePullRequest: unreadable rules fail closed even when classic protection is green", async () => {
-  // The actual rules response is malformed: the merge blocks without
-  // attempting a merge, and classic protection is never consulted as proof.
+Deno.test("mergePullRequest: unreadable rules do not block; the merge proceeds with no effective protections", async () => {
+  // Owner directive 2026-10-24: an unreadable rule policy is treated as no
+  // protections (nothing required beyond the review gate), never as a block.
+  // Classic branch protection is still never consulted. Each shape merges
+  // exactly once on the exact head.
+  const mergePut = httpRespond(
+    "PUT",
+    "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
+    200,
+    mergeResponseWire(SHA3),
+  );
+  const expectMerged = (
+    name: string,
+    result: Awaited<ReturnType<typeof mergeCall>>,
+  ) => {
+    assert.ok(result.ok, `${name}: ${JSON.stringify(result)}`);
+    if (!result.ok) return;
+    assert.deepEqual(
+      result.value,
+      { outcome: "merged", head: SHA1, mergeSha: SHA3 },
+      name,
+    );
+  };
+
+  // The actual rules response is malformed: invalid policy, no protections.
   const malformed = mergedPort([
     pullEntry(),
     pullEntry(),
@@ -675,12 +768,15 @@ Deno.test("mergePullRequest: unreadable rules fail closed even when classic prot
     },
     httpRespond("GET", RULESETS_PATH, 200, [rulesetWire()]),
     ...checksRead(),
+    mergePut,
   ]);
-  const result = await malformed.port.mergePullRequest(mergeRequest());
-  assert.equal(blockedReason(result), "protection_required");
-  assert.equal(putCount(malformed.transport), 0);
+  expectMerged(
+    "malformed",
+    await malformed.port.mergePullRequest(mergeRequest()),
+  );
+  assert.equal(putCount(malformed.transport), 1);
 
-  // A rules read that fails on the wire (rate limit) is unavailable → block.
+  // A rules read that fails on the wire (rate limit) is unavailable policy.
   const failed = mergedPort([
     pullEntry(),
     pullEntry(),
@@ -694,10 +790,13 @@ Deno.test("mergePullRequest: unreadable rules fail closed even when classic prot
     },
     httpRespond("GET", RULESETS_PATH, 200, [rulesetWire()]),
     ...checksRead(),
+    mergePut,
   ]);
-  const blocked = await failed.port.mergePullRequest(mergeRequest());
-  assert.equal(blockedReason(blocked), "protection_required");
-  assert.equal(putCount(failed.transport), 0);
+  expectMerged(
+    "rate-limited",
+    await failed.port.mergePullRequest(mergeRequest()),
+  );
+  assert.equal(putCount(failed.transport), 1);
 
   // A known rule type with unreadable parameters is unreadable policy.
   const badParams = mergedPort([
@@ -716,8 +815,11 @@ Deno.test("mergePullRequest: unreadable rules fail closed even when classic prot
     ]),
     httpRespond("GET", RULESETS_PATH, 200, [rulesetWire()]),
     ...checksRead(),
+    mergePut,
   ]);
-  const unreadable = await badParams.port.mergePullRequest(mergeRequest());
-  assert.equal(blockedReason(unreadable), "protection_required");
-  assert.equal(putCount(badParams.transport), 0);
+  expectMerged(
+    "bad-params",
+    await badParams.port.mergePullRequest(mergeRequest()),
+  );
+  assert.equal(putCount(badParams.transport), 1);
 });

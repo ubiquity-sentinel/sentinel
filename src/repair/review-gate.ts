@@ -26,6 +26,7 @@
  * must NOT be wired in.
  */
 
+import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import {
   reviewTaskAcceptanceRefusal,
@@ -144,9 +145,7 @@ function checkSharedReviewGuards(
   }
   if (receipt.findingsUncounted !== 0) return "uncounted findings";
   if (
-    receipt.unresolvedSeverities.some((severity) =>
-      severity === "P0" || severity === "P1"
-    )
+    hasBlockingSeverity(receipt.unresolvedSeverities)
   ) {
     return "blocking findings";
   }

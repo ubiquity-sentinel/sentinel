@@ -22,6 +22,7 @@ import { composeLocalGitHub, type LocalGitHubInputV1 } from "./local-github.ts";
 import {
   type HostedAppMintGrant,
   parseHostedAppMintGrant,
+  SENTINEL_APP_INSTALLATION_ID,
 } from "./hosted-app-grant.ts";
 import { parseAppTokenNotAfterV1 } from "./hosted-app-token-window.ts";
 import {
@@ -397,7 +398,11 @@ export function composeHostedAppGitHub(
       !value.source.targets.includes(
         `${repository.owner}/${repository.name}`,
       ) ||
-      repository.installationId !== value.grant.installationId)
+      // `repository.installationId` is the durable logical foreign scope;
+      // `value.grant.installationId` is the live credential installation the
+      // parse already bound to the expected one (the native path proves the
+      // repository's membership in that credential scope).
+      repository.installationId !== SENTINEL_APP_INSTALLATION_ID)
   ) throw new Error("hosted App principal target unavailable");
   const { host } = value;
   // Explicit final assignments defeat even a JavaScript caller that bypasses

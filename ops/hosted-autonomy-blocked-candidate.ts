@@ -227,7 +227,18 @@ export async function preserveBlockedCandidate(
           record.id,
           intent.key,
         )
-    ) return null;
+    ) {
+      // Nothing is written for an unfinished preservation; the bounded
+      // diagnostic names the task and the trusted preserver's static verdict
+      // so a candidate that never reaches its ref is visible in the job log.
+      console.log(JSON.stringify({
+        kind: "sentinel_candidate_preservation_unfinished",
+        taskId: record.id,
+        error: preserved.error.kind,
+        detail: preserved.error.detail.slice(0, 160),
+      }));
+      return null;
+    }
     const observed = await github.readRef(candidate.ref);
     if (!observed.ok || observed.value !== null) return null;
     refusal = preserved.error.detail === PUBLICATION_PROTECTED_DETAIL

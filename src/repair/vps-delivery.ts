@@ -1,4 +1,5 @@
 /** Exact gateway delivery binding shared by the repair and maintenance consumers. */
+import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type { StateReadView } from "../contracts/ports.ts";
 import {
@@ -59,9 +60,7 @@ export async function gatewayRequestBindsDelivery(
       review.completedAt !== null && review.observedReviewer !== null &&
       review.observedReviewer === review.expectedReviewer &&
       review.findingsUncounted === 0 &&
-      !review.unresolvedSeverities.some((severity) =>
-        severity === "P0" || severity === "P1"
-      ) &&
+      !hasBlockingSeverity(review.unresolvedSeverities) &&
       (record.related.issueNumber === null ||
         review.taskAcceptance?.issueNumber === record.related.issueNumber);
   } catch {

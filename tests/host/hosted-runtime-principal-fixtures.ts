@@ -16,8 +16,10 @@ export async function principalLauncherFixture(
   grantExpected: boolean,
   job: "repair" | "matrix_plan" | "matrix_cell" = "repair",
   tokenKind: "app" | "native" | "absent" = "app",
+  overrides: { mintGrant?: string; targetInstallationId?: string } = {},
 ) {
   const rig = await principalHostFixture();
+  const mintGrant = overrides.mintGrant ?? rig.hostInput.mintGrant;
   const appToken = tokenKind === "app"
     ? rig.scopeInput.token
     : tokenKind === "native"
@@ -26,19 +28,22 @@ export async function principalLauncherFixture(
   const expected = {
     GITHUB_TOKEN: rig.jobInput.token,
     SENTINEL_SUPERVISOR_TOKEN: appToken,
-    SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: grantExpected
-      ? rig.hostInput.mintGrant
-      : undefined,
+    SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: grantExpected ? mintGrant : undefined,
     SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER:
       appToken !== undefined && job !== "matrix_cell"
         ? String(OBSERVED + 58 * 60_000)
         : undefined,
+    SENTINEL_TARGET_INSTALLATION_ID: overrides.targetInstallationId,
   };
   const script = [
     "const expected = " + JSON.stringify(expected) + ";",
-    "for (const key of ['GITHUB_TOKEN', 'SENTINEL_SUPERVISOR_TOKEN', 'SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT', 'SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER', 'SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE']) {",
+    "for (const key of ['GITHUB_TOKEN', 'SENTINEL_SUPERVISOR_TOKEN', 'SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT', 'SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER', 'SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE', 'SENTINEL_TARGET_INSTALLATION_ID']) {",
     "  if (Deno.env.get(key) !== expected[key]) throw new Error('fixture child handoff mismatch');",
     "}",
+    // The production child refuses a malformed live installation id
+    // (`parseAppInstallationId`); the owned child mirrors that refusal.
+    "const liveId = Deno.env.get('SENTINEL_TARGET_INSTALLATION_ID');",
+    "if (liveId !== undefined && !/^[1-9][0-9]*$/.test(liveId)) throw new Error('fixture child installation id malformed');",
     "const command = new Deno.Command('/usr/bin/git', { args: ['rev-parse', 'HEAD'], stdout: 'piped', stderr: 'piped' }).outputSync();",
     "if (!command.success) throw new Error('fixture child source unavailable');",
     "const revision = new TextDecoder().decode(command.stdout).trim();",
@@ -103,8 +108,11 @@ export async function principalLauncherFixture(
       GITHUB_JOB: job,
       GITHUB_TOKEN: rig.jobInput.token,
       SENTINEL_SUPERVISOR_TOKEN: appToken,
-      SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: rig.hostInput.mintGrant,
+      SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: mintGrant,
       SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: String(OBSERVED),
+      ...(overrides.targetInstallationId === undefined ? {} : {
+        SENTINEL_TARGET_INSTALLATION_ID: overrides.targetInstallationId,
+      }),
       UOS_AI_TOKEN: "fixture-model-token",
       PATH: Deno.env.get("PATH") ?? "/usr/local/bin:/usr/bin:/bin",
       HOME: rig.root,

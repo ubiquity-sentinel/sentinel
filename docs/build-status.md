@@ -7,7 +7,199 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-23 21:10 UTC)
+## Latest checkpoint (2026-10-24 01:15 UTC)
+
+- Launcher `sentinel-supervisor` advanced 79eb079e8d → 9b2de3d259 after CI
+  40045951218 passed; bootstrap generation 94 on 79eb079e8d settled healthy (run
+  40045141215, grant retained with the live installation id). Ordinary run
+  40046208972 on 79eb079e8d is in flight.
+- Root cause of the in-flight candidate wedge (Sentinel #179, Passport 77/83;
+  Passport 42/49/50/53/59 share the symptom): maintenance recovery built every
+  target's candidate port with the foreign App token, so self pushes could not
+  happen; the repair job never holds a prior run's objects. Fixed in
+  `ops/hosted-autonomy-matrix-adapters.ts` (`maintenanceTargetToken`), with a
+  regression test (`tests/host/hosted-autonomy-matrix-adapter-tokens_test.ts`,
+  fails on the old wiring) and an unfinished-preservation diagnostic/action.
+  Local proof: the real #179 bundle preserves through the real preserver against
+  a local remote (only my shallow clone broke the fresh-store proof).
+- Correction 02:10 UTC: the 00:41 maintenance run preserved Passport
+  42/49/50/53/59/77/83/84/85 once its walk reached their wave
+  (`current-matrix:ingested:9`); #184 is closed as not a defect. The walk's 300
+  s budget still processes about one producer wave per maintenance run
+  (`deferred_budget`); filed as #185. Run 40046208972 (ordinary, 79eb079e8d)
+  settled healthy; ai.ubq.fi 1212/1229/1250 remain `ci_pending` with refreshed
+  waits; #179 still waits for the fixed launcher's maintenance.
+- 01:45 UTC: CI 40050503785 passed on fdc98f727a (token fix plus the test
+  fixture moved under the repository root, which the CI shards can read);
+  launcher `sentinel-supervisor` advanced 9b2de3d259 → fdc98f727a. The audit's
+  verified P1/P2 risks are filed as #186–#193.
+- 02:20 UTC: review round 1 (the end-to-end live-path audit, 53 agents,
+  adversarial verification) completed: 13 confirmed blocker/risk findings.
+  Blockers: launcher grant handoff (fixed 79eb079e8d), ai.ubq.fi scope rule
+  (#181, owner), activated queue proof blocking launcher delivery and queue
+  booking (#180, owner). Risks fixed: self aggregate gate (9b2de3d259), self
+  merge refusal park (a3c271be60). Risks filed: #187, #188, #191, #193 (plus
+  notes #189, #192). Two drafted findings were refuted by the skeptics and
+  closed: #186 (cancelled-run re-dispatch is recorded design) and #190 (a
+  reroute-ended review charging its round is owner policy). Round 2 (review of
+  every fix since the baseline) is running; the loop stops at the first round
+  with no P0, cap five rounds.
+- 02:45 UTC: live proof of the token fix. Bootstrap run 40052681804 on
+  fdc98f727a settled healthy and its maintenance preserved #179's candidate at
+  02:06 UTC (`refs/heads/sentinel-candidates/0868529a…` = d79f63bc now exists on
+  origin; record `work`, `preserved` set, intent cleared). Ordinary run
+  40053623976 on fdc98f727a is in flight and should publish #179's PR. The
+  issues filed from the audit (#185, #187–#189, #191–#193) were admitted as self
+  work records by the same run.
+- Next: CI on the fix, launcher advance, then watch maintenance preserve #179
+  and Passport 77/83; refresh the status board and dashboard afterwards.
+
+## Prior checkpoint (2026-10-23 22:10 UTC)
+
+Publication: `development` is `d32daa191033cd3e2dbbe9d3778df9c98f6fcc93`
+(`d32daa1910` on top of `324ab60cc0`), CI `40030055455` passed on the first
+attempt. The commit recomputes a loop checkpoint whose compare-and-swap was lost
+to a cooldown-only write (`src/repair/loop-state.ts`, bounded to three attempts;
+`tests/repair/loop-checkpoint-retry_test.ts`): the durable GitHub cooldown gate
+writes `githubCooldowns` from concurrent reviewer requests, so a checkpoint
+written in the same window lost its CAS and the repair child failed the whole
+cycle closed (`39985707960`, "checkpoint CAS conflict or ambiguity") although
+the synchronizer already admits cooldown-only movement. The same commit protects
+the merge guarantees the launcher and runtime share (issue `#158` item 1:
+`ops/hosted-autonomy-scopes.ts`, `src/repair/review-gate.ts`,
+`src/repair/transitions.ts`, `src/repair/vps-delivery.ts`). Issues `#175`,
+`#153` and `#154` were closed with their evidence; `#158` carries the item-1
+disposition; `#179` is the filed self repair candidate.
+
+Launcher: `sentinel-supervisor` was fast-forwarded `395f54637e..d32daa1910`
+(2026-10-23 22:08 UTC, owner-authorized launcher pin update, exact CI-green
+development ancestor, no workflow file changed). `SENTINEL_AUTO_FOLLOW` stays
+off. The run in flight at the advance (`40026556144`, generation 92 on
+`395f54637e`) finishes on the old launcher; the next dispatcher cycle starts the
+first run on `d32daa1910` (expect the model-disabled bootstrap at generation 93,
+then ordinary runs).
+
+Live evidence read for the gateway pre-merge dispatcher: the repair job's
+foreign mint grant (`40018567715`, logged nonsecret output) is installation
+`173913802` = `SENTINEL_TARGET_INSTALLATION_ID`, `actions: write`,
+`repositoryNames` `ai.ubq.fi` and `passport.ubq.fi`; the trusted author is
+`ubiquity-sentinel[bot]`; the AI PR heads on GitHub equal the records
+(`1254`=`55f8b095`, `1255`=`ba12c64e`, `1258`=`5cc0948f`, base `31ba5a15`).
+Every dispatcher precondition therefore holds on the installed runtime;
+`matrix_cell` tokens carry no grant and refuse (`grant_refused`) by design.
+
+Live state (`sentinel-state/repair` `c2a31d9d88`, 399 records) during
+`40026556144`: self `#179` admitted (implementation on base `d32daa19`), AI
+`#1281`/`#1282`/`#1283` admitted, self `#164` parked `unavailable` after three
+attempts, self `#173` at `delivery` re-arming a five-minute `unavailable` wait
+(`stalled` 17) although PR `174` was merged by the owner at 01:38 UTC; the self
+`development` branch has no branch rules (`/rules/branches/development` is
+empty, classic protection 404), so a self merge takes the conditional self path
+(`selfMergeEnabled` plus an execution proof). AI: the 33 records at `delivery`
+are merged pull requests waiting on the disabled release path
+(`release-deferred:count=33:release_path=disabled`), not pending merges; the
+launcher's queue custody reports `authorization_unavailable` for all 34 held
+records every pass.
+
+Root cause of the AI custody wedge (not changed here): the shipped custody
+capability has `queue.proofActivated: true` while the queue authority pins
+(accepted App-identity canary) are absent and `QUEUE_MODE_CEILING` is `off`.
+Under activated proof the native queue guard is strict, so any observation
+failure (deadline, state or rules read, queue pull read, exception) returns
+`observation_unavailable`, which `holdQueueRecord` writes as a permanent
+`backoff`/`until: null` hold; every later inspection answers `custody` from the
+wait shape alone, and the launcher's `readAuthorization` needs the pins, so no
+path releases the record. AI `#1214` (PR `1256`, stale `push` intent since
+2026-10-21 08:38 UTC) is wedged this way and any AI record can be on a transient
+failure. Options for the owner: treat `observation_unavailable` as transient in
+the runtime (five-minute `unavailable`, no effect authorized, custody facts
+`member`/`merged_head`/`identity_drift`/`queue_required`/`custody` unchanged),
+deactivate queue proof in the capability, or populate the pins through the
+canary; `#1214` additionally needs a one-time release of its hold.
+
+Correction (23:00 UTC, from the live-path audit): the dispatcher's preconditions
+do not hold on `d32daa1910` after all. The launcher strips the foreign mint
+grant before the child runs because its handoff verification parses the grant
+against the durable default `155687488` while the live grant names `173913802`
+(`src/host/hosted-runtime-principal-handoff.ts`, missed by the 2026-10-21
+migration commit `889d28de10`); the child would report `grant_refused`. Fixed in
+the candidate after `d32daa1910` together with the child-side scope comparison
+in `composeHostedAppGitHub` (durable scope, not the live installation), with
+launcher tests on the live id. Second blocker, outside Sentinel:
+`ubiquity/ai.ubq.fi` `scripts/test-scope.ts` grants the complete check set only
+to `merge_group`/`push`/`pull_request` events, so a dispatched run reports
+`skipped` jobs that the required-CI gate reads as failed (issue `#181`, owner
+change). Run `40026556144` (generation 92) settled healthy; its cell for self
+`#179` completed a candidate in 140 s (ingested by the next maintenance pass); a
+Passport cell (`#76`) hit `codex_operation_deadline`.
+
+Third blocker (23:10 UTC, owner decision, `#180` widened): under the activated
+queue proof (`hosted-custody-capability.json`, 2026-10-18) with empty authority
+pins and no `merge_queue` rule, the launcher's delivery pass routes every
+ai.ubq.fi record into the queue booking draft and never calls the merge, and a
+direct merge cannot be booked (`direct_provenance_missing`). No autonomous
+ai.ubq.fi merge can complete until the owner deactivates the proof or finishes
+the queue rollout; the self path (`#179`) is unaffected. Generation 93 bootstrap
+on `d32daa1910` (`40036136812`) settled healthy and its maintenance pass
+ingested the `#179` candidate (head `d79f63bc`, publication pending); the first
+ordinary run on `d32daa1910` is `40037450557`.
+
+Launcher advance 2 (23:15 UTC): `sentinel-supervisor` fast-forwarded
+`d32daa1910..79eb079e8d` (CI `40037212959` success; the handoff fix). Two
+adversarial review lenses (live regression, authority) found no blocker and no
+weakening; notes retained for later: the parent-side installation parse
+duplicates `parseAppInstallationId` (kept out of the launcher to avoid importing
+the runtime entrypoint), the launcher fixture child does not assert the target
+id itself, and a non-default `SENTINEL_APP_INSTALLATION_ID` override would now
+abort the pass at compose instead of degrading to the local port (unchanged
+pre-migration semantics; the workflow pins the literal `155687488`).
+
+Review policy (owner, 2026-10-23 23:40 UTC): keep running review rounds until no
+P0 remains, fixing every P0 in each round; a round without P0 writes its P1+
+findings to individual GitHub issues. Round 1 (live-path audit, five tracers;
+verify phase still running): P0s were the launcher grant handoff (fixed,
+`79eb079e8d`), the activated queue proof and the ai.ubq.fi scope rule. The
+queue-proof deactivation (`queue.proofActivated: false` in
+`src/host/hosted-custody-capability.json`, plus the literal `true` assertion at
+`tests/host/merge-queue-kill-switch_test.ts:363`) was attempted at 23:45 UTC and
+refused by this session's permission classifier as a custody weakening, so it
+remains the owner's one-line action (`#180`); the scope rule is `#181` (outside
+Sentinel). P1+ findings pending the verify phase: strict-hold wedge class
+(`#180`), launcher custody prelude gating every delivery, `skipped`/neutral
+check conclusions and no re-dispatch after a cancelled run, reroute rounds
+charged, self CI-first `test-local` admission window, self merge
+pipeline-identity refusal without a park, matrix_plan dispatcher deadline; they
+become individual issues once the round confirms no further P0.
+
+Transparency (owner request, 2026-10-24 00:05 UTC): progress and blockers are
+now reported in plain language in two places refreshed at each checkpoint of
+this session: the GitHub status board issue `#182` (what is blocking, who can
+unblock it, the exact action; every tracked issue per target with its PR and
+stage; recent runs) and the claude.ai dashboard "Sentinel Status Board"
+(https://claude.ai/artifact/9e1c69dyqQArndV3cENx7h, same data as tables and
+tiles). Both are generated from the `sentinel-state/repair` work records and the
+Actions API by the scratchpad script; Sentinel does not yet publish them itself
+(a self issue will ask for per-issue progress comments). Review policy amended
+by the owner at the same time: at most five review rounds, and the loop stops at
+the first round that reports no P0; P1+ of that round become individual issues.
+
+Self-path corrections (00:15 UTC): `a3c271be60` (self aggregate expectation,
+parked pre-write self-merge refusals) failed CI `40042505933` in eight host
+tests whose self-scope fixtures carry a generic green check and no `test-local`:
+hard-coding the aggregate name made every fixture head wait. A first correction
+read the base's suites for the self scope and broke the three tests that pin
+"the self scope reads no base" (CI `40044270243`). The final rule reads no base
+and expects `test-local` only on a head whose own `ci.yml` jobs (`quality`,
+`test-shards (…)`) already report; generic fixture checks add no expectation
+(reproduced and re-run locally: the 8 host tests and the 3 coverage tests pass).
+
+Next action: observe the first run on `d32daa1910` (bootstrap, then the first
+ordinary run) for `sentinel_premerge_ci` decisions in `matrix_plan`/`repair` and
+for the resulting Gateway CI run, native review and launcher merge on AI
+`1254`/`1255`/`1258`; read `40026556144`'s repair log for the `#173`/`#164`
+waits; owner decisions on the Passport gate and the queue custody wedge.
+
+## Prior checkpoint (2026-10-23 21:10 UTC)
 
 Audit of the 124 untrusted commits after the trusted baseline
 `e05ba64f1142710e4a902a9ae088593a1ca411f5` (current head
@@ -145,6 +337,36 @@ scope; and authorize a non-protected self repair or recover the spent self
 record. No target policy, review cap, charge or state was rewritten.
 
 ## Active task register
+
+Snapshot: 2026-10-23 22:15 UTC. Owner: the current primary integration owner
+(this session). Goal: Sentinel stable in GitHub Actions, repairing every
+outstanding issue in `ubiquity-sentinel/sentinel` and `ubiquity/ai.ubq.fi`
+(Passport a bonus); acceptance is green scheduled cycles and one autonomous
+issue -> PR -> completed native review -> merge per target.
+
+- Published and CI-green on `development`: dispatcher and authority inventory
+  `b7562c3742` (CI `40024444005`), history-cache validity `1dda5f0a1c`,
+  issue-only matrix scoping `77437d8921` (CI `40025261428`, attempt 2),
+  checkpoint CAS retry and `#158` item-1 protections `d32daa1910` (CI
+  `40030055455`). Launcher `sentinel-supervisor` advanced to `d32daa1910` at
+  22:08 UTC; installation of that runtime is the next hosted assertion.
+- Owner decisions open: Passport merge gate on a plan-limited private repository
+  (DECISIONS 2026-10-23); ai.ubq.fi queue custody wedge (`#180`, options
+  recorded there); AI `#1214` hold release; PR `171` (`#169`) task acceptance;
+  `SENTINEL_AUTO_FOLLOW` after the first installed runtime proves.
+- Live proof pending on the installed runtime: `sentinel_premerge_ci` dispatch
+  for AI `1254`/`1255`/`1258`, their Gateway CI, native review and launcher
+  merge; self `#179` (implementation started on base `d32daa19`) to PR, native
+  review and the conditional self merge; self `#173` (PR `174` merged by the
+  owner) and `#164` (prerequisite wait) dispositions from the `40026556144`
+  repair log.
+- Remaining audit findings for later disposition: `composeHostedAppGitHub`
+  installation-id check for foreign targets (latent), self mint grant absent in
+  the repair job, `ciFirstSelfInstalledRuntimeProven` denylist, tautological
+  native findings-rendering parity check, dead review-model selector plumbing,
+  duplicated env block in `hosted-runtime-child.ts`.
+
+### Register snapshot 2026-10-21 15:29 UTC (superseded)
 
 Snapshot: 2026-10-21 15:29 UTC. The original chat owns the active completion
 goal. Canonical `development` contains native review `77a41943`, held-refresh

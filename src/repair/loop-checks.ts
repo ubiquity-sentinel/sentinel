@@ -15,10 +15,18 @@ import type {
 import { markBlocked, setWait } from "./transitions.ts";
 
 /**
+ * The self scope's `ci.yml`: the jobs the aggregate `needs:` (a shard is
+ * `test-shards (<name>)`) and the aggregate itself.
+ */
+const SELF_SUITE_JOBS = ["quality", "test-shards"] as const;
+const SELF_AGGREGATE_CHECK = "test-local";
+
+/**
  * Pure CI gate decision. Returns "proceed" only when every (deduped by name)
  * check is completed with `success` conclusion. Returns "wait" when any check
  * is still running or when no checks are recorded (no evidence CI ran).
- * Returns a block detail when any check failed (including skipped/neutral,
+ * Returns a block detail when any check completed non-green (failure,
+ * timed_out, cancelled, action_required, stale; skipped and neutral are green,
  * matching requiredChecksState semantics). Exported for focused testing.
  *
  * It judges only the checks that exist: GitHub creates a `needs:` job's
@@ -63,17 +71,29 @@ export function decideCiGate(
  * The base read is the port's lenient `readCheckSuites` (name and suite
  * only), not the strict `readChecks`: a base may carry runs no pull request
  * head runs whose names exceed the strict label bound. The sentinel self
- * scope reads no base at all, like the launcher: its gate is the one named
- * `test-local` job (ci.yml, no `needs:`), and its `development` tip also
- * carries a `dispatch` run per five-minute schedule and the supervisor.yml
- * runs of `sentinel-supervisor`, which is fast-forwarded with it.
+ * scope reads no base at all, like the launcher: its `development` tip carries
+ * the supervisor.yml runs of `sentinel-supervisor` (fast-forwarded with it)
+ * and the five-minute `dispatch` runs, whose listings are large and share no
+ * name with a pull request head. Its gate is the one named `test-local` job
+ * of `ci.yml`, since 2026-10-20 a `needs: [quality, test-shards]` aggregate
+ * that GitHub creates only once those jobs finish: a head whose own `ci.yml`
+ * jobs already report but whose aggregate does not exist yet is awaited like
+ * running CI instead of admitting a review before the aggregate ran.
  */
 export async function absentExpectedChecks(
   deps: RepairCycleDepsV1,
   record: WorkRecordV1,
   head: readonly GitHubCheckV1[],
 ): Promise<string[] | null> {
-  if (isSelfScopeZero(record.repository)) return [];
+  if (isSelfScopeZero(record.repository)) {
+    const names = new Set(head.map((check) => check.name));
+    const suiteReported = [...names].some((name) =>
+      SELF_SUITE_JOBS.some((job) => name === job || name.startsWith(`${job} (`))
+    );
+    return suiteReported && !names.has(SELF_AGGREGATE_CHECK)
+      ? [SELF_AGGREGATE_CHECK]
+      : [];
+  }
   const observed = await deps.github.readCheckSuites(record.target.base);
   if (!observed.ok) return null;
   return missingExpectedChecks(head, observed.value.checks);

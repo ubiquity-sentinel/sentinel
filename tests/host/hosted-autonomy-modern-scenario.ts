@@ -831,9 +831,11 @@ async function modernRecoveryScenarioInGraph(
         // consumption, never a failed run: the record waits in flight, still
         // charged, and its producer's next (duplicate) visit finishes it.
         assert(!(result instanceof Error), String(result));
+        // The unfinished preservation is counted, never silent.
         assert.deepEqual((result as HostedAutonomyResultV1).actions, [
           "queue:inactive_no_rule",
           "current-matrix:ingested:1",
+          "current-matrix:preservation-unfinished:1",
         ]);
         assert.equal(casRefused, 1, "the same pass must reach its CAS");
         const waiting = after.value.snapshot.work.find((row) =>
