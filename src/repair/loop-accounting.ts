@@ -1,5 +1,8 @@
 /** Repair loop internals: accounting. */
-import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  findReservationV1,
+  type RepairStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { loadSnapshot, persistTransition } from "./loop-state.ts";
 import type {
@@ -82,9 +85,7 @@ export async function settleReviewCharge(
     if (read === null) {
       return { kind: "state_error", detail: "repair state unavailable" };
     }
-    const existing = read.snapshot.reservations.find(
-      (item) => item.id === reservationId,
-    );
+    const existing = findReservationV1(read.snapshot, reservationId);
     if (
       existing !== undefined &&
       (existing.outcome === "submitted" || existing.outcome === "ambiguous")

@@ -14,6 +14,7 @@
  * advisory and grants nothing.
  */
 import type { MatrixPlanDiagnosticV1 } from "./matrix-planner.ts";
+import { MaxItems } from "../contracts/validation.ts";
 
 export const MATRIX_PLAN_DIAGNOSTIC_KIND = "sentinel_matrix_plan_diagnostic";
 
@@ -57,6 +58,7 @@ export const MATRIX_PLAN_NOT_READY_REASONS: readonly string[] = [
   "candidateState.preserved=null",
   "target.branch=null",
   "config.sessionBound=null",
+  "no_ci_and_no_local_verify",
   "target.head-not-null",
   "existing_head_continuation_live",
   "config=null",
@@ -64,8 +66,56 @@ export const MATRIX_PLAN_NOT_READY_REASONS: readonly string[] = [
   "other",
 ];
 
+/** Closed reason vocabulary for a considered record's preparation outcome. */
+export const MATRIX_PLAN_DEFERRED_REASONS: readonly string[] = [
+  "progress",
+  "memory_refused",
+  "blocked",
+  "state_error",
+  "bounds",
+  "artifact",
+  "cooldown",
+  "admission_capacity",
+  "admission",
+  "deferred",
+  "other",
+];
+
 const SKIP = new Set(MATRIX_PLAN_SKIP_REASONS);
 const NOT_READY = new Set(MATRIX_PLAN_NOT_READY_REASONS);
+const DEFERRED = new Set(MATRIX_PLAN_DEFERRED_REASONS);
+
+/** The closed key of one preparation outcome (never its raw detail). */
+export function planDeferredKey(
+  outcome: { kind: string; detail?: string },
+  waitReason?: string | null,
+): string {
+  // A capacity refusal persists a bounded `ledger_capacity` wait and reports
+  // `progress` (the wait was written), so the wait reason keeps the planner's
+  // closed histogram precise instead of collapsing it to `progress`.
+  if (waitReason === "ledger_capacity") return "admission_capacity";
+  if (outcome.kind === "progress") return "progress";
+  if (outcome.kind === "blocked") return "blocked";
+  if (outcome.kind === "state_error") return "state_error";
+  if (outcome.kind !== "deferred") return "other";
+  const detail = (outcome.detail ?? "").toLowerCase();
+  if (detail.includes("artifact")) return "artifact";
+  if (
+    detail.includes("cutoff") || detail.includes("run bounds") ||
+    detail.includes("deadline")
+  ) return "bounds";
+  if (detail.includes("cooldown") || detail.includes("github")) {
+    return "cooldown";
+  }
+  if (
+    detail.includes("capacity") || detail.includes("ledger") ||
+    detail.includes("invalid")
+  ) return "admission_capacity";
+  if (detail.includes("admission") || detail.includes("unavailable")) {
+    return "admission";
+  }
+  return "deferred";
+}
 
 /** The closed key of one planner skip reason. */
 export function planSkipKey(raw: string): string {
@@ -98,6 +148,9 @@ export interface MatrixPlanDiagnosticLineV1 {
   waveId: string;
   cause: MatrixPlanDiagnosticCauseV1;
   prepared: number;
+  attempted: number;
+  deferred: number;
+  deferredByReason: Record<string, number>;
   totalRecords: number | null;
   repositories: MatrixPlanRepositoryLineV1[];
 }
@@ -110,12 +163,18 @@ export interface HostedMatrixPlanDiagnosticV1 {
   waveId: string;
   cause: MatrixPlanDiagnosticCauseV1;
   prepared: number;
+  attempted: number;
+  deferred: number;
+  deferredByReason: Record<string, number>;
   totalRecords: number | null;
   repositories: MatrixPlanRepositoryLineV1[];
 }
 
 const LINE_KEYS = [
+  "attempted",
   "cause",
+  "deferred",
+  "deferredByReason",
   "kind",
   "prepared",
   "repositories",
@@ -127,6 +186,10 @@ const MAX_LINE_CHARS = 16_384;
 const MAX_REPOSITORIES = 32;
 const MAX_COUNT = 1_000_000;
 const SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}$/;
+
+function planDeferredKeyOf(reason: string): string {
+  return DEFERRED.has(reason) ? reason : "other";
+}
 
 function closedCounts(
   raw: Record<string, number>,
@@ -144,6 +207,9 @@ function closedCounts(
 export function matrixPlanDiagnosticLineOf(input: {
   waveId: string;
   prepared: number;
+  attempted?: number;
+  deferred?: number;
+  deferredByReason?: Record<string, number>;
   cause: MatrixPlanDiagnosticCauseV1;
   diagnostic?: MatrixPlanDiagnosticV1;
 }): MatrixPlanDiagnosticLineV1 {
@@ -153,6 +219,12 @@ export function matrixPlanDiagnosticLineOf(input: {
     waveId: input.waveId,
     cause: input.cause,
     prepared: input.prepared,
+    attempted: input.attempted ?? input.diagnostic?.attempted ?? 0,
+    deferred: input.deferred ?? input.diagnostic?.deferred ?? 0,
+    deferredByReason: closedCounts(
+      input.deferredByReason ?? input.diagnostic?.deferredByReason ?? {},
+      planDeferredKeyOf,
+    ),
     totalRecords: input.diagnostic?.totalRecords ?? null,
     repositories: Object.keys(byRepository).sort().map((repository) => ({
       repository,
@@ -200,7 +272,9 @@ function parseLine(
   if (
     !exactKeys(value, LINE_KEYS) || value.waveId !== waveId ||
     (value.cause !== "planner" && value.cause !== "queue_custody_idle") ||
-    !isCount(value.prepared, 256) ||
+    !isCount(value.prepared, MaxItems.snapshotRecords) ||
+    !isCount(value.attempted, MaxItems.snapshotRecords) ||
+    !isCount(value.deferred, MaxItems.snapshotRecords) ||
     (value.totalRecords !== null && !isCount(value.totalRecords)) ||
     !Array.isArray(value.repositories) ||
     value.repositories.length > MAX_REPOSITORIES
@@ -220,6 +294,8 @@ function parseLine(
     if (skippedByReason === null || notReadyByReason === null) return null;
     repositories.push({ repository, skippedByReason, notReadyByReason });
   }
+  const deferredByReason = keptCounts(value.deferredByReason, DEFERRED);
+  if (deferredByReason === null) return null;
   return {
     version: "v1",
     kind: MATRIX_PLAN_DIAGNOSTIC_KIND,
@@ -227,6 +303,9 @@ function parseLine(
     waveId,
     cause: value.cause,
     prepared: value.prepared,
+    attempted: value.attempted,
+    deferred: value.deferred,
+    deferredByReason,
     totalRecords: value.totalRecords as number | null,
     repositories,
   };

@@ -1,5 +1,6 @@
 /** Repair loop internals: a pull request merged outside Sentinel's own path. */
 import type { GitSha } from "../contracts/brands.ts";
+import { allReservationsV1 } from "../contracts/state-snapshots.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type {
   GitHubPullRequestV1,
@@ -76,9 +77,8 @@ export function humanMergeRequestId(
 }
 
 /**
- * The merge actor when the port observed it (string or `{ login }`). The
- * frozen pull contract currently omits `merged_by`, so a live read that does
- * not carry it records `unknown` rather than guessing from the PR author.
+ * The merge actor when the port observed it (string or legacy `{ login }`).
+ * Missing actor data records `unknown` rather than guessing from the PR author.
  */
 function observedMergedBy(pull: GitHubPullRequestV1): string | null {
   const candidate = pull as GitHubPullRequestV1 & {
@@ -181,14 +181,16 @@ export async function completeHumanMerge(
 ): Promise<StepResultV1> {
   const admission = reservedReviewAdmission(
     record,
-    context.snapshot.reservations,
+    allReservationsV1(context.snapshot),
   );
   const namedAdmission = record.intent?.kind === "review_request"
     ? record.intent.requestId
     : null;
   if (
     namedAdmission !== null && admission === null &&
-    !context.snapshot.reservations.some((row) => row.id === namedAdmission)
+    !allReservationsV1(context.snapshot).some((row) =>
+      row.id === namedAdmission
+    )
   ) {
     // A saved review intent names an admission the ledger does not carry: the
     // charge is unaccounted, so completing the record would lose it.

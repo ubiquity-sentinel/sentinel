@@ -1,5 +1,6 @@
 /** Serialized idempotent matrix artifact ingestion. */
 import type { GitSha } from "../contracts/brands.ts";
+import { findReservationV1 } from "../contracts/state-snapshots.ts";
 import {
   matrixBundleFileNameV1,
   type MatrixCellResultV1,
@@ -171,8 +172,9 @@ export async function ingestMatrixResults(
       });
       continue;
     }
-    const reservation = context.snapshot.reservations.find((entry) =>
-      entry.id === cell.reservationId
+    const reservation = findReservationV1(
+      context.snapshot,
+      cell.reservationId,
     );
     if (
       !sameRepository(record.repository, cell.repository) ||

@@ -395,6 +395,12 @@ export async function rig(
       stateRemoteUrl: remote.remoteUrl,
       refreshSelf: () => Promise.resolve(sha),
       resolveDefaultBranch: () => Promise.resolve("development"),
+      resolveTreeFacts: () =>
+        Promise.resolve({
+          files: ["deno.json"],
+          scripts: ["test"],
+          hasCiWorkflow: true,
+        }),
       preflight: () => Promise.resolve(),
       env: {
         GITHUB_RUN_ID: String(currentRun),

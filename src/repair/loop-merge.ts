@@ -1,4 +1,5 @@
 import { queueDeliveryProvenanceRef } from "../github/queue-delivery-provenance.ts";
+import { allReservationsV1 } from "../contracts/state-snapshots.ts";
 import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 import { prepareExistingPrEffect } from "./loop-existing-pr.ts";
 import {
@@ -26,6 +27,7 @@ import {
   reviewOperationKey,
   reviewReceiptId,
 } from "./keys.ts";
+import { completeHumanMerge } from "./human-merge.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { gateDeliveryOnChecks } from "./loop-checks.ts";
@@ -227,7 +229,9 @@ export async function executeMerge(
     reviewOperationKey(record.target.pr!, record.target.head!),
     record.target.head!,
   );
-  const attemptedReviews = context.snapshot.reservations.filter((charge) =>
+  const attemptedReviews = allReservationsV1(context.snapshot).filter((
+    charge,
+  ) =>
     sameRepositoryIdentity(charge.repository, record.repository) &&
     charge.taskId === record.id && charge.head === record.target.head &&
     charge.purpose === "review_request" &&
@@ -740,9 +744,16 @@ export async function reconcileMergeIntent(
   }
   if (pull.state === "merged" && pull.mergeSha !== null) {
     if (pull.head !== record.target.head) {
-      // Reconcile only the head this task reviewed: an observed merged head
-      // different from the saved reviewed head is an identity contradiction
-      // and must never produce a release request for the wrong revision.
+      if (
+        pull.number === record.target.pr &&
+        pull.headRef === record.target.branch
+      ) {
+        // A human may merge a newer head while our merge intent is pending.
+        // Complete our own pull with provenance, never the prior receipt.
+        return completeHumanMerge(deps, context, record, pull, pull.mergeSha);
+      }
+      // A foreign pull or branch is still an identity contradiction, not a
+      // human merge of this record's publication.
       return persistWork(
         deps,
         context,

@@ -10,7 +10,9 @@ import assert from "node:assert/strict";
 import { createLocalRepositoryConfig } from "../../src/host/local.ts";
 import {
   createDefaultBranchResolver,
+  createGatedTargetReadTransport,
   createTargetConfigV1,
+  createTargetTreeFactsResolver,
   loadTargetConfigsV1,
   parseTargetSlugsV1,
   readTargetSlugsV1,
@@ -18,6 +20,11 @@ import {
   TARGETS_FILE_NAME,
   TARGETS_MAX,
 } from "../../src/host/targets.ts";
+import { portError, portOk } from "../../src/contracts/ports.ts";
+import {
+  isNoTestEvidenceTargetV1,
+  NO_TEST_EVIDENCE_COMMAND_ID,
+} from "../../src/host/target-policy-generic.ts";
 import type { TargetSlugV1 } from "../../src/host/targets.ts";
 import type { HttpRequestV1, HttpResponseV1 } from "../../src/github/http.ts";
 
@@ -37,16 +44,47 @@ Deno.test("targets: the shipped setting is a plain array", async () => {
   assert.ok(Array.isArray(parsed), "the setting is a plain array");
 });
 
-Deno.test("targets: the shipped setting names all three targets", async () => {
+/** The 2026-11-01 owner directive: every active ubiquity code repository. */
+const SHIPPED_TARGETS = [
+  "ubiquity-sentinel/sentinel",
+  "ubiquity/ai.ubq.fi",
+  "ubiquity/passport.ubq.fi",
+  "ubiquity/prospector",
+  "ubiquity/prospector-chrome-extension",
+  "ubiquity/ubiquity-dollar",
+  "ubiquity/ubiquibar",
+  "ubiquity/stake.ubq.fi",
+  "ubiquity/prospector-monorepo",
+  "ubiquity/uusd.ubq.fi",
+  "ubiquity/work.ubq.fi",
+  "ubiquity/ubq.fi-router",
+  "ubiquity/pay.ubq.fi",
+  "ubiquity/arbitrage-bot",
+  "ubiquity/xp.ubq.fi",
+  "ubiquity/permit2-rpc-manager",
+  "ubiquity/deno-deploy-workflow",
+  "ubiquity/webauthn-evm-signing-key",
+  "ubiquity/ts-template",
+  "ubiquity/keygen.ubq.fi",
+  "ubiquity/demo.ubq.fi",
+  "ubiquity/checkout.ubq.fi",
+  "ubiquity/uad-contracts",
+  "ubiquity/supabase-payments-audit",
+  "ubiquity/permit3",
+  "ubiquity/permit2-allowance.ubq.fi",
+  "ubiquity/partner.ubq.fi",
+  "ubiquity/notifications.ubq.fi",
+  "ubiquity/github-labels-processor",
+  "ubiquity/card-issuance",
+];
+
+Deno.test("targets: the shipped setting names every active ubiquity repository", async () => {
   const text = await Deno.readTextFile(`./${TARGETS_FILE_NAME}`);
   assert.deepEqual(
     parseTargetSlugsV1(JSON.parse(text)).map((entry) => entry.slug),
-    [
-      "ubiquity-sentinel/sentinel",
-      "ubiquity/ai.ubq.fi",
-      "ubiquity/passport.ubq.fi",
-    ],
+    SHIPPED_TARGETS,
   );
+  assert.ok(SHIPPED_TARGETS.length <= TARGETS_MAX, "within the fan-out bound");
 });
 
 Deno.test("targets: the setting file is ordinary work under the 2026-10-30 reduced set", () => {
@@ -139,13 +177,35 @@ Deno.test("targets: a slug can only change identity and base branch", () => {
     installationId: TEMPLATE.repository.installationId,
   });
   assert.equal(config.baseBranch, "main");
-  // Everything else stays the trusted template's value.
-  assert.deepEqual(config.commands, TEMPLATE.commands);
-  assert.deepEqual(config.commandRegistry, TEMPLATE.commandRegistry);
-  assert.deepEqual(config.protectedPaths, TEMPLATE.protectedPaths);
+  // A generic slug still cannot choose policy: without facts it gets the
+  // facts-less generic policy (no local verify, generic credential boundary).
+  assert.equal(config.commands.test, "no_local_verify");
+  assert.equal(
+    config.commandRegistry.commands[config.commands.test].executable,
+    "false",
+    "never claim a local verify without a checkout",
+  );
+  for (
+    const path of [".env", ".git/", ".npmrc", ".secrets", ".actrc", ".vars"]
+  ) assert.ok(config.protectedPaths.includes(path), path);
+  assert.equal(
+    config.protectedPaths.includes("src/host/local-config.ts"),
+    false,
+    "the Sentinel custody list is not a generic target's boundary",
+  );
   assert.deepEqual(config.sessionBound, TEMPLATE.sessionBound);
   assert.deepEqual(config.liveStartLimits, TEMPLATE.liveStartLimits);
   assert.equal(config.secretRef, TEMPLATE.secretRef);
+
+  // Only the Sentinel repository itself keeps the named template.
+  const self = createTargetConfigV1(
+    TEMPLATE,
+    slug("ubiquity-sentinel", "sentinel"),
+    "main",
+  );
+  assert.deepEqual(self.commands, TEMPLATE.commands);
+  assert.deepEqual(self.commandRegistry, TEMPLATE.commandRegistry);
+  assert.deepEqual(self.protectedPaths, TEMPLATE.protectedPaths);
 });
 
 Deno.test("targets: a target whose default branch is unavailable is skipped", async () => {
@@ -155,6 +215,7 @@ Deno.test("targets: a target whose default branch is unavailable is skipped", as
       Promise.resolve('["ubiquity-sentinel/sentinel", "ubiquity/other"]'),
     resolveDefaultBranch: (target) =>
       Promise.resolve(target.name === "sentinel" ? "development" : null),
+    resolveTreeFacts: () => Promise.resolve({ files: [], hasCiWorkflow: true }),
   });
   assert.deepEqual(
     loaded.configs.map((config) =>
@@ -163,6 +224,378 @@ Deno.test("targets: a target whose default branch is unavailable is skipped", as
     ["sentinel@development"],
   );
   assert.deepEqual([...loaded.skipped], ["ubiquity/other"]);
+});
+
+Deno.test("targets: a bun target with CI gets the bun verify policy", async () => {
+  const loaded = await loadTargetConfigsV1({
+    template: TEMPLATE,
+    readFile: () => Promise.resolve('["ubiquity/prospector"]'),
+    resolveDefaultBranch: () => Promise.resolve("development"),
+    resolveTreeFacts: () =>
+      Promise.resolve({
+        files: ["bun.lock", "package.json"],
+        manifestScripts: { package: ["test"] },
+        hasCiWorkflow: true,
+      }),
+  });
+  assert.equal(loaded.configs.length, 1);
+  const config = loaded.configs[0]!;
+  assert.equal(config.adapter.kind, "github");
+  const spec = config.commandRegistry.commands[config.commands.test];
+  assert.equal(spec.executable, "bun");
+  assert.deepEqual(spec.args, ["--no-env-file", "run", "test"]);
+  assert.equal(isNoTestEvidenceTargetV1(config), false);
+});
+
+Deno.test("targets: both manifests keep their script names separate", async () => {
+  const loaded = await loadTargetConfigsV1({
+    template: TEMPLATE,
+    readFile: () => Promise.resolve('["ubiquity/prospector"]'),
+    resolveDefaultBranch: () => Promise.resolve("main"),
+    resolveTreeFacts: () =>
+      Promise.resolve({
+        // deno.json is detected first, and only its own task may run.
+        files: ["deno.json", "package.json", "bun.lock"],
+        manifestScripts: { deno: ["check"], package: ["test"] },
+        hasCiWorkflow: true,
+      }),
+  });
+  const config = loaded.configs[0]!;
+  const spec = config.commandRegistry.commands[config.commands.test];
+  assert.equal(spec.executable, "deno");
+  assert.deepEqual(spec.args, ["task", "check"]);
+});
+
+Deno.test("targets: no CI and no local verify carries the no-evidence park", async () => {
+  const loaded = await loadTargetConfigsV1({
+    template: TEMPLATE,
+    readFile: () => Promise.resolve('["ubiquity/empty-repo"]'),
+    resolveDefaultBranch: () => Promise.resolve("main"),
+    resolveTreeFacts: () =>
+      Promise.resolve({ files: ["README.md"], hasCiWorkflow: false }),
+  });
+  assert.equal(loaded.configs.length, 1);
+  const config = loaded.configs[0]!;
+  assert.equal(config.commands.test, NO_TEST_EVIDENCE_COMMAND_ID);
+  assert.equal(isNoTestEvidenceTargetV1(config), true);
+  assert.equal(
+    config.commandRegistry.commands[config.commands.test].executable,
+    "false",
+  );
+});
+
+Deno.test("targets: unreadable tree facts skip the target like a bad branch", async () => {
+  const loaded = await loadTargetConfigsV1({
+    template: TEMPLATE,
+    readFile: () =>
+      Promise.resolve('["ubiquity-sentinel/sentinel", "ubiquity/offline"]'),
+    resolveDefaultBranch: () => Promise.resolve("development"),
+    resolveTreeFacts: (target) =>
+      Promise.resolve(
+        target.name === "offline" ? null : {
+          files: ["deno.json"],
+          manifestScripts: { deno: ["test"] },
+          hasCiWorkflow: true,
+        },
+      ),
+  });
+  // A facts read is authoritative: an unprovable answer skips the generic
+  // target instead of rebuilding it from an assumed toolchain.
+  assert.deepEqual(
+    loaded.configs.map((config) => config.repository.name),
+    ["sentinel"],
+  );
+  assert.deepEqual([...loaded.skipped], ["ubiquity/offline"]);
+  assert.deepEqual([...loaded.factsUnavailable], ["ubiquity/offline"]);
+  assert.deepEqual(
+    loaded.configs[0]!.commandRegistry,
+    TEMPLATE.commandRegistry,
+  );
+});
+
+Deno.test("targets: a malformed sentinel.protected skips the target", async () => {
+  const root = "https://api.github.com/repos/ubiquity/protected/contents";
+  const file = (name: string, text: string) =>
+    JSON.stringify({
+      type: "file",
+      name,
+      path: name,
+      encoding: "base64",
+      content: btoa(text),
+    });
+  const routes = new Map<string, string>([
+    [
+      `${root}?ref=main`,
+      JSON.stringify([
+        { type: "file", name: "package.json", path: "package.json" },
+        {
+          type: "file",
+          name: "sentinel.protected",
+          path: "sentinel.protected",
+        },
+      ]),
+    ],
+    [
+      `${root}/package.json?ref=main`,
+      file("package.json", JSON.stringify({ scripts: { test: "bun test" } })),
+    ],
+    [
+      `${root}/sentinel.protected?ref=main`,
+      file("sentinel.protected", "deploy/../escape\n"),
+    ],
+  ]);
+  const resolver = createTargetTreeFactsResolver({
+    http: (request) =>
+      Promise.resolve(
+        routes.has(request.url)
+          ? response(200, routes.get(request.url)!)
+          : response(404, "{}"),
+      ),
+    token: "token-value",
+  });
+  const loaded = await loadTargetConfigsV1({
+    template: TEMPLATE,
+    readFile: () => Promise.resolve('["ubiquity/protected"]'),
+    resolveDefaultBranch: () => Promise.resolve("main"),
+    resolveTreeFacts: resolver,
+  });
+  assert.deepEqual(loaded.configs, []);
+  assert.deepEqual([...loaded.skipped], ["ubiquity/protected"]);
+  assert.deepEqual([...loaded.factsUnavailable], ["ubiquity/protected"]);
+});
+
+Deno.test("targets: named policies never spend a tree-facts read", async () => {
+  const asked: string[] = [];
+  const loaded = await loadTargetConfigsV1({
+    template: TEMPLATE,
+    readFile: () =>
+      Promise.resolve(
+        '["ubiquity-sentinel/sentinel", "ubiquity/passport.ubq.fi", "ubiquity/ai.ubq.fi", "ubiquity/prospector"]',
+      ),
+    resolveDefaultBranch: () => Promise.resolve("development"),
+    resolveTreeFacts: (target) => {
+      asked.push(target.slug);
+      return Promise.resolve({
+        files: ["bun.lock", "package.json"],
+        manifestScripts: { package: ["test"] },
+        hasCiWorkflow: true,
+      });
+    },
+  });
+  assert.deepEqual(asked, ["ubiquity/prospector"]);
+  assert.deepEqual(
+    loaded.configs.map((config) => config.commands.test),
+    ["test_ci", "passport_verify", "gateway_verify", "generic_verify"],
+  );
+});
+
+Deno.test("targets: an omitted facts resolver keeps the generic boundary", async () => {
+  const loaded = await loadTargetConfigsV1({
+    template: TEMPLATE,
+    readFile: () =>
+      Promise.resolve('["ubiquity-sentinel/sentinel", "ubiquity/prospector"]'),
+    resolveDefaultBranch: () => Promise.resolve("development"),
+  });
+  assert.deepEqual([...loaded.skipped], []);
+  assert.deepEqual(
+    loaded.configs[0]!.commandRegistry,
+    TEMPLATE.commandRegistry,
+  );
+  const generic = loaded.configs[1]!;
+  assert.equal(generic.commands.test, "no_local_verify");
+  assert.ok(generic.protectedPaths.includes(".git/"));
+  assert.ok(generic.protectedPaths.includes(".npmrc"));
+});
+
+Deno.test("targets: tree facts read the exact branch's markers and CI trigger", async () => {
+  const rootUrl = "https://api.github.com/repos/ubiquity/prospector/contents";
+  const routes = new Map<string, string>();
+  const file = (name: string, text: string) =>
+    JSON.stringify({
+      type: "file",
+      name,
+      path: name,
+      encoding: "base64",
+      content: btoa(text),
+    });
+  routes.set(
+    `${rootUrl}?ref=main`,
+    JSON.stringify([
+      { type: "file", name: "package.json", path: "package.json" },
+      { type: "file", name: "bun.lock", path: "bun.lock" },
+      { type: "file", name: "deno.jsonc", path: "deno.jsonc" },
+      { type: "file", name: "sentinel.protected", path: "sentinel.protected" },
+      { type: "dir", name: ".github", path: ".github" },
+    ]),
+  );
+  routes.set(
+    `${rootUrl}/package.json?ref=main`,
+    file("package.json", JSON.stringify({ scripts: { test: "bun test" } })),
+  );
+  routes.set(
+    `${rootUrl}/deno.jsonc?ref=main`,
+    file(
+      "deno.jsonc",
+      // Deno's own dialect: comments and trailing commas in both extensions.
+      '{\n  // owner lanes\n  "tasks": { "check": "deno check src/mod.ts", },\n}\n',
+    ),
+  );
+  routes.set(
+    `${rootUrl}/sentinel.protected?ref=main`,
+    file("sentinel.protected", "# owner boundary\ndeploy/\n"),
+  );
+  routes.set(
+    `${rootUrl}/.github/workflows?ref=main`,
+    JSON.stringify([
+      {
+        type: "file",
+        name: "ci.yml",
+        path: ".github/workflows/ci.yml",
+      },
+    ]),
+  );
+  routes.set(
+    `${rootUrl}/.github/workflows/ci.yml?ref=main`,
+    file("ci.yml", "on:\n  pull_request:\n"),
+  );
+  const http = (request: HttpRequestV1) => {
+    const body = routes.get(request.url);
+    return Promise.resolve(
+      body === undefined ? response(404, "{}") : response(200, body),
+    );
+  };
+  const facts = createTargetTreeFactsResolver({ http, token: "token-value" });
+  const read = await facts(slug("ubiquity", "prospector"), "main");
+  assert.deepEqual(read, {
+    files: [
+      "package.json",
+      "bun.lock",
+      "deno.jsonc",
+      "sentinel.protected",
+    ],
+    hasCiWorkflow: true,
+    manifestScripts: { package: ["test"], deno: ["check"] },
+    sentinelProtected: ["deploy"],
+  });
+
+  // A workflow that only runs on push is not pull-request CI.
+  routes.set(
+    `${rootUrl}/.github/workflows/ci.yml?ref=main`,
+    file("ci.yml", "on:\n  push:\n"),
+  );
+  const pushOnly = await facts(slug("ubiquity", "prospector"), "main");
+  assert.equal(pushOnly?.hasCiWorkflow, false);
+
+  // Flow-style triggers are pull-request CI too.
+  for (
+    const flow of [
+      "on: [push, pull_request]\n",
+      "on: {pull_request: {}}\n",
+      "on: pull_request\n",
+    ]
+  ) {
+    routes.set(
+      `${rootUrl}/.github/workflows/ci.yml?ref=main`,
+      file("ci.yml", flow),
+    );
+    const flowFacts = await facts(slug("ubiquity", "prospector"), "main");
+    assert.equal(flowFacts?.hasCiWorkflow, true, flow);
+  }
+  // Block lists, comments and multi-line flows are scanned without a YAML
+  // dependency: a commented trigger is not a trigger, a block list item is.
+  for (
+    const workflow of [
+      "on:\n  - push\n  - pull_request\n",
+      "on: [push, # pull_request is not active here\n  pull_request]\n",
+      "on: { push: {}, pull_request: {} }  # owner CI\n",
+    ]
+  ) {
+    routes.set(
+      `${rootUrl}/.github/workflows/ci.yml?ref=main`,
+      file("ci.yml", workflow),
+    );
+    assert.equal(
+      (await facts(slug("ubiquity", "prospector"), "main"))?.hasCiWorkflow,
+      true,
+      workflow,
+    );
+  }
+  routes.set(
+    `${rootUrl}/.github/workflows/ci.yml?ref=main`,
+    file("ci.yml", "on:\n  # pull_request:\n  push:\n"),
+  );
+  assert.equal(
+    (await facts(slug("ubiquity", "prospector"), "main"))?.hasCiWorkflow,
+    false,
+    "a commented trigger is not CI",
+  );
+  routes.set(
+    `${rootUrl}/.github/workflows/ci.yml?ref=main`,
+    file(
+      "ci.yml",
+      "on:\n  workflow_call:\n    inputs:\n      pull_request:\n",
+    ),
+  );
+  assert.equal(
+    (await facts(slug("ubiquity", "prospector"), "main"))?.hasCiWorkflow,
+    false,
+    "a nested input named pull_request is not an event",
+  );
+  // A push-only flow list is not pull-request CI.
+  routes.set(
+    `${rootUrl}/.github/workflows/ci.yml?ref=main`,
+    file("ci.yml", "on: [push]\n"),
+  );
+  assert.equal(
+    (await facts(slug("ubiquity", "prospector"), "main"))?.hasCiWorkflow,
+    false,
+  );
+
+  // Trailing commas are not a parse failure: the check task is still found.
+  assert.deepEqual(
+    (await facts(slug("ubiquity", "prospector"), "main"))?.manifestScripts,
+    { package: ["test"], deno: ["check"] },
+  );
+
+  // An unreadable root listing never becomes an empty (defaulted) tree.
+  assert.equal(await facts(slug("ubiquity", "gone"), "main"), null);
+});
+
+Deno.test("targets: gated target reads consult the durable gate first", async () => {
+  let requests = 0;
+  const request = {
+    method: "GET" as const,
+    url: "https://api.github.com/repos/ubiquity/prospector",
+    headers: new Map<string, string>(),
+    body: null,
+  };
+  const refused = createGatedTargetReadTransport({
+    http: () => {
+      requests += 1;
+      return Promise.resolve(response(200, "{}"));
+    },
+    gate: {
+      beforeRequest: () => Promise.resolve(portError("unavailable", "held")),
+    },
+    installationId: 173913802,
+  });
+  await assert.rejects(() => refused(request), /durable cooldown/);
+  assert.equal(requests, 0, "a held gate performs no request");
+
+  const scopes: number[] = [];
+  const allowed = createGatedTargetReadTransport({
+    http: () => Promise.resolve(response(200, "{}")),
+    gate: {
+      beforeRequest: (installationId) => {
+        scopes.push(installationId);
+        return Promise.resolve(portOk(undefined));
+      },
+    },
+    installationId: 173913802,
+  });
+  const answered = await allowed(request);
+  assert.equal(answered.status, 200);
+  assert.deepEqual(scopes, [173913802]);
 });
 
 Deno.test("targets: the default branch comes from GitHub, never from the file", async () => {

@@ -7,7 +7,11 @@ import type {
   RepairStateWriter,
   StateReadView,
 } from "../contracts/ports.ts";
-import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  allReservationsV1,
+  findReservationV1,
+  type RepairStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type {
   HostedExecutionIntentV1,
@@ -34,6 +38,17 @@ export class ClosedCWaveRecoveryIntegrityFailure extends Error {
   constructor(message: string, readonly beforeHead: GitSha) {
     super(message);
     this.name = "ClosedCWaveRecoveryIntegrityFailure";
+  }
+}
+/**
+ * A cell charge that appears in neither the live ledger nor the durable
+ * archive makes the wave's admission scope unreadable. It is a typed skip:
+ * the caller reports it and writes nothing instead of failing the whole pass.
+ */
+export class ClosedCWaveUnrecoverableSkipV1 extends Error {
+  constructor(readonly reservationIds: readonly string[]) {
+    super("C recovery closed admission scope unavailable");
+    this.name = "ClosedCWaveUnrecoverableSkipV1";
   }
 }
 
@@ -472,9 +487,7 @@ export function closedCWaveHandledReservations(
 ): ReadonlySet<string> {
   return new Set(
     binding.cells.filter((cell) => {
-      const charge = snapshot.reservations.find((row) =>
-        row.id === cell.reservationId
-      );
+      const charge = findReservationV1(snapshot, cell.reservationId);
       const work = snapshot.work.find((row) =>
         row.id === cell.taskId && sameRepo(row.repository, cell.repository)
       );
@@ -501,6 +514,9 @@ function neededReservations(
   snapshot: RepairStateSnapshotV1,
   binding: ClosedCWaveBindingV1 = CLOSED_C_WAVE,
 ): ReadonlySet<string> {
+  // A wave is actionable only while one of its charges is still live; once
+  // every cell charge has been compacted into the durable archive the wave is
+  // fully terminal and needs no artifact or history IO.
   if (
     !binding.cells.some((cell) =>
       snapshot.reservations.some((row) => row.id === cell.reservationId)
@@ -509,10 +525,15 @@ function neededReservations(
   const handled = closedCWaveHandledReservations(snapshot, binding);
   return new Set(
     binding.cells.filter((cell) => {
-      const charge = snapshot.reservations.find((row) =>
-        row.id === cell.reservationId
-      );
+      const charge = findReservationV1(snapshot, cell.reservationId);
+      // Kept only so recovery can report the wave as a typed skip; a missing
+      // charge never opens a settlement path.
       if (!charge) return true;
+      // An archived charge is a terminal settlement the trusted writer already
+      // resolved; only a live charge can still need recovery.
+      if (
+        !snapshot.reservations.some((row) => row.id === charge.id)
+      ) return false;
       if (!handled.has(charge.id)) return true;
       const work = snapshot.work.find((row) =>
         row.id === cell.taskId && sameRepo(row.repository, cell.repository)
@@ -523,6 +544,20 @@ function neededReservations(
       return work?.intent?.kind === "candidate_preservation" &&
         work.intent.requestId === charge.id;
     }).map((cell) => cell.reservationId),
+  );
+}
+/**
+ * Live and archived rows are one ledger: capacity compaction only repartitions
+ * it, so an unrelated charge must read the same wherever the writer placed it.
+ */
+function unrelatedReservations(
+  snapshot: RepairStateSnapshotV1,
+  known: ReadonlySet<string>,
+): string {
+  return canonicalStringify(
+    allReservationsV1(snapshot)
+      .filter((row) => !known.has(row.id))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
   );
 }
 export function closedCWaveNeedsRecovery(
@@ -570,13 +605,14 @@ export async function recoverClosedCWave(
   if (needed.size === 0) {
     throw new Error("C recovery has no actionable original operations");
   }
-  if (
-    binding.cells.some((cell) =>
-      !live.repair.snapshot.reservations.some((row) =>
-        row.id === cell.reservationId
-      )
-    )
-  ) throw new Error("C recovery closed admission scope unavailable");
+  const missing = binding.cells.filter((cell) =>
+    findReservationV1(live.repair.snapshot, cell.reservationId) === undefined
+  );
+  if (missing.length > 0) {
+    throw new ClosedCWaveUnrecoverableSkipV1(
+      missing.map((cell) => cell.reservationId),
+    );
+  }
   if (!deps.state.readRepairAt || !deps.state.readReleaseAt) {
     throw new Error("C recovery authenticated history reader unavailable");
   }
@@ -664,8 +700,9 @@ export async function recoverClosedCWave(
     const work = producerSnapshot.work.find((row) =>
       row.id === cell.taskId && sameRepo(row.repository, cell.repository)
     );
-    const reservation = producerSnapshot.reservations.find((row) =>
-      row.id === cell.reservationId
+    const reservation = findReservationV1(
+      producerSnapshot,
+      cell.reservationId,
     );
     if (!work || !reservation) {
       throw new Error("C recovery original admission binding unavailable");
@@ -776,7 +813,25 @@ export async function ingestClosedCWave(
       row.retryNotBefore === null || row.retryNotBefore > deps.clock.now()
     )
   ) throw new Error("C recovery cooldown active");
-  const recovered = await recoverClosedCWave(deps);
+  let recovered: Awaited<ReturnType<typeof recoverClosedCWave>>;
+  try {
+    recovered = await recoverClosedCWave(deps);
+  } catch (error) {
+    // One wave whose admission scope can no longer be resolved is a typed
+    // skip: nothing is written and the pass continues.
+    if (!(error instanceof ClosedCWaveUnrecoverableSkipV1)) throw error;
+    return {
+      producer: binding.run,
+      repairHead: live.repair.head,
+      releaseHead: live.release.head,
+      dispositions: [],
+      reports: [],
+      skipped: {
+        reason: "missing_reservation" as const,
+        reservationIds: [...error.reservationIds],
+      },
+    };
+  }
   if (recovered.repairHead !== live.repair.head) {
     throw new ClosedCWaveRecoveryIntegrityFailure(
       "C recovery repair custody changed before ingestion",
@@ -888,12 +943,8 @@ export async function ingestClosedCWave(
   });
   const known = needed;
   if (
-    canonicalStringify(
-        before.reservations.filter((row) => !known.has(row.id)),
-      ) !==
-      canonicalStringify(
-        after.repair.snapshot.reservations.filter((row) => !known.has(row.id)),
-      ) ||
+    unrelatedReservations(before, known) !==
+      unrelatedReservations(after.repair.snapshot, known) ||
     canonicalStringify(
         before.work.filter((row) =>
           !binding.cells.some((cell) =>

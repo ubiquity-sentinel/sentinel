@@ -1,3 +1,7 @@
+import {
+  isNoTestEvidenceTargetV1,
+  NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
+} from "../host/target-policy-generic.ts";
 import { checkExistingPrCustody, routeExistingPr } from "./loop-existing-pr.ts";
 import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 import { deriveReservationId } from "../budget/mod.ts";
@@ -144,6 +148,22 @@ export async function prepareImplementationStart(
       setWait(
         record,
         { reason: "manual", since: now, until: null },
+        now,
+      ),
+    );
+  }
+  // A target with no pull-request CI and no runnable local verify can never
+  // produce reviewable evidence. Park it here, before any issue read or model
+  // reservation (uncharged), instead of starting a session that would only be
+  // blocked at the post-candidate review gate.
+  if (isNoTestEvidenceTargetV1(config)) {
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        record,
+        "missing_evidence",
+        NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
         now,
       ),
     );
@@ -516,6 +536,26 @@ export async function prepareImplementationStart(
       setWait(
         record,
         { reason: "budget_cap", since: now, until: reservation.retryAt },
+        now,
+      ),
+    );
+  }
+  if (reservation.status === "rejected") {
+    // A capacity refusal is TEMPORARY: the trusted writer compacts terminal
+    // rows once their retention window advances, so the identical admission
+    // succeeds on a later cycle. Keep the record live and its publication
+    // binding intact with a bounded, precisely-named wait; never park it
+    // terminally (`blocked` is skipped forever by ranking).
+    return persistWork(
+      deps,
+      context,
+      setWait(
+        record,
+        {
+          reason: "ledger_capacity",
+          since: now,
+          until: now + CHECK_POLL_MS,
+        },
         now,
       ),
     );

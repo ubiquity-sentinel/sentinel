@@ -40,7 +40,8 @@ import {
 } from "./loop-base-refresh-failure.ts";
 import { reconcileRefreshPublication } from "./loop-base-refresh.ts";
 import { MATRIX_IMPLEMENTATION_DEFERRED } from "./loop-bounds.ts";
-import { configFor, touchesProtected } from "./loop-records.ts";
+import { configFor } from "./loop-records.ts";
+import { targetTouchesProtectedV1 } from "../host/target-policy-generic.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { persistWork, replaceWorkMutation } from "./loop-state.ts";
 import type {
@@ -210,9 +211,7 @@ export async function preserveConflictMerge(
   if (
     intent === null || mergeBase === null || head === null || pr === null ||
     publishedHead !== head || merged.head === head ||
-    merged.changedPaths.some((path) =>
-      touchesProtected(config.protectedPaths, path)
-    )
+    merged.changedPaths.some((path) => targetTouchesProtectedV1(config, path))
   ) return null;
   const operationKey = baseRefreshIntentKey(pr, head, mergeBase);
   let preserved;
@@ -289,9 +288,7 @@ export async function handleConflictResolutionReceipt(
     return { kind: "state_error", detail: "budget settlement failed" };
   }
   if (
-    merged.changedPaths.some((path) =>
-      touchesProtected(config.protectedPaths, path)
-    )
+    merged.changedPaths.some((path) => targetTouchesProtectedV1(config, path))
   ) {
     return persistAfterSettlement(
       deps,

@@ -27,6 +27,7 @@ import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import { allReservationsV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { HOSTED_RUNTIME_ROLLOUT } from "../host/hosted-runtime-rollout.ts";
 import { isPassportWorkTrial } from "./passport-work-trial.ts";
@@ -283,7 +284,7 @@ function countedCharges(
   record: RoundRecord,
   purpose: BudgetReservationV1["purpose"],
 ): BudgetReservationV1[] {
-  return snapshot.reservations.filter((charge) =>
+  return allReservationsV1(snapshot).filter((charge) =>
     charge.purpose === purpose && charge.taskId === record.id &&
     sameRepository(charge.repository, record.repository) &&
     charge.outcome !== "confirmed_not_submitted"
@@ -471,7 +472,7 @@ export function reviewRoundsSpent(
 ): number {
   let charged = 0;
   let refunded = 0;
-  for (const charge of snapshot.reservations) {
+  for (const charge of allReservationsV1(snapshot)) {
     if (
       charge.purpose !== "review_request" || charge.taskId !== record.id ||
       !sameRepository(charge.repository, record.repository)
