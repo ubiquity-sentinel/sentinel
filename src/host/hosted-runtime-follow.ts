@@ -5,6 +5,7 @@ import {
   FOLLOW_DEVELOPMENT_REF,
   FOLLOW_LAUNCHER_REF,
   FOLLOW_REPOSITORY,
+  FOLLOW_SCAN_RETRY,
   FOLLOW_STATE_REF,
   FollowError,
   HostedRuntimeFollowApi,
@@ -56,6 +57,8 @@ export interface HostedRuntimeFollowDeps {
   maxPages?: number;
   /** Injected clock for the matrix-wave age bound; defaults to Date.now. */
   clock?: { now(): number };
+  /** Pause before a bounded read or listing retry; injected in tests. */
+  pause?: (ms: number) => Promise<void>;
 }
 
 /** The follow step has no state writer, App identity, model or promotion port. */
@@ -78,6 +81,8 @@ export async function runHostedRuntimeFollow(
     deps.token,
     deps.deadlineMs,
     deps.maxPages,
+    deps.pause,
+    FOLLOW_SCAN_RETRY,
   );
   let launcherSha: string | null = null;
   let safeToDispatch = false;
@@ -156,8 +161,9 @@ export async function runHostedRuntimeFollow(
       break;
     }
     if (selected === null) {
-      journal.decision = chain.length === 1 ? "unchanged" : "deferred";
-      journal.reason = chain.length === 1
+      const current = journal.observedDevelopmentSha === launcherSha;
+      journal.decision = current ? "unchanged" : "deferred";
+      journal.reason = current
         ? "launcher_current"
         : workflowChanged
         ? "workflow_change_needs_owner_advance"
@@ -248,13 +254,21 @@ async function completedExecutionRun(
     run.path === HOSTED_CONTROLLER_DEPLOYMENT.supervisorWorkflowPath;
 }
 
-/** The captured chain is a total ancestry order; its first green member is maximal. */
+/**
+ * The captured chain is a total ancestry order; its first green member is
+ * maximal. It ends at the launcher, or at the last first-parent commit that
+ * still descends from it: an integration merge can carry the launcher as a
+ * later parent, and an exact first-parent hit would then never arrive.
+ */
 async function firstParentChain(
   api: HostedRuntimeFollowApi,
   development: string,
   launcher: string,
   maxDepth: number,
 ): Promise<string[]> {
+  if (!await api.ancestor(launcher, development)) {
+    throw new FollowError("launcher_diverged");
+  }
   const chain = [development];
   const seen = new Set(chain);
   for (let depth = 0; chain[chain.length - 1] !== launcher; depth++) {
@@ -267,6 +281,7 @@ async function firstParentChain(
     if (commit.parents.length === 0) throw new FollowError("launcher_diverged");
     const parent = sha(record(commit.parents[0]).sha);
     if (seen.has(parent)) throw new FollowError("commit_cycle");
+    if (parent !== launcher && !await api.ancestor(launcher, parent)) break;
     seen.add(parent);
     chain.push(parent);
   }

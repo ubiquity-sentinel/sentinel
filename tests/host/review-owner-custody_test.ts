@@ -258,6 +258,8 @@ Deno.test("review custody: real interrupted owner and native carrier unblock a f
         server,
         `
 await Deno.writeTextFile(Deno.args[0], String(Deno.pid));
+// Cold startup under a parallel shard can exceed the former 1.5s owner timeout.
+await new Promise(resolve => setTimeout(resolve, 2000));
 setInterval(() => {}, 1000);
 let text = "";
 for await (const part of Deno.stdin.readable) {
@@ -346,7 +348,9 @@ const result = await transport.submitReview({ operationKey: "review:real-owner:1
           JSON.stringify(REVIEWER)
         }, latestStartAt: clock.now()+60000, settleBy: clock.now()+REVIEW_TRANSPORT_TOTAL_MS });
 if (!result.ok || result.value.status !== "submitted") throw new Error("real owner submission failed");
-console.log("reviewer opened"); await new Promise(() => {});
+// Crash only after the running journal and reviewer exist, not on a startup timer.
+await Deno.stdout.write(new TextEncoder().encode("reviewer opened\\n"));
+Deno.kill(Deno.pid, "SIGKILL");
 `,
       );
       try {
@@ -360,11 +364,12 @@ console.log("reviewer opened"); await new Promise(() => {});
               "--allow-read",
               "--allow-write",
               "--allow-env=PATH",
+              "--allow-run",
               driver,
             ],
             cwd: root,
             env: {},
-            maxDurationMs: 1500,
+            maxDurationMs: 30_000,
             maxOutputBytes: 8192,
           },
         );
@@ -372,6 +377,12 @@ console.log("reviewer opened"); await new Promise(() => {});
           new TextDecoder().decode(result.run.stdout),
           /reviewer opened/,
           new TextDecoder().decode(result.run.stderr),
+        );
+        assert.equal(result.run.outcome, "exited");
+        assert.equal(
+          result.run.exitCode,
+          137,
+          "the owner actually died by SIGKILL",
         );
         assert.equal(result.settlements.length, 1);
         record = result.settlements[0]!;

@@ -21,6 +21,10 @@ import {
 } from "../../src/repair/ci-readiness.ts";
 import { PRE_REVIEW_CI_BOUND_MS } from "../../src/repair/ci-first-policy.ts";
 import {
+  DELIVERY_QUEUE_IDLE_MS,
+  DELIVERY_QUEUE_STALL_LIMIT,
+} from "../../src/repair/delivery-queue.ts";
+import {
   releaseRequest,
   REPO,
   SHA1,
@@ -100,9 +104,9 @@ async function freshness(record: WorkRecordV1, other: WorkRecordV1) {
   return { outcome, before, after: after.value.snapshot };
 }
 
-Deno.test("pre-review refresh preserves another current-tip head's pending validation", async () => {
-  const record = published("issue-1");
-  const validating = published("issue-2", SHA2, 8);
+Deno.test("pre-review refresh preserves an EARLIER current-tip head's pending validation", async () => {
+  const record = published("issue-2");
+  const validating = published("issue-1", SHA2, 8);
   validating.wait = { reason: "ci_pending", since: T0, until: T0 + 300_000 };
   const out = await freshness(record, validating);
   assert.ok(out.outcome !== "closed_unmerged");
@@ -112,6 +116,49 @@ Deno.test("pre-review refresh preserves another current-tip head's pending valid
     out.before,
     "deferral writes no refresh, wait or charge",
   );
+});
+
+Deno.test("a later current-tip head awaiting its CI no longer starves an earlier green head", async () => {
+  // Live sentinel 2026-11-13: PRs 387, 389, 390, 391 and 392 were green and
+  // mergeable from 01:40Z; record issue-ubiquity-sentinel-393, created the
+  // same morning and published on the tip, stood in `work` awaiting its CI and
+  // held every one of them on every pass for more than ten hours.
+  const record = published("issue-1");
+  const later = published("issue-2", SHA2, 8);
+  later.wait = { reason: "ci_pending", since: T0, until: T0 + 300_000 };
+  const out = await freshness(record, later);
+  assert.ok(out.outcome !== "closed_unmerged");
+  assert.equal(out.outcome?.kind, "progress");
+  assert.equal(out.after.work[0].intent?.kind, "base_refresh");
+});
+
+Deno.test("a later head whose charged review is in flight still holds an earlier green head", async () => {
+  const record = published("issue-1");
+  for (
+    const inFlight of [
+      { nextStep: "review" as const },
+      {
+        intent: {
+          kind: "review_request" as const,
+          key: "review:8:head:1",
+          startedAt: T0,
+          branch: candidateBranch(asWorkItemId("issue-2")),
+          expectedHead: SHA3,
+          observedBase: SHA2,
+          pr: 8,
+          requestId: "req-1",
+          resultId: null,
+        },
+      },
+    ]
+  ) {
+    const later = published("issue-2", SHA2, 8);
+    Object.assign(later, inFlight);
+    const out = await freshness(record, later);
+    assert.ok(out.outcome !== "closed_unmerged");
+    assert.equal(out.outcome?.kind, "deferred", Object.keys(inFlight)[0]);
+    assert.deepEqual(out.after, out.before);
+  }
 });
 
 Deno.test("pre-review refresh does not wait behind a foreign target's validation", async () => {
@@ -148,8 +195,8 @@ Deno.test("pre-review refresh is not held by a base refresh that can never act",
 });
 
 Deno.test("a live validating base refresh still holds the line", () => {
-  const record = published("issue-1");
-  const other = published("issue-2", SHA1, 8);
+  const record = published("issue-2");
+  const other = published("issue-1", SHA1, 8);
   other.intent = {
     kind: "base_refresh",
     key: baseRefreshIntentKey(8, SHA3, SHA2),
@@ -182,8 +229,8 @@ Deno.test("a live validating base refresh still holds the line", () => {
 });
 
 Deno.test("readiness releases expired, superseded and old-base waits", () => {
-  const record = published("issue-1");
-  const other = published("issue-2", SHA2, 8);
+  const record = published("issue-2");
+  const other = published("issue-1", SHA2, 8);
   other.wait = { reason: "ci_pending", since: T0, until: T0 + 300_000 };
   assert.equal(currentCiValidation(other, SHA2), true);
   assert.equal(
@@ -204,10 +251,19 @@ Deno.test("readiness releases expired, superseded and old-base waits", () => {
   );
   other.target.base = SHA1;
   assert.equal(currentCiValidation(other, SHA2), false);
+  // A head on a moved base asks the line before its CI gate and its deferral
+  // writes nothing, so its `ci_pending` is an earlier poll's (live 268 and
+  // 397, green for hours): it orders nothing, and the line order decides.
   assert.equal(
-    ciRefreshAhead(seededSnapshot([record, other]), record, SHA2, T0 + 1000),
+    ciRefreshAhead(seededSnapshot([record, other]), record, SHA2, T0 + 1000)
+      ?.id,
+    other.id,
+    "an earlier head on a moved base goes first whatever wait it carries",
+  );
+  assert.equal(
+    ciRefreshAhead(seededSnapshot([record, other]), other, SHA2, T0 + 1000),
     null,
-    "pending historical head holds no ready refresh",
+    "a later head on a moved base holds no earlier one",
   );
   other.target.base = SHA2;
   other.target.candidateState = { publishedHead: SHA1, preserved: null };
@@ -223,6 +279,57 @@ Deno.test("only the oldest ready moved-base candidate refreshes before validatio
   const snapshot = seededSnapshot([next, first]);
   assert.equal(ciRefreshAhead(snapshot, next, SHA2, T0 + 1000)?.id, first.id);
   assert.equal(ciRefreshAhead(snapshot, first, SHA2, T0 + 1000), null);
+});
+
+Deno.test("a stalled head on a moved base keeps its place in line; stuck on the tip it holds nobody", () => {
+  // Its no-progress count is what its steps on an earlier tip left (12
+  // re-arms of a red base's 30-minute hold); on a moved base its next step is
+  // the refresh, durable progress that clears the count.
+  const first = published("issue-1");
+  first.counters = { ...first.counters, stalled: DELIVERY_QUEUE_STALL_LIMIT };
+  const next = published("issue-2", SHA1, 8);
+  const snapshot = seededSnapshot([next, first]);
+  assert.equal(
+    ciRefreshAhead(snapshot, next, SHA2, T0 + 1000)?.id,
+    first.id,
+    "the stalled earlier head holds the later one",
+  );
+  assert.equal(
+    ciRefreshAhead(snapshot, first, SHA2, T0 + 1000),
+    null,
+    "and refreshes first",
+  );
+  first.target.base = SHA2;
+  first.wait = { reason: "ci_pending", since: T0, until: T0 + 300_000 };
+  assert.equal(
+    ciRefreshAhead(seededSnapshot([next, first]), next, SHA2, T0 + 1000),
+    null,
+    "a head stuck on the tip still holds nobody",
+  );
+});
+
+Deno.test("a moved-base head whose wait never ends yields its place once nothing wrote it for the idle bound", () => {
+  // A native queue-custody hold (`backoff` with no end) skips the stall
+  // counter and selection never steps the record, so it never reaches the
+  // line until something else writes it.
+  const held = published("issue-1");
+  held.wait = { reason: "backoff", since: T0, until: null };
+  held.updatedAt = T0;
+  const next = published("issue-2", SHA1, 8);
+  const ahead = (now: number) =>
+    ciRefreshAhead(seededSnapshot([next, held]), next, SHA2, now)?.id ?? null;
+  assert.equal(
+    ahead(T0 + DELIVERY_QUEUE_IDLE_MS - 1),
+    held.id,
+    "inside the idle bound it keeps its place",
+  );
+  assert.equal(ahead(T0 + DELIVERY_QUEUE_IDLE_MS), null, "then holds nobody");
+  // A head that can still be stepped keeps its place however long nothing
+  // wrote it (live 397: green, unwritten for 13 hours, still the front): a
+  // deferral writes nothing, so idleness cannot tell it from a head idle only
+  // because the line held it.
+  held.wait = { reason: "ci_pending", since: T0, until: T0 + 120_000 };
+  assert.equal(ahead(T0 + 30 * 24 * 60 * 60_000), held.id);
 });
 
 Deno.test("readiness: an exact booked delivery cannot hold a pending candidate's refresh", () => {

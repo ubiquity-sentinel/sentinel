@@ -17,6 +17,7 @@ import type { MatrixPlanV1 } from "../../src/contracts/matrix-identity.ts";
 import {
   portError,
   portOk,
+  type PortResultV1,
   type RepairStateWriter,
   type StateReadView,
 } from "../../src/contracts/ports.ts";
@@ -25,7 +26,10 @@ import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
 import type { CandidateProofPassV1 } from "../../src/host/actions-candidates-proof.ts";
 import { CLOSED_C_WAVE } from "../../src/host/modern-matrix-recovery.ts";
-import { implementationIntentKey } from "../../src/repair/keys.ts";
+import {
+  candidatePreservationRef,
+  implementationIntentKey,
+} from "../../src/repair/keys.ts";
 import {
   createReleaseStateStore,
   DenoGitRunner,
@@ -552,10 +556,16 @@ export const walkLines = (lines: string[]) =>
  * maintenance pass consumes. Each wave plans only its own producer's cell.
  * Repair state is an in-memory compare-and-swap store, the consumer is the
  * ingest port seam with the real consumer's dispositions, and the trusted
- * preserver records each preservation and serves the ref it created. The
- * walk, the producer pass and the preservation tail are the real ones.
+ * preserver records each preservation and serves the ref it created, unless
+ * `verdict` answers for a request instead. Each record's preservation ref is
+ * its own deterministic one. The walk, the producer pass and the
+ * preservation tail are the real ones.
  */
-export async function preservationWalkRig() {
+export async function preservationWalkRig(input: {
+  verdict?: (
+    request: { taskId: string; candidate: { ref: string } },
+  ) => PortResultV1<void> | undefined;
+} = {}) {
   const root = await Deno.makeTempDir({
     prefix: "sentinel-preservation-walk-",
     dir: decodeURIComponent(new URL("../../", import.meta.url).pathname),
@@ -574,13 +584,23 @@ export async function preservationWalkRig() {
     [older.requestId, "4".repeat(40) as GitSha],
     [newer.requestId, "5".repeat(40) as GitSha],
   ]);
-  const ref = (requestId: string) =>
-    `refs/heads/sentinel-candidates/${
-      requestId.replace(/^0+/, "").padStart(
-        64,
-        "f",
-      )
-    }`;
+  const preservationRefs = new Map<string, string>();
+  for (
+    const [taskId, side] of [
+      ["inflight-older", older],
+      ["unconsumed-newer", newer],
+    ] as const
+  ) {
+    preservationRefs.set(
+      side.requestId,
+      await candidatePreservationRef(
+        REPO,
+        taskId as never,
+        implementationIntentKey(side.requestId),
+      ),
+    );
+  }
+  const ref = (requestId: string) => preservationRefs.get(requestId)!;
   // The older record as the live loop leaves it: the consumer settled its
   // charge and saved the pending preservation, its own job waits unavailable.
   const inflight = workRecord("inflight-older", {
@@ -770,9 +790,11 @@ export async function preservationWalkRig() {
   };
   const github = {
     preserveCandidate: (
-      request: { candidate: { ref: string; head: GitSha } },
+      request: { taskId: string; candidate: { ref: string; head: GitSha } },
     ) => {
       calls.preserved.push(request.candidate.ref);
+      const answer = input.verdict?.(request);
+      if (answer !== undefined) return Promise.resolve(answer);
       refs.set(request.candidate.ref, request.candidate.head);
       return Promise.resolve(portOk(undefined));
     },

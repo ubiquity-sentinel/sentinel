@@ -8,17 +8,26 @@ import {
   DELIVERY_QUEUE_IDLE_MS,
   DELIVERY_QUEUE_STALL_LIMIT,
   deliveryQueueAhead,
+  lineBefore,
+  reviewInFlight,
 } from "./delivery-queue.ts";
 import {
   releaseRequestMatchesDelivery,
   sameRepositoryIdentity,
 } from "./loop-records.ts";
-import type { LegacyCutoff } from "./review-round-cap.ts";
+import { type LegacyCutoff, reviewedHeadCarried } from "./review-round-cap.ts";
 
 type Snapshot = Pick<
   RepairStateSnapshotV1,
   "work" | "reviews" | "reservations" | "releaseRequests"
 >;
+
+/**
+ * Detail prefix of a pre-review base refresh deferred behind another record's
+ * validation (`ensureReviewFreshness`). Fixed text: the advisory step line
+ * reports it as the closed reason code `ci_line`.
+ */
+export const CI_VALIDATION_DEFERRED_PREFIX = "CI validation: ";
 
 /** A published identity, never an unpublished or superseded candidate. */
 export function publishedCiCandidate(record: WorkRecordV1): boolean {
@@ -55,14 +64,60 @@ export function currentCiValidation(
     record.intent === null && record.wait?.reason === "ci_pending";
 }
 
-function live(record: WorkRecordV1, now: number): boolean {
-  if (
-    (record.counters.stalled ?? 0) >= DELIVERY_QUEUE_STALL_LIMIT ||
-    now - record.updatedAt >= DELIVERY_QUEUE_IDLE_MS ||
-    isRedBaseHold(record.wait, now)
-  ) return false;
-  return record.wait?.reason !== "ci_pending" ||
-    now - record.wait.since < PRE_REVIEW_CI_BOUND_MS;
+/**
+ * A head the stall rule, a running red-base hold, a wait with no end
+ * (`dormant`) or the pre-review CI bound has not released: it can still act
+ * on its own next step. The stall rule and the CI bound release only a head
+ * on `tip`, where its step reads its CI and re-arms its wait: a head on a
+ * moved base asks this line before its CI gate and the deferral writes
+ * nothing, so its `ci_pending` is whatever an earlier poll left (live
+ * sentinel 2026-11-13: 397, green since 17:16Z, still carried its 17:10Z wait
+ * at midnight) and its no-progress count whatever its steps on an earlier tip
+ * left. Its next step is the refresh, durable progress that clears that
+ * count, so it keeps its place in line: a head held past six hours on the tip
+ * by its red base (12 re-arms) otherwise waited behind every sibling that
+ * could act, idle ones included, once the base was repaired.
+ *
+ * Idleness alone releases nothing: a deferral writes nothing, so a head idle
+ * only because this line held it looks exactly like one whose own step never
+ * reaches the line, and releasing it lets a younger head refresh first and
+ * the older one refresh beside it at its next step (ai.ubq.fi 1176 beside
+ * 1211, released by the old six-hour bound on a moved base). An untouched
+ * refresh candidate therefore still ORDERS the refreshes of its repository
+ * (`ready` below) instead of letting every idle sibling refresh onto one tip
+ * in the same pass; only a head selection can never step is released by
+ * time.
+ */
+function actionable(record: WorkRecordV1, tip: GitSha, now: number): boolean {
+  if (isRedBaseHold(record.wait, now) || dormant(record, now)) return false;
+  if (record.target.base !== tip) return true;
+  return (record.counters.stalled ?? 0) < DELIVERY_QUEUE_STALL_LIMIT &&
+    (record.wait?.reason !== "ci_pending" ||
+      now - record.wait.since < PRE_REVIEW_CI_BOUND_MS);
+}
+
+/**
+ * A head whose wait has no end (`until: null`: a native queue-custody hold,
+ * which also skips the stall counter, or a receipt awaiting authoritative
+ * disposition) and that nothing has written for `DELIVERY_QUEUE_IDLE_MS`:
+ * selection never steps it, so it reaches this line only once something else
+ * writes it, and it yields its place (no park, no charge). Inside the bound a
+ * hold released soon keeps the place it had.
+ */
+function dormant(record: WorkRecordV1, now: number): boolean {
+  return record.wait !== null && record.wait.until === null &&
+    now - record.updatedAt >= DELIVERY_QUEUE_IDLE_MS;
+}
+
+/** Actionable and written within the idle bound: it may hold a validation. */
+function live(record: WorkRecordV1, tip: GitSha, now: number): boolean {
+  return actionable(record, tip, now) &&
+    now - record.updatedAt < DELIVERY_QUEUE_IDLE_MS;
+}
+
+/** The line's own order as a sort (`lineBefore`: oldest, then id). */
+function lineOrder(a: WorkRecordV1, b: WorkRecordV1): number {
+  return lineBefore(a, b) ? -1 : lineBefore(b, a) ? 1 : 0;
 }
 
 /**
@@ -87,6 +142,28 @@ function baseRefreshCanAct(record: WorkRecordV1, tip: GitSha): boolean {
  * Preserve validation already admitted on the tip, then reuse the delivery
  * line and oldest ready refresh. No new count limit, state or wait is added.
  * Existing idle/stall/CI bounds release a head that can no longer advance.
+ *
+ * Fairness (sentinel 2026-11-13): a record with no reviewed head to carry
+ * (`reviewedHeadCarried` false) loses no review by refreshing, and a sibling
+ * merely awaiting its own CI on the tip, or holding an unexecuted refresh of
+ * it, has paid no review a merge ahead of it would discard. Such a sibling
+ * therefore holds it only from ahead in line (`lineBefore`: oldest
+ * `createdAt`, then id, the delivery pass's own order), so a candidate
+ * published on the current tip can no longer overtake an older green head on
+ * every pass. A sibling whose review is in flight (`reviewInFlight`) keeps
+ * holding whatever their order, and a record that carries a reviewed head
+ * keeps the unchanged order, so no review is spent twice.
+ *
+ * Front (sentinel 2026-11-13/14): the first in line that can act goes first.
+ * Heads on a moved base refresh oldest first (`lineBefore`), never by the wait
+ * an earlier step left: ranking a leftover `ci_pending` last put 271 ahead of
+ * 268 (green on its refreshed head since 19:47Z) at 20:39Z and, from 00:18Z,
+ * 398 (an expired `unavailable` from 18:16Z) ahead of 268 and 397. A stalled
+ * head on a moved base keeps its place by age (`actionable`), so it is the
+ * front, and refreshes first, instead of refreshing beside a younger front
+ * (312, stalled at 180, refreshed onto 386's tip at 23:00:17Z and both were
+ * reviewed at 00:12Z and 00:13Z). A record that cannot act (held by its red
+ * base) holds nobody and waits behind every record that can.
  */
 export function ciRefreshAhead(
   snapshot: Snapshot,
@@ -97,24 +174,28 @@ export function ciRefreshAhead(
 ): WorkRecordV1 | null {
   const delivery = deliveryQueueAhead(snapshot, record, tip, now, cutoff);
   if (delivery !== null) return delivery;
+  const carried = reviewedHeadCarried(snapshot, record);
+  const back = !actionable(record, tip, now);
   const candidates = snapshot.work.filter((other) =>
     other.id !== record.id &&
     sameRepositoryIdentity(other.repository, record.repository) &&
-    publishedCiCandidate(other) && live(other, now) &&
+    publishedCiCandidate(other) && actionable(other, tip, now) &&
     !snapshot.releaseRequests.some((request) =>
       releaseRequestMatchesDelivery(request, other)
     )
-  ).sort(compareCiReadiness);
-  const validating = candidates.find((other) =>
-    baseRefreshCanAct(other, tip) ||
-    (other.target.base === tip &&
-      (other.wait?.reason === "ci_pending" || other.nextStep === "review" ||
-        other.intent?.kind === "review_request"))
-  );
+  ).sort(lineOrder);
+  const validating = candidates.find((other) => {
+    if (!live(other, tip, now)) return false;
+    const onTip = other.target.base === tip;
+    if (onTip && reviewInFlight(other)) return true;
+    const ciOnTip = onTip && other.wait?.reason === "ci_pending";
+    return (baseRefreshCanAct(other, tip) || ciOnTip) &&
+      (carried || back || lineBefore(other, record));
+  });
   if (validating !== undefined) return validating;
   const ready = candidates.find((other) =>
     other.intent === null && other.target.base !== tip &&
-    compareCiReadiness(other, record) < 0
+    (back || lineBefore(other, record))
   );
   return ready ?? null;
 }

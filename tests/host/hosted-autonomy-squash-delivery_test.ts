@@ -4,6 +4,7 @@
 // guard, and books the squash by its exact merge SHA, single parent [tip] and
 // the head's own tree. All fixtures are synthetic; fetch is stubbed.
 import assert from "node:assert/strict";
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy.ts";
 import {
   baseAndHeadAreMerged,
@@ -121,7 +122,12 @@ Deno.test("hosted squash delivery: a green foreign head squashes with the exact 
     const { rig } = await makeRig("autonomy-foreign-squash", {
       repair: repairSnapshot([foreignRecord()], [foreignReceipt()]),
       resolver: (repository) =>
-        createHostedAutonomyGitHub("fixture-token", repository),
+        createHostedAutonomyGitHub(
+          "fixture-token",
+          repository,
+          undefined,
+          INACTIVE_CI_MINUTES,
+        ),
     });
     const result = await run(rig);
     assert.equal(result.status, "applied", JSON.stringify(result));
@@ -149,7 +155,12 @@ Deno.test("hosted squash delivery: a squash whose tree is not the head's tree is
     const { rig } = await makeRig("autonomy-foreign-squash-tree", {
       repair: repairSnapshot([foreignRecord()], [foreignReceipt()]),
       resolver: (repository) =>
-        createHostedAutonomyGitHub("fixture-token", repository),
+        createHostedAutonomyGitHub(
+          "fixture-token",
+          repository,
+          undefined,
+          INACTIVE_CI_MINUTES,
+        ),
     });
     const result = await run(rig);
     assert.deepEqual([...result.revisions], []);

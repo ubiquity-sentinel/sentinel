@@ -87,6 +87,11 @@ export interface RepairFanoutFinalizeInputV1 {
 
 type Reader = Pick<MatrixArtifactReaderV1, "json" | "pages" | "download">;
 type Archive = ReturnType<typeof createMatrixArtifactArchive>;
+/** What authentication binds: the run, its runtime, the plan and the clock. */
+export type RepairFanoutAuthInputV1 = Pick<
+  RepairFanoutFinalizeInputV1,
+  "clock" | "run" | "runtime" | "planDigest"
+>;
 
 function provenanceOf(
   attempt: Json,
@@ -121,7 +126,7 @@ function provenanceOf(
 async function cellMarker(
   reader: Reader,
   job: Json,
-  input: RepairFanoutFinalizeInputV1,
+  input: RepairFanoutAuthInputV1,
   cellId: string,
 ): Promise<Json> {
   if (
@@ -183,7 +188,7 @@ function only(files: Map<string, Uint8Array>, name: string): Uint8Array {
  * cannot be authenticated (nothing is applied).
  */
 export async function authenticateRepairFanout(
-  input: RepairFanoutFinalizeInputV1,
+  input: RepairFanoutAuthInputV1,
   reader: Reader,
   archive: Archive,
 ): Promise<

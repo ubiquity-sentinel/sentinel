@@ -222,7 +222,12 @@ Deno.test(
       const { rig } = await makeRig("autonomy-foreign-green", {
         repair: repairSnapshot([foreignRecord()], [foreignReceipt()]),
         resolver: (repository) =>
-          createHostedAutonomyGitHub("fixture-token", repository),
+          createHostedAutonomyGitHub(
+            "fixture-token",
+            repository,
+            undefined,
+            INACTIVE_CI_MINUTES,
+          ),
       });
       const result = await run(rig);
       assert.equal(result.status, "applied", JSON.stringify(result));

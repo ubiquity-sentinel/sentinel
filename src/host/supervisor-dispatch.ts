@@ -65,6 +65,11 @@ import {
   type HttpTransportV1,
 } from "../github/http.ts";
 import { dispatchFollowedSupervisor } from "./hosted-runtime-follow-dispatch.ts";
+import {
+  defaultListPause,
+  FOLLOW_LIST_ATTEMPTS,
+  FOLLOW_LIST_RETRY_PAUSE_MS,
+} from "./hosted-runtime-follow-api.ts";
 
 /** Exact repository the scheduled dispatcher owns. */
 export const SUPERVISOR_REPOSITORY = HOSTED_CONTROLLER_REPOSITORY;
@@ -81,6 +86,9 @@ export const STALE_OWNER_MS = 30 * 60 * 1000;
 export const PER_PAGE = 100;
 /** Bounded pagination: a listing without a validated terminal page fails. */
 export const MAX_LIST_PAGES = 10;
+/** Complete listings attempted, including the first, before refusing. */
+export const LIST_ATTEMPTS = FOLLOW_LIST_ATTEMPTS;
+const LIST_RETRY_PAUSE_MS = FOLLOW_LIST_RETRY_PAUSE_MS;
 /** Bounded refusals per pass; at most one acknowledged force-cancel. */
 export const MAX_CANCEL_ATTEMPTS = 3;
 /**
@@ -117,6 +125,8 @@ export interface SupervisorDispatchDepsV1 {
   log?: SupervisorLogV1;
   /** Exact readback from the preceding trusted follow step. */
   follow?: { expectedSha: string; ready: boolean; pause?: () => Promise<void> };
+  /** Pause before re-reading an inconsistent listing; tests inject one. */
+  pause?: () => Promise<void>;
 }
 
 /** Bounded recovery outcome of one pass. */
@@ -539,9 +549,47 @@ function evaluateRun(
  * page must report the same `total_count`, item ids must be unique across
  * pages, and the final count must equal the collected item count. Any
  * inconsistent, duplicated, overlong or unterminated listing fails closed, so
- * an omitted or hidden item can never be authorized away.
+ * an omitted or hidden item can never be authorized away. GitHub's filtered
+ * listings are eventually consistent, so an inconsistent listing is re-read
+ * from page 1 up to `LIST_ATTEMPTS` times in total, pausing only while the
+ * recovery budget still covers the pause and the next request; only a listing
+ * that completes within one pass is ever accepted.
  */
 async function listAllPages<T extends { id: number }>(
+  deps: SupervisorDispatchDepsV1,
+  path: string,
+  query: Record<string, string>,
+  collection: string,
+  decodeItem: (raw: unknown) => DecodedV1<T>,
+  recoveryDeadlineMs: number,
+): Promise<DecodedV1<PageV1<T>>> {
+  for (let attempt = 1;; attempt++) {
+    const listed = await listAllPagesOnce(
+      deps,
+      path,
+      query,
+      collection,
+      decodeItem,
+      recoveryDeadlineMs,
+    );
+    if (
+      listed.valid || !INCONSISTENT_LISTING.has(listed.reason) ||
+      attempt >= LIST_ATTEMPTS ||
+      recoveryBudgetExhausted(deps, recoveryDeadlineMs - LIST_RETRY_PAUSE_MS)
+    ) return listed;
+    await (deps.pause ?? defaultListPause)();
+  }
+}
+
+/** Listing refusals that a fresh complete re-read may resolve. */
+const INCONSISTENT_LISTING = new Set([
+  "pagination_total_changed",
+  "pagination_duplicate",
+  "pagination_inconsistent",
+  "pagination_incomplete",
+]);
+
+async function listAllPagesOnce<T extends { id: number }>(
   deps: SupervisorDispatchDepsV1,
   path: string,
   query: Record<string, string>,
@@ -584,7 +632,8 @@ async function listAllPages<T extends { id: number }>(
       return accepted({ items, totalCount });
     }
   }
-  return refused("pagination_incomplete");
+  // The page bound is not a transient inconsistency; it is never re-read.
+  return refused("pagination_limit");
 }
 
 /** Read one run's `pending_deployments`; a protected deployment blocks it. */

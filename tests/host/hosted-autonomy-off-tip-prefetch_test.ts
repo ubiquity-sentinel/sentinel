@@ -63,9 +63,9 @@ Deno.test("off-tip prefetch: a self delivery off the read tip reports base_moved
     );
     assert.equal(result.status, "skipped", JSON.stringify(result));
     assert.equal(result.reason, "base_moved");
-    // Only the closure pass reads the source issue (for its own closure
-    // plan); the delivery pass reads none.
-    assert.equal(reads.task, 1, "the delivery pass reads no source issue");
+    // The delivery pass reads no source issue, and neither does the closure
+    // pass for a self delivery no accepted release makes ready.
+    assert.equal(reads.task, 0, "the delivery pass reads no source issue");
     assert.equal(reads.pull, 1, "the delivery pass reads its pull request");
     assert.equal(rig.merges, 0);
     assert.equal(rig.writes, 0);
@@ -89,8 +89,9 @@ Deno.test("off-tip prefetch: a merged self pull request that moved the tip is st
     assert.equal(rig.merges, 0);
     assert.equal((await readRequests(rig)).length, 1);
     // The merged pull request goes on to the ordinary booking path, whose
-    // task read still authorizes the record (beside the closure pass's own).
-    assert.equal(reads.task, 2);
+    // task read still authorizes the record (the closure pass reads none
+    // for a self delivery no accepted release makes ready).
+    assert.equal(reads.task, 1);
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });
   }

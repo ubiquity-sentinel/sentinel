@@ -19,8 +19,10 @@
  * (loop-preservation.ts), owned by the existing REFUSED disposition. The
  * target, head and descriptor stay as they are, and every charge stays
  * byte-identical. Every other preserver answer, a preservation ref that is
- * present or unreadable, and the same verdict for the in-flight and
- * existing-ref callers still write nothing, and nothing is retired by age.
+ * present or unreadable, and the same verdict for the existing-ref caller
+ * still write nothing, and nothing is retired by age. (The in-flight restore
+ * records the verdict too, for an unpublished candidate:
+ * hosted-autonomy-inflight-refusal_test.ts.)
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -160,8 +162,9 @@ const SECRET = portError("invalid", PUBLICATION_SECRET_DETAIL);
 const RUNTIME_PROTECTED = "candidate touches a protected path";
 
 /**
- * The shared tail exactly as the parked runtime-mismatch restore calls it
- * (`recordRefusal`), or as every other caller does (`shared`).
+ * The shared tail exactly as the parked runtime-mismatch restore (and the
+ * in-flight restore, for an unpublished candidate) calls it (`recordRefusal`),
+ * or as the existing-ref caller does (`shared`).
  */
 function restore(
   state: TransitionState,
@@ -543,7 +546,7 @@ Deno.test("preservation refused: every answer short of the validator's verdict o
       ...cases.map(([name, record, answer]) =>
         [name, record, answer, false] as const
       ),
-      // The in-flight and existing-ref callers keep custody on the verdict.
+      // The existing-ref caller keeps custody on the verdict.
       [
         "the verdict for a caller that keeps custody",
         live,

@@ -64,9 +64,12 @@ const TIP = "7001700170017001700170017001700170017001" as GitSha;
 const PATCH = "a".repeat(64);
 const POLL = 300_001;
 
-type ProofMode = "holds" | "changed" | "unavailable";
+type ProofMode = "holds" | "changed" | "drift" | "unavailable";
 
-/** The git proof: equal digests and T the refreshed merge base, or not. */
+/**
+ * The git proof: equal digests and T the refreshed merge base, or not; `drift`
+ * is unequal digests whose reviewed hunks git carried across base drift.
+ */
 function fakeProof(github: FakeGithub, mode: ProofMode) {
   const requests: CarriedPatchRequestV1[] = [];
   github.proveCarriedPatch = (request) => {
@@ -81,6 +84,7 @@ function fakeProof(github: FakeGithub, mode: ProofMode) {
       refreshedPatch: mode === "holds" ? PATCH : "b".repeat(64),
       refreshedFrom: request.reviewedHead,
       refreshes: 1,
+      ...(mode === "drift" ? { driftCarried: true } : {}),
     }));
   };
   return requests;
@@ -184,7 +188,8 @@ Deno.test("carried release (runtime): a carried Gateway delivery is refused whil
     // The release path is enabled: the real VPS controller accepts the exact
     // carried request on the release ref.
     await persistVpsDelivery(rig.store, rig.releaseStore, rig.clock, request);
-    for (const mode of ["changed", "unavailable", "absent"] as const) {
+    // A native queue target keeps the exact identity: drift is no proof here.
+    for (const mode of ["changed", "drift", "unavailable", "absent"] as const) {
       const proofs = mode === "absent" ? [] : fakeProof(rig.github, mode);
       if (mode === "absent") rig.github.proveCarriedPatch = undefined;
       rig.clock.advance(POLL);
@@ -222,28 +227,30 @@ Deno.test("carried release (runtime): a carried Gateway delivery is refused whil
   }
 });
 
-Deno.test("carried release (runtime): a carried self delivery is accepted once its git patch proof holds", async () => {
-  const rig = await makeRig("carried-release-self", {
-    summaries: false,
-    localScope: true,
-  });
-  try {
-    const proofs = fakeProof(rig.github, "holds");
-    const { record, receipt, request } = carriedSelf();
-    await seed(rig, record, receipt, request);
-    Object.assign(rig.store, {
-      readLocalRelease: () =>
-        Promise.resolve(portOk(localAcceptedReceipt(request))),
+Deno.test("carried release (runtime): a carried self delivery is accepted once its git patch proof holds, exactly or across base drift", async () => {
+  for (const mode of ["holds", "drift"] as const) {
+    const rig = await makeRig(`carried-release-self-${mode}-accepted`, {
+      summaries: false,
+      localScope: true,
     });
-    const run = await rig.run();
-    assert.equal(run.status, "idle", JSON.stringify(run));
-    const after = (await rig.snapshot()).work[0];
-    assert.equal(after.nextStep, "done", JSON.stringify(after));
-    assert.equal(closes(rig), 1);
-    assert.ok(proofs.length > 0);
-    for (const proof of proofs) assert.deepEqual(proof, EXPECTED_PROOF);
-  } finally {
-    await rig.ctx.cleanup();
+    try {
+      const proofs = fakeProof(rig.github, mode);
+      const { record, receipt, request } = carriedSelf();
+      await seed(rig, record, receipt, request);
+      Object.assign(rig.store, {
+        readLocalRelease: () =>
+          Promise.resolve(portOk(localAcceptedReceipt(request))),
+      });
+      const run = await rig.run();
+      assert.equal(run.status, "idle", JSON.stringify(run));
+      const after = (await rig.snapshot()).work[0];
+      assert.equal(after.nextStep, "done", `${mode} ${JSON.stringify(after)}`);
+      assert.equal(closes(rig), 1, mode);
+      assert.ok(proofs.length > 0, mode);
+      for (const proof of proofs) assert.deepEqual(proof, EXPECTED_PROOF);
+    } finally {
+      await rig.ctx.cleanup();
+    }
   }
 });
 

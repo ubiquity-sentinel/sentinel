@@ -75,12 +75,23 @@ export async function executeSelfMerge(
         proof.taskDigest !== acceptance.taskDigest
       ) return portError("invalid", "self merge intent identity mismatch");
     }
-    const ci = await io.client.readNativeCiEvidence({
-      head: request.expectedHead,
-      base: request.expectedBase,
-      pr: request.pullRequestNumber,
-      headRef: context.headRef,
-    });
+    // Once the source write is recorded GitHub has merged the PR, and a CI run
+    // lists open pull requests only, so its PR-bound evidence can never be
+    // read again (sentinel-246: PR #256's run 41472559552 lists none). The
+    // durable proof keeps the exact evidence the write was authorized by; the
+    // object, ref, current-head CI, review, PR and issue checks below still run.
+    const recordedCi = proof === null || proof.stage === "prepared" ||
+        proof.stage === "preserved"
+      ? null
+      : proof.ci;
+    const ci = recordedCi !== null
+      ? portOk(recordedCi)
+      : await io.client.readNativeCiEvidence({
+        head: request.expectedHead,
+        base: request.expectedBase,
+        pr: request.pullRequestNumber,
+        headRef: context.headRef,
+      });
     if (!ci.ok) return ci;
     const base = await read(request.expectedBase),
       head = await read(request.expectedHead),

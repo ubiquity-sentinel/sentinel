@@ -13,6 +13,8 @@ import {
   type RunJobSummaryV1,
 } from "../../src/host/run-summary.ts";
 import { detectWedgesV0 } from "../../src/host/run-summary-wedges.ts";
+import { ATTEMPT_DETAIL_NO_CHANGE } from "../../src/repair/attempt-policy.ts";
+import { BASE_REVIEW_HOLD_MS } from "../../src/repair/base-satisfaction-marker.ts";
 import { seededSnapshot } from "../repair/loop-rig.ts";
 import { SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
 
@@ -139,6 +141,47 @@ Deno.test("wedge report: a lone holder, an expired wait and an empty snapshot ar
   ]);
   assert.equal(detectWedgesV0(expired, NOW).total, 0, "an expired wait moves");
   assert.equal(detectWedgesV0(seededSnapshot([]), NOW).total, 0);
+});
+
+Deno.test("wedge report: an open-ended base-review hold is reported, a bounded one is not", () => {
+  const charge = "a".repeat(64);
+  const held = (id: string, at: number | null) =>
+    workRecord(id, {
+      target: {
+        base: SHA1,
+        branch: `sentinel/repair/${id}`,
+        checkpoint: null,
+        head: null,
+        pr: null,
+      },
+      ...until("backoff", at),
+      intent: {
+        kind: "implementation",
+        key: `impl:${charge}`,
+        startedAt: T0,
+        branch: `sentinel/repair/${id}`,
+        expectedHead: null,
+        observedBase: SHA1,
+        pr: null,
+        requestId: charge,
+        resultId: null,
+        failure: {
+          kind: "base_review",
+          detail: ATTEMPT_DETAIL_NO_CHANGE,
+          atMs: T0,
+          attempts: 1,
+        },
+      },
+    });
+  const report = detectWedgesV0(
+    seededSnapshot([
+      held("b-legacy", null),
+      held("b-bounded", T0 + BASE_REVIEW_HOLD_MS),
+    ]),
+    NOW,
+  );
+  assert.equal(report.classes.open_ended_wait.count, 1);
+  assert.ok(report.classes.open_ended_wait.samples[0].endsWith("b-legacy"));
 });
 
 function healthyJob(): RunJobSummaryV1 {

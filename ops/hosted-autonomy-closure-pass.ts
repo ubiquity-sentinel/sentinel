@@ -39,6 +39,7 @@ import {
 } from "./hosted-autonomy-closures.ts";
 import {
   type HostedAutonomyPassContextV1,
+  type HostedAutonomyScopeV1,
   readHostedPullStatus,
 } from "./hosted-autonomy-scopes.ts";
 import {
@@ -218,6 +219,34 @@ function gatewayReleaseDeferredIn(
     gatewayReleaseDeferred(context.releaseSnapshot, requests[0]);
 }
 
+/**
+ * Merged, and its source issue already closed (normally by the merge's own
+ * `Resolves #N`): no closing write is left, so a non-Gateway foreign closure
+ * neither reads head CI nor writes the issue and settles through the same
+ * `applyHostedClosures` transition. Live 2026-11-12, seven such deliveries
+ * whose head CI did not read green refused on every pass and never settled.
+ * True only when this pass's source-issue facts and a fresh read immediately
+ * before the settlement both say closed: an open, reopened or unreadable issue
+ * keeps the green-CI gate on the closure Sentinel itself would make.
+ */
+async function foreignIssueAlreadyClosed(
+  closedIssues: ReadonlySet<string>,
+  scope: HostedAutonomyScopeV1,
+  record: HostedAutonomyRecordV1,
+  issueNumber: number,
+): Promise<boolean> {
+  if (
+    isHostedSelf(record.repository) ||
+    isGatewayVpsRepository(record.repository) || scope.surface === null ||
+    !closedIssues.has(hostedIssueKey(record.repository, issueNumber))
+  ) return false;
+  try {
+    return await scope.surface.readIssueOpen(issueNumber) === false;
+  } catch {
+    return false;
+  }
+}
+
 function gatewayIntentClosable(
   context: HostedAutonomyPassContextV1,
   record: HostedAutonomyRecordV1,
@@ -259,6 +288,11 @@ export async function runHostedClosurePass(
         releaseDeferred++;
         continue;
       }
+      const key = hostedDeliveryKey(record.repository, pr, head, base);
+      // A self delivery is ready only through its accepted release, so one
+      // still awaiting it (every one, while `sentinel-release` is disabled)
+      // costs no read here; an accepted one is authorized exactly as before.
+      if (isHostedSelf(record.repository) && !released.has(key)) continue;
       const scope = await scopeFor(record.repository);
       if (
         releaseAuthorizingReceipt(
@@ -267,9 +301,8 @@ export async function runHostedClosurePass(
           await readTrustedTask(scope.surface, record),
         ) === null
       ) continue;
-      const key = hostedDeliveryKey(record.repository, pr, head, base);
       if (isHostedSelf(record.repository)) {
-        if (released.has(key)) ready = true;
+        ready = true;
         continue;
       }
       const pull = await readPull(scope, pr);
@@ -628,6 +661,7 @@ export async function runHostedClosurePass(
         actions.push(`close:${plan.id}:issue=${plan.issueNumber}:refused`);
         continue;
       }
+      let alreadyClosed = false;
       if (!isHostedSelf(record.repository)) {
         if (recovered.has(record.id)) {
           const pull = await readPull(scope, record.target.pr!);
@@ -647,16 +681,26 @@ export async function runHostedClosurePass(
             continue;
           }
         }
-        let checksGreen = false;
-        try {
-          checksGreen = scope.surface !== null && record.target.head !== null &&
-            await scope.surface.hasAllChecksGreen(record.target.head) === true;
-        } catch {
-          checksGreen = false;
-        }
-        if (!checksGreen) {
-          actions.push(`close:${plan.id}:issue=${plan.issueNumber}:refused`);
-          continue;
+        alreadyClosed = await foreignIssueAlreadyClosed(
+          closedIssues,
+          scope,
+          record,
+          plan.issueNumber,
+        );
+        if (!alreadyClosed) {
+          let checksGreen = false;
+          try {
+            checksGreen = scope.surface !== null &&
+              record.target.head !== null &&
+              await scope.surface.hasAllChecksGreen(record.target.head) ===
+                true;
+          } catch {
+            checksGreen = false;
+          }
+          if (!checksGreen) {
+            actions.push(`close:${plan.id}:issue=${plan.issueNumber}:refused`);
+            continue;
+          }
         }
       }
       let closed = false;
@@ -742,6 +786,11 @@ export async function runHostedClosurePass(
             (request.source.reviewReceiptId !== proof.reviewReceiptId ||
               request.source.reviewRequestId !== proof.reviewRequestId))
         ) continue;
+      }
+      // The merge proof above was re-verified; the closed issue needs no write.
+      if (alreadyClosed) {
+        closed = true;
+        actions.push(`reconcile:${record.id}:already_closed`);
       }
       if (scope.surface !== null) {
         try {
