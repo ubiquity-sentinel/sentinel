@@ -160,10 +160,23 @@ export function createHostedAutonomyGitHub(
     if (baseBranch === null) return null;
     let parents: string[] = [];
     let revisionOnBaseBranch = false;
-    const commit = await request(
-      "GET",
-      `/repos/${scope}/commits/${mergeCommitSha}`,
-    );
+    // These exact-object proofs are independent. Overlap their read-only
+    // round trips instead of serializing three requests for every merged PR.
+    const [commit, compare, baseCompare] = await Promise.all([
+      request("GET", `/repos/${scope}/commits/${mergeCommitSha}`),
+      request(
+        "GET",
+        `/repos/${scope}/compare/${mergeCommitSha}...${baseBranch}`,
+        undefined,
+        MAX_COMPARE_RESPONSE_BYTES,
+      ),
+      parsed.baseSha === null ? null : request(
+        "GET",
+        `/repos/${scope}/compare/${parsed.baseSha}...${mergeCommitSha}`,
+        undefined,
+        MAX_COMPARE_RESPONSE_BYTES,
+      ),
+    ]);
     const parentList = commit !== null && typeof commit === "object"
       ? (commit as Record<string, unknown>)["parents"]
       : null;
@@ -178,12 +191,6 @@ export function createHostedAutonomyGitHub(
     const trees = parents.length === 1 && parsed.headSha !== null
       ? await readSquashTrees(request, scope, commit, parsed.headSha)
       : null;
-    const compare = await request(
-      "GET",
-      `/repos/${scope}/compare/${mergeCommitSha}...${baseBranch}`,
-      undefined,
-      MAX_COMPARE_RESPONSE_BYTES,
-    );
     revisionOnBaseBranch = revisionIntegratedIntoBase(
       compare,
       mergeCommitSha,
@@ -195,12 +202,6 @@ export function createHostedAutonomyGitHub(
     // base commit as the left side.
     let baseAncestorOfRevision = false;
     if (parsed.baseSha !== null) {
-      const baseCompare = await request(
-        "GET",
-        `/repos/${scope}/compare/${parsed.baseSha}...${mergeCommitSha}`,
-        undefined,
-        MAX_COMPARE_RESPONSE_BYTES,
-      );
       baseAncestorOfRevision = revisionIntegratedIntoBase(
         baseCompare,
         parsed.baseSha,
