@@ -22,6 +22,7 @@ import {
   ordinaryReviewRoundsSpent,
   reviewRoundsLeft,
 } from "../src/repair/review-round-cap.ts";
+import { planRaisedCeilingReadmission } from "./hosted-autonomy-raised-ceiling.ts";
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
 import {
   ciCorrectionRuntimeProven,
@@ -663,7 +664,12 @@ export function planHostedRetries(
         ciFirst,
         cutoff,
       );
-      if (ciFirstPlan !== null) plans.push(ciFirstPlan);
+      if (ciFirstPlan !== null) {
+        plans.push(ciFirstPlan);
+        continue;
+      }
+      const raised = planRaisedCeilingReadmission(snapshot, record, cutoff);
+      if (raised !== null) plans.push(raised);
       continue;
     }
     if (

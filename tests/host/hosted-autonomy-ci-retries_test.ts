@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
+import { LEGACY_REVIEW_ROUND_CEILING } from "../../src/repair/review-round-cap.ts";
 import {
   applyHostedRetries,
   planHostedRetries,
@@ -1185,9 +1186,12 @@ Deno.test("hosted autonomy: the green-head rule is the CI re-admission shape wit
     const snapshot = repairSnapshot([spent(rounds)], reviews, [], CHARGES);
     const record = snapshot.work[0];
     assert.equal(ciGreenRedeliveryEligible(snapshot, record), true);
+    // The fixture records predate the CI-first era, so they keep the
+    // 2026-10-16 ceiling of three (owner decision 2026-10-24 raised only the
+    // CI-first era to five).
     assert.equal(
       ciRedeliveryEligible(snapshot, record),
-      rounds < HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS,
+      rounds < LEGACY_REVIEW_ROUND_CEILING,
     );
   }
   assert.equal(

@@ -5,6 +5,7 @@ import {
 } from "./hosted-supervisor-execution.ts";
 import { parseHostedPointerIntentV1 } from "./hosted-supervisor-runtime.ts";
 import type {
+  HostedExecutionSettlementV1,
   HostedInstallationRecordV1,
   HostedRuntimeRecordV1,
 } from "./hosted-supervisor-types.ts";
@@ -27,6 +28,7 @@ export function parseHostedInstallationRecordV1(
   path = "$",
 ): HostedInstallationRecordV1 {
   const obj = expectRecord(input, path);
+  const retried = Object.hasOwn(obj, "retriedBootstrapProof");
   expectExactKeys(obj, [
     "version",
     "kind",
@@ -44,6 +46,7 @@ export function parseHostedInstallationRecordV1(
     "rollbackProof",
     "createdAt",
     "updatedAt",
+    ...(retried ? ["retriedBootstrapProof"] : []),
   ], path);
   expectVersion(obj.version, `${path}.version`);
   expectEnum(obj.kind, ["hosted_installation"], `${path}.kind`);
@@ -110,6 +113,14 @@ export function parseHostedInstallationRecordV1(
     ),
     createdAt: expectTimestamp(obj.createdAt, `${path}.createdAt`),
     updatedAt: expectTimestamp(obj.updatedAt, `${path}.updatedAt`),
+    ...(retried
+      ? {
+        retriedBootstrapProof: parseHostedExecutionSettlementV1(
+          obj.retriedBootstrapProof,
+          `${path}.retriedBootstrapProof`,
+        ),
+      }
+      : {}),
   };
   if (
     r.id !== `installation:${r.candidateRevision}` ||
@@ -180,6 +191,25 @@ export function parseHostedInstallationRecordV1(
       );
     }
   }
+  const first = r.retriedBootstrapProof;
+  if (
+    first !== undefined &&
+    (!bootstrapNeverStarted(first) || r.phase === "requested" ||
+      first.execution.purpose !== "bootstrap" ||
+      first.execution.releaseId !== null ||
+      first.execution.revision !== r.candidateRevision ||
+      first.execution.generation !== r.previousGeneration + 1 ||
+      first.observedAt > r.updatedAt ||
+      // Until the retry starts, the first attempt still owns the binding.
+      first.execution.id === r.bootstrapExecutionId &&
+        (r.phase !== "bootstrapping" || r.bootstrapProof !== null))
+  ) {
+    fail(
+      path,
+      "invalid_lifecycle",
+      "a bootstrap retry requires one exact first attempt that never reached startup-ready",
+    );
+  }
   if (
     r.phase !== "requested" && r.bootstrapExecutionId === null ||
     r.phase === "accepted" && r.bootstrapProof?.outcome !== "healthy" ||
@@ -202,6 +232,42 @@ const same = (a: unknown, b: unknown) =>
   canonicalStringify(a) === canonicalStringify(b);
 export function installationTerminal(r: HostedInstallationRecordV1): boolean {
   return ["accepted", "rolled_back", "rollback_failed"].includes(r.phase);
+}
+/**
+ * #191: the settled bootstrap never reached its startup-ready marker (no run,
+ * or a run whose child never attested startup readiness). A run that reached
+ * startup-ready and then failed actually executed and is never retried.
+ */
+export function bootstrapNeverStarted(
+  proof: HostedExecutionSettlementV1,
+): boolean {
+  return proof.outcome === "not_started" ||
+    proof.outcome === "failed" && !proof.startupReady;
+}
+/** The single retry rebinds only the never-started first attempt, in place. */
+function isBootstrapRetryStart(
+  r: HostedInstallationRecordV1,
+  n: HostedInstallationRecordV1,
+  runtime: HostedRuntimeRecordV1 | undefined,
+  next: HostedRuntimeRecordV1 | undefined,
+): boolean {
+  const first = r.retriedBootstrapProof, execution = next?.execution;
+  const pointer = r.previousGeneration + 1;
+  return first !== undefined && first.execution.id === r.bootstrapExecutionId &&
+    r.phase === "bootstrapping" && n.phase === "bootstrapping" &&
+    r.bootstrapProof === null && n.bootstrapProof === null &&
+    runtime?.execution === null &&
+    runtime.activeRevision === r.candidateRevision &&
+    runtime.generation === pointer && next !== undefined &&
+    next.activeRevision === r.candidateRevision &&
+    next.generation === pointer &&
+    execution !== undefined && execution !== null &&
+    execution.id === n.bootstrapExecutionId &&
+    execution.id !== first.execution.id && execution.purpose === "bootstrap" &&
+    execution.releaseId === null &&
+    execution.revision === r.candidateRevision &&
+    execution.launcherSha === r.candidateRevision &&
+    execution.generation === pointer;
 }
 export function matchesInstallationMovement(
   before: HostedRuntimeRecordV1,
@@ -285,6 +351,24 @@ export function validateHostedInstallationTransition(
       !movement && !same(r.pointerIntent, n.pointerIntent) &&
       !(r.phase === "bootstrapping" && n.phase === "rollback_pending")
     ) return "installation pointer intent cannot be rewritten";
+    // #191: the never-started first settlement is journaled exactly once, in
+    // the write that clears that execution, and admits one in-place retry.
+    if (r.retriedBootstrapProof !== undefined) {
+      if (!same(r.retriedBootstrapProof, n.retriedBootstrapProof)) {
+        return "installation retry proof is immutable";
+      }
+    } else if (
+      n.retriedBootstrapProof !== undefined &&
+      (r.phase !== "bootstrapping" || n.phase !== "bootstrapping" ||
+        r.bootstrapProof !== null || n.bootstrapProof !== null ||
+        n.bootstrapExecutionId !== r.bootstrapExecutionId ||
+        runtime?.execution?.id !== r.bootstrapExecutionId ||
+        next?.execution !== null ||
+        !same(n.retriedBootstrapProof, next.lastExecutionProof))
+    ) {
+      return "installation retry must journal its exact settlement atomically";
+    }
+    const retryStart = isBootstrapRetryStart(r, n, runtime, next);
     for (
       const [key, idKey] of [["bootstrapProof", "bootstrapExecutionId"], [
         "rollbackProof",
@@ -301,7 +385,10 @@ export function validateHostedInstallationTransition(
       ) {
         return "installation settlement must clear the exact execution atomically";
       }
-      if (r[idKey] !== null && r[idKey] !== n[idKey]) {
+      if (
+        r[idKey] !== null && r[idKey] !== n[idKey] &&
+        !(idKey === "bootstrapExecutionId" && retryStart)
+      ) {
         return "installation execution identity is immutable";
       }
       if (r[idKey] === null && n[idKey] !== null && !movement) {

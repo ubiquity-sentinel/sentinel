@@ -102,6 +102,13 @@ export interface HostedInstallationRecordV1 {
   rollbackProof: HostedExecutionSettlementV1 | null;
   createdAt: number;
   updatedAt: number;
+  /**
+   * #191: the first bootstrap attempt's settlement when it never reached the
+   * startup-ready marker. Its presence consumes the single same-pointer retry;
+   * `bootstrapExecutionId`/`bootstrapProof` then bind the retry. Absent on
+   * records that never retried, so earlier readers keep their exact shape.
+   */
+  retriedBootstrapProof?: HostedExecutionSettlementV1;
 }
 export interface HostedOwnerSupersessionIntentV1 {
   releaseId: string;

@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { MATRIX_PRESERVATION_UNCERTAINTY_DETAIL } from "../../src/host/matrix-uncertainty-maintenance.ts";
+import { CandidateProofPassV1 } from "../../src/host/actions-candidates-proof.ts";
 import { implementationIntentKey } from "../../src/repair/keys.ts";
 import {
   isInflightPreservation,
@@ -150,6 +151,37 @@ Deno.test(
       // Nothing is pending: the walk reads no producer again.
       assert.equal(await rig.walk(), null);
       assert.equal(rig.calls.recovered.length, 3);
+    } finally {
+      await rig.cleanup();
+    }
+  },
+);
+
+// #185: a producer pass builds its ingest cycle and every preservation of a
+// target with ONE proof pass, so the candidates it preserves share one fresh
+// store, and the pass closes it when it ends: no later pass reuses it.
+Deno.test(
+  "in-flight preservation walk: each producer pass preserves through its own proof pass, closed when that pass ends",
+  async () => {
+    const rig = await preservationWalkRig();
+    try {
+      const first = await rig.walk();
+      assert.equal(first?.status, "applied", JSON.stringify(first));
+      const passes = [...rig.calls.proofPasses];
+      // The newer producer's ingest cycle and its consumed cell's preservation.
+      assert.equal(passes.length, 2);
+      assert.ok(passes[0] instanceof CandidateProofPassV1);
+      assert.equal(passes[1], passes[0]);
+      assert.equal(passes[0].closed, true);
+
+      const second = await rig.walk();
+      assert.equal(second?.status, "applied", JSON.stringify(second));
+      const later = rig.calls.proofPasses.slice(passes.length);
+      assert.equal(later.length, 2, "the older producer's pass");
+      assert.ok(later[0] instanceof CandidateProofPassV1);
+      assert.equal(later[1], later[0]);
+      assert.notEqual(later[0], passes[0], "a new pass, never the earlier one");
+      assert.equal(later[0].closed, true);
     } finally {
       await rig.cleanup();
     }

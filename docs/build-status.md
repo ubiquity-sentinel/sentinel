@@ -7,7 +7,41 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 19:10 UTC)
+## Latest checkpoint (2026-10-24 19:55 UTC)
+
+- Runtime: 13 consecutive green supervisor runs since 17:43 UTC on launcher
+  `31212ac234`. The last non-green run was the 17:30 cancellation.
+- Owner directive (2026-10-24): "make it end to end autonomous". `34fec27394`
+  defaults dispatcher auto-follow to on and makes the follow skip a candidate
+  whose `.github/workflows` tree differs from the launcher's (deferring as
+  `workflow_change_needs_owner_advance`) instead of attempting a ref write the
+  native token cannot make. `34fec27394` itself changes
+  `supervisor-dispatch.yml`, so it needs one manual advance; `437e929d45` has no
+  workflow change and is the first automatic-advance candidate once its CI is
+  green.
+- On `development`, CI pending:
+  - `a62ac19a8e`: the pre-merge dispatcher requests Gateway CI base evidence on
+    ai.ubq.fi `development` when a red head's base has no run. Root cause of
+    ai.ubq.fi PRs 1295 and 1256 at `ci_pending`: closed-PR Gateway CI runs
+    report on the PR head, so the merge commit never has check runs and no red
+    head can be attributed. Like-for-like attribution also needs the owner's
+    ai.ubq.fi change in #181.
+  - `54a7c4063c` and `437e929d45` (#192): a pending commit status turns advisory
+    30 minutes after the head's last check run completed. The review found that
+    without the grace a status about to fail would pass the merge gates.
+- Closed: ai.ubq.fi #300 (fixed by 0c120c11f6 on 2026-09-22) and Sentinel #159
+  (items 1 and 2 done; item 3 stays an owner question in DECISIONS).
+- #183 verified on Sentinel and Passport issues (one comment per stage change,
+  no duplicates). ai.ubq.fi has had no stage change since the feature shipped.
+- Isolated workers (uncommitted worktrees, primary integrates after an
+  adversarial review): #191 and #185 done and under review; #177, #155, #156,
+  #152, #161/#162 and #169 running.
+- ai.ubq.fi reserved-file parks (1281, 1282, 1210, 1211, 1182, 1176) and #1249
+  are listed for the other-repos agent in
+  `docs/handoffs/2026-10-24-other-repos.md`; nothing was pushed to ai.ubq.fi
+  since 2026-10-23.
+
+## Prior checkpoint (2026-10-24 19:10 UTC)
 
 - Launcher: `31212ac234` at 18:31 UTC (CI `40120108667` green). Its bootstrap
   `40121335731` and ordinary run `40122100822` settled `success`. Maintenance

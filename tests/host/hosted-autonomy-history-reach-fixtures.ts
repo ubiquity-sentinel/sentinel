@@ -23,6 +23,7 @@ import {
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
+import type { CandidateProofPassV1 } from "../../src/host/actions-candidates-proof.ts";
 import { CLOSED_C_WAVE } from "../../src/host/modern-matrix-recovery.ts";
 import { implementationIntentKey } from "../../src/repair/keys.ts";
 import {
@@ -624,6 +625,8 @@ export async function preservationWalkRig() {
   const calls = {
     recovered: [] as number[],
     preserved: [] as string[],
+    // The proof pass every cycle of a producer pass was built with (#185).
+    proofPasses: [] as (CandidateProofPassV1 | undefined)[],
     ingested: [] as string[],
   };
   const refs = new Map<string, GitSha>();
@@ -784,7 +787,10 @@ export async function preservationWalkRig() {
         state,
         clock,
         configs: [{ repository: REPO }],
-        cycleFor: () => ({ clock, github }),
+        cycleFor: (_config: unknown, proofPass?: CandidateProofPassV1) => {
+          calls.proofPasses.push(proofPass);
+          return { clock, github };
+        },
         prepareTarget: () => Promise.resolve(),
         ingest,
         importerFor: () => ({}),

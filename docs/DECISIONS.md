@@ -1314,19 +1314,21 @@ a parked record is no delivery-line contender; a record waiting on the launcher
 stops holding the line after 12 polls without progress
 (`DELIVERY_QUEUE_STALL_LIMIT`). No merge intent is written for a carried merge
 (R79 would execute it against a head the receipt does not name and stop with a
-state error). A carried delivery can never be accepted or closed by the release
-path as it stands (round-2 rechecks P3): `gatewayRequestBindsDelivery` requires
-the request's receipt to name the record's own head and base (H0 is not H1), so
-R80's `observeGatewayVpsDelivery` and the launcher's closure gate answer `wait`
-before reading any release state, and for the self scope `acceptRelease` refuses
-through `deliveryTaskRefusal`, whose authorizing receipt needs the exact head,
-and blocks the merged record `missing_evidence`; R79 answers the same. While
-`sentinel-release` is disabled that wait is every request's, but once releases
-are enabled it would be permanent for carried deliveries. Generation-81
-follow-up, required before releases are enabled: release acceptance and closure
-accept a carried request through `carriedRequestBindsDelivery` (the receipt an
-earlier head of the same pull request, the proof re-derived, the task authorized
-as of `reviewedIdentity`). Until then a carried merge's source issue still
+state error). As generation 80 shipped, a carried delivery could never be
+accepted or closed by the release path (round-2 rechecks P3):
+`gatewayRequestBindsDelivery` requires the request's receipt to name the
+record's own head and base (H0 is not H1), so R80's `observeGatewayVpsDelivery`
+and the launcher's closure gate answer `wait` before reading any release state,
+and for the self scope `acceptRelease` refuses through `deliveryTaskRefusal`,
+whose authorizing receipt needs the exact head, and blocks the merged record
+`missing_evidence`; R79 answers the same. While `sentinel-release` is disabled
+that wait is every request's, but once releases are enabled it would be
+permanent for carried deliveries. That required follow-up is done (Sentinel
+#152; "2026-10-24: carried release acceptance and closure" below): release
+acceptance and closure accept a carried request only through the carried
+binders, which re-derive the patch proof and authorize the task as of
+`reviewedIdentity`; R79 and R80 still answer `wait` for a carried Gateway
+request (the rollback answer). Meanwhile a carried merge's source issue still
 closes through GitHub's own closing reference on the merge: the pull request
 body carries `Resolves #<issue>` and the App merges into the default branch, as
 for every launcher merge (verified live 2026-10-17: ai.ubq.fi issues 600, 664,
@@ -2412,7 +2414,7 @@ deferred record out to `done`). Live, fresh state 31e7cc24a (sequence 42434,
 609, 616, 618, 641, 649, 651, 659, 661, 664, 670, 674, 682, 683, 684, 686,
 688, 880) are deferred on the new runtime's first ordinary pass (no hosted step
 limit) and are then not rewritten; 618's request is a carried delivery that does
-not bind until the carried release acceptance follow-up ships.
+not bind under R80; the carried binders bind it (#152, 2026-10-24, below).
 
 ## Durable memory and self-healing
 
@@ -2797,14 +2799,17 @@ standing approval above. Applied as follows.
   already has a run, when its record base equals the live pull request base and
   that base SHA has no run of the workflow (any event or status). The inputs are
   `base_ref: development`, the App login and `scope_base` set to the base
-  commit's first parent. The pass reads the parent through the branch
+  itself. That empty changed-path scope makes the gateway's test scope run
+  everything (`runAll`); a first-parent scope would report `success` for gates
+  it never ran and blame a pre-existing base failure on the candidate (review
+  finding, upheld 2 of 3). The pass reads the tip through the branch
   (`GET /commits/development`) and dispatches only while that tip is still the
   exact base, so a branch that already moved (`<pr>:base_moved`) never draws a
-  dispatch on every pass; an unreadable tip or parent skips the base. Head
-  dispatches keep priority, a base SHA that has any run is never dispatched
-  again, and the same grant, cooldown gate, deadline and refusal-ends-the-pass
-  rules apply. Decisions are `<pr>:base_stale`, `<pr>:base_run_exists`,
-  `<pr>:base_runs_unreadable`, `<pr>:base_moved`, `<pr>:base_parent_unreadable`,
+  dispatch on every pass; an unreadable tip skips the base. Head dispatches keep
+  priority, a base SHA that has any run is never dispatched again, and the same
+  grant, cooldown gate, deadline and refusal-ends-the-pass rules apply.
+  Decisions are `<pr>:base_stale`, `<pr>:base_run_exists`,
+  `<pr>:base_runs_unreadable`, `<pr>:base_moved`, `<pr>:base_tip_unreadable`,
   `<pr>:base_dispatch_refused:<reason>` and
   `<pr>:base_dispatched:confirmed|pending_visibility|unconfirmed`; the pass
   reports `base_dispatched`.
@@ -2812,10 +2817,10 @@ standing approval above. Applied as follows.
   wait, counter or receipt. A base branch that moves before GitHub resolves the
   ref yields a run on another SHA, which is reported as `pending_visibility` and
   never retried in the pass.
-- Like-for-like attribution additionally needs the owner's ai.ubq.fi change
-  tracked in Sentinel issue #181 (the complete check set for an opted-in
-  dispatch run). Until then the base run is scoped by its first-parent diff, so
-  a head check the base run skips stays unattributed exactly as before.
+- A full-scope run still skips `docs` and `verify-artifact`. Their attribution
+  needs the owner's ai.ubq.fi change tracked in Sentinel issue #181 (the
+  complete check set for an opted-in dispatch run); until then a head check the
+  base run skips stays unattributed exactly as before.
 
 ## 2026-10-24: a pending commit status no longer holds a finished head's CI (#192)
 
@@ -2862,3 +2867,141 @@ standing approval above. Applied as follows.
 - Unchanged: exact first-parent ancestry, complete CI evidence for the exact
   SHA, failed-bootstrap exclusion, the expected-old non-force ref update and its
   readback, and the model-disabled bootstrap at generation+1.
+
+## 2026-10-24: up to five review rounds for CI-first-era records
+
+- Owner decision (2026-10-24): "For your triage you can have up to five
+  reviews." It answers the finding that native reviews returned an unparseable
+  result on about one attempt in three today (PR 211 and ai.ubq.fi 1258,
+  `json_syntax`), each spending one of three rounds.
+- `MAX_REVIEW_ROUNDS` is five for a record of the CI-first era: created at or
+  after the pinned CI-first cutoff (2026-10-17 17:05 UTC) with no review
+  admitted before it (`reviewRoundCeilingFor`). A record from before the cutoff,
+  one with an earlier review admission, and one whose creation time is unknown
+  keep the 2026-10-16 ceiling of three (`LEGACY_REVIEW_ROUND_CEILING`). The
+  legacy exception, its final round and the spent-round delivery rules are
+  defined against three, so they keep their exact membership and behavior.
+- The launcher re-admits a record the runtime's ceiling gate parked under the
+  old ceiling (no completed review, an unresolved P0, no task acceptance, or a
+  moved base) once its durable ledger leaves a round: it returns to `work`
+  uncharged (`other:review_rounds_raised`), and the runtime gates, refreshes,
+  corrects or reviews it on its ordinary path. A reviewed head awaiting delivery
+  is not re-admitted (it needs no round), and nothing is refunded, re-counted or
+  charged.
+- The current-head review, CI and P0 gates are unchanged.
+
+## 2026-10-24: one fresh proof store per target per maintenance pass (#185)
+
+- Finding: the maintenance `current_matrix` walk preserved about one candidate
+  every 15 s and ended on its 300 s budget (`deferred_budget`), so each run
+  recovered roughly one producer wave. Every preservation's durability proof
+  (`freshStoreProof`,
+  [src/host/actions-candidates-proof.ts](../src/host/actions-candidates-proof.ts))
+  ran `git init --bare` and fetched the target's full history into a new empty
+  store.
+- Decision: each producer pass (`recoverHostedMatrixProducer`) owns one
+  `CandidateProofPassV1`, and builds its ingest cycle and every preservation of
+  a target with it (`cycleFor(config, proofPass)`). The first proof of the pass
+  for a target creates ONE new empty bare store in the run's private scratch and
+  pays the history fetch. Every later proof of that pass fetches its own exact
+  operation ref into the same store, which transfers only the objects the store
+  lacks: each fully proved head is recorded there as a private
+  `refs/sentinel-proved/<head>` negotiation ref.
+- Every per-candidate check still runs for every proof in that store:
+  `FETCH_HEAD` equals the head; no shallow, replace or alternate masking; the
+  exact head, base and published-head commits; ancestry; and credential-free
+  publication validation. The source-mirror import and validation are unchanged.
+- The store only receives objects fetched from the fixed target remote during
+  that pass, and automatic gc is off for those fetches. A failed proof ends the
+  store's reuse the way a one-off store ends: it is removed when every child
+  settled, and kept for diagnosis after an unproved settlement or a validator
+  refusal. The next proof starts over in a new empty store. The pass closes its
+  stores when it ends, so a store is never reused across passes or runs.
+- The proof still shows that the remote's exact ref holds the head and that the
+  head's full graph is present. Objects an earlier proof of the same pass
+  fetched came from the same remote, which confirmed the common commits during
+  negotiation; this is accepted as equivalent to a per-candidate empty store.
+- Every other caller (runtime preservation, published-refresh validation, the
+  `existing_candidate_refs` phase and the closed-C ingest) still creates one
+  store per proof. The walk budget is unchanged; letting preservation continue
+  past the walk deadline under its own bound was not needed.
+
+## 2026-10-24: one in-place retry for a bootstrap that never started (#191)
+
+- A launcher self-install bootstrap that never reached its startup-ready marker
+  no longer burns the SHA. That covers a `not_started` settlement, and a failed
+  run whose child never attested `startupReady`: runner loss, a cancellation
+  before start, a failed fetch or a failed Codex preflight. The installation
+  journals that first settlement as `retriedBootstrapProof` and stays
+  `bootstrapping`, with models still stopped. The next supervisor run of the
+  same launcher starts exactly one more model-disabled bootstrap of the same SHA
+  at the same pointer. The generation stays `previousGeneration + 1`, because a
+  revision never changes generation. A new execution id rebinds
+  `bootstrapExecutionId`.
+- A run that reached startup-ready and then failed actually executed. It
+  journals the exact recorded-prior rollback immediately, as before. The retry
+  journals the rollback on any outcome other than healthy, including a second
+  run that never started. Rollback still restores the recorded prior at
+  `previousGeneration + 2`, and the failed SHA still cannot reinstall.
+- The retry cannot repeat. The state validator rebinds the execution only while
+  the journaled first attempt still owns it, at the exact candidate pointer and
+  with an idle runtime. Once journaled, the retry proof never changes. A record
+  that never retried keeps its earlier exact shape. The dispatcher's follow
+  reader and the rollback child's projection (which omits installations) read
+  retried journals unchanged.
+
+## 2026-10-24: carried release acceptance and closure (#152)
+
+- A carried merge books a production release request that names the receipt of
+  an earlier head H0 on B0 and gives the merged refreshed head H1 on tip T as
+  its source ("Spent records on a moved base" above). Release acceptance and
+  issue closure now accept such a request only through the carried binders:
+  `carriedGatewayRequestBindsDelivery` (Gateway, beside the exact binder in
+  `src/repair/vps-delivery.ts`) and `releaseDeliveryTaskRefusal` (the carried
+  variant of `deliveryTaskRefusal`, `src/repair/carried-release.ts`). The
+  receipt must be a completed review of an earlier head of the same pull request
+  in the same repository, by the fixed reviewer (the runtime port's
+  `reviewerIdentity`; on the launcher, the App), with nothing uncounted and no
+  unresolved P0, that accepted the record's own issue (`carriedReleaseReceipt`).
+- Each binder re-derives the patch proof between H0/B0 and H1/T with the
+  caller's existing proof: the runtime's git proof (`proveCarriedPatch`, decided
+  by `carriedPatchHolds`) or the launcher's exact tree proof
+  (`carriedPatchRefusal` over `mergeBaseTreeChanges`). It then authorizes the
+  task through the shared predicate as of `reviewedIdentity(record, receipt)`
+  and the trusted live task. The runtime derives the proof at most once per
+  step, the launcher at most once per pass.
+- The runtime uses the carried binders in `observeGatewayVpsDelivery` (its
+  optional `carried` prover), in `acceptRelease` for the self and Gateway
+  scopes, and in `retryClosure`. The launcher uses them in `gatewayClosureGate`,
+  and its closure pass authorizes a carried Gateway delivery through
+  `releaseAuthorizingReceipt` (`ops/hosted-autonomy-carried-release.ts`). Every
+  Gateway closure write still follows a `gatewayClosureGate` call that
+  re-derives the proof.
+- A request whose patch no longer proves is refused. This covers changed digests
+  or change sets, a refreshed head that is not on its tip, and on the launcher a
+  protected path. A Gateway request then does not bind and its record waits
+  beside it. A self delivery is blocked `missing_evidence` with
+  `MERGE_WITHOUT_REVIEW_DETAIL`, as any unauthorized delivery is. An unreadable
+  proof waits, and a runtime without the proof capability never binds a carried
+  request.
+- Non-carried requests are unchanged. The exact binders run first, exactly as
+  before. The carried binder never binds a receipt of the record's own head and
+  reads no proof for one.
+- Both new modules (`src/repair/carried-release.ts`,
+  `ops/hosted-autonomy-carried-release.ts`) join the hosted-authority protected
+  paths beside `src/repair/vps-delivery.ts`, the gateway delivery binding #158
+  protects, so a model candidate can neither publish nor merge a change to them.
+- Not changed: the launcher's self closure (`planHostedClosures`) keeps the
+  exact authorization, and the runtime's `acceptRelease` closes a carried self
+  delivery. The native-queue authority keeps the exact binder, because no
+  carried merge goes through the queue.
+- No state shape is added. The writes are the closure intent and the `done` and
+  blocked transitions the exact path already writes. Rollback: R79, R80 and
+  earlier launchers keep their exact binder and answer `wait` for a carried
+  Gateway request before any release read, as before (the runtime re-arms its
+  release wait; a closure intent this runtime wrote is kept and never consumed).
+  For an accepted carried self delivery they block the record
+  `missing_evidence`, as before.
+- `sentinel-release` stays disabled and nothing is enabled. Until the release
+  ref records a carried request, it is release-deferred like any other (JAM
+  B12).

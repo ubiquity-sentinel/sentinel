@@ -11,6 +11,90 @@ import {
   STATIC_PRESERVE_PROOF,
 } from "./actions-candidates-shared.ts";
 
+/** Pass-store refs naming every head a proof in that store fully proved. */
+const PROVED_TIP_NAMESPACE = "refs/sentinel-proved/";
+
+/** How one proof hands its pass store back. */
+export type ProofStoreOutcomeV1 = "reusable" | "discard" | "uncertain";
+
+export interface ProofStoreLeaseV1 {
+  /** The pass's initialized store, or null when this proof creates it. */
+  readonly store: string | null;
+  settle(store: string | null, outcome: ProofStoreOutcomeV1): Promise<void>;
+}
+
+/**
+ * One maintenance pass's amortized fresh-store proofs (#185). Instead of a new
+ * store per candidate, the first proof of the pass for one fixed remote (one
+ * target) creates ONE new empty bare store in owned private scratch and pays
+ * the full-history fetch; every later proof of the SAME pass for that remote
+ * fetches its exact operation ref into that store, so only objects the store
+ * lacks are transferred, and repeats every per-candidate check there:
+ * `FETCH_HEAD`, no shallow, replace or alternate masking, exact head/base and
+ * published-head commits, ancestry and credential-free publication. The store
+ * only ever receives objects from that fixed remote, and only a fully proved
+ * head is recorded (as a private negotiation ref) for reuse. Any failed proof
+ * ends the store's reuse exactly as it ends a one-off store (removed when
+ * every child settled; kept on disk for diagnosis after an unproved settlement
+ * or a validator refusal), and the next proof starts over in a NEW empty
+ * store. The owning pass creates this object and must `close()` it when it
+ * ends, which removes every kept store: a store is never shared across passes
+ * or runs. Each remote and scratch root has its own pass store; a closed pass
+ * or a concurrent proof gets the one-off store.
+ */
+export class CandidateProofPassV1 {
+  readonly #stores = new Map<string, { store: string | null; busy: boolean }>();
+  #closed = false;
+
+  get closed(): boolean {
+    return this.#closed;
+  }
+
+  /** Lease this pass's store for one remote, or null for a one-off store. */
+  lease(remoteUrl: string, scratch: string): ProofStoreLeaseV1 | null {
+    if (this.#closed) return null;
+    const key = JSON.stringify([remoteUrl, scratch]);
+    let entry = this.#stores.get(key);
+    if (entry === undefined) {
+      entry = { store: null, busy: false };
+      this.#stores.set(key, entry);
+    }
+    if (entry.busy) return null;
+    entry.busy = true;
+    const held = entry;
+    let settled = false;
+    return {
+      store: held.store,
+      settle: async (store, outcome) => {
+        if (settled) return;
+        settled = true;
+        held.busy = false;
+        if (outcome === "reusable" && !this.#closed && store !== null) {
+          held.store = store;
+          return;
+        }
+        held.store = null;
+        // An unsettled child keeps the exact store on disk, never reused.
+        if (outcome !== "uncertain" && store !== null) {
+          await Deno.remove(store, { recursive: true }).catch(() => {});
+        }
+      },
+    };
+  }
+
+  /** End the pass: remove every kept store; later proofs are one-off. */
+  async close(): Promise<void> {
+    this.#closed = true;
+    for (const entry of this.#stores.values()) {
+      const store = entry.store;
+      entry.store = null;
+      // A busy lease settles after close and then removes its own store.
+      if (store === null || entry.busy) continue;
+      await Deno.remove(store, { recursive: true }).catch(() => {});
+    }
+  }
+}
+
 /**
  * One bounded fresh-store durability proof. A NEW empty bare object store is
  * created in owned private scratch; exactly the fixed remote and exact
@@ -20,7 +104,8 @@ import {
  * trusted excluded `publishedHead` is fetched only when it is genuinely
  * missing and its exact identity is then re-proved. Publication is revalidated
  * credential-free inside this store. The exact task-owned store is removed
- * after every child process has settled.
+ * after every child process has settled. With a `pass`, the store is that
+ * pass's one store for this remote (see `CandidateProofPassV1`).
  */
 export async function freshStoreProof(input: {
   runGit: PreserverGitRunV1;
@@ -37,6 +122,8 @@ export async function freshStoreProof(input: {
   trustedPath: string;
   gitExecutable: string;
   scratch: string;
+  /** The owning maintenance pass whose one store this proof uses (#185). */
+  pass?: CandidateProofPassV1;
 }): Promise<PortResultV1<void>> {
   const {
     runGit,
@@ -53,19 +140,33 @@ export async function freshStoreProof(input: {
     gitExecutable,
     scratch,
   } = input;
+  const lease = input.pass?.lease(remoteUrl, scratch) ?? null;
+  const reused = lease?.store ?? null;
+  // A pass store accumulates one pack per fetch: automatic maintenance, which
+  // may detach a gc outside the owned process group, never runs in it.
+  const fetchFlags = lease === null
+    ? ["--no-tags"]
+    : ["--no-tags", "--no-auto-gc"];
   let store: string;
-  try {
-    store = await Deno.makeTempDir({
-      dir: scratch,
-      prefix: "sentinel-candidate-store-",
-    });
-  } catch {
-    return portError("unavailable", STATIC_PRESERVE_PROOF);
+  if (reused !== null) {
+    store = reused;
+  } else {
+    try {
+      store = await Deno.makeTempDir({
+        dir: scratch,
+        prefix: "sentinel-candidate-store-",
+      });
+    } catch {
+      await lease?.settle(null, "discard");
+      return portError("unavailable", STATIC_PRESERVE_PROOF);
+    }
   }
   // True when any child run could not be proved settled, or when the
   // validator failed without proving the settlement of its own processes: the
   // exact task-owned store is then preserved for diagnosis instead of removed.
   let uncertain = false;
+  // True only once a pass store recorded this fully proved head for reuse.
+  let reusable = false;
   /**
    * Bounded run for this proof. Null is an unusable result: a runtime throw or
    * an unproved settlement is recorded as uncertainty; a spawn failure or a
@@ -81,9 +182,13 @@ export async function freshStoreProof(input: {
     return result;
   };
   try {
-    const init = await run(store, ["init", "--bare", "-q"], false);
-    if (init === null || init.code !== 0) {
-      return portError("unavailable", STATIC_PRESERVE_PROOF);
+    // A reused pass store was created and initialized by an earlier proof of
+    // the same pass and holds only that pass's fully proved remote objects.
+    if (reused === null) {
+      const init = await run(store, ["init", "--bare", "-q"], false);
+      if (init === null || init.code !== 0) {
+        return portError("unavailable", STATIC_PRESERVE_PROOF);
+      }
     }
     // Durable cooldown immediately before the one credential-scoped fetch.
     let cooled: PortResultV1<void>;
@@ -95,7 +200,7 @@ export async function freshStoreProof(input: {
     if (!cooled.ok) return cooled;
     const fetched = await run(
       store,
-      ["fetch", "--no-tags", remoteUrl, ref],
+      ["fetch", ...fetchFlags, remoteUrl, ref],
       true,
     );
     if (fetched === null || fetched.code !== 0) {
@@ -164,7 +269,7 @@ export async function freshStoreProof(input: {
         if (!secondCooled.ok) return secondCooled;
         const publishedFetch = await run(
           store,
-          ["fetch", "--no-tags", remoteUrl, publishedHead],
+          ["fetch", ...fetchFlags, remoteUrl, publishedHead],
           true,
         );
         if (publishedFetch === null || publishedFetch.code !== 0) {
@@ -252,11 +357,28 @@ export async function freshStoreProof(input: {
     }
     if (!validated.ok) return validated;
     uncertain = false;
+    if (lease !== null) {
+      // The fully proved head becomes a negotiation tip of the pass store, so
+      // a later fetch of this pass transfers only objects it does not reach.
+      // A failed record only ends the store's reuse; the proof stands.
+      const tip = await run(store, [
+        "update-ref",
+        `${PROVED_TIP_NAMESPACE}${candidate.head}`,
+        candidate.head,
+      ], false);
+      reusable = tip !== null && tip.code === 0;
+    }
     return portOk(undefined);
   } finally {
     // Clean only the exact task-owned store after every child run settled;
-    // an unproved settlement keeps the owned scratch intact.
-    if (!uncertain) {
+    // an unproved settlement keeps the owned scratch intact. A pass store
+    // stays for the pass's next proof only after a full success.
+    if (lease !== null) {
+      await lease.settle(
+        store,
+        uncertain ? "uncertain" : reusable ? "reusable" : "discard",
+      );
+    } else if (!uncertain) {
       await Deno.remove(store, { recursive: true }).catch(() => {});
     }
   }

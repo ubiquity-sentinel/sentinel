@@ -1,5 +1,6 @@
 import { ingestMatrixResults } from "../src/host/matrix.ts";
 import type { MatrixIngestOptionsV1 } from "../src/host/matrix-ingest.ts";
+import { CandidateProofPassV1 } from "../src/host/actions-candidates-proof.ts";
 import { matrixDigestV1 } from "../src/contracts/matrix.ts";
 import {
   HOSTED_RUNTIME_ID,
@@ -75,6 +76,10 @@ export async function recoverHostedMatrixProducer(
   // through its one composed writer, which marks this before writing; a
   // consumer deferral marks it too.
   const writes = { attempted: false };
+  // Every candidate this pass preserves for one target is proved in ONE
+  // fresh store that this pass creates and removes (#185): the target's
+  // history is fetched once per pass instead of once per candidate.
+  const proofs = new CandidateProofPassV1();
   try {
     const outcome = await recoverProducerWithinBudget(
       deps,
@@ -87,6 +92,7 @@ export async function recoverHostedMatrixProducer(
       readProducer,
       scope,
       writes,
+      proofs,
     );
     return { ...outcome, mayHaveWritten: writes.attempted };
   } catch (error) {
@@ -99,6 +105,8 @@ export async function recoverHostedMatrixProducer(
       deps.clock.now() >= deadlineAt
     ) throw new Error(CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE);
     throw error;
+  } finally {
+    await proofs.close();
   }
 }
 
@@ -113,6 +121,7 @@ async function recoverProducerWithinBudget(
   readProducer: HostedProducerReaderV1 | undefined,
   scope: HostedProducerScopeV1,
   writes: { attempted: boolean },
+  proofs: CandidateProofPassV1,
 ): Promise<Omit<HostedProducerRecoveryV1, "mayHaveWritten">> {
   const checkDeadline = () => {
     if (deps.clock.now() >= deadlineAt) {
@@ -511,7 +520,7 @@ async function recoverProducerWithinBudget(
     await ports.prepareTarget(config);
     checkDeadline();
     const cycle = {
-      ...ports.cycleFor(config),
+      ...ports.cycleFor(config, proofs),
       state,
       controllerSha: saved.execution.revision,
       externalImplementations: true,
@@ -656,7 +665,7 @@ async function recoverProducerWithinBudget(
         record,
         wave,
         state,
-        github: ports.cycleFor(config).github,
+        github: ports.cycleFor(config, proofs).github,
         clock: deps.clock,
         readbackFailure: (write) =>
           new CurrentMatrixRecoveryIntegrityFailure(

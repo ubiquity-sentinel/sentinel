@@ -157,6 +157,38 @@ export function installation(
   };
 }
 
+/** #191: the same journal after one never-started first attempt was retried. */
+export function retriedInstallation(
+  candidate: string,
+  phase: string,
+): Record<string, unknown> {
+  return {
+    ...installation(candidate, phase),
+    retriedBootstrapProof: {
+      execution: {
+        createdAt: NOW - 2800,
+        generation: 82,
+        id: "799:1:repair",
+        launcherSha: candidate,
+        purpose: "bootstrap",
+        releaseId: null,
+        revision: candidate,
+        runAttempt: 1,
+        runId: 799,
+      },
+      evidenceDigest: "9".repeat(64),
+      finishedAt: NOW - 2600,
+      jobId: null,
+      observedAt: NOW - 2500,
+      outcome: "not_started",
+      ref: "refs/heads/sentinel-supervisor",
+      repository: CONTROLLER.fullName,
+      workflowId: CONTROLLER.workflowId,
+      workflowPath: ".github/workflows/supervisor.yml",
+    },
+  };
+}
+
 /** Production consumers see only this fake external HTTP boundary. */
 export class FollowFake {
   development = D;

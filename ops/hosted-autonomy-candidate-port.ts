@@ -17,6 +17,7 @@ import type { HttpTransportV1 } from "../src/github/http.ts";
 import type { ReviewServiceTransportV1 } from "../src/github/review-service.ts";
 import { composeGitHubHost } from "../src/host/github.ts";
 import { createCandidatePreserver } from "../src/host/actions-candidates-preserve.ts";
+import type { CandidateProofPassV1 } from "../src/host/actions-candidates-proof.ts";
 import { createMaintenanceNativeQueue } from "../src/host/maintenance-native-queue.ts";
 import { createLocalCandidateLoader } from "../src/host/local-candidate.ts";
 import { githubGitAuthEnv } from "../src/host/local.ts";
@@ -56,6 +57,8 @@ export function createHostedCandidateRecoveryPort(input: {
   sourcePath: string;
   scratch: string;
   remoteUrl: string;
+  /** The owning producer pass's one fresh proof store per target (#185). */
+  proofPass?: CandidateProofPassV1;
 }): GitHubPort {
   const refuse = () =>
     Promise.reject(new Error("C maintenance capability refused"));
@@ -107,6 +110,7 @@ export function createHostedCandidateRecoveryPort(input: {
       scratch: input.scratch,
       trustedPath: "/usr/bin:/bin",
     }),
+    ...(input.proofPass === undefined ? {} : { proofPass: input.proofPass }),
   });
   // A ref opens only for a record of this repository that is bound to it:
   // a restorable candidate's own preservation intent, or the merge of an

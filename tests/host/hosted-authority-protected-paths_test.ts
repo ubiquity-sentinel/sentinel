@@ -131,6 +131,8 @@ Deno.test("hosted authority: token-bearing entrypoints and merge-authority modul
       "src/repair/review-gate.ts",
       "src/repair/transitions.ts",
       "src/repair/vps-delivery.ts",
+      "src/repair/carried-release.ts",
+      "ops/hosted-autonomy-carried-release.ts",
     ]
   ) assert.equal(touchesProtected(protectedPaths, path), true, path);
 });

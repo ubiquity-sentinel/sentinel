@@ -10,6 +10,7 @@ import type {
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
 import type { ReplayRuntimeV1 } from "../replay/runtime.ts";
+import type { CandidateProofPassV1 } from "./actions-candidates-proof.ts";
 
 /**
  * The sentinel self remote. It is the default only for callers that supply
@@ -154,6 +155,12 @@ export interface ActionsCandidatePreserverInputV1 {
     taskId: WorkItemId,
     head: GitSha,
   ): Promise<PortResultV1<void>>;
+  /**
+   * The owning maintenance pass whose one fresh store per remote every
+   * durability proof of that pass uses (#185). Omitted, each proof creates
+   * and removes its own new empty store.
+   */
+  proofPass?: CandidateProofPassV1;
 }
 
 /** Safe exact candidate branch: prefixed, slash-separated, no forbidden refs. */

@@ -237,7 +237,8 @@ export function createCandidatePreserver(
     //    operation ref are fetched; the identities, ancestry and absence of
     //    shallow/replace/alternate masking are all verified, publication is
     //    re-validated credential-free in that store, and the authenticated ref
-    //    is re-read afterwards.
+    //    is re-read afterwards. Under a `proofPass` the store is that pass's
+    //    one fresh store for this remote, and every check above still runs.
     const proved = await freshStoreProof({
       runGit,
       gate: input.gate,
@@ -252,6 +253,7 @@ export function createCandidatePreserver(
       trustedPath: input.trustedPath,
       gitExecutable: input.gitExecutable,
       scratch: input.scratch,
+      ...(input.proofPass === undefined ? {} : { pass: input.proofPass }),
     });
     if (!proved.ok) return proved;
     const after = await input.port.readRef(ref);

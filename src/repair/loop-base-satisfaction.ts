@@ -29,7 +29,10 @@ import type {
   RepairCycleDepsV1,
   StepResultV1,
 } from "./loop-types.ts";
-import { MAX_REVIEW_ROUNDS, reviewRoundsSpent } from "./review-round-cap.ts";
+import {
+  reviewRoundCeilingFor,
+  reviewRoundsSpent,
+} from "./review-round-cap.ts";
 import { markBlocked, markDone } from "./transitions.ts";
 
 /** Optional host capability is in-memory only; no contract/stdout variant. */
@@ -130,7 +133,10 @@ export async function resumeBaseSatisfaction(
       // separately charged review within the same hard three-round ceiling.
     }
   }
-  if (reviewRoundsSpent(context.snapshot, record) >= MAX_REVIEW_ROUNDS) {
+  if (
+    reviewRoundsSpent(context.snapshot, record) >=
+      reviewRoundCeilingFor(context.snapshot, record)
+  ) {
     return persistWork(
       deps,
       context,

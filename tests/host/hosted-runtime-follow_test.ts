@@ -8,6 +8,7 @@ import {
   OLDER,
   P,
   response,
+  retriedInstallation,
   supervisorRun,
 } from "./hosted-runtime-follow-fixtures.ts";
 
@@ -203,6 +204,24 @@ Deno.test("follow defers while a persisted installation or rollback intent is un
       "installation_unresolved",
     );
     assert.equal(api.mutations, 0);
+  }
+});
+
+Deno.test("follow reads a retried bootstrap journal: unresolved while retrying, never followed once failed (#191)", async () => {
+  const retrying = new FollowFake();
+  retrying.installations = [retriedInstallation(OLDER, "bootstrapping")];
+  assert.equal(
+    (await retrying.follow()).journal.reason,
+    "installation_unresolved",
+  );
+  assert.equal(retrying.mutations, 0);
+  for (const phase of ["rolled_back", "rollback_failed"]) {
+    const api = new FollowFake();
+    api.ci.set(D, [ciRun(D, 30)]);
+    api.installations = [retriedInstallation(D, phase)];
+    const result = await api.follow();
+    assert.equal(result.journal.candidateSha, OLDER);
+    assert.equal(api.launcher, OLDER);
   }
 });
 

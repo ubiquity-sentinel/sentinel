@@ -503,7 +503,7 @@ Deno.test("premerge CI: a deadline crossed mid-pass is reported as a deadline, n
   assert.equal(rig.http.posts().length, 0);
 });
 
-Deno.test("premerge CI: a base without any run gets one dispatch scoped by its first parent", async () => {
+Deno.test("premerge CI: a base without any run gets one full-scope dispatch", async () => {
   // Gateway CI on a closed pull request reports on the PR head, so the
   // `development` merge commit carries no check run to attribute a red head.
   const second = pendingRecord(1258, {
@@ -547,7 +547,8 @@ Deno.test("premerge CI: a base without any run gets one dispatch scoped by its f
     inputs: {
       base_ref: "development",
       sentinel_pr_author: APP_LOGIN,
-      scope_base: PARENT,
+      // The base itself: an empty diff the gateway runs as everything.
+      scope_base: SHA1,
     },
   });
   assert.equal(posts[0].headers.get("authorization"), "Bearer target-token");
@@ -625,14 +626,13 @@ Deno.test("premerge CI: a head without a run keeps priority over base evidence",
   assert.equal(commitReads(rig), 0);
 });
 
-Deno.test("premerge CI: an unreadable first parent skips the base dispatch", async () => {
+Deno.test("premerge CI: an unreadable base branch tip skips the base dispatch", async () => {
   for (
     const [name, answer] of Object.entries({
       missing: response(404, { message: "Not Found" }),
       malformed: response(200, "{"),
       badSha: response(200, { sha: "abc", parents: [{ sha: PARENT }] }),
-      root: response(200, { sha: SHA1, parents: [] }),
-      badParent: response(200, { sha: SHA1, parents: [{ sha: "abc" }] }),
+      noSha: response(200, { parents: [{ sha: PARENT }] }),
     })
   ) {
     const rig = makeRig({ runsOnHead: [HEAD_RUN] });
@@ -641,7 +641,7 @@ Deno.test("premerge CI: an unreadable first parent skips the base dispatch", asy
     assert.equal(report.decision, "nothing_pending", name);
     assert.deepEqual(
       report.decisions,
-      ["1254:run_exists", "1254:base_parent_unreadable"],
+      ["1254:run_exists", "1254:base_tip_unreadable"],
       name,
     );
     assert.equal(rig.http.posts().length, 0, name);

@@ -29,8 +29,8 @@ import { portOk } from "../../src/contracts/ports.ts";
 import { reviewTaskStatementDigest } from "../../src/contracts/review-receipt.ts";
 import { completedReceipt } from "./loop-review-fixtures.ts";
 import { ciCorrectable } from "../../src/repair/ci-rejection.ts";
-import { CI_FIRST_REVIEW_ROUNDS } from "../../src/repair/ci-first-policy.ts";
 import {
+  LEGACY_REVIEW_ROUND_CEILING,
   legacyFinalRoundOpen,
   legacyReviewRoundClassDrift,
   legacyReviewRoundPin,
@@ -669,7 +669,7 @@ Deno.test({
       return record.nextStep === "blocked" && blocker !== null &&
         blocker.kind === "other" &&
         blocker.message.startsWith("CI checks failed: ") &&
-        record.counters.reviewRounds >= CI_FIRST_REVIEW_ROUNDS &&
+        record.counters.reviewRounds >= LEGACY_REVIEW_ROUND_CEILING &&
         record.intent === null && record.source.kind === "issue" &&
         record.related.issueNumber !== null &&
         reviews.some((review) =>
