@@ -54,6 +54,12 @@ export interface HostedRuntimeSummaryV1 {
   reasonCode: string;
   explanation: string;
   nextAction: string;
+  /**
+   * Bootstrap executions only (#336): the launcher-observed child duration
+   * (null when no child ran) and the bootstrap's own outcome, for metrics.
+   */
+  bootstrapDurationMs?: number | null;
+  bootstrapOutcome?: "healthy" | "failed" | "unavailable";
 }
 
 export interface HostedRuntimeTerminalV1 {

@@ -1,5 +1,6 @@
 /** Exact bounded runtime implementer prompt. */
 import type { ModelRunRequestV1 } from "../contracts/ports.ts";
+import { IDENTICAL_ATTEMPT_FACT_PREFIX } from "../contracts/attempt-input.ts";
 import {
   CI_EVIDENCE_FIX_INSTRUCTION,
   CI_SELF_CHECK_INSTRUCTION,
@@ -9,6 +10,11 @@ import {
   MAX_PROMPT_CHARS,
 } from "./model-port-policy.ts";
 import { renderCiEvidenceUnavailable } from "./ci-evidence-render.ts";
+import {
+  MAX_CHANGED_PATHS,
+  MAX_FILE_BYTES,
+  MAX_PROMPT_BYTES,
+} from "../github/snapshot-policy.ts";
 
 /** At most this many protected path prefixes are named in the prompt. */
 export const MAX_PROMPT_PROTECTED_PATHS = 60;
@@ -22,11 +28,15 @@ export const MAX_PROMPT_PROTECTED_PATH_CHARS = 4_000;
  * `MAX_PROMPT_PROTECTED_PATH_CHARS`; the rest are counted, never dropped
  * silently. Empty without configured prefixes, so a prompt for a repository
  * with none is byte-identical to the earlier one. The candidate's own
- * protected-path check stays the enforcement: this only steers the model to
- * a fix outside them. A candidate that still changes one parks as `candidate
- * touches a protected path` (its owner comment and `sentinel:retry` exit). An
- * instruction to make no change instead would land in the no-change
- * base-review lane, which has no such exit.
+ * protected-path check stays the enforcement: this steers the model to a fix
+ * outside them when one exists, and otherwise to the real in-place change. A
+ * candidate that changes one parks as `candidate touches a protected path`
+ * (its owner comment and `sentinel:retry` exit). An instruction to make no
+ * change instead would land in the no-change base-review lane, which has no
+ * such exit; and "avoid where you can" alone made ai.ubq.fi 1281/1282 and
+ * 1210/1211 commit tests and unapplied `patches/*.patch` files that spent
+ * every review round without changing the real file (see
+ * `candidate-shape.ts`).
  */
 export function renderProtectedPaths(paths: readonly string[]): string {
   const unique = [...new Set(paths)].sort();
@@ -50,9 +60,29 @@ export function renderProtectedPaths(paths: readonly string[]): string {
       : ` (and ${rest} more protected prefix${
         rest === 1 ? "" : "es"
       } not listed here)`) +
-    ". Fix the issue without changing them where you can; a candidate that " +
-    "changes one is parked for the repository owner to land.";
+    ". Fix the issue without changing them when a correct fix outside them " +
+    "exists. When the issue's fix genuinely requires changing a protected " +
+    "path, this narrows the rule above: make the real, complete change in " +
+    "place in that file, because a candidate that changes a protected path " +
+    "is parked for the repository owner to land as is, which is the useful " +
+    "outcome. Never substitute tests only, an unapplied .patch or .diff " +
+    "file, a copy of the file elsewhere, or a no-op for that change: such a " +
+    "candidate leaves the real file unchanged and can never be accepted.";
 }
+
+/**
+ * The trusted publication bounds the candidate must satisfy (#333/#166). They
+ * are the exact constants the trusted preservation validator and review
+ * snapshot enforce after the turn (`snapshot-policy.ts`), stated here so the
+ * model can comply instead of producing a candidate that is refused after
+ * the charged turn. The validator stays the enforcement.
+ */
+export const PUBLICATION_BOUNDS_SENTENCE = " The trusted publication " +
+  `validator refuses a candidate that changes more than ${MAX_CHANGED_PATHS} ` +
+  `paths, any file larger than ${MAX_FILE_BYTES} bytes, more than ` +
+  `${MAX_PROMPT_BYTES} total new bytes, binary, non-UTF-8 or NUL-bearing ` +
+  "content, symlinks, submodules, unsupported file modes, or secret-shaped " +
+  "text; keep the change within these bounds.";
 
 /**
  * The implementer prompt. `ciEvidence` is the trusted host's rendered CI
@@ -131,7 +161,27 @@ export function buildPrompt(
         "merge: the trusted host commits it with exactly these two parents.",
     );
   }
-  if (request.priorAttempts !== undefined && request.priorAttempts.length > 0) {
+  const refusals = (request.priorAttempts ?? []).filter((fact) =>
+    fact.detail.startsWith(IDENTICAL_ATTEMPT_FACT_PREFIX)
+  );
+  const priorFacts = (request.priorAttempts ?? []).filter((fact) =>
+    !fact.detail.startsWith(IDENTICAL_ATTEMPT_FACT_PREFIX)
+  );
+  if (refusals.length > 0) {
+    // #334: the trusted admission refused an identical replay of this task
+    // (same base tip, candidate patch, review findings and runtime). This
+    // attempt was admitted because at least one input changed; the fact names
+    // the refused prior attempt and which inputs it shared with this one.
+    parts.push(
+      "IDENTICAL ATTEMPT REFUSED — VERIFIED FACT: the trusted loop breaker " +
+        "refused re-running an earlier attempt of this task with identical " +
+        "inputs, because it could only reproduce the same result. Do not " +
+        "reproduce that attempt's change; address the review findings with a " +
+        "different change:\n" +
+        refusals.map((fact) => `- ${fact.detail}`).join("\n"),
+    );
+  }
+  if (priorFacts.length > 0) {
     // Bounded VERIFIED facts from durable attempt memory. An unchanged replay
     // of any listed approach has already been refused upstream by the trusted
     // loop breaker; this is evidence, never permission to change budgets,
@@ -142,7 +192,7 @@ export function buildPrompt(
         "runtime revision (unchanged replays have been refused by the trusted " +
         "loop breaker; do not repeat these, and make the change that produces " +
         "new evidence the listed failures did not):\n" +
-        request.priorAttempts
+        priorFacts
           .map((fact) =>
             `- ${fact.detail} (stage ${fact.stage}, ${fact.failureClass}, ${fact.count} recorded outcome${
               fact.count === 1 ? "" : "s"
@@ -218,7 +268,9 @@ export function buildPrompt(
     "rewrite expected test assertions to force success." +
     renderProtectedPaths(protectedPaths) +
     " Keep the change " +
-    "minimal and do not refactor beyond it. Keep every command's " +
+    "minimal and do not refactor beyond it." +
+    PUBLICATION_BOUNDS_SENTENCE +
+    " Keep every command's " +
     "max_output_tokens at or below 2000 and " +
     "keep individual command output bounded: prefer targeted symbol " +
     "searches followed by excerpts of at most 100 lines. Read the " +

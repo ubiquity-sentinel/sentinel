@@ -39,6 +39,7 @@ import type {
 import { executeStep } from "./loop-work.ts";
 import { rankEligibleWork, rankReviewDrain } from "./selection.ts";
 import { createStepLog, matrixSkipLine } from "./step-line.ts";
+import { StepInputGate } from "./loop-input-gate.ts";
 import { setWait } from "./transitions.ts";
 
 /** Scheduling boundary, never a persisted work status. */
@@ -63,17 +64,46 @@ export async function runRepairCycle(
   }
 }
 
-/** Original bounds and invocation-local sets survive each scheduling yield. */
+type RepairCycleGeneratorV1 = AsyncGenerator<
+  RepairCycleAdvanceV1,
+  RepairCycleOutcomeV1,
+  readonly string[] | undefined
+>;
+
+/**
+ * Original bounds and invocation-local sets survive each scheduling yield.
+ * The pass prints one advisory `sentinel_repair_pass` summary when it ends
+ * (issue #326), on every return path including the caller's `return()`.
+ */
 export async function* advanceRepairCycle(
   deps: RepairCycleDepsV1,
   options: RepairCycleOptionsV1,
   registerPostDrain?: (continuation: PostDrainReviewContinuationV1) => void,
-): AsyncGenerator<
-  RepairCycleAdvanceV1,
-  RepairCycleOutcomeV1,
-  readonly string[] | undefined
-> {
+): RepairCycleGeneratorV1 {
   const bounds = createRunBounds(deps, options);
+  const gate = new StepInputGate(deps, bounds, {
+    modelStartsEnabled: options.modelStartsEnabled ?? null,
+  });
+  try {
+    return yield* advanceSerialPass(
+      deps,
+      options,
+      bounds,
+      gate,
+      registerPostDrain,
+    );
+  } finally {
+    if (options.bootstrap !== true) gate.log();
+  }
+}
+
+async function* advanceSerialPass(
+  deps: RepairCycleDepsV1,
+  options: RepairCycleOptionsV1,
+  bounds: ReturnType<typeof createRunBounds>,
+  gate: StepInputGate,
+  registerPostDrain?: (continuation: PostDrainReviewContinuationV1) => void,
+): RepairCycleGeneratorV1 {
   const { runDeadline } = bounds;
   const stepLimit = options.stepLimit ?? DEFAULT_STEP_LIMIT;
   // A model-disabled bootstrap still runs intake, maintenance, compatibility,
@@ -158,7 +188,11 @@ export async function* advanceRepairCycle(
         return { status: "state_error", detail: "repair state unavailable" };
       }
     }
-    const context: LoopContextV1 = { ...loaded, bounds };
+    const context: LoopContextV1 = {
+      ...loaded,
+      bounds,
+      pendingStepInputs: gate.pending,
+    };
     tracking.lastSnapshot = context.snapshot;
 
     // The initial state read is awaited wall-clock time and may have crossed
@@ -211,6 +245,7 @@ export async function* advanceRepairCycle(
     }
 
     if (tracking.steps >= stepLimit) {
+      await gate.flush(context);
       return { status: "step_limit", steps: tracking.steps };
     }
 
@@ -392,7 +427,19 @@ export async function* advanceRepairCycle(
         if (line !== null) console.log(line);
       } catch { /* advisory only */ }
     }
+    // One batched live-input read per repository holding records this pass
+    // may step (issue #326); waiting records need no read.
+    if (!bootstrap) {
+      gate.noteWaiting(rank.skipped);
+      await gate.prime(
+        context.snapshot.work.filter((record) =>
+          rank.ordered.includes(record.id) && !matrixOnly.has(record.id) &&
+          options.excludeRecords?.has(record.id) !== true
+        ),
+      );
+    }
     if (rank.ordered.length === 0) {
+      await gate.flush(context);
       if (!didWork && sourceError !== null) {
         return { status: "source_error", detail: sourceError };
       }
@@ -418,7 +465,10 @@ export async function* advanceRepairCycle(
     let selected: WorkRecordV1 | null = null;
     let cannotFit: string | null = null;
     for (const id of rank.ordered) {
-      if (deferred.has(id) || takeoverRefused.has(id)) continue;
+      if (
+        deferred.has(id) || takeoverRefused.has(id) ||
+        options.excludeRecords?.has(id) === true
+      ) continue;
       // Matrix-only work is the planner's; this pass yields to it instead of
       // stepping (and re-reading) the record.
       if (matrixOnly.has(id)) continue;
@@ -434,6 +484,12 @@ export async function* advanceRepairCycle(
       if (
         bootstrap &&
         record.intent?.kind !== "candidate_preservation"
+      ) continue;
+      // Unchanged inputs since the record's last settled step: its step could
+      // only repeat that deferral, so it is skipped with no write or charge.
+      // A record a review completion woke is always stepped.
+      if (
+        !bootstrap && !awakened.has(id) && await gate.skips(context, record)
       ) continue;
       if (
         declaredOperationFits(deps, context, record)
@@ -466,6 +522,7 @@ export async function* advanceRepairCycle(
       // re-check and exact identity), so it stays open here; every other
       // margin exit keeps it closed.
       tracking.postDrainAllowed = true;
+      await gate.flush(context);
       const wake = yield {
         kind: "waiting",
         outcome: {
@@ -475,6 +532,8 @@ export async function* advanceRepairCycle(
             : cannotFit ??
               (matrixDeclined > 0
                 ? "remaining work is matrix-owned (planner admission)"
+                : gate.summary().skipReasons.unchanged_inputs > 0
+                ? "remaining eligible work has unchanged inputs"
                 : "no operation fits the remaining run margin"),
         },
       };
@@ -484,6 +543,8 @@ export async function* advanceRepairCycle(
     }
 
     awakened.delete(selected.id);
+    gate.beginStep(selected.id);
+    options.onStep?.(selected.id);
     context.executionBaseline = selected;
     // Monotonic wall time: the injected run clock is never read for the log.
     const stepStartedAt = performance.now();
@@ -494,6 +555,7 @@ export async function* advanceRepairCycle(
       result.kind,
       Math.round(performance.now() - stepStartedAt),
     );
+    await gate.settle(context, selected.id, result, selected);
     if (result.kind === "deferred") {
       deferred.add(selected.id);
       receiveWake(yield { kind: "progress" });
@@ -506,6 +568,7 @@ export async function* advanceRepairCycle(
       return { status: "margin", detail: result.detail };
     }
     if (result.kind === "idle") {
+      await gate.flush(context);
       if (!didWork && sourceError !== null) {
         return { status: "source_error", detail: sourceError };
       }

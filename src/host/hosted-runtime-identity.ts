@@ -155,7 +155,8 @@ export type HostedRuntimeJobV1 =
   | "repair"
   | "finalize"
   | "matrix_plan"
-  | "matrix_cell";
+  | "matrix_cell"
+  | "repair_cell";
 
 /** Core run identity plus the exact protected job this process runs in. */
 export interface HostedRuntimeIdentityV1 {

@@ -80,6 +80,10 @@ import {
   verifyHumanMergeHeadReadmissions,
 } from "./hosted-autonomy-human-merge-readmission.ts";
 import {
+  applyPullProbes,
+  type PullProbeStampV1,
+} from "./hosted-autonomy-pull-probe.ts";
+import {
   applyRepeatFailureParks,
   REPEAT_FAILURE_DEFAULT_ROUTE,
   repeatFailureLabel,
@@ -107,6 +111,7 @@ import {
   protectedReadmissionPlan,
   takeProtectedReadmissions,
 } from "./hosted-autonomy-protected-readmission.ts";
+import { implementerPromptTemplateDigest } from "../src/repair/model-port-prompt-digest.ts";
 
 /** Legacy class drift lines reported per pass (the rest are counted). */
 export const LEGACY_DRIFT_REPORTS_PER_PASS = 12;
@@ -499,6 +504,10 @@ export async function runHostedRetryPass(
       repeatFailure: {
         route: deps.modelRoute ?? REPEAT_FAILURE_DEFAULT_ROUTE,
         issueDigests,
+        // The implementer prompt template this launcher (the installed
+        // runtime's exact revision under self-install) ships: a park written
+        // under another prompt re-arms once under this one.
+        prompt: implementerPromptTemplateDigest(),
       },
       onRepeatFailurePark: (park) => {
         if (!settled(park.id)) parks.push(park);
@@ -628,12 +637,16 @@ export async function runHostedRetryPass(
   // and completes the delivery. Its blocker matches none of the sets above.
   // A record an earlier write of this pass settled (queue custody included)
   // waits for the next pass.
+  // A stale-step candidate whose pull read re-admits nothing is stamped in
+  // this pass's write and skipped until its probe backoff elapsed.
+  const staleProbes: PullProbeStampV1[] = [];
   const humanMerges = await verifyHumanMergeHeadReadmissions(
-    planHumanMergeHeadReadmissions(snapshot).filter((plan) =>
-      !settled(plan.id)
-    ),
+    // `settled` already holds every queue-protected record of this pass.
+    planHumanMergeHeadReadmissions(snapshot, closedIssues, deps.clock.now())
+      .filter((plan) => !settled(plan.id)),
     scopeFor,
     actions,
+    (probe) => staleProbes.push(probe),
   );
   // C6: an open issue's `sentinel:retry` label is the owner's exit for a
   // protected-path park. The label is removed first; only a confirmed removal
@@ -706,7 +719,7 @@ export async function runHostedRetryPass(
   }
   if (
     plans.length > 0 || readmissions.length > 0 || parks.length > 0 ||
-    humanMerges.length > 0
+    humanMerges.length > 0 || staleProbes.length > 0
   ) {
     const now = deps.clock.now();
     if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
@@ -714,22 +727,26 @@ export async function runHostedRetryPass(
     }
     let next: RepairStateSnapshotV1;
     try {
-      next = applyHumanMergeReadmissions(
-        applyBaseRefreshReadmissions(
-          applyRepeatFailureParks(
-            applyHostedRetries(
-              dropProtectedCandidates(snapshot, protectedTaken),
-              observedHead as GitSha,
-              plans,
+      next = applyPullProbes(
+        applyHumanMergeReadmissions(
+          applyBaseRefreshReadmissions(
+            applyRepeatFailureParks(
+              applyHostedRetries(
+                dropProtectedCandidates(snapshot, protectedTaken),
+                observedHead as GitSha,
+                plans,
+                now,
+              ),
+              parks,
               now,
             ),
-            parks,
+            readmissions,
             now,
           ),
-          readmissions,
+          humanMerges,
           now,
         ),
-        humanMerges,
+        staleProbes,
         now,
       );
     } catch {

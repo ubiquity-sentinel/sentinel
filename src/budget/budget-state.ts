@@ -207,97 +207,7 @@ export class BudgetStateContext {
     prior: RepairStateSnapshotV1 | null,
     now: number,
   ): WorkRecordV1 | null {
-    try {
-      const transition = request.implementationTransition;
-      if (!transition || !prior || request.purpose === "review_request") {
-        return null;
-      }
-      const before = parseWorkRecordV1(transition.expectedWork);
-      const next = parseWorkRecordV1(transition.nextWork);
-      const rows = prior.work.filter((row) => row.id === request.taskId);
-      if (
-        rows.length !== 1 ||
-        canonicalStringify(rows[0]) !== canonicalStringify(before) ||
-        before.id !== request.taskId ||
-        !sameRepository(before.repository, request.repository) ||
-        before.target.base !== request.head || before.nextStep !== "work" ||
-        before.blocker !== null ||
-        request.attempt !== before.counters.attempts + 1 ||
-        request.purpose !==
-          (before.counters.attempts === 0 ? "implementation" : "retry") ||
-        next.updatedAt > now
-      ) return null;
-      const mergeBase = pendingConflictResolution(before.intent);
-      if (
-        before.intent !== null && (mergeBase === null ||
-          before.intent.requestId !== null ||
-          before.intent.expectedHead !== before.target.head ||
-          before.intent.pr !== before.target.pr ||
-          before.intent.branch !== before.target.branch ||
-          before.target.pr === null || before.target.head === null ||
-          before.intent.key !==
-            baseRefreshIntentKey(
-              before.target.pr,
-              before.target.head,
-              mergeBase,
-            ))
-      ) return null;
-      const retry = next.counters.retries - before.counters.retries;
-      if (
-        retry !== 0 && (retry !== 1 || mergeBase !== null ||
-          // The existing-published-head continuation is the one preserved-null
-          // shape admitted to a CI fix: its exact head is re-proved live and
-          // the shared `ciPublicationShape` (delivery gate, launcher) keeps
-          // refusing it.
-          (!ciPublicationShape(before) &&
-            !existingHeadContinuationShape(before)) ||
-          (!isCiFixMarker(before.wait) && !headAcceptedByReview(prior, before)))
-      ) return null;
-      const intent = {
-        kind: "implementation" as const,
-        key: implementationIntentKey(id),
-        startedAt: next.updatedAt,
-        branch: hasTakeoverCustody(before)
-          ? before.target.branch
-          : candidateBranch(before.id),
-        expectedHead: null,
-        observedBase: request.head,
-        pr: null,
-        requestId: id,
-        resultId: null,
-        ...(mergeBase === null
-          ? {}
-          : { failure: conflictMarker(mergeBase, next.updatedAt) }),
-      };
-      const expected = {
-        ...before,
-        counters: {
-          ...before.counters,
-          attempts: request.attempt,
-          retries: before.counters.retries + retry,
-        },
-        wait: retry === 1 ? null : before.wait,
-        intent,
-        updatedAt: next.updatedAt,
-      };
-      if (canonicalStringify(next) !== canonicalStringify(expected)) {
-        return null;
-      }
-      // Budget owns admission time; construction may precede its clock read.
-      return parseWorkRecordV1({
-        ...next,
-        updatedAt: now,
-        intent: {
-          ...intent,
-          startedAt: now,
-          ...(mergeBase === null
-            ? {}
-            : { failure: conflictMarker(mergeBase, now) }),
-        },
-      });
-    } catch {
-      return null;
-    }
+    return admittedImplementationWork(request, id, prior, now);
   }
 
   protected updatedReservation(
@@ -456,4 +366,111 @@ function sameNonCooldownState(
     attemptMemory: value.attemptMemory,
   });
   return canonicalStringify(pick(a)) === canonicalStringify(pick(b));
+}
+
+/**
+ * The exact implementation work an admission may persist, or null when the
+ * transition is not the exact admissible one. Pure over its inputs: the
+ * budget's reservation CAS and the repair loop's pre-reservation checks
+ * (`pre-reservation-checks.ts`) evaluate the same predicate, so a transition
+ * the budget would refuse as `invalid` is refused before any reservation.
+ * Only accounting, its exact intent and the consumed CI wait may change.
+ */
+export function admittedImplementationWork(
+  request: ReserveModelStartRequestV1,
+  id: string,
+  prior: RepairStateSnapshotV1 | null,
+  now: number,
+): WorkRecordV1 | null {
+  try {
+    const transition = request.implementationTransition;
+    if (!transition || !prior || request.purpose === "review_request") {
+      return null;
+    }
+    const before = parseWorkRecordV1(transition.expectedWork);
+    const next = parseWorkRecordV1(transition.nextWork);
+    const rows = prior.work.filter((row) => row.id === request.taskId);
+    if (
+      rows.length !== 1 ||
+      canonicalStringify(rows[0]) !== canonicalStringify(before) ||
+      before.id !== request.taskId ||
+      !sameRepository(before.repository, request.repository) ||
+      before.target.base !== request.head || before.nextStep !== "work" ||
+      before.blocker !== null ||
+      request.attempt !== before.counters.attempts + 1 ||
+      request.purpose !==
+        (before.counters.attempts === 0 ? "implementation" : "retry") ||
+      next.updatedAt > now
+    ) return null;
+    const mergeBase = pendingConflictResolution(before.intent);
+    if (
+      before.intent !== null && (mergeBase === null ||
+        before.intent.requestId !== null ||
+        before.intent.expectedHead !== before.target.head ||
+        before.intent.pr !== before.target.pr ||
+        before.intent.branch !== before.target.branch ||
+        before.target.pr === null || before.target.head === null ||
+        before.intent.key !==
+          baseRefreshIntentKey(
+            before.target.pr,
+            before.target.head,
+            mergeBase,
+          ))
+    ) return null;
+    const retry = next.counters.retries - before.counters.retries;
+    if (
+      retry !== 0 && (retry !== 1 || mergeBase !== null ||
+        // The existing-published-head continuation is the one preserved-null
+        // shape admitted to a CI fix: its exact head is re-proved live and
+        // the shared `ciPublicationShape` (delivery gate, launcher) keeps
+        // refusing it.
+        (!ciPublicationShape(before) &&
+          !existingHeadContinuationShape(before)) ||
+        (!isCiFixMarker(before.wait) && !headAcceptedByReview(prior, before)))
+    ) return null;
+    const intent = {
+      kind: "implementation" as const,
+      key: implementationIntentKey(id),
+      startedAt: next.updatedAt,
+      branch: hasTakeoverCustody(before)
+        ? before.target.branch
+        : candidateBranch(before.id),
+      expectedHead: null,
+      observedBase: request.head,
+      pr: null,
+      requestId: id,
+      resultId: null,
+      ...(mergeBase === null
+        ? {}
+        : { failure: conflictMarker(mergeBase, next.updatedAt) }),
+    };
+    const expected = {
+      ...before,
+      counters: {
+        ...before.counters,
+        attempts: request.attempt,
+        retries: before.counters.retries + retry,
+      },
+      wait: retry === 1 ? null : before.wait,
+      intent,
+      updatedAt: next.updatedAt,
+    };
+    if (canonicalStringify(next) !== canonicalStringify(expected)) {
+      return null;
+    }
+    // Budget owns admission time; construction may precede its clock read.
+    return parseWorkRecordV1({
+      ...next,
+      updatedAt: now,
+      intent: {
+        ...intent,
+        startedAt: now,
+        ...(mergeBase === null
+          ? {}
+          : { failure: conflictMarker(mergeBase, now) }),
+      },
+    });
+  } catch {
+    return null;
+  }
 }

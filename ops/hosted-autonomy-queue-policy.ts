@@ -129,6 +129,8 @@ export interface QueueAuthorizationFacts {
   admissionAmbiguous: boolean;
   reentry: boolean;
   failedQueueAdmissions: number;
+  /** The record carries the owner-landing flag: never admitted by Sentinel. */
+  ownerLanding?: boolean;
 }
 /** Null authorization fields are incomplete evidence, never a refusal. */
 export function hasCompleteQueueAuthorizationFacts(
@@ -238,6 +240,11 @@ export function decideQueuePolicy(
       action: "hold",
       reason: facts.ownsEntry ? "queued" : "foreign_entry",
     };
+  }
+  // A protected-path change is merged only by its owner: no admission (an
+  // existing entry is still observed and held above, never re-entered).
+  if (facts.ownerLanding === true) {
+    return { action: "owner_park", reason: "owner_merge_required" };
   }
   if (
     !Number.isSafeInteger(facts.now) ||

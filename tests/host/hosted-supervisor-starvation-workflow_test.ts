@@ -17,7 +17,13 @@ function context() {
         executionPurpose: "bootstrap",
       },
     },
-    matrix_plan: { result: "skipped", outputs: { hasCells: "true" } },
+    matrix_plan: {
+      result: "skipped",
+      outputs: { hasCells: "true", hasRepairCells: "true" } as Record<
+        string,
+        string
+      >,
+    },
   };
 }
 function allows(
@@ -46,6 +52,8 @@ Deno.test("starvation workflow: authenticated prepare bootstrap runs without ret
   assert.equal(allows("repair", needs), true);
   assert.equal(allows("matrix_plan", needs), false);
   assert.equal(allows("matrix_cell", needs), false);
+  // #328: no repository cell without an admitted plan.
+  assert.equal(allows("repair_cell", needs), false);
   assert.ok(!jobs.get("prepare")?.includes("owner-development-install.ts"));
   for (const job of ["prepare", "repair"]) {
     assert.equal(allows(job, needs, "refs/heads/development"), false);
@@ -75,4 +83,25 @@ Deno.test("starvation workflow: ordinary fanout and aggregation remain bound to 
   for (const job of ["matrix_plan", "matrix_cell", "repair"]) {
     assert.equal(allows(job, needs, undefined, true), false);
   }
+});
+Deno.test("starvation workflow: repository repair cells run only for an admitted plan that delegated records (#328)", () => {
+  const needs = context();
+  needs.prepare.outputs.modelStartsEnabled = "true";
+  needs.prepare.outputs.executionPurpose = "ordinary";
+  assert.equal(allows("repair_cell", needs), false, "plan skipped");
+  needs.matrix_plan.result = "success";
+  assert.equal(allows("repair_cell", needs), true);
+  // An older runtime's planner writes no fan-out outputs at all.
+  delete needs.matrix_plan.outputs.hasRepairCells;
+  assert.equal(allows("repair_cell", needs), false);
+  needs.matrix_plan.outputs.hasRepairCells = "false";
+  assert.equal(allows("repair_cell", needs), false);
+  needs.matrix_plan.outputs.hasRepairCells = "true";
+  assert.equal(allows("repair_cell", needs, undefined, true), false);
+  assert.equal(allows("repair_cell", needs, "refs/heads/development"), false);
+  needs.maintenance.result = "failure";
+  assert.equal(allows("repair_cell", needs), false);
+  // finalize always runs and waits for every repository cell.
+  assert.equal(allows("finalize", needs), true);
+  assert.match(jobs.get("finalize") ?? "", /needs: \[[^\]]*repair_cell/);
 });

@@ -1,3 +1,4 @@
+import { causedWait } from "./loop-wait-cause.ts";
 import { isVerifiedDeliveryProof } from "../../ops/hosted-autonomy-queue-proof.ts";
 import { CHECK_POLL_MS } from "./loop-bounds.ts";
 import { hasQueueDeliveryProvenance } from "../github/queue-delivery-provenance.ts";
@@ -11,6 +12,7 @@ import type {
 import type { GitSha } from "../contracts/brands.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import type { WorkWaitCauseV1 } from "../contracts/work-wait-cause.ts";
 import {
   isNativeQueueTarget,
   type NativeQueueOperation,
@@ -47,6 +49,32 @@ function queueGuardHoldIsTransient(reason: QueueGuardReason): boolean {
   return QUEUE_GUARD_HOLD_TRANSIENT[reason];
 }
 
+/** Short closed wait-cause code of each guard reason (#335, <= 16 chars). */
+const QUEUE_GUARD_WAIT_CODE: Readonly<Record<QueueGuardReason, string>> = {
+  capability_missing: "capability",
+  rule_unavailable: "rule_unavail",
+  observation_unavailable: "obs_unavail",
+  inactive_observation_unavailable: "inactive_unavail",
+  authorization_unavailable: "auth_unavail",
+  custody: "custody",
+  member: "member",
+  identity_drift: "identity_drift",
+  merged_head: "merged_head",
+  queue_required: "queue_required",
+};
+
+/** The queue wait cause of one guard outcome; `none`: a positive observation. */
+function queueWaitCause(code: string, observed: boolean): WorkWaitCauseV1 {
+  return { port: "queue", status: observed ? "none" : "unknown", code };
+}
+
+function queueGuardWaitCause(reason: QueueGuardReason): WorkWaitCauseV1 {
+  return queueWaitCause(
+    QUEUE_GUARD_WAIT_CODE[reason],
+    !queueGuardHoldIsTransient(reason),
+  );
+}
+
 function isQueueGuardReason(value: string): value is QueueGuardReason {
   return Object.hasOwn(QUEUE_GUARD_HOLD_TRANSIENT, value);
 }
@@ -56,6 +84,7 @@ export async function holdQueueRecord(
   context: LoopContextV1,
   record: WorkRecordV1,
   transient = false,
+  cause?: WorkWaitCauseV1,
 ): Promise<StepResultV1> {
   record = context.snapshot.work.find((row) => row.id === record.id) ?? record;
   if (record.wait?.reason === "backoff" && record.wait.until === null) {
@@ -79,15 +108,19 @@ export async function holdQueueRecord(
     if (index < 0) throw new Error("queue hold work identity missing");
     draft.work[index] = {
       ...record,
-      wait: transient
-        ? {
-          reason: "unavailable",
-          since: record.wait?.reason === "unavailable"
-            ? record.wait.since
-            : now,
-          until: now + CHECK_POLL_MS,
-        }
-        : { reason: "backoff", since: now, until: null },
+      wait: causedWait(
+        deps,
+        transient
+          ? {
+            reason: "unavailable",
+            since: record.wait?.reason === "unavailable"
+              ? record.wait.since
+              : now,
+            until: now + CHECK_POLL_MS,
+          }
+          : { reason: "backoff", since: now, until: null },
+        cause,
+      ),
       updatedAt: now,
     };
   });
@@ -118,7 +151,15 @@ export async function guardQueueOperation(
     )
   ) return await guardQueueDelivery(deps, context, record);
   const guard = deps.github.nativeQueue;
-  if (guard === undefined) return await holdQueueRecord(deps, context, record);
+  if (guard === undefined) {
+    return await holdQueueRecord(
+      deps,
+      context,
+      record,
+      false,
+      queueWaitCause("no_guard", true),
+    );
+  }
   const result = await guard.inspect({
     record,
     operation,
@@ -130,6 +171,7 @@ export async function guardQueueOperation(
     context,
     record,
     queueGuardHoldIsTransient(result.reason),
+    queueGuardWaitCause(result.reason),
   );
 }
 export async function guardQueueDelivery(
@@ -161,7 +203,18 @@ export async function guardQueueDelivery(
   if (
     deps.github.nativeQueue === undefined || exactReceipt === null ||
     exactRevision === undefined
-  ) return await holdQueueRecord(deps, context, record);
+  ) {
+    return await holdQueueRecord(
+      deps,
+      context,
+      record,
+      false,
+      queueWaitCause(
+        deps.github.nativeQueue === undefined ? "no_guard" : "no_receipt",
+        true,
+      ),
+    );
+  }
   const proof = await deps.github.nativeQueue.proveDelivery({
     record,
     receipt: exactReceipt,
@@ -189,16 +242,28 @@ export async function guardQueueDelivery(
       (exactReceipt.taskAcceptance != null &&
         binding.taskDigest !== exactReceipt.taskAcceptance.taskDigest) ||
       (acceptProof !== undefined && !acceptProof(proof))
-    ) return await holdQueueRecord(deps, context, record);
+    ) {
+      return await holdQueueRecord(
+        deps,
+        context,
+        record,
+        false,
+        queueWaitCause("proof_mismatch", true),
+      );
+    }
     return null;
   }
+  const transient = proof.status === "unavailable" &&
+    (proof.reason === "rule_unavailable" ||
+      proof.reason === "inactive_observation_unavailable");
   return await holdQueueRecord(
     deps,
     context,
     record,
-    proof.status === "unavailable" &&
-      (proof.reason === "rule_unavailable" ||
-        proof.reason === "inactive_observation_unavailable"),
+    transient,
+    "reason" in proof && isQueueGuardReason(proof.reason)
+      ? queueGuardWaitCause(proof.reason)
+      : queueWaitCause("delivery_hold", !transient),
   );
 }
 

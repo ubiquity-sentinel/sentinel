@@ -8,7 +8,13 @@ import type {
   GitHubReviewDecisionV1,
   PortResultV1,
 } from "../contracts/ports.ts";
-import { expectArray, expectRecord, fail } from "../contracts/validation.ts";
+import {
+  expectArray,
+  expectBoolean,
+  expectRecord,
+  fail,
+} from "../contracts/validation.ts";
+import type { RepositoryMergeSettingsV1 } from "../contracts/target-delivery.ts";
 import {
   parseBranchRuleWire,
   parseCheckRunWire,
@@ -243,6 +249,55 @@ export abstract class GitHubClientReads extends GitHubClientChecks {
           return parent;
         },
       );
+    });
+  }
+
+  /**
+   * The exact tree of one commit; null when it does not exist. A squash merge
+   * is proven by its tree equal to the reviewed head's tree (#331).
+   */
+  async readCommitTree(sha: GitSha): Promise<PortResultV1<GitSha | null>> {
+    if (!isGitSha(sha)) return portError("invalid", "commit SHA is invalid");
+    const response = await this.request(
+      "GET",
+      `/repos/${repoPath(this.repository)}/git/commits/${sha}`,
+    );
+    if (!response.ok) return response;
+    if (response.value.status === 404) return portOk(null);
+    return parseWire(response.value, (value) => {
+      const commit = expectRecord(value, "$");
+      if (commit.sha !== sha) {
+        fail("$.sha", "invalid_value", "commit does not match the request");
+      }
+      const tree = expectRecord(commit.tree, "$.tree").sha;
+      if (!isGitSha(tree)) {
+        fail("$.tree.sha", "invalid_sha", "expected a full tree SHA");
+      }
+      return tree;
+    });
+  }
+
+  /** The repository's merge settings (`allow_squash_merge`, #331). */
+  async readRepositoryMergeSettings(): Promise<
+    PortResultV1<RepositoryMergeSettingsV1>
+  > {
+    const response = await this.request(
+      "GET",
+      `/repos/${repoPath(this.repository)}`,
+    );
+    if (!response.ok) return response;
+    return parseWire(response.value, (value) => {
+      const repo = expectRecord(value, "$");
+      return {
+        allowSquashMerge: expectBoolean(
+          repo.allow_squash_merge,
+          "$.allow_squash_merge",
+        ),
+        allowMergeCommit: expectBoolean(
+          repo.allow_merge_commit,
+          "$.allow_merge_commit",
+        ),
+      };
     });
   }
 

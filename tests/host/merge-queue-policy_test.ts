@@ -143,6 +143,18 @@ Deno.test("queue policy enqueues only complete pre-enqueue authorization and gre
   });
 });
 
+Deno.test("queue policy never admits an owner-landing record", async () => {
+  const facts = await queueAuthorizationFacts();
+  assert.equal(decideQueuePolicy(facts).action, "enqueue");
+  facts.ownerLanding = true;
+  assert.deepEqual(decideQueuePolicy(facts), {
+    action: "owner_park",
+    reason: "owner_merge_required",
+  });
+  facts.reentry = true;
+  assert.equal(decideQueuePolicy(facts).action, "owner_park");
+});
+
 Deno.test("every-pass drift dequeues only own entries; foreign entries remain protected", async () => {
   for (const ownsEntry of [true, false]) {
     const facts = await queueAuthorizationFacts();

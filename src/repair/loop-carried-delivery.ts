@@ -2,6 +2,7 @@ import { guardQueueDelivery } from "./loop-queue-guard.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 import { isNativeQueueTarget } from "../github/native-queue-guard.ts";
 import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "./review-round-cap.ts";
+import { mergeLanding } from "./merge-off-tip.ts";
 
 /**
  * A pull request that reports a head this record never published: the carried
@@ -35,7 +36,8 @@ const FOREIGN_HEAD_PREFIX = "the pull request reports a foreign head ";
  *
  * Bounds: one refresh per record per base tip (the refresh intent key binds
  * PR, head and observed tip, and the target advances), serialised per
- * repository by the delivery line (`deliveryQueueAhead`), and at most
+ * repository by the delivery line (`deliveryQueueAhead`: only the head of the
+ * line refreshes, so these bounds count head-of-line refreshes), and at most
  * `CARRIED_REFRESH_LIMIT` refreshes per reviewed head, counted from git (the
  * first-parent distance from H0, so no state field and no reset by a
  * refresh); every wait (CI, proof, a pull request still reporting the
@@ -827,18 +829,21 @@ async function carriedOffTipDetail(
     read === undefined || head === null ||
     isNativeQueueTarget(record.repository)
   ) return null;
-  let parents;
-  try {
-    parents = await read.call(deps.github, revision);
-  } catch {
-    return null;
-  }
-  if (!parents.ok || parents.value === null) return null;
-  const listed = parents.value;
-  if (listed.length === 2 && listed[0] === base && listed[1] === head) {
-    return null;
-  }
+  // A squash landing (#331) is exact on [T] with the tree of H1.
+  const tree = deps.github.readCommitTree;
+  const landing = await mergeLanding(
+    {
+      parents: (sha) => read.call(deps.github, sha),
+      ...(tree === undefined
+        ? {}
+        : { tree: (sha: GitSha) => tree.call(deps.github, sha) }),
+    },
+    revision,
+    base,
+    head,
+  );
+  if (landing === "unavailable" || landing.kind === "exact") return null;
   return `${REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX}merge ${revision} has parents ${
-    listed.join(",") || "none"
+    landing.parents.join(",") || "none"
   }, not ${base},${head}`;
 }

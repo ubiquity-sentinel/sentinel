@@ -506,6 +506,8 @@ export async function makeRig(
 export async function run(
   rig: RigV1,
   github?: HostedAutonomyGitHubV1,
+  /** Optional test-only dependency overrides (e.g. clock, delivery policy). */
+  extra: Partial<HostedAutonomyDepsV1> = {},
 ): Promise<HostedAutonomyResultV1> {
   return await runHostedAutonomy({
     state: rig.state,
@@ -517,6 +519,7 @@ export async function run(
       github === undefined ? rig : { ...rig, githubFor: () => github },
     ),
     clock: { now: () => T0 + 5_000_000 },
+    ...extra,
   });
 }
 

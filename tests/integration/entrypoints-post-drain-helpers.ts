@@ -55,13 +55,16 @@ export async function postDrainTaskScenario(
     | "matrix-step-limit"
     | "unbound-intent"
     | "lost-merge"
-    | "moved-base" = "expired",
+    | "moved-base"
+    | "owner-landing-moved-base" = "expired",
 ): Promise<void> {
   const head = SHA3;
   const branch = "sentinel/repair/issue-1";
-  const attempt = mode === "missing-acceptance" || mode === "moved-base"
-    ? 2
-    : 4;
+  // An owner-landing record at delivery on a moved base: post-drain must
+  // route it to the owner wait (no base push, no merge), never refresh it.
+  const ownerLanding = mode === "owner-landing-moved-base";
+  const movedBase = mode === "moved-base" || ownerLanding;
+  const attempt = mode === "missing-acceptance" || movedBase ? 2 : 4;
   const key = `review:7:${head}:attempt-${attempt}`;
   const rig = await makeRepairRig("post-drain-task", {
     summaries: false,
@@ -120,14 +123,19 @@ export async function postDrainTaskScenario(
       settledAt: T0,
       proofRef: null,
     });
-    const work = workRecord("issue-1", {
-      source: { kind: "issue", id: "1", revision: SHA1 },
-      target: { base: SHA1, branch, checkpoint: null, head, pr: 7 },
-      nextStep: "review",
-      wait: { reason: "review_pending", since: T0, until: T0 + 15 * 60_000 },
-      counters: { attempts: 1, retries: 0, reviewRounds: attempt },
-      updatedAt: T0,
-    });
+    const work = {
+      ...workRecord("issue-1", {
+        source: { kind: "issue", id: "1", revision: SHA1 },
+        target: { base: SHA1, branch, checkpoint: null, head, pr: 7 },
+        nextStep: "review",
+        wait: { reason: "review_pending", since: T0, until: T0 + 15 * 60_000 },
+        counters: { attempts: 1, retries: 0, reviewRounds: attempt },
+        updatedAt: T0,
+      }),
+      ...(ownerLanding
+        ? { ownerLanding: { paths: ["src/auth/"], since: T0 - 100 } }
+        : {}),
+    };
     const collision = mode === "foreign-only" || mode === "foreign-first";
     const foreign = workRecord("foreign-issue-1", {
       ...work,
@@ -354,7 +362,7 @@ export async function postDrainTaskScenario(
     rig.github.drainReviews = async (request) => {
       rig.clock.advance(mode === "future" ? 1 : 15 * 60_000 + 1);
       releaseResult();
-      if (mode === "moved-base") {
+      if (movedBase) {
         // The base moves after the review was requested (live: Passport PRs
         // 154 and 171): the continuation must refresh, never merge.
         const readRef = rig.github.readRef.bind(rig.github);
@@ -490,7 +498,7 @@ export async function postDrainTaskScenario(
     assert.equal(
       state.reviews.length,
       (positive || mode === "missing-acceptance" ||
-          mode === "missing-acceptance-spent-rounds" || mode === "moved-base"
+          mode === "missing-acceptance-spent-rounds" || movedBase
         ? 1
         : 0) + (collision ? 1 : 0),
       "a completed result may be retained without authorizing delivery",
@@ -504,6 +512,16 @@ export async function postDrainTaskScenario(
       assert.equal(state.work[0].intent?.kind, "base_refresh");
       assert.equal(state.work[0].intent?.observedBase, SHA2);
       assert.equal(state.work[0].target.base, SHA1);
+      assert.deepEqual(refreshPrepares, []);
+    }
+    if (ownerLanding) {
+      // The reviewed head waits for its owner: no refresh intent, no merge
+      // intent, no base push and no refresh preparation on the moved base.
+      assert.equal(state.work[0].nextStep, "delivery");
+      assert.equal(state.work[0].intent, null);
+      assert.equal(state.work[0].wait?.reason, "manual");
+      assert.equal(state.work[0].target.base, SHA1);
+      assert.deepEqual(state.work[0].ownerLanding?.paths, ["src/auth/"]);
       assert.deepEqual(refreshPrepares, []);
     }
     if (mode === "missing-acceptance") {

@@ -13,9 +13,15 @@ import type { ModelRunRequestV1 } from "../../src/contracts/ports.ts";
 import {
   buildPrompt,
   MAX_PROMPT_PROTECTED_PATHS,
+  PUBLICATION_BOUNDS_SENTENCE,
   renderProtectedPaths,
 } from "../../src/repair/model-port-prompt.ts";
 import { MAX_PROMPT_CHARS } from "../../src/repair/model-port-policy.ts";
+import {
+  MAX_CHANGED_PATHS,
+  MAX_FILE_BYTES,
+  MAX_PROMPT_BYTES,
+} from "../../src/github/snapshot-policy.ts";
 import { CodexImplementationPort } from "../../src/repair/model-port.ts";
 import { protectedPathsFor } from "../../src/host/local-model.ts";
 import { REPO, SHA1, SHA3 } from "../state/helpers.ts";
@@ -43,11 +49,14 @@ const PATHS = [
 ];
 
 const SENTENCE =
-  ' The trusted repository configuration protects exactly these path prefixes (sorted): ".github/workflows/", "AGENTS.md", "deno.json", "ops/". Fix the issue without changing them where you can; a candidate that changes one is parked for the repository owner to land.';
+  ' The trusted repository configuration protects exactly these path prefixes (sorted): ".github/workflows/", "AGENTS.md", "deno.json", "ops/". Fix the issue without changing them when a correct fix outside them exists. When the issue\'s fix genuinely requires changing a protected path, this narrows the rule above: make the real, complete change in place in that file, because a candidate that changes a protected path is parked for the repository owner to land as is, which is the useful outcome. Never substitute tests only, an unapplied .patch or .diff file, a copy of the file elsewhere, or a no-op for that change: such a candidate leaves the real file unchanged and can never be accepted.';
 
-/** SHA-256 of `buildPrompt(REQUEST, false, undefined, PATHS)` (pinned 2026-10-25). */
+/**
+ * SHA-256 of `buildPrompt(REQUEST, false, undefined, PATHS)` (pinned
+ * 2026-10-25; re-pinned 2026-11-05 for the in-place protected-fix guidance).
+ */
 const GOLDEN_HOSTED_PROTECTED =
-  "a52514266f9d6fd9a9f34360bb686f7fa1b4de215e0b2e25129a6226a82b16ba";
+  "5658b4f877bc9f10f2f8dde79e728a52946a102240e6d0ee35fa246c02c002bf";
 
 async function sha256(text: string): Promise<string> {
   const digest = await crypto.subtle.digest(
@@ -63,6 +72,13 @@ Deno.test("the protected sentence names the exact prefixes sorted and deduplicat
   assert.equal(renderProtectedPaths(PATHS), SENTENCE);
   assert.ok(!SENTENCE.includes("make no change"));
   assert.ok(!SENTENCE.includes("OWNER_LANDING_REQUIRED"));
+  // ai.ubq.fi 1281/1282, 1210/1211: a required protected fix is made in
+  // place, never replaced by tests, a patch file, a copy or a no-op.
+  assert.ok(SENTENCE.includes("make the real, complete change in place"));
+  assert.ok(SENTENCE.includes("an unapplied .patch or .diff file"));
+  assert.ok(SENTENCE.includes("tests only"));
+  assert.ok(SENTENCE.includes("a copy of the file elsewhere"));
+  assert.ok(SENTENCE.includes("when a correct fix outside them exists"));
   assert.equal(renderProtectedPaths([]), "");
 });
 
@@ -87,7 +103,9 @@ Deno.test("at most 60 prefixes are named and the rest are counted", () => {
     (_, index) => `${String(index).padStart(2, "0")}${"x".repeat(300)}`,
   );
   const bounded = renderProtectedPaths(long);
-  assert.ok(bounded.length < 4_500, String(bounded.length));
+  // The named prefixes stay within 4,000; the fixed guidance prose (about
+  // 900 characters since 2026-11-05) is the rest.
+  assert.ok(bounded.length < 5_000, String(bounded.length));
   assert.equal(bounded.match(/"\d\dx+"/g)?.length, 13);
   assert.match(bounded, /\(and 27 more protected prefixes not listed here\)/);
 });
@@ -104,7 +122,12 @@ Deno.test("the prompt carries the sentence inside the role, and none without pre
       `to force success.${SENTENCE} Keep the change`,
     ),
   );
-  assert.equal(await sha256(guarded), GOLDEN_HOSTED_PROTECTED);
+  // The #333 publication-bounds sentence is the only later addition.
+  assert.ok(guarded.includes(PUBLICATION_BOUNDS_SENTENCE));
+  assert.equal(
+    await sha256(guarded.replace(PUBLICATION_BOUNDS_SENTENCE, "")),
+    GOLDEN_HOSTED_PROTECTED,
+  );
   // With CI evidence the role (and so the sentence) stays last and intact.
   const crowded = {
     ...REQUEST,
@@ -180,4 +203,16 @@ Deno.test("the hosted port resolves the prefixes of exactly the requested reposi
     [],
   );
   assert.deepEqual(protectedPathsFor(undefined, REPO), []);
+});
+
+Deno.test("#333: the prompt carries the trusted denylist and the exact publication bounds", () => {
+  const prompt = buildPrompt(REQUEST, false, undefined, PATHS);
+  assert.ok(prompt.includes(SENTENCE));
+  assert.ok(prompt.includes(PUBLICATION_BOUNDS_SENTENCE));
+  assert.ok(prompt.includes(`more than ${MAX_CHANGED_PATHS} paths`));
+  assert.ok(prompt.includes(`larger than ${MAX_FILE_BYTES} bytes`));
+  assert.ok(prompt.includes(`${MAX_PROMPT_BYTES} total new bytes`));
+  // Nothing beyond the trusted constants: the session's own transport output
+  // allowance is still not part of the prompt.
+  assert.ok(!prompt.includes(String(REQUEST.maxOutputChars)));
 });

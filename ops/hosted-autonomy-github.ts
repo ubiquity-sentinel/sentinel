@@ -9,7 +9,11 @@ import {
   missingExpectedChecks,
 } from "../src/repair/ci-coverage.ts";
 import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
-import { isPassportDeployCheck } from "../src/repair/merge-gate-checks.ts";
+import {
+  isCiEvidenceConclusion,
+  isCiEvidenceSource,
+  isPassportDeployCheck,
+} from "../src/repair/merge-gate-checks.ts";
 import { HOSTED_AUTONOMY_REQUIRED_CHECK } from "./hosted-autonomy-policy.ts";
 import { createHostedMismatchDispositionObservations } from "./hosted-autonomy-mismatch-github.ts";
 import type {
@@ -32,6 +36,7 @@ import {
 } from "./hosted-autonomy-github-listing.ts";
 import {
   createHostedBaseRepairIssues,
+  createHostedCapabilityIssues,
   createHostedFollowUpIssues,
 } from "./hosted-autonomy-github-issues.ts";
 import { createHostedRetryLabel } from "./hosted-autonomy-retry-label.ts";
@@ -46,9 +51,17 @@ import {
   backupNeverStartedRemains,
   failedNamesWithBackup,
   type HostedBackupCiReadContextV1,
+  SENTINEL_BACKUP_FIELD,
   substituteBackupRuns,
 } from "./hosted-autonomy-backup-ci-read.ts";
 import { createMergeBaseTreeChanges } from "./hosted-autonomy-github-trees.ts";
+import { createTargetTreeFactsResolver } from "../src/host/target-tree-facts.ts";
+import { fetchHttpTransport } from "../src/github/http.ts";
+import { createHostedDeliveryReads } from "./hosted-autonomy-github-delivery.ts";
+import {
+  hostedMergeBody,
+  readSquashTrees,
+} from "./hosted-autonomy-merge-shape.ts";
 import {
   parseHostedAutonomyHeadPulls,
   parseHostedAutonomyPull,
@@ -121,6 +134,11 @@ export function createHostedAutonomyGitHub(
   const jobReads = createHostedActionsJobReads(request, scope);
   const effect = createHostedAutonomyEffect(token);
   const rawRead = createHostedAutonomyRawRead(token);
+  // A commit sha passed as the ref resolves to itself, so every read is exact.
+  const treeFactsAt = createTargetTreeFactsResolver({
+    http: fetchHttpTransport(),
+    token,
+  });
   async function readPull(
     number: number,
     baseBranch: string | null,
@@ -148,6 +166,11 @@ export function createHostedAutonomyGitHub(
         ? String((parent as Record<string, unknown>)["sha"] ?? "")
         : ""
     );
+    // A single-parent (squash, #331) merge is proven by its tree equal to
+    // the pull head's tree; a merge commit needs no tree read.
+    const trees = parents.length === 1 && parsed.headSha !== null
+      ? await readSquashTrees(request, scope, commit, parsed.headSha)
+      : null;
     const compare = await request(
       "GET",
       `/repos/${scope}/compare/${mergeCommitSha}...${baseBranch}`,
@@ -181,6 +204,7 @@ export function createHostedAutonomyGitHub(
       parents,
       revisionOnBaseBranch,
       baseAncestorOfRevision,
+      ...(trees === null ? {} : trees),
     };
   }
 
@@ -233,6 +257,30 @@ export function createHostedAutonomyGitHub(
       !isPassportDeployCheck(repository, String(run["name"]))
     );
 
+  /**
+   * One raw run is positive CI evidence: completed `success`, `skipped` or
+   * `neutral` from GitHub Actions, from no app (legacy/fixture shape) or a
+   * verified backup stand-in (`sentinel_backup`), the runtime's
+   * `isCiEvidenceCheck` over the wire.
+   */
+  const isCiEvidenceRun = (run: Record<string, unknown>) => {
+    if (
+      run["status"] !== "completed" ||
+      !isCiEvidenceConclusion(run["conclusion"])
+    ) {
+      return false;
+    }
+    if (run[SENTINEL_BACKUP_FIELD] !== undefined) return true;
+    const app = run["app"];
+    const slug = app === undefined || app === null
+      ? undefined
+      : typeof app === "object" && !Array.isArray(app) &&
+          typeof (app as Record<string, unknown>)["slug"] === "string"
+      ? String((app as Record<string, unknown>)["slug"])
+      : "unknown";
+    return isCiEvidenceSource(slug, String(run["name"]));
+  };
+
   /** Complete workflow-run listing for exactly one commit. */
   const readHeadRuns = (head: string) =>
     readCompleteListing(
@@ -269,6 +317,7 @@ export function createHostedAutonomyGitHub(
     };
 
   return {
+    ...createHostedDeliveryReads(request, scope),
     mismatchDisposition: createHostedMismatchDispositionObservations(
       token,
       repository,
@@ -331,7 +380,13 @@ export function createHostedAutonomyGitHub(
         typeof run["conclusion"] === "string" &&
         isGreenConclusion(run["conclusion"])
       );
-      if (!green || base === undefined) return green;
+      if (!green) return false;
+      // Positive CI evidence only (P1-2): green runs that all come from other
+      // apps (the gateway's lone skipped `CodeRabbit`, a scanner or a deploy
+      // preview, before any `Gateway CI` run) are no evidence: not green and
+      // not red (a failed one of them was already red above).
+      if (!runs.some(isCiEvidenceRun)) return null;
+      if (base === undefined) return true;
       // The runs that exist are green; a job GitHub creates late (`needs:`)
       // must exist too, by the base's own check suites (issue #154).
       const baseComplete = await readCompleteCheckRuns(base);
@@ -358,6 +413,25 @@ export function createHostedAutonomyGitHub(
     runNeverStarted: (id: number, head: string) =>
       jobReads.runNeverStarted(id, head),
     readPull,
+    async readCommitTree(sha: string) {
+      // Sentinel #330: a delivery-train landing binds the landed tree to the
+      // exact train commit's tree, both read here.
+      if (!/^[0-9a-f]{40}$/.test(sha)) return null;
+      const commit = await request("GET", `/repos/${scope}/commits/${sha}`);
+      const inner = commit !== null && typeof commit === "object" &&
+          (commit as Record<string, unknown>)["sha"] === sha
+        ? (commit as Record<string, unknown>)["commit"]
+        : null;
+      const tree = inner !== null && typeof inner === "object"
+        ? (inner as Record<string, unknown>)["tree"]
+        : null;
+      const value = tree !== null && typeof tree === "object"
+        ? (tree as Record<string, unknown>)["sha"]
+        : null;
+      return typeof value === "string" && /^[0-9a-f]{40}$/.test(value)
+        ? value
+        : null;
+    },
     async readPullStatus(number: number) {
       if (!Number.isSafeInteger(number) || number <= 0) return null;
       const pull = await request("GET", `/repos/${scope}/pulls/${number}`);
@@ -761,6 +835,12 @@ export function createHostedAutonomyGitHub(
     },
     followUpIssues: createHostedFollowUpIssues(request, repository),
     baseRepairIssues: createHostedBaseRepairIssues(request, repository),
+    capabilityIssues: createHostedCapabilityIssues(request, repository),
+    async readTreeFacts(commit: string) {
+      // A commit sha as the ref: every contents read is of exactly that tip.
+      if (!COMMIT_SHA.test(commit)) return null;
+      return await treeFactsAt(repository, commit);
+    },
     retryLabel: createHostedRetryLabel(request, repository),
     ciOutageTracker: createHostedOutageTracker(request, repository),
     async classifyTipStart(tip: string) {
@@ -795,12 +875,19 @@ export function createHostedAutonomyGitHub(
       );
     },
     async merge(number: number, head: string, message?: string) {
+      // The trusted per-target method (#331); null refuses this pass.
+      const body = await hostedMergeBody(
+        request,
+        repository,
+        number,
+        head,
+        message,
+      );
+      if (body === null) return null;
       const response = await request(
         "PUT",
         `/repos/${scope}/pulls/${number}/merge`,
-        message === undefined
-          ? { sha: head, merge_method: "merge" }
-          : { sha: head, merge_method: "merge", commit_message: message },
+        body,
       );
       if (response === null || typeof response !== "object") return null;
       const obj = response as Record<string, unknown>;

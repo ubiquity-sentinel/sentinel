@@ -367,7 +367,7 @@ export async function closureSlotFairness(): Promise<FairnessV1> {
     cap: anchor(
       "f.closureCap",
       "ops/hosted-autonomy-closure-pass.ts",
-      "const closures = closureCandidates.filter((plan) => !settled(plan.id)).filter(",
+      "const gateable = closureCandidates.filter((plan) => !settled(plan.id)).filter(",
     ),
     fleet: parts.length,
     passes,
