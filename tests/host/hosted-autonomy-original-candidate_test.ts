@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import {
+  INITIAL_CHARGE,
   ORIGINAL,
   originalCandidateRig,
   REJECTED,
+  REJECTED_CHARGE,
 } from "./hosted-autonomy-original-candidate-fixtures.ts";
 import { portError, portOk } from "../../src/contracts/ports.ts";
 import { check } from "../repair/ci-first-rig.ts";
@@ -39,6 +41,42 @@ Deno.test("original candidate: trusted maintenance restores the published candid
     const again = await f.runMaintenance();
     assert.equal(again.status, "skipped", JSON.stringify(again));
     assert.deepEqual((await f.rig.snapshot()).work[0], record);
+  } finally {
+    await f.rig.ctx.cleanup();
+  }
+});
+
+Deno.test("original candidate: charges compacted into the archive still restore the predecessor", async () => {
+  const f = await originalCandidateRig();
+  try {
+    const current = await f.rig.store.readRepair();
+    assert.ok(current.ok && current.value.status === "found");
+    const compacted = new Set([INITIAL_CHARGE, REJECTED_CHARGE]);
+    const written = await f.rig.store.writeRepair({
+      ...current.value.snapshot,
+      stateHead: current.value.head,
+      sequence: current.value.snapshot.sequence + 1,
+      updatedAt: current.value.snapshot.updatedAt + 1000,
+      reservations: current.value.snapshot.reservations.filter((row) =>
+        !compacted.has(row.id)
+      ),
+      reservationArchive: current.value.snapshot.reservations.filter((row) =>
+        compacted.has(row.id)
+      ),
+    }, current.value.head);
+    assert.ok(
+      written.ok && written.value.status === "applied",
+      JSON.stringify(written),
+    );
+    const result = await f.runMaintenance();
+    assert.equal(result.status, "applied", JSON.stringify(result));
+    const after = await f.rig.snapshot();
+    assert.equal(after.work[0].nextStep, "work");
+    assert.equal(after.work[0].target.head, ORIGINAL);
+    assert.deepEqual(
+      after.work[0].target.candidateState?.preserved,
+      f.descriptor,
+    );
   } finally {
     await f.rig.ctx.cleanup();
   }
