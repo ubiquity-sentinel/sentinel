@@ -30,6 +30,7 @@ import type {
   HttpTransportV1,
 } from "../../src/github/http.ts";
 import {
+  LIST_ATTEMPTS,
   PER_PAGE,
   RECOVERY_BUDGET_MS,
   runSupervisorDispatch,
@@ -167,6 +168,8 @@ class FakeApi {
   readonly runList = new Map<string, unknown[]>();
   /** Overrides the run listing's reported `total_count`. */
   readonly runTotal = new Map<string, number>();
+  /** When set, the `runTotal` override is served only this many times. */
+  readonly runTotalReads = new Map<string, number>();
   /** Complete job items per run id, sliced into `PER_PAGE` pages. */
   readonly jobs = new Map<number, unknown[]>();
   /** Overrides the job listing's reported `total_count`. */
@@ -198,6 +201,11 @@ class FakeApi {
     if (request.method === "GET" && path === RUNS_PATH) {
       const status = url.searchParams.get("status") ?? "";
       const items = this.runList.get(status) ?? [];
+      const reads = this.runTotalReads.get(status);
+      if (reads !== undefined) {
+        if (reads <= 0) this.runTotal.delete(status);
+        this.runTotalReads.set(status, reads - 1);
+      }
       return Promise.resolve(
         jsonResponse(200, {
           total_count: this.runTotal.get(status) ?? items.length,
@@ -269,19 +277,25 @@ function makePass(api: FakeApi, advanceMsPerRequest = 0) {
       nowMs += advanceMsPerRequest;
       return api.transport(request);
     };
-  return {
+  const pass = {
     logs,
     clock,
+    pauses: 0,
     run: (): Promise<SupervisorDispatchResultV1> =>
       runSupervisorDispatch({
         http: transport,
         token: "dummy-token",
         clock,
         log: (line) => logs.push(line),
+        pause: () => {
+          pass.pauses++;
+          return Promise.resolve();
+        },
       }),
     logFor: (event: string): Record<string, unknown> | undefined =>
       logs.find((line) => line.event === event),
   };
+  return pass;
 }
 
 /** The real 2026-10-01 wedge, scripted for scan and pre-action re-read. */
@@ -403,6 +417,10 @@ Deno.test("supervisor dispatch: incomplete pagination can never authorize a canc
   assert.equal(runsResult.recovery, "incomplete");
   assert.equal(runsResult.dispatched, true);
   assert.equal(runsIncomplete.cancelCalls().length, 0);
+  // The persistent mismatch was re-listed from page 1 a bounded number of
+  // times before the scan refused it.
+  assert.equal(queuedListings(runsIncomplete), LIST_ATTEMPTS);
+  assert.equal(runsPass.pauses, LIST_ATTEMPTS - 1);
 
   // (b) The stale candidate's job listing is incomplete.
   const jobsIncomplete = new FakeApi();
@@ -415,6 +433,45 @@ Deno.test("supervisor dispatch: incomplete pagination can never authorize a canc
   assert.equal(jobsResult.recovery, "incomplete");
   assert.equal(jobsResult.dispatched, true);
   assert.equal(jobsIncomplete.cancelCalls().length, 0);
+});
+
+function queuedListings(api: FakeApi): number {
+  return api.calls.filter((call) => {
+    const url = new URL(call.url);
+    return url.pathname === RUNS_PATH &&
+      url.searchParams.get("status") === "queued";
+  }).length;
+}
+
+Deno.test("supervisor dispatch: a transiently inconsistent run listing is re-listed and recovery proceeds", async () => {
+  const api = wedgeApi();
+  api.runTotal.set("queued", 2);
+  api.runTotalReads.set("queued", 1);
+  const pass = makePass(api);
+  const result = await pass.run();
+  assert.equal(result.recovery, "recovered");
+  assert.equal(result.cancelledRunId, WEDGED_RUN);
+  assert.equal(api.cancelCalls().length, 1);
+  assert.equal(api.dispatchCalls().length, 1);
+  assert.equal(queuedListings(api), 2);
+  assert.equal(pass.pauses, 1);
+  assert.equal(pass.logFor("recovery_scan_incomplete"), undefined);
+});
+
+Deno.test("supervisor dispatch: no listing retry pause runs past the recovery budget", async () => {
+  const api = wedgeApi();
+  api.runTotal.set("queued", 2);
+  // The first read alone leaves too little budget for a pause plus a request.
+  const pass = makePass(api, 70_000);
+  const result = await pass.run();
+  assert.equal(result.recovery, "incomplete");
+  assert.equal(api.cancelCalls().length, 0);
+  assert.equal(queuedListings(api), 1);
+  assert.equal(pass.pauses, 0);
+  assert.equal(
+    pass.logFor("recovery_scan_incomplete")?.reason,
+    "pagination_incomplete",
+  );
 });
 
 Deno.test("supervisor dispatch: an active job on a later page blocks the cancellation", async () => {

@@ -826,14 +826,18 @@ export async function planMatrixWave(
         entry.id === record.id
       )?.wait?.reason;
       noteDeferred(record, planDeferredKey(outcome, waitReason));
-      // An ordinary fresh-base refresh is progress, not a failed admission.
-      // Reconsider that same task against its persisted current base.
+      // An ordinary fresh-base refresh, or a retired stale intent, is
+      // progress, not a failed admission. Reconsider that same task against
+      // its persisted current base and null intent.
       if (outcome.kind === "progress") {
         const refreshed = await deps.state.readRepair();
         if (
           refreshed.ok && refreshed.value.status === "found" &&
           refreshed.value.snapshot.work.some((entry) =>
-            entry.id === record.id && entry.target.base !== record.target.base
+            entry.id === record.id &&
+            (entry.target.base !== record.target.base ||
+              (record.intent !== null && entry.intent === null &&
+                entry.nextStep === "work"))
           )
         ) {
           attemptedIds.delete(record.id);

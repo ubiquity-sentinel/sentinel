@@ -9,19 +9,22 @@
  *
  * The carried variant accepts that request only after it re-derives the
  * patch proof between H0/B0 and H1/T through the caller's EXISTING proof (the
- * runtime's git proof, `proveCarriedPatch` and `carriedPatchHolds`; the
- * launcher's tree proof, `mergeBaseTreeChanges`), and authorizes the task as
+ * runtime's git proof, `proveCarriedPatch` and `carriedChangeHolds`; the
+ * launcher's tree proof, `mergeBaseTreeChanges`; each carries base drift
+ * exactly where its carried merge does), and authorizes the task as
  * of the reviewed identity (`reviewedIdentity`). A request whose patch no
  * longer proves is refused. Every other request keeps the exact binders,
  * unchanged.
  */
 import {
-  carriedPatchHolds,
+  carriedChangeHolds,
   type CarriedPatchRequestV1,
 } from "../contracts/ports.ts";
 import type { ReleaseRequestV1 } from "../contracts/release.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
+import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { carriedDriftAllowed } from "../github/carried-drift.ts";
 import { cleanReview, reviewedIdentity } from "./carried-review.ts";
 import {
   releaseRequestMatchesDelivery,
@@ -113,16 +116,21 @@ export async function proveCarriedRelease(
 
 /**
  * The runtime's carried proof: its git proof (`proveCarriedPatch`, decided by
- * `carriedPatchHolds`), derived at most once per identity for the prover's
- * lifetime (one delivery step), with the port's trusted reviewer. A failed
- * read is `unavailable`. Undefined when the port cannot prove a carried
- * patch: then no carried request ever binds.
+ * `carriedChangeHolds` with base drift carried exactly where the carried
+ * delivery carries it for `repository`, `carriedDriftAllowed`; the exact
+ * patch alone without a repository), derived at most once per identity for
+ * the prover's lifetime (one delivery step), with the port's trusted
+ * reviewer. A failed read is `unavailable`. Undefined when the port cannot
+ * prove a carried patch: then no carried request ever binds.
  */
 export function gitCarriedReleaseProver(
   deps: Pick<RepairCycleDepsV1, "github">,
+  repository?: RepositoryIdentityV1,
 ): CarriedReleaseProverV1 | undefined {
   const prove = deps.github.proveCarriedPatch?.bind(deps.github);
   if (prove === undefined) return undefined;
+  const acrossDrift = repository !== undefined &&
+    carriedDriftAllowed(repository);
   const proofs = new Map<string, Promise<CarriedPatchVerdictV1>>();
   return {
     reviewer: deps.github.reviewerIdentity,
@@ -135,7 +143,7 @@ export function gitCarriedReleaseProver(
           (proof): CarriedPatchVerdictV1 =>
             !proof.ok
               ? "unavailable"
-              : carriedPatchHolds(request, proof.value)
+              : carriedChangeHolds(request, proof.value, acrossDrift)
               ? "holds"
               : "changed",
           (): CarriedPatchVerdictV1 => "unavailable",
@@ -162,7 +170,10 @@ export async function releaseDeliveryTaskRefusal(
   record: WorkRecordV1,
   request: ReleaseRequestV1 | undefined,
   referenced: ReviewReceiptV1 | null,
-  carried: CarriedReleaseProverV1 | undefined = gitCarriedReleaseProver(deps),
+  carried: CarriedReleaseProverV1 | undefined = gitCarriedReleaseProver(
+    deps,
+    record.repository,
+  ),
 ): Promise<string | "wait" | null> {
   if (
     carried === undefined || request === undefined ||

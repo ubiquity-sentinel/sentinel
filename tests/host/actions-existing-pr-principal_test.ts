@@ -6,6 +6,15 @@ import {
 } from "../../src/contracts/state-snapshots.ts";
 import { runProof } from "./actions-supervisor-fixture.ts";
 
+/**
+ * The "expired" grant's remaining window. The fixture clock stands still while
+ * the host bounds real work by that window (each source Git subprocess and
+ * native read), so a one-second window let one slow subprocess on a loaded
+ * runner refuse the principal. A minute keeps those bounds at their own caps;
+ * the effect still advances the clock exactly to the expiry.
+ */
+const EXPIRY_WINDOW_MS = 60_000;
+
 Deno.test("Actions existing PR principal: actual host preserves a native PR with its same-token opaque authority", async () => {
   const rig = await actionsExistingPrincipalFixture();
   try {
@@ -144,8 +153,9 @@ Deno.test("Actions existing PR principal: stale or unproven authority refuses be
           );
           rig.env.SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT = JSON.stringify({
             ...metadata,
-            expiresAt: new Date(rig.principal.clock.now() + 1_000)
-              .toISOString(),
+            expiresAt: new Date(
+              rig.principal.clock.now() + EXPIRY_WINDOW_MS,
+            ).toISOString(),
           });
         }
         let observedScope = false;
@@ -161,7 +171,7 @@ Deno.test("Actions existing PR principal: stale or unproven authority refuses be
           );
           if (scenario === "revoked") rig.controls.revoked = true;
           else if (scenario === "expired") {
-            rig.principal.setNow(rig.principal.clock.now() + 1_000);
+            rig.principal.setNow(rig.principal.clock.now() + EXPIRY_WINDOW_MS);
           } else if (scenario === "wrong scope") {
             rig.principal.model.repositories[0].id = 999;
           } else if (scenario === "PR head drift") {

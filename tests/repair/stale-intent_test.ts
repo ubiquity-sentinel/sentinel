@@ -9,6 +9,7 @@ import {
   isStaleImplementationIntent,
   STALE_IMPLEMENTATION_INTENT_TTL_MS,
 } from "../../src/repair/loop.ts";
+import { isRetirableStaleImplementationIntent } from "../../src/repair/loop-eligibility.ts";
 import type { IncompleteOperationV1 } from "../../src/contracts/work-record.ts";
 
 const NOW = 1_790_000_000_000;
@@ -67,5 +68,32 @@ describe("isStaleImplementationIntent", () => {
       startedAt: NOW - STALE_IMPLEMENTATION_INTENT_TTL_MS,
     });
     assert.equal(isStaleImplementationIntent(intent, NOW), true);
+  });
+});
+
+describe("isRetirableStaleImplementationIntent", () => {
+  const stale = NOW - STALE_IMPLEMENTATION_INTENT_TTL_MS - 1000;
+
+  it("a stale intent naming only its dead admission is retirable", () => {
+    const intent = baseIntent({ startedAt: stale });
+    assert.equal(isRetirableStaleImplementationIntent(intent, NOW), true);
+  });
+
+  it("a fresh intent or one without a charge is not retirable", () => {
+    assert.equal(isRetirableStaleImplementationIntent(null, NOW), false);
+    assert.equal(
+      isRetirableStaleImplementationIntent(baseIntent(), NOW),
+      false,
+    );
+    const unnamed = baseIntent({ startedAt: stale, requestId: null });
+    assert.equal(isRetirableStaleImplementationIntent(unnamed, NOW), false);
+  });
+
+  it("a carried conflict or base-review marker is never retired", () => {
+    const marked = baseIntent({
+      startedAt: stale,
+      failure: { kind: "base_review", detail: "d", atMs: stale, attempts: 1 },
+    });
+    assert.equal(isRetirableStaleImplementationIntent(marked, NOW), false);
   });
 });

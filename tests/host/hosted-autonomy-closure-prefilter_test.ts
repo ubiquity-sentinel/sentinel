@@ -9,6 +9,7 @@ import {
   candidatePreservationRef,
 } from "../../src/repair/keys.ts";
 import { RETIRED_MERGED_MESSAGE } from "../../src/repair/selection.ts";
+import { buildHostedReleaseRequest } from "../../ops/hosted-autonomy.ts";
 import { runHostedClosurePass } from "../../ops/hosted-autonomy-closure-pass.ts";
 import {
   createHostedAutonomyScopes,
@@ -17,7 +18,9 @@ import {
 import type { HostedAutonomyDepsV1 } from "../../ops/hosted-autonomy-types.ts";
 import { SHA1, T0 } from "../state/helpers.ts";
 import {
+  authorizingReceipt,
   BASE,
+  deliveryRecord,
   finding,
   FOREIGN_PR,
   FOREIGN_REPO,
@@ -26,7 +29,9 @@ import {
   foreignReceipt,
   foreignRecord,
   HEAD,
+  MERGE,
   SELF_REPO,
+  taskFor,
 } from "./hosted-autonomy-fixtures.ts";
 import { makeRig, repairSnapshot } from "./hosted-autonomy-rig.ts";
 
@@ -313,5 +318,84 @@ Deno.test("hosted closure: historical publication is reconstructed before the ex
         }
       },
     );
+  }
+});
+
+Deno.test("hosted closure: a self delivery awaiting its release costs no read until the release is accepted", async (t) => {
+  // Live 2026-11-12: six merged self deliveries wait on releases that never
+  // come while `sentinel-release` stays disabled; the delivery-bookkeeping
+  // pass re-read each one's issue on every maintenance pass for nothing.
+  const record = deliveryRecord();
+  const receipt = authorizingReceipt();
+  const request = await buildHostedReleaseRequest(
+    SELF_REPO,
+    MERGE,
+    HEAD,
+    BASE,
+    record.target.pr!,
+    receipt,
+    T0 + 2000,
+  );
+  if (request === null) throw new Error("fixture request invalid");
+  for (const accepted of [false, true]) {
+    await t.step(accepted ? "accepted release" : "no release", async () => {
+      const { rig, github } = await makeRig(
+        `closure-self-${accepted ? "released" : "awaiting"}`,
+        {
+          repair: repairSnapshot([record], [receipt], [request]),
+          ...(accepted
+            ? { hostedReceipt: { request, priorRevision: BASE } }
+            : {}),
+        },
+      );
+      let reads = 0;
+      github.readIssueTask = (issue) => {
+        reads++;
+        return Promise.resolve(taskFor(issue));
+      };
+      const deps: HostedAutonomyDepsV1 = {
+        ciMinutes: INACTIVE_CI_MINUTES,
+        state: rig.state,
+        githubFor: () => github,
+        clock: { now: () => T0 + 5_000_000 },
+      };
+      const repair = await rig.state.readRepair();
+      const release = await rig.state.readRelease();
+      if (
+        !repair.ok || repair.value.status !== "found" ||
+        !release.ok || release.value.status !== "found"
+      ) throw new Error("unreadable real state");
+      const context: HostedAutonomyPassContextV1 = {
+        deps,
+        snapshot: repair.value.snapshot,
+        observedHead: repair.value.head,
+        initialHead: repair.value.head,
+        releaseSnapshot: release.value.snapshot,
+        actions: [],
+        revisions: [],
+        closedIssues: new Set(),
+        foreignMerged: new Map(),
+        dedicatedReservations: new Set(),
+        ...createHostedAutonomyScopes(deps),
+      };
+      try {
+        const result = await runHostedClosurePass(context, true);
+        if (accepted) {
+          // The accepted release is the only readiness: the task is read and
+          // the issue closes exactly as before.
+          assert.equal(result?.reason, "closed_issues");
+          assert.ok(reads >= 1, "the released delivery reads its task");
+          assert.deepEqual(rig.closed, [record.related.issueNumber]);
+        } else {
+          assert.equal(result, null);
+          assert.equal(reads, 0, "an unreleased self delivery reads nothing");
+          assert.equal(rig.writes, 0);
+          assert.deepEqual(rig.closed, []);
+          assert.deepEqual(context.actions, []);
+        }
+      } finally {
+        await Deno.remove(rig.tmp, { recursive: true });
+      }
+    });
   }
 });

@@ -41,6 +41,7 @@ import {
 } from "../../src/repair/model-port-checkout.ts";
 import { settlementClassification } from "../../src/host/matrix-ingest-state.ts";
 import { candidateBranch } from "../../src/repair/keys.ts";
+import { BASE_REVIEW_HOLD_MS } from "../../src/repair/base-satisfaction-marker.ts";
 import { decompositionChildId } from "../../src/repair/transitions.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
@@ -180,7 +181,7 @@ Deno.test(
       assert.equal(work.nextStep, "work");
       assert.equal(work.blocker, null);
       assert.equal(work.wait?.reason, "backoff");
-      assert.equal(work.wait?.until, null);
+      assert.equal(work.wait?.until, work.wait!.since + BASE_REVIEW_HOLD_MS);
       assert.equal(work.intent?.kind, "implementation");
       assert.equal(work.intent?.failure?.detail, NO_CHANGE);
       // The charge stays charged: ambiguous, never refunded.

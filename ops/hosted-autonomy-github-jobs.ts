@@ -29,7 +29,6 @@ import type {
   CiMinuteReadCursorV1,
 } from "../src/contracts/ci-minute-budget.ts";
 import { ciMonth } from "../src/contracts/ci-minute-budget.ts";
-import { parseBoundedYaml } from "./backup-ci-workflow-map.ts";
 import type { PreparedWorkflowBlobV1 } from "../src/github/review-snapshot.ts";
 import { MAX_FILE_BYTES } from "../src/github/snapshot-policy.ts";
 import type {
@@ -617,6 +616,8 @@ export function createPrivateCiEffectResolver(
         if (decoded.length < 1 || decoded.length > MAX_FILE_BYTES) return null;
         workflowBlob = raw.sha;
       }
+      // Loaded on use: the YAML parser stays off the cold startup graph.
+      const { parseBoundedYaml } = await import("./backup-ci-workflow-map.ts");
       const workflow = parseBoundedYaml(decoded) as
         | Record<string, unknown>
         | null;

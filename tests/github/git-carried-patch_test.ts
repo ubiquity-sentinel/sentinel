@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 
 import type { GitSha } from "../../src/contracts/brands.ts";
 import {
+  carriedChangeHolds,
   carriedPatchHolds,
   type CarriedPatchRequestV1,
 } from "../../src/contracts/ports.ts";
@@ -270,6 +271,72 @@ Deno.test("carried patch: a base move that touches a reviewed path changes the p
       carriedPatchHolds(request(b0, h0, t, refreshed.value), proof.value),
       false,
     );
+    // The exact patch changed, yet the reviewed hunk itself is carried across
+    // that drift: the carried change holds wherever drift may be carried.
+    assert.equal(proof.value.driftCarried, true);
+    const carried = request(b0, h0, t, refreshed.value);
+    assert.equal(carriedChangeHolds(carried, proof.value, true), true);
+    assert.equal(carriedChangeHolds(carried, proof.value, false), false);
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+Deno.test("carried patch: a reviewed hunk is carried across context-only base drift, never to another place (#304/#307)", async () => {
+  const repo = await makeRepo();
+  try {
+    const lines = LINES.split(/(?<=\n)/);
+    const insert = (at: number, line: string, from = lines) =>
+      [...from.slice(0, at), line, ...from.slice(at)].join("");
+    const b0 = await repo.commit({ "a.txt": LINES, "b.txt": "kept\n" });
+    assert.ok((await repo.git(["checkout", "-q", "-b", "candidate"])).ok);
+    // The reviewed change: one inserted line after line 20 and a new file.
+    const h0 = await repo.commit({
+      "a.txt": insert(20, "guard();\n"),
+      "new.txt": "added\n",
+    });
+    assert.ok((await repo.git(["checkout", "-q", "development"])).ok);
+    // The base edits a context line two lines above the hunk and a far one.
+    const drifted = [...lines];
+    drifted[17] = "line eighteen\n";
+    drifted[38] = "line thirty-nine\n";
+    const t = await repo.commit({ "a.txt": drifted.join("") });
+    const git = repo.executor();
+    const refreshed = await git.integrateBase(h0, t);
+    assert.ok(refreshed.ok, JSON.stringify(refreshed));
+    const h1 = refreshed.value;
+    const proof = await git.carriedPatchProof(request(b0, h0, t, h1));
+    assert.ok(proof.ok, JSON.stringify(proof));
+    // The defect: only context lines, line numbers and blob ids differ, so the
+    // exact digest differs and the exact rule alone parked the record.
+    assert.notEqual(proof.value.refreshedPatch, proof.value.reviewedPatch);
+    assert.equal(carriedPatchHolds(request(b0, h0, t, h1), proof.value), false);
+    const patch = async (from: GitSha, to: GitSha) =>
+      (await repo.git(["diff", "-U0", from, to, "--", "a.txt"])).stdout
+        .split("\n").filter((line) => /^[+-][^+-]/.test(line));
+    assert.deepEqual(await patch(b0, h0), await patch(t, h1));
+    // The fix: the reviewed change is carried hunk for hunk.
+    assert.equal(proof.value.driftCarried, true);
+    assert.equal(
+      carriedChangeHolds(request(b0, h0, t, h1), proof.value, true),
+      true,
+    );
+    // The same added line at another place of the drifted file, on a head
+    // that contains the tip, is never carried.
+    assert.ok((await repo.git(["checkout", "-q", "-b", "moved", t])).ok);
+    const moved = await repo.commit({
+      "a.txt": insert(30, "guard();\n", drifted),
+      "new.txt": "added\n",
+    });
+    assert.deepEqual(await patch(b0, h0), await patch(t, moved));
+    const relocated = await git.carriedPatchProof(request(b0, h0, t, moved));
+    assert.ok(relocated.ok, JSON.stringify(relocated));
+    assert.equal(relocated.value.refreshedMergeBase, t);
+    assert.equal(relocated.value.driftCarried, undefined);
+    assert.equal(
+      carriedChangeHolds(request(b0, h0, t, moved), relocated.value, true),
+      false,
+    );
   } finally {
     await repo.cleanup();
   }
@@ -308,6 +375,12 @@ Deno.test("carried patch: a mode-only change binds the content it applies to (#1
     assert.equal(proof.value.refreshedMergeBase, t);
     assert.notEqual(proof.value.refreshedPatch, proof.value.reviewedPatch);
     assert.equal(carriedPatchHolds(request(b0, h0, t, h1), proof.value), false);
+    // A mode change is never carried across base drift.
+    assert.equal(proof.value.driftCarried, undefined);
+    assert.equal(
+      carriedChangeHolds(request(b0, h0, t, h1), proof.value, true),
+      false,
+    );
   } finally {
     await repo.cleanup();
   }
