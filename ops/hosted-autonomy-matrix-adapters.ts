@@ -10,6 +10,7 @@ import { CLOSED_C_WAVE } from "../src/host/modern-matrix-recovery.ts";
 import { createGitBundleImporter } from "../src/host/matrix-git.ts";
 import {
   createDefaultBranchResolver,
+  createTargetTreeFactsResolver,
   loadTargetConfigsV1,
 } from "../src/host/targets.ts";
 import {
@@ -89,6 +90,10 @@ export async function createHostedClosedMatrixRecovery(input: {
     self: createDefaultBranchResolver({ http, token: input.token }),
     foreign: createDefaultBranchResolver({ http, token: input.apiToken }),
   };
+  const factsResolvers = {
+    self: createTargetTreeFactsResolver({ http, token: input.token }),
+    foreign: createTargetTreeFactsResolver({ http, token: input.apiToken }),
+  };
   const targets = await loadTargetConfigsV1({
     template,
     root: input.sourceDir,
@@ -97,6 +102,11 @@ export async function createHostedClosedMatrixRecovery(input: {
           target.name === template.repository.name
         ? resolvers.self
         : resolvers.foreign)(target),
+    resolveTreeFacts: (target, branch) =>
+      (target.owner === template.repository.owner &&
+          target.name === template.repository.name
+        ? factsResolvers.self
+        : factsResolvers.foreign)(target, branch),
   });
   const configs = targets.configs.map((config) =>
     scopeTargetConfigV1(

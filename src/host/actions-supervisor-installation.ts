@@ -24,11 +24,15 @@ export async function planLauncherInstallation(
   releases: readonly HostedReleaseRecordV1[],
 ): Promise<"written" | HostedSupervisorOutcomeV1 | null> {
   const records = cursor.snapshot?.hostedInstallations ?? [];
+  // The latch stops model starts only for the candidate whose rollback
+  // failed; a different, CI-green launcher revision takes the ordinary fresh
+  // install path below (the failed candidate itself stays barred there).
   if (
     records.some((r) =>
       r.phase === "rollback_failed" &&
       runtime.activeRevision === r.previousRevision &&
-      runtime.generation === r.previousGeneration + 2
+      runtime.generation === r.previousGeneration + 2 &&
+      input.run.launcherSha === r.candidateRevision
     )
   ) {
     return pending(
