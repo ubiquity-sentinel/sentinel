@@ -29,10 +29,6 @@ import type {
   RepairCycleDepsV1,
   StepResultV1,
 } from "./loop-types.ts";
-import {
-  reviewRoundCeilingFor,
-  reviewRoundsSpent,
-} from "./review-round-cap.ts";
 import { markBlocked, markDone } from "./transitions.ts";
 
 /** Optional host capability is in-memory only; no contract/stdout variant. */
@@ -130,22 +126,8 @@ export async function resumeBaseSatisfaction(
         };
       }
       // Source/base drift or invalid native evidence requires a fresh,
-      // separately charged review within the same hard three-round ceiling.
+      // separately charged review. Review rounds are accounting only.
     }
-  }
-  if (
-    reviewRoundsSpent(context.snapshot, record) >=
-      reviewRoundCeilingFor(context.snapshot, record)
-  ) {
-    return persistWork(
-      deps,
-      context,
-      park(
-        record,
-        "review round ceiling reached: base satisfaction has no current accepted evidence",
-        deps.clock.now(),
-      ),
-    );
   }
   const latestStartAt = Math.min(
     context.bounds.modelCutoff,

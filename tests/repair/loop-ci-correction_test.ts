@@ -376,7 +376,7 @@ Deno.test("a failed check the base never ran proves nothing and stays blocked un
   }
 });
 
-Deno.test("once review rounds are spent a candidate CI failure stays terminally blocked", async () => {
+Deno.test("a spent review-round count never parks a candidate CI failure: the correction is spent", async () => {
   const { rig, charges, writes } = await ciRig("ci-exhausted", {
     reviewRounds: 3,
     checks: {
@@ -387,13 +387,35 @@ Deno.test("once review rounds are spent a candidate CI failure stays terminally 
   try {
     const outcome = await rig.run();
     assert.equal(outcome.status, "idle", JSON.stringify(outcome));
-    assert.equal(rig.model.requests.length, 0);
+    assert.equal(
+      rig.model.requests.length,
+      1,
+      "the spent count is accounting, never a park: the correction runs",
+    );
     const after = await rig.snapshot();
     const work = after.work[0];
-    assert.equal(work.nextStep, "blocked");
-    assert.equal(work.blocker?.message, "CI checks failed: validate(failure)");
+    assert.equal(work.blocker, null, "no terminal CI block");
+    assert.equal(work.nextStep, "work", "the fixed head waits for its review");
+    assert.equal(work.target.head, SHA4, "the corrected candidate head");
+    assert.equal(
+      work.wait?.reason,
+      "review_quota",
+      "the next review waits on the shared start budget, never on a round cap",
+    );
+    assert.equal(
+      work.counters.reviewRounds,
+      3,
+      "the round is counted on admission, never refused by the old ceiling",
+    );
+    assert.equal(work.counters.retries, 1, "the CI fix is charged in retries");
     assert.equal(work.target.pr, 7, "the publication identity is kept");
-    assert.deepEqual(after.reservations, charges);
+    for (const charge of charges) {
+      assert.deepEqual(
+        after.reservations.find((row) => row.id === charge.id),
+        charge,
+        "every earlier charge stays charged",
+      );
+    }
     assertGeneration76Shapes(writes);
   } finally {
     await rig.ctx.cleanup();
@@ -401,8 +423,65 @@ Deno.test("once review rounds are spent a candidate CI failure stays terminally 
 });
 
 for (
+  const [baseLabel, baseCheck] of [
+    ["red", check("validate", SHA1, "failure")],
+    ["pending", check("validate", SHA1, null, "in_progress")],
+  ] as const
+) {
+  Deno.test(`a ${baseLabel} base on a correctable head past the old round count waits, never parks`, async () => {
+    const { rig, charges, refreshes, writes } = await ciRig(
+      `ci-exhausted-${baseLabel}-base`,
+      {
+        reviewRounds: 3,
+        checks: {
+          [SHA3]: [check("validate", SHA3, "failure")],
+          [SHA1]: [baseCheck],
+        },
+      },
+    );
+    try {
+      const outcome = await rig.run();
+      assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+      assert.equal(rig.model.requests.length, 0, "no correction session");
+      const after = await rig.snapshot();
+      const work = after.work[0];
+      assert.equal(work.blocker, null, "a bounded wait, never a park");
+      assert.equal(work.nextStep, "delivery");
+      assert.equal(
+        work.wait?.reason,
+        baseLabel === "red" ? "backoff" : "ci_pending",
+        "the base's own state is a bounded recheck",
+      );
+      assert.ok(
+        work.wait !== null && work.wait.until !== null &&
+          work.wait.until > rig.clock.now(),
+        "the wait ends by itself",
+      );
+      assert.deepEqual(after.reservations, charges, "nothing charged");
+      // Past the wait's own bound the head is re-observed: still no correction
+      // session is spent on a red base and no review round is charged.
+      rig.clock.advance(60 * 60_000);
+      const again = await rig.run();
+      assert.equal(again.status, "idle", JSON.stringify(again));
+      assert.equal(rig.model.requests.length, 0, "still no correction session");
+      assert.equal(refreshes.length, 0, "never refreshed onto a red base");
+      const later = await rig.snapshot();
+      assert.equal(
+        later.work[0].counters.reviewRounds,
+        work.counters.reviewRounds,
+        "no further review round",
+      );
+      assert.deepEqual(later.reservations, charges, "nothing charged");
+      assert.equal(rig.github.calls.includes("merge"), false, "never merged");
+      assertGeneration76Shapes(writes);
+    } finally {
+      await rig.ctx.cleanup();
+    }
+  });
+}
+
+for (
   const [label, uncorrectable] of [
-    ["spent review rounds", { reviewRounds: 3 }],
     ["an undescribed candidate", {
       candidateState: { preserved: null, publishedHead: SHA3 },
     }],

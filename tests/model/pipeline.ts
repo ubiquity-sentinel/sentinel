@@ -5,14 +5,15 @@
  * The runtime's step functions need live ports, so their CONTROL FLOW is
  * modeled here, one transition per code path, each pinned by a source anchor
  * (`anchors.ts`). Every DECISION a transition takes is computed by the real
- * pure policy over a concretized record and ledger: review rounds left
- * (`reviewRoundsLeft`), CI fixes left (`ciFixesLeft`), the CI gate
+ * pure policy over a concretized record and ledger: CI fixes left
+ * (`ciFixesLeft`), the CI gate
  * (`decideCiGate`), base attribution (`attributeFailedChecks` +
  * `decideCiDisposition`), the hosted fix/correction routes
- * (`preReviewCiFixRouteOpen`, `ciCorrectionRouteOpen`), the ceiling's park
- * message (`ceilingParkMessage`) and wait expiry (`isWaiting`). A blocked
- * state's way back into the lifecycle is the census verdict of the REAL
- * launcher pass for that class (`census.ts`).
+ * (`preReviewCiFixRouteOpen`, `ciCorrectionRouteOpen`) and wait expiry
+ * (`isWaiting`). Review rounds are accounting only (owner directive
+ * 2026-10-30): a spent count never parks the model. A blocked state's way
+ * back into the lifecycle is the census verdict of the REAL launcher pass for
+ * that class (`census.ts`).
  *
  * Environment outcomes are edges labelled by who can repeat them forever:
  * `coop` (a cooperative world: CI and review eventually answer, GitHub works,
@@ -47,14 +48,6 @@ import {
   ciFixesLeft,
   preReviewCiFixRouteOpen,
 } from "../../src/repair/ci-first-policy.ts";
-import {
-  ceilingParkMessage,
-  REVIEW_ROUND_CEILING_REJECTED,
-  REVIEW_ROUND_CEILING_REVIEWED,
-  REVIEW_ROUND_CEILING_UNACCEPTED,
-  REVIEW_ROUND_CEILING_UNREVIEWED,
-  reviewRoundsLeft,
-} from "../../src/repair/review-round-cap.ts";
 import { CARRIED_REFRESH_LIMIT } from "../../src/repair/loop-carried-delivery.ts";
 import { MAX_BASE_REFRESH_FAILURES } from "../../src/repair/loop-base-refresh-failure.ts";
 import { A } from "./pipeline-anchors.ts";
@@ -73,7 +66,6 @@ import {
   NOW,
   releaseRequest,
   releaseSnapshot,
-  repairSnapshot,
 } from "./world.ts";
 
 export { indefiniteWaits, initialStates, key } from "./pipeline-states.ts";
@@ -152,8 +144,6 @@ export interface ModelOptionsV1 {
 }
 
 // ----------------------------------------------- real pure policy decisions
-const roundsLeftCache = new Map<string, number>();
-const parkCache = new Map<string, string>();
 
 /**
  * The Gateway release wait, decided by the REAL `observeGatewayVpsDelivery`
@@ -162,7 +152,7 @@ const parkCache = new Map<string, string>();
  */
 export const VPS = { binds: false, absentWaits: false, deferred: false };
 
-/** `reviewRoundsLeft` over a concretized record holding `rounds` charges. */
+/** Prime the real policy constants the model consults (`VPS`). */
 export async function primeRounds(): Promise<void> {
   const gateway = await concretize({
     ...DEFAULT_SHAPE,
@@ -195,46 +185,6 @@ export async function primeRounds(): Promise<void> {
     request,
     gateway.reviews[0]!,
   )).kind === "wait";
-  for (const rounds of [0, 1, 2, 3]) {
-    for (const review of ["none", "clean", "p1", "unaccepted"] as const) {
-      const part = await concretize({
-        ...DEFAULT_SHAPE,
-        nextStep: "work",
-        blocker: null,
-        wait: null,
-        candidate: "published",
-        rounds,
-        review,
-      });
-      const snapshot = repairSnapshot([part]);
-      roundsLeftCache.set(
-        `${rounds}`,
-        reviewRoundsLeft(snapshot, part.record, null),
-      );
-      parkCache.set(
-        `${review}`,
-        ceilingParkMessage(snapshot, part.record),
-      );
-    }
-  }
-}
-
-function roundsLeft(state: PStateV1): number {
-  const left = roundsLeftCache.get(`${state.rounds}`);
-  if (left === undefined) throw new Error("primeRounds() first");
-  return left;
-}
-
-const PARK_CLASS: Record<string, string> = {
-  [REVIEW_ROUND_CEILING_UNREVIEWED]: "ceil.unreviewed",
-  [REVIEW_ROUND_CEILING_REJECTED]: "ceil.rejected",
-  [REVIEW_ROUND_CEILING_UNACCEPTED]: "ceil.unaccepted",
-  [REVIEW_ROUND_CEILING_REVIEWED]: "ceil.reviewed",
-};
-
-/** The ceiling park class `ceilingParkMessage` picks for the latest review. */
-function ceilingClass(review: "none" | "clean" | "p1" | "unaccepted"): string {
-  return PARK_CLASS[parkCache.get(review)!]!;
 }
 
 function check(conclusion: string | null, status = "completed") {
@@ -315,7 +265,6 @@ export function successors(
     fair: Fairness,
     extra: Partial<PEdgeV1> = {},
   ) => edges.push({ to, event, fair, ...extra });
-  const left = roundsLeft(state);
   const fixesLeft = ciFixesLeft({
     counters: {
       attempts: 1 + state.fixes,
@@ -323,29 +272,24 @@ export function successors(
       reviewRounds: 0,
     },
   });
-  // The runtime's own red-head routing at the CI-first gate (hosted).
-  const preReviewRed = (from: PStateV1) => {
-    if (!fixesLeft) return park(from, "ci.fix_exhausted");
-    return preReviewCiFixRouteOpen(HOSTED)
-      ? at(from, "work.fresh", { fixes: from.fixes + 1 })
+  // The runtime's own red-head routing at the CI-first gate (hosted). The
+  // CI-fix count is accounting only (owner directive 2026-10-30): a spent
+  // count never selects the historical `ci.fix_exhausted` park.
+  const preReviewRed = (from: PStateV1) =>
+    preReviewCiFixRouteOpen(HOSTED)
+      ? at(from, "work.fresh", { fixes: Math.min(from.fixes + 1, 3) })
       : park(from, "ci.pre_review_red");
-  };
   // The pre-review CI gate's verdict on a head whose CI finished.
   const ciFirstFinished = (from: PStateV1, baseMayBeRed: boolean) => {
     if (gate("green") === "proceed") {
-      // `requestReviewFor` checks the ceiling before the CI-first gate.
-      if (left === 0) {
-        add(park(from, ceilingClass("none")), "ceiling_park", "sys", {
-          anchor: A.ceilingWork,
-        });
-      } else {
-        add(
-          at(from, "review.requested", { rounds: from.rounds + 1 }),
-          "ci_green:review_requested",
-          "coop",
-          { anchor: A.ciFirst },
-        );
-      }
+      add(
+        at(from, "review.requested", {
+          rounds: Math.min(from.rounds + 1, 3),
+        }),
+        "ci_green:review_requested",
+        "coop",
+        { anchor: A.ciFirst },
+      );
     }
     if (gate("red") === "blocked" && attribution("green") === "candidate") {
       add(preReviewRed(from), "ci_red_candidate", "coop", {
@@ -409,18 +353,14 @@ export function successors(
       );
     }
     if (attribution("green") === "candidate") {
-      if (ciCorrectionRouteOpen(HOSTED) && fixesLeft && left > 0) {
+      if (ciCorrectionRouteOpen(HOSTED) && fixesLeft) {
         add(
-          at(from, "work.fresh", { fixes: from.fixes + 1 }),
+          at(from, "work.fresh", { fixes: Math.min(from.fixes + 1, 3) }),
           "ci_red_candidate:correction",
           "coop",
         );
       } else {
-        add(
-          park(from, fixesLeft ? "del.ci_failed" : "ci.fix_exhausted"),
-          "ci_red_candidate:park",
-          "coop",
-        );
+        add(park(from, "del.ci_failed"), "ci_red_candidate:park", "coop");
       }
     }
     if (baseMayBeRed && attribution("red") === "base_red") {
@@ -435,7 +375,7 @@ export function successors(
   const p = state.phase;
   if (p.startsWith("blocked:")) {
     const link = readmit.get(p.slice("blocked:".length));
-    const readmission = state.rounds >= 3 ? link?.spent : link?.unspent;
+    const readmission = link?.unspent ?? link?.spent;
     if (readmission !== undefined && readmission !== null) {
       // A park re-admitted only for a head green again (a flake) spends the
       // head's one re-run; a new head replenishes it.
@@ -458,12 +398,6 @@ export function successors(
       // absorbing for the record (the J3 check covers the cycle it aborts).
       return edges;
     case "work.fresh":
-      if (left === 0) {
-        add(park(state, ceilingClass("none")), "ceiling_park", "sys", {
-          anchor: A.ceilingWork,
-        });
-        return edges;
-      }
       add(at(state, "work.impl"), "matrix_grant", "sys", {
         anchor: A.grant,
       });
@@ -557,12 +491,6 @@ export function successors(
       return edges;
     }
     case "work.published":
-      if (left === 0) {
-        add(park(state, ceilingClass("none")), "ceiling_park", "sys", {
-          anchor: A.ceilingWork,
-        });
-        return edges;
-      }
       ciFirstOutcomes(state);
       add(at(state, "work.refresh"), "base_moved", "base");
       add(
@@ -588,16 +516,10 @@ export function successors(
           { anchor: A.preReviewBound },
         );
       }
-      // The re-observation goes through `requestReviewFor` again: the
-      // ceiling gate first, then the CI-first gate (a still-pending head is
-      // the bound transition above: `since` is kept across re-arms).
-      if (left === 0) {
-        add(park(state, ceilingClass("none")), "ceiling_park", "sys", {
-          anchor: A.ceilingWork,
-        });
-      } else {
-        ciFirstFinished(at(state, "work.published"), true);
-      }
+      // The re-observation goes through `requestReviewFor` again: the CI-first
+      // gate only (a still-pending head is the bound transition above: `since`
+      // is kept across re-arms).
+      ciFirstFinished(at(state, "work.published"), true);
       return edges;
     case "work.base_red":
       // Unbounded: the red-base backoff is re-armed while the base stays red.
@@ -611,25 +533,17 @@ export function successors(
     case "review.requested":
       add(at(state, "delivery.gate"), "review_clean", "coop");
       add(at(state, "delivery.gate"), "review_p2_p3", "coop");
-      add(
-        left === 0 ? park(state, "ceil.rejected") : at(state, "work.fresh"),
-        "review_p0_p1",
-        "coop",
-        { anchor: left === 0 ? A.rejectedPark : A.correction },
-      );
-      add(
-        left === 0
-          ? park(state, "rev.acceptance_owner")
-          : at(state, "work.fresh"),
-        "review_not_fulfilled",
-        "coop",
-        { anchor: A.acceptanceCorrection },
-      );
+      add(at(state, "work.fresh"), "review_p0_p1", "coop", {
+        anchor: A.correction,
+      });
+      add(at(state, "work.fresh"), "review_not_fulfilled", "coop", {
+        anchor: A.acceptanceCorrection,
+      });
       add(park(state, "rev.uncertain"), "review_uncertain", "adv");
       add(
-        left === 0
-          ? park(state, ceilingClass("unaccepted"))
-          : at(state, "review.requested", { rounds: state.rounds + 1 }),
+        at(state, "review.requested", {
+          rounds: Math.min(state.rounds + 1, 3),
+        }),
         "review_acceptance_missing",
         "adv",
       );
@@ -665,13 +579,7 @@ export function successors(
         throw new Error("primeReviewIntent() first");
       }
       if (REVIEW_INTENT.unboundMoves) {
-        add(
-          left === 0
-            ? park(state, ceilingClass("none"))
-            : at(state, "work.published"),
-          "expired_intent_recovered",
-          "sys",
-        );
+        add(at(state, "work.published"), "expired_intent_recovered", "sys");
       }
       return edges;
     case "review.ctx_wait":
@@ -683,27 +591,17 @@ export function successors(
       return edges;
     case "delivery.gate":
       // A moved base: corrected first when the head broke its own CI, else
-      // refreshed (rounds left) or carried (rounds spent).
-      if (left > 0) {
-        add(at(state, "delivery.refresh"), "base_moved", "base");
-        if (fixesLeft) {
-          add(
-            at(state, "work.fresh", { fixes: state.fixes + 1 }),
-            "base_moved_head_red:correction",
-            "base",
-            { anchor: A.correctBeforeRefresh },
-          );
-        }
-      } else {
+      // refreshed and reviewed again. Review rounds are accounting only
+      // (owner directive 2026-10-30): a spent count never selects the
+      // carried-delivery path or parks the head.
+      add(at(state, "delivery.refresh"), "base_moved", "base");
+      if (fixesLeft) {
         add(
-          at(state, "delivery.carried", { carried: 0 }),
-          "base_moved_spent_green",
+          at(state, "work.fresh", { fixes: Math.min(state.fixes + 1, 3) }),
+          "base_moved_head_red:correction",
           "base",
-          { anchor: A.carried },
+          { anchor: A.correctBeforeRefresh },
         );
-        add(park(state, "del.ci_failed"), "base_moved_spent_red", "base", {
-          anchor: A.spentRed,
-        });
       }
       if (gate("pending") === "wait") {
         add(at(state, "delivery.ci_wait"), "ci_pending", "adv", {
@@ -778,12 +676,9 @@ export function successors(
       add(state, "pr_unreadable", "infra", { anchor: A.mergeUnreadable });
       if (state.moved && !options.preFixMergeReconcile) {
         // Open and unmerged on a moved base, intent one poll old: refresh.
-        add(
-          at(state, left > 0 ? "delivery.refresh" : "delivery.carried"),
-          "stale_intent_refresh",
-          "sys",
-          { anchor: A.mergeStaleRefresh },
-        );
+        add(at(state, "delivery.refresh"), "stale_intent_refresh", "sys", {
+          anchor: A.mergeStaleRefresh,
+        });
         return edges;
       }
       if (state.moved) {

@@ -14,6 +14,7 @@ import type {
   HttpTransportV1,
 } from "../../src/github/http.ts";
 import { GitHubApiClient } from "../../src/github/client.ts";
+import type { GitHubApiClientOptionsV1 } from "../../src/github/client-contracts.ts";
 import type {
   HostedExecutionIntentV1,
   HostedExecutionSettlementV1,
@@ -85,6 +86,9 @@ export class LocalClock implements Clock {
   now(): number {
     return this.t;
   }
+  advance(ms: number): void {
+    this.t += ms;
+  }
 }
 
 export class FakeGate implements GitHubCooldownGateV1 {
@@ -149,13 +153,19 @@ export function iso(ms: number): string {
 export interface RigV1 {
   http: ScriptedHttp;
   gate: FakeGate;
+  clock: LocalClock;
   client: GitHubApiClient;
 }
 
 export function makeRig(clockAt = OBSERVED): RigV1 {
   const http = new ScriptedHttp();
   const gate = new FakeGate();
-  const client = new GitHubApiClient({
+  const clock = new LocalClock(clockAt);
+  // Tests advance the injected clock instead of waiting on real timers. The
+  // reader's production default is a bounded timer at the same seam.
+  const options: GitHubApiClientOptionsV1 & {
+    sleep: (ms: number) => Promise<void>;
+  } = {
     repository: CONTROLLER.repository,
     apiBaseUrl: API_BASE,
     http: http.transport,
@@ -163,9 +173,14 @@ export function makeRig(clockAt = OBSERVED): RigV1 {
       authorizationHeader: () => Promise.resolve(portOk("Bearer test-token")),
     },
     cooldownGate: gate,
-    clock: new LocalClock(clockAt),
-  });
-  return { http, gate, client };
+    clock,
+    sleep: (ms) => {
+      clock.advance(ms);
+      return Promise.resolve();
+    },
+  };
+  const client = new GitHubApiClient(options);
+  return { http, gate, clock, client };
 }
 
 export function intent(

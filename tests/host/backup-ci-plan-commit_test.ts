@@ -48,6 +48,7 @@ import {
   unit,
 } from "../github/backup-ci-fixtures.ts";
 import {
+  archiveFixtureBare,
   PASSPORT_WORKFLOW,
   targetRepo,
   type TargetRepoV1,
@@ -238,6 +239,7 @@ function passDeps(
     }),
     workDir: `${w.repo.root}/work`,
     tokenNeedles: [],
+    archive: archiveFixtureBare,
     log: () => {},
     sleep: () => Promise.resolve(),
     ...over,
@@ -584,27 +586,32 @@ Deno.test("an unsupported job and a root act config file are final refusals", as
   }
 });
 
+function readLimitRecords(w: World) {
+  return Array.from({ length: 20 }, (_, i) =>
+    workRecord(`r${i}`, {
+      repository: {
+        owner: "ubiquity",
+        name: "passport.ubq.fi",
+        installationId: 7,
+      },
+      nextStep: "work",
+      target: {
+        base: w.base,
+        branch: i === 9 ? "sentinel/fix-7" : `b${i}`,
+        checkpoint: null,
+        head: i === 9
+          ? w.head
+          : `${(i + 10).toString(16).padStart(2, "0")}`.repeat(20),
+        pr: i === 9 ? 7 : null,
+      },
+    }));
+}
+
 Deno.test("the pass bounds commit reads but still reaches a later never-started head", async () => {
   const w = await world();
+  const logs: string[] = [];
   try {
-    const records = Array.from({ length: 20 }, (_, i) =>
-      workRecord(`r${i}`, {
-        repository: {
-          owner: "ubiquity",
-          name: "passport.ubq.fi",
-          installationId: 7,
-        },
-        nextStep: "work",
-        target: {
-          base: w.base,
-          branch: i === 9 ? "sentinel/fix-7" : `b${i}`,
-          checkpoint: null,
-          head: i === 9
-            ? w.head
-            : `${(i + 10).toString(16).padStart(2, "0")}`.repeat(20),
-          pr: i === 9 ? 7 : null,
-        },
-      }));
+    const records = readLimitRecords(w);
     const snapshot = {
       work: records,
       reservations: [],
@@ -612,14 +619,13 @@ Deno.test("the pass bounds commit reads but still reaches a later never-started 
       releaseRequests: [],
     } as unknown as RepairStateSnapshotV1;
     const pass = await runBackupCiPass(
-      passDeps(w, { snapshot, runId: 9009 }),
+      passDeps(w, { snapshot, runId: 9009, log: (line) => logs.push(line) }),
     );
     const latest = w.calls.filter((c) => c.startsWith("checkRuns:latest"));
     assert.equal(latest.length, 12, latest.join(" "));
-    // Run 9009 starts the work class at r9, which the old fixed head rotation
-    // could not reach: the fair scan still reads only 12 commits but reaches
-    // the never-started head instead of starving behind the other 19.
-    assert.equal(pass.units.length, 1);
+    // The fair scan reaches the valid head within the 12-read budget.
+    assert(latest.includes(`checkRuns:latest:${w.head.slice(0, 7)}`));
+    assert.equal(pass.units.length, 1, logs.join("\n"));
     assert.equal(pass.units[0].unit.commit, w.head);
     // With the head first in line, one unit is planned and tarred into slot 0.
     w.calls.length = 0;
@@ -670,6 +676,40 @@ Deno.test("the pass bounds commit reads but still reaches a later never-started 
       passDeps(w, { snapshot, runnerId: null }),
     );
     assert.equal(unpinned.units.length, 0);
+  } finally {
+    await w.repo.close();
+  }
+});
+
+Deno.test("a rejected archive is not read-slot starvation or valid backup evidence", async () => {
+  const w = await world();
+  const logs: string[] = [];
+  let archives = 0;
+  try {
+    const pass = await runBackupCiPass(passDeps(w, {
+      snapshot: {
+        work: readLimitRecords(w),
+        reservations: [],
+        reviews: [],
+        releaseRequests: [],
+      } as unknown as RepairStateSnapshotV1,
+      runId: 9009,
+      archive: () => {
+        archives++;
+        return Promise.resolve(false);
+      },
+      log: (line) => logs.push(line),
+    }));
+    const latest = w.calls.filter((c) => c.startsWith("checkRuns:latest"));
+    assert.equal(latest.length, 12);
+    assert(latest.includes(`checkRuns:latest:${w.head.slice(0, 7)}`));
+    assert.equal(archives, 1, "one valid planned tuple reached packing");
+    assert(
+      pass.files.some((f) => f.commit === w.head && f.coverage.length > 0),
+    );
+    assert.equal(pass.units.length, 0, "failed packing never supplies a unit");
+    assert(logs.some((line) => /^backup-ci:pack:.*:tar_failed$/.test(line)));
+    assert(pass.files.every((f) => f.results.length === 0));
   } finally {
     await w.repo.close();
   }

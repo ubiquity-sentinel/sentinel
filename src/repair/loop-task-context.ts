@@ -12,6 +12,7 @@ import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 import { checkExistingPrCustody } from "./loop-existing-pr.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
+import { existingHeadContinuationShape } from "./loop-eligibility.ts";
 import { ciRefreshAhead } from "./ci-readiness.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { configFor } from "./loop-records.ts";
@@ -68,7 +69,11 @@ export async function ensureReviewFreshness(
     if (
       candidateState.publishedHead !== head ||
       (preserved === null
-        ? !hasTakeoverCustody(record)
+        // A live-verified existing published head is sufficient custody for
+        // its review: the exact PR head, branch and base are re-proved by the
+        // live reads below before any reservation. This is the
+        // custody_ready/preserved-null continuation shape.
+        ? !hasTakeoverCustody(record) && !existingHeadContinuationShape(record)
         : preserved.head !== head || preserved.base !== record.target.base)
     ) {
       return {
@@ -132,6 +137,22 @@ export async function ensureReviewFreshness(
     return { kind: "deferred", detail: "review base ref unavailable" };
   }
   if (base.value.sha !== record.target.base) {
+    // The continuation shape (an existing published PR head with no
+    // preserved candidate descriptor) cannot be refreshed: there is no
+    // durable candidate to merge the moved base onto, and
+    // executeBaseRefreshIntent refuses exactly this shape. Persisting the
+    // intent would wedge the run with a state_error that repeats every
+    // cycle, so defer without writing it; the next cycle re-verifies the
+    // head and base from scratch.
+    if (
+      candidateState?.preserved === null &&
+      existingHeadContinuationShape(record)
+    ) {
+      return {
+        kind: "deferred",
+        detail: "existing published head cannot refresh a moved base",
+      };
+    }
     return await ensureBaseRefreshIntent(deps, context, record, (tip) => {
       const ahead = ciRefreshAhead(
         context.snapshot,

@@ -102,8 +102,8 @@ Deno.test("Passport trial: trusted policy permits product repairs and keeps cred
       template.protectedPaths,
       "src/repair/passport-work-trial.ts",
     ),
-    true,
-    "controller trial authority stays protected",
+    false,
+    "the 2026-10-30 reduced set leaves the Passport trial policy to ordinary work",
   );
   assert.equal(
     touchesProtected(
@@ -124,8 +124,8 @@ Deno.test("Passport trial: counted CI and review attempts remain available witho
   assert.equal(ciFixesLeft(record), true);
   assert.ok(reviewRoundsLeft(snapshot, record) > 0);
   const other = { ...record, repository: { ...PASSPORT, name: "ai.ubq.fi" } };
-  assert.equal(ciFixesLeft(other), false);
-  assert.equal(reviewRoundsLeft(snapshot, other), 0);
+  assert.equal(ciFixesLeft(other), true);
+  assert.ok(reviewRoundsLeft(snapshot, other) > 0);
   assert.deepEqual(snapshot, before);
 });
 

@@ -46,7 +46,6 @@ import {
   candidateBranch,
   candidatePreservationRef,
 } from "../src/repair/keys.ts";
-import { reviewRoundsLeft } from "../src/repair/review-round-cap.ts";
 import {
   BASE_REFRESH_BASE_READ_DETAIL,
   BASE_REFRESH_PR_OBSERVATION_DETAIL,
@@ -61,10 +60,6 @@ import {
   hostedIssueKey,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
-import {
-  LEGACY_ROUND_REQUIRES_CI_FIRST,
-  legacyFinalRoundAdmissible,
-} from "./hosted-autonomy-ci-first.ts";
 import type { HostedAutonomyScopeV1 } from "./hosted-autonomy-scopes.ts";
 import type { HostedAutonomyHeadPullV1 } from "./hosted-autonomy-types.ts";
 
@@ -143,10 +138,6 @@ export function planBaseRefreshReadmissions(
   runtimeSha: GitSha,
   closedIssues: ReadonlySet<string>,
   onDenied?: (denial: { id: string; reason: string }) => void,
-  /** The installed runtime is a proven CI-first runtime (`ciFirstRuntimeProven`). */
-  ciFirst = false,
-  /** The launcher's legacy review cutoff (`launcherLegacyCutoff`). */
-  cutoff: number | null = null,
 ): BaseRefreshCandidateV1[] {
   if (!isGitSha(runtimeSha)) return [];
   const legacyRuntime = BASE_REFRESH_LEGACY_RUNTIMES.has(runtimeSha);
@@ -182,17 +173,9 @@ export function planBaseRefreshReadmissions(
         hostedIssueKey(record.repository, record.related.issueNumber),
       )
     ) continue;
-    // The re-admitted refresh publishes a new head that needs a review round
-    // of its own; with none left (the hard ceiling) the record stays blocked.
-    if (reviewRoundsLeft(snapshot, record, cutoff) === 0) {
-      onDenied?.({ id: record.id, reason: "review_rounds_spent" });
-      continue;
-    }
-    // A legacy record's one final round is spent only on a green head.
-    if (!legacyFinalRoundAdmissible(snapshot, record, ciFirst)) {
-      onDenied?.({ id: record.id, reason: LEGACY_ROUND_REQUIRES_CI_FIRST });
-      continue;
-    }
+    // The re-admitted refresh publishes a new head that is reviewed again.
+    // Review rounds are accounting, never an admission limit (owner directive
+    // 2026-10-30), so a spent count never denies it.
     const head = record.target.head;
     const candidateState = record.target.candidateState;
     const branch = candidateBranch(record.id);

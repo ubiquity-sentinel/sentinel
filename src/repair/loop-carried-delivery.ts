@@ -2,6 +2,12 @@ import { guardQueueDelivery } from "./loop-queue-guard.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 import { isNativeQueueTarget } from "../github/native-queue-guard.ts";
 import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "./review-round-cap.ts";
+
+/**
+ * A pull request that reports a head this record never published: the carried
+ * patch can be neither proved nor merged, and no retry changes a foreign head.
+ */
+const FOREIGN_HEAD_PREFIX = "the pull request reports a foreign head ";
 /**
  * Repair loop internals: spent records on a moved base (owner decision
  * 2026-10-16 (2), "the 3 rounds are spent with no unresolved P0/P1, the PR
@@ -75,11 +81,13 @@ import {
   ciCheckLabels,
   failedChecks,
   latestChecks,
+  readCiChecks,
   unattributedDetail,
 } from "./ci-rejection.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
+import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 import {
   observeHeadFailure,
   RED_BASE_RECHECK_MS,
@@ -209,11 +217,15 @@ export async function spentOnMovedBase(
   if (cooling.kind === "deferred") {
     return { kind: "deferred", detail: cooling.detail };
   }
-  const observed = await deps.github.readChecks(head);
+  const observed = await readCiChecks(deps.github, head);
   if (!observed.ok) {
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
-  const decision = decideCiGate(observed.value.checks);
+  const gating = selectMergeGateChecksV1(
+    record.repository,
+    observed.value.checks,
+  ).checks;
+  const decision = decideCiGate(gating);
   if (decision === "wait") {
     return boundedWait(
       deps,
@@ -222,7 +234,7 @@ export async function spentOnMovedBase(
       "ci_pending",
       CHECK_POLL_MS,
       `${REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX}${
-        pendingLabels(observed.value.checks)
+        pendingLabels(gating)
       }`,
     );
   }
@@ -236,7 +248,7 @@ export async function spentOnMovedBase(
         deps,
         context,
         record,
-        observed.value.checks,
+        gating,
         observedBase,
       );
       if (held !== "generic") return held;
@@ -370,11 +382,13 @@ async function holdUncorrectableLegacyHead(
   const park = observed.kind === "base_red"
     ? baseRedDetail(failed)
     : unattributedDetail(failed);
-  const tip = await deps.github.readChecks(observedBase);
+  const tip = await readCiChecks(deps.github, observedBase);
   if (!tip.ok) {
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
-  const tipGate = decideCiGate(tip.value.checks);
+  const tipGate = decideCiGate(
+    selectMergeGateChecksV1(record.repository, tip.value.checks).checks,
+  );
   if (tipGate !== "proceed") {
     return boundedWait(
       deps,
@@ -503,11 +517,23 @@ export async function executeCarriedDelivery(
   if (observed.head !== head) {
     // GitHub reports a pull request's new head asynchronously after a push:
     // the head this one was refreshed from (or the reviewed head) is a lag,
-    // waited out (bounded); any other head is foreign and parks.
+    // waited out (bounded); any other head is foreign and parks precisely
+    // (not a spent round count, and no retry can change it).
     if (
       observed.head !== proof.value.refreshedFrom &&
       observed.head !== receipt.pullRequest.head
-    ) return null;
+    ) {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(
+          record,
+          "other",
+          `${FOREIGN_HEAD_PREFIX}${observed.head}, not ${head}`,
+          deps.clock.now(),
+        ),
+      );
+    }
     return boundedWait(
       deps,
       context,
@@ -523,11 +549,15 @@ export async function executeCarriedDelivery(
   // `CARRIED_REFRESH_LIMIT` times). A red the base caused, or one no base
   // evidence attributes yet, may still be cured by a refresh onto a moved tip,
   // so it keeps that path (review finding, upheld 3 of 3).
-  const checks = await deps.github.readChecks(head);
+  const checks = await readCiChecks(deps.github, head);
   if (!checks.ok) {
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
-  const decision = decideCiGate(checks.value.checks);
+  const gating = selectMergeGateChecksV1(
+    record.repository,
+    checks.value.checks,
+  ).checks;
+  const decision = decideCiGate(gating);
   if (decision !== "proceed" && decision !== "wait") {
     const observed = await observeHeadFailure(deps, record);
     if (observed === null) {
@@ -538,7 +568,7 @@ export async function executeCarriedDelivery(
         deps,
         context,
         record,
-        checks.value.checks,
+        gating,
         decision,
       );
     }
@@ -567,7 +597,7 @@ export async function executeCarriedDelivery(
       deps,
       context,
       record,
-      checks.value.checks,
+      gating,
       decision,
     );
   }
@@ -578,7 +608,7 @@ export async function executeCarriedDelivery(
   const absent = await absentExpectedChecks(
     deps,
     record,
-    checks.value.checks,
+    gating,
   );
   if (absent === null || absent.length > 0) {
     return boundedWait(
@@ -620,7 +650,7 @@ export async function executeCarriedDelivery(
   // restarts its `since` on every poll (that keeps its shape exact), so the
   // bound counts from the refreshed head's own CI completion instead.
   const now = deps.clock.now();
-  const green = ciCompletedAt(checks.value.checks);
+  const green = ciCompletedAt(gating);
   if (green === null || now - green >= CARRIED_WAIT_BOUND_MS) {
     return persistWork(
       deps,
