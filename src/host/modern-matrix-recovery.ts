@@ -481,6 +481,19 @@ async function readLive(deps: ClosedCWaveRecoveryDepsV1) {
   ) throw new Error("C recovery authoritative state unavailable");
   return { repair: repair.value, release: release.value };
 }
+function requireClosedCWaveCharges(
+  snapshot: RepairStateSnapshotV1,
+  binding: ClosedCWaveBindingV1,
+) {
+  const missing = binding.cells.filter((cell) =>
+    findReservationV1(snapshot, cell.reservationId) === undefined
+  );
+  if (missing.length > 0) {
+    throw new ClosedCWaveUnrecoverableSkipV1(
+      missing.map((cell) => cell.reservationId),
+    );
+  }
+}
 export function closedCWaveHandledReservations(
   snapshot: RepairStateSnapshotV1,
   binding: ClosedCWaveBindingV1 = CLOSED_C_WAVE,
@@ -605,14 +618,7 @@ export async function recoverClosedCWave(
   if (needed.size === 0) {
     throw new Error("C recovery has no actionable original operations");
   }
-  const missing = binding.cells.filter((cell) =>
-    findReservationV1(live.repair.snapshot, cell.reservationId) === undefined
-  );
-  if (missing.length > 0) {
-    throw new ClosedCWaveUnrecoverableSkipV1(
-      missing.map((cell) => cell.reservationId),
-    );
-  }
+  requireClosedCWaveCharges(live.repair.snapshot, binding);
   if (!deps.state.readRepairAt || !deps.state.readReleaseAt) {
     throw new Error("C recovery authenticated history reader unavailable");
   }
@@ -795,26 +801,28 @@ export async function ingestClosedCWave(
       reports: [],
     };
   }
-  if (
-    maintenance &&
-    live.release.snapshot.hostedRuntimes.some((row) => row.execution !== null)
-  ) throw new Error("C recovery current execution in flight");
-  if (
-    maintenance &&
-    live.release.snapshot.hostedReleases.some((row) =>
-      !isHostedReleaseTerminal(row.phase)
-    )
-  ) throw new Error("C recovery release is not terminal");
-  if (
-    [
-      ...live.repair.snapshot.githubCooldowns,
-      ...live.release.snapshot.githubCooldowns,
-    ].some((row) =>
-      row.retryNotBefore === null || row.retryNotBefore > deps.clock.now()
-    )
-  ) throw new Error("C recovery cooldown active");
   let recovered: Awaited<ReturnType<typeof recoverClosedCWave>>;
   try {
+    // Missing admission scope is a no-write skip, not gated maintenance work.
+    requireClosedCWaveCharges(live.repair.snapshot, binding);
+    if (
+      maintenance &&
+      live.release.snapshot.hostedRuntimes.some((row) => row.execution !== null)
+    ) throw new Error("C recovery current execution in flight");
+    if (
+      maintenance &&
+      live.release.snapshot.hostedReleases.some((row) =>
+        !isHostedReleaseTerminal(row.phase)
+      )
+    ) throw new Error("C recovery release is not terminal");
+    if (
+      [
+        ...live.repair.snapshot.githubCooldowns,
+        ...live.release.snapshot.githubCooldowns,
+      ].some((row) =>
+        row.retryNotBefore === null || row.retryNotBefore > deps.clock.now()
+      )
+    ) throw new Error("C recovery cooldown active");
     recovered = await recoverClosedCWave(deps);
   } catch (error) {
     // One wave whose admission scope can no longer be resolved is a typed
