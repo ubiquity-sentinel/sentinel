@@ -13,15 +13,22 @@ import {
   ATTEMPT_PATH,
   attemptBody,
   intent,
+  iso,
+  JOB_FINISHED,
+  JOB_STARTED,
   jobBody,
   JOBS_PATH,
   jobsBody,
   logText,
   makeRig,
+  OBSERVED,
   response,
   RUN_ATTEMPT,
   RUN_ID,
+  runtimeStep,
   scriptLog,
+  STEP_FINISHED,
+  STEP_STARTED,
   terminalRecord,
 } from "../github/hosted-execution-helpers.ts";
 
@@ -85,4 +92,42 @@ Deno.test("hosted settlement: a spent metadata window is not multiplied by the h
     if (result.outcome.status !== "pending") return;
     assert.match(result.outcome.detail, /hosted execution metadata is invalid/);
   }
+});
+
+Deno.test("hosted settlement: +3600s platform skew settles immediately on the unchanged runner clock", async () => {
+  const skew = 3_600_000;
+  const rig = makeRig();
+  rig.http.on("GET", ATTEMPT_PATH, () =>
+    response(200, {
+      ...attemptBody({ updatedAt: OBSERVED + skew }),
+      run_started_at: iso(JOB_STARTED + skew),
+    }, { date: new Date(OBSERVED).toUTCString() }));
+  rig.http.on("GET", JOBS_PATH, () =>
+    response(
+      200,
+      jobsBody([jobBody({
+        startedAt: JOB_STARTED + skew,
+        completedAt: JOB_FINISHED + skew,
+        steps: [runtimeStep({
+          started_at: iso(STEP_STARTED + skew),
+          completed_at: iso(STEP_FINISHED + skew),
+        })],
+      })]),
+    ));
+  scriptLog(rig, logText([terminalRecord()]));
+  const input = supervisorInput(
+    (saved) => rig.client.readHostedExecution(saved),
+    rig.clock,
+  );
+  const result = await readSettlement(input, intent(), {
+    retryPause: () => {
+      throw new Error("clock skew must not require a retry");
+    },
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  if (!result.ok) return;
+  assert.equal(result.settlement.outcome, "healthy");
+  assert.equal(result.settlement.observedAt, OBSERVED);
+  assert.equal(rig.clock.now(), OBSERVED);
+  assert.equal(rig.http.callsTo(ATTEMPT_PATH).length, 1);
 });

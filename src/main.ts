@@ -138,6 +138,12 @@ export interface RepairEntrypointOptionsV1 {
    * deterministic bookkeeping, drain and the total deadline stay unchanged.
    */
   modelStartsEnabled?: boolean;
+  /**
+   * Trusted host confirmation that this is the model-disabled BOOTSTRAP
+   * execution: maintenance, compatibility and health only, never a walk of
+   * the work queue (issue #297). Forwarded unchanged to the cycle.
+   */
+  bootstrap?: boolean;
 }
 
 /**
@@ -238,6 +244,9 @@ export function createRepairInvocation(
       stepLimit: options.stepLimit,
       runStartedAt,
       modelStartsEnabled: options.modelStartsEnabled,
+      // A production bootstrap invocation must take the maintenance-only path
+      // of the cycle, so the trusted host flag is forwarded unchanged.
+      bootstrap: options.bootstrap,
     },
     (continuation) => {
       postDrain.continuation = continuation;
