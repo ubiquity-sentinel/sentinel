@@ -145,6 +145,11 @@ export const REVIEW_ROUND_CEILING_MESSAGES: readonly string[] = [
  * (`legacyFinalRoundArmed`): only then may a review spend it. So a class
  * member whose head is green, or whose latest review left an unresolved
  * P0/P1, gets no further review: its rounds are spent like any other record's.
+ *
+ * The final round is spent by its admission, verdict or not, like every
+ * ordinary round: the one no-verdict re-request #155 item 2 proposed is not
+ * implemented (its review found it reopened parked legacy records through
+ * the raised-ceiling re-admission).
  */
 export interface LegacyReviewCutoffPinV1 {
   /**
@@ -238,6 +243,13 @@ type RoundRecord =
   >
   & Partial<Pick<WorkRecordV1, "createdAt">>;
 type Ledger = { readonly reservations: readonly BudgetReservationV1[] };
+/**
+ * A ledger with the snapshot's review receipts (every repair snapshot has
+ * them); the ceiling functions read only its reservations.
+ */
+type ReviewedLedger = Ledger & {
+  readonly reviews?: readonly ReviewReceiptV1[];
+};
 /** The legacy cutoff an evaluation runs under; absent or null is none. */
 export type LegacyCutoff = number | null | undefined;
 
@@ -327,10 +339,14 @@ export function legacyFinalRoundArmed(
     );
 }
 
-/** The merge gate's CI-red blockers (`loop-checks.ts`, `ci-rejection.ts`). */
+/**
+ * The merge gate's CI-red blockers (`loop-checks.ts`, `ci-rejection.ts`),
+ * with the legacy moved-base red-base park (`CI_BASE_RED_DETAIL`, #155).
+ */
 const CI_RED_PREFIXES = [
   "CI checks failed: ",
   "CI checks failed without base evidence: ",
+  "CI checks failed on the red reviewed base: ",
 ];
 
 /**
@@ -428,7 +444,7 @@ export function reviewRoundCeilingFor(
  * otherwise `reviewRoundCeilingFor`.
  */
 export function reviewRoundCeiling(
-  snapshot: Ledger,
+  snapshot: ReviewedLedger,
   record: RoundRecord,
   cutoff?: LegacyCutoff,
 ): number {
@@ -489,12 +505,11 @@ export function ordinaryReviewRoundsSpent(
 
 /**
  * Reviews this task may still request: its ceiling (`reviewRoundCeilingFor`)
- * minus the rounds
- * spent, never below zero, or exactly the one final round of a legacy record
- * once a CI fix armed it (`legacyFinalRoundArmed`).
+ * minus the rounds spent, never below zero, or exactly the one final round of
+ * a legacy record once a CI fix armed it (`legacyFinalRoundArmed`).
  */
 export function reviewRoundsLeft(
-  snapshot: Ledger,
+  snapshot: ReviewedLedger,
   record: RoundRecord,
   cutoff?: LegacyCutoff,
 ): number {

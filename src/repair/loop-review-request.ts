@@ -52,6 +52,11 @@ export async function requestReviewFor(
   context: LoopContextV1,
   record: WorkRecordV1,
   prNumber: number,
+  /**
+   * The operation key of a review journal the caller just observed concluded
+   * without a verdict: at the ceiling, a review intent bound to it is over.
+   */
+  concludedKey: string | null = null,
 ): Promise<StepResultV1> {
   const queueGuard = await guardQueueOperation(deps, context, record, "resume");
   if (queueGuard !== null) return queueGuard;
@@ -59,7 +64,7 @@ export async function requestReviewFor(
   // with no round left nothing is read, reserved or refreshed, and the record
   // parks. Every request path (publication, PR creation, no verdict, expiry,
   // missing acceptance, drain, launcher grants) passes through here.
-  const capped = reviewRoundCeilingGate(deps, context, record);
+  const capped = reviewRoundCeilingGate(deps, context, record, concludedKey);
   if (capped !== null) return await capped;
   const now = deps.clock.now();
   // A review request is NEW model work (it consumes the shared model-start
@@ -504,7 +509,9 @@ export async function requestReviewFor(
  * task's review-round allowance remains — one fresh attempt is requested for
  * the same head as a new, separately charged operation. Once the allowance is
  * spent the request's ceiling gate parks the record instead of polling a
- * terminal disposition or charging another round.
+ * terminal disposition or charging another round. A review intent still
+ * bound to the concluded journal (`operationKey`, the identity it was read
+ * under) is recovered by that park, counted once and cleared (issue #155).
  */
 export async function recoverFromNoVerdictReview(
   deps: RepairCycleDepsV1,
@@ -512,11 +519,18 @@ export async function recoverFromNoVerdictReview(
   record: WorkRecordV1,
   pr: number,
   _value: ReviewObservationV1,
+  operationKey: string | null = null,
 ): Promise<StepResultV1> {
   const now = deps.clock.now();
   // Each round is its own durable, uniquely admitted review request, bounded
   // by the hard ceiling in requestReviewFor (owner decision 2026-10-16: three
   // rounds; ai.ubq.fi 684 / PR 1059 re-requested 35 no-verdict rounds here).
   // A record is never merged because a round count ran out.
-  return await requestReviewFor(deps, context, clearWait(record, now), pr);
+  return await requestReviewFor(
+    deps,
+    context,
+    clearWait(record, now),
+    pr,
+    operationKey,
+  );
 }

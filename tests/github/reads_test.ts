@@ -604,6 +604,44 @@ Deno.test("readRef: exact identity or null; ref mismatch is invalid", async () =
   if (!bad.ok) assert.equal(bad.error.kind, "invalid");
 });
 
+Deno.test("readCommitParents (#156): the exact parents in order, null for no commit, a mismatched commit invalid", async () => {
+  const path = `/repos/ubiquity-sentinel/sentinel/git/commits/${SHA3}`;
+  const { port } = makePort({
+    script: [
+      httpRespond("GET", path, 200, {
+        sha: SHA3,
+        tree: { sha: SHA1 },
+        parents: [{ sha: SHA2 }, { sha: SHA1 }],
+      }),
+    ],
+  });
+  const found = await port.readCommitParents(SHA3);
+  assert.ok(found.ok, JSON.stringify(found));
+  if (found.ok) assert.deepEqual(found.value, [SHA2, SHA1]);
+
+  const { port: missing } = makePort({
+    script: [httpRespond("GET", path, 404, {})],
+  });
+  const absent = await missing.readCommitParents(SHA3);
+  assert.ok(absent.ok);
+  if (absent.ok) assert.equal(absent.value, null);
+
+  for (
+    const body of [
+      { sha: SHA1, parents: [{ sha: SHA2 }] },
+      { sha: SHA3, parents: [{ sha: "abc" }] },
+      { sha: SHA3 },
+    ]
+  ) {
+    const { port: wrong } = makePort({
+      script: [httpRespond("GET", path, 200, body)],
+    });
+    const bad = await wrong.readCommitParents(SHA3);
+    assert.equal(bad.ok, false, JSON.stringify(body));
+    if (!bad.ok) assert.equal(bad.error.kind, "invalid");
+  }
+});
+
 Deno.test("reads: auth failure and rate limit are typed, sanitized, no URL echo", async () => {
   const auth = new FakeAuthProvider("Bearer ghs_synthetic_token_0001", {
     kind: "auth_failed",

@@ -10,7 +10,7 @@ import type {
   GitHubReviewDecisionV1,
   PortResultV1,
 } from "../contracts/ports.ts";
-import { expectArray, expectRecord } from "../contracts/validation.ts";
+import { expectArray, expectRecord, fail } from "../contracts/validation.ts";
 import {
   parseBranchRuleWire,
   parseCheckRunWire,
@@ -26,7 +26,7 @@ import {
   unprotectedProtection,
 } from "./wire.ts";
 import { portError, portOk } from "../contracts/ports.ts";
-import type { GitSha } from "../contracts/brands.ts";
+import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import type {
   GitHubBranchRuleWireV1,
   GitHubReviewCommentWireV1,
@@ -81,6 +81,9 @@ function headStatuses(
     latest.get(status.name)?.status === "completed"
   );
 }
+
+/** Parents one commit may list (a merge has two; octopus merges more). */
+const COMMIT_PARENTS_MAX = 64;
 
 export abstract class GitHubClientReads extends GitHubClientIssues {
   /** Host-authored base-review jobs; unrelated supervisor jobs are not task CI. */
@@ -329,6 +332,37 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
       return portError("invalid", "GitHub API response is malformed");
     }
     return portOk(parsed.value);
+  }
+
+  /** The exact parents of one commit, in order; null when it does not exist. */
+  async readCommitParents(
+    sha: GitSha,
+  ): Promise<PortResultV1<GitSha[] | null>> {
+    if (!isGitSha(sha)) return portError("invalid", "commit SHA is invalid");
+    const response = await this.request(
+      "GET",
+      `/repos/${repoPath(this.repository)}/git/commits/${sha}`,
+    );
+    if (!response.ok) return response;
+    if (response.value.status === 404) return portOk(null);
+    return parseWire(response.value, (value) => {
+      const commit = expectRecord(value, "$");
+      if (commit.sha !== sha) {
+        fail("$.sha", "invalid_value", "commit does not match the request");
+      }
+      return expectArray(
+        commit.parents,
+        "$.parents",
+        COMMIT_PARENTS_MAX,
+        (item, path) => {
+          const parent = expectRecord(item, path).sha;
+          if (!isGitSha(parent)) {
+            fail(`${path}.sha`, "invalid_sha", "expected a full commit SHA");
+          }
+          return parent;
+        },
+      );
+    });
   }
 
   async readReviews(

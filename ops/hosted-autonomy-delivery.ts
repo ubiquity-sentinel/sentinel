@@ -163,6 +163,23 @@ export async function historicalMergedPublication(
   return { ...record, target: { ...record.target, pr: [...numbers][0] } };
 }
 
+/**
+ * True exactly when the pull's merge commit has the parents [tip, head], in
+ * that order, so the merged tree is that tip plus that head (#156). GitHub's
+ * merge API has no compare-and-swap on the base: a merge the pass made after
+ * re-reading the tip may still land on a later commit, a tree no CI ran on,
+ * which is never booked. A merge made outside the pass is adopted by
+ * `baseAndHeadAreMerged` instead.
+ */
+export function mergedExactlyOn(
+  pull: HostedAutonomyPullV1,
+  tip: string,
+  head: string,
+): boolean {
+  return pull.parents.length === 2 && pull.parents[0] === tip &&
+    pull.parents[1] === head;
+}
+
 /** Verified merge facts: the exact revision a foreign record delivered. */
 export interface HostedMergedDeliveryV1 {
   readonly revision: string;

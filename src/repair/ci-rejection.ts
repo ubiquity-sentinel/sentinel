@@ -87,6 +87,14 @@ export const UNTRUSTED_CHECK_NAME = "check with an unsupported name";
 /** Static terminal prefix when no base observation attributes a failure. */
 export const CI_UNATTRIBUTED_DETAIL = "CI checks failed without base evidence";
 
+/**
+ * Static terminal prefix of a legacy final-round head on a moved base that is
+ * red only because its reviewed base is red too (issue #155). Base evidence
+ * exists, so it is not the unattributed block, and it matches no launcher
+ * correction, re-run or green rule.
+ */
+export const CI_BASE_RED_DETAIL = "CI checks failed on the red reviewed base";
+
 /** Exact opening of the trusted CI correction finding (planner-produced). */
 export const CI_CORRECTION_FINDING_PREFIX =
   "Required CI checks failed on this candidate while the same checks passed on its base ";
@@ -283,6 +291,13 @@ export function absentCheckLabels(names: readonly string[] | null): string {
 /** Terminal blocker detail of a failure no base observation attributes. */
 export function unattributedDetail(checks: readonly GitHubCheckV1[]): string {
   return `${CI_UNATTRIBUTED_DETAIL}: ${
+    labels(checks, (name, conclusion) => `${name}(${conclusion})`)
+  }`;
+}
+
+/** Terminal blocker detail of a failure its red reviewed base shares. */
+export function baseRedDetail(checks: readonly GitHubCheckV1[]): string {
+  return `${CI_BASE_RED_DETAIL}: ${
     labels(checks, (name, conclusion) => `${name}(${conclusion})`)
   }`;
 }

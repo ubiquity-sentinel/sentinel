@@ -1153,14 +1153,16 @@ merge gate's `CI checks failed: …` blocker, so a legacy record stays in the
 class (live 649 and 1128 sat spent and red in `delivery` and would otherwise
 have left it as BASE_MOVED parks), except that a legacy record whose final round
 is open and whose red head its own change did not break (its reviewed base red
-too, a base check still running, or no usable base evidence) parks with the
-runtime's non-correctable `CI checks failed without base evidence: …` blocker
-instead, still in the class and re-admitted only by the green rule, after a
-bounded `ci_pending` wait at `delivery` while a base check is still running
-(round-2 recheck P3: with the generic blocker the launcher's correction rule
-re-admitted it as a CI correction on every pass and
-`correctFailedHeadBeforeRefresh` declined the fix every time, one correction
-slot per pass and no progress;
+too, a base check still running, or no usable base evidence) never takes that
+blocker: it waits, bounded, while a base check is still running, takes the
+uncharged carried refresh once the tip is green, and otherwise parks with a
+non-correctable blocker, `CI checks failed on the red reviewed base: …` or
+`CI checks failed without base evidence: …`, still in the class. On a moved base
+no rule re-admits that park, so it parks until the owner acts and the launcher
+reports it on every pass (issue #155, below; round-2 recheck P3: with the
+generic blocker the launcher's correction rule re-admitted it as a CI correction
+on every pass and `correctFailedHeadBeforeRefresh` declined the fix every time,
+one correction slot per pass and no progress;
 `tests/repair/ci-first-legacy-moved-base_test.ts`), a pending head waits in
 `delivery` and parks
 `review round ceiling reached: the reviewed head's required CI did not finish within 6 hours: …`
@@ -1249,10 +1251,13 @@ carries H0's authorization only when the pull request's own patch is unchanged:
 the merge-base patches `git diff B0...H0` and `git diff T...H1`, each from its
 unique merge base (a criss-cross history is no proof), rendered with every
 option fixed (`--binary --full-index --no-renames`, no external diff or
-textconv) and compared by the SHA-256 of their raw bytes
-(`src/github/git-carried-patch.ts`). Full blob ids on every index line make
-equal bytes mean equal contents, modes, renames and binary payloads, so a base
-change touching a reviewed path fails the proof even when it merges cleanly. The
+textconv) and compared by the SHA-256 of their raw bytes together with each
+side's raw listing `git diff --raw --no-abbrev -z --no-renames`
+(`src/github/git-carried-patch.ts`). Full blob ids on every index line bind a
+content change, but a mode-only change prints no index line (#156); the listing
+names both modes and both full blob ids of every changed path, so equal digests
+mean equal contents, modes, renames and binary payloads, and a base change
+touching a reviewed path fails the proof even when it merges cleanly. The
 runtime re-derives that proof from git on every step; no state field is added,
 so R79 parses everything generation 80 writes. The merge itself is the
 launcher's (round-2 recheck P1): the runtime's merge port refuses every merge on
@@ -1289,8 +1294,9 @@ parents are not exactly [T, H1] is never booked: the pass reports
 record
 `review round ceiling reached: the carried merge landed off its tip: merge … has parents …, not <T>,<H1>`
 (undeliverable, so later passes leave it alone; a self record is never rewritten
-by the pass, and its runtime parks it once its bounded wait for the delivery
-record ends), the same for a lost-write adoption of such a merge; (c) on H1's
+by the pass, and its runtime reads the merge commit's parents and parks it with
+the same blocker at its next step, #156), the same for a lost-write adoption of
+such a merge, decided on the parents before any patch proof is read; (c) on H1's
 own green required CI (every check run on the exact head completed successfully;
 `test-local` for the self scope); (d) when the exact patch proof re-derived from
 GitHub's Git data holds (round-2 recheck P3: the rendered compare diffs it used
@@ -1305,7 +1311,7 @@ is the refreshed side's own merge base; a tree GitHub truncates (past its entry
 or size limit) or any unreadable answer is no proof
 (`carried_proof_unavailable`). Full blob ids make equal sets mean equal
 contents, text or binary, and modes, and the old side binds the base content
-each change applies to, as the runtime's `--full-index --no-renames` proof does;
+each change applies to, as the runtime's raw listing and patch proof do (#156);
 the merge base is the one GitHub names, and a criss-cross history (several merge
 bases) is refused by the runtime's git proof, which must hold before it writes
 the marker. GitHub's rendered diffs are still read, as evidence only; and (e)
@@ -2824,6 +2830,56 @@ standing approval above. Applied as follows.
 - Whether the legacy class is the cutoff rule or the owner's list of twelve
   still needs the owner's answer.
 
+## 2026-10-24: carried and spent delivery precision (#156)
+
+- A merge the launcher's delivery pass makes is booked only when the merge
+  commit's parents are exactly [the tip re-read immediately before the merge
+  call, the head] (`mergedExactlyOn`). GitHub has no compare-and-swap on the
+  base, so a commit that lands in between makes the merge a tree no CI ran on;
+  the pass reports `delivery:<id>:merged_off_tip:sha=<merge sha>` and writes
+  nothing. The refusal is durable (review finding, upheld 3 of 3): while the
+  moved-base merge rule (D3) is off, an App-made merge of a non-carried record
+  is booked in any pass only on exactly [its reviewed base, its head], so a
+  later pass never adopts the refused merge as an outside merge. A queue merge
+  keeps its own proof, an owner's merge is not the App's, and with D3 on an App
+  merge onto a moved tip is intended, so only the same-pass check applies.
+- A carried merge already landed off its tip is decided on its parents before
+  the patch proof is read (a queue merge keeps the proof). The runtime reads the
+  merge commit's parents itself (`GitHubPort.readCommitParents`, optional;
+  absent, the bounded wait stays): a merged carried head not booked whose
+  commit's parents are not exactly [T, H1] parks at once with the launcher's own
+  `…the carried merge landed off its tip: merge … has parents …` blocker instead
+  of holding the delivery line for 6 hours and parking as a generic stall. A
+  native queue target (ai.ubq.fi) is left to the launcher, which parks it
+  itself.
+- `carriedRecordAwaited` still counts every `unavailable` wait at `work`: the
+  runtime writes it for a merged pull request awaiting the launcher's record,
+  but also before any merge (an unavailable patch proof or base ref, a pull
+  request still reporting the refreshed-from head), and the record carries no
+  merged fact. The pass therefore reads such a record's pull request first and
+  stops there with `carried_awaiting_runtime` unless it is merged (no task
+  read).
+- The runtime's carried patch digest is the SHA-256 of the length-prefixed raw
+  listing `git diff --raw --no-abbrev -z --no-renames <merge base> <head>`
+  followed by the patch bytes. A mode-only change prints no index line, so the
+  patch alone did not bind that path's content; the listing names both modes and
+  both full blob ids of every changed path, the same sets the launcher's
+  Git-tree proof compares.
+- `executeCarriedDelivery` reads H1's own CI before the tip. A red H1 its own
+  change caused is never refreshed onto a moved tip: it parks
+  `…the refreshed head's required CI failed: …`. A red the base caused, or one
+  no base evidence attributes yet, keeps the refresh path, since a refresh onto
+  a fixed tip can cure it (review finding, upheld 3 of 3); without a moved tip
+  it keeps its bounded wait.
+- Each repository's tip is read once before the spent read window. While D3 is
+  off, a spent record reviewed on its own head whose base is not that tip is
+  left out of the window (`spentOnTip`): only its pull request is read, so the
+  lost write of a merge that moved the tip itself is still adopted, and an
+  unmerged one reports `base_moved` without the task read. A carried head on a
+  moved base keeps its own exemption. Nothing here merges anything the gates
+  refused before, refunds or moves a reservation, or relaxes a review, CI or
+  protected-path gate.
+
 ## 2026-10-24: an unready ai.ubq.fi queue observation no longer holds all maintenance
 
 - The maintenance preflight still reads ai.ubq.fi's branch rules and merge queue
@@ -3095,3 +3151,56 @@ standing approval above. Applied as follows.
   and review rounds, CI-fix limits and the at-most-once enqueue are unchanged.
   The production queue stays disabled (`queue.proofActivated` off, empty
   authority pins), so this path cannot run until a reviewed queue rollout.
+
+## 2026-10-24: exits from the review ceiling's silent dead ends (#155)
+
+- Legacy head red through its base, on a moved base. This is a legacy record
+  whose final round is open and whose red reviewed head is red because its
+  reviewed base B0 is red, or because no base evidence attributes the failure.
+  B0 is a fixed commit and never turns green. Once the development tip is
+  complete and green, the head takes the same uncharged mechanical refresh a
+  green spent head takes, carrying its review (`holdUncorrectableLegacyHead`,
+  `carryReviewedHead` in `src/repair/loop-carried-delivery.ts`). The refreshed
+  head's own CI then decides through the existing carried delivery: green goes
+  to the launcher's carried merge, and red parks under the ceiling prefix as for
+  every carried head. Nothing is charged and no review round is spent.
+- While the tip is red or pending, the record waits at `delivery` in a
+  `ci_pending` wait, so it holds nobody in the delivery line. The wait is
+  bounded by 6 hours. A head whose latest review does not authorize carrying it,
+  or one still waiting at the bound, parks with a precise blocker:
+  `CI checks failed on the red reviewed base: …` when base evidence exists, or
+  `CI checks failed without base evidence: …`. Both stay in the legacy class
+  shape. No rule re-admits either park on a moved base, so the record parks
+  until the owner acts. Every maintenance pass names it as
+  `retry:<id>:denied:legacy_base_red` or `retry:<id>:denied:legacy_unattributed`
+  (the unattributed one only while its base is not the tip). At most 12 are
+  named per pass, then `retry:legacy_held:denied:held_more=<n>`.
+- Item 2 (a no-verdict attempt spends the legacy final round) is not
+  implemented. A one-re-request rule was built, but its adversarial review (five
+  claims upheld 3 of 3, all P3) found that, combined with the raised-ceiling
+  re-admission of 2026-10-24, it reopened records already parked UNREVIEWED
+  outside the CI-first gating, ran before the final review's own receipt was in
+  the snapshot, and left a concluded intent in place. The legacy final round
+  stays spent by its admission, verdict or not, like every round; the five-round
+  ceiling of CI-first-era records already absorbs no-verdict attempts there.
+  Whether legacy records get the re-request is an owner decision.
+- A review intent in flight at the ceiling no longer defers forever. A
+  `review_request` intent whose own journal concluded without a verdict, or one
+  started 6 hours ago or more, is recovered as `recoverExpiredReviewAttempt`
+  does. Its round is counted once and the intent is cleared, with its charge
+  kept: never refunded or moved. The record parks in the same write with the
+  fixed ceiling message its reviews select (`reviewRoundCeilingGate`,
+  `src/repair/loop-review-round-cap.ts`). Other intents still finish first. This
+  covers live 264's shape (counter 0, three charges) and a 647-shaped record
+  (counter 3, four charges) holding an already counted intent
+  (`tests/repair/review-round-cap-intent_test.ts`).
+- CI fix budgets are lifetime counts. `counters.retries` was written by older
+  generations and was not reset at the CI-first activation. A row that carries
+  retries from them starts generation 80 with those CI fixes spent: at state
+  719d8f30d issue-ubiquity-sentinel-61 (retries 3) gets none, sentinel-76 (2)
+  gets one and sentinel-21 (1) gets two. Counting only `retry` charges admitted
+  after the activation is not derivable safely. Every implementation admission
+  after the first is a `retry` charge, whether it is a P0 correction, a conflict
+  resolution, a retried implementation or a CI fix. The comment in
+  `src/repair/ci-first-policy.ts` is corrected. Resetting such rows is an owner
+  decision.
