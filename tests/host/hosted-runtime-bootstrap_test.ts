@@ -43,19 +43,40 @@ Deno.test("hosted runtime: bootstrap-only real child empty stdin aggregate", asy
   assert.ok(detached.ok, detached.stderr);
   const frozenHead = await gitRun(frozen, ["rev-parse", "HEAD"], env);
   assert.equal(frozenHead.stdout.trim(), revision);
-  // Preserve a local aggregate correction over the immutable current snapshot.
-  const aggregateSource = await Deno.readTextFile(
-    `${ROOT}/src/host/matrix-actions.ts`,
+  // Model a stale snapshot even when HEAD already has the eligibility export.
+  const eligibilityPath = `${frozen}/src/repair/loop-eligibility.ts`;
+  const staleEligibility = (await Deno.readTextFile(eligibilityPath)).replace(
+    "export function matrixOwnsFreshImplementation(",
+    "function matrixOwnsFreshImplementation(",
   );
-  await Deno.writeTextFile(
-    `${frozen}/src/host/matrix-actions.ts`,
-    aggregateSource,
+  await Deno.writeTextFile(eligibilityPath, staleEligibility);
+  // Preserve the local aggregate and its lifecycle wiring over the snapshot.
+  const aggregateSources: string[] = [];
+  for (
+    const path of [
+      "src/host/matrix-actions.ts",
+      "src/host/matrix-aggregate.ts",
+      "src/host/actions-target-flow.ts",
+      "src/main.ts",
+      "src/repair/loop-cycle.ts",
+      "src/repair/loop-eligibility.ts",
+      "src/repair/loop-types.ts",
+    ]
+  ) {
+    const source = await Deno.readTextFile(`${ROOT}/${path}`);
+    await Deno.writeTextFile(`${frozen}/${path}`, source);
+    aggregateSources.push(path, source);
+  }
+  assert.equal(
+    await Deno.readTextFile(eligibilityPath),
+    await Deno.readTextFile(`${ROOT}/src/repair/loop-eligibility.ts`),
+    "the frozen child must use the current checkout's loop eligibility source",
   );
   const aggregateDigest = [
     ...new Uint8Array(
       await crypto.subtle.digest(
         "SHA-256",
-        new TextEncoder().encode(aggregateSource),
+        new TextEncoder().encode(aggregateSources.join("\n")),
       ),
     ),
   ].map((byte) => byte.toString(16).padStart(2, "0")).join("");
