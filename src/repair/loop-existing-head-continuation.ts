@@ -109,16 +109,17 @@ export async function recoverClosedExistingHead(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): Promise<StepResultV1 | null> {
-  const { branch, candidateState, head, pr } = record.target;
+  const { branch, candidateState, head, pr, retiredOwnPr } = record.target;
   if (
     record.source.kind !== "issue" || record.nextStep !== "work" ||
     hasTakeoverCustody(record) || head === null ||
     head === record.target.base ||
     branch !== candidateBranch(record.id) ||
     candidateState?.preserved !== null ||
-    // A published head alone proves no closed-unmerged PR. Only a retained
-    // PR or a durable replacement intent authorizes this recovery lane.
-    (pr === null && record.intent === null) ||
+    // A published head alone proves no closed-unmerged PR. Retirement keeps
+    // that evidence in retiredOwnPr after clearing the PR and review intent.
+    // A retained PR or durable replacement intent also authorizes recovery.
+    (pr === null && record.intent === null && retiredOwnPr === undefined) ||
     (pr === null && candidateState.publishedHead !== head)
   ) return null;
   const config = configFor(deps, record.repository);
