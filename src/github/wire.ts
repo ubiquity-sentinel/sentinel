@@ -198,6 +198,9 @@ export function parsePullWire(
     obj.merged_at,
     `${path}.merged_at`,
   );
+  const mergedBy = obj.merged_by === undefined
+    ? null
+    : expectLogin(obj.merged_by, `${path}.merged_by`);
   const observedMergeSha = expectWireShaNullable(
     obj.merge_commit_sha,
     `${path}.merge_commit_sha`,
@@ -233,6 +236,7 @@ export function parsePullWire(
     createdAt,
     updatedAt,
     mergedAt,
+    mergedBy,
     reviewDecision,
   };
 }
