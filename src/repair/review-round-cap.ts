@@ -3,7 +3,7 @@
  * 684 / PR 1059 reached 44 rounds; 44 rounds is insane, 3 round max").
  *
  * Pure policy shared by the runtime repair loop and the protected launcher:
- * no I/O, no clock and only types imported, so the launcher can ship it before
+ * no I/O or clock, so the launcher can ship it before
  * the runtime does. A task has spent the larger of its unrefunded
  * `review_request` admissions and its review-round counter less its refunds;
  * once that reaches its ceiling no further review is requested anywhere, and
@@ -23,6 +23,7 @@ import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { HOSTED_RUNTIME_ROLLOUT } from "../host/hosted-runtime-rollout.ts";
 
 /** Review rounds any task may spend, everywhere (owner decision 2026-10-16). */
 export const MAX_REVIEW_ROUNDS = 3;
@@ -156,10 +157,13 @@ export interface LegacyReviewCutoffPinV1 {
 export const LEGACY_REVIEW_CUTOFF: LegacyReviewCutoffPinV1 = {
   activatedNotBefore: 1792256700000,
   revisions: [
-    // Generation 80 (R80), pinned by its launcher commit at 1792256700000.
-    "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
-    // Generation 81 (R81), pinned by its launcher commit.
-    "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+    ...new Set([
+      // Generation 80 (R80), pinned by its launcher commit at 1792256700000.
+      "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+      // Generation 81 (R81), pinned by its launcher commit.
+      "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+      ...HOSTED_RUNTIME_ROLLOUT.legacyReview,
+    ]),
   ],
 };
 

@@ -23,6 +23,8 @@ export interface HostedRuntimeRollout {
   readonly conflictResolution: readonly HostedRuntimeRolloutActivation[];
   readonly ciFirst: readonly GitSha[];
   readonly ciFirstFix: readonly GitSha[];
+  readonly acceptanceCorrection: readonly GitSha[];
+  readonly legacyReview: readonly GitSha[];
 }
 
 const INVALID = "invalid hosted runtime rollout";
@@ -41,6 +43,8 @@ export function parseHostedRuntimeRollout(
       "conflictResolution",
       "ciFirst",
       "ciFirstFix",
+      "acceptanceCorrection",
+      "legacyReview",
     ]);
     if (row.version !== 1) throw new Error(INVALID);
     const installs = array(row.installs).map(install);
@@ -75,6 +79,8 @@ export function parseHostedRuntimeRollout(
       conflictResolution,
       ciFirst: revisions(row.ciFirst),
       ciFirstFix: revisions(row.ciFirstFix),
+      acceptanceCorrection: revisions(row.acceptanceCorrection),
+      legacyReview: revisions(row.legacyReview),
     });
   } catch {
     throw new Error(INVALID);
