@@ -4,13 +4,20 @@
  *
  * It carries the wall time of each repository pass whose delta was opened
  * (descending, at most `MAX_FANOUT_REPOSITORIES` entries, no repository name),
- * the trusted writer's apply time and the applied/rejected counts by reason.
- * The fan-out's own acceptance compares the repair phase's wall time with
- * `max(repositoryWallMs) + applyMs`. Like the pass summary it has no `status`
- * property, a failure to print is swallowed, nothing reads it back as
- * evidence, and it carries only counts and durations.
+ * the trusted writer's apply time and the applied/rejected counts by reason,
+ * the records the plan delegated and the live records it left with the
+ * serial pass, and the cells' steps counted by step kind (kept, handed back,
+ * elapsed; `fanout-step-kinds.ts`). The fan-out's own acceptance compares the
+ * repair phase's wall time with `max(repositoryWallMs) + applyMs`. Like the
+ * pass summary it has no `status` property, a failure to print is swallowed,
+ * nothing reads it back as evidence, and it carries only counts and
+ * durations.
  */
 import type { RepairDeltaApplyResultV1 } from "./repair-delta-apply.ts";
+import {
+  type FanoutStepKindsV1,
+  parseFanoutStepKindsV1,
+} from "./fanout-step-kinds.ts";
 
 export const FANOUT_SUMMARY_LINE_KIND = "sentinel_repair_fanout";
 export const MAX_FANOUT_REPOSITORIES = 32;
@@ -36,6 +43,10 @@ export interface FanoutSummaryLineV1 {
   repositoryWallMs: number[];
   applyMs: number;
   recordsHandedBack: number;
+  recordsDelegated: number;
+  /** Null when the application never read the repair state. */
+  recordsSerialOwned: number | null;
+  stepKinds: FanoutStepKindsV1;
 }
 
 const KEYS = [
@@ -43,8 +54,11 @@ const KEYS = [
   "deltasApplied",
   "deltasRejected",
   "kind",
+  "recordsDelegated",
   "recordsHandedBack",
+  "recordsSerialOwned",
   "repositoryWallMs",
+  "stepKinds",
   "transitionsApplied",
 ].join();
 const REASONS = [
@@ -72,7 +86,11 @@ export function parseFanoutSummaryLine(
   const line = value as Record<string, unknown>;
   const reasons = line.deltasRejected as Record<string, unknown> | null;
   const walls = line.repositoryWallMs;
+  const stepKinds = parseFanoutStepKindsV1(line.stepKinds);
   if (
+    stepKinds === null || !bounded(line.recordsDelegated, MAX_COUNT) ||
+    (line.recordsSerialOwned !== null &&
+      !bounded(line.recordsSerialOwned, MAX_COUNT)) ||
     Object.keys(line).sort().join() !== KEYS ||
     line.kind !== FANOUT_SUMMARY_LINE_KIND ||
     typeof reasons !== "object" || reasons === null ||
@@ -97,6 +115,9 @@ export function parseFanoutSummaryLine(
     repositoryWallMs: [...walls] as number[],
     applyMs: line.applyMs as number,
     recordsHandedBack: line.recordsHandedBack as number,
+    recordsDelegated: line.recordsDelegated as number,
+    recordsSerialOwned: line.recordsSerialOwned as number | null,
+    stepKinds,
   };
 }
 
@@ -125,6 +146,9 @@ export function fanoutSummaryLine(
     repositoryWallMs: result.repositoryWallMs.slice(0, MAX_FANOUT_REPOSITORIES),
     applyMs: result.applyMs,
     recordsHandedBack: result.handedBack,
+    recordsDelegated: result.recordsDelegated,
+    recordsSerialOwned: result.recordsSerialOwned,
+    stepKinds: result.stepKinds,
   });
   return line === null ? null : JSON.stringify(line);
 }

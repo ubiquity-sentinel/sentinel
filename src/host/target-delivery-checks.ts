@@ -39,7 +39,16 @@ const EMPTY: TargetDeliveryCheckPolicyV1 = Object.freeze({
 const TRUSTED_DELIVERY_CHECKS: ReadonlyMap<string, readonly string[]> = new Map<
   string,
   readonly string[]
->([]);
+>([
+  // Read from the router's own `.github/workflows/ci.yml` on 2026-11-05 at
+  // 486b9cb: a push to `main` runs the `CI` workflow with jobs `test`,
+  // `build` and `deploy` (cloudflare/wrangler-action); `deploy` is the
+  // delivery check. Passport has no entry: its Deno Deploy and Workers
+  // Standby Deploy workflows are `workflow_dispatch` only, so no deploy check
+  // ever lands on a Passport merge commit (verified on its last six `main`
+  // commits, which carry only the `deno` CI job and CodeRabbit).
+  ["ubiquity/ubq.fi-router", ["deploy"]],
+]);
 
 /**
  * Parse one `requiredForDelivery` value: an array of distinct, non-empty,

@@ -4541,3 +4541,74 @@ evaluation as a Thresholds table. Kill switch: repository variable
 `SENTINEL_SELF_IMPROVE=off` (default on). Review, CI, P0, task-acceptance,
 accounting, custody and auto-follow gates are unchanged; the watchdog has no
 model access and no state authority beyond the metrics sidecar.
+
+## 2026-11-05: two integration lanes on development
+
+Owner decision (2026-11-05): the throughput lane (this session) and the
+hanging-PR lane may both push to `development` and advance
+`sentinel-supervisor`. Rule: each lane merges the current `development` into
+its candidate, validates the merged result, and pushes fast-forward only;
+whichever candidate is CI-green last installs, through auto-follow when the
+workflow files are unchanged or through that lane's manual advance when they
+changed. Neither lane rewrites the other's history or force-moves the
+launcher. The other owner answers of the same day: the deferral-streak notice
+is delivered as an owner issue (see the entry recorded with that change);
+repository cells are widened beyond observe-only records, with every write
+still owned by finalize; and this session reads the Passport and router
+repositories to record the exact required-for-delivery check names.
+
+## 2026-11-05: throughput watchdog guardrails, second set
+
+Owner decision (2026-11-05, "improve"): the first guardrail set in the entry
+above is superseded. Guardrails now: one issue per missed threshold, several
+in one cycle; none while that threshold's watchdog issue is open or an open
+PR references it (per threshold, not global); after its issue is observed
+closed, finalize records the measurement and the runtime (generation and SHA)
+installed at close and does not re-file that threshold until 10 cycles ran on
+a runtime newer than that one (later generation, different SHA) and it is
+still missed, or at once if the measurement is more than 10% worse than at
+close; an open issue is edited only when its window advanced 10 cycles; at
+most 3 watchdog issues per UTC day (attempts counted, `createBlocked:
+"daily_bound"` logged). State is `throughput/watchdog.json` version 2 on the
+metrics ref, written by the same expected-head, non-force finalize writer;
+the reader lifts the historical version 1 file with an unknown runtime at
+close, so the next known runtime becomes the baseline. An issue whose
+recording write was lost is adopted by its marker; a repeated finalize of one
+cycle acts once; 60 s bound; never throws into the run; kill switch
+`SENTINEL_SELF_IMPROVE=off`. The 7-day cooldown, the one-issue-per-cycle rule
+and the >10% edit rule are retired.
+
+## 2026-11-05: upkeep-deferral notice as an owner issue (#327)
+
+Owner decision (2026-11-05): the upkeep-deferral notice is one owner issue on
+`ubiquity-sentinel/sentinel`, filed by finalize through the trusted App issue
+port with the self App token the watchdog uses. The body's first line is
+`<!-- sentinel:skip -->` and its second is `<!-- sentinel:upkeep-deferral -->`;
+the title is "Upkeep deferred for N consecutive supervisor cycles"; the body
+carries only the closed reason codes, the streak's run ids (most recent 30),
+the streak start and this pointer. A deferral means the bounded self-upkeep
+pass was skipped without writing and the run stayed green. The third
+consecutive deferral opens the issue; later claims (each +3 to the streak) or
+a new streak edit the open marker issue, preferring the number recorded in
+`throughput/upkeep-streak.json` (version 2; version 1 is lifted on read);
+Sentinel never closes it. When the issue is not delivered the log line is the
+fallback, the finalize line records the adapter, and the run outcome is
+unaffected. A runtime before this revision rejects a version 2 streak file;
+the #340 rollback rule applies.
+
+## 2026-11-05: repository cells widened to read-only waits and verdict reads (#328)
+
+Owner decision (2026-11-05, "delegate more"): a serial step that only
+re-arms a running read wait (`backoff`, `unavailable`, `deployment`,
+`ci_pending`, `review_pending`) of an intent-free record, changing nothing
+but the wait and the no-progress counter, settles like a deferral and is
+stamped, with the stamp deadline equal to the wait's `until`. The existing
+plan rule therefore delegates waiting records and review/CI result reads to
+repository cells. A cell keeps only work-row wait/verdict transitions; a step
+needing a GitHub write, reservation, model start or review receipt is dropped
+and unstamped, so the next plan returns it to the serial path. Deltas carry
+an optional bounded step summary; finalize reports per-kind kept/deferred/
+elapsed counts and the delegated/serial-owned record counts on
+`sentinel_repair_fanout`, and the metrics record carries optional
+`fanoutDelegated`/`serialOwned`. Transition rule, accounting, deadline and
+margin are unchanged.

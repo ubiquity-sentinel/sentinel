@@ -50,9 +50,12 @@ import {
 } from "./throughput-watchdog-finalize.ts";
 import { createHostedAutonomyRequest } from "../../ops/hosted-autonomy-github-listing.ts";
 import { createHostedWatchdogIssues } from "../../ops/hosted-autonomy-watchdog-issues.ts";
+import { createHostedUpkeepIssues } from "../../ops/hosted-autonomy-upkeep-issues.ts";
 import { GitThroughputMetricsStore } from "../state/throughput-metrics-store.ts";
 import {
+  fallbackUpkeepNoticePort,
   type FinalizeUpkeepDeferralDepsV1,
+  issueUpkeepNoticePort,
   logUpkeepNoticePort,
   metricsUpkeepStreakStore,
   runFinalizeUpkeepDeferral,
@@ -68,6 +71,7 @@ import type { HostedRuntimeJobV1 } from "./hosted-runtime.ts";
 import { ensurePrivateDir, githubGitAuthEnv, joinPath } from "./local.ts";
 import {
   REPAIR_PLAN_DIGEST_ENV,
+  type RepairFanoutFinalizeOutcomeV1,
   repairFanoutHook,
 } from "./repair-fanout-finalize-host.ts";
 import type {
@@ -167,9 +171,10 @@ export interface HostedSupervisorHostInputV1 {
   /**
    * Finalize only (#328): authenticate and apply the run's repository repair
    * deltas in one trusted write before the release settlement. Advisory; it
-   * never throws. Absent, the run planned no repository cell.
+   * never throws. Absent, the run planned no repository cell. Its record
+   * counts feed the cycle's metrics record.
    */
-  repairFanout?: () => Promise<unknown>;
+  repairFanout?: () => Promise<RepairFanoutFinalizeOutcomeV1>;
 }
 
 export interface HostedSupervisorHostResultV1 {
@@ -297,8 +302,9 @@ export async function runHostedSupervisorHost(
     evidence,
     ownerStartupRecoveryOnly: input.ownerStartupRecoveryOnly,
   };
+  let fanout: RepairFanoutFinalizeOutcomeV1["counts"] = null;
   if (job === "finalize" && input.repairFanout !== undefined) {
-    await input.repairFanout();
+    fanout = (await input.repairFanout()).counts;
   }
   const outcome = job === "prepare"
     ? await runHostedSupervisorPrepare(core)
@@ -339,6 +345,7 @@ export async function runHostedSupervisorHost(
       const settled = await runFinalizeUpkeepDeferral(input.upkeepDeferral, {
         runId: identity.runId,
         observation: input.env[UPKEEP_DEFERRAL_ENV],
+        nowMs: input.clock.now(),
       });
       if (settled.notified) ownerNoticesSent = 1;
     }
@@ -362,6 +369,7 @@ export async function runHostedSupervisorHost(
         deliveryCounts: parseDeliveryCounts(input.env[DELIVERY_COUNTS_ENV]),
         tierCounts: parseTierCounts(input.env[TIER_COUNTS_ENV]),
         repair: repairRead,
+        fanout,
       });
     }
     return {
@@ -524,13 +532,22 @@ export async function main(): Promise<void> {
       ),
     };
     const summaryPath = Deno.env.get(STEP_SUMMARY_ENV);
+    const appendSummary = summaryPath === undefined || summaryPath.length === 0
+      ? undefined
+      : (line: string) =>
+        Deno.writeTextFile(summaryPath, line, { append: true });
     upkeepDeferral = {
       store: metricsUpkeepStreakStore(port),
-      // Log-only until an owner chooses an ntfy topic and secret.
-      notice: logUpkeepNoticePort({
-        appendSummary: summaryPath === undefined || summaryPath.length === 0
-          ? undefined
-          : (line) => Deno.writeTextFile(summaryPath, line, { append: true }),
+      // Owner decision 2026-11-05: the notice is one owner issue on the self
+      // repository through the same self App token as the watchdog issues;
+      // the log line is the fallback when the issue is not delivered.
+      notice: fallbackUpkeepNoticePort({
+        issue: issueUpkeepNoticePort(createHostedUpkeepIssues(
+          createHostedAutonomyRequest(selfToken),
+          SUPERVISOR_REPOSITORY,
+        )),
+        log: logUpkeepNoticePort({ appendSummary }),
+        appendSummary,
       }),
     };
   }

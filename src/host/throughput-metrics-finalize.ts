@@ -50,7 +50,7 @@ export interface FinalizeMetricsFactsV1 {
   /** Owner notices this finalize claimed and published (#327). */
   ownerNoticesSent?: number;
   /**
-   * Throughput watchdog issues this finalize filed (0 or 1); null/absent
+   * Throughput watchdog issues this finalize filed (0..3); null/absent
    * when the watchdog was off or its outcome is unknown.
    */
   watchdogIssuesFiled?: number | null;
@@ -69,6 +69,18 @@ export interface FinalizeMetricsFactsV1 {
    * null/absent when it was not read; feeds the wait-cause histogram.
    */
   repair?: RepairStateSnapshotV1 | null;
+  /**
+   * The repair fan-out's record counts (#328) from finalize's own delta
+   * application; null/absent when the run planned no cell or it was unread.
+   */
+  fanout?: RepairFanoutCountsV1 | null;
+}
+
+/** Records the plan delegated, and live records it left serial (#328). */
+export interface RepairFanoutCountsV1 {
+  delegated: number;
+  /** Null when the application never read the repair state. */
+  serialOwned: number | null;
 }
 
 /** Records waiting in `backoff`/`unavailable`, by cause key (#335). */
@@ -226,6 +238,13 @@ export function collectFinalizeMetricsV1(
   }
   const filed = facts.watchdogIssuesFiled ?? null;
   if (filed !== null) collector.addCount("watchdogIssuesFiled", filed);
+  const fanout = facts.fanout ?? null;
+  if (fanout !== null) {
+    collector.addCount("fanoutDelegated", fanout.delegated);
+    if (fanout.serialOwned !== null) {
+      collector.addCount("serialOwned", fanout.serialOwned);
+    }
+  }
   // The planner's refusal reason and ready-unplanned count (#335), from the
   // matrix_plan job's launcher-re-emitted plan diagnostic.
   const refusal = plan?.conclusion === "success"
