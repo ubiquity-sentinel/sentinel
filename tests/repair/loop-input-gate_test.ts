@@ -44,7 +44,7 @@ import {
   FakeReplay,
   MemoryState,
 } from "./helpers.ts";
-import { SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
+import { reservation, SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
 
 const MINUTE = 60_000;
 const REPOS = ["alpha", "beta", "gamma"].map((name) => ({
@@ -323,6 +323,65 @@ Deno.test("input gate: durable row ordering does not wake 60 unchanged records",
   assert.equal(rig.github.batchesOf(REPOS[0].name), 3, "one batch per pass");
   assert.deepEqual(rig.github.calls, [], "no per-record fallback or effects");
   assert.deepEqual(rig.state.repair!.reservations, [], "no model charge");
+});
+
+Deno.test("input gate: reservation reload order does not wake 60 unchanged records", async () => {
+  const rig = makeRig(
+    Array.from({ length: 60 }, (_, index) =>
+      pendingArtifact(REPOS[0], index, {
+        counters: { attempts: 2, retries: 1, reviewRounds: 0 },
+      })),
+  );
+  rig.state.repair!.reservations = rig.state.repair!.work.flatMap((record) =>
+    ["z", "a"].map((suffix, index) =>
+      reservation(`${record.id}-${suffix}`, {
+        repository: record.repository,
+        taskId: record.id,
+        attempt: index + 1,
+        outcome: "submitted",
+        settledAt: T0,
+      })
+    )
+  );
+  const first = await pass(rig);
+  assert.equal(first.summary.recordsStepped, 60);
+  assert.equal(stamped(rig), 60);
+  const head = rig.state.repairHead;
+  const writes = rig.state.repairWrites;
+  const reservations = orderRecords<
+    RepairStateSnapshotV1["reservations"][number]
+  >(
+    rig.state.repair!.reservations.map((row) => ({ id: row.id, value: row })),
+  );
+  rig.state.repair!.reservations = reservations;
+  rig.clock.advance(5 * MINUTE);
+  const reloaded = await pass(rig);
+  assert.deepEqual(
+    reloaded.stepped,
+    [],
+    "reservation order is not a changed input",
+  );
+  assert.equal(reloaded.summary.recordsRead, 60);
+  assert.equal(reloaded.summary.recordsSkipped, 60);
+  assert.equal(rig.state.repairHead, head, "a reordered reload costs no write");
+  assert.equal(rig.state.repairWrites, writes);
+  assert.deepEqual(
+    rig.state.repair!.reservations,
+    reservations,
+    "no accounting mutation",
+  );
+
+  // Sorting must not hide an actual change to a record's accounting inputs.
+  const changedReservation = reservations[0];
+  rig.state.repair!.reservations = reservations.map((row) =>
+    row.id === changedReservation.id ? { ...row, outcome: "ambiguous" } : row
+  );
+  rig.clock.advance(5 * MINUTE);
+  const changed = await pass(rig);
+  assert.deepEqual(changed.stepped, [changedReservation.taskId]);
+  assert.equal(changed.summary.recordsSkipped, 59);
+  assert.equal(rig.github.batchesOf(REPOS[0].name), 3, "one batch per pass");
+  assert.deepEqual(rig.github.calls, [], "no per-record fallback or effects");
 });
 
 Deno.test("input gate: the clock passing a wait or stamp deadline steps the record again", async () => {
