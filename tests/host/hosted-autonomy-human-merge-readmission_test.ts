@@ -93,11 +93,13 @@ const candidate: HumanMergeCandidateV1 = {
   repository: SELF_REPO,
   branch: BRANCH,
   head: HEAD,
+  pullRequest: null,
   parkedBy: "head_mismatch",
 };
 
 const offBaseCandidate: HumanMergeCandidateV1 = {
   ...candidate,
+  pullRequest: 51,
   parkedBy: "merge_off_base",
 };
 
@@ -112,6 +114,16 @@ const charge = (): BudgetReservationV1 =>
     settledAt: null,
   });
 
+/** The permanent backoff the completion step's queue guard wrote at review. */
+function stuckReviewBackoff(): WorkRecordV1 {
+  return deliveryRecord({
+    nextStep: "review",
+    blocker: null,
+    wait: { reason: "backoff", since: T0 + 5000, until: null },
+    intent: null,
+  });
+}
+
 Deno.test("human merge readmission: only the exact retired park is planned", () => {
   assert.deepEqual(planHumanMergeHeadReadmissions(repairSnapshot([parked()])), [
     candidate,
@@ -125,6 +137,30 @@ Deno.test("human merge readmission: only the exact retired park is planned", () 
     planHumanMergeHeadReadmissions(repairSnapshot([deliveryRecord({})])),
     [],
     "an ordinary record is never planned",
+  );
+  assert.deepEqual(
+    planHumanMergeHeadReadmissions(
+      repairSnapshot([stuckReviewBackoff()]),
+    ),
+    [{
+      id: TARGET,
+      repository: SELF_REPO,
+      branch: BRANCH,
+      head: HEAD,
+      pullRequest: 51,
+      parkedBy: "review_backoff",
+    }],
+    "the stuck review backoff is planned for correction",
+  );
+  assert.deepEqual(
+    planHumanMergeHeadReadmissions(repairSnapshot([deliveryRecord({
+      nextStep: "review",
+      blocker: null,
+      wait: { reason: "backoff", since: T0 + 5000, until: T0 + 60_000 },
+      intent: null,
+    })])),
+    [],
+    "a bounded backoff is already retryable and is never rewritten",
   );
   const other = parked({
     blocker: {
@@ -192,6 +228,74 @@ Deno.test("human merge readmission: a moved-base park readmits only a human merg
     "merge_by_sentinel",
     "the runtime's own trusted off-base merge keeps its refusal",
   );
+});
+
+Deno.test("human merge readmission: the stuck review backoff re-admits only its merged human pull", () => {
+  const stuck: HumanMergeCandidateV1 = {
+    ...candidate,
+    pullRequest: 51,
+    parkedBy: "review_backoff",
+  };
+  const readmit = decideHumanMergeHeadReadmission(
+    stuck,
+    [mergedPull()],
+    "development",
+    "0x4007",
+  );
+  assert.equal(readmit.kind, "readmit");
+  if (readmit.kind !== "readmit") return;
+  assert.equal(readmit.readmission.detail, "human_merge_review_backoff");
+  const refused = (mergedBy: string | null | undefined) => {
+    const verdict = decideHumanMergeHeadReadmission(
+      stuck,
+      [mergedPull()],
+      "development",
+      mergedBy,
+    );
+    return verdict.kind === "refused" ? verdict.reason : "readmit";
+  };
+  assert.equal(refused(undefined), "merge_actor_unreadable");
+  assert.equal(
+    refused("ubiquity-sentinel[bot]"),
+    "merge_by_sentinel",
+    "a genuine queue-custody hold is never released",
+  );
+  assert.equal(
+    decideHumanMergeHeadReadmission(
+      stuck,
+      [mergedPull({ number: 52 })],
+      "development",
+      "0x4007",
+    ).kind,
+    "refused",
+    "a different pull never corrects the retained identity",
+  );
+  assert.equal(
+    decideHumanMergeHeadReadmission(
+      stuck,
+      [mergedPull({ state: "open", merged: false })],
+      "development",
+      "0x4007",
+    ).kind,
+    "refused",
+    "an open queue custody hold is never released",
+  );
+});
+
+Deno.test("human merge readmission: the stuck review backoff clears its wait on the record", () => {
+  const snapshot = repairSnapshot([stuckReviewBackoff()]);
+  const applied = applyHumanMergeReadmissions(snapshot, [{
+    id: TARGET,
+    repository: SELF_REPO,
+    pullRequest: 51,
+    detail: "human_merge_review_backoff",
+  }], NOW);
+  const work = applied.work[0]!;
+  assert.equal(work.nextStep, "review");
+  assert.equal(work.wait, null, "the permanent wait is cleared");
+  assert.equal(work.blocker, null);
+  assert.equal(work.intent, null);
+  assert.equal(work.target.pr, 51);
 });
 
 Deno.test("human merge readmission: an open, foreign or off-base pull is refused", () => {
