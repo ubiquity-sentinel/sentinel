@@ -7,6 +7,7 @@
  * merge intent; any other conflict parks for the owner with the proof kept.
  */
 import assert from "node:assert/strict";
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { portError, portOk } from "../../src/contracts/ports.ts";
 import type { PortErrorV1 } from "../../src/contracts/ports.ts";
 import type { SelfMergeProofV1 } from "../../src/contracts/self-merge.ts";
@@ -123,6 +124,7 @@ async function recover(
     state,
     github,
     githubCooldown: new DurableGitHubCooldownGate({ state, clock }),
+    ciMinutes: INACTIVE_CI_MINUTES,
   } as unknown as RepairCycleDepsV1;
   const read = await state.readRepair();
   assert.ok(read.ok && read.value.status === "found");

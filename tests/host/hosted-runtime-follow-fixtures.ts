@@ -297,6 +297,8 @@ export class FollowFake {
     "normal";
   intercept?: (request: HttpRequestV1, url: URL) => HttpResponseV1 | undefined;
   treeTruncated = false;
+  /** Injected pauses before re-reading an inconsistent listing. */
+  listPauses = 0;
   /** Commit → its `.github/workflows` tree id (default shared by all). */
   workflowTrees = new Map<string, string>();
   private sourceTrees = new Map<string, { path: string; sha: string }>();
@@ -314,6 +316,10 @@ export class FollowFake {
       ...options,
       clock: { now: () => this.now },
       log: (journal) => this.journals.push(journal),
+      listPause: () => {
+        this.listPauses++;
+        return Promise.resolve();
+      },
     });
   }
 

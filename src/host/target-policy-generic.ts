@@ -228,14 +228,21 @@ export function genericTargetProtectedPathsV1(
   return paths;
 }
 
+/** Exact template basenames are exempt from the `.env*` family, not explicit protection. */
+function isProtectedEnvPath(path: string): boolean {
+  const normalized = normalizePath(path);
+  const base = normalized.slice(normalized.lastIndexOf("/") + 1);
+  return base.startsWith(".env") &&
+    ![".env.example", ".env.sample", ".env.template"].includes(base);
+}
+
 /** Whether a repository-relative candidate path hits the generic boundary. */
 export function isGenericTargetProtectedPathV1(
   path: string,
   extra: readonly string[] = [],
 ): boolean {
   const normalized = normalizePath(path);
-  const base = normalized.slice(normalized.lastIndexOf("/") + 1);
-  if (base.startsWith(".env")) return true;
+  if (isProtectedEnvPath(normalized)) return true;
   return touchesProtected(genericTargetProtectedPathsV1(extra), normalized);
 }
 
@@ -295,12 +302,9 @@ export function createGenericTargetPolicyV1(
     version: "v1",
     commands: { [commandId]: verify ?? NO_LOCAL_VERIFY_COMMAND },
   });
-  // `.env*` is a family, not one literal: every env file the checkout shows is
-  // added by its exact relative path so array-only consumers protect it too.
-  const envFiles = facts.files.filter((file) => {
-    const normalized = normalizePath(file);
-    return normalized.slice(normalized.lastIndexOf("/") + 1).startsWith(".env");
-  });
+  // Add exact paths for non-template `.env*` files so array-only consumers
+  // enforce the same family rule as the path predicate.
+  const envFiles = facts.files.filter(isProtectedEnvPath);
   return {
     adapter: { kind: "github" },
     commands: { test: commandId, replay: commandId },

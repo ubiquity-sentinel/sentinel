@@ -15,7 +15,11 @@ import {
   parseStepLine,
   STEP_LINE_KIND,
   STEP_LINE_OUTCOMES,
+  STEP_LINE_REASONS,
+  stepLineReason,
 } from "../../src/repair/step-line.ts";
+import { CI_VALIDATION_DEFERRED_PREFIX } from "../../src/repair/ci-readiness.ts";
+import { DELIVERY_QUEUE_DEFERRED_PREFIX } from "../../src/repair/loop-delivery-queue.ts";
 import { SHA1 } from "../state/helpers.ts";
 import {
   childLine,
@@ -98,6 +102,40 @@ Deno.test("step line: one cycle prints at most its bound, and junk is never prin
     "state_error",
     "deferred",
   ]);
+});
+
+Deno.test("step line: a recognized deferral carries its closed reason code", () => {
+  const lines: string[] = [];
+  const log = createStepLog((line) => lines.push(line), 10);
+  const record = {
+    id: asWorkItemId("issue-ubiquity-sentinel-254"),
+    nextStep: "work",
+  } as const;
+  log(record, "deferred", 1, `${DELIVERY_QUEUE_DEFERRED_PREFIX}issue-9 first`);
+  log(record, "deferred", 2, `${CI_VALIDATION_DEFERRED_PREFIX}issue-9 first`);
+  log(record, "deferred", 3, "review PR observation unavailable");
+  log(record, "progress", 4);
+  const parsed = lines.map((line) => JSON.parse(line));
+  assert.deepEqual(parsed.map((line) => line.reason ?? null), [
+    "delivery_line",
+    "ci_line",
+    null,
+    null,
+  ], "only a recognized deferral names a reason");
+  for (const line of parsed) {
+    assert.deepEqual(parseStepLine(line), line, "exact closed shape");
+    assert.equal(
+      JSON.stringify(line).includes("issue-9"),
+      false,
+      "no detail, record id or payload of the holder reaches the line",
+    );
+  }
+  // The reason is a closed vocabulary: anything else is not a step line.
+  assert.equal(parseStepLine({ ...parsed[0], reason: "something" }), null);
+  assert.equal(parseStepLine({ ...parsed[0], reason: 7 }), null);
+  assert.deepEqual([...STEP_LINE_REASONS], ["delivery_line", "ci_line"]);
+  assert.equal(stepLineReason(undefined), null);
+  assert.equal(stepLineReason("delivery queue"), null);
 });
 
 Deno.test("step line: a matrix-skip summary above the step-line bound round-trips", () => {

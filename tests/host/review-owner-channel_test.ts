@@ -183,14 +183,67 @@ function answerRequests(directory: string): () => Promise<void> {
 /** Count listings of one directory without changing what they show. */
 function countListings(directory: string): {
   count(): number;
+  /** Event frames the latest listing showed. */
+  framesListed(): number;
   restore(): void;
 } {
   let listings = 0;
-  const restore = stubListing(directory, () => {
+  let frames = 0;
+  const restore = stubListing(directory, (names) => {
     listings++;
+    frames = names.filter((name) => counterOf(name) !== null).length;
     return new Set();
   });
-  return { count: () => listings, restore };
+  return { count: () => listings, framesListed: () => frames, restore };
+}
+
+/**
+ * Replace Deno.watchFs for exactly one directory with events only the test
+ * sends. The client's own removal of a consumed frame then never lands a
+ * watcher-driven listing at a moment the test cannot observe: every listing
+ * is one the client starts itself or answers an event the test sent.
+ */
+function controlWatcher(directory: string): {
+  notify(): void;
+  restore(): void;
+} {
+  const realWatchFs = Deno.watchFs;
+  const queued: Deno.FsEvent[] = [];
+  let wake = () => {};
+  let closed = false;
+  Deno.watchFs = (paths, options) => {
+    if (String(paths) !== directory) return realWatchFs(paths, options);
+    const events = (async function* () {
+      while (!closed || queued.length > 0) {
+        const event = queued.shift();
+        if (event !== undefined) yield event;
+        else {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+      }
+    })();
+    return {
+      close() {
+        closed = true;
+        wake();
+      },
+      [Symbol.asyncIterator]: () => events,
+      [Symbol.dispose]() {
+        this.close();
+      },
+    };
+  };
+  return {
+    notify() {
+      queued.push({ kind: "create", paths: [directory] });
+      wake();
+    },
+    restore() {
+      Deno.watchFs = realWatchFs;
+    },
+  };
 }
 
 Deno.test("review channel: a listing that shows frame k+1 before frame k still dispatches k then k+1", async () => {
@@ -556,22 +609,34 @@ Deno.test("review channel: a frame a listing past the deadline missed is deliver
 Deno.test("review channel: a missing frame with nothing after it never rescans on its own", async () => {
   const directory = await tempChannel();
   await writeEvent(directory, 1, "A", "item/started", { seq: 1 });
+  const watcher = controlWatcher(directory);
   const listings = countListings(directory);
   const skips = captureSkips();
   const { client, seqs } = openClient(directory, 100);
   try {
-    assert.ok(await waitFor(() => seqs.length >= 1, 3_000));
+    // The client's own work ends with its third listing: the first, the one
+    // registering the handler wakes, and the refill after delivering frame 1.
+    assert.ok(
+      await waitFor(() => seqs.length >= 1 && listings.count() >= 3, 3_000),
+      "frame 1 delivered and its refill listed",
+    );
     // Frame 2 is never written and nothing later is visible: no gap, no spin.
     const quiet = listings.count();
     await new Promise((resolve) => setTimeout(resolve, 400));
     assert.equal(listings.count(), quiet);
     // A later frame opens the gap; it is skipped after the deadline.
     await writeEvent(directory, 3, "A", "item/completed", { seq: 3 });
+    watcher.notify();
     assert.ok(await waitFor(() => seqs.length >= 2, 3_000));
     assert.deepEqual(seqs, [1, 3]);
     assert.deepEqual(skippedCounters(skips.lines, 100), [2]);
+    // Every listing of the gap showed frame 3; the client removes it before
+    // its refill, so a listing without frames is that refill.
+    assert.ok(
+      await waitFor(() => listings.framesListed() === 0, 3_000),
+      "frame 3 refill listed",
+    );
     // Nothing is held after the skip: the client stops rescanning again.
-    await new Promise((resolve) => setTimeout(resolve, 50));
     const settled = listings.count();
     await new Promise((resolve) => setTimeout(resolve, 400));
     assert.equal(listings.count(), settled);
@@ -579,6 +644,7 @@ Deno.test("review channel: a missing frame with nothing after it never rescans o
     await client.close();
     skips.restore();
     listings.restore();
+    watcher.restore();
     await Deno.remove(directory, { recursive: true });
   }
 });

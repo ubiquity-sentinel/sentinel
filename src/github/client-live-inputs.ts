@@ -104,7 +104,7 @@ function chunkQuery(items: ChunkItem[]): LiveInputsChunkV1 {
         `${item.alias}: pullRequest(number: ${item.number}) { number state ` +
           "headRefOid baseRefOid baseRefName " +
           "commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } } " +
-          "reviews(last: 1) { nodes { databaseId } } }",
+          "reviews(last: 1) { nodes { fullDatabaseId } } }",
       );
     } else {
       declarations.push(`$${item.variable}: String!`);
@@ -231,11 +231,28 @@ function parsePull(
     checks: commits.length === 0
       ? "none"
       : rollup(commits[0], `${path}.commits.nodes[0]`, head),
-    latestReview: reviews.length === 0 ? null : expectPositiveInt(
-      expectRecord(reviews[0], `${path}.reviews.nodes[0]`).databaseId,
-      `${path}.reviews.nodes[0].databaseId`,
-    ),
+    latestReview: reviews.length === 0
+      ? null
+      : reviewDatabaseId(reviews[0], `${path}.reviews.nodes[0]`),
   };
+}
+
+/**
+ * The deprecated 32-bit databaseId may be null on a real review, failing the
+ * entire repository batch. fullDatabaseId is a BigInt decimal string; keep
+ * the shared numeric ID exact, refusing anything outside its safe range.
+ */
+function reviewDatabaseId(raw: unknown, path: string): number {
+  const idPath = `${path}.fullDatabaseId`;
+  const text = expectNonEmptyString(
+    expectRecord(raw, path).fullDatabaseId,
+    idPath,
+    16,
+  );
+  if (!/^[1-9][0-9]*$/.test(text)) {
+    fail(idPath, "invalid_count", "expected positive decimal review id");
+  }
+  return expectPositiveInt(Number(text), idPath);
 }
 
 function rollup(raw: unknown, path: string, head: GitSha): LiveCheckRollupV1 {

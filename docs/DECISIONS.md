@@ -3801,7 +3801,15 @@ standing approval above. Applied as follows.
   again, every waiting head is asked at the plain 30 minutes. Every run of a
   head is now re-run, not only the newest per workflow, because the launcher's
   green read needs every check run green and a Passport head has a pull_request
-  run and two push runs of one workflow. It writes no state.
+  run and two push runs of one workflow. It writes no state. Corrected
+  2026-11-12: the wait now doubles up to 24 hours. At 12 hours a run reached
+  attempt 40 after about 18 days, inside GitHub's 30-day window, and was never
+  asked again, so a stop that lasted until the monthly minute reset (Prospector
+  and Passport from 2026-11-05; the owner pays for no CI) left every pre-review
+  park on `<check>(not_started)` without a fresh run on its exact head, which
+  the green and CI-fix rules need to re-admit it. At 24 hours a run ends the
+  window near attempt 35; the 40-attempt cap, the per-pass bounds and the
+  CI-minute admission of each re-run are unchanged.
 - Unchanged: the merge gate's required-check verdict (`requiredChecksState`, a
   protected path) still never treats a never-started run as green; the
   launcher's green read (`hasAllChecksGreen`) is unchanged; every CI fix is
@@ -4665,3 +4673,34 @@ When a current month has no ledger, recovery reads the latest earlier calendar l
 Full-catalog refreshes span bounded existing native turns. Incomplete slices hold managed effects until a complete pass is available, which can delay admission across many turns. A ready observation may serve later reserves only within its native composition's fixed deadline, policy and UTC month; every reserve still revalidates effect facts and current CAS debits. No updated-since API, retirement cutoff or atomic organization-wide snapshot is assumed.
 
 Source publication, canonical CI, deterministic installation and live guard acceptance are separate gates. The scoped CI integration coordinator reconciles concurrent source by ancestry-preserving fast-forward publication; the existing release controller retains exclusive pointer installation and exact-prior rollback authority. Publication requires verified sanitized task history with the same final tree as the accepted source; preserve original private preparation tips outside the publication graph and verify their sanitized counterparts. Other owners' work and runtime model policy remain unchanged.
+
+## 2026-11-14: hand-backs stepped in the same run
+
+A repository cell's delta now carries no row of a record it hands back, and
+its base digest binds only the records it kept; finalize drops the stamps of
+an applied delta's hand-backs itself. Once every `repair_cell` job of the run
+attempt has completed, the serial repair job reads the cells' deltas,
+authenticated exactly as finalize authenticates them, and wakes each
+handed-back record the plan delegated to that cell, so its step runs in the
+same run instead of on the next plan (about 33 minutes later). The read is
+bounded (the consumer window or ten minutes, at most four authenticated
+reads); one advisory `sentinel_repair_handback` line counts the records
+woken. Every effect stays in the serial trusted path, with every CI, review,
+refresh-line, custody, accounting and CI-minute gate unchanged. A hand-back
+not read in time, not authenticated, or of a target whose cycle already ended
+falls back to finalize's hand-back and the next plan, as before.
+
+Version skew: a finalize from before this change rejects a delta carrying
+hand-backs through the existing path (`base_moved`; that cell's records are
+unstamped and handed back). A delta sealed by an earlier cell (whole-scope
+digest, stamp drop as a transition) still applies while that scope is
+unchanged; its row of a handed-back record may only drop that record's stamp.
+Known limits: a review started by a takeover can extend that run's serial job
+by up to one review, and in a rare window a cell keeps a `base_refresh` or
+`merge` intent while the takeover steps the front of the same line. The
+serial job's no-delegation line now carries `outcome` instead of `status`,
+which the launcher's child-status scan read as a second result record.
+
+Made under the owner's 2026-11-12 throughput grant; this supersedes only the
+"next plan" timing in the 2026-11-05 repository-cells entry. Rollback: revert
+these commits; no repair-state format changed.

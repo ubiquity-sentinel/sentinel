@@ -235,6 +235,15 @@ export interface CarriedPatchProofV1 {
    * parent is the head it refreshed).
    */
   refreshes: number;
+  /**
+   * Base drift (2026-11-12): true exactly when the digests differ only
+   * because the base edited reviewed text files beside the reviewed hunks:
+   * both sides change the same paths with the same modes, and each differing
+   * path's refreshed content is the clean line merge of the reviewed change
+   * and the base's change to it (`github/carried-drift.ts`). Absent from
+   * every other proof; it authorizes nothing by itself (`carriedChangeHolds`).
+   */
+  driftCarried?: boolean;
 }
 
 /**
@@ -251,6 +260,26 @@ export function carriedPatchHolds(
     proof.reviewedPatch === proof.refreshedPatch &&
     proof.refreshedMergeBase === request.base &&
     request.head !== request.reviewedHead;
+}
+
+/**
+ * True exactly when the refreshed head carries the reviewed CHANGE: the exact
+ * patch (`carriedPatchHolds`), or, only when `acrossDrift` (the repository's
+ * carried consumers all decide drift, `carriedDriftAllowed`), the reviewed
+ * change carried hunk for hunk across base drift (`driftCarried`) by a
+ * refreshed head that contains its own base and is not the reviewed head.
+ */
+export function carriedChangeHolds(
+  request: CarriedPatchRequestV1,
+  proof: CarriedPatchProofV1,
+  acrossDrift: boolean,
+): boolean {
+  return carriedPatchHolds(request, proof) ||
+    (acrossDrift && proof.driftCarried === true &&
+      /^[0-9a-f]{64}$/.test(proof.reviewedPatch) &&
+      /^[0-9a-f]{64}$/.test(proof.refreshedPatch) &&
+      proof.refreshedMergeBase === request.base &&
+      request.head !== request.reviewedHead);
 }
 
 /**

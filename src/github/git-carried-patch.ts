@@ -29,6 +29,13 @@
  * reviewed head to the refreshed one (the refreshes the patch was carried
  * through), so the runtime bounds both without a state field.
  *
+ * When the refreshed head is on its tip and the two digests differ, the proof
+ * also decides base drift (`carried-drift.ts`) over both raw listings and the
+ * exact blobs (`git cat-file blob`, bounded): `driftCarried` is true exactly
+ * when every differing path is a text file whose refreshed content is the
+ * clean line merge of the reviewed change and the base's change. The digests
+ * are unchanged by it; an unreadable blob makes the proof unavailable.
+ *
  * Every command only reads the local object store: no checkout, index or ref
  * update, no hook, no network and no credential. A missing object, a bound or
  * an unreadable result is a typed failure, never a proof; the decision itself
@@ -42,6 +49,13 @@ import {
   portOk,
   type PortResultV1,
 } from "../contracts/ports.ts";
+import {
+  byteString,
+  CARRIED_DRIFT_MAX_BLOB_BYTES,
+  carriedAcrossDrift,
+  type CarriedBlobReadV1,
+  type CarriedPathChangeV1,
+} from "./carried-drift.ts";
 
 /** One bounded git run over the trusted local store (stdout bytes kept). */
 export type CarriedPatchGitRunV1 = (
@@ -68,6 +82,7 @@ const STATIC_MERGE_BASE = "carried patch merge base is not unique";
 const STATIC_PATCH = "carried patch could not be read";
 const STATIC_BOUND = "carried patch exceeded its bound";
 const STATIC_LINEAGE = "carried patch lineage could not be read";
+const STATIC_DRIFT = "carried patch drift could not be read";
 
 /**
  * Fixed rendering of every patch: configuration in the local store can never
@@ -179,16 +194,22 @@ async function diffBytes(
   return portOk(bytes);
 }
 
+/** One side's digest and the raw listing it hashed. */
+interface SideDigest {
+  digest: string;
+  raw: Uint8Array;
+}
+
 /**
  * SHA-256 (lowercase hex) of one side's exact merge-base change: the decimal
  * byte length of its raw listing and a newline, that listing, then the patch
  * bytes (the length makes the boundary unambiguous).
  */
-export async function patchDigest(
+async function sideDigest(
   run: CarriedPatchGitRunV1,
   from: GitSha,
   to: GitSha,
-): Promise<PortResultV1<string>> {
+): Promise<PortResultV1<SideDigest>> {
   const raw = await diffBytes(run, RAW_ARGS, from, to);
   if (!raw.ok) return raw;
   const patch = await diffBytes(run, PATCH_ARGS, from, to);
@@ -201,9 +222,83 @@ export async function patchDigest(
   input.set(raw.value, header.byteLength);
   input.set(patch.value, header.byteLength + raw.value.byteLength);
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", input));
-  return portOk(
-    Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+  return portOk({
+    digest: Array.from(digest, (byte) => byte.toString(16).padStart(2, "0"))
+      .join(""),
+    raw: raw.value,
+  });
+}
+
+/** `sideDigest`'s digest alone. */
+export async function patchDigest(
+  run: CarriedPatchGitRunV1,
+  from: GitSha,
+  to: GitSha,
+): Promise<PortResultV1<string>> {
+  const side = await sideDigest(run, from, to);
+  return side.ok ? portOk(side.value.digest) : side;
+}
+
+const RAW_ENTRY =
+  /^:([0-7]{6}) ([0-7]{6}) ([0-9a-f]{40}) ([0-9a-f]{40}) ([ADMT])$/;
+const ABSENT_MODE = "000000";
+
+/**
+ * The change set of one fixed raw listing (`RAW_ARGS`: no renames, so one
+ * path per entry), each absent side as null; null for any other shape.
+ */
+export function parseRawChanges(raw: Uint8Array): CarriedPathChangeV1[] | null {
+  const fields = byteString(raw).split("\0");
+  if (fields.pop() !== "" || fields.length % 2 !== 0) return null;
+  const changes: CarriedPathChangeV1[] = [];
+  for (let index = 0; index < fields.length; index += 2) {
+    const entry = RAW_ENTRY.exec(fields[index]);
+    const path = fields[index + 1];
+    if (entry === null || path.length === 0) return null;
+    const [, oldMode, newMode, oldSha, newSha] = entry;
+    changes.push({
+      path,
+      oldMode: oldMode === ABSENT_MODE ? null : oldMode,
+      oldSha: oldMode === ABSENT_MODE ? null : oldSha,
+      newMode: newMode === ABSENT_MODE ? null : newMode,
+      newSha: newMode === ABSENT_MODE ? null : newSha,
+    });
+  }
+  return changes;
+}
+
+/**
+ * The drift verdict of two raw listings over the local object store: true
+ * when the refreshed change set carries the reviewed one across base drift,
+ * false when it does not (or a listing has another shape), a typed failure
+ * when a blob it needs cannot be read.
+ */
+async function driftCarried(
+  run: CarriedPatchGitRunV1,
+  reviewedRaw: Uint8Array,
+  refreshedRaw: Uint8Array,
+): Promise<PortResultV1<boolean>> {
+  const reviewed = parseRawChanges(reviewedRaw);
+  const refreshed = parseRawChanges(refreshedRaw);
+  if (reviewed === null || refreshed === null) return portOk(false);
+  const verdict = await carriedAcrossDrift(
+    reviewed,
+    refreshed,
+    async (sha): Promise<CarriedBlobReadV1> => {
+      const result = await run(
+        ["cat-file", "blob", sha],
+        CARRIED_DRIFT_MAX_BLOB_BYTES,
+      );
+      if (result.overflow === true) return "too_large";
+      return result.ok && result.stdoutBytes !== undefined
+        ? result.stdoutBytes
+        : null;
+    },
   );
+  if (verdict.kind === "unavailable") {
+    return portError("unavailable", STATIC_DRIFT);
+  }
+  return portOk(verdict.kind === "carried");
 }
 
 /** The first parent of `head`, or null for a root commit. */
@@ -267,13 +362,13 @@ export async function proveCarriedPatchWithGit(
   if (!reviewedMergeBase.ok) return reviewedMergeBase;
   const refreshedMergeBase = await uniqueMergeBase(run, base, head);
   if (!refreshedMergeBase.ok) return refreshedMergeBase;
-  const reviewedPatch = await patchDigest(
+  const reviewedPatch = await sideDigest(
     run,
     reviewedMergeBase.value,
     reviewedHead,
   );
   if (!reviewedPatch.ok) return reviewedPatch;
-  const refreshedPatch = await patchDigest(
+  const refreshedPatch = await sideDigest(
     run,
     refreshedMergeBase.value,
     head,
@@ -283,12 +378,28 @@ export async function proveCarriedPatchWithGit(
   if (!refreshedFrom.ok) return refreshedFrom;
   const refreshes = await firstParentDistance(run, reviewedHead, head);
   if (!refreshes.ok) return refreshes;
+  // Base drift is decided only where it could matter: a refreshed head on its
+  // own tip whose exact digest differs from the reviewed one.
+  let drift = false;
+  if (
+    refreshedMergeBase.value === base &&
+    reviewedPatch.value.digest !== refreshedPatch.value.digest
+  ) {
+    const carried = await driftCarried(
+      run,
+      reviewedPatch.value.raw,
+      refreshedPatch.value.raw,
+    );
+    if (!carried.ok) return carried;
+    drift = carried.value;
+  }
   return portOk({
     reviewedMergeBase: reviewedMergeBase.value,
-    reviewedPatch: reviewedPatch.value,
+    reviewedPatch: reviewedPatch.value.digest,
     refreshedMergeBase: refreshedMergeBase.value,
-    refreshedPatch: refreshedPatch.value,
+    refreshedPatch: refreshedPatch.value.digest,
     refreshedFrom: refreshedFrom.value,
     refreshes: refreshes.value,
+    ...(drift ? { driftCarried: true } : {}),
   });
 }
