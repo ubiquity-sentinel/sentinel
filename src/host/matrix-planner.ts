@@ -36,7 +36,10 @@ import {
   HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE,
   pendingConflictResolution,
 } from "../repair/conflict-resolution.ts";
-import { roundLeftForStart } from "../repair/loop-eligibility.ts";
+import {
+  existingHeadContinuationShape,
+  roundLeftForStart,
+} from "../repair/loop-eligibility.ts";
 import type { LegacyCutoff } from "../repair/review-round-cap.ts";
 import { rankEligibleWork } from "../repair/selection.ts";
 import {
@@ -226,7 +229,12 @@ export function explainMatrixNotReady(
     return `intent=${record.intent.key}`;
   }
   const candidateState = record.target.candidateState;
-  if (candidateState !== undefined && candidateState.preserved === null) {
+  // A published head with no descriptor is admitted through the
+  // existing-published-head continuation, so it is not a refusal reason.
+  if (
+    candidateState !== undefined && candidateState.preserved === null &&
+    !existingHeadContinuationShape(record)
+  ) {
     return "candidateState.preserved=null";
   }
   if (record.target.branch === null) {
@@ -236,7 +244,12 @@ export function explainMatrixNotReady(
     return "config.sessionBound=null";
   }
   if (record.target.head !== null) {
-    return "target.head-not-null";
+    // A continuation record is eligible on its snapshot shape; its exact head
+    // is re-proved against the live pull request and its CI at admission, so a
+    // refused one is named by this start kind, never by a missing head.
+    return existingHeadContinuationShape(record)
+      ? "existing_head_continuation_live"
+      : "target.head-not-null";
   }
   return null;
 }
@@ -532,6 +545,12 @@ export async function planMatrixWave(
           JSON.stringify(manifest([...cells, candidate]), null, 2) + "\n",
         ).length <= MAX_MATRIX_ARTIFACT_BYTES;
       },
+      // The planner authorizes the existing-published-head continuation: a
+      // custody_ready record with no preserved candidate is corrected on its
+      // exact published head (the admission re-proves that head and its live
+      // CI failure before anything is charged) instead of a fresh start from
+      // the base, which would overwrite the unverified head.
+      { existingHeadContinuation: true },
     );
     if (outcome.kind !== "prepared") {
       deferred++;
