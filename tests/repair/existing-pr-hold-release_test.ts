@@ -16,7 +16,12 @@ import {
   releasableExistingPrHold,
 } from "../../src/repair/loop-existing-pr.ts";
 import { SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
-import { FakeClock, FakeGithub, MemoryState } from "./helpers.ts";
+import {
+  FakeClock,
+  FakeGithub,
+  MemoryState,
+  repairConfigs,
+} from "./helpers.ts";
 import { seededSnapshot } from "./loop-rig.ts";
 
 const blocked = (
@@ -74,6 +79,7 @@ function rig(work: WorkRecordV1[], activated?: boolean) {
     clock,
     state,
     github,
+    configs: repairConfigs(),
     githubCooldown: new DurableGitHubCooldownGate({ state, clock }),
   } as unknown as RepairCycleDepsV1;
   const context = async (): Promise<LoopContextV1> => {
