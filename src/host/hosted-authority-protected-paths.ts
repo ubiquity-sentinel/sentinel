@@ -16,6 +16,9 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     // default branch every five minutes with `actions: write` and
     // `contents: write`) and the pre-merge CI dispatch on the target token.
     "src/host/supervisor-dispatch.ts",
+    // Its fast-failure backoff: whether the supervisor is dispatched now, and
+    // the dispatcher's own successor dispatch on the same token.
+    "src/host/supervisor-dispatch-backoff.ts",
     "src/host/actions-premerge-ci.ts",
     // Native-token auto-follow: the launcher SHA choice, the exact-head CI and
     // ancestry proof, the `actions: write` dispatch that advances
@@ -101,6 +104,9 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/host/hosted-app-grant.ts",
     "src/host/actions-target-cycles.ts",
     "src/host/actions-repair-host.ts",
+    // Which committed targets the run's minted token covers (the tolerant
+    // mint's dropped names are excluded before any read).
+    "src/host/target-token-scope.ts",
     // Its per-target mirror preparation: which remote each foreign mirror is
     // seeded and fetched from with the selected write credential.
     "src/host/actions-target-preparation.ts",

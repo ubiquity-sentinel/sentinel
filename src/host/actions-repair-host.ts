@@ -117,6 +117,11 @@ import { createActionsTargetPreparation } from "./actions-target-preparation.ts"
 import { readHostedSelfDependencyPreparer } from "./hosted-self-dependencies.ts";
 import { createPassportDependencyPreparer } from "./passport-dependencies.ts";
 import {
+  grantTokenScopeV1,
+  scopedTargetResolverV1,
+  tokenScopeLineV1,
+} from "./target-token-scope.ts";
+import {
   ensureRepairStateSeed,
   optionalEnv,
   readControllerSha,
@@ -375,6 +380,17 @@ export async function runActionsRepairHost(
   const gitExecutable = await resolveExecutable("git", trustedPath);
   const templateConfig = createLocalRepositoryConfig();
   const readObserver = createTargetReadObserverV1({ now: () => clock.now() });
+  const resolvers = createGitHubTargetResolvers({
+    ...deps,
+    http,
+    token: writeToken,
+    readGate: gate,
+    installationId: targetInstallationId ?? DEFAULT_APP_INSTALLATION_ID,
+    readObserver,
+  });
+  // A listed target the tolerant mint dropped from this token is excluded
+  // before any read (`target-token-scope.ts`), even when it is public.
+  const outOfScope: string[] = [];
   const targets = await loadTargetConfigsV1({
     template: templateConfig,
     // The setting lives in this run's own checkout, exactly as before.
@@ -391,15 +407,19 @@ export async function runActionsRepairHost(
       }),
     },
     // Private targets need the App token; reads share the cooldown gate.
-    ...createGitHubTargetResolvers({
-      ...deps,
-      http,
-      token: writeToken,
-      readGate: gate,
-      installationId: targetInstallationId ?? DEFAULT_APP_INSTALLATION_ID,
-      readObserver,
-    }),
+    ...resolvers,
+    resolveRepository: scopedTargetResolverV1(
+      resolvers.resolveRepository,
+      grantTokenScopeV1(
+        readEnv(HOSTED_APP_MINT_GRANT_ENV),
+        clock.now(),
+        targetInstallationId ?? DEFAULT_APP_INSTALLATION_ID,
+      ),
+      outOfScope,
+    ),
   });
+  const scopeLine = tokenScopeLineV1(outOfScope);
+  if (scopeLine !== null) console.log(JSON.stringify(scopeLine));
   // Owner decision 2026-11-18 (`src/repair/target-visibility.ts`): a private
   // target is never configured, so nothing below reads, plans, runs, reviews,
   // comments on or writes its work. One text-free line counts the skips.
