@@ -15,6 +15,7 @@ import { prepareExistingPrEffect } from "./loop-existing-pr.ts";
 import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { persistWork } from "./loop-state.ts";
+import { preservationRefusalMessage } from "./pre-reservation-checks.ts";
 import type {
   LoopContextV1,
   RepairCycleDepsV1,
@@ -190,7 +191,9 @@ export async function executeCandidatePreservation(
         markBlocked(
           clearIntent(record, at),
           "other",
-          "candidate preservation validation refused",
+          // The unchanged refusal prefix plus the post-inference check that
+          // could not be evaluated before the turn (#333).
+          preservationRefusalMessage(preserved.error.detail),
           at,
         ),
       );

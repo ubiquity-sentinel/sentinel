@@ -17,12 +17,20 @@ import { hasExactKeys } from "./hosted-runtime-status.ts";
 /** Native role selects a fixed entrypoint; no override may impersonate repair. */
 export function runtimeJob(
   value: string | undefined,
-): "repair" | "matrix_plan" | "matrix_cell" {
+): HostedRuntimeChildJobV1 {
   if (
-    value === "repair" || value === "matrix_plan" || value === "matrix_cell"
+    value === "repair" || value === "matrix_plan" ||
+    value === "matrix_cell" || value === "repair_cell"
   ) return value;
   failIdentity();
 }
+
+/** The jobs whose step runs the hosted runtime launcher. */
+export type HostedRuntimeChildJobV1 =
+  | "repair"
+  | "matrix_plan"
+  | "matrix_cell"
+  | "repair_cell";
 
 export function nativeMatrixStdin(
   value: string | undefined,
@@ -33,7 +41,7 @@ export function nativeMatrixStdin(
     return undefined;
   }
   if (value === undefined || value.trim() === "") {
-    if (job === "matrix_cell") failIdentity();
+    if (job === "matrix_cell" || job === "repair_cell") failIdentity();
     return undefined;
   }
   if (new TextEncoder().encode(value).byteLength > 512) failIdentity();
@@ -47,12 +55,19 @@ export function nativeMatrixStdin(
     failIdentity();
   }
   const obj = parsed as Record<string, unknown>;
+  // #328: the serial repair job may also carry the repository fan-out plan's
+  // digest; a repository cell carries both digests and its own cell id.
   const keys = job === "matrix_cell"
     ? ["planDigest", "cellId"]
+    : job === "repair_cell"
+    ? ["planDigest", "repairPlanDigest", "cellId"]
+    : Object.hasOwn(obj, "repairPlanDigest")
+    ? ["planDigest", "repairPlanDigest"]
     : ["planDigest"];
   if (
     !hasExactKeys(obj, keys) || !isDigest(obj.planDigest) ||
-    (job === "matrix_cell" && !isDigest(obj.cellId))
+    (keys.includes("cellId") && !isDigest(obj.cellId)) ||
+    (keys.includes("repairPlanDigest") && !isDigest(obj.repairPlanDigest))
   ) failIdentity();
   return JSON.stringify(obj);
 }

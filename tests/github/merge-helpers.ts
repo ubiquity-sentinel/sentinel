@@ -262,9 +262,35 @@ export function trustedService(): FakeReviewService {
   return service;
 }
 
-export function mergedPort(script: ScriptEntry[]) {
+export const REPO_PATH = "/repos/ubiquity-sentinel/sentinel";
+
+/**
+ * The repository merge settings the port reads for the default squash policy
+ * (#331). `makePort`'s fallback forbids squash, so ordinary merge fixtures
+ * keep the merge-commit shape; a squash case scripts this read itself.
+ */
+export function repoSettingsRead(allowSquashMerge: boolean): ScriptEntry {
+  return {
+    ...httpRespond("GET", REPO_PATH, 200, {
+      full_name: "ubiquity-sentinel/sentinel",
+      allow_squash_merge: allowSquashMerge,
+      allow_merge_commit: true,
+    }),
+    repeat: true,
+  };
+}
+
+export function mergedPort(
+  script: ScriptEntry[],
+  deliveryPolicies?: Readonly<Record<string, unknown>>,
+) {
   const service = trustedService();
-  return makePort({ clock: CLOCK, script, review: service });
+  return makePort({
+    clock: CLOCK,
+    script,
+    review: service,
+    deliveryPolicies,
+  });
 }
 
 export function blockedReason(

@@ -219,11 +219,13 @@ Deno.test("closed preserved-null publication recovers after review retirement", 
 
 Deno.test("closed preserved-null PR with a deleted branch restarts from the base without refunding history", async () => {
   const r = setup({ branchRefSha: null });
+  r.record.target.checkpoint = { branch: r.branch, sha: SHA2 };
   const step = await executeWorkStep(r.deps, r.context(), r.record);
   assert.equal(step.kind, "progress", JSON.stringify(step));
   const after = r.state.repair!.work[0]!;
   assert.equal(after.target.pr, null);
   assert.equal(after.target.head, null);
+  assert.equal(after.target.checkpoint, null);
   assert.deepEqual(after.target.candidateState, {
     preserved: null,
     publishedHead: null,
@@ -368,6 +370,29 @@ Deno.test("matrix planner: deleted closed-publication branch yields a charged fr
     0,
     "the planner grants but never infers",
   );
+});
+
+Deno.test("matrix planner: deleted branch with a stale checkpoint restarts from the current base", async () => {
+  const r = setup({ baseSha: SHA3, branchRefSha: null });
+  r.record.target.checkpoint = { branch: r.branch, sha: SHA2 };
+  const report = await planMatrixWave(r.deps, {
+    waveId: "closed-publication-checkpoint-restart",
+    run: { runId: 4, runAttempt: 1, launcherSha: SHA1 },
+    runtimeSha: SHA1,
+    generation: 1,
+    deadline: T0 + 60 * 60_000,
+    plannedAt: T0,
+  });
+  assert.equal(report.plan.cells.length, 1);
+  assert.equal(report.plan.cells[0]!.request.base, SHA3);
+  const after = r.state.repair!.work[0]!;
+  assert.equal(after.target.base, SHA3);
+  assert.equal(after.target.checkpoint, null);
+  assert.equal(after.counters.attempts, 3);
+  assert.equal(after.counters.retries, 1);
+  assert.equal(r.state.repair!.reservations.length, 1);
+  assert.equal(r.state.repair!.reservations[0]!.purpose, "retry");
+  assert.equal(r.model.requests.length, 0);
 });
 
 Deno.test("closed publication does not treat an unavailable branch read as deletion", async () => {

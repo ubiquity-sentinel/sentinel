@@ -11,7 +11,10 @@ sentinel status
 sentinel run observe
 sentinel run supervisor
 sentinel receipts <run-id>
+sentinel report --since 2026-11-01 [--until 2026-11-07]
 ```
+
+`sentinel report` is a read-only throughput readback: it fetches the `sentinel-state/metrics` ref (per-cycle metrics and daily rollups) and the repair state snapshot through their existing readers, writes nothing, and prints plain tables for an inclusive UTC window of at most 92 days: cycles, merges, refresh commits and target CI runs per merge, and model duty cycle (matrix cell minutes / controller minutes) per day; the planner refusal histogram; merges per day by repository; and the current delivery-queue depth, blocked-cause histogram and longest-waiting live records. A value the data does not record prints `n/a (not recorded)`, never zero. It needs only `--allow-run=git --allow-env=PATH --allow-read=<scratch> --allow-write=<scratch>` (scratch defaults to `/tmp`; `--remote <url-or-path>` selects another state remote) and refuses rather than prompts when a grant is missing.
 
 The 2026-10-20 owner grant authorizes the orchestrator's hosted workflow control, direct development pushes, launcher/runtime/state updates and gated autonomous merges for this effort without repeated approval. The default per-attempt boundary remains for future efforts without equivalent authorization; see the [hosted approval boundary](AGENTS.md#hosted-approval-boundary). Worker assignments retain their narrower permissions.
 

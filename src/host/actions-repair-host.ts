@@ -22,7 +22,7 @@ import { SystemClock } from "../contracts/ports.ts";
 import type { GitHubCooldownGateV1, GitHubPort } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepairCycleOutcomeV1 } from "../repair/loop.ts";
-import { DEFAULT_STEP_LIMIT } from "../repair/loop-bounds.ts";
+import { runBootstrapHealthPass } from "./bootstrap-health-pass.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import { RollingStartBudget } from "../budget/mod.ts";
 import {
@@ -43,6 +43,7 @@ import { GitHubApiClient } from "../github/client.ts";
 import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { fetchHttpTransport } from "../github/http.ts";
 import { runActionsPreflight } from "./actions-preflight.ts";
+import { isReadOnlyCellJob } from "./repair-cell-job.ts";
 import {
   prepareActionsQueueCustody,
   QUEUE_CUSTODY_IDLE_DETAIL,
@@ -57,7 +58,11 @@ import {
   loadTargetConfigsV1,
   STATIC_TARGETS_EMPTY,
 } from "./targets.ts";
-import { createRepairStateStore, DenoGitRunner } from "../state/mod.ts";
+import { DenoGitRunner } from "../state/mod.ts";
+import {
+  createHostedRepairStateStore,
+  hostedCellState,
+} from "./hosted-repair-state.ts";
 import { GATEWAY_BASE_URL, resolveModelRoute } from "./model-route.ts";
 import {
   composeLocalGitHub,
@@ -230,26 +235,19 @@ export async function runActionsRepairHost(
 
   // The state store uses the same authenticated Git transport as publication,
   // but its role is fixed to repair. GitHub state never shares an index or
-  // checkout with the source repository.
-  const stateStore = deps.state ?? createRepairStateStore({
-    scratchDir: scratch,
+  // checkout with the source repository. It also reads the open delivery
+  // trains (#330) its head-of-line refresh defers to. Cells get literal read
+  // capabilities and a refusing write adapter (`hostedCellState`).
+  const stateStore = deps.state ?? createHostedRepairStateStore({
+    scratch,
     remoteUrl: deps.stateRemoteUrl ?? REMOTE_URL,
     runner: new DenoGitRunner(
       joinPath(scratch, "state-git-home"),
       githubGitAuthEnv(githubToken),
     ),
   });
-  // Cells expose literal read capabilities and a refusing internal write adapter.
-  // No helper can accidentally reach the remote repair writer in a cell job.
-  const state = deps.job === "matrix_cell"
-    ? {
-      readRepair: () => stateStore.readRepair(),
-      readRelease: () => stateStore.readRelease(),
-      writeRepair: () =>
-        Promise.resolve(
-          portError("invalid", "matrix cells cannot write shared state"),
-        ),
-    }
+  const state = isReadOnlyCellJob(deps.job)
+    ? hostedCellState(stateStore)
     : stateStore;
   // The saved supervisor pointer must bind exactly this run, attempt, launcher
   // and controller revision BEFORE any repair seed, source, model, preflight or
@@ -267,7 +265,7 @@ export async function runActionsRepairHost(
   const matrixCarrier = childInput.matrix === undefined
     ? undefined
     : parseCarrier(JSON.parse(childInput.matrix), false);
-  if (deps.job !== "matrix_cell") await ensureRepairStateSeed(state, clock);
+  if (!isReadOnlyCellJob(deps.job)) await ensureRepairStateSeed(state, clock);
   // The enforcement mode is injected through the environment and parsed
   // strictly: an absent or empty setting enforces, a typo fails the run before
   // any request, and `off` is the explicit development switch.
@@ -279,7 +277,7 @@ export async function runActionsRepairHost(
     clock,
     mode: cooldownMode,
   });
-  const gate: GitHubCooldownGateV1 = deps.job === "matrix_cell"
+  const gate: GitHubCooldownGateV1 = isReadOnlyCellJob(deps.job)
     ? {
       beforeRequest: (scope) => mutableGate.beforeRequest(scope),
       recordRateLimit: () =>
@@ -404,7 +402,7 @@ export async function runActionsRepairHost(
     selfMintGrant: selfGrant,
     targetInstallationId,
     selfInstallationId,
-    contextsAllowed: identity.job !== "matrix_cell",
+    contextsAllowed: !isReadOnlyCellJob(identity.job),
     sourceProfiles: deps.hostedAppSourceProfiles,
   });
   const { isSelfTarget, tokenFor, loginFor, selfContext } = bindings;
@@ -739,7 +737,7 @@ export async function runActionsRepairHost(
     };
     if (isGatewayTarget(config)) {
       capabilities = unavailableTargetCapabilities();
-      if (deps.job !== "matrix_cell" && deps.gateway !== undefined) {
+      if (!isReadOnlyCellJob(deps.job) && deps.gateway !== undefined) {
         const native = new DenoReplayRuntime(trustedPath);
         const base = await native.run({
           executable: gitExecutable,
@@ -798,7 +796,7 @@ export async function runActionsRepairHost(
     canonicalStringify(runtime.execution) === canonicalStringify(execution) &&
     hostedOrdinaryAdmitted(runtime);
 
-  let queueReady = deps.job === "matrix_cell";
+  let queueReady = isReadOnlyCellJob(deps.job);
   let outcome: RepairCycleOutcomeV1 | null = null;
   let ownerOperationHandled = false;
   let failure: unknown = null;
@@ -820,6 +818,9 @@ export async function runActionsRepairHost(
     }
     if (!queueReady) {
       outcome = { status: "idle", detail: QUEUE_CUSTODY_IDLE_DETAIL };
+    } else if (execution.purpose === "bootstrap" && deps.job === undefined) {
+      // #336: bootstrap is a health pass; the next ordinary pass walks records.
+      outcome = await runBootstrapHealthPass({ state, execution });
     } else {
       ownerOperationHandled = await runOwnerSuccessorReviewPhase(
         {
@@ -857,7 +858,7 @@ export async function runActionsRepairHost(
           githubCooldown: gate,
           premergeCi: bindings.premergeCi,
           // #183 progress comments: the trusted host only, never a matrix cell.
-          progressComments: deps.job === "matrix_cell"
+          progressComments: isReadOnlyCellJob(deps.job)
             ? undefined
             : bindings.progressComments,
           // Legacy callers retain a closed pair; each prepared target resolves its own pair below.
@@ -870,12 +871,9 @@ export async function runActionsRepairHost(
           budget,
           deadline,
           runOrigin,
-          stepLimit: execution.purpose === "bootstrap"
-            ? DEFAULT_STEP_LIMIT
-            : STEP_LIMIT,
-          // Only an ordinary hosted execution may start a model. Bootstrap, prior,
-          // candidate and rollback runs execute the deterministic entrypoint with
-          // no model starts while keeping every budget, limit and source behavior.
+          stepLimit: STEP_LIMIT,
+          // Only an ordinary hosted execution may start a model; prior, candidate
+          // and rollback runs are deterministic with every budget and limit kept.
           modelStartsEnabled: startupReady && healthyOrdinaryExecution,
           externalImplementations: deps.job !== undefined,
           // The legacy review class's cutoff, handed over by the launcher that
@@ -966,12 +964,12 @@ export async function runActionsRepairHost(
   if (failure !== null) throw failure;
   if (outcome === null) throw new Error(STATIC_DEADLINE);
 
-  // Deterministic CI approval for durable self-target candidates runs after
-  // the loop and the tracker drain, even when model startup was unavailable.
-  // The helper is bounded and never throws, so an approval failure cannot
-  // prevent deterministic bookkeeping or change the original error semantics.
+  // Deterministic CI approval for durable self-target candidates runs after the
+  // loop and tracker drain, even without model startup (never for bootstrap).
+  // The bounded helper never throws or changes the original error semantics.
   const ciApproval =
-    deps.job === undefined && queueReady && !ownerOperationHandled
+    deps.job === undefined && queueReady && !ownerOperationHandled &&
+      execution.purpose !== "bootstrap"
       ? await runActionsCiApproval({
         state,
         gate,

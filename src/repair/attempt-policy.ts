@@ -49,6 +49,7 @@ import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { isPassportWorkTrial } from "./passport-work-trial.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { CANDIDATE_COMMIT_REFUSAL_DETAILS } from "./model-port-checkout.ts";
+import { recordAttemptInputs } from "./identical-attempt.ts";
 
 /**
  * Closed settlement details the implementation path already produces. These
@@ -87,6 +88,17 @@ export const ATTEMPT_DETAIL_PROVIDER_THROTTLED =
  */
 export const ATTEMPT_DETAIL_NO_CHANGE =
   "model run completed without any change to its checkout" as const;
+
+/**
+ * Failed settlements that are JUDGED outcomes of their inputs (#334): the
+ * session completed and its result was evaluated (no change at all, or only
+ * generated/cache artifacts). Only these record an input fingerprint; every
+ * incomplete, interrupted, looped, transient or uncertain run does not.
+ */
+export const JUDGED_ATTEMPT_DETAILS: ReadonlySet<string> = new Set([
+  ATTEMPT_DETAIL_NO_CHANGE,
+  ATTEMPT_DETAIL_ARTIFACT_ONLY,
+]);
 
 /**
  * The closed settlement detail of one failed implementation port result.
@@ -493,6 +505,8 @@ export async function attemptMemorySuccessMutationV1(input: {
   now: number;
   /** Authenticated producing runtime of this accepted attempt. */
   runtimeSha: GitSha;
+  /** The accepted candidate head; omitted when not a plain candidate. */
+  producedHead?: GitSha | null;
 }): Promise<(draft: RepairStateSnapshotV1) => void> {
   const runtimeSha = requireAttemptRuntime(input.runtimeSha);
   const purpose: AttemptPurposeV1 = "implementation";
@@ -517,11 +531,24 @@ export async function attemptMemorySuccessMutationV1(input: {
         entries: [],
       }
       : draft.attemptMemory[index];
-    const next = recordAttemptSuccessV1(
-      existing,
-      input.now,
-      runtimeSha,
-    );
+    // #334: an accepted attempt records its inputs only when it reproduced
+    // the exact candidate it started from (`producedHead` equals the input
+    // head): that outcome is judged, and an identical replay can only
+    // reproduce it again. A NEW candidate is never recorded: when it later
+    // goes missing (positive absence) or is otherwise dropped, the record
+    // returns to the same inputs and the fresh attempt must be admitted.
+    const succeeded = recordAttemptSuccessV1(existing, input.now, runtimeSha);
+    const next = input.producedHead !== undefined &&
+        input.producedHead !== null &&
+        input.producedHead === input.record.target.head
+      ? recordAttemptInputs(
+        succeeded,
+        draft,
+        input.record,
+        runtimeSha,
+        input.now,
+      )
+      : succeeded;
     const sorted = [...draft.attemptMemory];
     if (index === -1) {
       sorted.push(next);
@@ -591,7 +618,7 @@ export async function attemptMemorySettlementMutationV1(input: {
         entries: [],
       }
       : draft.attemptMemory[index];
-    const merged = mergeAttemptOutcomeV1(existing, {
+    const outcome = mergeAttemptOutcomeV1(existing, {
       fingerprint,
       stage: classification.stage,
       failureClass: classification.failureClass,
@@ -599,6 +626,19 @@ export async function attemptMemorySettlementMutationV1(input: {
       controllerSha,
       atMs: input.now,
     });
+    // Only a JUDGED outcome is recorded as an input fingerprint (#334): a
+    // session that completed and whose result was evaluated. An incomplete,
+    // interrupted, looped, transient or unknown run proves nothing about its
+    // inputs and keeps the bounded equivalence allowance above.
+    const merged = JUDGED_ATTEMPT_DETAILS.has(input.detail)
+      ? recordAttemptInputs(
+        outcome,
+        draft,
+        input.record,
+        controllerSha,
+        input.now,
+      )
+      : outcome;
     if (index === -1) {
       draft.attemptMemory.push(merged);
     } else {

@@ -15,6 +15,7 @@ import {
   runProof,
   startedFailureProof,
 } from "./actions-supervisor-fixture.ts";
+import { ciRun, FollowFake } from "./hosted-runtime-follow-fixtures.ts";
 
 /** A CI-green launcher revision that descends the failed candidate. */
 const ROLLBACK_FIX = "3".repeat(40) as GitSha;
@@ -113,6 +114,35 @@ Deno.test("rollback latch: stops only its own failed candidate; a new CI-green l
       async () => {
         const before = await rig.snapshot();
         const failed = before.hostedInstallations?.[0];
+        assert.ok(failed);
+        // #276: the dispatcher must deliver the repair despite rollback_failed;
+        // selecting a fresh launcher is the only autonomous way out of the latch.
+        const follow = new FollowFake();
+        // Keep the state commit distinct from the failed candidate fixture SHA.
+        follow.stateHead = "f".repeat(40);
+        follow.installed = before.hostedRuntimes[0].activeRevision;
+        follow.launcher = CANDIDATE;
+        follow.development = ROLLBACK_FIX;
+        follow.parents = new Map([
+          [ROLLBACK_FIX, [CANDIDATE]],
+          [CANDIDATE, [LAUNCHER]],
+          [LAUNCHER, []],
+        ]);
+        follow.ci = new Map([
+          [ROLLBACK_FIX, [ciRun(ROLLBACK_FIX, 30)]],
+          [CANDIDATE, [ciRun(CANDIDATE, 20)]],
+        ]);
+        follow.installations = [{ ...failed }];
+        const followed = await follow.follow();
+        assert.equal(
+          followed.journal.decision,
+          "advanced",
+          JSON.stringify(followed.journal),
+        );
+        assert.equal(followed.launcherSha, ROLLBACK_FIX);
+        assert.equal(followed.safeToDispatch, true);
+        assert.equal(followed.exitCode, 0);
+        assert.equal(follow.mutations, 1);
         const writes: ReleaseStateSnapshotV1[] = [];
         const writeRelease = rig.release.writeRelease.bind(rig.release);
         rig.release.writeRelease = async (next, expectedHead) => {
@@ -123,7 +153,7 @@ Deno.test("rollback latch: stops only its own failed candidate; a new CI-green l
         let bootId: string;
         try {
           const boot = requireRun(
-            await rig.prepare(launcherRun(6, ROLLBACK_FIX)),
+            await rig.prepare(launcherRun(6, followed.launcherSha as GitSha)),
           );
           bootId = boot.id;
           assert.equal(boot.purpose, "bootstrap");
@@ -167,9 +197,10 @@ Deno.test("rollback latch: stops only its own failed candidate; a new CI-green l
       },
     );
 
+    // Retain the bootstrap identity after the reinstall probe settles it.
+    const bootstrap = (await rig.snapshot()).hostedRuntimes[0].execution;
     await t.step("the failed candidate still cannot reinstall", async () => {
       // Settle the fresh install so no in-flight record masks the candidate bar.
-      const bootstrap = (await rig.snapshot()).hostedRuntimes[0].execution;
       assert.ok(bootstrap);
       await settle(rig, bootstrap, "healthy");
       const before = await rig.snapshot();
@@ -177,6 +208,8 @@ Deno.test("rollback latch: stops only its own failed candidate; a new CI-green l
       assert.equal(before.hostedRuntimes[0].execution, null);
       // Refuse before CI checks, not via duplicate-record validation.
       let ciChecks = 0;
+      const verifyMatrixOrdinaryRevision =
+        rig.evidence.verifyMatrixOrdinaryRevision;
       Object.assign(rig.evidence, {
         // Keep ordinary work unavailable during this installation-only probe.
         verifyMatrixOrdinaryRevision: undefined,
@@ -185,7 +218,10 @@ Deno.test("rollback latch: stops only its own failed candidate; a new CI-green l
           return Promise.resolve(portOk({ revision, checkRunId: 91 }));
         },
       });
-      const outcome = await rig.prepare(launcherRun(7));
+      const outcome = await rig.prepare(launcherRun(7)).finally(() => {
+        rig.evidence.verifyMatrixOrdinaryRevision =
+          verifyMatrixOrdinaryRevision;
+      });
       assert.equal(outcome.status, "pending");
       assert.equal(ciChecks, 0);
       const after = await rig.snapshot();
@@ -206,6 +242,46 @@ Deno.test("rollback latch: stops only its own failed candidate; a new CI-green l
       );
       assert.deepEqual(after.hostedRuntimes, before.hostedRuntimes);
     });
+
+    await t.step(
+      "the followed repair resumes ordinary work",
+      async () => {
+        const before = await rig.snapshot();
+        const boot = bootstrap;
+        assert.ok(boot);
+        rig.evidence.revisions.add(ROLLBACK_FIX);
+        const accepted = await rig.snapshot();
+        assert.equal(accepted.hostedInstallations?.[1].phase, "accepted");
+        assert.equal(
+          accepted.hostedRuntimes[0].lastHealthyProof?.execution.id,
+          boot.id,
+        );
+
+        const ordinary = requireRun(
+          await rig.prepare(launcherRun(8, ROLLBACK_FIX)),
+        );
+        assert.equal(ordinary.purpose, "ordinary");
+        assert.equal(ordinary.revision, ROLLBACK_FIX);
+        assert.equal(ordinary.launcherSha, ROLLBACK_FIX);
+        assert.equal(ordinary.generation, 4);
+        assert.equal(
+          hostedOrdinaryAdmitted((await rig.snapshot()).hostedRuntimes[0]),
+          true,
+        );
+        await settle(rig, ordinary, "healthy");
+        const after = await rig.snapshot();
+        assert.equal(after.hostedRuntimes[0].execution, null);
+        assert.equal(after.hostedInstallations?.length, 2);
+        assert.deepEqual(
+          after.hostedInstallations?.[0],
+          before.hostedInstallations?.[0],
+        );
+        assert.equal(
+          after.hostedRuntimes[0].lastHealthyProof?.execution.id,
+          ordinary.id,
+        );
+      },
+    );
   } finally {
     await rig.cleanup();
   }

@@ -17,6 +17,7 @@ import type { GitHubPort } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { implementationIntentKey } from "../repair/keys.ts";
 import {
   createRunBounds,
@@ -29,6 +30,10 @@ import {
 } from "../repair/loop.ts";
 import { attemptEquivalenceRefusalForRecordV1 } from "../repair/attempt-policy.ts";
 import { planDeferredKey } from "./matrix-plan-diagnostic.ts";
+import {
+  classifyMatrixPlanRefusalV1,
+  type MatrixPlanRefusalV1,
+} from "./matrix-plan-refusal.ts";
 import { ciCorrectionRouteOpen } from "../repair/ci-rejection.ts";
 import { preReviewCiFixRouteOpen } from "../repair/ci-first-policy.ts";
 import {
@@ -64,6 +69,7 @@ import {
   NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER,
   NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
 } from "./target-policy-generic.ts";
+import { targetCapabilityRefusesV1 } from "../repair/target-capability.ts";
 
 export interface MatrixPlanOptionsV1 {
   waveId: string;
@@ -105,6 +111,8 @@ export interface MatrixPlanReportV1 {
    * plan.
    */
   memoryRefused: number;
+  /** Closed refusal reason and ready-unplanned count of this pass (#335). */
+  refusal?: MatrixPlanRefusalV1;
 
   /**
    * Diagnostic breakdown of why records were filtered. Present when the
@@ -253,7 +261,7 @@ export function explainMatrixNotReady(
   }
   // The target's own evidence policy is the reason it is never planned, with
   // or without a retained intent; report it before the intent/round filters.
-  if (isNoTestEvidenceConfig(config)) {
+  if (noTestEvidence(config, snapshot, record)) {
     return NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER;
   }
   if (!roundLeftForStart(snapshot, record, ciRouteOpen, cutoff)) {
@@ -298,6 +306,20 @@ function isNoTestEvidenceConfig(config: RepositoryConfigV1): boolean {
 }
 
 /**
+ * No merge test evidence for this record's target: by its loaded policy, or
+ * by the trusted launcher's cached capability verdict (issue #332), which
+ * refuses admission before any reservation until a re-check clears it.
+ */
+function noTestEvidence(
+  config: RepositoryConfigV1,
+  snapshot: Pick<RepairStateSnapshotV1, "targetCapabilities">,
+  record: Pick<WorkRecordV1, "repository">,
+): boolean {
+  return isNoTestEvidenceConfig(config) ||
+    targetCapabilityRefusesV1(snapshot, record.repository);
+}
+
+/**
  * Trusted planner-side park for a target with no merge test evidence. Such a
  * record must never become a matrix cell: its admission would park it before
  * any carrier exists, failing the cell and the whole supervisor run. The park
@@ -329,7 +351,9 @@ async function parkNoTestEvidenceRecords(
       record.intent !== null && !isStaleImplementationIntent(record.intent, now)
     ) continue;
     const config = configForRepository(deps, record.repository);
-    if (config === null || !isNoTestEvidenceConfig(config)) continue;
+    if (config === null || !noTestEvidence(config, context.snapshot, record)) {
+      continue;
+    }
     if (
       !isMatrixImplementationReadyV1(
         record,
@@ -386,8 +410,15 @@ function buildPlanDiagnostic(
     return byRepository[key] ??= { skippedByReason: {}, notReadyByReason: {} };
   };
   for (const [id, reason] of Object.entries(ranked.skipped)) {
+    const record = workById.get(id);
+    // These parked records are counted under their specific reason below.
+    if (
+      record?.blocker?.message.startsWith(NO_CI_AND_NO_LOCAL_VERIFY_BLOCKER)
+    ) {
+      continue;
+    }
     skippedByReason[reason] = (skippedByReason[reason] ?? 0) + 1;
-    const counts = countsOf(workById.get(id));
+    const counts = countsOf(record);
     if (counts !== null) {
       counts.skippedByReason[reason] = (counts.skippedByReason[reason] ?? 0) +
         1;
@@ -485,6 +516,9 @@ export async function planMatrixWave(
   let lastDiagnostic: MatrixPlanDiagnosticV1 | null = null;
   let memoryRefused = 0;
   let noTestEvidenceParked = 0;
+  // #335: why ready records stayed unplanned (see matrix-plan-refusal.ts).
+  let stoppedByDeadline = false;
+  let lastReadyIds: string[] | null = null;
   // A CI correction is granted only where its cell survives a rollback
   // (`ciCorrectionRouteOpen`): in process, and in hosted runs from generation
   // 78, whose rollback target isolates the cell.
@@ -508,11 +542,17 @@ export async function planMatrixWave(
         readAt + config.sessionBound.maxDurationMs + OPERATION_MARGIN_MS <
           bounds.runDeadline
       )
-    ) break;
+    ) {
+      stoppedByDeadline = true;
+      break;
+    }
     const context = await loadRepairContext(deps, bounds);
     if (context === null) break;
     const now = deps.clock.now();
-    if (now >= bounds.modelCutoff || now >= bounds.runDeadline) break;
+    if (now >= bounds.modelCutoff || now >= bounds.runDeadline) {
+      stoppedByDeadline = true;
+      break;
+    }
     const takeover = await reconcileExistingPrs(
       deps,
       context,
@@ -607,8 +647,7 @@ export async function planMatrixWave(
     attempted += parkOutcome.parked;
     noTestEvidenceParked += parkOutcome.parked;
     if (parkOutcome.stateError) break;
-    const nextId = ranked.ordered.find((id) => {
-      if (attemptedIds.has(id) || takeoverRefused.has(id)) return false;
+    const isReady = (id: string) => {
       const record = context.snapshot.work.find((work) => work.id === id);
       if (record === undefined) return false;
       if (
@@ -620,7 +659,8 @@ export async function planMatrixWave(
         return false;
       }
       const config = configForRepository(deps, record.repository);
-      return config !== null && !isNoTestEvidenceConfig(config) &&
+      return config !== null &&
+        !noTestEvidence(config, context.snapshot, record) &&
         isMatrixImplementationReadyV1(
           record,
           context.snapshot,
@@ -631,7 +671,11 @@ export async function planMatrixWave(
           preReviewRouteOpen,
           context.legacyReviewCutoff ?? null,
         );
-    });
+    };
+    lastReadyIds = ranked.ordered.filter(isReady);
+    const nextId = ranked.ordered.find((id) =>
+      !attemptedIds.has(id) && !takeoverRefused.has(id) && isReady(id)
+    );
     if (nextId === undefined) break;
     attemptedIds.add(nextId);
     const record = context.snapshot.work.find((work) => work.id === nextId);
@@ -640,7 +684,7 @@ export async function planMatrixWave(
     if (config === null) continue;
     attempted++;
     if (
-      isNoTestEvidenceConfig(config) ||
+      noTestEvidence(config, context.snapshot, record) ||
       !isMatrixImplementationReadyV1(
         record,
         context.snapshot,
@@ -796,6 +840,15 @@ export async function planMatrixWave(
       }
       : {}),
     memoryRefused,
+    refusal: classifyMatrixPlanRefusalV1({
+      prepared: cells.length,
+      readyIds: lastReadyIds,
+      plannedTaskIds: new Set(cells.map((cell) => cell.taskId as string)),
+      stoppedByDeadline,
+      modelStartsDisabled: bounds.modelCutoff === Number.NEGATIVE_INFINITY,
+      deferredByReason,
+      memoryRefused,
+    }),
   };
 }
 

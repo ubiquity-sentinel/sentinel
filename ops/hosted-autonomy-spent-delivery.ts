@@ -32,12 +32,10 @@ import {
   reviewedIdentity,
 } from "../src/repair/carried-review.ts";
 import { releaseRequestId } from "../src/repair/keys.ts";
-import {
-  releaseRequestMatchesDelivery,
-  touchesProtected,
-} from "../src/repair/loop-records.ts";
+import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import { createLocalRepositoryConfig } from "../src/host/local-config.ts";
 import { selectTrustedTargetPolicyV1 } from "../src/host/target-policy.ts";
+import { targetTouchesProtectedV1 } from "../src/host/target-policy-generic.ts";
 import { reviewAuthorizesMerge } from "../src/repair/review-gate.ts";
 import { advanceToDelivery } from "../src/repair/transitions.ts";
 import {
@@ -447,7 +445,7 @@ function touchesTargetProtected(
       repository,
     );
     return changes.some((change) =>
-      touchesProtected(policy.protectedPaths, change.path)
+      targetTouchesProtectedV1(policy, change.path)
     );
   } catch {
     return true;
@@ -460,7 +458,7 @@ function touchesTargetProtected(
  * always lists files; a fixture surface without that read skips the check.
  * A failed or incomplete listing refuses.
  */
-async function protectedPathRefusal(
+export async function protectedPathRefusal(
   surface: HostedAutonomyGitHubV1,
   repository: RepositoryIdentityV1,
   pull: number,

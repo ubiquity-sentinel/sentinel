@@ -23,8 +23,68 @@ import type {
   RawSendResult,
   ReviewMutationOutcomeV1,
 } from "./client-contracts.ts";
+import type {
+  LiveInputsRequestV1,
+  LiveInputsV1,
+} from "../contracts/live-inputs.ts";
+import {
+  buildLiveInputsChunks,
+  mergeLiveInputs,
+  parseLiveInputsChunk,
+} from "./client-live-inputs.ts";
 
 export class GitHubApiClient extends GitHubClientCiEvidence {
+  /**
+   * Batched live inputs of this repository's live work records (issue #326):
+   * one read-only GraphQL request per bounded chunk, through the same
+   * authenticated gate, deadline, cooldown and typed error mapping as every
+   * other GraphQL read. Exhaustive: one failed chunk fails the whole read
+   * (never a partial or empty success); no retry loop.
+   */
+  async readLiveInputs(
+    request: LiveInputsRequestV1,
+  ): Promise<PortResultV1<LiveInputsV1>> {
+    const own = this.repository;
+    if (
+      request.repository.owner !== own.owner ||
+      request.repository.name !== own.name ||
+      request.repository.installationId !== own.installationId
+    ) {
+      return portError("invalid", "live inputs repository is foreign");
+    }
+    const chunks = buildLiveInputsChunks(request);
+    if (chunks === null) {
+      return portError("invalid", "live inputs request is invalid");
+    }
+    const parts: LiveInputsV1[] = [];
+    for (const chunk of chunks) {
+      const raw = await this.sendCore(
+        "POST",
+        `${this.apiBaseUrl}/graphql`,
+        {
+          query: chunk.query,
+          variables: { owner: own.owner, name: own.name, ...chunk.variables },
+        },
+      );
+      if (raw.status === "error") {
+        return portError(raw.error.kind, raw.error.detail, raw.error.rateLimit);
+      }
+      if (raw.status === "lost") {
+        return portError("unavailable", "GitHub API request failed");
+      }
+      if (raw.response.status !== 200) {
+        return portError(...this.mapError(raw.response));
+      }
+      const parsed = parseWire(
+        raw.response,
+        (value) => parseLiveInputsChunk(value, chunk),
+      );
+      if (!parsed.ok) return parsed;
+      parts.push(parsed.value);
+    }
+    return portOk(mergeLiveInputs(parts));
+  }
+
   // -------------------------------------------------------------------------
   // Review journal operations (pending-draft lifecycle)
   // -------------------------------------------------------------------------

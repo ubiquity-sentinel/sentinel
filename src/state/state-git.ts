@@ -466,6 +466,17 @@ export interface StateGitOps {
   ): PortResultV1<never>;
 }
 
+/**
+ * State pushes stay on the native Actions token, so their bookkeeping commits
+ * carry the native Actions identity, never the App identity.
+ */
+export const STATE_COMMIT_ENV: Readonly<Record<string, string>> = {
+  GIT_AUTHOR_NAME: "github-actions[bot]",
+  GIT_AUTHOR_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com",
+  GIT_COMMITTER_NAME: "github-actions[bot]",
+  GIT_COMMITTER_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com",
+};
+
 export function randomHex(bytes: number): string {
   const value = crypto.getRandomValues(new Uint8Array(bytes));
   return Array.from(value)

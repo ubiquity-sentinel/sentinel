@@ -13,9 +13,15 @@ import type { ModelRunRequestV1 } from "../../src/contracts/ports.ts";
 import {
   buildPrompt,
   MAX_PROMPT_PROTECTED_PATHS,
+  PUBLICATION_BOUNDS_SENTENCE,
   renderProtectedPaths,
 } from "../../src/repair/model-port-prompt.ts";
 import { MAX_PROMPT_CHARS } from "../../src/repair/model-port-policy.ts";
+import {
+  MAX_CHANGED_PATHS,
+  MAX_FILE_BYTES,
+  MAX_PROMPT_BYTES,
+} from "../../src/github/snapshot-policy.ts";
 import { CodexImplementationPort } from "../../src/repair/model-port.ts";
 import { protectedPathsFor } from "../../src/host/local-model.ts";
 import { REPO, SHA1, SHA3 } from "../state/helpers.ts";
@@ -104,7 +110,12 @@ Deno.test("the prompt carries the sentence inside the role, and none without pre
       `to force success.${SENTENCE} Keep the change`,
     ),
   );
-  assert.equal(await sha256(guarded), GOLDEN_HOSTED_PROTECTED);
+  // The #333 publication-bounds sentence is the only later addition.
+  assert.ok(guarded.includes(PUBLICATION_BOUNDS_SENTENCE));
+  assert.equal(
+    await sha256(guarded.replace(PUBLICATION_BOUNDS_SENTENCE, "")),
+    GOLDEN_HOSTED_PROTECTED,
+  );
   // With CI evidence the role (and so the sentence) stays last and intact.
   const crowded = {
     ...REQUEST,
@@ -180,4 +191,16 @@ Deno.test("the hosted port resolves the prefixes of exactly the requested reposi
     [],
   );
   assert.deepEqual(protectedPathsFor(undefined, REPO), []);
+});
+
+Deno.test("#333: the prompt carries the trusted denylist and the exact publication bounds", () => {
+  const prompt = buildPrompt(REQUEST, false, undefined, PATHS);
+  assert.ok(prompt.includes(SENTENCE));
+  assert.ok(prompt.includes(PUBLICATION_BOUNDS_SENTENCE));
+  assert.ok(prompt.includes(`more than ${MAX_CHANGED_PATHS} paths`));
+  assert.ok(prompt.includes(`larger than ${MAX_FILE_BYTES} bytes`));
+  assert.ok(prompt.includes(`${MAX_PROMPT_BYTES} total new bytes`));
+  // Nothing beyond the trusted constants: the session's own transport output
+  // allowance is still not part of the prompt.
+  assert.ok(!prompt.includes(String(REQUEST.maxOutputChars)));
 });

@@ -137,6 +137,7 @@ export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
             model: input.model,
             budget: input.budget,
             externalImplementations: input.externalImplementations,
+            recordWaitCauses: input.recordWaitCauses,
             legacyReviewCutoff: input.legacyReviewCutoff ?? null,
           };
           const options = {
@@ -147,6 +148,10 @@ export function createActionsTargetFlow(input: ActionsTargetCyclesInputV1) {
             // and health only: it never walks the work queue (issue #297).
             bootstrap,
             runStartedAt: origin,
+            // #328: the records this run's repository cells step.
+            ...(input.excludeRecords === undefined
+              ? {}
+              : { excludeRecords: input.excludeRecords }),
           };
           if (input.runCycle !== undefined) {
             // The existing deterministic test seam; never used by production.

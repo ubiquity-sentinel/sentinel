@@ -144,6 +144,11 @@ export interface RepairEntrypointOptionsV1 {
    * the work queue (issue #297). Forwarded unchanged to the cycle.
    */
   bootstrap?: boolean;
+  /**
+   * Records delegated to this run's repository cells (issue #328), which the
+   * pass never selects; forwarded unchanged to the cycle.
+   */
+  excludeRecords?: ReadonlySet<string>;
 }
 
 /**
@@ -247,6 +252,9 @@ export function createRepairInvocation(
       // A production bootstrap invocation must take the maintenance-only path
       // of the cycle, so the trusted host flag is forwarded unchanged.
       bootstrap: options.bootstrap,
+      ...(options.excludeRecords === undefined
+        ? {}
+        : { excludeRecords: options.excludeRecords }),
     },
     (continuation) => {
       postDrain.continuation = continuation;

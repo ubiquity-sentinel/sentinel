@@ -173,6 +173,15 @@ export async function nativeFixture(
         base: { ref: "development", sha: controls.base, repo: restRepo },
       });
     }
+    // Repository merge settings (#331): squash forbidden, so the direct merge
+    // keeps the merge-commit shape this fixture's parents expect.
+    if (path === `/repos/${repository.owner}/${repository.name}`) {
+      return response({
+        ...restRepo,
+        allow_squash_merge: false,
+        allow_merge_commit: true,
+      });
+    }
     if (path.endsWith("/protection")) return response({}, 404);
     if (path.includes("/rules/branches/")) return response([]);
     if (path.includes("/git/ref/")) {
