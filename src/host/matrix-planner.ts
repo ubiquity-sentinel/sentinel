@@ -36,6 +36,8 @@ import {
   HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE,
   pendingConflictResolution,
 } from "../repair/conflict-resolution.ts";
+import { roundLeftForStart } from "../repair/loop-eligibility.ts";
+import type { LegacyCutoff } from "../repair/review-round-cap.ts";
 import { rankEligibleWork } from "../repair/selection.ts";
 import {
   createDecompositionChildren,
@@ -192,15 +194,22 @@ async function persistDecompositionChildren(
  * snapshot context and is reported as "head-not-null" for further inspection).
  * Mirrors the predicate logic exactly for diagnostic purposes.
  */
-function explainMatrixNotReady(
+export function explainMatrixNotReady(
   record: WorkRecordV1,
   config: RepositoryConfigV1,
+  /** The snapshot, CI route and legacy cutoff of the planning run (#159). */
+  snapshot: Parameters<typeof roundLeftForStart>[0],
+  ciRouteOpen: boolean,
+  cutoff: LegacyCutoff,
 ): string | null {
   if (record.source.kind !== "issue") {
     return `source.kind=${record.source.kind}`;
   }
   if (record.nextStep !== "work") {
     return `nextStep=${record.nextStep}`;
+  }
+  if (!roundLeftForStart(snapshot, record, ciRouteOpen, cutoff)) {
+    return "review_rounds_spent";
   }
   if (record.intent !== null) {
     return `intent=${record.intent.key}`;
@@ -369,9 +378,13 @@ export async function planMatrixWave(
           pendingConflictResolution(record.intent) !== null
         ) return CONFLICT_RESOLUTION_CAP_REASON;
         const config = configForRepository(deps, record.repository);
-        return config === null
-          ? "config=null"
-          : explainMatrixNotReady(record, config);
+        return config === null ? "config=null" : explainMatrixNotReady(
+          record,
+          config,
+          context.snapshot,
+          ciRouteOpen,
+          context.legacyReviewCutoff ?? null,
+        );
       },
     );
     if (conflictCapReached) {

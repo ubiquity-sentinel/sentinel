@@ -2752,3 +2752,21 @@ standing approval above. Applied as follows.
   exposure if they later add a secret or a write permission to such a workflow:
   model code would then run with it before review. An automatic refusal for that
   case is an owner decision and is not implemented.
+
+## 2026-10-24: generation-80 rollout guards (#159)
+
+- The zero-cell matrix plan diagnostic now checks review rounds the same way the
+  readiness predicate does. A record at `work` with no review round left is
+  counted as `review_rounds_spent` instead of being explained as ready.
+- The two generation-79 rollback exposures of the legacy route are accepted and
+  no longer reachable. A conflict re-pend could end in R79's terminal conflict
+  block. A legacy record left at `work` could be published and reviewed before
+  CI. Both needed R79 as a rollback target. Ordinary updates now self-install
+  the exact CI-green development SHA, and rollback restores the exact recorded
+  prior runtime, so R79 is never a target.
+- No consistency test was added for the CI-first, CI-correction,
+  conflict-resolution and refresh re-arm allowlists. Those lists belong to the
+  retired rollout ceremony that DESIGN.md §4 schedules for deletion, and no
+  future pin appends to them.
+- Whether the legacy class is the cutoff rule or the owner's list of twelve
+  still needs the owner's answer.
