@@ -121,6 +121,12 @@ Deno.test("Actions self dependencies: real host refuses absent producer then run
       stateRemoteUrl: rig.remote.remoteUrl,
       refreshSelf: () => Promise.resolve(rig.base),
       resolveDefaultBranch: () => Promise.resolve("development"),
+      resolveTreeFacts: () =>
+        Promise.resolve({
+          files: ["deno.json"],
+          scripts: ["test"],
+          hasCiWorkflow: true,
+        }),
       preflight: () => Promise.resolve(),
       http: (request) => {
         const url = new URL(request.url);

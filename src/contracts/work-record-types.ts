@@ -32,6 +32,13 @@ export type WorkWaitReasonV1 =
    * a failed check transitions to a terminal blocker instead.
    */
   | "ci_pending"
+  /**
+   * Explicit TRANSIENT reservation-ledger capacity state. The trusted state
+   * writer refused an admission because the bounded live ledger has no
+   * archivable terminal rows yet; the record stays live with its publication
+   * binding and retries after the retention window has advanced.
+   */
+  | "ledger_capacity"
   | "backoff"
   | "unavailable"
   | "manual";

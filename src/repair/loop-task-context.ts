@@ -172,20 +172,31 @@ export async function ensureReviewFreshness(
   return await checkExistingPrCustody(deps, context, record, "review");
 }
 
-export async function readIssueForModel(
+/**
+ * One live source read for model admission. `unavailable` carries the terminal
+ * closed/absent fact from that same read: a read fault or a non-terminal
+ * prerequisite gate (relations, statement) is not a closed source, so callers
+ * can retire a dead record without re-observing the issue.
+ */
+export type IssueForModelReadV1 =
+  | { kind: "issue"; issue: { number: number; title: string; body: string } }
+  | { kind: "none" }
+  | { kind: "unavailable"; sourceClosed: boolean };
+
+export async function observeIssueForModel(
   deps: RepairCycleDepsV1,
   record: WorkRecordV1,
-): Promise<
-  { number: number; title: string; body: string } | null | "unavailable"
-> {
+): Promise<IssueForModelReadV1> {
   const issueNumber = record.related.issueNumber;
-  if (issueNumber === null) return null;
+  if (issueNumber === null) return { kind: "none" };
   const read = await deps.github.readIssue(issueNumber);
-  if (!read.ok) return "unavailable";
+  if (!read.ok) return { kind: "unavailable", sourceClosed: false };
   const issue = read.value;
   // The latest native state is authoritative: a closed issue (or one that no
   // longer exists) can never start model work, even when intake admitted it.
-  if (issue === null || issue.state !== "open") return "unavailable";
+  if (issue === null || issue.state !== "open") {
+    return { kind: "unavailable", sourceClosed: true };
+  }
   // Issue-only github-adapter intake also gates on native dependency
   // relations: unknown relations, a parent issue (sub-issues) or any open
   // native blocker defers admission. Closed blockers are already excluded by
@@ -198,7 +209,7 @@ export async function readIssueForModel(
       relations.subIssueCount > 0 ||
       relations.openBlockers.length > 0
     ) {
-      return "unavailable";
+      return { kind: "unavailable", sourceClosed: false };
     }
   }
   const text = {
@@ -208,12 +219,23 @@ export async function readIssueForModel(
   };
   const digest = await reviewTaskStatementDigest(text);
   const checked = await checkReviewTaskStatement({ ...text, digest });
-  if (!checked.ok) return "unavailable";
+  if (!checked.ok) return { kind: "unavailable", sourceClosed: false };
   return {
-    number: issue.number,
-    title: issue.title,
-    body: issue.body,
+    kind: "issue",
+    issue: { number: issue.number, title: issue.title, body: issue.body },
   };
+}
+
+export async function readIssueForModel(
+  deps: RepairCycleDepsV1,
+  record: WorkRecordV1,
+): Promise<
+  { number: number; title: string; body: string } | null | "unavailable"
+> {
+  const observed = await observeIssueForModel(deps, record);
+  if (observed.kind === "none") return null;
+  if (observed.kind === "issue") return observed.issue;
+  return "unavailable";
 }
 
 /**

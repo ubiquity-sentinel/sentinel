@@ -6,6 +6,7 @@ import type { GitSha } from "../contracts/brands.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { GitHubPort, PortResultV1 } from "../contracts/ports.ts";
 import { portError, portOk } from "../contracts/ports.ts";
+import { allReservationsV1 } from "../contracts/state-snapshots.ts";
 import type {
   CandidatePreservationV1,
   WorkRecordV1,
@@ -142,7 +143,7 @@ export function createCandidatePreserver(
         return portError("unavailable", STATIC_PRESERVE_BINDING);
       }
       record = matches[0]!;
-      reservations = read.value.snapshot.reservations;
+      reservations = allReservationsV1(read.value.snapshot);
     } catch {
       return portError("unavailable", STATIC_PRESERVE_BINDING);
     }

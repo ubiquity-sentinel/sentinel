@@ -241,6 +241,16 @@ try { result = await runActionsRepairHost({
   stateRemoteUrl: remote.remoteUrl,
   env: { GITHUB_RUN_ID: "37126414865", GITHUB_RUN_ATTEMPT: "1", GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel", GITHUB_REF: "refs/heads/sentinel-supervisor", GITHUB_SHA: launcher, GITHUB_WORKFLOW_SHA: launcher, GITHUB_WORKFLOW_REF: "ubiquity-sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor", GITHUB_JOB: "repair", GITHUB_TOKEN: "synthetic-native-token", SENTINEL_SUPERVISOR_TOKEN: "synthetic-app-token", UOS_AI_TOKEN: "synthetic-model-token", SENTINEL_GATEWAY_AUTH_JSON: JSON.stringify({ authorization: "Bearer synthetic-bootstrap-only-token" }), SENTINEL_REPLAY_KEY_B64: "11".repeat(32), PATH: root + "/bin:" + env.PATH, HOME: root + "/git-home" },
   refreshSelf: () => Promise.resolve(revision),
+  // The committed setting now lists every ubiquity repository; this bootstrap
+  // fixture models only its three targets. Resolve their branches here and
+  // leave the rest unavailable, so target discovery stays off the fake
+  // transport (no eager network/credential requirement at startup).
+  resolveDefaultBranch: (target) => Promise.resolve({
+    "ubiquity-sentinel/sentinel": "development",
+    "ubiquity/ai.ubq.fi": "development",
+    "ubiquity/passport.ubq.fi": "main",
+  }[target.slug] ?? null),
+  resolveTreeFacts: () => Promise.resolve(null),
   preflight: () => { preflightCalls++; return Promise.resolve(); },
   prepareTarget: async (config, source) => {
     preparedTargets.push(config.repository.owner + "/" + config.repository.name);
@@ -338,7 +348,7 @@ console.log(JSON.stringify({ kind: "bootstrap_fixture", result, modelCalls, http
     "--frozen",
     "--cached-only",
     `--config=${frozen}/deno.json`,
-    `--allow-read=${root},${gatewayRoot},/usr,/bin,${Deno.execPath()}`,
+    `--allow-read=${root},${gatewayRoot},/usr,/bin,${Deno.execPath()},/opt/node-lts/bin/node`,
     `--allow-write=${root},${gatewayRoot}`,
     "--allow-run",
     "--allow-env=PATH,NODE_V8_COVERAGE",

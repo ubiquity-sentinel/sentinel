@@ -9,6 +9,10 @@ import {
   type HostedExecutionIntentV1,
 } from "../contracts/hosted-supervisor.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
+import {
+  allReservationsV1,
+  findReservationV1,
+} from "../contracts/state-snapshots.ts";
 import { isGitSha } from "../contracts/brands.ts";
 import {
   matrixCellIdV1,
@@ -247,7 +251,7 @@ export async function recoverMatrixArtifactWaves(context: {
       )!;
       const resolved = await resolvedConflictCandidate(
         task,
-        snapshot.reservations,
+        allReservationsV1(snapshot),
       );
       if (task.intent?.kind === "base_refresh") {
         if (
@@ -307,8 +311,9 @@ export async function recoverMatrixArtifactWaves(context: {
                         review.outcome === "completed"
                       )))))))
       ) refuse();
-      const reservation = snapshot.reservations.find((row) =>
-        row.id === cell.reservationId
+      const reservation = findReservationV1(
+        snapshot,
+        cell.reservationId,
       )!;
       if (plan.plannedAt > options.clock.now() + TOLERANCE) refuse();
       if (reservation.createdAt > plan.plannedAt) {
@@ -489,10 +494,11 @@ export async function recoverMatrixArtifactWaves(context: {
       if (task.intent?.kind === "base_refresh") {
         const resolved = await resolvedConflictCandidate(
           task,
-          snapshot.reservations,
+          allReservationsV1(snapshot),
         );
-        const reservation = snapshot.reservations.find((row) =>
-          row.id === cell.reservationId
+        const reservation = findReservationV1(
+          snapshot,
+          cell.reservationId,
         )!;
         if (
           resolved === null || result.status !== "completed" ||
@@ -511,8 +517,9 @@ export async function recoverMatrixArtifactWaves(context: {
           result.receipt !== null || result.bundle !== null)
       ) refuse();
       if (task.intent?.kind === "candidate_preservation") {
-        const reservation = snapshot.reservations.find((row) =>
-          row.id === cell.reservationId
+        const reservation = findReservationV1(
+          snapshot,
+          cell.reservationId,
         )!;
         const checkpoint = task.target.checkpoint;
         if (
@@ -616,9 +623,7 @@ export async function recoverMatrixArtifactWaves(context: {
             row.id === cell.taskId &&
             row.intent?.requestId === cell.reservationId
           )!,
-          reservation: snapshot.reservations.find((row) =>
-            row.id === cell.reservationId
-          )!,
+          reservation: findReservationV1(snapshot, cell.reservationId)!,
           cell,
         })),
       });

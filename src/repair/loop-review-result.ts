@@ -1,4 +1,5 @@
 import { canonicalStringify } from "../contracts/canonical.ts";
+import { allReservationsV1 } from "../contracts/state-snapshots.ts";
 import { isPassportWorkTrial } from "./passport-work-trial.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: review result. */
@@ -121,7 +122,7 @@ export async function recoverMissingTaskReview(
     record.counters.reviewRounds + 1,
   );
   if (
-    context.snapshot.reservations.some((charge) =>
+    allReservationsV1(context.snapshot).some((charge) =>
       sameRepositoryIdentity(charge.repository, record.repository) &&
       charge.taskId === record.id && charge.head === record.target.head &&
       charge.purpose === "review_request" &&
