@@ -10,8 +10,10 @@
  *   published record of that repository waits;
  * - `open_ended_wait`: `until: null` on a row that is neither blocked nor done,
  *   outside the allowlisted marker shapes (a `backoff` hold: the queue hold,
- *   the base-satisfaction markers, the takeover hold; an `unavailable` wait at
- *   `delivery`: the deferred release);
+ *   the takeover hold; an `unavailable` wait at `delivery`: the deferred
+ *   release). A base-review hold is bounded (`BASE_REVIEW_HOLD_MS`), so an
+ *   open-ended one is a legacy row the runtime has not bounded yet and is
+ *   reported;
  * - `stalled`: `counters.stalled >= WEDGE_STALLED_THRESHOLD` on a live row,
  *   except a delivered row whose release request is recorded (it waits on the
  *   disabled release path, a park with a named external exit).
@@ -19,6 +21,7 @@
  */
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { baseReviewHeld } from "../repair/base-satisfaction-marker.ts";
 import { holdsDeliveryLine } from "../repair/delivery-queue.ts";
 import { releaseRequestMatchesDelivery } from "../repair/loop-records.ts";
 
@@ -71,7 +74,7 @@ export function runnableNow(record: WorkRecordV1, now: number): boolean {
 export function allowlistedOpenEndedWait(record: WorkRecordV1): boolean {
   const wait = record.wait;
   if (wait === null || wait.until !== null) return true;
-  return wait.reason === "backoff" ||
+  return (wait.reason === "backoff" && !baseReviewHeld(record)) ||
     (wait.reason === "unavailable" && record.nextStep === "delivery");
 }
 

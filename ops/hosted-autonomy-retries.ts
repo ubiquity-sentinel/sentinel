@@ -12,6 +12,7 @@ import {
 import { type GitSha, isGitSha } from "../src/contracts/brands.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { candidateBranch, reviewOperationKey } from "../src/repair/keys.ts";
+import { isRetirableStaleImplementationIntent } from "../src/repair/loop-eligibility.ts";
 import {
   HOSTED_AUTONOMY_RETRYABLE,
   hostedIssueKey,
@@ -142,6 +143,32 @@ export function intentClosable(
     reservation.head === head &&
     sameRepository(reservation.repository, record.repository) &&
     intent.key === reviewOperationKey(pullRequest, head, reservation.attempt)
+  );
+}
+
+/**
+ * The exact dead admission a `staleAdmission` park retains: a retirable stale
+ * implementation intent naming this record's own implementation charge at its
+ * current attempt index, in any outcome. The grant clears the intent and keeps
+ * the charge as it is (a still-`reserved` one stays charged, as a matrix host
+ * timeout keeps it); the next start uses the next unused attempt index.
+ */
+export function staleAdmissionRetained(
+  record: RepairStateSnapshotV1["work"][number],
+  reservations: RepairStateSnapshotV1["reservations"],
+  now: number,
+): boolean {
+  const intent = record.intent;
+  if (intent === null || !isRetirableStaleImplementationIntent(intent, now)) {
+    return false;
+  }
+  return reservations.some((reservation) =>
+    reservation.id === intent.requestId &&
+    reservation.taskId === record.id &&
+    sameRepository(reservation.repository, record.repository) &&
+    (reservation.purpose === "implementation" ||
+      reservation.purpose === "retry") &&
+    reservation.attempt === record.counters.attempts
   );
 }
 
@@ -662,7 +689,15 @@ export function planHostedRetries(
       rule.minBlockedMs !== undefined &&
       !evidenceExpired(record, snapshot.reservations, now, rule.minBlockedMs)
     ) continue;
-    if (!intentClosable(record, snapshot.reservations)) continue;
+    // A one-time historical re-arm: a later park of the class stays terminal.
+    if (
+      rule.blockedBefore !== undefined && !(blocker.since < rule.blockedBefore)
+    ) continue;
+    if (
+      rule.staleAdmission === true
+        ? !staleAdmissionRetained(record, snapshot.reservations, now)
+        : !intentClosable(record, snapshot.reservations)
+    ) continue;
     // A delivery-returning grant re-gates the exact reviewed head under the
     // installed runtime's CI attribution: no charge, no base advance and no
     // counter movement here; the runtime decides correction or deferral.

@@ -19,6 +19,7 @@ import {
 } from "../contracts/repository-config.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { baseReviewHeld } from "./base-satisfaction-marker.ts";
 
 /**
  * Exact hosted-retirement blocker. The hosted autonomy pass records it only
@@ -156,10 +157,14 @@ export interface RankedWorkV1 {
   skipped: Record<string, string>;
 }
 
-/** A record is waiting when its explicit wait has not elapsed. */
+/**
+ * A record is waiting when its explicit wait has not elapsed. A base-review
+ * hold stays waiting past its bound: only the pre-ranking base review
+ * (`loop-base-satisfaction.ts`) moves it, and it parks an expired hold.
+ */
 export function isWaiting(record: WorkRecordV1, now: number): boolean {
   if (record.wait === null) return false;
-  if (record.wait.until === null) return true;
+  if (record.wait.until === null || baseReviewHeld(record)) return true;
   return now < record.wait.until;
 }
 

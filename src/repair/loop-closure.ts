@@ -131,7 +131,10 @@ export async function retryClosure(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
-  carried: CarriedReleaseProverV1 | undefined = gitCarriedReleaseProver(deps),
+  carried: CarriedReleaseProverV1 | undefined = gitCarriedReleaseProver(
+    deps,
+    record.repository,
+  ),
 ): Promise<StepResultV1> {
   const queueGuard = await guardQueueDelivery(deps, context, record);
   if (queueGuard !== null) return queueGuard;

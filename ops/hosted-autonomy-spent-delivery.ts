@@ -61,8 +61,10 @@ import {
 import {
   type HostedTreeChangeV1,
   sameTreeChanges,
+  treeChangesAcrossDrift,
   treeChangesDigest,
 } from "./hosted-autonomy-github-trees.ts";
+import { carriedDriftAllowed } from "../src/github/carried-drift.ts";
 import type {
   HostedAutonomyGitHubV1,
   HostedAutonomyPullV1,
@@ -733,9 +735,14 @@ export interface CarriedMergeProofV1 {
   receipt: string;
   /** The merge base GitHub names for the reviewed side (`B0...H0`). */
   reviewedMergeBase: string;
-  /** SHA-256 of the exact change set both sides share, and its size. */
+  /**
+   * SHA-256 of the reviewed side's exact change set and its size: the set
+   * both sides share when `drifted` is 0.
+   */
   changes: string;
   paths: number;
+  /** Text paths carried hunk for hunk across base drift (0: none). */
+  drifted: number;
   /** Rendered merge-base diff digests, evidence only (null: unrendered). */
   reviewedPatch: string | null;
   refreshedPatch: string | null;
@@ -760,11 +767,11 @@ export function carriedMergeAction(
 ): string {
   return `delivery:${record.id}:carried_merge:pr=${record.target.pr}:reviewed=${proof.reviewedHead}@${proof.reviewedBase}:receipt=${
     plainId(proof.receipt)
-  }:refreshed=${proof.head}@${proof.base}:changes=${proof.changes}/${proof.paths}:patch=${
-    rendered(proof.reviewedPatch)
-  }/${rendered(proof.refreshedPatch)}:ci=${
-    proof.runs === null ? "unlisted" : proof.runs.join(",") || "none"
-  }`;
+  }:refreshed=${proof.head}@${proof.base}:changes=${proof.changes}/${proof.paths}${
+    proof.drifted > 0 ? `:drift=${proof.drifted}` : ""
+  }:patch=${rendered(proof.reviewedPatch)}/${
+    rendered(proof.refreshedPatch)
+  }:ci=${proof.runs === null ? "unlisted" : proof.runs.join(",") || "none"}`;
 }
 
 /** The carried merge's commit message: the whole proof, plain text only. */
@@ -775,7 +782,9 @@ export function carriedMergeEvidence(proof: CarriedMergeProofV1): string {
       plainId(proof.receipt)
     }`,
     `refreshed head ${proof.head} on base ${proof.base} (a strict ancestor of the head)`,
-    `exact change set sha256 ${proof.changes} (${proof.paths} paths by path, mode and full blob id): ${proof.reviewedMergeBase}..${proof.reviewedHead} equals ${proof.base}..${proof.head}`,
+    proof.drifted > 0
+      ? `change set sha256 ${proof.changes} (${proof.paths} paths by path and mode; ${proof.drifted} text paths carried hunk for hunk across base drift, the rest by full blob id): ${proof.reviewedMergeBase}..${proof.reviewedHead} carried to ${proof.base}..${proof.head}`
+      : `exact change set sha256 ${proof.changes} (${proof.paths} paths by path, mode and full blob id): ${proof.reviewedMergeBase}..${proof.reviewedHead} equals ${proof.base}..${proof.head}`,
     `merge-base diff sha256 ${proof.reviewedBase}...${proof.reviewedHead} ${
       rendered(proof.reviewedPatch)
     } (evidence only)`,
@@ -806,9 +815,11 @@ async function renderedDigest(
  * The exact patch proof (round-2 recheck P3): the full sets of (path, old
  * mode, old blob id, new mode, new blob id) of merge-base(B0, H0) -> H0 and
  * T -> H1 are equal, read from GitHub's Git trees (`mergeBaseTreeChanges`),
- * and T is the refreshed side's own merge base. GitHub's rendered diffs are
- * read only for the evidence line. A tree GitHub truncates, or any failed
- * read, is no proof.
+ * and T is the refreshed side's own merge base. Outside a native queue
+ * target, unequal sets still prove when they carry the reviewed hunks across
+ * base drift over the exact blobs (`treeChangesAcrossDrift`; `drifted` paths).
+ * GitHub's rendered diffs are read only for the evidence line. A tree GitHub
+ * truncates, or any failed read, is no proof.
  */
 export async function carriedPatchRefusal(
   surface: HostedAutonomyGitHubV1,
@@ -828,6 +839,7 @@ export async function carriedPatchRefusal(
     reviewedMergeBase: string;
     changes: string;
     paths: number;
+    drifted: number;
     reviewedPatch: string | null;
     refreshedPatch: string | null;
   }
@@ -851,8 +863,22 @@ export async function carriedPatchRefusal(
     return { refusal: "carried_proof_unavailable" };
   }
   if (refreshed.mergeBase !== base) return { refusal: "carried_not_on_tip" };
+  // Unequal sets carry only the same hunks across base drift, where the
+  // runtime's carried step carries drift too (`carriedDriftAllowed`).
+  let drifted = 0;
   if (!sameTreeChanges(reviewed.changes, refreshed.changes)) {
-    return { refusal: "carried_patch_changed" };
+    const drift = await treeChangesAcrossDrift(
+      carriedDriftAllowed(receipt.repository)
+        ? surface.readBlob?.bind(surface)
+        : undefined,
+      reviewed.changes,
+      refreshed.changes,
+    );
+    if (drift.kind === "unavailable") {
+      return { refusal: "carried_proof_unavailable" };
+    }
+    if (drift.kind !== "carried") return { refusal: "carried_patch_changed" };
+    drifted = drift.drifted;
   }
   if (touchesTargetProtected(receipt.repository, reviewed.changes)) {
     return { refusal: "protected_path" };
@@ -862,6 +888,7 @@ export async function carriedPatchRefusal(
     reviewedMergeBase: reviewed.mergeBase,
     changes: await treeChangesDigest(reviewed.changes),
     paths: reviewed.changes.length,
+    drifted,
     reviewedPatch: await renderedDigest(surface, reviewedBase, reviewedHead),
     refreshedPatch: await renderedDigest(surface, base, head),
   };
@@ -946,6 +973,7 @@ export async function carriedMergeGate(input: {
       reviewedMergeBase: patch.reviewedMergeBase,
       changes: patch.changes,
       paths: patch.paths,
+      drifted: patch.drifted,
       reviewedPatch: patch.reviewedPatch,
       refreshedPatch: patch.refreshedPatch,
       runs,

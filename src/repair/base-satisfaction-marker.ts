@@ -1,4 +1,10 @@
-/** R80-compatible hold for the trusted no-change disposition; never selectable by R80. */
+/**
+ * Bounded hold for the trusted no-change disposition. The runtime's
+ * pre-ranking base review (`loop-base-satisfaction.ts`) is its only exit: it
+ * closes the issue, returns the task to implementation, or parks the record
+ * once `BASE_REVIEW_HOLD_MS` passes without a completed review. Ranking never
+ * steps a held record (`baseReviewHeld` in `isWaiting`).
+ */
 import {
   findReservationV1,
   type RepairStateSnapshotV1,
@@ -28,6 +34,17 @@ function exactNoChangeFailure(record: WorkRecordV1): boolean {
     record.blocker.message.replace(prefix, "") === ATTEMPT_DETAIL_NO_CHANGE;
 }
 
+/** How long a no-change record waits for its base review before parking. */
+export const BASE_REVIEW_HOLD_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * No-change implementation outcomes from which a base review that finds the
+ * task still unsatisfied parks the record instead of returning it to
+ * implementation: each return costs one more charged implementation and one
+ * more charged base review, so the round trip is bounded.
+ */
+export const MAX_NO_CHANGE_BASE_REVIEWS = 3;
+
 export function holdNoChange(record: WorkRecordV1, now: number): WorkRecordV1 {
   if (record.intent?.kind !== "implementation") {
     throw new Error("missing no-change admission");
@@ -36,7 +53,7 @@ export function holdNoChange(record: WorkRecordV1, now: number): WorkRecordV1 {
     ...record,
     nextStep: "work",
     blocker: null,
-    wait: { reason: "backoff", since: now, until: null },
+    wait: { reason: "backoff", since: now, until: now + BASE_REVIEW_HOLD_MS },
     intent: {
       ...record.intent,
       failure: {
@@ -48,6 +65,59 @@ export function holdNoChange(record: WorkRecordV1, now: number): WorkRecordV1 {
     },
     updatedAt: now,
   };
+}
+
+/**
+ * A hold written by `holdNoChange`: open-ended (written before the bound
+ * existed) or at least `BASE_REVIEW_HOLD_MS` long. A shorter finite wait is
+ * some other wait and never this hold.
+ */
+function noChangeHold(wait: WorkRecordV1["wait"]): boolean {
+  return wait?.reason === "backoff" &&
+    (wait.until === null || wait.until - wait.since >= BASE_REVIEW_HOLD_MS);
+}
+
+/** Held for (or during) the native base review; ranking never steps it. */
+export function baseReviewHeld(record: WorkRecordV1): boolean {
+  const intent = record.intent;
+  return record.nextStep === "work" && record.wait?.reason === "backoff" &&
+    ((intent?.kind === "implementation" &&
+      intent.failure?.kind === "base_review" && noChangeHold(record.wait)) ||
+      (intent?.kind === "issue_closure" &&
+        intent.key.startsWith("base-review:")));
+}
+
+/** True once a hold's finite bound has passed (an open-ended hold never). */
+export function baseReviewHoldExpired(
+  record: WorkRecordV1,
+  now: number,
+): boolean {
+  return record.wait !== null && record.wait.until !== null &&
+    now >= record.wait.until;
+}
+
+/**
+ * Durable no-change implementation outcomes of this task across every base
+ * (attempt memory is not pruned and its counts never decrease); at least one
+ * for a record that reached base review.
+ */
+export function noChangeOutcomes(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRecordV1,
+): number {
+  let total = 0;
+  for (const memory of snapshot.attemptMemory) {
+    if (
+      memory.taskId !== record.id || memory.purpose !== "implementation" ||
+      memory.repository.owner !== record.repository.owner ||
+      memory.repository.name !== record.repository.name ||
+      memory.repository.installationId !== record.repository.installationId
+    ) continue;
+    for (const entry of memory.entries) {
+      if (entry.detail === ATTEMPT_DETAIL_NO_CHANGE) total += entry.count;
+    }
+  }
+  return Math.max(total, 1);
 }
 
 /** Original implementation admission, preserved even after review takes over. */
@@ -62,13 +132,13 @@ export function baseReviewOrigin(
     intent?.kind === "implementation" && intent.requestId !== null &&
     intent.key === `impl:${intent.requestId}` &&
     ((record.nextStep === "blocked" && exactNoChangeFailure(record)) ||
-      (record.nextStep === "work" && record.wait?.reason === "backoff" &&
-        record.wait.until === null && intent.failure?.kind === "base_review" &&
+      (record.nextStep === "work" && noChangeHold(record.wait) &&
+        intent.failure?.kind === "base_review" &&
         intent.failure.detail === ATTEMPT_DETAIL_NO_CHANGE))
   ) origin = intent.requestId;
   if (
     intent?.kind === "issue_closure" && record.nextStep === "work" &&
-    record.wait?.reason === "backoff" && record.wait.until === null &&
+    record.wait?.reason === "backoff" &&
     /^base-review:[0-9a-f]{64}:[0-9a-f]{64}$/.test(intent.key)
   ) origin = intent.key.split(":")[1];
   if (origin === null) return null;

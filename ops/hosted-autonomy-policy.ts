@@ -45,6 +45,13 @@ export function sameRepository(
     left.owner === right.owner && left.name === right.name;
 }
 
+/** The runtime's budget `invalid` park (`loop-implementation.ts`). */
+export const STALE_ADMISSION_INVALID_DETAIL =
+  "model admission refused: invalid";
+
+/** Parks of that class written before 2026-11-12T00:00:00Z re-arm once. */
+export const STALE_ADMISSION_REARM_CUTOFF_MS = Date.UTC(2026, 10, 12);
+
 /**
  * Stable repository scope key. This is the separator that makes every planning
  * identity repository-scoped: two repositories may both have an issue 120 and
@@ -253,6 +260,19 @@ export const HOSTED_AUTONOMY_RETRYABLE: readonly {
    * charge.
    */
   readonly minBlockedMs?: number;
+  /**
+   * Only a park whose blocker was written strictly before this instant: a
+   * one-time re-arm of historical parks. A later park of the same class (the
+   * re-armed record refused again included) stays terminal.
+   */
+  readonly blockedBefore?: number;
+  /**
+   * Only a record still retaining the exact stale admission the park was
+   * written over (`staleAdmissionRetained`); that dead, still-charged
+   * admission is then closable without a settlement, as a matrix host timeout
+   * closes it.
+   */
+  readonly staleAdmission?: true;
 }[] = [
   {
     prefix: "model run ended without a trusted receipt",
@@ -334,6 +354,18 @@ export const HOSTED_AUTONOMY_RETRYABLE: readonly {
   {
     prefix: "model admission refused: duplicate",
     nextStep: "work",
+  },
+  {
+    // Admission over a stale implementation intent (a matrix cell that died
+    // after reserving) was refused by the budget as `invalid` and parked for
+    // good: 40 records in one burst on 2026-11-01/02. The runtime now retires
+    // such an intent before admission (`isRetirableStaleImplementationIntent`),
+    // so these parks are re-armed once into an ordinary, separately charged
+    // work grant. Their dead admission stays charged; nothing is refunded.
+    prefix: STALE_ADMISSION_INVALID_DETAIL,
+    nextStep: "work",
+    blockedBefore: STALE_ADMISSION_REARM_CUTOFF_MS,
+    staleAdmission: true,
   },
   {
     // An uncertain implementation outcome stays charged (its admission is

@@ -316,6 +316,14 @@ export interface HostedAutonomyGitHubV1 {
     head: string,
   ): Promise<HostedTreeChangesV1 | null>;
   /**
+   * The exact bytes of one blob of THIS repository by its full object id, or
+   * null when it cannot be read whole within the carried drift bound
+   * (`CARRIED_DRIFT_MAX_BLOB_BYTES`). The carried patch proof checks every
+   * blob against its id. Optional: a surface without it carries no base
+   * drift, so a drifted carried patch reads as changed.
+   */
+  readBlob?(sha: string): Promise<Uint8Array | null>;
+  /**
    * Expected-head merge; null on any refusal. `message`, when given, is the
    * merge commit's plain evidence text (the carried merge's proof).
    */

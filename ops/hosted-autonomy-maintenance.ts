@@ -18,6 +18,7 @@ import {
   dedicatedMatrixReservations,
   recoverHostedCurrentMatrix,
 } from "./hosted-autonomy-current-recovery.ts";
+import { currentMatrixErrorDiagnostic } from "./hosted-autonomy-current-error.ts";
 import { restoreExistingCandidateRefs } from "./hosted-autonomy-existing-candidate.ts";
 import type {
   HostedAutonomyDepsV1,
@@ -163,10 +164,22 @@ export async function runHostedMatrixMaintenance(
     );
   } catch (error) {
     if (
-      error instanceof CurrentMatrixRecoveryIntegrityFailure ||
-      !isDeferredCurrentMatrixHistoryBudget(error)
-    ) throw error;
-    // Defer this bounded pre-pass; the runner rereads state before delivery.
+      !(error instanceof CurrentMatrixRecoveryIntegrityFailure) &&
+      isDeferredCurrentMatrixHistoryBudget(error)
+    ) {
+      // Defer this bounded pre-pass; the runner rereads state before delivery.
+      actions.push("matrix-history:deferred");
+      return null;
+    }
+    // Only fixed vocabulary reaches the hosted log, never error text, so the
+    // escaping refusal's origin is diagnosable without its payload.
+    const diagnostic = currentMatrixErrorDiagnostic(error);
+    console.log(JSON.stringify(diagnostic));
+    if (!diagnostic.deferred) throw error;
+    // An exact completed producer with no listed wave is availability, and
+    // the walk wrote nothing before it: like the budget, it defers only this
+    // pre-pass. The walk itself still stopped there, so no older wave settled
+    // anything; custody, integrity and unknown refusals stop as before.
     actions.push("matrix-history:deferred");
     return null;
   } finally {
