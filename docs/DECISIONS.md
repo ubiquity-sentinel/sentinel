@@ -2678,9 +2678,18 @@ internal policy is resolve all P0". Applied as follows.
   ai.ubq.fi's skipped dispatched jobs as failed (#181 becomes an ai.ubq.fi-side
   improvement, not a Sentinel blocker).
 - The activated merge-queue proof (`queue.proofActivated` in
-  `src/host/hosted-custody-capability.json`, #180) is not part of this policy
-  either; the session's permission layer refuses that one-line edit as a custody
-  weakening, so it remains the owner's edit until it lands.
+  `src/host/hosted-custody-capability.json`, #180) is off by owner directive
+  (2026-10-24, "fix the leftover safety flag thing, just unblock"; #180 option
+  2). The strict native queue guard no longer parks ai.ubq.fi records on a
+  transient observation failure, and the launcher delivers them on the legacy
+  direct path. With the proof dormant, admission off and an authenticated
+  negative `merge_queue` rule, the queue prelude
+  (`ops/hosted-autonomy-queue-pass.ts`, `releaseDormantHolds`) returns a bare
+  open-ended hold on an unbooked gateway pull (no queue intent, provenance,
+  native entry or matching release request) to a transient wait, which releases
+  the four open PR records held since 2026-10-21. Merged records waiting on the
+  disabled release path stay held. A future `merge_queue` rule still fails
+  closed with `activation_unaccepted`.
 - Review follow-up filing (`ops/hosted-autonomy-follow-ups.ts`) now files every
   unresolved P1/P2/P3 finding of a merged PR as follow-up work; before the
   directive it filed only P2/P3 because a P1 could not merge.

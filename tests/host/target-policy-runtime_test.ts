@@ -224,7 +224,6 @@ Deno.test("target policy: composed gateway candidate preserver rejects deploymen
     assert.equal(publicationCalls, 0);
     assert.deepEqual(reads, [
       "GET /repos/ubiquity/ai.ubq.fi/rules/branches/development",
-      "POST /graphql",
       `GET /repos/ubiquity/ai.ubq.fi/git/ref/${ref.slice("refs/".length)}`,
     ]);
     assert.deepEqual(

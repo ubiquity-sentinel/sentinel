@@ -358,9 +358,11 @@ Deno.test("production queue factories apply the same lower-only selector under a
   }
 });
 
-Deno.test("current production ceiling cannot be raised and proof activation cannot be lowered", async () => {
+Deno.test("current production ceiling cannot be raised and the shipped queue proof is dormant", async () => {
   assert.equal(QUEUE_MODE_CEILING, "off");
-  assert.equal(QUEUE_PROOF_ACTIVATED, true);
+  // Owner directive 2026-10-24 (#180): proof stays dormant until an accepted
+  // canary populates the authority pins. No selector can raise it.
+  assert.equal(QUEUE_PROOF_ACTIVATED, false);
   const rig = await factoryRig();
   const production = Reflect.apply(createHostedQueueCoordinator, undefined, [{
     state: rig.state,
@@ -370,7 +372,7 @@ Deno.test("current production ceiling cannot be raised and proof activation cann
     queueMode: "on",
   }]) as ReturnType<typeof createHostedQueueCoordinator>;
   assert.equal(production.config.mode, "off");
-  assert.equal(production.config.proofActivated, true);
+  assert.equal(production.config.proofActivated, false);
   for (const selector of ["on", "observe", "off", "invalid", undefined]) {
     const source = { ...dormantSource, mode: "off" as const };
     assert.equal(rig.coordinator(selector, source).config.mode, "off");
