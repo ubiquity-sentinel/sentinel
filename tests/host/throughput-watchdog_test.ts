@@ -258,7 +258,7 @@ Deno.test("sentinel report prints the watchdog's Thresholds table", () => {
   assert.equal(
     lines[start],
     "Thresholds (watchdog evaluation as of 2026-11-05 12:00 UTC; " +
-      "a missed, non-informational threshold files one Sentinel issue)",
+      "a missed, non-informational threshold files a Sentinel issue)",
   );
   assert.match(lines[start + 1], /^threshold +child +verdict +measured +limit/);
   const row = lines.find((line) =>

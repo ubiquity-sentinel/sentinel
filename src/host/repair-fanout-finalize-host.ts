@@ -6,7 +6,9 @@
  * trusted repair state writer, then authenticates and applies the deltas.
  * Advisory to finalize: it never throws and never changes the finalize
  * outcome; it prints one closed status line (the fan-out summary line with
- * the per-repository wall times and the apply time is printed by the apply).
+ * the per-repository wall times and the apply time is printed by the apply)
+ * and returns that status with the fan-out's record counts for the cycle's
+ * metrics record.
  */
 import type { GitSha } from "../contracts/brands.ts";
 import type { Clock, StateReadView } from "../contracts/ports.ts";
@@ -18,6 +20,13 @@ import { REMOTE_URL } from "./actions-supervisor-bootstrap.ts";
 import { ensurePrivateDir, githubGitAuthEnv, joinPath } from "./local.ts";
 import { createActionsMatrixArtifactHttpTransport } from "./matrix-artifacts.ts";
 import { runRepairFanoutFinalize } from "./repair-fanout-finalize.ts";
+import type { RepairFanoutCountsV1 } from "./throughput-metrics-finalize.ts";
+
+/** The closed apply status and the fan-out's record counts (advisory). */
+export interface RepairFanoutFinalizeOutcomeV1 {
+  status: string;
+  counts: RepairFanoutCountsV1 | null;
+}
 
 /** The finalize step's environment key for the native plan digest. */
 export const REPAIR_PLAN_DIGEST_ENV = "SENTINEL_REPAIR_PLAN_DIGEST";
@@ -39,9 +48,10 @@ export async function finalizeRepairFanout(input: {
   run: { runId: number; runAttempt: number; launcherSha: GitSha };
   planDigest: string;
   log?: (line: string) => void;
-}): Promise<string> {
+}): Promise<RepairFanoutFinalizeOutcomeV1> {
   const log = input.log ?? ((line: string) => console.log(line));
   let status = "unavailable";
+  let counts: RepairFanoutCountsV1 | null = null;
   try {
     const release = await input.release.readRelease();
     const runtime = release.ok && release.value.status === "found"
@@ -68,10 +78,17 @@ export async function finalizeRepairFanout(input: {
         planDigest: input.planDigest,
         deadline: execution.createdAt + REPAIR_RUN_CEILING_MS,
       });
-      if (result !== null) status = result.status;
+      if (result !== null) {
+        status = result.status;
+        counts = {
+          delegated: result.recordsDelegated,
+          serialOwned: result.recordsSerialOwned,
+        };
+      }
     }
   } catch {
     status = "unavailable";
+    counts = null;
   }
   try {
     log(JSON.stringify({
@@ -81,7 +98,7 @@ export async function finalizeRepairFanout(input: {
       status,
     }));
   } catch { /* advisory */ }
-  return status;
+  return { status, counts };
 }
 
 /**
@@ -102,7 +119,7 @@ export function repairFanoutHook(
     state: Pick<StateReadView, "readRelease">;
     identity: { runId: number; runAttempt: number; launcherSha: GitSha };
   },
-): (() => Promise<unknown>) | undefined {
+): (() => Promise<RepairFanoutFinalizeOutcomeV1>) | undefined {
   const planDigest = repairPlanDigestOf(env[REPAIR_PLAN_DIGEST_ENV]);
   if (job !== "finalize" || planDigest === null) return undefined;
   return () =>

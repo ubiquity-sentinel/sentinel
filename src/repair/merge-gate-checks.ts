@@ -103,15 +103,35 @@ export function isCiEvidenceSource(
 }
 
 /**
- * Positive CI evidence (P1-2): a completed check concluded `success` that is
- * either a verified backup-CI stand-in (docs/backup-ci-spec.md §11.1) or
- * comes from an evidence source (`isCiEvidenceSource`). A gate reads a head
- * as green only when at least one such check exists and nothing failed;
- * every other app's check is judged for failure (red still blocks) and
- * pending, but is never the evidence that CI ran.
+ * Conclusions of an evidence source's check that count as CI evidence:
+ * `success`, and a job the target's own CI skipped or marked neutral (owner
+ * directive 2026-10-24: such a job is a CI decision, not red).
+ */
+const CI_EVIDENCE_CONCLUSIONS: ReadonlySet<string> = new Set([
+  "success",
+  "skipped",
+  "neutral",
+]);
+
+/** Whether `conclusion` can make an evidence-source check CI evidence. */
+export function isCiEvidenceConclusion(conclusion: unknown): boolean {
+  return typeof conclusion === "string" &&
+    CI_EVIDENCE_CONCLUSIONS.has(conclusion);
+}
+
+/**
+ * Positive CI evidence (P1-2): a completed check concluded `success`,
+ * `skipped` or `neutral` that is either a verified backup-CI stand-in
+ * (docs/backup-ci-spec.md §11.1) or comes from an evidence source
+ * (`isCiEvidenceSource`: GitHub Actions or no app). A gate reads a head as
+ * green only when at least one such check exists and nothing failed; every
+ * other app's check is judged for failure (red still blocks) and pending,
+ * but is never the evidence that CI ran, whatever its conclusion.
  */
 export function isCiEvidenceCheck(check: GitHubCheckV1): boolean {
-  if (check.status !== "completed" || check.conclusion !== "success") {
+  if (
+    check.status !== "completed" || !isCiEvidenceConclusion(check.conclusion)
+  ) {
     return false;
   }
   return check.backup !== undefined ||

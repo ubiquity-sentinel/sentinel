@@ -10,8 +10,12 @@
  * When those are every pending cold record, the scan row for the generation
  * is formed too, and the caller writes it in the SAME tier commit as the
  * promotions; a pass that still leaves pending rows cold writes no row, so
- * the next pass scans again. A scan that finds nothing still records its row,
- * so later passes of the generation read no cold blob for it.
+ * the next pass scans again. A scan of cold work rows that finds nothing
+ * still records its row, so later passes of the generation read no cold blob
+ * for it. A cold tier with no work rows (no `repair-archive/` or an empty
+ * work index, read from the catalog listing alone) has nothing to scan: no
+ * cold blob is read and no row is formed, so a pass with nothing else to do
+ * writes nothing; the scan stays due until cold work rows exist.
  */
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type { PortResultV1 } from "../contracts/ports.ts";
@@ -58,16 +62,13 @@ export async function planRetiredPullScan(
   const entries = catalog.entries.filter((entry) =>
     entry.path.startsWith(prefix)
   );
-  let seeds: string[] = [];
-  let complete = true;
-  if (entries.length > 0) {
-    const cold = await readColdTier(io, op, {
-      tree: catalog.tree,
-      entries,
-    }, { partial: true });
-    if (!cold.ok) return cold;
-    ({ seeds, complete } = retiredPullScanSeeds(cold.value.work));
-  }
+  if (entries.length === 0) return portOk({ seeds: [], marker: null });
+  const cold = await readColdTier(io, op, {
+    tree: catalog.tree,
+    entries,
+  }, { partial: true });
+  if (!cold.ok) return cold;
+  const { seeds, complete } = retiredPullScanSeeds(cold.value.work);
   if (!complete) return portOk({ seeds, marker: null });
   const row = parseRepairTierScanV1({
     version: "v1",

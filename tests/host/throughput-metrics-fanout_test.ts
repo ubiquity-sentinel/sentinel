@@ -72,3 +72,29 @@ Deno.test("metrics: repository cells add their stepped and skipped records, neve
   assert.equal(record.phaseMs.repair, 159_000);
   assert.equal(record.phaseMs.matrixCellTotal, null);
 });
+
+Deno.test("metrics: the fan-out's delegated and serial-owned record counts are recorded when observed", () => {
+  const base = {
+    cycle: { runId: 8, attempt: 1 },
+    finalizeStartedAtMs: T + 300_000,
+    nowMs: T + 301_000,
+    jobs: [job("repair", 41, 200, summary(30, 4, 10))],
+    runSummary: null,
+  };
+  const record = collectFinalizeMetricsV1({
+    ...base,
+    fanout: { delegated: 37, serialOwned: 42 },
+  });
+  assert.equal(record.counts.fanoutDelegated, 37);
+  assert.equal(record.counts.serialOwned, 42);
+  const unread = collectFinalizeMetricsV1({
+    ...base,
+    fanout: { delegated: 5, serialOwned: null },
+  });
+  assert.equal(unread.counts.fanoutDelegated, 5);
+  assert(!Object.hasOwn(unread.counts, "serialOwned"));
+  // No fan-out: the record keeps the shape (and bytes) of older records.
+  const none = collectFinalizeMetricsV1(base);
+  assert(!Object.hasOwn(none.counts, "fanoutDelegated"));
+  assert(!Object.hasOwn(none.counts, "serialOwned"));
+});

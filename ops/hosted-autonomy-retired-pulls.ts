@@ -31,7 +31,15 @@
  * stamped (`pullProbe`, `hosted-autonomy-pull-probe.ts`) in the same write and
  * skipped until its backoff elapsed, and the least recently probed records
  * are read first, so an unsettleable record never starves the others. A
- * protected record is not read. The pass never throws and never fails the
+ * repository whose GitHub surface is unavailable (`surface_unreadable`) or
+ * lacks the listing or close capability (`capability_absent`) is a pass-level
+ * fact, not a record's: one action line names the repository and its records
+ * are skipped with no read, no stamp and no write. A probe stamped no later than the retirement (the stale-step read of the
+ * still-open pull before the issue's closure retired the record) does not
+ * hold back the first read after the retirement. A
+ * protected record is not read, and neither is a record the same hosted pass
+ * just retired: its retirement is that cycle's one write, and the pull
+ * request is settled from the next pass. The pass never throws and never fails the
  * run; it only appends actions (no URL, body or credential).
  */
 import type { GitSha } from "../src/contracts/brands.ts";
@@ -102,10 +110,9 @@ async function settleRecord(
   const branch = record.target.branch!;
   const issueNumber = record.related.issueNumber;
   const tag = `retired-pull:${record.id}:pr=${pr}`;
-  if (
-    surface.listPullsByHeadRef === undefined ||
-    surface.closePull === undefined || issueNumber === null
-  ) {
+  // The surface's capabilities were checked for the whole repository; a
+  // record with no source issue number is the record's own fact.
+  if (issueNumber === null) {
     actions.push(`${tag}:capability_absent`);
     return null;
   }
@@ -206,13 +213,26 @@ export async function runHostedRetiredPullPass(
    * state read. The pass re-reads `deps.state` for its expected head.
    */
   discovery: StateReadView = deps.state,
+  /**
+   * The start of the hosted pass this follows. A record retired at or after
+   * it was retired by this same pass, in that pass's own write: it waits for
+   * the next pass, so one retirement is one write and its pull request is
+   * never read, settled or stamped in the cycle that retired it.
+   */
+  passStartedAt: number = Number.POSITIVE_INFINITY,
 ): Promise<string[]> {
-  // A record inside its probe backoff waits for a later pass.
+  // A record inside its probe backoff waits for a later pass. A probe
+  // stamped no later than the retirement (the stale-step human-merge read of
+  // the still-open pull, before its issue's closure retired it) was not this
+  // pass's read: the first read after a retirement is always due.
   const start = deps.clock.now();
   const pending = (record: WorkRecordV1) =>
     retiredPullClosurePending(record) &&
+    !(record.blocker !== null && record.blocker.since >= passStartedAt) &&
     !queueRecordProtected(record, deps.queueCustody) &&
-    pullProbeDue(record, start);
+    (pullProbeDue(record, start) ||
+      (record.blocker !== null &&
+        pullProbedAt(record) <= record.blocker.since));
   try {
     if (discovery !== deps.state) {
       const seen = await readRepairSafely(discovery);
@@ -225,10 +245,37 @@ export async function runHostedRetiredPullPass(
     if (read === null || !read.ok || read.value.status !== "found") return [];
     const { snapshot } = read.value;
     const head = read.value.head as GitSha;
+    const actions: string[] = [];
+    // One surface per repository. An unavailable surface or a missing
+    // capability is the repository's fact: one action line, and its records
+    // are not read, stamped or written.
+    const surfaces = new Map<string, HostedAutonomyGitHubV1 | null>();
+    const surfaceOf = (record: WorkRecordV1) => {
+      const key = `${record.repository.owner}/${record.repository.name}`;
+      if (surfaces.has(key)) return surfaces.get(key)!;
+      let surface: HostedAutonomyGitHubV1 | null = null;
+      try {
+        surface = deps.githubFor(record.repository);
+      } catch {
+        surface = null;
+      }
+      if (surface === null) {
+        actions.push(`retired-pull:repo=${key}:surface_unreadable`);
+      } else if (
+        surface.listPullsByHeadRef === undefined ||
+        surface.closePull === undefined
+      ) {
+        actions.push(`retired-pull:repo=${key}:capability_absent`);
+        surface = null;
+      }
+      surfaces.set(key, surface);
+      return surface;
+    };
     // Least recently probed first (never probed first of all, in snapshot
     // order).
     const candidates = snapshot.work
       .filter(pending)
+      .filter((record) => surfaceOf(record) !== null)
       .map((record, index) => ({ record, index }))
       .sort((left, right) =>
         pullProbedAt(left.record) - pullProbedAt(right.record) ||
@@ -236,8 +283,7 @@ export async function runHostedRetiredPullPass(
       )
       .map((entry) => entry.record)
       .slice(0, RETIRED_PULLS_PER_PASS);
-    if (candidates.length === 0) return [];
-    const actions: string[] = [];
+    if (candidates.length === 0) return actions;
     const outcomes = new Map<string, Outcome>();
     const probes: PullProbeStampV1[] = [];
     const probe = (record: WorkRecordV1) =>
@@ -252,18 +298,7 @@ export async function runHostedRetiredPullPass(
         actions.push("retired-pull:deadline");
         break;
       }
-      let surface: HostedAutonomyGitHubV1 | null = null;
-      try {
-        surface = deps.githubFor(record.repository);
-      } catch {
-        surface = null;
-      }
-      if (surface === null) {
-        actions.push(`retired-pull:${record.id}:surface_unreadable`);
-        probe(record);
-        continue;
-      }
-      const outcome = await settleRecord(surface, record, actions);
+      const outcome = await settleRecord(surfaceOf(record)!, record, actions);
       if (outcome === null) {
         probe(record);
         continue;

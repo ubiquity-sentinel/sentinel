@@ -15,9 +15,11 @@ candidate recorded in the build ledger. Policy consequences:
   wait was ever written, so the dispatch-based pre-merge CI never fired, and
   PRs #1348, #1353 and #1354 merged with no CI run on their heads (post-merge
   Gateway CI then failed on `development`). A head is now green only on positive
-  evidence: at least one completed `success` check from the GitHub Actions app
-  (the target's own or dispatched workflow), from no app (legacy shape), or a
-  verified backup-CI stand-in, and nothing failed. Checks from any other app
+  evidence: at least one completed check concluded `success`, `skipped` or
+  `neutral` from the GitHub Actions app (the target's own or dispatched
+  workflow, whose skipped/neutral jobs are a CI decision per the 2026-10-24
+  directive), from no app (legacy shape), or a verified backup-CI stand-in, and
+  nothing failed. Checks from any other app
   (review bots, scanners, deploy previews) never make a head green; a failed
   one still blocks. A head with only such checks waits `ci_pending`, which is
   what makes the dispatch-based pre-merge CI fire; the launcher reads it as
@@ -4539,3 +4541,92 @@ evaluation as a Thresholds table. Kill switch: repository variable
 `SENTINEL_SELF_IMPROVE=off` (default on). Review, CI, P0, task-acceptance,
 accounting, custody and auto-follow gates are unchanged; the watchdog has no
 model access and no state authority beyond the metrics sidecar.
+
+## 2026-11-05: two integration lanes on development
+
+Owner decision (2026-11-05): the throughput lane (this session) and the
+hanging-PR lane may both push to `development` and advance
+`sentinel-supervisor`. Rule: each lane merges the current `development` into
+its candidate, validates the merged result, and pushes fast-forward only;
+whichever candidate is CI-green last installs, through auto-follow when the
+workflow files are unchanged or through that lane's manual advance when they
+changed. Neither lane rewrites the other's history or force-moves the
+launcher. The other owner answers of the same day: the deferral-streak notice
+is delivered as an owner issue (see the entry recorded with that change);
+repository cells are widened beyond observe-only records, with every write
+still owned by finalize; and this session reads the Passport and router
+repositories to record the exact required-for-delivery check names.
+
+## 2026-11-05: throughput watchdog guardrails, second set
+
+Owner decision (2026-11-05, "improve"): the first guardrail set in the entry
+above is superseded. Guardrails now: one issue per missed threshold, several
+in one cycle; none while that threshold's watchdog issue is open or an open
+PR references it (per threshold, not global); after its issue is observed
+closed, finalize records the measurement and the runtime (generation and SHA)
+installed at close and does not re-file that threshold until 10 cycles ran on
+a runtime newer than that one (later generation, different SHA) and it is
+still missed, or at once if the measurement is more than 10% worse than at
+close; an open issue is edited only when its window advanced 10 cycles; at
+most 3 watchdog issues per UTC day (attempts counted, `createBlocked:
+"daily_bound"` logged). State is `throughput/watchdog.json` version 2 on the
+metrics ref, written by the same expected-head, non-force finalize writer;
+the reader lifts the historical version 1 file with an unknown runtime at
+close, so the next known runtime becomes the baseline. An issue whose
+recording write was lost is adopted by its marker; a repeated finalize of one
+cycle acts once; 60 s bound; never throws into the run; kill switch
+`SENTINEL_SELF_IMPROVE=off`. The 7-day cooldown, the one-issue-per-cycle rule
+and the >10% edit rule are retired.
+
+## 2026-11-05: upkeep-deferral notice as an owner issue (#327)
+
+Owner decision (2026-11-05): the upkeep-deferral notice is one owner issue on
+`ubiquity-sentinel/sentinel`, filed by finalize through the trusted App issue
+port with the self App token the watchdog uses. The body's first line is
+`<!-- sentinel:skip -->` and its second is `<!-- sentinel:upkeep-deferral -->`;
+the title is "Upkeep deferred for N consecutive supervisor cycles"; the body
+carries only the closed reason codes, the streak's run ids (most recent 30),
+the streak start and this pointer. A deferral means the bounded self-upkeep
+pass was skipped without writing and the run stayed green. The third
+consecutive deferral opens the issue; later claims (each +3 to the streak) or
+a new streak edit the open marker issue, preferring the number recorded in
+`throughput/upkeep-streak.json` (version 2; version 1 is lifted on read);
+Sentinel never closes it. When the issue is not delivered the log line is the
+fallback, the finalize line records the adapter, and the run outcome is
+unaffected. A runtime before this revision rejects a version 2 streak file;
+the #340 rollback rule applies.
+
+## 2026-11-05: repository cells widened to read-only waits and verdict reads (#328)
+
+Owner decision (2026-11-05, "delegate more"): a serial step that only
+re-arms a running read wait (`backoff`, `unavailable`, `deployment`,
+`ci_pending`, `review_pending`) of an intent-free record, changing nothing
+but the wait and the no-progress counter, settles like a deferral and is
+stamped, with the stamp deadline equal to the wait's `until`. The existing
+plan rule therefore delegates waiting records and review/CI result reads to
+repository cells. A cell keeps only work-row wait/verdict transitions; a step
+needing a GitHub write, reservation, model start or review receipt is dropped
+and unstamped, so the next plan returns it to the serial path. Deltas carry
+an optional bounded step summary; finalize reports per-kind kept/deferred/
+elapsed counts and the delegated/serial-owned record counts on
+`sentinel_repair_fanout`, and the metrics record carries optional
+`fanoutDelegated`/`serialOwned`. Transition rule, accounting, deadline and
+margin are unchanged.
+
+## 2026-11-05: closed issues retire records with open Sentinel pulls
+
+Live defect: #324–#339 were closed while Sentinel's own candidate pulls
+#341–#358 stayed open, because retirement required a closed-unmerged pull and
+the retired-pull pass required a retirement. The closure pass now retires a
+record on any unmerged pull (closed or open), keeping the queue-custody,
+unsettled-implementation-intent, self-merge and preservation-uncertainty
+guards and every charge and counter. The next maintenance pass closes
+Sentinel's own pull under the existing one-write-per-cycle rule; a reopened
+issue returns the record to `work`. A `pullProbe` stamp alone does not settle
+a record within a pass, and a probe no later than the retirement does not
+delay the first retired-pull read. Intake now reports every open issue it
+lists but leaves without a record as a `skippedIssues` row `not_admitted`
+with a reason (`ci_outage_notice`, `native_parent`, `native_open_blockers`,
+`github_cooldown`, `base_unavailable`, `run_deadline`); the run-deadline case
+no longer stops silently. Issues opted out by the skip marker or label are
+still filtered before intake.

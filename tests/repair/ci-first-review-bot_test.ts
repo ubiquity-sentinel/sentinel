@@ -130,8 +130,18 @@ Deno.test("CI gate: positive evidence; a green foreign-app check is neither gree
   );
   assert.equal(
     decideCiGate([fromApp("validate", SHA3, "skipped", "github-actions")]),
+    "proceed",
+    "a job the target's own Actions CI skipped alone is green (CI decided)",
+  );
+  assert.equal(
+    decideCiGate([fromApp("advisory", SHA3, "neutral", "github-actions")]),
+    "proceed",
+    "a job the target's own Actions CI marked neutral alone is green",
+  );
+  assert.equal(
+    decideCiGate([fromApp("CodeRabbit", SHA3, "skipped", "coderabbit")]),
     "wait",
-    "a skipped Actions job alone is no evidence CI ran",
+    "a skipped review-bot app check alone is no evidence CI ran",
   );
   assert.equal(
     decideCiGate([fromApp("validate", SHA3, "success", "unknown")]),
