@@ -38,6 +38,10 @@ import { candidateBranch } from "../src/repair/keys.ts";
 import { hostedIssueKey, sameRepository } from "./hosted-autonomy-policy.ts";
 import type { RetryPlanV1 } from "./hosted-autonomy-retries.ts";
 import type { HostedAutonomyScopeV1 } from "./hosted-autonomy-scopes.ts";
+import {
+  isPassportWorkTrial,
+  passportTrialCanReconsider,
+} from "../src/repair/passport-work-trial.ts";
 
 /** The runtime's exact protected-path park message (`loop-implementation-result.ts`). */
 export const PROTECTED_PATH_BLOCKER = "candidate touches a protected path";
@@ -85,6 +89,10 @@ export function planProtectedReadmissions(
   const planned: ProtectedReadmissionV1[] = [];
   for (const record of snapshot.work) {
     if (skip(record.id) || !protectedReadmissionShape(record)) continue;
+    if (
+      isPassportWorkTrial(record.repository) &&
+      !passportTrialCanReconsider(record, snapshot.reservations)
+    ) continue;
     const issueNumber = record.related.issueNumber!;
     if (closedIssues.has(hostedIssueKey(record.repository, issueNumber))) {
       continue;
@@ -110,6 +118,10 @@ export async function takeProtectedReadmissions(
   const labelled = new Map<string, ReadonlySet<number> | null>();
   const taken: ProtectedReadmissionV1[] = [];
   for (const candidate of planned) {
+    if (isPassportWorkTrial(candidate.repository)) {
+      taken.push(candidate);
+      continue;
+    }
     const scope = await scopeFor(candidate.repository);
     const retryLabel = scope.surface?.retryLabel;
     if (retryLabel === undefined) continue;

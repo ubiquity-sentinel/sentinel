@@ -24,7 +24,10 @@ import { wakeBackupCiReceipt } from "../src/host/backup-ci-completion.ts";
 import { createRepairStateStore, DenoGitRunner } from "../src/state/mod.ts";
 import { backupCiRunnerId, parseBackupCiPins } from "./backup-ci-act.ts";
 import { rawGithubActionSource } from "./backup-ci-actions.ts";
-import { commitBackupCiPass } from "./backup-ci-dispatch.ts";
+import {
+  commitBackupCiPass,
+  createBackupCiLegDispatcher,
+} from "./backup-ci-dispatch.ts";
 import {
   BACKUP_CI_SENTINEL_REPOSITORY,
   createBackupCiLegReads,
@@ -246,6 +249,9 @@ async function commit(): Promise<number> {
     runId,
     now: () => Date.now(),
     api: createBackupCiApi(token),
+    legDispatcher: createBackupCiLegDispatcher(
+      env("SENTINEL_SELF_TOKEN") ?? "",
+    ),
     repository: BACKUP_CI_SENTINEL_REPOSITORY,
     writeStore: (mutate) =>
       writeBackupCiStore({

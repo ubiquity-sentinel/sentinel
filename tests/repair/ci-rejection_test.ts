@@ -452,22 +452,29 @@ Deno.test("a reviewed head back at work awaits its live CI correction only in th
   });
 });
 
-Deno.test("the CI correction decision files are protected from model-authored candidates", () => {
+Deno.test("CI correction launcher files are ordinary work; the CI verdict dependency and merge/credential authority stay protected", () => {
   const protectedPaths = createLocalRepositoryConfig().protectedPaths;
   for (
     const path of [
+      "src/host/supervisor-dispatch.ts",
+      "src/host/actions-premerge-ci.ts",
+      "src/github/port-evidence.ts",
+      "src/github/port-merge-policy.ts",
+      "src/github/port-merge.ts",
+      "src/repair/loop-checks.ts",
       "src/repair/ci-rejection.ts",
+      "src/host/hosted-app-credentials.ts",
+      "src/host/local-release.ts",
+    ]
+  ) assert.ok(protectedPaths.includes(path), path);
+  for (
+    const path of [
       "src/repair/loop-ci-correction.ts",
       "ops/hosted-autonomy-ci-retries.ts",
-      // The launcher files that apply the CI re-admission gate, supply the
-      // authenticated runtime record it trusts and define its blocker prefix
-      // and review-round ceiling.
       "ops/hosted-autonomy-retries.ts",
       "ops/hosted-autonomy-retry-pass.ts",
       "ops/hosted-autonomy-policy.ts",
-      // The flake re-run decides whether a parked head's correction waits
-      // for its once-per-head re-run, and re-runs it.
       "ops/hosted-autonomy-ci-rerun.ts",
     ]
-  ) assert.ok(protectedPaths.includes(path), path);
+  ) assert.ok(!protectedPaths.includes(path), path);
 });

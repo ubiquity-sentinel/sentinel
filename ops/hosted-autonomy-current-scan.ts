@@ -8,7 +8,9 @@ import {
   MATRIX_INDEX_RELEASE_REF,
   type MatrixHistoryPointV1,
   type MatrixProducerLocationV1,
+  type MatrixProducerPlanMembershipV1,
   parseCurrentMatrixIndexV1,
+  parseMatrixProducerPlanMembershipV1,
 } from "../src/contracts/maintenance-index.ts";
 import type {
   PortResultV1,
@@ -60,6 +62,11 @@ async function location(
 /** Durable discovery ranges, never a replacement for producer consumption. */
 export class CurrentMatrixScan {
   private dirty = false;
+  private plansTrusted = true;
+  private readonly learnedPlans = new Map<
+    string,
+    MatrixProducerPlanMembershipV1
+  >();
   private constructor(
     private readonly port: CurrentMatrixIndexPortV1,
     private readonly expectedHead: GitSha | null,
@@ -185,12 +192,74 @@ export class CurrentMatrixScan {
           canonicalStringify(producer.execution) &&
         p.proofFingerprint === producer.proofFingerprint
       );
+      const learned = this.learnedPlans.get(this.producerKey(producer));
+      if (learned !== undefined) producer.plan = learned;
+      else if (existing?.plan !== undefined) producer.plan = existing.plan;
       if (existing === undefined) this.index.producers.push(producer);
       else if (existing.sequence < producer.sequence) {
         Object.assign(existing, producer);
       }
     }
     this.dirty = true;
+  }
+
+  private producerKey(producer: MatrixProducerLocationV1): string {
+    return canonicalStringify({
+      execution: producer.execution,
+      proofFingerprint: producer.proofFingerprint,
+    });
+  }
+
+  /** Only an authenticated complete plan can teach a positive membership. */
+  async rememberPlan(
+    row: MatrixReleaseSnapshot,
+    input: MatrixProducerPlanMembershipV1,
+  ): Promise<void> {
+    if (!this.plansTrusted) return;
+    const producer = await location(row);
+    if (producer === null) return;
+    const plan = parseMatrixProducerPlanMembershipV1(input);
+    const key = this.producerKey(producer);
+    const existing = this.index.producers.find((p) =>
+      this.producerKey(p) === key
+    );
+    const prior = this.learnedPlans.get(key) ?? existing?.plan;
+    if (
+      prior !== undefined &&
+      canonicalStringify(prior) !== canonicalStringify(plan)
+    ) {
+      // A sidecar contradiction cannot turn a freshly proved consumer result
+      // into a failure or authorize replacing unknown acceleration metadata.
+      this.plansTrusted = false;
+      this.learnedPlans.clear();
+      return;
+    }
+    // An uncached source enters the index only after its parent was proved.
+    this.learnedPlans.set(key, plan);
+    if (existing !== undefined && existing.plan === undefined) {
+      existing.plan = plan;
+      this.dirty = true;
+    }
+  }
+
+  /** Positive membership refuses irrelevant work; never authorizes an effect. */
+  async planMembership(
+    row: MatrixReleaseSnapshot,
+    reservationIds: readonly string[],
+  ): Promise<"unknown" | "matching" | "disjoint"> {
+    if (!this.plansTrusted || reservationIds.length === 0) return "unknown";
+    const source = await location(row);
+    if (source === null) return "unknown";
+    const producer = this.index.producers.find((p) =>
+      p.head === source.head && p.sequence === source.sequence &&
+      this.producerKey(p) === this.producerKey(source)
+    );
+    if (producer?.plan === undefined) return "unknown";
+    return reservationIds.every((id) =>
+        !producer.plan!.reservationIds.includes(id)
+      )
+      ? "disjoint"
+      : "matching";
   }
 
   /** Yields strict source snapshots; only previously verified nonproducers skip. */
@@ -218,9 +287,15 @@ export class CurrentMatrixScan {
             ? row
             : await this.read(producer);
           const actual = await location(source);
+          const recorded = {
+            head: producer.head,
+            sequence: producer.sequence,
+            execution: producer.execution,
+            proofFingerprint: producer.proofFingerprint,
+          };
           if (
             actual === null ||
-            canonicalStringify(actual) !== canonicalStringify(producer)
+            canonicalStringify(actual) !== canonicalStringify(recorded)
           ) {
             throw this.fault("current matrix producer ancestry changed");
           }
@@ -252,7 +327,7 @@ export class CurrentMatrixScan {
   }
 
   async save(): Promise<void> {
-    if (!this.dirty) return;
+    if (!this.dirty || !this.plansTrusted) return;
     // A conflict/lost response affects acceleration only. No retry or overwrite;
     // a fresh invocation reads the winning sidecar and authoritative state.
     let outcome = "unavailable";

@@ -1,5 +1,7 @@
 # Backup CI in the ubiquity-sentinel org: final implementation spec (revision 2)
 
+Historical design snapshot at `4dd3144b56`; current implementation and delivery status belong in the [build ledger](build-status.md). Current trusted backup-leg dispatch uses the existing official self App actions:write capability only for the fixed leg-dispatch POST; native read/ref/store/receipt-wake authority remains separate, with no native dispatch fallback. Exact native/backup CI, completed native review, positive task acceptance, custody and durable accounting remain required. P0 is the only severity-based merge blocker; P1 and lower findings remain receipt-bound issue follow-ups. The historical examples below do not authorize restoring the old native-token dispatch path or its captured unlanded-work status.
+
 This revision is read-only: nothing was edited, committed or pushed. It is grounded at HEAD `4dd3144b56`, a docs-only commit on top of `7ec6d91185`. The never-started package (WP0) has not landed yet: `grep notStarted src ops` finds only an unrelated use in `src/contracts/hosted-supervisor.ts`. HEAD now also contains `docs/redesign-2026-10-25.md`, whose C2 and C7 sections cover the same ground. §19 reconciles them. The act and GitHub runner behaviours I rely on are listed as hosted-only assertions in §15, and a self-test checks them on every leg. If one is false, the leg fails closed and reports no evidence. It never produces a green.
 
 ---

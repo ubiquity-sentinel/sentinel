@@ -22,6 +22,7 @@ import { createMaintenanceNativeQueue } from "../src/host/maintenance-native-que
 import { createLocalCandidateLoader } from "../src/host/local-candidate.ts";
 import { githubGitAuthEnv } from "../src/host/local.ts";
 import { restorableCandidate } from "./hosted-autonomy-blocked-candidate.ts";
+import { resolvedConflictCandidate } from "../src/host/matrix-conflict-candidate.ts";
 
 /**
  * The exact operation ref an in-flight conflict resolution's merge M is
@@ -129,6 +130,11 @@ export function createHostedCandidateRecoveryPort(input: {
       ) continue;
       if (restorableCandidate(row) && row.intent?.branch === ref) return true;
       if (await inflightConflictMergeRef(row) === ref) return true;
+      const resolved = await resolvedConflictCandidate(
+        row,
+        read.value.snapshot.reservations,
+      );
+      if (resolved?.candidate.ref === ref) return true;
     }
     return false;
   };

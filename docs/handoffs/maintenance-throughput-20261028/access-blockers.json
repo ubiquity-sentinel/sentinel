@@ -1,0 +1,27 @@
+{
+  "capturedAt": "2026-10-28T00:29:30Z",
+  "session": "01a1752a-4c5b-72d1-9ede-0782a06ccc21",
+  "scope": "Authorised maintenance optimization; no permission escalation attempted",
+  "worktree": {
+    "command": "git worktree add -b codex/maintenance-throughput-20261028-gee28e37ed1 /Users/nv/repos/ubiquity/sentinel/.codex-worktrees/maintenance-throughput-20261028-gee28e37ed1 e6ac2213e27f124db21d13b757a9271066c434c9",
+    "cwd": "/Users/nv/repos/ubiquity/sentinel",
+    "exit": 255,
+    "error": "cannot lock ref: Unable to create .git/refs/heads/codex/maintenance-throughput-20261028-gee28e37ed1.lock: Operation not permitted",
+    "requiredPath": "/Users/nv/repos/ubiquity/sentinel/.git",
+    "branchAndWorktreeCreated": false
+  },
+  "evidenceRegistration": {
+    "tool": "/Users/nv/.codex/agents/assets/test-evidence/evidence.ts",
+    "toolSha256": "4d4a216be80a391eb3653425902159fc0b87be0153bcc02e48e267489777588c",
+    "operation": "register",
+    "target": "maintenance-perf-evidence-preflight",
+    "exit": 1,
+    "error": "PermissionDenied: Operation not permitted opening managed.lock",
+    "requiredPath": "/Users/nv/.local/state/dsh-evidence",
+    "validationExecuted": false,
+    "storageOverride": "No documented supported override; HOME/CODEX_HOME and tool source unchanged"
+  },
+  "safePreparation": "Two disjoint source/test candidates in task-owned plain snapshots from exact e6ac2213; no Git metadata, original source or authoritative ledger mutations",
+  "publication": "Not attempted; local validation remains required before hosted execution",
+  "neededToContinue": "A permission profile allowing the repository's Git metadata and fixed evidence storage writes in this same session; GitHub CLI network access is also needed for terminal publication, or an authorized supported connector"
+}

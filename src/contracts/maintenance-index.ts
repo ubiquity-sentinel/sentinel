@@ -2,13 +2,17 @@ import type { GitSha } from "./brands.ts";
 import { HOSTED_CONTROLLER_REPOSITORY } from "./hosted-controller-deployment.ts";
 import type { HostedExecutionIntentV1 } from "./hosted-supervisor.ts";
 import { parseHostedExecutionIntentV1 } from "./hosted-supervisor-execution.ts";
+import { MAX_MATRIX_CELLS } from "./matrix-identity.ts";
 import type { PortResultV1 } from "./ports.ts";
 import {
   expectArray,
   expectCount,
   expectExactKeys,
+  expectExactKeysWithOptional,
   expectGitSha,
+  expectPositiveInt,
   expectRecord,
+  expectSha256Hex,
   expectVersion,
   fail,
 } from "./validation.ts";
@@ -33,9 +37,39 @@ export interface MatrixHistoryRangeV1 {
 export interface MatrixProducerLocationV1 extends MatrixHistoryPointV1 {
   execution: HostedExecutionIntentV1;
   proofFingerprint: string;
+  plan?: MatrixProducerPlanMembershipV1;
 }
 
-/** Reconstructible discovery only: no state, artifact absence or settlement. */
+/** Positive complete plan membership; never a result or artifact-absence cache. */
+export interface MatrixProducerPlanMembershipV1 {
+  planDigest: string;
+  plannerJobId: number;
+  reservationIds: readonly string[];
+}
+
+export function parseMatrixProducerPlanMembershipV1(
+  input: unknown,
+  path = "matrixProducerPlanMembership",
+): MatrixProducerPlanMembershipV1 {
+  const row = expectRecord(input, path);
+  expectExactKeys(row, ["planDigest", "plannerJobId", "reservationIds"], path);
+  const reservationIds = expectArray(
+    row.reservationIds,
+    `${path}.reservationIds`,
+    MAX_MATRIX_CELLS,
+    expectSha256Hex,
+  );
+  if (new Set(reservationIds).size !== reservationIds.length) {
+    fail(path, "invalid_value", "plan reservations must be unique");
+  }
+  return {
+    planDigest: expectSha256Hex(row.planDigest, `${path}.planDigest`),
+    plannerJobId: expectPositiveInt(row.plannerJobId, `${path}.plannerJobId`),
+    reservationIds,
+  };
+}
+
+/** Reconstructible discovery and positive plans; no state or settlement. */
 export interface CurrentMatrixIndexV1 {
   version: "v1";
   kind: "current_matrix_index";
@@ -133,12 +167,17 @@ export function parseCurrentMatrixIndexV1(
     Number.MAX_SAFE_INTEGER,
     (value, at): MatrixProducerLocationV1 => {
       const row = expectRecord(value, at);
-      expectExactKeys(row, [
-        "head",
-        "sequence",
-        "execution",
-        "proofFingerprint",
-      ], at);
+      expectExactKeysWithOptional(
+        row,
+        [
+          "head",
+          "sequence",
+          "execution",
+          "proofFingerprint",
+        ],
+        ["plan"],
+        at,
+      );
       const location = point({ head: row.head, sequence: row.sequence }, at);
       const execution = parseHostedExecutionIntentV1(
         row.execution,
@@ -159,7 +198,14 @@ export function parseCurrentMatrixIndexV1(
       ) {
         fail(at, "invalid_lifecycle", "producer is outside verified ranges");
       }
-      return { ...location, execution, proofFingerprint: row.proofFingerprint };
+      return {
+        ...location,
+        execution,
+        proofFingerprint: row.proofFingerprint,
+        ...(row.plan === undefined ? {} : {
+          plan: parseMatrixProducerPlanMembershipV1(row.plan, `${at}.plan`),
+        }),
+      };
     },
   );
   if (new Set(producers.map((row) => row.head)).size !== producers.length) {

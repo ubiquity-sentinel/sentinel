@@ -3,13 +3,14 @@ import assert from "node:assert/strict";
 import { asWorkItemId } from "../../src/contracts/brands.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import { portError } from "../../src/contracts/ports.ts";
+import type { GitHubPullRequestV1 } from "../../src/contracts/ports.ts";
 import {
   candidateBranch,
   candidatePreservationRef,
   implementationIntentKey,
 } from "../../src/repair/keys.ts";
 import { REPO, SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
-import { makeRig, seededSnapshot } from "./loop-rig.ts";
+import { LOCAL_SENTINEL_REPO, makeRig, seededSnapshot } from "./loop-rig.ts";
 import {
   CHECK_POLL_MS,
   exactOpenPr,
@@ -495,28 +496,38 @@ Deno.test(
 );
 
 Deno.test(
-  "candidate lifecycle: a review-phase record whose own PR was merged outside the path is terminal",
+  "candidate lifecycle: a human-merged review-phase PR completes through delivery bookkeeping",
   async () => {
     const id = asWorkItemId("issue-1");
     const branch = candidateBranch(id);
     const rig = await makeRig("candidate-review-merged-pr", {
       summaries: false,
+      localScope: true,
       github: {
         candidateLifecycle: {
           ...positiveLifecycle(),
           refs: { [`refs/heads/${branch}`]: H1 },
-          pullRequests: [{
-            ...exactOpenPr(7, H1, branch),
-            state: "merged" as const,
-            mergeSha: SHA2,
-          }],
+          pullRequests: [
+            {
+              ...exactOpenPr(7, H1, branch),
+              state: "merged" as const,
+              mergeSha: SHA2,
+              mergedBy: "0x4007",
+            } as GitHubPullRequestV1 & { mergedBy: string },
+          ],
         },
       },
     });
     try {
       const written = await rig.store.writeRepair(
         seededSnapshot([
-          preservedIssueWork("issue-1", H1, { nextStep: "review", pr: 7 }),
+          {
+            ...preservedIssueWork("issue-1", H1, {
+              nextStep: "review",
+              pr: 7,
+            }),
+            repository: LOCAL_SENTINEL_REPO,
+          },
         ]),
         null,
       );
@@ -526,25 +537,45 @@ Deno.test(
       assert.equal(outcome.status, "idle", JSON.stringify(outcome));
       const state = await rig.snapshot();
       const work = state.work[0]!;
-      assert.equal(work.nextStep, "blocked");
-      assert.equal(
-        work.blocker?.message,
-        "pull request was merged outside the trusted review path",
+      assert.equal(work.nextStep, "done");
+      assert.equal(work.blocker, null);
+      assert.deepEqual(
+        work.evidence,
+        [{
+          kind: "review_receipt",
+          ref: `artifact:review-receipt/human-merge-v1/7/${H1}/${SHA2}/0x4007`,
+        }],
       );
       assert.equal(
         work.target.pr,
-        null,
-        "the dead merged PR identity is cleared",
+        7,
+        "the delivered merged PR identity is retained",
       );
-      assert.equal(work.target.head, H1, "the candidate head is retained");
+      assert.equal(work.target.head, H1, "the delivered head is retained");
       assert.equal(work.intent, null);
       assert.equal(work.wait, null);
+      assert.equal(
+        state.releaseRequests.length,
+        1,
+        "the ordinary post-merge bookkeeping persists one release request",
+      );
+      assert.equal(state.releaseRequests[0]!.revision, SHA2);
       assert.equal(
         rig.github.calls.filter((call) => call === "createPr").length,
         0,
         "a merged repair is never republished",
       );
       assert.equal(rig.model.requests.length, 0);
+      assert.equal(
+        rig.github.calls.filter((call) => call === "merge").length,
+        0,
+        "a completed human merge is never merged again",
+      );
+      assert.equal(
+        rig.github.calls.filter((call) => call.startsWith("closeIssue")).length,
+        0,
+        "no new GitHub write is invented for the human merge",
+      );
     } finally {
       await rig.ctx.cleanup();
     }

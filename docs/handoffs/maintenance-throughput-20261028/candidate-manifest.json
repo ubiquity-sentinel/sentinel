@@ -1,0 +1,96 @@
+{
+  "status": "unvalidated_source_candidate",
+  "base": "e6ac2213e27f124db21d13b757a9271066c434c9",
+  "candidateDirectory": "/tmp/sentinel-maintenance-perf-20261028/combined-candidate",
+  "patch": "/tmp/sentinel-maintenance-perf-20261028/candidate.patch",
+  "patchSha256": "b1236d5e835510639f8823485fe4268de4f86f6bf0538c96c5b743bc6cfdca68",
+  "changes": [
+    {
+      "module": "history",
+      "path": "tests/state/maintenance-index_test.ts",
+      "before": "e75fecab8c606dfc1a92b534935ebe4a3ce92b19d97256c6545ad32dca460b0b",
+      "after": "8d056f1ac02e913b4741587df77936b7b12604b14bf5d68cfa18a84e034ba353"
+    },
+    {
+      "module": "history",
+      "path": "ops/hosted-autonomy-producer-requests.ts",
+      "before": "4caf6d4a2be0c9e0b42a950180cbc4fc698654b07a2fa330e429f328fa078667",
+      "after": "368f48b8dd2f3ef5676354693e26d9901fd482ec5d318df817d34f1dc7712b77"
+    },
+    {
+      "module": "history",
+      "path": "ops/hosted-autonomy-current-scan.ts",
+      "before": "e86e3c3fe0fbe07d30b42bec0920a71e1a6713a4c6a0e5f2ecf2f569c9215f95",
+      "after": "ad8587b6ffb58438adeb6e8c0d4327aaceb12f8ed05f71b5bef6ce47f6052ead"
+    },
+    {
+      "module": "history",
+      "path": "ops/hosted-autonomy-producer-recovery.ts",
+      "before": "e199d284701ecc530c1706fa769fe0fc4ec7d0bf390c3e346bb38658d7107dc5",
+      "after": "cd0f0a118081acb1459f906c0a979ebcbc19a1d2c945c818a57718240f6164d8"
+    },
+    {
+      "module": "history",
+      "path": "ops/hosted-autonomy-current-recovery.ts",
+      "before": "9ce8d00c0a5cbb707e94e3957f4e6c6e54dc9933297b1e75b1b1a33832206699",
+      "after": "eba17ad2e446897cbd0192d45c0a9ae3e8c6c2a26a85f96e435b5d1f36fb2327"
+    },
+    {
+      "module": "history",
+      "path": "src/contracts/maintenance-index.ts",
+      "before": "18b617c833b388eb2231c2688c889495fcd77d4e33937c5376bcb35e27763304",
+      "after": "72f729ab25a86e47465cb691be66f0b0f4a9365028bedd0acfc19f0c7f1bb11f"
+    },
+    {
+      "module": "history",
+      "path": "tests/host/hosted-autonomy-producer-membership_test.ts",
+      "before": null,
+      "after": "5c0fa907d1a7f851ebbd7678dec15857479b5bc548a9397a1ea5ebf8b2fc09c1"
+    },
+    {
+      "module": "closure",
+      "path": "tests/host/hosted-autonomy-retirements_test.ts",
+      "before": "b6141b6383393403f70ce5379df9f56756cde259125922adbb6f893c6090ad4b",
+      "after": "673657317c1650a3245587e7070e298ad225726b19f87465ec583664cbade13a"
+    },
+    {
+      "module": "closure",
+      "path": "tests/host/hosted-autonomy-retirement-intents_test.ts",
+      "before": "343b92b8d0423a1fa8a61636463bcc791dfa86d4ab83e9889c9e7c777ab7ea31",
+      "after": "e7cf92d79db77e69863d3e6d25292eb886ad9cf90647584a00abdef809d6f2db"
+    },
+    {
+      "module": "closure",
+      "path": "ops/hosted-autonomy-closure-pass.ts",
+      "before": "52c9d33f7e481a19e3989b18e5b419870e1ef57169f4117d588a3e1e4fa7675a",
+      "after": "7a799ebde99d7c93ec9320bfc86c081b2dff4f05f56b98688d07e23e55f424d4"
+    },
+    {
+      "module": "closure",
+      "path": "ops/hosted-autonomy-scopes.ts",
+      "before": "629dbe4945a178cec9613afdaf70bfcb3e0c17e8499047631cedcf41ed2c45ef",
+      "after": "3122c76f56b7efd142c3b0cd21a999349aea5f584338f0b9b0833b8cdfdaaf99"
+    },
+    {
+      "module": "closure",
+      "path": "ops/hosted-autonomy-types.ts",
+      "before": "ebc0f4caa7a29c230887481a75df079a98004e50e63ae7fdba88cfac7dcf8e1f",
+      "after": "2a7c6b7b1ec61999f0bcd46eed5c6c53aa36930578f3cb5cd3a2e1c10de5be65"
+    },
+    {
+      "module": "closure",
+      "path": "ops/hosted-autonomy-github.ts",
+      "before": "1e36811eb0a4f2ad291dd74263751abaeb09a56b36ff926355cd26c57730d23d",
+      "after": "504c706a606e2a853ea6909f0e345c8b7859e167eb4fc902b2f4c934dd1aca2a"
+    },
+    {
+      "module": "closure",
+      "path": "tests/host/hosted-autonomy-closure-prefilter_test.ts",
+      "before": null,
+      "after": "b968fc9e3254dcb0f41542ab84f142beb400f98cd408d252e71de48efe92fa1a"
+    }
+  ],
+  "testsExecuted": false,
+  "repositoryMutated": false,
+  "limitation": "Git metadata and mandatory evidence storage writes are blocked; no type/lint/test/review/publication/install acceptance is claimed"
+}

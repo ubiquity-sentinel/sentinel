@@ -15,8 +15,7 @@ same path. Generic unavailable failures cannot.
 
 Before native review, the coordinator reads the current issue, digest and base,
 requires that base's CI, and reserves a `review_request` through the existing
-budget. The hard three-round count includes all previous admissions and
-ambiguous starts. An existing `issue_closure` intent carries the exact base,
+budget. The record's existing `reviewRoundCeilingFor` allowance includes all previous admissions and ambiguous starts; current-era and legacy ceilings remain distinct, and this route grants no additional round. An existing `issue_closure` intent carries the exact base,
 task digest, implementation reservation and review admission while the
 nonexpiring wait keeps R80 inert. No review request ever carries a fabricated
 pull request number.
@@ -37,8 +36,7 @@ existing `review_receipt` evidence reference binds their comment ids and digests
 to the exact issue, base, task digest and review admission. The trusted
 coordinator alone creates the binding; model output cannot choose it.
 
-Only an authenticated completed native result with no P0/P1 and
-`already_satisfied_at_base` for the exact task permits issue closure. The
+Only an authenticated completed native result with no unresolved P0 and `already_satisfied_at_base` for the exact task permits issue closure. P0 is the only severity-based blocker; other findings remain retained and their follow-up uses the existing authorized issue workflow. The
 closure capability re-reads both comments, verifies their author and complete
 digests, checks their existing native result and execution shapes, and re-reads
 issue text, configured base and CI immediately before the issue-only write. Base

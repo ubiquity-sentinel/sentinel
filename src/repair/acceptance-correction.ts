@@ -1,10 +1,11 @@
 /**
  * Repair loop internals: a task acceptance the reviewer found NOT fulfilled
- * (JAM B6). Owner rules: an unaccepted candidate never merges, and only P0/P1
- * block a merge, so a completed review whose only refusal is a `not_fulfilled`
- * acceptance bound to the record's own source issue and to its trusted live
- * text is a P1. While a review round is left it is corrected exactly like any
- * P0/P1 finding (B6a); with none left the record parks once with
+ * (JAM B6). Positive task acceptance is an independent merge gate; P0 alone
+ * blocks by severity. A `not_fulfilled` acceptance bound to the record's own
+ * source issue and trusted live text retains its synthetic P1 marker for the
+ * existing acceptance-correction and historical rollback contracts. While a
+ * review round is left the existing acceptance path corrects it (B6a); with
+ * none left the record parks once with
  * `TASK_ACCEPTANCE_OWNER_GATE_DETAIL`, which no runtime path and no launcher
  * rule ever re-admits and which the launcher names in its run summary (B6b).
  *

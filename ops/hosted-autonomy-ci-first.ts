@@ -54,6 +54,10 @@ import { ordinaryReviewRoundsSpent } from "../src/repair/review-round-cap.ts";
 import { ciCorrectionRuntimeProven } from "./hosted-autonomy-ci-retries.ts";
 import { legacyReviewCutoffForRuntime } from "../src/host/legacy-review-cutoff-env.ts";
 import { HOSTED_RUNTIME_ROLLOUT } from "../src/host/hosted-runtime-rollout.ts";
+import {
+  isPassportWorkTrial,
+  passportTrialCanReconsider,
+} from "../src/repair/passport-work-trial.ts";
 
 type WorkRow = RepairStateSnapshotV1["work"][number];
 
@@ -215,20 +219,42 @@ function publishedHead(
 }
 
 /**
- * Parked by the runtime's pre-review CI gate on its published head, red or
- * pending past bound (`prefixes`): the parks every pre-review rule takes.
+ * A published CI park that may need evidence. This grants no readmission or
+ * model-start authority; those predicates separately require settlement.
  */
-export function preReviewCiParked(
+export function preReviewCiEvidenceCandidate(
   snapshot: Pick<RepairStateSnapshotV1, "releaseRequests">,
   record: WorkRow,
   prefixes: readonly string[] = CI_PRE_REVIEW_PARK_PREFIXES,
 ): boolean {
   const blocker = record.blocker;
+  const accepted = isPassportWorkTrial(record.repository) &&
+      prefixes === CI_PRE_REVIEW_PARK_PREFIXES
+    ? [...prefixes, CI_FIX_EXHAUSTED_PREFIX]
+    : prefixes;
   return record.nextStep === "blocked" && record.intent === null &&
     blocker !== null && blocker.kind === "other" &&
-    prefixes.some((prefix) => blocker.message.startsWith(prefix)) &&
+    accepted.some((prefix) => blocker.message.startsWith(prefix)) &&
     record.related.issueNumber !== null && ciPublicationShape(record) &&
     publishedHead(snapshot, record);
+}
+
+/**
+ * Parked by the runtime's pre-review CI gate on its published head, red or
+ * pending past bound (`prefixes`): the parks every pre-review rule takes.
+ */
+export function preReviewCiParked(
+  snapshot:
+    & Pick<RepairStateSnapshotV1, "releaseRequests">
+    & Partial<Pick<RepairStateSnapshotV1, "reservations">>,
+  record: WorkRow,
+  prefixes: readonly string[] = CI_PRE_REVIEW_PARK_PREFIXES,
+): boolean {
+  if (
+    isPassportWorkTrial(record.repository) &&
+    !passportTrialCanReconsider(record, snapshot.reservations ?? [])
+  ) return false;
+  return preReviewCiEvidenceCandidate(snapshot, record, prefixes);
 }
 
 /**
