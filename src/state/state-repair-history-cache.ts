@@ -25,9 +25,20 @@ export interface ValidatedMemoRecord {
   value: RecordIdentitySource;
 }
 
+/**
+ * The bound of one store's hot repair/release read memo (`GitStateStore`).
+ * The hosted hot repair tree is already ~7 MiB of proof and record text
+ * (2026-11-15), just under the history default, so hot reads keep a larger
+ * bound of their own; the history views keep theirs.
+ */
+export const HOT_STATE_TREE_MEMO_BYTES = 32 * 1024 * 1024;
+
 /** A validated result is reusable only after ALL freshly read bytes match. */
 export class StateTreeMemo {
   private entries = new Map<string, MemoEntry>();
+
+  /** `limitBytes` bounds the proof and record text one memo may hold. */
+  constructor(private readonly limitBytes = 8 * 1024 * 1024) {}
 
   read(key: string, proof: TreeProof):
     | { status: "miss" | "mismatch" }
@@ -63,7 +74,7 @@ export class StateTreeMemo {
         (n, row) => n + new TextEncoder().encode(row.text).length,
         0,
       );
-    const limit = 8 * 1024 * 1024;
+    const limit = this.limitBytes;
     if (size > limit) return;
     this.entries.delete(key);
     while (

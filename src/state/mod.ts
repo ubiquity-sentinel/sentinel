@@ -36,7 +36,11 @@ import {
   compactReservationLedgerV1,
   ReservationLedgerCapacityError,
 } from "./state-reservation-archive.ts";
-import { RepairHistoryCache } from "./state-repair-history-cache.ts";
+import {
+  HOT_STATE_TREE_MEMO_BYTES,
+  RepairHistoryCache,
+  StateTreeMemo,
+} from "./state-repair-history-cache.ts";
 import {
   readColdCatalog,
   REPAIR_COLD_PREFIX,
@@ -89,6 +93,20 @@ import type { RepairTierPolicyV1 } from "./state-repair-tier-plan.ts";
 
 export class GitStateStore extends StateGitTransport implements StateStore {
   private readonly repairHistory = new RepairHistoryCache(this.scratchDir);
+  /**
+   * One validated memo per hot ref (the history views' `StateTreeMemo`). A
+   * later read still lists the ref, fetches it and reads every blob; it reuses
+   * a parse only when the parents, both listings and every fresh blob byte
+   * match, and a moved head reuses only its byte-identical records. Every hit
+   * is a fresh copy. The two refs keep separate memos so neither evicts the
+   * other.
+   */
+  private readonly hotRepairTrees = new StateTreeMemo(
+    HOT_STATE_TREE_MEMO_BYTES,
+  );
+  private readonly hotReleaseTrees = new StateTreeMemo(
+    HOT_STATE_TREE_MEMO_BYTES,
+  );
   // -------------------------------------------------------------------------
   // Reads: both roles read both fixed refs.
   // -------------------------------------------------------------------------
@@ -98,6 +116,7 @@ export class GitStateStore extends StateGitTransport implements StateStore {
   > {
     return this.withOpDir<StateReadResultV1<RepairStateSnapshotV1>>(
       async (op) => {
+        op.treeMemo = this.hotRepairTrees;
         const loaded = await this.loadRemote(op, REPAIR_REF, "repair");
         if (!loaded.ok) return loaded;
         if (loaded.value.status === "absent") {
@@ -122,6 +141,7 @@ export class GitStateStore extends StateGitTransport implements StateStore {
   > {
     return this.withOpDir<StateReadResultV1<ReleaseStateSnapshotV1>>(
       async (op) => {
+        op.treeMemo = this.hotReleaseTrees;
         const loaded = await this.loadRemote(op, RELEASE_REF, "release");
         if (!loaded.ok) return loaded;
         if (loaded.value.status === "absent") {

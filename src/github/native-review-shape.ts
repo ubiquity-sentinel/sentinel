@@ -268,8 +268,8 @@ function bodyFacts(body: string | null): BodyFacts {
       facts.repairOffset = rewritten.offset;
     }
   }
-  // An escaped layer and its rewrite are the other candidates (they begin
-  // with `{"` where the structural rewrite keeps `{\"`).
+  // An escaped layer and its rewrite are the other candidates (their quotes
+  // are unescaped where the structural rewrite keeps `\"`).
   for (const candidate of envelopeRecoveryCandidates(body)) {
     let value: unknown;
     try {
@@ -286,14 +286,38 @@ function bodyFacts(body: string | null): BodyFacts {
   return facts;
 }
 
+/** The last characters that name their own end class. */
+const END_BY_CHAR: ReadonlyMap<string, Facts["bodyEnd"]> = new Map([
+  ["}", "object_close"],
+  ["]", "array_close"],
+  ['"', "string"],
+  [",", "comma"],
+  [":", "colon"],
+  ["{", "open"],
+  ["[", "open"],
+]);
+
+/** The class of the last character of `scope` that is not JSON whitespace. */
+function lastTokenClass(scope: string): Facts["bodyEnd"] {
+  let at = scope.length - 1;
+  while (at >= 0 && " \t\n\r".includes(scope[at])) at--;
+  if (at < 0) return "none";
+  const char = scope[at];
+  const known = END_BY_CHAR.get(char);
+  if (known !== undefined) return known;
+  if (char >= "0" && char <= "9") return "digit";
+  return /^[A-Za-z]$/.test(char) ? "letter" : "other";
+}
+
 /**
  * Top-level `{` objects of `scope`, skipping JSON strings inside containers;
  * outside a string a backslash and its next character are skipped, so an
- * escaped layer (`{\"a\":1}`) scans by its structure.
+ * escaped layer (`{\"a\":1}`) scans by its structure. The scan's end state is
+ * the containers still open and the class of the scope's last token.
  */
 function topLevelObjects(
   scope: string,
-): Pick<Facts, "jsonCandidates" | "braces"> {
+): Pick<Facts, "jsonCandidates" | "braces" | "openContainers" | "bodyEnd"> {
   let depth = 0;
   let objects = 0;
   let inString = false;
@@ -322,6 +346,8 @@ function topLevelObjects(
       : depth > 0 || inString
       ? "unclosed"
       : "balanced",
+    openContainers: count(depth),
+    bodyEnd: inString ? "in_string" : lastTokenClass(scope),
   };
 }
 

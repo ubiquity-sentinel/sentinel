@@ -27,6 +27,7 @@ import {
   matrixPlanDiagnosticLineOf,
   type MatrixPlanDiagnosticLineV1,
 } from "./matrix-plan-diagnostic.ts";
+import { logHostPhase } from "../repair/timing-lines.ts";
 import {
   type ActionsMatrixHostDepsV1,
   configured,
@@ -69,6 +70,10 @@ export async function runActionsMatrixHost(
     runTargetCycles: async (input) => {
       const host = hostOf(input);
       if (job === "matrix_plan") {
+        // Advisory monotonic phase times (`sentinel_host_phase`): the child's
+        // own setup is the process uptime when its first target work starts.
+        logHostPhase("setup", performance.now());
+        let phaseStarted = performance.now();
         const deadline = Math.min(
           input.deadline,
           childRunDeadlineV1(host.execution.createdAt),
@@ -103,6 +108,8 @@ export async function runActionsMatrixHost(
           throw new Error("matrix planner addressed no configured target");
         }
         const pooled = { ...input, configs };
+        logHostPhase("intake", performance.now() - phaseStarted);
+        phaseStarted = performance.now();
         result = await runMatrixPlanEntrypoint({
           deps: targetDeps(pooled, first),
           options: {
@@ -120,6 +127,7 @@ export async function runActionsMatrixHost(
           planPath: host.artifactRoot + "/plan.json",
         });
         const planned = result;
+        logHostPhase("plan", performance.now() - phaseStarted);
         const include = planned.plan.cells.map((cell) => ({
           cellId: cell.cellId,
           planDigest: planned.planDigest,
@@ -139,6 +147,7 @@ export async function runActionsMatrixHost(
         );
         // #328: the repository fan-out plan on the state the planner left.
         // It is an optimization: any failure plans no repository cell.
+        phaseStarted = performance.now();
         await publishRepairFanoutOrNone({
           state: input.state,
           configs: pooled.configs,
@@ -146,6 +155,7 @@ export async function runActionsMatrixHost(
           artifactRoot: host.artifactRoot,
           output,
         });
+        logHostPhase("fanout", performance.now() - phaseStarted);
         console.log(JSON.stringify(matrixPlanCarrierOf({
           waveId: result.plan.waveId,
           run: host.run,

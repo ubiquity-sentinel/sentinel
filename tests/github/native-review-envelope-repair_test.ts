@@ -62,6 +62,11 @@ Deno.test("envelope recovery: each escaping slip parses to the intended value", 
     ['{"a":"see src\\utils.ts"}', { a: "see src\\utils.ts" }],
     // A doubled layer with a second slip inside it.
     ['{\\"a\\":\\"line one\nok\\"}', { a: "line one\nok" }],
+    // A layer whose opening brace JSON whitespace surrounds, raw or escaped.
+    ['{ \\"a\\":\\"b\\"}', { a: "b" }],
+    ['{\n\t\\"a\\":\\"b\\"}', { a: "b" }],
+    ['{\\n  \\"a\\": \\"b\\"\\n}', { a: "b" }],
+    ['\\n{\\r\\n\\t\\"a\\":\\"b\\"}', { a: "b" }],
   ];
   for (const [text, expected] of cases) {
     assert.throws(() => JSON.parse(text), "each case is invalid strict JSON");
@@ -116,6 +121,51 @@ Deno.test("native review: a doubly escaped envelope is read as the reviewer wrot
   );
   assert.equal(outcome.status, "clean", outcome.detail ?? "");
   assert.deepEqual(outcome.result, CLEAN_RESULT);
+});
+
+Deno.test("native review: a doubly escaped envelope opening with whitespace is read as the reviewer wrote it", async (t) => {
+  // One extra layer of a pretty-printed envelope opens with `{\n  \"`, and a
+  // spaced one with `{ \"`; the decoded layer is the complete envelope.
+  const layer = (binding: string, result: unknown, indent?: number) =>
+    JSON.stringify(
+      JSON.stringify({ binding: JSON.parse(binding), result }, null, indent),
+    ).slice(1, -1);
+  const cases = [{
+    name: "pretty-printed",
+    build: (binding: string) => layer(binding, CLEAN_RESULT, 2),
+  }, {
+    name: "spaced",
+    build: (binding: string) => "{ " + layer(binding, CLEAN_RESULT).slice(1),
+  }];
+  for (const item of cases) {
+    await t.step(item.name, async () => {
+      const outcome = await nativeOutcome((binding) =>
+        NATIVE_REVIEW_OPEN + item.build(binding) + NATIVE_REVIEW_CLOSE
+      );
+      assert.equal(outcome.status, "clean", outcome.detail ?? "");
+      assert.deepEqual(outcome.result, CLEAN_RESULT);
+    });
+  }
+  await t.step("every later check still holds", async () => {
+    const other = await nativeOutcome((binding) =>
+      NATIVE_REVIEW_OPEN + layer(
+        JSON.stringify({ ...JSON.parse(binding), head: "0".repeat(40) }),
+        CLEAN_RESULT,
+        2,
+      ) + NATIVE_REVIEW_CLOSE
+    );
+    assert.equal(other.status, "unavailable");
+    assert.equal(other.result, null);
+    assert.equal(other.detail, `${MALFORMED_PREFIX}[recovered_native_binding]`);
+    // A layer missing its last brace is never closed for the reviewer.
+    const cut = await nativeOutcome((binding) =>
+      NATIVE_REVIEW_OPEN + layer(binding, CLEAN_RESULT, 2).slice(0, -1) +
+      NATIVE_REVIEW_CLOSE
+    );
+    assert.equal(cut.status, "unavailable");
+    assert.equal(cut.result, null);
+    assert.equal(cut.detail, `${MALFORMED_PREFIX}[json_syntax]`);
+  });
 });
 
 Deno.test("native review: a recovered findings result still cross-checks the native findings", async () => {

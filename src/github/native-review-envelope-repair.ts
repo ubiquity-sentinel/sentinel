@@ -8,7 +8,8 @@
  * three unparseable on 2026-10-24 (`json_syntax`). This module retries the
  * strict parse on a few deterministic rewrites of those slips:
  *
- * - one whole extra layer of string escaping (`{\"binding\":...}`), itself
+ * - one whole extra layer of string escaping (`{\"binding\":...}`, with JSON
+ *   whitespace, raw or escaped, allowed around its opening brace), itself
  *   decoded tolerantly so a second slip inside it is still rewritten;
  * - raw control characters inside a string (an unescaped line break);
  * - a double quote inside an object member's string value that no JSON
@@ -35,6 +36,14 @@ const SIMPLE_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t"]);
 const AFTER_STRING = new Set([",", "}", "]", ":"]);
 
 const HEX4 = /^[0-9a-fA-F]{4}$/;
+
+/**
+ * An escaped layer's opening: `{` and its first key's escaped quote, with JSON
+ * whitespace before and after the brace either raw or escaped once (`\n`,
+ * `\r`, `\t`), as a pretty-printed envelope escaped once more begins.
+ */
+const ESCAPED_LAYER_OPENING =
+  /^(?:[ \t\n\r]|\\[nrt])*\{(?:[ \t\n\r]|\\[nrt])*\\"/;
 
 const CONTROL_ESCAPES: Record<string, string> = {
   "\b": "\\b",
@@ -80,7 +89,7 @@ function controlEscape(char: string): string {
  * the structural rewrite below.
  */
 function unescapedLayer(text: string): string | null {
-  if (!text.trimStart().startsWith('{\\"')) return null;
+  if (!ESCAPED_LAYER_OPENING.test(text.trimStart())) return null;
   let body = "";
   for (let index = 0; index < text.length; index++) {
     const char = text[index];

@@ -278,8 +278,9 @@ async function launchHostedRuntime(
       identity.job,
       stdin,
     );
+    // The planner's advisory step and timing lines reach its job log too.
     return identity.job === "matrix_plan"
-      ? attachPlanDiagnostic(matrix, run, execution)
+      ? attachStepLines(attachPlanDiagnostic(matrix, run, execution), run)
       : matrix;
   }
   const resolved = resolveLauncherResult({
@@ -448,15 +449,27 @@ function attachDiagnostics(
   } catch {
     // Advisory parsing cannot change the resolved child result.
   }
-  let withSteps = withTerminals;
+  const withSteps = attachStepLines(withTerminals, run);
+  if (earlyFailure === null) return withSteps;
+  return { ...withSteps, earlyFailure };
+}
+
+/**
+ * The child's strictly re-parsed advisory lines (`scanStepLines`), in child
+ * order. They never carry `status`, so the resolved child result, carrier and
+ * terminal are unchanged; a scan that throws attaches none.
+ */
+function attachStepLines(
+  result: HostedRuntimeLauncherResultV1,
+  run: ReplayCommandResultV1,
+): HostedRuntimeLauncherResultV1 {
   try {
     const stepLines = scanStepLines(new TextDecoder().decode(run.stdout));
-    if (stepLines.length > 0) withSteps = { ...withTerminals, stepLines };
+    if (stepLines.length > 0) return { ...result, stepLines };
   } catch {
     // Advisory parsing cannot change the resolved child result.
   }
-  if (earlyFailure === null) return withSteps;
-  return { ...withSteps, earlyFailure };
+  return result;
 }
 
 /**
