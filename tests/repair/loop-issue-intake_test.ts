@@ -390,6 +390,77 @@ Deno.test(
   },
 );
 
+for (const baseAvailable of [true, false]) {
+  Deno.test(
+    `released dead-candidate base: ${
+      baseAvailable
+        ? "refreshes before admission"
+        : "unavailable ref reserves nothing"
+    }`,
+    async () => {
+      const sourceIssue = issueRecord(1, {
+        relations: { openBlockers: [], subIssueCount: 0 },
+      });
+      const github = baseAvailable
+        ? new RelationsFakeGithub({ baseSha: SHA2 })
+        : new BaseRefUnavailableGithub();
+      github.listed = [sourceIssue];
+      github.latest.set(1, sourceIssue);
+      const rig = makeMemoryRig(github);
+      const queued = workRecord("issue-1", {
+        source: { kind: "issue", id: "1", revision: SHA3 },
+        counters: { attempts: 2, retries: 2, reviewRounds: 2 },
+        target: {
+          base: SHA1,
+          branch: "sentinel/repair/issue-1",
+          checkpoint: { branch: "sentinel/repair/issue-1", sha: SHA3 },
+          head: SHA3,
+          pr: null,
+          candidateState: { preserved: null, publishedHead: null },
+        },
+      });
+      const written = await rig.state.writeRepair(
+        seededSnapshot([queued]),
+        null,
+      );
+      assert.ok(written.ok && written.value.status === "applied");
+
+      // The placeholder head/checkpoint owns no recoverable artifact. Refresh
+      // only its base (or wait for the ref) before reserving a fresh start.
+      await rig.run(1);
+      let state = await rig.snapshot();
+      assert.equal(rig.model.requests.length, 0);
+      assert.equal(state.reservations.length, 0);
+      assert.deepEqual(state.work[0].target, {
+        ...queued.target,
+        base: baseAvailable ? SHA2 : SHA1,
+      });
+      assert.deepEqual(state.work[0].source, queued.source);
+      assert.deepEqual(state.work[0].counters, {
+        ...queued.counters,
+        // An unavailable ref records one uncharged no-progress observation.
+        ...(!baseAvailable ? { stalled: 1 } : {}),
+      });
+      assert.equal(state.work[0].createdAt, queued.createdAt);
+      assert.equal(state.work[0].firstSeenAt, queued.firstSeenAt);
+      if (!baseAvailable) {
+        assert.equal(state.work[0].wait?.reason, "unavailable");
+        assert.equal(state.work[0].wait?.until, T0 + 60 * 60_000);
+        return;
+      }
+
+      await rig.run(1);
+      assert.equal(rig.model.requests.length, 1);
+      assert.equal(rig.model.requests[0].base, SHA2);
+      assert.equal(rig.model.requests[0].checkoutBase, undefined);
+      state = await rig.snapshot();
+      assert.equal(state.reservations.length, 1);
+      assert.equal(state.reservations[0].head, SHA2);
+      assert.equal(state.work[0].counters.attempts, 3);
+    },
+  );
+}
+
 Deno.test(
   "queued issue base: an unavailable development ref reserves nothing",
   async () => {

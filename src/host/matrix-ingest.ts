@@ -323,6 +323,21 @@ export async function ingestMatrixResults(
       entries.push({ cellId: cell.cellId, ...accountedNoChange });
       continue;
     }
+    // A failed cell retains its implementation intent for ordinary retry
+    // reconciliation. Re-reading its exact settled artifact must not count the
+    // same model failure again in attempt memory.
+    if (
+      result.status === "failed" && reservation.outcome === "ambiguous" &&
+      reservation.settledAt !== null && record.nextStep === "blocked" &&
+      record.blocker?.message === result.detail
+    ) {
+      entries.push({
+        cellId: cell.cellId,
+        disposition: "duplicate",
+        detail: "authenticated failed result already accounted",
+      });
+      continue;
+    }
     let step: StepResultV1;
     if (
       interruptedOutputFailure(
@@ -416,6 +431,7 @@ export async function ingestMatrixResults(
         cell.reservationId,
         result.receipt,
         config,
+        result.detail,
       );
     } else {
       const failureDetail = result.detail ??

@@ -8,10 +8,19 @@ import { type GitHubPort, portError } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import {
   baseResultSatisfied,
+  baseResultWorkNeeded,
   type BaseTaskReviewPortV1,
   parseBaseReviewEvidenceRef,
 } from "../github/base-review-evidence.ts";
-import { baseReviewOrigin, holdNoChange } from "./base-satisfaction-marker.ts";
+import {
+  BASE_REVIEW_HOLD_MS,
+  BASE_REVIEW_NOT_ESTABLISHED,
+  baseReviewHoldExpired,
+  baseReviewOrigin,
+  holdNoChange,
+  MAX_NO_CHANGE_BASE_REVIEWS,
+  noChangeOutcomes,
+} from "./base-satisfaction-marker.ts";
 import {
   persistAfterSettlement,
   settleReviewCharge,
@@ -39,6 +48,24 @@ import { markBlocked, markDone } from "./transitions.ts";
 export type BaseTaskReviewGitHubV1 = GitHubPort & {
   baseTaskReview?: BaseTaskReviewPortV1;
 };
+
+/** Park of a hold whose bound passed before any base review completed. */
+export const BASE_REVIEW_HOLD_EXPIRED =
+  "base review did not complete within its hold bound";
+
+export { BASE_REVIEW_NOT_ESTABLISHED };
+
+/**
+ * A review found work still needed after `MAX_NO_CHANGE_BASE_REVIEWS`
+ * no-change implementation outcomes (the count follows the prefix). It
+ * matches no launcher retry prefix: the owner decides the next step.
+ */
+export const BASE_REVIEW_WORK_NEEDED_PARK =
+  "base review found the task still needs work; no-change implementation outcomes:";
+
+/** Park of a satisfied review whose issue closure kept deferring. */
+export const BASE_CLOSURE_HOLD_EXPIRED =
+  "base closure did not complete within its hold bound";
 
 function park(record: WorkRecordV1, detail: string, now: number): WorkRecordV1 {
   return markBlocked(record, "missing_evidence", detail, now);
@@ -92,6 +119,20 @@ export async function resumeBaseSatisfaction(
       if (settled.kind !== "progress") return settled;
       return { kind: "progress" };
     }
+  }
+  // A hold written before the bound existed gets its full window now; every
+  // hold then ends here once its bound passes without a completed review.
+  if (record.wait !== null && record.wait.until === null) {
+    const now = deps.clock.now();
+    return persistWork(deps, context, {
+      ...record,
+      wait: { ...record.wait, until: now + BASE_REVIEW_HOLD_MS },
+      updatedAt: now,
+    });
+  }
+  const expired = baseReviewHoldExpired(record, deps.clock.now());
+  if (record.intent?.kind === "issue_closure") {
+    const admission = record.intent.requestId;
     if (record.intent.resultId !== null) {
       const proof = record.evidence.find((row) => {
         const binding = row.kind === "review_receipt"
@@ -122,14 +163,27 @@ export async function resumeBaseSatisfaction(
         return persistWork(deps, context, markDone(record, deps.clock.now()));
       }
       if (closed.error.kind !== "conflict" && closed.error.kind !== "invalid") {
-        return {
-          kind: "deferred",
-          detail: "base closure waits for exact native evidence",
-        };
+        return expired
+          ? persistWork(
+            deps,
+            context,
+            park(record, BASE_CLOSURE_HOLD_EXPIRED, deps.clock.now()),
+          )
+          : {
+            kind: "deferred",
+            detail: "base closure waits for exact native evidence",
+          };
       }
       // Source/base drift or invalid native evidence requires a fresh,
       // separately charged review. Review rounds are accounting only.
     }
+  }
+  if (expired) {
+    return persistWork(
+      deps,
+      context,
+      park(record, BASE_REVIEW_HOLD_EXPIRED, deps.clock.now()),
+    );
   }
   const latestStartAt = Math.min(
     context.bounds.modelCutoff,
@@ -206,7 +260,13 @@ export async function resumeBaseSatisfaction(
     ...currentBase,
     nextStep: "work",
     blocker: null,
-    wait: { reason: "backoff", since: now, until: null },
+    // A further round never extends the hold: the bound counts from the
+    // no-change outcome (or the first bounded visit of an older hold).
+    wait: {
+      reason: "backoff",
+      since: now,
+      until: record.wait?.until ?? now + BASE_REVIEW_HOLD_MS,
+    },
     counters: { ...record.counters, reviewRounds: round },
     intent: {
       kind: "issue_closure",
@@ -265,13 +325,22 @@ export async function resumeBaseSatisfaction(
     intent: { ...held.intent!, resultId: binding.resultDigest },
     updatedAt: deps.clock.now(),
   };
-  const next = baseResultSatisfied(outcome.value.result, binding)
+  const result = outcome.value.result;
+  // The review answered that work is still needed at this exact base.
+  const workNeeded = baseResultWorkNeeded(result, binding);
+  const outcomes = noChangeOutcomes(fresh.snapshot, record);
+  const at = withProof.updatedAt;
+  const next = baseResultSatisfied(result, binding)
     ? withProof
-    : park(
-      withProof,
-      "base review did not establish already-satisfied task acceptance",
-      deps.clock.now(),
-    );
+    : !workNeeded
+    ? park(withProof, BASE_REVIEW_NOT_ESTABLISHED, at)
+    : outcomes < MAX_NO_CHANGE_BASE_REVIEWS
+    // Back to a fresh implementation at the reviewed base, carrying the
+    // review receipt as evidence; that start is admitted and charged by the
+    // ordinary gates (identical-attempt refusal included). Every charge so
+    // far stays settled as it is.
+    ? { ...withProof, nextStep: "work" as const, wait: null, intent: null }
+    : park(withProof, `${BASE_REVIEW_WORK_NEEDED_PARK} ${outcomes}`, at);
   return persistAfterSettlement(
     deps,
     context.bounds,

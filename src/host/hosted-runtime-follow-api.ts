@@ -53,6 +53,17 @@ export function positive(value: unknown): number {
   return value as number;
 }
 
+/** Complete listings attempted, including the first, before incompleteness fails. */
+export const FOLLOW_LIST_ATTEMPTS = 3;
+/** Production pause between complete re-listings; tests inject their own. */
+export const FOLLOW_LIST_RETRY_PAUSE_MS = 1_000;
+
+export function defaultListPause(): Promise<void> {
+  return new Promise((resolve) =>
+    setTimeout(resolve, FOLLOW_LIST_RETRY_PAUSE_MS)
+  );
+}
+
 /** Uses the existing bounded HTTP helpers, with one deadline for the whole scan. */
 export class HostedRuntimeFollowApi {
   private readonly deadline: DeadlineV1;
@@ -61,6 +72,7 @@ export class HostedRuntimeFollowApi {
     private readonly token: string,
     deadlineMs = 100_000,
     private readonly maxPages = 10,
+    private readonly listPause: () => Promise<void> = defaultListPause,
   ) {
     this.deadline = createDeadline(deadlineMs);
   }
@@ -131,11 +143,42 @@ export class HostedRuntimeFollowApi {
     return sha(object.sha);
   }
 
-  /** Total, uniqueness and terminal-link checks prevent partial-list success. */
+  /**
+   * GitHub's filtered listings are eventually consistent, so an incomplete or
+   * inconsistent listing is re-read from page 1 a bounded number of times,
+   * pausing inside the same overall deadline. Only a listing that completes
+   * within one pass is returned; one that stays inconsistent still fails.
+   */
   async list(
     path: string,
     key: "workflow_runs" | "jobs",
     query: Record<string, string> = {},
+  ): Promise<Record<string, unknown>[]> {
+    for (let attempt = 1;; attempt++) {
+      try {
+        return await this.listOnce(path, key, query);
+      } catch (error) {
+        if (
+          !(error instanceof FollowError) ||
+          error.reason !== "incomplete_pagination" ||
+          attempt >= FOLLOW_LIST_ATTEMPTS || this.deadline.fired()
+        ) throw error;
+      }
+      try {
+        await this.deadline.race(this.listPause());
+      } catch {
+        throw new FollowError(
+          this.deadline.fired() ? "follow_deadline" : "incomplete_pagination",
+        );
+      }
+    }
+  }
+
+  /** Total, uniqueness and terminal-link checks prevent partial-list success. */
+  private async listOnce(
+    path: string,
+    key: "workflow_runs" | "jobs",
+    query: Record<string, string>,
   ): Promise<Record<string, unknown>[]> {
     const rows: Record<string, unknown>[] = [];
     const ids = new Set<number>();

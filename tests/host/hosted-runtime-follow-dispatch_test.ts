@@ -35,6 +35,7 @@ const dispatch = async (api: FollowFake, expectedSha = L, ready = true) => {
     token: "fake-token",
     clock: { now: () => NOW },
     log: (line) => logs.push(line),
+    pause: () => Promise.resolve(),
     follow: { expectedSha, ready, pause: () => Promise.resolve() },
   });
   return { result, logs };
@@ -260,9 +261,73 @@ Deno.test("follow dispatcher refuses incomplete active listings without dispatch
       url.searchParams.get("status") === "queued"
       ? response({ total_count: 1, workflow_runs: [] })
       : undefined;
-  const { result } = await dispatch(api);
+  const { result, logs } = await dispatch(api);
   assert.equal(result.exitCode, 1);
   assert.equal(api.dispatches, 0);
+  // Both the recovery scan and the follow guard re-listed from page 1 a
+  // bounded number of times before refusing the data that stayed inconsistent.
+  assert.equal(queuedListings(api, true), 3);
+  assert.equal(queuedListings(api, false), 3);
+  assert.ok(
+    logs.some((line) =>
+      line.event === "follow_dispatch" && line.decision === "failed" &&
+      line.reason === "incomplete_pagination"
+    ),
+  );
+});
+
+function queuedListings(api: FollowFake, follow: boolean): number {
+  return api.requests.filter((request) => {
+    const url = new URL(request.url);
+    return request.method === "GET" &&
+      url.pathname.endsWith("/supervisor.yml/runs") &&
+      url.searchParams.get("status") === "queued" &&
+      url.searchParams.has("event") === follow;
+  }).length;
+}
+
+Deno.test("follow dispatcher re-lists a transiently inconsistent active listing and dispatches once", async () => {
+  const api = new FollowFake();
+  // The first queued listing of the recovery scan and of the follow guard
+  // each disagree with its total_count once.
+  const missed = new Set<string>();
+  api.intercept = (_request, url) => {
+    const kind = url.searchParams.has("event") ? "follow" : "recovery";
+    if (
+      !url.pathname.endsWith("/supervisor.yml/runs") ||
+      url.searchParams.get("status") !== "queued" || missed.has(kind)
+    ) return undefined;
+    missed.add(kind);
+    return response({ total_count: 1, workflow_runs: [] });
+  };
+  let pauses = 0;
+  const pause = () => {
+    pauses++;
+    return Promise.resolve();
+  };
+  const logs: Record<string, unknown>[] = [];
+  const result = await runSupervisorDispatch({
+    http: api.http,
+    token: "fake-token",
+    clock: { now: () => NOW },
+    log: (line) => logs.push(line),
+    pause,
+    follow: { expectedSha: L, ready: true, pause },
+  });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.dispatched, true);
+  assert.equal(result.recovery, "none");
+  assert.equal(api.dispatches, 1);
+  // The recovery scan absorbed the first miss and the follow guard the second.
+  assert.equal(queuedListings(api, false), 2);
+  assert.equal(queuedListings(api, true), 2);
+  assert.equal(pauses, 2);
+  assert.ok(!logs.some((line) => line.event === "recovery_scan_incomplete"));
+  assert.ok(
+    logs.some((line) =>
+      line.event === "follow_dispatch" && line.decision === "verified"
+    ),
+  );
 });
 
 Deno.test("follow dispatcher scans all active statuses before considering a duplicate-free POST", async () => {

@@ -198,6 +198,11 @@ async function rig(
       events.push("checks/read");
       return Promise.resolve(portOk(data.checks));
     },
+    readChecks(head) {
+      assert.equal(head, SHA1);
+      events.push("checks/read-all");
+      return Promise.resolve(portOk(data.checks));
+    },
     createBaseReviewComment(number, body) {
       assert.equal(number, 300);
       events.push("comment/create");
@@ -789,16 +794,32 @@ Deno.test("Passport base service: stale task/base or untrusted CI cannot start r
   }
   const f = await passportRig();
   try {
+    // A configured target without named checks (prospector, ubiquibar, ...)
+    // is judged by its own merge gate on the exact base, never refused
+    // outright: that refusal held every such no-change record forever.
     f.h.options.repository = { ...PASSPORT, name: "unsupported" };
-    const inspected = await f.h.service.inspect({
-      record: f.h.record,
-      deadline: T0 + 60_000,
-    });
-    assert.ok(!inspected.ok);
-    assert.equal(
-      inspected.error.detail,
-      "base review target CI policy unavailable",
-    );
+    const inspect = () =>
+      f.h.service.inspect({ record: f.h.record, deadline: T0 + 60_000 });
+    assert.deepEqual(await inspect(), portOk(f.h.task));
+    assert.ok(f.h.events.includes("checks/read-all"));
+    f.h.data.checks = { head: SHA1, checks: [] };
+    const absent = await inspect();
+    assert.ok(!absent.ok);
+    assert.equal(absent.error.detail, "base review CI is not green");
+    f.h.data.checks = {
+      head: SHA1,
+      checks: [{
+        name: "build",
+        head: SHA1,
+        status: "completed",
+        conclusion: "failure",
+        startedAt: T0 - 1_000,
+        completedAt: T0,
+      }],
+    };
+    const red = await inspect();
+    assert.ok(!red.ok);
+    assert.equal(red.error.detail, "base review CI is not green");
     assert.equal(f.h.session.turnStarts(), 0);
     assert.equal(f.h.data.closeCalls, 0);
   } finally {

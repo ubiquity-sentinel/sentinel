@@ -374,10 +374,13 @@ Deno.test("fan-out: a delegated step that needs a GitHub effect is handed back t
   const alpha = envelopes.find((e) => e.delta.repository.name === "alpha")!
     .delta;
   assert.deepEqual(alpha.deferredToTrusted, ["issue-alpha-60"]);
-  // Its only transition drops the stamp; the other records keep theirs.
-  const handed = alpha.transitions.find((t) => t.after.id === "issue-alpha-60");
+  // The delta carries no row of it: the trusted path owns it from here and
+  // the trusted writer drops its stamp; the other records keep theirs.
+  assert.equal(
+    alpha.transitions.some((t) => t.after.id === "issue-alpha-60"),
+    false,
+  );
   const { stepInputs: _stamp, ...unstamped } = publish;
-  assert.deepEqual(handed?.after, unstamped);
   const { value: result } = await apply(
     rig,
     fanout,

@@ -5,6 +5,8 @@
  */
 import assert from "node:assert/strict";
 
+import { ownerLandingTouch } from "../../src/repair/owner-landing.ts";
+
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 import {
   createGenericTargetPolicyV1,
@@ -254,6 +256,13 @@ Deno.test("generic policy: protected paths cover credentials, history and dispat
       ".env.local",
       ".env.production",
       "nested/.env.test",
+      ".env.EXAMPLE",
+      ".env.examples",
+      ".env.example.local",
+      ".env.sample.bak",
+      "nested/.env.templates",
+      "nested/.env.template.local",
+      ".env.production.example",
       ".git/config",
       ".github/workflows/ci.yml",
       ".npmrc",
@@ -280,6 +289,63 @@ Deno.test("generic policy: protected paths cover credentials, history and dispat
     facts({ files: ["package-lock.json", ".env.staging"], scripts: ["test"] }),
   );
   assert.ok(policy.protectedPaths.includes(".env.staging"));
+});
+
+Deno.test("generic policy: exact env templates remain repairable", () => {
+  const templates = [
+    ".env.example",
+    ".env.sample",
+    ".env.template",
+    "apps/web/.env.example",
+    "packages/api/.env.sample",
+    "nested/.env.template",
+  ];
+  const policy = selectTrustedTargetPolicyV1(
+    TEMPLATE,
+    { owner: "ubiquity", name: "template-fixture" },
+    facts({ files: ["package-lock.json", ...templates], scripts: ["test"] }),
+  );
+  for (const path of templates) {
+    assert.equal(isGenericTargetProtectedPathV1(path), false, path);
+    assert.equal(policy.protectedPaths.includes(path), false, path);
+    assert.equal(targetTouchesProtectedV1(policy, path), false, path);
+  }
+  for (const path of ["./.env.example", "nested\\.env.sample"]) {
+    assert.equal(targetTouchesProtectedV1(policy, path), false, path);
+  }
+  assert.deepEqual(ownerLandingTouch(policy, templates), { kind: "none" });
+});
+
+Deno.test("generic policy: env templates respect explicit protected paths", () => {
+  for (
+    const path of [
+      ".env.example",
+      "apps/web/.env.sample",
+      "packages/api/.env.template",
+    ]
+  ) {
+    const policy = createGenericTargetPolicyV1(facts({
+      files: ["package-lock.json", path],
+      scripts: ["test"],
+      sentinelProtected: [path],
+    }));
+    assert.ok(policy.protectedPaths.includes(path), path);
+    assert.equal(isGenericTargetProtectedPathV1(path, [path]), true, path);
+    assert.equal(targetTouchesProtectedV1(policy, path), true, path);
+  }
+  const policy = createGenericTargetPolicyV1(facts({
+    files: ["package-lock.json"],
+    scripts: ["test"],
+    sentinelProtected: ["templates/"],
+  }));
+  assert.equal(
+    targetTouchesProtectedV1(policy, "templates/.env.example"),
+    true,
+  );
+  assert.equal(
+    targetTouchesProtectedV1(policy, ".github/workflows/.env.sample"),
+    true,
+  );
 });
 
 Deno.test("generic policy: the production boundary protects nested env files", () => {

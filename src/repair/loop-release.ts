@@ -318,7 +318,10 @@ export async function acceptRelease(
   record: WorkRecordV1,
   request: ReleaseRequestV1,
   now: number,
-  carried: CarriedReleaseProverV1 | undefined = gitCarriedReleaseProver(deps),
+  carried: CarriedReleaseProverV1 | undefined = gitCarriedReleaseProver(
+    deps,
+    record.repository,
+  ),
 ): Promise<StepResultV1> {
   const queueGuard = await guardQueueDelivery(
     deps,
@@ -455,7 +458,7 @@ export async function observeReleaseAcceptance(
     }
     // A carried request binds only while its git patch proof holds (Sentinel
     // #152); one prover serves this whole step.
-    const carried = gitCarriedReleaseProver(deps);
+    const carried = gitCarriedReleaseProver(deps, record.repository);
     const observed = await observeGatewayVpsDelivery(
       deps.state,
       record,

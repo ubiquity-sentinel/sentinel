@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { parseRepairCellRefusalV1 } from "../../src/contracts/repair-delta.ts";
 import type { ActionsTargetCyclesInputV1 } from "../../src/host/actions.ts";
 import { isRepairCellMarker } from "../../src/host/hosted-runtime-repair-cell.ts";
+import { scanChildStatusRecords } from "../../src/host/hosted-runtime-status.ts";
 import {
   delegatedRecordsOfRun,
   publishRepairFanoutOrNone,
@@ -131,7 +132,7 @@ Deno.test("fan-out resilience: an absent, unreadable or mismatched plan delegate
       assert.equal(value, undefined, name);
       assert.deepEqual(
         lines.filter((line) => line.kind === REPAIR_FANOUT_DELEGATION_KIND),
-        [{ kind: REPAIR_FANOUT_DELEGATION_KIND, status: "unavailable" }],
+        [{ kind: REPAIR_FANOUT_DELEGATION_KIND, outcome: "unavailable" }],
         name,
       );
       // No delegation: the serial pass steps every record as before.
@@ -149,6 +150,33 @@ Deno.test("fan-out resilience: an absent, unreadable or mismatched plan delegate
       assert.deepEqual(stepped, ["issue-alpha-0", "issue-beta-100"], name);
     });
   }
+});
+
+Deno.test("fan-out resilience: the no-delegation line is never read as the serial child's status record", async () => {
+  const rig = makeRig([reviewing(REPOS[0], 0)]);
+  await inTemp(async (work) => {
+    // No plan beside this job's root: the serial child prints its one line.
+    const { value, lines } = await captured(() =>
+      delegatedRecordsOfRun(hostInput(rig, work + "/job/.sentinel-matrix"), {
+        planDigest: D,
+        repairPlanDigest: "b".repeat(64),
+      })
+    );
+    assert.equal(value, undefined);
+    const delegation = lines.filter((line) =>
+      line.kind === REPAIR_FANOUT_DELEGATION_KIND
+    );
+    assert.equal(delegation.length, 1);
+    const line = JSON.stringify(delegation[0]);
+    assert.deepEqual(scanChildStatusRecords(line), { kind: "none" });
+    // Beside the child's own result record the launcher still reads exactly
+    // that record: a second `status` line made the whole run unavailable.
+    const result = { status: "ran" };
+    assert.deepEqual(
+      scanChildStatusRecords(line + "\n" + JSON.stringify(result) + "\n"),
+      { kind: "one", value: result },
+    );
+  });
 });
 
 Deno.test("fan-out resilience: a repair cell that cannot proceed writes its bounded refusal and settles", async () => {
