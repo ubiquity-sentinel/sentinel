@@ -22,9 +22,15 @@ import type {
 import { planOwnerDevelopmentInstall } from "./owner-install-plan.ts";
 import {
   allowsHostedOwnerInstallMove,
+  allowsHostedRuntimeMove,
 } from "./hosted-runtime-compatibility.ts";
 import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
 import type { ExistingPrRuntimeCapability } from "./existing-pr-runtime-capability.ts";
+import {
+  type OwnerFutureRecoveryAuthority,
+  ownerFutureRecoveryBootstrap,
+} from "./owner-install-future-recovery.ts";
+import type { HostedRuntimeRollout } from "./hosted-runtime-rollout.ts";
 import {
   MAX_COMMIT_MESSAGE_CHARS,
   sha256HexText,
@@ -47,8 +53,18 @@ export function buildOwnerDevelopmentInstallSnapshot(
   /** Trusted in-process fixture only; production defaults to reviewed source. */
   capability?: QueueRuntimeCapability,
   custodyCapability?: ExistingPrRuntimeCapability,
+  future?: OwnerFutureRecoveryAuthority,
+  rollout?: HostedRuntimeRollout,
 ): ReleaseStateSnapshotV1 {
-  if (!allowsHostedOwnerInstallMove(move, capability, custodyCapability)) {
+  if (
+    !allowsHostedOwnerInstallMove(move, capability, custodyCapability) ||
+    (future !== undefined && !allowsHostedRuntimeMove(
+      move.priorRevision,
+      move.nextRevision,
+      capability,
+      custodyCapability,
+    ))
+  ) {
     throw new Error(STATIC_PLAN);
   }
   const parsed = tryParse(parseReleaseStateSnapshotV1, snapshot);
@@ -89,7 +105,7 @@ export function buildOwnerDevelopmentInstallSnapshot(
   ) {
     throw new Error(STATIC_PLAN);
   }
-  if (startup !== undefined) {
+  if (startup !== undefined || future !== undefined) {
     const intended = planOwnerDevelopmentInstall(
       state,
       now,
@@ -97,14 +113,18 @@ export function buildOwnerDevelopmentInstallSnapshot(
       startup,
       capability,
       custodyCapability,
+      rollout,
+      future,
     );
     if (
-      startup.releaseHead !== head ||
+      (startup !== undefined && startup.releaseHead !== head) ||
       (intended.status !== "install" && intended.status !== "rollback") ||
       canonicalStringify(intended.move) !== canonicalStringify(move)
     ) throw new Error(STATIC_PLAN);
   }
-  const execution = startup === undefined
+  const execution = future !== undefined
+    ? ownerFutureRecoveryBootstrap(future, head, now)
+    : startup === undefined
     ? runtime.execution
     : parseHostedExecutionIntentV1({
       id: `${startup.run.runId}:${startup.run.runAttempt}:repair`,

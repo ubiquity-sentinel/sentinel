@@ -223,6 +223,7 @@ export const EARLY_FAILURE_FRAME_LABELS: ReadonlySet<string> = new Set([
   "model-port-session.ts",
   "model-port-settlement.ts",
   "owner-install-api.ts",
+  "owner-install-future-recovery.ts",
   "owner-install-git.ts",
   "owner-install-matrix-evidence.ts",
   "owner-install-pins.ts",

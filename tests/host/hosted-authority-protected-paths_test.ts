@@ -19,6 +19,7 @@ Deno.test("hosted authority: actual repair keeps forbidden candidates charged an
       "src/host/maintenance-existing-pr-publication.ts",
       "src/host/hosted-runtime-bootstrap.ts",
       "src/host/owner-install-plan-proof.ts",
+      "src/host/owner-install-future-recovery.ts",
       "src/host/self-dependency-preparation.ts",
       "src/github/existing-pr-publication-proof.ts",
       "src/host/hosted-authority-protected-paths.ts",
@@ -89,6 +90,7 @@ Deno.test("hosted authority: real launcher emits only closed authority frame bas
         "error: Uncaught Error: fixture abort",
         "    at file:///private/runtime/src/host/hosted-unknown-authority.ts:12:6",
         "    at file:///private/runtime/src/host/synthetic-secret-value.ts:13:7",
+        "    at file:///private/runtime/src/host/owner-install-future-recovery.ts:14:2",
         "    at file:///private/launcher/src/host/hosted-app-principal-source.ts:9:3",
         "    at file:///private/runtime/src/host/hosted-self-dependencies.ts:10:4",
         "    at file:///private/runtime/ops/hosted-autonomy-queue-proof.ts:11:5",
@@ -101,12 +103,12 @@ Deno.test("hosted authority: real launcher emits only closed authority frame bas
     assert.equal(result.status, "failed");
     assert.equal(result.terminal?.outcome, "failed");
     assert.deepEqual(result.earlyFailure?.frames, [
+      "owner-install-future-recovery.ts:14:2",
       "hosted-app-principal-source.ts:9:3",
       "hosted-self-dependencies.ts:10:4",
       "hosted-autonomy-queue-proof.ts:11:5",
       "hosted-app-takeover-routing.ts:9:3",
       "actions-queue-custody.ts:10:4",
-      "maintenance-existing-pr-publication.ts:11:5",
     ]);
     const serialized = JSON.stringify(result);
     for (

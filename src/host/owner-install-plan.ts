@@ -43,12 +43,23 @@ import {
 import { planOwnerInstallMemory } from "./owner-install-plan-memory.ts";
 import {
   allowsHostedOwnerInstallMove,
+  allowsHostedRuntimeMove,
   runtimeCompatibilityRefusal,
 } from "./hosted-runtime-compatibility.ts";
-import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
-import type { ExistingPrRuntimeCapability } from "./existing-pr-runtime-capability.ts";
+import {
+  QUEUE_RUNTIME_CAPABILITY,
+  type QueueRuntimeCapability,
+} from "./queue-runtime-capability.ts";
+import {
+  EXISTING_PR_RUNTIME_CAPABILITY,
+  type ExistingPrRuntimeCapability,
+} from "./existing-pr-runtime-capability.ts";
 import type { HostedRuntimeRollout } from "./hosted-runtime-rollout.ts";
 import { planOwnerInstallRollout } from "./owner-install-plan-rollout.ts";
+import {
+  type OwnerFutureRecoveryAuthority,
+  planOwnerFutureRecovery,
+} from "./owner-install-future-recovery.ts";
 
 /**
  * Pure planning boundary. The snapshot is re-validated, so an unparsed or
@@ -64,14 +75,33 @@ export function planOwnerDevelopmentInstall(
   capability?: QueueRuntimeCapability,
   custodyCapability?: ExistingPrRuntimeCapability,
   rollout?: HostedRuntimeRollout,
+  future?: OwnerFutureRecoveryAuthority,
 ): OwnerDevelopmentInstallPlanV1 {
+  if (future !== undefined) {
+    const queue = capability ?? QUEUE_RUNTIME_CAPABILITY;
+    const custody = custodyCapability ?? EXISTING_PR_RUNTIME_CAPABILITY;
+    if (queue.proofActivated !== true || custody.custodyActivated !== true) {
+      return waiting("future recovery requires both active custody floors");
+    }
+  }
   const plan = planOwnerDevelopmentInstallUnchecked(
     snapshot,
     now,
     recovery,
     startup,
     rollout,
+    future,
   );
+  if (
+    future !== undefined &&
+    (plan.status === "install" || plan.status === "rollback") &&
+    !allowsHostedRuntimeMove(
+      plan.move.priorRevision,
+      plan.move.nextRevision,
+      capability,
+      custodyCapability,
+    )
+  ) return waiting(runtimeCompatibilityRefusal(custodyCapability));
   if (
     (plan.status === "install" || plan.status === "rollback") &&
     !allowsHostedOwnerInstallMove(plan.move, capability, custodyCapability)
@@ -85,6 +115,7 @@ function planOwnerDevelopmentInstallUnchecked(
   recovery?: OwnerMatrixRecoveryEvidenceV1,
   startup?: OwnerStartupRecoveryAuthorityV1,
   rollout?: HostedRuntimeRollout,
+  future?: OwnerFutureRecoveryAuthority,
 ): OwnerDevelopmentInstallPlanV1 {
   const parsed = tryParse(parseReleaseStateSnapshotV1, snapshot);
   if (!parsed.ok) {
@@ -117,6 +148,12 @@ function planOwnerDevelopmentInstallUnchecked(
     return waiting("a github cooldown is active");
   }
 
+  if (future !== undefined) {
+    if (startup !== undefined || recovery !== undefined) {
+      return waiting("conflicting owner recovery modes");
+    }
+    return planOwnerFutureRecovery(state, future, rollout);
+  }
   if (startup !== undefined) {
     if (recovery !== undefined) {
       return waiting("conflicting owner recovery modes");

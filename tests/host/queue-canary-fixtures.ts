@@ -22,7 +22,7 @@ export const GRANT: CanaryGrant = {
     number: 7,
     nodeId: "PR_CANARY",
     baseRef: "queue-canary",
-    headRef: "queue-canary/docs-a",
+    headRef: "queue-canary-fixtures/docs-a",
     head: SHA2,
   },
   reviewedBase: SHA1,

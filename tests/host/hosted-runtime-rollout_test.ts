@@ -54,6 +54,7 @@ function data() {
     ciFirstFix: [NEXT],
     acceptanceCorrection: [NEXT],
     legacyReview: [NEXT],
+    recoveries: [],
   };
 }
 
@@ -226,6 +227,7 @@ Deno.test("runtime rollout: empty source preserves the historical maintenance li
     ciFirstFix: [],
     acceptanceCorrection: [],
     legacyReview: [],
+    recoveries: [],
   });
   for (
     const rows of [
@@ -394,4 +396,61 @@ Deno.test("runtime rollout: copied future data reaches maintenance gates only wi
     }]),
     null,
   );
+});
+
+Deno.test("runtime rollout recoveries: exact required rows are bounded unique copied and frozen", () => {
+  const row = {
+    fromRevision: NEXT,
+    fromGeneration: 82,
+    toRevision: THIRD,
+    toGeneration: 83,
+    failedProofSha256: "a".repeat(64),
+    retainedHealthyProofSha256: "b".repeat(64),
+    healthyWitnessHead: PRIOR,
+  };
+  const source = { ...data(), recoveries: [{ ...row }] };
+  const parsed = parseHostedRuntimeRollout(source);
+  source.recoveries[0].toGeneration = 85;
+  assert.deepEqual(parsed.recoveries, [row]);
+  assert.equal(Object.isFrozen(parsed.recoveries), true);
+  assert.equal(Object.isFrozen(parsed.recoveries[0]), true);
+  for (const field of Object.keys(row)) {
+    const missing: Record<string, unknown> = { ...row };
+    delete missing[field];
+    rejected({ ...data(), recoveries: [missing] });
+  }
+  for (
+    const bad of [
+      null,
+      {},
+      { ...row, extra: true },
+      { ...row, fromRevision: "*" },
+      { ...row, toRevision: NEXT },
+      { ...row, fromGeneration: 0 },
+      { ...row, fromGeneration: 82.5 },
+      { ...row, toGeneration: 84 },
+      { ...row, toGeneration: "83" },
+      { ...row, healthyWitnessHead: "*" },
+      { ...row, failedProofSha256: "a".repeat(63) },
+      { ...row, failedProofSha256: "A".repeat(64) },
+      { ...row, retainedHealthyProofSha256: "*" },
+      Object.defineProperty({ ...row }, "toRevision", { get: () => THIRD }),
+    ]
+  ) {
+    rejected({ ...data(), recoveries: [bad] });
+  }
+  for (
+    const rows of [
+      null,
+      row,
+      Array(1),
+      [row, row],
+      [row, { ...row, toRevision: PRIOR, failedProofSha256: "c".repeat(64) }],
+      [row, { ...row, fromRevision: PRIOR }],
+      Object.assign([row], { extra: true }),
+      Array.from({ length: 1025 }, () => row),
+    ]
+  ) {
+    rejected({ ...data(), recoveries: rows });
+  }
 });
