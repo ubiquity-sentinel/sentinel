@@ -1,17 +1,19 @@
 /**
- * The launcher's follow-up pass: after the maintenance chain, file the
- * remaining P2/P3 findings of each trusted merge as one new issue in the
- * target repository (see `hosted-autonomy-follow-ups.ts`). It is state-free:
- * it reads the repair snapshot, writes no state, plans no matrix cell and
- * touches no release; its only external write is the bounded issue create
- * over the target repository's own sentinel App surface.
+ * The launcher's follow-up pass: after the maintenance chain, file one new
+ * issue per unresolved P1/P2/P3 finding of each trusted merge in the target
+ * repository (see `hosted-autonomy-follow-ups.ts`). It is state-free: it reads
+ * the repair snapshot, writes no state, plans no matrix cell and touches no
+ * release; its only external write is issue creation over the target
+ * repository's own sentinel App surface. There is no per-pass create-count
+ * cap; the pass deadline and listing/merge-check bounds still apply.
  *
  * Idempotency needs no state. Before any create the repository's created-since
- * listing is read, and an App-authored issue whose first line names the same
- * repository and PR (at any receipt or depth) means it is already filed. A
- * listing proves absence only strictly newer than its oldest item, including
- * the request/GitHub clock margin. An unproven create counts against the pass
- * bound and the next listing settles it (passes are serialised by the
+ * listing is read. An App-authored v2 marker for the same repository, PR,
+ * receipt and finding means that finding is already filed, at any depth. A
+ * legacy v1 marker for the same repository and PR covers every finding,
+ * regardless of receipt or depth. A listing proves absence only strictly newer
+ * than its oldest item, including the request/GitHub clock margin. An unproven
+ * create is reconciled from the next listing (passes are serialised by the
  * supervisor's concurrency group).
  */
 import { QUEUE_PROOF_ACTIVATED } from "../src/github/queue-runtime-policy.ts";
