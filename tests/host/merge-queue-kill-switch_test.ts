@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { createHostedQueueCoordinator } from "../../ops/hosted-autonomy-queue-host.ts";
 import { runHostedQueueCustody } from "../../ops/hosted-autonomy-queue-pass.ts";
@@ -435,6 +436,7 @@ Deno.test("factory restart with admission off retains actual native custody and 
     rig.clock.advance(24 * 3600000);
     const queue = rig.coordinator(selector, source);
     const result = await runHostedQueueCustody({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       clock: rig.clock,
       githubFor: () => null,
@@ -508,7 +510,8 @@ Deno.test("workflow binds only the protected repository selector and keeps imple
   const modelLines = workflow.split("\n").filter((line) =>
     line.trim().startsWith("SENTINEL_MODEL_ID:")
   );
-  assert.equal(modelLines.length, 4);
+  // maintenance, matrix_plan, matrix_cell, repair_cell (#328) and repair.
+  assert.equal(modelLines.length, 5);
   assert.ok(
     modelLines.every((line) =>
       line.trim() ===
@@ -528,6 +531,7 @@ Deno.test("actual coordinator factory switches off after a real HTTP admission a
   for (const selector of ["off", "observe", "invalid"]) {
     const queue = rig.coordinator(selector, rig.acceptedSource);
     const result = await runHostedQueueCustody({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       clock: rig.clock,
       githubFor: () => null,
@@ -539,6 +543,7 @@ Deno.test("actual coordinator factory switches off after a real HTTP admission a
   }
   const queue = rig.coordinator("on", rig.acceptedSource);
   const started = await runHostedQueueCustody({
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: rig.state,
     clock: rig.clock,
     githubFor: () => null,
@@ -551,6 +556,7 @@ Deno.test("actual coordinator factory switches off after a real HTTP admission a
     rig.clock.advance(60_000);
     const restarted = rig.coordinator(selector, rig.acceptedSource);
     const result = await runHostedQueueCustody({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       clock: rig.clock,
       githubFor: () => null,
@@ -567,6 +573,7 @@ Deno.test("actual coordinator factory switches off after a real HTTP admission a
 function restartable(rig: Awaited<ReturnType<typeof factoryRig>>) {
   return (selector: string) =>
     runHostedQueueCustody({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       clock: rig.clock,
       githubFor: () => null,

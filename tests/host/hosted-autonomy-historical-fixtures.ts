@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import { createHostedHistoricalMatrixQuarantine } from "../../ops/hosted-autonomy-matrix-adapters.ts";
@@ -664,6 +665,7 @@ export async function historicalMalformedRig(
       });
     }
     return await withDarkQueueAuthority({
+      ciMinutes: INACTIVE_CI_MINUTES,
       ...deps,
       historicalMatrix: {
         ...historicalMatrix,
@@ -677,7 +679,7 @@ export async function historicalMalformedRig(
   }
   const checkoutHead = await gitRun(checkout, ["rev-parse", "HEAD"], ENV);
   assert(checkoutHead.ok);
-  const mainEnv = {
+  const mainEnv: Record<string, string> = {
     GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel",
     GITHUB_REF: "refs/heads/sentinel-supervisor",
     GITHUB_JOB: "maintenance",
@@ -691,6 +693,7 @@ export async function historicalMalformedRig(
   };
   return {
     rig,
+    mainEnv,
     github,
     clock,
     records,

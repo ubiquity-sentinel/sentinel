@@ -169,15 +169,29 @@ export async function historicalMergedPublication(
  * merge API has no compare-and-swap on the base: a merge the pass made after
  * re-reading the tip may still land on a later commit, a tree no CI ran on,
  * which is never booked. A merge made outside the pass is adopted by
- * `baseAndHeadAreMerged` instead.
+ * `baseAndHeadAreMerged` instead. A squash commit (#331) is exact only on the
+ * single parent [tip] with the reviewed head's own tree.
  */
 export function mergedExactlyOn(
   pull: HostedAutonomyPullV1,
   tip: string,
   head: string,
 ): boolean {
+  if (pull.parents.length === 1) {
+    return pull.parents[0] === tip && squashTreeIsHead(pull, head);
+  }
   return pull.parents.length === 2 && pull.parents[0] === tip &&
     pull.parents[1] === head;
+}
+
+/**
+ * A squash commit (#331) is the reviewed tree only when the pull's own head
+ * is the reviewed head and the commit's tree is exactly that head's tree; an
+ * unread tree never proves it.
+ */
+function squashTreeIsHead(pull: HostedAutonomyPullV1, head: string): boolean {
+  return pull.headSha === head && typeof pull.mergeTree === "string" &&
+    pull.mergeTree.length > 0 && pull.mergeTree === pull.headTree;
 }
 
 /** Verified merge facts: the exact revision a foreign record delivered. */
@@ -190,7 +204,9 @@ export interface HostedMergedDeliveryV1 {
  * pull is merged under a named merge commit, it is authored by a trusted
  * identity, it targets the record's own base branch, that commit has exactly
  * two parents whose second one is the recorded head, the recorded base is
- * either the first parent or a proven ancestor of the merge revision, and the
+ * either the first parent or a proven ancestor of the merge revision (or, for
+ * a squash, #331, that commit has exactly the recorded base as its single
+ * parent and the recorded head's own tree), and the
  * revision is integrated into the recorded base branch. Any missing,
  * unreadable or mismatched fact yields null: an ambiguous merge is never
  * evidence.
@@ -200,6 +216,10 @@ export function baseAndHeadAreMerged(
   base: string,
   head: string,
 ): boolean {
+  // A squash (#331) on exactly the recorded base with the head's own tree.
+  if (pull.parents.length === 1) {
+    return pull.parents[0] === base && squashTreeIsHead(pull, head);
+  }
   if (pull.parents.length !== 2 || !pull.parents.includes(head)) return false;
   if (pull.parents.includes(base)) return true;
   // The merge may land on a descendant of the reviewed base: the base branch

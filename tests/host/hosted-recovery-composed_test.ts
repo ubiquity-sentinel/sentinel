@@ -1,4 +1,5 @@
 /** Historical ingestion and original-publication recovery share actual state transitions. */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { portError, portOk } from "../../src/contracts/ports.ts";
@@ -110,7 +111,12 @@ async function composedRig() {
     approveRun: () => Promise.resolve(false),
   };
   const clock = { now: () => rig.state.snapshot.updatedAt + 1 };
-  const deps = { state, githubFor: () => github, clock };
+  const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
+    state,
+    githubFor: () => github,
+    clock,
+  };
   const context = () => ({
     deps,
     snapshot: structuredClone(rig.state.snapshot),

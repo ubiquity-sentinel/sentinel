@@ -1,3 +1,4 @@
+import { parseOwnerLandingV1 } from "./owner-landing.ts";
 import {
   asIncidentFingerprint,
   asSourceSnapshotDigest,
@@ -30,8 +31,12 @@ import {
   MaxItems,
   MaxText,
 } from "./validation.ts";
+import { parseWorkWaitCauseV1 } from "./work-wait-cause.ts";
 import type {
+  PullProbeV1,
+  RetiredPullClosureV1,
   SelectionUrgencyV1,
+  StepInputsStampV1,
   WorkBlockerV1,
   WorkCountersV1,
   WorkRecordV1,
@@ -93,14 +98,26 @@ const URGENCY_KEYS = [
 ] as const;
 const CONTROLLER_KEYS = ["sha"] as const;
 const WAIT_KEYS = ["reason", "since", "until"] as const;
+/** Additive wait key absent from waits written before it existed (#335). */
+const WAIT_OPTIONAL_KEYS = ["cause"] as const;
 const BLOCKER_KEYS = ["kind", "message", "since"] as const;
 const COUNTERS_KEYS = ["attempts", "retries", "reviewRounds"] as const;
 /** Additive counter keys absent from rows written before they existed. */
 const COUNTERS_OPTIONAL_KEYS = ["stalled", "timeouts"] as const;
+/** Additive record keys absent from rows written before they existed. */
+const OPTIONAL_KEYS = [
+  "stepInputs",
+  "retiredPullClosure",
+  "ownerLanding",
+  "pullProbe",
+] as const;
+const RETIRED_PULL_CLOSURE_KEYS = ["pr", "outcome", "at"] as const;
+const PULL_PROBE_KEYS = ["pr", "at"] as const;
+const STEP_INPUTS_KEYS = ["digest", "deadline"] as const;
 
 export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
   const obj = expectRecord(input, "$");
-  expectExactKeys(obj, KEYS, "$");
+  expectExactKeysWithOptional(obj, KEYS, OPTIONAL_KEYS, "$");
   expectVersion(obj.version, "$.version");
   expectEnum(obj.kind, ["work"], "$.kind");
 
@@ -388,6 +405,56 @@ export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
     firstSeenAt,
     createdAt,
     updatedAt,
+    ...(obj.stepInputs === undefined
+      ? {}
+      : { stepInputs: parseStepInputs(obj.stepInputs, "$.stepInputs") }),
+    ...(obj.retiredPullClosure === undefined ? {} : {
+      retiredPullClosure: parseRetiredPullClosure(
+        obj.retiredPullClosure,
+        "$.retiredPullClosure",
+      ),
+    }),
+    ...(obj.ownerLanding === undefined ? {} : {
+      ownerLanding: parseOwnerLandingV1(obj.ownerLanding, "$.ownerLanding"),
+    }),
+    ...(obj.pullProbe === undefined
+      ? {}
+      : { pullProbe: parsePullProbe(obj.pullProbe, "$.pullProbe") }),
+  };
+}
+
+function parsePullProbe(input: unknown, path: string): PullProbeV1 {
+  const obj = expectRecord(input, path);
+  expectExactKeys(obj, PULL_PROBE_KEYS, path);
+  return {
+    pr: expectPositiveInt(obj.pr, `${path}.pr`),
+    at: expectTimestamp(obj.at, `${path}.at`),
+  };
+}
+
+function parseRetiredPullClosure(
+  input: unknown,
+  path: string,
+): RetiredPullClosureV1 {
+  const obj = expectRecord(input, path);
+  expectExactKeys(obj, RETIRED_PULL_CLOSURE_KEYS, path);
+  return {
+    pr: expectPositiveInt(obj.pr, `${path}.pr`),
+    outcome: expectEnum(
+      obj.outcome,
+      ["closed", "merged", "closed_elsewhere", "not_own", "reopened"],
+      `${path}.outcome`,
+    ),
+    at: expectTimestamp(obj.at, `${path}.at`),
+  };
+}
+
+function parseStepInputs(input: unknown, path: string): StepInputsStampV1 {
+  const obj = expectRecord(input, path);
+  expectExactKeys(obj, STEP_INPUTS_KEYS, path);
+  return {
+    digest: expectSha256Hex(obj.digest, `${path}.digest`),
+    deadline: expectTimestamp(obj.deadline, `${path}.deadline`),
   };
 }
 
@@ -398,7 +465,7 @@ function expectPriority(value: unknown, path: string): number {
 
 function parseWait(input: unknown, path: string): WorkWaitV1 {
   const obj = expectRecord(input, path);
-  expectExactKeys(obj, WAIT_KEYS, path);
+  expectExactKeysWithOptional(obj, WAIT_KEYS, WAIT_OPTIONAL_KEYS, path);
   const reason = expectEnum(
     obj.reason,
     [
@@ -407,6 +474,7 @@ function parseWait(input: unknown, path: string): WorkWaitV1 {
       "review_quota",
       "ci_pending",
       "ledger_capacity",
+      "deployment",
       "backoff",
       "unavailable",
       "manual",
@@ -422,7 +490,13 @@ function parseWait(input: unknown, path: string): WorkWaitV1 {
       "wait until cannot precede since",
     );
   }
-  return { reason, since, until };
+  // Absent stays absent so an older row re-serializes byte for byte.
+  return obj.cause === undefined ? { reason, since, until } : {
+    reason,
+    since,
+    until,
+    cause: parseWorkWaitCauseV1(obj.cause, `${path}.cause`),
+  };
 }
 
 function parseBlocker(input: unknown, path: string): WorkBlockerV1 {
@@ -494,7 +568,10 @@ export type {
   IncompleteOpKindV1,
   NextStepV1,
   OperationFailureV1,
+  PullProbeV1,
+  RetiredPullClosureV1,
   SelectionUrgencyV1,
+  StepInputsStampV1,
   TaskSourceKindV1,
   WorkBlockerV1,
   WorkCountersV1,

@@ -59,6 +59,7 @@ import {
   PRESERVATION_VALIDATION_REFUSED,
 } from "./hosted-autonomy-blocked-candidate.ts";
 import { taskReservationCount } from "./hosted-autonomy-retries.ts";
+import { isPreservationRefusalMessage } from "../src/repair/pre-reservation-checks.ts";
 import {
   HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS,
   hostedIssueKey,
@@ -139,7 +140,7 @@ async function judge(
   const parked = isParkedPreservation(record);
   const blocker = record.blocker;
   const refused = blocker?.kind === "other" &&
-    blocker.message === PRESERVATION_VALIDATION_REFUSED &&
+    isPreservationRefusalMessage(blocker.message) &&
     record.intent === null;
   if (!parked && !refused) return null;
   const dedicated = context.dedicatedReservations;

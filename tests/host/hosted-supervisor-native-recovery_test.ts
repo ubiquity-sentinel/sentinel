@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import {
   DORMANT_HOSTED_SUPERVISOR_POLICY as dormant,
   runHostedSupervisorWithPolicy,
@@ -176,6 +177,7 @@ for (const nativeCompletion of [false, true]) {
       let modelStarts = 0;
       const capability = {} as never;
       const aggregate = await runActionsTargetCycles({
+        ciMinutes: INACTIVE_CI_MINUTES,
         clock: rig.clock,
         state: capability,
         configs: [createLocalRepositoryConfig()],

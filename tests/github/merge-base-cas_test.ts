@@ -29,6 +29,14 @@ import {
 
 const MERGE_PATH = "/repos/ubiquity-sentinel/sentinel/pulls/1/merge";
 
+function headTreeRead(tree: typeof SHA1) {
+  return httpRespond("GET", commitPath(SHA1), 200, {
+    sha: SHA1,
+    tree: { sha: tree },
+    parents: [{ sha: SHA2 }],
+  });
+}
+
 function mergedPut() {
   return httpRespond("PUT", MERGE_PATH, 200, mergeResponseWire(SHA3));
 }
@@ -75,9 +83,11 @@ Deno.test("merge base CAS: a merge whose commit landed off the reviewed base is 
   for (
     const parents of [[SHA4, SHA1], [SHA2], [SHA1, SHA2], [SHA2, SHA1, SHA4]]
   ) {
+    // A single parent equal to the reviewed base is a squash shape (#331):
+    // its tree (SHA4) is not the reviewed head's tree (SHA2), so it is off-tip.
     const { port, transport } = mergedPort(happyScript({
       parents: mergeParentsRead(SHA3, parents),
-      extra: [mergedPut()],
+      extra: [mergedPut(), headTreeRead(SHA2)],
     }));
     const result = await mergeCall(port);
     assert.ok(result.ok, JSON.stringify(result));

@@ -1,3 +1,4 @@
+import { REFUSING_CI_MINUTES } from "../src/budget/ci-minutes.ts";
 import type {
   IncidentAdapter,
   RepairStateWriter,
@@ -332,6 +333,7 @@ export async function recoverHostedHistoricalC63(
           clock: deps.clock,
           configs: [config],
         }),
+        ciMinutes: REFUSING_CI_MINUTES,
         externalImplementations: true,
       },
       {

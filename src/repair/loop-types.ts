@@ -1,5 +1,12 @@
 /** Repair loop internals: types. */
 import type { BudgetControllerV1 } from "../budget/mod.ts";
+import type {
+  CiEffectKindV1,
+  CiEffectV1,
+  CiMinuteControllerV1,
+} from "../contracts/ci-minute-budget.ts";
+import { causedWait } from "./loop-wait-cause.ts";
+import { persistTransition } from "./loop-state.ts";
 import type { FixtureDigest, GitSha } from "../contracts/brands.ts";
 import type {
   Clock,
@@ -17,6 +24,8 @@ import type {
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import type { PendingStepInputsV1 } from "./step-inputs.ts";
+import type { DeliveryTrainHoldV1 } from "../contracts/delivery-train-ledger.ts";
 
 export interface RepairCycleDepsV1 {
   clock: Clock;
@@ -62,8 +71,17 @@ export interface RepairCycleDepsV1 {
   modelId?: string;
   /** The one production admission controller (RollingStartBudget). */
   budget: BudgetControllerV1;
+  /** Required trusted CI capability; hosts supply the explicit inactive capability by default. */
+  ciMinutes: CiMinuteControllerV1;
   /** Matrix-owned implementations settle only through authenticated artifact ingestion. */
   externalImplementations?: boolean;
+  /**
+   * Persist `wait.cause` on the waits that know it (#335). Off by default:
+   * every rollback target's strict parser must accept the state this runtime
+   * writes, so the trusted host turns it on only once the installed rollback
+   * target parses the optional key.
+   */
+  recordWaitCauses?: boolean;
   /**
    * The one-time legacy review class's cutoff (`review-round-cap.ts`): the
    * one instant no later than the first CI-first runtime's activation
@@ -72,6 +90,85 @@ export interface RepairCycleDepsV1 {
    * round is ever granted).
    */
   legacyReviewCutoff?: number | null;
+}
+
+/** Calendar holds are nonfailure state, never transport errors or model-start charges. */
+export async function guardCiMinuteEffect(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  kind: CiEffectKindV1,
+  override: Partial<
+    Pick<CiEffectV1, "head" | "base" | "ref" | "pr" | "publicationAfter">
+  > = {},
+): Promise<StepResultV1 | null> {
+  if (deps.ciMinutes === undefined) {
+    return { kind: "state_error", detail: "CI admission capability missing" };
+  }
+  if (!deps.ciMinutes.active) return null;
+  const baseBranch = kind === "merge"
+    ? deps.configs.find((c) =>
+      c.repository.owner === record.repository.owner &&
+      c.repository.name === record.repository.name &&
+      c.repository.installationId === record.repository.installationId
+    )?.baseBranch
+    : undefined;
+  if (kind === "merge" && baseBranch === undefined) {
+    return { kind: "state_error", detail: "CI base branch missing" };
+  }
+  const decision = await deps.ciMinutes.reserve({
+    repository: record.repository,
+    kind,
+    head: record.target.head,
+    base: record.target.base,
+    ref: baseBranch !== undefined
+      ? `refs/heads/${baseBranch}`
+      : record.target.branch === null
+      ? ""
+      : `refs/heads/${record.target.branch}`,
+    pr: record.target.pr,
+    ...override,
+  }, context.bounds.runDeadline);
+  if (
+    decision.kind === "inactive" || decision.kind === "admitted" ||
+    (kind === "base_refresh" && decision.kind === "reconciled")
+  ) {
+    return deps.clock.now() < context.bounds.runDeadline
+      ? null
+      : { kind: "margin", detail: "CI admission crossed operation deadline" };
+  }
+  if (decision.kind === "unavailable") {
+    return { kind: "deferred", detail: "CI minute evidence unavailable" };
+  }
+  if (decision.kind === "reconciled") {
+    return {
+      kind: "deferred",
+      detail: "CI effect awaits native reconciliation",
+    };
+  }
+  const now = deps.clock.now();
+  if (!Number.isSafeInteger(decision.retryAt) || decision.retryAt <= now) {
+    return { kind: "state_error", detail: "CI admission wait invalid" };
+  }
+  if (
+    record.wait?.reason === "backoff" && record.wait.until === decision.retryAt
+  ) {
+    return { kind: "deferred", detail: "CI minute calendar hold" };
+  }
+  return await persistTransition(deps, context, (draft) => {
+    const index = draft.work.findIndex((r) => r.id === record.id);
+    if (index < 0) throw new Error("CI wait record missing");
+    const current = draft.work[index];
+    draft.work[index] = {
+      ...current,
+      updatedAt: now,
+      wait: causedWait(deps, {
+        reason: "backoff",
+        since: current.wait?.reason === "backoff" ? current.wait.since : now,
+        until: decision.retryAt,
+      }, { port: "ci", status: "none", code: "minute_budget" }),
+    };
+  });
 }
 
 /** Read-only trusted identity lookup paired with the concrete fixture resolver. */
@@ -87,6 +184,8 @@ export interface RepairCycleOptionsV1 {
   deadline: number;
   /** Bounded persisted transitions per run. */
   stepLimit?: number;
+  /** The aggregate delegates fresh branch assignment to batched matrix intake. */
+  matrixIntakeOwnsBranches?: boolean;
   /**
    * Trusted ORIGINAL run start instant (the entrypoint captured it once). The
    * 90-minute model cutoff and the 120-minute ceiling are anchored to this
@@ -110,6 +209,19 @@ export interface RepairCycleOptionsV1 {
    * keeps the ordinary lifecycle unchanged.
    */
   bootstrap?: boolean;
+  /**
+   * Fan-out repository pass only (issue #328): told the id of each record
+   * about to be stepped, before its step runs, so the pass can attribute an
+   * interval to its record. It observes and never changes the pass.
+   */
+  onStep?: (id: string) => void;
+  /**
+   * Records this pass never selects for a step (issue #328): the trusted
+   * serial pass skips the records a repository cell steps, and a cell skips
+   * its repository's records that were not delegated to it. They stay
+   * visible to every other read of the pass.
+   */
+  excludeRecords?: ReadonlySet<string>;
 }
 
 export type RepairCycleOutcomeV1 =
@@ -146,6 +258,17 @@ export interface LoopContextV1 {
    * loaded); absent or null means no record is legacy.
    */
   legacyReviewCutoff?: number | null;
+  /**
+   * The serial pass's settled step stamps not yet written (issue #326). Every
+   * trusted write of this context folds them into the records they still
+   * describe; absent outside the serial pass (planner, ingester).
+   */
+  pendingStepInputs?: Map<string, PendingStepInputsV1>;
+  /**
+   * The launcher's open delivery trains read when the context was loaded
+   * (sentinel #330); absent or empty holds nothing.
+   */
+  deliveryTrainHolds?: readonly DeliveryTrainHoldV1[];
 }
 
 /** Effective run bounds: caller deadline clamped by the fixed ceiling. */

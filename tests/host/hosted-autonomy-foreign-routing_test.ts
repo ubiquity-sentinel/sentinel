@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import type { WorkItemId } from "../../src/contracts/brands.ts";
 import { resolveHostedDelivery } from "../../ops/hosted-autonomy-delivery-proof.ts";
@@ -209,7 +210,12 @@ Deno.test(
           title: FOREIGN_TASK_TITLE,
           body: FOREIGN_TASK_BODY,
         }
-        : { default_branch: FOREIGN_BRANCH };
+        : {
+          default_branch: FOREIGN_BRANCH,
+          // The target forbids squash (#331): the merge keeps its commit.
+          allow_squash_merge: false,
+          allow_merge_commit: true,
+        };
       return Promise.resolve(jsonResponse(payload));
     }) as typeof fetch;
     try {
@@ -431,6 +437,7 @@ Deno.test(
       pull: foreignPullFacts(),
     });
     const proofDeps = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: proofRig.rig.state,
       githubFor: proofRig.rig.githubFor,
       clock: { now: () => 0 },

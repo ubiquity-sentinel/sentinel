@@ -1076,7 +1076,7 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
       workflow.split("uses: ./launcher/.github/actions/sentinel-app-token")
         .length -
       1,
-    12,
+    14,
     "the coordinators and isolated cells mint target and self installation tokens",
   );
 
@@ -1086,6 +1086,7 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
       "prepare",
       "matrix_plan",
       "matrix_cell",
+      "repair_cell",
       "repair",
       "finalize",
     ]
@@ -1133,7 +1134,15 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
     );
   }
 
-  for (const job of ["maintenance", "matrix_plan", "matrix_cell", "repair"]) {
+  for (
+    const job of [
+      "maintenance",
+      "matrix_plan",
+      "matrix_cell",
+      "repair_cell",
+      "repair",
+    ]
+  ) {
     const lines = jobLines(workflow, job);
     assert.ok(
       lines.includes("    environment:") &&
@@ -1160,14 +1169,14 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
     const mint = mintStepRange(lines);
     assert.equal(
       /permission-[a-z-]+:/.test(blockText(lines, mint)),
-      job === "matrix_cell",
+      job === "matrix_cell" || job === "repair_cell",
       `${job} keeps the required installation permission scope`,
     );
     assert.ok(
       targets.start < mint.start,
       `${job} resolves its targets before the mint`,
     );
-    if (job === "matrix_cell") {
+    if (job === "matrix_cell" || job === "repair_cell") {
       assert.ok(blockText(lines, mint).includes("permission-contents: read"));
       assert.ok(
         blockText(lines, mint).includes("permission-pull-requests: read"),
@@ -1179,6 +1188,8 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
       ? "Plan isolated issue matrix"
       : job === "matrix_cell"
       ? "Run isolated issue cell"
+      : job === "repair_cell"
+      ? "Run repository repair cell"
       : "Run selected Sentinel runtime";
     const write = blockText(lines, namedStepRange(lines, writeStep));
     assert.ok(
@@ -1253,6 +1264,7 @@ Deno.test("hosted workflow: trusted coordination learns a lower bound on its App
       "maintenance",
       "prepare",
       "matrix_cell",
+      "repair_cell",
       "finalize",
     ]
   ) {

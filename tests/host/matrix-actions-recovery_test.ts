@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 /** Closed C mixed ingestion, charge retention and fresh-mirror recovery. */
 import assert from "node:assert/strict";
@@ -111,7 +112,8 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
               : "sources/ubiquity-ai.ubq.fi");
           const path = request.repository.name === "sentinel" || number === 4
             ? "repair.txt"
-            : "deno.json";
+            : "src/sentinel/probe.ts";
+          await Deno.mkdir(source + "/src/sentinel", { recursive: true });
           await Deno.writeTextFile(source + "/" + path, "candidate\n");
           await checked(source, ["add", path], r.env);
           await checked(source, ["commit", "-q", "-m", "candidate"], r.env);
@@ -327,6 +329,7 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
     );
     const first = await ingestClosedCWave(deps);
     const maintenance = await runHostedAutonomy({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: r.store,
       clock: r.clock,
       githubFor: () => {
@@ -360,17 +363,25 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
       first.dispositions.filter((row) =>
         row.intentKind === "candidate_preservation"
       ).length,
-      2,
+      3,
     );
+    // A protected `src/sentinel/` change is published for its owner to merge
+    // (2026-11-05 owner-landing decision): it is preserved like any
+    // candidate and flagged, never parked before publication.
     const protectedRow = first.dispositions.find((row) =>
       row.taskId.includes("ai.ubq.fi-1")
     )!;
-    assert.equal(protectedRow.nextStep, "blocked");
-    assert.equal(protectedRow.intentKind, null);
+    assert.equal(protectedRow.outcome, "submitted");
+    assert.equal(protectedRow.nextStep, "work");
+    assert.equal(protectedRow.intentKind, "candidate_preservation");
     assert.ok(protectedRow.head);
     assert.equal(protectedRow.checkpoint, null);
     const settled = await r.store.readRepair();
     assert.ok(settled.ok && settled.value.status === "found");
+    const protectedWork = settled.value.snapshot.work.find((row) =>
+      row.id === protectedRow.taskId
+    )!;
+    assert.deepEqual(protectedWork.ownerLanding?.paths, ["src/sentinel/"]);
     assert.equal(
       closedCWaveHandledReservations(settled.value.snapshot, binding).size,
       5,
@@ -394,9 +405,7 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
       "rehydration must not resettle or mutate state",
     );
     for (
-      const result of results.filter((row) =>
-        row.bundle !== null && !row.taskId.endsWith("ai.ubq.fi-1")
-      )
+      const result of results.filter((row) => row.bundle !== null)
     ) {
       const config = input.configs.find((row) =>
         row.repository.name === result.repository.name
@@ -613,8 +622,8 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
     const activeRecovery = await ingestClosedCWave(deps);
     assert.equal(
       activeRecovery.dispositions.length,
-      1,
-      "only the other still-actionable C preservation is read back",
+      2,
+      "only the two other still-actionable C preservations (ai.ubq.fi-1 owner landing, ai.ubq.fi-4) are read back",
     );
     assert.equal(
       activeRecovery.repairHead,
@@ -624,13 +633,32 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
     const foreign = input.configs.find((config) =>
       config.repository.name === "ai.ubq.fi"
     )!;
-    await runRepairCycle({ ...deps.cycleFor(foreign), configs: [foreign] }, {
-      deadline: r.clock.now() + 240_000,
-      stepLimit: 1,
-      modelStartsEnabled: false,
-    });
-    const ready = await r.store.readRepair();
+    // Both foreign preservations (the owner-landing ai.ubq.fi-1 and
+    // ai.ubq.fi-4) are consumed by the actual consumer, one step each.
+    let ready = await r.store.readRepair();
     assert.ok(ready.ok && ready.value.status === "found");
+    for (
+      let step = 0;
+      step < 3 &&
+      ready.value.snapshot.work.some((row) =>
+        row.repository.name === "ai.ubq.fi" &&
+        row.intent?.kind === "candidate_preservation"
+      );
+      step++
+    ) {
+      await runRepairCycle({ ...deps.cycleFor(foreign), configs: [foreign] }, {
+        deadline: r.clock.now() + 240_000,
+        stepLimit: 1,
+        modelStartsEnabled: false,
+      });
+      ready = await r.store.readRepair();
+      assert.ok(ready.ok && ready.value.status === "found");
+    }
+    const ownerLanding = ready.value.snapshot.work.find((row) =>
+      row.id.endsWith("ai.ubq.fi-1")
+    )!;
+    assert.equal(ownerLanding.intent, null);
+    assert.deepEqual(ownerLanding.ownerLanding?.paths, ["src/sentinel/"]);
     const newRetry = ready.value.snapshot.work.find((row) =>
       row.id.endsWith("ai.ubq.fi-2")
     )!;
@@ -673,7 +701,7 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
     assert.equal(
       closedCWaveNeedsRecovery(retired.value.snapshot, binding),
       false,
-      "handled protected BLOCKED candidate cannot keep old archives a global prerequisite",
+      "consumed owner-landing and ordinary preservations cannot keep old archives a global prerequisite",
     );
     for (const missing of [false, true]) {
       const unavailable = {
@@ -691,6 +719,7 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
         "fully retired scope performs no old artifact/history IO",
       );
       const maintenance = await runHostedAutonomy({
+        ciMinutes: INACTIVE_CI_MINUTES,
         state: r.store,
         clock: r.clock,
         githubFor: () => null,

@@ -1,5 +1,6 @@
 /** Trusted repair/planner queue prelude. This never invokes maintenance phases. */
 import { runHostedQueueCustody } from "../../ops/hosted-autonomy-queue-pass.ts";
+import { REFUSING_CI_MINUTES } from "../budget/ci-minutes.ts";
 import { createHostedQueueCoordinator } from "../../ops/hosted-autonomy-queue-host.ts";
 import type { QueueCustodyResult } from "../../ops/hosted-autonomy-queue-context.ts";
 import type { QueueRuntimeConfiguration } from "../github/queue-runtime-policy.ts";
@@ -26,6 +27,7 @@ export async function runRepairQueueCustody(
     };
   }
   return await runHostedQueueCustody({
+    ciMinutes: REFUSING_CI_MINUTES,
     state: input.state,
     clock: input.clock,
     githubFor: input.githubFor,

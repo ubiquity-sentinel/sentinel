@@ -3,6 +3,7 @@ import {
   type NativeQueueGuardV1,
   type QueueEffectRequest,
 } from "./native-queue-guard.ts";
+import { TARGET_DELIVERY_POLICIES } from "../contracts/target-delivery.ts";
 import type {
   ExistingPrTakeoverPort,
   TakeoverEffectAuthorization,
@@ -38,6 +39,10 @@ import type {
   WriteOutcomeV1,
 } from "../contracts/ports.ts";
 import type { GitHubIssueV1, GitHubPullRequestV1 } from "../contracts/ports.ts";
+import type {
+  LiveInputsRequestV1,
+  LiveInputsV1,
+} from "../contracts/live-inputs.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { GitHubApiClient } from "./client.ts";
 import type { GitExecutorV1 } from "./git-executor.ts";
@@ -74,8 +79,11 @@ export abstract class GitHubPortBase {
   protected readonly resolutionVerifier: HumanResolutionVerifierV1 | null;
   protected readonly findingCap: number;
   protected readonly cooldownGate: GitHubCooldownGateV1;
+  protected readonly deliveryPolicies: Readonly<Record<string, unknown>>;
 
   constructor(options: GitHubPortOptionsV1) {
+    this.deliveryPolicies = options.deliveryPolicies ??
+      TARGET_DELIVERY_POLICIES;
     this.nativeQueue = options.nativeQueue;
     this.selfMergeEnabled = options.selfMergeEnabled === true &&
       options.repository.owner === "ubiquity-sentinel" &&
@@ -197,6 +205,13 @@ export abstract class GitHubPortBase {
     return this.client.readChecks(head, names, options);
   }
 
+  /** Batched live inputs of this port's own repository (issue #326). */
+  readLiveInputs(
+    request: LiveInputsRequestV1,
+  ): Promise<PortResultV1<LiveInputsV1>> {
+    return this.client.readLiveInputs(request);
+  }
+
   readCheckSuites(head: GitSha): Promise<PortResultV1<GitHubCheckSuitesV1>> {
     return this.client.readCheckSuites(head);
   }
@@ -213,6 +228,10 @@ export abstract class GitHubPortBase {
 
   readCommitParents(sha: GitSha): Promise<PortResultV1<GitSha[] | null>> {
     return this.client.readCommitParents(sha);
+  }
+
+  readCommitTree(sha: GitSha): Promise<PortResultV1<GitSha | null>> {
+    return this.client.readCommitTree(sha);
   }
 
   /**

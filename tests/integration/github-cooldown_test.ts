@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import {
   exactCandidateLifecycle,
@@ -104,6 +105,7 @@ Deno.test("cooldown entrypoint: restart and fault modes keep zero further HTTP/a
         sessionBound: { maxDurationMs: 240000, maxOutputChars: 200000 },
       });
       const outcome = await runRepairEntrypoint({
+        ciMinutes: INACTIVE_CI_MINUTES,
         clock: rig.clock,
         state: rig.store,
         configs,
@@ -156,6 +158,7 @@ Deno.test("cooldown ambiguity: lost response keeps durable intent, cooldown and 
       });
       const run = () =>
         runRepairEntrypoint({
+          ciMinutes: INACTIVE_CI_MINUTES,
           clock: rig.clock,
           state: rig.store,
           configs,
@@ -251,6 +254,7 @@ Deno.test("cooldown bounds: gate wait cannot start GitHub intake after total run
   const configs = repairConfigs();
   const deadline = clock.now() + 600000;
   await runRepairEntrypoint({
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,
@@ -307,6 +311,7 @@ Deno.test("cooldown admission: awaited gate cannot consume an ineligible model r
       return result;
     };
     await runRepairEntrypoint({
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state,
       configs,

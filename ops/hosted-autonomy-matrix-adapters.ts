@@ -1,3 +1,4 @@
+import { REFUSING_CI_MINUTES } from "../src/budget/ci-minutes.ts";
 import {
   type IncidentAdapter,
   portError,
@@ -154,6 +155,7 @@ export async function createHostedClosedMatrixRecovery(input: {
     clock: input.clock,
     configs,
     cycleFor: (config, proofPass) => ({
+      ciMinutes: REFUSING_CI_MINUTES,
       state: input.state,
       clock: input.clock,
       configs,

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * M14 V1 candidate-handoff fresh-process worker.
  *
@@ -683,6 +684,7 @@ export async function runCandidateHandoffWorker(
   let cycleError: string | null = null;
   try {
     outcome = await runRepairEntrypoint({
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state,
       configs,

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { nativeLifecycleRig } from "../repair/existing-pr-lifecycle-fixtures.ts";
 import { routeExistingPr } from "../../src/repair/loop-existing-pr.ts";
@@ -205,6 +206,7 @@ Deno.test("existing PR final queue effect: real custody/principal after intent, 
           },
         };
         const deps = {
+          ciMinutes: INACTIVE_CI_MINUTES,
           state: r.state,
           clock: r.clock,
           githubFor: () => null,

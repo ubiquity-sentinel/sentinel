@@ -10,6 +10,7 @@ import { portError, portOk, SystemClock } from "../contracts/ports.ts";
 import { tryParse } from "../contracts/validation.ts";
 import {
   HOSTED_ACTIONS_CLOCK_TOLERANCE_MS,
+  HOSTED_ACTIONS_POSITIVE_SKEW_MS,
   HOSTED_SUPERVISOR_REF,
   HOSTED_SUPERVISOR_REPOSITORY,
   HOSTED_SUPERVISOR_WORKFLOW_ID,
@@ -224,13 +225,14 @@ export abstract class GitHubClientHostedExecution
       ) {
         return hostedExecutionMetadataError(metadataWindowExhausted);
       }
-      // Actual (non-skipped) metadata must be coherent and not future.
+      // Native chronology stays strict; only platform/observer skew is bounded.
       const tolerance = HOSTED_ACTIONS_CLOCK_TOLERANCE_MS;
+      const platformTolerance = tolerance + HOSTED_ACTIONS_POSITIVE_SKEW_MS;
       if (
         step.startedAt + tolerance < repair.startedAt ||
         step.completedAt > repair.completedAt + tolerance ||
-        repair.completedAt > observedAt + tolerance ||
-        step.completedAt > observedAt + tolerance
+        repair.completedAt > observedAt + platformTolerance ||
+        step.completedAt > observedAt + platformTolerance
       ) {
         return hostedExecutionMetadataError(metadataWindowExhausted);
       }
@@ -260,8 +262,8 @@ export abstract class GitHubClientHostedExecution
         step.completedAt !== null && repair.completedAt !== null &&
         step.startedAt + tolerance >= repair.startedAt &&
         step.completedAt <= repair.completedAt + tolerance &&
-        repair.completedAt <= observedAt + tolerance &&
-        step.completedAt <= observedAt + tolerance
+        repair.completedAt <= observedAt + platformTolerance &&
+        step.completedAt <= observedAt + platformTolerance
       ) {
         return parseWith({
           execution: saved,

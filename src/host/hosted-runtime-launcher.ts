@@ -24,6 +24,10 @@ import { tryParse } from "../contracts/validation.ts";
 import type { ReplayCommandResultV1 } from "../replay/runtime.ts";
 import { ensurePrivateDir, joinPath } from "./local.ts";
 import {
+  REPAIR_CELL_CHILD_ENTRYPOINT,
+  resolveRepairCellLauncherResult,
+} from "./hosted-runtime-repair-cell.ts";
+import {
   HOSTED_RUNTIME_CHILD_ENTRYPOINT,
   HOSTED_RUNTIME_DEADLINE_MS,
   HOSTED_RUNTIME_FAILED_DETAIL,
@@ -79,6 +83,7 @@ import { needsHostedLegacyStateView } from "./hosted-runtime-rollback-state.ts";
 import { HOSTED_RUNTIME_ROLLBACK_ENTRYPOINT } from "./hosted-runtime-rollback.ts";
 import { scanPlanDiagnostic } from "./matrix-plan-diagnostic.ts";
 import { scanStepLines } from "../repair/step-line.ts";
+import { readRepairLedgerV1 } from "../state/state-repair-ledger.ts";
 
 /**
  * Verify the launcher and runtime checkouts as clean worktrees at their exact
@@ -228,6 +233,8 @@ async function launchHostedRuntime(
         ? joinPath(dirs.launcher, HOSTED_RUNTIME_ROLLBACK_ENTRYPOINT)
         : identity.job === "repair"
         ? HOSTED_RUNTIME_CHILD_ENTRYPOINT
+        : identity.job === "repair_cell"
+        ? REPAIR_CELL_CHILD_ENTRYPOINT
         : "src/host/matrix-actions.ts",
     ],
     ...(childStdin === undefined ? {} : { stdin: childStdin }),
@@ -253,10 +260,15 @@ async function launchHostedRuntime(
   }
   observation.run = run;
   const finishedAt = input.clock.now();
+  observation.startedAt = startedAt;
+  observation.finishedAt = finishedAt;
   // A backward or invalid clock is a refusal: no terminal instant is ever
   // fabricated to hide it.
   if (!isNonNegativeSafeInteger(finishedAt) || finishedAt < startedAt) {
     return unavailableResult();
+  }
+  if (identity.job === "repair_cell") {
+    return resolveRepairCellLauncherResult(run, execution, stdin);
   }
   if (identity.job === "matrix_plan" || identity.job === "matrix_cell") {
     const matrix = resolveMatrixLauncherResult(
@@ -484,6 +496,9 @@ interface SummaryObservationV1 {
   /** null is a positively absent state; undefined is an unavailable read. */
   before?: RepairStateSnapshotV1 | null;
   run?: ReplayCommandResultV1;
+  /** Launcher clock instants around the child command (bootstrap metrics). */
+  startedAt?: number;
+  finishedAt?: number;
 }
 
 interface SummaryIntakeV1 {
@@ -500,7 +515,9 @@ async function readSummaryState(
   const deadline = createDeadline(5_000);
   try {
     const read = await deadline.race(
-      Promise.resolve().then(() => state.readRepair()),
+      // Run accounting compares whole ledgers: a row demoted to the cold
+      // tier between the two reads is still retained, never "removed".
+      Promise.resolve().then(() => readRepairLedgerV1(state)),
     );
     if (!read.ok) return undefined;
     return read.value.status === "absent"
@@ -557,6 +574,14 @@ async function summarizeHostedRuntime(
     observation.identity,
     observation.execution,
   );
+  if (summary.purpose === "bootstrap") {
+    const { startedAt, finishedAt } = observation;
+    summary.bootstrapDurationMs = startedAt !== undefined &&
+        finishedAt !== undefined && finishedAt >= startedAt
+      ? finishedAt - startedAt
+      : null;
+    summary.bootstrapOutcome = result.status;
+  }
   try {
     const intake = scanSummaryIntake(observation.run);
     const targets = observation.targets?.length
@@ -719,10 +744,11 @@ function explainHostedSummary(
     : summary.outcome === "failed"
     ? "failed"
     : "could not be verified";
-  const skipped = summary.targets.reduce(
-    (count, target) => count + (target.skippedIssues?.length ?? 0),
-    0,
-  );
+  // Contract-bound rows ask the owner to correct an issue; `not_admitted`
+  // rows only name why intake left an open issue for a later run.
+  const rows = summary.targets.flatMap((target) => target.skippedIssues ?? []);
+  const skipped = rows.filter((row) => row.code !== "not_admitted").length;
+  const notAdmitted = rows.length - skipped;
   let detail = summary.admittedWorkCount === null
     ? "work counts are unavailable"
     : `admitted ${summary.admittedWorkCount} work item${
@@ -768,6 +794,11 @@ function explainHostedSummary(
     if (summary.outcome === "healthy") {
       summary.nextAction = "Correct the skipped issue fields";
     }
+  }
+  if (notAdmitted > 0) {
+    detail += `; did not admit ${notAdmitted} open issue${
+      notAdmitted === 1 ? "" : "s"
+    } (reasons in skippedIssues)`;
   }
   summary.explanation =
     `${label} on ${generation} ${outcome}: ${detail}; next: ${

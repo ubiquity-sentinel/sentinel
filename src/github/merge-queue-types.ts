@@ -166,7 +166,10 @@ export type QueueOwnerReason =
   | "repeated_queue_failure"
   | "foreign_entry_drift"
   | "queue_evidence_expired"
-  | "historical_direct_evidence_missing";
+  | "historical_direct_evidence_missing"
+  // An owner-landing record (a protected-path change) is merged only by its
+  // repository owner: Sentinel never admits it to the merge queue.
+  | "owner_merge_required";
 export interface QueueBinding {
   repository: RepositoryIdentityV1;
   pullRequest: number;

@@ -199,3 +199,30 @@ Deno.test("plan diagnostic: a ledger-capacity wait keeps its admission_capacity 
     "admission_capacity",
   );
 });
+
+Deno.test("plan diagnostic: an expired ledger-capacity wait does not override the current outcome", () => {
+  for (
+    const [outcome, expected] of [
+      [{
+        kind: "deferred",
+        detail: "implementation start is past the model cutoff",
+      }, "bounds"],
+      [{
+        kind: "deferred",
+        detail: "implementation cannot fit its immutable dispatch artifact",
+      }, "artifact"],
+      [{ kind: "deferred", detail: "GitHub cooldown" }, "cooldown"],
+      [{
+        kind: "deferred",
+        detail: "implementation admission state is unavailable",
+      }, "admission"],
+      [{ kind: "deferred", detail: "ledger capacity" }, "admission_capacity"],
+      [{ kind: "deferred", detail: "synthetic secret xyz" }, "deferred"],
+      [{ kind: "blocked" }, "blocked"],
+      [{ kind: "state_error" }, "state_error"],
+      [{ kind: "unknown" }, "other"],
+    ] as const
+  ) {
+    assert.equal(planDeferredKey(outcome, "ledger_capacity"), expected);
+  }
+});

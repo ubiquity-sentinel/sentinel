@@ -38,6 +38,7 @@ import type { HostedAutonomyPullV1 } from "./hosted-autonomy-types.ts";
 import { QUEUE_PROOF_ACTIVATED } from "../src/github/queue-runtime-policy.ts";
 import { queueDeliveryProvenanceRef } from "../src/github/queue-delivery-provenance.ts";
 import { isVerifiedDeliveryProof } from "./hosted-autonomy-queue-proof.ts";
+import { verifiedTrainDelivery } from "./hosted-autonomy-train-landing.ts";
 
 export interface HostedDeliveryProof extends QueueBinding {
   readonly kind: "queue" | "direct" | "legacy";
@@ -280,7 +281,16 @@ export async function resolveHostedDelivery(
       evidenceRef,
     );
   }
-  const legacy = verifiedMergedDelivery(record, pull, scope.baseBranch);
+  // A delivery-train member (sentinel #330) lands on the tip the previous
+  // member left; its ledger landing, re-checked live, is its evidence.
+  const legacy = verifiedMergedDelivery(record, pull, scope.baseBranch) ??
+    await verifiedTrainDelivery(
+      context.deps,
+      record,
+      pull,
+      scope.surface,
+      scope.baseBranch,
+    );
   const receipt = authorizingReceipt(context.snapshot, record, task);
   return legacy === null || receipt === null
     ? null

@@ -5,7 +5,11 @@ import {
   writeHostedMigrationOutput,
 } from "./hosted-autonomy-compatibility.ts";
 import { emitHostedParkSummary } from "./hosted-autonomy-summary.ts";
-import { writeQueueCustodyOutput } from "./hosted-autonomy-queue-output.ts";
+import {
+  upkeepDeferralReason,
+  writeQueueCustodyOutput,
+  writeUpkeepDeferralOutput,
+} from "./hosted-autonomy-queue-output.ts";
 import { createHostedQueueCoordinator } from "./hosted-autonomy-queue-host.ts";
 import { createMaintenancePublicationFor } from "../src/host/maintenance-existing-pr-publication.ts";
 import { DurableGitHubCooldownGate } from "../src/repair/github-cooldown.ts";
@@ -25,6 +29,42 @@ import {
   isHostedControllerMaintenanceIdentity,
 } from "../src/contracts/hosted-controller-deployment.ts";
 import { runHostedAutonomy } from "./hosted-autonomy-runner.ts";
+import { GitDeliveryTrainStore } from "../src/state/delivery-train-store.ts";
+import { createVerifiedTrainLandingReader } from "../src/host/hosted-repair-state.ts";
+import { verifyCiMinuteSchedulingBasis } from "../src/budget/ci-minutes.ts";
+import {
+  ciStateGitArgs,
+  composePrivateCiMinutes,
+  type HostedPrivateCiCapabilities,
+} from "../src/host/hosted-app-principal.ts";
+import {
+  acceptedCiMinutePolicy,
+  CI_MINUTE_PRIVATE_REMOTE,
+} from "../src/contracts/ci-minute-budget.ts";
+import {
+  HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+  HOSTED_AUTONOMY_PHASE_RESERVE_MS,
+} from "./hosted-autonomy-continuation.ts";
+import {
+  APP_TOKEN_MINTED_NOT_BEFORE_ENV,
+  APP_TOKEN_NOT_AFTER_ENV,
+  deriveAppTokenNotAfterV1,
+  parseAppTokenNotAfterV1,
+} from "../src/host/hosted-app-token-window.ts";
+import { readHostedPrivateCiData } from "../src/host/hosted-app-principal-native.ts";
+import { fetchHttpTransport } from "../src/github/http.ts";
+import { readHostedMaintenanceCompatibility } from "./hosted-autonomy-runtime-compatibility.ts";
+import { readHostedMaintenanceQueueObservation } from "./hosted-autonomy-compatibility-queue.ts";
+import {
+  deliveryCountsFromActions,
+  writeDeliveryCountsOutput,
+} from "../src/host/delivery-counts-output.ts";
+import {
+  tierCountsFromActions,
+  writeTierCountsOutput,
+} from "../src/host/tier-counts-output.ts";
+import { createTrainComposerFor } from "./hosted-autonomy-train-git.ts";
+import type { PreparedWorkflowBlobV1 } from "../src/github/review-snapshot.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 import { ClosedCWaveRecoveryIntegrityFailure } from "../src/host/modern-matrix-recovery.ts";
 import {
@@ -33,11 +73,13 @@ import {
   HistoricalQuarantineIncomplete,
   isHardAutonomyFailure,
   maintenanceFailureCategory,
+  skipped,
 } from "./hosted-autonomy-state.ts";
 import { createHostedAutonomyGitHub } from "./hosted-autonomy-github.ts";
 import {
   composeBackupCi,
   readBackupCiMode,
+  readBackupCiTargets,
 } from "../src/host/backup-ci-compose.ts";
 import { repeatFailureRouteIdentity } from "./hosted-autonomy-repeat-failure.ts";
 import {
@@ -55,6 +97,8 @@ import {
   createHostedClosedMatrixRecovery,
   createHostedHistoricalMatrixQuarantine,
 } from "./hosted-autonomy-matrix-adapters.ts";
+import { createHostedOpenIssueLister } from "./hosted-autonomy-open-issues.ts";
+import { createMetricsCollectorV1 } from "../src/contracts/throughput-metrics-collector.ts";
 
 export const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
 
@@ -118,14 +162,58 @@ export async function emitMemoryDigest(state: StateReadView): Promise<void> {
   }
 }
 
-export async function runHostedAutonomyMain(input?: {
+export interface HostedAutonomyMainInputV1 {
   /** Trusted in-process test transport; native checkout identity remains mandatory. */
   env: Readonly<Record<string, string | undefined>>;
   deps: HostedAutonomyDepsV1;
   compatibility?: HostedMaintenanceCompatibilityFixture;
-}): Promise<number> {
+}
+
+export async function runHostedAutonomyMain(
+  input?: HostedAutonomyMainInputV1,
+): Promise<number> {
   const env = (key: string) =>
     input === undefined ? readEnv(key) : input.env[key] ?? null;
+  // A missing output reads as no deferral; the result line stays authoritative.
+  await writeUpkeepDeferralOutput(env("GITHUB_OUTPUT"), null);
+  await writeDeliveryCountsOutput(env("GITHUB_OUTPUT"), null);
+  await writeTierCountsOutput(env("GITHUB_OUTPUT"), null);
+  const result = await runHostedAutonomyMainResult(input, env);
+  await writeUpkeepDeferralOutput(
+    env("GITHUB_OUTPUT"),
+    upkeepDeferralReason(result),
+  );
+  // #330/#338: the delivery pass's counts for finalize's metrics record.
+  await writeDeliveryCountsOutput(
+    env("GITHUB_OUTPUT"),
+    deliveryCountsFromActions(result.actions),
+  );
+  // #324/#338: the repair-tier step's counts for the same record.
+  await writeTierCountsOutput(
+    env("GITHUB_OUTPUT"),
+    tierCountsFromActions(result.actions),
+  );
+  return report(result);
+}
+
+async function runHostedAutonomyMainResult(
+  input: HostedAutonomyMainInputV1 | undefined,
+  env: (key: string) => string | null,
+): Promise<HostedAutonomyResultV1> {
+  const nativeTurnOrigin = Date.now();
+  const tokenDeadline = Math.min(
+    parseAppTokenNotAfterV1(env(APP_TOKEN_NOT_AFTER_ENV) ?? undefined) ??
+      Infinity,
+    deriveAppTokenNotAfterV1(
+      env(APP_TOKEN_MINTED_NOT_BEFORE_ENV) ?? undefined,
+      nativeTurnOrigin,
+    ) ?? Infinity,
+  );
+  const nativeTurnDeadline = Math.min(
+    nativeTurnOrigin + HOSTED_AUTONOMY_PASS_DEADLINE_MS -
+      HOSTED_AUTONOMY_PHASE_RESERVE_MS,
+    tokenDeadline,
+  );
   // Missing output and every failure before custody are closed at the workflow boundary.
   await writeQueueCustodyOutput(env("GITHUB_OUTPUT"), false);
   await writeHostedMigrationOutput(env("GITHUB_OUTPUT"), null);
@@ -146,7 +234,7 @@ export async function runHostedAutonomyMain(input?: {
     checkoutHead: facts.head,
     checkoutClean: facts.clean,
   });
-  if (!validated) return report(failed("identity_rejected", null));
+  if (!validated) return failed("identity_rejected", null);
   const runFromVerifiedSource = (deps: HostedAutonomyDepsV1) =>
     runHostedAutonomy({
       ...deps,
@@ -166,7 +254,7 @@ export async function runHostedAutonomyMain(input?: {
     apiToken === null || apiToken.length === 0 ||
     selfToken === null || selfToken.length === 0
   ) {
-    return report(failed("identity_rejected", null));
+    return failed("identity_rejected", null);
   }
   const compatibility = async (
     state: StateReadView,
@@ -238,7 +326,7 @@ export async function runHostedAutonomyMain(input?: {
         } finally {
           finish();
         }
-        return report(disposition);
+        return disposition;
       }
       // One backup CI consumer for every surface (spec §11.4, §11.8): the
       // lower-only mode and the committed targets; absent, all reads native.
@@ -252,6 +340,133 @@ export async function runHostedAutonomyMain(input?: {
       // carry work for several repositories, and each record is delivered under
       // its OWN repository, never under the self repository.
       const surfaces = new Map<string, HostedAutonomyGitHubV1>();
+      const ciClock = { now: () => Date.now() };
+      const ciScratch = `${scratch}/ci-minutes-private`;
+      // Derived only here: the production branch has passed native identity,
+      // clean source and ordinary maintenance custody. Test input cannot mint it.
+      const privateCiAuthority = async (
+        limit: number,
+      ): Promise<HostedPrivateCiCapabilities | null> => {
+        const foreign = env("SENTINEL_SUPERVISOR_TOKEN");
+        if (
+          foreign === null || foreign.trim() === "" || ciClock.now() >= limit
+        ) return null;
+        const gate = new DurableGitHubCooldownGate({ state, clock: ciClock });
+        const http = fetchHttpTransport();
+        const request = (path: string, deadline: number) =>
+          readHostedPrivateCiData({
+            http,
+            token: foreign,
+            clock: ciClock,
+            gate,
+            deadline,
+          }, path);
+        const verify = async (deadline: number) => {
+          const current = await readCheckoutFacts();
+          if (
+            !current.clean || current.head !== facts.head ||
+            ciClock.now() >= deadline
+          ) return false;
+          const custody = await readHostedMaintenanceCompatibility({
+            state,
+            clock: ciClock,
+            native: {
+              token: stateToken,
+              run: {
+                runId: Number(env("GITHUB_RUN_ID")),
+                runAttempt: Number(env("GITHUB_RUN_ATTEMPT")),
+                launcherSha: facts.head as GitSha,
+              },
+              deadline,
+            },
+            readQueueReady: () =>
+              readHostedMaintenanceQueueObservation({
+                state,
+                clock: ciClock,
+                token: foreign,
+                deadline,
+              }),
+          });
+          if (custody.status !== "ordinary") return false;
+          const repo = await request("/repos/ubiquity/prospector", deadline) as
+            | Record<string, unknown>
+            | null;
+          return repo?.id === 1337190500 &&
+            repo.full_name === "ubiquity/prospector" && repo.private === true &&
+            ciClock.now() < deadline;
+        };
+        if (!await verify(limit)) return null;
+        await Deno.mkdir(ciScratch, { recursive: true, mode: 0o700 });
+        if (
+          (await Deno.lstat(ciScratch)).isSymlink ||
+          await Deno.realPath(ciScratch) !== ciScratch
+        ) return null;
+        await Deno.chmod(ciScratch, 0o700);
+        const ciRunner = new DenoGitRunner(
+          ciScratch,
+          githubGitAuthEnv(foreign, CI_MINUTE_PRIVATE_REMOTE),
+        );
+        return Object.freeze({
+          verify,
+          request,
+          async runGit(
+            args: string[],
+            options: Parameters<HostedPrivateCiCapabilities["runGit"]>[1],
+          ) {
+            if (
+              ciClock.now() >= limit ||
+              !options.cwd.startsWith(ciScratch + "/") ||
+              options.cwd.split("/").includes("..") ||
+              !ciStateGitArgs(args) ||
+              (args[0] === "push" && !await verify(limit))
+            ) {
+              return { ok: false, code: -1, stdout: "", stderr: "" };
+            }
+            const env = Object.fromEntries(
+              Object.entries(options.env ?? {}).filter(([key]) =>
+                [
+                  "GIT_AUTHOR_NAME",
+                  "GIT_AUTHOR_EMAIL",
+                  "GIT_COMMITTER_NAME",
+                  "GIT_COMMITTER_EMAIL",
+                ].includes(key)
+              ),
+            );
+            return await ciRunner.runGit(args, { ...options, env });
+          },
+        });
+      };
+      const preparedWorkflowReaders = new Map<
+        string,
+        (
+          head: GitSha,
+          deadline: number,
+        ) => Promise<PreparedWorkflowBlobV1 | null>
+      >();
+      const trainJournal = new GitDeliveryTrainStore({
+        scratchDir: `${scratch}/delivery-trains`,
+        remoteUrl: HOSTED_CONTROLLER_REMOTE,
+        runner,
+      });
+      const ciMinutes = composePrivateCiMinutes({
+        policy: acceptedCiMinutePolicy(),
+        clock: ciClock,
+        scratch: ciScratch,
+        deadlineAt: nativeTurnDeadline,
+        authority: privateCiAuthority,
+        billingBasis: verifyCiMinuteSchedulingBasis,
+        readVerifiedTrainLanding: createVerifiedTrainLandingReader(
+          trainJournal,
+          ciClock,
+        ),
+        readPreparedWorkflow: (effect, limit) =>
+          effect.head === null
+            ? Promise.resolve(null)
+            : preparedWorkflowReaders.get(
+              hostedRepositoryKey(effect.repository),
+            )?.(effect.head as GitSha, limit) ?? Promise.resolve(null),
+      });
+      await ciMinutes.reconcile(nativeTurnDeadline);
       const githubFor = (
         repository: RepositoryIdentityV1,
       ): HostedAutonomyGitHubV1 => {
@@ -262,6 +477,7 @@ export async function runHostedAutonomyMain(input?: {
           isHostedSelf(repository) ? selfToken : apiToken,
           repository,
           backupCi,
+          ciMinutes,
         );
         surfaces.set(key, created);
         return created;
@@ -271,6 +487,7 @@ export async function runHostedAutonomyMain(input?: {
       });
       try {
         result = await runFromVerifiedSource({
+          ciMinutes,
           state,
           currentMatrixIndex: new GitMaintenanceIndex({
             scratchDir: `${scratch}/maintenance-index`,
@@ -278,6 +495,9 @@ export async function runHostedAutonomyMain(input?: {
             runner,
           }),
           githubFor,
+          backupCiTargets: (await readBackupCiTargets(Deno.cwd())).map((
+            target,
+          ) => target.repository),
           clock: { now: () => Date.now() },
           queue: createHostedQueueCoordinator({
             queueMode: env("SENTINEL_MERGE_QUEUE"),
@@ -298,6 +518,35 @@ export async function runHostedAutonomyMain(input?: {
             }),
           }),
           onQueueCustodyReady,
+          // Sentinel #330: one validated train per foreign repository per
+          // pass. The ledger is the trains state sidecar (written only by the
+          // delivery pass); each target's composer is its own git store,
+          // fetch and push over the target token.
+          deliveryTrain: {
+            journal: trainJournal,
+            composerFor: createTrainComposerFor({
+              scratch,
+              tokenFor: () => apiToken,
+              now: ciClock.now,
+              onPreparedWorkflowReader: (repository, reader) => {
+                preparedWorkflowReaders.set(
+                  hostedRepositoryKey(repository),
+                  reader,
+                );
+              },
+            }),
+          },
+          // #338: the pass's in-process collector, filled by the delivery and
+          // tier steps. It is not persisted from here: the step outputs
+          // (deliveryCounts, tierCounts) carry the counts to finalize.
+          metrics: createMetricsCollectorV1(),
+          // The same trusted repair writer moves rows between hot and cold.
+          repairTiers: {
+            store: state,
+            listOpenIssueNumbers: createHostedOpenIssueLister((repository) =>
+              isHostedSelf(repository) ? selfToken : apiToken
+            ),
+          },
           // Route selector names only, never a key: a changed model route
           // re-arms the records the repeat-failure bound parked.
           modelRoute: repeatFailureRouteIdentity({
@@ -375,17 +624,17 @@ export async function runHostedAutonomyMain(input?: {
         kind: "sentinel_autonomy_failure_detail",
         category: maintenanceFailureCategory(error),
       }));
-      return report(failed("unexpected_failure", error.beforeHead));
+      return failed("unexpected_failure", error.beforeHead);
     }
     if (error instanceof CurrentMatrixRecoveryIntegrityFailure) {
       console.log(JSON.stringify({
         kind: "sentinel_autonomy_failure_detail",
         category: maintenanceFailureCategory(error),
       }));
-      return report({
+      return {
         ...failed("unexpected_failure", error.beforeHead),
         appliedHead: error.appliedHead,
-      });
+      };
     }
     if (isDeferredCurrentMatrixHistoryBudget(error)) {
       // Availability, not integrity: the walk wrote nothing after its bound,
@@ -394,7 +643,7 @@ export async function runHostedAutonomyMain(input?: {
         kind: "sentinel_current_matrix_deferred",
         detail: CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE,
       }));
-      result = {
+      return {
         kind: "hosted_autonomy",
         status: "skipped",
         reason: "deferred_matrix_history_budget",
@@ -403,7 +652,6 @@ export async function runHostedAutonomyMain(input?: {
         actions: ["matrix-history:deferred"],
         revisions: [],
       };
-      return report(result);
     }
     // Bounded diagnostic: only a fixed category code from this codebase's
     // own failure taxonomy is echoed; no raw error text can reach the log.
@@ -412,7 +660,20 @@ export async function runHostedAutonomyMain(input?: {
       category: maintenanceFailureCategory(error),
     }));
     if (error instanceof HistoricalQuarantineIncomplete) {
-      return report(failed("historical_quarantine_incomplete", null));
+      // Only a changed or conflicting custody refusal fails closed. Every
+      // other incomplete upkeep pass wrote nothing, so it is a bounded
+      // deferral: prepare, planning and delivery continue this run.
+      if (error.integrity) {
+        return failed("historical_quarantine_incomplete", null);
+      }
+      console.log(JSON.stringify({
+        kind: "sentinel_autonomy_deferred",
+        reason: "historical_quarantine_deferred",
+        category: "historical_quarantine_incomplete",
+      }));
+      return skipped("deferred_historical_quarantine", null, [
+        "historical-matrix:deferred",
+      ]);
     }
     result = {
       kind: "hosted_autonomy",
@@ -431,7 +692,7 @@ export async function runHostedAutonomyMain(input?: {
       category: maintenanceFailureCategory(error),
     }));
   }
-  return report(result);
+  return result;
 }
 
 export function report(result: HostedAutonomyResultV1): number {

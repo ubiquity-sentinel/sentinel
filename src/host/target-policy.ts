@@ -17,10 +17,11 @@ type TargetPolicyV1 = Pick<
 // Gateway AGENTS.md reserves credentials, deployment, capture/replay authority
 // and verification tooling to trusted owners. Preserve inherited protections
 // as well; choosing a repository must never remove an existing restriction.
-// The gateway moved from Deno to Bun (d28cefa): the Deno configuration entries
-// stay, and the Bun files that took over their role (scripts, dependencies,
-// lockfile, runtime, compiler, formatter and dead-code configuration) carry
-// the same protection.
+// Owner directive 2026-11-05: the gateway's source, auth, operations scripts
+// and tooling configuration are ordinary work that Sentinel merges on its own
+// after native review and green current-head CI. Only secrets and state
+// directories, the workflows CI executes, the owner documents, the replay
+// consumer and the Sentinel recording/integration code stay protected.
 const GATEWAY_PROTECTED_PATHS = [
   ".env",
   ".data/",
@@ -29,40 +30,10 @@ const GATEWAY_PROTECTED_PATHS = [
   ".github/workflows/",
   "AGENTS.md",
   "docs/DECISIONS.md",
-  "deno.json",
-  "deno.lock",
-  "package.json",
-  "bun.lock",
-  "bunfig.toml",
-  "tsconfig.json",
-  "tsconfig.lint.json",
-  "knip.json",
-  "ops/",
-  "tools/lint/",
-  ".prettierrc.json",
-  ".prettierrc",
-  ".prettierignore",
-  "file-size-baseline.json",
-  "scripts/verify.sh",
-  "scripts/_bootstrap.sh",
-  "scripts/format.sh",
-  "scripts/lint.sh",
-  "scripts/knip.sh",
-  "scripts/file-size-ratchet.ts",
   "scripts/replay.ts",
   "scripts/replay-chat-stream.ts",
   "tests/helpers/sentinel-recorded-upstream.ts",
   "src/sentinel/",
-  "src/config.ts",
-  "src/runtime-config.ts",
-  "src/kv.ts",
-  "src/auth/",
-  "src/api-keys.ts",
-  "src/api-key-policy.ts",
-  "src/codex/auth.ts",
-  "src/codex/auth-refresh.ts",
-  "src/codex/native-auth.ts",
-  "src/codex/native-auth-transport.ts",
   "src/codex/supervisor-secret.ts",
 ] as const;
 
@@ -80,7 +51,7 @@ const PASSPORT_PROTECTED_PATHS = [
 ] as const;
 
 export function isPassportTarget(
-  repository: Pick<RepositoryIdentityV1, "owner" | "name"> | undefined,
+  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
 ): boolean {
   return isPassportWorkTrial(repository);
 }

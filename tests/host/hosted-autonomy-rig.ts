@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { MemoryState } from "../repair/helpers.ts";
 import { CONTROLLER } from "./controller-identity-fixture.ts";
 import { HOSTED_RUNTIME_ID } from "../../src/contracts/hosted-supervisor.ts";
@@ -506,8 +507,11 @@ export async function makeRig(
 export async function run(
   rig: RigV1,
   github?: HostedAutonomyGitHubV1,
+  /** Optional test-only dependency overrides (e.g. clock, delivery policy). */
+  extra: Partial<HostedAutonomyDepsV1> = {},
 ): Promise<HostedAutonomyResultV1> {
   return await runHostedAutonomy({
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: rig.state,
     githubFor: github === undefined ? rig.githubFor : () => github,
     queueCustody: darkQueueFixture(
@@ -517,6 +521,7 @@ export async function run(
       github === undefined ? rig : { ...rig, githubFor: () => github },
     ),
     clock: { now: () => T0 + 5_000_000 },
+    ...extra,
   });
 }
 

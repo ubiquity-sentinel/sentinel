@@ -1,3 +1,16 @@
+import {
+  createCiMinuteController,
+  INACTIVE_CI_MINUTES,
+  proposedCiMinutePolicy,
+} from "../../src/budget/ci-minutes.ts";
+import {
+  type CiMinuteControllerV1,
+  type CiMinuteLedgerV1,
+  ciMonth,
+  ciPolicyDigest,
+} from "../../src/contracts/ci-minute-budget.ts";
+import { GitReviewSnapshot } from "../../src/github/review-snapshot.ts";
+import { createPrivateCiEffectResolver } from "../../ops/hosted-autonomy-github-jobs.ts";
 /**
  * Durable candidate-base refresh through the REAL repair loop: intent
  * persistence before any preparation or side effect, deterministic prepared
@@ -29,10 +42,7 @@ import type { BaseRefreshObserverV1 } from "../../src/host/local.ts";
 import { createPrepareBaseRefresh } from "../../src/host/local.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { baseRefreshIntentKey, mergeIntentKey } from "../../src/repair/keys.ts";
-import {
-  isRetiredTargetRecord,
-  RETIRED_MERGED_MESSAGE,
-} from "../../src/repair/selection.ts";
+import { CHECK_POLL_MS } from "../../src/repair/loop-bounds.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
 import { REPO, SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
 import {
@@ -59,7 +69,6 @@ const BRANCH = "sentinel/repair/issue-1";
 const OLD_HEAD = SHA3;
 const PREPARED = "7f0b28dc5c6f8a1a2b3c4d5e6f7a8b9c0d1e2f3a" as GitSha;
 const UNRELATED = "abcdefabcdefabcdefabcdefabcdefabcdefabcd" as GitSha;
-const CHECK_POLL_MS = 2 * 60_000;
 
 async function gitRun(
   cwd: string,
@@ -108,7 +117,7 @@ interface GitCtxV1 {
   cleanup(): Promise<void>;
 }
 
-async function makeGitCtx(): Promise<GitCtxV1> {
+async function makeGitCtx(workflow?: string): Promise<GitCtxV1> {
   const tmp = await Deno.makeTempDir({
     prefix: "sentinel-base-refresh-loop-",
     dir: ROOT,
@@ -129,6 +138,10 @@ async function makeGitCtx(): Promise<GitCtxV1> {
       return (await gitRun(repo, ["rev-parse", "HEAD"], env)).stdout
         .trim() as GitSha;
     };
+    if (workflow !== undefined) {
+      await Deno.mkdir(`${repo}/.github/workflows`, { recursive: true });
+      await Deno.writeTextFile(`${repo}/.github/workflows/ci.yml`, workflow);
+    }
     const oldBase = await commit("shared.txt", "shared\n");
     assert.ok(
       (await gitRun(repo, ["checkout", "-q", "-b", "candidate"], env)).ok,
@@ -361,8 +374,12 @@ function completedReceipt(
   });
 }
 
-function makeRig(github: GitHubPort) {
+function makeRig(
+  github: GitHubPort,
+  ciFor?: (clock: FakeClock) => CiMinuteControllerV1,
+) {
   const clock = new FakeClock(T0);
+  const ciMinutes = ciFor?.(clock) ?? INACTIVE_CI_MINUTES;
   const state = new MemoryState();
   const configs = repairConfigs({
     adapter: { kind: "github" },
@@ -375,6 +392,7 @@ function makeRig(github: GitHubPort) {
   const model = new FakeModel({ head: SHA3, changedPaths: ["src/app.ts"] });
   const run = (stepLimit = 16) =>
     runRepairCycle({
+      ciMinutes,
       clock,
       state,
       configs,
@@ -663,13 +681,104 @@ Deno.test(
 );
 
 Deno.test(
-  "base refresh: the real adapter/executor prepares the exact two-parent commit through the loop",
+  "CI acceptance base refresh qualifies its unpublished exact local workflow before preservation and recovers identical commit",
   async () => {
-    const ctx = await makeGitCtx();
+    const ctx = await makeGitCtx(
+      "on: [pull_request]\njobs:\n  validation:\n    runs-on: ubuntu-latest\n    timeout-minutes: 20\n    steps:\n      - run: true\n",
+    );
     try {
       const fake = new RefreshGithub(ctx.newBase, ctx.candidate);
       const github: GitHubPort = fake;
-      const rig = makeRig(github);
+      const blob = (await gitRun(ctx.repo, [
+        "rev-parse",
+        `${ctx.newBase}:.github/workflows/ci.yml`,
+      ], ctx.env)).stdout.trim();
+      let ciLedger: CiMinuteLedgerV1,
+        ciHead = "1".repeat(40) as GitSha,
+        ciSequence = 1;
+      const rig = makeRig(github, (clock) => {
+        const policy = {
+          ...proposedCiMinutePolicy(),
+          activated: true,
+          targets: [{
+            owner: REPO.owner,
+            name: REPO.name,
+            repositoryId: 101,
+            ceilingMinutes: 25,
+          }],
+          storageAcceptance: "a".repeat(64),
+          ceilingQualification: "b".repeat(64),
+        };
+        ciLedger = {
+          version: 1,
+          month: ciMonth(clock.now()).month,
+          policyDigest: ciPolicyDigest(policy),
+          updatedAt: clock.now(),
+          sequence: 0,
+          baselineMinutes: 0,
+          watermark: null,
+          reservations: [],
+          observed: [],
+        };
+        const view = new GitReviewSnapshot({
+          trustedPath: TRUSTED_PATH,
+          repositoryDir: ctx.repo,
+          now: () => clock.now(),
+        });
+        const resolve = createPrivateCiEffectResolver({
+          policy,
+          request: (path) => {
+            assert.equal(
+              path.includes("/contents/"),
+              false,
+              "unpublished refresh never requires remote contents",
+            );
+            return Promise.resolve(
+              path.includes("/git/ref/")
+                ? { object: { sha: fake.remoteBranch } }
+                : { id: 101, private: true, default_branch: BASE_BRANCH },
+            );
+          },
+          readPreparedWorkflow: (effect, deadline) =>
+            view.readWorkflowBlob(effect.head as GitSha, deadline),
+        });
+        return createCiMinuteController({
+          policy,
+          clock,
+          resolve,
+          authorizePolicy: (basis, _deadline, facts) =>
+            Promise.resolve(
+              ciPolicyDigest(basis) === ciPolicyDigest(policy) &&
+                (facts === undefined ||
+                  facts.workflowBlob === blob &&
+                    facts.runner === "ubuntu-latest" &&
+                    facts.timeoutMinutes === 20 && facts.jobs === 1),
+            ),
+          observe: (month) =>
+            Promise.resolve({
+              month,
+              complete: true,
+              watermark: clock.now(),
+              jobs: [],
+            }),
+          store: {
+            read: () =>
+              Promise.resolve(
+                portOk({ head: ciHead, ledger: structuredClone(ciLedger) }),
+              ),
+            readPrior: () =>
+              Promise.resolve(portOk({ head: ciHead, ledger: null })),
+            write: (input) => {
+              assert.equal(input.expectedHead, ciHead);
+              ciLedger = structuredClone(input.ledger);
+              ciHead = String(++ciSequence).padStart(40, "0") as GitSha;
+              return Promise.resolve(
+                portOk({ status: "applied" as const, head: ciHead }),
+              );
+            },
+          },
+        });
+      });
       const observer: BaseRefreshObserverV1 = {
         readPullRequest: (_number) =>
           Promise.resolve(portOk(pullRequest(ctx.candidate))),
@@ -688,6 +797,12 @@ Deno.test(
       fake.lostPush = true;
       let remoteWritesAfterPush = 0;
       fake.onPush = () => {
+        assert.equal(
+          ciLedger!.reservations.length,
+          1,
+          "CI reservation precedes preservation/push",
+        );
+        assert.equal(ciLedger!.reservations[0].chargedMinutes, 25);
         remoteWritesAfterPush = fake.remoteWrites;
         return Promise.resolve();
       };
@@ -723,7 +838,15 @@ Deno.test(
       // reconciles the already-published branch without a second push.
       rig.clock.advance(CHECK_POLL_MS + 1000);
       const second = await rig.run();
-      assert.equal(second.status, "idle", JSON.stringify(second));
+      assert.equal(
+        second.status,
+        "idle",
+        JSON.stringify({
+          second,
+          work: (await rig.snapshot()).work[0],
+          ci: ciLedger!,
+        }),
+      );
       state = await rig.snapshot();
       work = state.work[0];
       assert.equal(work.intent, null);
@@ -731,6 +854,8 @@ Deno.test(
       assert.equal(work.target.head, prepared);
       assert.equal(work.nextStep, "review");
       assert.equal(fake.remoteWrites, 1, "no duplicate remote effect");
+      assert.equal(ciLedger!.reservations.length, 1, "no second CI charge");
+      assert.equal(ciLedger!.reservations[0].chargedMinutes, 25);
       const parents = await ctx.revListParents(prepared);
       const parts = parents.trim().split(" ");
       assert.equal(parts.length, 3, "the prepared commit has two parents");
@@ -1025,36 +1150,93 @@ function pullRequest(head: GitSha): GitHubPullRequestV1 {
   };
 }
 
+for (const mergedHead of [OLD_HEAD, UNRELATED]) {
+  Deno.test(
+    `base refresh: a merged own publication completes with observed head ${mergedHead}`,
+    async () => {
+      const fake = new RefreshGithub(SHA2, mergedHead);
+      fake.prState = "merged";
+      const github: GitHubPort = fake;
+      const rig = makeRig(github);
+      let prepareCalls = 0;
+      github.prepareBaseRefresh = () => {
+        prepareCalls++;
+        return Promise.resolve(portOk(PREPARED));
+      };
+      await rig.seed([deliveryRecord(OLD_HEAD, {
+        intent: parkedBaseRefreshIntent(OLD_HEAD, SHA2),
+      })]);
+
+      const outcome = await rig.run();
+      assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+      const state = await rig.snapshot();
+      const work = state.work[0];
+      assert.equal(work.nextStep, "done");
+      assert.equal(work.blocker, null);
+      assert.equal(work.intent, null, "the refresh intent is cleared");
+      assert.equal(work.wait, null);
+      assert.equal(work.target.pr, 7, "the delivered PR identity is retained");
+      assert.equal(work.target.head, OLD_HEAD);
+      assert.deepEqual(work.evidence, [{
+        kind: "review_receipt",
+        ref:
+          `artifact:review-receipt/human-merge-v1/7/${mergedHead}/${SHA2}/unknown`,
+      }]);
+      assert.equal(state.releaseRequests.length, 1);
+      assert.equal(state.releaseRequests[0].revision, SHA2);
+      assert.equal(state.releaseRequests[0].source.pullRequest, 7);
+      assert.equal(state.releaseRequests[0].source.head, OLD_HEAD);
+      assert.equal(state.releaseRequests[0].source.reviewReceiptId, null);
+      assert.equal(prepareCalls, 0, "a merged publication is never refreshed");
+      assert.equal(fake.pushCalls.length, 0);
+      assert.equal(rig.model.requests.length, 0);
+
+      await rig.run();
+      assert.deepEqual(
+        (await rig.snapshot()).work[0],
+        work,
+        "completion is durable",
+      );
+      assert.deepEqual(
+        (await rig.snapshot()).releaseRequests,
+        state.releaseRequests,
+      );
+      assert.equal(prepareCalls, 0);
+      assert.equal(fake.pushCalls.length, 0);
+      assert.equal(rig.model.requests.length, 0);
+    },
+  );
+}
+
 Deno.test(
-  "base refresh: a merged own publication is retired instead of refreshed",
+  "base refresh: a merged own publication without a merge SHA stays pending",
   async () => {
     const fake = new RefreshGithub(SHA2, OLD_HEAD);
     fake.prState = "merged";
     const github: GitHubPort = fake;
-    const rig = makeRig(github);
-    let prepareCalls = 0;
-    github.prepareBaseRefresh = () => {
-      prepareCalls++;
-      return Promise.resolve(portOk(PREPARED));
+    const readPull = github.readPullRequest.bind(github);
+    github.readPullRequest = async (number) => {
+      const result = await readPull(number);
+      if (!result.ok || result.value === null) return result;
+      return portOk({ ...result.value, mergeSha: null });
     };
-    await rig.seed([deliveryRecord(OLD_HEAD, {
+    github.prepareBaseRefresh = () => {
+      throw new Error("a merged publication is never refreshed");
+    };
+    const rig = makeRig(github);
+    const record = deliveryRecord(OLD_HEAD, {
       intent: parkedBaseRefreshIntent(OLD_HEAD, SHA2),
-    })]);
+    });
+    await rig.seed([record]);
 
-    const outcome = await rig.run();
-    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
-    const work = (await rig.snapshot()).work[0];
-    assert.equal(work.nextStep, "blocked");
-    assert.equal(work.blocker?.kind, "other");
-    assert.equal(work.blocker?.message, RETIRED_MERGED_MESSAGE);
-    assert.equal(work.intent, null, "the refresh intent is cleared");
-    assert.equal(work.wait, null);
-    assert.equal(
-      isRetiredTargetRecord(work),
-      true,
-      "a human merge is terminal and consumes no capacity slot",
+    await rig.run();
+    const state = await rig.snapshot();
+    assert.deepEqual(
+      state.work[0],
+      record,
+      "an incomplete observation changes nothing",
     );
-    assert.equal(prepareCalls, 0, "a merged publication is never refreshed");
+    assert.equal(state.releaseRequests.length, 0);
     assert.equal(fake.pushCalls.length, 0);
     assert.equal(rig.model.requests.length, 0);
   },

@@ -1,4 +1,5 @@
 /** Off-tip carried parks file their retained review without a request. */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { parseReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
 import { planFollowUpCandidates } from "../../ops/hosted-autonomy-follow-ups.ts";
@@ -122,6 +123,7 @@ Deno.test("follow-ups F10: a real off-tip carried park files its retained review
         rig.githubFor = () => surface;
         try {
           const deps = {
+            ciMinutes: INACTIVE_CI_MINUTES,
             state: rig.state,
             githubFor: rig.githubFor,
             clock: { now: () => NOW },

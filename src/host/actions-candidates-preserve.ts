@@ -36,6 +36,7 @@ import {
 import type { ActionsCandidatePreserverInputV1 } from "./actions-candidates-shared.ts";
 import type { PreserverGitRunV1 } from "./actions-candidates-objects.ts";
 import { freshStoreProof } from "./actions-candidates-proof.ts";
+import { publicationProtectedPaths } from "../repair/owner-landing.ts";
 
 /**
  * Trusted candidate preservation over the SAME host port instance.
@@ -209,7 +210,7 @@ export function createCandidatePreserver(
         base: candidate.base,
         head: candidate.head,
         publishedHead,
-        protectedPaths: input.protectedPaths,
+        protectedPaths: publicationProtectedPaths(input.protectedPaths, record),
       });
       if (!validated.ok) return validated;
       const finalGuard = await queueCheck();
@@ -248,7 +249,7 @@ export function createCandidatePreserver(
       ref,
       candidate,
       publishedHead,
-      protectedPaths: input.protectedPaths,
+      protectedPaths: publicationProtectedPaths(input.protectedPaths, record),
       sourcePath: input.sourcePath,
       restoreSource: before.value !== null,
       trustedPath: input.trustedPath,

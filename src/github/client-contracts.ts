@@ -59,6 +59,18 @@ export type CreatePullWireV1 =
   | { status: "created"; pr: GitHubPullRequestV1 }
   | { status: "exists" };
 
+/**
+ * The method and (for a squash) exact commit text of one merge call (#331).
+ * Absent, the call keeps GitHub's repository default.
+ */
+export type MergePullShapeV1 =
+  | { readonly method: "merge" }
+  | {
+    readonly method: "squash";
+    readonly title: string;
+    readonly message: string;
+  };
+
 export type MergePutWireV1 =
   | { status: "merged"; mergeSha: GitSha }
   | { status: "rejected" }

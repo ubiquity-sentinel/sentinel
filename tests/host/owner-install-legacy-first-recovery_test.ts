@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import {
   type OwnerFutureRecoveryAuthority,
@@ -111,6 +112,7 @@ Deno.test("legacy first recovery actual maintenance: retained R81 health permits
         GITHUB_OUTPUT: output,
       },
       deps: {
+        ciMinutes: INACTIVE_CI_MINUTES,
         state: {
           readRepair: () => rig.repair.readRepair(),
           readRelease: () => rig.state.readRelease(),
@@ -158,6 +160,11 @@ Deno.test("legacy first recovery actual maintenance: retained R81 health permits
       runtimeMigrationOnly: "false",
       runtimeMigrationRevision: "",
       runtimeMigrationGeneration: "",
+      // #327/#330/#338: maintenance publishes the finalize inputs even when
+      // nothing was observed.
+      upkeepDeferral: "none",
+      deliveryCounts: "none",
+      tierCounts: "none",
     });
     assert.deepEqual(await rig.current(), before);
     assert.deepEqual(await rig.repair.readRepair(), repairBefore);

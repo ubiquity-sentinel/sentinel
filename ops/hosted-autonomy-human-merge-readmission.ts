@@ -41,11 +41,18 @@ import {
 import { parseWorkRecordV1 } from "../src/contracts/work-record.ts";
 import { HUMAN_MERGE_HEAD_MISMATCH_BLOCKER } from "../src/repair/human-merge.ts";
 import { MERGED_OFF_TIP_PREFIX } from "../src/repair/merge-off-tip.ts";
+import { candidateBranch } from "../src/repair/keys.ts";
+import { SOURCE_ISSUE_CLOSED_RETIREMENT } from "../src/contracts/work-record-retired-pull.ts";
 import {
   HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
   HOSTED_AUTONOMY_TRUSTED_AUTHORS,
+  hostedIssueKey,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
+import {
+  pullProbeDue,
+  type PullProbeStampV1,
+} from "./hosted-autonomy-pull-probe.ts";
 import type { HostedAutonomyScopeV1 } from "./hosted-autonomy-scopes.ts";
 import type { HostedAutonomyHeadPullV1 } from "./hosted-autonomy-types.ts";
 
@@ -53,7 +60,8 @@ import type { HostedAutonomyHeadPullV1 } from "./hosted-autonomy-types.ts";
 export type HumanMergeParkV1 =
   | "head_mismatch"
   | "merge_off_base"
-  | "review_backoff";
+  | "review_backoff"
+  | "stale_step";
 
 /** Action detail of every verified human-merge head re-admission. */
 const READMISSION_DETAIL = "human_merge_head_moved";
@@ -61,6 +69,26 @@ const READMISSION_DETAIL = "human_merge_head_moved";
 const MERGED_OFF_TIP_READMISSION_DETAIL = "human_merge_merged_off_base";
 /** Action detail of a re-admission from the stuck review backoff. */
 const REVIEW_BACKOFF_READMISSION_DETAIL = "human_merge_review_backoff";
+/** Action detail of a re-admission of a `work`/`blocked` record (stale). */
+const STALE_STEP_READMISSION_DETAIL = "human_merge_stale_step";
+/**
+ * The runtime's park of a pull request closed unmerged (`loop-merge.ts`,
+ * `loop-owner-landing.ts`): the pull can never merge, so it is never read.
+ */
+const PULL_CLOSED_BEFORE_MERGE = "pull request closed before merge";
+
+/**
+ * Intents a stale-step re-admission may clear: a merged pull request ends
+ * every one of them. A self-merge proof and every closure, replay, merge or
+ * candidate-preservation operation stay with their own reconciliation.
+ */
+const STALE_STEP_CLEARABLE_INTENTS: ReadonlySet<string> = new Set([
+  "implementation",
+  "base_refresh",
+  "pull_request",
+  "review_request",
+  "push",
+]);
 
 /** A record that passed every local gate; remote facts pending. */
 export interface HumanMergeCandidateV1 {
@@ -70,10 +98,15 @@ export interface HumanMergeCandidateV1 {
   branch: string;
   /** The exact reviewed head the record keeps unchanged. */
   head: GitSha;
-  /** The retained pull identity; null for the head-mismatch park. */
+  /** The retained pull identity, when the parked record still names it. */
   pullRequest: number | null;
   /** Which shape wrote the record; the merge-actor gate depends on it. */
   parkedBy: HumanMergeParkV1;
+  /**
+   * Stale-step only: the still-`reserved` charge the cleared intent names,
+   * settled `ambiguous` (never refunded) in the same write.
+   */
+  settleReservation?: string | null;
 }
 
 /** A verified re-admission, applied by `applyHumanMergeReadmissions`. */
@@ -83,6 +116,8 @@ export interface HumanMergeReadmissionV1 {
   /** The verified merged PR restored as target.pr. */
   pullRequest: number;
   detail: string;
+  /** Stale-step only: clear the intent and settle this reserved charge. */
+  stale?: { settleReservation: string | null };
 }
 
 /** The park a blocked record names, or null for any other blocker. */
@@ -102,9 +137,32 @@ function parkOf(message: string): HumanMergeParkV1 | null {
  */
 export function planHumanMergeHeadReadmissions(
   snapshot: RepairStateSnapshotV1,
+  /**
+   * `hostedIssueKey`s of the source issues this pass read closed. With it, a
+   * `work` or `blocked` record whose bound pull request may have been merged
+   * (its source issue closed, or the retired-pull pass recorded the pull
+   * merged) is a stale-step candidate; the merge itself is verified remotely.
+   */
+  closedIssues?: ReadonlySet<string>,
+  /**
+   * The pass's clock. With it, a stale-step candidate whose pull an earlier
+   * pass read without a re-admission (`pullProbe`) is skipped until its
+   * backoff elapsed (`hosted-autonomy-pull-probe.ts`).
+   */
+  now?: number,
 ): HumanMergeCandidateV1[] {
   const candidates: HumanMergeCandidateV1[] = [];
   for (const record of snapshot.work) {
+    const stale = closedIssues === undefined
+      ? null
+      : staleStepCandidate(record, snapshot, closedIssues);
+    if (stale !== null && now !== undefined && !pullProbeDue(record, now)) {
+      continue;
+    }
+    if (stale !== null) {
+      candidates.push(stale);
+      continue;
+    }
     if (
       record.intent !== null || record.target.head === null ||
       record.target.branch === null
@@ -135,10 +193,84 @@ export function planHumanMergeHeadReadmissions(
 }
 
 /**
+ * A record stuck at `work` (any wait or clearable intent) or `blocked` with
+ * no wait, whose bound pull request is on its own repair branch and whose
+ * source issue is closed (or whose pull the retired-pull pass recorded
+ * merged). Shapes the exact parks above own are left to them.
+ */
+function staleStepCandidate(
+  record: RepairStateSnapshotV1["work"][number],
+  snapshot: RepairStateSnapshotV1,
+  closedIssues: ReadonlySet<string>,
+): HumanMergeCandidateV1 | null {
+  const { pr, head, branch } = record.target;
+  if (pr === null || head === null || branch !== candidateBranch(record.id)) {
+    return null;
+  }
+  if (record.nextStep !== "work" && record.nextStep !== "blocked") return null;
+  if (record.nextStep === "blocked") {
+    if (record.wait !== null) return null;
+    if (
+      record.blocker?.kind === "other" &&
+      (parkOf(record.blocker.message) !== null ||
+        record.blocker.message === PULL_CLOSED_BEFORE_MERGE)
+    ) return null;
+  }
+  const intent = record.intent;
+  if (
+    intent !== null &&
+    (!STALE_STEP_CLEARABLE_INTENTS.has(intent.kind) ||
+      intent.selfMerge !== undefined)
+  ) return null;
+  if (record.target.selfMerge !== undefined) return null;
+  // The retired-pull pass owns a record retired on its closed issue: only the
+  // pull it recorded merged is completed here; one it closed, found closed or
+  // found foreign is settled and never read again. A `reopened` settlement
+  // returned the record to an ordinary open-issue record: it is unsettled.
+  const settledPull = record.retiredPullClosure?.pr === pr &&
+      record.retiredPullClosure.outcome !== "reopened"
+    ? record.retiredPullClosure.outcome
+    : undefined;
+  if (settledPull !== undefined && settledPull !== "merged") return null;
+  if (
+    settledPull === undefined && record.blocker?.kind === "other" &&
+    record.blocker.message === SOURCE_ISSUE_CLOSED_RETIREMENT
+  ) return null;
+  const issue = record.related.issueNumber;
+  const closed = issue !== null &&
+    closedIssues.has(hostedIssueKey(record.repository, issue));
+  if (!closed && settledPull !== "merged") return null;
+  const requestId = intent?.requestId ?? null;
+  const reserved = requestId === null ? undefined : snapshot.reservations.find(
+    (row) => row.id === requestId && row.outcome === "reserved",
+  );
+  return {
+    id: record.id,
+    repository: record.repository,
+    branch,
+    head,
+    pullRequest: pr,
+    parkedBy: "stale_step",
+    settleReservation: reserved?.id ?? null,
+  };
+}
+
+/** A retained PR disambiguates older publications on the same branch. */
+function pullsForCandidate(
+  candidate: HumanMergeCandidateV1,
+  pulls: readonly HostedAutonomyHeadPullV1[],
+): readonly HostedAutonomyHeadPullV1[] {
+  return candidate.pullRequest === null
+    ? pulls
+    : pulls.filter((pull) => pull.number === candidate.pullRequest);
+}
+
+/**
  * Pure remote verification of one candidate against the exact-branch pull
  * listing. The pull must be the one merged publication of the record's own
- * branch: a readable listing whose every entry is on that branch, exactly one
- * pull, merged, by a trusted author and based on the scope's base branch. An
+ * branch: a readable listing whose every entry is on that branch, one pull
+ * matching the retained PR number (or exactly one pull when no PR is retained),
+ * merged, by a trusted author and based on the scope's base branch. An
  * unreadable listing, an open pull (the standing review owns it) and a pull
  * on another base all refuse without a write. A record parked by the off-base
  * message is only re-admitted when the same pull read names its merger and
@@ -163,21 +295,22 @@ export function decideHumanMergeHeadReadmission(
   if (pulls.some((pull) => pull.headRef !== candidate.branch)) {
     return { kind: "refused", reason: "pr_listing_mismatch" };
   }
-  if (pulls.length !== 1) {
+  const matching = pullsForCandidate(candidate, pulls);
+  if (matching.length === 0 && pulls.length > 0) {
+    return { kind: "refused", reason: "pr_identity_mismatch" };
+  }
+  if (matching.length !== 1) {
     return {
       kind: "refused",
-      reason: pulls.length === 0 ? "pr_not_found" : "pr_ambiguous",
+      reason: matching.length === 0 ? "pr_not_found" : "pr_ambiguous",
     };
   }
-  const pull = pulls[0];
+  const pull = matching[0];
   if (pull.merged !== true || pull.state !== "closed") {
     return { kind: "refused", reason: "pr_not_merged" };
   }
   if (pull.baseRef !== baseBranch) {
     return { kind: "refused", reason: "pr_base_mismatch" };
-  }
-  if (candidate.pullRequest !== null && pull.number !== candidate.pullRequest) {
-    return { kind: "refused", reason: "pr_identity_mismatch" };
   }
   if (
     pull.author === null ||
@@ -201,7 +334,14 @@ export function decideHumanMergeHeadReadmission(
         ? MERGED_OFF_TIP_READMISSION_DETAIL
         : candidate.parkedBy === "review_backoff"
         ? REVIEW_BACKOFF_READMISSION_DETAIL
+        : candidate.parkedBy === "stale_step"
+        ? STALE_STEP_READMISSION_DETAIL
         : READMISSION_DETAIL,
+      ...(candidate.parkedBy === "stale_step"
+        ? {
+          stale: { settleReservation: candidate.settleReservation ?? null },
+        }
+        : {}),
     },
   };
 }
@@ -240,6 +380,13 @@ export async function verifyHumanMergeHeadReadmissions(
     repository: RepositoryIdentityV1,
   ) => Promise<HostedAutonomyScopeV1>,
   actions: string[],
+  /**
+   * Receives every stale-step candidate whose listing was attempted and
+   * refused (an open or closed-unmerged pull, an unreadable listing): the
+   * caller stamps it (`pullProbe`) in its write, so the record is read at
+   * most once per backoff window instead of every pass.
+   */
+  onStaleProbe?: (probe: PullProbeStampV1) => void,
 ): Promise<HumanMergeReadmissionV1[]> {
   const verified: HumanMergeReadmissionV1[] = [];
   for (const candidate of candidates) {
@@ -255,9 +402,15 @@ export async function verifyHumanMergeHeadReadmissions(
     } catch {
       pulls = null;
     }
+    const matching = pulls === null
+      ? null
+      : pullsForCandidate(candidate, pulls);
     const mergedBy = candidate.parkedBy !== "head_mismatch" &&
-        pulls !== null && pulls.length === 1
-      ? await readMergedBy(surface, pulls[0].number, scope.baseBranch)
+        matching !== null && matching.length === 1 &&
+        // A stale-step candidate is read every pass while its pull is open:
+        // the merger detail is read only once the listing shows it merged.
+        (candidate.parkedBy !== "stale_step" || matching[0].merged === true)
+      ? await readMergedBy(surface, matching[0].number, scope.baseBranch)
       : undefined;
     const decision = decideHumanMergeHeadReadmission(
       candidate,
@@ -267,6 +420,15 @@ export async function verifyHumanMergeHeadReadmissions(
     );
     if (decision.kind === "refused") {
       actions.push(`retry:${candidate.id}:skipped:${decision.reason}`);
+      if (
+        candidate.parkedBy === "stale_step" && candidate.pullRequest !== null
+      ) {
+        onStaleProbe?.({
+          id: candidate.id,
+          repository: candidate.repository,
+          pr: candidate.pullRequest,
+        });
+      }
       continue;
     }
     verified.push(decision.readmission);
@@ -286,8 +448,20 @@ export function applyHumanMergeReadmissions(
   now: number,
 ): RepairStateSnapshotV1 {
   if (readmissions.length === 0) return snapshot;
+  const settle = new Set(
+    readmissions.flatMap((entry) =>
+      entry.stale?.settleReservation ? [entry.stale.settleReservation] : []
+    ),
+  );
   return parseRepairStateSnapshotV1({
     ...snapshot,
+    // A cleared stale intent's still-reserved charge stays charged: it is
+    // settled `ambiguous`, never refunded.
+    reservations: snapshot.reservations.map((row) =>
+      settle.has(row.id) && row.outcome === "reserved"
+        ? { ...row, outcome: "ambiguous", settledAt: now }
+        : row
+    ),
     work: snapshot.work.map((record) => {
       const readmission = readmissions.find((entry) =>
         entry.id === record.id &&
@@ -300,6 +474,7 @@ export function applyHumanMergeReadmissions(
         nextStep: "review",
         wait: null,
         blocker: null,
+        ...(readmission.stale === undefined ? {} : { intent: null }),
         updatedAt: now,
       });
     }),

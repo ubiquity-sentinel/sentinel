@@ -1,8 +1,17 @@
 /** Bounded authenticated matrix recovery interleaved with serial delivery. */
+import { delegatedRecordsOfRun } from "./repair-fanout-host.ts";
+import { HOSTED_RECORD_WAIT_CAUSES } from "../repair/loop-wait-cause.ts";
 import { createActionsTargetFlow } from "./actions-target-flow.ts";
 import { matrixDigestV1 } from "../contracts/matrix.ts";
-import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
-import { OPERATION_MARGIN_MS, REVIEW_BOUND_MS } from "../repair/loop-bounds.ts";
+import {
+  parseRepairStateSnapshotV1,
+  type RepairStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
+import {
+  DEFAULT_STEP_LIMIT,
+  OPERATION_MARGIN_MS,
+  REVIEW_BOUND_MS,
+} from "../repair/loop-bounds.ts";
 import type {
   ActionsTargetCyclesInputV1,
   ActionsTargetCyclesResultV1,
@@ -204,13 +213,33 @@ export async function runActionsMatrixAggregateCycles(
   if (!read.ok || read.value.status !== "found") {
     throw new Error("matrix aggregate cannot read authoritative state");
   }
+  // A backlog without pending effects needs only a compatibility check.
+  // Native carriers and pending effects still require their scan and drain.
+  if (
+    host.execution.purpose === "bootstrap" && carrier === undefined &&
+    !read.value.snapshot.reservations.some((row) =>
+      row.outcome === "reserved"
+    ) &&
+    !read.value.snapshot.work.some((record) =>
+      record.intent !== null || record.wait?.reason === "review_pending"
+    )
+  ) {
+    parseRepairStateSnapshotV1(read.value.snapshot);
+    const result: ActionsTargetCyclesResultV1 = {
+      outcome: { status: "idle", detail: "bootstrap repair state compatible" },
+      addressed: [],
+      skipped: input.configs.map((config) =>
+        config.repository.owner + "/" + config.repository.name
+      ),
+      failed: [],
+    };
+    input.report?.(result);
+    return result;
+  }
   // #183: progress comments compare against the state before this job's
   // ingestion, so a park or publication made while consuming cells reports.
   const progressBaseline = read.value.snapshot.work;
   if (!bootstrap && closedCWaveNeedsRecovery(read.value.snapshot)) {
-    if (!host.readExecution) {
-      throw new Error("C recovery native proof reader unavailable");
-    }
     const recovered = await ingestClosedCWave({
       state: input.state,
       clock: input.clock,
@@ -225,7 +254,12 @@ export async function runActionsMatrixAggregateCycles(
           bundlesDir,
         }),
       transportFor: (state) => host.createArtifactTransport(state),
-      readExecution: host.readExecution,
+      readExecution: (execution) => {
+        if (!host.readExecution) {
+          throw new Error("C recovery native proof reader unavailable");
+        }
+        return host.readExecution(execution);
+      },
       failoverModel: host.failoverModel,
     }, false);
     console.log(
@@ -263,16 +297,24 @@ export async function runActionsMatrixAggregateCycles(
   const consumer = matrixConsumerWindowV1({
     now: input.clock.now(),
     deadline: input.deadline,
-    maxWaitMs: bootstrap ? 0 : options.maxWaitMs ?? MATRIX_CONSUMER_MAX_WAIT_MS,
+    maxWaitMs: bootstrap ? 0 : options.maxWaitMs ??
+      (carrier === undefined ? 0 : MATRIX_CONSUMER_MAX_WAIT_MS),
     targets: input.configs.length,
     reviewsMayStart: lifecycleModelStarts,
   });
   const consumerUntil = consumer.until;
   const prepared = new Set<string>();
+  // #328: the records this run's repository cells step are never selected by
+  // this serial pass (only the verified plan of this run attempt counts).
+  const excludeRecords = await delegatedRecordsOfRun(input, carrier);
   const flow = createActionsTargetFlow({
     ...input,
+    ...(excludeRecords === undefined ? {} : { excludeRecords }),
     modelStartsEnabled: lifecycleModelStarts,
     externalImplementations: true,
+    // #335: the hosted serial aggregate persists wait causes
+    // (`HOSTED_RECORD_WAIT_CAUSES`, installed rollback-target rule).
+    recordWaitCauses: HOSTED_RECORD_WAIT_CAUSES,
     // The trusted host alone posts progress comments; a model-disabled
     // bootstrap is not a delivery pass and posts none.
     progressComments: bootstrap ? undefined : input.progressComments,
@@ -283,7 +325,18 @@ export async function runActionsMatrixAggregateCycles(
       await input.prepareTarget?.(config);
       prepared.add(key);
     },
-  });
+  }, { matrixIntakeOwnsBranches: true });
+  // Allow every configured target to start while bounding ordinary observations,
+  // plus one reconciliation slot per pending intent. Native consumers fully drain.
+  const advanceLimit = Math.max(input.configs.length, DEFAULT_STEP_LIMIT) +
+    read.value.snapshot.work.filter((record) => record.intent !== null).length;
+  let advances = 0;
+  const advance = async () => {
+    if (carrier === undefined && advances >= advanceLimit) return false;
+    if (!await flow.advance()) return false;
+    advances++;
+    return true;
+  };
   let firstScan = true;
   // Progressive authenticated consumption: every scan re-reads authoritative
   // state, recovers ONLY completed artifacts for the still-charged producers
@@ -415,7 +468,7 @@ export async function runActionsMatrixAggregateCycles(
       // target retries preservation; a later target may belong to another wave.
       // Ready work still advances before waiting for any missing producer.
       while (
-        await flow.advance()
+        await advance()
       ) { /* existing work also advances on empty scans */ }
       // A later scan is bounded by `consumerUntil`, and one that reaches it
       // mid-download refuses the whole run, so it starts only with its whole
@@ -448,13 +501,13 @@ export async function runActionsMatrixAggregateCycles(
         );
         do {
           await Promise.race([poll, flow.waitForReady(waiting.signal)]);
-          while (await flow.advance()) { /* event-driven target work */ }
+          while (await advance()) { /* event-driven target work */ }
         } while (!polled);
       } finally {
         waiting.abort();
       }
     }
-    while (await flow.advance()) {
+    while (await advance()) {
       /* include the mandatory empty initial scan */
     }
   } catch (error) {

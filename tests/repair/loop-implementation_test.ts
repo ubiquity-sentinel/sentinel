@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Candidate eligibility, implementation uncertainty and P0 correction. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -398,15 +399,18 @@ Deno.test("P0 findings trigger a fresh bounded implementation/candidate/replay p
     await rig3.ctx.cleanup();
   }
 
-  // Protected path: candidate blocked before any publication.
+  // Protected path: published for the owner to merge (owner-landing policy,
+  // 2026-11-05), never parked unpublished and never merged by Sentinel.
   const rig4 = await makeRig("protected", {
     model: { changedPaths: ["src/handler.ts"] },
+    github: { candidateLifecycle: positiveLifecycle() },
   });
   try {
     await rig4.run();
     const state4 = await rig4.snapshot();
-    assert.equal(state4.work[0].nextStep, "blocked");
-    assert.equal(rig4.github.pushes.length, 0);
+    assert.notEqual(state4.work[0].nextStep, "blocked");
+    assert.deepEqual(state4.work[0].ownerLanding?.paths, ["src/handler.ts"]);
+    assert.equal(rig4.github.pushes.length, 1);
     assert.equal(state4.reservations[0].outcome, "submitted", "charged");
   } finally {
     await rig4.ctx.cleanup();
@@ -536,6 +540,7 @@ Deno.test(
       sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
     });
     const deps: RepairCycleDepsV1 = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state,
       configs,
@@ -672,6 +677,7 @@ Deno.test("no-CI generic targets park at admission, before any reservation", asy
     },
   };
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,
@@ -724,6 +730,7 @@ Deno.test("a capacity-refused admission waits bounded with a precise retry reaso
     sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
   });
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

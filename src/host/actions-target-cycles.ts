@@ -17,6 +17,7 @@ import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairCycleOutcomeV1 } from "../repair/loop.ts";
 import type { BudgetControllerV1 } from "../budget/mod.ts";
+import type { CiMinuteControllerV1 } from "../contracts/ci-minute-budget.ts";
 import type {
   HostedExecutionIntentV1,
   HostedExecutionSettlementV1,
@@ -189,6 +190,7 @@ export interface ActionsTargetCyclesInputV1 {
   model: ImplementationPort;
   /** THE one admission controller, constructed over every target config. */
   budget: BudgetControllerV1;
+  ciMinutes: CiMinuteControllerV1;
   /** ONE absolute run deadline shared by every cycle; never restarted. */
   deadline: number;
   /**
@@ -203,7 +205,14 @@ export interface ActionsTargetCyclesInputV1 {
   modelStartsEnabled: boolean;
   /** The model-disabled bootstrap execution: maintenance and health only. */
   bootstrap?: boolean;
+  /**
+   * Records this run's repository cells step (issue #328); the serial pass
+   * never selects them. Absent: every record is the serial pass's.
+   */
+  excludeRecords?: ReadonlySet<string>;
   externalImplementations?: boolean;
+  /** Persist concrete wait causes (#335, `HOSTED_RECORD_WAIT_CAUSES`). */
+  recordWaitCauses?: boolean;
   /**
    * The one-time legacy review class's cutoff the launcher handed this run
    * (`SENTINEL_LEGACY_REVIEW_CUTOFF`, `review-round-cap.ts`); absent or null
@@ -350,7 +359,7 @@ export interface ActionsRepairHostDepsV1 {
   /** Approved private persistence/cache/replay policy; absence keeps capture unavailable. */
   gateway?: import("./gateway-capabilities.ts").TrustedGatewayRuntimeV1;
   /** Native job role selected by the fixed matrix executable, never a product flag. */
-  job?: "matrix_plan" | "matrix_cell";
+  job?: "matrix_plan" | "matrix_cell" | "repair_cell";
   /** Fake external ports/transports for the actual hosted composition checks. */
   http?: HttpTransportV1;
   /** Fake external artifact HTTP boundary; production uses its bounded binary factory. */

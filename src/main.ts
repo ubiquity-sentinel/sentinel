@@ -34,6 +34,7 @@ import {
 } from "./contracts/repository-config.ts";
 import type { RepositoryConfigV1 } from "./contracts/repository-config.ts";
 import type { BudgetControllerV1 } from "./budget/mod.ts";
+import type { CiMinuteControllerV1 } from "./contracts/ci-minute-budget.ts";
 import type {
   Clock,
   GitHubCooldownGateV1,
@@ -113,6 +114,7 @@ export interface RepairEntrypointDepsV1 {
   model: ImplementationPort;
   /** The one durable model-start admission controller. */
   budget: BudgetControllerV1;
+  ciMinutes: CiMinuteControllerV1;
   /** Trusted matrix ownership: no serial implementation fallback or uncertainty settlement. */
   externalImplementations?: boolean;
   /** The legacy review cutoff the launcher handed this run (null: none). */
@@ -132,6 +134,8 @@ export interface RepairEntrypointOptionsV1 {
   deadline: number;
   /** Bounded persisted transitions per run. */
   stepLimit?: number;
+  /** Fresh branch assignment belongs to the aggregate's batched matrix intake. */
+  matrixIntakeOwnsBranches?: boolean;
   /**
    * Trusted host startup result forwarded unchanged to the cycle. `false`
    * refuses NEW model starts through the existing pre-admission guards while
@@ -144,6 +148,11 @@ export interface RepairEntrypointOptionsV1 {
    * the work queue (issue #297). Forwarded unchanged to the cycle.
    */
   bootstrap?: boolean;
+  /**
+   * Records delegated to this run's repository cells (issue #328), which the
+   * pass never selects; forwarded unchanged to the cycle.
+   */
+  excludeRecords?: ReadonlySet<string>;
 }
 
 /**
@@ -236,17 +245,22 @@ export function createRepairInvocation(
       fixtureIdentities: deps.fixtureIdentities,
       model: deps.model,
       budget: deps.budget,
+      ciMinutes: deps.ciMinutes,
       externalImplementations: deps.externalImplementations,
       legacyReviewCutoff: deps.legacyReviewCutoff ?? null,
     },
     {
       deadline: hardDeadline - OPERATION_MARGIN_MS,
       stepLimit: options.stepLimit,
+      matrixIntakeOwnsBranches: options.matrixIntakeOwnsBranches,
       runStartedAt,
       modelStartsEnabled: options.modelStartsEnabled,
       // A production bootstrap invocation must take the maintenance-only path
       // of the cycle, so the trusted host flag is forwarded unchanged.
       bootstrap: options.bootstrap,
+      ...(options.excludeRecords === undefined
+        ? {}
+        : { excludeRecords: options.excludeRecords }),
     },
     (continuation) => {
       postDrain.continuation = continuation;

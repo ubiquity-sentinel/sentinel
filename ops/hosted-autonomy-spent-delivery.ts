@@ -32,12 +32,10 @@ import {
   reviewedIdentity,
 } from "../src/repair/carried-review.ts";
 import { releaseRequestId } from "../src/repair/keys.ts";
-import {
-  releaseRequestMatchesDelivery,
-  touchesProtected,
-} from "../src/repair/loop-records.ts";
+import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import { createLocalRepositoryConfig } from "../src/host/local-config.ts";
 import { selectTrustedTargetPolicyV1 } from "../src/host/target-policy.ts";
+import { targetTouchesProtectedV1 } from "../src/host/target-policy-generic.ts";
 import { reviewAuthorizesMerge } from "../src/repair/review-gate.ts";
 import { advanceToDelivery } from "../src/repair/transitions.ts";
 import {
@@ -74,6 +72,7 @@ import type {
   HostedAutonomyPassContextV1,
   HostedAutonomyScopeV1,
 } from "./hosted-autonomy-scopes.ts";
+import { OWNER_MERGE_REQUIRED } from "../src/repair/owner-landing.ts";
 
 /**
  * Decision D3 (2026-10-16, launcher only), DISABLED: the coordinator chose
@@ -447,7 +446,7 @@ function touchesTargetProtected(
       repository,
     );
     return changes.some((change) =>
-      touchesProtected(policy.protectedPaths, change.path)
+      targetTouchesProtectedV1(policy, change.path)
     );
   } catch {
     return true;
@@ -460,7 +459,7 @@ function touchesTargetProtected(
  * always lists files; a fixture surface without that read skips the check.
  * A failed or incomplete listing refuses.
  */
-async function protectedPathRefusal(
+export async function protectedPathRefusal(
   surface: HostedAutonomyGitHubV1,
   repository: RepositoryIdentityV1,
   pull: number,
@@ -491,6 +490,10 @@ export async function preMergeGate(input: {
   tipGreen: Map<string, boolean>;
 }): Promise<{ refusal: string | null; spent: boolean }> {
   const { context, scope, record, receipt, pull, baseTip } = input;
+  // A protected-path change is merged only by its repository owner.
+  if (record.ownerLanding !== undefined) {
+    return { refusal: OWNER_MERGE_REQUIRED, spent: false };
+  }
   const { head, base } = record.target;
   const surface = scope.surface;
   if (surface === null || head === null || base === null) {
@@ -887,6 +890,10 @@ export async function carriedMergeGate(input: {
   baseTip: string;
 }): Promise<{ refusal: string | null; proof: CarriedMergeProofV1 | null }> {
   const { context, scope, record, receipt, pull, baseTip } = input;
+  // A protected-path change is merged only by its repository owner.
+  if (record.ownerLanding !== undefined) {
+    return { refusal: OWNER_MERGE_REQUIRED, proof: null };
+  }
   const { head, base } = record.target;
   const surface = scope.surface;
   if (surface === null || head === null || base === null) {

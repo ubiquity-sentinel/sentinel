@@ -2,8 +2,11 @@
  * Plain-language progress comments on the issues Sentinel works on (#183).
  *
  * After each target cycle the trusted repair host compares that target's
- * work records before and after the cycle and posts one comment on the
- * source issue for every stage change, in plain words. It never runs in a
+ * work records before and after the cycle and posts one comment for every
+ * stage change, in plain words. A stage of a record that has a pull request
+ * is posted on that pull request; only the stages before a pull request
+ * exists go on the source issue, so Sentinel's commentary never piles up on
+ * the issue once its work has a PR. It never runs in a
  * `matrix_cell` job, never writes state and never changes a record or the
  * cycle outcome: a failed read or post is logged and the pass moves on.
  *
@@ -17,6 +20,7 @@ import type { HttpResponseV1, HttpTransportV1 } from "../github/http.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { classifyGitHubRateLimit } from "../github/rate-limit.ts";
+import { ownerLandingWords, ownerMergeReady } from "../repair/owner-landing.ts";
 
 /** One stage of a record in plain words, with its stable change key. */
 export interface ProgressStageV1 {
@@ -24,11 +28,24 @@ export interface ProgressStageV1 {
   readonly words: string;
 }
 
-/** One stage change to report on a source issue. */
+/** One stage change to report, on the record's pull request or its issue. */
 export interface ProgressChangeV1 {
   readonly recordId: string;
   readonly issueNumber: number;
+  /** The issue or pull request number the comment is posted on. */
+  readonly commentOn: number;
   readonly stage: ProgressStageV1;
+}
+
+/**
+ * Where a record's progress comments go: its pull request once it has one,
+ * otherwise its source issue.
+ */
+export function progressCommentTarget(
+  record: WorkRecordV1,
+  issueNumber: number,
+): number {
+  return record.target.pr ?? issueNumber;
 }
 
 /** No more comments than this are posted for one target in one cycle. */
@@ -71,6 +88,7 @@ const WAIT_WORDS: Record<string, string> = {
   review_pending: "waiting for its review",
   review_quota: "waiting for a review slot",
   ledger_capacity: "waiting for reservation-ledger capacity",
+  deployment: "waiting for its deployment checks after the merge",
   backoff: "waiting before it retries",
   unavailable: "waiting for GitHub to respond",
   cooldown: "waiting for a GitHub rate limit to reset",
@@ -96,12 +114,23 @@ export function progressStage(record: WorkRecordV1): ProgressStageV1 | null {
     const message = record.blocker?.message ?? "no reason recorded";
     // A record retired because its issue closed says nothing on that issue.
     if (message.startsWith(SOURCE_CLOSED_PREFIX)) return null;
+    // The protected candidate is complete but is never published or merged
+    // by Sentinel (`loop-implementation-result.ts`): say who lands it.
     const person = message.startsWith("candidate touches a protected path")
-      ? " A person needs to fix this one."
+      ? " The fix changes a protected path, which Sentinel never merges; " +
+        "the repository owner needs to land this change."
       : "";
     return {
       key: `blocked:${hashKey(message)}`,
       words: `Parked: ${plain(message)}.${person}`,
+    };
+  }
+  if (record.nextStep === "delivery" && record.ownerLanding !== undefined) {
+    // Sentinel never merges a protected-path change: one owner comment per
+    // reviewed, CI-green head, and no "merging" claim before it.
+    return pr === null || !ownerMergeReady(record) ? null : {
+      key: `owner_merge:${pr}:${record.target.head}`,
+      words: ownerLandingWords(record.ownerLanding.paths),
     };
   }
   if (record.nextStep === "delivery") {
@@ -168,7 +197,12 @@ export function progressChanges(
     const prior = previous.get(record.id);
     const priorStage = prior === undefined ? null : progressStage(prior);
     if (priorStage?.key === stage.key) continue;
-    changes.push({ recordId: record.id, issueNumber, stage });
+    changes.push({
+      recordId: record.id,
+      issueNumber,
+      commentOn: progressCommentTarget(record, issueNumber),
+      stage,
+    });
   }
   return changes.sort((a, b) =>
     a.issueNumber - b.issueNumber ||
@@ -258,6 +292,7 @@ export async function postProgressComments(
     value === "deadline" || value === "cooldown" || value === "rate_limited";
   /** The key of the latest progress marker for `recordId`, or null. */
   const latestKey = async (
+    /** The issue or pull request number whose comments are read. */
     issue: number,
     recordId: string,
   ): Promise<string | null | Stop | "unreadable"> => {
@@ -293,7 +328,7 @@ export async function postProgressComments(
     return "unreadable";
   };
   for (const change of changes.slice(0, PROGRESS_COMMENTS_PER_CYCLE)) {
-    const latest = await latestKey(change.issueNumber, change.recordId);
+    const latest = await latestKey(change.commentOn, change.recordId);
     if (isStop(latest)) {
       report.stopped = latest;
       break;
@@ -306,7 +341,7 @@ export async function postProgressComments(
       report.skipped++;
       continue;
     }
-    const posted = await api("POST", `/issues/${change.issueNumber}/comments`, {
+    const posted = await api("POST", `/issues/${change.commentOn}/comments`, {
       body: `${change.stage.words}\n\n${
         progressMarker(change.recordId, change.stage.key)
       }`,

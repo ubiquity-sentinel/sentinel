@@ -63,6 +63,8 @@ export interface GitHubPullRequestV1 {
   createdAt: number;
   updatedAt: number;
   mergedAt: number | null;
+  /** Merge actor login; absent on older records, null when unavailable. */
+  mergedBy?: string | null;
   reviewDecision: GitHubReviewDecisionV1;
 }
 
@@ -114,6 +116,15 @@ export interface GitHubCheckV1 {
    * job id and head. Never persisted; absent keeps legacy attribution.
    */
   event?: string;
+  /**
+   * The slug of the GitHub App that reported this check run (`github-actions`
+   * for a workflow job), present only when the check-run wire carried one.
+   * Absent on commit statuses, on every fake/fixture check and on every
+   * record written before it existed. Read by the CI-evidence rule
+   * (`isCiEvidenceCheck`): only an Actions run, an absent app or a backup
+   * stand-in can be the evidence that CI ran. Never persisted.
+   */
+  app?: string;
 }
 
 /** The backup CI receipt a stand-in check carries (never persisted). */
