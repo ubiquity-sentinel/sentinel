@@ -35,7 +35,11 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/github/port-merge-policy.ts",
     "src/github/port-merge.ts",
     "src/repair/loop-checks.ts",
+    "src/repair/merge-gate-checks.ts",
     "src/repair/ci-rejection.ts",
+    // The policy half split out of that CI verdict dependency: editing
+    // it alone must not weaken the exact-head check verdict.
+    "src/repair/ci-correction-policy.ts",
     // Per-run credential selection and per-target token binding: the mint
     // action, self-versus-target token selection, grant parsing, target cycle
     // selection, the host composition that chooses the write tokens and

@@ -24,6 +24,7 @@ import {
   structuredCompletedFixture,
   T0,
 } from "./helpers.ts";
+import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
 import type { HttpRequestV1, HttpResponseV1 } from "../../src/github/http.ts";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
@@ -38,7 +39,13 @@ import {
   repairConfigs,
 } from "../repair/helpers.ts";
 
-async function fixture() {
+const PASSPORT: RepositoryIdentityV1 = {
+  owner: "ubiquity",
+  name: "passport.ubq.fi",
+  installationId: 155687488,
+};
+
+async function fixture(repository: RepositoryIdentityV1 = REPO) {
   const key = reviewOperationKey(1, SHA1);
   const acceptance = {
     issueNumber: 7,
@@ -51,6 +58,7 @@ async function fixture() {
     evidence: ["base already satisfies the exact task"],
   };
   const completion = await structuredCompletedFixture({
+    repository,
     operationKey: key,
     result: {
       verdict: "clean",
@@ -66,7 +74,7 @@ async function fixture() {
     requestId: "req-1",
     expectedReviewer: REVIEWER,
     observedReviewer: REVIEWER,
-    repository: REPO,
+    repository,
     pullRequest: { number: 1, head: SHA1, base: SHA2 },
     outcome: "completed",
     resultId: "result-9",
@@ -80,7 +88,7 @@ async function fixture() {
     observedAt: T0 + 200_000,
   });
   const record = workRecord("terminal-1", {
-    repository: REPO,
+    repository,
     related: { incidentId: null, issueNumber: 7 },
     nextStep: "delivery",
     target: {
@@ -114,6 +122,7 @@ async function fixture() {
     failCi: false,
     base: SHA2,
     baseTip: null as typeof SHA2 | null,
+    checks: null as unknown[] | null,
   };
   const requests: HttpRequestV1[] = [];
   const http = (request: HttpRequestV1): Promise<HttpResponseV1> => {
@@ -149,9 +158,11 @@ async function fixture() {
     } else if (path.endsWith("/git/ref/heads/development")) {
       body = refWire(state.baseTip ?? state.base, "refs/heads/development");
     } else if (path.endsWith("/check-runs")) {
-      body = checksPageWire([
-        checkRunWire({ conclusion: state.failCi ? "failure" : "success" }),
-      ]);
+      body = checksPageWire(
+        state.checks ?? [
+          checkRunWire({ conclusion: state.failCi ? "failure" : "success" }),
+        ],
+      );
     } else if (path.endsWith("/statuses")) body = [];
     else if (path.endsWith("/issues/7")) {
       if (request.method === "PATCH") {
@@ -178,7 +189,7 @@ async function fixture() {
   const service = new FakeReviewService();
   service.readResult = completion.service;
   const clock = new FakeClock(T0 + 200_000);
-  const { port } = makePort({ http, review: service, clock });
+  const { port } = makePort({ http, review: service, clock, repository });
   const request = { record, review, deadline: T0 + 3600_000 };
   return { port, request, state, requests, http, service, clock };
 }
@@ -371,6 +382,25 @@ Deno.test("terminal lifecycle: real Git CAS controller and native adapter retry 
     assert.equal(model.requests.length, 0);
   } finally {
     await Deno.remove(temporary, { recursive: true });
+  }
+});
+
+Deno.test("terminal adapter: a failed or pending Passport deploy does not block already-satisfied closure", async () => {
+  for (
+    const deploy of [
+      { name: "deploy-standby", status: "completed", conclusion: "failure" },
+      { name: "deploy-production", status: "in_progress", conclusion: null },
+    ] as const
+  ) {
+    const context = await fixture(PASSPORT);
+    context.state.checks = [
+      checkRunWire({ name: "deno", conclusion: "success" }),
+      checkRunWire(deploy),
+    ];
+    const outcome = await context.port.closeAlreadySatisfiedTask(
+      context.request,
+    );
+    assert.equal(outcome.ok, true, JSON.stringify(outcome));
   }
 });
 

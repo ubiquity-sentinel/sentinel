@@ -31,10 +31,12 @@ import {
   type CiDispositionV1,
   ciFixExhaustedDetail,
   failedChecks,
+  readCiChecks,
   unattributedDetail,
 } from "./ci-rejection.ts";
 import { ciFixesLeft, RED_BASE_RECHECK_MS } from "./ci-first-policy.ts";
 import { CHECK_POLL_MS } from "./loop-bounds.ts";
+import { selectMergeGateChecksV1 } from "./merge-gate-checks.ts";
 import {
   headAcceptedByReview,
   headTaskAcceptanceMissing,
@@ -77,7 +79,8 @@ async function attributeAgainstBase(
   failed: readonly GitHubCheckV1[],
 ): Promise<CiDispositionV1 | null> {
   // Only the failed names are read on the base (see `gateReviewOnCi`).
-  const base = await deps.github.readChecks(
+  const base = await readCiChecks(
+    deps.github,
     record.target.base,
     new Set(failed.map((check) => check.name)),
   );
@@ -99,9 +102,14 @@ export async function observeHeadFailure(
 ): Promise<CiDispositionV1 | { kind: "clean" } | null> {
   const head = record.target.head;
   if (head === null) return { kind: "clean" };
-  const observed = await deps.github.readChecks(head);
+  const observed = await readCiChecks(deps.github, head);
   if (!observed.ok) return null;
-  const failed = failedChecks(observed.value.checks);
+  const failed = failedChecks(
+    selectMergeGateChecksV1(
+      record.repository,
+      observed.value.checks,
+    ).checks,
+  );
   if (failed.length === 0) return { kind: "clean" };
   return attributeAgainstBase(deps, record, failed);
 }

@@ -27,10 +27,14 @@ import {
   HOSTED_EXECUTION_JOBS_PAGE_SIZE,
   HOSTED_EXECUTION_MAX_JOBS,
   HOSTED_EXECUTION_METADATA,
+  HOSTED_EXECUTION_METADATA_REREAD_BUDGET_MS,
+  HOSTED_EXECUTION_METADATA_REREAD_DELAY_MS,
+  HOSTED_EXECUTION_METADATA_REREAD_MAX,
   HOSTED_EXECUTION_READ_DEADLINE_MS,
   HOSTED_EXECUTION_REDIRECT,
   HOSTED_EXECUTION_SCOPE,
   HOSTED_EXECUTION_UNAVAILABLE,
+  hostedExecutionMetadataError,
 } from "./client-hosted-policy.ts";
 import {
   nextLinkUrl,
@@ -39,18 +43,25 @@ import {
   repoPath,
 } from "./client-response.ts";
 import {
+  hostedRuntimeMetadataIncomplete,
   parseHostedAttempt,
   parseHostedJobs,
   parseHostedJobsPage,
   validHostedJobsNext,
 } from "./client-hosted-job-wire.ts";
 import { type HostedJobsV1, sha256Hex } from "./client-hosted-revision-wire.ts";
+import type { GitHubApiClientOptionsV1 } from "./client-contracts.ts";
 import {
   HOSTED_EXECUTION_TERMINAL,
   HOSTED_EXECUTION_TERMINAL_LOOKING,
   parseHostedRuntimeTerminalLog,
   trustedActionsLogUrl,
 } from "./client-hosted-log-wire.ts";
+
+/** Optional deterministic wait seam for the bounded jobs-page re-read. */
+export interface HostedExecutionWaitOptionsV1 {
+  sleep?: (milliseconds: number) => Promise<void>;
+}
 
 export abstract class GitHubClientHostedExecution
   extends GitHubClientHostedRevisions {
@@ -73,6 +84,8 @@ export abstract class GitHubClientHostedExecution
     if (!parsedIntent.ok) return portError("invalid", HOSTED_EXECUTION_SCOPE);
     const saved = parsedIntent.value;
     const deadline = createDeadline(HOSTED_EXECUTION_READ_DEADLINE_MS);
+    // One shared window, measured by the same clock that waits against it.
+    const readStartedAt = this.options.clock.now();
     try {
       const repo = repoPath(this.repository);
       const attemptRaw = await this.actionsReleaseGet(
@@ -81,21 +94,67 @@ export abstract class GitHubClientHostedExecution
         deadline,
       );
       if (!attemptRaw.ok) return attemptRaw;
-      const observedAt = this.options.clock.now();
+      let observedAt = this.options.clock.now();
       const attempt = parseWith(
         attemptRaw.value,
         (value) => parseHostedAttempt(value, saved, observedAt),
       );
       if (!attempt.ok) return attempt;
-      const jobs = await this.readHostedAttemptJobs(saved, deadline);
+      let jobs = await this.readHostedAttemptJobs(saved, deadline);
       if (!jobs.ok) return jobs;
+      let repair = jobs.value.repair;
+      // GitHub can expose the completed repair job before its runtime step and
+      // terminal metadata exist, even while the run is still `in_progress`.
+      // Re-read the exact page; contradictory identity already failed above.
+      if (repair !== null && hostedRuntimeMetadataIncomplete(repair)) {
+        const rereadFrom = this.options.clock.now();
+        for (
+          let reread = 0;
+          reread < HOSTED_EXECUTION_METADATA_REREAD_MAX;
+          reread++
+        ) {
+          if (
+            this.options.clock.now() - rereadFrom +
+                HOSTED_EXECUTION_METADATA_REREAD_DELAY_MS >
+              HOSTED_EXECUTION_METADATA_REREAD_BUDGET_MS
+          ) break;
+          const remaining = this.remainingReadMs(deadline, readStartedAt);
+          if (remaining <= 0) return hostedExecutionMetadataError(true);
+          // The wait itself must never straddle the shared operation window.
+          await this.hostedExecutionWait(
+            Math.min(HOSTED_EXECUTION_METADATA_REREAD_DELAY_MS, remaining),
+          );
+          if (this.remainingReadMs(deadline, readStartedAt) <= 0) {
+            return hostedExecutionMetadataError(true);
+          }
+          const next = await this.readHostedAttemptJobs(saved, deadline);
+          if (!next.ok) {
+            return this.remainingReadMs(deadline, readStartedAt) <= 0
+              ? hostedExecutionMetadataError(true)
+              : next;
+          }
+          // The required repair job may gain metadata; it may never disappear
+          // from the same completed run attempt and be rewritten as absence.
+          if (
+            next.value.repair === null || next.value.repair.id !== repair.id
+          ) {
+            return portError("unavailable", HOSTED_EXECUTION_METADATA);
+          }
+          jobs = next;
+          repair = next.value.repair;
+          observedAt = this.options.clock.now();
+          if (!hostedRuntimeMetadataIncomplete(repair)) break;
+        }
+      }
+      // Still incomplete means the bounded window above ran to exhaustion.
+      const metadataWindowExhausted = repair !== null &&
+        hostedRuntimeMetadataIncomplete(repair);
       const evidenceDigest = await sha256Hex(
         canonicalStringify({
           attempt: attemptRaw.value,
           jobs: jobs.value.raw,
         }),
       );
-      const repair = jobs.value.repair;
       if (repair === null) {
         if (
           attempt.value.status !== "completed" ||
@@ -135,7 +194,7 @@ export abstract class GitHubClientHostedExecution
       }
       const step = repair.runtimeStep;
       if (step === null) {
-        return portError("unavailable", HOSTED_EXECUTION_METADATA);
+        return hostedExecutionMetadataError(metadataWindowExhausted);
       }
       if (step.status === "completed" && step.conclusion === "skipped") {
         return this.hostedNotStarted(
@@ -146,7 +205,7 @@ export abstract class GitHubClientHostedExecution
         );
       }
       if (repair.conclusion !== "success" && repair.conclusion !== "failure") {
-        return portError("unavailable", HOSTED_EXECUTION_METADATA);
+        return hostedExecutionMetadataError(metadataWindowExhausted);
       }
       const interrupted = repair.conclusion === "failure" &&
         step.conclusion === "cancelled";
@@ -154,7 +213,7 @@ export abstract class GitHubClientHostedExecution
         interrupted &&
         (attempt.value.status !== "completed" || !jobs.value.allCompleted)
       ) {
-        return portError("unavailable", HOSTED_EXECUTION_METADATA);
+        return hostedExecutionMetadataError(metadataWindowExhausted);
       }
       if (
         step.status !== "completed" ||
@@ -163,7 +222,7 @@ export abstract class GitHubClientHostedExecution
         repair.startedAt === null || step.startedAt === null ||
         step.completedAt === null
       ) {
-        return portError("unavailable", HOSTED_EXECUTION_METADATA);
+        return hostedExecutionMetadataError(metadataWindowExhausted);
       }
       // Actual (non-skipped) metadata must be coherent and not future.
       const tolerance = HOSTED_ACTIONS_CLOCK_TOLERANCE_MS;
@@ -173,7 +232,7 @@ export abstract class GitHubClientHostedExecution
         repair.completedAt > observedAt + tolerance ||
         step.completedAt > observedAt + tolerance
       ) {
-        return portError("unavailable", HOSTED_EXECUTION_METADATA);
+        return hostedExecutionMetadataError(metadataWindowExhausted);
       }
       const log = await this.readHostedRuntimeLog(repair.id, deadline);
       if (!log.ok) return log;
@@ -235,7 +294,7 @@ export abstract class GitHubClientHostedExecution
         terminal.outcome === "healthy" &&
         (repair.conclusion !== "success" || step.conclusion !== "success")
       ) {
-        return portError("unavailable", HOSTED_EXECUTION_METADATA);
+        return hostedExecutionMetadataError(metadataWindowExhausted);
       }
       return parseWith({
         execution: saved,
@@ -279,6 +338,25 @@ export abstract class GitHubClientHostedExecution
       outcome: "not_started",
       evidenceDigest,
     }, parseHostedNotStartedProofV1);
+  }
+
+  /** One finite timer; tests inject `sleep` and advance their clock instead. */
+  protected async hostedExecutionWait(ms: number): Promise<void> {
+    const sleep = (this.options as
+      & GitHubApiClientOptionsV1
+      & HostedExecutionWaitOptionsV1).sleep;
+    if (sleep !== undefined) return sleep(ms);
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+
+  /** Remaining shared read window; zero once it is spent. */
+  private remainingReadMs(
+    deadline: DeadlineV1,
+    startedAt: number,
+  ): number {
+    if (deadline.fired()) return 0;
+    return HOSTED_EXECUTION_READ_DEADLINE_MS -
+      (this.options.clock.now() - startedAt);
   }
 
   /** Complete native attempt listing; every page shares the same deadline. */

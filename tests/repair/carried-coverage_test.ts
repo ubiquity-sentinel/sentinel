@@ -26,15 +26,20 @@ import {
   reviewTaskStatementDigest,
 } from "../../src/contracts/review-receipt.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
-import { portError } from "../../src/contracts/ports.ts";
+import { type GitHubCheckV1, portError } from "../../src/contracts/ports.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
-import { CARRIED_WAIT_BOUND_MS } from "../../src/repair/loop-carried-delivery.ts";
+import { isPassportWorkTrial } from "../../src/repair/passport-work-trial.ts";
+import {
+  CARRIED_AWAITING_LAUNCHER_MERGE,
+  CARRIED_WAIT_BOUND_MS,
+} from "../../src/repair/loop-carried-delivery.ts";
 import { isCarriedMergeMarker } from "../../src/repair/carried-review.ts";
 import {
   MAX_REVIEW_ROUNDS,
   REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX,
+  REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX,
   REVIEW_ROUND_CEILING_PREFIX,
   REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX,
 } from "../../src/repair/review-round-cap.ts";
@@ -68,6 +73,29 @@ const GEN80 = await gen80Available();
 
 /** The first prepared refresh of the rig (`QueueGithub.prepareBaseRefresh`). */
 const H1 = sha(0x5001);
+
+/** The Passport target whose deploy checks are evidence, not CI. */
+const PASSPORT: RepositoryIdentityV1 = {
+  owner: "ubiquity",
+  name: "passport.ubq.fi",
+  installationId: 155687488,
+};
+
+function passportCheck(
+  name: string,
+  status: GitHubCheckV1["status"],
+  conclusion: GitHubCheckV1["conclusion"],
+  completedAt: number | null,
+): GitHubCheckV1 {
+  return {
+    name,
+    status,
+    conclusion,
+    head: H1,
+    startedAt: T0,
+    completedAt,
+  };
+}
 
 function spentCharges(record: WorkRecordV1): BudgetReservationV1[] {
   return Array.from(
@@ -117,7 +145,13 @@ async function spentRig(
     workRecord(record.id, {
       ...record,
       nextStep: "delivery",
-      counters: { attempts: 1, retries: 0, reviewRounds: MAX_REVIEW_ROUNDS },
+      counters: {
+        attempts: 1,
+        retries: 0,
+        reviewRounds: isPassportWorkTrial(repository)
+          ? Number.MAX_SAFE_INTEGER
+          : MAX_REVIEW_ROUNDS,
+      },
     })
   );
   const reviews = await Promise.all(spent.map(cleanReview));
@@ -145,8 +179,11 @@ async function runOnce(rig: Rig) {
 async function assertNothingSpent(rig: Rig, before: number) {
   const snapshot = await rig.snapshot();
   assert.equal(snapshot.reservations.length, before, "nothing charged");
+  const expectedRounds = isPassportWorkTrial(rig.records[0].repository)
+    ? Number.MAX_SAFE_INTEGER
+    : MAX_REVIEW_ROUNDS;
   for (const record of snapshot.work) {
-    assert.equal(record.counters.reviewRounds, MAX_REVIEW_ROUNDS);
+    assert.equal(record.counters.reviewRounds, expectedRounds);
     assert.equal(record.counters.retries, 0);
   }
   assert.deepEqual(rig.github.reviewed, [], "no review requested");
@@ -460,3 +497,57 @@ Deno.test(
     await assertRollbackParses(rig);
   }),
 );
+
+Deno.test("carried coverage: a later Passport deploy completion does not extend the carried wait bound", async () => {
+  const rig = await spentRig(PASSPORT);
+  const charges = (await rig.snapshot()).reservations.length;
+  rig.github.checksByHead.set(H1, [
+    passportCheck("validate", "completed", "success", T0 + 1000),
+    passportCheck("deploy-standby", "completed", "failure", T0 + 100 * HOUR),
+  ]);
+  await runOnce(rig);
+  await runOnce(rig);
+  let [record] = (await rig.snapshot()).work;
+  assert.equal(record.target.head, H1, "refreshed once onto T");
+  assert.ok(isCarriedMergeMarker(record.wait), JSON.stringify(record.wait));
+  for (let polls = 0; polls < 80 && record.nextStep !== "blocked"; polls++) {
+    rig.clock.advance(5 * 60_000);
+    await runOnce(rig);
+    [record] = (await rig.snapshot()).work;
+  }
+  assert.equal(record.nextStep, "blocked");
+  assert.equal(
+    record.blocker!.message,
+    `${REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX}${CARRIED_AWAITING_LAUNCHER_MERGE}`,
+  );
+  assert.deepEqual(rig.github.launcherMerges, []);
+  await assertNothingSpent(rig, charges);
+  await assertRollbackParses(rig);
+});
+
+Deno.test("carried coverage: a pending Passport deploy is not named in the carried CI wait", async () => {
+  const rig = await spentRig(PASSPORT);
+  const charges = (await rig.snapshot()).reservations.length;
+  rig.github.checksByHead.set(H1, [
+    passportCheck("validate", "in_progress", null, null),
+    passportCheck("deploy-production", "in_progress", null, null),
+  ]);
+  await runOnce(rig);
+  await runOnce(rig);
+  let [record] = (await rig.snapshot()).work;
+  assert.equal(record.wait?.reason, "ci_pending");
+  for (let elapsed = 0; elapsed <= CARRIED_WAIT_BOUND_MS; elapsed += HOUR) {
+    rig.clock.advance(HOUR);
+    await runOnce(rig);
+    [record] = (await rig.snapshot()).work;
+    if (record.nextStep === "blocked") break;
+  }
+  assert.equal(record.nextStep, "blocked");
+  assert.equal(
+    record.blocker!.message,
+    `${REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX}validate(in_progress)`,
+  );
+  assert.deepEqual(rig.github.launcherMerges, []);
+  await assertNothingSpent(rig, charges);
+  await assertRollbackParses(rig);
+});
