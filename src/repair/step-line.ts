@@ -23,6 +23,14 @@ import {
   PASS_SUMMARY_LINE_KIND,
   type PassSummaryLineV1,
 } from "./pass-summary-line.ts";
+import {
+  parseRepairFanoutDelegationLine,
+  parseRepairHandbackLine,
+  REPAIR_FANOUT_DELEGATION_KIND,
+  REPAIR_HANDBACK_KIND,
+  type RepairFanoutDelegationLineV1,
+  type RepairHandbackLineV1,
+} from "./repair-fanout-lines.ts";
 
 export const STEP_LINE_KIND = "sentinel_step";
 
@@ -208,7 +216,9 @@ export function matrixSkipLine(records: number): string | null {
 export type AdvisoryLogLineV1 =
   | StepLineV1
   | MatrixSkipLineV1
-  | PassSummaryLineV1;
+  | PassSummaryLineV1
+  | RepairHandbackLineV1
+  | RepairFanoutDelegationLineV1;
 
 const MATRIX_SKIP_KEYS = ["detail", "kind", "records"].join();
 
@@ -233,20 +243,27 @@ export function parseMatrixSkipLine(value: unknown): MatrixSkipLineV1 | null {
   };
 }
 
+/** The kinds `scanStepLines` reads; any other line is never parsed. */
+const ADVISORY_KINDS = [
+  STEP_LINE_KIND,
+  MATRIX_SKIP_LINE_KIND,
+  PASS_SUMMARY_LINE_KIND,
+  REPAIR_HANDBACK_KIND,
+  REPAIR_FANOUT_DELEGATION_KIND,
+];
+
 /**
  * Every valid advisory line of one child's stdout, in order, bounded: the
- * per-step lines, the one matrix-skip summary and the one pass summary the
- * launcher re-emits, so the summaries survive the hosted child's stdout
- * filter.
+ * per-step lines, the one matrix-skip summary, the one pass summary and the
+ * serial job's fan-out hand-back and delegation lines the launcher re-emits,
+ * so they survive the hosted child's stdout filter.
  */
 export function scanStepLines(stdout: string): AdvisoryLogLineV1[] {
   const lines: AdvisoryLogLineV1[] = [];
   for (const raw of stdout.split("\n")) {
     if (lines.length >= MAX_REEMITTED_STEP_LINES) break;
     if (
-      raw.length > 512 ||
-      !(raw.includes(STEP_LINE_KIND) || raw.includes(MATRIX_SKIP_LINE_KIND) ||
-        raw.includes(PASS_SUMMARY_LINE_KIND))
+      raw.length > 512 || !ADVISORY_KINDS.some((kind) => raw.includes(kind))
     ) continue;
     let value: unknown;
     try {
@@ -255,7 +272,8 @@ export function scanStepLines(stdout: string): AdvisoryLogLineV1[] {
       continue;
     }
     const line = parseStepLine(value) ?? parseMatrixSkipLine(value) ??
-      parsePassSummaryLine(value);
+      parsePassSummaryLine(value) ?? parseRepairHandbackLine(value) ??
+      parseRepairFanoutDelegationLine(value);
     if (line !== null) lines.push(line);
   }
   return lines;

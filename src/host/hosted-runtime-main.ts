@@ -23,6 +23,7 @@ import {
   reviewCommandItemRefusalLines,
   reviewTerminalAdvisoryLines,
 } from "./hosted-runtime-status.ts";
+import { reviewResultShapeLines } from "./hosted-review-shape.ts";
 import { runHostedRuntimeWithReviewCustody } from "./review-owner-host.ts";
 import { fallbackHostedRuntimeSummary } from "./hosted-runtime-launcher.ts";
 import type { HostedRuntimeSummaryV1 } from "../contracts/hosted-execution.ts";
@@ -205,6 +206,15 @@ export function emitHostedRuntimeCliResult(
   if (result.reviewTerminals !== undefined) {
     try {
       for (const line of reviewTerminalAdvisoryLines(result.reviewTerminals)) {
+        console.log(line);
+      }
+    } catch {
+      // Advisory printing cannot change the resolved child result or exit.
+    }
+  }
+  if (result.reviewResultShapes !== undefined) {
+    try {
+      for (const line of reviewResultShapeLines(result.reviewResultShapes)) {
         console.log(line);
       }
     } catch {

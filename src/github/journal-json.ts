@@ -39,6 +39,11 @@ export class StrictJsonParser {
     this.length = text.length;
   }
 
+  /** Characters consumed so far: after a refusal, where it was refused. */
+  get position(): number {
+    return this.index;
+  }
+
   parse(): unknown {
     this.skipWhitespace();
     const value = this.parseValue();

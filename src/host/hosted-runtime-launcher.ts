@@ -71,6 +71,7 @@ import {
   scanReviewTerminalAdvisories,
 } from "./hosted-runtime-status.ts";
 import type { ChildStatusV1 } from "./hosted-runtime-status.ts";
+import { scanReviewResultShapes } from "./hosted-review-shape.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import { legacyReviewCutoffForExecution } from "./legacy-review-cutoff-env.ts";
 import { runRepairOwnerWithReviewCustody } from "./review-owner-custody.ts";
@@ -435,6 +436,14 @@ function attachDiagnostics(
     const terminals = scanReviewTerminalAdvisories(run, execution);
     if (terminals !== null) {
       withTerminals = { ...withRefusals, reviewTerminals: terminals };
+    }
+  } catch {
+    // Advisory parsing cannot change the resolved child result.
+  }
+  try {
+    const shapes = scanReviewResultShapes(run, execution);
+    if (shapes !== null) {
+      withTerminals = { ...withTerminals, reviewResultShapes: shapes };
     }
   } catch {
     // Advisory parsing cannot change the resolved child result.

@@ -9,8 +9,13 @@ import {
 import { portOk, type PortResultV1 } from "../contracts/ports.ts";
 import {
   classifyNativeReviewRejection,
+  type NativeReviewRejectionCategoryV1,
   parseNativeReviewResult,
 } from "./native-review-result.ts";
+import {
+  nativeReviewResultShape,
+  reviewResultShapeLine,
+} from "./native-review-shape.ts";
 import { PreparedReviewEvents } from "./reviewer-events.ts";
 import {
   COMMAND_UNSETTLED_DETAIL,
@@ -78,6 +83,28 @@ export abstract class PreparedReviewOutcome extends PreparedReviewEvents {
     return null;
   }
 
+  /**
+   * Advisory only: one text-free line saying where the malformed result was
+   * refused (`native-review-shape-line.ts`). It runs after the category is
+   * fixed and can never change the outcome, the journal or the charge.
+   */
+  private reportResultShape(
+    text: string,
+    error: unknown,
+    category: NativeReviewRejectionCategoryV1,
+  ): void {
+    try {
+      const line = reviewResultShapeLine({
+        ownerRunId: this.ownerRunId,
+        requestId: this.requestId,
+        invocationId: this.invocationId,
+      }, nativeReviewResultShape(text, error, category));
+      if (line !== null) console.log(line);
+    } catch {
+      // An advisory sink cannot change the malformed outcome.
+    }
+  }
+
   protected buildOutcome(): PortResultV1<StructuredReviewOutcomeV1> {
     const actual = this.buildActual();
     const unavailable = (
@@ -140,6 +167,7 @@ export abstract class PreparedReviewOutcome extends PreparedReviewEvents {
       // derived from the parser issue and native recovery/check stage; raw
       // model text, parser messages, paths and indexes never reach publication.
       const category = classifyNativeReviewRejection(error);
+      this.reportResultShape(message.text, error, category);
       return unavailable(`${RESULT_MALFORMED_DETAIL} [${category}]`);
     }
     const location = validateFindingLocations(result, this.snapshot);
