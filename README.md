@@ -28,4 +28,6 @@ Dated handoff packets, redesign and specification snapshots, and retained review
 
 The read-only observer for `https://ai.ubq.fi` uses protected `SENTINEL_GATEWAY_AUTH_JSON` and `SENTINEL_REPLAY_KEY_B64` capabilities. It stores bounded encrypted captures and non-plaintext manifests, with one-day artifact retention; it receives no repair, model, state-write, replay-execution or deployment capability. The replay key is exactly 32 bytes represented as hexadecimal or standard/base64url text. The gateway-auth secret is a JSON object of header names/values. Keep both values out of Git, issues, PRs, artifact names and logs.
 
+Generic target policies protect `.env*` basenames at any directory depth, except the exact template names `.env.example`, `.env.sample` and `.env.template`. These templates remain repairable unless explicitly covered by a protected path (including entries in the target's `sentinel.protected` list or a protected parent directory). Other `.env*` names, such as `.env.example.local`, stay protected. Named target policies are unchanged.
+
 Local validation exercises real production consumers with fake external services and no paid/model calls or deployments. Use focused named checks with the 300-second bounds in AGENTS.md; whole-repository sweeps require a separate explicit request.

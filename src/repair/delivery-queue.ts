@@ -65,6 +65,20 @@
  * and the launcher's merge) and for the deliverable records ahead of it,
  * finitely many, each of which lands (or parks) in its turn.
  *
+ * Line order binds the holders of a record with NO reviewed head to carry
+ * (`reviewedHeadCarried` false: never reviewed, or reviewed with findings;
+ * sentinel 2026-11-13, PRs 387, 389, 390, 391 and 392, green and mergeable
+ * since 01:40Z, held for more than ten hours while 394 and 396, created the
+ * same morning, were reviewed and merged ahead of them). Such a record loses
+ * no review by refreshing, and a contender that still needs its own CI or
+ * review has paid nothing a merge ahead of it would discard, so it holds only
+ * while it is before that record in line (`lineBefore`). A contender that
+ * would lose paid work keeps holding whatever its age: one `landing` or
+ * `ready` (a completed clean accepted review it merges next) and one whose
+ * review of its current head is in flight (`reviewInFlight`). A record that
+ * does carry a reviewed head keeps the unchanged order, so no refresh of a
+ * reviewed head is brought forward and no review is spent twice.
+ *
  * A stuck contender holds nobody, so it never blocks the line: one that made
  * no durable progress in its last `DELIVERY_QUEUE_STALL_LIMIT` executions
  * (`counters.stalled`, the loop's own no-progress count, reset by every
@@ -212,6 +226,18 @@ export function refreshInFlight(
     latest.pullRequest.base !== other.target.base;
 }
 
+/**
+ * True while a charged review of `other`'s current head is in flight: it is
+ * observing its review (`review`), or its review-request intent is open. Such
+ * a contender keeps holding a record that carries no reviewed head, whatever
+ * their line order: a merge ahead of it would discard that charged review.
+ */
+export function reviewInFlight(
+  other: Pick<WorkRecordV1, "nextStep" | "intent">,
+): boolean {
+  return other.nextStep === "review" || other.intent?.kind === "review_request";
+}
+
 /** Where a contender stands in its repository's line (see the module). */
 export type DeliveryLineStandingV1 =
   | "landing"
@@ -317,11 +343,14 @@ export function deliveryQueueAhead(
     ) continue;
     const standing = lineStanding(snapshot, other, tip, now, cutoff);
     const inFlight = refreshInFlight(snapshot, other, tip, standing);
-    const holds = standing === "landing" || inFlight ||
+    // A record with no reviewed head to carry loses no review by refreshing,
+    // so a contender that still needs its own CI or review holds it only from
+    // ahead in line; one that would lose paid work holds it either way.
+    const ordered = lineBefore(other, record) || reviewInFlight(other);
+    const holds = standing === "landing" ||
       (standing === "ready" && (!deliverable || lineBefore(other, record))) ||
-      (!deliverable &&
-        (standing === "re_review" ||
-          (standing === "reviewed" && lineBefore(other, record))));
+      (deliverable ? inFlight : ((standing === "re_review" && ordered) ||
+        (standing === "reviewed" && lineBefore(other, record))));
     if (!holds) continue;
     // The head of the line in flight is named first, as a landing one.
     const rank = inFlight ? 0 : HOLD_ORDER.indexOf(standing);

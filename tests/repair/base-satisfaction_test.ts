@@ -30,6 +30,16 @@ import { implementationIntent } from "../../src/repair/loop-implementation.ts";
 import { candidateBranch } from "../../src/repair/keys.ts";
 import { isWaiting, rankEligibleWork } from "../../src/repair/selection.ts";
 import { SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
+import { baseReviewCommentBody } from "../../src/github/base-review-comments.ts";
+import {
+  applyHostedRetries,
+  planHostedRetries,
+} from "../../ops/hosted-autonomy-retries.ts";
+import {
+  HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
+  hostedIssueKey,
+} from "../../ops/hosted-autonomy-policy.ts";
+import { readBaseReviewWorkNeeded } from "../../ops/hosted-autonomy-base-review-verdicts.ts";
 import { r80Available, withR80Parsers } from "../host/r80-contracts.ts";
 import {
   issueRecord,
@@ -515,4 +525,164 @@ Deno.test("base satisfaction: work-needed round trips park after the bounded no-
     "submitted",
   ]);
   assert.equal(f.rig.model.requests.length, 0);
+});
+
+/**
+ * The park the runtime wrote for this exact completed review before work-needed
+ * reviews returned to implementation: its bounded park keeps the same intent,
+ * evidence and charges; only the message was the not-established one.
+ */
+async function historicalPark(result: Partial<ReviewResultV1>) {
+  const g = await fixture();
+  Object.assign(g.result, result);
+  await noChangeHistory(g, MAX_NO_CHANGE_BASE_REVIEWS);
+  await g.rig.run(1);
+  const parked = (await g.rig.snapshot()).work[0];
+  assert.equal(parked.nextStep, "blocked");
+  assert.ok(parked.intent?.resultId, "the park retains its result binding");
+  return {
+    ...parked,
+    blocker: { ...parked.blocker!, message: BASE_REVIEW_NOT_ESTABLISHED },
+  };
+}
+
+/** The repository surface serving the review's result comment. */
+function commentSurface(
+  payload: ReviewResultV1,
+  author = HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
+) {
+  const reads: number[] = [];
+  return {
+    reads,
+    scopeFor: () =>
+      Promise.resolve({
+        surface: {
+          readIssueComment: (_issue: number, id: number) => {
+            reads.push(id);
+            return Promise.resolve({
+              id,
+              author,
+              body: baseReviewCommentBody(payload),
+            });
+          },
+        },
+      }),
+  };
+}
+
+function notFulfilled(result: ReviewResultV1): Partial<ReviewResultV1> {
+  return {
+    taskAcceptance: { ...result.taskAcceptance!, verdict: "not_fulfilled" },
+  };
+}
+
+Deno.test("base satisfaction: a historical park of a work-needed review re-arms once into the runtime's own return", async () => {
+  const f = await fixture();
+  Object.assign(f.result, notFulfilled(f.result));
+  await noChangeHistory(f, 1);
+  await f.rig.run(1);
+  const state = await f.rig.snapshot();
+  const returned = state.work[0];
+  assert.equal(returned.nextStep, "work");
+  const parked = await historicalPark(notFulfilled(f.result));
+  const historical = { ...state, work: [parked] };
+  const surface = commentSurface(f.result);
+  const verified = await readBaseReviewWorkNeeded(
+    historical,
+    new Set(),
+    surface.scopeFor,
+  );
+  assert.equal(verified.size, 1);
+  // Only the result comment the evidence names is read.
+  assert.deepEqual(surface.reads, [2]);
+  const now = f.rig.clock.now();
+  const plans = planHostedRetries(
+    historical,
+    now,
+    SHA1,
+    new Map(),
+    new Set(),
+    undefined,
+    { baseReviewWorkNeeded: verified },
+  );
+  assert.equal(plans.length, 1);
+  const rearmed = applyHostedRetries(historical, SHA1, plans, now);
+  // Exactly the record the runtime now writes for that review.
+  assert.deepEqual(
+    { ...rearmed.work[0], updatedAt: 0 },
+    { ...returned, updatedAt: 0 },
+  );
+  // Every charge stays as settled: nothing is refunded, reused or added.
+  assert.deepEqual(rearmed.reservations, state.reservations);
+  assert.equal(baseReviewOrigin(rearmed.work[0], rearmed), null);
+  assert.ok(
+    rankEligibleWork(rearmed, f.rig.configs, now).ordered.includes(parked.id),
+  );
+  assert.equal(f.rig.model.requests.length, 0);
+});
+
+Deno.test("base satisfaction: a historical not-established park stays parked unless its comment proves work is needed", async () => {
+  const f = await fixture();
+  Object.assign(f.result, notFulfilled(f.result));
+  await noChangeHistory(f, 1);
+  // The review's charges, as both runtimes settled them.
+  await f.rig.run(1);
+  const state = await f.rig.snapshot();
+  const workNeeded = await historicalPark(notFulfilled(f.result));
+  const rearms = async (
+    parked: WorkRecordV1,
+    surface: ReturnType<typeof commentSurface>,
+    closed = new Set<string>(),
+  ) => {
+    const historical = { ...state, work: [parked] };
+    const verified = await readBaseReviewWorkNeeded(
+      historical,
+      closed,
+      surface.scopeFor,
+    );
+    return planHostedRetries(
+      historical,
+      f.rig.clock.now(),
+      SHA1,
+      new Map(),
+      closed,
+      undefined,
+      { baseReviewWorkNeeded: verified },
+    ).length;
+  };
+  assert.equal(await rearms(workNeeded, commentSurface(f.result)), 1);
+  // A comment by another author, or whose result does not hash to the stored
+  // digest (here an "already satisfied" answer), proves nothing.
+  assert.equal(
+    await rearms(workNeeded, commentSurface(f.result, "someone[bot]")),
+    0,
+  );
+  const satisfied: ReviewResultV1 = {
+    ...f.result,
+    taskAcceptance: {
+      ...f.result.taskAcceptance!,
+      verdict: "already_satisfied_at_base",
+    },
+  };
+  assert.equal(await rearms(workNeeded, commentSurface(satisfied)), 0);
+  // A closed issue is never read.
+  const closed = commentSurface(f.result);
+  assert.equal(
+    await rearms(
+      workNeeded,
+      closed,
+      new Set([hostedIssueKey(workNeeded.repository, 1141)]),
+    ),
+    0,
+  );
+  assert.deepEqual(closed.reads, []);
+  // A real not-established park (the review gave no task verdict) keeps it:
+  // its comment hashes to its digest but answers no work needed.
+  const g = await fixture();
+  g.result.verdict = "unavailable";
+  g.result.taskAcceptance = null;
+  await g.rig.run(1);
+  const unavailable = (await g.rig.snapshot()).work[0];
+  assert.equal(unavailable.blocker?.message, BASE_REVIEW_NOT_ESTABLISHED);
+  assert.equal(await rearms(unavailable, commentSurface(g.result)), 0);
 });

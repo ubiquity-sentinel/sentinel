@@ -42,6 +42,7 @@ import {
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import type {
+  ModelRunReceiptV1,
   PriorAttemptFactV1,
   RepositoryRegressionFactV1,
 } from "../contracts/ports.ts";
@@ -60,6 +61,30 @@ export const ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT =
   "model run ended without a trusted receipt" as const;
 export const ATTEMPT_DETAIL_INCOMPLETE =
   "model run did not complete with a trusted candidate" as const;
+/** Public diagnostic details only; attempt memory retains the incomplete key. */
+export const IMPLEMENTATION_RECEIPT_FAILURE_DETAILS = {
+  failed: `${ATTEMPT_DETAIL_INCOMPLETE} (failed)`,
+  interrupted: `${ATTEMPT_DETAIL_INCOMPLETE} (interrupted)`,
+  "host-timeout": `${ATTEMPT_DETAIL_INCOMPLETE} (host-timeout)`,
+  "dirty-tree": `${ATTEMPT_DETAIL_INCOMPLETE} (dirty-tree)`,
+} as const;
+
+/** Never copy runtime error text or infer a dirty tree from a missing candidate. */
+export function implementationReceiptFailureDetail(
+  receipt: ModelRunReceiptV1,
+): string | null {
+  if (receipt.error === "failed_command_loop") return null;
+  if (receipt.actual.terminalOrigin === "host-timeout") {
+    return IMPLEMENTATION_RECEIPT_FAILURE_DETAILS["host-timeout"];
+  }
+  if (receipt.candidate === null && receipt.error === "dirty-tree") {
+    return IMPLEMENTATION_RECEIPT_FAILURE_DETAILS["dirty-tree"];
+  }
+  return receipt.outcome === "failed" || receipt.outcome === "interrupted"
+    ? IMPLEMENTATION_RECEIPT_FAILURE_DETAILS[receipt.outcome]
+    : null;
+}
+
 export const ATTEMPT_DETAIL_INTERRUPTED_BOUND =
   "model run did not complete with a trusted candidate: interrupted output bound exceeded" as const;
 export const ATTEMPT_DETAIL_LOOP_STOP = "failed_command_loop" as const;

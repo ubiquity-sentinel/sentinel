@@ -55,7 +55,6 @@ import {
 } from "./hosted-autonomy-scopes.ts";
 import {
   deliveryEligible,
-  HOSTED_AUTONOMY_RETIRED,
   HOSTED_AUTONOMY_SELF_SCOPE,
   HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
   HOSTED_AUTONOMY_TRUSTED_AUTHORS,
@@ -76,7 +75,7 @@ import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "../src/repair/review-round-cap.ts";
 import { markBlocked } from "../src/repair/transitions.ts";
 import { runHostedCiRerunPass } from "./hosted-autonomy-ci-rerun.ts";
-import { ciFirstApprovalEligible } from "./hosted-autonomy-ci-first.ts";
+import { runHostedApprovalPass } from "./hosted-autonomy-approval-pass.ts";
 import {
   acceptanceOwnerGateActions,
   acceptanceOwnerGated,
@@ -137,54 +136,7 @@ async function deliveryPass(
   // itself stays credential-free and unchanged. Under CI first a head's CI
   // must be green BEFORE its review, so a published head waiting at `work`
   // (or parked by the pre-review gate) is approved too.
-  for (const record of snapshot.work) {
-    if (hostedPassDeadlineReached(context)) return defer();
-    if (protectedRecord(record)) continue;
-    // Terminal source retirement and rejected unpublished candidates cannot
-    // acquire approval authority. Ambiguous preservation intents stay eligible.
-    const candidate = record.target.candidateState;
-    if (
-      record.nextStep === "blocked" && record.intent === null &&
-      record.blocker?.kind === "other" &&
-      (record.blocker.message === HOSTED_AUTONOMY_RETIRED ||
-        (record.blocker.message === "candidate touches a protected path" &&
-          candidate?.preserved === null &&
-          record.target.head !== candidate.publishedHead))
-    ) continue;
-    if (
-      !eligible(record) &&
-      !(ciFirstApprovalEligible(snapshot, record) &&
-        context.settled?.has(record.id) !== true)
-    ) {
-      continue;
-    }
-    const head = record.target.head;
-    if (head === null || record.target.pr === null) continue;
-    const scope = await scopeFor(record.repository);
-    if (hostedPassDeadlineReached(context)) return defer();
-    if (scope.surface === null) {
-      actions.push(`approve:${record.id}:surface_unreadable`);
-      continue;
-    }
-    let parked: number[] = [];
-    try {
-      parked = await scope.surface.listParkedRuns(head);
-    } catch {
-      parked = [];
-    }
-    for (const id of parked.slice(0, 3)) {
-      if (hostedPassDeadlineReached(context)) return defer();
-      let approved = false;
-      try {
-        approved = await scope.surface.approveRun(id);
-      } catch {
-        approved = false;
-      }
-      actions.push(
-        `approve:${record.id}:run=${id}:${approved ? "approved" : "refused"}`,
-      );
-    }
-  }
+  if (!await runHostedApprovalPass(context, eligible)) return defer();
   if (hostedPassDeadlineReached(context)) return defer();
   // A clean-reviewed head parked on a failed CI run against its green,
   // current base gets that run re-run once (state-free; see the module).

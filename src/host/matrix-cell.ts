@@ -21,6 +21,7 @@ import { OPERATION_MARGIN_MS, type RunBoundsV1 } from "../repair/loop.ts";
 import {
   ATTEMPT_DETAIL_PROVIDER_THROTTLED,
   implementationPortFailureDetail,
+  implementationReceiptFailureDetail,
 } from "../repair/attempt-policy.ts";
 import { isProviderThrottledReceiptV1 } from "../repair/model-port-retry.ts";
 import type { MatrixBundleExporterV1 } from "./matrix-git.ts";
@@ -344,7 +345,7 @@ export async function runMatrixCell(
         : "runtime_error",
     },
     bundle,
-    detail: null,
+    detail: implementationReceiptFailureDetail(receipt.value),
     completedAt: deps.clock.now(),
   };
 }

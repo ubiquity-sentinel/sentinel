@@ -11,7 +11,11 @@
  * effect ever reaches a delta.
  */
 import { portError } from "../contracts/ports.ts";
-import type { GitHubPort } from "../contracts/ports.ts";
+import type { GitHubPort, StateReadView } from "../contracts/ports.ts";
+import {
+  type NativeQueueGuardV1,
+  withQueueDecisionView,
+} from "../github/native-queue-guard.ts";
 import type { RepairCycleDepsV1 } from "./loop-types.ts";
 
 export const FENCE_DETAIL =
@@ -37,7 +41,8 @@ const GITHUB_WITHHELD = new Set<string>(["onReviewCompletion"]);
  * discovery and proof reads pass through, and the capability stays present,
  * so the #326 step fingerprint (which records which capabilities exist)
  * equals the serial pass's. The native queue guard only inspects and proves
- * (it decides; it never performs an effect) and passes through unchanged.
+ * (it decides; it never performs an effect) and stays present; it decides on
+ * the pass's own fork (`withQueueDecisionView`), never the shared store.
  */
 const TAKEOVER_EFFECTS = new Set<string>([
   "authorizeBoundary",
@@ -89,10 +94,15 @@ function fenceMembers<T extends object>(
   });
 }
 
-function fenceGithub(github: GitHubPort, fence: RepositoryPassFence) {
+function fenceGithub(
+  github: GitHubPort,
+  fence: RepositoryPassFence,
+  state: StateReadView,
+) {
   const takeover = github.existingPrTakeover === undefined
     ? undefined
     : fenceMembers(github.existingPrTakeover, TAKEOVER_EFFECTS, fence);
+  let queue: [NativeQueueGuardV1, NativeQueueGuardV1] | undefined;
   return new Proxy(github, {
     get(target, property, _receiver) {
       if (typeof property === "string" && GITHUB_WITHHELD.has(property)) {
@@ -100,6 +110,11 @@ function fenceGithub(github: GitHubPort, fence: RepositoryPassFence) {
       }
       if (property === "existingPrTakeover") return takeover;
       const value = Reflect.get(target, property, target);
+      if (property === "nativeQueue" && value !== undefined) {
+        const cached = queue?.[0] === value ? queue : undefined;
+        queue = cached ?? [value, withQueueDecisionView(value, state)];
+        return queue[1];
+      }
       if (typeof property === "string" && GITHUB_EFFECTS.has(property)) {
         return value === undefined ? undefined : fenced(fence);
       }
@@ -131,7 +146,7 @@ export function fencedRepositoryDeps(
     ...deps,
     state,
     configs,
-    github: fenceGithub(deps.github, fence),
+    github: fenceGithub(deps.github, fence, state),
     githubCooldown: {
       beforeRequest: (scope) => deps.githubCooldown.beforeRequest(scope),
       recordRateLimit: () => {
