@@ -102,8 +102,8 @@ Deno.test("Passport trial: trusted policy permits product repairs and keeps cred
       template.protectedPaths,
       "src/repair/passport-work-trial.ts",
     ),
-    true,
-    "controller trial authority stays protected",
+    false,
+    "the 2026-10-30 reduced set leaves the Passport trial policy to ordinary work",
   );
   assert.equal(
     touchesProtected(
