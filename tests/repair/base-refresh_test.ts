@@ -29,6 +29,7 @@ import type { BaseRefreshObserverV1 } from "../../src/host/local.ts";
 import { createPrepareBaseRefresh } from "../../src/host/local.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { baseRefreshIntentKey, mergeIntentKey } from "../../src/repair/keys.ts";
+import { CHECK_POLL_MS } from "../../src/repair/loop-bounds.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
 import { REPO, SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
 import {
@@ -55,7 +56,6 @@ const BRANCH = "sentinel/repair/issue-1";
 const OLD_HEAD = SHA3;
 const PREPARED = "7f0b28dc5c6f8a1a2b3c4d5e6f7a8b9c0d1e2f3a" as GitSha;
 const UNRELATED = "abcdefabcdefabcdefabcdefabcdefabcdefabcd" as GitSha;
-const CHECK_POLL_MS = 2 * 60_000;
 
 async function gitRun(
   cwd: string,
