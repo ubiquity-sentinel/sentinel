@@ -999,6 +999,31 @@ Deno.test("output bound: the current-matrix walk applies the live pass once, the
   assert.equal(rig.calls.deferred, 0);
 });
 
+Deno.test("output bound: a terminal abandoned or superseded release never defers the walk", async (t) => {
+  // Live 2026-10-24: release f42d04c7, abandoned as included_in_successor,
+  // deferred every current-matrix walk since 09:24 and orphaned that wave.
+  for (const phase of ["abandoned", "owner_superseded", "requested"]) {
+    await t.step(phase, async () => {
+      const rig = await producerRig();
+      const read = rig.state.readRelease.bind(rig.state);
+      rig.state.readRelease = async () => {
+        const r = await read();
+        if (!r.ok || r.value.status !== "found") return r;
+        const snapshot = { ...r.value.snapshot, hostedReleases: [{ phase }] };
+        return { ...r, value: { ...r.value, snapshot } } as typeof r;
+      };
+      const walked = await rig.walk();
+      if (phase === "requested") {
+        assert.equal(walked, null);
+        assert.equal(rig.calls.deferred, 1);
+      } else {
+        assert.equal(walked?.status, "applied", JSON.stringify(walked));
+        assert.equal(rig.calls.deferred, 0);
+      }
+    });
+  }
+});
+
 for (const [name, variant] of NEAR_MISSES) {
   Deno.test(`output bound near miss: ${name} still fails maintenance`, async () => {
     const rig = await producerRig(variant);

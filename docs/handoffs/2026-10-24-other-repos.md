@@ -51,11 +51,17 @@ closed ones.
 
 - Sentinel will not start a competing repair once the issue is closed. Its
   record then retires as "source issue is closed".
-- The owner also directed that Sentinel stop deferring to other people's PRs
-  (the "existing PR hold"). That change is not live yet, see the Sentinel
-  handoff. Once it is, Sentinel may also work an issue that has an open hand-fix
-  PR. Merge or close hand-fix PRs promptly, or tell the Sentinel session which
-  issues you are taking.
+- Sentinel no longer defers to other people's PRs (the "existing PR hold"). The
+  change (`f2db8fc948`) is live since the 12:44 UTC install of `62af807857`, so
+  Sentinel may also work an issue that has an open hand-fix PR. Merge or close
+  hand-fix PRs promptly, or tell the Sentinel session which issues you are
+  taking.
+- Thirteen Passport candidates (PRs 143, 146, 158, 170, 173, 175–182) sit at
+  `work` on an uncharged, re-armed `backoff` since about 08:44 UTC. That is the
+  CI-first gate's shape for "the same check is red on the base", so Passport's
+  own `development` CI most likely has a red check (inferred from state; this
+  session cannot read Passport's check runs). If so, fixing that base check
+  unblocks them all.
 - Ten ai.ubq.fi PRs from forks (1284 to 1294) are open for issues 1281 to 1283.
   They are not Sentinel's.
 
@@ -63,6 +69,6 @@ closed ones.
 
 - Never add branch protection rules or rulesets on Sentinel's repository.
 - Never commit credentials.
-- ai.ubq.fi merges by Sentinel are blocked until `queue.proofActivated` is false
-  in Sentinel. That change is prepared (see the Sentinel handoff) but not live
-  yet. Hand-fix PRs merged by people are not affected.
+- `queue.proofActivated` is false and live (#180 closed). Sentinel has merged
+  ai.ubq.fi PRs 1254, 1255 and 1258; their issues stay open until a VPS release
+  is accepted, because the release path is disabled.

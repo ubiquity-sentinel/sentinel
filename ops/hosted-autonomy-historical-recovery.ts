@@ -8,6 +8,7 @@ import { ingestMatrixResults } from "../src/host/matrix.ts";
 import { matrixDigestV1 } from "../src/contracts/matrix.ts";
 import {
   HOSTED_RUNTIME_ID,
+  isHostedReleaseTerminal,
   parseHostedRunProofV1,
 } from "../src/contracts/hosted-supervisor.ts";
 import { RollingStartBudget } from "../src/budget/mod.ts";
@@ -116,7 +117,7 @@ export async function recoverHostedHistoricalC63(
   if (
     !runtime ||
     current.snapshot.hostedReleases.some((row) =>
-      !["accepted", "rolled_back", "cancelled"].includes(row.phase)
+      !isHostedReleaseTerminal(row.phase)
     )
   ) return { ingested: 0, deferred: true };
   if (runtime.execution !== null) {

@@ -3,6 +3,7 @@ import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 import {
   HOSTED_RUNTIME_ID,
   type HostedExecutionIntentV1,
+  isHostedReleaseTerminal,
 } from "../src/contracts/hosted-supervisor.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
@@ -114,7 +115,7 @@ export async function recoverHostedCurrentMatrix(
   if (
     runtime.execution !== null ||
     current.snapshot.hostedReleases.some((row) =>
-      !["accepted", "rolled_back", "cancelled"].includes(row.phase)
+      !isHostedReleaseTerminal(row.phase)
     )
   ) {
     onDeferred();

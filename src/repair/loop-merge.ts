@@ -30,6 +30,7 @@ import {
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { gateDeliveryOnChecks } from "./loop-checks.ts";
+import { waitSince } from "./loop-ci-correction.ts";
 import { configFor, sameRepositoryIdentity } from "./loop-records.ts";
 import { waitRelease } from "./loop-release.ts";
 import { standingReviewAttempt } from "./loop-review-records.ts";
@@ -139,6 +140,42 @@ function selfMergeRefusal(
       SELF_MERGE_REFUSALS.has(error.detail)
     ? `self merge refused by trusted validation; owner action required: ${error.detail}`
     : null;
+}
+
+const SELF_MERGE_TARGET_MOVED = "self merge target moved without exact merge";
+
+/**
+ * Issue #203: a self-merge conflict never clears by waiting. When the target
+ * moved without this proof's merge while the proof is still at `prepared` or
+ * `preserved` (no source write yet; the fresh-store ancestry check proved the
+ * target does not contain the merge), the proof is dropped and the plain
+ * merge intent is reconciled. Any other conflict (closure, native merge or
+ * issue identity, a moved preservation ref) parks for the owner with the
+ * proof kept from `preserved` on. Other errors stay a bounded wait.
+ */
+export function selfMergeConflict(
+  record: WorkRecordV1,
+  error: PortErrorV1,
+):
+  | { kind: "reconcile"; record: WorkRecordV1 }
+  | { kind: "park"; refusal: string }
+  | null {
+  if (error.kind !== "conflict" || record.intent?.kind !== "merge") {
+    return null;
+  }
+  const stage = record.intent.selfMerge?.stage;
+  if (stage === undefined) return null;
+  if (
+    error.detail === SELF_MERGE_TARGET_MOVED &&
+    (stage === "prepared" || stage === "preserved")
+  ) {
+    const { selfMerge: _dropped, ...intent } = record.intent;
+    return { kind: "reconcile", record: { ...record, intent } };
+  }
+  return {
+    kind: "park",
+    refusal: `self merge conflict; owner action required: ${error.detail}`,
+  };
 }
 
 /**
@@ -497,6 +534,29 @@ export async function handleMergeOutcome(
   }
   const reason = outcome.reason;
   if (
+    reason === "checks_pending" && record.intent?.kind === "merge" &&
+    record.intent.selfMerge === undefined
+  ) {
+    // Issue #189: the port refuses `checks_pending` only for an open,
+    // unmerged pull request, so the intent binds no write. Clearing it into a
+    // bounded `ci_pending` wait lets the pre-merge CI dispatcher (which
+    // selects intent-free `ci_pending` records) start CI the target never
+    // starts itself; the next turn's CI gate re-observes the head.
+    return persistWork(
+      deps,
+      context,
+      setWait(
+        clearIntent(record, now),
+        {
+          reason: "ci_pending",
+          since: waitSince(record, "ci_pending", now),
+          until: now + CHECK_POLL_MS,
+        },
+        now,
+      ),
+    );
+  }
+  if (
     reason === "checks_pending" || reason === "conflict" ||
     reason === "review_required"
   ) {
@@ -549,16 +609,26 @@ export async function reconcileMergeIntent(
       review: receipt,
     }, self.execution);
     if (self.failure !== null) return self.failure;
-    if (!result.ok) {
-      const at = deps.clock.now();
-      const refusal = selfMergeRefusal(self.record, result.error);
-      if (refusal !== null) {
-        return persistWork(
-          deps,
-          context,
-          parkSelfMergeRefusal(self.record, refusal, at),
-        );
-      }
+    if (result.ok) {
+      return handleMergeOutcome(
+        deps,
+        context,
+        self.record,
+        result.value,
+        receipt,
+      );
+    }
+    const at = deps.clock.now();
+    const refusal = selfMergeRefusal(self.record, result.error);
+    if (refusal !== null) {
+      return persistWork(
+        deps,
+        context,
+        parkSelfMergeRefusal(self.record, refusal, at),
+      );
+    }
+    const conflict = selfMergeConflict(self.record, result.error);
+    if (conflict === null) {
       return persistWork(
         deps,
         context,
@@ -569,13 +639,17 @@ export async function reconcileMergeIntent(
         }, at),
       );
     }
-    return handleMergeOutcome(
-      deps,
-      context,
-      self.record,
-      result.value,
-      receipt,
-    );
+    if (conflict.kind === "park") {
+      return persistWork(
+        deps,
+        context,
+        parkSelfMergeRefusal(self.record, conflict.refusal, at),
+      );
+    }
+    // The target moved without this proof's merge before any source write:
+    // reconcile the plain merge intent like any other (merged, closed, or
+    // open on a moved base refreshes) instead of waiting forever.
+    record = conflict.record;
   }
   if (record.target.pr === null || record.target.head === null) {
     return { kind: "state_error", detail: "merge intent without identity" };
