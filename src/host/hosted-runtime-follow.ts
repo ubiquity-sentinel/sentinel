@@ -5,6 +5,7 @@ import {
   FOLLOW_DEVELOPMENT_REF,
   FOLLOW_LAUNCHER_REF,
   FOLLOW_REPOSITORY,
+  FOLLOW_SCAN_RETRY,
   FOLLOW_STATE_REF,
   FollowError,
   HostedRuntimeFollowApi,
@@ -56,8 +57,8 @@ export interface HostedRuntimeFollowDeps {
   maxPages?: number;
   /** Injected clock for the matrix-wave age bound; defaults to Date.now. */
   clock?: { now(): number };
-  /** Pause before re-reading an inconsistent listing; injected in tests. */
-  listPause?: () => Promise<void>;
+  /** Pause before a bounded read or listing retry; injected in tests. */
+  pause?: (ms: number) => Promise<void>;
 }
 
 /** The follow step has no state writer, App identity, model or promotion port. */
@@ -80,7 +81,8 @@ export async function runHostedRuntimeFollow(
     deps.token,
     deps.deadlineMs,
     deps.maxPages,
-    deps.listPause,
+    deps.pause,
+    FOLLOW_SCAN_RETRY,
   );
   let launcherSha: string | null = null;
   let safeToDispatch = false;

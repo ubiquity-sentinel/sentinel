@@ -4704,3 +4704,31 @@ which the launcher's child-status scan read as a second result record.
 Made under the owner's 2026-11-12 throughput grant; this supersedes only the
 "next plan" timing in the 2026-11-05 repository-cells entry. Rollback: revert
 these commits; no repair-state format changed.
+
+## 2026-11-14: refresh line front is the oldest record that can act
+
+The per-repository refresh line that a published head on a moved base asks
+before its review (`ciRefreshAhead`, `src/repair/ci-readiness.ts`) now takes as
+its front the first record in line order (oldest `createdAt`, then id) that can
+act, no longer the one whose leftover wait ranks first: a moved-base head asks
+the line before its CI gate and its deferral writes nothing, so its wait is an
+earlier step's (live sentinel 2026-11-13/14: 271, 386 and 398 refreshed ahead of
+268 and 397). Every head behind the front defers (`ci_line`) and writes, charges
+and refreshes nothing.
+
+Bounds: the six-hour pre-review CI bound and the stall rule (12 executions
+without progress) release only a head on the tip; on a moved base both describe
+an earlier tip and the next step is the refresh, so the head keeps its place by
+age. A head whose wait never ends (a native queue-custody hold) and that nothing
+has written for two hours (`DELIVERY_QUEUE_IDLE_MS`) holds nobody. Idleness
+alone releases no other front: a head idle only because the line held it looks
+the same, and releasing one let a younger head refresh first and the older one
+beside it (ai.ubq.fi 1176 and 1211).
+
+Unchanged: one record per repository at a time through the refresh line, the
+delivery line, current-head CI, native review with no unresolved P0, custody and
+accounting; no state shape, write, charge or refund is added. Known gap, also
+unchanged: a review request on the tip consults no line, so a candidate
+published on the tip, or an older head that refreshes beside a younger front
+once its hold ends, can still take a charged review on the front's tip.
+Rollback: revert these commits; no repair-state format changed.

@@ -104,10 +104,14 @@ export function stepFingerprint(
       id,
       snapshot.work.find((row) => row.id === id)?.nextStep ?? null,
     ]),
+    // Intake appends in discovery order; Git reloads in ID order. The
+    // sibling set's ordering is not a changed input.
     siblings: snapshot.work.filter((row) =>
       row.id !== record.id &&
       sameRepositoryIdentity(row.repository, record.repository)
-    ).map(siblingShape),
+    ).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map(
+      siblingShape,
+    ),
     config: configFor(deps, record.repository),
     gates: {
       controller: deps.controllerSha,

@@ -7,7 +7,7 @@ import {
   isHostedReleaseTerminal,
   parseHostedRunProofV1,
 } from "../contracts/hosted-supervisor.ts";
-import { portError, portOk } from "../contracts/ports.ts";
+import { portError, portOk, SystemClock } from "../contracts/ports.ts";
 import { GitHubApiClient } from "../github/client.ts";
 import { fetchHttpTransport } from "../github/http.ts";
 import {
@@ -159,7 +159,7 @@ export async function readOwnerSupersededNormalEvidence(input: ReadInput) {
         authorizationHeader: () =>
           Promise.resolve(portOk(`Bearer ${input.token}`)),
       },
-      clock: { now: () => Date.now() },
+      clock: new SystemClock(),
       cooldownGate: {
         beforeRequest: async (scope) =>
           scope === 0 && await unchanged() ? portOk(undefined) : portError(

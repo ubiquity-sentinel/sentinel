@@ -12,6 +12,7 @@ import {
   readHostedClosedIssues,
   runHostedRetryPass,
 } from "./hosted-autonomy-retry-pass.ts";
+import { withHostedOpenIssueCache } from "./hosted-autonomy-closed-issues.ts";
 import { retryWritten } from "./hosted-autonomy-retry-actions.ts";
 import { runHostedClosurePass } from "./hosted-autonomy-closure-pass.ts";
 import {
@@ -122,6 +123,7 @@ function integrityFault(error: unknown): boolean {
 export async function runHostedAutonomy(
   deps: HostedAutonomyDepsV1,
 ): Promise<HostedAutonomyResultV1> {
+  deps = withHostedOpenIssueCache(deps);
   await deps.onQueueCustodyReady?.(false);
   const startedAt = deps.clock.now();
   try {
