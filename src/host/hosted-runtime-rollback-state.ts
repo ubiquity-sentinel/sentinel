@@ -14,6 +14,7 @@ import {
 } from "../contracts/state-snapshots.ts";
 import { RUNTIME_KEYS } from "../contracts/hosted-supervisor-runtime.ts";
 import { HOSTED_RELEASE_KEYS } from "../contracts/hosted-supervisor-release.ts";
+import { hostedOrdinaryAdmissionMode } from "../contracts/hosted-supervisor-verification.ts";
 
 export function isHostedInstallationRollback(
   snapshot: ReleaseStateSnapshotV1,
@@ -29,6 +30,22 @@ export function isHostedInstallationRollback(
           execution.purpose === "bootstrap" &&
           record.rollbackExecutionId === execution.id)
     );
+}
+
+/** Exact custody is checked by both callers before this read-only projection. */
+export function needsHostedLegacyStateView(
+  snapshot: ReleaseStateSnapshotV1,
+  execution: HostedExecutionIntentV1,
+): boolean {
+  const runtime = snapshot.hostedRuntimes[0];
+  const admission = runtime?.ordinaryAdmission;
+  return isHostedInstallationRollback(snapshot, execution) ||
+    execution.purpose === "ordinary" &&
+      execution.revision !== execution.launcherSha && runtime !== undefined &&
+      hostedOrdinaryAdmissionMode(runtime) === "healthy" &&
+      admission?.mode === "healthy" && admission.executionId === execution.id &&
+      admission.revision === execution.revision &&
+      admission.generation === execution.generation;
 }
 
 /** Legacy children need their exact pointer/proofs, not launcher scheduling journals. */

@@ -21,8 +21,8 @@ import type {
 } from "./hosted-autonomy-types.ts";
 import { HISTORICAL_C63 } from "./hosted-autonomy-matrix-bindings.ts";
 import {
-  blockedCandidateBinding,
-  blockedCandidateMatchesProducer,
+  blockedRecoveryBinding,
+  blockedRecoveryMatchesProducer,
   isMatrixRecoveryPending,
 } from "../src/host/matrix-blocked-candidate.ts";
 import {
@@ -321,7 +321,7 @@ export async function recoverHostedCurrentMatrix(
     // only those candidates: their plan artifacts expire, and newer producers
     // that only in-flight work binds to may otherwise spend every budget.
     const parked = new Set(
-      pending.filter((row) => blockedCandidateBinding(row) !== null),
+      pending.filter((row) => blockedRecoveryBinding(row) !== null),
     );
     // In-flight work keeps the newest-first walk below.
     const inFlight = parked.size < pending.length;
@@ -338,7 +338,7 @@ export async function recoverHostedCurrentMatrix(
       await traverse(
         (producer, execution) => {
           const bound = [...parked].filter((row) =>
-            blockedCandidateMatchesProducer(row, execution)
+            blockedRecoveryMatchesProducer(row, execution)
           );
           if (bound.length > 0) {
             for (const row of bound) parked.delete(row);

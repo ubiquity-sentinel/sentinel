@@ -144,11 +144,11 @@ async function moveInstallation(
         saved.previousRevision,
         saved.candidateRevision,
       );
+      // Revalidate current CI; the immutable journal records request-time evidence.
       const ci = await input.evidence.verifyLauncherCi(saved.candidateRevision);
       if (
         !ancestor.ok || !ancestor.value || !ci.ok ||
-        ci.value?.revision !== saved.candidateRevision ||
-        ci.value.checkRunId !== saved.ci.checkRunId
+        ci.value?.revision !== saved.candidateRevision
       ) return pending("launcher installation evidence changed");
       for (const r of releases.filter((r) => !isTerminalPhase(r.phase))) {
         const comparison = await input.evidence.verifyAncestor(

@@ -104,7 +104,7 @@ function fixture(compatible = false) {
   };
 }
 
-Deno.test("existing PR maintenance: migration-only retains queue-first read ordering and cannot become ordinary readiness", async () => {
+Deno.test("existing PR maintenance: installed history retains queue-first custody without owner-install planning", async () => {
   const f = fixture();
   const before = structuredClone({ release: f.release, repair: f.repair });
   f.native.peers.push({ ...f.native.nativeRun, id: 701, status: "queued" });
@@ -113,14 +113,9 @@ Deno.test("existing PR maintenance: migration-only retains queue-first read orde
     dormant.queue,
     custody,
   );
-  assert.equal(result.status, "migration_only");
+  assert.equal(result.status, "ordinary");
   assert.equal(f.order[0], "queue");
   assert.deepEqual({ release: f.release, repair: f.repair }, before);
-  assert.ok(result.status === "migration_only");
-  assert.ok(result.move !== null);
-  assert.equal(result.move.priorRevision, PRIOR);
-  assert.equal(result.move.nextRevision, NEXT);
-  assert.equal(result.releaseHead, HEAD);
   assert.equal(
     EXISTING_PR_TAKEOVER_ACTIVATED,
     false,
@@ -135,7 +130,6 @@ Deno.test("existing PR maintenance: incompatible execution, old queued source an
       "old_queue",
       "state",
       "queue_unavailable",
-      "no_migration",
     ]
   ) {
     await t.step(fault, async () => {
@@ -166,16 +160,14 @@ Deno.test("existing PR maintenance: incompatible execution, old queued source an
       const result = await readHostedMaintenanceCompatibility(
         f.input,
         dormant.queue,
-        fault === "no_migration"
-          ? { ...custody, ownerInstallMigrations: [] }
-          : custody,
+        custody,
       );
       assert.equal(result.status, "hold");
     });
   }
 });
 
-Deno.test("existing PR maintenance: accepted installed runtime still intersects queue capability", async () => {
+Deno.test("existing PR maintenance: retired revision lists cannot fence a healthy installed runtime", async () => {
   const f = fixture(true);
   assert.equal(
     (await readHostedMaintenanceCompatibility(f.input, dormant.queue, custody))
@@ -187,7 +179,7 @@ Deno.test("existing PR maintenance: accepted installed runtime still intersects 
       proofActivated: true,
       revisions: [],
     }, custody)).status,
-    "hold",
+    "ordinary",
   );
 });
 

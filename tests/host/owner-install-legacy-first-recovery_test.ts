@@ -14,6 +14,8 @@ import {
 import { requestedRelease } from "./owner-install-fixture-proofs.ts";
 import { nativeWriterFixture } from "./existing-pr-runtime-fixtures.ts";
 import { readHostedMaintenanceCompatibility } from "../../ops/hosted-autonomy-runtime-compatibility.ts";
+import { runHostedAutonomyMain } from "../../ops/hosted-autonomy-main.ts";
+import { snapshotWire } from "../github/merge-queue-fixtures.ts";
 import {
   FUTURE,
   futureRecoveryFixture,
@@ -69,20 +71,96 @@ async function target(rig: Rig, input: Input) {
   });
 }
 
-Deno.test("legacy first recovery actual maintenance: exact failed R81 routes only to prepare", async () => {
+Deno.test("legacy first recovery actual maintenance: retained R81 health permits ordinary maintenance without owner migration", async () => {
   const rig = await futureRecoveryFixture({ legacyFirst: true });
   try {
     const before = await rig.current();
-    const result = await rig.maintenance();
-    assert.equal(result.code, 0);
-    assert.equal(result.effects, 0);
-    assert.deepEqual(result.outputs, {
-      queueCustodyReady: "false",
-      runtimeMigrationOnly: "true",
-      runtimeMigrationRevision: rig.successor,
-      runtimeMigrationGeneration: "82",
+    const repairBefore = await rig.repair.readRepair();
+    const runtime = before.snapshot.hostedRuntimes[0];
+    assert.equal(runtime.activeRevision, R81);
+    assert.equal(runtime.lastExecutionProof?.outcome, "failed");
+    assert.equal(runtime.lastHealthyProof?.execution.revision, R81);
+    assert.equal(
+      runtime.lastHealthyProof?.execution.generation,
+      runtime.generation,
+    );
+    assert.equal(rig.queue.revisions.includes(R81), false);
+    assert.equal(rig.custody.revisions.includes(R81), false);
+    const output = `${rig.source.root}/ordinary-maintenance-output`;
+    const readiness: boolean[] = [];
+    let writes = 0;
+    const forbiddenWrite = () => {
+      writes++;
+      throw new Error("empty maintenance must preserve durable state");
+    };
+    const native = nativeWriterFixture(rig.run, "maintenance");
+    // Readiness notifications are observations, not model/state/install effects.
+    // The retired migration-only helper deliberately throws on all four alike.
+    const code = await runHostedAutonomyMain({
+      env: {
+        GITHUB_REPOSITORY: "ubiquity/sentinel",
+        GITHUB_REF: "refs/heads/sentinel-supervisor",
+        GITHUB_JOB: "maintenance",
+        GITHUB_RUN_ID: String(rig.run.runId),
+        GITHUB_RUN_ATTEMPT: String(rig.run.runAttempt),
+        GITHUB_WORKFLOW_REF:
+          "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+        GITHUB_SHA: rig.run.launcherSha,
+        GITHUB_WORKFLOW_SHA: rig.run.launcherSha,
+        GITHUB_TOKEN: "offline-native-token",
+        GITHUB_OUTPUT: output,
+      },
+      deps: {
+        state: {
+          readRepair: () => rig.repair.readRepair(),
+          readRelease: () => rig.state.readRelease(),
+          writeRepair: forbiddenWrite,
+        },
+        clock: { now: () => RECOVERY_NOW },
+        githubFor: () => null,
+        onQueueCustodyReady: (ready) => {
+          readiness.push(ready);
+        },
+      },
+      compatibility: {
+        queue: rig.queue,
+        custody: rig.custody,
+        rollout: rig.rollout,
+        nativeRead: native.read,
+        http: (request) => {
+          const path = new URL(request.url).pathname;
+          assert.ok(path.includes("/rules/branches/") || path === "/graphql");
+          if (path === "/graphql") {
+            assert.ok(
+              JSON.parse(request.body!).query.trimStart().startsWith("query"),
+            );
+          } else assert.equal(request.method, "GET");
+          return Promise.resolve({
+            status: 200,
+            headers: new Headers(),
+            bodyText: JSON.stringify(
+              path === "/graphql" ? snapshotWire(null) : [],
+            ),
+          });
+        },
+      },
+    });
+    const outputs = Object.fromEntries(
+      (await Deno.readTextFile(output)).trimEnd().split("\n").map((line) =>
+        line.split("=", 2)
+      ),
+    );
+    assert.equal(code, 0);
+    assert.deepEqual(readiness, [false, true]);
+    assert.equal(writes, 0);
+    assert.deepEqual(outputs, {
+      queueCustodyReady: "true",
+      runtimeMigrationOnly: "false",
+      runtimeMigrationRevision: "",
+      runtimeMigrationGeneration: "",
     });
     assert.deepEqual(await rig.current(), before);
+    assert.deepEqual(await rig.repair.readRepair(), repairBefore);
     assert.equal(rig.patches(), 0);
   } finally {
     await rig.close();

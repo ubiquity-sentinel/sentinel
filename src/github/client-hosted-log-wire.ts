@@ -100,7 +100,11 @@ export function parseHostedRuntimeTerminalLog(
     terminal.finishedAt > job.completedAt + tolerance ||
     // The authenticated log instant must follow the terminal's own finish.
     found.terminalAt + tolerance < terminal.finishedAt ||
-    found.terminalAt > terminal.finishedAt + tolerance ||
+    // Emission can lag runtime settlement; it must still belong to this
+    // authenticated step/job and cannot be after the observation instant.
+    found.terminalAt > step.completedAt + tolerance ||
+    found.terminalAt > job.completedAt + tolerance ||
+    found.terminalAt > observedAt + tolerance ||
     observedAt + tolerance < terminal.finishedAt
   ) {
     return portError("unavailable", HOSTED_EXECUTION_TERMINAL);

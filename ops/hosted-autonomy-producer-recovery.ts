@@ -21,7 +21,10 @@ import {
   HISTORICAL_RECOVERY_PROVIDERS,
   RECOVERY_ROUTE_FAILOVER_MODEL,
 } from "./hosted-autonomy-matrix-bindings.ts";
-import { blockedCandidateBinding } from "../src/host/matrix-blocked-candidate.ts";
+import {
+  blockedCandidateBinding,
+  blockedImplementationBinding,
+} from "../src/host/matrix-blocked-candidate.ts";
 import {
   isInflightPreservation,
   restoreBlockedCandidate,
@@ -419,6 +422,36 @@ async function recoverProducerWithinBudget(
     )
   ) {
     throw integrityFault("current matrix wave binding changed");
+  }
+  // A quarantined, unconsumed correction must match every original descriptor
+  // field BEFORE the normal importer or accounting consumer can run.
+  for (const request of requests) {
+    const record = before.snapshot.work.find((row) =>
+      row.id === request.taskId
+    )!;
+    const binding = blockedImplementationBinding(record);
+    if (binding === null) continue;
+    const cells = wave.plan.cells.filter((cell) =>
+      cell.reservationId === request.reservationId
+    );
+    const results = wave.results.filter((result) =>
+      result.reservationId === request.reservationId
+    );
+    if (
+      cells.length !== 1 || results.length !== 1 ||
+      binding.planDigest !== wave.planDigest ||
+      binding.plannerJobId !== wave.provenance.plannerJobId ||
+      binding.resultDigest !== await matrixDigestV1(results[0]) ||
+      cells[0].request.checkoutBase !== record.target.head ||
+      results[0].status !== "completed" ||
+      results[0].receipt?.outcome !== "completed" ||
+      results[0].bundle === null ||
+      results[0].receipt?.candidate?.head !== results[0].bundle.head
+    ) {
+      throw integrityFault(
+        "current matrix blocked implementation binding changed",
+      );
+    }
   }
   const intersection = wave.plan.cells.filter((cell) =>
     requests.some((request) => request.reservationId === cell.reservationId)

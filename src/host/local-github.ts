@@ -648,7 +648,9 @@ export function scopeLocalRepairIssues(port: GitHubPort): GitHubPort {
   const readIssue = port.readIssue.bind(port);
   port.listOpenIssues = async () => {
     const listed = await listOpenIssues();
-    return listed.ok ? portOk(listed.value.filter(isLocalRepairIssue)) : listed;
+    return listed.ok
+      ? { ...listed, value: listed.value.filter(isLocalRepairIssue) }
+      : listed;
   };
   port.readIssue = async (issueNumber) => {
     const read = await readIssue(issueNumber);

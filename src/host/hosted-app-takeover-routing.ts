@@ -7,7 +7,6 @@ import {
 } from "./hosted-app-principal-source.ts";
 import { parseHostedCustodyCapability } from "./hosted-custody-capability.ts";
 import { parseHostedRuntimeRollout } from "./hosted-runtime-rollout.ts";
-import profiles from "./hosted-app-source-profiles.json" with { type: "json" };
 
 export interface HostedAppTakeoverRouting {
   readonly status: "inactive" | "required" | "unknown";
@@ -28,14 +27,16 @@ const unknown: HostedAppTakeoverRouting = Object.freeze({ status: "unknown" });
  */
 export async function readHostedAppTakeoverRouting(
   source: HostedAppSourceInput,
-  sourceProfiles: unknown = profiles,
+  sourceProfiles?: unknown,
 ): Promise<HostedAppTakeoverRouting> {
   try {
-    const accepted = parseHostedAppSourceProfiles(sourceProfiles);
+    const accepted = sourceProfiles === undefined
+      ? undefined
+      : parseHostedAppSourceProfiles(sourceProfiles);
     // Intentional legacy deployment exception: empty runtime-owned profiles and
     // compiled false admission mean unconfigured/inert. This is not evidence
     // about actual L policy. Configured or malformed source cannot use it.
-    if (accepted.length === 0 && !EXISTING_PR_TAKEOVER_ACTIVATED) {
+    if (accepted?.length === 0 && !EXISTING_PR_TAKEOVER_ACTIVATED) {
       return inactive;
     }
     const evidence = await readHostedAppSourceEvidence(source, accepted);

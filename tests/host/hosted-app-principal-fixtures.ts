@@ -217,7 +217,7 @@ export function principalNativeFixture(
 }
 
 /** Actual clean Git launcher/runtime siblings; every file remains checkout-owned. */
-export async function principalSourceFixture() {
+export async function principalSourceFixture(selfInstalled = false) {
   const native = principalNativeFixture();
   await Deno.mkdir(".sentinel-artifacts", { recursive: true });
   const root = await Deno.realPath(
@@ -327,6 +327,14 @@ export async function principalSourceFixture() {
   native.execution.launcherSha = launcherSha;
   native.model.attempt.head_sha = launcherSha;
   native.model.jobs[0].head_sha = launcherSha;
+  if (selfInstalled) {
+    await git(runtime, ["fetch", "--no-tags", launcher, "HEAD"]);
+    await git(runtime, ["checkout", "--detach", "FETCH_HEAD"]);
+    native.execution.revision = launcherSha;
+    native.names.dependencyStep = "Install locked self-test dependencies";
+    const jobSteps = native.model.jobs[0].steps as Array<{ name: string }>;
+    jobSteps[0].name = native.names.dependencyStep;
+  }
   const source = {
     launcherDir: launcher,
     runtimeDir: runtime,
@@ -372,8 +380,8 @@ export async function principalSourceFixture() {
 }
 
 /** Real snapshot parsers and exact source/native inputs for the private factory. */
-export async function principalHostFixture() {
-  const rig = await principalSourceFixture();
+export async function principalHostFixture(selfInstalled = false) {
+  const rig = await principalSourceFixture(selfInstalled);
   const state = new MemoryState();
   const healthy = parseHostedExecutionIntentV1({
     ...rig.execution,
@@ -451,4 +459,37 @@ export async function principalHostFixture() {
     state.setRelease(release);
   };
   return { ...rig, state, task, hostInput, commitLauncher };
+}
+
+/** Convert an existing owned-child fixture to the installed launcher SHA. */
+export async function selfInstallPrincipalFixture(
+  rig: Awaited<ReturnType<typeof principalHostFixture>>,
+) {
+  // The source-only launcher fixture becomes an actual Deno child checkout.
+  await rig.write(rig.launcher, "deno.json", "{}\n");
+  for (const path of ["src/host/actions.ts", "src/host/matrix-actions.ts"]) {
+    await rig.write(
+      rig.launcher,
+      path,
+      await Deno.readTextFile(`${rig.runtime}/${path}`),
+    );
+  }
+  await rig.commitLauncher();
+  await rig.git(rig.runtime, ["fetch", "--no-tags", rig.launcher, "HEAD"]);
+  await rig.git(rig.runtime, ["checkout", "--detach", "FETCH_HEAD"]);
+  rig.execution.revision = rig.identity.launcherSha;
+  rig.names.dependencyStep = "Install locked self-test dependencies";
+  const steps = rig.model.jobs[0].steps as Array<{ name: string }>;
+  steps[0].name = rig.names.dependencyStep;
+  const release = parseReleaseStateSnapshotV1(rig.state.release!.snapshot);
+  const runtime = release.hostedRuntimes[0];
+  runtime.activeRevision = rig.execution.revision;
+  runtime.execution = structuredClone(rig.execution);
+  assert(runtime.lastHealthyProof !== null);
+  runtime.lastHealthyProof = runProof({
+    ...runtime.lastHealthyProof.execution,
+    revision: rig.execution.revision,
+    launcherSha: rig.identity.launcherSha,
+  }, "healthy");
+  rig.state.setRelease(release);
 }

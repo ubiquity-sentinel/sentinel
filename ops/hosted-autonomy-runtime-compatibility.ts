@@ -7,16 +7,7 @@ import {
   EXISTING_PR_RUNTIME_CAPABILITY,
   type ExistingPrRuntimeCapability,
 } from "../src/host/existing-pr-runtime-capability.ts";
-import {
-  allowsHostedExecution,
-  allowsHostedRuntime,
-} from "../src/host/hosted-runtime-compatibility.ts";
-import { planOwnerDevelopmentInstall } from "../src/host/owner-install-plan.ts";
-import { readOwnerLegacyFirstRecoveryTarget } from "../src/host/owner-install-future-recovery.ts";
-import {
-  readOwnerSupersededRecoveryTarget,
-  readOwnerSupersessionTarget,
-} from "../src/host/owner-install-supersession.ts";
+import { allowsHostedExecution } from "../src/host/hosted-runtime-compatibility.ts";
 import type { OwnerDevelopmentInstallMoveV1 } from "../src/host/owner-install-types.ts";
 import {
   QUEUE_RUNTIME_CAPABILITY,
@@ -81,58 +72,15 @@ export async function readHostedMaintenanceCompatibility(
       ? snapshot.hostedRuntimes[0]
       : null;
     if (runtime === null) return hold();
-    const compatible =
-      allowsHostedRuntime(runtime.activeRevision, queue, custody) &&
-      (runtime.execution === null ||
-        allowsHostedExecution(
-          runtime.execution,
-          snapshot.hostedReleases,
-          queue,
-          custody,
-        ));
-    const plan = compatible ? null : planOwnerDevelopmentInstall(
-      snapshot,
-      input.clock.now(),
-      undefined,
-      undefined,
-      queue,
-      custody,
-      input.rollout,
-    );
-    // The predecessor must finish its genuine normal finalize before migration.
-    if (!compatible && runtime.execution !== null) return hold();
-    const ownerTargetInput = {
-      snapshot,
-      repair: repair.value.snapshot,
-      launcherSha: input.native.run.launcherSha,
-      releaseHead: release.value.head,
-      repairHead: repair.value.head,
-      now: input.clock.now(),
-      queue,
-      custody,
-      rollout: input.rollout,
-    };
-    const owner = runtime.execution === null
-      ? await readOwnerSupersessionTarget(ownerTargetInput) ??
-        await readOwnerSupersededRecoveryTarget(ownerTargetInput)
-      : undefined;
-    const legacy = !compatible && plan?.status !== "install"
-      ? await readOwnerLegacyFirstRecoveryTarget({
-        snapshot,
-        repair: repair.value.snapshot,
-        launcherSha: input.native.run.launcherSha,
-        now: input.clock.now(),
-        queue,
-        custody,
-        rollout: input.rollout,
-      })
-      : undefined;
+    // Revision floors and owner-install planning are retired. A saved execution
+    // still owns its work until genuine finalize; only bootstrap may resume here.
     if (
-      !compatible && plan?.status !== "install" && legacy === undefined &&
-      owner === undefined
-    ) {
-      return hold();
-    }
+      runtime.execution !== null &&
+      (runtime.execution.purpose !== "bootstrap" ||
+        runtime.execution.revision !== runtime.activeRevision ||
+        runtime.execution.generation !== runtime.generation ||
+        !allowsHostedExecution(runtime.execution, snapshot.hostedReleases))
+    ) return hold();
     const native = await readHostedWriterQuiescence({
       ...input.native,
       phase: "maintenance",
@@ -153,57 +101,19 @@ export async function readHostedMaintenanceCompatibility(
       canonicalStringify(freshRepair.value.snapshot) !==
         canonicalStringify(repair.value.snapshot)
     ) return hold();
-    if (owner !== undefined) {
+    const bootstrap = hostedRuntimeBootstrapDisposition(runtime);
+    if (bootstrap === "hold") return hold();
+    if (bootstrap === "bootstrap" || runtime.execution !== null) {
       return {
         status: "migration_only",
         releaseHead: release.value.head,
         repairHead: repair.value.head,
-        ...owner,
+        revision: runtime.activeRevision,
+        generation: runtime.generation,
         move: null,
       };
     }
-    if (compatible) {
-      const bootstrap = hostedRuntimeBootstrapDisposition(
-        runtime,
-        queue,
-        custody,
-        input.rollout,
-      );
-      if (bootstrap === "hold") return hold();
-      if (bootstrap === "bootstrap") {
-        // An interrupted bootstrap must retain its model-disabled workflow route.
-        if (
-          runtime.execution !== null &&
-          runtime.execution.purpose !== "bootstrap"
-        ) return hold();
-        return {
-          status: "migration_only",
-          releaseHead: release.value.head,
-          repairHead: repair.value.head,
-          revision: runtime.activeRevision,
-          generation: runtime.generation,
-          move: null,
-        };
-      }
-      return { status: "ordinary" };
-    }
-    if (plan?.status !== "install") {
-      return legacy === undefined ? hold() : {
-        status: "migration_only",
-        releaseHead: release.value.head,
-        repairHead: repair.value.head,
-        ...legacy,
-        move: null,
-      };
-    }
-    return {
-      status: "migration_only",
-      releaseHead: release.value.head,
-      repairHead: repair.value.head,
-      revision: plan.move.nextRevision,
-      generation: plan.move.nextGeneration,
-      move: plan.move,
-    };
+    return { status: "ordinary" };
   } catch {
     return hold();
   }

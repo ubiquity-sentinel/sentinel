@@ -2,6 +2,32 @@
 export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
   .freeze([
     "src/host/hosted-authority-protected-paths.ts",
+    // Extracted installation, settlement, verification and ordinary admission authority.
+    "src/contracts/hosted-supervisor-installation.ts",
+    "src/contracts/hosted-supervisor-verification.ts",
+    "src/host/actions-supervisor-install-api.ts",
+    "src/host/actions-supervisor-installation-state.ts",
+    "src/host/actions-supervisor-installation.ts",
+    "src/host/actions-supervisor-ordinary.ts",
+    // Native-token launcher advancement and exact followed-SHA dispatch.
+    ".github/actions/hosted-runtime-control/",
+    "src/host/hosted-runtime-follow-api.ts",
+    "src/host/hosted-runtime-follow-ci.ts",
+    "src/host/hosted-runtime-follow-dispatch.ts",
+    "src/host/hosted-runtime-follow-main.ts",
+    "src/host/hosted-runtime-follow-state.ts",
+    "src/host/hosted-runtime-follow.ts",
+    // Exact rollback custody and the prior runtime's restricted state view.
+    "src/host/hosted-runtime-rollback-state.ts",
+    "src/host/hosted-runtime-rollback.ts",
+    // Trusted history and CAS restoration of the original protected candidate.
+    "ops/hosted-autonomy-original-candidate.ts",
+    "ops/hosted-autonomy-original-candidate-pass.ts",
+    // Trusted blocked-candidate selection and exact evidence before recovery ingestion.
+    "src/host/matrix-blocked-candidate.ts",
+    "ops/hosted-autonomy-current-recovery.ts",
+    "ops/hosted-autonomy-producer-requests.ts",
+    "ops/hosted-autonomy-producer-recovery.ts",
     // Exact mint artifact, takeover custody, principal/source proofs and dependency preparation.
     ".github/actions/sentinel-app-token/",
     "ops/hosted-autonomy-runtime-compatibility.ts",
