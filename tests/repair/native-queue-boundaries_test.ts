@@ -1,4 +1,6 @@
 /** Queue custody discovered after scheduling must stop actual runtime consumers. */
+import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import { HOSTED_RECORD_WAIT_CAUSES } from "../../src/repair/loop-wait-cause.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { portError, portOk } from "../../src/contracts/ports.ts";
@@ -770,14 +772,60 @@ Deno.test("owner enqueue during a charged conflict session holds its receipt and
   assert.equal(rig.model.requests.length, 1);
 });
 
+/**
+ * Rollback compatibility is stated against the installed rollback-target
+ * rule (`HOSTED_RECORD_WAIT_CAUSES`), not an older parser: a new revision
+ * installs through a model-disabled bootstrap that writes no record (#336)
+ * and is rolled back automatically only when that bootstrap fails, so a
+ * runtime that predates `wait.cause` never reads a state this revision
+ * wrote. R80 is kept only as evidence for the cause-free shape, which the
+ * in-process default (no host enablement) still writes.
+ */
 Deno.test({
   name:
-    "actual R80 parser accepts runtime-produced queue hold and retained charged session",
+    "actual R80 parser accepts the cause-free queue hold and retained charged session",
   ignore: !available,
   fn: async () => {
     const { held } = await queuedDuringSession();
+    assert.equal(Object.hasOwn(held.work[0].wait!, "cause"), false);
     await withR80Parsers((r80) => {
       assert.deepEqual(r80.parseRepairStateSnapshotV1(held), held);
     });
   },
+});
+
+Deno.test("a hosted queue hold records its closed queue cause and the current parser reads it", async () => {
+  for (
+    const [reason, wait] of [
+      ["member", {
+        reason: "backoff",
+        until: null,
+        cause: { port: "queue", status: "none", code: "member" },
+      }],
+      ["observation_unavailable", {
+        reason: "unavailable",
+        until: CHECK_POLL_MS,
+        cause: { port: "queue", status: "unknown", code: "obs_unavail" },
+      }],
+    ] as const
+  ) {
+    const rig = harness(baseRecord(), reason);
+    rig.deps.recordWaitCauses = HOSTED_RECORD_WAIT_CAUSES;
+    const before = structuredClone(rig.context.snapshot);
+    await prepareImplementationStart(
+      rig.deps,
+      rig.context,
+      rig.record,
+      rig.deps.configs[0],
+    );
+    const now = rig.clock.now();
+    assertQueueWait(rig, before, {
+      reason: wait.reason,
+      since: now,
+      until: wait.until === null ? null : now + wait.until,
+      cause: wait.cause,
+    });
+    const stored = rig.state.repair!;
+    assert.deepEqual(parseRepairStateSnapshotV1(stored), stored);
+  }
 });

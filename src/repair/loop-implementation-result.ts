@@ -356,6 +356,7 @@ export async function handleModelReceipt(
     record,
     now,
     runtimeSha: deps.controllerSha,
+    producedHead: head,
   });
   return persistTransition(deps, afterSettlement, (draft) => {
     replaceWorkMutation(

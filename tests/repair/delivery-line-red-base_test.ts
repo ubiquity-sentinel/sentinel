@@ -83,6 +83,8 @@ function contender(
     },
     nextStep: "delivery",
     counters: { attempts: 1, retries: 0, reviewRounds: rounds },
+    // The line's order is oldest first (`createdAt`, then id): issue order.
+    createdAt: T0 + issue,
     updatedAt: NOW - MINUTE,
     ...overrides,
   });
@@ -227,11 +229,14 @@ Deno.test("delivery line: a red-base hold on the tip releases the line only for 
       before,
       `${label}, no wait`,
     );
-    // A deliverable record is held by a `landing` contender only. A
-    // `re_review` head (even one whose old count was spent) holds nobody.
+    // While the hold runs, a deliverable record is held by a `landing`
+    // contender only. Once it is due, a head refreshed onto the tip since its
+    // review is the head of the line in flight and holds it too (sentinel
+    // #329); a head re-requesting the review of its own head holds nobody.
     const behind = contender(30, 1);
     const snapshot = line([held, behind]);
     const holds = before === "landing";
+    const dueHolds = holds || label === "refreshed head at work, a round left";
     assert.equal(
       deliveryQueueAhead(snapshot, behind, TIP, NOW, null)?.id ?? null,
       holds ? held.id : null,
@@ -240,7 +245,7 @@ Deno.test("delivery line: a red-base hold on the tip releases the line only for 
     assert.equal(
       deliveryQueueAhead(snapshot, behind, TIP, RED_BASE.until!, null)?.id ??
         null,
-      holds ? held.id : null,
+      dueHolds ? held.id : null,
       `${label}, due`,
     );
   }

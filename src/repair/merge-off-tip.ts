@@ -4,13 +4,15 @@
  * GitHub's merge API guards only the head, and branch rules no longer gate a
  * merge (owner directive 2026-10-24), so a base that moved between the review
  * and the merge makes the merged tree one no CI ran on (live 2026-10-24:
- * Passport PRs 154 and 171). The REST merge makes a merge commit, so a merge
- * is the reviewed tree only when that commit's parents are exactly [reviewed
- * base, reviewed head]; the port refuses a moved base before the call
- * (`base_mismatch`) and reports any other landing as `merged_off_tip`.
+ * Passport PRs 154 and 171). A merge commit is the reviewed tree only when
+ * its parents are exactly [reviewed base, reviewed head]; a squash commit
+ * (#331, `src/contracts/target-delivery.ts`) only when its single parent is
+ * the reviewed base and its tree is exactly the reviewed head's tree. The
+ * port refuses a moved base before the call (`base_mismatch`) and reports any
+ * other landing as `merged_off_tip`.
  */
 import type { GitSha } from "../contracts/brands.ts";
-import type { MergeOutcomeV1 } from "../contracts/ports.ts";
+import type { MergeOutcomeV1, PortResultV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { isNativeQueueTarget } from "../github/native-queue-guard.ts";
 import {
@@ -49,6 +51,57 @@ export function mergedExactlyOnBase(
   return parents.length === 2 && parents[0] === base && parents[1] === head;
 }
 
+/** The commit reads a landing proof needs; trees only for a squash. */
+export interface MergeLandingReadsV1 {
+  readonly parents: (sha: GitSha) => Promise<PortResultV1<GitSha[] | null>>;
+  readonly tree?: (sha: GitSha) => Promise<PortResultV1<GitSha | null>>;
+}
+
+/**
+ * How one merge commit landed: `exact` on the reviewed tree (a merge commit on
+ * exactly [base, head], or a squash commit on exactly [base] whose tree is
+ * the head's tree), `off_tip` with its parents otherwise, and `unavailable`
+ * when a needed commit cannot be read (never booked unproven). A
+ * single-parent commit is never exact without the tree capability.
+ */
+export async function mergeLanding(
+  reads: MergeLandingReadsV1,
+  mergeSha: GitSha,
+  base: GitSha,
+  head: GitSha,
+): Promise<
+  | { readonly kind: "exact" }
+  | { readonly kind: "off_tip"; readonly parents: GitSha[] }
+  | "unavailable"
+> {
+  let parents;
+  try {
+    parents = await reads.parents(mergeSha);
+  } catch {
+    return "unavailable";
+  }
+  if (!parents.ok || parents.value === null) return "unavailable";
+  const listed = parents.value;
+  if (mergedExactlyOnBase(listed, base, head)) return { kind: "exact" };
+  const offTip = { kind: "off_tip" as const, parents: listed };
+  if (
+    reads.tree === undefined || listed.length !== 1 || listed[0] !== base
+  ) return offTip;
+  let merged;
+  let reviewed;
+  try {
+    merged = await reads.tree(mergeSha);
+    reviewed = await reads.tree(head);
+  } catch {
+    return "unavailable";
+  }
+  if (
+    !merged.ok || !reviewed.ok || merged.value === null ||
+    reviewed.value === null
+  ) return "unavailable";
+  return merged.value === reviewed.value ? { kind: "exact" } : offTip;
+}
+
 /** The fixed park message naming the merge, its parents and the expected pair. */
 export function mergedOffTipMessage(
   outcome: OffTipOutcome,
@@ -78,14 +131,20 @@ export async function observedMergeLanding(
   if (read === undefined || queueMayHaveMerged(record.repository)) {
     return merged;
   }
-  let parents;
-  try {
-    parents = await read.call(deps.github, mergeSha);
-  } catch {
-    return "unavailable";
-  }
-  if (!parents.ok || parents.value === null) return "unavailable";
-  return mergedExactlyOnBase(parents.value, record.target.base, head)
+  const tree = deps.github.readCommitTree;
+  const landing = await mergeLanding(
+    {
+      parents: (sha) => read.call(deps.github, sha),
+      ...(tree === undefined
+        ? {}
+        : { tree: (sha: GitSha) => tree.call(deps.github, sha) }),
+    },
+    mergeSha,
+    record.target.base,
+    head,
+  );
+  if (landing === "unavailable") return "unavailable";
+  return landing.kind === "exact"
     ? merged
-    : { outcome: "merged_off_tip", head, mergeSha, parents: parents.value };
+    : { outcome: "merged_off_tip", head, mergeSha, parents: landing.parents };
 }

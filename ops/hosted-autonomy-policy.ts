@@ -1,6 +1,7 @@
 import { HISTORICAL_NOT_STARTED_DETAIL } from "../src/host/matrix-quarantine-state.ts";
 import { CI_UNATTRIBUTED_DETAIL } from "../src/repair/ci-rejection.ts";
 import { ATTEMPT_DETAIL_NO_CHANGE } from "../src/repair/attempt-policy.ts";
+import { IDENTICAL_ATTEMPT_REFUSED_PREFIX } from "../src/repair/identical-attempt.ts";
 import {
   isDeliverableReviewRoundCeilingPark,
   isReviewRoundCeilingPark,
@@ -284,6 +285,15 @@ export const HOSTED_AUTONOMY_RETRYABLE: readonly {
     // (`hosted-autonomy-repeat-failure.ts`) parks it for the owner after
     // `REPEAT_FAILURE_PARK_THRESHOLD` identical outcomes.
     prefix: ATTEMPT_DETAIL_NO_CHANGE,
+    nextStep: "work",
+  },
+  {
+    // An identical replay refused before reservation (#334). The work grant
+    // is withheld in `planHostedRetries` while the record's current inputs
+    // still match the refused fingerprint (`identicalAttemptRegrantVerdictV1`):
+    // only a moved base, changed findings, a new candidate head or a new
+    // runtime revision re-grants it.
+    prefix: IDENTICAL_ATTEMPT_REFUSED_PREFIX,
     nextStep: "work",
   },
   {

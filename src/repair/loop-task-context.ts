@@ -1,4 +1,8 @@
 /** Repair loop internals: task context. */
+import {
+  waitCauseOfPortError,
+  type WorkWaitCauseV1,
+} from "../contracts/work-wait-cause.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { ReleaseRequestV1 } from "../contracts/release.ts";
 import {
@@ -181,7 +185,12 @@ export async function ensureReviewFreshness(
 export type IssueForModelReadV1 =
   | { kind: "issue"; issue: { number: number; title: string; body: string } }
   | { kind: "none" }
-  | { kind: "unavailable"; sourceClosed: boolean };
+  | {
+    kind: "unavailable";
+    sourceClosed: boolean;
+    /** The concrete closed cause of an open-source deferral (#335). */
+    cause?: WorkWaitCauseV1;
+  };
 
 export async function observeIssueForModel(
   deps: RepairCycleDepsV1,
@@ -190,7 +199,13 @@ export async function observeIssueForModel(
   const issueNumber = record.related.issueNumber;
   if (issueNumber === null) return { kind: "none" };
   const read = await deps.github.readIssue(issueNumber);
-  if (!read.ok) return { kind: "unavailable", sourceClosed: false };
+  if (!read.ok) {
+    return {
+      kind: "unavailable",
+      sourceClosed: false,
+      cause: waitCauseOfPortError("github", read.error),
+    };
+  }
   const issue = read.value;
   // The latest native state is authoritative: a closed issue (or one that no
   // longer exists) can never start model work, even when intake admitted it.
@@ -209,7 +224,19 @@ export async function observeIssueForModel(
       relations.subIssueCount > 0 ||
       relations.openBlockers.length > 0
     ) {
-      return { kind: "unavailable", sourceClosed: false };
+      return {
+        kind: "unavailable",
+        sourceClosed: false,
+        cause: {
+          port: "github",
+          status: "none",
+          code: relations === undefined
+            ? "no_relations"
+            : relations.subIssueCount > 0
+            ? "parent_issue"
+            : "open_blocker",
+        },
+      };
     }
   }
   const text = {
@@ -219,7 +246,13 @@ export async function observeIssueForModel(
   };
   const digest = await reviewTaskStatementDigest(text);
   const checked = await checkReviewTaskStatement({ ...text, digest });
-  if (!checked.ok) return { kind: "unavailable", sourceClosed: false };
+  if (!checked.ok) {
+    return {
+      kind: "unavailable",
+      sourceClosed: false,
+      cause: { port: "github", status: "none", code: "bad_statement" },
+    };
+  }
   return {
     kind: "issue",
     issue: { number: issue.number, title: issue.title, body: issue.body },

@@ -13,6 +13,13 @@ const ROOT = HOSTED_CONTROLLER_API_PATH;
 const record = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
+/** An Actions job ISO instant as epoch ms, or null when absent/malformed. */
+function jobInstant(value: unknown): number | null {
+  if (typeof value !== "string" || value.length > 40) return null;
+  const ms = Date.parse(value);
+  return Number.isSafeInteger(ms) && ms >= 0 ? ms : null;
+}
+
 export interface HostedSupervisorGitHubClientOptionsV1
   extends GitHubApiClientOptionsV1, HostedExecutionWaitOptionsV1 {}
 
@@ -39,8 +46,13 @@ export class HostedSupervisorGitHubClient extends GitHubApiClient {
     ) return portError("invalid", "run summary scope is invalid");
     const deadline = createDeadline(budgetMs);
     try {
-      const jobs: { id: number; name: string; conclusion: string | null }[] =
-        [];
+      const jobs: {
+        id: number;
+        name: string;
+        conclusion: string | null;
+        startedAtMs: number | null;
+        completedAtMs: number | null;
+      }[] = [];
       for (let page = 1; page <= 3; page++) {
         const response = await this.actionsReleaseGet(
           `${ROOT}/actions/runs/${runId}/attempts/${runAttempt}/jobs`,
@@ -64,6 +76,8 @@ export class HostedSupervisorGitHubClient extends GitHubApiClient {
             conclusion: typeof job.conclusion === "string"
               ? job.conclusion
               : null,
+            startedAtMs: jobInstant(job.started_at),
+            completedAtMs: jobInstant(job.completed_at),
           });
         }
         if (value.jobs.length < 100) break;
@@ -79,7 +93,13 @@ export class HostedSupervisorGitHubClient extends GitHubApiClient {
             summary = null;
           }
         }
-        rows.push({ name: job.name, conclusion: job.conclusion, summary });
+        rows.push({
+          name: job.name,
+          conclusion: job.conclusion,
+          summary,
+          startedAtMs: job.startedAtMs,
+          completedAtMs: job.completedAtMs,
+        });
       }
       return portOk(rows);
     } catch {

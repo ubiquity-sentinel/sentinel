@@ -71,6 +71,7 @@ const WAIT_WORDS: Record<string, string> = {
   review_pending: "waiting for its review",
   review_quota: "waiting for a review slot",
   ledger_capacity: "waiting for reservation-ledger capacity",
+  deployment: "waiting for its deployment checks after the merge",
   backoff: "waiting before it retries",
   unavailable: "waiting for GitHub to respond",
   cooldown: "waiting for a GitHub rate limit to reset",

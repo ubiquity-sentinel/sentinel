@@ -13,6 +13,11 @@
  */
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { StepResultV1 } from "./loop-types.ts";
+import {
+  parsePassSummaryLine,
+  PASS_SUMMARY_LINE_KIND,
+  type PassSummaryLineV1,
+} from "./pass-summary-line.ts";
 
 export const STEP_LINE_KIND = "sentinel_step";
 
@@ -153,7 +158,10 @@ export function matrixSkipLine(records: number): string | null {
 }
 
 /** Every advisory log line one child run may re-emit, in child order. */
-export type AdvisoryLogLineV1 = StepLineV1 | MatrixSkipLineV1;
+export type AdvisoryLogLineV1 =
+  | StepLineV1
+  | MatrixSkipLineV1
+  | PassSummaryLineV1;
 
 const MATRIX_SKIP_KEYS = ["detail", "kind", "records"].join();
 
@@ -180,8 +188,9 @@ export function parseMatrixSkipLine(value: unknown): MatrixSkipLineV1 | null {
 
 /**
  * Every valid advisory line of one child's stdout, in order, bounded: the
- * per-step lines and the one matrix-skip summary the launcher re-emits, so the
- * summary survives the hosted child's stdout filter.
+ * per-step lines, the one matrix-skip summary and the one pass summary the
+ * launcher re-emits, so the summaries survive the hosted child's stdout
+ * filter.
  */
 export function scanStepLines(stdout: string): AdvisoryLogLineV1[] {
   const lines: AdvisoryLogLineV1[] = [];
@@ -189,7 +198,8 @@ export function scanStepLines(stdout: string): AdvisoryLogLineV1[] {
     if (lines.length >= MAX_REEMITTED_STEP_LINES) break;
     if (
       raw.length > 512 ||
-      !(raw.includes(STEP_LINE_KIND) || raw.includes(MATRIX_SKIP_LINE_KIND))
+      !(raw.includes(STEP_LINE_KIND) || raw.includes(MATRIX_SKIP_LINE_KIND) ||
+        raw.includes(PASS_SUMMARY_LINE_KIND))
     ) continue;
     let value: unknown;
     try {
@@ -197,7 +207,8 @@ export function scanStepLines(stdout: string): AdvisoryLogLineV1[] {
     } catch {
       continue;
     }
-    const line = parseStepLine(value) ?? parseMatrixSkipLine(value);
+    const line = parseStepLine(value) ?? parseMatrixSkipLine(value) ??
+      parsePassSummaryLine(value);
     if (line !== null) lines.push(line);
   }
   return lines;

@@ -155,7 +155,10 @@ export function buildChildEnvironment(
   // App token every write uses the
   // job-lifetime native token, so there is nothing to bound. A malformed or
   // future mint bound refuses here, before any child exists.
-  if (identity.job !== "matrix_cell" && isNonEmptyText(appToken)) {
+  if (
+    identity.job !== "matrix_cell" && identity.job !== "repair_cell" &&
+    isNonEmptyText(appToken)
+  ) {
     let notAfter: number | undefined;
     try {
       notAfter = deriveAppTokenNotAfterV1(

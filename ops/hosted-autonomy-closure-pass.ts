@@ -24,6 +24,11 @@ import {
   resolveHostedDelivery,
   retainHostedDeliveryProvenance,
 } from "./hosted-autonomy-delivery-proof.ts";
+import {
+  gateDeliveryChecks,
+  persistDeliveryCheckUpdates,
+  postDeliveryCheckComments,
+} from "./hosted-autonomy-delivery-checks.ts";
 import { hasQueueIntentNamespace } from "./hosted-autonomy-queue-policy.ts";
 import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 import { intentClosable } from "./hosted-autonomy-retries.ts";
@@ -565,13 +570,21 @@ export async function runHostedClosurePass(
       repository: record.repository,
     });
   }
-  const closures = closureCandidates.filter((plan) => !settled(plan.id)).filter(
+  const gateable = closureCandidates.filter((plan) => !settled(plan.id)).filter(
     (plan) =>
       !deliveryOnly ||
       closureSnapshot.work.some((record) =>
         record.id === plan.id && record.nextStep === "delivery"
       ),
   );
+  // Merge is not delivery (#337): the target's trusted delivery checks on the
+  // merge commit gate the closure; an empty policy lets every plan through.
+  const deliveryGate = await gateDeliveryChecks(
+    context,
+    gateable,
+    closureSnapshot.work,
+  );
+  const closures = gateable.filter((plan) => deliveryGate.proceed.has(plan.id));
   if (closures.length > 0) {
     for (const plan of closures) {
       const record = closureSnapshot.work.find((item) =>
@@ -765,7 +778,7 @@ export async function runHostedClosurePass(
             work: snapshot.work.map((record) =>
               applied.some((plan) => plan.id === record.id)
                 ? recovered.get(record.id) ?? record
-                : record
+                : deliveryGate.updates.get(record.id) ?? record
             ),
           },
           observedHead as GitSha,
@@ -799,6 +812,7 @@ export async function runHostedClosurePass(
       ) {
         return failed("readback_unverified", observedHead, actions);
       }
+      await postDeliveryCheckComments(context, deliveryGate.comments);
       return {
         kind: "hosted_autonomy",
         status: "applied",
@@ -811,6 +825,9 @@ export async function runHostedClosurePass(
     }
   }
 
+  if (deliveryGate.updates.size > 0) {
+    return persistDeliveryCheckUpdates(context, deliveryGate);
+  }
   if (retirementResult !== null) return retirementResult;
   return null;
 }

@@ -32,3 +32,5 @@ export * from "./hosted-supervisor.ts";
 export * from "./merge-request.ts";
 // Ports.
 export * from "./ports.ts";
+// Repository repair fan-out deltas (#328).
+export * from "./repair-delta.ts";
