@@ -14,7 +14,10 @@ import {
 } from "../contracts/validation.ts";
 import type { ReleaseRequestV1 } from "../contracts/release.ts";
 import type { GitSha } from "../contracts/brands.ts";
-import { expectSelfRepository } from "./client-ci-wire.ts";
+import {
+  expectHostedControllerRepository,
+  isHostedControllerRepository,
+} from "../contracts/hosted-controller-deployment.ts";
 import { ACTIONS_RELEASE_BRANCH } from "./client-hosted-policy.ts";
 
 /** ISO-8601 UTC timestamp with millisecond precision, as milliseconds. */
@@ -61,7 +64,7 @@ export function parseActionsReleasePull(
   ) {
     fail("$.head.sha", "invalid_value", "pull request head mismatch");
   }
-  expectSelfRepository(head.repo, "$.head.repo");
+  expectHostedControllerRepository(head.repo, "$.head.repo");
   const base = expectRecord(obj.base, "$.base");
   if (
     expectNonEmptyString(base.ref, "$.base.ref", MaxText.branch) !==
@@ -69,7 +72,7 @@ export function parseActionsReleasePull(
   ) {
     fail("$.base.ref", "invalid_value", "unexpected pull request base ref");
   }
-  expectSelfRepository(base.repo, "$.base.repo");
+  expectHostedControllerRepository(base.repo, "$.base.repo");
 }
 
 /** Exact merge commit whose two parents are the request base and head. */
@@ -139,8 +142,7 @@ export interface HostedJobsV1 {
 /** Exact scope-0 production open reviewed request. */
 export function hostedSelfRequest(request: ReleaseRequestV1): boolean {
   const repository = request.target.repository;
-  return repository.installationId === 0 && repository.owner === "ubiquity" &&
-    repository.name === "sentinel" &&
+  return isHostedControllerRepository(repository) &&
     request.target.environment === "production" &&
     request.status === "open" && request.source.reviewReceiptId !== null;
 }

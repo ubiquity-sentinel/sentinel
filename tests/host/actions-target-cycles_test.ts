@@ -1,5 +1,9 @@
 /** Hosted actions-target-cycles_test responsibility. */
 import assert from "node:assert/strict";
+import {
+  CONTROLLER,
+  PUBLIC_CONTROLLER,
+} from "./controller-identity-fixture.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import {
   parseAppInstallationId,
@@ -28,6 +32,60 @@ import {
   unique,
 } from "./actions-target-fixture.ts";
 import { APP_PUBLISHER } from "./actions-ci-fixture.ts";
+import { readHostedAppCredentials } from "../../src/host/hosted-app-credentials.ts";
+
+Deno.test("actions host: issue-only repair scopes a gateway target to GitHub", () => {
+  const self = createLocalRepositoryConfig();
+  const gateway = createTargetConfigV1(
+    self,
+    { owner: "ubiquity", name: "ai.ubq.fi", slug: "ubiquity/ai.ubq.fi" },
+    "development",
+  );
+  assert.equal(gateway.adapter.kind, "gateway");
+  const scoped = scopeTargetConfigV1(
+    gateway,
+    self.repository,
+    APP_INSTALLATION,
+    { issueOnly: true },
+  );
+  assert.equal(scoped.adapter.kind, "github");
+  assert.equal(scoped.repository.installationId, APP_INSTALLATION);
+  const matrix = scopeTargetConfigV1(
+    gateway,
+    self.repository,
+    APP_INSTALLATION,
+    { issueOnly: false },
+  );
+  assert.equal(matrix.adapter.kind, "gateway");
+});
+
+Deno.test("actions host: live App installation ids are explicit while old runs retain the legacy scope", () => {
+  const legacy = readHostedAppCredentials((name) =>
+    ({
+      SENTINEL_SUPERVISOR_TOKEN: "legacy-app",
+      SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: "legacy-grant",
+    })[name]
+  );
+  assert.equal(legacy.appToken, "legacy-app");
+  assert.equal(legacy.selfToken, "legacy-app");
+  assert.equal(legacy.selfGrant, "legacy-grant");
+  assert.equal(legacy.targetInstallationId, 155687488);
+  assert.equal(legacy.selfInstallationId, 155687488);
+
+  const current = readHostedAppCredentials((name) =>
+    ({
+      SENTINEL_SUPERVISOR_TOKEN: "foreign-app",
+      SENTINEL_SELF_TOKEN: "self-app",
+      SENTINEL_SELF_TOKEN_MINT_GRANT: "self-grant",
+      SENTINEL_TARGET_INSTALLATION_ID: "173913802",
+      SENTINEL_SELF_INSTALLATION_ID: "173834540",
+    })[name]
+  );
+  assert.equal(current.selfToken, "self-app");
+  assert.equal(current.selfGrant, "self-grant");
+  assert.equal(current.targetInstallationId, 173913802);
+  assert.equal(current.selfInstallationId, 173834540);
+});
 
 Deno.test("actions host: prepared target capabilities reach the actual target cycle", async () => {
   const rig = makeTargetHostRig(["sentinel", FOREIGN_REPO, THIRD_REPO]);
@@ -71,7 +129,7 @@ Deno.test("actions host: prepared target capabilities reach the actual target cy
     `prepare:${THIRD_REPO}`,
   ]);
   assert.deepEqual(result.addressed, [
-    "ubiquity/sentinel",
+    "ubiquity-sentinel/sentinel",
     `ubiquity/${FOREIGN_REPO}`,
   ]);
   assert.equal(result.failed.length, 1);
@@ -108,25 +166,28 @@ Deno.test(
     // EVERY committed target is addressed exactly once, and each cycle is
     // injected the SOLE configuration its port was composed for.
     assert.deepEqual(result.addressed, [
-      "ubiquity/sentinel",
+      "ubiquity-sentinel/sentinel",
       `ubiquity/${FOREIGN_REPO}`,
     ]);
     assert.deepEqual(result.skipped, []);
     assert.deepEqual(configsPerCycle, [
-      ["ubiquity/sentinel"],
+      ["ubiquity-sentinel/sentinel"],
       [`ubiquity/${FOREIGN_REPO}`],
     ]);
     // The REAL entrypoint read one issue list per target, in setting order,
     // through the port the host composed for that exact repository.
     assert.deepEqual(issueReadPaths(rig.http), [
-      "/repos/ubiquity/sentinel/issues",
+      "/repos/ubiquity-sentinel/sentinel/issues",
       `/repos/ubiquity/${FOREIGN_REPO}/issues`,
     ]);
     // The sentinel self-target keeps the reserved no-App scope 0; the foreign
     // target is gated under the one App installation scope.
     assert.deepEqual(
       admissionsPerCycle.map(unique),
-      [[0], [APP_INSTALLATION]],
+      [
+        [PUBLIC_CONTROLLER ? 0 : APP_INSTALLATION],
+        [APP_INSTALLATION],
+      ],
       "each cycle is gated under its own target's installation scope",
     );
     // The aggregate uses the LAST addressed cycle's outcome.
@@ -147,7 +208,7 @@ Deno.test(
     assert.deepEqual(line, {
       version: "v1",
       kind: "sentinel_targets_diagnostic",
-      addressed: ["ubiquity/sentinel", `ubiquity/${FOREIGN_REPO}`],
+      addressed: ["ubiquity-sentinel/sentinel", `ubiquity/${FOREIGN_REPO}`],
       skipped: [],
       failed: [],
     });
@@ -155,7 +216,7 @@ Deno.test(
 );
 
 Deno.test(
-  "actions host: a non-sentinel target uses the App installation scope while sentinel keeps 0",
+  "actions host: a foreign target uses the App installation scope while the controller keeps 0",
   () => {
     assert.equal(APP_INSTALLATION, 155_687_488);
     assert.equal(parseAppInstallationId("4242"), 4242);
@@ -165,9 +226,9 @@ Deno.test(
 
     const self = createLocalRepositoryConfig();
     const sentinel = createTargetConfigV1(self, {
-      slug: "ubiquity/sentinel",
-      owner: "ubiquity",
-      name: "sentinel",
+      slug: CONTROLLER.fullName,
+      owner: self.repository.owner,
+      name: self.repository.name,
     }, "development");
     const foreign = createTargetConfigV1(self, {
       slug: `ubiquity/${FOREIGN_REPO}`,
@@ -214,14 +275,14 @@ Deno.test(
     }));
 
     assert.equal(cycles, 1, "only the first target was attempted");
-    assert.deepEqual(result.addressed, ["ubiquity/sentinel"]);
+    assert.deepEqual(result.addressed, ["ubiquity-sentinel/sentinel"]);
     assert.deepEqual(result.skipped, [
       `ubiquity/${FOREIGN_REPO}`,
       `ubiquity/${THIRD_REPO}`,
     ]);
-    assert.deepEqual(composed, ["ubiquity/sentinel"]);
+    assert.deepEqual(composed, ["ubiquity-sentinel/sentinel"]);
     assert.deepEqual(issueReadPaths(rig.http), [
-      "/repos/ubiquity/sentinel/issues",
+      "/repos/ubiquity-sentinel/sentinel/issues",
     ]);
     assert.ok(result.outcome !== null);
   },
@@ -279,14 +340,42 @@ Deno.test(
       /--allow-env=\S*SENTINEL_APP_INSTALLATION_ID/.test(repairJob),
       "the repair launcher may read the App installation scope",
     );
+    assert.ok(
+      repairJob.includes(
+        "SENTINEL_TARGET_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}",
+      ),
+      "the repair launcher binds the live foreign credential installation",
+    );
+    assert.ok(
+      repairJob.includes(
+        "SENTINEL_SELF_INSTALLATION_ID: ${{ steps.self-token.outputs.installation-id }}",
+      ),
+      "the repair launcher binds the live self credential installation",
+    );
+    assert.ok(
+      /--allow-env=\S*SENTINEL_TARGET_INSTALLATION_ID/.test(repairJob),
+      "the repair launcher may read the live foreign installation",
+    );
+    assert.ok(
+      /--allow-env=\S*SENTINEL_SELF_INSTALLATION_ID/.test(repairJob),
+      "the repair launcher may read the live self installation",
+    );
     const manifest = JSON.parse(
       await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
     ) as { tasks: Record<string, string> };
     for (const task of ["repair:actions", "supervisor:run"]) {
-      assert.ok(
-        manifest.tasks[task].includes("SENTINEL_APP_INSTALLATION_ID"),
-        `${task} may read the App installation scope`,
-      );
+      for (
+        const key of [
+          "SENTINEL_APP_INSTALLATION_ID",
+          "SENTINEL_TARGET_INSTALLATION_ID",
+          "SENTINEL_SELF_INSTALLATION_ID",
+        ]
+      ) {
+        assert.ok(
+          manifest.tasks[task].includes(key),
+          `${task} may read ${key}`,
+        );
+      }
     }
   },
 );
@@ -342,11 +431,11 @@ Deno.test(
     }));
 
     assert.deepEqual(prepared, [
-      "ubiquity/sentinel",
+      "ubiquity-sentinel/sentinel",
       `ubiquity/${FOREIGN_REPO}`,
     ]);
-    assert.deepEqual(addressed, [["ubiquity/sentinel"]]);
-    assert.deepEqual(result.addressed, ["ubiquity/sentinel"]);
+    assert.deepEqual(addressed, [["ubiquity-sentinel/sentinel"]]);
+    assert.deepEqual(result.addressed, ["ubiquity-sentinel/sentinel"]);
     assert.deepEqual(result.skipped, []);
     assert.deepEqual(result.failed, [
       `ubiquity/${FOREIGN_REPO}: target mirror fetch failed`,

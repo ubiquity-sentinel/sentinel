@@ -36,6 +36,7 @@ if (import.meta.main) {
     : new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   await runActionsRepairHost({
     trustedStdin,
+    issueOnly: true,
     runTargetCycles: (input) =>
       runActionsMatrixAggregateCycles(
         input,

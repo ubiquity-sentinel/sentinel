@@ -12,6 +12,10 @@ import {
 } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import {
+  HOSTED_CONTROLLER_API_PATH,
+  isHostedControllerRepository,
+} from "../contracts/hosted-controller-deployment.ts";
+import {
   parseHostedAttempt,
   parseHostedJobs,
   parseHostedJobsPage,
@@ -30,7 +34,10 @@ import {
 } from "../github/http.ts";
 import { classifyGitHubRateLimit } from "../github/rate-limit.ts";
 import type { HostedRuntimeIdentityV1 } from "./hosted-runtime-identity.ts";
-import type { HostedAppMintGrant } from "./hosted-app-grant.ts";
+import {
+  type HostedAppMintGrant,
+  SENTINEL_APP_INSTALLATION_ID,
+} from "./hosted-app-grant.ts";
 
 const api = "https://api.github.com";
 const maximumBodyBytes = 1024 * 1024;
@@ -238,7 +245,7 @@ export async function readHostedAppNativeJob(
   const timer = createDeadline(Math.min(30_000, remaining));
   try {
     const attemptPath =
-      `/repos/ubiquity/sentinel/actions/runs/${input.identity.runId}/attempts/${input.identity.runAttempt}`;
+      `${HOSTED_CONTROLLER_API_PATH}/actions/runs/${input.identity.runId}/attempts/${input.identity.runAttempt}`;
     const before = await read(input, attemptPath, 0, timer);
     if (
       before === null ||
@@ -331,9 +338,9 @@ export async function readHostedAppRepositoryScope(
     !Number.isSafeInteger(input.deadline) ||
     !Number.isSafeInteger(remaining) || remaining <= 0 ||
     grant.expiresAt <= input.clock.now() ||
-    repository.owner !== "ubiquity" ||
-    (repository.installationId !== grant.installationId &&
-      !(repository.installationId === 0 && repository.name === "sentinel"))
+    (!isHostedControllerRepository(repository) &&
+      (repository.owner !== "ubiquity" ||
+        repository.installationId !== SENTINEL_APP_INSTALLATION_ID))
   ) return refused();
   const timer = createDeadline(Math.min(30_000, remaining));
   try {
@@ -374,6 +381,11 @@ export async function readHostedAppRepositoryScope(
     );
     if (found.length !== 1) return refused();
     const target = found[0];
+    // `repository.installationId` is the durable logical scope (the retired
+    // 155687488 foreign namespace). `grant.installationId` is the live
+    // credential installation that minted this token. Exact owner/name
+    // membership below proves the credential scope; the durable identity stays
+    // stable across an App transfer.
     if (
       (grant.repositoryIds !== undefined &&
         !grant.repositoryIds.includes(target.id)) ||

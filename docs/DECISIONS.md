@@ -9,6 +9,116 @@ continuation.
 
 ## Runtime and dispatch
 
+### Dedicated organization migration (2026-10-21)
+
+The owner moved Sentinel into the dedicated `ubiquity-sentinel` organization to
+isolate its GitHub Actions allowance. The public controller moved from
+`ubiquity/sentinel` to `ubiquity-sentinel/sentinel`, and the private Passport
+controller moved from `ubiquity/sentinel-passport` to
+`ubiquity-sentinel/sentinel-passport`. Repository ids, issues, pull requests,
+refs, secrets, variables, visibility and environment branch policies were
+preserved. Current self identity is the new organization. The permanently
+retired `ubiquity/sentinel` identity is accepted only while reading
+pre-migration state and is normalized to the current identity in memory; no
+protected state ref is rewritten by this migration. Derived repair ids and
+candidate refs retain the retired identity as their stable internal namespace,
+so existing work remains addressable after the external rename.
+
+The owner made the `ubiquity-sentinel` GitHub App public so one App can be
+installed on both organizations. The new-org self installation is `173834540`;
+the original-owner installation is `173913802` and is enabled for all `ubiquity`
+repositories, though every dispatched token is still narrowed to the committed
+target repositories. Self writes use the self installation; foreign targets use
+the `ubiquity` installation. No installation token is shared across owners. The
+old installation id `155687488` remains the durable logical foreign-target scope
+for existing state and refs, while the workflows pass the live credential
+installation ids separately as `SENTINEL_TARGET_INSTALLATION_ID` and
+`SENTINEL_SELF_INSTALLATION_ID`. Do not rewrite historical state to the new
+installation ids. The release-state ruleset's App bypass is restored with the
+self installation. `ubiquity/ai.ubq.fi` remains a target under its original
+owner. The five-minute dispatcher and the disabled `sentinel-release` workflow
+retain their existing states.
+
+### Post-transfer scheduler recovery (2026-10-22)
+
+The 2026-10-21 organization transfer did not preserve GitHub's cron registration
+for `supervisor-dispatch.yml`. Changing the cron line and re-enabling the
+workflow did not restore scheduled runs. A minimal `sentinel-scheduler.yml` now
+invokes the existing dispatcher every five minutes; the dispatcher remains the
+sole owner of stale-run recovery and the protected-ref dispatch.
+`SENTINEL_AUTO_FOLLOW` is temporarily off because the native dispatcher token
+cannot fast-forward a ref to a commit that changes a workflow file. Runtime
+advances are manual until the follow path has a workflow-capable trusted token.
+This does not change model, review, merge, release or promotion authority.
+
+### Self-installed runtime handoff and CI-first recognition (2026-10-22)
+
+GitHub stops a `workflow_run` chain after three levels. The completed supervisor
+run `39834202668` produced no dispatcher run even though the dispatcher trigger
+existed on the default branch. The supervisor finalize job now sends one
+`workflow_dispatch` handoff to `supervisor-dispatch.yml` with its own run ID;
+the dispatcher waits for that parent run to complete, then runs the existing
+active-run, stale-recovery and fixed-protected-ref guards. This is not another
+`workflow_run` level, and it preserves the scheduler as a fallback. A dispatcher
+handoff is chained even when finalization or an earlier job fails, so recovery
+remains live.
+
+The installed runtime `c019bcd5833eff5551201d1b46039a0996841b8b` is a
+self-installed generation-89 runtime with a settled healthy proof but no
+historical rollout row. The launcher now recognizes an exact healthy
+self-installed runtime at generation 82 or later as CI-first, while retaining
+the exact allowlists for generation 80/81 and excluding the known pre-CI-first
+R76-R79 revisions. This restores moved-base pre-review re-admission for the
+existing AI parks. It changes no review-round, charge, CI, review, merge,
+promotion or model policy, and it does not rewrite state or accounting.
+
+### Private Passport controller isolation (2026-10-21)
+
+The owner's request to add `ubiquity/passport.ubq.fi`, followed by the explicit
+completion goal, authorizes completing its private execution path. The dedicated
+private `ubiquity-sentinel/sentinel-passport` controller owns only Passport; the
+public controller retains Sentinel and AI. Private target code, artifacts,
+runtime state, review evidence and logs must remain private. Seed source
+ancestry only, never public runtime state or accounting. Provision the existing
+App/model credentials exclusively in the private controller's
+`sentinel-supervisor` environment restricted to that branch; no credential
+replacement, audience expansion, branch ruleset or product-release activation is
+authorized. The private dispatcher and product release remain disabled during
+preparation; native private CI, controller-bound bootstrap, target authorization
+and real reviewed delivery precede activation claims.
+
+### Native review mode owns reviewer selection (2026-10-21)
+
+The owner explicitly clarified: "CODEX REVIEW IS NOT A NORNAL CODEX SESSION THAT
+YOU SELECT THE MODEL". This corrects the continuation's proposed switch to
+`gpt-6.1-sol/max`. That proposal is withdrawn; reviewer selection is not a
+pending owner choice for fixing the current failure.
+
+Sentinel must enter native Codex review mode through `codex review`,
+`codex exec review`, or the supported app-server `review/start` request. Codex
+resolves the reviewer. Do not override reviewer model or effort, inherit an
+implementation model as a substitute, or use a normal `turn/start` with review
+instructions. A gateway alias named `codex-auto-review`, the review rubric, and
+a structured output schema do not establish native review mode. Existing text
+naming that alias is not authority to replace the mode with a generic model
+invocation.
+
+The app-server integration must support and correlate the native
+`enteredReviewMode` and `exitedReviewMode` events, actual review-thread/turn
+identity, target and structured result. Keep trusted read-only execution, exact
+head/base/task binding, current CI, durable reservations/settlement and normal
+merge gates. An unavailable review remains unavailable. This correction changes
+neither the hard review-round ceiling nor past charges and does not authorize an
+additional paid attempt. Diagnose and repair the invocation before considering
+any further run.
+
+At source `e0c4cd07c643c9828d811e61c48e5b9c136e6182`, the runtime reviewer uses
+`turn/start` with explicit model/effort/output schema; its custody RPC allowlist
+omits `review/start`, and its reviewer event filter rejects native review-mode
+items. Those are concrete implementation mismatches. Documentation clarification
+does not itself fix or validate the runtime path. Official protocol reference:
+https://learn.chatgpt.com/docs/app-server#review.
+
 ### Owner grant, scope and acceptance (2026-10-20 UTC)
 
 For this Sentinel autonomy effort, the owner grants the orchestrator blanket
@@ -25,7 +135,7 @@ authoritative state writes and promotion authority never reach model workers;
 (2) record exact revision SHAs and never select by time or list order; (3)
 durable admission/reservation precedes every model start and settlement follows
 it; (4) autonomous merge requires current CI and a completed internal structured
-review through gateway `codex-auto-review`, with no unresolved P0/P1; (5) the
+review from native Codex review mode, with no unresolved P0/P1; (5) the
 deterministic Deno controller exclusively owns promotion and `sentinel-release`
 stays disabled.
 
@@ -40,10 +150,10 @@ for every edit.
 
 Acceptance for this effort is green scheduled supervisor cycles plus at least
 one autonomous issue → PR → completed review → merge in each of
-`ubiquity/sentinel` and `ubiquity/ai.ubq.fi`. The ai.ubq.fi scope is issue
-repairs only for now. Gateway capture, VPS deployment, release activation and
-the original broader gateway observation gates remain separate work. Bootstrap
-health and opened PRs alone do not satisfy this acceptance.
+`ubiquity-sentinel/sentinel` and `ubiquity/ai.ubq.fi`. The ai.ubq.fi scope is
+issue repairs only for now. Gateway capture, VPS deployment, release activation
+and the original broader gateway observation gates remain separate work.
+Bootstrap health and opened PRs alone do not satisfy this acceptance.
 
 ### Incident and operational unblock (2026-10-20 UTC)
 
@@ -792,11 +902,13 @@ forward path is installed; they require a separately verified native recovery
 transition, not a manual state rewrite.
 
 GitHub `@codex review` reviewer statements are retired for autonomous runtime
-target PRs. Those PRs use only the internal structured reviewer through gateway
-`codex-auto-review`. Silence, a reaction or absence of comments does not
-establish a completed review. No unresolved P0/P1 may pass the gate; changed
-candidate bytes need matching evidence. The separate development-review
-preference above does not satisfy this runtime gate.
+target PRs. Those PRs use native Codex review mode through the internal review
+service, with reviewer selection delegated to Codex as clarified above. A model
+alias and a normal review-prompted turn do not meet that contract. Silence, a
+reaction or absence of comments does not establish a completed review. No
+unresolved P0/P1 may pass the gate; changed candidate bytes need matching
+evidence. The separate development-review preference above does not satisfy this
+runtime gate.
 
 Review rounds are capped at three per task, hard, everywhere (owner decision
 2026-10-16, after ai.ubq.fi issue 684 / PR 1059 reached 44 rounds). A task's
@@ -1212,6 +1324,17 @@ unreadable pending journal can never produce the polled record. The observation
 step recovers it — a surviving review_request intent is counted once and
 cleared, a plain observation wait only clears — and requests a fresh uniquely
 admitted round instead of re-arming the transient wait forever.
+
+Native review terminal diagnostics (2026-10-21): retain only exact matched
+request/invocation/owner/thread/turn identities, `terminalStatus`, bounded
+duration and closed typed error fields. Never emit provider prose, output or
+additional details. The hosted launcher accepts only a strict exact-key,
+owner-bound, capped advisory projection and forwards it through captured-result
+CLI output; malformed or foreign advisories cannot affect the authoritative
+child result. Advisory fields must not use top-level `status`, which is reserved
+by child-result detection. These diagnostics do not complete an unavailable
+review, change its null execution receipt, select a route, admit a model start,
+restore a spent round or authorize a merge.
 
 ## Blocked-work recovery and decomposition (2026-10-15)
 

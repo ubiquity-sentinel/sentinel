@@ -19,6 +19,26 @@ import {
   RelationsFakeGithub,
   seededSnapshot,
 } from "./loop-rig.ts";
+import { isIssueOnlyIntake } from "../../src/repair/loop-intake.ts";
+import { repairConfigs } from "./helpers.ts";
+
+Deno.test("issue-only intake covers every configured GitHub target", () => {
+  const [gateway] = repairConfigs();
+  assert.ok(gateway);
+  const github = { ...gateway, adapter: { kind: "github" as const } };
+  assert.equal(isIssueOnlyIntake([gateway]), false);
+  assert.equal(isIssueOnlyIntake([github]), true);
+  assert.equal(
+    isIssueOnlyIntake([
+      github,
+      { ...github, repository: { ...github.repository, name: "other" } },
+    ]),
+    true,
+    "two GitHub targets are still issue-only",
+  );
+  assert.equal(isIssueOnlyIntake([github, gateway]), false);
+  assert.equal(isIssueOnlyIntake([]), false);
+});
 
 Deno.test(
   "open GitHub issue intake creates one deterministic record and deduplicates repeated rows",
@@ -243,7 +263,11 @@ Deno.test(
       15,
       issueRecord(15, {
         relations: {
-          openBlockers: [{ owner: "ubiquity", name: "sentinel", number: 99 }],
+          openBlockers: [{
+            owner: "ubiquity-sentinel",
+            name: "sentinel",
+            number: 99,
+          }],
           subIssueCount: 0,
         },
       }),

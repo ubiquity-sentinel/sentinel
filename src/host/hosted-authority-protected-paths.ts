@@ -2,6 +2,20 @@
 export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
   .freeze([
     "src/host/hosted-authority-protected-paths.ts",
+    "src/contracts/hosted-controller-deployment.ts",
+    "src/github/native-review-result.ts",
+    // Native review invocation, lifecycle evidence and completion authority.
+    "src/github/codex-reviewer.ts",
+    "src/github/reviewer-prepared.ts",
+    "src/github/reviewer-events.ts",
+    "src/github/reviewer-outcome.ts",
+    "src/github/reviewer-session-state.ts",
+    "src/github/journal-metadata.ts",
+    "src/github/review-transport-journal.ts",
+    "src/github/codex-review-transport.ts",
+    "src/github/review-normalize.ts",
+    "src/host/published-refresh-validator.ts",
+    "src/host/passport-dependencies.ts",
     // Extracted installation, settlement, verification and ordinary admission authority.
     "src/contracts/hosted-supervisor-installation.ts",
     "src/contracts/hosted-supervisor-verification.ts",

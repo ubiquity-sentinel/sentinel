@@ -19,6 +19,7 @@ import {
   HOSTED_SUPERVISOR_REPOSITORY,
   HOSTED_SUPERVISOR_WORKFLOW_ID,
   HOSTED_SUPERVISOR_WORKFLOW_PATH,
+  RETIRED_HOSTED_SUPERVISOR_REPOSITORY,
 } from "./hosted-supervisor-types.ts";
 import type {
   HostedExecutionIntentV1,
@@ -152,18 +153,22 @@ export function parseHostedRunProofV1(
       "proof workflow path is not the fixed supervisor workflow",
     );
   }
-  const repository = expectNonEmptyString(
+  const rawRepository = expectNonEmptyString(
     obj.repository,
     `${path}.repository`,
     MaxText.name + MaxText.owner + 1,
   );
-  if (repository !== HOSTED_SUPERVISOR_REPOSITORY) {
+  if (
+    rawRepository !== HOSTED_SUPERVISOR_REPOSITORY &&
+    rawRepository !== RETIRED_HOSTED_SUPERVISOR_REPOSITORY
+  ) {
     fail(
       `${path}.repository`,
       "invalid_lifecycle",
       "proof repository is not the fixed supervisor repository",
     );
   }
+  const repository = HOSTED_SUPERVISOR_REPOSITORY;
   const ref = expectNonEmptyString(obj.ref, `${path}.ref`, MaxText.ref);
   if (ref !== HOSTED_SUPERVISOR_REF) {
     fail(
@@ -307,18 +312,22 @@ export function parseHostedNotStartedProofV1(
       "settlement workflow path is not the fixed supervisor workflow",
     );
   }
-  const repository = expectNonEmptyString(
+  const rawRepository = expectNonEmptyString(
     obj.repository,
     `${path}.repository`,
     MaxText.name + MaxText.owner + 1,
   );
-  if (repository !== HOSTED_SUPERVISOR_REPOSITORY) {
+  if (
+    rawRepository !== HOSTED_SUPERVISOR_REPOSITORY &&
+    rawRepository !== RETIRED_HOSTED_SUPERVISOR_REPOSITORY
+  ) {
     fail(
       `${path}.repository`,
       "invalid_lifecycle",
       "settlement repository is not the fixed supervisor repository",
     );
   }
+  const repository = HOSTED_SUPERVISOR_REPOSITORY;
   const ref = expectNonEmptyString(obj.ref, `${path}.ref`, MaxText.ref);
   if (ref !== HOSTED_SUPERVISOR_REF) {
     fail(

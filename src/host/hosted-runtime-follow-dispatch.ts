@@ -29,6 +29,8 @@ export interface FollowDispatchDeps {
   log?: (line: Record<string, unknown>) => void;
   /** Injected in tests; production waits only for bounded API propagation. */
   pause?: () => Promise<void>;
+  /** Uncancelled active runs positively observed by the same dispatcher pass. */
+  observedActiveRunIds?: readonly number[];
 }
 
 /** One POST at most, even after lost acknowledgement or delayed visibility. */
@@ -42,7 +44,9 @@ export async function dispatchFollowedSupervisor(
     if (!deps.ready) throw new FollowError("follow_not_ready");
     const expected = sha(deps.expectedSha);
     const repositoryId = positive(record(await api.get("")).id);
-    if ((await activeSupervisorRuns(api)).length > 0) {
+    const observedActive = (deps.observedActiveRunIds?.length ?? 0) > 0;
+    const listedActive = (await activeSupervisorRuns(api)).length > 0;
+    if (observedActive || listedActive) {
       log({
         event: "follow_dispatch",
         decision: "skipped",

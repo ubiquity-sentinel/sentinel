@@ -1,5 +1,6 @@
 /** Hosted hosted-supervisor-lifecycle_test responsibility. */
 import assert from "node:assert/strict";
+import { CONTROLLER } from "./controller-identity-fixture.ts";
 import { GitHubApiClient } from "../../src/github/client.ts";
 import type { HttpResponseV1 } from "../../src/github/http.ts";
 import type {
@@ -21,7 +22,6 @@ import {
   reviewReceipt,
   run,
   runProof,
-  SELF,
 } from "./actions-supervisor-fixture.ts";
 import {
   advanceToCandidate,
@@ -138,7 +138,7 @@ Deno.test("hosted supervisor interrupted step: actual client settles ordinary fa
     let control = "coherent";
     const calls: string[] = [];
     const client = new GitHubApiClient({
-      repository: SELF,
+      repository: CONTROLLER.repository,
       apiBaseUrl: "https://api.github.com",
       clock: rig.clock,
       auth: {
@@ -155,24 +155,24 @@ Deno.test("hosted supervisor interrupted step: actual client settles ordinary fa
         let body: unknown;
         let status = 200;
         const headers = new Headers();
-        if (path === `/repos/ubiquity/sentinel/actions/runs/2/attempts/1`) {
+        if (path === `${CONTROLLER.apiPath}/actions/runs/2/attempts/1`) {
           body = {
             id: ordinary.runId,
             run_attempt: ordinary.runAttempt,
-            workflow_id: 357012162,
+            workflow_id: CONTROLLER.workflowId,
             path: ".github/workflows/supervisor.yml",
             head_sha: ordinary.launcherSha,
             head_branch: "sentinel-supervisor",
             event: "workflow_dispatch",
             status: "completed",
             conclusion: "failure",
-            repository: { full_name: "ubiquity/sentinel" },
-            head_repository: { full_name: "ubiquity/sentinel" },
+            repository: { full_name: CONTROLLER.fullName },
+            head_repository: { full_name: CONTROLLER.fullName },
             run_started_at: new Date(startedAt).toISOString(),
             updated_at: new Date(finishedAt).toISOString(),
           };
         } else if (
-          path === `/repos/ubiquity/sentinel/actions/runs/2/attempts/1/jobs`
+          path === `${CONTROLLER.apiPath}/actions/runs/2/attempts/1/jobs`
         ) {
           body = {
             total_count: 1,
@@ -200,7 +200,7 @@ Deno.test("hosted supervisor interrupted step: actual client settles ordinary fa
               }],
             }],
           };
-        } else if (path === "/repos/ubiquity/sentinel/actions/jobs/7/logs") {
+        } else if (path === `${CONTROLLER.apiPath}/actions/jobs/7/logs`) {
           status = 302;
           headers.set("location", signedUrl);
           body = "";
@@ -260,7 +260,7 @@ Deno.test("hosted supervisor interrupted step: actual client settles ordinary fa
     assert.equal(runtime.generation, before.hostedRuntimes[0].generation);
     assert.deepEqual(after.hostedReleases, before.hostedReleases);
     assert.deepEqual(await rig.repair.readRepair(), repairBefore);
-    assert.ok(calls.includes("/repos/ubiquity/sentinel/actions/jobs/7/logs"));
+    assert.ok(calls.includes(`${CONTROLLER.apiPath}/actions/jobs/7/logs`));
     assert.ok(calls.includes("/logs/interrupted"));
     assert.equal((await rig.finalize(identity)).status, "pending");
     assert.deepEqual(await rig.snapshot(), after);

@@ -109,7 +109,7 @@ async function modernRecoveryScenarioInGraph(
   }
   const scratch = targetRoot + "/factory";
   const mirror = history
-    ? scratch + "/sources/ubiquity-sentinel"
+    ? scratch + "/sources/ubiquity-sentinel-sentinel"
     : targetRoot + "/target-mirror";
   if (history) await Deno.mkdir(scratch + "/sources", { recursive: true });
   await checked(targetRoot, ["clone", "-q", target.work, mirror]);
@@ -117,7 +117,7 @@ async function modernRecoveryScenarioInGraph(
     await checked(mirror, [
       "config",
       `url.file://${target.work}.insteadOf`,
-      "https://github.com/ubiquity/sentinel.git",
+      "https://github.com/ubiquity-sentinel/sentinel.git",
     ]);
     await checked(mirror, ["config", "protocol.https.allow", "never"]);
   }

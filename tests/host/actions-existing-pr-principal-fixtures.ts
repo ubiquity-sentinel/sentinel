@@ -152,7 +152,7 @@ export async function actionsExistingPrincipalFixture(
   const env: Record<string, string | undefined> = {
     GITHUB_RUN_ID: String(principal.identity.runId),
     GITHUB_RUN_ATTEMPT: String(principal.identity.runAttempt),
-    GITHUB_REPOSITORY: "ubiquity/sentinel",
+    GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel",
     GITHUB_REF: "refs/heads/sentinel-supervisor",
     GITHUB_SHA: principal.identity.launcherSha,
     GITHUB_WORKFLOW_SHA: principal.identity.launcherSha,
@@ -160,7 +160,9 @@ export async function actionsExistingPrincipalFixture(
     GITHUB_JOB: "matrix_plan",
     GITHUB_TOKEN: principal.jobInput.token,
     SENTINEL_SUPERVISOR_TOKEN: principal.scopeInput.token,
+    SENTINEL_SELF_TOKEN: principal.scopeInput.token,
     SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: principal.hostInput.mintGrant,
+    SENTINEL_SELF_TOKEN_MINT_GRANT: principal.hostInput.mintGrant,
     SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER: principal.hostInput.appTokenNotAfter,
     SENTINEL_APP_INSTALLATION_ID: "155687488",
     SENTINEL_MODEL_ID: "gpt-6.1-sol",
@@ -185,7 +187,7 @@ export async function actionsExistingPrincipalFixture(
       "actual host REST port uses its captured target credential",
     );
     targetCalls.push({ method: input.method, path });
-    if (path === "/repos/ubiquity/sentinel/issues/1") {
+    if (path === "/repos/ubiquity-sentinel/sentinel/issues/1") {
       return {
         status: 200,
         headers: new Headers(),
@@ -225,10 +227,10 @@ export async function actionsExistingPrincipalFixture(
     }
     if (
       path === "/installation/repositories" ||
-      path === "/repos/ubiquity/sentinel"
+      path === "/repos/ubiquity-sentinel/sentinel"
     ) {
       const reply = await principal.scopeInput.http(input);
-      if (path === "/repos/ubiquity/sentinel") {
+      if (path === "/repos/ubiquity-sentinel/sentinel") {
         await controls.afterScopeRead?.(++controls.scopeReads);
       }
       return reply;
@@ -246,12 +248,13 @@ export async function actionsExistingPrincipalFixture(
   const originalRun = DenoReplayRuntime.prototype.run;
   const gitCalls: Array<{ args: string[]; credential: string }> = [];
   DenoReplayRuntime.prototype.run = function (input) {
-    const remoteUrl = "https://github.com/ubiquity/sentinel.git";
+    const remoteUrl = "https://github.com/ubiquity-sentinel/sentinel.git";
     if (input.executable === "/usr/bin/git" && input.args.includes(remoteUrl)) {
       const expected = "Authorization: Basic " +
         btoa(
           "x-access-token:" +
-            (env.SENTINEL_SUPERVISOR_TOKEN ?? env.GITHUB_TOKEN),
+            (env.SENTINEL_SELF_TOKEN ?? env.SENTINEL_SUPERVISOR_TOKEN ??
+              env.GITHUB_TOKEN),
         );
       assert.equal(
         input.env.GIT_CONFIG_KEY_0,
@@ -275,13 +278,14 @@ export async function actionsExistingPrincipalFixture(
   };
   Deno.Command = class extends originalCommand {
     constructor(command: string | URL, options: Deno.CommandOptions = {}) {
-      const remoteUrl = "https://github.com/ubiquity/sentinel.git";
+      const remoteUrl = "https://github.com/ubiquity-sentinel/sentinel.git";
       let actual = options;
       if (command === "/usr/bin/git" && options.args?.includes(remoteUrl)) {
         const expected = "Authorization: Basic " +
           btoa(
             "x-access-token:" +
-              (env.SENTINEL_SUPERVISOR_TOKEN ?? env.GITHUB_TOKEN),
+              (env.SENTINEL_SELF_TOKEN ?? env.SENTINEL_SUPERVISOR_TOKEN ??
+                env.GITHUB_TOKEN),
           );
         assert.equal(
           options.env?.GIT_CONFIG_KEY_0,
@@ -356,6 +360,20 @@ export async function actionsExistingPrincipalFixture(
         input: ActionsTargetCyclesInputV1,
       ) => Promise<void>,
     ) {
+      // The routing scenarios mutate the target grant/token. Mirror that state
+      // onto the self installation so the same missing/forged/expired authority
+      // is exercised under the dual-token composition.
+      if (env.SENTINEL_SUPERVISOR_TOKEN === undefined) {
+        delete env.SENTINEL_SELF_TOKEN;
+      } else {
+        env.SENTINEL_SELF_TOKEN = env.SENTINEL_SUPERVISOR_TOKEN;
+      }
+      if (env.SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT === undefined) {
+        delete env.SENTINEL_SELF_TOKEN_MINT_GRANT;
+      } else {
+        env.SENTINEL_SELF_TOKEN_MINT_GRANT =
+          env.SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT;
+      }
       const result = await runActionsRepairHost({
         ...deps,
         runTargetCycles: async (input) => {
@@ -370,7 +388,7 @@ export async function actionsExistingPrincipalFixture(
           await effect(port, input);
           return {
             outcome: { status: "idle", detail: "fixture native boundary" },
-            addressed: ["ubiquity/sentinel"],
+            addressed: ["ubiquity-sentinel/sentinel"],
             skipped: [],
             failed: [],
           };

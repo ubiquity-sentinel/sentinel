@@ -49,6 +49,8 @@ import {
   isSentinelSelfTarget,
   type PrepareCheckoutDependenciesV1,
 } from "./self-dependency-preparation.ts";
+import type { PreparePassportDependenciesV1 } from "./passport-dependencies.ts";
+import { isPassportTarget } from "./target-policy.ts";
 
 // ---------------------------------------------------------------------------
 // Implementation port: one persistent isolated checkout per task
@@ -128,6 +130,8 @@ export interface LocalModelInputV1 {
   ) => Promise<PortResultV1<void>>;
   /** Trusted, source-bound offline self dependencies; never executes target code. */
   prepareCheckoutDependencies?: PrepareCheckoutDependenciesV1;
+  /** Trusted exact-base frozen Passport preparation, before any client starts. */
+  preparePassportDependencies?: PreparePassportDependenciesV1;
 }
 
 /**
@@ -294,6 +298,22 @@ export class LocalCheckoutModelPort implements ImplementationPort {
         const dependencies = await this.input.prepareCheckoutDependencies({
           repository: request.repository,
           checkout: prepared.checkout,
+        });
+        if (!dependencies.ok) return await failCheckout();
+      } catch {
+        return await failCheckout();
+      }
+    }
+
+    if (isPassportTarget(request.repository)) {
+      try {
+        const prepare = this.input.preparePassportDependencies;
+        if (prepare === undefined) return await failCheckout();
+        const dependencies = await prepare({
+          repository: request.repository,
+          checkout: prepared.checkout,
+          sourcePath,
+          base: mergeBase ?? request.base,
         });
         if (!dependencies.ok) return await failCheckout();
       } catch {

@@ -430,8 +430,17 @@ Deno.test("base service: running comment readback and fresh facts precede native
         h.data.issue.body += " changed";
       };
     }],
-    ["configured identity mismatch", (h) => {
-      h.options.model = "different-review-model";
+    ["historical generic execution cannot authorize a native start", (h) => {
+      const prepare = h.options.reviewer.prepare.bind(h.options.reviewer);
+      h.options.reviewer.prepare = async (request) => {
+        const prepared = await prepare(request);
+        if (prepared.ok) {
+          delete prepared.value.execution.nativeReview;
+          prepared.value.execution.model = "historical-reviewer";
+          prepared.value.execution.reasoning = "max";
+        }
+        return prepared;
+      };
     }],
   ];
   for (const [label, mutate] of mutations) {
@@ -588,7 +597,7 @@ Deno.test("base service: clean code quality alone never authorizes issue closure
 
 Deno.test({
   name:
-    "base service: actual R80 parses every persisted native running/result/ready payload and held state",
+    "base service: actual R80 refuses native execution while preserving result and held-state parsing",
   ignore: !R80,
   async fn() {
     const h = await rig();
@@ -603,9 +612,9 @@ Deno.test({
       binding.executionDigest,
     );
     await withR80Parsers((old) => {
-      assert.deepEqual(old.parseReviewExecutionV1(running), running);
+      assert.throws(() => old.parseReviewExecutionV1(running));
       assert.deepEqual(old.parseReviewResultV1(result), result);
-      assert.deepEqual(old.parseReviewReadyExecutionV1(execution), execution);
+      assert.throws(() => old.parseReviewReadyExecutionV1(execution));
       assert.deepEqual(
         old.parseRepairStateSnapshotV1(h.state.repair),
         h.state.repair,

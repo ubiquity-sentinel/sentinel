@@ -14,10 +14,10 @@ import type {
   StructuredReviewOutcomeV1,
   StructuredReviewPrepareV1,
 } from "../../src/github/codex-reviewer.ts";
-import {
-  REVIEW_MODEL,
-  REVIEW_REASONING,
-} from "../../src/github/review-journal.ts";
+import { createHash } from "node:crypto";
+import { canonicalStringify } from "../../src/contracts/canonical.ts";
+import { renderReviewPrompt } from "../../src/github/review-snapshot.ts";
+import { nativeReviewInstructions } from "../../src/github/native-review-result.ts";
 import { portError, portOk } from "../../src/contracts/ports.ts";
 import type { GitHubCodexReviewTransport } from "../../src/github/codex-review-transport.ts";
 import type {
@@ -200,6 +200,18 @@ export function preparedCleanReview(
   result: ReviewResultV1 = CLEAN_REVIEW_RESULT,
   beforeResult: () => Promise<void> = () => Promise.resolve(),
 ): PreparedStructuredReviewV1 {
+  const target = {
+    type: "custom",
+    instructions: renderReviewPrompt(request.snapshot, request.task ?? null) +
+      "\n\n" +
+      nativeReviewInstructions(
+        request.snapshot,
+        request.task ?? null,
+        "/fixture/review",
+      ),
+  };
+  const targetDigest = createHash("sha256").update(canonicalStringify(target))
+    .digest("hex");
   // Prepared/running identity: exactly ReviewJournalExecutionV1. The transport
   // persists this object into the RUNNING journal before `start`, whose parser
   // rejects terminal-only keys (turnId/resultId/actual).
@@ -208,8 +220,9 @@ export function preparedCleanReview(
     invocationId: request.invocationId,
     threadId: "thread-1",
     submittedProvider: "openai",
-    model: REVIEW_MODEL,
-    reasoning: REVIEW_REASONING,
+    model: null,
+    reasoning: null,
+    nativeReview: { mode: "review/start", targetDigest },
     startMayOccur: true,
   };
   let attempted = false;
@@ -233,14 +246,20 @@ export function preparedCleanReview(
         turnId: "turn-1",
         resultId: "result-9",
         actual: {
-          evidenceKind: "request-runtime",
+          evidenceKind: "native-review",
           provider: "openai",
           threadId: "thread-1",
           turnId: "turn-1",
           terminalOrigin: "runtime",
           observedTerminalStatus: "completed",
-          observedModel: REVIEW_MODEL,
-          observedReasoning: REVIEW_REASONING,
+          observedModel: null,
+          observedReasoning: null,
+          nativeReview: {
+            targetDigest,
+            reviewThreadId: "thread-1",
+            enteredItemId: "entered-review-1",
+            exitedItemId: "result-9",
+          },
           durationMs: 5,
           outputChars: 10,
         },

@@ -1,10 +1,16 @@
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { portOk } from "../../src/contracts/ports.ts";
-import { parseReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import {
+  parseReleaseStateSnapshotV1,
+  parseRepairStateSnapshotV1,
+} from "../../src/contracts/state-snapshots.ts";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 import { composeLocalGitHub } from "../../src/host/local-github.ts";
 import { LocalSessionTracker } from "../../src/host/local-client.ts";
-import { runOwnerSuccessorReviewPhase } from "../../src/host/owner-successor-acceptance.ts";
+import {
+  produceOwnerSuccessorAcceptance,
+  runOwnerSuccessorReviewPhase,
+} from "../../src/host/owner-successor-acceptance.ts";
 import { FakeClock, MemoryState } from "../repair/helpers.ts";
 import { seededSnapshot } from "../repair/loop-rig.ts";
 import {
@@ -19,7 +25,12 @@ import type { OwnerSuccessorReviewPorts } from "../../src/host/owner-successor-a
 import { driveOwnerTaskAcceptance } from "./owner-install-supersession-acceptance-fixtures.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
-import { canonicalStringify } from "../../src/contracts/canonical.ts";
+import {
+  canonicalStringify,
+  canonicalStringifySha256,
+} from "../../src/contracts/canonical.ts";
+import { parseHostedReleaseRecordV1 } from "../../src/contracts/hosted-supervisor.ts";
+import { ownerSuccessorAcceptanceBinds } from "../../src/host/owner-successor-acceptance-proof.ts";
 import { parseHostedRuntimeRollout } from "../../src/host/hosted-runtime-rollout.ts";
 import { ownerInstall } from "./owner-install-supersession-fixtures.ts";
 
@@ -27,6 +38,50 @@ Deno.test("owner successor genuine structured review produces charged durable ac
   const rig = await installedSupersession();
   try {
     await driveOwnerTaskAcceptance(rig);
+  } finally {
+    await rig.close();
+  }
+});
+
+Deno.test("owner successor authorizer refuses legacy completion while preserving historical bytes", async () => {
+  const rig = await installedSupersession();
+  try {
+    const { receipt } = await driveOwnerTaskAcceptance(rig);
+    assert.equal(await ownerSuccessorAcceptanceBinds(receipt), true);
+    const before = await rig.repair.readRepair();
+    assert.ok(before.ok && before.value.status === "found");
+    const historical = structuredClone(receipt);
+    const acceptance = historical.ownerAcceptance!;
+    const review = acceptance.review;
+    assert.ok(review.execution && review.readyExecution);
+    delete review.execution.nativeReview;
+    review.execution.model = "historical-reviewer";
+    review.execution.reasoning = "max";
+    delete review.readyExecution.nativeReview;
+    review.readyExecution.model = "historical-reviewer";
+    review.readyExecution.reasoning = "max";
+    delete review.readyExecution.actual.nativeReview;
+    review.readyExecution.actual.evidenceKind = "request-runtime";
+    review.readyExecution.actual.observedModel = "historical-reviewer";
+    review.readyExecution.actual.observedReasoning = "max";
+    acceptance.reviewSha256 = await canonicalStringifySha256(review);
+    const bytes = canonicalStringify(historical);
+    const decoded = parseHostedReleaseRecordV1(JSON.parse(bytes));
+    assert.equal(canonicalStringify(decoded), bytes);
+    const history = {
+      ...before.value.snapshot,
+      ownerSuccessorReviews: [review],
+    };
+    assert.equal(
+      canonicalStringify(parseRepairStateSnapshotV1(history)),
+      canonicalStringify(history),
+    );
+    assert.equal(
+      await ownerSuccessorAcceptanceBinds(decoded),
+      false,
+      "historical decoding must not grant new native authority",
+    );
+    assert.deepEqual(await rig.repair.readRepair(), before);
   } finally {
     await rig.close();
   }
@@ -313,6 +368,52 @@ Deno.test("owner successor phase keeps required custody fail closed and lazily c
     assert.equal(compositions, 2, "completed review never composes again");
     assert.equal(native.session.turnStarts(), 1);
     assert.deepEqual(await rig.repair.readRepair(), completed);
+    const legacy = structuredClone(journal);
+    assert.ok(legacy.execution && legacy.readyExecution);
+    delete legacy.execution.nativeReview;
+    legacy.execution.model = "historical-reviewer";
+    legacy.execution.reasoning = "max";
+    delete legacy.readyExecution.nativeReview;
+    legacy.readyExecution.model = "historical-reviewer";
+    legacy.readyExecution.reasoning = "max";
+    delete legacy.readyExecution.actual.nativeReview;
+    legacy.readyExecution.actual.evidenceKind = "request-runtime";
+    legacy.readyExecution.actual.observedModel = "historical-reviewer";
+    legacy.readyExecution.actual.observedReasoning = "max";
+    const historical = parseRepairStateSnapshotV1({
+      ...completed.value.snapshot,
+      ownerSuccessorReviews: [legacy],
+    });
+    const historicalState = new Proxy(rig.repair, {
+      get(target, key, receiver) {
+        if (key === "readRepair") {
+          return () =>
+            Promise.resolve(
+              portOk({ ...completed.value, snapshot: historical }),
+            );
+        }
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    assert.equal(
+      await produceOwnerSuccessorAcceptance({
+        ...input,
+        state: historicalState,
+        ports: native.ports,
+        modelStartsEnabled: true,
+      }),
+      "pending",
+    );
+    assert.equal(
+      native.session.turnStarts(),
+      1,
+      "legacy completion never starts another review",
+    );
+    assert.deepEqual(
+      await rig.repair.readRepair(),
+      completed,
+      "legacy completion stays charged and byte-unchanged",
+    );
   } finally {
     await native?.dispose();
     await rig.close();

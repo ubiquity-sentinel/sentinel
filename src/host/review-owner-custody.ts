@@ -1,5 +1,8 @@
 /** Surviving trusted launcher owns reviewer spawn handles, never child PIDs. */
-import { canonicalStringify } from "../contracts/canonical.ts";
+import {
+  canonicalStringify,
+  canonicalStringifySha256,
+} from "../contracts/canonical.ts";
 import { parseHostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
@@ -43,12 +46,13 @@ import {
 export interface LauncherReviewSessionTargetV1 {
   repository: RepositoryIdentityV1;
   session: CodexTransportOptionsV1;
-  provider: string;
-  model: string;
+  provider?: string;
+  model?: string;
   permissionProfile: string;
 }
 
 interface OwnedBrokerSession {
+  nativeReviewTargetDigest?: string;
   target: LauncherReviewSessionTargetV1;
   session: CodexSessionV1 | null;
   prepared: ReviewJournalExecutionV1 | null;
@@ -332,7 +336,7 @@ export class ReviewOwnerCustodyBroker {
       throw new Error("base review custody operation unavailable");
     }
     const keys = method === "open"
-      ? "cwd,invocationId,ownerRunId,requestId"
+      ? "cwd,invocationId,nativeReviewTargetDigest,ownerRunId,requestId"
       : method === "close"
       ? "requestId"
       : "method,params,requestId";
@@ -346,6 +350,8 @@ export class ReviewOwnerCustodyBroker {
         params.ownerRunId !== this.execution.id ||
         params.cwd !== entry.target.session.cwd ||
         typeof params.invocationId !== "string" ||
+        typeof params.nativeReviewTargetDigest !== "string" ||
+        !/^[0-9a-f]{64}$/.test(params.nativeReviewTargetDigest) ||
         (entry.kind !== "pull_request" && entry.invocationId !== null) ||
         (entry.kind === "owner_successor" &&
           params.invocationId !==
@@ -355,6 +361,8 @@ export class ReviewOwnerCustodyBroker {
         throw new Error("review custody session identity changed");
       }
       entry.invocationId = params.invocationId;
+      entry.nativeReviewTargetDigest = params
+        .nativeReviewTargetDigest as string;
       const session = new CodexSubprocessSession(entry.target.session);
       entry.session = session;
       entry.processSettled = false;
@@ -389,14 +397,18 @@ export class ReviewOwnerCustodyBroker {
     }
     if (
       method !== "send" ||
-      !["initialize", "thread/start", "turn/start"].includes(params.method)
+      !["initialize", "thread/start", "review/start"].includes(params.method)
     ) throw new Error("review custody method refused");
     const input = params.params as Record<string, unknown>;
     if (
       params.method === "thread/start" &&
       (input.cwd !== entry.target.session.cwd ||
-        input.model !== entry.target.model ||
-        input.modelProvider !== entry.target.provider ||
+        ["model", "modelProvider", "effort", "outputSchema"].some((key) =>
+          Object.hasOwn(input, key)
+        ) ||
+        (typeof input.config === "object" && input.config !== null &&
+          ["model", "model_provider", "model_reasoning_effort", "review_model"]
+            .some((key) => Object.hasOwn(input.config!, key))) ||
         input.permissions !== entry.target.permissionProfile)
     ) throw new Error("review custody thread policy changed");
     if (entry.kind !== "pull_request" && params.method === "thread/start") {
@@ -405,18 +417,28 @@ export class ReviewOwnerCustodyBroker {
       }
       entry.preparationStarted = true;
     }
-    if (params.method === "turn/start") {
+    if (params.method === "review/start") {
       if (
         entry.turnStarted ||
         (entry.kind !== "pull_request"
           ? !entry.armed
           : entry.registration.journal.phase !== "running") ||
         input.threadId !== entry.prepared?.threadId ||
-        input.model !== entry.target.model ||
-        input.permissions !== entry.target.permissionProfile ||
-        input.effort !== "max"
+        input.delivery !== "inline" ||
+        Object.keys(input).sort().join(",") !== "delivery,target,threadId"
       ) throw new Error("review custody turn identity unavailable");
       entry.turnStarted = true;
+      const target = input.target as Record<string, unknown>;
+      if (
+        !target || target.type !== "custom" ||
+        typeof target.instructions !== "string" ||
+        Object.keys(target).sort().join(",") !== "instructions,type" ||
+        await canonicalStringifySha256(target) !==
+          entry.nativeReviewTargetDigest
+      ) {
+        entry.faulted = true;
+        throw new Error("review custody native target changed");
+      }
     }
     const response = await session.send(params.method, params.params);
     if (params.method === "thread/start") {
@@ -424,9 +446,7 @@ export class ReviewOwnerCustodyBroker {
       const thread = result.thread as Record<string, unknown>;
       if (
         !thread || typeof thread.id !== "string" ||
-        result.model !== entry.target.model ||
-        result.modelProvider !== entry.target.provider ||
-        result.reasoningEffort !== "max"
+        typeof result.modelProvider !== "string" || !result.modelProvider
       ) {
         entry.faulted = true;
         throw new Error("review custody preparation unproved");
@@ -435,9 +455,13 @@ export class ReviewOwnerCustodyBroker {
         ownerRunId: this.execution.id,
         invocationId: entry.invocationId!,
         threadId: thread.id,
-        submittedProvider: entry.target.provider,
-        model: entry.target.model,
-        reasoning: "max",
+        submittedProvider: result.modelProvider,
+        model: null,
+        reasoning: null,
+        nativeReview: {
+          mode: "review/start",
+          targetDigest: entry.nativeReviewTargetDigest!,
+        },
         startMayOccur: true,
       };
     }

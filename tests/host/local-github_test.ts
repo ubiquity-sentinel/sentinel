@@ -421,8 +421,9 @@ Deno.test(
     );
     const env = testGitEnv(`${root}/home`);
     const mirror = `${root}/mirror`;
-    const pullPath = "/repos/ubiquity/sentinel/pulls/7";
-    const refPath = "/repos/ubiquity/sentinel/git/ref/heads/development";
+    const pullPath = "/repos/ubiquity-sentinel/sentinel/pulls/7";
+    const refPath =
+      "/repos/ubiquity-sentinel/sentinel/git/ref/heads/development";
     const trustedAuthor = "ubiquity-sentinel[bot]";
     const branch = "sentinel/repair-base-refresh";
     const requests: string[] = [];
@@ -493,7 +494,7 @@ Deno.test(
         (await gitRun(mirror, [
           "config",
           `url.file://${remote.bare}.insteadOf`,
-          "https://github.com/ubiquity/sentinel.git",
+          "https://github.com/ubiquity-sentinel/sentinel.git",
         ], env)).ok,
         true,
       );
@@ -713,7 +714,7 @@ Deno.test(
         (await gitRun(mirror, [
           "config",
           `url.file://${foreign.bare}.insteadOf`,
-          "https://github.com/ubiquity/other.git",
+          "https://github.com/ubiquity-sentinel/other.git",
         ], env)).ok,
         true,
       );

@@ -52,6 +52,7 @@ export interface HostedAppPrincipalHandoffInput {
   nativeToken: string;
   appToken: string | undefined;
   mintGrant: string | undefined;
+  expectedInstallationId?: number;
   appTokenNotAfter: string | undefined;
   deadline: number;
 }
@@ -185,6 +186,21 @@ export async function createHostedAppPrincipalContext(
   return context;
 }
 
+/** Optional context construction for one already-bound App token and grant. */
+export async function createOptionalHostedAppPrincipalContext(
+  input: HostedAppPrincipalHostInput,
+  appToken: string | undefined,
+  mintGrant: string | undefined,
+  sourceProfiles?: unknown,
+): Promise<HostedAppPrincipalContext | null> {
+  if (appToken === undefined || mintGrant === undefined) return null;
+  return await createHostedAppPrincipalContext({
+    ...input,
+    appToken,
+    mintGrant,
+  }, sourceProfiles);
+}
+
 /** Parent-side read-only check. No context, principal or credential is returned. */
 export async function verifyHostedAppPrincipalHandoff(
   input: HostedAppPrincipalHandoffInput,
@@ -204,7 +220,11 @@ async function readHandoff<T extends HostedAppPrincipalHandoffInput>(
       input.nativeToken.trim() === "" || input.appToken === input.nativeToken ||
       !Number.isSafeInteger(input.deadline) || input.deadline <= now
     ) return null;
-    const grant = parseHostedAppMintGrant(input.mintGrant, now);
+    const grant = parseHostedAppMintGrant(
+      input.mintGrant,
+      now,
+      input.expectedInstallationId,
+    );
     if (grant === null) return null;
     const conservative = parseAppTokenNotAfterV1(input.appTokenNotAfter);
     if (conservative === undefined) return null;
@@ -368,11 +388,16 @@ export function composeHostedAppGitHub(
     throw new Error("hosted App principal context unavailable");
   }
   const repository = Object.freeze({ ...input.repository });
+  const selfController = repository.installationId === 0 &&
+    repository.owner === "ubiquity-sentinel" &&
+    repository.name === "sentinel";
   if (
-    repository.owner !== "ubiquity" ||
-    !value.source.targets.includes(`${repository.owner}/${repository.name}`) ||
-    (repository.installationId !== value.grant.installationId &&
-      !(repository.name === "sentinel" && repository.installationId === 0))
+    !selfController &&
+    (repository.owner !== "ubiquity" ||
+      !value.source.targets.includes(
+        `${repository.owner}/${repository.name}`,
+      ) ||
+      repository.installationId !== value.grant.installationId)
   ) throw new Error("hosted App principal target unavailable");
   const { host } = value;
   // Explicit final assignments defeat even a JavaScript caller that bypasses

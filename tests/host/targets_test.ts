@@ -46,20 +46,22 @@ Deno.test("targets: the setting file is a protected path", () => {
 
 Deno.test("targets: only a bounded, duplicate-free slug array is accepted", () => {
   assert.deepEqual(
-    parseTargetSlugsV1(["ubiquity/sentinel"]).map((entry) => entry.slug),
-    ["ubiquity/sentinel"],
+    parseTargetSlugsV1(["ubiquity-sentinel/sentinel"]).map((entry) =>
+      entry.slug
+    ),
+    ["ubiquity-sentinel/sentinel"],
   );
   const rejected: unknown[] = [
     [],
     {},
-    "ubiquity/sentinel",
+    "ubiquity-sentinel/sentinel",
     [""],
     ["sentinel"],
     ["/sentinel"],
     ["ubiquity/"],
-    ["ubiquity/sentinel/extra"],
-    ["ubiquity/sentinel", "Ubiquity/Sentinel"],
-    ["ubiquity/sentinel", "ubiquity/sentinel"],
+    ["ubiquity-sentinel/sentinel/extra"],
+    ["ubiquity-sentinel/sentinel", "ubiquity-sentinel/Sentinel"],
+    ["ubiquity-sentinel/sentinel", "ubiquity-sentinel/sentinel"],
     [1],
     [null],
     Array.from(
@@ -94,19 +96,21 @@ Deno.test("targets: an unreadable or malformed setting yields no targets", async
   );
   assert.deepEqual(
     await readTargetSlugsV1({
-      readFile: () => Promise.resolve('["ubiquity/sentinel"]'),
+      readFile: () => Promise.resolve('["ubiquity-sentinel/sentinel"]'),
     }),
-    [slug("ubiquity", "sentinel")],
+    [slug("ubiquity-sentinel", "sentinel")],
   );
   assert.deepEqual(
     await readTargetSlugsV1({
       root: ".",
       readFile: (path) =>
         Promise.resolve(
-          path === `./${TARGETS_FILE_NAME}` ? '["ubiquity/sentinel"]' : "[]",
+          path === `./${TARGETS_FILE_NAME}`
+            ? '["ubiquity-sentinel/sentinel"]'
+            : "[]",
         ),
     }),
-    [slug("ubiquity", "sentinel")],
+    [slug("ubiquity-sentinel", "sentinel")],
   );
 });
 
@@ -134,7 +138,8 @@ Deno.test("targets: a slug can only change identity and base branch", () => {
 Deno.test("targets: a target whose default branch is unavailable is skipped", async () => {
   const loaded = await loadTargetConfigsV1({
     template: TEMPLATE,
-    readFile: () => Promise.resolve('["ubiquity/sentinel", "ubiquity/other"]'),
+    readFile: () =>
+      Promise.resolve('["ubiquity-sentinel/sentinel", "ubiquity/other"]'),
     resolveDefaultBranch: (target) =>
       Promise.resolve(target.name === "sentinel" ? "development" : null),
   });
@@ -160,8 +165,10 @@ Deno.test("targets: the default branch comes from GitHub, never from the file", 
     },
     token: "token-value",
   });
-  assert.equal(await resolve(slug("ubiquity", "sentinel")), "trunk");
-  assert.deepEqual(seen, ["https://api.github.com/repos/ubiquity/sentinel"]);
+  assert.equal(await resolve(slug("ubiquity-sentinel", "sentinel")), "trunk");
+  assert.deepEqual(seen, [
+    "https://api.github.com/repos/ubiquity-sentinel/sentinel",
+  ]);
 
   const notFound = createDefaultBranchResolver({
     http: () => Promise.resolve(response(404, "{}")),
@@ -173,18 +180,18 @@ Deno.test("targets: the default branch comes from GitHub, never from the file", 
     http: () => Promise.resolve(response(200, "not json")),
     token: "token-value",
   });
-  assert.equal(await garbage(slug("ubiquity", "sentinel")), null);
+  assert.equal(await garbage(slug("ubiquity-sentinel", "sentinel")), null);
 
   const blank = createDefaultBranchResolver({
     http: () =>
       Promise.resolve(response(200, JSON.stringify({ default_branch: " " }))),
     token: "token-value",
   });
-  assert.equal(await blank(slug("ubiquity", "sentinel")), null);
+  assert.equal(await blank(slug("ubiquity-sentinel", "sentinel")), null);
 
   const unavailable = createDefaultBranchResolver({
     http: () => Promise.reject(new Error("offline")),
     token: "token-value",
   });
-  assert.equal(await unavailable(slug("ubiquity", "sentinel")), null);
+  assert.equal(await unavailable(slug("ubiquity-sentinel", "sentinel")), null);
 });

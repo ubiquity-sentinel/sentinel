@@ -134,7 +134,7 @@ export async function runOwnerDevelopmentInstallMain(input?: {
       !Number.isSafeInteger(runId) || runId < 1 ||
       !Number.isSafeInteger(runAttempt) || runAttempt < 1 ||
       Deno.env.get("GITHUB_WORKFLOW_REF") !==
-        "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor"
+        "ubiquity-sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor"
     ) {
       return report(failedResult("startup_identity_rejected"), 1);
     }
@@ -150,7 +150,8 @@ export async function runOwnerDevelopmentInstallMain(input?: {
     if (input?.startupRecovery === true) startupRun = fenceRun;
   }
   const nativeToken = Deno.env.get("GITHUB_TOKEN");
-  const appToken = Deno.env.get("SENTINEL_SUPERVISOR_TOKEN");
+  const appToken = Deno.env.get("SENTINEL_SELF_TOKEN") ??
+    Deno.env.get("SENTINEL_SUPERVISOR_TOKEN");
   if (!isToken(nativeToken) || !isToken(appToken)) {
     return report(failedResult("credentials_unavailable"), 1);
   }

@@ -173,7 +173,7 @@ Deno.test(
             threadId: "thread-1",
             turnId: session.turnId,
             fromModel: "gpt-reserve",
-            toModel: "gpt-5.4",
+            toModel: "gpt-reserve",
             reason: "capacity",
           });
         } else {
@@ -664,7 +664,7 @@ Deno.test(
 );
 
 Deno.test(
-  "structured review contract: the submitted guidance carries the vendored upstream Codex review rubric",
+  "structured review contract: native mode owns the rubric without a caller copy or attached schema",
   async () => {
     const session = new ScriptedCodexSession();
     session.plan = (scripted) => {
@@ -678,21 +678,81 @@ Deno.test(
     assert.equal(outcome.status, "clean");
     const guidance = submittedGuidance(session);
     for (const phrase of RUBRIC_PHRASES) {
-      contains(
-        guidance,
-        phrase,
-        "the submitted guidance must carry the authentic upstream rubric text",
-      );
+      assert.equal(guidance.includes(phrase), false);
     }
-    contains(
-      guidance,
-      "The rubric's output-format section is superseded by the harness output schema",
-      "the base instructions must state the harness output-schema override",
-    );
-    contains(
-      guidance,
-      "the harness output schema attached to this turn supersedes the rubric's output-format section",
-      "the developer instructions must state the harness output-schema override",
-    );
+    const thread = session.params[1] as Record<string, unknown>;
+    assert.equal(Object.hasOwn(thread, "baseInstructions"), false);
+    assert.equal(Object.hasOwn(thread, "developerInstructions"), false);
+    contains(guidance, "native Codex review mode");
+    contains(guidance, "not a protocol-enforced output schema");
   },
 );
+
+Deno.test("reviewer: native entry, returned thread and strict envelope are mandatory", async (t) => {
+  for (
+    const variant of [
+      "missing-entry",
+      "wrong-thread",
+      "ordinary-message",
+      "prose",
+      "duplicate-envelope",
+      "contradictory-findings",
+    ] as const
+  ) {
+    await t.step(variant, async () => {
+      const session = new ScriptedCodexSession();
+      if (variant === "missing-entry") session.nativeEntry = false;
+      if (variant === "wrong-thread") {
+        session.turnResponse = {
+          turn: { id: "turn-1" },
+          reviewThreadId: "foreign",
+        };
+      }
+      session.plan = (scripted) => {
+        if (variant === "ordinary-message") {
+          scripted.emit("item/completed", {
+            threadId: "thread-1",
+            turnId: scripted.turnId,
+            item: {
+              type: "agentMessage",
+              id: "generic",
+              text: JSON.stringify(CLEAN_RESULT),
+            },
+          });
+        } else {
+          const envelope = "<SENTINEL_NATIVE_REVIEW_V1>" +
+            JSON.stringify({
+              binding: scripted.nativeBinding,
+              result: CLEAN_RESULT,
+            }) + "</SENTINEL_NATIVE_REVIEW_V1>";
+          const text = variant === "prose"
+            ? "Looks good"
+            : variant === "duplicate-envelope"
+            ? envelope + envelope
+            : variant === "contradictory-findings"
+            ? envelope +
+              "\n\nReview comment:\n\n- [P0] Undisclosed defect — /tmp/sentinel-review-checkout/account.ts:1-1"
+            : JSON.stringify(CLEAN_RESULT);
+          scripted.emit(
+            "item/completed",
+            agentMessage(scripted.turnId, "native-exit", text),
+          );
+        }
+        scripted.emit("turn/completed", turnCompleted(scripted.turnId));
+      };
+      const reviewer = makeReviewer(session);
+      const prepared = await reviewer.prepare(
+        prepareRequest(await snapshotFixture()),
+      );
+      if (!prepared.ok) assert.fail(prepared.error.detail);
+      try {
+        const outcome = await prepared.value.start();
+        assert.ok(!outcome.ok || outcome.value.status === "unavailable");
+        assert.equal(session.turnStarts(), 1);
+        assert.equal(session.sent.includes("turn/start"), false);
+      } finally {
+        await prepared.value.close();
+      }
+    });
+  }
+});

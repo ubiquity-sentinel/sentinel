@@ -1,5 +1,6 @@
 /** Hosted actions-target-cycles responsibility. */
 import type { GitSha } from "../contracts/brands.ts";
+import { HOSTED_CONTROLLER_REMOTE } from "../contracts/hosted-controller-deployment.ts";
 import type {
   Clock,
   GitHubCooldownGateV1,
@@ -29,7 +30,7 @@ import type { TargetSlugV1 } from "./targets.ts";
 import type { ModelRouteV1 } from "./model-route.ts";
 import type { CiEvidenceReaderV1 } from "../repair/ci-evidence-types.ts";
 
-export const REMOTE_URL = "https://github.com/ubiquity/sentinel.git";
+export const REMOTE_URL = HOSTED_CONTROLLER_REMOTE;
 
 /**
  * Public base URL of the primary gateway route. The trusted route resolver
@@ -112,16 +113,24 @@ export function scopeTargetConfigV1(
   config: RepositoryConfigV1,
   selfRepository: RepositoryIdentityV1,
   appInstallationId: number,
+  options: { issueOnly?: boolean } = {},
 ): RepositoryConfigV1 {
   const installationId = config.repository.owner === selfRepository.owner &&
       config.repository.name === selfRepository.name
     ? selfRepository.installationId
     : appInstallationId;
-  if (config.repository.installationId === installationId) return config;
-  return {
-    ...config,
-    repository: { ...config.repository, installationId },
-  };
+  const scoped = config.repository.installationId === installationId
+    ? config
+    : {
+      ...config,
+      repository: { ...config.repository, installationId },
+    };
+  // An issue-only repair host reads every target through the GitHub adapter;
+  // the gateway adapter belongs to the plan/cell path, which composes its own
+  // incident source.
+  return options.issueOnly === true && scoped.adapter.kind === "gateway"
+    ? { ...scoped, adapter: { kind: "github" } }
+    : scoped;
 }
 
 /**
@@ -396,6 +405,8 @@ export function childRunDeadlineV1(
 export interface ActionsRepairHostDepsV1 {
   /** Raw private publisher stdin; decoded only after the saved native execution matches. */
   trustedStdin?: string;
+  /** Ordinary hosted repair reads GitHub issues only; gateway adapters are scoped to GitHub. */
+  issueOnly?: boolean;
   /** Approved private persistence/cache/replay policy; absence keeps capture unavailable. */
   gateway?: import("./gateway-capabilities.ts").TrustedGatewayRuntimeV1;
   /** Native job role selected by the fixed matrix executable, never a product flag. */

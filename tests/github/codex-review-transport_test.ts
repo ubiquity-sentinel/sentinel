@@ -29,6 +29,7 @@ import {
   onlyReview,
   OP_KEY,
   oversizedFindingsResult,
+  OWNER_RUN_ID,
   PR,
   PROVIDER,
   readyJournal,
@@ -39,6 +40,116 @@ import {
   submission,
   withRealGitRange,
 } from "./codex-review-transport-helpers.ts";
+
+Deno.test(
+  "transport: failed review terminals retain only exact sanitized diagnostics after unavailable publication",
+  async () => {
+    const rawDetail = "Bearer diagnostic-secret https://private.invalid/raw";
+    const cases = [
+      {
+        error: {
+          message: rawDetail,
+          additionalDetails: rawDetail,
+          codexErrorInfo: {
+            responseTooManyFailedAttempts: { httpStatusCode: 200 },
+          },
+        },
+        errorCode: "model_response_too_many_failed_attempts",
+        httpStatusCode: 200,
+        duplicate: false,
+      },
+      {
+        error: { message: `${rawDetail} HTTP 429` },
+        errorCode: "model_unknown",
+        httpStatusCode: null,
+        duplicate: true,
+      },
+    ];
+    await withRealGitRange(async ({ base, head, snapshot }) => {
+      for (const item of cases) {
+        const session = new RecordingSession();
+        const register = session.onNotification.bind(session);
+        session.onNotification = (handler) =>
+          register((event) => {
+            if (event.method !== "turn/completed") {
+              handler(event);
+              return;
+            }
+            const terminal = {
+              id: session.turnId,
+              status: "failed",
+              durationMs: 12.9,
+              error: item.error,
+            };
+            // These events all precede the turn/start acknowledgement. Foreign
+            // terminals cannot supply diagnostics for this review.
+            handler({
+              method: "turn/completed",
+              params: { threadId: "foreign-thread", turn: terminal },
+            });
+            handler({
+              method: "turn/completed",
+              params: {
+                threadId: session.threadId,
+                turn: { ...terminal, id: "foreign-turn" },
+              },
+            });
+            const exact = {
+              method: "turn/completed",
+              params: { threadId: session.threadId, turn: terminal },
+            };
+            handler(exact);
+            if (item.duplicate) handler(exact);
+          });
+        const h = makeHarness({ session, snapshot });
+        const lines: unknown[][] = [];
+        const originalLog = console.log;
+        console.log = (...args: unknown[]) => lines.push(args);
+        try {
+          const submitted = await h.transport.submitReview(
+            submission({ expectedBase: base, expectedHead: head }),
+          );
+          assert.equal(submitted.ok, true);
+          await settle(h.transport);
+        } finally {
+          console.log = originalLog;
+        }
+        const journal = await parseReviewJournalBody(onlyReview(h.store).body!);
+        assert.equal(journal.phase, "ready");
+        if (journal.phase !== "ready") assert.fail("expected ready journal");
+        assert.equal(journal.result.verdict, "unavailable");
+        assert.equal(journal.execution, null);
+        assert.equal(session.turnStarts(), 1);
+        assert.equal(session.closed, 1);
+        assert.equal(h.store.submits, 1);
+        assert.equal(lines.length, 1, "one exact terminal advisory survives");
+        assert.deepEqual(JSON.parse(lines[0][0] as string), {
+          event: "sentinel_review_terminal",
+          ownerRunId: OWNER_RUN_ID,
+          requestId: REQUEST_ID,
+          invocationId: `review-invocation-${OP_KEY}`,
+          threadId: session.threadId,
+          turnId: session.turnId,
+          terminalStatus: "failed",
+          durationMs: 12,
+          errorPresent: true,
+          errorCode: item.errorCode,
+          httpStatusCode: item.httpStatusCode,
+        });
+        assert.equal(JSON.stringify(lines).includes(rawDetail), false);
+        assert.equal(JSON.stringify(journal).includes(rawDetail), false);
+        const observed = await h.freshTransport().readReview({
+          operationKey: OP_KEY,
+          requestId: REQUEST_ID,
+          prNumber: PR,
+        });
+        assert.equal(observed.ok, true);
+        if (observed.ok) assert.equal(observed.value.status, "unavailable");
+        assert.equal(session.turnStarts(), 1, "observation starts no new turn");
+      }
+    });
+  },
+);
 
 Deno.test(
   "transport: real Git snapshot and recording session publish one exact clean COMMENT",
@@ -62,7 +173,7 @@ Deno.test(
       assert.equal(h.store.creates, 1);
       assert.equal(
         h.store.requests.filter((entry) =>
-          entry === "POST /repos/ubiquity/sentinel/pulls/1/reviews"
+          entry === "POST /repos/ubiquity-sentinel/sentinel/pulls/1/reviews"
         ).length,
         1,
         "exactly one review object is created",
@@ -100,7 +211,7 @@ Deno.test(
 );
 
 Deno.test(
-  "transport: configured review model identity is durable across the review handoff",
+  "transport: native review lifecycle is durable without caller model selection",
   async () => {
     const configured = "route-selected-review-model";
     await withRealGitRange(async ({ base, head, snapshot }) => {
@@ -118,25 +229,25 @@ Deno.test(
       // The submitted thread and turn bind the configured model, never the
       // omitted-caller default literal.
       const threadParams = session.params[1] as Record<string, unknown>;
-      assert.equal(threadParams.model, configured);
-      assert.equal(threadParams.modelProvider, PROVIDER);
+      assert.equal(threadParams.model, undefined);
+      assert.equal(threadParams.modelProvider, undefined);
       assert.equal(
         (threadParams.config as Record<string, unknown>).review_model,
-        configured,
+        undefined,
       );
       const turnParams = session.params[2] as Record<string, unknown>;
-      assert.equal(turnParams.model, configured);
-      assert.equal(turnParams.effort, "max");
+      assert.equal(turnParams.model, undefined);
+      assert.equal(turnParams.effort, undefined);
 
-      // The durable journal round-trips the exact configured identity.
+      // Thread defaults never claim actual native reviewer identity.
       const journal = await parseReviewJournalBody(review.body ?? "");
       assert.equal(journal.phase, "ready");
       if (journal.phase === "ready") {
-        assert.equal(journal.execution?.model, configured);
+        assert.equal(journal.execution?.model, null);
         assert.equal(journal.execution?.submittedProvider, PROVIDER);
-        assert.equal(journal.execution?.reasoning, "max");
-        assert.equal(journal.execution?.actual.observedModel, configured);
-        assert.equal(journal.execution?.actual.observedReasoning, "max");
+        assert.equal(journal.execution?.reasoning, null);
+        assert.equal(journal.execution?.actual.observedModel, null);
+        assert.equal(journal.execution?.actual.observedReasoning, null);
       }
 
       // A fresh transport instance still observes the durable completion.

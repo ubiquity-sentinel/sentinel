@@ -457,7 +457,9 @@ export abstract class GitHubReviewTransportJournal
     }
     const execution = journal.execution;
     if (
-      execution === null || execution.actual.terminalOrigin !== "runtime" ||
+      execution === null || execution.nativeReview?.mode !== "review/start" ||
+      execution.actual.evidenceKind !== "native-review" ||
+      execution.actual.terminalOrigin !== "runtime" ||
       execution.actual.observedTerminalStatus !== "completed"
     ) {
       return {

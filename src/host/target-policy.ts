@@ -61,6 +61,33 @@ const GATEWAY_PROTECTED_PATHS = [
   "src/codex/supervisor-secret.ts",
 ] as const;
 
+const PASSPORT_PROTECTED_PATHS = [
+  ".env",
+  ".npmrc",
+  "AGENTS.md",
+  "docs/DECISIONS.md",
+  "docs/CLOUDFLARE.md",
+  ".github/workflows/",
+  "package.json",
+  "bun.lock",
+  "bunfig.toml",
+  "deno.json",
+  "deno.lock",
+  "tsconfig.json",
+  "tsconfig.worker.json",
+  "wrangler.jsonc",
+  "worker-configuration.d.ts",
+  "scripts/",
+  "kv-service/",
+] as const;
+
+export function isPassportTarget(
+  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
+): boolean {
+  return repository.owner.toLowerCase() === "ubiquity" &&
+    repository.name.toLowerCase() === "passport.ubq.fi";
+}
+
 /**
  * Select only a host-authored policy for the exact repository identity. The
  * existing trusted deployment template remains authoritative for Sentinel and
@@ -71,6 +98,30 @@ export function selectTrustedTargetPolicyV1(
   template: RepositoryConfigV1,
   repository: Pick<RepositoryIdentityV1, "owner" | "name">,
 ): TargetPolicyV1 {
+  if (isPassportTarget(repository)) {
+    // The named native gate includes isolated Deno fixtures, Bun and Worker
+    // tests. Generated types and both deployment dry-runs remain required CI
+    // gates. Passport is issue-only: this does not enable gateway captures.
+    const verify = asCommandId("passport_verify");
+    return {
+      adapter: { kind: "github" },
+      commands: { test: verify, replay: verify },
+      commandRegistry: parseCommandRegistryV1({
+        version: "v1",
+        commands: {
+          passport_verify: {
+            executable: "bun",
+            args: ["--no-env-file", "run", "check"],
+            maxDurationMs: 1_800_000,
+            maxOutputBytes: 4_194_304,
+          },
+        },
+      }),
+      protectedPaths: [
+        ...new Set([...template.protectedPaths, ...PASSPORT_PROTECTED_PATHS]),
+      ],
+    };
+  }
   if (
     repository.owner.toLowerCase() !== "ubiquity" ||
     repository.name.toLowerCase() !== "ai.ubq.fi"

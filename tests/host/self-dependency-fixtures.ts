@@ -71,7 +71,7 @@ export async function selfDependencyRig() {
     ...modelRequest(),
     base,
     repository: {
-      owner: "ubiquity",
+      owner: "ubiquity-sentinel",
       name: "sentinel",
       installationId: 155687488,
     },

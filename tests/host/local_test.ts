@@ -8,7 +8,7 @@ import {
 
 Deno.test("local repository config parses with fixed local scope", () => {
   const config = createLocalRepositoryConfig();
-  assert.equal(config.repository.owner, "ubiquity");
+  assert.equal(config.repository.owner, "ubiquity-sentinel");
   assert.equal(config.repository.name, "sentinel");
   assert.equal(config.repository.installationId, 0);
   assert.equal(config.adapter.kind, "github");

@@ -8,6 +8,7 @@ import {
   decideQueuePolicy,
   hasQueueIntentNamespace,
   isProvenQueueDequeueRemoval,
+  isQueueHeld,
 } from "./hosted-autonomy-queue-policy.ts";
 import {
   parseQueueIntent,
@@ -21,6 +22,8 @@ import {
 } from "./hosted-autonomy-queue-writer.ts";
 import { submitQueueAdmission } from "./hosted-autonomy-queue-submit.ts";
 import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
+import { acknowledgeBaseRefresh } from "../src/repair/loop-base-refresh.ts";
+import { candidatePreservationRef } from "../src/repair/keys.ts";
 
 export interface QueueRecordPass {
   deps: HostedAutonomyDepsV1;
@@ -44,6 +47,42 @@ export async function reconcileQueueRecord(
   const { queue, writer, deps } = input;
   let { record } = input;
   const tag = `queue:${record.id}`;
+  if (isQueueHeld(record) && record.intent?.kind === "base_refresh") {
+    const recovered = await queue.authorization.readPublishedRefreshRecovery?.({
+      snapshot: writer.observed.snapshot,
+      observedHead: writer.observed.head,
+      record,
+      binding: null,
+      queue: input.native,
+      deadline: input.deadline,
+    });
+    if (recovered?.status !== "complete") {
+      writer.actions.push(`${tag}:published_refresh_unavailable`);
+      return ready();
+    }
+    const { candidate, at } = recovered.value;
+    if (
+      candidate.operationKey !== record.intent.key ||
+      candidate.head !== record.intent.resultId ||
+      candidate.base !== record.intent.observedBase ||
+      candidate.ref !== await candidatePreservationRef(
+          record.repository,
+          record.id,
+          record.intent.key,
+        ) ||
+      deps.clock.now() >= input.deadline ||
+      at > deps.clock.now() || at < record.updatedAt
+    ) return stop();
+    const acknowledged = acknowledgeBaseRefresh(
+      record,
+      record.intent,
+      candidate.ref,
+      at,
+    );
+    if (!await writer.update([acknowledged])) return stop();
+    writer.actions.push(`${tag}:published_refresh_acknowledged`);
+    return ready();
+  }
   const saved = await queueIntentBinding(writer.observed.snapshot, record);
   if (hasQueueIntentNamespace(record) && saved === null) {
     writer.actions.push(`${tag}:invalid_intent_owner_action`);

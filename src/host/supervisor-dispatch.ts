@@ -39,8 +39,10 @@
  *    five-minute job for the ordinary dispatch.
  * 6. It then performs the existing dispatch of `supervisor.yml` at
  *    `sentinel-supervisor` with the same `GH_TOKEN` the dispatcher already
- *    holds, whatever recovery did. The process exit code reports the dispatch
- *    outcome (0 accepted, 1 not accepted).
+ *    holds. A queued or in-progress run observed by this pass blocks dispatch
+ *    unless this pass canceled that exact run; an incomplete filtered read can
+ *    never erase the positive observation. The process exit code reports the
+ *    dispatch outcome (0 accepted, 1 not accepted).
  *
  * Capability boundary: the follow step supplies only its SHA/readiness outputs;
  * no App secret, model call, state write or external service. Every read and
@@ -50,6 +52,10 @@
  */
 
 import { type Clock, SystemClock } from "../contracts/ports.ts";
+import {
+  HOSTED_CONTROLLER_DEPLOYMENT,
+  HOSTED_CONTROLLER_REPOSITORY,
+} from "../contracts/hosted-controller-deployment.ts";
 import {
   DEFAULT_HTTP_DEADLINE_MS,
   fetchHttpTransport,
@@ -61,13 +67,14 @@ import {
 import { dispatchFollowedSupervisor } from "./hosted-runtime-follow-dispatch.ts";
 
 /** Exact repository the scheduled dispatcher owns. */
-export const SUPERVISOR_REPOSITORY = "ubiquity/sentinel";
+export const SUPERVISOR_REPOSITORY = HOSTED_CONTROLLER_REPOSITORY;
 /** Exact supervisor workflow file name used by the Actions endpoints. */
 export const SUPERVISOR_WORKFLOW_FILE = "supervisor.yml";
 /** Exact supervisor workflow path every candidate run must match. */
-export const SUPERVISOR_WORKFLOW_PATH = ".github/workflows/supervisor.yml";
+export const SUPERVISOR_WORKFLOW_PATH =
+  HOSTED_CONTROLLER_DEPLOYMENT.supervisorWorkflowPath;
 /** Exact protected ref every candidate run must match. */
-export const SUPERVISOR_REF = "sentinel-supervisor";
+export const SUPERVISOR_REF = HOSTED_CONTROLLER_DEPLOYMENT.supervisorBranch;
 /** Minimum quiet period with no useful transition before a run is stale. */
 export const STALE_OWNER_MS = 30 * 60 * 1000;
 /** Per-page bound used for every workflow-run and job listing page. */
@@ -256,10 +263,13 @@ export async function runSupervisorDispatch(
     ? "incomplete"
     : "none";
 
+  const observedActiveRunIds = scan.observedActiveRunIds.filter((runId) =>
+    runId !== cancelledRunId
+  );
   const dispatched = deps.follow === undefined
     ? await dispatchSupervisor(deps)
     : await dispatchFollowedSupervisor(
-      { ...deps, ...deps.follow },
+      { ...deps, ...deps.follow, observedActiveRunIds },
       () => dispatchSupervisor(deps),
     );
   const didDispatch = dispatched.valid &&
@@ -288,6 +298,8 @@ interface ScanV1 {
   /** The fixed recovery budget stopped the scan; nothing is authorized. */
   budgetExhausted: boolean;
   scannedRuns: number;
+  /** Every queued/in-progress run positively observed by this scan. */
+  observedActiveRunIds: number[];
 }
 
 /**
@@ -303,13 +315,15 @@ async function scanStaleOwners(
   recoveryDeadlineMs: number,
   log: SupervisorLogV1,
 ): Promise<ScanV1> {
+  const runs: SupervisorRunV1[] = [];
+  const observedActiveRunIds = (): number[] => runs.map((run) => run.id);
   const exhausted = (): ScanV1 => ({
     candidates: [],
     incomplete: true,
     budgetExhausted: true,
     scannedRuns: 0,
+    observedActiveRunIds: observedActiveRunIds(),
   });
-  const runs: SupervisorRunV1[] = [];
   for (const status of ["queued", "in_progress"]) {
     const listed = await listAllPages(
       deps,
@@ -327,6 +341,7 @@ async function scanStaleOwners(
         incomplete: true,
         budgetExhausted: false,
         scannedRuns: 0,
+        observedActiveRunIds: observedActiveRunIds(),
       };
     }
     runs.push(...listed.value.items);
@@ -395,6 +410,7 @@ async function scanStaleOwners(
     incomplete,
     budgetExhausted: false,
     scannedRuns: runs.length,
+    observedActiveRunIds: observedActiveRunIds(),
   };
 }
 

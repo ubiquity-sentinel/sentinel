@@ -23,6 +23,7 @@ import {
 } from "./hosted-autonomy-queue-authority.ts";
 import type { HostedAutonomyDepsV1 } from "./hosted-autonomy-types.ts";
 import type { HostedQueueCoordinatorDeps } from "./hosted-autonomy-queue-contracts.ts";
+import { createPublishedRefreshValidator } from "../src/host/published-refresh-validator.ts";
 
 export function createHostedQueueCoordinator(input: {
   state: StateReadView & RepairStateWriter;
@@ -70,6 +71,13 @@ export function createHostedQueueCoordinator(input: {
     ...input,
     clientFor,
     configuration,
+    validatePublishedRefresh: createPublishedRefreshValidator({
+      repository,
+      token: input.token,
+      clock: input.clock,
+      gate,
+      http: input.http ?? fetchHttpTransport(),
+    }),
   });
   return {
     repository,

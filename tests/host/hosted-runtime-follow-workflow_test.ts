@@ -89,6 +89,21 @@ Deno.test("follow workflow uses only the checked-out dispatcher action before fi
         workflow.indexOf("steps:"),
       ),
   );
+  assert.ok(workflow.includes("sentinel_parent_run_id"));
+  assert.ok(workflow.includes("parent supervisor did not complete"));
+  const supervisor = await Deno.readTextFile(
+    ".github/workflows/supervisor.yml",
+  );
+  assert.ok(supervisor.includes("Chain the next dispatcher run"));
+  assert.ok(
+    supervisor.includes(
+      "gh workflow run supervisor-dispatch.yml",
+    ),
+  );
+  assert.ok(
+    supervisor.includes('sentinel_parent_run_id="${{ github.run_id }}"'),
+  );
+  assert.ok(supervisor.includes("actions: write"));
   assert.ok(
     workflow.includes(
       "SENTINEL_FOLLOW_SHA: ${{ steps.follow.outputs.launcher-sha }}",

@@ -56,6 +56,66 @@ export interface RepositoryIdentityV1 {
 
 const REPOSITORY_IDENTITY_KEYS = ["owner", "name", "installationId"] as const;
 
+/** Current canonical Sentinel self identity. */
+export const SENTINEL_SELF_REPOSITORY: Readonly<RepositoryIdentityV1> = Object
+  .freeze({
+    owner: "ubiquity-sentinel",
+    name: "sentinel",
+    installationId: 0,
+  });
+
+/** Retired pre-migration self identity; accepted only for existing state reads. */
+export const RETIRED_SENTINEL_SELF_REPOSITORY: Readonly<RepositoryIdentityV1> =
+  Object.freeze({
+    owner: "ubiquity",
+    name: "sentinel",
+    installationId: 0,
+  });
+
+/**
+ * Normalize the permanently retired pre-migration self identity into the
+ * current organization. Other identities are returned unchanged.
+ */
+export function normalizeRepositoryIdentity(
+  repository: RepositoryIdentityV1,
+): RepositoryIdentityV1 {
+  return repository.owner === RETIRED_SENTINEL_SELF_REPOSITORY.owner &&
+      repository.name === RETIRED_SENTINEL_SELF_REPOSITORY.name &&
+      repository.installationId ===
+        RETIRED_SENTINEL_SELF_REPOSITORY.installationId
+    ? { ...SENTINEL_SELF_REPOSITORY }
+    : repository;
+}
+
+/** The stable internal identity used for derived ids and refs. */
+export function stableRepositoryIdentity(
+  repository: RepositoryIdentityV1,
+): RepositoryIdentityV1 {
+  return repository.owner === SENTINEL_SELF_REPOSITORY.owner &&
+      repository.name === SENTINEL_SELF_REPOSITORY.name &&
+      repository.installationId === SENTINEL_SELF_REPOSITORY.installationId
+    ? { ...RETIRED_SENTINEL_SELF_REPOSITORY }
+    : repository;
+}
+
+/** Recursively replace the current self identity in a digest input. */
+export function stableIdentityValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableIdentityValue);
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.owner === "string" && typeof record.name === "string" &&
+    typeof record.installationId === "number"
+  ) {
+    return stableRepositoryIdentity(record as unknown as RepositoryIdentityV1);
+  }
+  return Object.fromEntries(
+    Object.entries(record).map((
+      [key, item],
+    ) => [key, stableIdentityValue(item)]),
+  );
+}
+
 export function parseRepositoryIdentity(
   input: unknown,
   path: string,
@@ -82,7 +142,7 @@ export function parseRepositoryIdentity(
     obj.installationId,
     `${path}.installationId`,
   );
-  return { owner, name, installationId };
+  return normalizeRepositoryIdentity({ owner, name, installationId });
 }
 
 /**

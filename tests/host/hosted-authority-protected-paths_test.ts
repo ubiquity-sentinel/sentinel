@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
+import { touchesProtected } from "../../src/repair/loop-records.ts";
 import { positiveLifecycle } from "../repair/loop-candidate-fixtures.ts";
 import { makeRig as makeRepairRig } from "../repair/loop-rig.ts";
 import {
@@ -85,6 +86,26 @@ for (
   Deno.test(`hosted authority: maintenance refuses ${path}`, () =>
     assertForbiddenCandidate(path));
 }
+
+Deno.test("hosted authority: native review authority inventory is protected", () => {
+  const protectedPaths = createLocalRepositoryConfig().protectedPaths;
+  for (
+    const path of [
+      "src/github/codex-reviewer.ts",
+      "src/github/reviewer-prepared.ts",
+      "src/github/reviewer-events.ts",
+      "src/github/reviewer-outcome.ts",
+      "src/github/reviewer-session-state.ts",
+      "src/github/journal-metadata.ts",
+      "src/github/review-transport-journal.ts",
+      "src/github/codex-review-transport.ts",
+      "src/github/review-normalize.ts",
+    ]
+  ) assert.equal(touchesProtected(protectedPaths, path), true, path);
+});
+
+Deno.test("hosted authority: native review refuses src/github/codex-reviewer.ts", () =>
+  assertForbiddenCandidate("src/github/codex-reviewer.ts"));
 
 Deno.test("hosted authority: unrelated source and action candidates retain publication", async () => {
   const rig = await makeRepairRig("hosted-authority-control", {

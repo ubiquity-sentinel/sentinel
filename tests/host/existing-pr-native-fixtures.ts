@@ -229,7 +229,7 @@ export async function nativeFixture(
     pullRequest: 7,
     pullNodeId: "PR_7",
     headRepositoryId: "R_target",
-    headRepository: { owner: SELF_REPO.owner, name: repository.name },
+    headRepository: { owner: repository.owner, name: repository.name },
     headRef: branch,
     baseRef: "development",
     author: controls.author,

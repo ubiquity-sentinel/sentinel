@@ -30,6 +30,7 @@ const authorityPaths = [
   "ops/hosted-autonomy-current-recovery.ts",
   "ops/hosted-autonomy-producer-requests.ts",
   "ops/hosted-autonomy-producer-recovery.ts",
+  "src/github/codex-reviewer.ts",
 ];
 
 async function writeFile(repo: string, path: string, text: string) {

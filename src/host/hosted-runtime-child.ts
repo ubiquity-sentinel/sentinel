@@ -44,6 +44,8 @@ export function buildChildEnvironment(
   const path = env.PATH;
   const githubToken = env.GITHUB_TOKEN;
   const appToken = env.SENTINEL_SUPERVISOR_TOKEN;
+  const selfToken = env.SENTINEL_SELF_TOKEN;
+  const selfGrant = env.SENTINEL_SELF_TOKEN_MINT_GRANT;
   const modelToken = env.UOS_AI_TOKEN;
   if (
     !isNonEmptyText(path) || !isNonEmptyText(githubToken) ||
@@ -76,7 +78,17 @@ export function buildChildEnvironment(
     PATH: path,
     GITHUB_TOKEN: githubToken,
     ...(isNonEmptyText(appToken)
-      ? { SENTINEL_SUPERVISOR_TOKEN: appToken }
+      ? {
+        SENTINEL_SUPERVISOR_TOKEN: appToken,
+        ...(isNonEmptyText(selfToken)
+          ? {
+            SENTINEL_SELF_TOKEN: selfToken,
+            ...(selfGrant === undefined
+              ? {}
+              : { SENTINEL_SELF_TOKEN_MINT_GRANT: selfGrant }),
+          }
+          : {}),
+      }
       : {}),
     ...routeEnv,
     UOS_AI_TOKEN: modelToken,
@@ -95,6 +107,12 @@ export function buildChildEnvironment(
   };
   if (isNonEmptyText(appToken)) {
     child.SENTINEL_SUPERVISOR_TOKEN = appToken;
+    if (isNonEmptyText(selfToken)) {
+      child.SENTINEL_SELF_TOKEN = selfToken;
+      if (selfGrant !== undefined) {
+        child.SENTINEL_SELF_TOKEN_MINT_GRANT = selfGrant;
+      }
+    }
   }
   // Optional model-route inputs, forwarded only when non-empty so an unset
   // route keeps the primary gateway behaviour exactly as before. The child's
@@ -107,6 +125,8 @@ export function buildChildEnvironment(
       "SENTINEL_MODEL_FALLBACK",
       "SENTINEL_DEEPSEEK_API_KEY",
       "SENTINEL_APP_INSTALLATION_ID",
+      "SENTINEL_TARGET_INSTALLATION_ID",
+      "SENTINEL_SELF_INSTALLATION_ID",
       "SENTINEL_COOLDOWN_MODE",
     ] as const
   ) {

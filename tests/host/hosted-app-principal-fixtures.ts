@@ -87,13 +87,16 @@ export function principalNativeFixture(
       step(names.runtimeStep, 6, JOB_STARTED + 50, null),
     ],
   };
-  const repository = (id: number, name: string) => ({
-    id,
-    node_id: `R_${id}`,
-    name,
-    full_name: `ubiquity/${name}`,
-    owner: { login: "ubiquity" },
-  });
+  const repository = (id: number, name: string) => {
+    const owner = name === "sentinel" ? "ubiquity-sentinel" : "ubiquity";
+    return {
+      id,
+      node_id: `R_${id}`,
+      name,
+      full_name: `${owner}/${name}`,
+      owner: { login: owner },
+    };
+  };
   const model = {
     attempt: attemptBody({ status: "in_progress", conclusion: null }),
     jobs: [activeJob] as Array<Record<string, unknown>>,
@@ -258,7 +261,7 @@ export async function principalSourceFixture(selfInstalled = false) {
     });
     await Deno.writeTextFile(destination, text);
   };
-  const targetText = '["ubiquity/sentinel","ubiquity/ai.ubq.fi"]\n';
+  const targetText = '["ubiquity-sentinel/sentinel","ubiquity/ai.ubq.fi"]\n';
   await Deno.mkdir(runtime);
   await git(runtime, ["init", "-q"]);
   await write(runtime, "sentinel.targets.json", targetText);
@@ -414,7 +417,11 @@ export async function principalHostFixture(selfInstalled = false) {
     }],
   }));
   const task = workRecord("principal-task", {
-    repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+    repository: {
+      owner: "ubiquity-sentinel",
+      name: "sentinel",
+      installationId: 0,
+    },
   });
   state.repair = parseRepairStateSnapshotV1({
     version: "v1",

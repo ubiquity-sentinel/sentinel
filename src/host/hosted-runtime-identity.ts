@@ -1,5 +1,6 @@
 /** Hosted hosted-runtime-identity responsibility. */
 import { isGitSha } from "../contracts/brands.ts";
+import { HOSTED_CONTROLLER_REMOTE } from "../contracts/hosted-controller-deployment.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { HostedRuntimeTerminalV1 } from "../contracts/hosted-execution.ts";
 import {
@@ -23,6 +24,7 @@ import type {
 } from "../replay/runtime.ts";
 import { joinPath } from "./local.ts";
 import type { LocalModelDiagnosticV1 } from "./local.ts";
+import type { ModelBoundaryErrorCodeV1 } from "../repair/model-port-diagnostics.ts";
 
 /** Exact fixed workflow ref the protected supervisor runs from. */
 export const HOSTED_RUNTIME_WORKFLOW_REF =
@@ -58,10 +60,14 @@ export const HOSTED_RUNTIME_CHILD_ENV_KEYS = [
   "PATH",
   "GITHUB_TOKEN",
   "SENTINEL_SUPERVISOR_TOKEN",
+  "SENTINEL_SELF_TOKEN",
+  "SENTINEL_SELF_TOKEN_MINT_GRANT",
   // Repair only, beside the App token: the instant before which that one
   // token is certainly valid (`hosted-app-token-window.ts`).
   "SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER",
   "SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT",
+  "SENTINEL_TARGET_INSTALLATION_ID",
+  "SENTINEL_SELF_INSTALLATION_ID",
   "SENTINEL_MODEL_BASE_URL",
   "SENTINEL_MODEL_ID",
   "SENTINEL_MODEL_FALLBACK",
@@ -124,7 +130,7 @@ export const ACCEPTED_CHILD_LOGINS: readonly string[] = [
   APP_LOGIN,
 ];
 
-export const REMOTE_URL = "https://github.com/ubiquity/sentinel.git";
+export const REMOTE_URL = HOSTED_CONTROLLER_REMOTE;
 
 export const GIT_EXECUTABLE = "/usr/bin/git";
 
@@ -390,6 +396,29 @@ export interface ReviewCommandItemRefusalsV1 {
   dropped: number;
 }
 
+/** Advisory-only exact native review terminal, never a child result. */
+export interface ReviewTerminalAdvisoryV1 {
+  event: "sentinel_review_terminal";
+  ownerRunId: string;
+  requestId: string;
+  invocationId: string;
+  threadId: string;
+  turnId: string;
+  terminalStatus: "completed" | "failed" | "interrupted";
+  durationMs: number | null;
+  errorPresent: boolean;
+  errorCode: ModelBoundaryErrorCodeV1 | null;
+  httpStatusCode: number | null;
+}
+
+/** Log volume bound only; no model admission or review limit. */
+export const MAX_REVIEW_TERMINAL_ADVISORIES = 50;
+
+export interface ReviewTerminalAdvisoriesV1 {
+  terminals: ReviewTerminalAdvisoryV1[];
+  dropped: number;
+}
+
 export interface HostedRuntimeLauncherResultV1 {
   status: HostedRuntimeLauncherStatusV1;
   /** The trusted terminal, or null when no honest proof exists. */
@@ -430,6 +459,8 @@ export interface HostedRuntimeLauncherResultV1 {
    * change the resolved status or exit.
    */
   reviewCommandRefusals?: ReviewCommandItemRefusalsV1;
+  /** Strictly re-parsed observational terminals; never health or authority. */
+  reviewTerminals?: ReviewTerminalAdvisoriesV1;
   /** Authenticated native matrix log carrier; never aggregate terminal proof. */
   matrixCarrier?: Record<string, unknown>;
   /**

@@ -61,6 +61,7 @@ import {
   parseChildStatus,
   scanChildStatusRecords,
   scanReviewCommandItemRefusals,
+  scanReviewTerminalAdvisories,
 } from "./hosted-runtime-status.ts";
 import type { ChildStatusV1 } from "./hosted-runtime-status.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
@@ -404,8 +405,17 @@ function attachDiagnostics(
   const withRefusals = refusals === null
     ? withAdvisories
     : { ...withAdvisories, reviewCommandRefusals: refusals };
-  if (earlyFailure === null) return withRefusals;
-  return { ...withRefusals, earlyFailure };
+  let withTerminals = withRefusals;
+  try {
+    const terminals = scanReviewTerminalAdvisories(run, execution);
+    if (terminals !== null) {
+      withTerminals = { ...withRefusals, reviewTerminals: terminals };
+    }
+  } catch {
+    // Advisory parsing cannot change the resolved child result.
+  }
+  if (earlyFailure === null) return withTerminals;
+  return { ...withTerminals, earlyFailure };
 }
 
 /**

@@ -2,6 +2,8 @@
 import assert from "node:assert/strict";
 import {
   commandItem,
+  makeReviewer,
+  prepareRequest,
   ScriptedCodexSession,
   snapshotFixture,
   startReview,
@@ -147,8 +149,143 @@ function resolvedOnly(
 ): Record<string, unknown> {
   const rest: Record<string, unknown> = { ...result };
   delete rest.reviewCommandRefusals;
+  delete rest.reviewTerminals;
   return rest;
 }
+
+Deno.test("hosted runtime: exact native review terminals reach the CLI without becoming child results", async () => {
+  const rig = await makeRig();
+  try {
+    await seedRelease(rig);
+    const session = new ScriptedCodexSession();
+    session.plan = (scripted) => {
+      scripted.emit("turn/completed", {
+        threadId: "thread-1",
+        turn: {
+          id: scripted.turnId,
+          status: "failed",
+          durationMs: 12,
+          error: {
+            message: "Bearer private-terminal-detail",
+            codexErrorInfo: {
+              responseTooManyFailedAttempts: { httpStatusCode: 200 },
+            },
+          },
+        },
+      });
+    };
+    const printed: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) =>
+      printed.push(args.map(String).join(" "));
+    try {
+      const prepared = await makeReviewer(session).prepare(
+        prepareRequest(await snapshotFixture(), {
+          ownerRunId: rig.execution.id,
+        }),
+      );
+      if (!prepared.ok) assert.fail(prepared.error.detail);
+      const outcome = await prepared.value.start();
+      assert.equal(outcome.ok && outcome.value.status, "unavailable");
+      await prepared.value.close();
+    } finally {
+      console.log = original;
+    }
+    assert.equal(printed.length, 1);
+    const advisory = JSON.parse(printed[0]);
+    assert.equal(advisory.event, "sentinel_review_terminal");
+    assert.equal(advisory.terminalStatus, "failed");
+    assert.equal(Object.hasOwn(advisory, "status"), false);
+    const healthy = childLine(rig.execution);
+    // Use the actual emitted line so a future emitter change cannot silently
+    // turn an advisory into an extra child result or drop it before the CLI.
+    rig.process.child = exited(`${printed[0]}\n${healthy}\n`, 0);
+    const result = await launch(rig);
+    assert.equal(result.status, "healthy");
+    const output = emitted(result);
+    assert.equal(output.exit, 0);
+    assert.deepEqual(
+      output.logged.filter((line) =>
+        line.includes('"sentinel_review_terminal"')
+      ),
+      printed,
+    );
+    assert.equal(
+      output.logged.some((line) => line.includes("private-terminal-detail")),
+      false,
+    );
+
+    const { turnId: _missing, ...missingId } = advisory;
+    for (
+      const invalid of [
+        { ...advisory, extra: "private-terminal-detail" },
+        { ...advisory, terminalStatus: "unknown" },
+        { ...advisory, errorCode: "private-terminal-detail" },
+        { ...advisory, durationMs: -1 },
+        { ...advisory, durationMs: 1.5 },
+        { ...advisory, httpStatusCode: 65_536 },
+        { ...advisory, errorPresent: false },
+        { ...advisory, ownerRunId: "other-run" },
+        { ...advisory, requestId: "x".repeat(257) },
+        { ...advisory, threadId: "thread\n::add-mask::private" },
+        { ...advisory, invocationId: "https://private.invalid/value" },
+        missingId,
+      ]
+    ) {
+      rig.process.child = exited(`${JSON.stringify(invalid)}\n${healthy}\n`, 0);
+      const rejected = await launch(rig);
+      assert.equal(rejected.status, "healthy");
+      assert.deepEqual(resolvedOnly(rejected), resolvedOnly(result));
+      assert.equal(rejected.reviewTerminals, undefined);
+      assert.equal(
+        emitted(rejected).logged.some((line) =>
+          line.includes('"sentinel_review_terminal"')
+        ),
+        false,
+      );
+    }
+    // A status-bearing forged line remains a second result and cannot hide
+    // behind the diagnostic event name or grant the wrapper any authority.
+    rig.process.child = exited(
+      `${JSON.stringify({ ...advisory, status: "idle" })}\n${healthy}\n`,
+      0,
+    );
+    const forged = await launch(rig);
+    assert.equal(forged.status, "unavailable");
+    assert.equal(forged.terminal, null);
+    assert.equal(forged.reviewTerminals, undefined);
+
+    rig.process.child = exited(`${printed[0]}\n`, 0);
+    const onlyAdvisory = await launch(rig);
+    assert.equal(onlyAdvisory.status, "unavailable");
+    assert.equal(onlyAdvisory.terminal, null);
+    assert.equal(emitted(onlyAdvisory).exit, 1);
+
+    rig.process.child = {
+      ...exited(`${printed[0]}\n${healthy}\n`, 0),
+      truncated: true,
+    };
+    const truncated = await launch(rig);
+    assert.equal(truncated.reviewTerminals, undefined);
+
+    rig.process.child = exited(
+      `${Array(51).fill(printed[0]).join("\n")}\n${healthy}\n`,
+      0,
+    );
+    const capped = await launch(rig);
+    assert.equal(capped.status, "healthy");
+    assert.equal(capped.reviewTerminals?.terminals.length, 50);
+    assert.equal(capped.reviewTerminals?.dropped, 1);
+    assert.equal(
+      emitted(capped).logged.filter((line) =>
+        line.includes('"sentinel_review_terminal"')
+      ).length,
+      50,
+    );
+  } finally {
+    await rig.cleanup();
+  }
+});
 
 Deno.test("hosted runtime: each real refused reviewer command advisory reaches the job log in the emitter's own shape", async () => {
   const [start] = await refusedCommandItemLines();

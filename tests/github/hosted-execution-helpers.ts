@@ -20,12 +20,13 @@ import type {
 } from "../../src/contracts/hosted-supervisor.ts";
 import { parseHostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
 import assert from "node:assert/strict";
+import { CONTROLLER } from "../host/controller-identity-fixture.ts";
 import type { ReleaseRequestV1 } from "../../src/contracts/release.ts";
 import { parseReleaseRequestV1 } from "../../src/contracts/release.ts";
 
 export const API_BASE = "https://api.github.com";
 
-export const REPO = "ubiquity/sentinel";
+export const REPO = CONTROLLER.fullName;
 
 export const LAUNCHER = "1".repeat(40) as GitSha;
 
@@ -155,7 +156,7 @@ export function makeRig(clockAt = OBSERVED): RigV1 {
   const http = new ScriptedHttp();
   const gate = new FakeGate();
   const client = new GitHubApiClient({
-    repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+    repository: CONTROLLER.repository,
     apiBaseUrl: API_BASE,
     http: http.transport,
     auth: {
@@ -201,7 +202,7 @@ export function attemptBody(
   return {
     id: overrides.runId ?? RUN_ID,
     run_attempt: overrides.attempt ?? RUN_ATTEMPT,
-    workflow_id: overrides.workflowId ?? 357012162,
+    workflow_id: overrides.workflowId ?? CONTROLLER.workflowId,
     path: overrides.path ?? ".github/workflows/supervisor.yml",
     head_sha: overrides.headSha ?? LAUNCHER,
     head_branch: overrides.branch ?? "sentinel-supervisor",
@@ -370,7 +371,7 @@ export function requestFixture(
     kind: "release_request",
     id: "release-hosted-1",
     target: {
-      repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+      repository: CONTROLLER.repository,
       environment: "production",
     },
     revision: REVISION,

@@ -59,6 +59,7 @@ import { hostedIssueKey, sameRepository } from "./hosted-autonomy-policy.ts";
 import { refreshFixActivation } from "./hosted-autonomy-refresh-rearm.ts";
 import {
   ciFirstRuntimeProven,
+  ciFirstSelfInstalledRuntimeProven,
   LEGACY_ROUND_REQUIRES_CI_FIRST,
   legacyFinalRoundAdmissible,
 } from "./hosted-autonomy-ci-first.ts";
@@ -208,7 +209,8 @@ export function planConflictReadmissions(
       !legacyFinalRoundAdmissible(
         snapshot,
         record,
-        ciFirstRuntimeProven(installed),
+        ciFirstRuntimeProven(installed) ||
+          ciFirstSelfInstalledRuntimeProven(installed),
       )
     ) {
       onDenied?.({ id: record.id, reason: LEGACY_ROUND_REQUIRES_CI_FIRST });

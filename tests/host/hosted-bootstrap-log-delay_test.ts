@@ -38,7 +38,8 @@ for (
       rig.clock.advance(6_000);
 
       const http = new ScriptedHttp();
-      const attemptPath = "/repos/ubiquity/sentinel/actions/runs/1/attempts/1";
+      const attemptPath =
+        "/repos/ubiquity-sentinel/sentinel/actions/runs/1/attempts/1";
       http.on("GET", attemptPath, () =>
         response(200, {
           id: bootstrap.runId,
@@ -50,8 +51,8 @@ for (
           head_sha: bootstrap.launcherSha,
           status: "completed",
           conclusion: "success",
-          repository: { full_name: "ubiquity/sentinel" },
-          head_repository: { full_name: "ubiquity/sentinel" },
+          repository: { full_name: "ubiquity-sentinel/sentinel" },
+          head_repository: { full_name: "ubiquity-sentinel/sentinel" },
           run_started_at: iso(startedAt),
           updated_at: iso(jobFinishedAt),
         }));
@@ -76,7 +77,7 @@ for (
         ));
       http.on(
         "GET",
-        "/repos/ubiquity/sentinel/actions/jobs/901/logs",
+        "/repos/ubiquity-sentinel/sentinel/actions/jobs/901/logs",
         () =>
           response(302, "", {
             location:
@@ -96,7 +97,11 @@ for (
           ], emittedAt),
         ));
       const client = new HostedSupervisorGitHubClient({
-        repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+        repository: {
+          owner: "ubiquity-sentinel",
+          name: "sentinel",
+          installationId: 0,
+        },
         apiBaseUrl: "https://api.github.com",
         clock: rig.clock,
         auth: {
@@ -128,12 +133,12 @@ for (
         } else {
           http.on(
             "GET",
-            `/repos/ubiquity/sentinel/commits/${newerLauncher}`,
+            `/repos/ubiquity-sentinel/sentinel/commits/${newerLauncher}`,
             () => response(200, { sha: newerLauncher }),
           );
           http.on(
             "GET",
-            `/repos/ubiquity/sentinel/compare/${SUCCESSOR}...${newerLauncher}`,
+            `/repos/ubiquity-sentinel/sentinel/compare/${SUCCESSOR}...${newerLauncher}`,
             () =>
               response(200, {
                 status: "ahead",
@@ -146,7 +151,7 @@ for (
           );
           http.on(
             "GET",
-            `/repos/ubiquity/sentinel/commits/${newerLauncher}/check-runs`,
+            `/repos/ubiquity-sentinel/sentinel/commits/${newerLauncher}/check-runs`,
             () =>
               response(200, {
                 total_count: 1,

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { CONTROLLER } from "./controller-identity-fixture.ts";
 import type {
   HttpRequestV1,
   HttpResponseV1,
@@ -18,11 +19,11 @@ export const STATE = "2".repeat(40);
 const TREE = "3".repeat(40);
 const BLOB = "4".repeat(40);
 export const NOW = Date.parse("2026-10-20T08:00:00Z");
-const ROOT = "/repos/ubiquity/sentinel";
+const ROOT = CONTROLLER.apiPath;
 export const repository = {
   id: 101,
   node_id: "R_sentinel",
-  full_name: "ubiquity/sentinel",
+  full_name: CONTROLLER.fullName,
 };
 
 export function response(
@@ -62,7 +63,7 @@ export function supervisorRun(
   return {
     id,
     run_attempt: 1,
-    workflow_id: 357012162,
+    workflow_id: CONTROLLER.workflowId,
     path: ".github/workflows/supervisor.yml",
     event: "workflow_dispatch",
     head_branch: "sentinel-supervisor",
@@ -105,12 +106,12 @@ export function installation(
     observedAt: NOW,
     outcome,
     ref: "refs/heads/sentinel-supervisor",
-    repository: "ubiquity/sentinel",
+    repository: CONTROLLER.fullName,
     settled: true,
     startedAt: NOW - 1500,
     startupReady: true,
     terminalAt: NOW - 600,
-    workflowId: 357012162,
+    workflowId: CONTROLLER.workflowId,
     workflowPath: ".github/workflows/supervisor.yml",
   });
   return {
@@ -298,7 +299,7 @@ export class FollowFake {
         ? {
           version: "v1",
           kind: "hosted_runtime",
-          id: "ubiquity/sentinel:0:production",
+          id: CONTROLLER.runtimeId,
           activeRevision: this.installed,
           generation: 81,
           lastHealthyProof: null,

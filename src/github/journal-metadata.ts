@@ -49,15 +49,17 @@ export interface ReviewJournalExecutionV1 {
    * `REVIEW_MODEL` is only the omitted-caller default, so a route-selected
    * model round-trips as its own bounded identity (never a hardcoded literal).
    */
-  model: string;
-  reasoning: typeof REVIEW_REASONING;
+  model: string | null;
+  reasoning: typeof REVIEW_REASONING | null;
+  /** Absent only on retained historical generic-turn records. */
+  nativeReview?: { mode: "review/start"; targetDigest: string };
   /** Explicit durable marker: a model start may occur after running readback. */
   startMayOccur: true;
 }
 
 export interface ReviewJournalRuntimeActualV1 {
   /** Request/runtime evidence class — never a backend provider attestation. */
-  evidenceKind: "request-runtime";
+  evidenceKind: "request-runtime" | "native-review";
   provider: string;
   threadId: string;
   turnId: string;
@@ -67,8 +69,14 @@ export interface ReviewJournalRuntimeActualV1 {
    * Bounded observed runtime model id, exactly equal to the submitted
    * `execution.model`; the default literal is never assumed.
    */
-  observedModel: string;
-  observedReasoning: typeof REVIEW_REASONING;
+  observedModel: string | null;
+  observedReasoning: typeof REVIEW_REASONING | null;
+  nativeReview?: {
+    targetDigest: string;
+    reviewThreadId: string;
+    enteredItemId: string | null;
+    exitedItemId: string | null;
+  };
   durationMs: number;
   outputChars: number;
 }
@@ -336,7 +344,12 @@ export function parseExecution(
   path: string,
 ): ReviewJournalExecutionV1 {
   const obj = expectRecord(input, path);
-  expectJournalExactKeys(obj, EXECUTION_KEYS, path);
+  expectJournalExactKeysWithOptional(
+    obj,
+    EXECUTION_KEYS,
+    ["nativeReview"],
+    path,
+  );
   return parseExecutionFields(obj, path);
 }
 
@@ -344,8 +357,31 @@ export function parseExecutionFields(
   obj: Record<string, unknown>,
   path: string,
 ): ReviewJournalExecutionV1 {
-  const model = expectModelId(obj.model, `${path}.model`);
-  const reasoning = expectEnum(
+  let nativeReview: ReviewJournalExecutionV1["nativeReview"];
+  if (Object.hasOwn(obj, "nativeReview")) {
+    const native = expectRecord(obj.nativeReview, `${path}.nativeReview`);
+    expectJournalExactKeys(
+      native,
+      ["mode", "targetDigest"],
+      `${path}.nativeReview`,
+    );
+    nativeReview = {
+      mode: expectEnum(
+        native.mode,
+        ["review/start"],
+        `${path}.nativeReview.mode`,
+      ),
+      targetDigest: expectSha256Hex(
+        native.targetDigest,
+        `${path}.nativeReview.targetDigest`,
+      ),
+    };
+    if (obj.model !== null || obj.reasoning !== null) {
+      fail(path, "invalid_value", "native reviewer selection belongs to Codex");
+    }
+  }
+  const model = nativeReview ? null : expectModelId(obj.model, `${path}.model`);
+  const reasoning = nativeReview ? null : expectEnum(
     obj.reasoning,
     [REVIEW_REASONING],
     `${path}.reasoning`,
@@ -380,6 +416,7 @@ export function parseExecutionFields(
     ),
     model,
     reasoning,
+    ...(nativeReview ? { nativeReview } : {}),
     startMayOccur,
   };
 }
@@ -389,7 +426,9 @@ export function parseReadyExecution(
   path: string,
 ): ReviewJournalReadyExecutionV1 {
   const obj = expectRecord(input, path);
-  expectJournalExactKeys(obj, READY_EXECUTION_KEYS, path);
+  expectJournalExactKeysWithOptional(obj, READY_EXECUTION_KEYS, [
+    "nativeReview",
+  ], path);
   const execution = parseExecutionFields(obj, path);
   const turnId = expectBoundedId(
     obj.turnId,
@@ -402,6 +441,9 @@ export function parseReadyExecution(
     MaxText.recordId,
   );
   const actual = parseActual(obj.actual, `${path}.actual`, execution, turnId);
+  if (
+    execution.nativeReview && actual.nativeReview?.exitedItemId !== resultId
+  ) fail(path, "invalid_value", "native exit result identity mismatch");
   return { ...execution, turnId, resultId, actual };
 }
 
@@ -412,10 +454,10 @@ export function parseActual(
   turnId: string,
 ): ReviewJournalRuntimeActualV1 {
   const obj = expectRecord(input, path);
-  expectJournalExactKeys(obj, ACTUAL_KEYS, path);
+  expectJournalExactKeysWithOptional(obj, ACTUAL_KEYS, ["nativeReview"], path);
   const evidenceKind = expectEnum(
     obj.evidenceKind,
-    ["request-runtime"],
+    ["request-runtime", "native-review"],
     `${path}.evidenceKind`,
   );
   const provider = expectBoundedId(
@@ -480,11 +522,51 @@ export function parseActual(
       "host timeout carries no observed runtime terminal",
     );
   }
-  const observedModel = expectModelId(
+  let nativeReview: ReviewJournalRuntimeActualV1["nativeReview"];
+  if (execution.nativeReview) {
+    const native = expectRecord(obj.nativeReview, `${path}.nativeReview`);
+    expectJournalExactKeys(native, [
+      "targetDigest",
+      "reviewThreadId",
+      "enteredItemId",
+      "exitedItemId",
+    ], `${path}.nativeReview`);
+    nativeReview = {
+      targetDigest: expectSha256Hex(
+        native.targetDigest,
+        `${path}.nativeReview.targetDigest`,
+      ),
+      reviewThreadId: expectBoundedId(
+        native.reviewThreadId,
+        `${path}.nativeReview.reviewThreadId`,
+        MaxText.recordId,
+      ),
+      enteredItemId: expectBoundedId(
+        native.enteredItemId,
+        `${path}.nativeReview.enteredItemId`,
+        MaxText.recordId,
+      ),
+      exitedItemId: expectBoundedId(
+        native.exitedItemId,
+        `${path}.nativeReview.exitedItemId`,
+        MaxText.recordId,
+      ),
+    };
+    if (
+      evidenceKind !== "native-review" ||
+      nativeReview.targetDigest !== execution.nativeReview.targetDigest ||
+      nativeReview.reviewThreadId !== threadId ||
+      nativeReview.enteredItemId === nativeReview.exitedItemId ||
+      obj.observedModel !== null || obj.observedReasoning !== null
+    ) fail(path, "invalid_value", "native lifecycle evidence mismatch");
+  } else if (
+    evidenceKind !== "request-runtime" || Object.hasOwn(obj, "nativeReview")
+  ) fail(path, "invalid_value", "legacy evidence cannot carry native proof");
+  const observedModel = nativeReview ? null : expectModelId(
     obj.observedModel,
     `${path}.observedModel`,
   );
-  const observedReasoning = expectEnum(
+  const observedReasoning = nativeReview ? null : expectEnum(
     obj.observedReasoning,
     [REVIEW_REASONING],
     `${path}.observedReasoning`,
@@ -512,6 +594,7 @@ export function parseActual(
     observedTerminalStatus,
     observedModel,
     observedReasoning,
+    ...(nativeReview ? { nativeReview } : {}),
     durationMs: expectCount(obj.durationMs, `${path}.durationMs`),
     outputChars: expectCount(obj.outputChars, `${path}.outputChars`),
   };

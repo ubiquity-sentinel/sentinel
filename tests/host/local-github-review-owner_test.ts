@@ -69,7 +69,7 @@ Deno.test("local GitHub review owner: separate supplied native resolver reaches 
     const journal = {
       version: "v1" as const,
       phase: "intent" as const,
-      repository: { owner: "ubiquity", name: "sentinel" },
+      repository: { owner: "ubiquity-sentinel", name: "sentinel" },
       prNumber: 1,
       expectedHead: "c".repeat(40) as GitSha,
       expectedBase: "d".repeat(40) as GitSha,
@@ -135,16 +135,17 @@ Deno.test("local GitHub review owner: explicit self capability reaches native re
     ] as const
   ) {
     const request = mergeRequest();
-    const repository = { owner: "ubiquity", name, installationId };
+    const owner = name === "sentinel" ? "ubiquity-sentinel" : "ubiquity";
+    const repository = { owner, name, installationId };
     request.review = { ...request.review, repository };
     const input = localInput();
     // Empty state and rules plus a complete native non-membership observation
     // let the ordinary merge reach its own pull-request lookup.
     input.state.repair = seededSnapshot([]);
     const requests: string[] = [];
-    const rulesPath = `/repos/ubiquity/${name}/rules/branches/development`;
+    const rulesPath = `/repos/${owner}/${name}/rules/branches/development`;
     const pullPath =
-      `/repos/ubiquity/${name}/pulls/${request.pullRequestNumber}`;
+      `/repos/${owner}/${name}/pulls/${request.pullRequestNumber}`;
     const port = composeLocalGitHub({
       ...input,
       repository,

@@ -11,12 +11,17 @@
 
 import { asWorkItemId } from "../contracts/brands.ts";
 import type { GitSha, WorkItemId } from "../contracts/brands.ts";
-import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import {
+  type RepositoryIdentityV1,
+  stableIdentityValue,
+  stableRepositoryIdentity,
+} from "../contracts/shared.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 
 /** Repository identity part of an id: exact owner/name, no normalization. */
 function repositorySlug(repository: RepositoryIdentityV1): string {
-  return `${repository.owner}-${repository.name}`;
+  const stable = stableRepositoryIdentity(repository);
+  return `${stable.owner}-${stable.name}`;
 }
 
 /** Deterministic work item id for one incident fingerprint. */
@@ -196,9 +201,10 @@ export function reviewEvidenceRef(receiptId: string): string {
  * values are always hex strings and are never echoed into public payloads.
  */
 export async function deriveDigest(value: unknown): Promise<string> {
-  const canonical = typeof value === "object" && value !== null
-    ? canonicalStringify(value)
-    : String(value);
+  const stable = stableIdentityValue(value);
+  const canonical = typeof stable === "object" && stable !== null
+    ? canonicalStringify(stable)
+    : String(stable);
   const bytes = new TextEncoder().encode(canonical);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0"))

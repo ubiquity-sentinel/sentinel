@@ -349,6 +349,8 @@ export async function normalizeReviewObservation(
     return portOk(await unavailable(service.resultId, service.summary));
   }
   if (
+    execution.nativeReview?.mode !== "review/start" ||
+    execution.actual.evidenceKind !== "native-review" ||
     execution.actual.terminalOrigin !== "runtime" ||
     execution.actual.observedTerminalStatus !== "completed"
   ) {

@@ -77,8 +77,8 @@ for await (const part of Deno.stdin.readable) {
         thread: { id: "synthetic-thread" }, model: "codex-auto-review",
         modelProvider: "uos", reasoningEffort: "max",
         activePermissionProfile: { id: "sentinel-review" }
-      } : frame.method === "turn/start" ? {
-        turn: { id: "synthetic-turn", status: "inProgress" }
+      } : frame.method === "review/start" ? {
+        turn: { id: "synthetic-turn", status: "inProgress" }, reviewThreadId: "synthetic-thread"
       } : { userAgent: "synthetic-reviewer" };
       console.log(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result }));
     }
@@ -113,7 +113,8 @@ function inputFor(rig: Awaited<ReturnType<typeof makeRig>>) {
 function runtimeFiles(extra: Record<string, string> = {}) {
   return {
     ".gitignore": ".sentinel-actions-state/\n.sentinel/\n",
-    "sentinel.targets.json": '["ubiquity/sentinel","ubiquity/ai.ubq.fi"]\n',
+    "sentinel.targets.json":
+      '["ubiquity-sentinel/sentinel","ubiquity/ai.ubq.fi"]\n',
     ...extra,
   };
 }
@@ -314,7 +315,7 @@ Deno.kill(Deno.pid, "SIGKILL");
       rig.execution.id,
     );
     assert.equal(record.carrier.preparedExecution?.submittedProvider, "uos");
-    assert.equal(record.carrier.preparedExecution?.model, "codex-auto-review");
+    assert.equal(record.carrier.preparedExecution?.model, null);
     const finish = record.carrier.settledAt + 1000;
     const native = nativeRig(finish + 1000);
     const begun = record.execution.createdAt;
@@ -367,7 +368,7 @@ Deno.kill(Deno.pid, "SIGKILL");
   }
 });
 
-Deno.test("review owner host: missing targets, invalid model and exact private path substitutions refuse before launch", async (test) => {
+Deno.test("review owner host: invalid private paths refuse while obsolete model selection is ignored", async (test) => {
   for (
     const fault of [
       "missing-targets",
@@ -425,9 +426,14 @@ Deno.test("review owner host: missing targets, invalid model and exact private p
           }
         }
         const result = await runFixtureReviewOwnerHost(inputFor(rig));
-        assert.equal(result.status, "unavailable");
-        assert.equal(result.terminal, null);
-        assert.equal(rig.process.childCalls().length, 0);
+        if (fault === "invalid-model") {
+          assert.equal(result.status, "healthy");
+          assert.equal(rig.process.childCalls().length, 1);
+        } else {
+          assert.equal(result.status, "unavailable");
+          assert.equal(result.terminal, null);
+          assert.equal(rig.process.childCalls().length, 0);
+        }
       } finally {
         await rig.cleanup();
       }

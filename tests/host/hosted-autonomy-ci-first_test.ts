@@ -34,9 +34,13 @@ import {
 } from "../../src/repair/ci-first-policy.ts";
 import {
   ciFirstFixRuntimeProven,
+  ciFirstFixSelfInstalledRuntimeProven,
+  ciFirstRuntimeProven,
+  ciFirstSelfInstalledRuntimeProven,
   HOSTED_AUTONOMY_CI_FIRST_FIX_MIN_GENERATION,
   HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
   HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
+  HOSTED_AUTONOMY_CI_FIRST_SELF_INSTALLED_MIN_GENERATION,
 } from "../../ops/hosted-autonomy-ci-first.ts";
 import {
   applyHostedRetries,
@@ -91,6 +95,8 @@ const GEN80 = await gen80Available();
 /** R80, the pinned CI-first runtime and generation 81's rollback target. */
 const R80 = "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481";
 const R81 = "da98f5f49c45b57cfa97a45fe647c36b1021f302";
+const SELF_INSTALLED = "c019bcd5833eff5551201d1b46039a0996841b8b";
+const R79 = "549c7a69186b3d2070aa4e69c92ee846d183ce8f";
 
 const RED_PARK = "CI red before review; awaiting a CI fix: validate(failure)";
 const PENDING_PARK =
@@ -159,19 +165,25 @@ function plan(
     settled?: boolean;
     ciFirst?: boolean;
     fixRuntime?: boolean;
+    selfInstalled?: boolean;
     r80?: boolean;
     tip?: string;
   } = {},
 ) {
   const runtime = options.r80 === true
     ? R80
+    : options.selfInstalled === true
+    ? SELF_INSTALLED
     : options.fixRuntime === true
     ? FIX_RUNTIME
     : SHA2;
   const ciFirst = options.ciFirst === true || options.fixRuntime === true;
   const cast = {
-    ciRuntime: installed(runtime, options.r80 === true ? 80 : 81),
-    ...(options.r80 === true ? {} : {
+    ciRuntime: installed(
+      runtime,
+      options.r80 === true ? 80 : options.selfInstalled === true ? 89 : 81,
+    ),
+    ...(options.r80 === true || options.selfInstalled === true ? {} : {
       ciAllowlist: new Set([runtime]),
       ciFirstAllowlist: new Set(ciFirst ? [runtime] : []),
       ciFirstFixAllowlist: new Set(
@@ -237,9 +249,11 @@ Deno.test("CI first L3: under a proven CI-first runtime a pre-review park on a m
     for (
       const options of [
         { r80: true },
+        { selfInstalled: true },
         { ciFirst: true },
         { fixRuntime: true, settled: true },
         { ciFirst: true, green: true },
+        { selfInstalled: true, green: true },
       ]
     ) {
       const plans = plan(snapshot, { ...options, tip: SHA1 });
@@ -585,6 +599,33 @@ Deno.test("CI first L2: a head parked red before review is re-run once on its gr
   ], [authorizingReceipt()]);
   assert.deepEqual(await pass(mergeGate), []);
   assert.deepEqual(reruns, [9001, 9002]);
+});
+
+Deno.test("CI first: a healthy self-installed runtime is proven without a historical rollout row", () => {
+  const runtime = installed(SELF_INSTALLED, 89);
+  assert.equal(HOSTED_AUTONOMY_CI_FIRST_SELF_INSTALLED_MIN_GENERATION, 82);
+  assert.equal(ciFirstRuntimeProven(runtime), false);
+  assert.equal(ciFirstSelfInstalledRuntimeProven(runtime), true);
+  assert.equal(ciFirstFixSelfInstalledRuntimeProven(runtime), true);
+  assert.equal(
+    ciFirstSelfInstalledRuntimeProven(installed(SELF_INSTALLED, 81)),
+    false,
+    "the self-install route starts at generation 82",
+  );
+  assert.equal(
+    ciFirstSelfInstalledRuntimeProven(installed(R79, 89)),
+    false,
+    "a pre-CI-first rollback stays excluded at a higher generation",
+  );
+  const wrong = {
+    ...runtime,
+    lastHealthyProof: healthyProof(
+      SELF_INSTALLED as GitSha,
+      88,
+      "ci-first-fix",
+    ),
+  } as HostedRuntimeRecordV1;
+  assert.equal(ciFirstSelfInstalledRuntimeProven(wrong), false);
 });
 
 Deno.test("CI first: generation 81 opens the hosted pre-review fix route; its fix allowlist waits for the pin", () => {

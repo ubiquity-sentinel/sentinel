@@ -142,7 +142,7 @@ export const REROUTE_BOUND_DETAIL =
   "structured review unavailable: routing evidence exceeded its bound";
 
 export const REROUTE_OFF_POLICY_DETAIL =
-  "structured review unavailable: the run was routed off the required Luna/max";
+  "structured review unavailable: native reviewer routing evidence was contradictory";
 
 export const HOST_CLOSED_DETAIL =
   "structured review unavailable: the owned session was closed before completion";
@@ -209,7 +209,7 @@ export interface ThreadAckV1 {
   threadId: string;
   model: string;
   modelProvider: string;
-  reasoningEffort: string;
+  reasoningEffort: string | null;
 }
 
 /** One exact-correlated active read-only command start. */

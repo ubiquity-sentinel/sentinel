@@ -128,7 +128,7 @@ async function publishOver(
       httpRespond("GET", "/pulls?head=", 200, [existing]),
       httpRespond(
         "POST",
-        "/repos/ubiquity/sentinel/pulls",
+        "/repos/ubiquity-sentinel/sentinel/pulls",
         201,
         pullWire({
           number: 22,

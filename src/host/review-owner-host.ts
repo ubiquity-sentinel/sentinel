@@ -10,7 +10,6 @@ import {
   LOCAL_REPOSITORY,
   REVIEW_SESSION_DEADLINE_MS,
 } from "./local-policy.ts";
-import { GATEWAY_PROVIDER, resolveReviewModelId } from "./model-route.ts";
 import { readTargetSlugsV1, TARGETS_FILE_NAME } from "./targets.ts";
 import {
   type LauncherReviewSessionTargetV1,
@@ -97,8 +96,6 @@ export async function createHostedReviewOwnerCustody(
         input.env.SENTINEL_APP_INSTALLATION_ID || undefined,
       )
       : 0;
-    const model = resolveReviewModelId(input.env);
-    if (!model) throw new Error(UNAVAILABLE);
     const state = ".sentinel-actions-state";
     const home = await knownDirectory(root, `${state}/clients/review`);
     const tmp = await knownDirectory(root, `${state}/tmp/review`);
@@ -138,8 +135,6 @@ export async function createHostedReviewOwnerCustody(
             ? LOCAL_REPOSITORY.installationId
             : appInstallation,
         }, "$.repository"),
-        provider: GATEWAY_PROVIDER,
-        model,
         permissionProfile: "sentinel-review",
         session: {
           command: [codexExecutable, "app-server"],

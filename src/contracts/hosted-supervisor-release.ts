@@ -1,4 +1,5 @@
 import type { GitSha } from "./brands.ts";
+import { isHostedControllerRepository } from "./hosted-controller-deployment.ts";
 import { parseReleaseRequestV1 } from "./release.ts";
 import {
   expectArray,
@@ -85,10 +86,7 @@ export function parseHostedReleaseRecordV1(
   // Exact self scope-0 production open reviewed request: no other repository,
   // installation, environment, status or review-less request is representable.
   const repository = request.target.repository;
-  if (
-    repository.owner !== "ubiquity" || repository.name !== "sentinel" ||
-    repository.installationId !== 0
-  ) {
+  if (!isHostedControllerRepository(repository)) {
     fail(
       `${path}.request.target.repository`,
       "invalid_lifecycle",

@@ -41,6 +41,14 @@ import {
   createIssueWork,
 } from "./transitions.ts";
 
+/** True when every configured target reads its work from GitHub issues alone. */
+export function isIssueOnlyIntake(
+  configs: RepairCycleDepsV1["configs"],
+): boolean {
+  return configs.length > 0 &&
+    configs.every((config) => config.adapter.kind === "github");
+}
+
 /** Matrix intake only: discover sources and assign fresh branches without dispatching lifecycle work. */
 export async function prepareMatrixIntakeV1(
   deps: RepairCycleDepsV1,
@@ -196,13 +204,10 @@ export async function pollIntake(
   const seenCursors = new Set<string>();
   let pages = 0;
 
-  // Issue-only intake: a host with exactly one configured repository whose
-  // adapter is the GitHub variant reads issues only. Every gateway
-  // configuration, and every multi-repository or otherwise ambiguous
-  // configuration, keeps the existing incident scan and its source-error
-  // behavior.
-  const issueOnlyIntake = deps.configs.length === 1 &&
-    deps.configs[0].adapter.kind === "github";
+  // Issue-only intake: when every configured target is a GitHub issue source,
+  // no incident scan is needed. Any gateway adapter keeps the existing incident
+  // scan and its fail-closed source-error behavior.
+  const issueOnlyIntake = isIssueOnlyIntake(deps.configs);
 
   for (;;) {
     // A GitHub issue-only host never scans incidents; the issue listing below

@@ -9,6 +9,10 @@ import {
 } from "../src/repair/review-round-cap.ts";
 import type { BudgetReservationV1 } from "../src/contracts/budget-reservation.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
+import {
+  HOSTED_CONTROLLER_DEPLOYMENT,
+  HOSTED_CONTROLLER_SELF,
+} from "../src/contracts/hosted-controller-deployment.ts";
 import type { HostedAutonomyRecordV1 } from "./hosted-autonomy-types.ts";
 
 /**
@@ -17,11 +21,8 @@ import type { HostedAutonomyRecordV1 } from "./hosted-autonomy-types.ts";
  * check and the trusted release path. Every other identity is a foreign target
  * and is handled entirely under its OWN repository surface.
  */
-export const HOSTED_AUTONOMY_SELF_SCOPE: RepositoryIdentityV1 = {
-  owner: "ubiquity",
-  name: "sentinel",
-  installationId: 0,
-};
+export const HOSTED_AUTONOMY_SELF_SCOPE: RepositoryIdentityV1 =
+  HOSTED_CONTROLLER_SELF;
 
 /** True only for the sentinel self scope, the one identity with named checks. */
 export function isHostedSelf(repository: RepositoryIdentityV1): boolean {
@@ -126,7 +127,8 @@ export const HOSTED_AUTONOMY_SPENT_DELIVERY_BLOCKERS: readonly {
 ];
 
 /** The base branch every reviewed candidate must be integrated into. */
-export const HOSTED_AUTONOMY_BASE_BRANCH = "development";
+export const HOSTED_AUTONOMY_BASE_BRANCH =
+  HOSTED_CONTROLLER_DEPLOYMENT.sourceBranch;
 
 /** The deterministic check the merge requires on the exact reviewed head. */
 export const HOSTED_AUTONOMY_REQUIRED_CHECK = "test-local";

@@ -24,8 +24,8 @@
  *   gateway transports.
  * - the direct startup environment boundary (issue89): executing the REAL
  *   `src/main.ts` direct consumer under a named environment allowlist must
- *   read its review-model override through that key's own grant and still
- *   cross into the local host configuration; an unrestricted
+ *   use only its required named grants and ignore the retired reviewer-model
+ *   selector while crossing into local host configuration; an unrestricted
  *   `Deno.env.toObject()` read is denied under a named allowlist, so no
  *   startup path may depend on one.
  *
@@ -857,7 +857,7 @@ interface DirectStartupChildV1 {
 
 /** Deno's permission denial for an environment read that was not granted. */
 const ENV_ACCESS_DENIAL = /Requires env access/;
-/** The one named review-model key the direct startup consumer may read. */
+/** Retired selector: native review must not read or apply this override. */
 const REVIEW_MODEL_ENV = "SENTINEL_REVIEW_MODEL_ID";
 /**
  * The production fail-closed refusal raised by the orphan guard, which runs
@@ -909,7 +909,7 @@ async function runDirectStartupChild(input: {
 }
 
 Deno.test(
-  "direct startup: the named environment allowlist carries the review-model override into the host configuration (issue89)",
+  "direct startup: named grants remain required while legacy reviewer selection is ignored (issue89)",
   async () => {
     // Disposable fake home under the worktree, matching the Wave C
     // integration fixture pattern (already ignored when a run is interrupted).
@@ -931,17 +931,16 @@ Deno.test(
         GITHUB_TOKEN: "synthetic-local-marker-not-a-credential",
         UOS_AI_TOKEN: "synthetic-gateway-marker-not-a-credential",
       };
-      // The named allowlist the direct consumer needs. The review-model key is
-      // its OWN item; the unrestricted environment read this test guards
-      // against is never granted. `NODE_V8_COVERAGE` is granted because the
+      // Grant only supported startup keys; the retired review-model selector
+      // has no grant. Unrestricted environment access is never granted.
+      // `NODE_V8_COVERAGE` is granted because the
       // owned-group spawn layer reads it even when it is unset, and every
       // production launcher grant (`repair:run`, the workflow launchers) names
       // it for the same reason.
       const namedAllowlist =
-        `HOME,PATH,GITHUB_TOKEN,UOS_AI_TOKEN,NODE_V8_COVERAGE,${REVIEW_MODEL_ENV}`;
+        "HOME,PATH,GITHUB_TOKEN,UOS_AI_TOKEN,NODE_V8_COVERAGE";
 
-      // 1. Omitted override: the declared default must still start under the
-      //    named allowlist and cross the configuration boundary.
+      // 1. Native startup crosses configuration under only named grants.
       const omitted = await runDirectStartupChild({
         home,
         allowEnv: namedAllowlist,
@@ -958,8 +957,7 @@ Deno.test(
           `configuration boundary:\n${omitted.combined}`,
       );
 
-      // 2. Provided override, granted: the same boundary is crossed with the
-      //    override present.
+      // 2. A provided legacy selector is ignored without requesting its grant.
       const provided = await runDirectStartupChild({
         home,
         allowEnv: namedAllowlist,
@@ -976,21 +974,18 @@ Deno.test(
           `configuration boundary:\n${provided.combined}`,
       );
 
-      // 3. Provided override, withheld grant: the consumer must read the
-      //    override through that key's OWN named grant. A hardcoded default,
-      //    an ignored key or a swallowed generic read cannot produce this
-      //    named denial, so the provided override cannot be silently dropped.
-      //    This is the same named set as above minus only the review-model key.
+      // 3. A required credential key still needs its own named grant. Removing
+      //    that grant must fail before the orphan guard, without weakening it.
       const withheld = await runDirectStartupChild({
         home,
-        allowEnv: "HOME,PATH,GITHUB_TOKEN,UOS_AI_TOKEN,NODE_V8_COVERAGE",
+        allowEnv: "HOME,PATH,UOS_AI_TOKEN,NODE_V8_COVERAGE",
         env: { ...baseEnv, [REVIEW_MODEL_ENV]: "codex-auto-review-canary" },
       });
       assert.ok(
         ENV_ACCESS_DENIAL.test(withheld.combined) &&
-          withheld.combined.includes(REVIEW_MODEL_ENV) &&
+          withheld.combined.includes("GITHUB_TOKEN") &&
           !withheld.combined.includes(ORPHAN_REFUSAL),
-        "the provided review-model override was not read through its own " +
+        "the required GitHub token was not read through its own " +
           `named grant:\n${withheld.combined}`,
       );
     } finally {

@@ -3,6 +3,7 @@ import type { GitSha } from "../src/contracts/brands.ts";
 import type { PortResultV1 } from "../src/contracts/ports.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
+import type { CandidatePreservationV1 } from "../src/contracts/work-record.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type {
   MergeQueueSurface,
@@ -26,6 +27,10 @@ export interface QueueAuthorizationRequest {
   queue: QueueSnapshot;
 }
 export interface HostedQueueAuthorizationPort {
+  /** Root-only acknowledgment of an authenticated, already-published refresh hold. */
+  readPublishedRefreshRecovery?(
+    request: QueueAuthorizationRequest & { deadline: number },
+  ): Promise<QueueRead<{ candidate: CandidatePreservationV1; at: number }>>;
   /** Final adopted-PR App/custody gate; never a substitute for queue policy or intent provenance. */
   authorizeEnqueue?(
     request: QueueAuthorizationRequest & { deadline: number },

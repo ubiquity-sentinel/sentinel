@@ -1,3 +1,4 @@
+import { canonicalStringifySha256 } from "../../src/contracts/canonical.ts";
 /** Real parent-owned handles for issue-only, exact-base satisfaction reviews. */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -15,7 +16,11 @@ import {
 import { DenoReplayRuntime } from "../../src/replay/runtime.ts";
 
 const ROOT = new URL("../../", import.meta.url).pathname;
-const REPOSITORY = { owner: "ubiquity", name: "sentinel", installationId: 0 };
+const REPOSITORY = {
+  owner: "ubiquity-sentinel",
+  name: "sentinel",
+  installationId: 0,
+};
 const OWNER: HostedExecutionIntentV1 = {
   id: "7:2:repair",
   runId: 7,
@@ -35,25 +40,25 @@ const REGISTRATION: BaseReviewOwnerRegistrationV1 = {
   requestId: "base-review-" + "e".repeat(64),
   ownerRunId: OWNER.id,
 };
+const TARGET = { type: "custom", instructions: "Review the exact base task." };
+const TARGET_DIGEST = await canonicalStringifySha256(TARGET);
 const PREPARED: ReviewJournalExecutionV1 = {
   ownerRunId: OWNER.id,
   invocationId: "base-review-invocation",
   threadId: "base-review-thread",
   submittedProvider: "uos",
-  model: "codex-auto-review",
-  reasoning: "max",
+  model: null,
+  reasoning: null,
+  nativeReview: { mode: "review/start", targetDigest: TARGET_DIGEST },
   startMayOccur: true,
 };
 const THREAD = {
-  model: PREPARED.model,
-  modelProvider: PREPARED.submittedProvider,
   permissions: "sentinel-review",
 };
 const TURN = {
   threadId: PREPARED.threadId,
-  model: PREPARED.model,
-  permissions: "sentinel-review",
-  effort: "max",
+  delivery: "inline",
+  target: TARGET,
 };
 
 async function fixture() {
@@ -78,8 +83,8 @@ for await (const part of Deno.stdin.readable) {
     if (frame.id === undefined) continue;
     const p = frame.params ?? {};
     const result = frame.method === "thread/start"
-      ? { thread: { id: "base-review-thread" }, model: p.model, modelProvider: p.modelProvider, reasoningEffort: "max" }
-      : frame.method === "turn/start" ? { turn: { id: "base-review-turn", status: "inProgress" } }
+      ? { thread: { id: "base-review-thread" }, model: "codex-resolved", modelProvider: "uos", reasoningEffort: null, activePermissionProfile: { id: p.permissions } }
+      : frame.method === "review/start" ? { turn: { id: "base-review-turn", status: "inProgress" } }
       : { userAgent: "fake-reviewer" };
     console.log(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result }));
   }
@@ -90,7 +95,7 @@ await new Promise(() => {});
   const broker = new ReviewOwnerCustodyBroker(OWNER, [{
     repository: REPOSITORY,
     provider: PREPARED.submittedProvider,
-    model: PREPARED.model,
+    model: "ignored-legacy-selector",
     permissionProfile: THREAD.permissions,
     session: {
       command: [
@@ -122,6 +127,7 @@ await new Promise(() => {});
         requestId: REGISTRATION.requestId,
         invocationId: PREPARED.invocationId,
         ownerRunId: OWNER.id,
+        nativeReviewTargetDigest: TARGET_DIGEST,
       }),
     async dispose() {
       await client.close();
@@ -154,6 +160,7 @@ Deno.test("base review custody: only exact prepared and armed owner starts one n
       session.send("thread/start", { ...THREAD, cwd: h.root }),
     );
     await assert.rejects(session.send("turn/start", TURN));
+    await assert.rejects(session.send("review/start", TURN));
     await assert.rejects(h.client.armBaseReview({
       requestId: REGISTRATION.requestId,
       execution: { ...PREPARED, threadId: "unowned-thread" },
@@ -172,10 +179,10 @@ Deno.test("base review custody: only exact prepared and armed owner starts one n
       }),
     );
     await assert.rejects(
-      session.send("turn/start", { ...TURN, effort: "low" }),
+      session.send("review/start", { ...TURN, effort: "low" }),
     );
-    await session.send("turn/start", TURN);
-    await assert.rejects(session.send("turn/start", TURN));
+    await session.send("review/start", TURN);
+    await assert.rejects(session.send("review/start", TURN));
     await session.close();
     assert.equal(session.isSettled?.(), true);
     await h.client.settledBaseReview({ requestId: REGISTRATION.requestId });
@@ -187,7 +194,8 @@ Deno.test("base review custody: only exact prepared and armed owner starts one n
       (line) => JSON.parse(line),
     );
     assert.equal(methods.filter((name) => name === "thread/start").length, 1);
-    assert.equal(methods.filter((name) => name === "turn/start").length, 1);
+    assert.equal(methods.filter((name) => name === "review/start").length, 1);
+    assert.equal(methods.includes("turn/start"), false);
     assert.equal(alive(Number(await Deno.readTextFile(h.pidFile))), false);
   } finally {
     await h.dispose();
@@ -290,6 +298,7 @@ const session = client.openSession(${
           requestId: REGISTRATION.requestId,
           invocationId: PREPARED.invocationId,
           ownerRunId: OWNER.id,
+          nativeReviewTargetDigest: TARGET_DIGEST,
         })
       });
 await session.send("initialize", {});
@@ -302,7 +311,7 @@ await client.armBaseReview(${
           execution: PREPARED,
         })
       });
-await session.send("turn/start", ${JSON.stringify(TURN)});
+await session.send("review/start", ${JSON.stringify(TURN)});
 console.log("base reviewer opened");
 await new Promise(() => {});
 `,
