@@ -11,6 +11,7 @@
  * never asked again, so GitHub's 50 re-runs per run are not spent (stage-1
  * review, 2026-10-25). The pass writes no state.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import {
   ciResumeActive,
@@ -251,6 +252,7 @@ async function resume(work: WorkRecordV1[], fake: Fake) {
   const rig = await liveRig("ci-resume", liveSnapshot(work, []), fake.surface);
   try {
     const actions = await runHostedCiResumePass({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       githubFor: rig.githubFor,
       clock: { now: () => NOW },

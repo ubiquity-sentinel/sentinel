@@ -4,6 +4,8 @@
  * unresolvable charge is a typed skip rather than a failed repair pass.
  */
 import assert from "node:assert/strict";
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
+import { runHostedMatrixMaintenance } from "../../ops/hosted-autonomy-maintenance.ts";
 import type { GitSha, WorkItemId } from "../../src/contracts/brands.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import {
@@ -82,7 +84,10 @@ function wave(archive: boolean): RepairStateSnapshotV1 {
 }
 
 /** Deps whose state reads resolve; no history reader and no write ability. */
-function depsFor(snapshot: RepairStateSnapshotV1): ClosedCWaveRecoveryDepsV1 {
+function depsFor(
+  snapshot: RepairStateSnapshotV1,
+  release = releaseSnapshot(),
+): ClosedCWaveRecoveryDepsV1 {
   const head = SHA2 as GitSha;
   return {
     state: {
@@ -95,7 +100,7 @@ function depsFor(snapshot: RepairStateSnapshotV1): ClosedCWaveRecoveryDepsV1 {
           status: "found" as const,
           head,
           ref: null,
-          snapshot: releaseSnapshot(),
+          snapshot: release,
         })),
       writeRepair: () => {
         throw new Error("a typed skip must not write repair state");
@@ -161,4 +166,147 @@ Deno.test("closed C recovery: an unresolvable charge is a typed skip", async () 
   assert.deepEqual(skipped.dispositions, []);
   assert.deepEqual(skipped.reports, []);
   assert.equal(skipped.repairHead, SHA2);
+});
+
+for (const archived of [false, true]) {
+  Deno.test(
+    `closed C recovery: ${
+      archived ? "archived and absent" : "all-absent"
+    } charges produce a typed skip`,
+    async () => {
+      const snapshot = { ...wave(archived), reservations: [] };
+      const missing = archived ? [LIVE] : [ARCHIVED, LIVE];
+      assert.equal(
+        closedCWaveNeedsRecovery(snapshot, binding),
+        true,
+        "missing charges remain reportable even without any live charges",
+      );
+      await assert.rejects(
+        () => recoverClosedCWave(depsFor(snapshot)),
+        (error: unknown) => {
+          assert.ok(error instanceof ClosedCWaveUnrecoverableSkipV1);
+          assert.deepEqual(error.reservationIds, missing);
+          return true;
+        },
+      );
+      assert.deepEqual(await ingestClosedCWave(depsFor(snapshot)), {
+        producer: binding.run,
+        repairHead: SHA2,
+        releaseHead: SHA2,
+        dispositions: [],
+        reports: [],
+        skipped: {
+          reason: "missing_reservation",
+          reservationIds: missing,
+        },
+      });
+    },
+  );
+}
+
+Deno.test("closed C recovery: fully archived charges remain a no-op", async () => {
+  const original = wave(true);
+  const snapshot = parseRepairStateSnapshotV1({
+    ...original,
+    reservations: [],
+    reservationArchive: [
+      ...original.reservationArchive ?? [],
+      {
+        ...original.reservations[0],
+        outcome: "submitted",
+        settledAt: T0 + 1000,
+      },
+    ],
+  });
+  assert.equal(closedCWaveNeedsRecovery(snapshot, binding), false);
+  assert.deepEqual(await ingestClosedCWave(depsFor(snapshot)), {
+    producer: binding.run,
+    repairHead: SHA2,
+    releaseHead: SHA2,
+    dispositions: [],
+    reports: [],
+  });
+});
+
+for (const archived of [false, true]) {
+  for (const ledger of ["repair", "release"] as const) {
+    for (const retryNotBefore of [null, T0 + 60_000]) {
+      Deno.test(`closed C recovery: ${archived ? "archived and absent" : "all-absent"} charges skip ${ledger} cooldown ${retryNotBefore ?? "hold"} and maintenance continues`, async () => {
+        const snapshot = { ...wave(archived), reservations: [] };
+        const release = releaseSnapshot();
+        const cooldown = {
+          installationId: REPO.installationId,
+          retryNotBefore,
+          observedAt: T0,
+          observationId: "c".repeat(64),
+          secondaryBackoff: 0,
+        };
+        (ledger === "repair" ? snapshot : release).githubCooldowns.push(
+          cooldown,
+        );
+        const before = structuredClone({ snapshot, release });
+        const deps = depsFor(snapshot, release);
+        const expected = {
+          producer: binding.run,
+          repairHead: SHA2,
+          releaseHead: SHA2,
+          dispositions: [],
+          reports: [],
+          skipped: {
+            reason: "missing_reservation",
+            reservationIds: archived ? [LIVE] : [ARCHIVED, LIVE],
+          },
+        };
+        assert.deepEqual(await ingestClosedCWave(deps), expected);
+        let continued = false;
+        const log = console.log;
+        const lines: string[] = [];
+        console.log = (...args: unknown[]) => lines.push(args.join(" "));
+        try {
+          const result = await runHostedMatrixMaintenance({
+            ciMinutes: INACTIVE_CI_MINUTES,
+            state: deps.state,
+            clock: deps.clock,
+            githubFor: () => null,
+            closedMatrix: () => Promise.resolve(deps),
+            uncertainMatrix: () => {
+              continued = true;
+              return Promise.resolve({
+                beforeHead: SHA2,
+                appliedHead: SHA2,
+                quarantined: 0,
+              });
+            },
+          }, []);
+          assert.equal(result, null);
+        } finally {
+          console.log = log;
+        }
+        assert.equal(continued, true, "later recovery phases must still run");
+        assert.deepEqual(
+          lines.filter((line) =>
+            line.includes('"kind":"sentinel_closed_c_recovery"')
+          )
+            .map((line) => JSON.parse(line)),
+          [{ kind: "sentinel_closed_c_recovery", ...expected }],
+        );
+        assert.deepEqual({ snapshot, release }, before);
+      });
+    }
+  }
+}
+
+Deno.test("closed C recovery: a recoverable wave still respects cooldown", async () => {
+  const snapshot = wave(true);
+  snapshot.githubCooldowns.push({
+    installationId: REPO.installationId,
+    retryNotBefore: null,
+    observedAt: T0,
+    observationId: "c".repeat(64),
+    secondaryBackoff: 0,
+  });
+  await assert.rejects(
+    () => ingestClosedCWave(depsFor(snapshot)),
+    /C recovery cooldown active/,
+  );
 });

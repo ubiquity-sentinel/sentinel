@@ -7,8 +7,9 @@
  * cooldown), the repository is reported `unavailable` — never an empty
  * success — and each record's inputs come from the existing per-record reads
  * instead (`readIssue`, `readPullRequest`, `readChecks`, `readRef`), at most
- * once per record per pass. A record whose inputs cannot be read has no inputs
- * (`null`): it is stepped as before, never skipped.
+ * once per record per pass, with bounded read-only concurrency. A record whose
+ * inputs cannot be read has no inputs (`null`): it is stepped as before, never
+ * skipped.
  *
  * These are advisory scheduling inputs: they decide only whether a record
  * whose inputs are unchanged needs another step. A stepped record still
@@ -22,6 +23,9 @@ import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { checkGithubCooldown } from "./loop-bounds.ts";
 import { configFor } from "./loop-records.ts";
 import type { RepairCycleDepsV1, RunBoundsV1 } from "./loop-types.ts";
+
+/** Read-only repository batches or fallback records in flight; effects stay serial. */
+const LIVE_INPUT_READ_CONCURRENCY = 4;
 
 /** One record's normalized live inputs. */
 export interface RecordLiveInputsV1 {
@@ -71,7 +75,10 @@ function pullNumber(record: WorkRecordV1): number | null {
 export class PassLiveInputs {
   private readonly repositories = new Map<string, RepositoryReadV1>();
   private readonly records = new Map<string, RecordLiveInputsV1 | null>();
-  private readonly fallbackTips = new Map<string, GitSha | null | "failed">();
+  private readonly fallbackTips = new Map<
+    string,
+    Promise<GitSha | null | "failed">
+  >();
   readonly metrics: LiveInputMetricsV1 = {
     batchReads: 0,
     batchUnavailable: 0,
@@ -98,9 +105,60 @@ export class PassLiveInputs {
       group.push(record);
       groups.set(key, group);
     }
-    for (const [key, group] of groups) {
-      this.repositories.set(key, await this.readRepository(group));
+    const entries = [...groups];
+    let next = 0;
+    // Preserve fallback-first deadline behavior during a GraphQL outage. Once
+    // a batch answers, overlap the remaining independent repository batches.
+    while (next < entries.length) {
+      if (this.deps.clock.now() >= this.bounds.runDeadline) return;
+      const [key, group] = entries[next++];
+      const read = await this.readRepository(group);
+      this.repositories.set(key, read);
+      if (read.status === "unavailable") await this.primeFallback(group);
+      if (read.status === "batch") break;
     }
+    const remaining = entries.slice(next);
+    const worker = async () => {
+      while (
+        next < entries.length &&
+        this.deps.clock.now() < this.bounds.runDeadline
+      ) {
+        const [key, group] = entries[next++];
+        this.repositories.set(key, await this.readRepository(group));
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(LIVE_INPUT_READ_CONCURRENCY, remaining.length) },
+        worker,
+      ),
+    );
+    // Keep fallback pools serial across repositories: a partial outage must
+    // not multiply fallback concurrency or interleave their cached tip reads.
+    for (const [key, group] of remaining) {
+      if (this.repositories.get(key)?.status === "unavailable") {
+        await this.primeFallback(group);
+      }
+    }
+  }
+
+  /** A failed batch must not turn a hot tier into serial network round trips. */
+  private async primeFallback(records: readonly WorkRecordV1[]): Promise<void> {
+    let next = 0;
+    const worker = async () => {
+      while (
+        next < records.length &&
+        this.deps.clock.now() < this.bounds.runDeadline
+      ) {
+        await this.inputsFor(records[next++]);
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(LIVE_INPUT_READ_CONCURRENCY, records.length) },
+        worker,
+      ),
+    );
   }
 
   private async readRepository(
@@ -246,15 +304,19 @@ export class PassLiveInputs {
     }
   }
 
-  private async fallbackTip(
+  private fallbackTip(
     record: WorkRecordV1,
     branch: string,
   ): Promise<GitSha | null | "failed"> {
     const key = `${repositoryKey(record.repository)}#${branch}`;
     const cached = this.fallbackTips.get(key);
     if (cached !== undefined) return cached;
-    const read = await this.deps.github.readRef(`refs/heads/${branch}`);
-    const tip = read.ok ? read.value?.sha ?? null : "failed";
+    // Cache the in-flight read too: concurrent fallback records share the
+    // same repository/branch observation, including a failed observation.
+    const tip = (async () => {
+      const read = await this.deps.github.readRef(`refs/heads/${branch}`);
+      return read.ok ? read.value?.sha ?? null : "failed" as const;
+    })();
     this.fallbackTips.set(key, tip);
     return tip;
   }

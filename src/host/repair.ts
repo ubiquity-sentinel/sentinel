@@ -87,6 +87,7 @@ import type {
 import { LocalCandidateCommitter } from "../repair/model-port.ts";
 import type { CodexSessionV1 } from "../repair/codex-transport.ts";
 import { RollingStartBudget } from "../budget/mod.ts";
+import { INACTIVE_CI_MINUTES } from "../budget/ci-minutes.ts";
 
 /** Exact repository identity: owner, name AND installation id are one. */
 function sameRepositoryIdentity(
@@ -342,6 +343,7 @@ export function composeRepairHost(
     fixtureIdentities: composition,
     model,
     budget,
+    ciMinutes: INACTIVE_CI_MINUTES,
   };
 }
 

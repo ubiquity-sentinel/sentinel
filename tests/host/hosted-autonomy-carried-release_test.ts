@@ -8,6 +8,7 @@
  * T -> H1, T the refreshed side's merge base), authorizing the task as of
  * the reviewed identity; a request whose patch no longer proves is refused.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import {
   DORMANT_HOSTED_SUPERVISOR_POLICY,
@@ -187,6 +188,7 @@ historicalTest(
       const pass = async (offset: number) =>
         runHostedAutonomy(
           await withHistoricalQueueAuthority({
+            ciMinutes: INACTIVE_CI_MINUTES,
             state: rig.state,
             githubFor: () => surface,
             clock: { now: () => now + offset },
@@ -248,6 +250,7 @@ historicalTest(
       const before = await snapshot(rig.state);
       for (const offset of [300_000, 600_000]) {
         const result = await runHostedAutonomy({
+          ciMinutes: INACTIVE_CI_MINUTES,
           state: rig.state,
           githubFor: () => surface,
           clock: { now: () => now + offset },

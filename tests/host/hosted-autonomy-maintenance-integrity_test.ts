@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import {
   DORMANT_HOSTED_SUPERVISOR_POLICY,
@@ -137,6 +138,7 @@ Deno.test("current matrix integrity: wrong-sequence ancestry fails protected mai
       binding: CLOSED_C_WAVE,
     };
     const reported = await captureNativeMain(rig.tmp, {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state,
       clock,
       githubFor: () => null,
@@ -311,6 +313,7 @@ Deno.test("modern closed C integrity: changed native proof fails protected main 
       /C recovery native failure proof changed/,
     );
     const reported = await captureNativeMain(rig.tmp, {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state,
       clock,
       githubFor: () => null,
@@ -340,6 +343,7 @@ Deno.test("modern closed C integrity: changed native proof fails protected main 
       readExecution: () => Promise.resolve(portOk(null)),
     };
     const deferred = await captureNativeMain(rig.tmp, {
+      ciMinutes: INACTIVE_CI_MINUTES,
       state,
       clock,
       githubFor: () => null,

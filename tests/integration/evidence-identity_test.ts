@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * Wave C cross-module evidence identity regression (m02 gateway producer x
  * m04 repair consumer).
@@ -230,6 +231,7 @@ Deno.test(
       const model = new FakeModel();
       const run = (stepLimit: number) =>
         runRepairEntrypoint({
+          ciMinutes: INACTIVE_CI_MINUTES,
           clock: loopClock,
           state: store,
           configs,
@@ -442,6 +444,7 @@ Deno.test(
 
       const run = (stepLimit: number) =>
         runRepairEntrypoint({
+          ciMinutes: INACTIVE_CI_MINUTES,
           clock: loopClock,
           state: store,
           configs,
@@ -775,6 +778,7 @@ async function makeIntakeGatewayRig(
   const model = new FakeModel();
   const run = () =>
     runRepairEntrypoint({
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state: store,
       configs,
@@ -1079,6 +1083,7 @@ async function makeEvidenceRig(
   }
   const run = (stepLimit: number) =>
     runRepairEntrypoint({
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state: store,
       configs,

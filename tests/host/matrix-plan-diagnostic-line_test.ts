@@ -4,6 +4,7 @@
  * carrier; the launcher keeps only the closed key vocabulary with integer
  * counts and re-emits it after the carrier.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { portOk } from "../../src/contracts/ports.ts";
@@ -94,6 +95,7 @@ Deno.test("plan diagnostic: a zero-cell plan counts skips and not-ready reasons 
   ]);
   state.repairHead = SHA1;
   const report = await planMatrixWave({
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,
@@ -396,6 +398,7 @@ Deno.test("plan diagnostic: an expired capacity wait reports the current GitHub 
     true,
   );
   const report = await planMatrixWave({
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

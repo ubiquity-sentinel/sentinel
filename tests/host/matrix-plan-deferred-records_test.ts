@@ -5,6 +5,7 @@
  * `deferredByReason:{}` because the histogram rode only the zero-cell
  * diagnostic and takeover/publication deferrals were never keyed.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import {
@@ -56,6 +57,7 @@ Deno.test("planner: a deferred ready record is named with its closed key on the 
     true,
   );
   const report = await planMatrixWave({
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

@@ -5,6 +5,7 @@
  * outcomes over 23 bases since 2026-10-10, every one a charged reservation)
  * and sentinel 152/155/156 (output-bound overruns).
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -631,6 +632,7 @@ async function maintenance(
 ) {
   return await runHostedAutonomy(
     await withDarkQueueAuthority({
+      ciMinutes: INACTIVE_CI_MINUTES,
       state: rig.state,
       githubFor: rig.githubFor,
       clock: { now: () => at },

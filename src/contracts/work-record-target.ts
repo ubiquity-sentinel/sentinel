@@ -66,6 +66,9 @@ export function parseTarget(input: unknown, path: string): WorkTargetV1 {
       ...(Object.prototype.hasOwnProperty.call(obj, "selfMerge")
         ? ["selfMerge"]
         : []),
+      ...(Object.prototype.hasOwnProperty.call(obj, "retiredOwnPr")
+        ? ["retiredOwnPr"]
+        : []),
     ],
     path,
   );
@@ -91,7 +94,17 @@ export function parseTarget(input: unknown, path: string): WorkTargetV1 {
       selfMerge.head !== head || selfMerge.pr !== pr ||
       selfMerge.headRef !== branch)
   ) fail(path, "invalid_lifecycle", "self merge receipt binding mismatch");
-  const receipt = selfMerge === undefined ? {} : { selfMerge };
+  const receipt = {
+    ...(selfMerge === undefined ? {} : { selfMerge }),
+    ...(Object.prototype.hasOwnProperty.call(obj, "retiredOwnPr")
+      ? {
+        retiredOwnPr: expectPositiveInt(
+          obj.retiredOwnPr,
+          `${path}.retiredOwnPr`,
+        ),
+      }
+      : {}),
+  };
   if (!hasCandidateStateKey) {
     return { base, branch, checkpoint, head, pr, ...receipt };
   }

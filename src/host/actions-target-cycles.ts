@@ -17,6 +17,7 @@ import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairCycleOutcomeV1 } from "../repair/loop.ts";
 import type { BudgetControllerV1 } from "../budget/mod.ts";
+import type { CiMinuteControllerV1 } from "../contracts/ci-minute-budget.ts";
 import type {
   HostedExecutionIntentV1,
   HostedExecutionSettlementV1,
@@ -189,6 +190,7 @@ export interface ActionsTargetCyclesInputV1 {
   model: ImplementationPort;
   /** THE one admission controller, constructed over every target config. */
   budget: BudgetControllerV1;
+  ciMinutes: CiMinuteControllerV1;
   /** ONE absolute run deadline shared by every cycle; never restarted. */
   deadline: number;
   /**

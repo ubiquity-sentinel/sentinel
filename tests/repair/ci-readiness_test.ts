@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { asWorkItemId } from "../../src/contracts/brands.ts";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -71,6 +72,7 @@ async function freshness(record: WorkRecordV1, other: WorkRecordV1) {
     },
   });
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * A ledger-capacity refusal is time-dependent: it must leave the review
  * record's publication binding intact so a later compaction can admit it.
@@ -84,6 +85,7 @@ function harness(record: WorkRecordV1) {
       detail: "reservation ledger capacity refused",
     });
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

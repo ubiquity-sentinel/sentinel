@@ -1,3 +1,4 @@
+import { guardCiMinuteEffect } from "./loop-types.ts";
 import { routeExistingPr } from "./loop-existing-pr.ts";
 import {
   holdQueueRecord,
@@ -92,7 +93,7 @@ export async function createPullRequestFor(
   }
   const intent = {
     kind: "pull_request" as const,
-    key: pullRequestIntentKey(head),
+    key: pullRequestIntentKey(head, record.target.retiredOwnPr),
     startedAt: now,
     branch,
     expectedHead: head,
@@ -101,6 +102,21 @@ export async function createPullRequestFor(
     requestId: null,
     resultId: null,
   };
+  const ciAdmission = await guardCiMinuteEffect(
+    deps,
+    context,
+    record,
+    "pr_open",
+    {
+      head,
+      ref: `refs/heads/${branch}`,
+      pr: null,
+      ...(record.target.retiredOwnPr === undefined
+        ? {}
+        : { publicationAfter: record.target.retiredOwnPr }),
+    },
+  );
+  if (ciAdmission !== null) return ciAdmission;
   const withIntent = setIntent(record, intent, now);
   const persisted = await persistWork(deps, context, withIntent);
   if (persisted.kind !== "progress") return persisted;

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Temporary matrix runtime model, Git, budget and state fixtures; no test registrations. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -347,6 +348,7 @@ export async function makeRig(
   let claimCounter = 0;
   const model = new OverlappingModel(overlap, repos, env);
   const deps: RepairCycleDepsV1 = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state: store,
     configs,

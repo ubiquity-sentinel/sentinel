@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /** Retired capacity limits preserve current admission and merge gates. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -53,6 +54,7 @@ Deno.test(
     const github = new FakeGithub();
     const model = new FakeModel();
     const deps = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state,
       configs,
@@ -243,6 +245,7 @@ Deno.test(
     const budget = new RollingStartBudget({ clock, state, configs });
     const githubCooldown = new DurableGitHubCooldownGate({ state, clock });
     const deps = {
+      ciMinutes: INACTIVE_CI_MINUTES,
       clock,
       state,
       configs,

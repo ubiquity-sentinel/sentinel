@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { DORMANT_HOSTED_POLICIES } from "./actions-supervisor-fixture.ts";
 import {
@@ -267,6 +268,7 @@ async function modernRecoveryScenarioInGraph(
       Deno.chdir(f.checkout);
       try {
         const deps: HostedAutonomyDepsV1 = {
+          ciMinutes: INACTIVE_CI_MINUTES,
           state: f.rig.state,
           clock: f.clock,
           githubFor: f.rig.githubFor,
@@ -392,6 +394,7 @@ async function modernRecoveryScenarioInGraph(
               clock: f.clock,
               configs: [config],
               cycleFor: () => ({
+                ciMinutes: INACTIVE_CI_MINUTES,
                 ...cycle,
                 state,
                 budget,
@@ -747,6 +750,7 @@ async function modernRecoveryScenarioInGraph(
         });
         assert.notEqual(consumerRevision, f.execution.revision);
         const published = await runRepairCycle({
+          ciMinutes: INACTIVE_CI_MINUTES,
           ...cycle,
           controllerSha: consumerRevision,
           github: publication,

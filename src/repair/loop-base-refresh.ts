@@ -1,3 +1,4 @@
+import { guardCiMinuteEffect } from "./loop-types.ts";
 import {
   holdQueueRecord,
   queueEffectRefused,
@@ -314,6 +315,18 @@ export async function executeBaseRefreshIntent(
     ...intent,
     resultId: preparedHead,
   };
+  const ciAdmission = await guardCiMinuteEffect(
+    deps,
+    context,
+    record,
+    "base_refresh",
+    {
+      head: preparedHead,
+      base: expectedBase,
+      ref: `refs/heads/${record.target.branch}`,
+    },
+  );
+  if (ciAdmission !== null) return ciAdmission;
   let durable = record;
   if (persistedPrepared === null) {
     durable = setIntent(record, durableIntent, deps.clock.now());

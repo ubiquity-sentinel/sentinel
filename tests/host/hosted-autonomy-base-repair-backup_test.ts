@@ -7,6 +7,7 @@
  * without any receipt file nothing (the never-started run is no failure).
  * All synthetic.
  */
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import assert from "node:assert/strict";
 import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy-github.ts";
 import { runHostedBaseRepairPass } from "../../ops/hosted-autonomy-base-repair.ts";
@@ -134,6 +135,7 @@ async function pass(label: string, read: BackupCiReadV1) {
     const actions = await withFetch(() =>
       runHostedBaseRepairPass(
         {
+          ciMinutes: INACTIVE_CI_MINUTES,
           state: rig.state,
           githubFor: rig.githubFor,
           clock: { now: () => NOW },

@@ -34,6 +34,7 @@ import {
 } from "./contracts/repository-config.ts";
 import type { RepositoryConfigV1 } from "./contracts/repository-config.ts";
 import type { BudgetControllerV1 } from "./budget/mod.ts";
+import type { CiMinuteControllerV1 } from "./contracts/ci-minute-budget.ts";
 import type {
   Clock,
   GitHubCooldownGateV1,
@@ -113,6 +114,7 @@ export interface RepairEntrypointDepsV1 {
   model: ImplementationPort;
   /** The one durable model-start admission controller. */
   budget: BudgetControllerV1;
+  ciMinutes: CiMinuteControllerV1;
   /** Trusted matrix ownership: no serial implementation fallback or uncertainty settlement. */
   externalImplementations?: boolean;
   /** The legacy review cutoff the launcher handed this run (null: none). */
@@ -132,6 +134,8 @@ export interface RepairEntrypointOptionsV1 {
   deadline: number;
   /** Bounded persisted transitions per run. */
   stepLimit?: number;
+  /** Fresh branch assignment belongs to the aggregate's batched matrix intake. */
+  matrixIntakeOwnsBranches?: boolean;
   /**
    * Trusted host startup result forwarded unchanged to the cycle. `false`
    * refuses NEW model starts through the existing pre-admission guards while
@@ -241,12 +245,14 @@ export function createRepairInvocation(
       fixtureIdentities: deps.fixtureIdentities,
       model: deps.model,
       budget: deps.budget,
+      ciMinutes: deps.ciMinutes,
       externalImplementations: deps.externalImplementations,
       legacyReviewCutoff: deps.legacyReviewCutoff ?? null,
     },
     {
       deadline: hardDeadline - OPERATION_MARGIN_MS,
       stepLimit: options.stepLimit,
+      matrixIntakeOwnsBranches: options.matrixIntakeOwnsBranches,
       runStartedAt,
       modelStartsEnabled: options.modelStartsEnabled,
       // A production bootstrap invocation must take the maintenance-only path

@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 import { MemoryState } from "../repair/helpers.ts";
 import { CONTROLLER } from "./controller-identity-fixture.ts";
 import { HOSTED_RUNTIME_ID } from "../../src/contracts/hosted-supervisor.ts";
@@ -510,6 +511,7 @@ export async function run(
   extra: Partial<HostedAutonomyDepsV1> = {},
 ): Promise<HostedAutonomyResultV1> {
   return await runHostedAutonomy({
+    ciMinutes: INACTIVE_CI_MINUTES,
     state: rig.state,
     githubFor: github === undefined ? rig.githubFor : () => github,
     queueCustody: darkQueueFixture(

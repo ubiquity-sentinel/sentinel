@@ -1,3 +1,4 @@
+import { INACTIVE_CI_MINUTES } from "../../src/budget/ci-minutes.ts";
 /**
  * JAM B5: a saved review request whose attempt key binds no review journal.
  *
@@ -303,6 +304,7 @@ async function liveRig(issue: number, at: number = NEXT_PASS) {
   });
   const github = new LiveGithub(shape, at, previousRoundKey(shape.record));
   const deps = {
+    ciMinutes: INACTIVE_CI_MINUTES,
     clock,
     state,
     configs,

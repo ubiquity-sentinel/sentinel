@@ -104,6 +104,8 @@ export function retireClosedPublication(
   record: WorkRecordV1,
   now: number,
   nextStep: WorkRecordV1["nextStep"] = record.nextStep,
+  retiredOwnPr: number | null = record.target.pr ??
+    (record.intent?.kind === "review_request" ? record.intent.pr : null),
 ): WorkRecordV1 {
   if (hasTakeoverCustody(record)) {
     const message = "existing PR hold: closed_publication";
@@ -114,7 +116,11 @@ export function retireClosedPublication(
   return {
     ...record,
     nextStep,
-    target: { ...record.target, pr: null },
+    target: {
+      ...record.target,
+      pr: null,
+      ...(retiredOwnPr === null ? {} : { retiredOwnPr }),
+    },
     updatedAt: now,
   };
 }
