@@ -15,7 +15,17 @@
  */
 import assert from "node:assert/strict";
 import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
-import { portOk } from "../../src/contracts/ports.ts";
+import {
+  BASE_REFRESH_CONFLICT_DETAIL,
+  portError,
+  portOk,
+} from "../../src/contracts/ports.ts";
+import { conflictMarkerBase } from "../../src/repair/conflict-resolution.ts";
+import {
+  applyHostedRetries,
+  planHostedRetries,
+} from "../../ops/hosted-autonomy-retries.ts";
+import { HISTORICAL_PARK_REARM_CUTOFF_MS } from "../../ops/hosted-autonomy-policy.ts";
 import {
   type ReviewReceiptV1,
   reviewTaskStatementDigest,
@@ -38,6 +48,7 @@ import {
   reservation,
   SHA1,
   SHA2,
+  SHA3,
   T0,
   workRecord,
 } from "../state/helpers.ts";
@@ -168,7 +179,12 @@ type Rig = Awaited<ReturnType<typeof spentRig>>;
  * Script the refreshed head H1 as `refreshed` over the fixture blobs: the
  * reviewed side is base -> reviewed, the refreshed side tip -> refreshed.
  */
-async function driftedRefresh(rig: Rig, refreshed: "carried" | "moved") {
+async function driftedRefresh(
+  rig: Rig,
+  refreshed: "carried" | "moved",
+  /** False: the runtime's exact-digest rule before drift was decided. */
+  drift: () => boolean = () => true,
+) {
   const reviewedChanges = [appChange(IDS.base, IDS.reviewed)];
   const refreshedChanges = [appChange(IDS.tip, IDS[refreshed])];
   // The runtime's git proof: unequal exact digests, drift by the shared rule.
@@ -184,7 +200,7 @@ async function driftedRefresh(rig: Rig, refreshed: "carried" | "moved") {
     return portOk({
       ...proof.value,
       refreshedPatch: "c".repeat(64),
-      ...(verdict.kind === "carried" ? { driftCarried: true } : {}),
+      ...(verdict.kind === "carried" && drift() ? { driftCarried: true } : {}),
     });
   };
   // The launcher's proof: GitHub's trees of the same identities and blobs.
@@ -211,6 +227,38 @@ async function runOnce(rig: Rig) {
     deadline: rig.clock.now() + 60 * 60_000,
     stepLimit: 16,
   });
+}
+
+/** The maintenance retry pass's REAL planner and writer over the rig state. */
+async function retryPass(rig: Rig) {
+  const read = await rig.state.readRepair();
+  if (!read.ok || read.value.status !== "found") throw new Error("state");
+  const { snapshot, head } = read.value;
+  const plans = planHostedRetries(snapshot, rig.clock.now(), SHA1);
+  if (plans.length > 0) {
+    const written = await rig.state.writeRepair(
+      applyHostedRetries(snapshot, head!, plans, rig.clock.now()),
+      head,
+    );
+    assert.ok(written.ok && written.value.status === "applied");
+  }
+  return plans;
+}
+
+/** Park the record under the exact-digest rule the runtime used to apply. */
+async function historicalPark(rig: Rig) {
+  await runOnce(rig);
+  await runOnce(rig);
+  const [record] = (await rig.snapshot()).work;
+  assert.equal(record.nextStep, "blocked");
+  assert.ok(
+    record.blocker!.message.startsWith(
+      REVIEW_ROUND_CEILING_CARRIED_PATCH_CHANGED_PREFIX,
+    ),
+    record.blocker!.message,
+  );
+  assert.ok(record.blocker!.since < HISTORICAL_PARK_REARM_CUTOFF_MS);
+  return record;
 }
 
 async function assertRollbackParses(rig: Rig) {
@@ -301,5 +349,111 @@ Deno.test(
     );
     assert.deepEqual(rig.github.launcherMerges, []);
     await assertRollbackParses(rig);
+  }),
+);
+
+Deno.test(
+  "carried drift (#304): a historical exact-digest park re-arms once, re-proves the patch and merges under its carried review",
+  historicalDeliveryScenario(async (graph) => {
+    const rig = await spentRig(SELF, graph);
+    const charges = (await rig.snapshot()).reservations.length;
+    let drift = false;
+    assert.equal(
+      await driftedRefresh(rig, "carried", () => drift),
+      "carried",
+    );
+    await historicalPark(rig);
+    // The installed runtime decides drift now; the retry pass re-arms once.
+    drift = true;
+    const plans = await retryPass(rig);
+    assert.equal(plans.length, 1);
+    assert.equal(plans[0].detail, "other:historical_rearm:carried_patch");
+    let [record] = (await rig.snapshot()).work;
+    assert.equal(record.nextStep, "work");
+    assert.equal(record.target.head, H1);
+    await runOnce(rig);
+    [record] = (await rig.snapshot()).work;
+    assert.ok(isCarriedMergeMarker(record.wait), JSON.stringify(record));
+    const actions = await rig.launcher();
+    assert.equal(rig.github.launcherMerges.length, 1, JSON.stringify(actions));
+    assert.equal(rig.github.launcherMerges[0].head, H1);
+    assert.equal(rig.github.launcherMerges[0].onto, SHA2);
+    rig.clock.advance(5 * 60_000);
+    await runOnce(rig);
+    [record] = (await rig.snapshot()).work;
+    assert.notEqual(record.nextStep, "blocked", record.blocker?.message);
+    assert.equal((await rig.snapshot()).releaseRequests.length, 1);
+    // No review round, no charge: the merge stands on the carried review.
+    assert.equal(record.counters.reviewRounds, MAX_REVIEW_ROUNDS);
+    assert.equal((await rig.snapshot()).reservations.length, charges);
+    assert.deepEqual(await retryPass(rig), []);
+    await assertRollbackParses(rig);
+  }),
+);
+
+Deno.test(
+  "carried drift (#304/#307): a re-armed park whose patch still does not carry parks again and stays parked",
+  historicalDeliveryScenario(async (graph) => {
+    const rig = await spentRig(SELF, graph);
+    const charges = (await rig.snapshot()).reservations.length;
+    assert.equal(await driftedRefresh(rig, "moved"), "changed");
+    await historicalPark(rig);
+    // Re-armed after the cutoff: the runtime's re-park is written after it.
+    rig.clock.advance(HISTORICAL_PARK_REARM_CUTOFF_MS - rig.clock.now() + 1);
+    assert.equal((await retryPass(rig)).length, 1);
+    await runOnce(rig);
+    const [record] = (await rig.snapshot()).work;
+    assert.equal(record.nextStep, "blocked");
+    assert.ok(
+      record.blocker!.message.startsWith(
+        REVIEW_ROUND_CEILING_CARRIED_PATCH_CHANGED_PREFIX,
+      ),
+      record.blocker!.message,
+    );
+    assert.ok(record.blocker!.since >= HISTORICAL_PARK_REARM_CUTOFF_MS);
+    assert.deepEqual(await retryPass(rig), []);
+    await rig.launcher();
+    assert.deepEqual(rig.github.launcherMerges, []);
+    assert.equal((await rig.snapshot()).reservations.length, charges);
+  }),
+);
+
+Deno.test(
+  "carried drift (#307): a re-armed carried head that conflicts with the moved tip takes the existing conflict path, never the carried merge",
+  historicalDeliveryScenario(async (graph) => {
+    const rig = await spentRig(SELF, graph);
+    let drift = false;
+    assert.equal(
+      await driftedRefresh(rig, "carried", () => drift),
+      "carried",
+    );
+    await historicalPark(rig);
+    drift = true;
+    // The tip moved on and no longer merges cleanly with the carried head.
+    rig.github.remoteBase = SHA3;
+    const prepare = rig.github.prepareBaseRefresh!.bind(rig.github);
+    rig.github.prepareBaseRefresh = (request, authority) =>
+      request.expectedBase === SHA3
+        ? Promise.resolve(portError("conflict", BASE_REFRESH_CONFLICT_DETAIL))
+        : prepare(request, authority);
+    assert.equal((await retryPass(rig)).length, 1);
+    await runOnce(rig);
+    await runOnce(rig);
+    await rig.launcher();
+    const [record] = (await rig.snapshot()).work;
+    assert.deepEqual(rig.github.launcherMerges, []);
+    assert.ok(!isCarriedMergeMarker(record.wait));
+    // The refresh's own conflict outcome. This rig's record holds no
+    // preserved candidate descriptor, so it is the terminal conflict block; a
+    // record that holds one (#307 does) takes the charged conflict-resolution
+    // route instead (`conflictResolutionShape`), whose resolved head needs a
+    // fresh current-head review.
+    assert.equal(record.nextStep, "blocked");
+    assert.equal(
+      record.blocker?.message,
+      `base refresh has conflicts at ${SHA3}`,
+    );
+    assert.equal(conflictMarkerBase(record.intent), null);
+    assert.deepEqual(await retryPass(rig), []);
   }),
 );

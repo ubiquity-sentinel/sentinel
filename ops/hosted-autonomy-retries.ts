@@ -20,6 +20,7 @@ import {
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import { evidenceExpired } from "./hosted-autonomy-evidence-expiry.ts";
+import { planHistoricalRearm } from "./hosted-autonomy-historical-rearms.ts";
 import {
   currentHeadReviewTerminal,
   ordinaryReviewRoundsSpent,
@@ -533,6 +534,8 @@ export function planHostedRetries(
     repeatFailure?: RepeatFailureContextV1;
     /** Receives each park the bound decided; the caller writes it. */
     onRepeatFailurePark?: (park: RepeatFailureParkPlanV1) => void;
+    /** Recovered work-needed base-review verdicts (`readBaseReviewWorkNeeded`). */
+    baseReviewWorkNeeded?: ReadonlySet<string>;
   } = {},
 ): RetryPlanV1[] {
   if (!isGitSha(runtimeSha)) return [];
@@ -693,6 +696,20 @@ export function planHostedRetries(
     if (
       rule.blockedBefore !== undefined && !(blocker.since < rule.blockedBefore)
     ) continue;
+    if (rule.historicalRearm !== undefined) {
+      const historical = planHistoricalRearm(
+        snapshot,
+        record,
+        rule.historicalRearm,
+        options.baseReviewWorkNeeded ?? new Set(),
+      );
+      if (typeof historical !== "string") plans.push(historical);
+      else {
+        const { id, repository } = record;
+        onDenied?.({ id, repository, reason: historical });
+      }
+      continue;
+    }
     if (
       rule.staleAdmission === true
         ? !staleAdmissionRetained(record, snapshot.reservations, now)

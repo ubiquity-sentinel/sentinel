@@ -101,8 +101,36 @@ export function queueHold(
 const equal = (a: unknown, b: unknown) =>
   canonicalStringify(a) === canonicalStringify(b);
 
+/** Guards composed here; a fixture or wrapper composed elsewhere has none. */
+const COMPOSED = new WeakMap<NativeQueueGuardV1, NativeQueueGuardOptions>();
+
 export function createNativeQueueGuard(
   options: NativeQueueGuardOptions,
+): NativeQueueGuardV1 {
+  return composeNativeQueueGuard(options, options.state);
+}
+
+/**
+ * The same guard deciding over `view` (#328). A repository pass steps its
+ * records on a private fork that never reaches the shared store while the
+ * serial trusted writer keeps committing to it, so judging the fork's rows
+ * against that store reports every in-pass write and every concurrent commit
+ * as identity drift. The pass decides on its own state instead: its effects
+ * stay fenced and re-guarded by the trusted writer on the authoritative view,
+ * and its delta lands only on an unchanged planned base. Delivery proofs keep
+ * the authoritative view; an uncomposed guard is returned unchanged.
+ */
+export function withQueueDecisionView(
+  guard: NativeQueueGuardV1,
+  view: StateReadView,
+): NativeQueueGuardV1 {
+  const options = COMPOSED.get(guard);
+  return options === undefined ? guard : composeNativeQueueGuard(options, view);
+}
+
+function composeNativeQueueGuard(
+  options: NativeQueueGuardOptions,
+  decisions: StateReadView,
 ): NativeQueueGuardV1 {
   async function inspect(
     input: QueueEffectRequest,
@@ -126,7 +154,7 @@ export function createNativeQueueGuard(
           (row.target.branch === input.branch ||
             candidateBranch(row.id) === input.branch));
     const readState = async () => {
-      const read = await options.state.readRepair();
+      const read = await decisions.readRepair();
       if (read.ok && read.value.status === "found") {
         strict ||= read.value.snapshot.work.some((row) =>
           matches(row) && hasCustody(row)
@@ -224,10 +252,12 @@ export function createNativeQueueGuard(
       return unavailable();
     }
   }
-  return {
+  const guard: NativeQueueGuardV1 = {
     inspect: ({ record, operation, expectedHead, deadline }) =>
       inspect({ operation, expectedHead, deadline }, record),
     inspectEffect: (input) => inspect(input),
     proveDelivery: (input) => proveNativeQueueDelivery(options, input),
   };
+  COMPOSED.set(guard, options);
+  return guard;
 }

@@ -30,6 +30,7 @@ import {
   workRecord,
 } from "../state/helpers.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
+import { STEP_LINE_KIND } from "../../src/repair/step-line.ts";
 import { queueRig } from "./delivery-queue-rig.ts";
 
 const RECORDS = 5;
@@ -81,10 +82,24 @@ Deno.test("delivery queue: a record waiting its turn writes, charges and refresh
     ],
   });
   const before = await rig.snapshot();
-  await runRepairCycle(rig.deps, {
-    deadline: rig.clock.now() + 60 * 60_000,
-    stepLimit: 16,
-  });
+  const lines: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+  try {
+    await runRepairCycle(rig.deps, {
+      deadline: rig.clock.now() + 60 * 60_000,
+      stepLimit: 16,
+    });
+  } finally {
+    console.log = original;
+  }
+  // The hosted step log names why the record deferred, as one closed code.
+  const steps = lines.filter((line) => line.includes(STEP_LINE_KIND))
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.deepEqual(
+    steps.map((step) => [step.recordId, step.outcome, step.reason]),
+    [[rig.records[1].id, "deferred", "delivery_line"]],
+  );
   const after = await rig.snapshot();
   assert.deepEqual(after.work, before.work, "no record rewritten");
   assert.deepEqual(after.reservations, before.reservations);
@@ -157,10 +172,22 @@ const onTip = (index: number, overrides: Record<string, unknown> = {}) =>
 Deno.test("delivery queue: a reviewed record in flight on the tip goes first", () => {
   const me = reviewed(5);
   for (const step of ["work", "review", "delivery"] as const) {
-    const other = onTip(9, { nextStep: step });
+    // Ahead in line (`createdAt`): every in-flight step holds.
+    const earlier = onTip(1, { nextStep: step });
     assert.equal(
-      deliveryQueueAhead(snapshotOf([me, other]), me, TIP, NOW)?.id,
-      other.id,
+      deliveryQueueAhead(snapshotOf([me, earlier]), me, TIP, NOW)?.id,
+      earlier.id,
+      step,
+    );
+    // Behind it in line: only paid work holds (`landing`, or a review in
+    // flight); a younger head merely awaiting its own CI at `work` does not
+    // starve an older record with no reviewed head to lose (sentinel
+    // 2026-11-13: PRs 387-392 waited more than ten hours behind heads created
+    // the same morning).
+    const later = onTip(9, { nextStep: step });
+    assert.equal(
+      deliveryQueueAhead(snapshotOf([me, later]), me, TIP, NOW)?.id ?? null,
+      step === "work" ? null : later.id,
       step,
     );
   }
@@ -174,23 +201,31 @@ Deno.test("delivery queue: the oldest record on a moved base refreshes first", (
   const snapshot = snapshotOf([second, first]);
   assert.equal(deliveryQueueAhead(snapshot, first, TIP, NOW), null);
   assert.equal(deliveryQueueAhead(snapshot, second, TIP, NOW)?.id, first.id);
-  // A refresh already in flight holds the line whatever its number.
-  const refreshing = reviewed(9, {
-    intent: {
-      kind: "base_refresh",
-      key: `base_refresh:109:${SHA3}:${TIP}`,
-      startedAt: T0,
-      branch: "sentinel/repair/issue-9",
-      expectedHead: SHA3,
-      observedBase: TIP,
-      pr: 109,
-      requestId: null,
-      resultId: null,
-    },
+  // A refresh already in flight holds every record behind it in line; it no
+  // longer holds one ahead of it that has no reviewed head to lose, so a
+  // younger refresh cannot take the tip on every pass.
+  const refreshIntent = (index: number) => ({
+    kind: "base_refresh" as const,
+    key: `base_refresh:${100 + index}:${SHA3}:${TIP}`,
+    startedAt: T0,
+    branch: `sentinel/repair/issue-${index}`,
+    expectedHead: SHA3,
+    observedBase: TIP,
+    pr: 100 + index,
+    requestId: null,
+    resultId: null,
   });
+  const refreshing = reviewed(9, { intent: refreshIntent(9) });
   assert.equal(
-    deliveryQueueAhead(snapshotOf([first, refreshing]), first, TIP, NOW)?.id,
-    refreshing.id,
+    deliveryQueueAhead(snapshotOf([first, refreshing]), first, TIP, NOW),
+    null,
+  );
+  const earlierRefresh = reviewed(1, { intent: refreshIntent(1) });
+  assert.equal(
+    deliveryQueueAhead(snapshotOf([earlierRefresh, second]), second, TIP, NOW)
+      ?.id,
+    earlierRefresh.id,
+    "a younger record still waits behind the refresh in flight",
   );
 });
 

@@ -88,3 +88,21 @@ export function baseResultSatisfied(
     task.taskDigest === binding.taskDigest &&
     task.evidence.length > 0;
 }
+
+/**
+ * A completed review that answered that work is still needed at its exact
+ * base (`not_fulfilled` or `uncertain` for the bound task). The runtime
+ * returns such a record to implementation (`loop-base-satisfaction.ts`); the
+ * launcher's one-time historical re-arm recovers the same verdict from the
+ * digest-bound result comment (`ops/hosted-autonomy-base-review-verdicts.ts`).
+ */
+export function baseResultWorkNeeded(
+  result: ReviewResultV1,
+  binding: Pick<BaseReviewBindingV1, "issueNumber" | "taskDigest">,
+): boolean {
+  const task = result.taskAcceptance ?? null;
+  return result.verdict !== "unavailable" && task !== null &&
+    task.issueNumber === binding.issueNumber &&
+    task.taskDigest === binding.taskDigest &&
+    (task.verdict === "not_fulfilled" || task.verdict === "uncertain");
+}

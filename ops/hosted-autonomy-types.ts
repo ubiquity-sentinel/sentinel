@@ -10,6 +10,7 @@ import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { MismatchDispositionObservationsV1 } from "./runtime-mismatch-recovery-disposition.ts";
 import type { HostedPlanArtifactV1 } from "./hosted-autonomy-producer-requests.ts";
 import type { HostedTreeChangesV1 } from "./hosted-autonomy-github-trees.ts";
+import type { BaseReviewCommentV1 } from "../src/github/base-review-comments.ts";
 import type {
   RepairStateWriter,
   StateReadView,
@@ -323,6 +324,16 @@ export interface HostedAutonomyGitHubV1 {
    * drift, so a drifted carried patch reads as changed.
    */
   readBlob?(sha: string): Promise<Uint8Array | null>;
+  /**
+   * One exact comment of one issue of THIS repository (id, body, author), or
+   * null when it cannot be read or belongs to another issue. Optional: a
+   * surface without it recovers no historical base-review verdict
+   * (`hosted-autonomy-base-review-verdicts.ts`).
+   */
+  readIssueComment?(
+    issue: number,
+    id: number,
+  ): Promise<BaseReviewCommentV1 | null>;
   /**
    * Expected-head merge; null on any refusal. `message`, when given, is the
    * merge commit's plain evidence text (the carried merge's proof).

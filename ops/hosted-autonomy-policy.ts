@@ -10,7 +10,9 @@ import {
   isReviewRoundCeilingPark,
   MAX_REVIEW_ROUNDS,
   ordinaryReviewRoundsSpent,
+  REVIEW_ROUND_CEILING_CARRIED_PATCH_CHANGED_PREFIX,
 } from "../src/repair/review-round-cap.ts";
+import { BASE_REVIEW_NOT_ESTABLISHED } from "../src/repair/base-satisfaction-marker.ts";
 import type { BudgetReservationV1 } from "../src/contracts/budget-reservation.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import {
@@ -51,6 +53,20 @@ export const STALE_ADMISSION_INVALID_DETAIL =
 
 /** Parks of that class written before 2026-11-12T00:00:00Z re-arm once. */
 export const STALE_ADMISSION_REARM_CUTOFF_MS = Date.UTC(2026, 10, 12);
+
+/**
+ * Historical carried-patch and base-review parks written before
+ * 2026-11-13T00:00:00Z re-arm once (`hosted-autonomy-historical-rearms.ts`).
+ */
+export const HISTORICAL_PARK_REARM_CUTOFF_MS = Date.UTC(2026, 10, 13);
+
+/**
+ * The one-time re-arms of parks whose parking rule has since been fixed:
+ * `carried_patch` (exact-digest carried-patch refusal, now decided across
+ * context-only base drift) and `base_review_work_needed` (a base review that
+ * found work still needed, now returned to implementation).
+ */
+export type HistoricalRearmV1 = "carried_patch" | "base_review_work_needed";
 
 /**
  * Stable repository scope key. This is the separator that makes every planning
@@ -273,6 +289,12 @@ export const HOSTED_AUTONOMY_RETRYABLE: readonly {
    * closes it.
    */
   readonly staleAdmission?: true;
+  /**
+   * A one-time re-arm planned only by `planHistoricalRearm`, never by the
+   * ordinary work grant: it charges nothing itself and returns the record to
+   * the runtime step that re-decides the park under the fixed rule.
+   */
+  readonly historicalRearm?: HistoricalRearmV1;
 }[] = [
   {
     prefix: "model run ended without a trusted receipt",
@@ -366,6 +388,27 @@ export const HOSTED_AUTONOMY_RETRYABLE: readonly {
     nextStep: "work",
     blockedBefore: STALE_ADMISSION_REARM_CUTOFF_MS,
     staleAdmission: true,
+  },
+  {
+    // A spent, cleanly reviewed record whose refreshed head was refused under
+    // the exact-digest carried-patch rule (sentinel PRs 304 and 307). The
+    // runtime now decides context-only base drift (`carriedChangeHolds`), so
+    // these parks return once to the carried-delivery work step, which
+    // re-proves the patch and then gates CI, the delivery line and the merge.
+    prefix: REVIEW_ROUND_CEILING_CARRIED_PATCH_CHANGED_PREFIX,
+    nextStep: "work",
+    blockedBefore: HISTORICAL_PARK_REARM_CUTOFF_MS,
+    historicalRearm: "carried_patch",
+  },
+  {
+    // A completed native base review that found work still needed parked for
+    // good until the runtime returned such reviews to implementation. Only a
+    // verdict recovered from its digest-bound result comment re-arms, once,
+    // under the runtime's own no-change bound.
+    prefix: BASE_REVIEW_NOT_ESTABLISHED,
+    nextStep: "work",
+    blockedBefore: HISTORICAL_PARK_REARM_CUTOFF_MS,
+    historicalRearm: "base_review_work_needed",
   },
   {
     // An uncertain implementation outcome stays charged (its admission is

@@ -20,6 +20,7 @@ import {
   ATTEMPT_DETAIL_UNCERTAIN,
   attemptMemorySettlementMutationV1,
   attemptMemorySuccessMutationV1,
+  IMPLEMENTATION_RECEIPT_FAILURE_DETAILS,
 } from "./attempt-policy.ts";
 import { holdNoChange, noChangeIssue } from "./base-satisfaction-marker.ts";
 import { unappliedPatchOnly } from "./candidate-shape.ts";
@@ -164,6 +165,7 @@ export async function handleModelReceipt(
   reservationId: string,
   receipt: ModelRunReceiptV1,
   config: RepositoryConfigV1,
+  failureDetail: string | null = null,
 ): Promise<StepResultV1> {
   const queueGuard = await guardQueueOperation(deps, context, record, "resume");
   if (queueGuard !== null) return queueGuard;
@@ -198,9 +200,9 @@ export async function handleModelReceipt(
       );
     }
     // Only OUR sanitized loop-stop marker gets the exact failed_command_loop
-    // blocker message; every other incomplete receipt keeps the generic
-    // message. The settlement write moved the authoritative head, so the
-    // block is persisted against the reloaded state (never a stale CAS).
+    // blocker message. Other incomplete receipts may carry a closed cell
+    // diagnostic, never raw model text. The settlement write moved the head,
+    // so the block is persisted against reloaded state (never a stale CAS).
     const loopStopped = receipt.error === ATTEMPT_DETAIL_LOOP_STOP;
     const artifactOnly = receipt.outcome === "completed" &&
       candidate !== null &&
@@ -217,12 +219,19 @@ export async function handleModelReceipt(
     ) {
       incompleteMessage = ATTEMPT_DETAIL_UNAPPLIED_PATCH;
     }
+    // Enrich only the park text. Keep the original detail below for attempt
+    // classification/fingerprints, so this diagnostic does not change retries.
+    const parkDetail = incompleteMessage === ATTEMPT_DETAIL_INCOMPLETE
+      ? Object.values(IMPLEMENTATION_RECEIPT_FAILURE_DETAILS).find((detail) =>
+        detail === failureDetail
+      ) ?? incompleteMessage
+      : incompleteMessage;
     const settled = await settleAndBlock(
       deps,
       reservationId,
       "ambiguous",
       record,
-      incompleteMessage,
+      parkDetail,
       now,
     );
     if (settled.kind === "state_error") return settled;
