@@ -34,13 +34,20 @@ import type {
   ReviewSubmissionV1,
 } from "./ports-github-requests.ts";
 
-/** Optional enrichment of one strict check read. */
+/** Optional enrichment or advisory-only mode of one strict check read. */
 export interface GitHubChecksReadOptionsV1 {
   /**
    * Prove each Actions check run's workflow event. One bounded extra read is
    * made per distinct workflow run and cached for this observation.
    */
   events?: boolean;
+  /**
+   * Advisory changed-input scheduling only: read native checks/statuses without
+   * Actions job/event or backup-CI enrichment, even if `events` is requested.
+   * Never use this mode as CI/merge evidence; authoritative reads omit it.
+   * Exhaustive collection, exact-head binding and strict parsing still apply.
+   */
+  liveInputsOnly?: boolean;
 }
 
 /** Optional narrowing of one open-issue listing. */
@@ -105,7 +112,8 @@ export interface GitHubPort {
    *
    * With `options.events`, each GitHub Actions check run also carries its
    * proven workflow `event`; a run whose event cannot be proved stays absent
-   * and attribution keeps its legacy path.
+   * and attribution keeps its legacy path. `options.liveInputsOnly` skips all
+   * enrichment for advisory input fingerprints, never for a CI/merge decision.
    */
   readChecks(
     head: GitSha,
