@@ -200,7 +200,7 @@ Deno.test("base satisfaction: charged no-change reviews exact base then closes o
   }
 });
 
-Deno.test("base satisfaction: unavailable native outcomes remain charged across restarts and stop after three rounds", async () => {
+Deno.test("base satisfaction: unavailable native outcomes remain charged across restarts and never park a spent round count", async () => {
   const f = await fixture();
   f.setAmbiguous(true);
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -208,12 +208,14 @@ Deno.test("base satisfaction: unavailable native outcomes remain charged across 
     f.rig.clock.advance(60 * 60_000);
   }
   const state = await f.rig.snapshot();
-  assert.equal(f.counts().runs, 3);
-  assert.equal(new Set(f.counts().admissions).size, 3);
-  assert.equal(state.work[0].counters.reviewRounds, 3);
-  assert.equal(state.work[0].nextStep, "blocked");
-  assert.match(state.work[0].blocker!.message, /review round ceiling reached/);
-  assert.equal(state.reservations.length, 4);
+  // Rounds are accounting (owner directive 2026-10-30): the fourth pass buys
+  // a fourth review instead of parking at a three-round ceiling.
+  assert.equal(f.counts().runs, 4);
+  assert.equal(new Set(f.counts().admissions).size, 4);
+  assert.equal(state.work[0].counters.reviewRounds, 4);
+  assert.equal(state.work[0].nextStep, "work");
+  assert.equal(state.work[0].blocker, null);
+  assert.equal(state.reservations.length, 5);
   assert.ok(state.reservations.every((row) => row.outcome === "ambiguous"));
   assert.equal(f.counts().closes, 0);
 });

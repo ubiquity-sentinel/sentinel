@@ -80,6 +80,55 @@ Deno.test("self defects: CI job display names remain allowlisted", () => {
   }
 });
 
+Deno.test("self defects: current CI matrix names retain their logical job", () => {
+  for (
+    const job of [
+      "test-shards (modules, 4)",
+      "test-shards (integration, 1)",
+      "test-shards (host-1, 4)",
+      "test-shards (host-2, 4)",
+      "test-shards (host-3, 4)",
+    ]
+  ) {
+    const signature = extractSelfFailureSignature("no useful log output\n", {
+      ...RUN,
+      job,
+    });
+    assert.equal(signature.key, "sentinel-ci:test-shards:job:observed");
+  }
+  for (
+    const job of [
+      "test-shards (private-value, 4)",
+      "test-shards (modules, 99)",
+      "test-shards (modules, 4) private-value",
+    ]
+  ) {
+    const signature = extractSelfFailureSignature("no useful log output\n", {
+      ...RUN,
+      job,
+    });
+    assert.equal(signature.key, "sentinel-ci:unknown-job:job:observed");
+  }
+});
+
+Deno.test("self defects: timestamped Actions errors retain their signature", () => {
+  const expected = extractSelfFailureSignature("error: Test failed\n", RUN);
+  for (
+    const prefix of [
+      "2026-10-27T20:06:18Z ",
+      "2026-10-27T20:06:18.1234567Z ",
+      "2026-10-27T20:06:18.1234567Z ##[error]",
+      "##[error]",
+    ]
+  ) {
+    const signature = extractSelfFailureSignature(
+      `${prefix}error: SYNTHETIC_PRIVATE_MARKER /private/path\n`,
+      RUN,
+    );
+    assert.deepEqual(signature, expected);
+  }
+});
+
 Deno.test("self defects: assertion and generic error lines are extracted", () => {
   const assertion = extractSelfFailureSignature(
     "error: AssertionError: unexpected github calls: readRef, createPr\n",

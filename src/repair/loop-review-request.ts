@@ -60,10 +60,11 @@ export async function requestReviewFor(
 ): Promise<StepResultV1> {
   const queueGuard = await guardQueueOperation(deps, context, record, "resume");
   if (queueGuard !== null) return queueGuard;
-  // The hard review-round ceiling comes first (owner decision 2026-10-16):
-  // with no round left nothing is read, reserved or refreshed, and the record
-  // parks. Every request path (publication, PR creation, no verdict, expiry,
-  // missing acceptance, drain, launcher grants) passes through here.
+  // The retired review-round ceiling gate comes first. Owner directive
+  // 2026-10-30: a spent count no longer withholds a review, so the gate always
+  // admits and this call is the single seam every request path (publication,
+  // PR creation, no verdict, expiry, missing acceptance, drain, launcher
+  // grants) passes through.
   const capped = reviewRoundCeilingGate(deps, context, record, concludedKey);
   if (capped !== null) return await capped;
   const now = deps.clock.now();
@@ -522,10 +523,10 @@ export async function recoverFromNoVerdictReview(
   operationKey: string | null = null,
 ): Promise<StepResultV1> {
   const now = deps.clock.now();
-  // Each round is its own durable, uniquely admitted review request, bounded
-  // by the hard ceiling in requestReviewFor (owner decision 2026-10-16: three
-  // rounds; ai.ubq.fi 684 / PR 1059 re-requested 35 no-verdict rounds here).
-  // A record is never merged because a round count ran out.
+  // Each round is its own durable, uniquely admitted review request through
+  // requestReviewFor (ai.ubq.fi 684 / PR 1059 re-requested 35 no-verdict rounds
+  // here). Rounds are accounting (owner directive 2026-10-30): their count
+  // neither bounds a request nor merges a record.
   return await requestReviewFor(
     deps,
     context,

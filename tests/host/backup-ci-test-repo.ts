@@ -39,6 +39,25 @@ export async function fixtureGit(
 }
 
 /**
+ * A real POSIX tar for planner fixtures on both BSD/macOS and GNU/Linux.
+ * GNU metadata normalization belongs to the hosted packer's own tests, not
+ * read-slot planning. The production packer still bounds and scans this tar.
+ */
+export async function archiveFixtureBare(
+  parent: string,
+  out: string,
+): Promise<boolean> {
+  const result = await new Deno.Command("tar", {
+    args: ["-cf", out, "-C", parent, "bare"],
+    clearEnv: true,
+    env: { PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", LC_ALL: "C" },
+    stdout: "null",
+    stderr: "piped",
+  }).output();
+  return result.success;
+}
+
+/**
  * An absolute temporary directory inside the checkout: the named test
  * permissions read only `.`, and the code under test reads its own files.
  */

@@ -28,6 +28,10 @@ import {
   isReleaseDeferredWait,
   observeGatewayVpsDelivery,
 } from "./vps-delivery.ts";
+import {
+  completeMergeAccepted,
+  deferRelease,
+} from "./loop-release-merge-accepted.ts";
 import { persistWork } from "./loop-state.ts";
 import {
   type CarriedReleaseProverV1,
@@ -86,26 +90,6 @@ export function waitRelease(
   );
 }
 
-/**
- * Merged; release deferred while the release path is disabled (JAM B12). The
- * record stays at `delivery` beside its open request: it is never marked
- * done, because only this record consumes the release outcome (acceptance
- * reconciles the closure, a failed or rolled-back release blocks it) and a
- * done record never moves again. Written once; selection then skips it.
- */
-export function deferRelease(
-  deps: RepairCycleDepsV1,
-  context: LoopContextV1,
-  record: WorkRecordV1,
-  now: number,
-): Promise<StepResultV1> {
-  return persistWork(
-    deps,
-    context,
-    setWait(record, { reason: "unavailable", since: now, until: null }, now),
-  );
-}
-
 /** One positively read and reparsed release snapshot; anything else is null. */
 export async function readReleaseSnapshot(
   state: Pick<StateReadView, "readRelease">,
@@ -132,9 +116,10 @@ export interface ReleaseResumeRunV1 {
  * deferred record exists, the release ref is read ONCE; a deferred record
  * whose request the release ref now records (or that is no longer an open,
  * intent-free deferral) has its wait released, so the ordinary delivery step
- * observes the release outcome on this same run. A still-deferred record is
- * not touched, an unreadable release ref changes nothing, and each record is
- * looked at once per run, so the pass never loops or rewrites.
+ * observes the release outcome on this same run. While the release path is
+ * disabled, a merged PR at the exact recorded revision completes the record.
+ * A still-deferred record is not touched and an unreadable ref changes
+ * nothing; each record is looked at once per run, so the pass never loops.
  */
 export async function resumeDeferredRelease(
   deps: RepairCycleDepsV1,
@@ -158,7 +143,18 @@ export async function resumeDeferredRelease(
     if (
       record.intent === null && request !== undefined &&
       gatewayReleaseDeferred(run.release, request)
-    ) continue;
+    ) {
+      const completed = await completeMergeAccepted(
+        deps,
+        context,
+        record,
+        request,
+        run.release,
+        deps.clock.now(),
+      );
+      if (completed !== null) return completed;
+      continue;
+    }
     const now = deps.clock.now();
     const since = record.wait!.since;
     return persistWork(
@@ -440,12 +436,20 @@ export async function observeReleaseAcceptance(
   }
   const now = deps.clock.now();
   if (isGatewayVpsRepository(record.repository)) {
-    // Merged, release deferred while the release path is disabled: no release
-    // record can be observed for this request, so the record waits in its one
-    // stable shape instead of re-arming a poll every cycle (JAM B12).
+    // Merged, deferred: with the release path disabled the exact merge
+    // completes the record (owner directive 2026-10-31); enabled still waits.
     if (record.intent === null && request.status === "open") {
       const release = await readReleaseSnapshot(deps.state);
       if (release !== null && gatewayReleaseDeferred(release, request)) {
+        const accepted = await completeMergeAccepted(
+          deps,
+          context,
+          record,
+          request,
+          release,
+          now,
+        );
+        if (accepted !== null) return accepted;
         return deferRelease(deps, context, record, now);
       }
     }

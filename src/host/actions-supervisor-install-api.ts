@@ -3,6 +3,8 @@ import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import { HOSTED_CONTROLLER_API_PATH } from "../contracts/hosted-controller-deployment.ts";
 import { portError, portOk, type PortResultV1 } from "../contracts/ports.ts";
 import { GitHubApiClient } from "../github/client.ts";
+import type { GitHubApiClientOptionsV1 } from "../github/client-contracts.ts";
+import type { HostedExecutionWaitOptionsV1 } from "../github/client-hosted-execution.ts";
 import { parseHostedCompare } from "../github/client-hosted-revision-wire.ts";
 import { createDeadline } from "../github/http.ts";
 import type { ChildRuntimeSummaryV1, RunJobSummaryV1 } from "./run-summary.ts";
@@ -10,7 +12,15 @@ import type { ChildRuntimeSummaryV1, RunJobSummaryV1 } from "./run-summary.ts";
 const ROOT = HOSTED_CONTROLLER_API_PATH;
 const record = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
+
+export interface HostedSupervisorGitHubClientOptionsV1
+  extends GitHubApiClientOptionsV1, HostedExecutionWaitOptionsV1 {}
+
 export class HostedSupervisorGitHubClient extends GitHubApiClient {
+  constructor(options: HostedSupervisorGitHubClientOptionsV1) {
+    super(options);
+  }
+
   /**
    * #178: every completed job of one run attempt with the summary `select`
    * reads from its bounded signed log (null when the log is unreadable or
