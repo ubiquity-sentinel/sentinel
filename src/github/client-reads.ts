@@ -42,6 +42,7 @@ export {
 const COMMIT_PARENTS_MAX = 64;
 
 export abstract class GitHubClientReads extends GitHubClientChecks {
+  /** Host-authored base-review jobs; unrelated supervisor jobs are not task CI. */
   async readBaseReviewChecks(
     sha: GitSha,
     names: readonly string[],
@@ -173,7 +174,6 @@ export abstract class GitHubClientReads extends GitHubClientChecks {
     );
   }
 
-  /** Every check-run page of exactly one commit, raw, item bound applied. */
   async readProtections(
     branch: string,
   ): Promise<PortResultV1<GitHubBranchProtectionsV1>> {
