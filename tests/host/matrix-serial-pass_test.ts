@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import type { HostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
+import { DEFAULT_STEP_LIMIT } from "../../src/repair/loop-bounds.ts";
 import { prepareMatrixIntakeV1 } from "../../src/repair/loop-intake.ts";
 import { targetDeps } from "../../src/host/matrix-actions-shared.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
@@ -168,6 +169,26 @@ Deno.test("matrix serial pass: 700 planner-owned issues across 30 targets need n
   assert.equal(test.model.requests.length, 0);
   assert.equal(measured.result.addressed.length, 30);
 });
+
+for (const targets of [DEFAULT_STEP_LIMIT + 1, DEFAULT_STEP_LIMIT * 2]) {
+  Deno.test(`matrix serial pass: prepares all ${targets} configured targets`, async () => {
+    const test = rig(targets);
+    const before = structuredClone(test.state.repair);
+    test.input.modelStartsEnabled = true;
+    const measured = await measure(test.input);
+    assert.equal(test.preparations(), targets);
+    assert.deepEqual(
+      measured.result.addressed,
+      test.input.configs.map((config) =>
+        `${config.repository.owner}/${config.repository.name}`
+      ),
+    );
+    assert.deepEqual(measured.result.skipped, []);
+    assert.deepEqual(measured.result.failed, []);
+    assert.deepEqual(test.state.repair, before);
+    assert.equal(test.model.requests.length, 0);
+  });
+}
 
 Deno.test("matrix serial pass: bootstrap checks state without recovery, target preparation or lifecycle", async () => {
   const test = rig(30, 700, "bootstrap");
