@@ -355,15 +355,88 @@ Deno.test("targets: a bun target with CI gets the bun verify policy", async () =
   assert.equal(isNoTestEvidenceTargetV1(config), false);
 });
 
-Deno.test("targets: both manifests keep their script names separate", async () => {
+Deno.test("targets: prospector mixed manifests select the declared package manager", async () => {
+  for (const [index, toolchain] of ["bun", "npm", "yarn", "pnpm"].entries()) {
+    // Each manifest graph has its own commit, including across cached reads.
+    const revision = (index + 1).toString(16).padStart(40, "0");
+    const packageManager = `${toolchain}@1.3.3`;
+    const manifests: Record<string, string> = {
+      "/package.json": JSON.stringify({
+        packageManager,
+        scripts: { check: "tsc --noEmit" },
+      }),
+      "/deno.json": JSON.stringify({ tasks: { test: "deno test" } }),
+      "/.github/workflows/ci.yml":
+        `on: [pull_request]\njobs:\n  check:\n    steps:\n      - run: ${toolchain} ${
+          toolchain === "npm" ? "ci" : "install --frozen-lockfile"
+        } && ${toolchain} run check\n`,
+    };
+    const resolveTreeFacts = createTargetTreeFactsResolver({
+      token: "token-value",
+      http: (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/repos/ubiquity/prospector/commits/main") {
+          return Promise.resolve(
+            response(200, JSON.stringify({ sha: revision })),
+          );
+        }
+        assert.equal(url.searchParams.get("ref"), revision);
+        const path = url.pathname.split("/contents")[1];
+        let body: unknown;
+        if (path === "") {
+          body = ["package.json", "deno.json", "bun.lock"].map((name) => ({
+            type: "file",
+            name,
+            path: name,
+          }));
+        } else if (path === "/.github/workflows") {
+          body = [{
+            type: "file",
+            name: "ci.yml",
+            path: ".github/workflows/ci.yml",
+          }];
+        } else {
+          const text = manifests[path];
+          assert.notEqual(text, undefined, `unexpected contents read: ${path}`);
+          body = { type: "file", encoding: "base64", content: btoa(text) };
+        }
+        return Promise.resolve(response(200, JSON.stringify(body)));
+      },
+    });
+    const tree = await resolveTreeFacts(slug("ubiquity", "prospector"), "main");
+    assert.ok(tree);
+    assert.equal(tree.packageManager, packageManager);
+    const loaded = await loadTargetConfigsV1({
+      template: TEMPLATE,
+      readFile: () => Promise.resolve('["ubiquity/prospector"]'),
+      resolveDefaultBranch: () => Promise.resolve("main"),
+      resolveTreeFacts,
+    });
+    assert.deepEqual(loaded.skipped, []);
+    assert.equal(loaded.configs.length, 1);
+    const config = loaded.configs[0]!;
+    const spec = config.commandRegistry.commands[config.commands.test];
+    assert.equal(config.adapter.kind, "github");
+    assert.equal(spec.executable, toolchain);
+    assert.deepEqual(
+      spec.args,
+      toolchain === "bun"
+        ? ["--no-env-file", "run", "check"]
+        : ["run", "check"],
+    );
+    assert.equal(isNoTestEvidenceTargetV1(config), false);
+  }
+});
+
+Deno.test("targets: Deno without package-manager markers keeps its task names separate", async () => {
   const loaded = await loadTargetConfigsV1({
     template: TEMPLATE,
     readFile: () => Promise.resolve('["ubiquity/prospector"]'),
     resolveDefaultBranch: () => Promise.resolve("main"),
     resolveTreeFacts: () =>
       Promise.resolve({
-        // deno.json is detected first, and only its own task may run.
-        files: ["deno.json", "package.json", "bun.lock"],
+        // With no package-manager declaration or lockfile, only a Deno task may run.
+        files: ["deno.json", "package.json"],
         manifestScripts: { deno: ["check"], package: ["test"] },
         hasCiWorkflow: true,
       }),
