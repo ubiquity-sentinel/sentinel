@@ -56,7 +56,7 @@ Deno.test(
 );
 
 Deno.test(
-  "hosted autonomy: a settled three-round review record is refused at the hard ceiling, never advanced onto a newer base",
+  "hosted autonomy: a settled three-round reviewed record is left to delivery, never advanced onto a newer base",
   () => {
     // The live shape: review admissions 1-3 are durably settled at the current
     // candidate head and the review-round counter was reset to 0, so re-entry

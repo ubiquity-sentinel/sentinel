@@ -1,14 +1,19 @@
 /**
- * Launcher re-admission of the retired human-merge head park.
+ * Launcher re-admission of the retired human-merge parks.
  *
  * The installed runtime completed a human merge only at the exact reviewed
  * head and parked every merged pull request whose head had moved on, as
- * "observed merged head identity mismatch" with `target.pr` cleared. Owner
+ * "observed merged head identity mismatch" with `target.pr` cleared. It also
+ * parked a human merge whose base branch had moved on after the review, as
+ * "the merge landed off its reviewed base: ...", keeping `target.pr`. Owner
  * rule 2026-10-30: a human merge is a completed delivery, so the runtime now
- * books that merge on the record's own base. This maintenance path returns
- * the records already parked by the old rule to `review`, where the runtime
- * re-reads the pull request and completes the delivery (or refuses a merge
- * that landed on another base) through its ordinary path.
+ * books that merge on the record's own base branch. This maintenance path
+ * returns the records already parked by both rules to `review`, where the
+ * runtime re-reads the pull request and completes the delivery (or refuses a
+ * merge that landed on another branch) through its ordinary path. A park the
+ * runtime's own trusted merge wrote with the same off-base message is not a
+ * human merge and stays refused: its merged pull must not name the Sentinel
+ * application as the merger.
  *
  * Nothing is charged and no counter, reservation or evidence moves here: the
  * record keeps its reviewed head, base and counters, only the verified open
@@ -26,15 +31,22 @@ import {
 } from "../src/contracts/state-snapshots.ts";
 import { parseWorkRecordV1 } from "../src/contracts/work-record.ts";
 import { HUMAN_MERGE_HEAD_MISMATCH_BLOCKER } from "../src/repair/human-merge.ts";
+import { MERGED_OFF_TIP_PREFIX } from "../src/repair/merge-off-tip.ts";
 import {
+  HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
   HOSTED_AUTONOMY_TRUSTED_AUTHORS,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import type { HostedAutonomyScopeV1 } from "./hosted-autonomy-scopes.ts";
 import type { HostedAutonomyHeadPullV1 } from "./hosted-autonomy-types.ts";
 
+/** The two parks this rule re-admits, by the exact blocker they wrote. */
+export type HumanMergeParkV1 = "head_mismatch" | "merge_off_base";
+
 /** Action detail of every verified human-merge head re-admission. */
 const READMISSION_DETAIL = "human_merge_head_moved";
+/** Action detail of a re-admission from the moved-base park. */
+const MERGED_OFF_TIP_READMISSION_DETAIL = "human_merge_merged_off_base";
 
 /** A blocked record that passed every local gate; remote facts pending. */
 export interface HumanMergeCandidateV1 {
@@ -44,6 +56,8 @@ export interface HumanMergeCandidateV1 {
   branch: string;
   /** The exact reviewed head the record keeps unchanged. */
   head: GitSha;
+  /** Which park wrote the blocker; the merge-actor gate depends on it. */
+  parkedBy: HumanMergeParkV1;
 }
 
 /** A verified re-admission, applied by `applyHumanMergeReadmissions`. */
@@ -53,6 +67,13 @@ export interface HumanMergeReadmissionV1 {
   /** The verified merged PR restored as target.pr. */
   pullRequest: number;
   detail: string;
+}
+
+/** The park a blocked record names, or null for any other blocker. */
+function parkOf(message: string): HumanMergeParkV1 | null {
+  if (message === HUMAN_MERGE_HEAD_MISMATCH_BLOCKER) return "head_mismatch";
+  if (message.startsWith(MERGED_OFF_TIP_PREFIX)) return "merge_off_base";
+  return null;
 }
 
 /**
@@ -70,15 +91,17 @@ export function planHumanMergeHeadReadmissions(
     if (
       record.nextStep !== "blocked" || record.blocker === null ||
       record.blocker.kind !== "other" ||
-      record.blocker.message !== HUMAN_MERGE_HEAD_MISMATCH_BLOCKER ||
       record.intent !== null || record.wait !== null ||
       record.target.head === null || record.target.branch === null
     ) continue;
+    const parkedBy = parkOf(record.blocker.message);
+    if (parkedBy === null) continue;
     candidates.push({
       id: record.id,
       repository: record.repository,
       branch: record.target.branch,
       head: record.target.head,
+      parkedBy,
     });
   }
   return candidates;
@@ -90,12 +113,17 @@ export function planHumanMergeHeadReadmissions(
  * branch: a readable listing whose every entry is on that branch, exactly one
  * pull, merged, by a trusted author and based on the scope's base branch. An
  * unreadable listing, an open pull (the standing review owns it) and a pull
- * on another base all refuse without a write.
+ * on another base all refuse without a write. A record parked by the off-base
+ * message is only re-admitted when the same pull read names its merger and
+ * that merger is not the Sentinel application: a park the runtime's own
+ * trusted merge wrote keeps its exact-tip refusal.
  */
 export function decideHumanMergeHeadReadmission(
   candidate: HumanMergeCandidateV1,
   pulls: readonly HostedAutonomyHeadPullV1[] | null,
   baseBranch: string | null,
+  /** The pull's observed merger; undefined when no detail read was made. */
+  mergedBy?: string | null,
 ): { kind: "readmit"; readmission: HumanMergeReadmissionV1 } | {
   kind: "refused";
   reason: string;
@@ -124,15 +152,48 @@ export function decideHumanMergeHeadReadmission(
     pull.author === null ||
     !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author)
   ) return { kind: "refused", reason: "pr_foreign" };
+  if (candidate.parkedBy === "merge_off_base") {
+    if (mergedBy === null || mergedBy === undefined || mergedBy.length === 0) {
+      return { kind: "refused", reason: "merge_actor_unreadable" };
+    }
+    if (mergedBy === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR) {
+      return { kind: "refused", reason: "merge_by_sentinel" };
+    }
+  }
   return {
     kind: "readmit",
     readmission: {
       id: candidate.id,
       repository: candidate.repository,
       pullRequest: pull.number,
-      detail: READMISSION_DETAIL,
+      detail: candidate.parkedBy === "merge_off_base"
+        ? MERGED_OFF_TIP_READMISSION_DETAIL
+        : READMISSION_DETAIL,
     },
   };
+}
+
+/**
+ * The only remote fact that separates a human merge from the runtime's own
+ * trusted merge on the same branch: the pull detail's merger. Any failed,
+ * foreign or unreadable detail read is null, and a null merger refuses.
+ */
+async function readMergedBy(
+  surface: NonNullable<HostedAutonomyScopeV1["surface"]>,
+  number: number,
+  baseBranch: string | null,
+): Promise<string | null> {
+  try {
+    const pull = await surface.readPull(number, baseBranch);
+    if (pull === null || pull.number !== number || pull.merged !== true) {
+      return null;
+    }
+    return typeof pull.mergedBy === "string" && pull.mergedBy.length > 0
+      ? pull.mergedBy
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -161,10 +222,15 @@ export async function verifyHumanMergeHeadReadmissions(
     } catch {
       pulls = null;
     }
+    const mergedBy = candidate.parkedBy === "merge_off_base" &&
+        pulls !== null && pulls.length === 1
+      ? await readMergedBy(surface, pulls[0].number, scope.baseBranch)
+      : undefined;
     const decision = decideHumanMergeHeadReadmission(
       candidate,
       pulls,
       scope.baseBranch,
+      mergedBy,
     );
     if (decision.kind === "refused") {
       actions.push(`retry:${candidate.id}:skipped:${decision.reason}`);
