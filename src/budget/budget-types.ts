@@ -39,7 +39,25 @@ export type ReserveModelStartResultV1 =
   | { status: "conflict"; currentHead: GitSha | null }
   | { status: "ambiguous"; currentHead: GitSha | null }
   | { status: "unavailable"; detail: string }
+  | {
+    /**
+     * The trusted writer refused the snapshot as invalid (capacity/contract).
+     * Unlike an ambiguous transport failure, retrying the identical admission
+     * cannot succeed without compaction or state repair, so callers park or
+     * wait with this precise reason instead of re-arming a silent poll.
+     */
+    status: "rejected";
+    reason: "state_snapshot_refused";
+    detail: string;
+  }
   | { status: "invalid"; detail: string };
+
+/**
+ * Closed refusal reason of an admission whose snapshot the trusted writer
+ * refused as invalid (reservation-ledger capacity or a contract violation).
+ * Distinct from a transient transport failure: retrying unchanged cannot work.
+ */
+export const RESERVATION_SNAPSHOT_REFUSED_REASON = "state_snapshot_refused";
 
 export interface SettleModelStartRequestV1 {
   /** The trusted derived reservation id. */

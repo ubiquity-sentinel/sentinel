@@ -52,6 +52,10 @@ import {
   blockedRecoveryBinding,
   blockedRecoveryMatchesProducer,
 } from "./matrix-blocked-candidate.ts";
+import {
+  allReservationsV1,
+  findReservationV1,
+} from "../contracts/state-snapshots.ts";
 import { resolvedConflictCandidate } from "./matrix-conflict-candidate.ts";
 
 export function createActionsMatrixArtifactHttpTransport(
@@ -199,9 +203,11 @@ export function createActionsMatrixArtifactTransport(
         const requested = new Map<string, MatrixArtifactRequestV1>();
         for (const request of input.requests) {
           if (requested.has(request.reservationId)) refuse();
-          const reservations = snapshot.reservations.filter((row) =>
-            row.id === request.reservationId
+          const found = findReservationV1(
+            snapshot,
+            request.reservationId,
           );
+          const reservations = found === undefined ? [] : [found];
           const work = snapshot.work.filter((row) =>
             row.id === request.taskId &&
             sameRepo(row.repository, request.repository)
@@ -241,7 +247,7 @@ export function createActionsMatrixArtifactTransport(
               );
           const resolved = await resolvedConflictCandidate(
             task,
-            snapshot.reservations,
+            allReservationsV1(snapshot),
           );
           const consumedConflict = resolved !== null &&
             resolved.reservationId === request.reservationId &&

@@ -379,9 +379,11 @@ Owned exclusively by the deterministic release workflow.
 
 The single JSON document on `sentinel-state/repair`:
 `{ stateHead, sequence, updatedAt, incidents, evidence, work, reservations,
-reviews, replays, releaseRequests }`.
-Every nested record is fully validated by its own parser; corruption of any
-nested record fails the whole snapshot. `stateHead` is the **parent** state
+reservationArchive?, reviews, replays, releaseRequests }`.
+The optional `reservationArchive` is the durable retention index for terminal
+reservations moved out of the bounded live ledger; it is never written by
+callers. Every nested record is fully validated by its own parser; corruption of
+any nested record fails the whole snapshot. `stateHead` is the **parent** state
 branch head this snapshot extends (`null` only on branch creation) — it is never
 claimed to be the snapshot's own content commit hash. Enabling strict
 expected-head CAS. Duplicate work/reservation/release (and incident/evidence/
@@ -598,9 +600,9 @@ and writes only its own:
 - One commit per write, containing `manifest.json` (exact keys
   `version/kind/sequence/updatedAt/stateHead`) plus one canonical JSON file per
   record under role-specific collection directories (`incidents/`, `evidence/`,
-  `work/`, `reservations/`, `reviews/`, `replays/`, `releaseRequests/` for
-  repair; `releases/` for release), named by `sha256(record.id)` — digest
-  filenames mean no id can traverse or collide.
+  `work/`, `reservations/`, `reservationArchive/`, `reviews/`, `replays/`,
+  `releaseRequests/` for repair; `releases/` for release), named by
+  `sha256(record.id)` — digest filenames mean no id can traverse or collide.
 - Reads validate the full record tree: manifest schema, exact collection layout,
   exact record keys/schema via the frozen parsers, unique ids, digest filenames
   matching the record id, and manifest `stateHead` against the actual commit
@@ -679,16 +681,17 @@ is granted.
 
 Result variants (exactly one; only `admitted` grants a start):
 
-| Variant       | Meaning                                                                                                                                                                 |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `admitted`    | one new reservation was applied; carries the durable reservation plus the newly applied state head                                                                      |
-| `duplicate`   | an existing reservation with the same derived id **and the exact same logical identity** exists (including a refunded one): reconciliation needed, never a second start |
-| `deferred`    | `reason: "cap_limit"` with the exact `retryAt`, or `reason: "clock_regression"` with the time at which the clock catches up                                             |
-| `disabled`    | policy missing/mismatched/unowned; `detail` explains which                                                                                                              |
-| `conflict`    | expected-head CAS lost; caller rereads rather than retrying                                                                                                             |
-| `ambiguous`   | the write may have applied (including a rejected write promise, `currentHead: null`); reread reconciles (never a start from this response)                              |
-| `unavailable` | read/write failure, a rejected read promise, malformed/out-of-range state or exhausted sequence; never grants                                                           |
-| `invalid`     | bad identity fields, non-positive attempt, or an identity collision (same id under a different identity, or the same identity under a different id)                     |
+| Variant       | Meaning                                                                                                                                                                                                                                                                          |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `admitted`    | one new reservation was applied; carries the durable reservation plus the newly applied state head                                                                                                                                                                               |
+| `duplicate`   | an existing reservation with the same derived id **and the exact same logical identity** exists (including a refunded one): reconciliation needed, never a second start                                                                                                          |
+| `deferred`    | `reason: "cap_limit"` with the exact `retryAt`, or `reason: "clock_regression"` with the time at which the clock catches up                                                                                                                                                      |
+| `disabled`    | policy missing/mismatched/unowned; `detail` explains which                                                                                                                                                                                                                       |
+| `conflict`    | expected-head CAS lost; caller rereads rather than retrying                                                                                                                                                                                                                      |
+| `ambiguous`   | the write may have applied (including a rejected write promise, `currentHead: null`); reread reconciles (never a start from this response)                                                                                                                                       |
+| `unavailable` | read/write failure, a rejected read promise, malformed/out-of-range state or exhausted sequence; never grants                                                                                                                                                                    |
+| `rejected`    | `reason: "state_snapshot_refused"`: the trusted writer refused the snapshot as invalid (reservation-ledger capacity or a contract violation); retrying unchanged cannot succeed, so callers park/wait with this precise reason instead of treating it as transient `unavailable` |
+| `invalid`     | bad identity fields, non-positive attempt, or an identity collision (same id under a different identity, or the same identity under a different id)                                                                                                                              |
 
 Rules:
 
@@ -727,6 +730,18 @@ Rules:
 - **Clock regression.** If `now` is behind the durable snapshot `updatedAt` or
   any reservation `createdAt`/`settledAt` (including refunded entries),
   admission is blocked so future state is never lost.
+- **Bounded live ledger and durable archive.** `reservations` is bounded by
+  `MaxItems.snapshotRecords`. At the trusted write boundary, a full collection
+  moves its OLDEST **terminal** reservations (`submitted` or
+  `confirmed_not_submitted`, settled longer than the 6h attempt-memory window)
+  into `reservationArchive`, oldest first, until there is room. An unsettled or
+  settled `ambiguous` row is never moved: `ambiguous` remains reconcilable in
+  the live ledger. Every archived row is retained (never dropped while inside
+  the rolling seven-day accounting window) and is immutable; accounting,
+  duplicate-detection and proof readers consult the archive when an id is not
+  live. If no terminal rows are eligible, the write refuses precisely with
+  `rejected`/`state_snapshot_refused` rather than parking a valid admission
+  silently or archiving a resolvable charge.
 - **Fail closed at the write.** A read error, a rejected read promise (sanitized
   `unavailable`, never an escaped transport exception), malformed state, CAS
   conflict, ambiguous write or persistence failure never grants permission, and
@@ -740,7 +755,9 @@ Rules:
 `{ id, outcome, proofRef }` with `outcome` in `submitted`/`ambiguous`/
 `confirmed_not_submitted` and a restricted `proofRef` required iff
 `confirmed_not_submitted`. The controller reads the clock and state itself,
-preserves `createdAt`, and applies:
+preserves `createdAt`, resolves the id live first and then in
+`reservationArchive`, and applies (an archived row is immutable: only an equal
+idempotent settlement is accepted, any other resolution fails `invalid`):
 
 - `reserved` → any settlement outcome; the settlement time is the trusted now.
 - `ambiguous` → `submitted` (stays charged) or `confirmed_not_submitted` (proof

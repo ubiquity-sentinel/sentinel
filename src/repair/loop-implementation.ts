@@ -1,3 +1,7 @@
+import {
+  isNoTestEvidenceTargetV1,
+  NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
+} from "../host/target-policy-generic.ts";
 import { checkExistingPrCustody, routeExistingPr } from "./loop-existing-pr.ts";
 import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 import { deriveReservationId } from "../budget/mod.ts";
@@ -60,7 +64,8 @@ import {
 import { existingHeadContinuationShape } from "./loop-eligibility.ts";
 import { verifyNoLiveLocalCandidateBranch } from "./loop-local-candidate.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
-import { readBase, readIssueForModel } from "./loop-task-context.ts";
+import { RETIRED_TARGET_MESSAGE } from "./selection.ts";
+import { observeIssueForModel, readBase } from "./loop-task-context.ts";
 import type {
   LoopContextV1,
   PreparedImplementationV1,
@@ -143,6 +148,22 @@ export async function prepareImplementationStart(
       setWait(
         record,
         { reason: "manual", since: now, until: null },
+        now,
+      ),
+    );
+  }
+  // A target with no pull-request CI and no runnable local verify can never
+  // produce reviewable evidence. Park it here, before any issue read or model
+  // reservation (uncharged), instead of starting a session that would only be
+  // blocked at the post-candidate review gate.
+  if (isNoTestEvidenceTargetV1(config)) {
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        record,
+        "missing_evidence",
+        NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
         now,
       ),
     );
@@ -291,12 +312,29 @@ export async function prepareImplementationStart(
   // gate): an unavailable issue returns a wait with ZERO reservation/model and
   // never an ambiguous unsent model intent. The value is kept for the model
   // invocation below.
-  const issue = await readIssueForModel(deps, record);
-  if (issue === "unavailable") {
-    // Prerequisite gating (closed/absent issue, unknown relations, parent or
-    // open native blocker) defers to the next hour with ZERO reservation and
-    // zero model start: a dependency that closes by then, or a source that
-    // recovers, is re-read on that poll. Not an indefinite wait.
+  const observation = await observeIssueForModel(deps, record);
+  if (observation.kind === "unavailable") {
+    // A source observed closed or absent is terminal: retire it with the
+    // existing source-closed blocker BEFORE the conflict-resolution start
+    // (this read happens before the charged admission below), instead of
+    // re-parking it on an hour-long unavailable prerequisite wait that keeps
+    // a dead base-refresh record holding the same-repository refresh line.
+    // The terminal fact comes from this single read; a gated/unreadable
+    // source is not re-read and keeps the prerequisite wait.
+    if (observation.sourceClosed) {
+      return persistWork(
+        deps,
+        context,
+        clearIntent(
+          markBlocked(record, "other", RETIRED_TARGET_MESSAGE, now),
+          now,
+        ),
+      );
+    }
+    // Prerequisite gating (unknown relations, parent or open native blocker)
+    // defers to the next hour with ZERO reservation and zero model start: a
+    // dependency that closes by then, or a source that recovers, is re-read
+    // on that poll. Not an indefinite wait.
     return persistWork(
       deps,
       context,
@@ -311,6 +349,7 @@ export async function prepareImplementationStart(
       ),
     );
   }
+  const issue = observation.kind === "issue" ? observation.issue : null;
 
   // Recheck the latest shared gate and the run bounds after this awaited
   // prerequisite: a newly discovered rate limit must never consume an
@@ -497,6 +536,26 @@ export async function prepareImplementationStart(
       setWait(
         record,
         { reason: "budget_cap", since: now, until: reservation.retryAt },
+        now,
+      ),
+    );
+  }
+  if (reservation.status === "rejected") {
+    // A capacity refusal is TEMPORARY: the trusted writer compacts terminal
+    // rows once their retention window advances, so the identical admission
+    // succeeds on a later cycle. Keep the record live and its publication
+    // binding intact with a bounded, precisely-named wait; never park it
+    // terminally (`blocked` is skipped forever by ranking).
+    return persistWork(
+      deps,
+      context,
+      setWait(
+        record,
+        {
+          reason: "ledger_capacity",
+          since: now,
+          until: now + CHECK_POLL_MS,
+        },
         now,
       ),
     );
