@@ -45,6 +45,11 @@
  * failure is re-derived from live check runs (`confirmPreReviewCiFix`).
  */
 import { ownBaseRed } from "./base-repair.ts";
+import {
+  isNoTestEvidenceTargetV1,
+  NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
+} from "../host/target-policy-generic.ts";
+import { configFor } from "./loop-records.ts";
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
 import {
@@ -239,6 +244,23 @@ export async function gateReviewOnCi(
   const head = record.target.head;
   if (head === null) {
     return { kind: "deferred", detail: "review requires a published head" };
+  }
+  // No test evidence at all (no pull_request CI workflow and no runnable local
+  // verify): a review-only merge is refused. The generic target policy marks
+  // this state with its trusted test command id, so the park is written here,
+  // where the head would otherwise be admitted to review, uncharged.
+  const config = configFor(deps, record.repository);
+  if (config !== null && isNoTestEvidenceTargetV1(config)) {
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        record,
+        "missing_evidence",
+        NO_CI_AND_NO_LOCAL_VERIFY_DETAIL,
+        deps.clock.now(),
+      ),
+    );
   }
   const cooling = await checkGithubCooldown(
     deps,
