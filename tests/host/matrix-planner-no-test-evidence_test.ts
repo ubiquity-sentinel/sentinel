@@ -71,41 +71,45 @@ Deno.test("matrix planner: a no-test-evidence target parks uncharged and plans n
   );
   assert.ok(seeded.ok && seeded.value.status === "applied");
   let modelCalls = 0;
-  const report = await planMatrixWave(
-    {
-      clock,
-      state,
-      configs: [config],
-      controllerSha: SHA1,
-      github: new FakeGithub({ baseSha: SHA1 }),
-      githubCooldown: new DurableGitHubCooldownGate({ state, clock }),
-      incidents: new FakeIncidents({ summaries: [] }),
-      replay: new FakeReplay(),
-      model: {
-        modelId: "gpt-reserve",
-        runModel: () => {
-          modelCalls++;
-          return Promise.reject(new Error("the planner cannot infer"));
-        },
+  const deps = {
+    clock,
+    state,
+    configs: [config],
+    controllerSha: SHA1,
+    github: new FakeGithub({ baseSha: SHA1 }),
+    githubCooldown: new DurableGitHubCooldownGate({ state, clock }),
+    incidents: new FakeIncidents({ summaries: [] }),
+    replay: new FakeReplay(),
+    model: {
+      modelId: "gpt-reserve",
+      runModel: () => {
+        modelCalls++;
+        return Promise.reject(new Error("the planner cannot infer"));
       },
-      budget: new RollingStartBudget({ clock, state, configs: [config] }),
-      externalImplementations: true,
-      legacyReviewCutoff: null,
     },
-    {
-      waveId: "wave-no-test-evidence",
-      run: { runId: 1, runAttempt: 1, launcherSha: SHA1 },
-      runtimeSha: SHA1,
-      generation: 1,
-      deadline: clock.now() + 60 * 60_000,
-      runStartedAt: clock.now(),
-      plannedAt: clock.now(),
-      modelStartsEnabled: true,
-    },
-  );
+    budget: new RollingStartBudget({ clock, state, configs: [config] }),
+    externalImplementations: true,
+    legacyReviewCutoff: null,
+  } satisfies Parameters<typeof planMatrixWave>[0];
+  const options = {
+    waveId: "wave-no-test-evidence",
+    run: { runId: 1, runAttempt: 1, launcherSha: SHA1 },
+    runtimeSha: SHA1,
+    generation: 1,
+    deadline: clock.now() + 60 * 60_000,
+    runStartedAt: clock.now(),
+    plannedAt: clock.now(),
+    modelStartsEnabled: true,
+  } satisfies Parameters<typeof planMatrixWave>[1];
+  const report = await planMatrixWave(deps, options);
   assert.equal(report.prepared, 0);
   assert.deepEqual(report.plan.cells, []);
   assert.equal(report.diagnostic?.notReadyByReason[NO_EVIDENCE], 1);
+  assert.deepEqual(report.diagnostic?.skippedByReason, {});
+  assert.deepEqual(
+    report.diagnostic?.byRepository?.["ubiquity/ai.ubq.fi"]?.skippedByReason,
+    {},
+  );
   assert.equal(
     report.diagnostic?.byRepository?.["ubiquity/ai.ubq.fi"]
       ?.notReadyByReason[NO_EVIDENCE],
@@ -117,6 +121,19 @@ Deno.test("matrix planner: a no-test-evidence target parks uncharged and plans n
   assert.equal(parked.intent, null, "the planner park is uncharged");
   assert.equal(state.repair!.reservations.length, 0);
   assert.equal(modelCalls, 0);
+  const replanned = await planMatrixWave(deps, {
+    ...options,
+    waveId: "wave-no-test-evidence-again",
+  });
+  assert.equal(replanned.diagnostic?.totalRecords, 1);
+  assert.deepEqual(replanned.diagnostic?.skippedByReason, {});
+  assert.deepEqual(replanned.diagnostic?.notReadyByReason, {
+    [NO_EVIDENCE]: 1,
+  });
+  assert.deepEqual(
+    replanned.diagnostic?.byRepository,
+    report.diagnostic?.byRepository,
+  );
 });
 
 Deno.test("matrix planner: a stale retained implementation intent is still parked", async () => {
@@ -213,6 +230,11 @@ Deno.test("matrix planner: a stale retained implementation intent is still parke
   assert.equal(report.prepared, 0);
   assert.deepEqual(report.plan.cells, []);
   assert.equal(report.diagnostic?.notReadyByReason[NO_EVIDENCE], 1);
+  assert.deepEqual(report.diagnostic?.skippedByReason, {});
+  assert.deepEqual(
+    report.diagnostic?.byRepository?.["ubiquity/ai.ubq.fi"]?.skippedByReason,
+    {},
+  );
   const parked = state.repair!.work[0]!;
   assert.equal(parked.nextStep, "blocked");
   assert.ok(parked.blocker?.message.startsWith(NO_EVIDENCE));
