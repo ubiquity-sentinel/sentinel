@@ -29,9 +29,11 @@ import type {
 } from "../contracts/live-inputs.ts";
 import {
   buildLiveInputsChunks,
+  type LiveInputsChunkV1,
   mergeLiveInputs,
   parseLiveInputsChunk,
 } from "./client-live-inputs.ts";
+import { createDeadline } from "./http.ts";
 
 export class GitHubApiClient extends GitHubClientCiEvidence {
   /**
@@ -39,7 +41,8 @@ export class GitHubApiClient extends GitHubClientCiEvidence {
    * one read-only GraphQL request per bounded chunk, through the same
    * authenticated gate, deadline, cooldown and typed error mapping as every
    * other GraphQL read. Exhaustive: one failed chunk fails the whole read
-   * (never a partial or empty success); no retry loop.
+   * (never a partial or empty success). A transient gateway response gets
+   * one read-only retry of that chunk within its original deadline.
    */
   async readLiveInputs(
     request: LiveInputsRequestV1,
@@ -58,14 +61,7 @@ export class GitHubApiClient extends GitHubClientCiEvidence {
     }
     const parts: LiveInputsV1[] = [];
     for (const chunk of chunks) {
-      const raw = await this.sendCore(
-        "POST",
-        `${this.apiBaseUrl}/graphql`,
-        {
-          query: chunk.query,
-          variables: { owner: own.owner, name: own.name, ...chunk.variables },
-        },
-      );
+      const raw = await this.readLiveInputsChunk(chunk);
       if (raw.status === "error") {
         return portError(raw.error.kind, raw.error.detail, raw.error.rateLimit);
       }
@@ -83,6 +79,40 @@ export class GitHubApiClient extends GitHubClientCiEvidence {
       parts.push(parsed.value);
     }
     return portOk(mergeLiveInputs(parts));
+  }
+
+  private async readLiveInputsChunk(
+    chunk: LiveInputsChunkV1,
+  ): Promise<RawSendResult> {
+    const deadline = createDeadline(this.requestDeadlineMs);
+    const send = () =>
+      this.sendCore(
+        "POST",
+        `${this.apiBaseUrl}/graphql`,
+        {
+          query: chunk.query,
+          variables: {
+            owner: this.repository.owner,
+            name: this.repository.name,
+            ...chunk.variables,
+          },
+        },
+        undefined,
+        deadline,
+      );
+    try {
+      const raw = await send();
+      // One transient gateway fault must not amplify into REST fallback for
+      // the whole hot tier. Retry only this read-only chunk, through the same
+      // auth/cooldown gate and shared deadline; never retry lost requests,
+      // malformed GraphQL answers, rate limits or permanent failures.
+      return raw.status === "response" &&
+          [502, 503, 504].includes(raw.response.status) && !deadline.fired()
+        ? await send()
+        : raw;
+    } finally {
+      deadline.dispose();
+    }
   }
 
   // -------------------------------------------------------------------------
