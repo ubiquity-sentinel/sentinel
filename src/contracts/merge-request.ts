@@ -8,7 +8,7 @@
  * validated base and one completed ReviewReceiptV1 for the same PR/head/base.
  * The strict parser refuses any missing/unknown field and any stale, pending,
  * unavailable or mismatched review; a review with uncounted findings or with
- * unresolved P0/P1 findings is never merge authorization.
+ * unresolved P0 findings is never merge authorization.
  *
  * Parsing alone never grants authority: repository binding and reviewer
  * identity must match the trusted adapter policy passed by the caller, so a

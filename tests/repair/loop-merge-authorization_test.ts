@@ -546,12 +546,24 @@ Deno.test(
 );
 
 Deno.test(
-  "delivery refuses to merge on a completed receipt with unresolved P1 findings",
+  "delivery refuses to merge on a completed receipt with unresolved P0 findings",
   async () => {
     const taskId = asWorkItemId("issue-rejected");
     const branch = candidateBranch(taskId);
-    for (const hasP1 of [false, true]) {
-      const rig = await makeRig(`merge-gate-${hasP1 ? "rejected" : "clean"}`, {
+    // Owner directive 2026-10-24: only an unresolved P0 blocks the merge. The
+    // clean receipt and the unresolved-P1 receipt both authorize; the
+    // unresolved-P0 receipt is refused before any merge mutation.
+    const cases: Array<{
+      name: string;
+      severity: "P0" | "P1" | null;
+      merges: boolean;
+    }> = [
+      { name: "clean", severity: null, merges: true },
+      { name: "p1", severity: "P1", merges: true },
+      { name: "rejected", severity: "P0", merges: false },
+    ];
+    for (const { name, severity, merges } of cases) {
+      const rig = await makeRig(`merge-gate-${name}`, {
         summaries: false,
         github: {
           candidateLifecycle: {
@@ -564,18 +576,16 @@ Deno.test(
       try {
         const proof = completedReceipt(7, SHA3, SHA1, {
           id: await reviewReceiptId(reviewOperationKey(7, SHA3, 1), SHA3),
-          findings: hasP1
-            ? [{
-              id: "finding-1",
-              severity: "P1",
-              path: "src/app.ts",
-              message: "required fix",
-              fingerprint: "a".repeat(64),
-              resolved: false,
-              resolutionEvidence: null,
-            }]
-            : [],
-          unresolvedSeverities: hasP1 ? ["P1"] : [],
+          findings: severity === null ? [] : [{
+            id: "finding-1",
+            severity,
+            path: "src/app.ts",
+            message: "required fix",
+            fingerprint: "a".repeat(64),
+            resolved: false,
+            resolutionEvidence: null,
+          }],
+          unresolvedSeverities: severity === null ? [] : [severity],
         });
         const seeded = await rig.store.writeRepair(
           seededSnapshot([
@@ -601,13 +611,13 @@ Deno.test(
         const outcome = await rig.run();
         assert.equal(
           outcome.status,
-          hasP1 ? "state_error" : "idle",
-          JSON.stringify(outcome),
+          merges ? "idle" : "state_error",
+          `${name}: ${JSON.stringify(outcome)}`,
         );
         assert.equal(
           rig.github.calls.filter((call) => call === "merge").length,
-          hasP1 ? 0 : 1,
-          "only the paired clean receipt authorizes a merge",
+          merges ? 1 : 0,
+          `${name}: only a receipt without an unresolved P0 authorizes a merge`,
         );
       } finally {
         await rig.ctx.cleanup();

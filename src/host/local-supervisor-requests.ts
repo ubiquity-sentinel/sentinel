@@ -2,6 +2,7 @@ import {
   isLocalReleaseTerminalPhase,
   isLocalSentinelRepository,
 } from "../contracts/local-release.ts";
+import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import type { ReleaseRequestV1 } from "../contracts/release.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
@@ -96,12 +97,7 @@ function matchReviewReceipt(
     return null;
   }
   if (receipt.findingsUncounted !== 0) return null;
-  if (
-    receipt.unresolvedSeverities.includes("P0") ||
-    receipt.unresolvedSeverities.includes("P1")
-  ) {
-    return null;
-  }
+  if (hasBlockingSeverity(receipt.unresolvedSeverities)) return null;
   const repository = receipt.repository;
   const target = request.target.repository;
   if (

@@ -353,7 +353,7 @@ export async function setupCandidateFaultFixture(
         summary: null,
         findings: [{
           id: "finding-51-1",
-          severity: "P1",
+          severity: "P0",
           path: "candidate.txt",
           message: "correction required",
           fingerprint: "e".repeat(64),
@@ -361,7 +361,7 @@ export async function setupCandidateFaultFixture(
           resolutionEvidence: null,
         }],
         findingsUncounted: 0,
-        unresolvedSeverities: ["P1"],
+        unresolvedSeverities: ["P0"],
         submittedAt: T0 - 2000,
         completedAt: T0 - 1000,
         observedAt: T0 - 500,

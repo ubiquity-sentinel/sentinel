@@ -1,4 +1,4 @@
-/** Candidate eligibility, implementation uncertainty and P1 correction. */
+/** Candidate eligibility, implementation uncertainty and P0 correction. */
 import assert from "node:assert/strict";
 import { asWorkItemId } from "../../src/contracts/brands.ts";
 import {
@@ -61,11 +61,14 @@ Deno.test("duplicate unresolved review severities are normalized before parsing"
   try {
     const first = await rig.run();
     assert.equal(first.status, "idle", JSON.stringify(first));
+    // Two unresolved findings of the one blocking severity (P0, owner
+    // directive 2026-10-24) collapse to a single recorded severity and still
+    // reject the head into one correction round.
     rig.clock.advance(15 * 60_000 + 1);
     rig.github.completeReview([
       {
-        id: "finding-p1-a",
-        severity: "P1",
+        id: "finding-p0-a",
+        severity: "P0",
         path: "src/app.ts",
         message: "first required fix",
         fingerprint: "b".repeat(64),
@@ -73,8 +76,8 @@ Deno.test("duplicate unresolved review severities are normalized before parsing"
         resolutionEvidence: null,
       },
       {
-        id: "finding-p1-b",
-        severity: "P1",
+        id: "finding-p0-b",
+        severity: "P0",
         path: "src/app.ts",
         message: "second required fix",
         fingerprint: "c".repeat(64),
@@ -86,7 +89,7 @@ Deno.test("duplicate unresolved review severities are normalized before parsing"
     assert.equal(second.status, "idle", JSON.stringify(second));
     const state = await rig.snapshot();
     assert.equal(state.reviews.length, 1);
-    assert.deepEqual(state.reviews[0].unresolvedSeverities, ["P1"]);
+    assert.deepEqual(state.reviews[0].unresolvedSeverities, ["P0"]);
     assert.equal(state.work[0].nextStep, "review");
     assert.equal(state.work[0].target.head, SHA4);
   } finally {
@@ -190,8 +193,8 @@ Deno.test(
   },
 );
 
-Deno.test("P1 findings trigger a fresh bounded implementation/candidate/replay path", async () => {
-  const rig = await makeRig("p1fresh", {
+Deno.test("P0 findings trigger a fresh bounded implementation/candidate/replay path", async () => {
+  const rig = await makeRig("p0fresh", {
     model: { heads: [SHA3, SHA4] },
     github: { candidateLifecycle: positiveLifecycle() },
   });
@@ -204,7 +207,7 @@ Deno.test("P1 findings trigger a fresh bounded implementation/candidate/replay p
     assert.equal(state.work[0].nextStep, "review");
     assert.equal(state.work[0].target.head, SHA3);
 
-    // A P1 finding arrives on the observed head: it never merges and never
+    // A P0 finding arrives on the observed head: it never merges and never
     // re-requests a review of the SAME rejected candidate. Instead the record
     // forgets the rejected head and runs a fresh bounded implementation,
     // validates the new candidate through the replay path and only then
@@ -212,7 +215,7 @@ Deno.test("P1 findings trigger a fresh bounded implementation/candidate/replay p
     rig.clock.advance(15 * 60_000 + 1);
     rig.github.completeReview([{
       id: "finding-1",
-      severity: "P1",
+      severity: "P0",
       path: "src/app.ts",
       message: "required fix",
       fingerprint: "a".repeat(64),
@@ -224,7 +227,7 @@ Deno.test("P1 findings trigger a fresh bounded implementation/candidate/replay p
     assert.equal(
       rig.model.requests.length,
       2,
-      "a P1 finding opens exactly one fresh implementation",
+      "a P0 finding opens exactly one fresh implementation",
     );
     assert.equal(
       rig.model.requests[1]?.base,
@@ -242,7 +245,7 @@ Deno.test("P1 findings trigger a fresh bounded implementation/candidate/replay p
     assert.deepEqual(
       rig.model.requests[1]?.reviewFindings,
       [{
-        severity: "P1",
+        severity: "P0",
         path: "src/app.ts",
         message: "required fix",
       }],
@@ -264,7 +267,7 @@ Deno.test("P1 findings trigger a fresh bounded implementation/candidate/replay p
     assert.equal(
       rig.github.calls.includes("merge"),
       false,
-      "P1 must never merge",
+      "P0 must never merge",
     );
     // The new candidate went through the before/after replay path with exact
     // original + candidate identities (a fresh candidate, not the old one).
@@ -302,24 +305,24 @@ Deno.test("P1 findings trigger a fresh bounded implementation/candidate/replay p
       "implementation + review + retry implementation + correction review are each charged once",
     );
     // The rejected head is not silently forgotten: the review receipt remains
-    // attached as evidence and the P1 finding is recorded.
+    // attached as evidence and the P0 finding is recorded.
     assert.ok(
       work.evidence.some((ref) => ref.kind === "review_receipt"),
-      "P1 review receipt is retained as evidence",
+      "P0 review receipt is retained as evidence",
     );
     assert.ok(
       state.reviews.some((review) =>
         review.outcome === "completed" &&
-        review.unresolvedSeverities.includes("P1")
+        review.unresolvedSeverities.includes("P0")
       ),
-      "P1 finding is durably recorded",
+      "P0 finding is durably recorded",
     );
     // A LATER correction also carries the earlier rejections of the same pull
     // request, so the model can converge on the rule rather than the last case.
     rig.clock.advance(15 * 60_000 + 1);
     rig.github.completeReview([{
       id: "finding-2",
-      severity: "P1",
+      severity: "P0",
       path: "src/github/text.ts",
       message: "second required fix",
       fingerprint: "b".repeat(64),
@@ -387,8 +390,10 @@ Deno.test("P1 findings trigger a fresh bounded implementation/candidate/replay p
   }
 });
 
-Deno.test("P2/P3-only findings never spend a correction round", async () => {
-  const rig = await makeRig("p2nocorrection", {
+Deno.test("P1/P2/P3-only findings never spend a correction round", async () => {
+  // Owner directive 2026-10-24: only an unresolved P0 blocks. An unresolved
+  // P1 is recorded exactly like P2/P3 and spends no correction round either.
+  const rig = await makeRig("p1nocorrection", {
     model: { heads: [SHA3, SHA4] },
     github: { candidateLifecycle: positiveLifecycle() },
   });
@@ -400,6 +405,14 @@ Deno.test("P2/P3-only findings never spend a correction round", async () => {
 
     rig.clock.advance(15 * 60_000 + 1);
     rig.github.completeReview([{
+      id: "finding-p1",
+      severity: "P1",
+      path: "src/app.ts",
+      message: "non-blocking required fix",
+      fingerprint: "a".repeat(64),
+      resolved: false,
+      resolutionEvidence: null,
+    }, {
       id: "finding-p2",
       severity: "P2",
       path: "src/app.ts",
@@ -423,7 +436,15 @@ Deno.test("P2/P3-only findings never spend a correction round", async () => {
       1,
       "non-blocking findings open no correction implementation",
     );
-    const work = (await rig.snapshot()).work[0];
+    const after = await rig.snapshot();
+    const work = after.work[0];
+    assert.ok(
+      after.reviews.some((review) =>
+        review.outcome === "completed" &&
+        review.unresolvedSeverities.includes("P1")
+      ),
+      "the unresolved P1 is recorded without rejecting the head",
+    );
     assert.equal(
       work.nextStep,
       "delivery",

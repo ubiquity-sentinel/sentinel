@@ -709,8 +709,9 @@ Deno.test("mergePullRequest: malformed merge response is invalid, rejected maps 
   assert.equal(invalid.ok, false);
   if (!invalid.ok) assert.equal(invalid.error.kind, "invalid");
 
-  // 405 with everything still in order and no re-check clue: the safe
-  // non-merge classification is protection_required after re-observation.
+  // 405 with everything still in order and no re-check clue: after
+  // re-observation the safe non-merge classification is a conflict block
+  // (branch rules are no merge requirement, owner directive 2026-10-24).
   const rejected = mergedPort([
     pullEntry(),
     pullEntry(),
@@ -728,7 +729,7 @@ Deno.test("mergePullRequest: malformed merge response is invalid, rejected maps 
     ...checksRead(),
   ]);
   const blocked = await rejected.port.mergePullRequest(mergeRequest());
-  assert.equal(blockedReason(blocked), "protection_required");
+  assert.equal(blockedReason(blocked), "conflict");
   assert.equal(putCount(rejected.transport), 1);
 });
 

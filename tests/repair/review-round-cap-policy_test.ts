@@ -5,6 +5,7 @@
  * messages and their choice, and the protection of the ceiling itself.
  */
 import assert from "node:assert/strict";
+import type { GitSha } from "../../src/contracts/brands.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 import { CI_CORRECTION_REVIEW_ROUNDS } from "../../src/repair/ci-rejection.ts";
@@ -70,6 +71,29 @@ const AI = {
   name: "ai.ubq.fi",
   installationId: 155687488,
 } as const;
+
+/**
+ * A completed receipt of `head` rejected by one unresolved P0 finding. Owner
+ * directive 2026-10-24 ("the only internal policy is resolve all P0"): only an
+ * unresolved P0 rejects a head; the rig's own "p1" verdict is a clean review
+ * under that rule.
+ */
+function rejectedReceipt(
+  round: number,
+  head: GitSha,
+  options: { base?: GitSha; completedAt?: number } = {},
+) {
+  const receipt = completedReceipt(round, head, "p1", options);
+  return {
+    ...receipt,
+    findings: receipt.findings.map((finding) => ({
+      ...finding,
+      severity: "P0" as const,
+      message: "P0 finding",
+    })),
+    unresolvedSeverities: ["P0" as const],
+  };
+}
 
 function task(
   rounds: number,
@@ -471,12 +495,25 @@ Deno.test("round cap policy: the latest completed review of the current head pic
   const choose = (reviews: ReturnType<typeof completedReceipt>[]) =>
     ceilingParkMessage({ reviews }, record);
   assert.equal(choose([]), CAP_UNREVIEWED);
-  assert.equal(choose([completedReceipt(3, SHA3, "p1")]), CAP_REJECTED);
+  assert.equal(choose([rejectedReceipt(3, SHA3)]), CAP_REJECTED);
   assert.equal(
     choose([completedReceipt(3, SHA3, "unaccepted")]),
     CAP_UNACCEPTED,
   );
   assert.equal(choose([completedReceipt(3, SHA3, "clean")]), CAP_REVIEWED);
+  // Owner directive 2026-10-24: only an unresolved P0 rejects. The same review
+  // with an unresolved P1 is clean: without a task acceptance it parks
+  // UNACCEPTED, with one it parks REVIEWED (deliverable), never REJECTED.
+  const p1Only = completedReceipt(3, SHA3, "p1");
+  assert.deepEqual(p1Only.unresolvedSeverities, ["P1"]);
+  assert.equal(choose([p1Only]), CAP_UNACCEPTED);
+  assert.equal(
+    choose([{
+      ...p1Only,
+      taskAcceptance: completedReceipt(3, SHA3, "clean").taskAcceptance,
+    }]),
+    CAP_REVIEWED,
+  );
   // An uncounted finding is never treated as resolved.
   assert.equal(
     choose([{ ...completedReceipt(3, SHA3, "clean"), findingsUncounted: 1 }]),
@@ -497,7 +534,7 @@ Deno.test("round cap policy: the latest completed review of the current head pic
   // The LATEST completed review decides, both ways.
   assert.equal(
     choose([
-      completedReceipt(2, SHA3, "p1", { completedAt: T0 - 5000 }),
+      rejectedReceipt(2, SHA3, { completedAt: T0 - 5000 }),
       completedReceipt(3, SHA3, "clean", { completedAt: T0 }),
     ]),
     CAP_REVIEWED,
@@ -505,7 +542,7 @@ Deno.test("round cap policy: the latest completed review of the current head pic
   assert.equal(
     choose([
       completedReceipt(2, SHA3, "clean", { completedAt: T0 - 5000 }),
-      completedReceipt(3, SHA3, "p1", { completedAt: T0 }),
+      rejectedReceipt(3, SHA3, { completedAt: T0 }),
     ]),
     CAP_REJECTED,
   );

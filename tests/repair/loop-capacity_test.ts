@@ -218,7 +218,7 @@ Deno.test(
 );
 
 Deno.test(
-  "hard round ceiling: two P1 corrections run, a P1 in round three parks with every gate retained",
+  "hard round ceiling: two P0 corrections run, a P0 in round three parks with every gate retained",
   async () => {
     const heads = [
       SHA3,
@@ -281,7 +281,7 @@ Deno.test(
         const message = `required correction ${index + 1}`;
         rig.github.completeReview([{
           id: `finding-uncapped-${index}`,
-          severity: "P1",
+          severity: "P0",
           path: "src/app.ts",
           message,
           fingerprint: (index + 1).toString(16).repeat(64),
@@ -314,7 +314,7 @@ Deno.test(
         assert.equal(
           rig.github.calls.includes("merge"),
           false,
-          "unresolved P1 never merges at any round",
+          "unresolved P0 never merges at any round",
         );
         assert.equal(state.releaseRequests.length, 0);
       }
@@ -325,7 +325,7 @@ Deno.test(
       rig.clock.advance(15 * 60_000 + 1);
       rig.github.completeReview([{
         id: "finding-capped-3",
-        severity: "P1",
+        severity: "P0",
         path: "src/app.ts",
         message: "required correction 3",
         fingerprint: "3".repeat(64),
@@ -337,6 +337,9 @@ Deno.test(
       const work = parked.work[0]!;
       assert.equal(work.nextStep, "blocked");
       assert.equal(work.blocker?.kind, "other");
+      // The park text is a fixed exact-match constant
+      // (REVIEW_ROUND_CEILING_REJECTED); historical parks carry this wording
+      // although only an unresolved P0 selects it since 2026-10-24.
       assert.equal(
         work.blocker?.message,
         "review round ceiling reached: unresolved P0/P1 findings remain",
@@ -375,7 +378,7 @@ Deno.test(
       assert.deepEqual(
         parked.reviews.filter((review) =>
           review.outcome === "completed" &&
-          review.unresolvedSeverities.includes("P1")
+          review.unresolvedSeverities.includes("P0")
         ).map((review) => review.pullRequest.head),
         heads.slice(0, 3),
       );

@@ -35,7 +35,7 @@ export const REVIEW_ROUND_CEILING_PREFIX = "review round ceiling reached: ";
 /** No completed review binds the record's current head. */
 export const REVIEW_ROUND_CEILING_UNREVIEWED =
   `${REVIEW_ROUND_CEILING_PREFIX}the current head has no completed review`;
-/** The latest completed review of the current head left a P0/P1 unresolved. */
+/** The latest completed review of the current head left a P0 unresolved. */
 export const REVIEW_ROUND_CEILING_REJECTED =
   `${REVIEW_ROUND_CEILING_PREFIX}unresolved P0/P1 findings remain`;
 /** The latest completed review of the current head accepted no task. */
@@ -488,7 +488,7 @@ function laterReview(a: ReviewReceiptV1, b: ReviewReceiptV1): boolean {
 
 /**
  * The fixed park message the latest completed review of the current head
- * selects: none (UNREVIEWED); an unresolved P0/P1 or an uncounted finding
+ * selects: none (UNREVIEWED); an unresolved P0 or an uncounted finding
  * (REJECTED); an issue task without a positive task acceptance (UNACCEPTED);
  * otherwise REVIEWED. A moved base is the caller's own BASE_MOVED.
  */
@@ -527,8 +527,8 @@ export function isReviewRoundCeilingPark(
  * last review (BASE_MOVED, deliverable only by a moved-base merge of that
  * reviewed head). The message is shape, never authority: the rule itself
  * requires the latest completed review of the exact head and base to leave no
- * unresolved P0/P1, and green required CI on that head. The other parks (no
- * completed review, unresolved P0/P1, no task acceptance) never merge.
+ * unresolved P0, and green required CI on that head. The other parks (no
+ * completed review, unresolved P0, no task acceptance) never merge.
  */
 export const REVIEW_ROUND_CEILING_DELIVERABLE_MESSAGES: readonly string[] = [
   REVIEW_ROUND_CEILING_BASE_MOVED,

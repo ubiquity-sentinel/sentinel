@@ -264,10 +264,40 @@ for (const conclusion of ["skipped", "neutral", "cancelled", null] as const) {
   });
 }
 
-for (const conclusion of ["cancelled", "skipped", "neutral"] as const) {
-  Deno.test(`a head check that only concluded ${conclusion} never spends a charged round`, async () => {
+Deno.test("a head check that only concluded cancelled never spends a charged round", async () => {
+  const { rig, charges, writes } = await ciRig("ci-headnoise-cancelled", {
+    checks: {
+      [SHA3]: [check("validate", SHA3, "cancelled")],
+      [SHA1]: [check("validate", SHA1, "success")],
+    },
+  });
+  try {
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    assert.equal(rig.model.requests.length, 0, "no correction session");
+    const after = await rig.snapshot();
+    const work = after.work[0];
+    assert.equal(work.nextStep, "blocked");
+    assert.equal(
+      work.blocker?.message,
+      "CI checks failed without base evidence: validate(cancelled)",
+    );
+    assert.equal(work.counters.reviewRounds, 1);
+    assert.deepEqual(after.reservations, charges, "nothing charged");
+    assert.equal(rig.github.calls.includes("merge"), false, "never merged");
+    assertGeneration76Shapes(writes);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+// Owner directive 2026-10-24: a job the target's own CI skipped or marked
+// neutral is a green check, never a failure. Such a head is neither corrected
+// (no charged round) nor blocked: it is delivered.
+for (const conclusion of ["skipped", "neutral"] as const) {
+  Deno.test(`a head check that only concluded ${conclusion} is green: delivered without a correction, a block or a charge`, async () => {
     const { rig, charges, writes } = await ciRig(
-      `ci-headnoise-${conclusion}`,
+      `ci-headgreen-${conclusion}`,
       {
         checks: {
           [SHA3]: [check("validate", SHA3, conclusion)],
@@ -281,12 +311,15 @@ for (const conclusion of ["cancelled", "skipped", "neutral"] as const) {
       assert.equal(rig.model.requests.length, 0, "no correction session");
       const after = await rig.snapshot();
       const work = after.work[0];
-      assert.equal(work.nextStep, "blocked");
+      assert.equal(work.nextStep, "delivery");
+      assert.equal(work.blocker, null, `${conclusion} is never a block`);
       assert.equal(
-        work.blocker?.message,
-        `CI checks failed without base evidence: validate(${conclusion})`,
+        rig.github.calls.filter((call) => call === "merge").length,
+        1,
+        "the green reviewed head merges",
       );
-      assert.equal(work.counters.reviewRounds, 1);
+      assert.equal(work.target.head, SHA3);
+      assert.equal(work.counters.reviewRounds, 1, "no review round spent");
       assert.deepEqual(after.reservations, charges, "nothing charged");
       assertGeneration76Shapes(writes);
     } finally {

@@ -16,6 +16,7 @@ import { runRepairEntrypoint } from "../../src/main.ts";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { candidateBranch, workItemIdForIssue } from "../../src/repair/keys.ts";
+import { headRejectedByReview } from "../../src/repair/loop-review-records.ts";
 import { createRepairStateStore } from "../../src/state/mod.ts";
 import { FakeAuthProvider, FakeReviewService } from "../github/helpers.ts";
 import { FakeClock } from "../repair/helpers.ts";
@@ -203,7 +204,7 @@ Deno.test(
       );
 
       // ---------------------------------------------------------------------
-      // Real repair state: B0/H0 target, rejected current-head review (P1).
+      // Real repair state: B0/H0 target, rejected current-head review (P0).
       // ---------------------------------------------------------------------
       expectOk(
         await gitRun(tmp, ["init", "-q", "--bare", `${tmp}/state.git`], env),
@@ -217,6 +218,34 @@ Deno.test(
         state.readRepair.bind(state),
         `${tmp}/state.git`,
       );
+      // Owner directive 2026-10-24: only an unresolved P0 rejects the current
+      // head and admits a charged correction; P1/P2/P3 never block and never
+      // spend a correction round.
+      const rejectedReview = (severity: "P0" | "P1") =>
+        reviewReceipt("review-51-h0", {
+          requestId: "review-request-51",
+          expectedReviewer: TRUSTED_REVIEWER,
+          observedReviewer: TRUSTED_REVIEWER,
+          repository: REPOSITORY,
+          pullRequest: { number: PR_NUMBER, head: h0, base: b0 },
+          outcome: "completed",
+          resultId: "result-51-h0",
+          summary: null,
+          findings: [{
+            id: "finding-51-1",
+            severity,
+            path: "candidate.txt",
+            message: "correction required",
+            fingerprint: "e".repeat(64),
+            resolved: false,
+            resolutionEvidence: null,
+          }],
+          findingsUncounted: 0,
+          unresolvedSeverities: [severity],
+          submittedAt: T0 - 2000,
+          completedAt: T0 - 1000,
+          observedAt: T0 - 500,
+        });
       const seeded = parseRepairStateSnapshotV1({
         version: "v1",
         kind: "repair_state_snapshot",
@@ -260,38 +289,26 @@ Deno.test(
             proofRef: null,
           }),
         ],
-        reviews: [
-          reviewReceipt("review-51-h0", {
-            requestId: "review-request-51",
-            expectedReviewer: TRUSTED_REVIEWER,
-            observedReviewer: TRUSTED_REVIEWER,
-            repository: REPOSITORY,
-            pullRequest: { number: PR_NUMBER, head: h0, base: b0 },
-            outcome: "completed",
-            resultId: "result-51-h0",
-            summary: null,
-            findings: [{
-              id: "finding-51-1",
-              severity: "P1",
-              path: "candidate.txt",
-              message: "correction required",
-              fingerprint: "e".repeat(64),
-              resolved: false,
-              resolutionEvidence: null,
-            }],
-            findingsUncounted: 0,
-            unresolvedSeverities: ["P1"],
-            submittedAt: T0 - 2000,
-            completedAt: T0 - 1000,
-            observedAt: T0 - 500,
-          }),
-        ],
+        reviews: [rejectedReview("P0")],
         replays: [],
         releaseRequests: [],
         githubCooldowns: [],
         attemptMemory: [],
         lessons: [],
       });
+      assert.equal(
+        headRejectedByReview(seeded, seeded.work[0]),
+        true,
+        "an unresolved P0 rejects the current head",
+      );
+      assert.equal(
+        headRejectedByReview(
+          { ...seeded, reviews: [rejectedReview("P1")] },
+          seeded.work[0],
+        ),
+        false,
+        "an unresolved P1 never authorizes the producer correction below",
+      );
       const seededWrite = await state.writeRepair(seeded, null);
       assert.ok(
         seededWrite.ok && seededWrite.value.status === "applied",

@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
+import { reviewOperationKey, reviewReceiptId } from "../../src/repair/keys.ts";
 import { SHA1, SHA3, T0 } from "../state/helpers.ts";
 import { completedReceipt } from "./loop-review-fixtures.ts";
 import {
@@ -85,25 +86,30 @@ Deno.test("CI first: red -> CI fix -> green -> one review -> merge", async () =>
   }
 });
 
-Deno.test("CI first: a P1 correction must pass CI before the next review", async () => {
-  const rejection = completedReceipt(7, SHA3, SHA1, {
-    id: `review-receipt:7:${SHA3}`,
-    resultId: "p1-result",
+/** A completed verdict on SHA3 (round one) with one unresolved finding. */
+async function verdictWithFinding(severity: "P0" | "P1") {
+  return completedReceipt(7, SHA3, SHA1, {
+    id: await reviewReceiptId(reviewOperationKey(7, SHA3, 1), SHA3),
+    resultId: `${severity.toLowerCase()}-result`,
     findings: [{
       id: "github-review-1-finding-0",
       fingerprint: "e".repeat(64),
-      severity: "P1",
+      severity,
       path: "src/app.ts",
       message: "the change breaks the documented contract",
       resolutionEvidence: null,
       resolved: false,
     }],
-    unresolvedSeverities: ["P1"],
+    unresolvedSeverities: [severity],
     submittedAt: T0,
     completedAt: T0 + 1000,
     observedAt: T0 + 1001,
   });
-  const { rig } = await ciFirstRig("cf-p1-red", {
+}
+
+Deno.test("CI first: a P0 correction must pass CI before the next review", async () => {
+  const rejection = await verdictWithFinding("P0");
+  const { rig } = await ciFirstRig("cf-p0-red", {
     reviewRounds: 1,
     reviews: [rejection],
     heads: [SHA4, SHA5],
@@ -133,6 +139,43 @@ Deno.test("CI first: a P1 correction must pass CI before the next review", async
       [SHA5],
       "the red correction was never reviewed",
     );
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("CI first: an unresolved P1 is no rejection: the reviewed green head merges without a correction", async () => {
+  // Owner directive 2026-10-24: only an unresolved P0 blocks. The same verdict
+  // with a P1 is a clean current-head review: no correction session, no CI
+  // fix, no further review round, and the green head is delivered.
+  const verdict = await verdictWithFinding("P1");
+  const { rig, charges } = await ciFirstRig("cf-p1-clean", {
+    reviewRounds: 1,
+    reviews: [verdict],
+    heads: [SHA4, SHA5],
+    checks: { [SHA4]: red(SHA4), [SHA1]: GREEN_BASE },
+  });
+  try {
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    assert.equal(rig.model.requests.length, 0, "no correction for a P1");
+    assert.equal(
+      rig.github.calls.filter((call) => call === "merge").length,
+      1,
+      "the P1-reviewed green head merges",
+    );
+    const state = await rig.snapshot();
+    const work = taskRecord(state);
+    assert.equal(work.target.head, SHA3, "the reviewed head is delivered");
+    assert.equal(work.nextStep, "delivery");
+    assert.equal(work.counters.reviewRounds, 1, "no further round");
+    assert.equal(work.counters.retries, 0, "no CI fix charged");
+    assert.deepEqual(
+      rig.github.reviewRequestIdentities,
+      [],
+      "the head is never re-reviewed",
+    );
+    assert.deepEqual(state.reservations, charges, "nothing charged");
   } finally {
     await rig.ctx.cleanup();
   }

@@ -17,7 +17,7 @@ import {
 } from "./loop-records.ts";
 
 /**
- * A completed review receipt with unresolved P0/P1 findings bound to the
+ * A completed review receipt with unresolved P0 findings bound to the
  * record's CURRENT reviewed head means that head is rejected: the work step
  * must run a fresh bounded implementation and validate the NEW candidate
  * through the replay path before any publication. The rejected candidate is
@@ -53,7 +53,7 @@ export function rejectedReceipt(
 }
 
 /**
- * Only unresolved P0/P1 findings reject a head, exactly as the merge gate
+ * Only unresolved P0 findings reject a head, exactly as the merge gate
  * decides: unresolved P2/P3 findings never block delivery, so they must not
  * spend a correction round either.
  */
@@ -183,7 +183,7 @@ export function headAwaitsPreReviewCiFix(
 
 /**
  * The record's current head must be corrected, never re-published or
- * re-reviewed: a completed review rejected it with an unresolved P0/P1, it is
+ * re-reviewed: a completed review rejected it with an unresolved P0, it is
  * a reviewed head awaiting its live-verified CI correction, or it is a red,
  * never-reviewed head awaiting its live-verified CI fix.
  */

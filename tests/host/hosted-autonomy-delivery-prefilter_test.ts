@@ -10,6 +10,7 @@ import type { HostedAutonomyDepsV1 } from "../../ops/hosted-autonomy-types.ts";
 import { buildHostedReleaseRequest } from "../../ops/hosted-autonomy-delivery.ts";
 import { HOSTED_AUTONOMY_RETIRED } from "../../ops/hosted-autonomy-policy.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import type { ReviewFindingV1 } from "../../src/contracts/review-receipt.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { makeRig } from "./hosted-autonomy-rig.ts";
 import { authorityRig } from "./merge-queue-authority-fixtures.ts";
@@ -18,7 +19,7 @@ import { SHA1, SHA2, SHA3, SHA4, T0 } from "./merge-queue-proof-fixtures.ts";
 
 async function fixture(options: {
   approval?: boolean;
-  review?: "missing" | "dirty";
+  review?: "missing" | "dirty" | "p1";
   acceptance?:
     | "missing"
     | "wrong-issue"
@@ -43,13 +44,20 @@ async function fixture(options: {
         : options.acceptance,
     };
   }
+  // Owner directive 2026-10-24: only an unresolved P0 blocks. "p1" leaves the
+  // bound review itself with an unresolved P1, which stays clean.
+  if (options.review === "p1") {
+    clean.findings = [finding("P1") as ReviewFindingV1];
+    clean.unresolvedSeverities = ["P1"];
+  }
+  // A later review of the same head leaving an unresolved P0: dirty.
   const dirty = {
     ...clean,
     id: `review-receipt:${"f".repeat(64)}`,
     completedAt: clean.completedAt! + 1,
     observedAt: clean.observedAt + 1,
-    findings: [finding("P1")],
-    unresolvedSeverities: ["P1"],
+    findings: [{ ...finding("P1"), severity: "P0", message: "P0 finding" }],
+    unresolvedSeverities: ["P0"],
   };
   const reviews = options.review === "missing"
     ? []
@@ -306,6 +314,33 @@ Deno.test("delivery prefilter: a clean refreshed context retains real authority 
       after.snapshot.work[0].counters,
       before.snapshot.work[0].counters,
     );
+  } finally {
+    await Deno.remove(f.rig.tmp, { recursive: true });
+  }
+});
+
+Deno.test("delivery prefilter: a bound review with an unresolved P1 is not dirty and still books", async () => {
+  // Owner directive 2026-10-24: only an unresolved P0 blocks delivery; the
+  // bound review's unresolved P1 still authorizes the booking.
+  const f = await fixture({ review: "p1" });
+  try {
+    const before = await f.saved();
+    const context = await f.context();
+    const result = await runHostedDeliveryPass(context);
+    assert.equal(
+      result?.status,
+      "applied",
+      JSON.stringify({ result, actions: context.actions }),
+    );
+    assert.ok(f.calls.resolve > 0);
+    assert.equal(f.calls.merge, 0);
+    const after = await f.saved();
+    assert.equal(after.snapshot.releaseRequests.length, 1);
+    assert.equal(
+      after.snapshot.releaseRequests[0].source.reviewReceiptId,
+      f.authority.facts.receipt.id,
+    );
+    assert.deepEqual(after.snapshot.reservations, before.snapshot.reservations);
   } finally {
     await Deno.remove(f.rig.tmp, { recursive: true });
   }

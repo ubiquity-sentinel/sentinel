@@ -37,7 +37,7 @@ Deno.test("matrix ingest: an unavailable predecessor observation of a legacy cor
   const rig = await makeRig([ISSUE], 1);
   try {
     // Legacy shape: the published head SHA2 carries no candidate state, and a
-    // completed review rejected it with an unresolved P1.
+    // completed review rejected it with an unresolved P0 (only a P0 rejects).
     const record = workRecord(`issue-${ISSUE}`, {
       source: { kind: "issue", id: String(ISSUE), revision: rig.base },
       related: { incidentId: null, issueNumber: ISSUE },
@@ -60,13 +60,13 @@ Deno.test("matrix ingest: an unavailable predecessor observation of a legacy cor
       findings: [{
         id: "legacy-rejection-finding-0",
         fingerprint: "f".repeat(64),
-        severity: "P1",
+        severity: "P0",
         path: "src/app.ts",
         message: "legacy correction finding",
         resolutionEvidence: null,
         resolved: false,
       }],
-      unresolvedSeverities: ["P1"],
+      unresolvedSeverities: ["P0"],
       submittedAt: T0 - 3_000,
       completedAt: T0 - 2_000,
       observedAt: T0 - 1_000,

@@ -368,9 +368,12 @@ Deno.test(
       // A bounded recovery cleared the wait while the review was completing,
       // so the record carries no wait to quote and its updatedAt is LATER than
       // the completion. The receipt must still be built from the reservation.
+      // The finding is a P0, the one severity that still rejects a head
+      // (owner directive 2026-10-24), so the recorded receipt drives a
+      // correction.
       rig.github.completeReview([{
         id: "finding-1",
-        severity: "P1",
+        severity: "P0",
         path: "src/app.ts",
         message: "required fix",
         fingerprint: "a".repeat(64),
@@ -420,7 +423,7 @@ Deno.test(
       assert.equal(record.counters.reviewRounds, 2, "fresh correction round");
       assert.equal(rig.model.requests.length, 2);
       assert.deepEqual(rig.model.requests[1]?.reviewFindings, [{
-        severity: "P1",
+        severity: "P0",
         path: "src/app.ts",
         message: "required fix",
       }]);

@@ -78,7 +78,7 @@ export function latestPullReview(
   return latest;
 }
 
-/** No unresolved P0/P1 and nothing uncounted: the review blocks nothing. */
+/** No unresolved P0 and nothing uncounted: the review blocks nothing. */
 export function cleanReview(review: ReviewReceiptV1): boolean {
   return review.findingsUncounted === 0 &&
     !hasBlockingSeverity(review.unresolvedSeverities);

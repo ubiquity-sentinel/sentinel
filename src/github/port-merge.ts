@@ -302,7 +302,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     }
     const after = await this.client.readPullRequest(merge.pullRequestNumber);
     if (!after.ok) return after;
-    if (after.value === null) return blocked("protection_required", null);
+    if (after.value === null) return blocked("conflict", null);
     if (after.value.state === "merged") {
       if (after.value.head !== merge.expectedHead) {
         return blocked("head_mismatch", after.value.head);
@@ -337,7 +337,9 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
         return blocked("checks_failed", after.value.head);
       }
     }
-    return blocked("protection_required", after.value.head);
+    // A rejection no readable rule, check or review explains: report it as a
+    // conflict with the live pull request, never as a missing protection.
+    return blocked("conflict", after.value.head);
   }
 
   private async authorizeSelfMerge(
