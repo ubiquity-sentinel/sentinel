@@ -42,6 +42,19 @@ export interface QueueIntentState {
   queueFailures: number;
   admission: 0 | 1;
 }
+
+/**
+ * #169: only a first admission whose every attempt durably ended
+ * `not_submitted` is definitely unsent.  An earlier refusal, queue failure,
+ * re-admission marker, dequeue marker or native request/result identity is
+ * durable queue history and keeps strict custody.
+ */
+export function isDefinitelyNotSubmitted(state: QueueIntentState): boolean {
+  return state.stage === "not_submitted" && state.admission === 0 &&
+    state.refusals === 0 && state.queueFailures === 0 &&
+    state.intent.requestId === null && state.intent.resultId === null &&
+    !state.intent.key.endsWith(":d1");
+}
 /** Finite vocabulary: no raw text, arbitrary metadata, or embedded proof object. */
 export const QUEUE_FAILURE_DETAILS: ReadonlyMap<string, {
   stage: typeof STAGES[number];

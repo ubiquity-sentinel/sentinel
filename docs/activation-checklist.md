@@ -20,6 +20,22 @@ Preserve the existing `deploy:vps` path, exclusive `.data/deploy.lock`, immutabl
 
 A Sentinel VPS release/receipt integration needs an approved exact contract beyond merely calling the deployment command: record the healthy prior and promotion intent before switching, verify the exact candidate, preserve interrupted monitoring and exact rollback proof, and refuse to overwrite a newer unrelated revision. Reconcile promotion ownership and any active target work before transfer.
 
+### Release bridge host grants (owner-installed)
+
+The owner installs the bridge's SSH forced command (`ops/vps-release-bridge.ts`). Before re-pinning its driver at or after ai.ubq.fi 6c3afe42 (ubiquity/ai.ubq.fi#1162, after #1155), add these driver grants to the forced command's `deno run` flags (sentinel#162). They are recorded in `VPS_RELEASE_BRIDGE_DRIVER_GRANTS` and `vpsReleaseBridgeDriverDenoFlags` (`src/host/release-bridge-grants.ts`). `tests/host/vps-release-bridge-grants_test.ts` runs the exact upstream lock, checkpoint storage, journal runner and command runner under exactly these flags, and checks that each one is needed. They add to the bridge's own installation, state and network grants.
+
+- `--allow-sys=uid`. The deploy lock must be a mode `0600` file owned by `Deno.uid()`, so run the bridge as the uid that owns `<root>/.data/deploy.lock`. Without this grant, every locked driver operation and every metrics checkpoint load or save throws `NotCapable`.
+- `--allow-run`, unscoped. The driver runs its commands through `Deno.Command`, and the journal reader runs `/usr/bin/journalctl` through `node:child_process`.
+- `--allow-read=<root>` and `--allow-write=<root>/.data`. The release store checks `realpath(<root>)`, and the lock, journal, releases and `.data/sentinel-vps-metrics` live under `.data`.
+- `--allow-env=NODE_V8_COVERAGE`. Deno's `node:child_process` reads it even when the child has an explicit environment, so without it every journal read fails. Add `PATH` when release preparation uses the sparse command runner.
+- A Deno that has `FsFile.prototype.tryLockSync`. Upstream verified 2.9.7.
+
+Do not use `--allow-all`. At ai.ubq.fi `development` 3393df1, the Deno lock opens a `/dev/fd/<n>` alias. Deno 2.9.8 allows that only under `--allow-all`, so a pin at that revision cannot take the lock under these grants.
+
+The capabilities host must not carry a `platform` substitute; the bridge refuses one, so the command and journal runners are always the pinned tree's own (sentinel#161). Install one `telemetry.retention` for every bridge that shares `<root>/.data/sentinel-vps-metrics`, because each checkpoint save prunes that directory by its `evidenceMaxAgeMs`. The bridge accepts the driver's default 10 s `stateReadMs`.
+
+Release preparation stays Bun-only through 6c3afe42. Until ubiquity/ai.ubq.fi#1178 item 1 ships a Deno-safe `preparePayload` and the capabilities host supplies it as `host.preparePayload`, the bridge can drive only candidates already prepared under `<root>/.data/releases/<sha>`. Keep `sentinel-release` disabled.
+
 ## Required target decisions and proof
 
 | Boundary                     | Required decision or evidence                                                                                                 |

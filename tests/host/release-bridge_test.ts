@@ -545,6 +545,24 @@ Deno.test("release bridge: setup/preflight and missing capability/custody perfor
     "capability_unavailable",
   );
   assert.equal(rig.calls.length, 0);
+  // sentinel#161: the pinned tree's own command and journal runners only.
+  const substitute = {
+    acquireOwner: () => {
+      throw new Error("must not acquire custody");
+    },
+    claimReplay: () => {
+      throw new Error("must not claim");
+    },
+    host: {
+      clock: { now: rig.now },
+      platform: { journal: () => Promise.resolve("") },
+    },
+  } as unknown as ReleaseBridgeCapabilities;
+  assert.equal(
+    (await runReleaseBridge(input, rig.pin, substitute, rig.http)).code,
+    "capability_unavailable",
+  );
+  assert.equal(rig.calls.length, 0, "refused before authentication");
   const caps = {
     acquireOwner: () => Promise.resolve(null),
     claimReplay: () => {
