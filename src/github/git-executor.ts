@@ -566,14 +566,9 @@ export class DenoGitExecutor implements GitExecutorV1 {
         "test-local.ts",
       ], ["emitter", "ops/native-ci-proof.ts"]] as const
     ) {
-      const blob = await this.runGit([
-        "rev-parse",
-        "--verify",
-        `${sha}:${path}`,
-      ], null);
-      if (blob.ok && SHA_RE.test(blob.stdout.trim())) {
-        sources[key] = blob.stdout.trim() as GitSha;
-      }
+      const blob = await this.selfMergePathObject(sha, path);
+      if (!blob.ok) return blob;
+      sources[key] = blob.value;
     }
     const pipeline: SelfMergeCommitV1["pipeline"] = {
       workflows: null,
@@ -587,16 +582,36 @@ export class DenoGitExecutor implements GitExecutorV1 {
         "deno.json",
       ], ["lock", "deno.lock"]] as const
     ) {
-      const object = await this.runGit([
-        "rev-parse",
-        "--verify",
-        `${sha}:${path}`,
-      ], null);
-      if (object.ok && SHA_RE.test(object.stdout.trim())) {
-        pipeline[key] = object.stdout.trim() as GitSha;
-      }
+      const object = await this.selfMergePathObject(sha, path);
+      if (!object.ok) return object;
+      pipeline[key] = object.value;
     }
     return portOk({ ...commit, sources, pipeline });
+  }
+
+  /**
+   * The object at `sha:path`: null only when git reports the path absent
+   * (`--verify --quiet` exits 1). A failed child (deadline, spawn failure,
+   * signal, any other status) is `unavailable`, never an absent path, so a
+   * slow runner cannot read as a changed trusted pipeline (issue #196).
+   */
+  private async selfMergePathObject(
+    sha: GitSha,
+    path: string,
+  ): Promise<PortResultV1<GitSha | null>> {
+    const result = await this.runGit([
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `${sha}:${path}`,
+    ], null);
+    if (result.ok && SHA_RE.test(result.stdout.trim())) {
+      return portOk(result.stdout.trim() as GitSha);
+    }
+    if (!result.ok && result.code === 1 && result.timeout !== true) {
+      return portOk(null);
+    }
+    return portError("unavailable", "self merge object read unavailable");
   }
 
   async proveSelfMergeCommit(

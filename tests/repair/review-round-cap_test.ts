@@ -12,6 +12,7 @@
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
+import { portOk } from "../../src/contracts/ports.ts";
 import { candidateBranch, reviewOperationKey } from "../../src/repair/keys.ts";
 import { REVIEW_BOUND_MS } from "../../src/repair/loop-bounds.ts";
 import { isModelStartAction } from "../../src/repair/loop-eligibility.ts";
@@ -50,6 +51,43 @@ const AI = {
 
 function reviewWait(since: number) {
   return { reason: "review_pending" as const, since, until: since + MINUTE };
+}
+
+/**
+ * A completed receipt of `head` rejected by one unresolved P0 finding. Owner
+ * directive 2026-10-24 ("the only internal policy is resolve all P0"): only an
+ * unresolved P0 rejects a head; the rig's own "p1" verdict is a clean review
+ * under that rule.
+ */
+function rejectedReceipt(round: number, head: GitSha) {
+  const receipt = completedReceipt(round, head, "p1");
+  return {
+    ...receipt,
+    findings: receipt.findings.map((finding) => ({
+      ...finding,
+      severity: "P0" as const,
+      message: "P0 finding",
+    })),
+    unresolvedSeverities: ["P0" as const],
+  };
+}
+
+/** Script the fake's live verdict as a rejection: one unresolved P0 finding. */
+function rejectWithP0(rig: CapRigV1): void {
+  rig.github.reviewMode = "p1";
+  const observe = rig.github.observeReview.bind(rig.github);
+  rig.github.observeReview = async (request: unknown) => {
+    const observed = await observe(request);
+    if (!observed.ok) return observed;
+    return portOk({
+      ...observed.value,
+      findings: observed.value.findings.map((finding) => ({
+        ...finding,
+        severity: "P0" as const,
+        message: "P0 finding",
+      })),
+    });
+  };
 }
 
 async function runs(
@@ -323,7 +361,30 @@ Deno.test("round cap: an in-flight attempt is still observed to its clean verdic
   assert.notEqual(rig.github.mergedSha, null, "the authorized head merges");
 });
 
-Deno.test("round cap: a P1 verdict in round three parks REJECTED instead of a correction", async () => {
+Deno.test("round cap: a P0 verdict in round three parks REJECTED instead of a correction", async () => {
+  const rig = await capRig({
+    reviewRounds: 3,
+    nextStep: "review",
+    wait: reviewWait(T0 - MINUTE),
+    reservations: reviewCharges(ID, 3),
+  });
+  rig.github.bind(3);
+  rejectWithP0(rig);
+  await runs(rig, 2);
+  const work = await assertParked(rig, CAP_REJECTED);
+  assert.equal(rig.model.requests.length, 0, "no correction model start");
+  assert.equal(rig.github.requests, 0);
+  const state = await rig.snapshot();
+  assert.equal(state.reviews.length, 1, "the rejecting receipt is retained");
+  assert.deepEqual(state.reviews[0]!.unresolvedSeverities, ["P0"]);
+  assert.ok(work.evidence.some((item) => item.kind === "review_receipt"));
+  assert.equal(rig.github.merges, 0, "a P0 never merges");
+});
+
+Deno.test("round cap: a P1 verdict in round three is no rejection: the reviewed head is delivered", async () => {
+  // Owner directive 2026-10-24: only an unresolved P0 blocks. A completed
+  // round-three verdict whose only finding is a P1 neither parks REJECTED nor
+  // spends a correction: the accepted head goes to delivery and merges.
   const rig = await capRig({
     reviewRounds: 3,
     nextStep: "review",
@@ -332,18 +393,45 @@ Deno.test("round cap: a P1 verdict in round three parks REJECTED instead of a co
   });
   rig.github.bind(3);
   rig.github.reviewMode = "p1";
+  rig.github.mergeMode = "merged";
   await runs(rig, 2);
-  const work = await assertParked(rig, CAP_REJECTED);
+  const work = await rig.work();
+  assert.ok(
+    !(work.blocker?.message ?? "").startsWith(CAP_PREFIX),
+    JSON.stringify(work.blocker),
+  );
   assert.equal(rig.model.requests.length, 0, "no correction model start");
-  assert.equal(rig.github.requests, 0);
+  assert.equal(rig.github.requests, 0, "no fourth review round");
   const state = await rig.snapshot();
-  assert.equal(state.reviews.length, 1, "the rejecting receipt is retained");
+  assert.equal(state.reviews.length, 1, "the P1 receipt is retained");
   assert.deepEqual(state.reviews[0]!.unresolvedSeverities, ["P1"]);
-  assert.ok(work.evidence.some((item) => item.kind === "review_receipt"));
-  assert.equal(rig.github.merges, 0, "a P1 never merges");
+  assert.equal(work.counters.reviewRounds, 3, "no round spent");
+  assert.equal(work.target.head, SHA3, "the reviewed head is delivered");
+  assert.notEqual(rig.github.mergedSha, null, "the P1-reviewed head merges");
+  assert.equal((await rig.charges()).length, 3, "nothing more is charged");
 });
 
-Deno.test("round cap: a P1 verdict in round two still goes to its correction (control)", async () => {
+Deno.test("round cap: a P0 verdict in round two still goes to its correction (control)", async () => {
+  const rig = await capRig({
+    reviewRounds: 2,
+    nextStep: "review",
+    wait: reviewWait(T0 - MINUTE),
+    reservations: reviewCharges(ID, 2),
+  });
+  rig.github.bind(2);
+  rejectWithP0(rig);
+  await rig.run();
+  const work = await rig.work();
+  assert.ok(
+    !(work.blocker?.message ?? "").startsWith(CAP_PREFIX),
+    JSON.stringify(work.blocker),
+  );
+  assert.ok(rig.model.requests.length >= 1, "the correction starts");
+});
+
+Deno.test("round cap: a P1 verdict in round two spends no correction: the reviewed head goes to delivery", async () => {
+  // Owner directive 2026-10-24: a P1 never spends a correction round, below
+  // the ceiling as much as at it.
   const rig = await capRig({
     reviewRounds: 2,
     nextStep: "review",
@@ -354,11 +442,14 @@ Deno.test("round cap: a P1 verdict in round two still goes to its correction (co
   rig.github.reviewMode = "p1";
   await rig.run();
   const work = await rig.work();
-  assert.ok(
-    !(work.blocker?.message ?? "").startsWith(CAP_PREFIX),
-    JSON.stringify(work.blocker),
-  );
-  assert.ok(rig.model.requests.length >= 1, "the correction starts");
+  assert.equal(work.nextStep, "delivery", JSON.stringify(work.blocker));
+  assert.equal(rig.model.requests.length, 0, "no correction model start");
+  assert.equal(rig.github.requests, 0, "no further review round");
+  assert.equal(work.counters.reviewRounds, 2, "no round spent");
+  assert.equal(work.target.head, SHA3, "the reviewed head is kept");
+  const state = await rig.snapshot();
+  assert.deepEqual(state.reviews[0]!.unresolvedSeverities, ["P1"]);
+  assert.equal((await rig.charges()).length, 2, "nothing more is charged");
 });
 
 Deno.test("round cap: missing task acceptance at the ceiling parks UNACCEPTED, never another review", async (t) => {
@@ -493,10 +584,19 @@ Deno.test("round cap: the work step at the ceiling starts, pushes and opens noth
       pr: null,
     },
     {
-      name: "a head rejected by a P1 review",
+      name: "a head rejected by a P0 review",
+      head: SHA3,
+      reviews: [rejectedReceipt(3, SHA3)],
+      message: CAP_REJECTED,
+      pr: PR,
+    },
+    {
+      // Owner directive 2026-10-24: a P1-only verdict is no rejection; this
+      // change-only one lacks a task acceptance, so the head parks UNACCEPTED.
+      name: "a head whose only finding is a P1, without a task acceptance",
       head: SHA3,
       reviews: [completedReceipt(3, SHA3, "p1")],
-      message: CAP_REJECTED,
+      message: CAP_UNACCEPTED,
       pr: PR,
     },
     {
@@ -551,7 +651,7 @@ Deno.test("round cap: no matrix cell, model start, CI correction or conflict res
     capRig({
       reviewRounds: 2,
       reservations: reviewCharges(ID, ledgerRounds, { head: SHA2 }),
-      reviews: [completedReceipt(2, SHA3, "p1")],
+      reviews: [rejectedReceipt(2, SHA3)],
       record: {
         target: {
           base: SHA1,

@@ -143,16 +143,17 @@ export function legacyLossReview(
     observedAt: T0 + 1001,
     findings: [{
       id: "finding-h0",
-      severity: "P1",
+      severity: "P0",
       path: "src/app.ts",
       message: "legacy correction finding",
       fingerprint: "a".repeat(64),
       resolved: false,
       resolutionEvidence: null,
     }],
-    // The lost correction followed a blocking rejection: only unresolved
-    // P0/P1 findings reject a head and send it back to implementation.
-    unresolvedSeverities: ["P1"],
+    // The lost correction followed a blocking rejection: only an unresolved
+    // P0 finding rejects a head and sends it back to implementation (owner
+    // directive 2026-10-24).
+    unresolvedSeverities: ["P0"],
     ...overrides,
   });
 }

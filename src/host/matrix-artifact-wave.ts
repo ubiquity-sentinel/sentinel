@@ -1,4 +1,5 @@
 /** Authenticated wave, grant, cell and bundle recovery against frozen custody. */
+import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import {
   HOSTED_ACTIONS_CLOCK_TOLERANCE_MS as TOLERANCE,
   HOSTED_SUPERVISOR_REF,
@@ -281,9 +282,7 @@ export async function recoverMatrixArtifactWaves(context: {
                     review.pullRequest.head === cell.request.checkoutBase &&
                     review.pullRequest.base === task.target.base &&
                     review.outcome === "completed" &&
-                    !review.unresolvedSeverities.some((severity) =>
-                      severity === "P0" || severity === "P1"
-                    )
+                    !hasBlockingSeverity(review.unresolvedSeverities)
                   ) ||
                     (task.counters.retries >= 1 &&
                       !snapshot.reviews.some((review) =>

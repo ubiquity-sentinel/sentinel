@@ -1,7 +1,7 @@
 /**
  * Review follow-up issues (owner decision 2026-10-16: "kick the can down the
  * road and merge with some tech debt to keep moving forward"). After a trusted
- * merge, the P2/P3 findings the latest current-head review left unresolved
+ * merge, the P1/P2/P3 findings the latest current-head review left unresolved
  * are filed as ONE new issue per merged PR in the target repository, listing
  * each finding with its file:line. Pure planning and rendering only; the
  * launcher pass (`hosted-autonomy-follow-up-pass.ts`) owns every read and the
@@ -13,6 +13,7 @@
  * and PR. Receipt and depth remain audit data, but a newer receipt can never
  * create a second follow-up for that PR.
  */
+import { BLOCKING_SEVERITIES } from "../src/contracts/review-receipt.ts";
 import type { ReleaseRequestV1 } from "../src/contracts/release.ts";
 import type {
   ReviewFindingV1,
@@ -109,7 +110,7 @@ export function markerNamesCandidate(
     marker.pullRequest === candidate.pullRequest;
 }
 
-/** One merged PR whose latest review left P2/P3 findings unresolved. */
+/** One merged PR whose latest review left P1/P2/P3 findings unresolved. */
 export interface FollowUpCandidateV1 {
   request: ReleaseRequestV1;
   repository: RepositoryIdentityV1;
@@ -178,8 +179,7 @@ function offTipParkCandidate(
     createdAt: record.blocker.since,
   };
   const findings = receipt.findings.filter((finding) =>
-    !finding.resolved &&
-    (finding.severity === "P2" || finding.severity === "P3")
+    !finding.resolved && !BLOCKING_SEVERITIES.includes(finding.severity)
   );
   if (findings.length === 0) return null;
   return {
@@ -200,7 +200,7 @@ function offTipParkCandidate(
  * `now`: a launcher installed after a request was created must still see it.
  * The findings come from the LATEST identity-bound completed App review of
  * the request's exact PR, head and base, which must have zero uncounted
- * findings and no unresolved P0/P1; only its unresolved P2/P3 findings count,
+ * findings and no unresolved P0; only its unresolved P1/P2/P3 findings count,
  * and a request without one is not a candidate.
  */
 export function planFollowUpCandidates(
@@ -228,8 +228,7 @@ export function planFollowUpCandidates(
     ).at(-1) ?? carriedRequestReceipt(snapshot.reviews, request) ?? undefined;
     if (receipt === undefined || reviewBlocksMerge(receipt)) continue;
     const findings = receipt.findings.filter((finding) =>
-      !finding.resolved &&
-      (finding.severity === "P2" || finding.severity === "P3")
+      !finding.resolved && !BLOCKING_SEVERITIES.includes(finding.severity)
     );
     if (findings.length === 0) continue;
     const record = snapshot.work.find((item) =>
@@ -386,13 +385,13 @@ export function renderFollowUpIssue(input: {
   const count = findings.length;
   const noun = count === 1 ? "finding" : "findings";
   const title = cut(
-    `Review follow-ups from #${pullRequest}: ${count} P2/P3 ${noun}`,
+    `Review follow-ups from #${pullRequest}: ${count} P1/P2/P3 ${noun}`,
     FOLLOW_UP_MAX_TITLE_CHARS,
   );
   const header = [
     marker,
     "",
-    `Pull request #${pullRequest} was merged by Sentinel as \`${mergeRevision}\`. Its latest current-head review had no unresolved P0/P1 finding, so it merged; the review left the P2/P3 ${noun} below unresolved. P2/P3 findings never block a merge, so they are filed here as follow-up work.`,
+    `Pull request #${pullRequest} was merged by Sentinel as \`${mergeRevision}\`. Its latest current-head review had no unresolved P0 finding, so it merged; the review left the P1/P2/P3 ${noun} below unresolved. Only P0 findings block a merge (owner directive 2026-10-24), so the rest are filed here as follow-up work.`,
     "",
     `- Merged pull request: #${pullRequest}`,
     ...(candidate.sourceIssue === null

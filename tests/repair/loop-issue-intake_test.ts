@@ -464,8 +464,9 @@ Deno.test(
     });
     // Without a completed, finding-bearing receipt for the CURRENT head the
     // work step would wait on the existing review. The receipt binds the exact
-    // repository/PR/head/base and one unresolved P1 finding, so the run must
-    // actually correct the rejected candidate.
+    // repository/PR/head/base and one unresolved P0 finding (the only blocking
+    // severity, owner directive 2026-10-24), so the run must actually correct
+    // the rejected candidate.
     const rejected = reviewReceipt("review-receipt-1", {
       repository: REPO,
       pullRequest: { number: 7, head: SHA3, base: SHA1 },
@@ -477,14 +478,14 @@ Deno.test(
       observedAt: T0 + 1001,
       findings: [{
         id: "finding-1",
-        severity: "P1",
+        severity: "P0",
         path: "src/app.ts",
         message: "required fix",
         fingerprint: "a".repeat(64),
         resolved: false,
         resolutionEvidence: null,
       }],
-      unresolvedSeverities: ["P1"],
+      unresolvedSeverities: ["P0"],
     });
     const written = await rig.state.writeRepair(
       seededSnapshot([correction], { reviews: [rejected] }),

@@ -302,7 +302,7 @@ Deno.test("a reviewed head back at work awaits its live CI correction only in th
   assert.deepEqual(correctionFindings(snapshot, record, finding), [finding]);
 
   await t.step("a CI correction never carries superseded rejections", () => {
-    // SHA2 of the same PR was rejected before SHA3 was accepted: that P1 was
+    // SHA2 of the same PR was rejected before SHA3 was accepted: that P0 was
     // resolved by the accepted head, so only the live CI finding is carried.
     const superseded = reviewReceipt("superseded", {
       pullRequest: { number: 7, head: SHA2, base: SHA1 },
@@ -312,20 +312,21 @@ Deno.test("a reviewed head back at work awaits its live CI correction only in th
       findings: [{
         id: "github-review-1-finding-0",
         fingerprint: "e".repeat(64),
-        severity: "P1",
+        severity: "P0",
         path: "src/superseded.ts",
-        message: "superseded P1",
+        message: "superseded P0",
         resolutionEvidence: null,
         resolved: false,
       }],
-      unresolvedSeverities: ["P1"],
+      unresolvedSeverities: ["P0"],
       completedAt: T0 + 1200,
       observedAt: T0 + 1300,
     });
     const view = snapshotFor(record, [superseded, ACCEPTED]);
     assert.equal(headAwaitsCiCorrection(view, record), true);
     assert.deepEqual(correctionFindings(view, record, finding), [finding]);
-    // A head rejected by its own review still carries its rejection history.
+    // A head rejected by its own review (an unresolved P0) still carries its
+    // rejection history.
     const rejectedHead = reviewReceipt("rejected-current", {
       pullRequest: { number: 7, head: SHA3, base: SHA1 },
       outcome: "completed",
@@ -334,16 +335,24 @@ Deno.test("a reviewed head back at work awaits its live CI correction only in th
       findings: [{
         id: "github-review-2-finding-0",
         fingerprint: "d".repeat(64),
-        severity: "P1",
+        severity: "P0",
         path: "src/current.ts",
-        message: "current P1",
+        message: "current P0",
         resolutionEvidence: null,
         resolved: false,
       }],
-      unresolvedSeverities: ["P1"],
+      unresolvedSeverities: ["P0"],
       completedAt: T0 + 1500,
       observedAt: T0 + 1600,
     });
+    assert.equal(
+      headAwaitsCiCorrection(
+        snapshotFor(record, [superseded, rejectedHead]),
+        record,
+      ),
+      false,
+      "a rejected head is corrected by its review, not by CI",
+    );
     assert.deepEqual(
       correctionFindings(
         snapshotFor(record, [superseded, rejectedHead]),
@@ -353,6 +362,38 @@ Deno.test("a reviewed head back at work awaits its live CI correction only in th
       ["src/current.ts", "src/superseded.ts"],
     );
   });
+
+  await t.step(
+    "an unresolved P1 is no rejection: only the live CI finding is carried",
+    () => {
+      // Owner directive 2026-10-24: only an unresolved P0 blocks. A P1-only
+      // verdict on the current head is a clean review of it, so the head still
+      // awaits its live CI correction and the P1 is never a correction finding.
+      const p1Head = reviewReceipt("p1-current", {
+        pullRequest: { number: 7, head: SHA3, base: SHA1 },
+        outcome: "completed",
+        observedReviewer: "chatgpt-codex-connector[bot]",
+        resultId: "p1-current-result",
+        findings: [{
+          id: "github-review-3-finding-0",
+          fingerprint: "c".repeat(64),
+          severity: "P1",
+          path: "src/current.ts",
+          message: "current P1",
+          resolutionEvidence: null,
+          resolved: false,
+        }],
+        unresolvedSeverities: ["P1"],
+        completedAt: T0 + 1500,
+        observedAt: T0 + 1600,
+      });
+      const view = snapshotFor(record, [p1Head]);
+      assert.equal(headAwaitsCiCorrection(view, record), true);
+      assert.equal(headNeedsCorrection(view, record), true, "CI only");
+      assert.equal(correctionFindings(view, record), null, "no rejection");
+      assert.deepEqual(correctionFindings(view, record, finding), [finding]);
+    },
+  );
 
   await t.step("an undescribed candidate never awaits a correction", () => {
     const undescribed = reviewed({

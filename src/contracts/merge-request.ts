@@ -8,7 +8,7 @@
  * validated base and one completed ReviewReceiptV1 for the same PR/head/base.
  * The strict parser refuses any missing/unknown field and any stale, pending,
  * unavailable or mismatched review; a review with uncounted findings or with
- * unresolved P0/P1 findings is never merge authorization.
+ * unresolved P0 findings is never merge authorization.
  *
  * Parsing alone never grants authority: repository binding and reviewer
  * identity must match the trusted adapter policy passed by the caller, so a
@@ -26,7 +26,8 @@ import {
   type ReviewTaskStatementV1,
 } from "./review-receipt.ts";
 import { parseRepositoryIdentity } from "./shared.ts";
-import type { RepositoryIdentityV1, SeverityV1 } from "./shared.ts";
+import { hasBlockingSeverity } from "./review-receipt.ts";
+import type { RepositoryIdentityV1 } from "./shared.ts";
 import {
   expectExactKeys,
   expectGitSha,
@@ -143,11 +144,11 @@ export function parseMergeRequestV1(
       "merge requires zero uncounted findings",
     );
   }
-  if (hasUnresolvedP0P1(review.unresolvedSeverities)) {
+  if (hasBlockingSeverity(review.unresolvedSeverities)) {
     fail(
       "$.review.unresolvedSeverities",
       "invalid_lifecycle",
-      "merge requires no unresolved P0/P1 findings",
+      "merge requires no unresolved P0 findings",
     );
   }
 
@@ -157,10 +158,6 @@ export function parseMergeRequestV1(
     expectedBase,
     review,
   } satisfies MergeRequestV1;
-}
-
-function hasUnresolvedP0P1(severities: readonly SeverityV1[]): boolean {
-  return severities.includes("P0") || severities.includes("P1");
 }
 
 /**

@@ -119,9 +119,10 @@ Deno.test(
     // Every case keeps the EXACT referenced id/request id of the accepted
     // request, so only the changed dimension can refuse it: another repository
     // scope, another reviewed base, an untrusted observed reviewer, an
-    // unresolved P1, a change-only receipt without any acceptance, and the
-    // explicit `already_satisfied_at_base` verdict. None may persist a closure
-    // intent, close the issue or finish the record.
+    // unresolved P0 (the only blocking severity, owner directive 2026-10-24),
+    // a change-only receipt without any acceptance, and the explicit
+    // `already_satisfied_at_base` verdict. None may persist a closure intent,
+    // close the issue or finish the record.
     const variants: Array<{
       name: string;
       overrides: Record<string, unknown>;
@@ -146,18 +147,18 @@ Deno.test(
         blockerKind: "missing_evidence",
       },
       {
-        name: "unresolved-P1",
+        name: "unresolved-P0",
         overrides: {
           findings: [{
             id: "finding-1",
-            severity: "P1",
+            severity: "P0",
             path: "src/app.ts",
             message: "required fix",
             fingerprint: "a".repeat(64),
             resolved: false,
             resolutionEvidence: null,
           }],
-          unresolvedSeverities: ["P1"],
+          unresolvedSeverities: ["P0"],
         },
         blockerKind: "missing_evidence",
       },
@@ -223,6 +224,66 @@ Deno.test(
       } finally {
         await rig.ctx.cleanup();
       }
+    }
+  },
+);
+
+Deno.test(
+  "local release: an unresolved P1 on the referenced receipt still closes",
+  async () => {
+    // Owner directive 2026-10-24: only an unresolved P0 blocks delivery. The
+    // same exact referenced receipt with one unresolved P1 finding keeps its
+    // full identity and positive acceptance, so the accepted local release
+    // closes the record exactly as the finding-free receipt does.
+    const rig = await makeRig("localp1closes", {
+      summaries: false,
+      localScope: true,
+    });
+    try {
+      const request = localDeliveryRequest("release-local-1", SHA3);
+      const record = localDeliveryRecord();
+      const proof = referencedDeliveryReceipt(
+        request,
+        record,
+        LOCAL_DELIVERY_TASK_DIGEST,
+        {
+          findings: [{
+            id: "finding-1",
+            severity: "P1",
+            path: "src/app.ts",
+            message: "non-blocking required fix",
+            fingerprint: "a".repeat(64),
+            resolved: false,
+            resolutionEvidence: null,
+          }],
+          unresolvedSeverities: ["P1"],
+        },
+      );
+      const seeded = await rig.store.writeRepair(
+        seededSnapshot([record], {
+          releaseRequests: [request],
+          reviews: [proof],
+        }),
+        null,
+      );
+      assert.ok(seeded.ok && seeded.value.status === "applied");
+      Object.assign(rig.store, {
+        readLocalRelease: () =>
+          Promise.resolve(portOk(localAcceptedReceipt(request))),
+      });
+      const run = await rig.run();
+      assert.equal(run.status, "idle", JSON.stringify(run));
+      const state = await rig.snapshot();
+      assert.equal(state.work[0].nextStep, "done");
+      assert.equal(state.work[0].blocker, null);
+      assert.equal(
+        rig.github.calls.filter((call) => call.startsWith("closeIssue"))
+          .length,
+        1,
+        "the unresolved P1 does not withhold the closure",
+      );
+    } finally {
+      await rig.ctx.cleanup();
     }
   },
 );

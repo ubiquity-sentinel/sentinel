@@ -5,7 +5,7 @@
  * merge is authorized only by a durable `ReviewReceiptV1` that matches the
  * EXACT repository scope, pull request, reviewed head and reviewed base, is
  * `completed`, carries a result id and completion instant, was observed from
- * the trusted reviewer identity and has no unresolved P0/P1. The predicate is
+ * the trusted reviewer identity and has no unresolved P0. The predicate is
  * shared by the loop's merge step; the GitHub adapter independently
  * re-observes the same authorization before it calls `PUT /merge`.
  *
@@ -26,6 +26,7 @@
  * must NOT be wired in.
  */
 
+import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import {
   reviewTaskAcceptanceRefusal,
@@ -144,9 +145,7 @@ function checkSharedReviewGuards(
   }
   if (receipt.findingsUncounted !== 0) return "uncounted findings";
   if (
-    receipt.unresolvedSeverities.some((severity) =>
-      severity === "P0" || severity === "P1"
-    )
+    hasBlockingSeverity(receipt.unresolvedSeverities)
   ) {
     return "blocking findings";
   }
@@ -187,7 +186,7 @@ export function classifyReviewTerminalDisposition(
  * completed review receipt that covers the record's exact published identity
  * AND whose task acceptance is positively, exactly bound to the TRUSTED live
  * task statement passed by the caller. Any missing, pending, unavailable,
- * mismatched, untrusted or P0/P1-bearing receipt refuses the merge; omitting
+ * mismatched, untrusted or P0-bearing receipt refuses the merge; omitting
  * the trusted statement fails closed for issue-backed records.
  */
 export function reviewAuthorizesMerge(

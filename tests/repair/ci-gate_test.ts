@@ -1,8 +1,10 @@
 /**
  * CI gate decision tests: pure logic for the delivery-phase merge gate.
- * Verifies that pending checks wait, failed/skipped/neutral checks block, and
- * only all-success checks proceed — without blocking a turn. Matches
- * requiredChecksState semantics (only completed `success` passes).
+ * Verifies that pending checks wait, failed/timed_out/cancelled/action_required
+ * checks block, and all-green checks proceed — without blocking a turn. Owner
+ * directive 2026-10-24: `skipped` and `neutral` are green conclusions (a job the
+ * target's own CI did not run is not a red check), matching
+ * requiredChecksState semantics (`isGreenConclusion`).
  */
 import assert from "node:assert/strict";
 
@@ -37,14 +39,46 @@ Deno.test("decideCiGate: all success checks proceed", () => {
   assert.equal(decideCiGate(checks), "proceed");
 });
 
-Deno.test("decideCiGate: skipped check blocks", () => {
-  const result = decideCiGate([check("ci", "completed", "skipped")]);
-  assert.ok(typeof result === "object" && "blocked" in result);
+Deno.test("decideCiGate: skipped check is green (proceeds)", () => {
+  assert.equal(decideCiGate([check("ci", "completed", "skipped")]), "proceed");
+  assert.equal(
+    decideCiGate([
+      check("ci", "completed", "success"),
+      check("verify-artifact", "completed", "skipped"),
+    ]),
+    "proceed",
+    "a skipped job next to a passing one never blocks",
+  );
 });
 
-Deno.test("decideCiGate: neutral check blocks", () => {
-  const result = decideCiGate([check("ci", "completed", "neutral")]);
+Deno.test("decideCiGate: neutral check is green (proceeds)", () => {
+  assert.equal(decideCiGate([check("ci", "completed", "neutral")]), "proceed");
+  assert.equal(
+    decideCiGate([
+      check("ci", "completed", "success"),
+      check("advisory", "completed", "neutral"),
+    ]),
+    "proceed",
+    "a neutral job next to a passing one never blocks",
+  );
+});
+
+Deno.test("decideCiGate: a failure next to skipped/neutral checks still blocks, naming only the failure", () => {
+  const result = decideCiGate([
+    check("ci", "completed", "failure"),
+    check("verify-artifact", "completed", "skipped"),
+    check("advisory", "completed", "neutral"),
+  ]);
   assert.ok(typeof result === "object" && "blocked" in result);
+  assert.equal(result.blocked, "CI checks failed: ci(failure)");
+});
+
+Deno.test("decideCiGate: a skipped check never masks a pending one", () => {
+  const checks = [
+    check("ci", "completed", "skipped"),
+    check("slow", "in_progress", null, null),
+  ];
+  assert.equal(decideCiGate(checks), "wait");
 });
 
 Deno.test("decideCiGate: in-progress check waits (non-blocking)", () => {

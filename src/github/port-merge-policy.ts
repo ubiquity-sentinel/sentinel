@@ -9,6 +9,7 @@ import type {
 import type { GitSha } from "../contracts/brands.ts";
 import { portOk } from "../contracts/ports.ts";
 import type { GitHubEffectiveProtectionsV1 } from "./port-contracts.ts";
+import { isGreenConclusion } from "../repair/ci-rejection.ts";
 
 /**
  * Effective strict server-enforced protections required for a merge, from
@@ -58,6 +59,28 @@ export function evaluateEffectiveProtections(
   return { ok: true };
 }
 
+/**
+ * The protections record of a branch with no enforceable rules: what the
+ * merge path uses when the target has none, or when they cannot be read.
+ * Owner directive 2026-10-24: branch rules are not a merge requirement.
+ */
+export function noEffectiveProtections(
+  branch: string,
+): GitHubEffectiveProtectionsV1 {
+  return {
+    branch,
+    activeRuleTypes: [],
+    unsupportedRuleTypes: [],
+    mergeQueueActive: false,
+    requiredCheckNames: [],
+    strictRequiredChecks: false,
+    requiredApprovingReviewCount: 0,
+    pullRequestThreadResolutionRequired: false,
+    bypassUnknown: false,
+    bypassActors: [],
+  };
+}
+
 export function uniqueSorted(names: string[]): string[] {
   return [...new Set(names)].sort();
 }
@@ -84,9 +107,9 @@ export type RequiredChecksState = "pass" | "pending" | "failed";
 /**
  * Exact-name required checks on the exact head: commit-status contexts and
  * check runs share the same required name space. A missing or not-completed
- * observation is pending; any failed conclusion (including skipped, neutral,
- * timed_out, cancelled or action_required) is failed; only completed
- * `success` observations pass. GitHub returns historical observations for a
+ * observation is pending; a completed non-green conclusion (failure,
+ * timed_out, cancelled, action_required, stale) is failed; completed `success`,
+ * `skipped` and `neutral` observations pass (owner directive 2026-10-24). GitHub returns historical observations for a
  * context, so only the newest observation (by its completion/start time) is
  * evaluated; an older pending or failed status must not override a newer pass.
  */
@@ -106,7 +129,7 @@ export function requiredChecksState(
       pending = true;
       continue;
     }
-    if (run.conclusion !== "success") return "failed";
+    if (!isGreenConclusion(run.conclusion)) return "failed";
   }
   return pending ? "pending" : "pass";
 }

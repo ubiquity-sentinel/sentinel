@@ -41,6 +41,32 @@ import {
   repairStateHead,
 } from "./loop-legacy-fixtures.ts";
 
+/**
+ * The authentic completed H0/B0 correction review the lost retry followed.
+ * Owner directive 2026-10-24 ("the only internal policy is resolve all P0"):
+ * only an unresolved P0 rejects a head, so the historical rejection the bridge
+ * requires carries a P0 finding (the fixture default); a P1-only review is a
+ * clean review under that rule (see the control below).
+ */
+function legacyRejection(
+  id: string = LEGACY_REVIEW_ID,
+  overrides: Record<string, unknown> = {},
+) {
+  return legacyLossReview(id, LEGACY_H0, LEGACY_B0, {
+    findings: [{
+      id: "finding-h0",
+      severity: "P0",
+      path: "src/app.ts",
+      message: "legacy correction finding",
+      fingerprint: "a".repeat(64),
+      resolved: false,
+      resolutionEvidence: null,
+    }],
+    unresolvedSeverities: ["P0"],
+    ...overrides,
+  });
+}
+
 Deno.test(
   "legacy loss bridge: two guarded CAS commits recover a lost legacy candidate into one charged retry",
   async () => {
@@ -60,7 +86,7 @@ Deno.test(
         );
       };
       const charge = legacyLossCharge();
-      const review = legacyLossReview(LEGACY_REVIEW_ID, LEGACY_H0, LEGACY_B0);
+      const review = legacyRejection();
       const seeded = seededSnapshot(
         [legacyLossWork("issue-48", LEGACY_ISSUE)],
         { reservations: [charge], reviews: [review] },
@@ -319,7 +345,7 @@ Deno.test(
         legacyLossWork("issue-48", LEGACY_ISSUE),
         unrelated,
       ], {
-        reviews: [legacyLossReview(LEGACY_REVIEW_ID, LEGACY_H0, LEGACY_B0)],
+        reviews: [legacyRejection()],
       });
       const written = await rig.store.writeRepair(seeded, null);
       assert.ok(written.ok && written.value.status === "applied");
@@ -387,7 +413,7 @@ Deno.test(
       legacyLossWork("issue-4", 4),
       unrelated,
     ], {
-      reviews: [legacyLossReview(LEGACY_REVIEW_ID, LEGACY_H0, LEGACY_B0)],
+      reviews: [legacyRejection()],
     });
     const written = await rig.state.writeRepair(seeded, null);
     assert.ok(written.ok && written.value.status === "applied");
@@ -470,7 +496,7 @@ Deno.test(
       legacyLossWork("issue-4", 4),
       unrelated,
     ], {
-      reviews: [legacyLossReview(LEGACY_REVIEW_ID, LEGACY_H0, LEGACY_B0)],
+      reviews: [legacyRejection()],
     });
     const written = await rig.state.writeRepair(seeded, null);
     assert.ok(written.ok && written.value.status === "applied");
@@ -543,11 +569,11 @@ Deno.test(
         unresolvedSeverities: [],
       },
     );
-    const p2 = legacyLossReview(LEGACY_REVIEW_ID, LEGACY_H0, LEGACY_B0);
+    const p0 = legacyRejection();
     const seeded = seededSnapshot([
       legacyLossWork("issue-48", LEGACY_ISSUE, legacyLossBlockedExtras()),
     ], {
-      reviews: [clean, p2],
+      reviews: [clean, p0],
       reservations: [legacyLossCharge()],
     });
     const written = await rig.state.writeRepair(seeded, null);
@@ -595,7 +621,7 @@ Deno.test(
         counters: { attempts: 4, retries: 0, reviewRounds: 1 },
       }),
     ], {
-      reviews: [legacyLossReview(LEGACY_REVIEW_ID, LEGACY_H0, LEGACY_B0)],
+      reviews: [legacyRejection()],
       reservations: [legacyLossCharge("res-4", { attempt: 4 })],
     });
     const written = await rig.state.writeRepair(seeded, null);
@@ -722,7 +748,7 @@ Deno.test(
     const seeded = seededSnapshot([
       legacyLossWork("issue-48", LEGACY_ISSUE),
     ], {
-      reviews: [legacyLossReview(LEGACY_REVIEW_ID, LEGACY_H0, LEGACY_B0)],
+      reviews: [legacyRejection()],
       reservations: [legacyLossCharge()],
     });
     const written = await rig.state.writeRepair(seeded, null);
@@ -744,13 +770,80 @@ Deno.test(
 );
 
 Deno.test(
+  "legacy loss bridge: a P1-only historical review is no rejection: the tuple stays untouched and uncharged",
+  async (t) => {
+    // Owner directive 2026-10-24: only an unresolved P0 rejects a head. A
+    // historical H0/B0 review whose only finding is a P1 is a clean review, so
+    // the proof it names is no authentic correction rejection: neither bridge
+    // phase writes, charges or starts anything, exactly as for a mismatched
+    // proof tuple. The ordinary gate would treat such an H0 as publish-ready,
+    // so restoring it is refused.
+    const p1Only = legacyLossReview(LEGACY_REVIEW_ID, LEGACY_H0, LEGACY_B0, {
+      findings: [{
+        id: "finding-h0",
+        severity: "P1",
+        path: "src/app.ts",
+        message: "legacy correction finding",
+        fingerprint: "a".repeat(64),
+        resolved: false,
+        resolutionEvidence: null,
+      }],
+      unresolvedSeverities: ["P1"],
+    });
+    assert.deepEqual(p1Only.unresolvedSeverities, ["P1"]);
+    // The refused work tuple is deferred for the run (margin); the refused
+    // blocked tuple simply stays blocked (idle), as for an earlier clean H0.
+    const phases = [
+      { name: "discovery (the work tuple)", extra: {}, status: "margin" },
+      {
+        name: "restoration (the blocked tuple)",
+        extra: legacyLossBlockedExtras(),
+        status: "idle",
+      },
+    ] as const;
+    for (const phase of phases) {
+      await t.step(phase.name, async () => {
+        const rig = legacyLossMemory();
+        let proofCalls = 0;
+        rig.github.proveLegacyBaseRefreshLoss = async (taskId) => {
+          proofCalls++;
+          return portOk(
+            legacyLossProof(taskId, await repairStateHead(rig.state)),
+          );
+        };
+        const seeded = seededSnapshot([
+          legacyLossWork("issue-48", LEGACY_ISSUE, { ...phase.extra }),
+        ], {
+          reviews: [p1Only],
+          reservations: [legacyLossCharge()],
+        });
+        const written = await rig.state.writeRepair(seeded, null);
+        assert.ok(written.ok && written.value.status === "applied");
+        const writesBefore = rig.state.repairWrites;
+        const before = canonicalStringify((await rig.snapshot()).work[0]);
+
+        const outcome = await rig.run(1);
+        assert.equal(outcome.status, phase.status, JSON.stringify(outcome));
+        assert.equal(proofCalls, 1, "the phase is attempted once per run");
+        const state = await rig.snapshot();
+        assert.equal(canonicalStringify(state.work[0]), before);
+        assert.equal(rig.state.repairWrites, writesBefore, "no state write");
+        assert.equal(rig.model.requests.length, 0);
+        assert.equal(state.reservations.length, 1);
+        assert.equal(state.reservations[0]!.outcome, "submitted");
+      });
+    }
+  },
+);
+
+Deno.test(
   "legacy loss bridge: an absent proof capability leaves generic behavior unchanged",
   async () => {
     const rig = legacyLossMemory();
     const seeded = seededSnapshot([
       legacyLossWork("issue-48", LEGACY_ISSUE),
     ], {
-      reviews: [legacyLossReview(LEGACY_REVIEW_ID, LEGACY_H0, LEGACY_B0)],
+      reviews: [legacyRejection()],
       reservations: [legacyLossCharge()],
     });
     const written = await rig.state.writeRepair(seeded, null);

@@ -118,11 +118,13 @@ function emitMergePortError(
 }
 
 /**
- * Self-merge refusals the trusted port answers before any write: the base and
- * the tested commit disagree on the CI pipeline identity, the preserved CI
- * binding or the tested tree. Waiting never clears them (only a new base or a
- * new candidate can), so they park for the owner instead of re-arming a
- * five-minute wait on every cycle for the life of the base.
+ * Self-merge refusals of the trusted port's content checks: the base and the
+ * tested commit disagree on the CI pipeline identity, the preserved CI binding
+ * or the tested tree. Waiting never clears them (only a new base or a new
+ * candidate can), so they park for the owner instead of re-arming a five-minute
+ * wait on every cycle for the life of the base. A failed git read is
+ * `unavailable`, never one of these (issue #196); a refusal after the remote
+ * writes began keeps the proof (`parkSelfMergeRefusal`).
  */
 const SELF_MERGE_REFUSALS: ReadonlySet<string> = new Set([
   "self merge trusted CI pipeline changed",
@@ -137,6 +139,31 @@ function selfMergeRefusal(
       SELF_MERGE_REFUSALS.has(error.detail)
     ? `self merge refused by trusted validation; owner action required: ${error.detail}`
     : null;
+}
+
+/**
+ * Park a refused self merge for the owner. Before any remote write (no proof,
+ * or a proof still at stage `prepared`) the merge intent is cleared as before.
+ * From stage `preserved` on, the operation ref is pushed and `development` may
+ * already carry the merge, so the durable proof is the only record binding
+ * that write to its task and review: the record parks with the intent kept
+ * for reconciliation (issue #197; `clearIntent` clears only reconciled
+ * effects). A blocked record is idle, so nothing re-runs the merge.
+ */
+export function parkSelfMergeRefusal(
+  record: WorkRecordV1,
+  refusal: string,
+  at: number,
+): WorkRecordV1 {
+  const stage = record.intent?.selfMerge?.stage;
+  return stage === undefined || stage === "prepared"
+    ? markBlocked(clearIntent(record, at), "other", refusal, at)
+    : markBlocked(
+      record,
+      "other",
+      `${refusal}; self merge proof kept at stage ${stage}`,
+      at,
+    );
 }
 
 export async function executeMerge(
@@ -167,7 +194,7 @@ export async function executeMerge(
   // HARD INVARIANT: nothing merges without a passing review. Find a durable
   // completed receipt for this exact PR/head, then require the strict
   // authorization predicate (exact repository/PR/head/base, trusted reviewer,
-  // zero uncounted findings, no unresolved P0/P1). A completed-but-unclean
+  // zero uncounted findings, no unresolved P0). A completed-but-unclean
   // receipt is authoritative disposition, never a blind resubmission.
   const currentRound = standingReviewAttempt(record);
   const currentReviewId = await reviewReceiptId(
@@ -251,7 +278,7 @@ export async function executeMerge(
   );
   if (receipt === null) {
     // A durable completed verdict exists but does not authorize this exact
-    // merge (base drift, unresolved P0/P1, uncounted findings, untrusted
+    // merge (base drift, unresolved P0, uncounted findings, untrusted
     // reviewer). Never resubmit or merge: surface the state contradiction.
     return { kind: "state_error", detail: MERGE_WITHOUT_REVIEW_DETAIL };
   }
@@ -356,7 +383,7 @@ export async function executeMerge(
       return persistWork(
         deps,
         context,
-        markBlocked(clearIntent(self.record, now), "other", refusal, now),
+        parkSelfMergeRefusal(self.record, refusal, now),
       );
     }
     // The saved merge intent must stay durable: the response may have been
@@ -529,7 +556,7 @@ export async function reconcileMergeIntent(
         return persistWork(
           deps,
           context,
-          markBlocked(clearIntent(self.record, at), "other", refusal, at),
+          parkSelfMergeRefusal(self.record, refusal, at),
         );
       }
       return persistWork(

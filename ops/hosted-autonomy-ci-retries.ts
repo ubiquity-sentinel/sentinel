@@ -24,6 +24,7 @@
  * delivery, review rounds spent or not, from the legacy CI block and from the
  * runtime's own unattributed block alike.
  */
+import { hasBlockingSeverity } from "../src/contracts/review-receipt.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import { HOSTED_RUNTIME_ROLLOUT } from "../src/host/hosted-runtime-rollout.ts";
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
@@ -187,7 +188,7 @@ function ciGateParked(
     sameRepository(review.repository, record.repository) &&
     review.pullRequest.number === pr && review.pullRequest.head === head &&
     review.pullRequest.base === base && review.outcome === "completed" &&
-    !review.unresolvedSeverities.some((s) => s === "P0" || s === "P1")
+    !hasBlockingSeverity(review.unresolvedSeverities)
   );
   if (!reviewed) return false;
   // A release-phase CI block belongs to an already merged delivery.

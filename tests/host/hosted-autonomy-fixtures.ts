@@ -285,7 +285,7 @@ export function chargedAttempts(base: GitSha = BASE) {
   );
 }
 
-export function finding(severity: "P1" | "P2") {
+export function finding(severity: "P0" | "P1" | "P2") {
   return {
     id: "github-review-1-finding-0",
     fingerprint: "f".repeat(64),

@@ -15,58 +15,82 @@ import { handleModelReceipt } from "../../src/repair/loop-implementation-result.
 import { executeCandidatePreservation } from "../../src/repair/loop-preservation.ts";
 import { executePublishStep } from "../../src/repair/loop-publication.ts";
 
+type Rig = Awaited<ReturnType<typeof nativeLifecycleRig>>;
+
+/** Adopt the native head through the real route: intent, anchor, adoption. */
+async function adoptNative(r: Rig) {
+  let context = await r.reload();
+  for (let phase = 0; phase < 3; phase++) {
+    const step = await routeExistingPr(
+      r.deps,
+      context,
+      context.snapshot.work[0],
+    );
+    assert.ok(step.status === "step" && step.step.kind === "progress");
+    context = await r.reload();
+  }
+  return context;
+}
+
+function runBounds(r: Rig) {
+  return {
+    runDeadline: r.clock.now() +
+      r.deps.configs[0].sessionBound!.maxDurationMs + 7_200_000,
+    modelCutoff: r.clock.now() + 5_400_000,
+  };
+}
+
+function issueReader(r: Rig): Rig["host"]["port"]["readIssue"] {
+  return () =>
+    Promise.resolve(portOk({
+      number: 1,
+      title: "Repair source",
+      body: r.nativeControls.body,
+      state: "open",
+      labels: [],
+      assignees: [],
+      author: "human-owner",
+      createdAt: r.clock.now(),
+      closedAt: null,
+      updatedAt: r.clock.now(),
+      relations: { subIssueCount: 0, openBlockers: [] },
+    }));
+}
+
+/** The completed verdict on the native head with ONE unresolved finding. */
+function nativeVerdict(r: Rig, severity: "P0" | "P1") {
+  return completedReceipt(7, r.ctx.head, r.ctx.base, {
+    repository: r.initial.work[0].repository,
+    unresolvedSeverities: [severity],
+    findings: [{
+      id: `native-${severity.toLowerCase()}`,
+      severity,
+      path: "candidate.txt",
+      message: "The submitted change does not cover the edge case",
+      resolved: false,
+      fingerprint: "b".repeat(64),
+      resolutionEvidence: null,
+    }],
+  });
+}
+
 Deno.test("existing PR successor: real correction admission retains native branch and charges one implementation", async () => {
   const r = await nativeLifecycleRig();
   try {
-    let context = await r.reload();
-    for (let phase = 0; phase < 3; phase++) {
-      const step = await routeExistingPr(
-        r.deps,
-        context,
-        context.snapshot.work[0],
-      );
-      assert.ok(step.status === "step" && step.step.kind === "progress");
-      context = await r.reload();
-    }
+    let context = await adoptNative(r);
     const native = context.snapshot.work[0];
+    // Only an unresolved P0 rejects the native head and admits ONE charged
+    // correction (owner directive 2026-10-24); the non-blocking P1 verdict is
+    // proved on its own rig below.
     assert.deepEqual(
       await persistTransition(r.deps, context, (draft) => {
-        draft.reviews.push(completedReceipt(7, r.ctx.head, r.ctx.base, {
-          repository: native.repository,
-          unresolvedSeverities: ["P1"],
-          findings: [{
-            id: "native-p1",
-            severity: "P1",
-            path: "candidate.txt",
-            message: "The submitted change does not cover the edge case",
-            resolved: false,
-            fingerprint: "b".repeat(64),
-            resolutionEvidence: null,
-          }],
-        }));
+        draft.reviews.push(nativeVerdict(r, "P0"));
       }),
       { kind: "progress" },
     );
     context = await r.reload();
-    context.bounds = {
-      runDeadline: r.clock.now() +
-        r.deps.configs[0].sessionBound!.maxDurationMs + 7_200_000,
-      modelCutoff: r.clock.now() + 5_400_000,
-    };
-    r.host.port.readIssue = () =>
-      Promise.resolve(portOk({
-        number: 1,
-        title: "Repair source",
-        body: r.nativeControls.body,
-        state: "open",
-        labels: [],
-        assignees: [],
-        author: "human-owner",
-        createdAt: r.clock.now(),
-        closedAt: null,
-        updatedAt: r.clock.now(),
-        relations: { subIssueCount: 0, openBlockers: [] },
-      }));
+    context.bounds = runBounds(r);
+    r.host.port.readIssue = issueReader(r);
     const record = context.snapshot.work[0];
     const prepared = await prepareImplementationStart(
       r.deps,
@@ -210,6 +234,60 @@ Deno.test("existing PR successor: real correction admission retains native branc
       "missing immutable producer history cannot become inferred custody",
     );
     r.state.readRepairAt = readAt;
+  } finally {
+    await r.ctx.cleanup();
+  }
+});
+
+Deno.test("existing PR successor: an unresolved P1 verdict admits no correction and charges nothing", async () => {
+  const r = await nativeLifecycleRig();
+  try {
+    let context = await adoptNative(r);
+    assert.deepEqual(
+      await persistTransition(r.deps, context, (draft) => {
+        draft.reviews.push(nativeVerdict(r, "P1"));
+      }),
+      { kind: "progress" },
+    );
+    context = await r.reload();
+    const before = structuredClone(context);
+    context.bounds = runBounds(r);
+    r.host.port.readIssue = issueReader(r);
+    const record = context.snapshot.work[0];
+    // Owner directive 2026-10-24: only an unresolved P0 blocks. A completed
+    // P1 verdict on the native head authorizes NO correction: the real
+    // admission defers with zero reservation, zero model start and no state
+    // write, and the matrix plans no correction cell for it.
+    assert.deepEqual(
+      await prepareImplementationStart(
+        r.deps,
+        context,
+        record,
+        r.deps.configs[0],
+      ),
+      { kind: "deferred", detail: "existing PR has no authorized correction" },
+    );
+    assert.equal(
+      isMatrixImplementationReadyV1(
+        record,
+        context.snapshot,
+        r.deps.configs[0],
+        r.clock.now(),
+      ),
+      false,
+      "an unresolved P1 never spends a correction round",
+    );
+    assert.deepEqual(
+      await r.reload(),
+      before,
+      "a non-blocking P1 verdict neither writes state nor charges a producer",
+    );
+    assert.deepEqual(context.snapshot.reservations, r.initial.reservations);
+    assert.equal(
+      r.pushes.length,
+      1,
+      "only native immutable preservation occurred",
+    );
   } finally {
     await r.ctx.cleanup();
   }

@@ -25,7 +25,8 @@ const SELF_AGGREGATE_CHECK = "test-local";
  * Pure CI gate decision. Returns "proceed" only when every (deduped by name)
  * check is completed with `success` conclusion. Returns "wait" when any check
  * is still running or when no checks are recorded (no evidence CI ran).
- * Returns a block detail when any check failed (including skipped/neutral,
+ * Returns a block detail when any check completed non-green (failure,
+ * timed_out, cancelled, action_required, stale; skipped and neutral are green,
  * matching requiredChecksState semantics). Exported for focused testing.
  *
  * It judges only the checks that exist: GitHub creates a `needs:` job's

@@ -4,9 +4,9 @@ import {
 } from "./hosted-autonomy-dark-queue-fixture.ts";
 /**
  * Review follow-up issues (owner decision 2026-10-16: merge with the
- * remaining P2/P3 findings filed as new issues). After the maintenance chain
+ * remaining P1/P2/P3 findings filed as new issues). After the maintenance chain
  * the trusted launcher files ONE issue per merged PR in the target
- * repository, listing every unresolved P2/P3 finding of the latest
+ * repository, listing every unresolved P1/P2/P3 finding of the latest
  * current-head review with its file:line. It is idempotent without state (a
  * deterministic first-line marker, a complete listing before any create),
  * bounded per pass, never filed twice, and only for the App's own verified
@@ -77,7 +77,7 @@ const FIRST_LINE_1105 =
 const BODY_1052 = [
   FIRST_LINE_1052,
   "",
-  "Pull request #1052 was merged by Sentinel as `8a99ecbeaf8fd5f845fd6be034e284dd370f332c`. Its latest current-head review had no unresolved P0/P1 finding, so it merged; the review left the P2/P3 finding below unresolved. P2/P3 findings never block a merge, so they are filed here as follow-up work.",
+  "Pull request #1052 was merged by Sentinel as `8a99ecbeaf8fd5f845fd6be034e284dd370f332c`. Its latest current-head review had no unresolved P0 finding, so it merged; the review left the P1/P2/P3 finding below unresolved. Only P0 findings block a merge (owner directive 2026-10-24), so the rest are filed here as follow-up work.",
   "",
   "- Merged pull request: #1052",
   "- Original issue: #600",
@@ -261,7 +261,7 @@ Deno.test("follow-ups F1: each live merged PR with an open P2 gets exactly one a
   assert.equal(issues.created[1].body.split("\n", 1)[0], FIRST_LINE_1105);
   assert.equal(
     issues.created[1].title,
-    "Review follow-ups from #1105: 1 P2/P3 finding",
+    "Review follow-ups from #1105: 1 P1/P2/P3 finding",
   );
   assert.ok(
     issues.created[1].body.includes(
@@ -270,7 +270,7 @@ Deno.test("follow-ups F1: each live merged PR with an open P2 gets exactly one a
   );
   assert.equal(
     issues.created[0].title,
-    "Review follow-ups from #1052: 1 P2/P3 finding",
+    "Review follow-ups from #1052: 1 P1/P2/P3 finding",
   );
   assert.equal(issues.created[0].body, BODY_1052);
   const [request1052, request1105] = [liveRequest(1052), liveRequest(1105)];
@@ -565,7 +565,7 @@ Deno.test("follow-ups F8: production requests since the fixed epoch remain eligi
     assert.equal(issues.created.length, 1);
   });
   await t.step(
-    "a review with an unresolved P1 is never a candidate",
+    "a review with an unresolved P1 files it as a follow-up (only P0 blocks)",
     async () => {
       const issues = fakeIssues();
       const live = liveDelivered();
@@ -582,7 +582,10 @@ Deno.test("follow-ups F8: production requests since the fixed epoch remain eligi
         requests: [base],
         reviews,
       });
-      assert.deepEqual(followUps(results[0].actions), []);
+      assert.deepEqual(followUps(results[0].actions), [
+        `followup:${base.id}:pr=1052:filed=#5001`,
+      ]);
+      assert.equal(issues.created.length, 1);
     },
   );
 });

@@ -90,6 +90,12 @@ const RUNTIME = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a" as GitSha;
 const ALLOWLIST: ReadonlySet<string> = new Set([RUNTIME]);
 /** The parked head's once-per-head flake re-run can no longer act. */
 const SETTLED: ReadonlySet<string> = new Set([ciGreenHeadKey(SELF_REPO, HEAD)]);
+/** The one unresolved severity that still rejects a review (2026-10-24). */
+const P0_FINDING = {
+  ...finding("P1"),
+  severity: "P0" as const,
+  message: "P0 finding",
+};
 
 /** The authenticated installed runtime record with its own healthy proof. */
 function installed(
@@ -234,11 +240,20 @@ Deno.test("hosted autonomy: only the exact reviewed, unreleased CI-gate shape is
     assert.equal(plan(undefined, []).length, 0, "no receipt");
     assert.equal(
       plan(undefined, [authorizingReceipt({
-        findings: [finding("P1")],
-        unresolvedSeverities: ["P1"],
+        findings: [P0_FINDING],
+        unresolvedSeverities: ["P0"],
       })]).length,
       0,
       "a rejecting receipt",
+    );
+    // Owner directive 2026-10-24: only P0 blocks; an unresolved P1 is clean.
+    assert.equal(
+      plan(undefined, [authorizingReceipt({
+        findings: [finding("P1")],
+        unresolvedSeverities: ["P1"],
+      })]).length,
+      1,
+      "an unresolved P1 does not reject",
     );
     assert.equal(
       plan(undefined, [authorizingReceipt({
@@ -1106,11 +1121,20 @@ Deno.test("hosted autonomy: the green-head re-admission needs the exact green he
     assert.equal(greenPlan(snapshot(undefined, [])).length, 0, "no receipt");
     assert.equal(
       greenPlan(snapshot(undefined, [authorizingReceipt({
-        findings: [finding("P1")],
-        unresolvedSeverities: ["P1"],
+        findings: [P0_FINDING],
+        unresolvedSeverities: ["P0"],
       })])).length,
       0,
       "a rejecting receipt",
+    );
+    // Owner directive 2026-10-24: only P0 blocks; an unresolved P1 is clean.
+    assert.equal(
+      greenPlan(snapshot(undefined, [authorizingReceipt({
+        findings: [finding("P1")],
+        unresolvedSeverities: ["P1"],
+      })])).length,
+      1,
+      "an unresolved P1 does not reject",
     );
     const released = releaseRequest("ci-green-release", {
       target: { repository: SELF_REPO, environment: "production" },

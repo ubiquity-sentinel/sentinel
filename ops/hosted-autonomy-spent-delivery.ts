@@ -12,6 +12,10 @@
  * merges, and a Gateway merge is made only when its release request provably
  * binds afterwards (so release bookkeeping can never be skipped or faked).
  */
+import {
+  BLOCKING_SEVERITIES,
+  hasBlockingSeverity,
+} from "../src/contracts/review-receipt.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type {
   ReviewReceiptV1,
@@ -231,13 +235,12 @@ export function carriedDeliveryAction(
   return null;
 }
 
-/** True when a review leaves uncounted findings or an unresolved P0/P1. */
+/** True when a review leaves uncounted findings or an unresolved P0. */
 export function reviewBlocksMerge(review: ReviewReceiptV1): boolean {
   return review.findingsUncounted !== 0 ||
-    review.unresolvedSeverities.some((s) => s === "P0" || s === "P1") ||
+    hasBlockingSeverity(review.unresolvedSeverities) ||
     review.findings.some((finding) =>
-      !finding.resolved &&
-      (finding.severity === "P0" || finding.severity === "P1")
+      !finding.resolved && BLOCKING_SEVERITIES.includes(finding.severity)
     );
 }
 

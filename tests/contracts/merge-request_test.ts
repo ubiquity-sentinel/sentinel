@@ -1,8 +1,10 @@
 // MergeRequestV1 parser tests: a valid completed receipt binds the exact
-// PR/head/base with zero uncounted findings and no unresolved P0/P1; any
+// PR/head/base with zero uncounted findings and no unresolved P0; any
 // unknown/missing field, stale/pending/unavailable/mismatched review,
 // repository or reviewer policy mismatch, uncounted finding or unresolved
-// P0/P1 fails closed. The parser never grants authority by itself.
+// P0 fails closed. Unresolved P1/P2/P3 findings never block (owner directive
+// 2026-10-24: the only internal policy is that every P0 is resolved). The
+// parser never grants authority by itself.
 import assert from "node:assert/strict";
 
 import {
@@ -291,7 +293,7 @@ Deno.test("merge request: repository and reviewer must match trusted adapter pol
   );
 });
 
-Deno.test("merge request: uncounted findings and unresolved P0/P1 block merge", () => {
+Deno.test("merge request: uncounted findings and unresolved P0 block merge; P1-P3 never do", () => {
   // Uncounted findings with a non-empty unresolved set pass the review parser
   // (completeness is unknown, not false) but still fail the merge parser.
   expectParseFailure(
@@ -311,22 +313,47 @@ Deno.test("merge request: uncounted findings and unresolved P0/P1 block merge", 
     POLICY,
     { code: "invalid_lifecycle", path: "$.review.findingsUncounted" },
   );
-  expectParseFailure(
+  // Owner directive 2026-10-24: the only internal policy is that every P0 is
+  // resolved. Unresolved P1, P2 and P3 findings parse and are carried through
+  // verbatim; they never block a merge (and so never spend a correction round).
+  const nonBlocking = parseMergeRequestV1(
     requestWithReview({
-      findings: [{
-        id: "f1",
-        severity: "P1",
-        path: null,
-        message: "unresolved critical",
-        fingerprint: FINGERPRINT,
-        resolved: false,
-        resolutionEvidence: null,
-      }],
-      unresolvedSeverities: ["P1"],
+      findings: [
+        {
+          id: "f1",
+          severity: "P1",
+          path: null,
+          message: "unresolved important",
+          fingerprint: FINGERPRINT,
+          resolved: false,
+          resolutionEvidence: null,
+        },
+        {
+          id: "f2",
+          severity: "P2",
+          path: null,
+          message: "unresolved moderate",
+          fingerprint: "e".repeat(64),
+          resolved: false,
+          resolutionEvidence: null,
+        },
+        {
+          id: "f3",
+          severity: "P3",
+          path: null,
+          message: "unresolved minor",
+          fingerprint: "f".repeat(64),
+          resolved: false,
+          resolutionEvidence: null,
+        },
+      ],
+      unresolvedSeverities: ["P1", "P2", "P3"],
     }),
     POLICY,
-    { code: "invalid_lifecycle", path: "$.review.unresolvedSeverities" },
   );
+  assert.deepEqual(nonBlocking.review.unresolvedSeverities, ["P1", "P2", "P3"]);
+  assert.equal(nonBlocking.review.findings.length, 3);
+  // An unresolved P0 blocks, alone or alongside non-blocking severities.
   expectParseFailure(
     requestWithReview({
       findings: [{
@@ -341,6 +368,41 @@ Deno.test("merge request: uncounted findings and unresolved P0/P1 block merge", 
       unresolvedSeverities: ["P0"],
     }),
     POLICY,
-    { code: "invalid_lifecycle", path: "$.review.unresolvedSeverities" },
+    {
+      code: "invalid_lifecycle",
+      path: "$.review.unresolvedSeverities",
+      message: /no unresolved P0 findings/,
+    },
+  );
+  expectParseFailure(
+    requestWithReview({
+      findings: [
+        {
+          id: "f1",
+          severity: "P0",
+          path: null,
+          message: "unresolved blocker",
+          fingerprint: FINGERPRINT,
+          resolved: false,
+          resolutionEvidence: null,
+        },
+        {
+          id: "f2",
+          severity: "P1",
+          path: null,
+          message: "unresolved important",
+          fingerprint: "e".repeat(64),
+          resolved: false,
+          resolutionEvidence: null,
+        },
+      ],
+      unresolvedSeverities: ["P0", "P1"],
+    }),
+    POLICY,
+    {
+      code: "invalid_lifecycle",
+      path: "$.review.unresolvedSeverities",
+      message: /no unresolved P0 findings/,
+    },
   );
 });
