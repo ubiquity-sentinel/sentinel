@@ -7,7 +7,197 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 08:30 UTC)
+## Latest checkpoint (2026-10-24 17:40 UTC)
+
+- Launcher: `51c7004b5d` at 16:42 UTC, `17d91e3c13` at 17:12 and `b3cede8f71` at
+  17:37 UTC, each an exact CI-green `development` SHA with no workflow change.
+  #204, #205 and #206 are installed and closed.
+- Two red repair jobs, ordinary runs `40113229034` (16:52) and `40113959407`
+  (17:02) on `51c7004b5d`. Both died on an uncaught "matrix artifact provenance
+  unavailable or conflicting" in the matrix consumer's artifact recovery.
+  GitHub's Actions API was answering 502 for run job listings, and the artifact
+  reader turned any non-200 into a provenance refusal. Fixes:
+  - `17d91e3c13`: a repository artifact listing (440 artifacts, 5 pages) whose
+    count shifts between pages lists again, up to three times.
+  - `b3cede8f71`: a GitHub 5xx is retried twice. A persistent one throws
+    `MatrixArtifactUnavailableError`, and the consumer then leaves every charge
+    unresolved and still runs the ordinary target cycles. Real provenance
+    conflicts still fail closed.
+- Since about 17:00 UTC GitHub's Actions API returns every job of new runs with
+  an empty `steps` array (runs at 16:48 and earlier still list theirs; no GitHub
+  incident is declared). Execution evidence needs the runtime step, so every
+  prepare since then reports `pending` with "hosted execution metadata is
+  invalid". Supervisor runs stay green but do no repair work. The saved
+  execution is `40113959407`. This recovers by itself once GitHub serves steps
+  again. The evidence binding is not weakened.
+- Next: once prepare runs again, confirm a bootstrap and an ordinary run on
+  `b3cede8f71`.
+
+## Prior checkpoint (2026-10-24 16:20 UTC)
+
+- Launcher: `e115fb6ac4` at 15:51 UTC (CI `40107905409` green). Its bootstrap
+  `40109314922` settled `success`. Ordinary runs `40106345750` and `40107701392`
+  on `201c65bac5` settled `success`.
+- More hand fixes of reserved files on `development`, each with a test that
+  fails on the previous code:
+  - `c09192c9a9` (#209): Sentinel's own candidate from PR 210, green CI, refused
+    for self merge because it edits `ops/` (the trusted pipeline). Reviewed and
+    cherry-picked; PR 210 and #209 closed.
+  - `bcbefe881b` (#206): a proof-bound checkpoint defers right after a lost CAS.
+  - `5c09895791` (#205): a model-start settlement recomputes after a
+    cooldown-only CAS loss instead of ending the cycle.
+  - `74122774d4` (#204): the ai.ubq.fi pre-merge dispatcher also dispatches a
+    zero-run head parked on the six-hour pre-review CI bound.
+  - `aa021f82f3` (#183 follow-up): progress comments compare against the repair
+    job's start, so ingestion parks and publications report too. Live, Sentinel
+    204–206 parked at 15:59 with no comment.
+- Live: Sentinel 204–206 were re-admitted after their stale intents and parked
+  on protected paths; 207 and 208 wait for the next plan. Sentinel 187 (PR 195)
+  moved to a CI-fix retry once `development` CI was green again.
+- Launcher advanced to `74122774d4` at 16:29 UTC (CI `40110319280` green).
+  `aa021f82f3` failed CI only on the #208 heap bound (33.67 MB), in modules code
+  identical to `74122774d4`, so it waits for the next green SHA. Sentinel
+  re-attempts #208 itself in its next plan.
+- Next: verify the bootstrap and ordinary run on `74122774d4`, then close
+  #204–#206.
+
+## Prior checkpoint (2026-10-24 14:40 UTC)
+
+- Launcher: `1d056586ed` (bootstrap `40100679498` and ordinary run `40101240892`
+  settled `success`), then `201c65bac5` at 14:40 UTC, an exact CI-green
+  `development` SHA (CI `40102429155`) with no workflow change. It adds the walk
+  fix and four hand fixes of reserved files.
+- Hand fixes on `development` (owner directive 3):
+  - `7c0d11b109`: with in-flight work, the parked traversal of the
+    current-matrix walk stops at half its budget. Live on `1d056586ed` the walk
+    still reported `current-matrix:unrecoverable:unlisted` for ai.ubq.fi 587 and
+    608, so Sentinel 204–208 stayed on their 09:44 implementation intents.
+  - `af475d8ec7` (#183): plain-language progress comments on worked issues,
+    posted by the trusted repair host after each target cycle, idempotent by a
+    hidden marker. Acceptance needs two live runs without duplicates.
+  - `aa67c6fd9e` (#159 item 2): the zero-cell plan diagnostic counts
+    `review_rounds_spent`. DECISIONS records the other #159 items.
+  - `da183f5d7e` (#193): one `sentinel_app_grant_handoff` line names why the
+    launcher withheld the Gateway mint grant.
+  - `201c65bac5` (#178): finalize prints one `hosted_runtime_run_summary` line
+    and a step summary.
+- CI: the host-2 failure on `7c0d11b109` (`matrix_actions_test.ts:200`) passed
+  on `af475d8ec7` with the same code. The modules shard failed on `af475d8ec7`
+  and `da183f5d7e` only on the heap bound of
+  `model-port-early-notifications_test.ts`: 33.67 and 33.81 MB against 32 MiB.
+  Same Deno 2.9.8, same 262 modules, and no change to the model port. It passed
+  on `7c0d11b109` and `201c65bac5`. Locally, alone, it measures 26–28 MiB. The
+  bound is left unchanged because it still proves the 38 MiB output is not
+  retained.
+- Passport: 23 reviewed records (PRs 138–169) wait at `delivery` since 05:06
+  UTC. The shipped delivery-line code shows candidates 43, 53 and 58 (PRs 143,
+  158, 146) on the tip, waiting for CI on the apparently red base, holding the
+  whole line. They stop holding at stall count 12, around 17:00 UTC. A green
+  Passport base is the fix, handed to the Passport agent.
+- Live on `201c65bac5` (checked 15:20 UTC):
+  - Bootstrap `40103710577` (generation 104) and ordinary run `40104416574`
+    settled `success`.
+  - The walk fix works. Bootstrap maintenance applied with
+    `current-matrix:ingested:10`. Passport 87–108 left their preservation
+    intents, and the ordinary run's repair job published PRs 196–204.
+  - Sentinel 204–208 still hold their 09:44 implementation intents, whose
+    producer run crashed. They turn stale and re-admittable at 15:44 UTC.
+  - #178: finalize printed one `hosted_runtime_run_summary` line per run (#178
+    closed).
+  - #193: `sentinel_app_grant_handoff` reads `retained` in the ordinary plan and
+    repair jobs, and `refused`/`source` in the bootstrap, as designed (#193
+    closed).
+  - #183: `ubiquity-sentinel[bot]` posted "Sentinel opened pull request #210 and
+    is waiting for CI on it." on Sentinel issue 209 at 15:03 UTC. The child's
+    report lines are not forwarded to the job log. This session cannot read
+    ai.ubq.fi or Passport issues, so comments there are unverified here. By
+    15:35 issue 209 had two comments for two real stage changes, and issue 187
+    had one: no duplicate.
+- Sentinel 209 (PR 210, green CI) parked on "self merge trusted CI pipeline
+  changed" because the candidate edits `ops/self-defects.ts`, part of the
+  trusted pipeline a model candidate may not self-merge. Its change was reviewed
+  and hand-landed as `c09192c9a9` (owner directive 3).
+
+## Prior checkpoint (2026-10-24 13:30 UTC)
+
+- Throughput restored: ordinary run `40095160777` (generation 101, launcher
+  `62af807857`) admitted 26 work items in one wave (Passport 22, ai.ubq.fi 3,
+  Sentinel 1; before it every ordinary run admitted 0) and all 26 matrix cells
+  succeeded. The 22 Passport admissions are the re-admitted existing-PR holds
+  (issues 87–108). The plan job took 14 minutes (18 before).
+- More hand fixes on `development`: `b97a210cb1` (the current-matrix walk, the
+  producer, existing-candidate and historical recoveries and the closed-wave
+  ingest also treated `abandoned` and `owner_superseded` releases as in flight;
+  Sentinel 204–208 kept reserved implementation intents from the crashed run
+  `40081911304`), `afb2b719d9` (#158) and `c2adb4bb73` (#188: unprovable
+  ai.ubq.fi queue custody no longer stops maintenance for every target).
+  `1d056586ed` aligns the queue runner test CI `40096206432` failed on. #158 and
+  #188 are closed.
+- Launcher: `755718ff7a` at 13:02 UTC (bootstrap `40097996543` succeeded), then
+  `1d056586ed` at 13:38 (CI green).
+- Live, bootstrap `40097996543`: the current-matrix walk now runs but spent its
+  300 s budget walking 1031 release-history steps for two parked ai.ubq.fi rows
+  (587, 608) whose producer `37996641586` plan expired, so the in-flight
+  recovery of the 26-cell wave ran out of budget (`deferred_budget`) on every
+  pass. The run's own repair job consumed only part of the wave (Passport 87–90
+  candidates, ai.ubq.fi 1283 → its own PR 1295; ai.ubq.fi 1281/1282 and Sentinel
+  183 parked on protected paths). The walk fix (with in-flight work the parked
+  traversal stops at half the budget) is the next commit. A fresh-store fetch is
+  cheap (Passport 0.8 s, ai.ubq.fi 2.9 s measured), so #185's per-candidate
+  proof is not the binding cost today.
+
+## Prior checkpoint (2026-10-24 12:45 UTC)
+
+- Acceptance, ai.ubq.fi: correcting the 08:30 checkpoint, ai.ubq.fi has
+  autonomous merges. `ubiquity-sentinel[bot]` merged PR 1254 (issue 1212) and PR
+  1255 (issue 1229) at 06:20 UTC and PR 1258 (issue 1250) at 09:08 UTC onto
+  `development`, each on the exact head of a completed internal review receipt
+  with no findings and task acceptance `fulfilled`. Their source issues stay
+  open by design: Gateway closure waits for an accepted VPS release, and the
+  release path is disabled (`release-deferred:count=33:release_path=disabled`).
+  With Sentinel #179 and Passport 25, 49 and 77, every target now has an
+  autonomous issue → PR → completed review → merge.
+- Live maintenance on launcher `87365939e3` (run `40093950692`): the pass
+  applied instead of skipping `release_not_terminal`. It released the dormant
+  queue holds of ai.ubq.fi 1212, 1214, 1229 and 1250 and booked 1212's merged
+  delivery.
+- Live runtime: the crash fix `41b82bb6ff` (a terminal block kept the PR a
+  self-merge receipt binds) is proven live. Bootstrap `40085603484` and the
+  ordinary runs `40085831848` and `40088502752` settled `success`.
+- Owner directives of 2026-10-24, landed on `development` with tests that fail
+  on the previous code:
+  - #180, queue proof off: `c8809b32b6` and `b7cd073fb1` set
+    `queue.proofActivated` false and release the dormant ai.ubq.fi holds;
+    `3a7d2ab1f8` aligns the uncertainty-maintenance read counts (CI green).
+  - Other people's PRs never hold Sentinel (`f2db8fc948`, CI green): discovery
+    is off in every composition and the existing parks (Passport 87–108,
+    ai.ubq.fi 300 and 1281–1283) return to work. DECISIONS records the
+    supersession of the 2026-10-18 takeover approval.
+  - Hand edits of reserved files: `87365939e3` counts an `abandoned` release as
+    terminal (release `f42d04c7`, abandoned as included_in_successor, had
+    skipped every closure, retry and delivery pass for all targets since 09:24
+    UTC); `9c4de3fc22` (#189) and `62af807857` (#203). #150 was already fixed by
+    `4d25ed48f3`. #150, #189 and #203 are closed.
+- Launcher: `sentinel-supervisor` advanced `41b82bb6ff` → `3a7d2ab1f8` (11:49
+  UTC) → `87365939e3` (12:19) → `62af807857` (12:33), each an exact CI-green
+  `development` SHA with no workflow change.
+- Held locally for the next batch: `afb2b719d9` (#158 item 2: launcher merges
+  refuse a protected-path change) and the #158 DECISIONS record.
+- Open owner items:
+  - Set the repository variable `SENTINEL_AUTO_FOLLOW` to `on`. Every self merge
+    creates a `requested` hosted release, and the maintenance chain for all
+    targets defers until a launcher advance abandons it; with auto-follow off
+    only a manual advance does.
+  - Decide whether a merged ai.ubq.fi repair may close its issue before a VPS
+    release while `sentinel-release` stays disabled; today 33 merged records
+    wait on the release path.
+  - Decide #191, #185, #177, #192 (pending third-party statuses advisory), the
+    automatic refusal of #158 item 3 (the trade-off is recorded) and
+    #152/#161/#162 (release path, disabled).
+- Next: verify the bootstrap and first ordinary run on `62af807857`, the
+  re-admitted records, ai.ubq.fi 1229 and 1250 booked, and record 173's closure.
+
+## Prior checkpoint (2026-10-24 08:30 UTC)
 
 - Acceptance progress: the first autonomous closures. Sentinel issue #179 went
   issue → PR #194 → deterministic base refresh onto green `development` → CI 7/7

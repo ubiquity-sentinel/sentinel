@@ -233,18 +233,21 @@ Deno.test("hosted principal launcher: the grant binds to the live target install
         expected: true,
         grant: principalGrant({ installationId: live }),
         id: String(live),
+        handoff: { outcome: "retained", refusal: null },
       },
       {
         name: "durable grant under the live id is stripped",
         expected: false,
         grant: principalGrant(),
         id: String(live),
+        handoff: { outcome: "refused", refusal: "grant_installation" },
       },
       {
         name: "live grant under the durable default is stripped",
         expected: false,
         grant: principalGrant({ installationId: live }),
         id: undefined,
+        handoff: { outcome: "refused", refusal: "grant_installation" },
       },
       {
         name: "malformed live id strips the grant and the child refuses it",
@@ -252,6 +255,7 @@ Deno.test("hosted principal launcher: the grant binds to the live target install
         grant: principalGrant(),
         id: "17391380x",
         status: "failed",
+        handoff: { outcome: "installation_invalid", refusal: null },
       },
     ]
   ) {
@@ -265,8 +269,18 @@ Deno.test("hosted principal launcher: the grant binds to the live target install
           targetInstallationId: scenario.id,
         },
       );
+      const lines: string[] = [];
+      const log = console.log;
+      console.log = (...args: unknown[]) => {
+        lines.push(args.map(String).join(" "));
+      };
       try {
-        const result = await rig.launch();
+        let result;
+        try {
+          result = await rig.launch();
+        } finally {
+          console.log = log;
+        }
         assert.equal(
           result.status,
           scenario.status ?? "healthy",
@@ -276,6 +290,22 @@ Deno.test("hosted principal launcher: the grant binds to the live target install
         assert.equal(rig.state.repairWrites, 0);
         // A grant refused before verification never issues a native read.
         if (!scenario.expected) assert.equal(rig.model.calls.length, 0);
+        // #193: every withheld grant names its refusal class in one line.
+        const handoff = lines.flatMap((line) => {
+          try {
+            const value = JSON.parse(line);
+            return value?.kind === "sentinel_app_grant_handoff" ? [value] : [];
+          } catch {
+            return [];
+          }
+        });
+        assert.deepEqual(handoff, [{
+          version: "v1",
+          kind: "sentinel_app_grant_handoff",
+          job: "repair",
+          ...scenario.handoff,
+        }]);
+        assert.doesNotMatch(lines.join("\n"), /appId|expiresAt/);
       } finally {
         await rig.close();
       }

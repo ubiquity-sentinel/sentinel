@@ -16,9 +16,15 @@ import type {
   MatrixArtifactOptionsV1,
   MatrixArtifactReaderV1,
 } from "./matrix-artifact-context.ts";
+import { MatrixArtifactUnavailableError } from "./matrix-artifact-port.ts";
 
 const API = `https://api.github.com/repos/${REPOSITORY}/actions`;
 const MAX_ITEMS = 10_000;
+/** Complete listings attempted when items shift between pages. */
+const LISTING_ATTEMPTS = 3;
+/** Reads attempted per request when GitHub answers a server error (5xx). */
+const SERVER_ERROR_ATTEMPTS = 3;
+const SERVER_ERROR_PAUSE_MS = 1_000;
 function storageUrl(location: string | null): string {
   if (location === null) refuse();
   const url = new URL(location);
@@ -37,10 +43,28 @@ export function createMatrixArtifactHttp(
   deadline: MatrixArtifactDeadlineV1,
   repositoryIdentity: { id: number | null },
 ): MatrixArtifactReaderV1 {
+  /** One GitHub API or storage read, retried on a server error. */
   const get = async (
     path: string,
     binary = false,
     storage = false,
+  ): Promise<HttpResponseV1> => {
+    for (let attempt = 1;; attempt++) {
+      const response = await getOnce(path, binary, storage);
+      if (
+        storage || response.status < 500 || response.status > 599 ||
+        attempt >= SERVER_ERROR_ATTEMPTS ||
+        until - options.clock.now() <= SERVER_ERROR_PAUSE_MS * attempt
+      ) return response;
+      await new Promise((resolve) =>
+        setTimeout(resolve, SERVER_ERROR_PAUSE_MS * attempt)
+      );
+    }
+  };
+  const getOnce = async (
+    path: string,
+    binary: boolean,
+    storage: boolean,
   ): Promise<HttpResponseV1> => {
     const remaining = until - options.clock.now();
     if (remaining <= 0 || deadline.fired()) refuse();
@@ -67,29 +91,46 @@ export function createMatrixArtifactHttp(
     ) refuse();
     return response;
   };
+  /** A server error that outlived its retries is unavailability, never provenance. */
+  const unavailableOr = (status: number) => {
+    if (status >= 500 && status <= 599) {
+      throw new MatrixArtifactUnavailableError();
+    }
+    refuse();
+  };
   const json = async (path: string): Promise<Json> => {
     const response = await get(path);
-    if (response.status !== 200) refuse();
+    if (response.status !== 200) unavailableOr(response.status);
     return record(JSON.parse(response.bodyText));
   };
-  const pages = async (path: string, key: string): Promise<Json[]> => {
+  /**
+   * One complete listing. Other runs add and delete artifacts while a listing
+   * pages (each plan and cell uploads, maintenance cleanup deletes; live
+   * 2026-10-24 run 40113229034 refused at 440 artifacts over 5 pages), so a
+   * count or item set that shifts between pages is reported as `shifted` and
+   * the caller lists again; every structural refusal stays immediate.
+   */
+  const listOnce = async (
+    path: string,
+    key: string,
+  ): Promise<Json[] | "shifted"> => {
     const items: Json[] = [];
     let total: number | null = null;
     for (let page = 1; page <= 100; page++) {
       const url = `${API}${path}?per_page=100&page=${page}`;
       const response = await get(url);
-      if (response.status !== 200) refuse();
+      if (response.status !== 200) unavailableOr(response.status);
       const body = record(JSON.parse(response.bodyText));
       if (
         !Number.isSafeInteger(body.total_count) ||
         (body.total_count as number) < 0 ||
         (body.total_count as number) > MAX_ITEMS
       ) refuse();
-      if (total !== null && total !== body.total_count) refuse();
+      if (total !== null && total !== body.total_count) return "shifted";
       total = body.total_count as number;
       if (!Array.isArray(body[key]) || body[key].length > 100) refuse();
       items.push(...body[key].map(record));
-      if (items.length > total) refuse();
+      if (items.length > total) return "shifted";
       const link = response.headers.get("link");
       const nextLinks = [
         ...(link?.matchAll(/<([^>]+)>;\s*rel="next"/g) ?? []),
@@ -120,10 +161,17 @@ export function createMatrixArtifactHttp(
       }
       if (!next && items.length === total) {
         const ids = items.map((row) => positive(row.id));
-        if (new Set(ids).size !== ids.length) refuse();
+        if (new Set(ids).size !== ids.length) return "shifted";
         return items;
       }
-      if (!next || body[key].length === 0) refuse();
+      if (!next || body[key].length === 0) return "shifted";
+    }
+    refuse();
+  };
+  const pages = async (path: string, key: string): Promise<Json[]> => {
+    for (let attempt = 1; attempt <= LISTING_ATTEMPTS; attempt++) {
+      const listed = await listOnce(path, key);
+      if (listed !== "shifted") return listed;
     }
     refuse();
   };

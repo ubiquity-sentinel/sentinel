@@ -152,6 +152,12 @@ Deno.test(
           jsonResponse({ state: "closed", number: SHARED_ISSUE_NUMBER }),
         );
       }
+      if (url.includes(`/pulls/${FOREIGN_PR}/files`)) {
+        // The merge gate's protected-path listing (issue #158).
+        return Promise.resolve(jsonResponse([
+          { filename: "README.md", status: "modified" },
+        ]));
+      }
       if (url.includes(`/pulls/${FOREIGN_PR}`)) {
         return Promise.resolve(jsonResponse(
           mergedNow

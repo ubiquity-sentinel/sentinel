@@ -157,14 +157,34 @@ Deno.test("existing PR maintenance: incompatible execution, old queued source an
       if (fault === "queue_unavailable") {
         f.input.readQueueReady = () => Promise.resolve(false);
       }
+      // An unready queue holds only while queue proof is active (#180, #188).
+      const queue = fault === "queue_unavailable"
+        ? { ...dormant.queue, proofActivated: true }
+        : dormant.queue;
       const result = await readHostedMaintenanceCompatibility(
         f.input,
-        dormant.queue,
+        queue,
         custody,
       );
       assert.equal(result.status, "hold");
     });
   }
+});
+
+Deno.test("existing PR maintenance: with queue proof off an unready queue no longer holds every target", async () => {
+  const f = fixture();
+  f.input.readQueueReady = () => {
+    f.order.push("queue");
+    return Promise.resolve(false);
+  };
+  const result = await readHostedMaintenanceCompatibility(
+    f.input,
+    dormant.queue,
+    custody,
+  );
+  assert.equal(dormant.queue.proofActivated, false);
+  assert.equal(result.status, "ordinary");
+  assert.equal(f.order[0], "queue", "the queue is still observed first");
 });
 
 Deno.test("existing PR maintenance: retired revision lists cannot fence a healthy installed runtime", async () => {

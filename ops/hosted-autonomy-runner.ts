@@ -28,6 +28,8 @@ import { runHostedMatrixMaintenance } from "./hosted-autonomy-maintenance.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 import { ClosedCWaveRecoveryIntegrityFailure } from "../src/host/modern-matrix-recovery.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import { isHostedReleaseTerminal } from "../src/contracts/hosted-supervisor.ts";
+import { isNativeQueueTarget } from "../src/github/native-queue-guard.ts";
 import {
   continuationLate,
   createPassWrites,
@@ -125,16 +127,38 @@ export async function runHostedAutonomy(
     } finally {
       finishCustody();
     }
-    if (!custody.ready) {
+    // Issue #188: ai.ubq.fi queue custody that cannot be proven this pass
+    // (an unavailable or inconsistent native observation, unknown rules, an
+    // unaccepted activation) no longer stops every target. Once state was
+    // read and the prelude wrote nothing, the pass continues with every
+    // ai.ubq.fi record protected and no protected-write authority, so it can
+    // neither write nor deliver one; the custody output stays not ready.
+    const degraded = !custody.ready && custody.write === null &&
+      custody.observed !== null;
+    if (!custody.ready && !degraded) {
       return custody.write ??
         skipped("no_change", custody.observed?.head ?? null, custody.actions);
+    }
+    if (degraded) {
+      custody = {
+        ...custody,
+        protectedRecordIds: new Set([
+          ...custody.protectedRecordIds,
+          ...custody.observed!.snapshot.work.filter((row) =>
+            isNativeQueueTarget(row.repository)
+          ).map((row) => row.id),
+        ]),
+        actions: [...custody.actions, "queue:gateway_protected"],
+      };
     }
     const context: HostedQueueCustodyContext = {
       ready: true,
       proofActivated: deps.queue?.config.proofActivated ?? false,
       protectedRecordIds: custody.protectedRecordIds,
-      resolveDelivery: deps.queue?.resolveDelivery,
-      verifyProtectedWrite: deps.queue?.verifyProtectedWrite,
+      resolveDelivery: degraded ? undefined : deps.queue?.resolveDelivery,
+      verifyProtectedWrite: degraded
+        ? undefined
+        : deps.queue?.verifyProtectedWrite,
     };
     const guarded = protectQueueState(deps.state, context);
     const scoped: HostedAutonomyDepsV1 = {
@@ -184,7 +208,7 @@ export async function runHostedAutonomy(
     } finally {
       finishFollowup();
     }
-    await deps.onQueueCustodyReady?.(followUpComplete);
+    await deps.onQueueCustodyReady?.(followUpComplete && !degraded);
     return followUps.length === 0
       ? result
       : { ...result, actions: [...result.actions, ...followUps] };
@@ -308,9 +332,10 @@ async function runHostedAutonomyChain(
     if (
       releaseRead === null || !releaseRead.ok ||
       releaseRead.value.status !== "found" ||
+      // The contract's terminal set, `abandoned` included (an
+      // included_in_successor abandonment is settled custody, not in flight).
       releaseRead.value.snapshot.hostedReleases.some((release) =>
-        release.phase !== "accepted" && release.phase !== "rolled_back" &&
-        release.phase !== "owner_superseded"
+        !isHostedReleaseTerminal(release.phase)
       )
     ) {
       return writes.applied

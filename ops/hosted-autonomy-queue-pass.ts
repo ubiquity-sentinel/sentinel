@@ -10,10 +10,12 @@ import {
   queueRecordProtected,
 } from "./hosted-autonomy-queue-context.ts";
 import {
+  hasQueueDeliveryProvenance,
   hasQueueIntentNamespace,
   isQueueHeld,
   queueCustodyRequired,
 } from "./hosted-autonomy-queue-policy.ts";
+import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import {
   QueueCustodyWriter,
   queueHold,
@@ -100,6 +102,14 @@ export async function runHostedQueueCustody(
       return writer.result(false);
     }
     if (effective === null) return writer.result(false);
+    if (
+      effective === false && queue.config.mode === "off" &&
+      !queue.config.proofActivated &&
+      !await releaseDormantHolds(writer, native, deps.clock.now())
+    ) {
+      writer.actions.push("queue:dormant_release_unverified");
+      return writer.result(false);
+    }
     if (effective && !queue.config.proofActivated) {
       writer.actions.push("queue:activation_unaccepted");
       return writer.result(false);
@@ -198,4 +208,39 @@ async function acquireSnapshotHolds(
     if (held !== record) changed.push(held);
   }
   return await writer.update(changed);
+}
+
+/**
+ * Owner directive 2026-10-24 (#180): with queue proof dormant, admission off
+ * and an authenticated negative merge_queue rule, a bare open-ended hold on an
+ * unbooked gateway pull (no queue intent, no queue provenance, no native
+ * entry, no matching release request) is no custody. It returns to the
+ * runtime's transient wait so the ordinary direct path re-observes it.
+ */
+async function releaseDormantHolds(
+  writer: QueueCustodyWriter,
+  native: QueueSnapshot,
+  now: number,
+): Promise<boolean> {
+  const { snapshot } = writer.observed;
+  const released = snapshot.work.filter((record) =>
+    record.repository.owner === "ubiquity" &&
+    record.repository.name === "ai.ubq.fi" &&
+    record.nextStep !== "done" && isQueueHeld(record) &&
+    !hasQueueIntentNamespace(record) && !hasQueueDeliveryProvenance(record) &&
+    record.intent?.kind !== "base_refresh" &&
+    !native.entries.some((entry) => entry.pull.number === record.target.pr) &&
+    !snapshot.releaseRequests.some((request) =>
+      releaseRequestMatchesDelivery(request, record)
+    )
+  ).map((record): WorkRecordV1 => ({
+    ...record,
+    wait: { reason: "unavailable", since: now, until: now },
+    updatedAt: now,
+  }));
+  if (!await writer.update(released)) return false;
+  for (const record of released) {
+    writer.actions.push(`queue:${record.id}:dormant_hold_released`);
+  }
+  return true;
 }

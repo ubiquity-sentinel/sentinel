@@ -4,6 +4,7 @@ import { matrixDigestV1 } from "../src/contracts/matrix.ts";
 import {
   HOSTED_RUNTIME_ID,
   type HostedExecutionSettlementV1,
+  isHostedReleaseTerminal,
   parseHostedRunProofV1,
 } from "../src/contracts/hosted-supervisor.ts";
 import type { ReleaseStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
@@ -137,7 +138,7 @@ async function recoverProducerWithinBudget(
   if (
     runtime.execution !== null ||
     current.snapshot.hostedReleases.some((row) =>
-      !["accepted", "rolled_back", "cancelled"].includes(row.phase)
+      !isHostedReleaseTerminal(row.phase)
     )
   ) throw new Error("current matrix producer custody unavailable");
   if (!producerPointerConsistent(runtime, saved.execution)) {

@@ -2678,9 +2678,18 @@ internal policy is resolve all P0". Applied as follows.
   ai.ubq.fi's skipped dispatched jobs as failed (#181 becomes an ai.ubq.fi-side
   improvement, not a Sentinel blocker).
 - The activated merge-queue proof (`queue.proofActivated` in
-  `src/host/hosted-custody-capability.json`, #180) is not part of this policy
-  either; the session's permission layer refuses that one-line edit as a custody
-  weakening, so it remains the owner's edit until it lands.
+  `src/host/hosted-custody-capability.json`, #180) is off by owner directive
+  (2026-10-24, "fix the leftover safety flag thing, just unblock"; #180 option
+  2). The strict native queue guard no longer parks ai.ubq.fi records on a
+  transient observation failure, and the launcher delivers them on the legacy
+  direct path. With the proof dormant, admission off and an authenticated
+  negative `merge_queue` rule, the queue prelude
+  (`ops/hosted-autonomy-queue-pass.ts`, `releaseDormantHolds`) returns a bare
+  open-ended hold on an unbooked gateway pull (no queue intent, provenance,
+  native entry or matching release request) to a transient wait, which releases
+  the four open PR records held since 2026-10-21. Merged records waiting on the
+  disabled release path stay held. A future `merge_queue` rule still fails
+  closed with `activation_unaccepted`.
 - Review follow-up filing (`ops/hosted-autonomy-follow-ups.ts`) now files every
   unresolved P1/P2/P3 finding of a merged PR as follow-up work; before the
   directive it filed only P2/P3 because a P1 could not merge.
@@ -2690,3 +2699,85 @@ internal policy is resolve all P0". Applied as follows.
   any other non-rejecting review.
 - Exact current-head CI, native review receipts, task acceptance, durable
   accounting and the custody of credentials are unchanged.
+
+## Owner directive 2026-10-24: other people's pull requests never hold Sentinel
+
+The owner directed (2026-10-24): ignore other contributors' pull requests
+completely and remove the existing-PR hold, even for the owner's own open pull
+requests. This supersedes the existing-PR takeover part of the 2026-10-18
+standing approval above. Applied as follows.
+
+- Sentinel always opens and drives its own pull request on its fixed
+  `sentinel/repair/<task>` branch. Existing-PR discovery is never activated: the
+  hosted App composition already ships `takeover.activated` false, and the local
+  composition in `src/host/actions-repair-host.ts` no longer reads the takeover
+  source routing, whose `unknown` answer used to switch discovery on. With
+  discovery off, the router and the PR-creation boundary guard stand down, so no
+  `existing PR hold` is written and Sentinel's own PR creation is never refused
+  for another pull request.
+- The parks discovery already wrote are released in one checked transition
+  (`releaseExistingPrHolds` in `src/repair/loop-existing-pr.ts`) on any record
+  whose port has discovery off: issue records without takeover custody or a
+  bound PR whose blocker is an `existing PR hold: <discovery reason>` park or
+  the takeover queue-preflight hold return to `work`. Intent, target, counters,
+  evidence and reservations are kept and nothing is charged or refunded. This
+  re-admits Passport issues 87–108 and ai.ubq.fi issues 300 and 1281–1283.
+- Sentinel's handling of its own branch, PR and head is unchanged, including
+  own-branch reuse and the author check in `src/github/port-publication.ts`. The
+  native merge-queue guard for Sentinel's own ai.ubq.fi effects stays.
+- Takeover custody parks (`closed_publication`, `self_merge_requires_owner`) and
+  records with takeover custody keep their existing handling; no live record
+  carries takeover custody. Deleting the dormant adoption and custody modules is
+  a separate cleanup.
+- Where an outside pull request and Sentinel's own both target an issue,
+  whichever merges first closes the issue, and the other Sentinel record then
+  retires as "source issue is closed".
+
+## 2026-10-24: merge-time protected paths and the held-run approval trade-off (#158)
+
+- The launcher's merge gates refuse a protected-path change at merge time, not
+  only at publication. `preMergeGate` lists the pull request's files (a rename's
+  previous path included) for a head about to merge and refuses
+  `protected_path`, or `protected_path_unverified` when the listing is unproven.
+  The carried gate checks the exact patch it already proves. The list is
+  `selectTrustedTargetPolicyV1(...).protectedPaths`, the same list runtime
+  publication refuses.
+- Under CI first, the launcher approves GitHub-held CI runs of model-authored
+  heads before any review (`ciFirstApprovalEligible`). This is accepted because
+  every target's `.github/workflows/` is a protected path: a model candidate can
+  neither publish nor merge a workflow change, so an approved run executes only
+  owner-authored workflow definitions. Sentinel's `ci.yml` runs with
+  `contents: read` and no secrets (checked 2026-10-24); ai.ubq.fi
+  `deno-deploy.yml` did at the 2026-10-17 audit in #158. The owner accepts the
+  exposure if they later add a secret or a write permission to such a workflow:
+  model code would then run with it before review. An automatic refusal for that
+  case is an owner decision and is not implemented.
+
+## 2026-10-24: generation-80 rollout guards (#159)
+
+- The zero-cell matrix plan diagnostic now checks review rounds the same way the
+  readiness predicate does. A record at `work` with no review round left is
+  counted as `review_rounds_spent` instead of being explained as ready.
+- The two generation-79 rollback exposures of the legacy route are accepted and
+  no longer reachable. A conflict re-pend could end in R79's terminal conflict
+  block. A legacy record left at `work` could be published and reviewed before
+  CI. Both needed R79 as a rollback target. Ordinary updates now self-install
+  the exact CI-green development SHA, and rollback restores the exact recorded
+  prior runtime, so R79 is never a target.
+- No consistency test was added for the CI-first, CI-correction,
+  conflict-resolution and refresh re-arm allowlists. Those lists belong to the
+  retired rollout ceremony that DESIGN.md §4 schedules for deletion, and no
+  future pin appends to them.
+- Whether the legacy class is the cutoff rule or the owner's list of twelve
+  still needs the owner's answer.
+
+## 2026-10-24: an unready ai.ubq.fi queue observation no longer holds all maintenance
+
+- The maintenance preflight still reads ai.ubq.fi's branch rules and merge queue
+  first. A failed or inconsistent read now holds maintenance only while queue
+  proof is active. With queue proof off (owner directive of 2026-10-24, #180),
+  maintenance continues for every target. The runner's queue custody prelude
+  then protects every ai.ubq.fi native-queue record and grants no
+  protected-write authority (#188).
+- Live, the read failed on every maintenance pass from 16:43 UTC, so no closure,
+  retry, delivery or follow-up pass ran for any target.
