@@ -29,10 +29,7 @@ import type { BaseRefreshObserverV1 } from "../../src/host/local.ts";
 import { createPrepareBaseRefresh } from "../../src/host/local.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { baseRefreshIntentKey, mergeIntentKey } from "../../src/repair/keys.ts";
-import {
-  isRetiredTargetRecord,
-  RETIRED_MERGED_MESSAGE,
-} from "../../src/repair/selection.ts";
+import { CHECK_POLL_MS } from "../../src/repair/loop-bounds.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
 import { REPO, SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
 import {
@@ -59,7 +56,6 @@ const BRANCH = "sentinel/repair/issue-1";
 const OLD_HEAD = SHA3;
 const PREPARED = "7f0b28dc5c6f8a1a2b3c4d5e6f7a8b9c0d1e2f3a" as GitSha;
 const UNRELATED = "abcdefabcdefabcdefabcdefabcdefabcdefabcd" as GitSha;
-const CHECK_POLL_MS = 2 * 60_000;
 
 async function gitRun(
   cwd: string,
@@ -1025,36 +1021,93 @@ function pullRequest(head: GitSha): GitHubPullRequestV1 {
   };
 }
 
+for (const mergedHead of [OLD_HEAD, UNRELATED]) {
+  Deno.test(
+    `base refresh: a merged own publication completes with observed head ${mergedHead}`,
+    async () => {
+      const fake = new RefreshGithub(SHA2, mergedHead);
+      fake.prState = "merged";
+      const github: GitHubPort = fake;
+      const rig = makeRig(github);
+      let prepareCalls = 0;
+      github.prepareBaseRefresh = () => {
+        prepareCalls++;
+        return Promise.resolve(portOk(PREPARED));
+      };
+      await rig.seed([deliveryRecord(OLD_HEAD, {
+        intent: parkedBaseRefreshIntent(OLD_HEAD, SHA2),
+      })]);
+
+      const outcome = await rig.run();
+      assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+      const state = await rig.snapshot();
+      const work = state.work[0];
+      assert.equal(work.nextStep, "done");
+      assert.equal(work.blocker, null);
+      assert.equal(work.intent, null, "the refresh intent is cleared");
+      assert.equal(work.wait, null);
+      assert.equal(work.target.pr, 7, "the delivered PR identity is retained");
+      assert.equal(work.target.head, OLD_HEAD);
+      assert.deepEqual(work.evidence, [{
+        kind: "review_receipt",
+        ref:
+          `artifact:review-receipt/human-merge-v1/7/${mergedHead}/${SHA2}/unknown`,
+      }]);
+      assert.equal(state.releaseRequests.length, 1);
+      assert.equal(state.releaseRequests[0].revision, SHA2);
+      assert.equal(state.releaseRequests[0].source.pullRequest, 7);
+      assert.equal(state.releaseRequests[0].source.head, OLD_HEAD);
+      assert.equal(state.releaseRequests[0].source.reviewReceiptId, null);
+      assert.equal(prepareCalls, 0, "a merged publication is never refreshed");
+      assert.equal(fake.pushCalls.length, 0);
+      assert.equal(rig.model.requests.length, 0);
+
+      await rig.run();
+      assert.deepEqual(
+        (await rig.snapshot()).work[0],
+        work,
+        "completion is durable",
+      );
+      assert.deepEqual(
+        (await rig.snapshot()).releaseRequests,
+        state.releaseRequests,
+      );
+      assert.equal(prepareCalls, 0);
+      assert.equal(fake.pushCalls.length, 0);
+      assert.equal(rig.model.requests.length, 0);
+    },
+  );
+}
+
 Deno.test(
-  "base refresh: a merged own publication is retired instead of refreshed",
+  "base refresh: a merged own publication without a merge SHA stays pending",
   async () => {
     const fake = new RefreshGithub(SHA2, OLD_HEAD);
     fake.prState = "merged";
     const github: GitHubPort = fake;
-    const rig = makeRig(github);
-    let prepareCalls = 0;
-    github.prepareBaseRefresh = () => {
-      prepareCalls++;
-      return Promise.resolve(portOk(PREPARED));
+    const readPull = github.readPullRequest.bind(github);
+    github.readPullRequest = async (number) => {
+      const result = await readPull(number);
+      if (!result.ok || result.value === null) return result;
+      return portOk({ ...result.value, mergeSha: null });
     };
-    await rig.seed([deliveryRecord(OLD_HEAD, {
+    github.prepareBaseRefresh = () => {
+      throw new Error("a merged publication is never refreshed");
+    };
+    const rig = makeRig(github);
+    const record = deliveryRecord(OLD_HEAD, {
       intent: parkedBaseRefreshIntent(OLD_HEAD, SHA2),
-    })]);
+    });
+    await rig.seed([record]);
 
-    const outcome = await rig.run();
-    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
-    const work = (await rig.snapshot()).work[0];
-    assert.equal(work.nextStep, "blocked");
-    assert.equal(work.blocker?.kind, "other");
-    assert.equal(work.blocker?.message, RETIRED_MERGED_MESSAGE);
-    assert.equal(work.intent, null, "the refresh intent is cleared");
-    assert.equal(work.wait, null);
-    assert.equal(
-      isRetiredTargetRecord(work),
-      true,
-      "a human merge is terminal and consumes no capacity slot",
+    await rig.run();
+    const state = await rig.snapshot();
+    assert.deepEqual(
+      state.work[0],
+      record,
+      "an incomplete observation changes nothing",
     );
-    assert.equal(prepareCalls, 0, "a merged publication is never refreshed");
+    assert.equal(state.releaseRequests.length, 0);
     assert.equal(fake.pushCalls.length, 0);
     assert.equal(rig.model.requests.length, 0);
   },

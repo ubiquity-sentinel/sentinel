@@ -272,6 +272,7 @@ export async function executeWorkStep(
   if (
     record.target.head === null ||
     localOnlyCandidate ||
+    (existingHeadContinuationShape(record) && isCiFixMarker(record.wait)) ||
     headNeedsCorrection(
       context.snapshot,
       record,
