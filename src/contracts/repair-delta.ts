@@ -79,14 +79,21 @@ export interface RepairDeltaV1 {
   binding: RepairDeltaBindingV1;
   /** Exact authoritative repair state head the cell read. */
   baseHead: GitSha;
-  /** `repairProjectionDigestV1` of the repository at `baseHead`. */
+  /**
+   * `repairProjectionDigestV1` of the repository at `baseHead`, scoped to the
+   * delegated records less `deferredToTrusted` (a delta sealed before that
+   * rule scoped it to every delegated record; the trusted writer accepts
+   * either while it is current).
+   */
   baseDigest: string;
   /** Sorted by record id; each id at most once. */
   transitions: RepairDeltaTransitionV1[];
   /**
    * Ids whose step needed an effect a cell may not perform (a GitHub write,
    * a model start, a reservation, a replay or a shared-collection write):
-   * none of their rows is in `transitions`; the trusted path steps them.
+   * none of their rows is in `transitions` and `baseDigest` does not bind
+   * them; the trusted path steps them, and the trusted writer drops their
+   * step stamps.
    */
   deferredToTrusted: string[];
   /** Wall time of the cell's pass (advisory, for the metrics collector). */
