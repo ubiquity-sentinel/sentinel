@@ -1741,9 +1741,37 @@ async function bridgeLegacyLoss(
       deferred.add(id);
       continue;
     }
-    // Explicit "this record is not a legacy-loss case": no state change, and
-    // the scan continues to any later candidate.
-    if (proof.value === null) continue;
+    // Explicit "this record is not a legacy-loss case": an ordinary work
+    // record needs no bridge mutation. A record that this bridge previously
+    // parked as missing_evidence must be resumed, however; otherwise the
+    // generic selector skips it forever and its saved base-refresh intent can
+    // never reach executeBaseRefreshIntent, which owns candidate restoration.
+    if (proof.value === null) {
+      if (phase !== "restore") continue;
+      const resumed = await persistTransition(
+        deps,
+        context,
+        replaceWorkMutation({
+          ...record,
+          nextStep: "work",
+          wait: null,
+          blocker: null,
+          updatedAt: deps.clock.now(),
+        }),
+      );
+      if (resumed.kind === "progress") {
+        // The same non-loss proof also covers the newly resumed discover
+        // phase; do not spend a second remote proof before normal refresh
+        // processing observes the exact task ref again.
+        attempted.add(`${id}:discover`);
+        return { kind: "progress" };
+      }
+      if (resumed.kind === "state_error") {
+        return { kind: "state_error", detail: resumed.detail };
+      }
+      deferred.add(id);
+      continue;
+    }
     if (!legacyLossProofMatches(deps, context, record, proof.value)) {
       deferred.add(id);
       continue;
