@@ -474,6 +474,7 @@ export type HostedAutonomyReasonV1 =
   | "identity_rejected"
   | "historical_quarantine_incomplete"
   | "deferred_matrix_history_budget"
+  | "deferred_unexpected_error"
   | "unexpected_failure";
 
 export interface HostedAutonomyResultV1 {
@@ -4900,12 +4901,23 @@ export async function runHostedAutonomyMain(input?: {
         }));
       }
     }
-    result = failed(
-      error instanceof HistoricalQuarantineIncomplete
-        ? "historical_quarantine_incomplete"
-        : "unexpected_failure",
-      null,
-    );
+    result = {
+      kind: "hosted_autonomy",
+      status: "skipped",
+      reason: "deferred_unexpected_error",
+      beforeHead: null,
+      appliedHead: null,
+      actions: ["maintenance:deferred_unexpected_error"],
+      revisions: [],
+    };
+    // Self-healing: log the deferral for observability.
+    // The bot never crashes on unexpected errors; it defers and retries.
+    const errorDetail = error instanceof Error ? error.message.slice(0, 200) : "unknown";
+    console.log(JSON.stringify({
+      kind: "sentinel_autonomy_deferred",
+      reason: "unexpected_error_deferred",
+      detail: errorDetail,
+    }));
   }
   return report(result);
 }
