@@ -7769,6 +7769,43 @@ Deno.test(
 );
 
 Deno.test(
+  "legacy loss bridge: a remotely present parked candidate reaches base refresh",
+  async () => {
+    const rig = legacyLossMemory();
+    let proofCalls = 0;
+    let prepareCalls = 0;
+    rig.github.proveLegacyBaseRefreshLoss = () => {
+      proofCalls++;
+      return Promise.resolve(portOk(null));
+    };
+    rig.github.prepareBaseRefresh = () => {
+      prepareCalls++;
+      return Promise.resolve(
+        portError("unavailable", "test base refresh stop"),
+      );
+    };
+    rig.github.readRef = (ref) =>
+      Promise.resolve(portOk({ ref, sha: LEGACY_B1 }));
+    const seeded = seededSnapshot([
+      legacyLossWork("issue-48", LEGACY_ISSUE, legacyLossBlockedExtras()),
+    ], { reservations: [legacyLossCharge()] });
+    const written = await rig.state.writeRepair(seeded, null);
+    assert.ok(written.ok && written.value.status === "applied");
+
+    const outcome = await rig.run(2);
+    assert.equal(outcome.status, "step_limit", JSON.stringify(outcome));
+    assert.equal(proofCalls, 1, "the non-loss proof is not repeated");
+    assert.equal(prepareCalls, 1, "base refresh receives the parked record");
+    const state = await rig.snapshot();
+    assert.equal(state.work[0]!.nextStep, "work");
+    assert.equal(state.work[0]!.blocker, null);
+    assert.equal(state.work[0]!.wait?.reason, "unavailable");
+    assert.equal(state.work[0]!.intent?.kind, "base_refresh");
+    assert.equal(rig.model.requests.length, 0);
+  },
+);
+
+Deno.test(
   "legacy loss bridge: a cooldown-only state move between proof and CAS refuses the stale commit",
   async () => {
     const port = new RelationsFakeGithub({ baseSha: LEGACY_B0 });
