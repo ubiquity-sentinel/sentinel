@@ -587,10 +587,11 @@ async function pathPresent(path: string): Promise<boolean | null> {
  * one authenticated reread; and finally prove durability by fetching only the
  * fixed remote and exact operation ref into a NEW empty bare object store,
  * verifying the exact head/base objects, ancestry and the absence of
- * shallow/replace/alternate masking, then re-validating publication in that
- * credential-free store and re-reading the authenticated ref. Only then is
- * success returned. No model, PR, task-branch, review or release effect exists
- * here.
+ * shallow/replace/alternate masking. When reconciling an existing ref, the
+ * exact proved graph is first imported into the source mirror and validated
+ * there; publication is then re-validated in the credential-free proof store
+ * before re-reading the authenticated ref. Only then is success returned. No
+ * model, PR, task-branch, review or release effect exists here.
  */
 export function createCandidatePreserver(
   input: ActionsCandidatePreserverInputV1,
@@ -1097,6 +1098,45 @@ async function freshStoreProof(input: {
     if (ancestry === null || ancestry.code !== 0) {
       return portError("unavailable", STATIC_PRESERVE_PROOF);
     }
+    let validated: PortResultV1<void>;
+    if (restoreSource) {
+      // A resumed source mirror may have none of these retained objects. Import
+      // only the exact graph just proved above, including the excluded published
+      // head, before validating the publication in that mirror. This local
+      // fetch has no credential and cannot select a mutable remote/task ref or
+      // a producer checkout.
+      const imported = await run(sourcePath, [
+        "fetch",
+        "--no-tags",
+        store,
+        candidate.head,
+        ...(publishedHead === null ? [] : [publishedHead]),
+      ], false);
+      if (imported === null || imported.code !== 0) {
+        return portError("unavailable", STATIC_PRESERVE_LOCAL);
+      }
+      const sourceValidator = new GitReviewSnapshot({
+        trustedPath,
+        repositoryDir: sourcePath,
+        gitExecutable,
+      });
+      // Its interface does not prove that the validator's own process group
+      // settled, so uncertainty is raised BEFORE the call and cleared only by
+      // a returned success; a thrown validation also keeps the owned store.
+      uncertain = true;
+      try {
+        validated = await sourceValidator.validatePublication({
+          base: candidate.base,
+          head: candidate.head,
+          publishedHead,
+          protectedPaths,
+        });
+      } catch {
+        return portError("unavailable", STATIC_PRESERVE_LOCAL);
+      }
+      if (!validated.ok) return validated;
+      uncertain = false;
+    }
     // Credential-free revalidation inside the freshly fetched exact objects.
     const freshValidator = new GitReviewSnapshot({
       trustedPath,
@@ -1107,7 +1147,6 @@ async function freshStoreProof(input: {
     // settled, so uncertainty is raised BEFORE the call and cleared only by a
     // returned success; a thrown validation also keeps the owned store.
     uncertain = true;
-    let validated: PortResultV1<void>;
     try {
       validated = await freshValidator.validatePublication({
         base: candidate.base,
@@ -1117,39 +1156,6 @@ async function freshStoreProof(input: {
       });
     } catch {
       return portError("unavailable", STATIC_PRESERVE_PROOF);
-    }
-    if (!validated.ok) return validated;
-    uncertain = false;
-    if (!restoreSource) return portOk(undefined);
-    // A resumed source mirror may have none of these retained objects. Import
-    // only the exact graph just proved above, including the excluded published
-    // head, before removing the proof store. This local fetch has no credential
-    // and cannot select a mutable remote/task ref or a producer checkout.
-    const imported = await run(sourcePath, [
-      "fetch",
-      "--no-tags",
-      store,
-      candidate.head,
-      ...(publishedHead === null ? [] : [publishedHead]),
-    ], false);
-    if (imported === null || imported.code !== 0) {
-      return portError("unavailable", STATIC_PRESERVE_LOCAL);
-    }
-    const sourceValidator = new GitReviewSnapshot({
-      trustedPath,
-      repositoryDir: sourcePath,
-      gitExecutable,
-    });
-    uncertain = true;
-    try {
-      validated = await sourceValidator.validatePublication({
-        base: candidate.base,
-        head: candidate.head,
-        publishedHead,
-        protectedPaths,
-      });
-    } catch {
-      return portError("unavailable", STATIC_PRESERVE_LOCAL);
     }
     if (!validated.ok) return validated;
     uncertain = false;
