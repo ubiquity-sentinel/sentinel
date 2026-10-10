@@ -2954,12 +2954,29 @@ async function recoverHostedMatrixProducer(
     // A missing current artifact is a completed timeout disposition: the
     // normal consumer records the host timeout, clears the intent and emits
     // `missing`, so it must not fail the maintenance pass after that write.
+    // "foreign", "binding_mismatch", and "absent" are expected when the owner
+    // works in parallel (manual PRs, rebased branches); they are benign and
+    // must not fail maintenance. Only "state_error" (repair state unavailable)
+    // is a real failure.
+    const benignDispositions = [
+      "ingested",
+      "duplicate",
+      "missing",
+      "foreign",
+      "binding_mismatch",
+      "absent",
+    ];
+    const badEntries = report.entries.filter(
+      (entry) => !benignDispositions.includes(entry.disposition),
+    );
     if (
-      report.entries.some((entry) =>
-        !["ingested", "duplicate", "missing"].includes(entry.disposition)
-      ) || report.entries.length !== cells.length
+      badEntries.length > 0 ||
+      report.entries.length !== cells.length
     ) {
-      throw new Error("current matrix ingestion incomplete");
+      const detail = badEntries.length > 0
+        ? `bad dispositions: ${badEntries.map((e) => `${e.cellId}:${e.disposition}`).join(", ")}`
+        : `entry count ${report.entries.length} != cell count ${cells.length}`;
+      throw new Error(`current matrix ingestion incomplete (${detail})`);
     }
     checkDeadline();
     ingested += report.ingested;
