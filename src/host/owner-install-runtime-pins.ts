@@ -227,6 +227,23 @@ export const OWNER_DEVELOPMENT_INSTALL_EARLY_FRAME_PRIOR_GENERATION = 72;
 export const OWNER_DEVELOPMENT_INSTALL_EARLY_FRAME_REVISION =
   "37c81e771cfedcf0b1e6b4cb70cbed04c8bb6e87" as GitSha;
 export const OWNER_DEVELOPMENT_INSTALL_EARLY_FRAME_GENERATION = 73;
+/**
+ * Mismatch-disposition rung: protected maintenance settles every evidenced
+ * historical runtime-mismatch quarantine into the retryable no-candidate
+ * class (the 2026-10-11 disposition wrote 36 records back into the retry
+ * path), and the consumption path runs the classified historical recovery
+ * instead of the generation-73 uncaught artifact-provenance refusal.
+ * Installed only after the recorded generation 73 healthy proof; a failed
+ * generation 74 candidate restores the recorded generation 73 revision once
+ * at monotonic generation 75.
+ */
+export const OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_PRIOR_REVISION =
+  "37c81e771cfedcf0b1e6b4cb70cbed04c8bb6e87" as GitSha;
+export const OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_PRIOR_GENERATION =
+  73;
+export const OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_REVISION =
+  "4baeaf67d9677a317bc37831486c075b143fe68f" as GitSha;
+export const OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_GENERATION = 74;
 /** Monotonic rollback target the failed generation 45 candidate rolled to. */
 export const OWNER_DEVELOPMENT_INSTALL_ROLLBACK_TARGET_GENERATION =
   OWNER_DEVELOPMENT_INSTALL_ASSIGN_FIRST_GENERATION + 2;
