@@ -6026,9 +6026,12 @@ Deno.test("historical malformed wave: actual maintenance entrypoint blocks prepa
 Deno.test("historical malformed wave: maintenance leaf diagnostic is secret-free and fail-closed", async () => {
   const f = await historicalMalformedRig(false, 1);
   const errors: string[] = [];
+  const logs: string[] = [];
   const originalError = console.error;
+  const originalLog = console.log;
   const readRepair = f.rig.state.readRepair;
   console.error = (value: unknown) => errors.push(String(value));
+  console.log = (value: unknown) => logs.push(String(value));
   try {
     f.setFault("auth");
     const before = await f.rig.state.readRepair();
@@ -6113,6 +6116,31 @@ Deno.test("historical malformed wave: maintenance leaf diagnostic is secret-free
     }
     assert.equal(nameReads, 1);
     assert.equal(messageReads, 1);
+    // Both maintenance log sinks must emit only fixed taxonomy categories and
+    // must never echo raw error text or payload content.
+    const SAFE_CATEGORIES = [
+      "historical_quarantine_incomplete",
+      "historical_matrix_recovery",
+      "current_matrix_ingestion",
+      "closed_c_maintenance",
+      "unexpected_error",
+    ];
+    const categoryLines = logs
+      .map((value) => JSON.parse(value))
+      .filter((line) =>
+        line.kind === "sentinel_autonomy_failure_detail" ||
+        line.kind === "sentinel_autonomy_deferred"
+      );
+    assert.ok(categoryLines.length >= 2);
+    for (const line of categoryLines) {
+      assert.ok(
+        typeof line.category === "string" &&
+          SAFE_CATEGORIES.includes(line.category),
+      );
+      assert.equal("detail" in line, false);
+      assert.equal("message" in line, false);
+    }
+    assert.doesNotMatch(logs.join("\n"), /private-token|private-response-body/);
     f.rig.state.readRepair = readRepair;
     assert.deepEqual(await f.rig.state.readRepair(), before);
     assert.deepEqual(await f.rig.state.readRelease(), releaseBefore);
@@ -6123,6 +6151,7 @@ Deno.test("historical malformed wave: maintenance leaf diagnostic is secret-free
   } finally {
     f.rig.state.readRepair = readRepair;
     console.error = originalError;
+    console.log = originalLog;
     await Deno.remove(f.rig.tmp, { recursive: true });
   }
 });
