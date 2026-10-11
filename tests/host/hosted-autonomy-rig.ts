@@ -22,8 +22,12 @@ import {
   createReleaseStateStore,
   createRepairStateStore,
 } from "../../src/state/mod.ts";
-import { runHostedAutonomy } from "../../ops/hosted-autonomy.ts";
+import {
+  runHostedAutonomy,
+  runHostedAutonomyMain,
+} from "../../ops/hosted-autonomy.ts";
 import type {
+  HostedAutonomyDepsV1,
   HostedAutonomyGitHubV1,
   HostedAutonomyPullV1,
   HostedAutonomyResultV1,
@@ -41,6 +45,45 @@ import {
   pullFacts,
   taskFor,
 } from "./hosted-autonomy-fixtures.ts";
+
+/** Capture the real protected main result while retaining its native checkout gate. */
+export async function captureHostedAutonomyMain(
+  deps: HostedAutonomyDepsV1,
+  head: string,
+): Promise<{ exit: number; result: HostedAutonomyResultV1 }> {
+  let result: HostedAutonomyResultV1 | null = null;
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    originalLog(...values);
+    if (typeof values[0] !== "string") return;
+    const parsed = JSON.parse(values[0]);
+    if (parsed.kind === "hosted_autonomy") result = parsed;
+  };
+  let exit: number;
+  try {
+    exit = await runHostedAutonomyMain({
+      env: {
+        GITHUB_REPOSITORY: "ubiquity/sentinel",
+        GITHUB_REF: "refs/heads/sentinel-supervisor",
+        GITHUB_JOB: "maintenance",
+        GITHUB_RUN_ID: "900",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_WORKFLOW_REF:
+          "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+        GITHUB_SHA: head,
+        GITHUB_WORKFLOW_SHA: head,
+        GITHUB_TOKEN: "offline-native-token",
+      },
+      deps,
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  if (result === null) {
+    throw new Error("native main must report its actual disposition");
+  }
+  return { exit, result };
+}
 
 export function repairSnapshot(
   records: WorkRecordV1[] = [deliveryRecord()],

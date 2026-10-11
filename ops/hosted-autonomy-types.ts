@@ -4,6 +4,7 @@ import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts"
 import type { ReviewTaskStatementV1 } from "../src/contracts/review-receipt.ts";
 import type { HistoricalMatrixQuarantineDepsV1 } from "../src/host/matrix-actions.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
+import type { MismatchDispositionObservationsV1 } from "./runtime-mismatch-recovery-disposition.ts";
 import type {
   RepairStateWriter,
   StateReadView,
@@ -16,6 +17,7 @@ export type HostedAutonomyReasonV1 =
   | "applied"
   | "no_change"
   | "retried"
+  | "dispositioned"
   | "no_authorizing_review"
   | "base_moved"
   | "checks_pending"
@@ -134,6 +136,9 @@ export interface HostedAutonomyGitHubV1 {
   listParkedRuns(head: string): Promise<number[]>;
   /** Approve one parked workflow run; true when the approval was accepted. */
   approveRun(id: number): Promise<boolean>;
+
+  /** Optional trusted effect evidence; absent means no disposition reads or writes. */
+  mismatchDisposition?: MismatchDispositionObservationsV1;
 
   /**
    * Optional self-observation capability. Present only where the deployment

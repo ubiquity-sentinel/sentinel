@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import type { GitSha } from "../../src/contracts/brands.ts";
+import type { GitSha, WorkItemId } from "../../src/contracts/brands.ts";
+import { deriveReservationId } from "../../src/budget/mod.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
@@ -12,7 +13,8 @@ import {
   runHostedAutonomy,
 } from "../../ops/hosted-autonomy.ts";
 import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
-import { SHA1, T0 } from "../state/helpers.ts";
+import { reservation, SHA1, T0 } from "../state/helpers.ts";
+import { MISMATCH_DISPOSITION_RETRYABLE_BLOCKER } from "../../ops/runtime-mismatch-recovery-disposition.ts";
 import {
   authorizingReceipt,
   BASE,
@@ -26,6 +28,162 @@ import {
 import { makeRig, repairSnapshot, run } from "./hosted-autonomy-rig.ts";
 
 const REF_IDENTITY_BLOCKER = "candidate branch ref identity mismatch";
+
+Deno.test("hosted autonomy: ref revalidation, mismatch disposition and retry preserve phase order", async () => {
+  const revalidated = await refIdentityBlockerRecord();
+  const mismatchId = "issue-ubiquity-sentinel-49" as WorkItemId;
+  const mismatchBranch = candidateBranch(mismatchId);
+  const reservationId = await deriveReservationId({
+    repository: SELF_REPO,
+    taskId: mismatchId,
+    head: BASE,
+    attempt: 1,
+    purpose: "retry",
+  });
+  const mismatch = blockedRecord({
+    id: mismatchId,
+    source: { kind: "issue", id: "49", revision: SHA1 },
+    related: { incidentId: null, issueNumber: 49 },
+    target: {
+      base: BASE,
+      branch: mismatchBranch,
+      checkpoint: null,
+      head: null,
+      pr: null,
+    },
+    counters: { attempts: 1, retries: 0, reviewRounds: 0 },
+    evidence: [],
+    blocker: {
+      kind: "other",
+      message:
+        "authenticated historical matrix runtime mismatch; producer=900:1; original admission retained",
+      since: T0 + 3000,
+    },
+    intent: {
+      kind: "implementation",
+      key: implementationIntentKey(reservationId),
+      startedAt: T0 + 1000,
+      branch: mismatchBranch,
+      expectedHead: null,
+      observedBase: BASE,
+      pr: null,
+      requestId: reservationId,
+      resultId: null,
+    },
+  });
+  const ordinary = blockedRecord({
+    id: "issue-ubiquity-sentinel-50",
+    source: { kind: "issue", id: "50", revision: SHA1 },
+    related: { incidentId: null, issueNumber: 50 },
+    target: {
+      base: BASE,
+      branch: "sentinel/repair/issue-ubiquity-sentinel-50",
+      checkpoint: null,
+      head: null,
+      pr: null,
+    },
+    evidence: [],
+  });
+  const charge = reservation(reservationId, {
+    repository: SELF_REPO,
+    taskId: mismatchId,
+    head: BASE,
+    purpose: "retry",
+  });
+  const { rig, github } = await makeRig("mismatch-phase-order", {
+    repair: repairSnapshot([revalidated, mismatch, ordinary], [], [], [charge]),
+    branchTip: (branch) => branch === candidateBranch(TARGET) ? HEAD : BASE,
+  });
+  const requests: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    assert.equal(url.origin, "https://api.github.com");
+    requests.push(url.pathname);
+    if (
+      url.pathname ===
+        `/repos/ubiquity/sentinel/git/ref/heads/${mismatchBranch}`
+    ) {
+      return Promise.resolve(new Response("null", { status: 404 }));
+    }
+    if (url.pathname === "/repos/ubiquity/sentinel/pulls") {
+      assert.equal(url.searchParams.get("head"), `ubiquity:${mismatchBranch}`);
+      return Promise.resolve(jsonResponse([]));
+    }
+    if (url.pathname === "/repos/ubiquity/sentinel/actions/runs/900") {
+      return Promise.resolve(jsonResponse({ status: "completed" }));
+    }
+    return Promise.reject(new Error("offline unexpected mismatch API path"));
+  };
+  github.mismatchDisposition = createHostedAutonomyGitHub(
+    "offline-native-token",
+    SELF_REPO,
+  ).mismatchDisposition;
+  const read = async () => {
+    const result = await rig.state.readRepair();
+    assert(result.ok && result.value.status === "found");
+    return result.value;
+  };
+  try {
+    const first = await run(rig, github);
+    assert.equal(first.reason, "applied", JSON.stringify(first));
+    assert.deepEqual(first.actions, [`revalidate:${TARGET}:cleared`]);
+    assert.deepEqual(
+      requests,
+      [],
+      "revalidation must return before mismatch reads",
+    );
+    assert.equal(rig.writes, 1);
+    const afterRevalidation = await read();
+    assert.deepEqual(afterRevalidation.snapshot.work[1], mismatch);
+    assert.deepEqual(afterRevalidation.snapshot.work[2], ordinary);
+    assert.deepEqual(afterRevalidation.snapshot.reservations, [charge]);
+
+    const second = await run(rig, github);
+    assert.deepEqual(requests, [
+      `/repos/ubiquity/sentinel/git/ref/heads/${mismatchBranch}`,
+      "/repos/ubiquity/sentinel/pulls",
+      "/repos/ubiquity/sentinel/actions/runs/900",
+    ]);
+    assert.equal(second.reason, "dispositioned", JSON.stringify(second));
+    assert.equal(second.beforeHead, afterRevalidation.head);
+    assert.equal(rig.writes, 2);
+    const afterDisposition = await read();
+    assert.equal(second.appliedHead, afterDisposition.head);
+    assert.equal(
+      afterDisposition.snapshot.reservations[0].outcome,
+      "ambiguous",
+    );
+    assert.equal(
+      afterDisposition.snapshot.work[1].blocker?.message,
+      MISMATCH_DISPOSITION_RETRYABLE_BLOCKER,
+    );
+    assert.deepEqual(afterDisposition.snapshot.work[1].intent, mismatch.intent);
+    assert.deepEqual(
+      afterDisposition.snapshot.work[2],
+      ordinary,
+      "disposition must return before retry effects",
+    );
+
+    const third = await run(rig, github);
+    assert.equal(third.reason, "retried", JSON.stringify(third));
+    assert.equal(rig.writes, 3);
+    const afterRetry = await read();
+    assert.equal(afterRetry.snapshot.work[2].nextStep, "work");
+    assert.deepEqual(
+      afterRetry.snapshot.reservations,
+      afterDisposition.snapshot.reservations,
+    );
+    assert.equal(
+      requests.length,
+      3,
+      "ordinary retry must not repeat mismatch observations",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
 
 /** The saved candidate descriptor one eligible blocked record must carry. */
 async function refIdentityCandidateState(

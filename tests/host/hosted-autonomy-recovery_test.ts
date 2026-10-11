@@ -7,6 +7,9 @@ Deno.test("current settled modern wave: failed receipt and real candidate recove
 Deno.test("prior ordinary history: newer healthy proof preserves failed result and real candidate recovery", () =>
   modernRecoveryScenario(true));
 
+Deno.test("native maintenance main: joined CAS expiry and custody drift retain failed applied-head accounting", () =>
+  modernRecoveryScenario(true, true));
+
 Deno.test("C63 historical recovery: exact evidenced cells settle through normal consumer before maintenance", () =>
   historicalC63Scenario(false));
 

@@ -13,6 +13,7 @@ import {
   validateIssue48QuotaHostedIdentity,
 } from "./issue48-review-quota-recovery.ts";
 import { runHostedAutonomy } from "./hosted-autonomy-runner.ts";
+import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 import {
   failed,
   HistoricalQuarantineIncomplete,
@@ -210,6 +211,16 @@ export async function runHostedAutonomyMain(input?: {
       }
     }
   } catch (error) {
+    if (error instanceof CurrentMatrixRecoveryIntegrityFailure) {
+      console.log(JSON.stringify({
+        kind: "sentinel_autonomy_failure_detail",
+        category: maintenanceFailureCategory(error),
+      }));
+      return report({
+        ...failed("unexpected_failure", error.beforeHead),
+        appliedHead: error.appliedHead,
+      });
+    }
     if (isDeferredCurrentMatrixHistoryBudget(error)) {
       // Availability, not integrity: the walk wrote nothing after its bound,
       // so report a bounded deferral and keep the maintenance job green.

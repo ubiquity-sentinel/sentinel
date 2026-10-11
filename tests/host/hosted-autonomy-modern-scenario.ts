@@ -26,14 +26,23 @@ import { portError, portOk } from "../../src/contracts/ports.ts";
 import { createReleaseStateStore } from "../../src/state/mod.ts";
 import {
   createHostedClosedMatrixRecovery,
+  isDeferredCurrentMatrixHistoryBudget,
   runHostedAutonomy,
+} from "../../ops/hosted-autonomy.ts";
+import type {
+  HostedAutonomyDepsV1,
+  HostedAutonomyResultV1,
 } from "../../ops/hosted-autonomy.ts";
 import { gitRun, makeRemoteCtx, T0 } from "../state/helpers.ts";
 import { BASE, ENV, SELF_REPO } from "./hosted-autonomy-fixtures.ts";
 import { historicalMalformedRig } from "./hosted-autonomy-historical-fixtures.ts";
 import { prepareModernHistory } from "./hosted-autonomy-modern-history-fixtures.ts";
+import { captureHostedAutonomyMain } from "./hosted-autonomy-rig.ts";
 
-export async function modernRecoveryScenario(history = false) {
+export async function modernRecoveryScenario(
+  history = false,
+  throughMain = false,
+) {
   const targetRoot = await Deno.makeTempDir({
     prefix: "sentinel-modern-target-",
     dir: decodeURIComponent(new URL("../../", import.meta.url).pathname),
@@ -248,11 +257,12 @@ export async function modernRecoveryScenario(history = false) {
     const continueCustody = Promise.withResolvers<void>();
     let nativeWriterProbe = false;
     let nativeWriterAttempted = false;
-    const run = async () => {
+    let mainExit: number | null = null;
+    const run = async (main = false): Promise<HostedAutonomyResultV1> => {
       const previous = Deno.cwd();
       Deno.chdir(f.checkout);
       try {
-        return await runHostedAutonomy({
+        const deps: HostedAutonomyDepsV1 = {
           state: f.rig.state,
           clock: f.clock,
           githubFor: f.rig.githubFor,
@@ -363,7 +373,12 @@ export async function modernRecoveryScenario(history = false) {
               },
             });
           },
-        });
+        };
+        if (!main) return await runHostedAutonomy(deps);
+        const head = await checked(f.checkout, ["rev-parse", "HEAD"]);
+        const captured = await captureHostedAutonomyMain(deps, head);
+        mainExit = captured.exit;
+        return captured.result;
       } finally {
         Deno.chdir(previous);
       }
@@ -536,17 +551,24 @@ export async function modernRecoveryScenario(history = false) {
     }
     const originalWrite = f.rig.state.writeRepair;
     let writesBeforeDrift = 0;
+    let writeAttempts = 0;
+    let actualAppliedHead: GitSha | null = null;
+    let actualWriteResult: unknown;
+    let partialError: unknown;
     const casEntered = Promise.withResolvers<void>();
     const continueCAS = Promise.withResolvers<void>();
     let partialRun: Promise<unknown> | null = null;
     f.rig.state.writeRepair = async (next, head) => {
+      writeAttempts++;
       if (history) {
         casEntered.resolve();
         await continueCAS.promise;
       }
       const written = await originalWrite(next, head);
+      actualWriteResult = written;
       if (written.ok && written.value.status === "applied") {
         writesBeforeDrift++;
+        actualAppliedHead = written.value.head;
         f.rig.state.readRelease = () =>
           Promise.resolve(
             portError("conflict", "offline partial custody drift"),
@@ -556,9 +578,9 @@ export async function modernRecoveryScenario(history = false) {
     };
     try {
       let finished = false;
-      const pending = run().then(() => {
+      const pending = run(throughMain).then((result) => {
         finished = true;
-        return null;
+        return throughMain ? result : null;
       }, (error: unknown) => {
         finished = true;
         return error;
@@ -582,6 +604,7 @@ export async function modernRecoveryScenario(history = false) {
         continueCAS.resolve();
       }
       const rejected = await pending;
+      partialError = rejected;
       if (history && writesBeforeDrift !== 1 && rejected instanceof Error) {
         console.error(
           JSON.stringify({
@@ -597,10 +620,12 @@ export async function modernRecoveryScenario(history = false) {
         1,
         "older ordinary results remain unconsumed after newer healthy proof replacement",
       );
-      assert(
-        rejected instanceof Error,
-        "partial settlement must refuse after custody drift",
-      );
+      if (!throughMain) {
+        assert(
+          rejected instanceof Error,
+          "partial settlement must refuse after custody drift",
+        );
+      }
     } finally {
       continueCAS.resolve();
       if (partialRun) await partialRun;
@@ -618,14 +643,51 @@ export async function modernRecoveryScenario(history = false) {
       );
     }
     assert.equal(writesBeforeDrift, 1);
+    assert.equal(
+      writeAttempts,
+      1,
+      "custody drift must prevent later native writes",
+    );
     const partial = await f.rig.state.readRepair();
     assert(partial.ok && partial.value.status === "found");
+    assert.equal(partial.value.head, actualAppliedHead);
     assert.deepEqual(partial.value.snapshot.work, before.value.snapshot.work);
     const partialCharge = partial.value.snapshot.reservations.find((row) =>
       row.id === f.cells[0].reservationId
     )!;
     assert.equal(partialCharge.outcome, "ambiguous");
     assert.notEqual(partialCharge.settledAt, null);
+    const originalCharge = before.value.snapshot.reservations.find((row) =>
+      row.id === partialCharge.id
+    )!;
+    assert.deepEqual({
+      ...partialCharge,
+      outcome: originalCharge.outcome,
+      settledAt: originalCharge.settledAt,
+    }, originalCharge);
+    if (throughMain) {
+      assert.equal(mainExit, 1, "applied custody failure must not exit green");
+      const reported = partialError as HostedAutonomyResultV1;
+      assert.equal(reported.status, "failed");
+      assert.equal(reported.reason, "unexpected_failure");
+      assert.equal(reported.beforeHead, before.value.head);
+      assert.equal(reported.appliedHead, partial.value.head);
+      assert.deepEqual(reported.actions, []);
+    } else {
+      assert(partialError instanceof Error);
+      assert.match(
+        partialError.message,
+        /^current matrix (release custody|producer ancestry) changed$/,
+        "joined partial CAS must reject custody drift, not clock expiry",
+      );
+      assert.equal(isDeferredCurrentMatrixHistoryBudget(partialError), false);
+      assert("beforeHead" in partialError);
+      assert("appliedHead" in partialError);
+      assert("writeResult" in partialError);
+      assert.equal(partialError.beforeHead, before.value.head);
+      assert.equal(partialError.appliedHead, partial.value.head);
+      assert.deepEqual(partialError.writeResult, actualWriteResult);
+    }
     f.clock.now = () => T0 + 61_000;
     const result = await run();
     assert.equal(result.status, "applied", JSON.stringify(result));

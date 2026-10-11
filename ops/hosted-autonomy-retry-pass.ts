@@ -14,6 +14,7 @@ import {
 } from "./hosted-autonomy-retries.ts";
 import { hostedIssueKey, sameRepository } from "./hosted-autonomy-policy.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
+import { runHostedMismatchDispositionPass } from "./hosted-autonomy-mismatch-pass.ts";
 import {
   applyCandidateRefRevalidations,
   candidateRefRevalidation,
@@ -22,6 +23,7 @@ import {
 
 export async function runHostedRetryPass(
   context: HostedAutonomyPassContextV1,
+  releaseHead: string,
 ): Promise<HostedAutonomyResultV1 | null> {
   const { deps, actions, revisions, scopeFor, readTip, readPull } = context;
   let { snapshot, observedHead } = context;
@@ -106,6 +108,12 @@ export async function runHostedRetryPass(
       revisions,
     };
   }
+
+  const disposition = await runHostedMismatchDispositionPass(
+    context,
+    releaseHead,
+  );
+  if (disposition !== null) return disposition;
 
   // ---- retry pass ---------------------------------------------------------
   // A task whose pull request is already merged or closed is delivered or

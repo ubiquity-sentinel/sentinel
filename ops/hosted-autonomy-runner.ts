@@ -63,7 +63,7 @@ export async function runHostedAutonomy(
     foreignMerged: new Map(),
     ...scopes,
   };
-  const retried = await runHostedRetryPass(context);
+  const retried = await runHostedRetryPass(context, releaseRead.value.head);
   if (retried !== null) return retried;
   const delivered = await runHostedDeliveryPass(context);
   if (delivered !== null) return delivered;

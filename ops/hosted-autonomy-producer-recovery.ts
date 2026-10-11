@@ -9,8 +9,10 @@ import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import { implementationIntentKey } from "../src/repair/keys.ts";
 import type {
+  PortResultV1,
   RepairStateWriter,
   StateReadView,
+  StateWriteResultV1,
 } from "../src/contracts/ports.ts";
 import { CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE } from "./hosted-autonomy-policy.ts";
 import type {
@@ -18,6 +20,18 @@ import type {
   HostedAutonomyResultV1,
 } from "./hosted-autonomy-types.ts";
 import { HISTORICAL_RECOVERY_PROVIDERS } from "./hosted-autonomy-matrix-bindings.ts";
+
+export class CurrentMatrixRecoveryIntegrityFailure extends Error {
+  constructor(
+    message: string,
+    readonly beforeHead: GitSha,
+    readonly appliedHead: GitSha | null,
+    readonly writeResult: PortResultV1<StateWriteResultV1> | null,
+  ) {
+    super(message);
+    this.name = "CurrentMatrixRecoveryIntegrityFailure";
+  }
+}
 
 export async function recoverHostedMatrixProducer(
   deps: HostedAutonomyDepsV1,
@@ -57,12 +71,10 @@ export async function recoverHostedMatrixProducer(
       !["accepted", "rolled_back", "cancelled"].includes(row.phase)
     )
   ) throw new Error("current matrix producer custody unavailable");
-  const custody = async () => {
-    if (deps.clock.now() >= deadlineAt) {
-      throw new Error(CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE);
-    }
+  const custody = async (bounded = true) => {
+    if (bounded) checkDeadline();
     const fresh = await deps.state.readRelease();
-    checkDeadline();
+    if (bounded) checkDeadline();
     if (
       !fresh.ok || fresh.value.status !== "found" ||
       fresh.value.head !== current.head ||
@@ -72,12 +84,12 @@ export async function recoverHostedMatrixProducer(
       throw new Error("current matrix release custody changed");
     }
     if (producer.head !== current.head) {
-      checkDeadline();
+      if (bounded) checkDeadline();
       const prior = await deps.state.readReleaseAt?.({
         commit: producer.head,
         expectedHead: current.head,
       });
-      checkDeadline();
+      if (bounded) checkDeadline();
       if (
         !prior?.ok || prior.value.status !== "found" ||
         prior.value.head !== producer.head ||
@@ -86,13 +98,42 @@ export async function recoverHostedMatrixProducer(
       ) throw new Error("current matrix producer ancestry changed");
     }
   };
+  let integrityFailure: CurrentMatrixRecoveryIntegrityFailure | null = null;
+  let appliedHead: GitSha | null = null;
   const state: StateReadView & RepairStateWriter = {
     readRepair: () => deps.state.readRepair(),
     readRelease: () => deps.state.readRelease(),
     writeRepair: async (next, expectedHead) => {
+      if (integrityFailure !== null) throw integrityFailure;
       await custody();
       checkDeadline();
-      return await deps.state.writeRepair(next, expectedHead);
+      let written: PortResultV1<StateWriteResultV1> | null = null;
+      let writeError: unknown;
+      try {
+        written = await deps.state.writeRepair(next, expectedHead);
+      } catch (error) {
+        writeError = error;
+      }
+      if (written?.ok && written.value.status === "applied") {
+        appliedHead = written.value.head;
+      }
+      try {
+        await custody(false);
+      } catch (error) {
+        integrityFailure = new CurrentMatrixRecoveryIntegrityFailure(
+          error instanceof Error &&
+            /^current matrix (release custody|producer ancestry) changed$/
+              .test(error.message)
+            ? error.message
+            : "current matrix producer custody unavailable",
+          before.head,
+          appliedHead,
+          written,
+        );
+        throw integrityFailure;
+      }
+      if (written === null) throw writeError;
+      return written;
     },
   };
   // Native reads, cooldown, budget and consumer writes all use this SAME
@@ -268,7 +309,10 @@ export async function recoverHostedMatrixProducer(
         expectedProvider: HISTORICAL_RECOVERY_PROVIDERS,
         bundleImporter: ports.importerFor(config, wave.bundlesDir),
       },
-    );
+    ).catch((error: unknown) => {
+      throw integrityFailure ?? error;
+    });
+    if (integrityFailure !== null) throw integrityFailure;
     // A missing current artifact is a completed timeout disposition: the
     // normal consumer records the host timeout, clears the intent and emits
     // `missing`, so it must not fail the maintenance pass after that write.

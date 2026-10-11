@@ -4,6 +4,7 @@ import {
 } from "../src/contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { HOSTED_AUTONOMY_REQUIRED_CHECK } from "./hosted-autonomy-policy.ts";
+import { createHostedMismatchDispositionObservations } from "./hosted-autonomy-mismatch-github.ts";
 import type {
   HostedAutonomyGitHubV1,
   HostedAutonomyPullV1,
@@ -136,6 +137,10 @@ export function createHostedAutonomyGitHub(
   }
 
   return {
+    mismatchDisposition: createHostedMismatchDispositionObservations(
+      token,
+      repository,
+    ),
     async readDefaultBranch() {
       const repo = await request("GET", `/repos/${scope}`);
       if (repo === null || typeof repo !== "object") return null;
