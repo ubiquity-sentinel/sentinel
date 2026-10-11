@@ -146,6 +146,12 @@ import {
 import { HostedRepairCooldownGate } from "../src/host/hosted-cooldown.ts";
 import { parseCooldownModeV1 } from "../src/contracts/cooldown-mode.ts";
 import {
+  MISMATCH_DISPOSITION_BLOCKER_PREFIX,
+  MISMATCH_DISPOSITION_MAX_PER_RUN,
+  runMismatchDispositionPassV1,
+  type MismatchDispositionObservationsV1,
+} from "./runtime-mismatch-recovery-disposition.ts";
+import {
   createActionsMatrixArtifactHttpTransport,
   createActionsMatrixArtifactTransport,
 } from "../src/host/matrix-artifacts.ts";
@@ -455,6 +461,7 @@ export type HostedAutonomyReasonV1 =
   | "applied"
   | "no_change"
   | "retried"
+  | "dispositioned"
   | "no_authorizing_review"
   | "base_moved"
   | "checks_pending"
@@ -574,6 +581,12 @@ export interface HostedAutonomyGitHubV1 {
   /** Approve one parked workflow run; true when the approval was accepted. */
   approveRun(id: number): Promise<boolean>;
 
+  /**
+   * Optional trusted effect-evidence capability for runtime-mismatch
+   * disposition. Present only on the protected maintenance host; absent means
+   * the pass performs no reads and no writes and behaves exactly as before.
+   */
+  mismatchDisposition?: MismatchDispositionObservationsV1;
   /**
    * Optional self-observation capability. Present only where the deployment
    * may read its own Actions history and file defects into its own tracker.
@@ -3413,6 +3426,77 @@ export async function runHostedAutonomy(
     };
   }
 
+  // ---- runtime-mismatch disposition pass ----------------------------------
+  // A record blocked only by an authenticated historical matrix runtime
+  // mismatch has no proven effect. When its OWN repository surface proves the
+  // repair ref absent, no pull on that branch and a terminal producer run, the
+  // accepted admission charge is settled ambiguous (charged, never refunded
+  // from absence) and the blocker becomes the retryable no-candidate class the
+  // ordinary retry pass owns on the next maintenance run. Every unreadable or
+  // present fact retains the record untouched with a bounded reason, and the
+  // whole batch is one expected-head write with a canonical readback.
+  const mismatchObservations = new Map<
+    string,
+    MismatchDispositionObservationsV1 | null
+  >();
+  for (const record of snapshot.work) {
+    if (record.nextStep !== "blocked") continue;
+    if (
+      record.blocker === null ||
+      !record.blocker.message.startsWith(MISMATCH_DISPOSITION_BLOCKER_PREFIX)
+    ) continue;
+    const key = hostedRepositoryKey(record.repository);
+    if (mismatchObservations.has(key)) continue;
+    const scope = await scopeFor(record.repository);
+    mismatchObservations.set(
+      key,
+      scope.surface?.mismatchDisposition ?? null,
+    );
+  }
+  const mismatchCapabilityPresent = [...mismatchObservations.values()].some(
+    (value) => value !== null,
+  );
+  if (mismatchCapabilityPresent) {
+    const disposition = await runMismatchDispositionPassV1({
+      snapshot,
+      head: observedHead as GitSha,
+      release: releaseRead.value.snapshot,
+      expectedReleaseHead: releaseRead.value.head as GitSha | null,
+      observationsFor: (record) =>
+        mismatchObservations.get(hostedRepositoryKey(record.repository)) ??
+          null,
+      now: deps.clock.now(),
+      state: deps.state,
+      limit: MISMATCH_DISPOSITION_MAX_PER_RUN,
+    });
+    if (disposition.kind === "applied") {
+      for (const id of disposition.applied) {
+        actions.push(`disposition:${id}:ambiguous+retryable`);
+      }
+      for (const row of disposition.retained) {
+        actions.push(`disposition:${row.id}:retained:${row.reason}`);
+      }
+      return {
+        kind: "hosted_autonomy",
+        status: "applied",
+        reason: "dispositioned",
+        beforeHead: initial.value.head,
+        appliedHead: disposition.head,
+        actions,
+        revisions,
+      };
+    }
+    if (disposition.kind === "failed") {
+      return failed(disposition.reason, observedHead, actions);
+    }
+    if (disposition.kind === "skipped") {
+      return skipped(disposition.reason, observedHead, actions);
+    }
+    for (const row of disposition.retained) {
+      actions.push(`disposition:${row.id}:retained:${row.reason}`);
+    }
+  }
+
   // ---- retry pass ---------------------------------------------------------
   // A task whose pull request is already merged or closed is delivered or
   // abandoned: retrying it would only spend model starts on a branch that can
@@ -4554,6 +4638,85 @@ export function createHostedAutonomyGitHub(
       );
       if (closed === null || typeof closed !== "object") return false;
       return (closed as Record<string, unknown>)["state"] === "closed";
+    },
+    mismatchDisposition: {
+      async readRefAbsent(ref: string) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+        try {
+          const response = await fetch(
+            `${API_BASE}/repos/${scope}/git/ref/${
+              ref.replace(/^refs\//, "")
+            }`,
+            {
+              method: "GET",
+              headers: {
+                authorization: `Bearer ${token}`,
+                accept: "application/vnd.github+json",
+                "user-agent": "sentinel-hosted-autonomy",
+              },
+              signal: controller.signal,
+            },
+          );
+          // Only an exact 404 PROVES absence; any other failure is unreadable.
+          if (response.status === 404) return true;
+          if (response.status < 200 || response.status >= 300) return null;
+          const text = await response.text();
+          if (text.length > MAX_RESPONSE_BYTES) return null;
+          const parsed = JSON.parse(text) as unknown;
+          if (typeof parsed !== "object" || parsed === null) return null;
+          const objectRef = (parsed as Record<string, unknown>)["ref"];
+          return typeof objectRef === "string" ? false : null;
+        } catch {
+          return null;
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+      async listPullsByHead(branch: string) {
+        const pulls = await request(
+          "GET",
+          `/repos/${scope}/pulls?state=all&head=${
+            encodeURIComponent(`${repository.owner}:${branch}`)
+          }&per_page=100`,
+        );
+        if (!Array.isArray(pulls)) return null;
+        // A full page is not a proven complete listing; refuse it.
+        if (pulls.length >= 100) return null;
+        const parsed: {
+          number: number;
+          state: string;
+          head: string | null;
+        }[] = [];
+        for (const item of pulls) {
+          if (typeof item !== "object" || item === null) return null;
+          const obj = item as Record<string, unknown>;
+          const number = Number(obj["number"]);
+          const state = obj["state"];
+          if (!Number.isSafeInteger(number) || number <= 0) return null;
+          if (typeof state !== "string") return null;
+          const head = obj["head"];
+          const headRef = typeof head === "object" && head !== null
+            ? (head as Record<string, unknown>)["ref"]
+            : null;
+          parsed.push({
+            number,
+            state,
+            head: typeof headRef === "string" ? headRef : null,
+          });
+        }
+        return parsed;
+      },
+      async readRunTerminal(runId: number) {
+        const run = await request(
+          "GET",
+          `/repos/${scope}/actions/runs/${runId}`,
+        );
+        if (run === null || typeof run !== "object") return null;
+        const status = (run as Record<string, unknown>)["status"];
+        if (typeof status !== "string") return null;
+        return status === "completed";
+      },
     },
     selfObservation: {
       async listRuns(input: { sinceIso: string; limit: number }) {
