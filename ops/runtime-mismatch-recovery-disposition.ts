@@ -91,6 +91,15 @@ export async function collectMismatchDispositionCandidatesV1(input: {
   readonly observationsFor: (
     record: WorkRecordV1,
   ) => MismatchDispositionObservationsV1 | null;
+  /**
+   * Producer workflow runs live in the self (sentinel) repository, not in the
+   * target repository whose refs and pulls the record surface proves. The
+   * caller supplies the self surface's terminal read; a missing capability
+   * retains the record untouched.
+   */
+  readonly producerTerminal: (
+    runId: number,
+  ) => Promise<boolean | null>;
   readonly limit?: number;
 }): Promise<MismatchDispositionCandidatesV1> {
   const limit = Math.max(
@@ -116,7 +125,7 @@ export async function collectMismatchDispositionCandidatesV1(input: {
     };
     const intent = record.intent;
     if (intent === null || intent.kind !== "implementation") {
-      retain("missing implementation intent");
+      retain("intent is not an implementation start");
       continue;
     }
     if (!intent.key.startsWith("impl:")) {
@@ -197,7 +206,7 @@ export async function collectMismatchDispositionCandidatesV1(input: {
       retain("pull observations present");
       continue;
     }
-    const terminal = await observations.readRunTerminal(producerRun);
+    const terminal = await input.producerTerminal(producerRun);
     if (terminal === null) {
       retain("producer run unreadable");
       continue;
@@ -365,6 +374,9 @@ export async function runMismatchDispositionPassV1(input: {
   readonly observationsFor: (
     record: WorkRecordV1,
   ) => MismatchDispositionObservationsV1 | null;
+  readonly producerTerminal: (
+    runId: number,
+  ) => Promise<boolean | null>;
   readonly now: number;
   readonly state: Pick<StateReadView, "readRepair"> & RepairStateWriter;
   readonly limit?: number;
@@ -378,6 +390,7 @@ export async function runMismatchDispositionPassV1(input: {
   const candidates = await collectMismatchDispositionCandidatesV1({
     snapshot: input.snapshot,
     observationsFor: input.observationsFor,
+    producerTerminal: input.producerTerminal,
     limit: input.limit,
   });
   if (candidates.bindings.length === 0) {

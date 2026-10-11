@@ -3456,7 +3456,12 @@ export async function runHostedAutonomy(
   const mismatchCapabilityPresent = [...mismatchObservations.values()].some(
     (value) => value !== null,
   );
-  if (mismatchCapabilityPresent) {
+  // Producer runs belong to the SELF repository, so the terminal read comes
+  // from the self surface, never from the target record's surface.
+  const mismatchProducer = await scopeFor(HOSTED_AUTONOMY_SELF_SCOPE);
+  const producerTerminal =
+    mismatchProducer.surface?.mismatchDisposition?.readRunTerminal ?? null;
+  if (mismatchCapabilityPresent && producerTerminal !== null) {
     const disposition = await runMismatchDispositionPassV1({
       snapshot,
       head: observedHead as GitSha,
@@ -3465,6 +3470,7 @@ export async function runHostedAutonomy(
       observationsFor: (record) =>
         mismatchObservations.get(hostedRepositoryKey(record.repository)) ??
           null,
+      producerTerminal,
       now: deps.clock.now(),
       state: deps.state,
       limit: MISMATCH_DISPOSITION_MAX_PER_RUN,
