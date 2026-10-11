@@ -2979,6 +2979,25 @@ async function recoverHostedMatrixProducer(
         : `entry count ${report.entries.length} != cell count ${cells.length}`;
       throw new Error(`current matrix ingestion incomplete (${detail})`);
     }
+    // Non-silent accounting for owner-parallel disposals: tolerated
+    // dispositions are still counted and reported with fixed keys only.
+    const benignCounts = {
+      foreign: report.entries.filter((e) => e.disposition === "foreign").length,
+      binding_mismatch:
+        report.entries.filter((e) => e.disposition === "binding_mismatch")
+          .length,
+      absent: report.entries.filter((e) => e.disposition === "absent").length,
+    };
+    if (
+      benignCounts.foreign + benignCounts.binding_mismatch +
+        benignCounts.absent > 0
+    ) {
+      console.log(JSON.stringify({
+        kind: "sentinel_matrix_ingest_benign",
+        waveId: wave.plan.waveId,
+        ...benignCounts,
+      }));
+    }
     checkDeadline();
     ingested += report.ingested;
   }
@@ -4884,23 +4903,12 @@ export async function runHostedAutonomyMain(input?: {
       };
       return report(result);
     }
-    // Bounded diagnostic: only this codebase's own failure vocabulary is
-    // echoed, so an external payload can never reach the log.
-    if (error instanceof Error) {
-      const message = typeof error.message === "string" ? error.message : "";
-      if (
-        message.length <= 200 &&
-        /^(historical matrix|current matrix|C maintenance|closed-c matrix)/
-          .test(
-            message,
-          )
-      ) {
-        console.log(JSON.stringify({
-          kind: "sentinel_autonomy_failure_detail",
-          detail: message,
-        }));
-      }
-    }
+    // Bounded diagnostic: only a fixed category code from this codebase's
+    // own failure taxonomy is echoed; no raw error text can reach the log.
+    console.log(JSON.stringify({
+      kind: "sentinel_autonomy_failure_detail",
+      category: maintenanceFailureCategory(error),
+    }));
     if (error instanceof HistoricalQuarantineIncomplete) {
       return report(failed("historical_quarantine_incomplete", null));
     }
@@ -4913,16 +4921,54 @@ export async function runHostedAutonomyMain(input?: {
       actions: ["maintenance:deferred_unexpected_error"],
       revisions: [],
     };
-    // Self-healing: log the deferral for observability.
-    // The bot never crashes on unexpected errors; it defers and retries.
-    const errorDetail = error instanceof Error ? error.message.slice(0, 200) : "unknown";
+    // Self-healing: log the deferral for observability. Only the fixed
+    // category code is emitted; raw error text is never logged.
     console.log(JSON.stringify({
       kind: "sentinel_autonomy_deferred",
       reason: "unexpected_error_deferred",
-      detail: errorDetail,
+      category: maintenanceFailureCategory(error),
     }));
   }
   return report(result);
+}
+
+/** Fixed safe categories for maintenance failure logging; never raw text. */
+export type MaintenanceFailureCategoryV1 =
+  | "historical_quarantine_incomplete"
+  | "historical_matrix_recovery"
+  | "current_matrix_ingestion"
+  | "closed_c_maintenance"
+  | "unexpected_error";
+
+/** Map any thrown maintenance error to one fixed, payload-free category. */
+function maintenanceFailureCategory(
+  error: unknown,
+): MaintenanceFailureCategoryV1 {
+  if (error instanceof HistoricalQuarantineIncomplete) {
+    return "historical_quarantine_incomplete";
+  }
+  if (error instanceof Error) {
+    let message: unknown;
+    try {
+      message = error.message;
+    } catch {
+      return "unexpected_error";
+    }
+    if (typeof message !== "string") return "unexpected_error";
+    if (message.startsWith("historical matrix")) {
+      return "historical_matrix_recovery";
+    }
+    if (message.startsWith("current matrix")) {
+      return "current_matrix_ingestion";
+    }
+    if (
+      message.startsWith("C maintenance") ||
+      message.startsWith("closed-c matrix")
+    ) {
+      return "closed_c_maintenance";
+    }
+  }
+  return "unexpected_error";
 }
 
 /** The two reasons that mean the helper itself could not run safely. */
