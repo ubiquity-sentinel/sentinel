@@ -846,3 +846,87 @@ Deno.test(
     assert.equal(dispositionComplete.status, "no_change");
   },
 );
+
+Deno.test(
+  "owner development install plan: generation 75 mismatch-disposition retry installs only after the once-only generation 74 rollback",
+  () => {
+    const earlyFrameHealthy = healthyProof(
+      EARLY_FRAME_RUNTIME_REVISION,
+      73,
+      201,
+    );
+
+    // The consumed first candidate rolled back to the generation 72
+    // revision at monotonic generation 74; that exact pointer installs the
+    // retry rung at generation 75.
+    const retryInstall = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: STACKED_MERGE_RUNTIME_REVISION,
+          generation: 74,
+          healthyProof: earlyFrameHealthy,
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(retryInstall.status, "install");
+    if (retryInstall.status !== "install") {
+      throw new Error("expected install");
+    }
+    assert.equal(
+      retryInstall.move.priorRevision,
+      STACKED_MERGE_RUNTIME_REVISION,
+    );
+    assert.equal(retryInstall.move.priorGeneration, 74);
+    assert.equal(
+      retryInstall.move.nextRevision,
+      MISMATCH_DISPOSITION_RUNTIME_REVISION,
+    );
+    assert.equal(retryInstall.move.nextGeneration, 75);
+    assert.equal(
+      canonicalStringify(retryInstall.move.priorHealthyProof),
+      canonicalStringify(earlyFrameHealthy),
+    );
+
+    // A failed generation 75 restores the recorded generation 73 revision
+    // once at monotonic generation 76.
+    const retryRollback = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: MISMATCH_DISPOSITION_RUNTIME_REVISION,
+          generation: 75,
+          healthyProof: earlyFrameHealthy,
+          executionProof: failedProof(
+            MISMATCH_DISPOSITION_RUNTIME_REVISION,
+            75,
+            202,
+          ),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(retryRollback.status, "rollback");
+    if (retryRollback.status !== "rollback") {
+      throw new Error("expected rollback");
+    }
+    assert.equal(retryRollback.move.nextRevision, EARLY_FRAME_RUNTIME_REVISION);
+    assert.equal(retryRollback.move.nextGeneration, 76);
+
+    // A healthy generation 75 completes the chain.
+    const retryComplete = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: MISMATCH_DISPOSITION_RUNTIME_REVISION,
+          generation: 75,
+          healthyProof: healthyProof(
+            MISMATCH_DISPOSITION_RUNTIME_REVISION,
+            75,
+            203,
+          ),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(retryComplete.status, "no_change");
+  },
+);

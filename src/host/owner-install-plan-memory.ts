@@ -18,6 +18,10 @@ import {
   OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_PRIOR_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_PRIOR_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_GENERATION,
+  OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_GENERATION,
+  OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_REVISION,
   OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_REVISION,
   OWNER_DEVELOPMENT_INSTALL_STACKED_MERGE_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_STACKED_MERGE_PRIOR_GENERATION,
@@ -136,6 +140,69 @@ export function planOwnerInstallMemory(
     }
     return waiting(
       "the mismatch-disposition generation 74 healthy proof is not recorded",
+    );
+  }
+
+  // Mismatch-disposition retry rung: the FIRST candidate consumed a real
+  // generation 73 failure, so the guard rolled exactly once to the recorded
+  // generation 72 revision at monotonic generation 74. Only that exact
+  // rollback target installs the second candidate, gated on the recorded
+  // generation 73 healthy proof.
+  if (
+    revision === OWNER_DEVELOPMENT_INSTALL_STACKED_MERGE_REVISION &&
+    generation === OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_GENERATION
+  ) {
+    const prior = healthyProofFor(
+      runtime,
+      OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_REVISION,
+      OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_GENERATION,
+    );
+    if (prior === null) {
+      return waiting(
+        "the recorded generation 73 healthy proof for the retry rung is unavailable",
+      );
+    }
+    return movePlan(
+      "install",
+      runtime,
+      OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_REVISION,
+      OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_GENERATION,
+      prior,
+      "install the mismatch-disposition retry runtime after the recorded generation 73 healthy proof",
+    );
+  }
+
+  if (
+    revision ===
+      OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_REVISION &&
+    generation ===
+      OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_GENERATION
+  ) {
+    if (failed !== null) {
+      const prior = healthyProofFor(
+        runtime,
+        OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_REVISION,
+        OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_GENERATION,
+      );
+      if (prior === null) {
+        return waiting(
+          "the recorded generation 73 healthy proof for the rollback is unavailable",
+        );
+      }
+      return movePlan(
+        "rollback",
+        runtime,
+        OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_REVISION,
+        runtime.generation + 1,
+        prior,
+        "roll back the failed mismatch-disposition retry runtime to its recorded proven predecessor",
+      );
+    }
+    if (healthy !== null) {
+      return noChange("the owner development installation is complete");
+    }
+    return waiting(
+      "the mismatch-disposition retry generation 75 healthy proof is not recorded",
     );
   }
 
