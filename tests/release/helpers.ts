@@ -3,17 +3,13 @@
 // and real temporary Git state fixtures. No production state branch is
 // created anywhere; every write targets disposable local bare repositories.
 import assert from "node:assert/strict";
-
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
-import type { Clock } from "../../src/contracts/ports.ts";
 import type { DeploymentIdentityV1 } from "../../src/contracts/shared.ts";
-import type { StabilityPolicyV1 } from "../../src/contracts/repository-config.ts";
 import type { ReleaseRequestV1 } from "../../src/contracts/release.ts";
 import { parseReleaseRequestV1 } from "../../src/contracts/release.ts";
 import { GitStateStore } from "../../src/state/mod.ts";
 import type { GitRunnerV1 } from "../../src/state/mod.ts";
-import type { ReleaseTargetConfigV1 } from "../../src/release/config.ts";
 import type {
   BuildReceiptLookupV1,
   BuildReceiptResolverV1,
@@ -31,414 +27,33 @@ import {
   T0,
   testGitEnv,
 } from "../state/helpers.ts";
+import { DEP_0, DEP_1, PROJECT_ID } from "./helpers-config.ts";
+import type { ScriptedTransport } from "./helpers-transport.ts";
+export {
+  API_URL,
+  BODY_MARKER,
+  CUSTOM_URL,
+  DEP_0,
+  DEP_1,
+  DEP_X,
+  GIT_SHA_HEADER,
+  HEALTH_HEADERS,
+  immutableUrl,
+  MANAGED_URL,
+  PROJECT_ID,
+  REVISION_HEADER,
+  stabilityPolicy,
+  targetConfig,
+  TestClock,
+} from "./helpers-config.ts";
+export {
+  type RouteCallV1,
+  type RouteResponseV1,
+  type RouteV1,
+  ScriptedTransport,
+} from "./helpers-transport.ts";
 
 export { releaseRequest, REPO, SHA1, SHA2, T0 };
-
-export const DEP_0: DeploymentIdentityV1 = {
-  gitSha: SHA2,
-  revisionId: "dep-0000",
-};
-export const DEP_1: DeploymentIdentityV1 = {
-  gitSha: SHA1,
-  revisionId: "dep-0001",
-};
-export const DEP_X: DeploymentIdentityV1 = {
-  gitSha: "1111111111111111111111111111111111111111" as GitSha,
-  revisionId: "dep-0009",
-};
-
-/**
- * Public synthetic Deno managed host used by every fixture: the actual
- * two-label shape `<project>.<organization>.deno.net`, so the trusted
- * immutable hostname form (`<first-label>-<revisionId>` plus the rest of the
- * configured hostname) is exercised exactly as production derives it. No
- * generic-host fallback exists in the port.
- */
-export const MANAGED_URL = "https://ai-ubq-fi.ubiquity-dao.deno.net";
-export const CUSTOM_URL = "https://ai.ubq.fi";
-export const API_URL = "https://api.deno.com";
-export const PROJECT_ID = "project-ubq";
-export const HEALTH_HEADERS = {
-  "cache-control": "no-store",
-} as const;
-export const BODY_MARKER = '"status":"available"';
-export const GIT_SHA_HEADER = "x-uos-git-sha";
-export const REVISION_HEADER = "x-uos-deployment-id";
-
-/** Immutable managed base URL for one exact revision (test-side mirror). */
-export function immutableUrl(revisionId: string): string {
-  const managed = new URL(MANAGED_URL);
-  const hostname = managed.hostname;
-  const firstLabel = hostname.slice(0, hostname.indexOf("."));
-  return `https://${firstLabel}-${revisionId}${
-    hostname.slice(firstLabel.length)
-  }`;
-}
-
-export function targetConfig(
-  overrides: Partial<ReleaseTargetConfigV1> = {},
-): ReleaseTargetConfigV1 {
-  return {
-    projectId: PROJECT_ID,
-    apiBaseUrl: API_URL,
-    managedBaseUrl: MANAGED_URL,
-    customBaseUrl: CUSTOM_URL,
-    acceptance: {
-      healthPath: "/health",
-      metricsPath: "/health",
-      managedBodyMarker: BODY_MARKER,
-      managedHeaders: [],
-      domain: "ai.ubq.fi",
-    },
-    identityHeaders: {
-      gitSha: GIT_SHA_HEADER,
-      revisionId: REVISION_HEADER,
-    },
-    timeoutFailureKinds: ["upstream_timeout"],
-    upstreamWideFailureKinds: ["upstream_error", "empty_upstream_completion"],
-    logsLagMs: 5_000,
-    ...overrides,
-  };
-}
-
-export function stabilityPolicy(
-  overrides: Partial<StabilityPolicyV1> = {},
-): StabilityPolicyV1 {
-  return {
-    windowMs: 30 * 60 * 1000,
-    sampleIntervalMs: 30 * 1000,
-    minSamples: 60,
-    minRequests: 50,
-    baselineWindowMs: 30 * 60 * 1000,
-    baselineMinSamples: 60,
-    thresholds: [
-      {
-        metric: "five_xx_rate",
-        maxRate: 0.02,
-        maxIncrease: 0.01,
-      },
-      {
-        metric: "timeout_rate",
-        maxRate: 0.01,
-        maxIncrease: 0.01,
-      },
-      {
-        metric: "stream_failure_rate",
-        maxRate: 0.01,
-        maxIncrease: 0.01,
-      },
-    ],
-    ...overrides,
-  };
-}
-
-/** Deterministic test clock; the controller only advances by explicit ticks. */
-export class TestClock implements Clock {
-  private current = T0;
-
-  constructor(start = T0) {
-    this.current = start;
-  }
-
-  now(): number {
-    return this.current;
-  }
-
-  at(ms: number): void {
-    this.current = ms;
-  }
-
-  advance(ms: number): void {
-    this.current += ms;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Scripted transport.
-// ---------------------------------------------------------------------------
-
-export interface RouteCallV1 {
-  method: string;
-  host: string;
-  pathname: string;
-  search: string;
-  authorization: string | null;
-}
-
-export type RouteResponseV1 =
-  | {
-    kind: "response";
-    status: number;
-    headers?: Record<string, string>;
-    body?: string;
-  }
-  | { kind: "reject" };
-
-export interface RouteV1 {
-  method: string;
-  /** Exact pathname, or a RegExp.source string starting with "^". */
-  pathname: string;
-  respond: (url: URL) => RouteResponseV1 | Promise<RouteResponseV1>;
-}
-
-/**
- * Stateful scripted transport: routes by method + pathname; queries and the
- * mutable deployed state are visible to route handlers. Every call is
- * recorded (method/path/query/authz) so tests can prove exactly which effects
- * were attempted and how often.
- */
-export class ScriptedTransport {
-  readonly calls: RouteCallV1[] = [];
-  /** Exact identity currently served by the managed/custom domains. */
-  deployed: DeploymentIdentityV1 = DEP_0;
-  /** Mutable per-test behavior. */
-  customStatus: number = 200;
-  /**
-   * When true, a 403 custom response carries the full identified Cloudflare
-   * challenge header set (server: cloudflare, cf-mitigated: challenge,
-   * cf-ray); when false it is a bare origin 403.
-   */
-  customCloudflare: boolean = false;
-  /** Custom-domain transport failure (the probe is unobservable). */
-  customReject: boolean = false;
-  /** Managed health 200 with valid identity headers but a missing body marker. */
-  managedBodyMissing: boolean = false;
-  /**
-   * Per-call managed STABLE health identities: when non-empty each probe
-   * serves the next entry (the last one repeats), so a moving deployment can
-   * be scripted deterministically.
-   */
-  managedIdentitySequence: DeploymentIdentityV1[] = [];
-  private managedSequenceCursor = 0;
-  /**
-   * Exact identity served by the immutable managed host for one revision id.
-   * Lookup order: this map first, then the revisions installed by
-   * `installREST` (which are registered there).
-   */
-  immutableIdentities: Map<string, DeploymentIdentityV1> = new Map();
-  /**
-   * Per-request override for one immutable health probe. Receives the looked
-   * up identity (null when unknown) and returns a raw response or null to use
-   * the default identity body/headers. Enables body/header discrepancy and
-   * wrong-identity scripting.
-   */
-  immutableHealth:
-    | ((identity: DeploymentIdentityV1 | null) => RouteResponseV1 | null)
-    | null = null;
-  /**
-   * Per-request override for one managed STABLE health probe. Receives the
-   * identity that would be served and returns a raw response or null to use
-   * the default body/headers. Enables body/header discrepancy and malformed
-   * identity scripting on the stable host.
-   */
-  managedHealth:
-    | ((identity: DeploymentIdentityV1) => RouteResponseV1 | null)
-    | null = null;
-  identityOverride: DeploymentIdentityV1 | null = null;
-  customIdentityOverride: DeploymentIdentityV1 | null = null;
-  /** When true, the logs endpoint rejects (transport failure). */
-  logsReject: boolean = false;
-  /** Known succeeded revisions (set by installREST); used by promote routes. */
-  revisions: DeploymentIdentityV1[] = [];
-  private routes: RouteV1[] = [];
-
-  constructor(readonly config: ReleaseTargetConfigV1 = targetConfig()) {}
-
-  route(entry: RouteV1): this {
-    this.routes.push(entry);
-    return this;
-  }
-
-  any(method: string, pattern: RegExp, respond: RouteV1["respond"]): this {
-    this.routes.push({ method, pathname: pattern.source, respond });
-    return this;
-  }
-
-  private identity(): DeploymentIdentityV1 {
-    return this.identityOverride ?? this.deployed;
-  }
-
-  /** Managed-domain health: 200 + exact body marker + identity headers. */
-  health(path = "/health"): this {
-    const managedBase = new URL(this.config.managedBaseUrl);
-    const customBase = this.config.customBaseUrl === null
-      ? null
-      : new URL(this.config.customBaseUrl);
-    if (customBase !== null) {
-      this.any(
-        "GET",
-        new RegExp(
-          `^${escapeRegExp(customBase.href.slice(0, -1))}${
-            escapeRegExp(path)
-          }$`,
-        ),
-        () => this.customHealthResponse(),
-      );
-    }
-    this.any(
-      "GET",
-      new RegExp(
-        `^${escapeRegExp(managedBase.href.slice(0, -1))}${escapeRegExp(path)}$`,
-      ),
-      () => {
-        const sequence = this.managedIdentitySequence.length > 0
-          ? this.managedIdentitySequence[
-            Math.min(
-              this.managedSequenceCursor,
-              this.managedIdentitySequence.length - 1,
-            )
-          ]
-          : null;
-        this.managedSequenceCursor++;
-        const effective = sequence ?? this.identity();
-        const override = this.managedHealth?.(effective);
-        if (override !== null && override !== undefined) return override;
-        return this.identityHealthResponse(200, effective);
-      },
-    );
-    // Immutable managed hostname for one exact revision:
-    // <first-label>-<revisionId> + the REST of the configured managed hostname
-    // (the actual two-label shape keeps the `<organization>.deno.net` suffix).
-    // The looked-up identity is the immutableIdentities map entry or the
-    // installed revision. The suffix is derived from the configured trusted
-    // host, never hardcoded to a single-label form.
-    const managedHostName = managedBase.hostname;
-    const firstLabel = managedHostName.slice(
-      0,
-      managedHostName.indexOf("."),
-    );
-    const managedSuffix = managedHostName.slice(firstLabel.length);
-    this.any(
-      "GET",
-      new RegExp(
-        `^https://${escapeRegExp(firstLabel)}-[A-Za-z0-9_-]+${
-          escapeRegExp(managedSuffix)
-        }${escapeRegExp(path)}$`,
-      ),
-      (url) => {
-        const hostname = url.hostname;
-        const revisionId = hostname.slice(
-          firstLabel.length + 1,
-          hostname.length - managedSuffix.length,
-        );
-        const identity = this.immutableIdentities.get(revisionId) ??
-          this.revisions.find((entry) => entry.revisionId === revisionId) ??
-          null;
-        const override = this.immutableHealth?.(identity);
-        if (override !== null && override !== undefined) return override;
-        if (identity === null) return { kind: "reject" };
-        return this.identityHealthResponse(200, identity);
-      },
-    );
-    return this;
-  }
-
-  private customHealthResponse(): RouteResponseV1 {
-    if (this.customReject) return { kind: "reject" };
-    if (this.customStatus !== 200) {
-      return {
-        kind: "response",
-        status: this.customStatus,
-        headers: this.customStatus === 403 && this.customCloudflare
-          ? {
-            server: "cloudflare",
-            "cf-mitigated": "challenge",
-            "cf-ray": "abc123",
-          }
-          : {},
-        body: "Forbidden",
-      };
-    }
-    return this.identityHealthResponse(
-      200,
-      this.customIdentityOverride ?? this.identity(),
-    );
-  }
-
-  private identityHealthResponse(
-    status: number,
-    forced: DeploymentIdentityV1 | null = null,
-  ): RouteResponseV1 {
-    const identity = forced ?? this.identity();
-    return {
-      kind: "response",
-      status,
-      headers: {
-        ...HEALTH_HEADERS,
-        [GIT_SHA_HEADER]: identity.gitSha,
-        [REVISION_HEADER]: identity.revisionId,
-      },
-      body: this.managedBodyMissing
-        ? `{"status":"maintenance","release":{"git_sha":"${identity.gitSha}","deployment_id":"${identity.revisionId}"}}`
-        : `{"status":"available","release":{"git_sha":"${identity.gitSha}","deployment_id":"${identity.revisionId}"}}`,
-    };
-  }
-
-  /** Raw body override for a single pathname (e.g. malformed responses). */
-  raw(pathname: string, method: string, respond: RouteV1["respond"]): this {
-    this.routes.push({ method, pathname, respond });
-    return this;
-  }
-
-  /** Reject (transport failure) for one method+pathname. */
-  reject(method: string, pattern: RegExp): this {
-    this.routes.push({
-      method,
-      pathname: pattern.source,
-      respond: () => ({ kind: "reject" }),
-    });
-    return this;
-  }
-
-  private resolveRoute(method: string, pathname: string): RouteV1 | null {
-    // Last registration wins: an override route replaces an earlier one.
-    for (let i = this.routes.length - 1; i >= 0; i--) {
-      const route = this.routes[i];
-      if (route.method !== method) continue;
-      if (route.pathname.startsWith("^")) {
-        if (new RegExp(route.pathname).test(pathname)) return route;
-      } else if (route.pathname === pathname) {
-        return route;
-      }
-    }
-    return null;
-  }
-
-  callCount(method: string, pathnameRegex: RegExp): number {
-    return this.calls.filter((call) =>
-      call.method === method && pathnameRegex.test(call.pathname)
-    ).length;
-  }
-
-  async fetch(
-    input: string | URL | Request,
-    init?: RequestInit,
-  ): Promise<Response> {
-    const url = new URL(typeof input === "string" ? input : input.toString());
-    const method = init?.method ?? "GET";
-    const headers = new Headers(init?.headers ?? {});
-    this.calls.push({
-      method,
-      host: url.host,
-      pathname: url.pathname,
-      search: url.search,
-      authorization: headers.get("authorization"),
-    });
-    const route = this.resolveRoute(method, url.pathname) ??
-      this.resolveRoute(method, url.href);
-    if (route === null) {
-      throw new Error(`unexpected transport call: ${method} ${url.pathname}`);
-    }
-    const outcome = await route.respond(url);
-    if (outcome.kind === "reject") {
-      throw new Error("synthetic transport failure");
-    }
-    return new Response(outcome.body ?? null, {
-      status: outcome.status,
-      headers: outcome.headers ?? {},
-    });
-  }
-}
 
 export const REVISIONS_PATH = `/v2/apps/${PROJECT_ID}/revisions`;
 export const PROMOTE_RE = /^\/v2\/revisions\/([^/]+)\/promote$/;
@@ -539,10 +154,6 @@ export function promoteRoute(
  * the effect (flips the deployed identity) and returns 204. Additional routes
  * (health, logs) are registered by the caller.
  */
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 export interface LogEventV1 {
   requestId: string;
   status?: number;
