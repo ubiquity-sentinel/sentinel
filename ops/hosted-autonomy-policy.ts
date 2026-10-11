@@ -1,0 +1,238 @@
+import { HISTORICAL_NOT_STARTED_DETAIL } from "../src/host/matrix-actions.ts";
+import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
+import type { HostedAutonomyRecordV1 } from "./hosted-autonomy-types.ts";
+
+/**
+ * The one hosted self scope: the no-App owner credential identity that owns
+ * this repository, its `development` base branch, its named deterministic
+ * check and the trusted release path. Every other identity is a foreign target
+ * and is handled entirely under its OWN repository surface.
+ */
+export const HOSTED_AUTONOMY_SELF_SCOPE: RepositoryIdentityV1 = {
+  owner: "ubiquity",
+  name: "sentinel",
+  installationId: 0,
+};
+
+/** True only for the sentinel self scope, the one identity with named checks. */
+export function isHostedSelf(repository: RepositoryIdentityV1): boolean {
+  return repository.installationId ===
+      HOSTED_AUTONOMY_SELF_SCOPE.installationId &&
+    repository.owner === HOSTED_AUTONOMY_SELF_SCOPE.owner &&
+    repository.name === HOSTED_AUTONOMY_SELF_SCOPE.name;
+}
+
+/** Exact repository identity equality, installation scope included. */
+export function sameRepository(
+  left: RepositoryIdentityV1,
+  right: RepositoryIdentityV1,
+): boolean {
+  return left.installationId === right.installationId &&
+    left.owner === right.owner && left.name === right.name;
+}
+
+/**
+ * Stable repository scope key. This is the separator that makes every planning
+ * identity repository-scoped: two repositories may both have an issue 120 and
+ * they must never be confused.
+ */
+export function hostedRepositoryKey(
+  repository: RepositoryIdentityV1,
+): string {
+  return `${repository.installationId}:${repository.owner}/${repository.name}`;
+}
+
+/** One issue identity: the pair (repository, issue number), never a number. */
+export function hostedIssueKey(
+  repository: RepositoryIdentityV1,
+  issueNumber: number,
+): string {
+  return `${hostedRepositoryKey(repository)}#${issueNumber}`;
+}
+
+/** One delivery identity: repository, pull request, head and base. */
+export function hostedDeliveryKey(
+  repository: RepositoryIdentityV1,
+  pullRequest: number,
+  head: string,
+  base: string,
+): string {
+  return `${hostedRepositoryKey(repository)}:${pullRequest}:${head}:${base}`;
+}
+
+/**
+ * Delivery eligibility. The ordinary path is the runtime's own `review` and
+ * `delivery` steps. A record parked in `work` or `blocked` is also eligible
+ * once it has spent every review round: the runtime advances to a correction
+ * round for ANY unresolved finding (its `advanceToCorrection` predicate is
+ * stricter than the documented "no unresolved P0/P1 → delivery" rule and than
+ * the trusted acceptance gate), and without a review round left that
+ * correction can never become a reviewed verdict. The receipt in hand is then
+ * the only honest basis for delivery, and P2/P3 findings stay future work. No
+ * other parked step is ever delivered.
+ */
+export function deliveryEligible(record: HostedAutonomyRecordV1): boolean {
+  if (record.nextStep === "review" || record.nextStep === "delivery") {
+    return true;
+  }
+  if (record.nextStep !== "work" && record.nextStep !== "blocked") {
+    return false;
+  }
+  return record.counters.reviewRounds >= HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS;
+}
+
+/** The base branch every reviewed candidate must be integrated into. */
+export const HOSTED_AUTONOMY_BASE_BRANCH = "development";
+
+/** The deterministic check the merge requires on the exact reviewed head. */
+export const HOSTED_AUTONOMY_REQUIRED_CHECK = "test-local";
+
+/**
+ * Bound on automatic retry grants per task, counted in the task's durable
+ * reservations: every reservation for the task counts, whatever its purpose or
+ * outcome, including one still `reserved`. A reservation is the charge the
+ * runtime persists before any model start, so this unit cannot be reset,
+ * refunded away or left uncharged by this pass; the preserved `retries` counter
+ * is history and is never incremented or reset here. A transient provider
+ * outage must never permanently kill a task, and a single task must never loop
+ * cheaply either: the retry only ever runs inside an execution, and executions
+ * are hourly unless a release or a health gap starts one, so the cadence itself
+ * is the rate limit. (An earlier 30-minute blocker cooldown also gated retries
+ * that carry a fresh reservation identity, which merely wedged tasks that were
+ * otherwise recoverable.)
+ */
+export const HOSTED_AUTONOMY_MAX_RETRIES = 200;
+
+/** The runtime's own implementation-attempt ceiling. */
+export const HOSTED_AUTONOMY_MAX_IMPLEMENTATION_ATTEMPTS = 4;
+
+/**
+ * The runtime's own review-round ceiling. A record that has spent every review
+ * round can never turn another correction into a reviewed verdict, so the only
+ * remaining delivery path is the receipt it already holds.
+ */
+export const HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS = 3;
+
+/**
+ * Static blocker message for a record whose source issue no longer exists. It
+ * deliberately matches none of the retryable prefixes, so the retry pass never
+ * revives it.
+ */
+export const HOSTED_AUTONOMY_RETIRED =
+  "source issue is closed; the repair no longer exists";
+
+/**
+ * The trusted publication identity of autonomously repaired pull requests
+ * before the App migration. Kept as the single legacy login for callers that
+ * still name it.
+ */
+export const HOSTED_AUTONOMY_TRUSTED_AUTHOR = "github-actions[bot]";
+/** The sentinel App bot identity that now authors repaired pull requests. */
+export const HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR = "ubiquity-sentinel[bot]";
+/**
+ * The same fixed sentinel App identity (App 4682172, bot user 319834869) is
+ * the ONLY reviewer that may authorize issue-backed delivery at the persisted
+ * receipt boundary: `authorizingReceipt` pins
+ * `HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR` as the receipt's exact reviewer, so a
+ * self-consistent receipt naming any other reviewer never authorizes. Legacy
+ * receipts keep parsing; they simply refuse as new authorization.
+ */
+/**
+ * Bounded transition set: a pull request published by a runtime at an older
+ * installed revision is authored by `github-actions[bot]`, one published after
+ * this migration by `ubiquity-sentinel[bot]`. This dual acceptance is a scoped
+ * transition rule; remove the old login after the first app-authored delivery
+ * is observed.
+ */
+export const HOSTED_AUTONOMY_TRUSTED_AUTHORS: readonly string[] = [
+  HOSTED_AUTONOMY_TRUSTED_AUTHOR,
+  "ubiquity-sentinel[bot]",
+];
+
+/**
+ * The exact transient blockers the retry pass may clear, with the step the
+ * record returns to. A blocker outside this closed set is never touched.
+ *
+ * The two review classes are the runtime's own transient review outcomes: a
+ * review whose durable admission was settled while its operation intent was
+ * lost (re-entry on the same identity is the runtime's terminal "settled
+ * without an intent" contradiction), and the legacy bounded no-verdict review
+ * wait. Both return to `review`, where the runtime rehydrates its standing
+ * review before any new charge and continues inside its own round allowance.
+ */
+export const HOSTED_AUTONOMY_RETRYABLE: readonly {
+  readonly prefix: string;
+  readonly nextStep: "work" | "review";
+}[] = [
+  {
+    prefix: "model run ended without a trusted receipt",
+    nextStep: "work",
+  },
+  {
+    // A cell whose model run failed on infrastructure ("model run failed
+    // (unavailable)", "(bundle)", ...) is the runtime's own transient class:
+    // the durable attempt memory bounds equivalent outcomes and owns the
+    // six-hour decay window. Without this entry the classified transient
+    // decay could never fire, because the record stayed blocked forever
+    // (twelve such records had been parked since 2026-10-04).
+    prefix: "model run failed (",
+    nextStep: "work",
+  },
+  {
+    // A cell that never started because the run's own session window closed
+    // ("past the model cutoff or no longer fits the run bounds") proves
+    // nothing about the task: the next run has a fresh window. Five records
+    // were parked on this scheduling refusal since 2026-10-05.
+    prefix:
+      "implementation start is past the model cutoff or no longer fits the run bounds",
+    nextStep: "work",
+  },
+  {
+    prefix: "model run did not complete with a trusted candidate",
+    nextStep: "work",
+  },
+  {
+    // A truthfully proven historical not-started admission is resolved
+    // uncertainty, not a model outcome: the existing retry authority still
+    // owns whether a fresh eligible start follows, under its own attempt
+    // ceiling, durable reservation identity, source and closed-issue gates.
+    prefix: HISTORICAL_NOT_STARTED_DETAIL,
+    nextStep: "work",
+  },
+  {
+    prefix: "implementation attempt budget exhausted",
+    nextStep: "work",
+  },
+  {
+    prefix: "review rounds exhausted without an accepted verdict",
+    nextStep: "review",
+  },
+  {
+    prefix: "review produced no verdict within the bounded review wait",
+    nextStep: "review",
+  },
+  {
+    prefix: "review admission already settled without an intent",
+    nextStep: "review",
+  },
+  {
+    prefix: "model admission refused: duplicate",
+    nextStep: "work",
+  },
+];
+
+/**
+ * Exact bounded message the current-matrix history walk throws when its scan
+ * budget is exhausted. The walk itself stays fail-closed (nothing is written
+ * after the bound); the hosted entry point classifies this exact availability
+ * condition as a deferred, non-fatal result so one oversized history walk can
+ * never fail the maintenance job and skip prepare, matrix_plan and delivery.
+ */
+export const CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE =
+  "current matrix history deadline exhausted";
+
+/** True when a thrown autonomy error is that bounded availability condition. */
+export function isDeferredCurrentMatrixHistoryBudget(error: unknown): boolean {
+  return error instanceof Error &&
+    error.message === CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE;
+}

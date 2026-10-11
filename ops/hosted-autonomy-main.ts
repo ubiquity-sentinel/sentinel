@@ -1,0 +1,312 @@
+import {
+  createMatrixUncertaintyMaintenance,
+  runMatrixUncertaintyMaintenance,
+} from "../src/host/matrix-uncertainty-maintenance.ts";
+import { parseRepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
+import { buildMemoryLessonsV1 } from "../src/repair/memory-lessons.ts";
+import { githubGitAuthEnv } from "../src/host/local.ts";
+import { createRepairStateStore, DenoGitRunner } from "../src/state/mod.ts";
+import type { StateReadView } from "../src/contracts/ports.ts";
+import {
+  ISSUE48_QUOTA_REMOTE_URL,
+  validateIssue48QuotaHostedIdentity,
+} from "./issue48-review-quota-recovery.ts";
+import { runHostedAutonomy } from "./hosted-autonomy-runner.ts";
+import {
+  failed,
+  HistoricalQuarantineIncomplete,
+  isHardAutonomyFailure,
+  maintenanceFailureCategory,
+} from "./hosted-autonomy-state.ts";
+import { createHostedAutonomyGitHub } from "./hosted-autonomy-github.ts";
+import {
+  CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE,
+  hostedRepositoryKey,
+  isDeferredCurrentMatrixHistoryBudget,
+} from "./hosted-autonomy-policy.ts";
+import type {
+  HostedAutonomyDepsV1,
+  HostedAutonomyGitHubV1,
+  HostedAutonomyResultV1,
+} from "./hosted-autonomy-types.ts";
+import {
+  createHostedClosedMatrixRecovery,
+  createHostedHistoricalMatrixQuarantine,
+} from "./hosted-autonomy-matrix-adapters.ts";
+
+export const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
+
+/** Hosted entry point: identity first, then the two bounded passes. */
+/** Bounded read-only learning digest emitted by the live maintenance entry. */
+export async function emitMemoryDigest(state: StateReadView): Promise<void> {
+  try {
+    const read = await state.readRepair();
+    if (!read.ok || read.value.status !== "found") return;
+    const snapshot = parseRepairStateSnapshotV1(read.value.snapshot);
+    const lessons = await buildMemoryLessonsV1(snapshot, Date.now());
+    let refused = 0;
+    let regressions = 0;
+    let resolved = 0;
+    for (const record of lessons) {
+      for (const entry of record.entries) {
+        if (entry.refused) refused++;
+        if (entry.regression) regressions++;
+        if (entry.resolved) resolved++;
+      }
+    }
+    // Version-control awareness: name the exact older working revision of
+    // each currently failing family (bounded, closed fields only), so the
+    // rollback/restore signal is actionable for an operator instead of only
+    // a count. Advisory: the installer chain remains the only rollback
+    // authority.
+    const versioned: {
+      taskId: string;
+      detail: string;
+      priorSuccessRevision: string;
+      failuresAtCurrentRevision: number;
+    }[] = [];
+    for (const memory of snapshot.attemptMemory) {
+      const successRevision = memory.lastSuccessRevision ?? null;
+      const successAt = memory.lastSuccessAtMs ?? null;
+      if (successRevision === null || successAt === null) continue;
+      for (const entry of memory.entries) {
+        if (entry.controllerSha === successRevision) continue;
+        if (entry.lastAtMs <= successAt) continue;
+        versioned.push({
+          taskId: String(memory.taskId),
+          detail: entry.detail,
+          priorSuccessRevision: successRevision,
+          failuresAtCurrentRevision: entry.count,
+        });
+      }
+    }
+    versioned.sort((left, right) =>
+      right.failuresAtCurrentRevision - left.failuresAtCurrentRevision
+    );
+    console.log(JSON.stringify({
+      kind: "sentinel_memory_digest",
+      records: snapshot.attemptMemory.length,
+      refused,
+      regressions,
+      resolved,
+      versionedRegressions: versioned.slice(0, 5),
+    }));
+  } catch {
+    // Advisory only; never blocks the pass.
+  }
+}
+
+export async function runHostedAutonomyMain(input?: {
+  /** Trusted in-process test transport; native checkout identity remains mandatory. */
+  env: Readonly<Record<string, string | undefined>>;
+  deps: HostedAutonomyDepsV1;
+}): Promise<number> {
+  const env = (key: string) =>
+    input === undefined ? readEnv(key) : input.env[key] ?? null;
+  const facts = await readCheckoutFacts();
+  const validated = validateIssue48QuotaHostedIdentity({
+    repository: env("GITHUB_REPOSITORY"),
+    ref: env("GITHUB_REF"),
+    job: env("GITHUB_JOB"),
+    runId: env("GITHUB_RUN_ID"),
+    runAttempt: env("GITHUB_RUN_ATTEMPT"),
+    workflowRef: env("GITHUB_WORKFLOW_REF"),
+    sha: env("GITHUB_SHA"),
+    workflowSha: env("GITHUB_WORKFLOW_SHA"),
+    checkoutHead: facts.head,
+    checkoutClean: facts.clean,
+  });
+  if (!validated.ok) return report(failed("identity_rejected", null));
+  // Split by purpose, mirroring the hosted runtime: the scoped sentinel App
+  // token authenticates every repository-visible code-change op (merge, issue
+  // closure, CI approval) so it is attributed to ubiquity-sentinel[bot], while
+  // the native Actions token keeps owning the state refs it has always owned.
+  const stateToken = env("GITHUB_TOKEN");
+  const apiToken = env("SENTINEL_SUPERVISOR_TOKEN") ?? stateToken;
+  if (
+    stateToken === null || stateToken.length === 0 ||
+    apiToken === null || apiToken.length === 0
+  ) {
+    return report(failed("identity_rejected", null));
+  }
+  let result: HostedAutonomyResultV1;
+  try {
+    if (input) {
+      result = await runHostedAutonomy(input.deps);
+    } else {
+      const scratch = `${Deno.cwd()}/.hosted-autonomy`;
+      Deno.mkdirSync(scratch, { recursive: true, mode: 0o700 });
+      const runner = new DenoGitRunner(
+        `${scratch}/git-home`,
+        githubGitAuthEnv(stateToken),
+      );
+      const state = createRepairStateStore({
+        scratchDir: `${scratch}/state`,
+        remoteUrl: ISSUE48_QUOTA_REMOTE_URL,
+        runner,
+      });
+      // Live learning visibility: emit a bounded digest of durable memory
+      // before the pass, so operators can see what Sentinel has learned
+      // (refused replays, resolved families, versioned regressions). Advisory
+      // only: a digest failure never blocks the maintenance pass.
+      await emitMemoryDigest(state);
+      // One surface per exact repository identity: the durable snapshot may
+      // carry work for several repositories, and each record is delivered under
+      // its OWN repository, never under the self repository.
+      const surfaces = new Map<string, HostedAutonomyGitHubV1>();
+      const githubFor = (
+        repository: RepositoryIdentityV1,
+      ): HostedAutonomyGitHubV1 => {
+        const key = hostedRepositoryKey(repository);
+        const cached = surfaces.get(key);
+        if (cached !== undefined) return cached;
+        const created = createHostedAutonomyGitHub(apiToken, repository);
+        surfaces.set(key, created);
+        return created;
+      };
+      const artifactRoot = await Deno.makeTempDir({
+        prefix: "sentinel-maintenance-matrix-",
+      });
+      try {
+        result = await runHostedAutonomy({
+          state,
+          githubFor,
+          clock: { now: () => Date.now() },
+          uncertainMatrix: () =>
+            runMatrixUncertaintyMaintenance(createMatrixUncertaintyMaintenance({
+              state,
+              clock: { now: () => Date.now() },
+              token: stateToken,
+              artifactRoot,
+            })),
+          closedMatrix: (guardedState = state) =>
+            createHostedClosedMatrixRecovery({
+              state: guardedState,
+              clock: { now: () => Date.now() },
+              token: stateToken,
+              apiToken,
+              sourceDir: Deno.cwd(),
+              scratch,
+              artifactRoot,
+              appInstallationId: env("SENTINEL_APP_INSTALLATION_ID") ??
+                undefined,
+              cooldownMode: env("SENTINEL_COOLDOWN_MODE") ?? undefined,
+            }),
+          historicalMatrix: createHostedHistoricalMatrixQuarantine({
+            state,
+            clock: { now: () => Date.now() },
+            token: stateToken,
+            artifactRoot,
+            cooldownMode: env("SENTINEL_COOLDOWN_MODE") ?? undefined,
+            // The trusted production maintenance route is the one caller that
+            // revalidates already-quarantined records against authenticated
+            // not-started evidence.
+            revalidateNotStarted: true,
+          }),
+        });
+      } finally {
+        await Deno.remove(artifactRoot, { recursive: true });
+      }
+    }
+  } catch (error) {
+    if (isDeferredCurrentMatrixHistoryBudget(error)) {
+      // Availability, not integrity: the walk wrote nothing after its bound,
+      // so report a bounded deferral and keep the maintenance job green.
+      console.log(JSON.stringify({
+        kind: "sentinel_current_matrix_deferred",
+        detail: CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE,
+      }));
+      result = {
+        kind: "hosted_autonomy",
+        status: "skipped",
+        reason: "deferred_matrix_history_budget",
+        beforeHead: null,
+        appliedHead: null,
+        actions: ["matrix-history:deferred"],
+        revisions: [],
+      };
+      return report(result);
+    }
+    // Bounded diagnostic: only a fixed category code from this codebase's
+    // own failure taxonomy is echoed; no raw error text can reach the log.
+    console.log(JSON.stringify({
+      kind: "sentinel_autonomy_failure_detail",
+      category: maintenanceFailureCategory(error),
+    }));
+    if (error instanceof HistoricalQuarantineIncomplete) {
+      return report(failed("historical_quarantine_incomplete", null));
+    }
+    result = {
+      kind: "hosted_autonomy",
+      status: "skipped",
+      reason: "deferred_unexpected_error",
+      beforeHead: null,
+      appliedHead: null,
+      actions: ["maintenance:deferred_unexpected_error"],
+      revisions: [],
+    };
+    // Self-healing: log the deferral for observability. Only the fixed
+    // category code is emitted; raw error text is never logged.
+    console.log(JSON.stringify({
+      kind: "sentinel_autonomy_deferred",
+      reason: "unexpected_error_deferred",
+      category: maintenanceFailureCategory(error),
+    }));
+  }
+  return report(result);
+}
+
+export function report(result: HostedAutonomyResultV1): number {
+  console.log(JSON.stringify(result));
+  return isHardAutonomyFailure(result.reason) ? 1 : 0;
+}
+
+export function readEnv(key: string): string | null {
+  try {
+    return Deno.env.get(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function readCheckoutFacts(): Promise<
+  { head: string | null; clean: boolean }
+> {
+  const env: Record<string, string> = {
+    PATH: readEnv("PATH") ?? "/usr/bin:/bin",
+    HOME: readEnv("HOME") ?? "/tmp",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_TERMINAL_PROMPT: "0",
+  };
+  try {
+    const cwd = Deno.cwd();
+    const head = await new Deno.Command("git", {
+      args: ["rev-parse", "HEAD"],
+      cwd,
+      clearEnv: true,
+      env,
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    const headSha = head.success
+      ? new TextDecoder().decode(head.stdout).trim()
+      : "";
+    const status = await new Deno.Command("git", {
+      args: ["status", "--porcelain"],
+      cwd,
+      clearEnv: true,
+      env,
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    return {
+      head: GIT_SHA_PATTERN.test(headSha) ? headSha : null,
+      clean: status.success &&
+        new TextDecoder().decode(status.stdout).trim() === "",
+    };
+  } catch {
+    return { head: null, clean: false };
+  }
+}
