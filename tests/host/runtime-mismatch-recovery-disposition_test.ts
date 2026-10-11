@@ -364,6 +364,7 @@ Deno.test("disposition apply settles the charge ambiguous and installs the retry
   const applied = applyMismatchDispositionPlanV1({
     snapshot: f.snapshot,
     plan,
+    head: SHA1 as never,
     now: T0 + 5,
   });
   assert.equal(applied.ok, true);
@@ -378,6 +379,7 @@ Deno.test("disposition apply settles the charge ambiguous and installs the retry
   assert.equal(row.proofRef, null);
   assert.equal(applied.snapshot.sequence, f.snapshot.sequence + 1);
   assert.equal(applied.snapshot.updatedAt, T0 + 5);
+  assert.equal(applied.snapshot.stateHead, SHA1);
   assert.deepEqual(applied.applied, [f.recordId]);
 });
 
@@ -406,12 +408,14 @@ Deno.test("disposition apply refuses a changed record, settled charge or empty p
   const empty = applyMismatchDispositionPlanV1({
     snapshot: f.snapshot,
     plan: { ok: true, proposals: [] },
+    head: SHA1 as never,
     now: T0 + 5,
   });
   assert.equal(empty.ok, false);
   const settled = applyMismatchDispositionPlanV1({
     snapshot: f.snapshot,
     plan: { ok: true, proposals: [proposal] },
+    head: SHA1 as never,
     now: T0 - 1,
   });
   assert.equal(settled.ok, false);
@@ -421,6 +425,7 @@ Deno.test("disposition apply refuses a changed record, settled charge or empty p
       work: [{ ...f.snapshot.work[0]!, nextStep: "work" as const }],
     },
     plan: { ok: true, proposals: [proposal] },
+    head: SHA1 as never,
     now: T0 + 5,
   });
   assert.equal(changed.ok, false);
