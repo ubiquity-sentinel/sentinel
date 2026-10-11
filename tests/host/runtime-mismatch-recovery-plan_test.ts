@@ -338,6 +338,9 @@ Deno.test("planner refuses wrong installation scope", async () => {
 
 Deno.test("planner refuses selected reservation B when intent names A", async () => {
   const { input } = await baselineInput();
+  // A distinct attempt yields a genuinely different reservation identity; the
+  // record's intent still names A, so the plan must refuse before any
+  // reservation or digest comparison can accept B.
   const otherId = await deriveReservationId({
     repository: {
       owner: "ubiquity",
@@ -346,12 +349,16 @@ Deno.test("planner refuses selected reservation B when intent names A", async ()
     },
     taskId: WORK_ID as never,
     head: SHA1 as never,
-    attempt: 1,
+    attempt: 2,
     purpose: "retry",
   });
   const bindings = [{ ...input.bindings[0], reservationId: otherId }];
   const result = await planRuntimeMismatchRecovery({ ...input, bindings });
   assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.refused, "binding failed");
+    assert.equal(result.rows[0]?.reason, "native intent key mismatch");
+  }
 });
 
 Deno.test("planner refuses changed record bytes", async () => {
