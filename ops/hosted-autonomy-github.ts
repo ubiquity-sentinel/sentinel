@@ -1,0 +1,429 @@
+import {
+  checkReviewTaskStatement,
+  reviewTaskStatementDigest,
+} from "../src/contracts/review-receipt.ts";
+import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
+import { HOSTED_AUTONOMY_REQUIRED_CHECK } from "./hosted-autonomy-policy.ts";
+import type {
+  HostedAutonomyGitHubV1,
+  HostedAutonomyPullV1,
+  HostedSelfJobV1,
+  HostedSelfRunV1,
+} from "./hosted-autonomy-types.ts";
+import {
+  API_BASE,
+  createHostedAutonomyRequest,
+  LISTING_PAGE_SIZE,
+  MAX_COMPARE_RESPONSE_BYTES,
+  readHostedCompleteListing,
+  REQUEST_TIMEOUT_MS,
+  RUN_LISTING_PAGE_SIZE,
+} from "./hosted-autonomy-github-listing.ts";
+import {
+  parseHostedAutonomyPull,
+  revisionIntegratedIntoBase,
+} from "./hosted-autonomy-github-pull.ts";
+
+/**
+ * Live GitHub surface this helper needs, over one repository token. The
+ * factory takes the target repository identity and builds EVERY REST path for
+ * THAT repository: the sentinel self repository's paths are never reused as a
+ * fallback for a foreign target, and no other repository name is hard-coded.
+ */
+export function createHostedAutonomyGitHub(
+  token: string,
+  repository: RepositoryIdentityV1,
+): HostedAutonomyGitHubV1 {
+  const scope = `${repository.owner}/${repository.name}`;
+
+  const request = createHostedAutonomyRequest(token);
+  async function readPull(
+    number: number,
+    baseBranch: string | null,
+  ): Promise<HostedAutonomyPullV1 | null> {
+    const pull = await request("GET", `/repos/${scope}/pulls/${number}`);
+    const parsed = parseHostedAutonomyPull(pull);
+    if (parsed === null || parsed.merged !== true) return parsed;
+    const mergeCommitSha = parsed.mergeCommitSha;
+    if (mergeCommitSha === null) return null;
+    // A merged pull whose integration point is unknown cannot be verified: it
+    // reads as null rather than as an unproven merge.
+    if (baseBranch === null) return null;
+    let parents: string[] = [];
+    let revisionOnBaseBranch = false;
+    const commit = await request(
+      "GET",
+      `/repos/${scope}/commits/${mergeCommitSha}`,
+    );
+    const parentList = commit !== null && typeof commit === "object"
+      ? (commit as Record<string, unknown>)["parents"]
+      : null;
+    if (!Array.isArray(parentList)) return null;
+    parents = parentList.map((parent) =>
+      typeof parent === "object" && parent !== null
+        ? String((parent as Record<string, unknown>)["sha"] ?? "")
+        : ""
+    );
+    const compare = await request(
+      "GET",
+      `/repos/${scope}/compare/${mergeCommitSha}...${baseBranch}`,
+      undefined,
+      MAX_COMPARE_RESPONSE_BYTES,
+    );
+    revisionOnBaseBranch = revisionIntegratedIntoBase(
+      compare,
+      mergeCommitSha,
+    );
+    // The reviewed base may have advanced before the merge landed (the owner
+    // merged PRs 890/892/894/895 as a stack on 2026-10-05), so the merge's
+    // first parent is not always the pull's own base commit. Prove the base
+    // ancestry instead of guessing it: the same compare shape with the pull's
+    // base commit as the left side.
+    let baseAncestorOfRevision = false;
+    if (parsed.baseSha !== null) {
+      const baseCompare = await request(
+        "GET",
+        `/repos/${scope}/compare/${parsed.baseSha}...${mergeCommitSha}`,
+        undefined,
+        MAX_COMPARE_RESPONSE_BYTES,
+      );
+      baseAncestorOfRevision = revisionIntegratedIntoBase(
+        baseCompare,
+        parsed.baseSha,
+      );
+    }
+    return {
+      ...parsed,
+      parents,
+      revisionOnBaseBranch,
+      baseAncestorOfRevision,
+    };
+  }
+
+  const readCompleteListing = (
+    pagePath: (page: number) => string,
+    key: string,
+    pageSize: number,
+  ) => readHostedCompleteListing(request, pagePath, key, pageSize);
+  /**
+   * Complete check-run listing for exactly one commit. Every reported run must
+   * be bound to the requested head: a run recorded for another commit is not
+   * evidence for this head, and a page that could not be read completely makes
+   * the whole listing unusable.
+   */
+  async function readCompleteCheckRuns(
+    head: string,
+  ): Promise<Record<string, unknown>[] | null> {
+    const runs = await readCompleteListing(
+      (page) =>
+        `/repos/${scope}/commits/${head}/check-runs?per_page=${LISTING_PAGE_SIZE}&page=${page}`,
+      "check_runs",
+      LISTING_PAGE_SIZE,
+    );
+    if (runs === null) return null;
+    for (const run of runs) {
+      if (run["head_sha"] !== head) return null;
+      if (typeof run["name"] !== "string" || run["name"].length === 0) {
+        return null;
+      }
+      if (typeof run["status"] !== "string" || run["status"].length === 0) {
+        return null;
+      }
+      const conclusion = run["conclusion"];
+      if (conclusion !== null && typeof conclusion !== "string") return null;
+    }
+    return runs;
+  }
+
+  return {
+    async readDefaultBranch() {
+      const repo = await request("GET", `/repos/${scope}`);
+      if (repo === null || typeof repo !== "object") return null;
+      const branch = (repo as Record<string, unknown>)["default_branch"];
+      return typeof branch === "string" && branch.length > 0 ? branch : null;
+    },
+    async readBaseTip(branch: string) {
+      const ref = await request(
+        "GET",
+        `/repos/${scope}/git/ref/heads/${branch}`,
+      );
+      if (ref === null || typeof ref !== "object") return null;
+      // The response must name exactly the requested branch: a ref for another
+      // branch (or one without a ref identity) is never this branch's tip.
+      if ((ref as Record<string, unknown>)["ref"] !== `refs/heads/${branch}`) {
+        return null;
+      }
+      const object = (ref as Record<string, unknown>)["object"];
+      if (object === null || typeof object !== "object") return null;
+      const sha = (object as Record<string, unknown>)["sha"];
+      return typeof sha === "string" ? sha : null;
+    },
+    async hasSuccessfulCheck(head: string) {
+      const runs = await readCompleteCheckRuns(head);
+      // An unreadable, incomplete, drifted or malformed listing is never
+      // green; the exact named check must be found on its bound head.
+      if (runs === null) return false;
+      return runs.some((run) =>
+        run["name"] === HOSTED_AUTONOMY_REQUIRED_CHECK &&
+        run["head_sha"] === head &&
+        run["status"] === "completed" &&
+        run["conclusion"] === "success"
+      );
+    },
+    async hasAllChecksGreen(head: string) {
+      const runs = await readCompleteCheckRuns(head);
+      if (runs === null) return false;
+      // Only the runs reported on the exact head count, and the listing was
+      // already proven complete and bound to this head. Zero runs is not
+      // green: a foreign repository's own completed CI is the only
+      // deterministic signal it can supply, so a head with no CI at all is
+      // never delivered. Every run on that head must be completed and
+      // successful, which also excludes anything pending, queued or failed —
+      // including a failure that only the last page carries.
+      if (runs.length === 0) return false;
+      return runs.every((run) =>
+        run["head_sha"] === head &&
+        run["status"] === "completed" &&
+        run["conclusion"] === "success"
+      );
+    },
+    readPull,
+    async listParkedRuns(head: string) {
+      // The approval listing gates the same delivery as the checks themselves,
+      // so it is read completely too: a parked run on a later page must still
+      // be found, and an unproven listing approves nothing.
+      const runs = await readCompleteListing(
+        (page) =>
+          `/repos/${scope}/actions/runs?head_sha=${head}&per_page=${RUN_LISTING_PAGE_SIZE}&page=${page}`,
+        "workflow_runs",
+        RUN_LISTING_PAGE_SIZE,
+      );
+      if (runs === null) return [];
+      return runs
+        .filter((run) =>
+          run["head_sha"] === head &&
+          run["conclusion"] === "action_required"
+        )
+        .map((run) => Number(run["id"]))
+        .filter((id) => Number.isSafeInteger(id) && id > 0);
+    },
+    async approveRun(id: number) {
+      const approved = await request(
+        "POST",
+        `/repos/${scope}/actions/runs/${id}/approve`,
+      );
+      return approved !== null;
+    },
+    async readIssueOpen(number: number) {
+      const issue = await request("GET", `/repos/${scope}/issues/${number}`);
+      if (issue === null || typeof issue !== "object") return null;
+      const state = (issue as Record<string, unknown>)["state"];
+      if (state === "open") return true;
+      if (state === "closed") return false;
+      return null;
+    },
+    async readIssueTask(number: number) {
+      // Trusted independent read over THIS repository's authenticated surface,
+      // through the same client and auth as every other read here. Only the
+      // bounded exact statement is returned: a malformed, over-bound or
+      // unreadable issue is null and never authorizes anything.
+      const issue = await request("GET", `/repos/${scope}/issues/${number}`);
+      if (issue === null || typeof issue !== "object") return null;
+      const obj = issue as Record<string, unknown>;
+      const title = obj["title"];
+      const rawBody = obj["body"];
+      const body = typeof rawBody === "string"
+        ? rawBody
+        : rawBody === null
+        ? ""
+        : null;
+      if (typeof title !== "string" || body === null) return null;
+      const checked = await checkReviewTaskStatement({
+        issueNumber: Number(obj["number"]),
+        title,
+        body,
+        digest: await reviewTaskStatementDigest({
+          issueNumber: Number(obj["number"]),
+          title,
+          body,
+        }),
+      });
+      return checked.ok ? checked.statement : null;
+    },
+    async closeIssue(number: number) {
+      const closed = await request(
+        "PATCH",
+        `/repos/${scope}/issues/${number}`,
+        { state: "closed" },
+      );
+      if (closed === null || typeof closed !== "object") return false;
+      return (closed as Record<string, unknown>)["state"] === "closed";
+    },
+    selfObservation: {
+      async listRuns(input: { sinceIso: string; limit: number }) {
+        const runs = await request(
+          "GET",
+          `/repos/${scope}/actions/runs?created=${
+            encodeURIComponent(
+              `>=${input.sinceIso}`,
+            )
+          }&per_page=${Math.min(Math.max(input.limit, 1), 50)}`,
+        );
+        const list = runs !== null && typeof runs === "object"
+          ? (runs as Record<string, unknown>)["workflow_runs"]
+          : null;
+        if (!Array.isArray(list)) return null;
+        const parsed: HostedSelfRunV1[] = [];
+        for (const item of list) {
+          if (typeof item !== "object" || item === null) continue;
+          const obj = item as Record<string, unknown>;
+          const id = Number(obj["id"]);
+          const name = obj["name"];
+          const conclusion = obj["conclusion"];
+          const createdAt = obj["created_at"];
+          if (!Number.isSafeInteger(id) || id <= 0) continue;
+          if (typeof name !== "string" || typeof createdAt !== "string") {
+            continue;
+          }
+          parsed.push({
+            id,
+            name,
+            conclusion: typeof conclusion === "string" ? conclusion : null,
+            createdAt,
+          });
+        }
+        return parsed;
+      },
+      async listJobs(runId: number) {
+        const jobs = await request(
+          "GET",
+          `/repos/${scope}/actions/runs/${runId}/jobs?per_page=50`,
+        );
+        const list = jobs !== null && typeof jobs === "object"
+          ? (jobs as Record<string, unknown>)["jobs"]
+          : null;
+        if (!Array.isArray(list)) return null;
+        const parsed: HostedSelfJobV1[] = [];
+        for (const item of list) {
+          if (typeof item !== "object" || item === null) continue;
+          const obj = item as Record<string, unknown>;
+          const id = Number(obj["id"]);
+          const name = obj["name"];
+          const conclusion = obj["conclusion"];
+          if (!Number.isSafeInteger(id) || id <= 0) continue;
+          if (typeof name !== "string") continue;
+          parsed.push({
+            id,
+            name,
+            conclusion: typeof conclusion === "string" ? conclusion : null,
+          });
+        }
+        return parsed;
+      },
+      async readJobLog(input: { jobId: number; maxBytes: number }) {
+        // The log endpoint answers with a redirect to a pre-signed URL that
+        // must NEVER receive the installation token, so the redirect is taken
+        // manually and the signed URL is fetched unauthenticated.
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+        try {
+          const head = await fetch(
+            `${API_BASE}/repos/${scope}/actions/jobs/${input.jobId}/logs`,
+            {
+              method: "GET",
+              redirect: "manual",
+              headers: {
+                authorization: `Bearer ${token}`,
+                accept: "application/vnd.github+json",
+                "user-agent": "sentinel-hosted-autonomy",
+              },
+              signal: controller.signal,
+            },
+          );
+          const location = head.headers.get("location");
+          const isRedirect = head.status >= 300 && head.status < 400;
+          if (isRedirect && location === null) return null;
+          const target = isRedirect ? location! : null;
+          if (target !== null && !target.startsWith("https://")) return null;
+          const response = target === null ? head : await fetch(target, {
+            method: "GET",
+            redirect: "manual",
+            signal: controller.signal,
+          });
+          if (response.status < 200 || response.status >= 300) return null;
+          const body = response.body;
+          if (body === null) return null;
+          const reader = body.getReader();
+          const chunks: Uint8Array[] = [];
+          let total = 0;
+          while (total < input.maxBytes) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            const value = chunk.value;
+            if (value === undefined) break;
+            const remaining = input.maxBytes - total;
+            const slice = value.byteLength > remaining
+              ? value.slice(0, remaining)
+              : value;
+            chunks.push(slice);
+            total += slice.byteLength;
+            if (value.byteLength > remaining) break;
+          }
+          try {
+            await reader.cancel();
+          } catch {
+            // A body that refuses cancellation is still bounded by total.
+          }
+          const merged = new Uint8Array(total);
+          let offset = 0;
+          for (const chunk of chunks) {
+            merged.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          return new TextDecoder().decode(merged);
+        } catch {
+          return null;
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+      async listOpenIssueBodies() {
+        const issues = await request(
+          "GET",
+          `/repos/${scope}/issues?state=open&per_page=100`,
+        );
+        if (!Array.isArray(issues)) return null;
+        const bodies: string[] = [];
+        for (const item of issues) {
+          if (typeof item !== "object" || item === null) continue;
+          const body = (item as Record<string, unknown>)["body"];
+          if (typeof body === "string") bodies.push(body);
+        }
+        return bodies;
+      },
+      async fileIssue(input: { title: string; body: string }) {
+        const created = await request("POST", `/repos/${scope}/issues`, {
+          title: input.title,
+          body: input.body,
+        });
+        if (created === null || typeof created !== "object") return null;
+        const number = Number((created as Record<string, unknown>)["number"]);
+        return Number.isSafeInteger(number) && number > 0 ? number : null;
+      },
+    },
+    async merge(number: number, head: string) {
+      const response = await request(
+        "PUT",
+        `/repos/${scope}/pulls/${number}/merge`,
+        { sha: head, merge_method: "merge" },
+      );
+      if (response === null || typeof response !== "object") return null;
+      const obj = response as Record<string, unknown>;
+      const sha = obj["sha"];
+      return {
+        merged: obj["merged"] === true,
+        sha: typeof sha === "string" ? sha : null,
+      };
+    },
+  };
+}
