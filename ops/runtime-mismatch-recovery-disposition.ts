@@ -36,6 +36,7 @@ import type {
   StateWriteResultV1,
 } from "../src/contracts/ports.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import { parseRepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import {
   planRuntimeMismatchRecovery,
@@ -241,6 +242,7 @@ export async function collectMismatchDispositionCandidatesV1(input: {
 export function applyMismatchDispositionPlanV1(input: {
   readonly snapshot: RepairStateSnapshotV1;
   readonly plan: RuntimeMismatchPlanV1;
+  readonly head: GitSha;
   readonly now: number;
 }): { ok: true; snapshot: RepairStateSnapshotV1; applied: readonly string[] } | {
   ok: false;
@@ -309,17 +311,23 @@ export function applyMismatchDispositionPlanV1(input: {
     };
     applied.push(record.id);
   }
-  return {
-    ok: true,
-    applied,
-    snapshot: {
+  // The durable manifest binds the new commit's parent: the snapshot's
+  // stateHead must equal the expected remote head, exactly like every other
+  // maintenance writer.
+  let next: RepairStateSnapshotV1;
+  try {
+    next = parseRepairStateSnapshotV1({
       ...input.snapshot,
+      stateHead: input.head,
       sequence: input.snapshot.sequence + 1,
       updatedAt: input.now,
       work,
       reservations,
-    },
-  };
+    });
+  } catch {
+    return { ok: false, reason: "snapshot invalid" };
+  }
+  return { ok: true, applied, snapshot: next };
 }
 
 export type MismatchDispositionPassResultV1 =
@@ -402,6 +410,7 @@ export async function runMismatchDispositionPassV1(input: {
   const applied = applyMismatchDispositionPlanV1({
     snapshot: input.snapshot,
     plan,
+    head: input.head,
     now: input.now,
   });
   if (!applied.ok) return { kind: "skipped", reason: "snapshot_invalid" };
