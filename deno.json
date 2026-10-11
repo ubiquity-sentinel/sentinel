@@ -8,6 +8,8 @@
   "tasks": {
     "fmt": "deno fmt",
     "lint": "deno lint",
+    "size:report": "deno run --frozen --allow-read=. --allow-run=git ops/code-size.ts report",
+    "size:check": "deno run --frozen --allow-read=. --allow-run=git ops/code-size.ts check",
     "check": "deno check src/contracts/mod.ts src/state/mod.ts src/budget/mod.ts src/github/mod.ts src/adapters/gateway/mod.ts src/replay/mod.ts src/repair/mod.ts src/release/mod.ts src/host/github.ts src/host/host.ts src/host/local.ts src/host/providers.ts src/host/repair.ts src/host/release.ts src/host/run.ts src/host/actions-supervisor.ts src/host/actions.ts src/host/hosted-runtime.ts src/host/hosted-cooldown.ts src/main.ts src/release-main.ts src/observe-main.ts",
     "test": "deno test --allow-read=.,/usr,/bin,$(deno eval 'console.log(Deno.execPath())') --allow-run --allow-write --allow-env=PATH,NODE_V8_COVERAGE tests/contracts/ tests/state/ tests/budget/ tests/github/ tests/host/ tests/adapters/gateway/ tests/replay/ tests/repair/ tests/release/ tests/integration/",
     "test:integration": "deno test --allow-read=. --allow-run=git --allow-write --allow-env=PATH tests/integration/",

@@ -23,6 +23,14 @@ Do not edit the vendored upstream rubric constant in `src/github/codex-review-ru
 
 ## Fast local development
 
+### Code locality and reads
+
+Keep one cohesive responsibility per file; aim for source files at or below 500 lines and test groups at or below 800 lines where a natural boundary exists. Review files above those targets. The physical ceilings are 1,000 lines for source and 1,500 for tests, including comments and blank lines. `deno task size:check` enforces every tracked code file and new nonignored code file across the repository, including `ops/`; there is no grandfather baseline or exemption.
+
+Before reading an unfamiliar code file whole, use `deno task size:report` to inspect its lines and bytes. Above 500 lines or 20 KB, locate symbols with `rg` and read focused 100–200-line ranges. Treat truncated output as incomplete, inspect imports/callers/tests before editing, and refresh symbol locations after edits. Do not page mechanically through a whole file or split files into one function each.
+
+### Validation loop
+
 - Use local reproduction and checks as the edit/test loop; hosted CI and live Sentinel runs are separate acceptance surfaces. Read existing failure evidence once and keep independent local work moving.
 - Before editing, identify the changed module, affected callers/contracts and smallest observable failure. Prove the actual defect before the fix when a regression is useful; permission, type, dependency, dirty-checkout and timeout errors are setup failures.
 - After a meaningful edit, run applicable file-scoped static checks and the smallest relevant named test, then its affected module/consumer boundary. Preserve declared Deno permissions. Do not default to `deno task test`, `test:integration`, `test:local` or an equivalent whole-repository sweep.
