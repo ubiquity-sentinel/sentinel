@@ -231,6 +231,7 @@ Deno.test("disposition collects one no-effect binding and proof for an eligible 
   const candidates = await collectMismatchDispositionCandidatesV1({
     snapshot: f.snapshot,
     observationsFor: () => observations(),
+    producerTerminal: () => Promise.resolve(true),
   });
   assert.equal(candidates.retained.length, 0);
   assert.equal(candidates.bindings.length, 1);
@@ -252,16 +253,19 @@ Deno.test("disposition retains every unproven or present effect fact", async () 
   const cases: {
     name: string;
     obs: MismatchDispositionObservationsV1;
+    terminal: boolean | null;
     reason: string;
   }[] = [
     {
       name: "repair ref present",
       obs: observations({ refAbsent: false }),
+      terminal: true,
       reason: "repair ref present",
     },
     {
       name: "repair ref unreadable",
       obs: observations({ refAbsent: null }),
+      terminal: true,
       reason: "repair ref unreadable",
     },
     {
@@ -269,21 +273,28 @@ Deno.test("disposition retains every unproven or present effect fact", async () 
       obs: observations({
         pulls: [{ number: 12, state: "open", head: "x" }],
       }),
+      terminal: true,
       reason: "pull observations present",
     },
     {
       name: "pull listing unreadable",
       obs: observations({ pulls: null }),
+      terminal: true,
       reason: "pull listing unreadable",
     },
     {
+      // The producer run belongs to the SELF repository, so its terminal fact
+      // arrives through the separate producer capability, never through the
+      // target record's observations.
       name: "producer not terminal",
-      obs: observations({ terminal: false }),
+      obs: observations(),
+      terminal: false,
       reason: "producer run not terminal",
     },
     {
       name: "producer unreadable",
-      obs: observations({ terminal: null }),
+      obs: observations(),
+      terminal: null,
       reason: "producer run unreadable",
     },
   ];
@@ -292,6 +303,7 @@ Deno.test("disposition retains every unproven or present effect fact", async () 
     const candidates = await collectMismatchDispositionCandidatesV1({
       snapshot: f.snapshot,
       observationsFor: () => item.obs,
+      producerTerminal: () => Promise.resolve(item.terminal),
     });
     assert.equal(candidates.bindings.length, 0, item.name);
     assert.equal(candidates.retained[0]?.reason, item.reason, item.name);
@@ -317,6 +329,7 @@ Deno.test("disposition retains a settled charge, head or missing intent", async 
     const candidates = await collectMismatchDispositionCandidatesV1({
       snapshot: f.snapshot,
       observationsFor: () => observations(),
+      producerTerminal: () => Promise.resolve(true),
     });
     assert.equal(candidates.bindings.length, 0, name);
     assert.equal(candidates.retained.length, 1, name);
@@ -328,12 +341,14 @@ Deno.test("disposition retains an absent capability and honors the batch limit",
   const absent = await collectMismatchDispositionCandidatesV1({
     snapshot: f.snapshot,
     observationsFor: () => null,
+    producerTerminal: () => Promise.resolve(true),
   });
   assert.equal(absent.bindings.length, 0);
   assert.equal(absent.retained[0]?.reason, "observation capability absent");
   const limited = await collectMismatchDispositionCandidatesV1({
     snapshot: f.snapshot,
     observationsFor: () => observations(),
+    producerTerminal: () => Promise.resolve(true),
     limit: 1,
   });
   assert.equal(limited.bindings.length, 1);
@@ -344,6 +359,7 @@ Deno.test("disposition apply settles the charge ambiguous and installs the retry
   const candidates = await collectMismatchDispositionCandidatesV1({
     snapshot: f.snapshot,
     observationsFor: () => observations(),
+    producerTerminal: () => Promise.resolve(true),
   });
   const plan = {
     ok: true as const,
@@ -440,6 +456,7 @@ Deno.test("disposition pass applies one write and verifies the canonical readbac
     release: testRelease(),
     expectedReleaseHead: null,
     observationsFor: () => observations(),
+    producerTerminal: () => Promise.resolve(true),
     now: T0 + 5,
     state,
   });
@@ -467,6 +484,7 @@ Deno.test("disposition pass fails closed on conflict, ambiguity, unavailable wri
       release: testRelease(),
       expectedReleaseHead: null,
       observationsFor: () => observations(),
+      producerTerminal: () => Promise.resolve(true),
       now: T0 + 5,
       state,
     });
@@ -492,6 +510,7 @@ Deno.test("disposition pass reports no candidates without any write", async () =
     release: null,
     expectedReleaseHead: null,
     observationsFor: () => observations(),
+    producerTerminal: () => Promise.resolve(true),
     now: T0 + 5,
     state,
   });
@@ -508,6 +527,7 @@ Deno.test("disposition pass reports no candidates without any write", async () =
     release: testRelease(),
     expectedReleaseHead: null,
     observationsFor: () => observations(),
+    producerTerminal: () => Promise.resolve(true),
     now: T0 + 5,
     state: new FakeState(f.snapshot),
   });
@@ -534,6 +554,7 @@ Deno.test("disposition pass preserves unrelated rows byte-identical", async () =
     release: testRelease(),
     expectedReleaseHead: null,
     observationsFor: () => observations(),
+    producerTerminal: () => Promise.resolve(true),
     now: T0 + 5,
     state,
   });

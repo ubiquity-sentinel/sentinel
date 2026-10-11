@@ -5,7 +5,10 @@ import {
   type MismatchDispositionObservationsV1,
   runMismatchDispositionPassV1,
 } from "./runtime-mismatch-recovery-disposition.ts";
-import { hostedRepositoryKey } from "./hosted-autonomy-policy.ts";
+import {
+  HOSTED_AUTONOMY_SELF_SCOPE,
+  hostedRepositoryKey,
+} from "./hosted-autonomy-policy.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import { failed, skipped } from "./hosted-autonomy-state.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
@@ -43,7 +46,16 @@ export async function runHostedMismatchDispositionPass(
   const mismatchCapabilityPresent = [...mismatchObservations.values()].some(
     (value) => value !== null,
   );
+  // No mismatch-blocked record with an observation capability means this pass
+  // resolves no surface at all: ordinary foreign records keep their exact
+  // routing and the sentinel scope is never consulted for them.
   if (!mismatchCapabilityPresent) return null;
+  // Producer runs belong to the SELF repository, so the terminal read comes
+  // from the self surface, never from the target record's surface.
+  const mismatchProducer = await scopeFor(HOSTED_AUTONOMY_SELF_SCOPE);
+  const producerTerminal =
+    mismatchProducer.surface?.mismatchDisposition?.readRunTerminal ?? null;
+  if (producerTerminal === null) return null;
   const disposition = await runMismatchDispositionPassV1({
     snapshot,
     head: observedHead as GitSha,
@@ -51,6 +63,7 @@ export async function runHostedMismatchDispositionPass(
     expectedReleaseHead: releaseHead as GitSha | null,
     observationsFor: (record) =>
       mismatchObservations.get(hostedRepositoryKey(record.repository)) ?? null,
+    producerTerminal,
     now: deps.clock.now(),
     state: deps.state,
     limit: MISMATCH_DISPOSITION_MAX_PER_RUN,
