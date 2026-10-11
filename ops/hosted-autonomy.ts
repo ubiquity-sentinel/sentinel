@@ -4901,6 +4901,9 @@ export async function runHostedAutonomyMain(input?: {
         }));
       }
     }
+    if (error instanceof HistoricalQuarantineIncomplete) {
+      return report(failed("historical_quarantine_incomplete", null));
+    }
     result = {
       kind: "hosted_autonomy",
       status: "skipped",
