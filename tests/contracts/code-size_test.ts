@@ -95,7 +95,16 @@ async function git(root: string, ...args: string[]) {
 }
 
 async function withRepository(run: (root: string) => Promise<void>) {
-  const root = await Deno.makeTempDir({ prefix: "sentinel-code-size-" });
+  // The harness grants read access to the workspace only, so fixture
+  // repositories are created inside it and remain ignored by the repository's
+  // own inventory.
+  const workspace = decodeURIComponent(
+    new URL("../../", import.meta.url).pathname,
+  );
+  const root = await Deno.makeTempDir({
+    prefix: "sentinel-code-size-",
+    dir: workspace,
+  });
   try {
     await git(root, "init", "--quiet");
     await Deno.writeTextFile(
@@ -166,7 +175,18 @@ Deno.test("code size inventory includes tracked, new, ops and shebang code witho
 Deno.test("code size refuses symlinks instead of silently skipping their code", async () => {
   await withRepository(async (root) => {
     await write(root, "src/real.ts", "export {};\n");
-    await Deno.symlink("real.ts", `${root}/src/link.ts`);
+    // Deno.symlink requires unscoped read access; the harness grants only the
+    // workspace, so the fixture link is created by the fixed `ln` tool.
+    const linked = await new Deno.Command("ln", {
+      args: ["-s", "real.ts", `${root}/src/link.ts`],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assert.equal(
+      linked.success,
+      true,
+      new TextDecoder().decode(linked.stderr),
+    );
     await assert.rejects(
       () => inventoryCode(root),
       /regular file.*src\/link\.ts/,

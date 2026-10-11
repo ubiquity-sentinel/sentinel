@@ -46,12 +46,16 @@ export async function runHostedMismatchDispositionPass(
   const mismatchCapabilityPresent = [...mismatchObservations.values()].some(
     (value) => value !== null,
   );
+  // No mismatch-blocked record with an observation capability means this pass
+  // resolves no surface at all: ordinary foreign records keep their exact
+  // routing and the sentinel scope is never consulted for them.
+  if (!mismatchCapabilityPresent) return null;
   // Producer runs belong to the SELF repository, so the terminal read comes
   // from the self surface, never from the target record's surface.
   const mismatchProducer = await scopeFor(HOSTED_AUTONOMY_SELF_SCOPE);
   const producerTerminal =
     mismatchProducer.surface?.mismatchDisposition?.readRunTerminal ?? null;
-  if (!mismatchCapabilityPresent || producerTerminal === null) return null;
+  if (producerTerminal === null) return null;
   const disposition = await runMismatchDispositionPassV1({
     snapshot,
     head: observedHead as GitSha,
