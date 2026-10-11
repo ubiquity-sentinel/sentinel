@@ -45,6 +45,17 @@ const steps: { name: string; args: string[] }[] = [
   { name: "fmt", args: ["fmt", "--check"] },
   { name: "lint", args: ["lint"] },
   {
+    name: "size",
+    args: [
+      "run",
+      "--frozen",
+      "--allow-read=.",
+      "--allow-run=git",
+      "ops/code-size.ts",
+      "check",
+    ],
+  },
+  {
     name: "check",
     args: [
       "check",

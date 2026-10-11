@@ -1,0 +1,254 @@
+/** Repair loop internals: implementation result. */
+import type {
+  AttemptFailureClassV1,
+  AttemptStageV1,
+} from "../contracts/attempt-memory.ts";
+import type { ModelRunReceiptV1 } from "../contracts/ports.ts";
+import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
+import type {
+  IncompleteOperationV1,
+  WorkRecordV1,
+} from "../contracts/work-record.ts";
+import { generatedArtifactOnly } from "../github/review-snapshot.ts";
+import {
+  ATTEMPT_DETAIL_INCOMPLETE,
+  ATTEMPT_DETAIL_LOOP_STOP,
+  ATTEMPT_DETAIL_UNCERTAIN,
+  attemptMemorySettlementMutationV1,
+  attemptMemorySuccessMutationV1,
+} from "./attempt-policy.ts";
+import {
+  candidateBranch,
+  candidatePreservationRef,
+  implementationIntentKey,
+} from "./keys.ts";
+import { persistAfterSettlement, settleAndBlock } from "./loop-accounting.ts";
+import { verifiedPublishedHead } from "./loop-preservation.ts";
+import { touchesProtected } from "./loop-records.ts";
+import {
+  loadSnapshot,
+  persistTransition,
+  replaceWorkMutation,
+} from "./loop-state.ts";
+import type {
+  LoopContextV1,
+  RepairCycleDepsV1,
+  StepResultV1,
+} from "./loop-types.ts";
+import {
+  clearIntent,
+  markBlocked,
+  noteCandidate,
+  setCandidateState,
+  setIntent,
+} from "./transitions.ts";
+
+/**
+ * Trusted terminal handling for a start that produced no usable receipt: the
+ * reservation settles ambiguous (charged, never refunded from absence) and the
+ * record is blocked with the exact static detail. Shared by the serial step
+ * and the matrix ingester so both consumers are byte-identical.
+ */
+export async function settleFailedImplementation(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  reservationId: string,
+  detail: string,
+  classification?: {
+    stage: AttemptStageV1;
+    failureClass: AttemptFailureClassV1;
+  },
+): Promise<StepResultV1> {
+  const now = deps.clock.now();
+  const blocked = await settleAndBlock(
+    deps,
+    reservationId,
+    "ambiguous",
+    record,
+    detail,
+    now,
+  );
+  // The attempt-memory entry is persisted in the SAME state commit as the
+  // blocker it describes (atomic memory + outcome, never a torn pair).
+  const memory = await attemptMemorySettlementMutationV1({
+    record,
+    detail,
+    now,
+    ...(classification === undefined ? {} : { classification }),
+  });
+  return persistAfterSettlement(deps, context.bounds, (draft) => {
+    replaceWorkMutation(blocked)(draft);
+    memory(draft);
+  });
+}
+
+export async function handleModelReceipt(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  reservationId: string,
+  receipt: ModelRunReceiptV1,
+  config: RepositoryConfigV1,
+): Promise<StepResultV1> {
+  const now = deps.clock.now();
+  const candidate = receipt.candidate;
+  const completed = receipt.outcome === "completed" && candidate !== null &&
+    candidate.head !== null && candidate.head !== record.target.base &&
+    candidate.changedPaths.length > 0 &&
+    // A nonempty diff is not a repair: a candidate whose ENTIRE change set is
+    // obvious generated/cache output (build products, logs, caches, OS junk)
+    // can never establish task completion — however clean a downstream
+    // code-quality review is — so it is refused here, before publication.
+    !generatedArtifactOnly(candidate.changedPaths);
+  if (!completed) {
+    // Only OUR sanitized loop-stop marker gets the exact failed_command_loop
+    // blocker message; every other incomplete receipt keeps the generic
+    // message. The settlement write moved the authoritative head, so the
+    // block is persisted against the reloaded state (never a stale CAS).
+    const loopStopped = receipt.error === ATTEMPT_DETAIL_LOOP_STOP;
+    const artifactOnly = receipt.outcome === "completed" &&
+      candidate !== null &&
+      candidate.changedPaths.length > 0 &&
+      generatedArtifactOnly(candidate.changedPaths);
+    let incompleteMessage: string = ATTEMPT_DETAIL_INCOMPLETE;
+    if (loopStopped) incompleteMessage = ATTEMPT_DETAIL_LOOP_STOP;
+    if (artifactOnly) {
+      incompleteMessage =
+        "model candidate changed only generated/cache artifacts";
+    }
+    const blocked = await settleAndBlock(
+      deps,
+      reservationId,
+      "ambiguous",
+      record,
+      incompleteMessage,
+      now,
+    );
+    const memory = await attemptMemorySettlementMutationV1({
+      record,
+      detail: incompleteMessage,
+      now,
+    });
+    return persistAfterSettlement(deps, context.bounds, (draft) => {
+      replaceWorkMutation(blocked)(draft);
+      memory(draft);
+    });
+  }
+  const head = candidate!.head!;
+  const protectedHit = candidate!.changedPaths.some((path) =>
+    touchesProtected(config.protectedPaths, path)
+  );
+  // A verified bad candidate stays charged (submitted) but never publishes.
+  const settled = await deps.budget.settleModelStart({
+    id: reservationId,
+    outcome: "submitted",
+    proofRef: null,
+  });
+  if (settled.status !== "settled" && settled.status !== "idempotent") {
+    return { kind: "state_error", detail: "budget settlement failed" };
+  }
+  // The settlement write advanced the state; the exact new head must be
+  // observed before the candidate transition is persisted (never a stale CAS).
+  const afterSettlement = await loadSnapshot(deps, context.bounds);
+  if (afterSettlement === null) {
+    return { kind: "state_error", detail: "repair state unavailable" };
+  }
+  // The verified prior published head: retained from existing V1 candidate
+  // state, or proved by an ACTUAL owned-branch observation of the exact prior
+  // target head for a legacy record. Model output never establishes it.
+  const priorPublishedHead = await verifiedPublishedHead(deps, context, record);
+  const operationKey = implementationIntentKey(reservationId);
+  const preservationRef = await candidatePreservationRef(
+    record.repository,
+    record.id,
+    operationKey,
+  );
+  const preservationIntent: IncompleteOperationV1 = {
+    kind: "candidate_preservation",
+    key: operationKey,
+    startedAt: now,
+    branch: preservationRef,
+    expectedHead: head,
+    observedBase: record.target.base,
+    pr: null,
+    requestId: reservationId,
+    resultId: null,
+  };
+  // A completed run closes the implementation operation and opens the durable
+  // candidate lifecycle: head/checkpoint plus candidateState with no
+  // descriptor yet and the verified published head unchanged. The intent is
+  // cleared only after the candidate is durably noted (never on uncertain
+  // outcomes, where it remains as the manual-disposition record).
+  const noted = noteCandidate(clearIntent(record, now), {
+    head,
+    checkpoint: candidate!.checkpointSha === null
+      ? null
+      : { branch: candidateBranch(record.id), sha: candidate!.checkpointSha },
+  }, now);
+  const withCandidate = setCandidateState(noted, {
+    preserved: null,
+    publishedHead: priorPublishedHead,
+  }, now);
+  if (protectedHit) {
+    const blocked = markBlocked(
+      withCandidate,
+      "other",
+      "candidate touches a protected path",
+      now,
+    );
+    const r1 = await persistTransition(
+      deps,
+      afterSettlement,
+      replaceWorkMutation(blocked),
+    );
+    return r1;
+  }
+  // An accepted candidate resolves the implementation attempt: record the
+  // family success in the SAME state commit as the candidate transition, so
+  // durable memory grows the full picture (failures and resolutions), not
+  // only the refusal side.
+  const successMemory = await attemptMemorySuccessMutationV1({
+    record,
+    now,
+  });
+  return persistTransition(deps, afterSettlement, (draft) => {
+    replaceWorkMutation(setIntent(withCandidate, preservationIntent, now))(
+      draft,
+    );
+    successMemory(draft);
+  });
+}
+
+/** Saved implementation uncertainty: charged ambiguous, blocked, never rerun. */
+export async function handleImplementationUncertainty(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+): Promise<StepResultV1> {
+  const reservationId = record.intent?.requestId;
+  if (
+    reservationId !== null && reservationId !== undefined &&
+    reservationId !== ""
+  ) {
+    await deps.budget.settleModelStart({
+      id: reservationId,
+      outcome: "ambiguous",
+      proofRef: null,
+    });
+  }
+  // The ambiguous settlement above writes the SAME authoritative repair state,
+  // so the block is applied against the reread head exactly like the adjacent
+  // settled-budget paths (a pre-settlement CAS is refused as state_error).
+  const now = deps.clock.now();
+  const blocked = markBlocked(record, "other", ATTEMPT_DETAIL_UNCERTAIN, now);
+  const memory = await attemptMemorySettlementMutationV1({
+    record,
+    detail: ATTEMPT_DETAIL_UNCERTAIN,
+    now,
+  });
+  return persistAfterSettlement(deps, context.bounds, (draft) => {
+    replaceWorkMutation(blocked)(draft);
+    memory(draft);
+  });
+}

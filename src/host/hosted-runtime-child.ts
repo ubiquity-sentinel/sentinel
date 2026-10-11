@@ -1,0 +1,188 @@
+/** Hosted hosted-runtime-child responsibility. */
+import { isGitSha } from "../contracts/brands.ts";
+import type { GitSha } from "../contracts/brands.ts";
+import {
+  HOSTED_SUPERVISOR_REF,
+  HOSTED_SUPERVISOR_REPOSITORY,
+} from "../contracts/hosted-supervisor.ts";
+import type { ReplayRuntimeV1 } from "../replay/runtime.ts";
+import { joinPath } from "./local.ts";
+import {
+  GIT_EXECUTABLE,
+  GIT_MAX_OUTPUT_BYTES,
+  GIT_TIMEOUT_MS,
+  HOSTED_RUNTIME_STATIC_ENV,
+  HOSTED_RUNTIME_STATIC_SOURCE,
+  HOSTED_RUNTIME_WORKFLOW_REF,
+  isNonEmptyText,
+  parentDirectory,
+} from "./hosted-runtime-identity.ts";
+import type { HostedRuntimeIdentityV1 } from "./hosted-runtime-identity.ts";
+
+export function buildChildEnvironment(
+  env: Readonly<Record<string, string | undefined>>,
+  identity: HostedRuntimeIdentityV1,
+  dirs: { home: string; tmp: string; denoDir: string },
+): Record<string, string> {
+  const path = env.PATH;
+  const githubToken = env.GITHUB_TOKEN;
+  const appToken = env.SENTINEL_SUPERVISOR_TOKEN;
+  const modelToken = env.UOS_AI_TOKEN;
+  if (
+    !isNonEmptyText(path) || !isNonEmptyText(githubToken) ||
+    !isNonEmptyText(modelToken)
+  ) {
+    throw new Error(HOSTED_RUNTIME_STATIC_ENV);
+  }
+  // Complete-only child environment: the two required credentials, the
+  // optional App token when it is non-empty text, the validated standard
+  // identity, plus private HOME/cache/temp. No Actions output/env/path file and
+  // no host variable crosses over.
+  // Optional route inputs: forwarded only when non-empty so an unset route
+  // keeps the primary gateway behavior exactly as before. The child's own
+  // trusted resolver decides the route; the launcher never selects one.
+  const routeKeys = [
+    "SENTINEL_MODEL_BASE_URL",
+    "SENTINEL_MODEL_ID",
+    "SENTINEL_MODEL_FALLBACK",
+    "SENTINEL_REVIEW_MODEL_ID",
+    "SENTINEL_DEEPSEEK_API_KEY",
+    "SENTINEL_COOLDOWN_MODE",
+  ] as const;
+  const routeEnv: Record<string, string> = {};
+  for (const key of routeKeys) {
+    const value = env[key];
+    if (isNonEmptyText(value)) routeEnv[key] = value;
+  }
+  const child: Record<string, string> = {
+    HOME: dirs.home,
+    PATH: path,
+    GITHUB_TOKEN: githubToken,
+    ...(isNonEmptyText(appToken)
+      ? { SENTINEL_SUPERVISOR_TOKEN: appToken }
+      : {}),
+    ...routeEnv,
+    UOS_AI_TOKEN: modelToken,
+    GITHUB_RUN_ID: String(identity.runId),
+    GITHUB_RUN_ATTEMPT: String(identity.runAttempt),
+    GITHUB_REPOSITORY: HOSTED_SUPERVISOR_REPOSITORY,
+    GITHUB_REF: HOSTED_SUPERVISOR_REF,
+    GITHUB_SHA: identity.launcherSha,
+    GITHUB_WORKFLOW_SHA: identity.launcherSha,
+    GITHUB_WORKFLOW_REF: HOSTED_RUNTIME_WORKFLOW_REF,
+    GITHUB_JOB: identity.job,
+    TMPDIR: dirs.tmp,
+    TEMP: dirs.tmp,
+    TMP: dirs.tmp,
+    DENO_DIR: dirs.denoDir,
+  };
+  if (isNonEmptyText(appToken)) {
+    child.SENTINEL_SUPERVISOR_TOKEN = appToken;
+  }
+  // Optional model-route inputs, forwarded only when non-empty so an unset
+  // route keeps the primary gateway behaviour exactly as before. The child's
+  // own trusted resolver decides the route; the launcher never selects one and
+  // the DeepSeek key is only ever a forwarded value, never logged.
+  for (
+    const key of [
+      "SENTINEL_MODEL_BASE_URL",
+      "SENTINEL_MODEL_ID",
+      "SENTINEL_MODEL_FALLBACK",
+      "SENTINEL_DEEPSEEK_API_KEY",
+      "SENTINEL_APP_INSTALLATION_ID",
+      "SENTINEL_COOLDOWN_MODE",
+    ] as const
+  ) {
+    const value = env[key];
+    if (isNonEmptyText(value)) child[key] = value;
+  }
+  if (identity.job === "matrix_plan") {
+    const output = env.GITHUB_OUTPUT;
+    if (!isNonEmptyText(output)) throw new Error(HOSTED_RUNTIME_STATIC_ENV);
+    child.GITHUB_OUTPUT = output;
+  }
+  return child;
+}
+
+/** Canonical real directories: the runtime is the launcher's fixed sibling. */
+export async function resolveRuntimeDirectories(
+  launcherDir: string,
+  runtimeDir: string,
+): Promise<{ launcher: string; runtime: string }> {
+  const launcher = await realDirectory(launcherDir);
+  const runtime = await realDirectory(runtimeDir);
+  if (runtime !== joinPath(parentDirectory(launcher), "runtime")) {
+    throw new Error(HOSTED_RUNTIME_STATIC_SOURCE);
+  }
+  if (runtime === launcher) throw new Error(HOSTED_RUNTIME_STATIC_SOURCE);
+  return { launcher, runtime };
+}
+
+async function realDirectory(path: string): Promise<string> {
+  let real: string;
+  try {
+    real = await Deno.realPath(path);
+  } catch {
+    throw new Error(HOSTED_RUNTIME_STATIC_SOURCE);
+  }
+  let info: Deno.FileInfo;
+  try {
+    info = await Deno.stat(real);
+  } catch {
+    throw new Error(HOSTED_RUNTIME_STATIC_SOURCE);
+  }
+  if (!info.isDirectory) throw new Error(HOSTED_RUNTIME_STATIC_SOURCE);
+  return real;
+}
+
+/** Exact commit of a clean worktree, read with fixed credential-free git. */
+export async function readCleanGitHead(
+  process: ReplayRuntimeV1,
+  dir: string,
+): Promise<GitSha> {
+  const head = await runBoundedGit(process, dir, ["rev-parse", "HEAD"]);
+  if (head === null || !isGitSha(head)) {
+    throw new Error(HOSTED_RUNTIME_STATIC_SOURCE);
+  }
+  const status = await runBoundedGit(process, dir, [
+    "status",
+    "--porcelain",
+    "--untracked-files=all",
+  ]);
+  if (status === null || status !== "") {
+    throw new Error(HOSTED_RUNTIME_STATIC_SOURCE);
+  }
+  return head;
+}
+
+async function runBoundedGit(
+  process: ReplayRuntimeV1,
+  dir: string,
+  args: readonly string[],
+): Promise<string | null> {
+  try {
+    const result = await process.run({
+      executable: GIT_EXECUTABLE,
+      args: ["-c", "core.hooksPath=/dev/null", "-C", dir, ...args],
+      cwd: dir,
+      env: {
+        PATH: "/usr/bin:/bin",
+        HOME: dir,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_SYSTEM: "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+      maxDurationMs: GIT_TIMEOUT_MS,
+      maxOutputBytes: GIT_MAX_OUTPUT_BYTES,
+    });
+    if (
+      result.outcome !== "exited" || !result.settled || result.truncated ||
+      result.exitCode !== 0
+    ) {
+      return null;
+    }
+    return new TextDecoder().decode(result.stdout).trim();
+  } catch {
+    return null;
+  }
+}

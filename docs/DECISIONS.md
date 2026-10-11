@@ -68,6 +68,8 @@ A trusted already-merged pull request is verified by its exact head binding plus
 
 ## Evidence, target release and local development
 
+Sentinel adapts the Ubiquity physical file-size policy from `ubiquity/ts-template` revision `fc5add134e8ed3728a3da981d298d0a92eb27ac8` with Deno-native `size:report` and `size:check` tasks. Source ceilings are 1,000 lines and test ceilings are 1,500, counting comments and blanks; 500/800 are review triggers. All tracked and new nonignored code, including operations scripts, is covered without a grandfather baseline or exemptions. Keep Deno's existing formatter, linter and lockfile; the cheap size gate also runs in `test-local.ts` before typechecks/tests. This adaptation does not add an ESLint/Node toolchain or broaden local/hosted validation authority.
+
 Use fast module checks and directly affected production-consumer boundaries with fake external transports, temporary Git/state and injected clocks. Enforce a 300-second deadline on each local validation command. One named changed-lifecycle scenario is final local acceptance; whole-repository sweeps require a separate explicit request. [AGENTS.md](../AGENTS.md) defines observation, teardown and evidence rules.
 
 Preserve candidate durability, exact reviewed heads, independent state/promotion ownership, healthy prior identity and exact rollback. Gateway deployment follows its current trusted VPS contract; Deno target receipts cannot establish VPS delivery. Finite encrypted evidence retention, objective telemetry and uninterrupted acceptance coverage remain activation requirements in [activation-checklist.md](activation-checklist.md).

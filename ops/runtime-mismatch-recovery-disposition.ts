@@ -26,9 +26,7 @@ import {
   canonicalStringifySha256,
 } from "../src/contracts/canonical.ts";
 import type { BudgetReservationV1 } from "../src/contracts/budget-reservation.ts";
-import type {
-  PortResultV1,
-} from "../src/contracts/ports.ts";
+import type { PortResultV1 } from "../src/contracts/ports.ts";
 import type {
   RepairStateWriter,
   StateReadResultV1,
@@ -179,7 +177,9 @@ export async function collectMismatchDispositionCandidatesV1(input: {
       retain("observation capability absent");
       continue;
     }
-    const refAbsent = await observations.readRefAbsent(record.target.branch);
+    const refAbsent = await observations.readRefAbsent(
+      `refs/heads/${record.target.branch}`,
+    );
     if (refAbsent === null) {
       retain("repair ref unreadable");
       continue;
@@ -244,10 +244,12 @@ export function applyMismatchDispositionPlanV1(input: {
   readonly plan: RuntimeMismatchPlanV1;
   readonly head: GitSha;
   readonly now: number;
-}): { ok: true; snapshot: RepairStateSnapshotV1; applied: readonly string[] } | {
-  ok: false;
-  reason: string;
-} {
+}):
+  | { ok: true; snapshot: RepairStateSnapshotV1; applied: readonly string[] }
+  | {
+    ok: false;
+    reason: string;
+  } {
   if (!input.plan.ok) return { ok: false, reason: "plan refused" };
   if (input.plan.proposals.length === 0) {
     return { ok: false, reason: "plan is empty" };
@@ -372,7 +374,9 @@ export async function runMismatchDispositionPassV1(input: {
   if (input.release === null || input.release === undefined) {
     return { kind: "none", reason: "release_absent", retained: [] };
   }
-  if (!Number.isSafeInteger(input.now) || input.now < input.snapshot.updatedAt) {
+  if (
+    !Number.isSafeInteger(input.now) || input.now < input.snapshot.updatedAt
+  ) {
     return { kind: "skipped", reason: "clock_invalid" };
   }
   const candidates = await collectMismatchDispositionCandidatesV1({
@@ -414,9 +418,10 @@ export async function runMismatchDispositionPassV1(input: {
     now: input.now,
   });
   if (!applied.ok) return { kind: "skipped", reason: "snapshot_invalid" };
+  const next = { ...applied.snapshot, stateHead: input.head };
   let write: PortResultV1<StateWriteResultV1>;
   try {
-    write = await input.state.writeRepair(applied.snapshot, input.head);
+    write = await input.state.writeRepair(next, input.head);
   } catch {
     return { kind: "failed", reason: "write_unavailable" };
   }
@@ -437,7 +442,7 @@ export async function runMismatchDispositionPassV1(input: {
     !readback.ok || readback.value.status !== "found" ||
     readback.value.head !== write.value.head ||
     canonicalStringify(readback.value.snapshot) !==
-      canonicalStringify(applied.snapshot)
+      canonicalStringify(next)
   ) {
     return { kind: "failed", reason: "readback_unverified" };
   }

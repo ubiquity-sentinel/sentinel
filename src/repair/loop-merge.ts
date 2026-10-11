@@ -1,0 +1,453 @@
+/** Repair loop internals: merge. */
+import type { GitSha } from "../contracts/brands.ts";
+import { parseMergeRequestV1 } from "../contracts/merge-request.ts";
+import type { MergeOutcomeV1 } from "../contracts/ports.ts";
+import {
+  parseReleaseRequestV1,
+  type ReleaseRequestV1,
+} from "../contracts/release.ts";
+import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
+import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import {
+  candidateBranch,
+  mergeIntentKey,
+  releaseRequestId,
+  reviewOperationKey,
+  reviewReceiptId,
+} from "./keys.ts";
+import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
+import { gateDeliveryOnChecks } from "./loop-checks.ts";
+import { configFor, sameRepositoryIdentity } from "./loop-records.ts";
+import { waitRelease } from "./loop-release.ts";
+import { standingReviewAttempt } from "./loop-review-records.ts";
+import { persistTransition, persistWork } from "./loop-state.ts";
+import {
+  deliveryTaskRefusal,
+  mergeIntentReceipt,
+  readDeliveryTaskContext,
+  semanticRefusalKind,
+} from "./loop-task-context.ts";
+import type {
+  LoopContextV1,
+  RepairCycleDepsV1,
+  StepResultV1,
+} from "./loop-types.ts";
+import {
+  authorizingReceipt,
+  MERGE_WITHOUT_REVIEW_DETAIL,
+  taskAcceptanceRefusal,
+} from "./review-gate.ts";
+import {
+  clearIntent,
+  markBlocked,
+  markTerminalBlocked,
+  setIntent,
+  setWait,
+} from "./transitions.ts";
+
+export async function executeMerge(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+): Promise<StepResultV1> {
+  const now = deps.clock.now();
+  // Merge is a GitHub write: gate before any preparation or intent write (a
+  // cooling installation never writes a merge intent it cannot act on; the
+  // concrete adapter separately rechecks the gate at the call).
+  const cooling = await checkGithubCooldown(
+    deps,
+    record.repository,
+    context.bounds,
+  );
+  if (cooling.kind === "state_error") {
+    return { kind: "state_error", detail: cooling.detail };
+  }
+  if (cooling.kind === "deferred") {
+    return { kind: "deferred", detail: cooling.detail };
+  }
+  const config = configFor(deps, record.repository);
+  // HARD INVARIANT: nothing merges without a passing review. Find a durable
+  // completed receipt for this exact PR/head, then require the strict
+  // authorization predicate (exact repository/PR/head/base, trusted reviewer,
+  // zero uncounted findings, no unresolved P0/P1). A completed-but-unclean
+  // receipt is authoritative disposition, never a blind resubmission.
+  const currentRound = standingReviewAttempt(record);
+  const currentReviewId = await reviewReceiptId(
+    reviewOperationKey(
+      record.target.pr!,
+      record.target.head!,
+      currentRound,
+    ),
+    record.target.head!,
+  );
+  const currentReview = context.snapshot.reviews.find((review) =>
+    review.id === currentReviewId
+  );
+  const legacyReviewId = await reviewReceiptId(
+    reviewOperationKey(record.target.pr!, record.target.head!),
+    record.target.head!,
+  );
+  const attemptedReviews = context.snapshot.reservations.filter((charge) =>
+    sameRepositoryIdentity(charge.repository, record.repository) &&
+    charge.taskId === record.id && charge.head === record.target.head &&
+    charge.purpose === "review_request" &&
+    charge.outcome !== "confirmed_not_submitted"
+  );
+  if (
+    record.intent?.kind === "review_request" ||
+    attemptedReviews.some((charge) => charge.attempt > currentRound)
+  ) {
+    return { kind: "state_error", detail: MERGE_WITHOUT_REVIEW_DETAIL };
+  }
+  if (
+    currentReview === undefined &&
+    context.snapshot.reviews.some((review) =>
+      review.id !== legacyReviewId &&
+      sameRepositoryIdentity(review.repository, record.repository) &&
+      review.pullRequest.number === record.target.pr &&
+      review.pullRequest.head === record.target.head &&
+      review.pullRequest.base === record.target.base
+    )
+  ) {
+    // A modern receipt without the exact current receipt cannot prove absence
+    // of newer work. Inspect actual history, never an arbitrary round ceiling.
+    return { kind: "state_error", detail: MERGE_WITHOUT_REVIEW_DETAIL };
+  }
+  // A retained legacy verdict cannot shadow the exact new attempt. A present
+  // current-round refusal never falls back to an older completed receipt.
+  const completed = currentReview === undefined &&
+      !attemptedReviews.some((charge) => charge.attempt >= currentRound)
+    ? context.snapshot.reviews.find((review) =>
+      review.id === legacyReviewId &&
+      review.pullRequest.number === record.target.pr &&
+      review.pullRequest.head === record.target.head &&
+      review.outcome === "completed"
+    )
+    : currentReview?.outcome === "completed"
+    ? currentReview
+    : undefined;
+  if (config === null || completed === undefined) {
+    return { kind: "state_error", detail: MERGE_WITHOUT_REVIEW_DETAIL };
+  }
+  // The merge authorization additionally binds the receipt's task acceptance
+  // to the TRUSTED live source-issue context, independently re-read here (the
+  // adapter re-reads it again immediately before the mutation). A transient
+  // read failure defers without a merge intent; different or unreadable
+  // context fails the strict authorization below.
+  const mergeTask = await readDeliveryTaskContext(deps, record);
+  if (mergeTask === "unavailable") {
+    return { kind: "deferred", detail: "merge task context is unavailable" };
+  }
+  // Surface the exact static semantic refusal (missing acceptance, changed
+  // digest, wrong issue, non-fulfilled verdict) instead of the generic
+  // contradiction detail: the owner sees why this candidate must not merge.
+  const semanticDetail = taskAcceptanceRefusal(completed, record, mergeTask);
+  if (semanticDetail !== null) {
+    return { kind: "state_error", detail: semanticDetail };
+  }
+  const receipt = authorizingReceipt(
+    [completed],
+    record,
+    deps.github.reviewerIdentity,
+    mergeTask,
+  );
+  if (receipt === null) {
+    // A durable completed verdict exists but does not authorize this exact
+    // merge (base drift, unresolved P0/P1, uncounted findings, untrusted
+    // reviewer). Never resubmit or merge: surface the state contradiction.
+    return { kind: "state_error", detail: MERGE_WITHOUT_REVIEW_DETAIL };
+  }
+  // CI gate (async, non-blocking): after review authorization, verify all
+  // checks on the exact candidate head are green. Still-running checks park
+  // the record in a bounded `ci_pending` wait and the turn completes; the
+  // next turn re-observes. Failed checks terminally block. This matches the
+  // `review_pending` turn-based pattern: no blocking wait inside a turn.
+  const ciGate = await gateDeliveryOnChecks(deps, context, record, now);
+  if (ciGate !== null) return ciGate;
+  let mergeRequest;
+  try {
+    mergeRequest = parseMergeRequestV1({
+      pullRequestNumber: record.target.pr!,
+      expectedHead: record.target.head!,
+      expectedBase: record.target.base,
+      review: receipt,
+    }, {
+      repository: record.repository,
+      expectedReviewer: deps.github.reviewerIdentity,
+    });
+  } catch {
+    // A receipt that no longer authorizes (identity/cleanliness mismatch)
+    // requires authoritative disposition, not a blind re-submission.
+    return persistWork(
+      deps,
+      context,
+      setWait(
+        record,
+        { reason: "review_pending", since: now, until: null },
+        now,
+      ),
+    );
+  }
+  const intent = {
+    kind: "merge" as const,
+    key: mergeIntentKey(record.target.pr!, record.target.head!),
+    startedAt: now,
+    branch: candidateBranch(record.id),
+    expectedHead: record.target.head,
+    observedBase: record.target.base,
+    pr: record.target.pr,
+    requestId: receipt.requestId,
+    resultId: receipt.resultId,
+  };
+  const withIntent = setIntent(record, intent, now);
+  const persisted = await persistWork(deps, context, withIntent);
+  if (persisted.kind !== "progress") return persisted;
+
+  // The merge intent write is awaited wall-clock time: no merge mutation may
+  // start at/after the total deadline. The merge intent stays durable, so the
+  // next run re-reads the exact PR gate and merges exactly once.
+  if (deps.clock.now() >= context.bounds.runDeadline) {
+    return {
+      kind: "margin",
+      detail: "merge crossed the total run deadline",
+    };
+  }
+
+  const merged = await deps.github.mergePullRequest(mergeRequest);
+  if (!merged.ok) {
+    // The saved merge intent must stay durable: the response may have been
+    // lost after the write, and the next run reconciles the exact remote PR
+    // state before repeating rather than blindly retrying an ambiguous write.
+    return persistWork(
+      deps,
+      context,
+      setWait(
+        withIntent,
+        { reason: "unavailable", since: now, until: now + CHECK_POLL_MS },
+        now,
+      ),
+    );
+  }
+  return handleMergeOutcome(deps, context, withIntent, merged.value, receipt);
+}
+
+/**
+ * `receipt` is the EXACT review receipt that authorized this merge: the one the
+ * caller just validated with the strict predicate (the fresh merge) or the one
+ * the durable merge intent references by its review request/result identity
+ * (reconciliation). A receipt that merely shares PR/head never carries the
+ * delivery proof, and the release request published below must reference this
+ * exact record so a later acceptance can revalidate the same proof.
+ */
+export async function handleMergeOutcome(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  outcome: MergeOutcomeV1,
+  receipt: ReviewReceiptV1 | null,
+): Promise<StepResultV1> {
+  const now = deps.clock.now();
+  if (outcome.outcome === "merged") {
+    const cleared = clearIntent(record, now);
+    // GitHub may already have auto-closed the issue through the published
+    // "Resolves #N" link. The trusted read-only context still yields the same
+    // canonical title/body digest, so a successful merge is never left
+    // unreleasable; a changed digest or a non-positive verdict is an honest
+    // no-delivery: no release request is published and the task is never
+    // counted as a newly delivered repair.
+    const semantic = await deliveryTaskRefusal(deps, record, receipt);
+    if (semantic === "wait") {
+      return waitRelease(deps, context, record, now);
+    }
+    if (semantic !== null) {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(cleared, semanticRefusalKind(semantic), semantic, now),
+      );
+    }
+    const request = await buildReleaseRequest(deps, record, outcome, receipt);
+    if (request === null) {
+      return persistWork(
+        deps,
+        context,
+        markTerminalBlocked(
+          cleared,
+          "other",
+          "release request identity invalid",
+          now,
+        ),
+      );
+    }
+    return persistTransition(deps, context, (draft) => {
+      const index = draft.work.findIndex((work) => work.id === record.id);
+      draft.work[index] = { ...cleared, updatedAt: now };
+      if (!draft.releaseRequests.some((item) => item.id === request.id)) {
+        draft.releaseRequests.push(request);
+      }
+    });
+  }
+  if (outcome.outcome === "ambiguous") {
+    return { kind: "progress" }; // reconciled via readPullRequest next run
+  }
+  const reason = outcome.reason;
+  if (
+    reason === "checks_pending" || reason === "conflict" ||
+    reason === "review_required"
+  ) {
+    return persistWork(
+      deps,
+      context,
+      setWait(
+        record,
+        { reason: "backoff", since: now, until: now + CHECK_POLL_MS },
+        now,
+      ),
+    );
+  }
+  return persistWork(
+    deps,
+    context,
+    setWait(
+      record,
+      { reason: "backoff", since: now, until: now + CHECK_POLL_MS },
+      now,
+    ),
+  );
+}
+
+export async function reconcileMergeIntent(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+): Promise<StepResultV1> {
+  if (record.target.pr === null || record.target.head === null) {
+    return { kind: "state_error", detail: "merge intent without identity" };
+  }
+  // Merge reconciliation observes the exact remote PR state: gate before the
+  // read. A cooldown deferral keeps the merge intent durable so the next run
+  // reconciles the exact same operation once.
+  const cooling = await checkGithubCooldown(
+    deps,
+    record.repository,
+    context.bounds,
+  );
+  if (cooling.kind === "state_error") {
+    return { kind: "state_error", detail: cooling.detail };
+  }
+  if (cooling.kind === "deferred") {
+    return { kind: "deferred", detail: cooling.detail };
+  }
+  const pr = await deps.github.readPullRequest(record.target.pr);
+  if (!pr.ok) {
+    return persistWork(
+      deps,
+      context,
+      setWait(
+        record,
+        {
+          reason: "unavailable",
+          since: deps.clock.now(),
+          until: deps.clock.now() + CHECK_POLL_MS,
+        },
+        deps.clock.now(),
+      ),
+    );
+  }
+  const pull = pr.value;
+  if (pull === null) {
+    return persistWork(
+      deps,
+      context,
+      setWait(
+        record,
+        { reason: "unavailable", since: deps.clock.now(), until: null },
+        deps.clock.now(),
+      ),
+    );
+  }
+  if (pull.state === "merged" && pull.mergeSha !== null) {
+    if (pull.head !== record.target.head) {
+      // Reconcile only the head this task reviewed: an observed merged head
+      // different from the saved reviewed head is an identity contradiction
+      // and must never produce a release request for the wrong revision.
+      return persistWork(
+        deps,
+        context,
+        markTerminalBlocked(
+          record,
+          "other",
+          "observed merged head identity mismatch",
+          deps.clock.now(),
+        ),
+      );
+    }
+    return handleMergeOutcome(deps, context, record, {
+      outcome: "merged",
+      head: pull.head,
+      mergeSha: pull.mergeSha,
+    }, mergeIntentReceipt(context.snapshot.reviews, record));
+  }
+  if (pull.state === "closed") {
+    return persistWork(
+      deps,
+      context,
+      markTerminalBlocked(
+        record,
+        "other",
+        "pull request closed before merge",
+        deps.clock.now(),
+      ),
+    );
+  }
+  // The merge-gate read is awaited wall-clock time: it may have crossed the
+  // total deadline, and the merge mutation must not start then. The merge
+  // intent stays durable; the next run re-reads the gate and merges once.
+  if (deps.clock.now() >= context.bounds.runDeadline) {
+    return {
+      kind: "margin",
+      detail: "merge gate crossed the total run deadline",
+    };
+  }
+  return executeMerge(deps, context, record);
+}
+
+export async function buildReleaseRequest(
+  deps: RepairCycleDepsV1,
+  record: WorkRecordV1,
+  outcome: { head: GitSha | null; mergeSha: GitSha | null },
+  receipt: ReviewReceiptV1 | null,
+): Promise<ReleaseRequestV1 | null> {
+  const head = outcome.head ?? record.target.head;
+  const revision = outcome.mergeSha ?? head;
+  if (record.target.pr === null || head === null || revision === null) {
+    return null;
+  }
+  const id = await releaseRequestId(
+    record.repository,
+    revision,
+    record.target.pr,
+  );
+  const request: ReleaseRequestV1 = {
+    version: "v1",
+    kind: "release_request",
+    id,
+    target: { repository: record.repository, environment: "production" },
+    revision,
+    source: {
+      pullRequest: record.target.pr,
+      reviewRequestId: receipt?.requestId ?? "",
+      reviewReceiptId: receipt?.id ?? null,
+      head,
+      base: record.target.base,
+    },
+    status: "open",
+    failureReason: null,
+    createdAt: deps.clock.now(),
+  };
+  try {
+    return parseReleaseRequestV1(request);
+  } catch {
+    return null;
+  }
+}

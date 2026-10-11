@@ -1,0 +1,282 @@
+// port merge.
+
+import type {
+  MergeOutcomeV1,
+  MergeRequestV1,
+  PortResultV1,
+} from "../contracts/ports.ts";
+import { tryParse } from "../contracts/validation.ts";
+import {
+  mergeSemanticRefusal,
+  parseMergeRequestV1,
+} from "../contracts/merge-request.ts";
+import { portError, portOk } from "../contracts/ports.ts";
+import { completedReviewMatchesReceipt } from "./review-normalize.ts";
+import {
+  checkReviewTaskStatement,
+  reviewTaskStatementDigest,
+  type ReviewTaskStatementV1,
+} from "../contracts/review-receipt.ts";
+import { GitHubPortReview } from "./port-review.ts";
+import {
+  blocked,
+  closingIssueNumber,
+  evaluateEffectiveProtections,
+  requiredChecksState,
+} from "./port-merge-policy.ts";
+
+export abstract class GitHubPortMerge extends GitHubPortReview {
+  // -------------------------------------------------------------------------
+  // mergePullRequest
+  // -------------------------------------------------------------------------
+
+  async mergePullRequest(
+    request: MergeRequestV1,
+  ): Promise<PortResultV1<MergeOutcomeV1>> {
+    // 1. Strict parse against the trusted adapter policy: the request can
+    // never name another repository or select the trusted reviewer.
+    const parsed = tryParse(
+      (value: unknown) =>
+        parseMergeRequestV1(value, {
+          repository: this.repository,
+          expectedReviewer: this.trustedReviewer,
+        }),
+      request,
+    );
+    if (!parsed.ok) {
+      return portError("invalid", "merge request is malformed");
+    }
+    const merge = parsed.value;
+    // 2. Current authoritative PR and exact identities.
+    const pull = await this.client.readPullRequest(merge.pullRequestNumber);
+    if (!pull.ok) return pull;
+    if (pull.value === null) {
+      return portError("not_found", "pull request not found");
+    }
+    if (pull.value.state === "merged") {
+      if (pull.value.head !== merge.expectedHead) {
+        return blocked("head_mismatch", null);
+      }
+      return portOk({
+        outcome: "merged",
+        head: pull.value.head,
+        mergeSha: pull.value.mergeSha!,
+      });
+    }
+    if (pull.value.state === "closed") {
+      return blocked("conflict", pull.value.head);
+    }
+    if (pull.value.head !== merge.expectedHead) {
+      return blocked("head_mismatch", pull.value.head);
+    }
+    if (pull.value.base !== merge.expectedBase) {
+      return blocked("base_mismatch", pull.value.head);
+    }
+    // Never merge human-owned/unassigned target work.
+    if (pull.value.author !== this.trustedPrAuthor) {
+      return blocked("conflict", pull.value.head);
+    }
+    // 3. Re-observe the authoritative current review by exact request id; the
+    // caller-supplied receipt never grants authority by itself.
+    const normalizedRes = await this.currentReviewEvidence(
+      merge.pullRequestNumber,
+      merge,
+    );
+    if (!normalizedRes.ok) {
+      // The existing error object is returned as-is: rate-limit metadata
+      // must survive every reconstruction.
+      return { ok: false, error: normalizedRes.error };
+    }
+    const normalized = normalizedRes.normalized;
+    if (normalized === null) {
+      return blocked("review_required", pull.value.head);
+    }
+    if (!completedReviewMatchesReceipt(normalized, merge.review)) {
+      return blocked("review_required", pull.value.head);
+    }
+    // Human resolution authorization: a trusted authenticated resolver must
+    // prove each resolved finding's immutable reference against the exact
+    // repo/PR/head/fingerprint/author; a caller-supplied resolved:true with an
+    // allowlisted author name is never authentication by itself.
+    if (!(await this.resolutionsTrusted(merge.review, pull.value))) {
+      return blocked("review_required", pull.value.head);
+    }
+    // 4. Effective protections are the ACTIVE branch rules (branch-rules
+    // response plus per-ruleset bypass policy) — classic branch protection
+    // alone never proves effective server-enforced strict checks. Unreadable,
+    // unsupported, merge-queue or bypassable policies block.
+    const protections = await this.readEffectiveProtections(pull.value.baseRef);
+    if (!protections.ok) {
+      // Bounded operational diagnostic: the PR number and the typed error kind
+      // only; never a message, body, URL or credential.
+      console.error(JSON.stringify({
+        event: "sentinel_merge_protection_unavailable",
+        prNumber: merge.pullRequestNumber,
+        errorKind: protections.error.kind,
+      }));
+      return blocked("protection_required", pull.value.head);
+    }
+    const protectionEvaluation = evaluateEffectiveProtections(
+      protections.value,
+    );
+    if (!protectionEvaluation.ok) {
+      // Bounded operational diagnostic: the evaluator's own reason plus the
+      // normalized protections record; never raw API bodies or messages.
+      console.error(JSON.stringify({
+        event: "sentinel_merge_protection_blocked",
+        prNumber: merge.pullRequestNumber,
+        reason: protectionEvaluation.reason,
+        protections: protections.value,
+      }));
+      return blocked("protection_required", pull.value.head);
+    }
+    // 5. Required checks all passing on the exact head.
+    const checks = await this.client.readChecks(merge.expectedHead);
+    if (!checks.ok) return blocked("protection_required", pull.value.head);
+    if (checks.value.head !== merge.expectedHead) {
+      return blocked("protection_required", pull.value.head);
+    }
+    const checkState = requiredChecksState(
+      protections.value.requiredCheckNames,
+      checks.value.checks,
+    );
+    if (checkState === "pending") {
+      return blocked("checks_pending", pull.value.head);
+    }
+    if (checkState === "failed") {
+      return blocked("checks_failed", pull.value.head);
+    }
+    // 6. Required GitHub approvals (distinct from the review receipt). The
+    // REST pull response does not carry the authoritative approval state;
+    // read the exact GraphQL field only when branch policy requires it.
+    if (protections.value.requiredApprovingReviewCount > 0) {
+      const approval = await this.client.readPullRequestReviewDecision(
+        merge.pullRequestNumber,
+      );
+      if (!approval.ok || approval.value !== "approved") {
+        return blocked("review_required", pull.value.head);
+      }
+    }
+    // 7. Candidate ancestry: the candidate must contain the exact integrated
+    // validated base as ancestor.
+    const ancestor = await this.git.isAncestor(
+      merge.expectedBase,
+      merge.expectedHead,
+    );
+    if (!ancestor.ok) return ancestor;
+    if (!ancestor.value) {
+      return blocked("base_mismatch", pull.value.head);
+    }
+    // 7b. Semantic task authorization, immediately before the merge mutation.
+    // A receipt copy is never fulfillment evidence: the adapter independently
+    // reads the live source issue named by the PR's OWN published closing link
+    // ("Resolves #N"), rebuilds the bounded canonical statement and requires
+    // the receipt's acceptance to be the same positive, exactly bound verdict.
+    // An acceptance present without a closing link is verified against its own
+    // issue number; incident PRs (no link, no acceptance) keep the change-only
+    // contract. A transient issue read failure is a retryable typed error
+    // (never a merge); a missing/malformed context or any semantic refusal is
+    // a typed refusal.
+    const closingIssue = closingIssueNumber(pull.value.body);
+    const acceptance = merge.review.taskAcceptance;
+    const contextIssueNumber = closingIssue ?? acceptance?.issueNumber ?? null;
+    let semanticTask: ReviewTaskStatementV1 | null | "unavailable" = null;
+    if (contextIssueNumber !== null) {
+      const issue = await this.client.readIssue(contextIssueNumber);
+      if (!issue.ok) return issue;
+      if (issue.value === null || issue.value.number !== contextIssueNumber) {
+        return blocked("review_required", pull.value.head);
+      }
+      const text = {
+        issueNumber: contextIssueNumber,
+        title: issue.value.title,
+        body: issue.value.body,
+      };
+      const checked = await checkReviewTaskStatement({
+        ...text,
+        digest: await reviewTaskStatementDigest(text),
+      });
+      semanticTask = checked.ok ? checked.statement : "unavailable";
+    }
+    if (
+      mergeSemanticRefusal(merge, {
+        issueNumber: contextIssueNumber,
+        task: semanticTask,
+      }) !== null
+    ) {
+      return blocked("review_required", pull.value.head);
+    }
+    // 8. Expected-head merge. REST has no atomic base CAS: the strict
+    // up-to-date protection is what rejects a base movement after this last
+    // precheck; a rejection is reconciled against the re-observed PR.
+    const merged = await this.client.mergePull(
+      merge.pullRequestNumber,
+      merge.expectedHead,
+    );
+    if (!merged.ok) return merged;
+    if (merged.value.status === "merged") {
+      return portOk({
+        outcome: "merged",
+        head: merge.expectedHead,
+        mergeSha: merged.value.mergeSha,
+      });
+    }
+    if (merged.value.status === "ambiguous") {
+      // The merge response was lost; report ambiguous unless the exact PR
+      // proves the merge happened. Never a blind retry, and never pretend
+      // "no effect": when the reconcile observation itself is unavailable the
+      // effect stays ambiguous.
+      const check = await this.client.readPullRequest(merge.pullRequestNumber);
+      if (!check.ok) {
+        return portOk({ outcome: "ambiguous", head: null, mergeSha: null });
+      }
+      if (
+        check.value !== null && check.value.state === "merged" &&
+        check.value.head === merge.expectedHead
+      ) {
+        return portOk({
+          outcome: "merged",
+          head: check.value.head,
+          mergeSha: check.value.mergeSha!,
+        });
+      }
+      return portOk({ outcome: "ambiguous", head: null, mergeSha: null });
+    }
+    const after = await this.client.readPullRequest(merge.pullRequestNumber);
+    if (!after.ok) return after;
+    if (after.value === null) return blocked("protection_required", null);
+    if (after.value.state === "merged") {
+      if (after.value.head !== merge.expectedHead) {
+        return blocked("head_mismatch", after.value.head);
+      }
+      return portOk({
+        outcome: "merged",
+        head: after.value.head,
+        mergeSha: after.value.mergeSha!,
+      });
+    }
+    if (after.value.state === "closed") {
+      return blocked("conflict", after.value.head);
+    }
+    if (after.value.head !== merge.expectedHead) {
+      return blocked("head_mismatch", after.value.head);
+    }
+    if (after.value.base !== merge.expectedBase) {
+      return blocked("base_mismatch", after.value.head);
+    }
+    const checksAfter = await this.client.readChecks(merge.expectedHead);
+    if (checksAfter.ok && checksAfter.value.head === merge.expectedHead) {
+      const stateAfter = requiredChecksState(
+        protections.value.requiredCheckNames,
+        checksAfter.value.checks,
+      );
+      if (stateAfter === "pending") {
+        return blocked("checks_pending", after.value.head);
+      }
+      if (stateAfter === "failed") {
+        return blocked("checks_failed", after.value.head);
+      }
+    }
+    return blocked("protection_required", after.value.head);
+  }
+}
