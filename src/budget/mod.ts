@@ -1,3 +1,32 @@
+import { parseBudgetReservationV1 } from "../contracts/budget-reservation.ts";
+import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
+import { isGitSha } from "../contracts/brands.ts";
+import type {
+  PortResultV1,
+  StateReadResultV1,
+  StateWriteResultV1,
+} from "../contracts/ports.ts";
+import { expectRestrictedRef } from "../contracts/shared.ts";
+import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  deriveReservationId,
+  earliestRetryAt,
+  invalid,
+  nextSequence,
+  PURPOSES,
+  sameLogicalIdentity,
+  SETTLEMENT_OUTCOMES,
+  unavailable,
+} from "./budget-rolling.ts";
+import type {
+  BudgetControllerV1,
+  ReserveModelStartRequestV1,
+  ReserveModelStartResultV1,
+  SettleModelStartRequestV1,
+  SettleModelStartResultV1,
+} from "./budget-types.ts";
+import { BudgetStateContext } from "./budget-state.ts";
+
 /**
  * Rolling model-start budget controller.
  *
@@ -48,128 +77,8 @@
  * ambiguous or conflicting write the caller reconciles by rereading.
  */
 
-import { parseBudgetReservationV1 } from "../contracts/budget-reservation.ts";
-import type {
-  BudgetReservationV1,
-  ReservationOutcomeV1,
-  ReservationPurposeV1,
-} from "../contracts/budget-reservation.ts";
-import { isGitSha } from "../contracts/brands.ts";
-import type { GitSha, WorkItemId } from "../contracts/brands.ts";
-import { canonicalStringify } from "../contracts/canonical.ts";
-import type {
-  Clock,
-  PortResultV1,
-  RepairStateWriter,
-  StateReadResultV1,
-  StateReadView,
-  StateWriteResultV1,
-} from "../contracts/ports.ts";
-import { parseRepositoryConfigV1 } from "../contracts/repository-config.ts";
-import type {
-  LiveStartLimitsV1,
-  RepositoryConfigV1,
-} from "../contracts/repository-config.ts";
-import {
-  expectRestrictedRef,
-  parseRepositoryIdentity,
-} from "../contracts/shared.ts";
-import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
-import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
-
-/** One rolling hour in milliseconds. */
-export const HOUR_WINDOW_MS = 3_600_000;
-/** One rolling week in milliseconds. */
-export const SEVEN_DAY_WINDOW_MS = 7 * 24 * 3_600_000;
-
-const PURPOSES: readonly ReservationPurposeV1[] = [
-  "implementation",
-  "continuation",
-  "retry",
-  "review_request",
-];
-const SETTLEMENT_OUTCOMES: readonly ReservationOutcomeV1[] = [
-  "submitted",
-  "ambiguous",
-  "confirmed_not_submitted",
-];
-
-export interface ReserveModelStartRequestV1 {
-  repository: RepositoryIdentityV1;
-  taskId: WorkItemId;
-  /** Repository head the session would start against. */
-  head: GitSha;
-  /** One-based attempt; a genuinely new retry uses its own incremented attempt. */
-  attempt: number;
-  purpose: ReservationPurposeV1;
-}
-
-export type DeferredReasonV1 = "cap_limit" | "clock_regression";
-
-export type ReserveModelStartResultV1 =
-  | { status: "admitted"; reservation: BudgetReservationV1; stateHead: GitSha }
-  | { status: "duplicate"; reservation: BudgetReservationV1 }
-  | { status: "deferred"; reason: DeferredReasonV1; retryAt: number }
-  | { status: "disabled"; detail: string }
-  | { status: "conflict"; currentHead: GitSha | null }
-  | { status: "ambiguous"; currentHead: GitSha | null }
-  | { status: "unavailable"; detail: string }
-  | { status: "invalid"; detail: string };
-
-export interface SettleModelStartRequestV1 {
-  /** The trusted derived reservation id. */
-  id: string;
-  /** submitted | ambiguous remain charged; confirmed_not_submitted refunds. */
-  outcome: ReservationOutcomeV1;
-  /** Required restricted proof ref iff outcome is confirmed_not_submitted. */
-  proofRef: string | null;
-}
-
-export type SettleModelStartResultV1 =
-  | { status: "settled"; reservation: BudgetReservationV1; stateHead: GitSha }
-  | {
-    status: "idempotent";
-    reservation: BudgetReservationV1;
-    stateHead: GitSha;
-  }
-  | { status: "deferred"; reason: "clock_regression"; retryAt: number }
-  | { status: "conflict"; currentHead: GitSha | null }
-  | { status: "ambiguous"; currentHead: GitSha | null }
-  | { status: "unavailable"; detail: string }
-  | { status: "invalid"; detail: string };
-
-export interface BudgetControllerOptionsV1 {
-  clock: Clock;
-  /** The repair state capability: authoritative reads + one trusted writer. */
-  state: StateReadView & RepairStateWriter;
-  /**
-   * Trusted complete repository configuration set. Every operation re-parses
-   * and re-validates the whole set with the frozen parser; admission is
-   * disabled on any missing/mismatched policy or unchosen repository.
-   */
-  configs: readonly RepositoryConfigV1[];
-}
-
-export interface BudgetControllerV1 {
-  reserveModelStart(
-    request: ReserveModelStartRequestV1,
-  ): Promise<ReserveModelStartResultV1>;
-  settleModelStart(
-    request: SettleModelStartRequestV1,
-  ): Promise<SettleModelStartResultV1>;
-}
-
-export class RollingStartBudget implements BudgetControllerV1 {
-  private readonly clock: Clock;
-  private readonly state: StateReadView & RepairStateWriter;
-  private readonly configs: readonly RepositoryConfigV1[];
-
-  constructor(options: BudgetControllerOptionsV1) {
-    this.clock = options.clock;
-    this.state = options.state;
-    this.configs = options.configs;
-  }
-
+export class RollingStartBudget extends BudgetStateContext
+  implements BudgetControllerV1 {
   // -------------------------------------------------------------------------
   // Reserve: one durable reservation must be applied before a start is granted.
   // -------------------------------------------------------------------------
@@ -497,406 +406,26 @@ export class RollingStartBudget implements BudgetControllerV1 {
   // -------------------------------------------------------------------------
   // Policy: one global budget, one trusted complete config set.
   // -------------------------------------------------------------------------
-
-  private resolvePolicy(
-    requested: RepositoryIdentityV1,
-  ): { status: "valid"; limits: LiveStartLimitsV1 } | {
-    status: "disabled";
-    detail: string;
-  } {
-    if (this.configs.length === 0) {
-      return disabledPolicy("no repository configurations were supplied");
-    }
-    let first: LiveStartLimitsV1 | null = null;
-    let requestedConfigured = false;
-    for (const config of this.configs) {
-      let parsed: RepositoryConfigV1;
-      try {
-        parsed = parseRepositoryConfigV1(config);
-      } catch {
-        return disabledPolicy("a repository configuration failed validation");
-      }
-      if (parsed.liveStartLimits === null) {
-        return disabledPolicy(
-          "liveStartLimits is null: inference is not enabled",
-        );
-      }
-      if (parsed.sessionBound === null) {
-        return disabledPolicy(
-          "sessionBound is null: session bounds are required",
-        );
-      }
-      const limits = parsed.liveStartLimits;
-      // Each cap is enforced only when numeric: explicit null means no cap
-      // for that window, never a wildcard and never Infinity/zero. A present
-      // numeric cap must stay a positive integer.
-      if (
-        (limits.perHour !== null && limits.perHour < 1) ||
-        (limits.perSevenDays !== null && limits.perSevenDays < 1)
-      ) {
-        return disabledPolicy("live start caps must be positive integers");
-      }
-      if (first === null) {
-        first = limits;
-      } else if (
-        limits.perHour !== first.perHour ||
-        limits.perSevenDays !== first.perSevenDays
-      ) {
-        return disabledPolicy(
-          "configured live start caps disagree across repositories",
-        );
-      }
-      if (sameRepository(parsed.repository, requested)) {
-        requestedConfigured = true;
-      }
-    }
-    if (!requestedConfigured) {
-      return disabledPolicy("the requested repository is not configured");
-    }
-    return { status: "valid", limits: first as LiveStartLimitsV1 };
-  }
-
-  // -------------------------------------------------------------------------
-  // Timestamps, regression and rolling caps.
-  // -------------------------------------------------------------------------
-
-  private readClock(): number | null {
-    let now: number;
-    try {
-      now = this.clock.now();
-    } catch {
-      return null;
-    }
-    if (typeof now !== "number" || !Number.isSafeInteger(now) || now < 0) {
-      return null;
-    }
-    return now;
-  }
-
-  /**
-   * The earliest time at which the clock is no longer behind durable state:
-   * now must never be behind the snapshot updatedAt or any reservation
-   * creation/settlement time (including refunded entries), or state written
-   * by a newer clock could be lost. Returns null when now is not behind.
-   */
-  private clockRegression(
-    snapshot: RepairStateSnapshotV1,
-    now: number,
-  ): number | null {
-    let latest = snapshot.updatedAt;
-    for (const reservation of snapshot.reservations) {
-      if (reservation.createdAt > latest) latest = reservation.createdAt;
-      if (
-        reservation.settledAt !== null && reservation.settledAt > latest
-      ) {
-        latest = reservation.settledAt;
-      }
-    }
-    return now < latest ? latest : null;
-  }
-
-  private extendSnapshot(
-    prior: RepairStateSnapshotV1 | null,
-    expectedHead: GitSha | null,
-    now: number,
-    reservation: BudgetReservationV1,
-    sequence: number,
-  ): RepairStateSnapshotV1 {
-    const base = prior ?? {
-      version: "v1",
-      kind: "repair_state_snapshot",
-      stateHead: null,
-      sequence: 1,
-      updatedAt: now,
-      incidents: [],
-      evidence: [],
-      work: [],
-      reservations: [],
-      reviews: [],
-      replays: [],
-      releaseRequests: [],
-      githubCooldowns: [],
-      attemptMemory: [],
-      lessons: [],
-    };
-    return {
-      ...base,
-      stateHead: expectedHead,
-      sequence,
-      updatedAt: now,
-      reservations: [...base.reservations, reservation],
-    };
-  }
-
-  private updatedReservation(
-    prior: BudgetReservationV1,
-    outcome: ReservationOutcomeV1,
-    now: number,
-    proofRef: string | null,
-  ): BudgetReservationV1 | null {
-    const updated: BudgetReservationV1 = {
-      ...prior,
-      outcome,
-      settledAt: now,
-      proofRef,
-      // createdAt is immutable trusted identity; never caller-supplied.
-    };
-    try {
-      return parseBudgetReservationV1(updated);
-    } catch {
-      return null;
-    }
-  }
-
-  private async writeSettlement(
-    snapshot: RepairStateSnapshotV1,
-    expectedHead: GitSha,
-    now: number,
-    updated: BudgetReservationV1,
-  ): Promise<SettleModelStartResultV1> {
-    const sequence = nextSequence(snapshot);
-    if (sequence === null) {
-      return unavailable("state sequence is exhausted; no settlement applied");
-    }
-    const next: RepairStateSnapshotV1 = {
-      ...snapshot,
-      stateHead: expectedHead,
-      sequence,
-      updatedAt: now,
-      reservations: snapshot.reservations.map((r) =>
-        r.id === updated.id ? updated : r
-      ),
-    };
-    let write: PortResultV1<StateWriteResultV1>;
-    try {
-      write = await this.state.writeRepair(next, expectedHead);
-    } catch {
-      // A rejected write means the settlement may have been applied: no
-      // outcome is claimed from this response; rereading reconciles.
-      return { status: "ambiguous", currentHead: null };
-    }
-    if (!write.ok) {
-      return unavailable(
-        `state settlement write failed (${write.error.kind}); not applied`,
-      );
-    }
-    if (write.value.status === "applied") {
-      return {
-        status: "settled",
-        reservation: updated,
-        stateHead: write.value.head,
-      };
-    }
-    if (write.value.status === "conflict") {
-      return { status: "conflict", currentHead: write.value.currentHead };
-    }
-    return { status: "ambiguous", currentHead: write.value.currentHead };
-  }
-
-  // -------------------------------------------------------------------------
-  // Request validation via the frozen parsers (no duplicated validation).
-  // -------------------------------------------------------------------------
-
-  private parseRepository(
-    request: ReserveModelStartRequestV1,
-  ): RepositoryIdentityV1 | null {
-    try {
-      return parseRepositoryIdentity(request.repository, "$.repository");
-    } catch {
-      return null;
-    }
-  }
-
-  private parseTaskId(taskId: WorkItemId): WorkItemId | null {
-    if (
-      typeof taskId !== "string" ||
-      !/^[A-Za-z0-9._:-]{1,256}$/.test(taskId)
-    ) {
-      return null;
-    }
-    return taskId as WorkItemId;
-  }
 }
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for deterministic use and boundary tests).
 // ---------------------------------------------------------------------------
 
-/** Reservations that still charge the caps; refunded proof is the only uncharged terminal. */
-export function isCharged(
-  reservation: BudgetReservationV1,
-): boolean {
-  return reservation.outcome !== "confirmed_not_submitted";
-}
+export {
+  deriveReservationId,
+  earliestRetryAt,
+  HOUR_WINDOW_MS,
+  isCharged,
+  SEVEN_DAY_WINDOW_MS,
+} from "./budget-rolling.ts";
 
-/**
- * Earliest retry time under the rolling caps at `now` for the given
- * reservations. Windows are (x - windowMs, x]; refunded
- * confirmed_not_submitted reservations never charge. Entries are sorted by
- * their charge timestamp (createdAt) and the earliest x >= now that admits
- * one more start is the max of every enforced per-window result. A cap that is
- * explicitly null is not enforced at all: the explicit uncapped policy
- * records every start durably but never defers one.
- *
- * Exported for deterministic use and boundary tests. Invalid input (a
- * malformed reservation, a non-safe `now`, a non-positive numeric cap, or a
- * numeric hour cap that exceeds a numeric weekly cap) and arithmetic overflow
- * throw one fixed sanitized RangeError that never echoes input values; callers
- * catch it at their boundary and fail closed.
- */
-export function earliestRetryAt(
-  reservations: readonly BudgetReservationV1[],
-  now: number,
-  limits: LiveStartLimitsV1,
-): number {
-  if (!isSafeTimestamp(now)) {
-    throw new RangeError("earliestRetryAt: invalid now");
-  }
-  if (
-    (limits.perHour !== null && !isPositiveSafeInt(limits.perHour)) ||
-    (limits.perSevenDays !== null &&
-      !isPositiveSafeInt(limits.perSevenDays)) ||
-    (limits.perHour !== null && limits.perSevenDays !== null &&
-      limits.perHour > limits.perSevenDays)
-  ) {
-    throw new RangeError("earliestRetryAt: invalid limits");
-  }
-  if (!Array.isArray(reservations)) {
-    throw new RangeError("earliestRetryAt: invalid reservations");
-  }
-  // The frozen reservation parser is the input gate: reserved/settled
-  // lifecycle, safe timestamps and valid refs are all already enforced.
-  for (const reservation of reservations) {
-    try {
-      parseBudgetReservationV1(reservation);
-    } catch {
-      throw new RangeError("earliestRetryAt: invalid reservation");
-    }
-  }
-  const descending = reservations
-    .filter(isCharged)
-    .map((r) => r.createdAt)
-    .sort((a, b) => b - a);
-  let retryAt = now;
-  // Each numeric cap still defers; explicit null has no admission cap for
-  // that window, so only the enforced windows bound admission.
-  if (limits.perHour !== null) {
-    retryAt = Math.max(
-      retryAt,
-      perWindowRetryAt(descending, limits.perHour, HOUR_WINDOW_MS, now),
-    );
-  }
-  if (limits.perSevenDays !== null) {
-    retryAt = Math.max(
-      retryAt,
-      perWindowRetryAt(
-        descending,
-        limits.perSevenDays,
-        SEVEN_DAY_WINDOW_MS,
-        now,
-      ),
-    );
-  }
-  return retryAt;
-}
-
-function perWindowRetryAt(
-  descending: readonly number[],
-  limit: number,
-  windowMs: number,
-  now: number,
-): number {
-  if (descending.length < limit) return now;
-  // The limit-th most recent charge must fall out of the window before one
-  // more start fits; sorting handles several excess entries, not one.
-  const threshold = descending[limit - 1];
-  const retryAt = threshold + windowMs;
-  if (!Number.isSafeInteger(retryAt)) {
-    throw new RangeError("earliestRetryAt: retry timestamp overflow");
-  }
-  return Math.max(now, retryAt);
-}
-
-function isSafeTimestamp(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-
-function isPositiveSafeInt(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
-}
-
-/**
- * The next snapshot sequence: sequence 1 on branch creation, otherwise
- * exactly one more than the prior sequence. Returns null when the increment
- * would leave the safe-integer range (exhausted state: no write may proceed).
- */
-function nextSequence(prior: RepairStateSnapshotV1 | null): number | null {
-  const value = prior === null ? 1 : prior.sequence + 1;
-  return Number.isSafeInteger(value) ? value : null;
-}
-
-/** SHA-256 of the canonical JSON identity — the trusted reservation id. */
-export async function deriveReservationId(
-  identity: {
-    repository: RepositoryIdentityV1;
-    taskId: WorkItemId;
-    head: GitSha;
-    attempt: number;
-    purpose: ReservationPurposeV1;
-  },
-): Promise<string> {
-  const bytes = new TextEncoder().encode(
-    canonicalStringify({
-      repository: identity.repository,
-      taskId: identity.taskId,
-      head: identity.head,
-      attempt: identity.attempt,
-      purpose: identity.purpose,
-    }),
-  );
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function sameLogicalIdentity(
-  reservation: BudgetReservationV1,
-  repository: RepositoryIdentityV1,
-  taskId: WorkItemId,
-  head: GitSha,
-  attempt: number,
-  purpose: ReservationPurposeV1,
-): boolean {
-  return sameRepository(reservation.repository, repository) &&
-    reservation.taskId === taskId &&
-    reservation.head === head &&
-    reservation.attempt === attempt &&
-    reservation.purpose === purpose;
-}
-
-function sameRepository(
-  a: RepositoryIdentityV1,
-  b: RepositoryIdentityV1,
-): boolean {
-  return a.owner === b.owner && a.name === b.name &&
-    a.installationId === b.installationId;
-}
-
-function unavailable<T extends string>(
-  detail: T,
-): { status: "unavailable"; detail: T } {
-  return { status: "unavailable", detail };
-}
-
-function invalid<T extends string>(
-  detail: T,
-): { status: "invalid"; detail: T } {
-  return { status: "invalid", detail };
-}
-
-function disabledPolicy(
-  detail: string,
-): { status: "disabled"; detail: string } {
-  return { status: "disabled", detail };
-}
+export type {
+  BudgetControllerOptionsV1,
+  BudgetControllerV1,
+  DeferredReasonV1,
+  ReserveModelStartRequestV1,
+  ReserveModelStartResultV1,
+  SettleModelStartRequestV1,
+  SettleModelStartResultV1,
+} from "./budget-types.ts";
