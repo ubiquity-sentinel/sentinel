@@ -1,0 +1,146 @@
+/** Read-only bounded authenticated requests, redirects and exhaustive pagination. */
+import { HOSTED_SUPERVISOR_REPOSITORY as REPOSITORY } from "../contracts/hosted-supervisor.ts";
+import { MAX_MATRIX_ARCHIVE_BYTES } from "../contracts/matrix.ts";
+import {
+  DEFAULT_HTTP_MAX_BODY_BYTES,
+  type HttpResponseV1,
+} from "../github/http.ts";
+import {
+  type Json,
+  positive,
+  record,
+  refuse,
+} from "./matrix-artifact-values.ts";
+import type {
+  MatrixArtifactDeadlineV1,
+  MatrixArtifactOptionsV1,
+  MatrixArtifactReaderV1,
+} from "./matrix-artifact-context.ts";
+
+const API = `https://api.github.com/repos/${REPOSITORY}/actions`;
+const MAX_ITEMS = 10_000;
+function storageUrl(location: string | null): string {
+  if (location === null) refuse();
+  const url = new URL(location);
+  if (
+    url.protocol !== "https:" || url.port !== "" || url.username !== "" ||
+    url.password !== "" || url.hash !== "" ||
+    !/^productionresultssa[0-9]+\.blob\.core\.windows\.net$/.test(url.hostname)
+  ) refuse();
+  return url.toString();
+}
+
+/** Dedicated bounded archive bytes; ordinary metadata/log bodies retain 8 MiB. */
+export function createMatrixArtifactHttp(
+  options: MatrixArtifactOptionsV1,
+  until: number,
+  deadline: MatrixArtifactDeadlineV1,
+  repositoryIdentity: { id: number | null },
+): MatrixArtifactReaderV1 {
+  const get = async (
+    path: string,
+    binary = false,
+    storage = false,
+  ): Promise<HttpResponseV1> => {
+    const remaining = until - options.clock.now();
+    if (remaining <= 0 || deadline.fired()) refuse();
+    const response = await deadline.race(
+      options.http({
+        method: "GET",
+        url: path,
+        deadlineMs: remaining,
+        headers: storage
+          ? new Map()
+          : new Map([["authorization", `Bearer ${options.token}`], [
+            "accept",
+            "application/vnd.github+json",
+          ], ["x-github-api-version", "2022-11-28"]]),
+        body: null,
+        redirect: storage ? "error" : "manual",
+        ...(binary ? { responseType: "bytes" as const } : {}),
+      }),
+    );
+    if (
+      new TextEncoder().encode(response.bodyText).length >
+        DEFAULT_HTTP_MAX_BODY_BYTES ||
+      (response.bodyBytes?.length ?? 0) > MAX_MATRIX_ARCHIVE_BYTES
+    ) refuse();
+    return response;
+  };
+  const json = async (path: string): Promise<Json> => {
+    const response = await get(path);
+    if (response.status !== 200) refuse();
+    return record(JSON.parse(response.bodyText));
+  };
+  const pages = async (path: string, key: string): Promise<Json[]> => {
+    const items: Json[] = [];
+    let total: number | null = null;
+    for (let page = 1; page <= 100; page++) {
+      const url = `${API}${path}?per_page=100&page=${page}`;
+      const response = await get(url);
+      if (response.status !== 200) refuse();
+      const body = record(JSON.parse(response.bodyText));
+      if (
+        !Number.isSafeInteger(body.total_count) ||
+        (body.total_count as number) < 0 ||
+        (body.total_count as number) > MAX_ITEMS
+      ) refuse();
+      if (total !== null && total !== body.total_count) refuse();
+      total = body.total_count as number;
+      if (!Array.isArray(body[key]) || body[key].length > 100) refuse();
+      items.push(...body[key].map(record));
+      if (items.length > total) refuse();
+      const link = response.headers.get("link");
+      const nextLinks = [
+        ...(link?.matchAll(/<([^>]+)>;\s*rel="next"/g) ?? []),
+      ];
+      if (nextLinks.length > 1) refuse();
+      const next = nextLinks[0];
+      if (
+        next && next[1] !== `${API}${path}?per_page=100&page=${page + 1}`
+      ) {
+        if (!next[1].startsWith("https://api.github.com/repositories/")) {
+          refuse();
+        }
+        if (repositoryIdentity.id === null) {
+          const repository = await json(
+            `https://api.github.com/repos/${REPOSITORY}`,
+          );
+          if (repository.full_name !== REPOSITORY) refuse();
+          repositoryIdentity.id = positive(repository.id);
+        }
+        if (
+          next[1] !==
+            `https://api.github.com/repositories/${repositoryIdentity.id}/actions${path}?per_page=100&page=${
+              page + 1
+            }`
+        ) {
+          refuse();
+        }
+      }
+      if (!next && items.length === total) {
+        const ids = items.map((row) => positive(row.id));
+        if (new Set(ids).size !== ids.length) refuse();
+        return items;
+      }
+      if (!next || body[key].length === 0) refuse();
+    }
+    refuse();
+  };
+  const download = async (
+    path: string,
+    binary: boolean,
+  ): Promise<HttpResponseV1> => {
+    const redirect = await get(`${API}${path}`);
+    if (redirect.status !== 302) refuse();
+    const response = await get(
+      storageUrl(redirect.headers.get("location")),
+      binary,
+      true,
+    );
+    if (response.status !== 200) refuse();
+    return response;
+  };
+
+  return { json, pages, download };
+}
