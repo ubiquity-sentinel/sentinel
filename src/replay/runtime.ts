@@ -1,3 +1,17 @@
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import {
+  describeThrow,
+  destroyStreams,
+  exitCodeFor,
+  groupAlive,
+  STREAM_MARGIN_MS,
+  SUPPORTED_POSIX_OS,
+  terminateOwnedGroup,
+  within,
+} from "./runtime-process.ts";
+import { BoundedCollector } from "./runtime-output.ts";
+
 /**
  * Replay process runtime (m03-owned).
  *
@@ -47,10 +61,6 @@
  * combined are retained; excess bytes are discarded and flagged. The
  * retained prefix is what the digests cover; truncation is reported.
  */
-
-import { spawn } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
-import { kill } from "node:process";
 
 export interface ReplayCommandInputV1 {
   /** Executable name or absolute path (argv element 0, never a shell string). */
@@ -106,57 +116,6 @@ export interface ReplayCommandResultV1 {
 export interface ReplayRuntimeV1 {
   run(input: ReplayCommandInputV1): Promise<ReplayCommandResultV1>;
 }
-
-const TERM_GRACE_MS = 250;
-const GROUP_POLL_MS = 25;
-const STREAM_MARGIN_MS = 500;
-
-/** POSIX platforms where a detached child leads its own signalable group. */
-const SUPPORTED_POSIX_OS = new Set([
-  "aix",
-  "darwin",
-  "freebsd",
-  "illumos",
-  "linux",
-  "netbsd",
-  "openbsd",
-  "solaris",
-]);
-
-/** Signal -> conventional exit code (128 + signal), for signal deaths. */
-const SIGNAL_EXIT_CODE: Record<string, number> = {
-  SIGHUP: 1,
-  SIGINT: 2,
-  SIGQUIT: 3,
-  SIGILL: 4,
-  SIGTRAP: 5,
-  SIGABRT: 6,
-  SIGBUS: 7,
-  SIGFPE: 8,
-  SIGKILL: 9,
-  SIGUSR1: 10,
-  SIGSEGV: 11,
-  SIGUSR2: 12,
-  SIGPIPE: 13,
-  SIGALRM: 14,
-  SIGTERM: 15,
-  SIGSTKFLT: 16,
-  SIGCHLD: 17,
-  SIGCONT: 18,
-  SIGSTOP: 19,
-  SIGTSTP: 20,
-  SIGTTIN: 21,
-  SIGTTOU: 22,
-  SIGURG: 23,
-  SIGXCPU: 24,
-  SIGXFSZ: 25,
-  SIGVTALRM: 26,
-  SIGPROF: 27,
-  SIGWINCH: 28,
-  SIGIO: 29,
-  SIGPWR: 30,
-  SIGSYS: 31,
-};
 
 export interface DenoReplayRuntimeOptions {
   /** Platform override for deterministic tests; defaults to Deno.build.os. */
@@ -433,213 +392,4 @@ export class DenoReplayRuntime implements ReplayRuntimeV1 {
       detail: `command exited with code ${exitCode ?? "signal"}`,
     };
   }
-}
-
-/**
- * Bounded owned-group termination: SIGTERM the recorded group, wait (up to
- * the grace) for the group to become provably empty, then SIGKILL and wait
- * again. Only `-groupId` is ever signaled.
- */
-async function terminateOwnedGroup(
-  groupId: number,
-): Promise<"empty" | "uncertain"> {
-  try {
-    signalGroup(groupId, "SIGTERM");
-  } catch {
-    return "uncertain";
-  }
-  const afterTerm = await waitGroupEmpty(groupId, TERM_GRACE_MS);
-  if (afterTerm === "empty") return "empty";
-  try {
-    signalGroup(groupId, "SIGKILL");
-  } catch {
-    return "uncertain";
-  }
-  const afterKill = await waitGroupEmpty(groupId, TERM_GRACE_MS);
-  return afterKill === "empty" ? "empty" : "uncertain";
-}
-
-function signalGroup(groupId: number, signal: "SIGTERM" | "SIGKILL"): void {
-  try {
-    kill(-groupId, signal);
-  } catch (error) {
-    // NotFound already means an empty group; anything else must not be
-    // swallowed — it makes settlement unprovable.
-    if (!isGroupMissing(error)) throw error;
-  }
-}
-
-async function waitGroupEmpty(
-  groupId: number,
-  maxMs: number,
-): Promise<"empty" | "pending"> {
-  if (maxMs <= 0) return groupAlive(groupId) ? "pending" : "empty";
-  const deadline = Date.now() + maxMs;
-  while (true) {
-    if (!groupAlive(groupId)) return "empty";
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) return "pending";
-    await delay(Math.min(GROUP_POLL_MS, remaining));
-  }
-}
-
-/** True while any member of the owned group exists (0 = probe signal). */
-function groupAlive(groupId: number): boolean {
-  try {
-    kill(-groupId, 0);
-    return true;
-  } catch (error) {
-    if (isGroupMissing(error)) return false;
-    // Cannot verify: fail closed by treating the group as alive.
-    return true;
-  }
-}
-
-function isGroupMissing(error: unknown): boolean {
-  const code = (error as { code?: unknown })?.code;
-  return code === "ESRCH" || error instanceof Deno.errors.NotFound;
-}
-
-function exitCodeFor(
-  code: number | null,
-  signal: string | null,
-): number | null {
-  if (code !== null) return code;
-  if (signal === null) return null;
-  const base = SIGNAL_EXIT_CODE[signal];
-  return base === undefined ? null : 128 + base;
-}
-
-function destroyStreams(child: ChildProcess): void {
-  try {
-    child.stdout?.destroy();
-  } catch {
-    // Best effort; nothing to reap.
-  }
-  try {
-    child.stderr?.destroy();
-  } catch {
-    // Best effort; nothing to reap.
-  }
-}
-
-/**
- * Resolve `promise` if it settles within `timeoutMs`; else resolve null.
- * The timer is always cleared or consumed exactly once — no timer outlives
- * the returned promise.
- */
-function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        resolve(null);
-      }
-    }, timeoutMs);
-    promise.then(
-      (value) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          resolve(value);
-        }
-      },
-      () => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          resolve(null);
-        }
-      },
-    );
-  });
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Concurrent, bounded collector for both streams. One shared byte budget
- * covers the combined retained output (stdout + stderr), matching the
- * registry contract; the retained prefix is what digests cover and any
- * overage sets `truncated`. Both streams are drained concurrently to EOF so
- * a full pipe can never deadlock the run. An optional advisory observer sees
- * exactly the retained stdout chunks, and never stderr.
- */
-class BoundedCollector {
-  truncated = false;
-  private remaining: number;
-  private readonly stdoutChunks: Uint8Array[] = [];
-  private readonly stderrChunks: Uint8Array[] = [];
-  private stdoutTotal = 0;
-  private stderrTotal = 0;
-
-  constructor(
-    budget: number,
-    private readonly onStdoutChunk?: (chunk: Uint8Array) => void,
-  ) {
-    this.remaining = budget;
-  }
-
-  stdout(): Uint8Array {
-    return joinChunks(this.stdoutChunks, this.stdoutTotal);
-  }
-
-  stderr(): Uint8Array {
-    return joinChunks(this.stderrChunks, this.stderrTotal);
-  }
-
-  async collect(
-    stream: AsyncIterable<Uint8Array> | null,
-    slot: "stdout" | "stderr",
-  ): Promise<void> {
-    if (stream === null) return;
-    const chunks = slot === "stdout" ? this.stdoutChunks : this.stderrChunks;
-    const observer = slot === "stdout" ? this.onStdoutChunk : undefined;
-    for await (const value of stream) {
-      if (this.remaining === 0) {
-        this.truncated = true;
-        continue;
-      }
-      const take = Math.min(value.byteLength, this.remaining);
-      const retained = value.subarray(0, take);
-      chunks.push(retained);
-      if (slot === "stdout") {
-        this.stdoutTotal += take;
-      } else {
-        this.stderrTotal += take;
-      }
-      this.remaining -= take;
-      if (take < value.byteLength) this.truncated = true;
-      // Advisory observer: only retained stdout bytes, never stderr. A thrown
-      // observer must not disturb capture, draining, the deadline or
-      // settlement, so it is swallowed here.
-      if (observer !== undefined && take > 0) {
-        try {
-          observer(retained);
-        } catch {
-          // Advisory only: the run continues exactly as if it were absent.
-        }
-      }
-    }
-  }
-}
-
-function joinChunks(chunks: Uint8Array[], total: number): Uint8Array {
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out;
-}
-
-/** Bounded error text for diagnostics; never raw child output. */
-function describeThrow(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  const single = text.replace(/[\r\n\t]+/g, " ").trim();
-  return single.length === 0 ? "unknown error" : single.slice(0, 160);
 }
