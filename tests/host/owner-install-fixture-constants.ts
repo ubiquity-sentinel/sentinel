@@ -211,3 +211,5 @@ export const STACKED_MERGE_RUNTIME_REVISION =
   "dc5e08af05ed04be2e45a0acca72505fcad0b922" as GitSha;
 export const EARLY_FRAME_RUNTIME_REVISION =
   "37c81e771cfedcf0b1e6b4cb70cbed04c8bb6e87" as GitSha;
+export const MISMATCH_DISPOSITION_RUNTIME_REVISION =
+  "4baeaf67d9677a317bc37831486c075b143fe68f" as GitSha;

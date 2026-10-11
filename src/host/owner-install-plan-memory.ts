@@ -15,6 +15,10 @@ import {
   OWNER_DEVELOPMENT_INSTALL_MEMORY_PRIOR_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_MEMORY_PRIOR_REVISION,
   OWNER_DEVELOPMENT_INSTALL_MEMORY_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_GENERATION,
+  OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_PRIOR_GENERATION,
+  OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_PRIOR_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_REVISION,
   OWNER_DEVELOPMENT_INSTALL_STACKED_MERGE_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_STACKED_MERGE_PRIOR_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_STACKED_MERGE_PRIOR_REVISION,
@@ -86,10 +90,52 @@ export function planOwnerInstallMemory(
       );
     }
     if (healthy !== null) {
-      return noChange("the owner development installation is complete");
+      return movePlan(
+        "install",
+        runtime,
+        OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_REVISION,
+        OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_GENERATION,
+        healthy,
+        "install the mismatch-disposition runtime after its generation 73 healthy proof",
+      );
     }
     return waiting(
       "the early-frame diagnostics generation 73 healthy proof is not recorded",
+    );
+  }
+
+  // Mismatch-disposition rung. Only a HEALTHY generation 73 record takes this
+  // branch; a failed 73 falls through to the early-frame rung's own rollback
+  // below, so its rollback semantics stay as recorded.
+  if (
+    revision === OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_REVISION &&
+    generation === OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_GENERATION
+  ) {
+    if (failed !== null) {
+      const prior = healthyProofFor(
+        runtime,
+        OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_PRIOR_REVISION,
+        OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_PRIOR_GENERATION,
+      );
+      if (prior === null) {
+        return waiting(
+          "the recorded generation 73 healthy proof for the rollback is unavailable",
+        );
+      }
+      return movePlan(
+        "rollback",
+        runtime,
+        OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_PRIOR_REVISION,
+        runtime.generation + 1,
+        prior,
+        "roll back the failed mismatch-disposition runtime to its recorded proven predecessor",
+      );
+    }
+    if (healthy !== null) {
+      return noChange("the owner development installation is complete");
+    }
+    return waiting(
+      "the mismatch-disposition generation 74 healthy proof is not recorded",
     );
   }
 

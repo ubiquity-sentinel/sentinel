@@ -10,6 +10,7 @@ import {
   EARLY_FRAME_RUNTIME_REVISION,
   LEARNING_RUNTIME_REVISION,
   MEMORY_RUNTIME_REVISION,
+  MISMATCH_DISPOSITION_RUNTIME_REVISION,
   NOW,
   ORIGINAL,
   READER,
@@ -760,5 +761,88 @@ Deno.test(
       CANCELLED_RELEASE_RUNTIME_REVISION,
     );
     assert.equal(stackedFailed.move.nextGeneration, 73);
+  },
+);
+
+Deno.test(
+  "owner development install plan: generation 74 mismatch-disposition install follows a healthy 73 and rolls back once",
+  () => {
+    const earlyFrameHealthy = healthyProof(
+      EARLY_FRAME_RUNTIME_REVISION,
+      73,
+      191,
+    );
+    const dispositionInstall = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: EARLY_FRAME_RUNTIME_REVISION,
+          generation: 73,
+          healthyProof: earlyFrameHealthy,
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(dispositionInstall.status, "install");
+    if (dispositionInstall.status !== "install") {
+      throw new Error("expected install");
+    }
+    assert.equal(
+      dispositionInstall.move.priorRevision,
+      EARLY_FRAME_RUNTIME_REVISION,
+    );
+    assert.equal(dispositionInstall.move.priorGeneration, 73);
+    assert.equal(
+      dispositionInstall.move.nextRevision,
+      MISMATCH_DISPOSITION_RUNTIME_REVISION,
+    );
+    assert.equal(dispositionInstall.move.nextGeneration, 74);
+    assert.equal(
+      canonicalStringify(dispositionInstall.move.priorHealthyProof),
+      canonicalStringify(earlyFrameHealthy),
+    );
+
+    // A failed generation 74 restores the recorded generation 73 revision
+    // once at monotonic generation 75.
+    const dispositionRollback = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: MISMATCH_DISPOSITION_RUNTIME_REVISION,
+          generation: 74,
+          healthyProof: earlyFrameHealthy,
+          executionProof: failedProof(
+            MISMATCH_DISPOSITION_RUNTIME_REVISION,
+            74,
+            192,
+          ),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(dispositionRollback.status, "rollback");
+    if (dispositionRollback.status !== "rollback") {
+      throw new Error("expected rollback");
+    }
+    assert.equal(
+      dispositionRollback.move.nextRevision,
+      EARLY_FRAME_RUNTIME_REVISION,
+    );
+    assert.equal(dispositionRollback.move.nextGeneration, 75);
+
+    // A healthy generation 74 completes the owner development installation.
+    const dispositionComplete = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: MISMATCH_DISPOSITION_RUNTIME_REVISION,
+          generation: 74,
+          healthyProof: healthyProof(
+            MISMATCH_DISPOSITION_RUNTIME_REVISION,
+            74,
+            193,
+          ),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(dispositionComplete.status, "no_change");
   },
 );
