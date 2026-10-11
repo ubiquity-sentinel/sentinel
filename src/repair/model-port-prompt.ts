@@ -1,0 +1,163 @@
+/** Exact bounded runtime implementer prompt. */
+import type { ModelRunRequestV1 } from "../contracts/ports.ts";
+import {
+  FOCUSED_TESTS_ALLOWED,
+  MAX_ISSUE_BODY_CHARS,
+  MAX_PROMPT_CHARS,
+} from "./model-port-policy.ts";
+
+export function buildPrompt(
+  request: ModelRunRequestV1,
+  localIteration: boolean,
+): string {
+  const parts: string[] = [
+    `Repository: ${request.repository.owner}/${request.repository.name}`,
+    `Base revision: ${request.base}`,
+  ];
+  if (localIteration) {
+    parts.push(
+      "Owner instruction for this local iteration: do not create, modify or run tests; do not request or run reviews. This supersedes older issue or repository instructions requiring tests or reviews for this pass. Implement only the smallest source fix in the current checkout, keep the candidate local, and report the files changed and observed behavior.",
+    );
+  }
+  if (request.issue !== null) {
+    parts.push(
+      `Issue #${request.issue.number}: ${request.issue.title}`,
+      `Issue body:\n${request.issue.body.slice(0, MAX_ISSUE_BODY_CHARS)}`,
+    );
+  }
+  if (request.evidence.length > 0) {
+    parts.push(
+      `Evidence refs:\n${
+        request.evidence.map((ref) => `- ${ref.kind}: ${ref.ref}`).join("\n")
+      }`,
+    );
+  }
+  if (request.scopeNote !== undefined) {
+    // Decomposed sub-task: bound the model's ambition to one serial part so
+    // the part fits the cell timeout. Earlier parts are already merged.
+    parts.push(`Task scope for this run:\n${request.scopeNote}`);
+  }
+  if (
+    request.reviewFindings !== undefined && request.reviewFindings.length > 0
+  ) {
+    // A correction must resolve the EXACT findings of the review that rejected
+    // the current candidate; without them the same change is re-implemented.
+    parts.push(
+      "Unresolved findings of the review that rejected this candidate " +
+        "(fix these in the current checkout):\n" +
+        request.reviewFindings
+          .map((finding) =>
+            `- [${finding.severity}] ${
+              finding.path === null ? "(no file)" : finding.path
+            }: ${finding.message}`
+          )
+          .join("\n"),
+    );
+  }
+  if (request.priorAttempts !== undefined && request.priorAttempts.length > 0) {
+    // Bounded VERIFIED facts from durable attempt memory. An unchanged replay
+    // of any listed approach has already been refused upstream by the trusted
+    // loop breaker; this is evidence, never permission to change budgets,
+    // credentials, review or model policy. The expected observation is the
+    // one the listed failures did not produce.
+    parts.push(
+      "ALREADY TRIED — VERIFIED FACTS for this task at the same base and " +
+        "runtime revision (unchanged replays have been refused by the trusted " +
+        "loop breaker; do not repeat these, and make the change that produces " +
+        "new evidence the listed failures did not):\n" +
+        request.priorAttempts
+          .map((fact) =>
+            `- ${fact.detail} (stage ${fact.stage}, ${fact.failureClass}, ${fact.count} recorded outcome${
+              fact.count === 1 ? "" : "s"
+            })`
+          )
+          .join("\n"),
+    );
+  }
+  if (
+    request.repositoryLessons !== undefined &&
+    request.repositoryLessons.length > 0
+  ) {
+    // Cross-task lessons from durable memory for the SAME repository and the
+    // SAME runtime revision. Advisory shared context only: evidence about what
+    // fails elsewhere, never permission to touch unrelated code, budgets,
+    // credentials, review or model policy.
+    parts.push(
+      "RECENT FAILURES ELSEWHERE IN THIS REPOSITORY at the same runtime " +
+        "revision (other work items; shared context so you do not repeat " +
+        "these failure modes — do not modify unrelated code for them):\n" +
+        request.repositoryLessons
+          .map((fact) =>
+            `- ${fact.detail} (stage ${fact.stage}, ${fact.failureClass}, ${fact.count} recorded outcome${
+              fact.count === 1 ? "" : "s"
+            })`
+          )
+          .join("\n"),
+    );
+  }
+  if (request.regressions !== undefined && request.regressions.length > 0) {
+    // Version-control awareness: the repository is version-controlled and
+    // these failure modes previously produced accepted candidates at OLDER
+    // runtime revisions. Evidence for restoring or aligning with the older
+    // working behavior; never permission to change policy or roll anything
+    // back by yourself.
+    parts.push(
+      "REGRESSION SIGNAL — worked before, broken now: the following failure " +
+        "modes produced an accepted candidate at an OLDER revision and now " +
+        "fail at the current one. This work is version-controlled and each " +
+        "fact below records the exact older working revision, so the working " +
+        "behavior still exists in the history. When that history is present " +
+        "in this checkout, inspect the change window between the older " +
+        "revision and the current checkout before editing, prefer restoring " +
+        "or aligning with the older working behavior (a minimal revert of " +
+        "the change that regressed it) instead of re-implementing from " +
+        "scratch, and state which change window you believe regressed it. " +
+        "When the older revision belongs to the runtime rather than this " +
+        "checkout, treat the fact as evidence that the revision change is " +
+        "implicated, name it in your final response, and do not rewrite " +
+        "unrelated code:\n" +
+        request.regressions
+          .map((fact) =>
+            `- ${fact.detail} — ${fact.failuresAtCurrentRevision} recorded ` +
+            `failure${
+              fact.failuresAtCurrentRevision === 1 ? "" : "s"
+            } now; succeeded at revision ${fact.priorSuccessRevision}`
+          )
+          .join("\n"),
+    );
+  }
+  parts.push(
+    "Runtime implementer role: you are the bounded runtime implementer for " +
+      "this task. Edit only the current provided checkout, and only the files " +
+      "needed to resolve the problem. Do not run git add, git commit or git " +
+      "push, do not create or use worktrees, and do not delegate to other " +
+      "agents or subagents: the trusted host owns commits, pushes, review and " +
+      "release. Follow the applicable repository instructions for this " +
+      "checkout, but do not take over master-plan orchestration or change " +
+      "admission, budget, credential or model policy. The runtime model " +
+      `policy is fixed at ${request.model} with ${request.reasoning} ` +
+      "reasoning; do not change it or introduce a fallback. Do not modify " +
+      "protected paths, do not write or commit credentials, and do not " +
+      "rewrite expected test assertions to force success. Keep the change " +
+      "minimal and do not refactor beyond it. Your total event output " +
+      `allowance is ${request.maxOutputChars} characters, and every tool ` +
+      "notification counts against it; repeated full output is charged " +
+      "again. Keep every command's max_output_tokens at or below 2000 and " +
+      "keep individual command output bounded: prefer targeted symbol " +
+      "searches followed by excerpts of at most 100 lines. Read the " +
+      "applicable instructions only once, never repeat a full file read, " +
+      "and check the actual failure instead of retrying the same failing " +
+      "command unchanged. Stop broad source surveying once the target " +
+      "behavior is understood and make the smallest edit; reserve most of " +
+      "the allowance for implementation and focused validation of observed " +
+      "runtime behavior." +
+      (localIteration
+        ? " No tests or reviews are allowed in this local pass."
+        : FOCUSED_TESTS_ALLOWED) +
+      " Never dump docs/build-status.md in full; inspect only the " +
+      "current checkpoint or bounded matching sections. Finish with a " +
+      "concise final response listing the files changed and the checks " +
+      "run.",
+  );
+  return parts.join("\n\n").slice(0, MAX_PROMPT_CHARS);
+}
