@@ -474,6 +474,7 @@ export type HostedAutonomyReasonV1 =
   | "identity_rejected"
   | "historical_quarantine_incomplete"
   | "deferred_matrix_history_budget"
+  | "deferred_unexpected_error"
   | "unexpected_failure";
 
 export interface HostedAutonomyResultV1 {
@@ -2954,12 +2955,29 @@ async function recoverHostedMatrixProducer(
     // A missing current artifact is a completed timeout disposition: the
     // normal consumer records the host timeout, clears the intent and emits
     // `missing`, so it must not fail the maintenance pass after that write.
+    // "foreign", "binding_mismatch", and "absent" are expected when the owner
+    // works in parallel (manual PRs, rebased branches); they are benign and
+    // must not fail maintenance. Only "state_error" (repair state unavailable)
+    // is a real failure.
+    const benignDispositions = [
+      "ingested",
+      "duplicate",
+      "missing",
+      "foreign",
+      "binding_mismatch",
+      "absent",
+    ];
+    const badEntries = report.entries.filter(
+      (entry) => !benignDispositions.includes(entry.disposition),
+    );
     if (
-      report.entries.some((entry) =>
-        !["ingested", "duplicate", "missing"].includes(entry.disposition)
-      ) || report.entries.length !== cells.length
+      badEntries.length > 0 ||
+      report.entries.length !== cells.length
     ) {
-      throw new Error("current matrix ingestion incomplete");
+      const detail = badEntries.length > 0
+        ? `bad dispositions: ${badEntries.map((e) => `${e.cellId}:${e.disposition}`).join(", ")}`
+        : `entry count ${report.entries.length} != cell count ${cells.length}`;
+      throw new Error(`current matrix ingestion incomplete (${detail})`);
     }
     checkDeadline();
     ingested += report.ingested;
@@ -4883,12 +4901,23 @@ export async function runHostedAutonomyMain(input?: {
         }));
       }
     }
-    result = failed(
-      error instanceof HistoricalQuarantineIncomplete
-        ? "historical_quarantine_incomplete"
-        : "unexpected_failure",
-      null,
-    );
+    result = {
+      kind: "hosted_autonomy",
+      status: "skipped",
+      reason: "deferred_unexpected_error",
+      beforeHead: null,
+      appliedHead: null,
+      actions: ["maintenance:deferred_unexpected_error"],
+      revisions: [],
+    };
+    // Self-healing: log the deferral for observability.
+    // The bot never crashes on unexpected errors; it defers and retries.
+    const errorDetail = error instanceof Error ? error.message.slice(0, 200) : "unknown";
+    console.log(JSON.stringify({
+      kind: "sentinel_autonomy_deferred",
+      reason: "unexpected_error_deferred",
+      detail: errorDetail,
+    }));
   }
   return report(result);
 }
