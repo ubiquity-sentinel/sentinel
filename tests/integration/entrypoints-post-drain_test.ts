@@ -22,6 +22,8 @@ for (
   Deno.test(`entrypoint: post-drain ${mode} keeps delivery and matrix ownership separate`, () =>
     postDrainTaskScenario(mode));
 }
+Deno.test("entrypoint: post-drain returns the successful cycle outcome when the drain fails", () =>
+  postDrainTaskScenario("failed-drain"));
 for (
   const mode of [
     "wrong-key",
@@ -29,7 +31,6 @@ for (
     "unavailable",
     "missing-acceptance",
     "missing-acceptance-capped",
-    "failed-drain",
     "deadline",
   ] as const
 ) {
