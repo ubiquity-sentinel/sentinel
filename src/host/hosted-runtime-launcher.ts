@@ -223,12 +223,22 @@ function failedResult(
   // keeps its own observed startup flag and valid base SHA.
   // Raw stderr never enters detail. The separate advisory projects only
   // closed categories, known reason codes and allow-listed frame locations.
-  return terminalResult(
+  const result = terminalResult(
     input,
     "failed",
     child?.startupReady ?? false,
     child?.baseSha ?? null,
   );
+  if (child?.failure == null) return result;
+  return {
+    ...result,
+    childFailure: {
+      version: "v1",
+      kind: "hosted_runtime_child_failure",
+      status: child.failure.status,
+      detail: child.failure.detail,
+    },
+  };
 }
 
 function terminalResult(

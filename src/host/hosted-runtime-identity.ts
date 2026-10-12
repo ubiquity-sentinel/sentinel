@@ -261,6 +261,20 @@ export interface HostedModelDiagnosticV1 {
   diagnostic: LocalModelDiagnosticV1;
 }
 
+/**
+ * Advisory-only summary of a settled child status record whose outcome was
+ * state_error or source_error: the child's own closed status and bounded
+ * authored detail, verbatim. It never carries raw stderr, credentials, model
+ * or prompt text, and it can never change the terminal, health, settlement or
+ * exit status.
+ */
+export interface HostedRuntimeChildFailureV1 {
+  version: "v1";
+  kind: "hosted_runtime_child_failure";
+  status: "state_error" | "source_error";
+  detail: string;
+}
+
 export interface HostedRuntimeLauncherResultV1 {
   status: HostedRuntimeLauncherStatusV1;
   /** The trusted terminal, or null when no honest proof exists. */
@@ -279,6 +293,13 @@ export interface HostedRuntimeLauncherResultV1 {
    * change the terminal, health, settlement or exit status.
    */
   earlyFailure?: HostedRuntimeEarlyFailureV1;
+  /**
+   * Advisory-only child-authored failure detail for a settled
+   * state_error/source_error child record. Present only on failed results
+   * whose parsed child record carried that closed detail; it never attests
+   * health, terminal, settlement or delivery.
+   */
+  childFailure?: HostedRuntimeChildFailureV1;
   /** Authenticated native matrix log carrier; never aggregate terminal proof. */
   matrixCarrier?: Record<string, unknown>;
   /**

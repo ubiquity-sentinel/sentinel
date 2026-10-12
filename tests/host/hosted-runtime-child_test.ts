@@ -6,6 +6,7 @@ import { DenoReplayRuntime } from "../../src/replay/runtime.ts";
 import type { ReplayCommandResultV1 } from "../../src/replay/runtime.ts";
 import { ACTIONS_UOS_BASE_URL } from "../../src/host/actions.ts";
 import {
+  emitHostedRuntimeCliResult,
   HOSTED_RUNTIME_CHILD_ENTRYPOINT,
   HOSTED_RUNTIME_STATIC_IDENTITY,
   HOSTED_RUNTIME_WORKFLOW_REF,
@@ -29,6 +30,7 @@ import {
   forgedFixtureScript,
   HOSTED_FIXTURE_CHANGED_PATH,
   HOSTED_FIXTURE_EVIDENCE_REF,
+  HOSTED_FIXTURE_FAILURE_DETAIL,
   HOSTED_FIXTURE_INVOCATION,
   HOSTED_FIXTURE_ISSUE_BODY,
   HOSTED_FIXTURE_PROVIDER,
@@ -222,6 +224,64 @@ Deno.test("hosted runtime: a real owned-group child cannot forge the wrapper ter
     }
   } finally {
     await valid.cleanup();
+  }
+});
+
+Deno.test("hosted runtime: a settled state_error child surfaces its bounded failure detail", async () => {
+  const rig = await makeRig({
+    runtimeFiles: {
+      "src/host/actions.ts": validFixtureScript("", {
+        status: "state_error",
+        detail: HOSTED_FIXTURE_FAILURE_DETAIL,
+      }),
+      ".gitignore": ".sentinel/\n",
+    },
+  });
+  try {
+    await seedRelease(rig);
+    rig.process.realChild = true;
+    const result = await launch(rig);
+    assert.equal(result.status, "failed", JSON.stringify(result));
+    assert.equal(result.terminal?.outcome, "failed");
+    assert.deepEqual(result.childFailure, {
+      version: "v1",
+      kind: "hosted_runtime_child_failure",
+      status: "state_error",
+      detail: HOSTED_FIXTURE_FAILURE_DETAIL,
+    });
+    // The emitted advisory carries the child detail in the workflow log while
+    // the exit stays red and the terminal stays the only settlement proof.
+    const logged: string[] = [];
+    const failed: string[] = [];
+    const originalLog = console.log;
+    const originalError = console.error;
+    let exitCode = -1;
+    try {
+      console.log = ((...args: unknown[]) => {
+        logged.push(args.map((arg) => String(arg)).join(" "));
+      }) as typeof console.log;
+      console.error = ((...args: unknown[]) => {
+        failed.push(args.map((arg) => String(arg)).join(" "));
+      }) as typeof console.error;
+      exitCode = emitHostedRuntimeCliResult(result);
+    } finally {
+      console.log = originalLog;
+      console.error = originalError;
+    }
+    assert.equal(exitCode, 1);
+    assert.equal(failed.length, 1);
+    const advisory = logged
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((line) => line.kind === "hosted_runtime_child_failure");
+    assert.ok(advisory !== undefined, logged.join("\n"));
+    assert.equal(advisory?.status, "state_error");
+    assert.equal(advisory?.detail, HOSTED_FIXTURE_FAILURE_DETAIL);
+    assert.equal(
+      logged.some((line) => line.includes("hosted_runtime_terminal")),
+      true,
+    );
+  } finally {
+    await rig.cleanup();
   }
 });
 

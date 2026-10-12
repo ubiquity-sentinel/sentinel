@@ -54,6 +54,8 @@ Numeric GitHub pagination aliases are accepted only after authenticating the sam
 
 Gateway unavailable diagnostics retain numeric HTTP status without response bodies, URLs, authentication headers or credentials. Error kind and fail-closed observation remain unchanged; the status alone does not establish a producer root cause.
 
+A settled hosted child that reports state_error or source_error surfaces its own bounded authored detail as one advisory line beside the terminal, so a failed hosted run names its closed failure instead of collapsing to the static settled-failed text. The advisory never carries raw stderr, credentials or model text and never changes the terminal, health, settlement or exit status.
+
 ## Durable memory and self-healing
 
 Sentinel records machine-readable attempt memory and a deterministic lesson digest in the existing Git repair state; trusted writers own every write and model workers never write state. Bounded records carry the attempt fingerprint, the stage reached, a closed failure class, counts and the runtime revision. Unchanged replays of a recorded failure are refused with a precise reason, and the implementer prompt carries verified prior attempts, cross-task repository lessons and regression facts.

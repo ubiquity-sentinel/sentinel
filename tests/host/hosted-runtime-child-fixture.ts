@@ -22,6 +22,9 @@ export const HOSTED_FIXTURE_RAW_ERROR = "hosted-fixture-raw-error-marker";
 export const HOSTED_FIXTURE_CHANGED_PATH =
   "src/hosted-fixture-changed-path-marker.ts";
 
+export const HOSTED_FIXTURE_FAILURE_DETAIL =
+  "hosted-fixture-child-failure-detail-marker";
+
 export const HOSTED_FIXTURE_INVOCATION = "hosted-fixture-invocation-marker";
 
 export const HOSTED_FIXTURE_PROVIDER = "hosted-fixture-provider-marker";
@@ -75,7 +78,13 @@ export function hostedFixtureReceipt(): PortResultV1<ModelRunReceiptV1> {
  * Real fixture child that writes a marker, prints the exact captured advisory
  * stdout, leaves a descendant, then a record.
  */
-export function validFixtureScript(diagnosticStdout: string): string {
+export function validFixtureScript(
+  diagnosticStdout: string,
+  outcome: { status: string; detail: string } = {
+    status: "idle",
+    detail: "fixture",
+  },
+): string {
   return `const decoder = new TextDecoder();
 const runId = Number(Deno.env.get("GITHUB_RUN_ID"));
 const runAttempt = Number(Deno.env.get("GITHUB_RUN_ATTEMPT"));
@@ -104,7 +113,7 @@ console.log(${JSON.stringify(diagnosticStdout)});
 new Deno.Command("sleep", { args: ["0.3"] }).spawn();
 console.log(JSON.stringify({
   status: "ran",
-  outcome: { status: "idle", detail: "fixture" },
+  outcome: ${JSON.stringify(outcome)},
   controllerSha: head,
   baseSha: "${OBSERVED_BASE}",
   login: "github-actions[bot]",

@@ -59,6 +59,12 @@ export interface ChildStatusV1 {
   baseSha: GitSha | null;
   /** The child reported a healthy-shaped successful outcome. */
   healthy: boolean;
+  /**
+   * The child's own closed state_error/source_error status and bounded authored
+   * detail, or null for every healthy-shaped status. It never carries raw
+   * stderr and can never change terminal, health, settlement or exit status.
+   */
+  failure: { status: "state_error" | "source_error"; detail: string } | null;
 }
 
 const CHILD_RESULT_KEYS = [
@@ -114,11 +120,18 @@ export function parseChildStatus(
   const status = (outcome as Record<string, unknown>).status;
   if (!isChildOutcome(outcome, status)) return null;
 
+  const failure = status === "state_error" || status === "source_error"
+    ? {
+      status: status as "state_error" | "source_error",
+      detail: (outcome as Record<string, unknown>).detail as string,
+    }
+    : null;
   return {
     startupReady: record.startupReady,
     baseSha: isGitSha(record.baseSha) ? record.baseSha : null,
     healthy: record.startupReady === true &&
       (status === "idle" || status === "margin" || status === "step_limit"),
+    failure,
   };
 }
 
