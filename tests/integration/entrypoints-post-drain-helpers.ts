@@ -35,7 +35,7 @@ import { GitHubApiClient } from "../../src/github/client.ts";
 import { FakeAuthProvider, FakeCooldownGate } from "../github/helpers.ts";
 import { GitHubCodexReviewTransport } from "../../src/github/codex-review-transport.ts";
 import type { ReviewDrainReportV1 } from "../../src/contracts/ports.ts";
-import { RepairReviewDrainError, runRepairEntrypoint } from "../../src/main.ts";
+import { runRepairEntrypoint } from "../../src/main.ts";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 
 export async function postDrainTaskScenario(
@@ -314,7 +314,11 @@ export async function postDrainTaskScenario(
       );
     };
     if (mode === "failed-drain") {
-      await assert.rejects(() => rig.run(60 * 60_000), RepairReviewDrainError);
+      // Drain failure after a successful cycle is non-fatal (the drain
+      // failure non-fatal contract): the successful cycle outcome is
+      // returned instead of throwing RepairReviewDrainError.
+      const outcome = await rig.run(60 * 60_000);
+      assert.equal(outcome.status, "idle", JSON.stringify(outcome));
     } else {
       const configs = repairConfigs({
         sessionBound: {
@@ -397,7 +401,11 @@ export async function postDrainTaskScenario(
     let state = await rig.snapshot();
     const positive = mode === "expired" || mode === "future" ||
       mode === "lost-merge" || mode === "foreign-first" ||
-      mode === "matrix-deferred" || mode === "matrix-fresh";
+      mode === "matrix-deferred" || mode === "matrix-fresh" ||
+      // Drain failure after a successful cycle is non-fatal: the cycle
+      // completes and delivers exactly like a positive run; only the drain
+      // report carries the fault.
+      mode === "failed-drain";
     assert.equal(
       state.reviews.length,
       (positive || mode === "missing-acceptance" ||
