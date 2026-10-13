@@ -202,6 +202,7 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "src/host/local.ts",
       "src/host/local-policy.ts",
       "src/host/local-config.ts",
+      "src/host/target-policy.ts",
       "src/host/local-client.ts",
       "src/host/local-checkout.ts",
       "src/host/local-model-reason.ts",

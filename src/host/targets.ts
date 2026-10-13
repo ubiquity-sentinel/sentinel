@@ -4,7 +4,7 @@
  * `sentinel.targets.json` is the ONLY source of the repositories this
  * deployment may repair. It is a plain array of `owner/name` slugs and nothing
  * else: per-repository conventions (commands, protected paths, session bounds,
- * live-start limits) come from the trusted template, and the base branch of a
+ * live-start limits) come from trusted host policy, and the base branch of a
  * target is that repository's own default branch, read from GitHub — never a
  * value in the file and never a hard-coded constant here.
  *
@@ -20,6 +20,7 @@
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
+import { selectTrustedTargetPolicyV1 } from "./target-policy.ts";
 
 /** Exact committed setting file name, relative to the runtime checkout root. */
 export const TARGETS_FILE_NAME = "sentinel.targets.json";
@@ -154,9 +155,9 @@ export function createDefaultBranchResolver(options: {
 }
 
 /**
- * Build the trusted configuration of one target from the deployment template:
- * everything except identity and base branch is the template's, so a slug can
- * never introduce a command, protected-path list or limit of its own.
+ * Build one target from the deployment template and fixed host-authored
+ * repository policy. A slug carries only identity: it can never introduce a
+ * command, protected-path list or limit of its own.
  */
 export function createTargetConfigV1(
   template: RepositoryConfigV1,
@@ -170,6 +171,7 @@ export function createTargetConfigV1(
   };
   return {
     ...template,
+    ...selectTrustedTargetPolicyV1(template, repository),
     repository,
     baseBranch: defaultBranch,
   };

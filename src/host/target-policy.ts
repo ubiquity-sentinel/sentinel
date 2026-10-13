@@ -1,0 +1,110 @@
+/** Trusted repository policy; slugs never carry executable configuration. */
+import { asCommandId } from "../contracts/brands.ts";
+import { parseCommandRegistryV1 } from "../contracts/command-registry.ts";
+import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
+import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+
+type TargetPolicyV1 = Pick<
+  RepositoryConfigV1,
+  "commands" | "commandRegistry" | "protectedPaths"
+>;
+
+// Gateway AGENTS.md reserves credentials, deployment, capture/replay authority
+// and verification tooling to trusted owners. Preserve inherited protections
+// as well; choosing a repository must never remove an existing restriction.
+const GATEWAY_PROTECTED_PATHS = [
+  ".env",
+  ".data/",
+  ".release/",
+  ".kv-migration/",
+  ".github/workflows/",
+  "AGENTS.md",
+  "docs/DECISIONS.md",
+  "deno.json",
+  "deno.lock",
+  "ops/",
+  "tools/lint/",
+  ".prettierrc.json",
+  ".prettierignore",
+  "file-size-baseline.json",
+  "scripts/verify.sh",
+  "scripts/_bootstrap.sh",
+  "scripts/format.sh",
+  "scripts/lint.sh",
+  "scripts/file-size-ratchet.ts",
+  "scripts/replay.ts",
+  "scripts/replay-chat-stream.ts",
+  "tests/helpers/sentinel-recorded-upstream.ts",
+  "src/sentinel/",
+  "src/config.ts",
+  "src/runtime-config.ts",
+  "src/kv.ts",
+  "src/auth/",
+  "src/api-keys.ts",
+  "src/api-key-policy.ts",
+  "src/codex/auth.ts",
+  "src/codex/auth-refresh.ts",
+  "src/codex/native-auth.ts",
+  "src/codex/native-auth-transport.ts",
+  "src/codex/supervisor-secret.ts",
+] as const;
+
+/**
+ * Select only a host-authored policy for the exact repository identity. The
+ * existing trusted deployment template remains authoritative for Sentinel and
+ * other repositories; issue text, the target file and model output are never
+ * policy inputs. Installation scope and default branch remain caller-owned.
+ */
+export function selectTrustedTargetPolicyV1(
+  template: RepositoryConfigV1,
+  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
+): TargetPolicyV1 {
+  if (
+    repository.owner.toLowerCase() !== "ubiquity" ||
+    repository.name.toLowerCase() !== "ai.ubq.fi"
+  ) {
+    return {
+      commands: template.commands,
+      commandRegistry: template.commandRegistry,
+      protectedPaths: template.protectedPaths,
+    };
+  }
+  // Actual target AGENTS.md requires the full verify gate, which includes all
+  // required deterministic CI checks. sentinel:test-local alone is not CI.
+  // Cache/sandbox unavailability must refuse, never substitute a partial gate.
+  return {
+    commands: {
+      test: asCommandId("gateway_verify"),
+      replay: asCommandId("gateway_replay"),
+    },
+    commandRegistry: parseCommandRegistryV1({
+      version: "v1",
+      commands: {
+        gateway_verify: {
+          executable: "sh",
+          args: ["scripts/verify.sh"],
+          maxDurationMs: 1_800_000,
+          maxOutputBytes: 4_194_304,
+        },
+        gateway_replay: {
+          executable: "deno",
+          // docs/sentinel.md's fixed local replay consumer uses real gateway
+          // parsers with recorded transports and no credentials/network.
+          args: [
+            "run",
+            "--no-prompt",
+            "--no-config",
+            "--no-remote",
+            "--allow-read=.",
+            "scripts/replay.ts",
+          ],
+          maxDurationMs: 600_000,
+          maxOutputBytes: 1_048_576,
+        },
+      },
+    }),
+    protectedPaths: [
+      ...new Set([...template.protectedPaths, ...GATEWAY_PROTECTED_PATHS]),
+    ],
+  };
+}
