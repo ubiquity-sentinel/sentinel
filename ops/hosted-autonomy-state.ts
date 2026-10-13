@@ -100,7 +100,7 @@ export function maintenanceFailureCategory(
       return "current_matrix_ingestion";
     }
     if (
-      message.startsWith("C maintenance") ||
+      message.startsWith("C maintenance") || message.startsWith("C recovery") ||
       message.startsWith("closed-c matrix")
     ) {
       return "closed_c_maintenance";

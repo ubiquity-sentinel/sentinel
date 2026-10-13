@@ -21,6 +21,34 @@ import {
   type CandidateRefRevalidationV1,
 } from "./hosted-autonomy-candidate-refs.ts";
 
+/** Read-only source facts shared by bookkeeping and the later retry grant. */
+export async function readHostedClosedIssues(
+  context: HostedAutonomyPassContextV1,
+): Promise<void> {
+  const { snapshot, scopeFor, actions } = context;
+  const closedIssues = new Set<string>();
+  for (const record of snapshot.work) {
+    if (record.nextStep === "done") continue;
+    const issueNumber = record.related.issueNumber;
+    if (issueNumber === null) continue;
+    const scope = await scopeFor(record.repository);
+    if (scope.surface === null) {
+      actions.push(`record:${record.id}:surface_unreadable`);
+      continue;
+    }
+    let open: boolean | null = null;
+    try {
+      open = await scope.surface.readIssueOpen(issueNumber);
+    } catch {
+      open = null;
+    }
+    if (open === false) {
+      closedIssues.add(hostedIssueKey(record.repository, issueNumber));
+    }
+  }
+  context.closedIssues = closedIssues;
+}
+
 export async function runHostedRetryPass(
   context: HostedAutonomyPassContextV1,
   releaseHead: string,
@@ -133,26 +161,7 @@ export async function runHostedRetryPass(
   // source issue is already gone. The retry pass keeps consuming it for blocked
   // records exactly as before, and the identity is always the pair
   // (repository, issue number).
-  const closedIssues = new Set<string>();
-  for (const record of snapshot.work) {
-    if (record.nextStep === "done") continue;
-    const issueNumber = record.related.issueNumber;
-    if (issueNumber === null) continue;
-    const scope = await scopeFor(record.repository);
-    if (scope.surface === null) {
-      actions.push(`record:${record.id}:surface_unreadable`);
-      continue;
-    }
-    let open: boolean | null = null;
-    try {
-      open = await scope.surface.readIssueOpen(issueNumber);
-    } catch {
-      open = null;
-    }
-    if (open === false) {
-      closedIssues.add(hostedIssueKey(record.repository, issueNumber));
-    }
-  }
+  const closedIssues = context.closedIssues;
   const planned = planHostedRetries(
     snapshot,
     deps.clock.now(),

@@ -42,7 +42,7 @@ Deno.test("self defects: normalization makes one class out of shifting values", 
     RUN,
   );
   assert.equal(a.key, b.key, "paths and positions are redacted");
-  assert.match(a.summary, /type error: Cannot find name/);
+  assert.equal(a.summary, "type error: TS2304");
 });
 
 Deno.test("self defects: assertion and generic error lines are extracted", () => {
@@ -102,9 +102,8 @@ Deno.test("self defects: planning dedups markers, caps the pass and counts runs"
   assert.deepEqual(planned[0]!.runIds, [1, 2]);
   assert.ok(planned[0]!.body.includes(selfDefectMarker(planned[0]!.key)));
   assert.ok(
-    !planned[0]!.body.includes("AssertionError: boom") ||
-      planned[0]!.body.includes("assertion: AssertionError: boom"),
-    "only the sanitized summary line is carried",
+    !planned[0]!.body.includes("boom"),
+    "arbitrary assertion detail is private",
   );
 
   const deduped = planSelfObservations({
