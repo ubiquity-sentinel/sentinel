@@ -138,7 +138,14 @@ export async function recoverHostedMatrixProducer(
     readRelease: () => deps.state.readRelease(),
     writeRepair: async (next, expectedHead) => {
       if (integrityFailure !== null) throw integrityFailure;
-      await custody();
+      try {
+        await custody();
+      } catch (error) {
+        if (error instanceof CurrentMatrixRecoveryIntegrityFailure) {
+          integrityFailure = error;
+        }
+        throw error;
+      }
       checkDeadline();
       let written: PortResultV1<StateWriteResultV1> | null = null;
       let writeError: unknown;
@@ -358,13 +365,14 @@ export async function recoverHostedMatrixProducer(
       throw integrityFailure ?? error;
     });
     if (integrityFailure !== null) throw integrityFailure;
+    checkDeadline();
     // A missing current artifact is a completed timeout disposition: the
     // normal consumer records the host timeout, clears the intent and emits
     // `missing`, so it must not fail the maintenance pass after that write.
     // "foreign", "binding_mismatch", and "absent" are expected when the owner
     // works in parallel (manual PRs, rebased branches); they are benign and
-    // must not fail maintenance. Only "state_error" (repair state unavailable)
-    // is a real failure.
+    // must not fail maintenance. Unavailable repair settlement defers the
+    // same charged intent instead of becoming a proven integrity failure.
     const benignDispositions = [
       "ingested",
       "duplicate",
@@ -374,13 +382,19 @@ export async function recoverHostedMatrixProducer(
       "absent",
     ];
     const badEntries = report.entries.filter(
-      (entry) => !benignDispositions.includes(entry.disposition),
+      (entry) =>
+        entry.disposition !== "state_error" &&
+        !benignDispositions.includes(entry.disposition),
     );
     if (
       badEntries.length > 0 ||
       report.entries.length !== cells.length
     ) {
       throw integrityFault("current matrix ingestion incomplete");
+    }
+    if (report.entries.some((entry) => entry.disposition === "state_error")) {
+      onDeferred();
+      return { result: null, deferred: true };
     }
     // Non-silent accounting for owner-parallel disposals: tolerated
     // dispositions are still counted and reported with fixed keys only.

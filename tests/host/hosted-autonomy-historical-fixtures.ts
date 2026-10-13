@@ -68,7 +68,7 @@ export async function historicalMalformedRig(
       : "2".repeat(40)) as GitSha;
   const generation = c63 ? 63 : 1;
   const repository = c63
-    ? { ...FOREIGN_REPO, installationId: 155687488 }
+    ? { ...FOREIGN_REPO, name: "ai.ubq.fi", installationId: 155687488 }
     : SELF_REPO;
   const base = baseOverride ??
     (c63 ? "3691fe4a36e4e4c6aae6f8c6aa04c12ed3ff6698" : BASE) as GitSha;
