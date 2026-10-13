@@ -29,6 +29,7 @@ import type {
 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { OpContext, StateGitOps } from "./state-git.ts";
+import { parseBlobBatch } from "./state-batch.ts";
 import {
   collectionDirectory,
   orderRecords,
@@ -171,18 +172,24 @@ export async function readCommitTree(
   ) {
     return portError("invalid", "state tree has duplicate manifest entries");
   }
-  const manifestBlob = await io.git(op, [
-    "cat-file",
-    "blob",
-    manifestEntry.sha,
-  ]);
-  if (!manifestBlob.ok) {
-    return io.gitFailure("unavailable", "cat-file", manifestBlob);
+  const requested = entries.map((entry) => entry.sha);
+  const batch = await io.git(op, ["cat-file", "--batch"], {
+    stdin: new TextEncoder().encode(`${requested.join("\n")}\n`),
+    rawOutput: true,
+  });
+  if (!batch.ok) {
+    return io.gitFailure("unavailable", "cat-file", batch);
   }
+  if (!(batch.stdoutBytes instanceof Uint8Array)) {
+    return portError("invalid", "state blob batch has no raw output");
+  }
+  const blobs = parseBlobBatch(batch.stdoutBytes, requested);
+  if (!blobs.ok) return blobs;
+  const manifestText = blobs.value[entries.indexOf(manifestEntry)];
   let manifest: StateManifestV1;
   try {
     manifest = parseStateManifest(
-      JSON.parse(manifestBlob.stdout),
+      JSON.parse(manifestText),
       "$.manifest",
       kind,
     );
@@ -193,7 +200,7 @@ export async function readCommitTree(
   // (canonicalStringify + newline). Any reordered keys, duplicate JSON keys
   // — which parse to one silent last-wins value — or formatting drift is a
   // mismatch and invalid rather than a best-effort reparse.
-  if (`${canonicalStringify(manifest)}\n` !== manifestBlob.stdout) {
+  if (`${canonicalStringify(manifest)}\n` !== manifestText) {
     return portError("invalid", "state manifest is not canonical JSON");
   }
 
@@ -223,7 +230,7 @@ export async function readCommitTree(
   for (const collection of collections) {
     byDirectory[collection.directory] = {};
   }
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     if (entry.path === "manifest.json") continue;
     const slash = entry.path.indexOf("/");
     if (slash === -1) {
@@ -240,9 +247,7 @@ export async function readCommitTree(
         "state record file name is not digest-encoded",
       );
     }
-    const blob = await io.git(op, ["cat-file", "blob", entry.sha]);
-    if (!blob.ok) return io.gitFailure("unavailable", "cat-file", blob);
-    byDirectory[directory][fileName] = blob.stdout;
+    byDirectory[directory][fileName] = blobs.value[index];
   }
 
   // Parse and validate every record file; the filename must be the SHA-256
