@@ -8,14 +8,21 @@ import {
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { reviewOperationKey } from "./keys.ts";
 import { executeBaseRefreshIntent } from "./loop-base-refresh.ts";
-import { checkGithubCooldown, REVIEW_POLL_MS } from "./loop-bounds.ts";
+import {
+  checkGithubCooldown,
+  REVIEW_BOUND_MS,
+  REVIEW_POLL_MS,
+} from "./loop-bounds.ts";
 import { retireClosedPublication } from "./loop-records.ts";
 import {
   isUnboundReviewObservation,
   reviewWaitSince,
   standingReviewAttempt,
 } from "./loop-review-records.ts";
-import { recoverFromNoVerdictReview } from "./loop-review-request.ts";
+import {
+  recoverFromNoVerdictReview,
+  requestReviewFor,
+} from "./loop-review-request.ts";
 import { applyObservedReview } from "./loop-review-result.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
@@ -26,6 +33,7 @@ import type {
 import { RETIRED_MERGED_MESSAGE } from "./selection.ts";
 import {
   clearIntent,
+  clearWait,
   countReviewRound,
   markTerminalBlocked,
   setWait,
@@ -34,6 +42,55 @@ import {
 // ---------------------------------------------------------------------------
 // Review phase.
 // ---------------------------------------------------------------------------
+
+/** The transient review waits bound to one in-flight attempt. */
+function isReviewAttemptWait(record: WorkRecordV1): boolean {
+  const reason = record.wait?.reason;
+  return reason === "review_pending" || reason === "review_quota";
+}
+
+/**
+ * An attempt whose own settle deadline passed without an accepted verdict is
+ * dead: no live owner may still settle it (the review transport hard-settles
+ * within REVIEW_BOUND_MS), so an interrupted owner, a lost response or an
+ * unreadable pending journal can never produce the record this poll waits
+ * for. The anchor is the preserved wait start, which reviewWaitSince never
+ * resets while the attempt is the same.
+ */
+function reviewAttemptExpired(record: WorkRecordV1, now: number): boolean {
+  const wait = record.wait;
+  const since = wait !== null && isReviewAttemptWait(record)
+    // The drain pass releases an expired review_quota wait before this step
+    // runs, so a live wait keeps its preserved start and the bound intent is
+    // the only surviving anchor for an already-released attempt.
+    ? wait.since
+    : record.intent !== null && record.intent.kind === "review_request"
+    ? record.intent.startedAt
+    : null;
+  if (since === null) return false;
+  return now >= since + REVIEW_BOUND_MS;
+}
+
+/**
+ * Recover one provably dead attempt: a bound review_request intent (an
+ * ambiguous or in-flight submission the round counter never counted) is
+ * counted once and cleared so the next pass requests a fresh uniquely
+ * admitted round; a plain observation wait only clears, because its round was
+ * already counted at submit. Either way the record never polls an
+ * unrecoverable journal forever.
+ */
+function recoverExpiredReviewAttempt(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  now: number,
+): Promise<StepResultV1> {
+  const intent = record.intent;
+  const recovered = intent !== null && intent.kind === "review_request"
+    ? countReviewRound(clearIntent(clearWait(record, now), now), now)
+    : clearWait(record, now);
+  return requestReviewFor(deps, context, recovered, record.target.pr!);
+}
 
 export async function observeReview(
   deps: RepairCycleDepsV1,
@@ -102,6 +159,9 @@ export async function observeReview(
   }
   const observed = await observeStandingReview(deps, record, pr, head);
   if (!observed.ok) {
+    if (reviewAttemptExpired(record, now)) {
+      return recoverExpiredReviewAttempt(deps, context, record, now);
+    }
     // A failed observation is TRANSIENT review unavailability (transport
     // hiccup, rate limit, quota), never a terminal failure: it re-arms the
     // explicit review-quota wait and is retroactively drained later. Only a
@@ -145,6 +205,9 @@ export async function observeReview(
     );
   }
   if (value.status === "pending") {
+    if (reviewAttemptExpired(record, now)) {
+      return recoverExpiredReviewAttempt(deps, context, record, now);
+    }
     // A healthy review that simply has not posted yet stays on the ordinary
     // bounded poll; it is transient and never blocks by itself.
     const since = reviewWaitSince(record, now);
@@ -168,6 +231,9 @@ export async function observeReview(
     // previously indistinguishable here, so a terminal disposition was polled
     // forever and the task could never move again.
     if (value.completedAt === null) {
+      if (reviewAttemptExpired(record, now)) {
+        return recoverExpiredReviewAttempt(deps, context, record, now);
+      }
       // Non-terminal unavailability is transient: keep the explicit
       // review-quota state and let the drain pass retry it when quota returns.
       const since = reviewWaitSince(record, now);
