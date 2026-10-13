@@ -1,5 +1,4 @@
 import {
-  DEP_2,
   makeRepairRig,
   repairConfigs,
   REPO,
@@ -18,18 +17,10 @@ import {
   wireConcreteReviewTransport,
 } from "./entrypoints-review-helpers.ts";
 import { reviewTaskStatementDigest } from "../../src/contracts/review-receipt.ts";
-import {
-  monitoredReleaseRecord,
-  reservation,
-  reviewReceipt,
-  sample,
-  workRecord,
-} from "../state/helpers.ts";
+import { reservation, reviewReceipt, workRecord } from "../state/helpers.ts";
+import { persistVpsDelivery } from "../repair/vps-delivery-fixtures.ts";
 import { REPO_2 } from "../budget/helpers.ts";
-import {
-  parseReleaseStateSnapshotV1,
-  parseRepairStateSnapshotV1,
-} from "../../src/contracts/state-snapshots.ts";
+import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import assert from "node:assert/strict";
 import { GitHubApiClient } from "../../src/github/client.ts";
 import { FakeAuthProvider, FakeCooldownGate } from "../github/helpers.ts";
@@ -464,42 +455,14 @@ export async function postDrainTaskScenario(
         1,
       );
       assert.deepEqual(state.reservations, [charge]);
-      // Production is an injected external acceptance boundary here. Its
-      // exact-candidate evidence enters the REAL separate release Git store
-      // only after merge; no review or merge authorization is seeded.
-      const accepted = monitoredReleaseRecord(
-        "post-drain-production",
-        "accepted",
+      // The real VPS controller accepts the reconciled request through fake
+      // external ports and the separate release Git store after merge.
+      await persistVpsDelivery(
+        rig.store,
+        rig.releaseStore,
+        rig.clock,
+        state.releaseRequests[0],
       );
-      const released = await rig.releaseStore.writeRelease(
-        parseReleaseStateSnapshotV1({
-          version: "v1",
-          kind: "release_state_snapshot",
-          stateHead: null,
-          sequence: 1,
-          updatedAt: rig.clock.now(),
-          hostedRuntimes: [],
-          hostedReleases: [],
-          githubCooldowns: [],
-          releases: [{
-            ...accepted,
-            requestId: state.releaseRequests[0].id,
-            requestRevision: head,
-            candidate: {
-              identity: DEP_2,
-              buildTransactionId: "post-drain-production",
-            },
-            observed: { ...accepted.observed, identity: DEP_2 },
-            acceptance: {
-              ...accepted.acceptance!,
-              identity: DEP_2,
-              samples: [sample(DEP_2, T0 + 33_000)],
-            },
-          }],
-        }),
-        null,
-      );
-      assert.ok(released.ok && released.value.status === "applied");
       rig.clock.advance(5 * 60_000 + 1);
       await rig.run(60 * 60_000);
       state = await rig.snapshot();
