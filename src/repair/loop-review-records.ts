@@ -121,6 +121,7 @@ export function reviewWaitSince(
 ): number {
   if (
     record.wait?.reason === "review_pending" ||
+    record.wait?.reason === "review_quota" ||
     record.wait?.reason === "unavailable"
   ) return record.wait.since;
   if (record.intent?.kind === "review_request") {

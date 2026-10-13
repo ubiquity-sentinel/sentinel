@@ -156,6 +156,15 @@ export class GitHubCodexReviewTransport extends GitHubReviewTransportLifecycle
     }, read.value);
     if (bound.kind !== "one") return portOk(this.unavailableReceipt(request));
 
+    if (
+      local !== undefined && bound.journal.phase !== "ready" &&
+      await this.recoverSettledPending(local, bound.journal, bound.review)
+    ) {
+      // Re-observe the exact published disposition through the normal journal
+      // binding path; recovery never manufactures a completed model verdict.
+      return await this.readReview(request);
+    }
+
     // A durable ready journal awaiting publication is recovered EXACTLY here,
     // on the actual observation path: the original body and identities are
     // reused, and no snapshot, preparation, model start or new budget

@@ -188,6 +188,7 @@ export abstract class GitHubReviewTransportState {
       reviewId: null,
       remoteJournal: false,
       prepared: null,
+      preparedExecution: null,
       closePromise: null,
       submission: null,
       submissionSettled: true,

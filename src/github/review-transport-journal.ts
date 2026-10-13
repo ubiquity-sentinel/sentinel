@@ -1,6 +1,7 @@
 // review transport journal.
 
 import type { GitSha } from "../contracts/brands.ts";
+import { canonicalStringify } from "../contracts/canonical.ts";
 import type { GitHubReviewWireV1 } from "./wire.ts";
 import {
   parseReviewJournalBody,
@@ -13,6 +14,7 @@ import type { ReviewRequestReadV1 } from "./review-service.ts";
 import { GitHubReviewTransportState } from "./review-transport-state.ts";
 import {
   type BoundRecordV1,
+  DETAIL_FAILURE,
   DETAIL_READBACK,
   DETAIL_RECONCILE,
   type OwnedReviewV1,
@@ -189,6 +191,56 @@ export abstract class GitHubReviewTransportJournal
       review: candidates[0].review,
       journal: candidates[0].journal,
     };
+  }
+
+  /**
+   * Finish only this transport's exact failed operation after its retained
+   * submission, completion and session have all proved settlement. A fresh
+   * host, elapsed deadline or a changed execution supplies no such authority.
+   */
+  protected async recoverSettledPending(
+    op: OwnedReviewV1,
+    journal: ReviewJournalV1,
+    review: GitHubReviewWireV1,
+  ): Promise<boolean> {
+    if (
+      !op.done || !op.submissionSettled || !op.runningSettled ||
+      !op.processSettled || op.prepared !== null || !op.remoteJournal ||
+      op.readyDurable || op.reviewId !== review.id ||
+      review.author !== this.publisher ||
+      review.commitSha !== op.expectedHead ||
+      review.state !== "pending" || review.submittedAt !== null ||
+      journal.phase === "ready" || this.clock.now() < journal.requestedAt ||
+      !this.journalIdentityMatches(op, review.id, journal)
+    ) return false;
+    if (
+      journal.phase === "running" &&
+      (op.preparedExecution === null ||
+        journal.execution.ownerRunId !== this.ownerRunId ||
+        canonicalStringify(journal.execution) !==
+          canonicalStringify(op.preparedExecution))
+    ) return false;
+
+    // Retain finalization ownership before the first await. Concurrent starts
+    // for this operation/PR and drain observe the same owned promise.
+    op.done = false;
+    op.submissionSettled = false;
+    op.fault = null;
+    const publication = (async () => {
+      try {
+        await this.publishDisposition(op, null, DETAIL_FAILURE);
+        return op.phase === "published";
+      } catch {
+        op.fault ??= DETAIL_FAILURE;
+        return false;
+      } finally {
+        op.done = true;
+      }
+    })();
+    op.submission = publication.then(() => {
+      op.submissionSettled = true;
+    });
+    return await publication;
   }
 
   /**

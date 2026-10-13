@@ -50,12 +50,11 @@ function isReviewAttemptWait(record: WorkRecordV1): boolean {
 }
 
 /**
- * An attempt whose own settle deadline passed without an accepted verdict is
- * dead: no live owner may still settle it (the review transport hard-settles
- * within REVIEW_BOUND_MS), so an interrupted owner, a lost response or an
- * unreadable pending journal can never produce the record this poll waits
- * for. The anchor is the preserved wait start, which reviewWaitSince never
- * resets while the attempt is the same.
+ * Bound observation time for one attempt without an accepted verdict. Expiry
+ * permits a separately admitted round, never a claim that an old session
+ * settled: the transport still refuses live ownership or an unproved pending
+ * journal. The anchor is the preserved wait start, which reviewWaitSince
+ * never resets while the attempt is the same.
  */
 function reviewAttemptExpired(record: WorkRecordV1, now: number): boolean {
   const wait = record.wait;
@@ -72,14 +71,14 @@ function reviewAttemptExpired(record: WorkRecordV1, now: number): boolean {
 }
 
 /**
- * Recover one provably dead attempt: a bound review_request intent (an
+ * Recover one expired observation: a bound review_request intent (an
  * ambiguous or in-flight submission the round counter never counted) is
  * counted once and cleared so the next pass requests a fresh uniquely
  * admitted round; a plain observation wait only clears, because its round was
  * already counted at submit. Either way the record never polls an
  * unrecoverable journal forever.
  */
-function recoverExpiredReviewAttempt(
+async function recoverExpiredReviewAttempt(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
@@ -89,6 +88,11 @@ function recoverExpiredReviewAttempt(
   const recovered = intent !== null && intent.kind === "review_request"
     ? countReviewRound(clearIntent(clearWait(record, now), now), now)
     : clearWait(record, now);
+  // Admission reloads authoritative state after reserving the fresh start.
+  // Persist the recovered round first; otherwise that reload discards the
+  // count and the following expiry reuses an already-settled admission.
+  const persisted = await persistWork(deps, context, recovered);
+  if (persisted.kind !== "progress") return persisted;
   return requestReviewFor(deps, context, recovered, record.target.pr!);
 }
 
