@@ -130,15 +130,29 @@ export function validateRepairTransition(
     if (nextTotal < priorTotal) {
       return "attempt memory counts cannot decrease";
     }
+    const priorSuccesses = priorRecord.successes ?? 0;
+    const nextSuccesses = nextRecord.successes ?? 0;
+    const priorSuccessAt = priorRecord.lastSuccessAtMs ?? null;
+    const nextSuccessAt = nextRecord.lastSuccessAtMs ?? null;
+    const priorSuccessRevision = priorRecord.lastSuccessRevision ?? null;
+    const nextSuccessRevision = nextRecord.lastSuccessRevision ?? null;
     if (
-      (priorRecord.successes ?? 0) > (nextRecord.successes ?? 0) ||
-      (priorRecord.lastSuccessAtMs !== null &&
-        priorRecord.lastSuccessAtMs !== undefined &&
-        nextRecord.lastSuccessAtMs !== null &&
-        nextRecord.lastSuccessAtMs !== undefined &&
-        nextRecord.lastSuccessAtMs < priorRecord.lastSuccessAtMs)
+      priorSuccesses > nextSuccesses ||
+      (priorSuccessAt !== null &&
+        (nextSuccessAt === null || nextSuccessAt < priorSuccessAt)) ||
+      (priorSuccessRevision !== null && nextSuccessRevision === null)
     ) {
       return "attempt memory success history cannot move backward";
+    }
+    // Once known, success identity stays fixed until another success is
+    // recorded. Legacy absent/null provenance may still be filled once.
+    if (
+      priorSuccesses === nextSuccesses &&
+      ((priorSuccessAt !== null && nextSuccessAt !== priorSuccessAt) ||
+        (priorSuccessRevision !== null &&
+          nextSuccessRevision !== priorSuccessRevision))
+    ) {
+      return "attempt memory success provenance cannot change without a new success";
     }
     for (const priorEntry of priorRecord.entries) {
       const nextEntry = nextRecord.entries.find((entry) =>

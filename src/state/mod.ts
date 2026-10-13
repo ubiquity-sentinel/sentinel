@@ -128,7 +128,12 @@ export class GitStateStore extends StateGitTransport implements StateStore {
       ) {
         return portError("invalid", "historical repair identity is malformed");
       }
-      const loaded = await this.loadRemote(op, REPAIR_REF, "repair");
+      const loaded = await this.loadRemote(
+        op,
+        REPAIR_REF,
+        "repair",
+        "complete",
+      );
       if (!loaded.ok) return loaded;
       if (
         loaded.value.status !== "found" ||
@@ -183,7 +188,12 @@ export class GitStateStore extends StateGitTransport implements StateStore {
       ) {
         return portError("invalid", "historical release identity is malformed");
       }
-      const loaded = await this.loadRemote(op, RELEASE_REF, "release");
+      const loaded = await this.loadRemote(
+        op,
+        RELEASE_REF,
+        "release",
+        "complete",
+      );
       if (!loaded.ok) return loaded;
       if (
         loaded.value.status !== "found" ||
