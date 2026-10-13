@@ -82,6 +82,7 @@ Deno.test("current matrix integrity: wrong-sequence ancestry fails protected mai
     counters: { attempts: 1, retries: 0, reviewRounds: 0 },
   });
   const { rig } = await makeRig("current-integrity", {
+    fixtureDir: Deno.cwd(),
     repair: repairSnapshot([record], [], [], []),
     release,
   });
@@ -227,6 +228,7 @@ Deno.test("modern closed C integrity: changed native proof fails protected main 
   const release = releaseSnapshot();
   release.hostedRuntimes = [idle];
   const { rig } = await makeRig("modern-integrity", {
+    fixtureDir: Deno.cwd(),
     repair: repairSnapshot([record], [], [], [charge]),
     release,
   });

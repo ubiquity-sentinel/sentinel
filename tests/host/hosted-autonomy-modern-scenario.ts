@@ -550,6 +550,27 @@ export async function modernRecoveryScenario(
       assert.deepEqual(await f.rig.state.readRepair(), before);
     }
     const originalWrite = f.rig.state.writeRepair;
+    let unavailableWrites = 0;
+    f.rig.state.writeRepair = () => {
+      unavailableWrites++;
+      return Promise.resolve(
+        portError("unavailable", "offline settlement unavailable"),
+      );
+    };
+    try {
+      const unavailable = await run();
+      assert.equal(unavailable.status, "skipped");
+      assert(unavailableWrites > 0, "real settlement consumer must be reached");
+      assert.deepEqual(await f.rig.state.readRepair(), before);
+      assert.deepEqual(await f.rig.state.readRelease(), releaseBefore);
+      console.log(JSON.stringify({
+        kind: "offline_unavailable_settlement",
+        zeroWrites: true,
+        chargedIntentPreserved: true,
+      }));
+    } finally {
+      f.rig.state.writeRepair = originalWrite;
+    }
     let writesBeforeDrift = 0;
     let writeAttempts = 0;
     let actualAppliedHead: GitSha | null = null;
@@ -569,10 +590,17 @@ export async function modernRecoveryScenario(
       if (written.ok && written.value.status === "applied") {
         writesBeforeDrift++;
         actualAppliedHead = written.value.head;
-        f.rig.state.readRelease = () =>
-          Promise.resolve(
-            portError("conflict", "offline partial custody drift"),
-          );
+        f.rig.state.readRelease = async () => {
+          const current = await originalReleaseRead();
+          assert(current.ok && current.value.status === "found");
+          return portOk({
+            ...current.value,
+            snapshot: {
+              ...current.value.snapshot,
+              sequence: current.value.snapshot.sequence + 1,
+            },
+          });
+        };
       }
       return written;
     };
