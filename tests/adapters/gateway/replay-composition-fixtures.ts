@@ -2,6 +2,11 @@ import type { ArtifactStoreLimitsV1 } from "../../../src/adapters/gateway/store.
 import type { CommandId } from "../../../src/contracts/brands.ts";
 import assert from "node:assert/strict";
 import { sha256hex } from "./helpers.ts";
+import {
+  currentAttempt,
+  currentClassification,
+  currentMetadata,
+} from "./current-format-helpers.ts";
 
 export const INDEX_PATH = "/admin/sentinel/incidents";
 export const REPLAY_PATH = "/admin/sentinel/replay-captures";
@@ -12,12 +17,14 @@ export const LIMITS: ArtifactStoreLimitsV1 = {
 };
 
 const GOLDEN_V2_URL = new URL(
-  "../../fixtures/gateway/producer-golden-v2.json",
+  "../../fixtures/gateway/producer-golden-v3.json",
   import.meta.url,
 );
-export const CAPTURE_ID_V2 = "synthetic-capture-2";
-export const GIT_SHA = "1".repeat(40);
-export const CAPTURED_AT_V2 = 1_788_811_200_000;
+export const CAPTURE_ID_V2 = readGolden().exported.manifest
+  .capture_id as string;
+export const GIT_SHA = readGolden().expected.git_sha as string;
+export const CAPTURED_AT_V2 = readGolden().exported.manifest
+  .captured_at_ms as number;
 const RETAINED_TTL_MS = 48 * 60 * 60 * 1_000;
 
 const TEST_ID = "gateway:complete-upstream";
@@ -303,21 +310,21 @@ function encodeEnvelope(
 export function v2Attempt(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
-  return {
+  return currentAttempt({
     provider: "surplus",
     status: 200,
     content_type: "text/event-stream",
     chunks_base64: [] as string[],
     terminal: "eof",
     ...overrides,
-  };
+  });
 }
 
 export function v2Upstream(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    version: 1,
+    version: 2,
     attempts: [] as Record<string, unknown>[],
     attempts_truncated: false,
     bytes_truncated: false,
@@ -336,7 +343,7 @@ export function baseMetadata(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    version: 2,
+    version: 3,
     captured_at_ms: CAPTURED_AT_V2,
     endpoint: "/v1/responses",
     method: "POST",
@@ -371,6 +378,7 @@ export function baseMetadata(
 }
 
 interface CraftedWireCaptureV1 {
+  classificationDigest: string;
   manifest: Record<string, unknown>;
   chunks: string[];
   ciphertext: Uint8Array<ArrayBuffer>;
@@ -383,6 +391,7 @@ export async function craftWireCapture(
   metadata: Record<string, unknown>,
   body: Uint8Array<ArrayBuffer>,
 ): Promise<CraftedWireCaptureV1> {
+  metadata = currentMetadata(metadata, body);
   const fingerprint = await v2Fingerprint(keyBytes, metadata, body);
   const caseGroupDigest = await v2CaseGroup(keyBytes, metadata, body);
   const plaintext = encodeEnvelope(metadata, body);
@@ -405,6 +414,7 @@ export async function craftWireCapture(
     ciphertext_bytes: ciphertext.byteLength,
   };
   return {
+    classificationDigest: currentClassification(metadata),
     manifest: manifestRecord,
     chunks: [toBase64Url(ciphertext)],
     ciphertext,

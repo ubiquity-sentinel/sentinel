@@ -266,8 +266,14 @@ export function completedUpstream(): RetainedGatewayCaptureV1["upstream"] {
   const chunk =
     'data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n';
   return {
-    version: 1,
+    version: 2,
     attempts: [{
+      headers: { "content-type": "text/event-stream" },
+      headers_truncated: false,
+      chunk_times_ms: [0],
+      started_at_ms: 0,
+      headers_at_ms: 0,
+      ended_at_ms: 0,
       provider: "chatgpt_codex",
       status: 200,
       content_type: "text/event-stream",

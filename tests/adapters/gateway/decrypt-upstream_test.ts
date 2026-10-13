@@ -168,7 +168,7 @@ Deno.test("gateway decrypt: an empty upstream trace is accepted and returned tru
   assert.equal(result.ok, true, "empty trace must decrypt");
   if (!result.ok) return;
   assert.deepEqual(result.value.upstream, {
-    version: 1,
+    version: 2,
     attempts: [],
     attempts_truncated: false,
     bytes_truncated: false,

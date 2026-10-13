@@ -3,6 +3,10 @@ import {
   PROTOCOL_TYPES,
 } from "./sanitize-protocol-vocabulary.ts";
 import type { ProtocolSanitizer } from "./sanitize-protocol-vocabulary.ts";
+import {
+  decodeCanonicalBase64,
+  parseAttemptMetadataV2,
+} from "./decrypt-upstream.ts";
 import type {
   RetainedGatewayUpstreamAttemptV1,
   RetainedGatewayUpstreamV1,
@@ -22,9 +26,9 @@ const MIN_ATTEMPTS = 1;
 /** Maximum attempts on a recorded upstream trace. */
 const MAX_ATTEMPTS = 8;
 /** Maximum aggregate chunk count across attempts. */
-const MAX_CHUNKS = 256;
+const MAX_CHUNKS = 4096;
 /** Maximum aggregate decoded byte count across attempts. */
-const MAX_BYTES = 131072;
+const MAX_BYTES = 4 * 1024 * 1024;
 /** Encoded-length bound of one base64 chunk before it is decoded. */
 const MAX_BASE64_ENCODED = Math.ceil(MAX_BYTES / 3) * 4;
 
@@ -94,17 +98,8 @@ function assertArrayShape(value: readonly unknown[]): void {
 /** Decode a canonical standard base64 chunk into bytes. */
 function decodeChunk(chunk: string): Uint8Array {
   if (chunk.length > MAX_BASE64_ENCODED) failUpstream();
-  let binary: string;
-  try {
-    binary = atob(chunk);
-  } catch {
-    failUpstream();
-  }
-  if (btoa(binary) !== chunk) failUpstream();
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
+  const bytes = decodeCanonicalBase64(chunk);
+  if (bytes === null) failUpstream();
   return bytes;
 }
 
@@ -297,6 +292,12 @@ function transformAttempt(
     "content_type",
     "chunks_base64",
     "terminal",
+    "headers",
+    "headers_truncated",
+    "chunk_times_ms",
+    "started_at_ms",
+    "headers_at_ms",
+    "ended_at_ms",
   ]);
   if (path.has(attempt)) failUpstream();
   path.add(attempt);
@@ -304,7 +305,9 @@ function transformAttempt(
   const provider = attempt.provider;
   if (
     provider !== "chatgpt_codex" && provider !== "surplus" &&
-    provider !== "metered" && provider !== "cerebras"
+    provider !== "metered" && provider !== "cerebras" &&
+    provider !== "deepseek" && provider !== "lithos" &&
+    provider !== "openrouter"
   ) {
     failUpstream();
   }
@@ -397,7 +400,45 @@ function transformAttempt(
   if (stats.outputBytes > MAX_BYTES) failUpstream();
   path.delete(attempt);
 
+  const metadata = parseAttemptMetadataV2(
+    attempt,
+    status as number | null,
+    terminal as string,
+    chunksValue.length,
+  );
+  if (metadata === null || outChunks.length > metadata.chunk_times_ms.length) {
+    failUpstream();
+  }
+  const headers: Record<string, string> = {};
+  let headersTruncated = metadata.headers_truncated;
+  for (const [name, value] of Object.entries(metadata.headers)) {
+    if (
+      name === "content-type" &&
+      (contentType === "application/json" ||
+        contentType === "text/event-stream")
+    ) headers[name] = contentType;
+    else if (name === "content-length") headers[name] = String(outputBytes);
+    else if (/^\d+(?:\.\d+)?(?:ms|s|m|h|d)?$/.test(value)) {
+      headers[name] = value;
+    } else if (
+      name === "cache-control" &&
+      /^(?:no-store|no-cache|private|public|must-revalidate)(?:, ?(?:no-store|no-cache|private|public|must-revalidate))*$/
+        .test(value)
+    ) headers[name] = value;
+    else headersTruncated = true;
+  }
+
   return {
+    headers,
+    headers_truncated: headersTruncated,
+    chunk_times_ms: metadata.chunk_times_ms.slice(0, outChunks.length),
+    started_at_ms: 0,
+    headers_at_ms: metadata.headers_at_ms === null
+      ? null
+      : metadata.headers_at_ms - metadata.started_at_ms,
+    ended_at_ms: metadata.ended_at_ms === null
+      ? null
+      : metadata.ended_at_ms - metadata.started_at_ms,
     provider,
     status,
     content_type: contentType,
@@ -419,7 +460,7 @@ function sanitizeTrace(
     "bytes_truncated",
     "chunks_truncated",
   ]);
-  if (upstream.version !== 1) failUpstream();
+  if (upstream.version !== 2) failUpstream();
   if (upstream.attempts_truncated !== false) failUpstream();
   if (upstream.bytes_truncated !== false) failUpstream();
   if (upstream.chunks_truncated !== false) failUpstream();
@@ -451,7 +492,7 @@ function sanitizeTrace(
   if (stats.outputBytes > MAX_BYTES) failUpstream();
 
   return {
-    version: 1,
+    version: 2,
     attempts: outAttempts,
     attempts_truncated: false,
     bytes_truncated: false,
