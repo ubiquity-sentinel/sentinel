@@ -64,24 +64,41 @@ export async function recoverHostedMatrixProducer(
     saved.execution.purpose !== "ordinary"
   ) return { result: null, deferred: false };
   if (
-    runtime.execution !== null || saved.execution.releaseId !== null ||
-    runtime.activeRevision !== saved.execution.revision ||
-    runtime.generation !== saved.execution.generation ||
+    runtime.execution !== null ||
     current.snapshot.hostedReleases.some((row) =>
       !["accepted", "rolled_back", "cancelled"].includes(row.phase)
     )
   ) throw new Error("current matrix producer custody unavailable");
+  if (
+    saved.execution.releaseId !== null ||
+    runtime.activeRevision !== saved.execution.revision ||
+    runtime.generation !== saved.execution.generation
+  ) {
+    throw new CurrentMatrixRecoveryIntegrityFailure(
+      "current matrix producer custody unavailable",
+      before.head,
+      null,
+      null,
+    );
+  }
   const custody = async (bounded = true) => {
     if (bounded) checkDeadline();
     const fresh = await deps.state.readRelease();
     if (bounded) checkDeadline();
+    if (!fresh.ok || fresh.value.status !== "found") {
+      throw new Error("current matrix producer custody unavailable");
+    }
     if (
-      !fresh.ok || fresh.value.status !== "found" ||
       fresh.value.head !== current.head ||
       canonicalStringify(fresh.value.snapshot) !==
         canonicalStringify(current.snapshot)
     ) {
-      throw new Error("current matrix release custody changed");
+      throw new CurrentMatrixRecoveryIntegrityFailure(
+        "current matrix release custody changed",
+        before.head,
+        appliedHead,
+        null,
+      );
     }
     if (producer.head !== current.head) {
       if (bounded) checkDeadline();
@@ -90,16 +107,32 @@ export async function recoverHostedMatrixProducer(
         expectedHead: current.head,
       });
       if (bounded) checkDeadline();
+      if (!prior?.ok || prior.value.status !== "found") {
+        throw new Error("current matrix producer custody unavailable");
+      }
       if (
-        !prior?.ok || prior.value.status !== "found" ||
         prior.value.head !== producer.head ||
         canonicalStringify(prior.value.snapshot) !==
           canonicalStringify(producer.snapshot)
-      ) throw new Error("current matrix producer ancestry changed");
+      ) {
+        throw new CurrentMatrixRecoveryIntegrityFailure(
+          "current matrix producer ancestry changed",
+          before.head,
+          appliedHead,
+          null,
+        );
+      }
     }
   };
   let integrityFailure: CurrentMatrixRecoveryIntegrityFailure | null = null;
   let appliedHead: GitSha | null = null;
+  const integrityFault = (message: string) =>
+    new CurrentMatrixRecoveryIntegrityFailure(
+      message,
+      before.head,
+      appliedHead,
+      null,
+    );
   const state: StateReadView & RepairStateWriter = {
     readRepair: () => deps.state.readRepair(),
     readRelease: () => deps.state.readRelease(),
@@ -162,7 +195,7 @@ export async function recoverHostedMatrixProducer(
       intent.key !== implementationIntentKey(charge.id) ||
       intent.observedBase !== record.target.base || intent.resultId !== null
     ) {
-      throw new Error("current matrix request binding unavailable");
+      throw integrityFault("current matrix request binding unavailable");
     }
     if (
       !ports.configs.some((config) =>
@@ -210,14 +243,19 @@ export async function recoverHostedMatrixProducer(
     return { result: null, deferred: true };
   }
   if (native.value.outcome === "not_started") {
-    throw new Error("current matrix native proof unavailable");
+    throw integrityFault("current matrix native proof unavailable");
   }
-  const proof = parseHostedRunProofV1(native.value);
+  let proof;
+  try {
+    proof = parseHostedRunProofV1(native.value);
+  } catch {
+    throw integrityFault("current matrix native proof changed");
+  }
   if (
     canonicalStringify({ ...proof, observedAt: 0 }) !==
       canonicalStringify({ ...saved, observedAt: 0 })
   ) {
-    throw new Error("current matrix native proof changed");
+    throw integrityFault("current matrix native proof changed");
   }
   await custody();
   const waves = await transport.recover({
@@ -232,7 +270,10 @@ export async function recoverHostedMatrixProducer(
     deadline: deadlineAt,
   });
   checkDeadline();
-  if (waves.length !== 1) throw new Error("current matrix wave unavailable");
+  if (waves.length > 1) {
+    throw integrityFault("current matrix wave binding changed");
+  }
+  if (waves.length === 0) throw new Error("current matrix wave unavailable");
   const wave = waves[0];
   if (
     wave.plan.waveId !== saved.execution.id ||
@@ -247,7 +288,7 @@ export async function recoverHostedMatrixProducer(
       cell.generation !== saved.execution.generation
     )
   ) {
-    throw new Error("current matrix wave binding changed");
+    throw integrityFault("current matrix wave binding changed");
   }
   const intersection = wave.plan.cells.filter((cell) =>
     requests.some((request) => request.reservationId === cell.reservationId)
@@ -255,24 +296,28 @@ export async function recoverHostedMatrixProducer(
   if (intersection.length === 0) {
     await custody();
     const fresh = await state.readRepair();
+    if (!fresh.ok || fresh.value.status !== "found") {
+      throw new Error("current matrix producer custody unavailable");
+    }
     if (
-      !fresh.ok || fresh.value.status !== "found" ||
       fresh.value.head !== before.head ||
       canonicalStringify(fresh.value.snapshot) !==
         canonicalStringify(before.snapshot)
     ) {
-      throw new Error("current matrix repair custody changed");
+      throw integrityFault("current matrix repair custody changed");
     }
     return { result: null, deferred: false };
   }
   const fresh = await state.readRepair();
+  if (!fresh.ok || fresh.value.status !== "found") {
+    throw new Error("current matrix producer custody unavailable");
+  }
   if (
-    !fresh.ok || fresh.value.status !== "found" ||
     fresh.value.head !== before.head ||
     canonicalStringify(fresh.value.snapshot) !==
       canonicalStringify(before.snapshot)
   ) {
-    throw new Error("current matrix repair custody changed");
+    throw integrityFault("current matrix repair custody changed");
   }
   let ingested = 0;
   const selected = new Set<string>();
@@ -335,12 +380,7 @@ export async function recoverHostedMatrixProducer(
       badEntries.length > 0 ||
       report.entries.length !== cells.length
     ) {
-      const detail = badEntries.length > 0
-        ? `bad dispositions: ${
-          badEntries.map((e) => `${e.cellId}:${e.disposition}`).join(", ")
-        }`
-        : `entry count ${report.entries.length} != cell count ${cells.length}`;
-      throw new Error(`current matrix ingestion incomplete (${detail})`);
+      throw integrityFault("current matrix ingestion incomplete");
     }
     // Non-silent accounting for owner-parallel disposals: tolerated
     // dispositions are still counted and reported with fixed keys only.
@@ -366,7 +406,7 @@ export async function recoverHostedMatrixProducer(
     ingested += report.ingested;
   }
   if (selected.size === 0) {
-    throw new Error("current matrix selected evidence unavailable");
+    throw integrityFault("current matrix selected evidence unavailable");
   }
   await custody();
   const after = await state.readRepair();
@@ -391,7 +431,7 @@ export async function recoverHostedMatrixProducer(
         before.snapshot.reservations.filter((row) => !selected.has(row.id)),
       )
   ) {
-    throw new Error("current matrix readback incomplete");
+    throw integrityFault("current matrix readback incomplete");
   }
   for (const id of selected) covered.add(id);
   return {

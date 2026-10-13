@@ -1,7 +1,10 @@
 import type { ClosedCWaveBindingV1 } from "../src/host/modern-matrix-recovery.ts";
 import { HOSTED_RUNTIME_ID } from "../src/contracts/hosted-supervisor.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
-import { recoverHostedMatrixProducer } from "./hosted-autonomy-producer-recovery.ts";
+import {
+  CurrentMatrixRecoveryIntegrityFailure,
+  recoverHostedMatrixProducer,
+} from "./hosted-autonomy-producer-recovery.ts";
 import { CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE } from "./hosted-autonomy-policy.ts";
 import type {
   HostedAutonomyDepsV1,
@@ -45,6 +48,9 @@ export async function recoverHostedCurrentMatrix(
     )
   ) return null;
   const current = release.value;
+  const beforeHead = repair.value.head;
+  const integrityFailure = (message: string) =>
+    new CurrentMatrixRecoveryIntegrityFailure(message, beforeHead, null, null);
   const runtime = current.snapshot.hostedRuntimes.find((row) =>
     row.id === HOSTED_RUNTIME_ID
   );
@@ -80,7 +86,7 @@ export async function recoverHostedCurrentMatrix(
         throw new Error(CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE);
       }
       if (snapshots.has(producer.head)) {
-        throw new Error("current matrix history cycle");
+        throw integrityFailure("current matrix history cycle");
       }
       snapshots.add(producer.head);
       const producerRuntime = producer.snapshot.hostedRuntimes.find((row) =>
@@ -106,7 +112,7 @@ export async function recoverHostedCurrentMatrix(
           const proof = canonicalStringify({ ...saved, observedAt: 0 });
           const prior = proofs.get(identity);
           if (prior !== undefined && prior !== proof) {
-            throw new Error("current matrix historical proof conflicts");
+            throw integrityFailure("current matrix historical proof conflicts");
           }
           if (prior === undefined) {
             proofs.set(identity, proof);
@@ -137,7 +143,7 @@ export async function recoverHostedCurrentMatrix(
       const parent = producer.snapshot.stateHead;
       if (parent === null) {
         if (producer.snapshot.sequence !== 1) {
-          throw new Error("current matrix history root unavailable");
+          throw integrityFailure("current matrix history root unavailable");
         }
         return null;
       }
@@ -145,7 +151,7 @@ export async function recoverHostedCurrentMatrix(
       // offline-history controls pin a rejection for missing, wrong-head,
       // wrong-sequence and cycle faults.
       if (snapshots.has(parent) || !deps.state.readReleaseAt) {
-        throw new Error("current matrix history unavailable");
+        throw integrityFailure("current matrix history unavailable");
       }
       const prior = await deps.state.readReleaseAt({
         commit: parent,
@@ -155,7 +161,7 @@ export async function recoverHostedCurrentMatrix(
         !prior.ok || prior.value.status !== "found" ||
         prior.value.head !== parent ||
         prior.value.snapshot.sequence !== producer.snapshot.sequence - 1
-      ) throw new Error("current matrix history ancestry unavailable");
+      ) throw integrityFailure("current matrix history ancestry unavailable");
       producer = prior.value;
     }
   };

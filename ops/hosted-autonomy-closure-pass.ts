@@ -13,6 +13,7 @@ import {
   readTrustedTask,
   verifiedMergedDelivery,
 } from "./hosted-autonomy-delivery.ts";
+import { intentClosable } from "./hosted-autonomy-retries.ts";
 import {
   acceptedReleases,
   applyHostedClosures,
@@ -35,12 +36,49 @@ import type {
 
 export async function runHostedClosurePass(
   context: HostedAutonomyPassContextV1,
+  deliveryOnly = false,
 ): Promise<HostedAutonomyResultV1 | null> {
   const { deps, actions, revisions, scopeFor, readPull } = context;
   let { snapshot, observedHead } = context;
   const { closedIssues, foreignMerged } = context;
   // ---- closure pass -------------------------------------------------------
   const released = acceptedReleases(context.releaseSnapshot.hostedReleases);
+  if (deliveryOnly) {
+    let ready = false;
+    for (const record of snapshot.work) {
+      if (record.nextStep !== "delivery") continue;
+      const { pr, head, base } = record.target;
+      if (
+        record.related.issueNumber === null || pr === null || head === null ||
+        base === null
+      ) continue;
+      if (!intentClosable(record, snapshot.reservations)) continue;
+      const scope = await scopeFor(record.repository);
+      if (
+        authorizingReceipt(
+          snapshot,
+          record,
+          await readTrustedTask(scope.surface, record),
+        ) === null
+      ) continue;
+      const key = hostedDeliveryKey(record.repository, pr, head, base);
+      if (isHostedSelf(record.repository)) {
+        if (released.has(key)) ready = true;
+        continue;
+      }
+      const pull = await readPull(scope, pr);
+      if (pull === null) continue;
+      const evidence = verifiedMergedDelivery(record, pull, scope.baseBranch);
+      if (evidence === null) continue;
+      foreignMerged.set(key, evidence);
+      actions.push(`delivery:${record.id}:foreign_merged`);
+      revisions.push(evidence.revision);
+      ready = true;
+    }
+    // An open pull still needs the ordinary delivery pass before retirement;
+    // only already-proven delivery bookkeeping may preempt unrelated retries.
+    if (!ready) return null;
+  }
   // A record whose source issue is closed and whose own pull request is
   // definitively closed without a merge can never deliver, whatever step it is
   // parked at. That verdict requires the read to succeed and the pull to be
@@ -136,6 +174,7 @@ export async function runHostedClosurePass(
   // are already present and are not read twice.
   const recovered = new Map<string, HostedAutonomyRecordV1>();
   for (const original of snapshot.work) {
+    if (deliveryOnly && original.nextStep !== "delivery") continue;
     const record = await historicalMergedPublication(snapshot, original) ??
       original;
     if (record !== original) recovered.set(record.id, record);
@@ -191,6 +230,7 @@ export async function runHostedClosurePass(
     ReviewTaskStatementV1 | null | "unavailable"
   >();
   for (const record of closureSnapshot.work) {
+    if (deliveryOnly && record.nextStep !== "delivery") continue;
     if (record.nextStep === "done") continue;
     const issueNumber = record.related.issueNumber;
     const pullRequest = record.target.pr;
@@ -218,6 +258,11 @@ export async function runHostedClosurePass(
     released,
     foreignMerged,
     closureTasks,
+  ).filter((plan) =>
+    !deliveryOnly ||
+    closureSnapshot.work.some((record) =>
+      record.id === plan.id && record.nextStep === "delivery"
+    )
   ).slice(0, 5);
   if (closures.length > 0) {
     for (const plan of closures) {

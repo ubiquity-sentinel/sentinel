@@ -165,3 +165,41 @@ Deno.test("self observation: an unreadable log is an explicit skip, not a report
     "the refusal is visible as an action",
   );
 });
+
+Deno.test("self observation: arbitrary diagnostic text never enters issue titles bodies or markers", async (t) => {
+  const marker = "SYNTHETIC_PRIVATE_MARKER";
+  for (
+    const log of [
+      `error: authorization=Bearer ${marker} /private/synthetic/path\n`,
+      `error: AssertionError: ${marker} https://private.invalid/model-text\n`,
+      `TS2304 [ERROR]: ${marker} /private/synthetic/path\n`,
+    ]
+  ) {
+    await t.step(
+      log.startsWith("TS")
+        ? "type diagnostic"
+        : log.includes("AssertionError")
+        ? "assertion diagnostic"
+        : "generic diagnostic",
+      async () => {
+        const { surface, filed } = fakeSurface({
+          runs: [FAILED_RUNS[0]!],
+          jobs: [{ id: 11, name: marker, conclusion: "failure" }],
+          logs: { 11: log },
+          bodies: [],
+        });
+        await runSelfObservationPass({
+          github: surface,
+          now: Date.parse("2026-09-23T19:00:00Z"),
+        });
+        assert.equal(filed.length, 1);
+        const publicIssue = JSON.stringify(filed).toLowerCase();
+        assert.ok(!publicIssue.includes(marker.toLowerCase()));
+        assert.ok(!publicIssue.includes("/private/"));
+        assert.ok(!publicIssue.includes("https://private.invalid"));
+        assert.ok(filed[0]!.body.includes("unknown-job"));
+        assert.ok(filed[0]!.body.includes("run ids: `1`"));
+      },
+    );
+  }
+});

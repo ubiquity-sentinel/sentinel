@@ -27,6 +27,14 @@ import { ingestMatrixResults } from "./matrix.ts";
 import type { MatrixBundleImporterV1 } from "./matrix-git.ts";
 import type { RepairCycleDepsV1 } from "../repair/loop.ts";
 
+/** Proven closed-wave integrity faults must not become availability deferrals. */
+export class ClosedCWaveRecoveryIntegrityFailure extends Error {
+  constructor(message: string, readonly beforeHead: GitSha) {
+    super(message);
+    this.name = "ClosedCWaveRecoveryIntegrityFailure";
+  }
+}
+
 export const CLOSED_C_WAVE = {
   runtimeSha: "ddc98af7062b63e2b6b0f1e6b877e32f4675d442" as GitSha,
   generation: 60,
@@ -577,19 +585,27 @@ export async function recoverClosedCWave(
   );
   const held = runtime?.lastExecutionProof;
   const healthy = runtime?.lastHealthyProof;
+  if (!held || !healthy) {
+    throw new Error("C recovery failed-wave/own-health identity unavailable");
+  }
   if (
-    !held || held.outcome !== "failed" ||
+    held.outcome !== "failed" ||
     held.execution.purpose !== "ordinary" ||
     held.execution.runId !== binding.run.runId ||
     held.execution.runAttempt !== binding.run.runAttempt ||
     held.execution.launcherSha !== binding.run.launcherSha ||
     held.execution.revision !== binding.runtimeSha ||
-    held.execution.generation !== binding.generation || !healthy ||
+    held.execution.generation !== binding.generation ||
     healthy.outcome !== "healthy" ||
     healthy.execution.revision !== binding.runtimeSha ||
     healthy.execution.generation !== binding.generation ||
     healthy.finishedAt > held.startedAt
-  ) throw new Error("C recovery failed-wave/own-health identity unavailable");
+  ) {
+    throw new ClosedCWaveRecoveryIntegrityFailure(
+      "C recovery failed-wave/own-health identity unavailable",
+      live.repair.head,
+    );
+  }
   const producerState: StateReadView = {
     readRepair: () => Promise.resolve(producerRepair),
     readRelease: () => Promise.resolve(producerRelease),
@@ -601,14 +617,32 @@ export async function recoverClosedCWave(
   ) throw new Error("C recovery native jobs unsettled");
   const native = await deps.readExecution(held.execution);
   if (
-    !native.ok || native.value === null ||
-    native.value.outcome === "not_started"
+    !native.ok || native.value === null
   ) throw new Error("C recovery native failure proof unavailable");
-  const proof = parseHostedRunProofV1(native.value);
+  if (native.value.outcome === "not_started") {
+    throw new ClosedCWaveRecoveryIntegrityFailure(
+      "C recovery native failure proof changed",
+      live.repair.head,
+    );
+  }
+  let proof;
+  try {
+    proof = parseHostedRunProofV1(native.value);
+  } catch {
+    throw new ClosedCWaveRecoveryIntegrityFailure(
+      "C recovery native failure proof changed",
+      live.repair.head,
+    );
+  }
   if (
     canonicalStringify({ ...held, observedAt: proof.observedAt }) !==
       canonicalStringify(proof)
-  ) throw new Error("C recovery native failure proof changed");
+  ) {
+    throw new ClosedCWaveRecoveryIntegrityFailure(
+      "C recovery native failure proof changed",
+      live.repair.head,
+    );
+  }
   const requests = binding.cells.filter((cell) =>
     needed.has(cell.reservationId)
   ).map((cell) => {
@@ -618,13 +652,21 @@ export async function recoverClosedCWave(
     const reservation = producerSnapshot.reservations.find((row) =>
       row.id === cell.reservationId
     );
+    if (!work || !reservation) {
+      throw new Error("C recovery original admission binding unavailable");
+    }
     if (
-      !work || !reservation || work.intent?.kind !== "implementation" ||
+      work.intent?.kind !== "implementation" ||
       work.intent.requestId !== cell.reservationId ||
       work.intent.observedBase !== cell.base ||
       reservation.taskId !== cell.taskId || reservation.head !== cell.base ||
       !sameRepo(reservation.repository, cell.repository)
-    ) throw new Error("C recovery original admission binding unavailable");
+    ) {
+      throw new ClosedCWaveRecoveryIntegrityFailure(
+        "C recovery original admission binding unavailable",
+        live.repair.head,
+      );
+    }
     return {
       taskId: work.id,
       repository: work.repository,
@@ -640,7 +682,13 @@ export async function recoverClosedCWave(
     launcherSha: binding.run.launcherSha,
     currentRun: binding.run,
   });
-  if (waves.length !== 1) throw new Error("C recovery exact wave unavailable");
+  if (waves.length > 1) {
+    throw new ClosedCWaveRecoveryIntegrityFailure(
+      "C recovery plan/result producer mismatch",
+      live.repair.head,
+    );
+  }
+  if (waves.length === 0) throw new Error("C recovery exact wave unavailable");
   const wave = waves[0];
   if (
     wave.planDigest !== binding.planDigest ||
@@ -659,10 +707,18 @@ export async function recoverClosedCWave(
         sameRepo(expected.repository, cell.repository)
       )
     )
-  ) throw new Error("C recovery plan/result producer mismatch");
+  ) {
+    throw new ClosedCWaveRecoveryIntegrityFailure(
+      "C recovery plan/result producer mismatch",
+      live.repair.head,
+    );
+  }
   const fresh = await readLive(deps);
   if (fresh.release.head !== live.release.head) {
-    throw new Error("C recovery release custody changed");
+    throw new ClosedCWaveRecoveryIntegrityFailure(
+      "C recovery release custody changed",
+      live.repair.head,
+    );
   }
   return {
     wave,
@@ -707,7 +763,10 @@ export async function ingestClosedCWave(
   ) throw new Error("C recovery cooldown active");
   const recovered = await recoverClosedCWave(deps);
   if (recovered.repairHead !== live.repair.head) {
-    throw new Error("C recovery repair custody changed before ingestion");
+    throw new ClosedCWaveRecoveryIntegrityFailure(
+      "C recovery repair custody changed before ingestion",
+      live.repair.head,
+    );
   }
   const before = live.repair.snapshot;
   const reports = [];

@@ -6,9 +6,8 @@
  * The rules are deliberately narrow:
  *  - only allowlisted, small patterns are extracted from a bounded log read;
  *    raw log bodies are never copied anywhere;
- *  - every extracted signature is normalized (SHAs, numbers and paths are
- *    redacted and the text is capped) so the same defect maps to one stable
- *    identity across runs;
+ *  - summaries and marker identities contain only closed diagnostic facts,
+ *    never arbitrary log detail, so one class stays stable across runs;
  *  - one report per signature, filed at most once, and never for a signature
  *    that already carries its marker in an open issue.
  */
@@ -54,31 +53,38 @@ export interface SelfObservationIssueV1 {
   runIds: number[];
 }
 
-/**
- * Key-safe normalization: SHAs, numbers, paths, spaces and every other
- * character outside `[a-z0-9:._-]` collapse to `-`, so one defect class keeps
- * one stable identity and the resulting marker can never be truncated by the
- * `<`/`>` of a placeholder.
- */
-function normalize(text: string): string {
-  let value = text.toLowerCase();
-  value = value.replace(/[0-9a-f]{40}/g, "sha");
-  value = value.replace(/[0-9a-f]{12,39}/g, "sha");
-  value = value.replace(/[0-9]+/g, "n");
-  // Any path-like token collapses to one placeholder, so the same defect in a
-  // different file still maps to one class.
-  value = value.replace(/\S*\/\S*/g, "path");
-  value = value.replace(/[^a-z0-9:._-]+/g, "-");
-  value = value.replace(/-+/g, "-");
-  value = value.replace(/^-+|-+$/g, "");
-  return value.slice(0, 96).replace(/-+$/g, "");
+const SELF_DEFECT_JOBS = [
+  "test-local",
+  "maintenance",
+  "prepare",
+  "matrix_plan",
+  "matrix_cell",
+  "repair",
+  "finalize",
+  "bootstrap",
+  "observe",
+  "dispatch",
+  "review",
+  "validate",
+  "verify-artifact",
+] as const;
+
+function safeWorkflow(value: string): string {
+  return SELF_DEFECT_WORKFLOWS.includes(value) ? value : "unknown-workflow";
 }
 
-function keyOf(kind: string, context: SelfFailureV1, detail: string): string {
-  const basis = `${context.workflow}:${context.job}:${kind}:${
-    normalize(detail)
-  }`;
-  return basis.slice(0, 160);
+function safeJob(value: string): string {
+  return SELF_DEFECT_JOBS.some((job) => job === value) ? value : "unknown-job";
+}
+
+function keyOf(
+  kind: string,
+  context: SelfFailureV1,
+  detail = "observed",
+): string {
+  return `${safeWorkflow(context.workflow)}:${
+    safeJob(context.job)
+  }:${kind}:${detail}`;
 }
 
 /**
@@ -95,41 +101,45 @@ export function extractSelfFailureSignature(
   );
   if (shutdown !== null) {
     return {
-      key: keyOf("runner-shutdown", context, shutdown[0]),
+      key: keyOf("runner-shutdown", context),
       summary: "the runner was shut down while the job was running",
     };
   }
-  const typeError = logText.match(/TS\d{4} \[ERROR\]: ([^\n]+)/);
+  const typeError = logText.match(/(TS\d{4}) \[ERROR\]:/);
   if (typeError !== null) {
     return {
-      key: keyOf("ts", context, typeError[1]),
-      summary: `type error: ${typeError[1].slice(0, 120)}`,
+      key: keyOf("ts", context, typeError[1].toLowerCase()),
+      summary: `type error: ${typeError[1]}`,
     };
   }
   const assertion = logText.match(/error: AssertionError: ([^\n]+)/);
   if (assertion !== null) {
     return {
-      key: keyOf("assertion", context, assertion[1]),
-      summary: `assertion: ${assertion[1].slice(0, 120)}`,
+      key: keyOf("assertion", context),
+      summary: "a test assertion failed",
     };
   }
   const genericError = logText.match(/^error: ([^\n]+)$/m);
   if (genericError !== null) {
     return {
-      key: keyOf("error", context, genericError[1]),
-      summary: `error: ${genericError[1].slice(0, 120)}`,
+      key: keyOf("error", context),
+      summary: "the job reported an error",
     };
   }
   const exit = logText.match(/Process completed with exit code (\d+)/);
   if (exit !== null) {
+    const value = Number(exit[1]);
+    const code = Number.isSafeInteger(value) && value <= 255
+      ? String(value)
+      : "unknown";
     return {
-      key: keyOf("exit", context, exit[1]),
-      summary: `the job exited with code ${exit[1]}`,
+      key: keyOf("exit", context, code),
+      summary: `the job exited with code ${code}`,
     };
   }
   return {
-    key: keyOf("job", context, "no allowlisted pattern"),
-    summary: `the ${context.job} job failed with no allowlisted log pattern`,
+    key: keyOf("job", context),
+    summary: "the job failed with no allowlisted log pattern",
   };
 }
 
@@ -163,20 +173,39 @@ export function planSelfObservations(input: {
     if (observed.length < SELF_DEFECT_MIN_OCCURRENCES) continue;
     if (known.has(selfDefectMarker(key))) continue;
     const first = observed[0]!;
-    const runIds = [...new Set(observed.map((entry) => entry.runId))].sort(
+    const runIds = [...new Set(observed.map((entry) => entry.runId))].filter(
+      (id) => Number.isSafeInteger(id) && id > 0,
+    ).sort(
       (a, b) => a - b,
     );
+    const conclusion = [
+        "success",
+        "failure",
+        "cancelled",
+        "timed_out",
+        "action_required",
+        "neutral",
+        "skipped",
+        "stale",
+        "startup_failure",
+      ].includes(first.conclusion)
+      ? first.conclusion
+      : "unknown";
+    const instant = Date.parse(first.createdAt);
+    const createdAt = Number.isFinite(instant)
+      ? new Date(instant).toISOString()
+      : "unknown";
     const lines = [
       selfDefectMarker(key),
       "",
       `Sentinel observed its own repeated failure: ${first.signature.summary}.`,
       "",
-      `- workflow: \`${first.workflow}\``,
-      `- job: \`${first.job}\``,
-      `- conclusion: \`${first.conclusion}\``,
+      `- workflow: \`${safeWorkflow(first.workflow)}\``,
+      `- job: \`${safeJob(first.job)}\``,
+      `- conclusion: \`${conclusion}\``,
       `- occurrences in the observation window: ${observed.length}`,
       `- run ids: ${runIds.map((id) => `\`${id}\``).join(", ")}`,
-      `- first observed: ${first.createdAt}`,
+      `- first observed: ${createdAt}`,
       "",
       "Filed automatically from sanitized summary fields only; raw job logs stay in Actions.",
       "Fix it through the normal repair loop; this issue is not a release or policy change.",

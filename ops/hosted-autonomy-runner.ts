@@ -4,7 +4,10 @@ import {
   readRepairSafely,
   skipped,
 } from "./hosted-autonomy-state.ts";
-import { runHostedRetryPass } from "./hosted-autonomy-retry-pass.ts";
+import {
+  readHostedClosedIssues,
+  runHostedRetryPass,
+} from "./hosted-autonomy-retry-pass.ts";
 import { runHostedClosurePass } from "./hosted-autonomy-closure-pass.ts";
 import {
   createHostedAutonomyScopes,
@@ -63,6 +66,12 @@ export async function runHostedAutonomy(
     foreignMerged: new Map(),
     ...scopes,
   };
+  // Ready delivery bookkeeping precedes unrelated retry grants. Restrict this
+  // early pass to delivery records so blocked candidate-ref and recovery
+  // transitions retain their own reconciliation boundary.
+  await readHostedClosedIssues(context);
+  const reconciled = await runHostedClosurePass(context, true);
+  if (reconciled !== null) return reconciled;
   const retried = await runHostedRetryPass(context, releaseRead.value.head);
   if (retried !== null) return retried;
   const delivered = await runHostedDeliveryPass(context);
