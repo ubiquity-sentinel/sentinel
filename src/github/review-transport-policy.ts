@@ -120,6 +120,8 @@ export interface OwnedReviewV1 {
   /** True once any journal body was durably created on the remote. */
   remoteJournal: boolean;
   prepared: PreparedStructuredReviewV1 | null;
+  /** Exact trusted preparation identity retained after the session closes. */
+  preparedExecution: PreparedStructuredReviewV1["execution"] | null;
   /** The single owned close attempt; reused so close is never duplicated. */
   closePromise: Promise<StructuredReviewCloseV1> | null;
   /** In-flight submission/publication work; retained for drain, never lost. */

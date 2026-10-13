@@ -122,6 +122,7 @@ export abstract class GitHubReviewTransportLifecycle
       return this.fail(op, DETAIL_PREPARE);
     }
     op.prepared = prepared.value;
+    op.preparedExecution = { ...prepared.value.execution };
     // Preparation is awaited work too: recheck before persisting running work.
     if (!this.admitsStart(op)) {
       await this.closePrepared(op);

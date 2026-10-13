@@ -230,10 +230,12 @@ Deno.test(
       liveStartLimits: { perHour: null, perSevenDays: null },
       sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
     });
-    const github = new FakeGithub({
+    const reviewOptions = {
       baseSha: SHA1,
       candidateLifecycle: positiveLifecycle(),
-    });
+      reviewRequestedAt: clock.now(),
+    };
+    const github = new FakeGithub(reviewOptions);
     const model = new FakeModel({ heads });
     const budget = new RollingStartBudget({ clock, state, configs });
     const githubCooldown = new DurableGitHubCooldownGate({ state, clock });
@@ -256,11 +258,13 @@ Deno.test(
       clock,
       github,
       model,
-      entry: () =>
-        runRepairEntrypoint(deps, {
+      entry: () => {
+        reviewOptions.reviewRequestedAt = clock.now();
+        return runRepairEntrypoint(deps, {
           deadline: clock.now() + 60 * 60_000,
           stepLimit: 16,
-        }),
+        });
+      },
       snapshot: async () => {
         const read = await state.readRepair();
         assert.ok(read.ok && read.value.status === "found");
@@ -369,7 +373,12 @@ Deno.test(
       assert.equal(rig.model.requests.length, 5);
 
       rig.clock.advance(15 * 60_000 + 1);
-      rig.github.completeReview([], rig.clock.now());
+      // Observation may be delayed beyond the poll, but the producer's actual
+      // completion still occurred within the bounded fifth session.
+      rig.github.completeReview(
+        [],
+        waiting.work[0]!.wait!.since + 19 * 60_000,
+      );
       const accepted = await rig.entry();
       assert.equal(accepted.status, "idle", JSON.stringify(accepted));
       const delivered = await rig.snapshot();

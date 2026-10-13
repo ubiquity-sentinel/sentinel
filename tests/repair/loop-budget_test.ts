@@ -22,7 +22,10 @@ import { positiveLifecycle } from "./loop-candidate-fixtures.ts";
 Deno.test("rolling budget caps share model starts and review requests", async () => {
   const rig = await makeRig("sharedcap", {
     configOverrides: { liveStartLimits: { perHour: 1, perSevenDays: 5 } },
-    github: { candidateLifecycle: positiveLifecycle() },
+    github: {
+      candidateLifecycle: positiveLifecycle(),
+      reviewRequestedAt: T0 + 3_600_000 + 1000,
+    },
   });
   try {
     // The first task's implementation consumes the single hour-window start;
@@ -132,6 +135,11 @@ Deno.test("rolling budget caps share model starts and review requests", async ()
       1,
       "the first review request is admitted exactly once",
     );
+
+    // The admitted review finishes within its twenty-minute session bound.
+    // Keeping it pending for another hour would request a real recovery round
+    // and consume the released slot instead of testing implementation admission.
+    rig.github.completeReview([], rig.clock.now() + 1000);
 
     // Another hour releases the slot: the second task implements and
     // publishes; its review request then defers again on the shared cap.

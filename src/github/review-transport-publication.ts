@@ -166,6 +166,7 @@ export abstract class GitHubReviewTransportPublication
       reviewId: review.id,
       remoteJournal: true,
       prepared: null,
+      preparedExecution: journal.execution,
       closePromise: null,
       submission: null,
       submissionSettled: true,
