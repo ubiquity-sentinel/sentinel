@@ -18,6 +18,11 @@ import type {
 } from "./loop-types.ts";
 import { classifyReviewTerminalDisposition } from "./review-gate.ts";
 import { clearIntent, markBlocked, markDone, setWait } from "./transitions.ts";
+import {
+  gatewayClosureIntentBindsRequest,
+  isGatewayVpsRepository,
+  observeGatewayVpsDelivery,
+} from "./vps-delivery.ts";
 
 export async function retryAlreadySatisfiedClosure(
   deps: RepairCycleDepsV1,
@@ -116,6 +121,12 @@ export async function retryClosure(
 ): Promise<StepResultV1> {
   const issueNumber = record.related.issueNumber;
   if (issueNumber === null) {
+    if (isGatewayVpsRepository(record.repository)) {
+      return {
+        kind: "deferred",
+        detail: "gateway closure requires exact issue identity",
+      };
+    }
     return persistWork(
       deps,
       context,
@@ -158,6 +169,37 @@ export async function retryClosure(
   const referenced = referencedRequest === undefined
     ? null
     : releaseRequestReceipt(context.snapshot.reviews, referencedRequest);
+  if (isGatewayVpsRepository(record.repository)) {
+    const accepted = referencedRequest === undefined ||
+        !gatewayClosureIntentBindsRequest(record, referencedRequest)
+      ? { kind: "wait" as const }
+      : await observeGatewayVpsDelivery(
+        deps.state,
+        record,
+        referencedRequest,
+        referenced,
+      );
+    if (accepted.kind === "blocked") {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(record, "other", accepted.reason, now),
+      );
+    }
+    if (accepted.kind !== "accepted") {
+      return persistWork(
+        deps,
+        context,
+        setWait(record, {
+          reason: "unavailable",
+          since: now,
+          until: now + CHECK_POLL_MS,
+        }, now),
+      );
+    }
+    const checks = await gateDeliveryOnChecks(deps, context, record, now);
+    if (checks !== null) return checks;
+  }
   const semantic = await deliveryTaskRefusal(deps, record, referenced);
   if (semantic === "wait") {
     return persistWork(

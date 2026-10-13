@@ -15,6 +15,11 @@ import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { closureIntentKey } from "./keys.ts";
 import { RELEASE_POLL_MS } from "./loop-bounds.ts";
 import { retryClosure } from "./loop-closure.ts";
+import { gateDeliveryOnChecks } from "./loop-checks.ts";
+import {
+  isGatewayVpsRepository,
+  observeGatewayVpsDelivery,
+} from "./vps-delivery.ts";
 import { persistWork } from "./loop-state.ts";
 import {
   deliveryTaskRefusal,
@@ -256,7 +261,10 @@ export async function observeReleaseAcceptance(
   // authorization evidence: no release entry can ever appear for it, so the
   // record is parked with the recorded reason instead of waiting forever.
   // The exact historical cancellation reason is preserved on the blocker.
-  if (request.status === "cancelled" || request.status === "failed") {
+  if (
+    !isGatewayVpsRepository(record.repository) &&
+    (request.status === "cancelled" || request.status === "failed")
+  ) {
     return persistWork(
       deps,
       context,
@@ -272,6 +280,27 @@ export async function observeReleaseAcceptance(
     return await observeLocalReleaseAcceptance(deps, context, record, request);
   }
   const now = deps.clock.now();
+  if (isGatewayVpsRepository(record.repository)) {
+    const observed = await observeGatewayVpsDelivery(
+      deps.state,
+      record,
+      request,
+      releaseRequestReceipt(context.snapshot.reviews, request),
+    );
+    if (observed.kind === "blocked") {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(record, "other", observed.reason, now),
+      );
+    }
+    if (observed.kind !== "accepted") {
+      return waitRelease(deps, context, record, now);
+    }
+    const checks = await gateDeliveryOnChecks(deps, context, record, now);
+    if (checks !== null) return checks;
+    return acceptRelease(deps, context, record, request, now);
+  }
   const release = await deps.state.readRelease();
   if (!release.ok || release.value.status !== "found") {
     return waitRelease(deps, context, record, now);
