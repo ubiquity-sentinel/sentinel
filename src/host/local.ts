@@ -31,6 +31,7 @@ import { createRepairStateStore } from "../state/mod.ts";
 import { composeLocalReleaseReader } from "./local-release.ts";
 import { resolveReviewModelId } from "./model-route.ts";
 import { RollingStartBudget } from "../budget/mod.ts";
+import { unavailableTargetCapabilities } from "./gateway-capabilities.ts";
 import { fetchHttpTransport } from "../github/http.ts";
 import { DurableGitHubCooldownGate } from "../repair/github-cooldown.ts";
 import type { RepairCycleOutcomeV1 } from "../repair/loop.ts";
@@ -40,8 +41,6 @@ import {
   STATIC_INVALID_OPTIONS,
   STATIC_MARKER,
   STEP_LIMIT,
-  unavailableIncidents,
-  unavailableReplay,
 } from "./local-policy.ts";
 import {
   createLocalRepositoryConfig,
@@ -295,6 +294,9 @@ export async function runLocalRepairHost(
       codexExecutable: input.codexExecutable,
       tracker,
       reviewModelId: input.reviewModelId,
+      selfMergeEnabled: appliedConfig.repository.owner === "ubiquity" &&
+        appliedConfig.repository.name === "sentinel" &&
+        appliedConfig.repository.installationId === 0,
     });
     const model = new LocalCheckoutModelPort({
       stateRoot: input.stateRoot,
@@ -329,6 +331,7 @@ export async function runLocalRepairHost(
         "unavailable",
         "Owner local-only iteration: publication and reviews are paused",
       ));
+    const capabilities = unavailableTargetCapabilities();
     outcome = await runRepairEntrypoint({
       clock,
       state,
@@ -336,8 +339,8 @@ export async function runLocalRepairHost(
       controllerSha: input.controllerSha,
       github: github,
       githubCooldown: gate,
-      incidents: unavailableIncidents,
-      replay: unavailableReplay,
+      incidents: capabilities.incidents,
+      replay: capabilities.replay,
       model,
       budget: new RollingStartBudget({
         clock,

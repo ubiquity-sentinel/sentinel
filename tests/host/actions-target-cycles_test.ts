@@ -12,6 +12,8 @@ import {
   composeLocalGitHub,
   createLocalRepositoryConfig,
   LocalSessionTracker,
+  unavailableIncidents,
+  unavailableReplay,
 } from "../../src/host/local.ts";
 import { createTargetConfigV1 } from "../../src/host/targets.ts";
 import { runRepairEntrypoint } from "../../src/main.ts";
@@ -26,6 +28,55 @@ import {
   unique,
 } from "./actions-target-fixture.ts";
 import { APP_PUBLISHER } from "./actions-ci-fixture.ts";
+
+Deno.test("actions host: prepared target capabilities reach the actual target cycle", async () => {
+  const rig = makeTargetHostRig(["sentinel", FOREIGN_REPO, THIRD_REPO]);
+  const trace: string[] = [];
+  const pairs = new Map(rig.configs.map((config) => [config.repository.name, {
+    incidents: { ...unavailableIncidents },
+    replay: { ...unavailableReplay },
+  }]));
+  const input = {
+    ...targetCycleInput(rig, {
+      prepareTarget: (config) => {
+        trace.push(`prepare:${config.repository.name}`);
+        if (config.repository.name === THIRD_REPO) {
+          throw new Error("owned setup refusal");
+        }
+        return Promise.resolve();
+      },
+      runCycle: (deps, options) => {
+        const name = deps.configs[0].repository.name;
+        const pair = pairs.get(name)!;
+        trace.push(`cycle:${name}`);
+        assert.equal(deps.incidents, pair.incidents);
+        assert.equal(deps.replay, pair.replay);
+        assert.equal(options.deadline, rig.clock.now() + 60 * 60_000);
+        return runRepairEntrypoint(deps, options);
+      },
+    }),
+    resolveTargetCapabilities: (config: typeof rig.configs[number]) => {
+      trace.push(`resolve:${config.repository.name}`);
+      return pairs.get(config.repository.name)!;
+    },
+  };
+  const result = await runActionsTargetCycles(input);
+  assert.deepEqual(trace, [
+    "prepare:sentinel",
+    "resolve:sentinel",
+    "cycle:sentinel",
+    `prepare:${FOREIGN_REPO}`,
+    `resolve:${FOREIGN_REPO}`,
+    `cycle:${FOREIGN_REPO}`,
+    `prepare:${THIRD_REPO}`,
+  ]);
+  assert.deepEqual(result.addressed, [
+    "ubiquity/sentinel",
+    `ubiquity/${FOREIGN_REPO}`,
+  ]);
+  assert.equal(result.failed.length, 1);
+  assert.equal(rig.budget, input.budget);
+});
 
 Deno.test(
   "actions host: two committed targets produce two targeted cycles that read every target's issues",

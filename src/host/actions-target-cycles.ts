@@ -167,6 +167,11 @@ export interface ActionsTargetCyclesInputV1 {
   githubCooldown: GitHubCooldownGateV1;
   incidents: IncidentAdapter;
   replay: ReplayPort;
+  /** Private target-bound pair, resolved only after its own preparation. */
+  resolveTargetCapabilities?: (config: RepositoryConfigV1) => {
+    incidents: IncidentAdapter;
+    replay: ReplayPort;
+  };
   /** THE one model port shared by every cycle. */
   model: ImplementationPort;
   /** THE one admission controller, constructed over every target config. */
@@ -191,6 +196,7 @@ export interface ActionsTargetCyclesInputV1 {
     artifactRoot: string;
     sourcePathFor: (config: RepositoryConfigV1) => string;
     expectedProvider: string;
+    matrixCarrier?: import("./matrix-actions-shared.ts").MatrixNativeCarrierV1;
     createArtifactTransport: (
       producerState?: StateReadView,
     ) => Promise<MatrixArtifactTransportV1>;
@@ -293,6 +299,7 @@ export async function runActionsTargetCycles(
         }
       }
       addressed.push(slug);
+      const capabilities = input.resolveTargetCapabilities?.(config) ?? input;
       outcome = await runCycle({
         clock: input.clock,
         state: input.state,
@@ -300,8 +307,8 @@ export async function runActionsTargetCycles(
         controllerSha: input.controllerSha,
         github: input.composeGithub(config),
         githubCooldown: input.githubCooldown,
-        incidents: input.incidents,
-        replay: input.replay,
+        incidents: capabilities.incidents,
+        replay: capabilities.replay,
         model: input.model,
         budget: input.budget,
         externalImplementations: input.externalImplementations,
@@ -344,6 +351,10 @@ export function childRunDeadlineV1(runOrigin: number): number {
  * multi-target call itself.
  */
 export interface ActionsRepairHostDepsV1 {
+  /** Raw private publisher stdin; decoded only after the saved native execution matches. */
+  trustedStdin?: string;
+  /** Approved private persistence/cache/replay policy; absence keeps capture unavailable. */
+  gateway?: import("./gateway-capabilities.ts").TrustedGatewayRuntimeV1;
   /** Native job role selected by the fixed matrix executable, never a product flag. */
   job?: "matrix_plan" | "matrix_cell";
   /** Fake external ports/transports for the actual hosted composition checks. */
