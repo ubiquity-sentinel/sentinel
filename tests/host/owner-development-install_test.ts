@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import {
+  buildOwnerDevelopmentInstallSnapshot,
   OWNER_DEVELOPMENT_INSTALL_READER_GENERATION,
   planOwnerDevelopmentInstall,
 } from "../../src/host/owner-development-install.ts";
@@ -15,6 +16,7 @@ import {
   ORIGINAL,
   READER,
   STACKED_MERGE_RUNTIME_REVISION,
+  STATE_HEAD,
   UNRELATED,
   VERSIONED_RUNTIME_REVISION,
 } from "./owner-install-fixture-constants.ts";
@@ -850,25 +852,50 @@ Deno.test(
 Deno.test(
   "owner development install plan: generation 75 mismatch-disposition retry installs only after the once-only generation 74 rollback",
   () => {
-    const earlyFrameHealthy = healthyProof(
-      EARLY_FRAME_RUNTIME_REVISION,
-      73,
+    const stackedHealthy = healthyProof(
+      STACKED_MERGE_RUNTIME_REVISION,
+      72,
       201,
     );
-
-    // The consumed first candidate rolled back to the generation 72
-    // revision at monotonic generation 74; that exact pointer installs the
-    // retry rung at generation 75.
-    const retryInstall = planOwnerDevelopmentInstall(
-      releaseSnapshot({
-        runtime: runtimeRecord({
-          revision: STACKED_MERGE_RUNTIME_REVISION,
-          generation: 74,
-          healthyProof: earlyFrameHealthy,
-        }),
+    const source = releaseSnapshot({
+      runtime: runtimeRecord({
+        revision: STACKED_MERGE_RUNTIME_REVISION,
+        generation: 72,
+        healthyProof: stackedHealthy,
       }),
+    });
+    const earlyInstall = planOwnerDevelopmentInstall(source, NOW);
+    if (earlyInstall.status !== "install") {
+      throw new Error("expected early install");
+    }
+    const early = buildOwnerDevelopmentInstallSnapshot(
+      source,
+      STATE_HEAD,
+      earlyInstall.move,
       NOW,
     );
+    const failed = {
+      ...early,
+      hostedRuntimes: [{
+        ...early.hostedRuntimes[0],
+        lastExecutionProof: failedProof(EARLY_FRAME_RUNTIME_REVISION, 73, 202),
+      }],
+    };
+    const earlyRollback = planOwnerDevelopmentInstall(failed, NOW + 1);
+    if (earlyRollback.status !== "rollback") {
+      throw new Error("expected early rollback");
+    }
+    const restored = buildOwnerDevelopmentInstallSnapshot(
+      failed,
+      STATE_HEAD,
+      earlyRollback.move,
+      NOW + 1,
+    );
+    assert.deepEqual(
+      restored.hostedRuntimes[0].lastHealthyProof,
+      stackedHealthy,
+    );
+    const retryInstall = planOwnerDevelopmentInstall(restored, NOW + 2);
     assert.equal(retryInstall.status, "install");
     if (retryInstall.status !== "install") {
       throw new Error("expected install");
@@ -885,17 +912,17 @@ Deno.test(
     assert.equal(retryInstall.move.nextGeneration, 75);
     assert.equal(
       canonicalStringify(retryInstall.move.priorHealthyProof),
-      canonicalStringify(earlyFrameHealthy),
+      canonicalStringify(stackedHealthy),
     );
 
-    // A failed generation 75 restores the recorded generation 73 revision
+    // A failed generation 75 restores the recorded generation 72 revision
     // once at monotonic generation 76.
     const retryRollback = planOwnerDevelopmentInstall(
       releaseSnapshot({
         runtime: runtimeRecord({
           revision: MISMATCH_DISPOSITION_RUNTIME_REVISION,
           generation: 75,
-          healthyProof: earlyFrameHealthy,
+          healthyProof: stackedHealthy,
           executionProof: failedProof(
             MISMATCH_DISPOSITION_RUNTIME_REVISION,
             75,
@@ -909,7 +936,10 @@ Deno.test(
     if (retryRollback.status !== "rollback") {
       throw new Error("expected rollback");
     }
-    assert.equal(retryRollback.move.nextRevision, EARLY_FRAME_RUNTIME_REVISION);
+    assert.equal(
+      retryRollback.move.nextRevision,
+      STACKED_MERGE_RUNTIME_REVISION,
+    );
     assert.equal(retryRollback.move.nextGeneration, 76);
 
     // A healthy generation 75 completes the chain.
