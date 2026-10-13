@@ -42,6 +42,14 @@
 
 import type { ReplayIsolationAttestationV1 } from "./port.ts";
 import { DenoReplayRuntime } from "./runtime.ts";
+import {
+  materializeDependencyCache,
+  removeDependencyRun,
+} from "./dependency-cache.ts";
+import type {
+  ReplayDependencyCacheV1,
+  ReplayDependencyRunV1,
+} from "./dependency-cache.ts";
 import type {
   ReplayCommandInputV1,
   ReplayCommandResultV1,
@@ -56,6 +64,8 @@ export interface LinuxReplayIsolationOptions {
   runtime?: ReplayRuntimeV1;
   /** Platform override for deterministic unsupported-platform tests only. */
   osName?: string;
+  /** Trusted pinned public seed; every run validates it and owns a private Deno copy. */
+  dependencyCache?: ReplayDependencyCacheV1;
 }
 
 /** Fixed bubblewrap binary; never configurable. */
@@ -99,11 +109,15 @@ export class LinuxReplayIsolation {
   private readonly runtime: ReplayRuntimeV1;
   private readonly osName: string;
   private readonly scratchRoot: string;
+  private readonly dependencyCache?: ReplayDependencyCacheV1;
 
   constructor(scratchRoot: string, options: LinuxReplayIsolationOptions = {}) {
     this.scratchRoot = requireTrustedScratchRoot(scratchRoot);
     this.osName = options.osName ?? Deno.build.os;
     this.runtime = options.runtime ?? new DenoReplayRuntime(SANDBOX_PATH);
+    this.dependencyCache = options.dependencyCache === undefined
+      ? undefined
+      : { ...options.dependencyCache };
     this.attestation = {
       version: "v1",
       host: "linux-bwrap-namespace",
@@ -158,9 +172,32 @@ export class LinuxReplayIsolation {
       );
     }
 
-    return await this.runtime.run({
+    let dependencies: ReplayDependencyRunV1 | undefined;
+    if (this.dependencyCache !== undefined) {
+      try {
+        dependencies = await materializeDependencyCache(
+          this.dependencyCache,
+          checkout,
+          scratch,
+        );
+      } catch {
+        return rejected(
+          "isolation rejected: trusted dependency cache integrity or input mismatch",
+        );
+      }
+    }
+    const result = await this.runtime.run({
       executable: BWRAP_PATH,
-      args: bwrapArgs(checkout, executable.path, input.args, access),
+      args: bwrapArgs(
+        checkout,
+        dependencies !== undefined &&
+          (input.executable === "deno" || executable.path === Deno.execPath())
+          ? "/tmp/public-tools/deno"
+          : executable.path,
+        input.args,
+        access,
+        dependencies,
+      ),
       // The host cwd is irrelevant: bwrap enters the exact checkout with
       // `--chdir` after the mount setup.
       cwd: "/",
@@ -168,6 +205,10 @@ export class LinuxReplayIsolation {
       maxDurationMs: input.maxDurationMs,
       maxOutputBytes: input.maxOutputBytes,
     });
+    if (dependencies !== undefined && result.settled) {
+      await removeDependencyRun(dependencies);
+    }
+    return result;
   }
 }
 
@@ -372,6 +413,7 @@ function bwrapArgs(
   executable: string,
   argv: readonly string[],
   access: ReplayCheckoutAccessV1,
+  dependencies?: ReplayDependencyRunV1,
 ): string[] {
   const args: string[] = [
     "--unshare-all",
@@ -409,6 +451,24 @@ function bwrapArgs(
     access === "read-only" ? "--ro-bind" : "--bind",
     checkout,
     checkout,
+  );
+  if (dependencies !== undefined) {
+    args.push(
+      "--bind",
+      dependencies.denoDir,
+      "/tmp/deno",
+      "--ro-bind",
+      dependencies.toolsDir,
+      `${checkout}/tools/lint/node_modules`,
+      "--ro-bind",
+      dependencies.runtimeDir,
+      "/tmp/public-tools",
+      "--setenv",
+      "PATH",
+      `/tmp/public-tools:${SANDBOX_PATH}`,
+    );
+  }
+  args.push(
     "--chdir",
     checkout,
     "--",
