@@ -219,12 +219,14 @@ Deno.test(
       assert.ok(requests.some((entry) =>
         entry.method === "PUT" &&
         entry.url.endsWith(
-          `/repos/ubiquity/ai.ubq.fi/pulls/${FOREIGN_PR}/merge`,
+          `/repos/${FOREIGN_REPO.owner}/${FOREIGN_REPO.name}/pulls/${FOREIGN_PR}/merge`,
         )
       ));
       assert.ok(requests.some((entry) =>
         entry.method === "PATCH" &&
-        entry.url.endsWith(`/repos/ubiquity/ai.ubq.fi/issues/120`)
+        entry.url.endsWith(
+          `/repos/${FOREIGN_REPO.owner}/${FOREIGN_REPO.name}/issues/120`,
+        )
       ));
       assert.ok(!requests.some((entry) => isSelfPath(entry.url)));
       // No release request is ever fabricated for a foreign repository.

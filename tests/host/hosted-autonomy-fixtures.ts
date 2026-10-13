@@ -26,7 +26,7 @@ export const SELF_REPO = {
 /** The foreign target the durable snapshot also carries work for. */
 export const FOREIGN_REPO = {
   owner: "ubiquity",
-  name: "ai.ubq.fi",
+  name: "other-target",
   installationId: 7,
 } as const;
 /** The foreign repository's own default branch, never sentinel's. */
@@ -442,7 +442,7 @@ export function jsonResponse(payload: unknown): Response {
 
 /** True when a request URL addresses the foreign fixture repository. */
 export function isForeignPath(url: string): boolean {
-  return url.includes("/repos/ubiquity/ai.ubq.fi");
+  return url.includes("/repos/ubiquity/other-target");
 }
 
 /** True when a request URL addresses the sentinel self repository. */

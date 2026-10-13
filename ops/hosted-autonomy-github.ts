@@ -3,6 +3,7 @@ import {
   reviewTaskStatementDigest,
 } from "../src/contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
+import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
 import { HOSTED_AUTONOMY_REQUIRED_CHECK } from "./hosted-autonomy-policy.ts";
 import { createHostedMismatchDispositionObservations } from "./hosted-autonomy-mismatch-github.ts";
 import type {
@@ -222,6 +223,10 @@ export function createHostedAutonomyGitHub(
     async readIssueOpen(number: number) {
       const issue = await request("GET", `/repos/${scope}/issues/${number}`);
       if (issue === null || typeof issue !== "object") return null;
+      if (
+        isGatewayVpsRepository(repository) &&
+        (issue as Record<string, unknown>)["number"] !== number
+      ) return null;
       const state = (issue as Record<string, unknown>)["state"];
       if (state === "open") return true;
       if (state === "closed") return false;
@@ -255,6 +260,30 @@ export function createHostedAutonomyGitHub(
       });
       return checked.ok ? checked.statement : null;
     },
+    async readIssueOptedOut(number: number) {
+      const issue = await request("GET", `/repos/${scope}/issues/${number}`);
+      if (issue === null || typeof issue !== "object" || Array.isArray(issue)) {
+        return null;
+      }
+      const object = issue as Record<string, unknown>;
+      if (
+        object["number"] !== number ||
+        !["open", "closed"].includes(String(object["state"])) ||
+        object["pull_request"] !== undefined || !Array.isArray(object["labels"])
+      ) return null;
+      const body = object["body"] === null ? "" : object["body"];
+      if (typeof body !== "string") return null;
+      const labels: string[] = [];
+      for (const label of object["labels"]) {
+        if (
+          label === null || typeof label !== "object" || Array.isArray(label) ||
+          typeof (label as Record<string, unknown>)["name"] !== "string"
+        ) return null;
+        labels.push((label as Record<string, unknown>)["name"] as string);
+      }
+      return body.split(/\r?\n/, 1)[0].trim() === "<!-- sentinel:skip -->" ||
+        labels.some((label) => label.toLowerCase() === "sentinel:skip");
+    },
     async closeIssue(number: number) {
       const closed = await request(
         "PATCH",
@@ -262,6 +291,10 @@ export function createHostedAutonomyGitHub(
         { state: "closed" },
       );
       if (closed === null || typeof closed !== "object") return false;
+      if (
+        isGatewayVpsRepository(repository) &&
+        (closed as Record<string, unknown>)["number"] !== number
+      ) return false;
       return (closed as Record<string, unknown>)["state"] === "closed";
     },
     selfObservation: {

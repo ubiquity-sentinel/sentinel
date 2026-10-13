@@ -30,6 +30,11 @@ import {
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
+import {
+  gatewayRequestBindsDelivery,
+  isGatewayVpsRepository,
+} from "../src/repair/vps-delivery.ts";
+import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 
 export async function runHostedDeliveryPass(
   context: HostedAutonomyPassContextV1,
@@ -138,8 +143,9 @@ export async function runHostedDeliveryPass(
       continue;
     }
     const self = isHostedSelf(record.repository);
+    const gateway = isGatewayVpsRepository(record.repository);
     if (
-      self &&
+      (self || gateway) &&
       snapshot.releaseRequests.some((request) =>
         sameRepository(request.target.repository, record.repository) &&
         request.source.pullRequest === pullRequest &&
@@ -212,6 +218,18 @@ export async function runHostedDeliveryPass(
         actions.push(`delivery:${record.id}:task_acceptance_refused`);
         continue;
       }
+      if (gateway) {
+        let optedOut: boolean | null = null;
+        try {
+          optedOut = await scope.surface.readIssueOptedOut?.(
+            record.related.issueNumber!,
+          ) ?? null;
+        } catch { /* current source must remain eligible */ }
+        if (record.related.issueNumber !== null && optedOut !== false) {
+          actions.push(`delivery:${record.id}:task_acceptance_refused`);
+          continue;
+        }
+      }
       let merged: { merged: boolean; sha: string | null } | null;
       try {
         merged = await scope.surface.merge(pullRequest, head);
@@ -245,7 +263,7 @@ export async function runHostedDeliveryPass(
       continue;
     }
 
-    if (!self) {
+    if (!self && !gateway) {
       // A foreign repository has no sentinel release authority: nothing is
       // recorded and no release is invented. The verified merge facts are
       // handed to the closure pass, which closes the record's OWN issue from
@@ -285,6 +303,29 @@ export async function runHostedDeliveryPass(
     if (request === null) {
       return skipped("snapshot_invalid", observedHead, actions);
     }
+    if (gateway && record.related.issueNumber !== null) {
+      let optedOut: boolean | null = null;
+      try {
+        optedOut =
+          await scope.surface.readIssueOptedOut?.(record.related.issueNumber) ??
+            null;
+      } catch { /* unavailable source cannot authorize a request */ }
+      if (optedOut !== false) {
+        actions.push(`delivery:${record.id}:task_acceptance_refused`);
+        continue;
+      }
+    }
+    if (
+      gateway &&
+      (!await gatewayRequestBindsDelivery(request, record, receipt, revision) ||
+        snapshot.releaseRequests.some((existing) =>
+          existing.id === request.id ||
+          releaseRequestMatchesDelivery(existing, record)
+        ))
+    ) {
+      actions.push(`delivery:${record.id}:already_recorded`);
+      continue;
+    }
     let next: RepairStateSnapshotV1;
     try {
       next = parseRepairStateSnapshotV1({
@@ -292,6 +333,13 @@ export async function runHostedDeliveryPass(
         stateHead: observedHead,
         sequence: snapshot.sequence + 1,
         updatedAt: now,
+        work: gateway
+          ? snapshot.work.map((item) =>
+            item.id === record.id
+              ? { ...item, nextStep: "delivery", updatedAt: now }
+              : item
+          )
+          : snapshot.work,
         releaseRequests: [...snapshot.releaseRequests, request],
       });
     } catch {

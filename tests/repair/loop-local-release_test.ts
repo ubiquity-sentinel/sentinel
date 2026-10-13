@@ -546,7 +546,7 @@ Deno.test(
 );
 
 Deno.test(
-  "local release: nonlocal delivery still consumes the hosted release gateway",
+  "local release: gateway Deno acceptance cannot replace VPS delivery",
   async () => {
     const rig = await makeRig("localgateway", { summaries: false });
     try {
@@ -596,8 +596,8 @@ Deno.test(
       const state = await rig.snapshot();
       assert.equal(
         state.work[0].nextStep,
-        "done",
-        "the hosted gateway path is unchanged for nonlocal targets",
+        "delivery",
+        "a Deno receipt cannot accept gateway VPS delivery",
       );
       assert.equal(reads, 0, "the local capability is never consulted");
     } finally {

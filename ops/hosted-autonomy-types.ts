@@ -121,6 +121,8 @@ export interface HostedAutonomyGitHubV1 {
    * also fails closed for issue-backed records.
    */
   readIssueTask?(number: number): Promise<ReviewTaskStatementV1 | null>;
+  /** Exact current source opt-out projection; null/absent cannot authorize gateway closure. */
+  readIssueOptedOut?(number: number): Promise<boolean | null>;
   /** Expected-head merge; null on any refusal. */
   merge(
     number: number,
