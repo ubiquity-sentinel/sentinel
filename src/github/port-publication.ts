@@ -2,6 +2,7 @@
 
 import type { GitSha } from "../contracts/brands.ts";
 import type {
+  GitHubPullRequestV1,
   PortResultV1,
   PullRequestCreateV1,
   PullRequestPublishV1,
@@ -114,6 +115,14 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
         "pull request body exceeds the contract bound",
       );
     }
+    // A created, reused or reconciled PR must describe the same publication.
+    // The response may race an external edit even after the branch precheck.
+    const matchesPublication = (pull: GitHubPullRequestV1): boolean =>
+      pull.state === "open" && pull.mergeSha === null &&
+      pull.head === request.expectedHeadRef &&
+      pull.headRef === request.headRef && pull.base === request.expectedBase &&
+      pull.baseRef === request.baseRef &&
+      pull.author === this.trustedPrAuthor && pull.body === request.body;
     // 1. The deterministic head branch must exist and carry exactly the
     // expected candidate, or the publication precondition fails closed.
     const branch = await this.client.readRef(`heads/${request.headRef}`);
@@ -153,6 +162,12 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
           "pull request is not owned by the trusted actor",
         );
       }
+      if (!matchesPublication(owned)) {
+        return portError(
+          "conflict",
+          "pull request publication identity mismatch",
+        );
+      }
       return portOk({
         outcome: "applied",
         number: owned.number,
@@ -176,6 +191,12 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
         // base means the published PR is not the exact candidate.
         return portError("conflict", "pull request base moved");
       }
+      if (!matchesPublication(created.value.pr)) {
+        return portError(
+          "conflict",
+          "pull request publication identity mismatch",
+        );
+      }
       return portOk({
         outcome: "applied",
         number: created.value.pr.number,
@@ -187,11 +208,7 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
     const rereadOpen = reread.value.filter((pull) => pull.state === "open");
     if (rereadOpen.length === 1) {
       const owned = rereadOpen[0];
-      if (
-        owned.head === request.expectedHeadRef &&
-        owned.author === this.trustedPrAuthor &&
-        owned.base === request.expectedBase
-      ) {
+      if (matchesPublication(owned)) {
         return portOk({
           outcome: "applied",
           number: owned.number,
