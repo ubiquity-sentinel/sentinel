@@ -27,6 +27,10 @@ import { parseIncidentEvidenceV1, parseIncidentSummaryV1 } from "./incident.ts";
 import type { IncidentEvidenceV1, IncidentSummaryV1 } from "./incident.ts";
 import { parseReleaseRecordV1, parseReleaseRequestV1 } from "./release.ts";
 import type { ReleaseRecordV1, ReleaseRequestV1 } from "./release.ts";
+import {
+  parseVpsReleaseRecordV1,
+  type VpsReleaseRecordV1,
+} from "./vps-release.ts";
 import { parseReplayResultV1 } from "./replay-result.ts";
 import type { ReplayResultV1 } from "./replay-result.ts";
 import { parseReviewReceiptV1 } from "./review-receipt.ts";
@@ -84,6 +88,8 @@ export interface ReleaseStateSnapshotV1 {
   sequence: number;
   updatedAt: number;
   releases: ReleaseRecordV1[];
+  /** Absent on canonical legacy snapshots; never represented as Deno records. */
+  vpsReleases?: VpsReleaseRecordV1[];
   /**
    * Hosted supervisor records (separate from Deno release records). The
    * runtime pointer is at most one record; hosted releases are one per exact
@@ -240,7 +246,13 @@ export function parseReleaseStateSnapshotV1(
   input: unknown,
 ): ReleaseStateSnapshotV1 {
   const obj = expectRecord(input, "$");
-  expectExactKeys(obj, RELEASE_KEYS, "$");
+  expectExactKeys(
+    obj,
+    Object.hasOwn(obj, "vpsReleases")
+      ? [...RELEASE_KEYS, "vpsReleases"]
+      : RELEASE_KEYS,
+    "$",
+  );
   expectVersion(obj.version, "$.version");
   expectEnum(obj.kind, ["release_state_snapshot"], "$.kind");
 
@@ -284,6 +296,16 @@ export function parseReleaseStateSnapshotV1(
   // Cooldowns have no string id; one record per affected installation.
   expectUniqueInstallationIds(githubCooldowns, "$.githubCooldowns");
 
+  const vpsReleases = Object.hasOwn(obj, "vpsReleases")
+    ? expectArray(
+      obj.vpsReleases,
+      "$.vpsReleases",
+      MaxItems.snapshotRecords,
+      parseVpsReleaseRecordV1,
+    )
+    : undefined;
+  if (vpsReleases !== undefined) expectUniqueIds(vpsReleases, "$.vpsReleases");
+
   return {
     version: "v1",
     kind: "release_state_snapshot",
@@ -291,6 +313,7 @@ export function parseReleaseStateSnapshotV1(
     sequence,
     updatedAt,
     releases,
+    ...(vpsReleases === undefined ? {} : { vpsReleases }),
     hostedRuntimes,
     hostedReleases,
     githubCooldowns,

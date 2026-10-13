@@ -7,6 +7,7 @@ import type {
 } from "../contracts/state-snapshots.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import { validateRepairTransition } from "./state-repair-transition.ts";
+import { validateVpsReleaseTransition } from "../contracts/vps-release.ts";
 
 // ---------------------------------------------------------------------------
 // Transition validation: fail-closed preservation and immutability rules.
@@ -41,6 +42,11 @@ export function validateSnapshotTransition(
     // historical proofs, a non-initial generation or terminal receipts.
     if (!("work" in next)) {
       const firstRelease = next as ReleaseStateSnapshotV1;
+      const vpsError = validateVpsReleaseTransition(
+        [],
+        firstRelease.vpsReleases ?? [],
+      );
+      if (vpsError !== null) return vpsError;
       return validateHostedStateTransition(
         [],
         [],
@@ -111,6 +117,11 @@ export function validateReleaseTransition(
   prior: ReleaseStateSnapshotV1,
   next: ReleaseStateSnapshotV1,
 ): string | null {
+  const vpsError = validateVpsReleaseTransition(
+    prior.vpsReleases ?? [],
+    next.vpsReleases ?? [],
+  );
+  if (vpsError !== null) return vpsError;
   for (const priorRecord of prior.releases) {
     const nextRecord = next.releases.find(
       (record) => record.id === priorRecord.id,
