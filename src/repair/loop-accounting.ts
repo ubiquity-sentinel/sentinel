@@ -17,15 +17,20 @@ export async function settleAndBlock(
   record: WorkRecordV1,
   message: string,
   now: number,
-): Promise<WorkRecordV1> {
+): Promise<WorkRecordV1 | { kind: "state_error"; detail: string }> {
   // Settlement is done before the record moves: an uncertain start must be
   // charged (ambiguous) before the task is blocked for authoritative
   // disposition; a proven completed run settles as submitted.
-  await deps.budget.settleModelStart({
+  const settled = await deps.budget.settleModelStart({
     id: reservationId,
     outcome,
     proofRef: null,
   });
+  if (settled.status !== "settled" && settled.status !== "idempotent") {
+    // Keep the implementation intent pending so the next cycle reconciles
+    // this same charge before writing a terminal blocker or attempt memory.
+    return { kind: "state_error", detail: "budget settlement failed" };
+  }
   return markBlocked(record, "other", message, now);
 }
 
