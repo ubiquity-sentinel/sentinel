@@ -6,7 +6,8 @@ import {
   reviewOperationKey,
   reviewReceiptId,
 } from "../../src/repair/keys.ts";
-import { SHA1, SHA3, workRecord } from "../state/helpers.ts";
+import { SHA1, SHA3, T0, workRecord } from "../state/helpers.ts";
+import { REVIEW_BOUND_MS } from "../../src/repair/loop-bounds.ts";
 import { makeRig, seededSnapshot } from "./loop-rig.ts";
 import {
   noVerdictObservation,
@@ -369,6 +370,129 @@ Deno.test(
         rig.github.calls.filter((call) => call === "mergePr").length,
         0,
         "nothing merges without an accepted review",
+      );
+    } finally {
+      await rig.ctx.cleanup();
+    }
+  },
+);
+
+Deno.test(
+  "review no-verdict: an expired pending attempt recovers into a fresh bounded round",
+  async () => {
+    const { rig, work } = await rigAtReviewWait("review-expired-pending");
+    try {
+      rig.clock.advance(REVIEW_BOUND_MS + 1);
+      const first = await rig.run();
+      assert.equal(first.status, "idle", JSON.stringify(first));
+      const state = await rig.snapshot();
+      const record = state.work[0]!;
+      assert.equal(record.nextStep, "review");
+      assert.equal(record.wait?.reason, "review_pending");
+      assert.equal(
+        record.counters.reviewRounds,
+        2,
+        "the dead round is not re-counted; only the fresh round is added",
+      );
+      assert.equal(record.intent, null);
+      assert.equal(
+        rig.github.reviewRequestIdentities.at(-1)!.operationKey,
+        reviewOperationKey(7, work.target.head!, 2),
+      );
+      assert.equal(rig.github.calls.includes("merge"), false);
+      assert.equal(
+        rig.github.calls.some((call) => call.startsWith("closeIssue:")),
+        false,
+      );
+    } finally {
+      await rig.ctx.cleanup();
+    }
+  },
+);
+
+Deno.test(
+  "review no-verdict: an expired ambiguous intent recovers and counts the dead round once",
+  async () => {
+    const taskId = asWorkItemId("issue-777");
+    const branch = candidateBranch(taskId);
+    const rig = await makeRig("review-expired-intent", {
+      summaries: false,
+      github: {
+        reviewUnavailable: true,
+        candidateLifecycle: {
+          ...positiveLifecycle(),
+          refs: { [`refs/heads/${branch}`]: SHA3 },
+          pullRequests: [exactOpenPr(7, SHA3, branch)],
+        },
+      },
+    });
+    try {
+      const seeded = await rig.store.writeRepair(
+        seededSnapshot([
+          workRecord(taskId, {
+            source: { kind: "issue", id: "777", revision: SHA1 },
+            related: { incidentId: null, issueNumber: 777 },
+            target: {
+              base: SHA1,
+              branch,
+              checkpoint: null,
+              head: SHA3,
+              pr: 7,
+            },
+            nextStep: "review",
+            wait: {
+              reason: "review_quota",
+              since: T0,
+              until: T0 + 1,
+            },
+            intent: {
+              kind: "review_request",
+              key: reviewOperationKey(7, SHA3),
+              startedAt: T0,
+              branch,
+              expectedHead: SHA3,
+              observedBase: SHA1,
+              pr: 7,
+              requestId: null,
+              resultId: null,
+            },
+          }),
+        ]),
+        null,
+      );
+      assert.ok(seeded.ok && seeded.value.status === "applied");
+      rig.clock.advance(REVIEW_BOUND_MS + 1);
+      const first = await rig.run();
+      assert.equal(first.status, "idle", JSON.stringify(first));
+      const state = await rig.snapshot();
+      const record = state.work[0]!;
+      assert.equal(record.intent, null, "the dead ambiguous intent is cleared");
+      assert.equal(
+        record.counters.reviewRounds,
+        1,
+        "the dead ambiguous round is counted exactly once",
+      );
+      assert.equal(
+        record.wait?.reason,
+        "review_pending",
+        "the recovered record parks on its fresh bounded round",
+      );
+      assert.ok(
+        state.reservations.some((reservation) =>
+          reservation.purpose === "review_request" &&
+          reservation.attempt === 2 &&
+          reservation.outcome === "submitted"
+        ),
+        "a fresh uniquely admitted round was requested",
+      );
+      assert.equal(
+        rig.github.reviewRequestIdentities.at(-1)!.operationKey,
+        reviewOperationKey(7, SHA3, 2),
+      );
+      assert.equal(rig.github.calls.includes("merge"), false);
+      assert.equal(
+        rig.github.calls.some((call) => call.startsWith("closeIssue:")),
+        false,
       );
     } finally {
       await rig.ctx.cleanup();
