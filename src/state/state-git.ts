@@ -279,6 +279,7 @@ export class StateGitTransport {
     op: OpContext,
     ref: string,
     kind: StateKind,
+    history: "latest" | "complete" = "latest",
   ): Promise<PortResultV1<LoadedState>> {
     const init = await this.git(op, ["init", "-q"]);
     if (!init.ok) return this.gitFailure("unavailable", "init", init);
@@ -317,6 +318,9 @@ export class StateGitTransport {
       "fetch",
       "-q",
       "--no-tags",
+      // Keep the current commit and its real parent for manifest validation;
+      // exact historical witnesses explicitly retain complete ancestry.
+      ...(history === "latest" ? ["--depth=2"] : []),
       "origin",
       ref,
     ]);
