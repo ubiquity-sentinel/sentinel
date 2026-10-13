@@ -8,7 +8,11 @@ import {
   HOSTED_SUPERVISOR_WORKFLOW_PATH,
 } from "../contracts/hosted-supervisor.ts";
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
-import type { Clock, StateReadView } from "../contracts/ports.ts";
+import type {
+  Clock,
+  PortErrorKindV1,
+  StateReadView,
+} from "../contracts/ports.ts";
 import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { ReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type {
@@ -275,6 +279,51 @@ export interface HostedRuntimeChildFailureV1 {
   detail: string;
 }
 
+/** Closed event kinds of one failed delivery port call. */
+export const MERGE_EVENT_KINDS = [
+  "merge_port_error",
+  "merge_reconcile_read_error",
+] as const;
+
+export type MergeEventKindV1 = typeof MERGE_EVENT_KINDS[number];
+
+/** Closed detail codes for the adapter's own static delivery failures. */
+export const MERGE_EVENT_DETAIL_CODES = [
+  "candidate_binding",
+  "candidate_remote",
+  "candidate_fetch",
+  "ancestry_unavailable",
+] as const;
+
+export type MergeEventDetailCodeV1 = typeof MERGE_EVENT_DETAIL_CODES[number];
+
+/**
+ * Runtime-emitted closed delivery event for one failed merge port call. It
+ * carries only the PR number, the closed port error kind and an allow-listed
+ * detail code; never a message, body, URL, path or credential.
+ */
+export interface SentinelMergeEventV1 {
+  version: "v1";
+  kind: "sentinel_merge_event";
+  event: MergeEventKindV1;
+  prNumber: number;
+  errorKind: PortErrorKindV1;
+  detailCode: MergeEventDetailCodeV1 | null;
+}
+
+/**
+ * Launcher-stamped advisory wrapper around one accepted delivery event. The
+ * wrapper kind, the advisory flag and the execution intent are stamped by
+ * the trusted launcher only.
+ */
+export interface HostedMergeEventV1 {
+  version: "v1";
+  kind: "hosted_merge_event";
+  advisory: true;
+  execution: HostedExecutionIntentV1;
+  merge: SentinelMergeEventV1;
+}
+
 export interface HostedRuntimeLauncherResultV1 {
   status: HostedRuntimeLauncherStatusV1;
   /** The trusted terminal, or null when no honest proof exists. */
@@ -300,6 +349,12 @@ export interface HostedRuntimeLauncherResultV1 {
    * health, terminal, settlement or delivery.
    */
   childFailure?: HostedRuntimeChildFailureV1;
+  /**
+   * Advisory-only closed delivery events reconstructed from settled child
+   * stdout. Empty by default; they never attest health, terminal, settlement
+   * or delivery and can never change the wait, intent or exit status.
+   */
+  mergeEvents?: HostedMergeEventV1[];
   /** Authenticated native matrix log carrier; never aggregate terminal proof. */
   matrixCarrier?: Record<string, unknown>;
   /**

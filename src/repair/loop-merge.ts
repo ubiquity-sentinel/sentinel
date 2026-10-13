@@ -1,7 +1,7 @@
 /** Repair loop internals: merge. */
 import type { GitSha } from "../contracts/brands.ts";
 import { parseMergeRequestV1 } from "../contracts/merge-request.ts";
-import type { MergeOutcomeV1 } from "../contracts/ports.ts";
+import type { MergeOutcomeV1, PortErrorV1 } from "../contracts/ports.ts";
 import {
   parseReleaseRequestV1,
   type ReleaseRequestV1,
@@ -44,6 +44,41 @@ import {
   setIntent,
   setWait,
 } from "./transitions.ts";
+
+/**
+ * Closed operational emission for one failed delivery port call: the PR
+ * number, the closed port error kind and an allow-listed code for the
+ * adapter's own static details. It never carries a message, body, URL, path
+ * or credential, and the line can never change the wait, intent or outcome.
+ */
+const MERGE_DETAIL_CODES: readonly (readonly [string, string])[] = [
+  ["candidate restore has no exact durable binding", "candidate_binding"],
+  ["candidate restore remote identity is not exact", "candidate_remote"],
+  ["candidate restore fetch did not verify", "candidate_fetch"],
+  ["ancestry check failed", "ancestry_unavailable"],
+];
+
+function emitMergePortError(
+  event: "merge_port_error" | "merge_reconcile_read_error",
+  prNumber: number,
+  error: PortErrorV1,
+): void {
+  let detailCode: string | null = null;
+  for (const [detail, code] of MERGE_DETAIL_CODES) {
+    if (error.detail === detail) {
+      detailCode = code;
+      break;
+    }
+  }
+  console.log(JSON.stringify({
+    version: "v1",
+    kind: "sentinel_merge_event",
+    event,
+    prNumber,
+    errorKind: error.kind,
+    detailCode,
+  }));
+}
 
 export async function executeMerge(
   deps: RepairCycleDepsV1,
@@ -215,6 +250,11 @@ export async function executeMerge(
 
   const merged = await deps.github.mergePullRequest(mergeRequest);
   if (!merged.ok) {
+    emitMergePortError(
+      "merge_port_error",
+      mergeRequest.pullRequestNumber,
+      merged.error,
+    );
     // The saved merge intent must stay durable: the response may have been
     // lost after the write, and the next run reconciles the exact remote PR
     // state before repeating rather than blindly retrying an ambiguous write.
@@ -340,6 +380,11 @@ export async function reconcileMergeIntent(
   }
   const pr = await deps.github.readPullRequest(record.target.pr);
   if (!pr.ok) {
+    emitMergePortError(
+      "merge_reconcile_read_error",
+      record.target.pr,
+      pr.error,
+    );
     return persistWork(
       deps,
       context,

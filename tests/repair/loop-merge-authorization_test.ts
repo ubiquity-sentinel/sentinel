@@ -520,3 +520,53 @@ Deno.test(
     }
   },
 );
+
+Deno.test("a failed merge reconcile read emits one closed delivery event and keeps the wait", async () => {
+  const rig = await makeRig("mergereaderr", { summaries: false });
+  try {
+    const seed = seededSnapshot([deliveryRecord(SHA3, {
+      intent: {
+        kind: "merge",
+        key: `merge:7:${SHA3}`,
+        startedAt: T0,
+        branch: "sentinel/repair/issue-1",
+        expectedHead: SHA3,
+        observedBase: SHA1,
+        pr: 7,
+        requestId: "review-req-1",
+        resultId: "result-1",
+      },
+    })]);
+    const written = await rig.store.writeRepair(seed, null);
+    assert.ok(written.ok && written.value.status === "applied");
+    rig.github.readPullRequest = () =>
+      Promise.resolve(portError("rate_limited", "transient delivery read"));
+    const emitted: string[] = [];
+    const originalLog = console.log;
+    try {
+      console.log = ((...args: unknown[]) => {
+        emitted.push(args.map((arg) => String(arg)).join(" "));
+      }) as typeof console.log;
+      const outcome = await rig.run();
+      assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    } finally {
+      console.log = originalLog;
+    }
+    const state = await rig.snapshot();
+    assert.equal(state.work[0].wait?.reason, "unavailable");
+    const events = emitted
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((line) => line.kind === "sentinel_merge_event");
+    assert.equal(events.length, 1, emitted.join("\n"));
+    assert.deepEqual(events[0], {
+      version: "v1",
+      kind: "sentinel_merge_event",
+      event: "merge_reconcile_read_error",
+      prNumber: 7,
+      errorKind: "rate_limited",
+      detailCode: null,
+    });
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});

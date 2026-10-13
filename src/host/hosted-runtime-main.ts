@@ -108,6 +108,11 @@ export function emitHostedRuntimeCliResult(
     console.log(JSON.stringify(result.earlyFailure));
   }
   if (result.terminal !== null) console.log(JSON.stringify(result.terminal));
+  if (result.mergeEvents !== undefined) {
+    for (const mergeEvent of result.mergeEvents) {
+      console.log(JSON.stringify(mergeEvent));
+    }
+  }
   if (result.childFailure !== undefined) {
     console.log(JSON.stringify(result.childFailure));
   }

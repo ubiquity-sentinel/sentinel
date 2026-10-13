@@ -39,6 +39,7 @@ import {
   createHostedDiagnosticStream,
   earlyChildFailureDiagnostic,
   scanChildDiagnostics,
+  scanChildMergeEvents,
 } from "./hosted-runtime-diagnostics.ts";
 import {
   parseChildStatus,
@@ -285,9 +286,15 @@ function attachDiagnostics(
   execution: HostedExecutionIntentV1,
 ): HostedRuntimeLauncherResultV1 {
   const diagnostics = scanChildDiagnostics(run, execution);
+  const mergeEvents = scanChildMergeEvents(run, execution);
   const earlyFailure = earlyChildFailureDiagnostic(result, run);
-  if (earlyFailure === null) {
-    return diagnostics.length === 0 ? result : { ...result, diagnostics };
-  }
-  return { ...result, diagnostics, earlyFailure };
+  const withAdvisories = diagnostics.length === 0 && mergeEvents.length === 0
+    ? result
+    : {
+      ...result,
+      diagnostics,
+      ...(mergeEvents.length === 0 ? {} : { mergeEvents }),
+    };
+  if (earlyFailure === null) return withAdvisories;
+  return { ...withAdvisories, earlyFailure };
 }

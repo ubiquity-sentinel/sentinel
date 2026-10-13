@@ -56,6 +56,8 @@ Gateway unavailable diagnostics retain numeric HTTP status without response bodi
 
 A settled hosted child that reports state_error or source_error surfaces its own bounded authored detail as one advisory line beside the terminal, so a failed hosted run names its closed failure instead of collapsing to the static settled-failed text. The advisory never carries raw stderr, credentials or model text and never changes the terminal, health, settlement or exit status.
 
+A failed delivery port call emits one closed sentinel_merge_event (event kind, PR number, closed port error kind, allow-listed detail code) beside the unchanged unavailable wait, and the launcher forwards each accepted event as a hosted_merge_event advisory. The event never carries a message, body, URL, path or credential, and it never changes the wait, intent, terminal or exit status.
+
 ## Durable memory and self-healing
 
 Sentinel records machine-readable attempt memory and a deterministic lesson digest in the existing Git repair state; trusted writers own every write and model workers never write state. Bounded records carry the attempt fingerprint, the stage reached, a closed failure class, counts and the runtime revision. Unchanged replays of a recorded failure are refused with a precise reason, and the implementer prompt carries verified prior attempts, cross-task repository lessons and regression facts.

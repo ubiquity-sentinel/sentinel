@@ -228,9 +228,17 @@ Deno.test("hosted runtime: a real owned-group child cannot forge the wrapper ter
 });
 
 Deno.test("hosted runtime: a settled state_error child surfaces its bounded failure detail", async () => {
+  const mergeEvent = {
+    version: "v1",
+    kind: "sentinel_merge_event",
+    event: "merge_port_error",
+    prNumber: 1004,
+    errorKind: "rate_limited",
+    detailCode: "candidate_binding",
+  } as const;
   const rig = await makeRig({
     runtimeFiles: {
-      "src/host/actions.ts": validFixtureScript("", {
+      "src/host/actions.ts": validFixtureScript(JSON.stringify(mergeEvent), {
         status: "state_error",
         detail: HOSTED_FIXTURE_FAILURE_DETAIL,
       }),
@@ -249,6 +257,13 @@ Deno.test("hosted runtime: a settled state_error child surfaces its bounded fail
       status: "state_error",
       detail: HOSTED_FIXTURE_FAILURE_DETAIL,
     });
+    assert.deepEqual(result.mergeEvents, [{
+      version: "v1",
+      kind: "hosted_merge_event",
+      advisory: true,
+      execution: rig.execution,
+      merge: mergeEvent,
+    }]);
     // The emitted advisory carries the child detail in the workflow log while
     // the exit stays red and the terminal stays the only settlement proof.
     const logged: string[] = [];
@@ -280,6 +295,11 @@ Deno.test("hosted runtime: a settled state_error child surfaces its bounded fail
       logged.some((line) => line.includes("hosted_runtime_terminal")),
       true,
     );
+    const mergeAdvisory = logged
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((line) => line.kind === "hosted_merge_event");
+    assert.ok(mergeAdvisory !== undefined, logged.join("\n"));
+    assert.deepEqual(mergeAdvisory?.merge, mergeEvent);
   } finally {
     await rig.cleanup();
   }

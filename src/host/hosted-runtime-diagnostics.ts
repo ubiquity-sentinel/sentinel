@@ -3,19 +3,29 @@ import { stripVTControlCharacters } from "node:util";
 import { EARLY_FAILURE_FRAME_LABELS } from "./hosted-runtime-frame-labels.ts";
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 import type { ReplayCommandResultV1 } from "../replay/runtime.ts";
+import type { PortErrorKindV1 } from "../contracts/ports.ts";
 import { parseLocalModelDiagnosticV1 } from "./local.ts";
 import {
   MAX_DIAGNOSTIC_LINE_CHARS,
   MAX_HOSTED_DIAGNOSTICS,
+  MERGE_EVENT_DETAIL_CODES,
+  MERGE_EVENT_KINDS,
 } from "./hosted-runtime-identity.ts";
 import type {
+  HostedMergeEventV1,
   HostedModelDiagnosticV1,
   HostedRuntimeEarlyFailureCategoryV1,
   HostedRuntimeEarlyFailureReasonV1,
   HostedRuntimeEarlyFailureV1,
   HostedRuntimeLauncherResultV1,
+  MergeEventDetailCodeV1,
+  MergeEventKindV1,
+  SentinelMergeEventV1,
 } from "./hosted-runtime-identity.ts";
-import { scanChildStatusRecords } from "./hosted-runtime-status.ts";
+import {
+  hasExactKeys,
+  scanChildStatusRecords,
+} from "./hosted-runtime-status.ts";
 
 /** Bound on the retained stderr prefix inspected for one early-failure summary. */
 const MAX_EARLY_FAILURE_STDERR_BYTES = 16 * 1024;
@@ -237,6 +247,103 @@ export function earlyChildFailureDiagnostic(
     frames: earlyChildFailureFrames(stderr),
     reasonCode: earlyChildFailureReason(stderr),
   };
+}
+
+/** Exact keys of the runtime-emitted delivery event. */
+const MERGE_EVENT_KEYS = [
+  "version",
+  "kind",
+  "event",
+  "prNumber",
+  "errorKind",
+  "detailCode",
+] as const;
+
+const MERGE_EVENT_ERROR_KINDS: readonly PortErrorKindV1[] = [
+  "unavailable",
+  "auth_failed",
+  "rate_limited",
+  "not_found",
+  "conflict",
+  "invalid",
+];
+
+/**
+ * Strict validation of one closed runtime delivery event. Exact keys only;
+ * unknown events, kinds, detail codes or unbounded numbers are refused, so a
+ * forged or foreign line can never become an advisory.
+ */
+export function parseSentinelMergeEventV1(
+  value: unknown,
+): SentinelMergeEventV1 | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (!hasExactKeys(record, MERGE_EVENT_KEYS)) return null;
+  if (record.version !== "v1" || record.kind !== "sentinel_merge_event") {
+    return null;
+  }
+  const event = record.event;
+  if (!MERGE_EVENT_KINDS.includes(event as MergeEventKindV1)) return null;
+  const prNumber = record.prNumber;
+  if (
+    typeof prNumber !== "number" || !Number.isSafeInteger(prNumber) ||
+    prNumber <= 0
+  ) {
+    return null;
+  }
+  const errorKind = record.errorKind;
+  if (!MERGE_EVENT_ERROR_KINDS.includes(errorKind as PortErrorKindV1)) {
+    return null;
+  }
+  const detailCode = record.detailCode;
+  if (
+    detailCode !== null &&
+    !MERGE_EVENT_DETAIL_CODES.includes(detailCode as MergeEventDetailCodeV1)
+  ) {
+    return null;
+  }
+  return {
+    version: "v1",
+    kind: "sentinel_merge_event",
+    event: event as MergeEventKindV1,
+    prNumber,
+    errorKind: errorKind as PortErrorKindV1,
+    detailCode: detailCode as MergeEventDetailCodeV1 | null,
+  };
+}
+
+/** Reconstruct every accepted delivery event from one settled child capture. */
+export function scanChildMergeEvents(
+  run: ReplayCommandResultV1,
+  execution: HostedExecutionIntentV1,
+): HostedMergeEventV1[] {
+  if (run.truncated || !run.settled) return [];
+  if (run.outcome !== "exited" && run.outcome !== "timed_out") return [];
+  const found: HostedMergeEventV1[] = [];
+  const stdout = new TextDecoder().decode(run.stdout);
+  for (const rawLine of stdout.split("\n")) {
+    if (found.length >= MAX_HOSTED_DIAGNOSTICS) break;
+    const line = rawLine.trim();
+    if (line.length === 0 || line.length > MAX_DIAGNOSTIC_LINE_CHARS) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const merge = parseSentinelMergeEventV1(value);
+    if (merge === null) continue;
+    found.push({
+      version: "v1",
+      kind: "hosted_merge_event",
+      advisory: true,
+      execution,
+      merge,
+    });
+  }
+  return found;
 }
 
 export function scanChildDiagnostics(
