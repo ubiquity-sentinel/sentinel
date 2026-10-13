@@ -9,9 +9,16 @@
 # `ubiquity-sentinel[bot]`; state-ref bookkeeping stays on the native Actions
 # token. The repair job starts no model for verification executions.
 name: sentinel-supervisor
+run-name: ${{ inputs.sentinel_dispatch_request && format('sentinel-supervisor request {0}', inputs.sentinel_dispatch_request) || '' }}
 
 on:
   workflow_dispatch:
+    inputs:
+      sentinel_dispatch_request:
+        description: Internal operator dispatch identity
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
