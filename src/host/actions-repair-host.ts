@@ -1,5 +1,16 @@
 /** Hosted actions-repair-host responsibility. */
 import { canonicalStringify } from "../contracts/canonical.ts";
+import { asGitSha } from "../contracts/brands.ts";
+import { DenoReplayRuntime } from "../replay/runtime.ts";
+import { ReviewOwnerChannelClient } from "./review-owner-channel.ts";
+import { reviewOwnerChildInput } from "./review-owner-child-input.ts";
+import { parseCarrier } from "./matrix-actions-shared.ts";
+import {
+  createTrustedGatewayCapabilities,
+  isGatewayTarget,
+  type TargetRepairCapabilitiesV1,
+  unavailableTargetCapabilities,
+} from "./gateway-capabilities.ts";
 import {
   COOLDOWN_MODE_ENV,
   parseCooldownModeV1,
@@ -216,6 +227,14 @@ export async function runActionsRepairHost(
     identity,
     controllerSha,
   });
+  const childInput = reviewOwnerChildInput(deps.trustedStdin, execution);
+  if (
+    childInput.reviewCustody !== undefined &&
+    (identity.job !== "repair" || execution.purpose !== "ordinary")
+  ) throw new Error(STATIC_RUNNER);
+  const matrixCarrier = childInput.matrix === undefined
+    ? undefined
+    : parseCarrier(JSON.parse(childInput.matrix), false);
   if (deps.job !== "matrix_cell") await ensureRepairStateSeed(state, clock);
   // The enforcement mode is injected through the environment and parsed
   // strictly: an absent or empty setting enforces, a typo fails the run before
@@ -394,6 +413,27 @@ export async function runActionsRepairHost(
     state,
     configs: targetConfigs,
   });
+  // Native owner settlement always authenticates Sentinel, independently of the reviewed target.
+  const nativeSelf = new GitHubApiClient({
+    repository: selfRepository,
+    apiBaseUrl: "https://api.github.com",
+    http,
+    clock,
+    auth: {
+      authorizationHeader: () =>
+        Promise.resolve(portOk(`Bearer ${githubToken}`)),
+    },
+    cooldownGate: gate,
+  });
+  let reviewCustody: ReviewOwnerChannelClient | undefined;
+  const custodyFor = () => {
+    if (childInput.reviewCustody === undefined) return undefined;
+    return reviewCustody ??= new ReviewOwnerChannelClient(
+      childInput.reviewCustody,
+    );
+  };
+  const nativeReviewOwner = identity.job === "repair" &&
+    execution.purpose === "ordinary";
   // The SAME absolute run deadline captured before every setup step above is
   // handed to every target cycle unchanged; it is never recomputed.
   // The port is composed per target: the REST client, review service, trusted
@@ -406,7 +446,16 @@ export async function runActionsRepairHost(
       http,
       token: writeToken,
       login,
-      invocationId: crypto.randomUUID(),
+      invocationId: nativeReviewOwner ? execution.id : crypto.randomUUID(),
+      ...(nativeReviewOwner
+        ? { ownerExecution: execution, ownerCustody: custodyFor() }
+        : {}),
+      ownerSettlement: {
+        read: (input) => nativeSelf.readReviewOwnerSettlement(input),
+      },
+      selfMergeEnabled: config.repository.owner === "ubiquity" &&
+        config.repository.name === "sentinel" &&
+        config.repository.installationId === 0,
       stateRoot,
       sourcePath: mirrorPathFor(config),
       scratch,
@@ -538,36 +587,93 @@ export async function runActionsRepairHost(
    * failure is contained to that target by the loop, which records it as
    * failed rather than treating it as addressed.
    */
+  const capabilitiesByConfig = new Map<string, TargetRepairCapabilitiesV1>();
   const prepareTarget = async (config: RepositoryConfigV1): Promise<void> => {
+    const slug = `${config.repository.owner}/${config.repository.name}`;
+    const committed = targetConfigs.find((entry) =>
+      canonicalStringify(entry) === canonicalStringify(config)
+    );
+    if (
+      committed === undefined ||
+      sourcePathBySlug.get(slug) !== mirrorPathFor(config)
+    ) throw new Error(STATIC_TARGET_UNKNOWN);
     if (deps.prepareTarget !== undefined) {
       await deps.prepareTarget(config, mirrorPathFor(config));
-      return;
+    } else if (mirrorPathFor(config) !== sourcePath) {
+      const remoteUrl =
+        `https://github.com/${config.repository.owner}/${config.repository.name}.git`;
+      // A foreign target's mirror MUST authenticate with the App token, never the
+      // native Actions token. The native token is scoped to the sentinel
+      // repository, and Git applies an `http.<url>.extraheader` to that url: the
+      // header is then SENT, the server rejects the credential, and Git fails
+      // with "could not read Username" instead of falling back to anonymous
+      // access. That is why a public foreign repository still could not be
+      // cloned or fetched while the same operation succeeds with the App token.
+      const targetInput = { ...hostInput, githubToken: writeToken };
+      await prepareSourceRepository(
+        mirrorPathFor(config),
+        targetInput,
+        scratch,
+        remoteUrl,
+      );
+      await refreshDevelopment(
+        mirrorPathFor(config),
+        targetInput,
+        scratch,
+        gate,
+        config.repository.installationId,
+        { remoteUrl, baseBranch: config.baseBranch },
+      );
     }
-    if (mirrorPathFor(config) === sourcePath) return;
-    const remoteUrl =
-      `https://github.com/${config.repository.owner}/${config.repository.name}.git`;
-    // A foreign target's mirror MUST authenticate with the App token, never the
-    // native Actions token. The native token is scoped to the sentinel
-    // repository, and Git applies an `http.<url>.extraheader` to that url: the
-    // header is then SENT, the server rejects the credential, and Git fails
-    // with "could not read Username" instead of falling back to anonymous
-    // access. That is why a public foreign repository still could not be
-    // cloned or fetched while the same operation succeeds with the App token.
-    const targetInput = { ...hostInput, githubToken: writeToken };
-    await prepareSourceRepository(
-      mirrorPathFor(config),
-      targetInput,
-      scratch,
-      remoteUrl,
-    );
-    await refreshDevelopment(
-      mirrorPathFor(config),
-      targetInput,
-      scratch,
-      gate,
-      config.repository.installationId,
-      { remoteUrl, baseBranch: config.baseBranch },
-    );
+    // Only a trusted controller receives private capture capabilities. Model cells never do.
+    let capabilities: TargetRepairCapabilitiesV1 = {
+      incidents: unavailableIncidents,
+      replay: unavailableReplay,
+    };
+    if (isGatewayTarget(config)) {
+      capabilities = unavailableTargetCapabilities();
+      if (deps.job !== "matrix_cell" && deps.gateway !== undefined) {
+        const native = new DenoReplayRuntime(trustedPath);
+        const base = await native.run({
+          executable: gitExecutable,
+          args: [
+            "rev-parse",
+            "--verify",
+            `refs/remotes/origin/${config.baseBranch}`,
+          ],
+          cwd: mirrorPathFor(config),
+          env: { PATH: trustedPath, GIT_CONFIG_NOSYSTEM: "1" },
+          maxDurationMs: 30_000,
+          maxOutputBytes: 4096,
+        });
+        if (
+          base.outcome === "exited" && base.exitCode === 0 && base.settled &&
+          !base.truncated
+        ) {
+          const resolved = await createTrustedGatewayCapabilities({
+            config,
+            prepared: {
+              config,
+              sourcePath: mirrorPathFor(config),
+              sourceSha: asGitSha(
+                new TextDecoder("utf-8", { fatal: true }).decode(base.stdout)
+                  .trim(),
+              ),
+              controllerSha,
+              execution,
+              denoExecutable,
+              gitExecutable,
+            },
+            clock,
+            authority: deps.gateway,
+            authJson: optionalEnv(readEnv, "SENTINEL_GATEWAY_AUTH_JSON") ?? "",
+            replayKeyB64: optionalEnv(readEnv, "SENTINEL_REPLAY_KEY_B64") ?? "",
+          });
+          if (resolved.ok) capabilities = resolved.value;
+        }
+      }
+    }
+    capabilitiesByConfig.set(canonicalStringify(config), capabilities);
   };
 
   // An ordinary execution without current health is a deterministic verification.
@@ -602,12 +708,12 @@ export async function runActionsRepairHost(
       configs: targetConfigs,
       controllerSha,
       githubCooldown: gate,
-      // The hosted GitHub adapter is intentionally issue-only for each target.
-      // Incident/replay capabilities remain unavailable until their
-      // authenticated producer is configured; unavailable is never an empty
-      // success and therefore cannot create a fabricated fixture.
+      // Legacy callers retain a closed pair; each prepared target resolves its own pair below.
       incidents: unavailableIncidents,
       replay: unavailableReplay,
+      resolveTargetCapabilities: (config) =>
+        capabilitiesByConfig.get(canonicalStringify(config)) ??
+          unavailableTargetCapabilities(),
       model,
       budget,
       deadline,
@@ -628,18 +734,8 @@ export async function runActionsRepairHost(
         artifactRoot: joinPath(sourceDir, "..", ".sentinel-matrix"),
         sourcePathFor: mirrorPathFor,
         expectedProvider: modelRoute.provider,
-        readExecution: (execution) =>
-          new GitHubApiClient({
-            repository: selfRepository,
-            apiBaseUrl: "https://api.github.com",
-            http,
-            clock,
-            auth: {
-              authorizationHeader: () =>
-                Promise.resolve(portOk(`Bearer ${githubToken}`)),
-            },
-            cooldownGate: gate,
-          }).readHostedExecution(execution),
+        ...(matrixCarrier === undefined ? {} : { matrixCarrier }),
+        readExecution: (execution) => nativeSelf.readHostedExecution(execution),
         createArtifactTransport: async (producerState) => {
           const {
             createActionsMatrixArtifactTransport,
@@ -677,6 +773,11 @@ export async function runActionsRepairHost(
   } catch (error) {
     failure = error;
   } finally {
+    try {
+      await reviewCustody?.close();
+    } catch {
+      failure ??= new Error(STATIC_RUNNER);
+    }
     if (!await tracker.settleAll()) {
       failure ??= new Error(STATIC_RUNNER);
     }

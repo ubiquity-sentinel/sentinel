@@ -6,7 +6,7 @@ import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 
 type TargetPolicyV1 = Pick<
   RepositoryConfigV1,
-  "commands" | "commandRegistry" | "protectedPaths"
+  "adapter" | "commands" | "commandRegistry" | "protectedPaths"
 >;
 
 // Gateway AGENTS.md reserves credentials, deployment, capture/replay authority
@@ -64,6 +64,7 @@ export function selectTrustedTargetPolicyV1(
     repository.name.toLowerCase() !== "ai.ubq.fi"
   ) {
     return {
+      adapter: template.adapter,
       commands: template.commands,
       commandRegistry: template.commandRegistry,
       protectedPaths: template.protectedPaths,
@@ -73,6 +74,7 @@ export function selectTrustedTargetPolicyV1(
   // required deterministic CI checks. sentinel:test-local alone is not CI.
   // Cache/sandbox unavailability must refuse, never substitute a partial gate.
   return {
+    adapter: { kind: "gateway", baseUrl: "https://ai.ubq.fi" },
     commands: {
       test: asCommandId("gateway_verify"),
       replay: asCommandId("gateway_replay"),

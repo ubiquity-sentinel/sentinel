@@ -82,6 +82,7 @@ export function targetDeps(
   input: ActionsTargetCyclesInputV1,
   config: RepositoryConfigV1,
 ): RepairCycleDepsV1 {
+  const capabilities = input.resolveTargetCapabilities?.(config) ?? input;
   return {
     clock: input.clock,
     state: input.state,
@@ -89,8 +90,8 @@ export function targetDeps(
     controllerSha: input.controllerSha,
     github: input.composeGithub(config),
     githubCooldown: input.githubCooldown,
-    incidents: input.incidents,
-    replay: input.replay,
+    incidents: capabilities.incidents,
+    replay: capabilities.replay,
     model: input.model,
     budget: input.budget,
     externalImplementations: true,

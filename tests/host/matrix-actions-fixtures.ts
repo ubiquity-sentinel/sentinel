@@ -28,6 +28,8 @@ import {
 } from "../../src/state/mod.ts";
 import { FakeClock, FakeGithub, MemoryState } from "../repair/helpers.ts";
 import { gitRun, makeRemoteCtx, T0, testGitEnv } from "../state/helpers.ts";
+import { createHostedReviewOwnerCustody } from "../../src/host/review-owner-host.ts";
+import type { ReviewOwnerCustodyBroker } from "../../src/host/review-owner-custody.ts";
 
 export const ROOT = decodeURIComponent(
   new URL("../../", import.meta.url).pathname,
@@ -312,9 +314,11 @@ export async function rig(
     );
   }
   await Deno.mkdir(root + "/bin");
-  await Deno.writeTextFile(root + "/bin/codex", "");
+  await Deno.writeTextFile(root + "/bin/codex", "#!/bin/sh\nexit 1\n");
+  await Deno.chmod(root + "/bin/codex", 0o700);
   const jobs = new Map<string, string>();
   let currentRun = 71;
+  const brokers: ReviewOwnerCustodyBroker[] = [];
   async function advanceRun(runId: number) {
     const read = await release.readRelease();
     assert.ok(read.ok && read.value.status === "found");
@@ -383,7 +387,7 @@ export async function rig(
     await Deno.mkdir(root + "/" + name, { recursive: true });
     await checked(root, ["clone", "-q", root + "/seed", dir], env);
     jobs.set(name, dir);
-    return {
+    const input = {
       clock,
       workDir: dir,
       stateRemoteUrl: remote.remoteUrl,
@@ -427,6 +431,25 @@ export async function rig(
         }
       },
     };
+    if (role === "repair") {
+      const read = await release.readRelease();
+      assert.ok(read.ok && read.value.status === "found");
+      const owner = read.value.snapshot.hostedRuntimes[0]!.execution;
+      if (owner?.purpose === "ordinary") {
+        const broker = await createHostedReviewOwnerCustody({
+          execution: owner,
+          runtimeDir: dir,
+          env: input.env,
+        });
+        brokers.push(broker);
+        const descriptor = await broker.start(root);
+        return {
+          ...input,
+          trustedStdin: JSON.stringify({ reviewCustody: descriptor }),
+        };
+      }
+    }
+    return input;
   }
   return {
     root,
@@ -440,6 +463,9 @@ export async function rig(
     jobs,
     job,
     advanceRun,
-    cleanup: () => Deno.remove(root, { recursive: true }),
+    cleanup: async () => {
+      for (const broker of brokers) await broker.dispose();
+      await Deno.remove(root, { recursive: true });
+    },
   };
 }
