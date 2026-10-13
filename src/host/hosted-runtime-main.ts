@@ -17,7 +17,7 @@ import type {
   HostedRuntimeLauncherResultV1,
 } from "./hosted-runtime-identity.ts";
 import { readNativeMatrixStdin, runtimeJob } from "./hosted-runtime-matrix.ts";
-import { runHostedRuntimeLauncher } from "./hosted-runtime-launcher.ts";
+import { runHostedRuntimeWithReviewCustody } from "./review-owner-host.ts";
 
 /**
  * Production entrypoint: fixed launcher cwd, fixed sibling runtime, the actual
@@ -71,7 +71,7 @@ export async function runHostedRuntimeMain(): Promise<
         githubGitAuthEnv(token),
       ),
     });
-    const result = await runHostedRuntimeLauncher({
+    const result = await runHostedRuntimeWithReviewCustody({
       state,
       clock: new SystemClock(),
       env,

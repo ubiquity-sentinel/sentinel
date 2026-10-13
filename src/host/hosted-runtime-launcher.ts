@@ -60,11 +60,18 @@ import type { HostedReviewOwnerSettlementV1 } from "../github/review-owner-evide
 export async function runHostedRuntimeLauncher(
   input: HostedRuntimeLauncherInputV1,
 ): Promise<HostedRuntimeLauncherResultV1> {
+  let result = unavailableResult();
   try {
-    return await launchHostedRuntime(input);
+    result = await launchHostedRuntime(input);
+  } catch {
+    result = unavailableResult();
+  }
+  try {
+    await input.reviewCustody?.dispose();
   } catch {
     return unavailableResult();
   }
+  return result;
 }
 
 async function launchHostedRuntime(
@@ -162,19 +169,15 @@ async function launchHostedRuntime(
   };
   let reviewOwnerSettlements: HostedReviewOwnerSettlementV1[] = [];
   let run: ReplayCommandResultV1;
-  try {
-    if (custody === undefined) run = await input.process.run(command);
-    else {
-      const owned = await runRepairOwnerWithReviewCustody(
-        custody,
-        input.process,
-        command,
-      );
-      run = owned.run;
-      reviewOwnerSettlements = owned.settlements;
-    }
-  } finally {
-    await custody?.dispose();
+  if (custody === undefined) run = await input.process.run(command);
+  else {
+    const owned = await runRepairOwnerWithReviewCustody(
+      custody,
+      input.process,
+      command,
+    );
+    run = owned.run;
+    reviewOwnerSettlements = owned.settlements;
   }
   const finishedAt = input.clock.now();
   // A backward or invalid clock is a refusal: no terminal instant is ever

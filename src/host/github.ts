@@ -108,6 +108,8 @@ export interface GitHubHostOptionsV1 {
    * stay unknown; the host never defaults this on.
    */
   includeIssueRelations?: boolean;
+  /** Trusted native self merge; foreign and non-reserved scopes remain disabled. */
+  selfMergeEnabled?: boolean;
 }
 
 /** The composed capability set a trusted repair host holds for GitHub. */
@@ -178,6 +180,9 @@ export function composeGitHubHost(
     trustedResolutionAuthors,
     resolutionVerifier: options.resolutionVerifier,
     includeIssueRelations: options.includeIssueRelations,
+    ...(options.selfMergeEnabled === undefined
+      ? {}
+      : { selfMergeEnabled: options.selfMergeEnabled }),
   });
 
   return { port, git };
