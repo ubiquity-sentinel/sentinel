@@ -245,18 +245,17 @@ export const OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_REVISION =
   "4baeaf67d9677a317bc37831486c075b143fe68f" as GitSha;
 export const OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_GENERATION = 74;
 /**
- * Mismatch-disposition retry rung: the first candidate consumed a real
- * generation 73 failure, so the guard rolls exactly once to the recorded
- * generation 72 revision at monotonic generation 74. This second, separate
- * rung is keyed on that rollback target and installs the same green
- * mismatch-disposition revision as generation 75 after the recorded
- * generation 73 healthy proof; a failed generation 75 restores that
- * generation 73 revision once at monotonic generation 76.
+ * Mismatch-disposition retry after an authenticated early-frame generation 73
+ * failure. Its exact generation 74 rollback retains the proven generation 72
+ * revision and healthy proof until its own protected bootstrap proves that
+ * same revision at generation 74. This separate rung installs the same
+ * approved revision as generation 75 and saves whichever exact prior proof
+ * authorized it; failure restores only that recorded revision once at 76.
  */
 export const OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_REVISION =
-  "37c81e771cfedcf0b1e6b4cb70cbed04c8bb6e87" as GitSha;
+  OWNER_DEVELOPMENT_INSTALL_EARLY_FRAME_PRIOR_REVISION;
 export const OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_GENERATION =
-  73;
+  OWNER_DEVELOPMENT_INSTALL_EARLY_FRAME_PRIOR_GENERATION;
 export const OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_REVISION =
   "4baeaf67d9677a317bc37831486c075b143fe68f" as GitSha;
 export const OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_GENERATION =

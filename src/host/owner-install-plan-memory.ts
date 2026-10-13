@@ -1,3 +1,4 @@
+import { canonicalStringify } from "../contracts/canonical.ts";
 import {
   OWNER_DEVELOPMENT_INSTALL_CANCELLED_DELIVERY_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_CANCELLED_DELIVERY_PRIOR_GENERATION,
@@ -37,11 +38,32 @@ import type {
   OwnerInstallPlanContextV1,
 } from "./owner-install-types.ts";
 import {
+  failedSettlementFor,
   healthyProofFor,
   movePlan,
   noChange,
   waiting,
 } from "./owner-install-plan-proof.ts";
+
+function mismatchRetryPriorProof(
+  runtime: OwnerInstallPlanContextV1["runtime"],
+) {
+  const retained = healthyProofFor(
+    runtime,
+    OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_REVISION,
+    OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_GENERATION,
+  );
+  if (retained !== null) return retained;
+  const bootstrap = healthyProofFor(
+    runtime,
+    OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_REVISION,
+    OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_GENERATION,
+  );
+  return bootstrap?.execution.purpose === "bootstrap" &&
+      bootstrap.execution.releaseId === null
+    ? bootstrap
+    : null;
+}
 
 /** Ordered diagnostics, merge, delivery, versioned, learning and memory rungs. Unmatched pointers continue to the next group. */
 export function planOwnerInstallMemory(
@@ -143,23 +165,33 @@ export function planOwnerInstallMemory(
     );
   }
 
-  // Mismatch-disposition retry rung: the FIRST candidate consumed a real
-  // generation 73 failure, so the guard rolled exactly once to the recorded
-  // generation 72 revision at monotonic generation 74. Only that exact
-  // rollback target installs the second candidate, gated on the recorded
-  // generation 73 healthy proof.
+  // The exact rollback preserves generation 72 health until the protected
+  // supervisor replaces it with its own generation 74 bootstrap settlement.
+  // Either native producer must bind this same recorded predecessor; retain
+  // the actual authorizing proof for retry failure restoration.
   if (
     revision === OWNER_DEVELOPMENT_INSTALL_STACKED_MERGE_REVISION &&
     generation === OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_GENERATION
   ) {
-    const prior = healthyProofFor(
-      runtime,
-      OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_REVISION,
-      OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_GENERATION,
-    );
+    const prior = mismatchRetryPriorProof(runtime);
     if (prior === null) {
       return waiting(
-        "the recorded generation 73 healthy proof for the retry rung is unavailable",
+        "the exact retained predecessor or rollback bootstrap healthy proof for the retry rung is unavailable",
+      );
+    }
+    if (
+      prior.execution.generation ===
+          OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_GENERATION
+        ? failedSettlementFor(
+          runtime,
+          OWNER_DEVELOPMENT_INSTALL_EARLY_FRAME_REVISION,
+          OWNER_DEVELOPMENT_INSTALL_EARLY_FRAME_GENERATION,
+        ) === null
+        : canonicalStringify(prior) !==
+          canonicalStringify(runtime.lastExecutionProof)
+    ) {
+      return waiting(
+        "the exact failed producer or current rollback bootstrap settlement for the retry rung is unavailable",
       );
     }
     return movePlan(
@@ -168,7 +200,7 @@ export function planOwnerInstallMemory(
       OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_REVISION,
       OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_GENERATION,
       prior,
-      "install the mismatch-disposition retry runtime after the recorded generation 73 healthy proof",
+      "install the mismatch-disposition retry runtime after its exact rollback producer proof",
     );
   }
 
@@ -179,14 +211,10 @@ export function planOwnerInstallMemory(
       OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_GENERATION
   ) {
     if (failed !== null) {
-      const prior = healthyProofFor(
-        runtime,
-        OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_REVISION,
-        OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_GENERATION,
-      );
+      const prior = mismatchRetryPriorProof(runtime);
       if (prior === null) {
         return waiting(
-          "the recorded generation 73 healthy proof for the rollback is unavailable",
+          "the exact recorded predecessor healthy proof for the retry rollback is unavailable",
         );
       }
       return movePlan(
