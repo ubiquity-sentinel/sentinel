@@ -4,6 +4,10 @@ These are current owner decisions for Sentinel. [AGENTS.md](../AGENTS.md) govern
 
 ## Runtime and dispatch
 
+### Integration ownership after Muse retirement
+
+On 2026-10-13, the owner stated that Muse is retired and directed the current coordinator to take over Sentinel. The sole primary integration owner is now the current GPT-6.1 Sol coordinator; independent milestone audits use a fresh GPT-6.1 Sol/max agent. This replaces the Astra-specific development ownership and auditor restriction, not runtime model/review policy, credential custody, CI, source/target identity, promotion ownership or per-attempt hosted approval. Preserve existing dirty work and recorded lane identities; only the primary writes the authoritative build-status ledger.
+
 Sentinel runs in GitHub Actions. Per the owner directive of 2026-10-07 (commit `5aac94da8`, "Make it fully autonomous"), `supervisor-dispatch.yml` runs every five minutes and dispatches the exact protected `sentinel-supervisor` ref; `observe.yml` and `repair.yml` stay manual-only, and `sentinel-release` remains disabled. The installed trusted-host CLI stays available for explicit dispatch: `sentinel status`, `sentinel run observe`, `sentinel run supervisor`, and `sentinel receipts <run-id>`. The supervisor uses the exact protected `sentinel-supervisor` ref and authenticated execution receipts; neither time nor list order selects a runtime.
 
 Every development-triggered hosted end-to-end/runtime/supervisor dispatch, retry or rerun needs explicit user approval for that identified attempt after local preparation; earlier activation/recovery permissions do not authorize this task's next attempt. The scheduled autonomous dispatcher and the runtime's own retries are runtime behavior, not development-triggered attempts.

@@ -50,11 +50,11 @@ If an approved attempt fails, retain its logs, reproduce/fix locally and repeat 
 
 ## Ownership and acceptance
 
-`docs/build-status.md` is the single authoritative task and acceptance ledger. Only the current GPT-6 Astra integration owner may edit it or change scope, status, acceptance, evidence disposition or write ownership. Other workers return evidence and proposed updates; they do not create another authoritative task list.
+`docs/build-status.md` is the single authoritative task and acceptance ledger. Only the current primary integration owner may edit it or change scope, status, acceptance, evidence disposition or write ownership. The owner directive of 2026-10-13 retires Muse and transfers this role to the current GPT-6.1 Sol coordinator. Other workers return evidence and proposed updates; they do not create another authoritative task list.
 
 A fresh integration owner reads the active register first and reconciles exact Git/process ownership, reservations, current refs and existing evidence before writes. READY, elapsed time and cached success do not establish integration or acceptance. Integrate, reject or assign a concrete owner/next action to ready work promptly; preserve original goals and accounting.
 
-Before a major milestone or resuming after repeated failure/no useful progress, obtain a read-only audit from a fresh GPT-6 Astra agent without inherited worker history. Supply the authoritative task, exact candidate diff and evidence references. The owner records its independent pass/corrections/blocker; the auditor does not become another writer. Do not request an audit per edit or a development Codex review.
+Before a major milestone or resuming after repeated failure/no useful progress, obtain a read-only audit from a fresh GPT-6.1 Sol/max agent without inherited worker history. Supply the authoritative task, exact candidate diff and evidence references. The owner records its independent pass/corrections/blocker; the auditor does not become another writer. Do not request an audit per edit or a development Codex review.
 
 Use recorded module scopes and explicit isolated ownership. DSH workers do not commit or push; the primary validates, commits and integrates with accepted ancestry preserved. Freeze writers for final validation and acceptance. The canonical lane and shipped branch must contain accepted worker tips.
 

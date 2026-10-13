@@ -1,8 +1,20 @@
 # Build status
 
-This is the single current task, ownership and acceptance ledger. The current GPT-6 Astra integration owner maintains it. Keep present state, remaining work and exact evidence references here; replace stale checkpoints instead of appending a session transcript. Current design decisions belong in [MASTER-PLAN.md](../MASTER-PLAN.md) and [DECISIONS.md](DECISIONS.md).
+This is the single current task, ownership and acceptance ledger. The current primary GPT-6.1 Sol/ultra coordinator maintains it under the owner's 2026-10-13 takeover directive; Muse ownership is retired. Keep present state, remaining work and exact evidence references here; replace stale checkpoints instead of appending a session transcript. Current design decisions belong in [MASTER-PLAN.md](../MASTER-PLAN.md) and [DECISIONS.md](DECISIONS.md).
 
 ## Active task register
+
+| Task | Owner and surface | Current disposition |
+| --- | --- | --- |
+| Full Sentinel module recovery | Primary coordinator; `codex/stabilization-plan-gfb96206486` at `.codex-worktrees/stabilization-plan-gfb96206486`; original master-plan identity preserved | Local integration candidate `98f92ad603d23e7d33620ebb47d15966c5dbc81e`; paired gateway `aa84129fbd620109540a7172533298dfbb6b5303`. Restored module tips are integrated locally, not in shipping source. Full combined validation, publication, installed runtime and live delivery remain incomplete. Current evidence reconciliation: `/tmp/sentinel-module-recovery-20261013/delivery-readiness-1705.md` and `coverage-1705.md`; proposed reports are not substitutes for independent acceptance. |
+| Trusted host composition | Assigned native m08 execution writer; `.codex-worktrees/stabilization-plan-m08-replay-a8bf5ffd9a5`; primary integrates | Fourteen preserved dirty paths based on `98f92ad6`. Actual gateway producer boundary passed on those dirty inputs; actual pinned VPS driver/controller consumer receipt `fd362755-34c5-442d-9b36-0cf678e3a993` failed both acceptance and rollback cases. Writer is diagnosing the concrete failed phase before final validation. Dirty-input checks do not establish canonical proof. |
+| Genuine captured-request regression | Assigned native r18 execution worker; `.codex-worktrees/stabilization-plan-r18-causal-semantic-loss-aa03d8e51ca`; primary owns shared contract | Lane is clean on `98f92ad6`; first authorization is factual original/candidate full-application reproduction only. No semantic classifier or proof extension is accepted. Preserve exact original source, producer classification, capture integrity and normal target CI inclusion. |
+| Installed runtime and suspension | Primary; read-only status worker settled | Verified through 2026-10-13 17:08:42 UTC: generation 74, runtime `4baeaf67d9677a317bc37831486c075b143fe68f`; supervisor/dispatcher active, release disabled; execution `38425610373:1:repair` in progress. Last saved healthy proof's exact job completed at 15:56:06. Zero target acceptance records. All 31 suspended units remain masked/non-running; exact Muse scopes and former PIDs are absent. Evidence `/tmp/sentinel-module-recovery-20261013/status-1705.md`, SHA-256 `6575e225ce93e29313d23f046ca56e9fa4be743b73a366e3f4203d119c0074bb`. |
+| Operational delivery boundary | Primary integration and deterministic promotion controller; no model authority | Native Actions-to-VPS release-state writer transport, retained-capture cross-job restoration and approved telemetry/receipt policy remain unproved. Prepare the exact candidate and concrete existing-host security proposal; request any new credential/security setup and each identified hosted attempt separately. Keep release disabled during development; no live acceptance or source publication is claimed. |
+
+## Preserved prior register
+
+The following register is historical cleanup/owner evidence, not current Muse ownership or a fresh process observation. Preserve its original artifacts and unrelated root dirty work during takeover.
 
 | Task | Owner and surface | Current disposition |
 | --- | --- | --- |
