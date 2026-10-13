@@ -41,6 +41,7 @@ import {
   STATIC_GITHUB_REPOSITORY,
 } from "./local-policy.ts";
 import { createLocalRepositoryConfig } from "./local-config.ts";
+import { selectTrustedTargetPolicyV1 } from "./target-policy.ts";
 import {
   createPrepareBaseRefresh,
   STATIC_BASE_REFRESH_BASE_MOVED,
@@ -373,7 +374,10 @@ export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
     // foreign target's own record unfindable and its push unauthenticated.
     repository,
     port: host.port,
-    protectedPaths: createLocalRepositoryConfig().protectedPaths,
+    protectedPaths: selectTrustedTargetPolicyV1(
+      createLocalRepositoryConfig(),
+      repository,
+    ).protectedPaths,
     ensureLocalCandidate: createLocalCandidateLoader({
       stateRoot: input.stateRoot,
       sourcePath: input.sourcePath,
