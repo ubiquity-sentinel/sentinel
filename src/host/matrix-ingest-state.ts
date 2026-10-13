@@ -1,9 +1,11 @@
 /** Exact cell binding and trusted timeout settlement transitions. */
+import { canonicalStringify } from "../contracts/canonical.ts";
 import type {
   MatrixCellPlanV1,
   MatrixCellResultV1,
   MatrixPlanV1,
 } from "../contracts/matrix.ts";
+import { matrixDigestV1 } from "../contracts/matrix.ts";
 import {
   loadRepairContext,
   type RepairCycleDepsV1,
@@ -13,10 +15,8 @@ import type {
   AttemptFailureClassV1,
   AttemptStageV1,
 } from "../contracts/attempt-memory.ts";
-import {
-  clearMatrixTimeouts,
-  recordMatrixTimeout,
-} from "../repair/transitions.ts";
+import { clearMatrixTimeouts } from "../repair/transitions.ts";
+import { implementationIntentKey } from "../repair/keys.ts";
 import { sameRepository } from "./matrix-identity.ts";
 
 export function resultMatchesCell(
@@ -39,66 +39,84 @@ export function resultMatchesCell(
 }
 
 /**
- * Record one host timeout for a cell's task: increment the consecutive-timeout
- * counter and clear the stale intent so the record becomes retry-eligible.
- * Returns the new timeout count, or null when state was unavailable.
- */
-export async function recordCellTimeout(
-  deps: RepairCycleDepsV1,
-  bounds: RunBoundsV1,
-  taskId: string,
-): Promise<number | null> {
-  const context = await loadRepairContext(deps, bounds);
-  if (context === null) return null;
-  const record = context.snapshot.work.find((work) => work.id === taskId);
-  if (record === undefined) return null;
-  const timedOut = recordMatrixTimeout(record, deps.clock.now());
-  const next = {
-    ...context.snapshot,
-    work: context.snapshot.work.map((work) =>
-      work.id === timedOut.id ? timedOut : work
-    ),
-    sequence: context.snapshot.sequence + 1,
-    updatedAt: deps.clock.now(),
-  };
-  const written = await deps.state.writeRepair(
-    next,
-    context.snapshot.stateHead,
-  );
-  if (!written.ok) return null;
-  return timedOut.counters.timeouts ?? 1;
-}
-
-/**
- * Reset the consecutive-timeout counter after a cell's result was ingested
- * (the model ran to completion, breaking the timeout streak). No-op when the
- * record never timed out. Returns false only on state errors.
+ * Reset only the exact settled admission's timeout streak. Missing artifacts
+ * never enter this path. Candidate/implementation intents and charged history
+ * remain untouched; an unbound, conflicted or unreadable result is false.
  */
 export async function resetCellTimeouts(
   deps: RepairCycleDepsV1,
   bounds: RunBoundsV1,
-  taskId: string,
+  cell: MatrixCellPlanV1,
 ): Promise<boolean> {
   const context = await loadRepairContext(deps, bounds);
   if (context === null) return false;
-  const record = context.snapshot.work.find((work) => work.id === taskId);
-  if (record === undefined || record.counters.timeouts === undefined) {
-    return true;
+  const record = context.snapshot.work.find((work) => work.id === cell.taskId);
+  const reservation = context.snapshot.reservations.find((row) =>
+    row.id === cell.reservationId
+  );
+  if (
+    record === undefined || reservation === undefined ||
+    !sameRepository(record.repository, cell.repository) ||
+    !sameRepository(reservation.repository, cell.repository) ||
+    record.source.kind !== "issue" ||
+    record.related.issueNumber !== cell.request.issue?.number ||
+    record.target.base !== cell.expectedBase ||
+    reservation.taskId !== cell.taskId ||
+    reservation.head !== cell.expectedBase ||
+    reservation.attempt !== record.counters.attempts ||
+    (reservation.purpose !== "implementation" &&
+      reservation.purpose !== "retry") ||
+    (reservation.outcome !== "submitted" &&
+      reservation.outcome !== "ambiguous") ||
+    reservation.settledAt === null ||
+    cell.intentKey !== implementationIntentKey(cell.reservationId) ||
+    cell.request.taskId !== cell.taskId ||
+    cell.request.base !== cell.expectedBase ||
+    !sameRepository(cell.request.repository, cell.repository) ||
+    await matrixDigestV1(cell.request) !== cell.requestDigest ||
+    (record.intent !== null &&
+      (record.intent.requestId !== cell.reservationId ||
+        record.intent.key !== cell.intentKey ||
+        (record.intent.kind !== "implementation" &&
+          record.intent.kind !== "candidate_preservation"))) ||
+    (reservation.outcome === "submitted" &&
+      (record.target.head === null ||
+        record.target.candidateState === undefined))
+  ) return false;
+  if (record.counters.timeouts === undefined) return true;
+  const now = deps.clock.now();
+  if (!Number.isSafeInteger(now) || now < context.snapshot.updatedAt) {
+    return false;
   }
-  const cleared = clearMatrixTimeouts(record, deps.clock.now());
+  const cleared = clearMatrixTimeouts(record, now);
   const next = {
     ...context.snapshot,
+    stateHead: context.head,
     work: context.snapshot.work.map((work) =>
       work.id === cleared.id ? cleared : work
     ),
     sequence: context.snapshot.sequence + 1,
-    updatedAt: deps.clock.now(),
+    updatedAt: now,
   };
   const written = await deps.state.writeRepair(
     next,
-    context.snapshot.stateHead,
+    context.head,
   );
-  return written.ok;
+  if (!written.ok || written.value.status !== "applied") return false;
+  const verified = await deps.state.readRepair();
+  if (
+    !verified.ok || verified.value.status !== "found" ||
+    verified.value.head !== written.value.head
+  ) return false;
+  const verifiedWork = verified.value.snapshot.work.find((work) =>
+    work.id === cell.taskId
+  );
+  const verifiedReservation = verified.value.snapshot.reservations.find((row) =>
+    row.id === cell.reservationId
+  );
+  return verifiedWork !== undefined && verifiedReservation !== undefined &&
+    canonicalStringify(verifiedWork) === canonicalStringify(cleared) &&
+    canonicalStringify(verifiedReservation) === canonicalStringify(reservation);
 }
 
 /**
@@ -132,9 +150,7 @@ export function settlementClassification(
  * time against a FRESH authoritative context, so a successful sibling is never
  * rolled back and a restarted finalizer cannot double-apply. Conflicting
  * duplicate artifacts for one cell are rejected instead of picking the first;
- * identical reruns stay idempotent. A missing result records a host timeout
- * (incrementing the consecutive-timeout counter and clearing the stale intent
- * so the record becomes retry-eligible); repeated timeouts trigger
- * decomposition. A completed result whose receipt does not re-verify against
+ * identical reruns stay idempotent. A missing result changes no state and
+ * preserves its charged admission. A completed result that does not verify against
  * the exact planned request causes NO state update.
  */

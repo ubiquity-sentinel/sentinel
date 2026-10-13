@@ -78,7 +78,7 @@ export async function runMatrixCell(
   deps: MatrixCellDepsV1,
   grant: MatrixCellGrantV1,
   actual: MatrixCellActualIdentityV1,
-  now: number,
+  _now: number,
 ): Promise<MatrixCellResultV1> {
   const { cell } = grant;
   const binding = resultBinding(grant);
@@ -272,7 +272,7 @@ export async function runMatrixCell(
     },
     bundle,
     detail: null,
-    completedAt: now,
+    completedAt: deps.clock.now(),
   };
 }
 

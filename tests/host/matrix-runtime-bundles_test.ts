@@ -7,7 +7,10 @@ import {
   ZipWriter,
 } from "@zip.js/zip.js";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
-import { matrixDigestV1 } from "../../src/contracts/matrix.ts";
+import {
+  matrixDigestV1,
+  tryParseMatrixCellResultV1,
+} from "../../src/contracts/matrix.ts";
 import type {
   ImplementationPort,
   ModelRunReceiptV1,
@@ -20,6 +23,7 @@ import {
   runMatrixCellEntrypoint,
 } from "../../src/host/matrix.ts";
 import { writeLocalModelResult } from "../../src/host/local.ts";
+import { writeResult } from "../../src/host/matrix-actions-shared.ts";
 import { gitRun, T0 } from "../state/helpers.ts";
 import {
   ACTUAL,
@@ -31,6 +35,80 @@ import {
   snapshot,
   WAVE,
 } from "./matrix-runtime-fixtures.ts";
+
+Deno.test("matrix runtime: native completion clock follows model settlement and real bundle export", async () => {
+  const rig = await makeRig([990003], 1);
+  try {
+    const seeded = await rig.store.writeRepair(
+      seedSnapshot([freshIssue(990003, rig.base)]),
+      null,
+    );
+    assert.ok(seeded.ok && seeded.value.status === "applied");
+    const planned = await planMatrixWave(rig.deps, rig.planOptions());
+    assert.equal(planned.prepared, 1);
+    const cell = planned.plan.cells[0];
+    const ctx = await rig.claimCell(cell);
+    const invokedAt = rig.clock.now();
+    const originalModel = ctx.deps.model.runModel.bind(ctx.deps.model);
+    const exporter = ctx.deps.bundle;
+    ctx.deps.model.runModel = async (request) => {
+      const receipt = await originalModel(request);
+      rig.clock.advance(25_000);
+      return receipt;
+    };
+    ctx.deps.bundle = {
+      create: async (request) => {
+        const created = await exporter.create(request);
+        rig.clock.advance(1_877);
+        return created;
+      },
+    };
+    const result = await runMatrixCell(
+      ctx.deps,
+      { waveId: WAVE, run: RUN, cell },
+      ACTUAL,
+      invokedAt,
+    );
+    assert.equal(result.status, "completed");
+    assert.ok(result.bundle);
+    assert.equal(
+      result.completedAt,
+      invokedAt + 26_877,
+      "completion is sampled after both awaited production stages",
+    );
+    assert.equal(result.completedAt, rig.clock.now());
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (value) => logs.push(String(value));
+    try {
+      await writeResult(ctx.bundlesDir, result);
+    } finally {
+      console.log = originalLog;
+    }
+    const parsed = tryParseMatrixCellResultV1(
+      JSON.parse(await Deno.readTextFile(ctx.bundlesDir + "/result.json")),
+    );
+    assert.ok(parsed.ok);
+    if (!parsed.ok) {
+      throw new Error("native result parser refused production export");
+    }
+    const carrier = JSON.parse(logs[0]);
+    assert.equal(carrier.resultDigest, await matrixDigestV1(parsed.value));
+    assert.deepEqual(carrier.run, RUN);
+    assert.equal(carrier.cellId, cell.cellId);
+    assert.equal(carrier.reservationId, cell.reservationId);
+    assert.equal(carrier.bundleDigest, result.bundle.digest);
+    await rig.transfer([parsed.value], [ctx]);
+    const ingested = await ingestMatrixResults(rig.deps, planned.plan, [
+      parsed.value,
+    ], rig.ingestOptions());
+    assert.equal(ingested.ingested, 1);
+    assert.equal((await snapshot(rig)).work[0].target.head, result.bundle.head);
+    assert.equal(await rig.objectPresent(result.bundle.head), true);
+  } finally {
+    await rig.cleanup();
+  }
+});
 
 Deno.test("matrix runtime: delta bundle requires its base and ignores model-controlled Git hooks", async () => {
   const rig = await makeRig([501], 1);

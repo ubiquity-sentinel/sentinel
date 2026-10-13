@@ -23,7 +23,6 @@ import {
   verifyMatrixReceiptV1,
 } from "./matrix-identity.ts";
 import {
-  recordCellTimeout,
   resetCellTimeouts,
   resultMatchesCell,
   settlementClassification,
@@ -127,17 +126,10 @@ export async function ingestMatrixResults(
     if (conflicted.has(cell.cellId)) continue;
     const result = chosen.get(cell.cellId);
     if (result === undefined) {
-      // Host timeout: the runner was killed before the cell wrote its result
-      // artifact, so the model run's work was discarded. Count the timeout
-      // and clear the stale implementation intent so the record becomes
-      // retry-eligible; repeated timeouts trigger decomposition.
-      const timeouts = await recordCellTimeout(deps, bounds, cell.taskId);
       entries.push({
         cellId: cell.cellId,
         disposition: "missing",
-        detail: timeouts === null
-          ? "no result artifact; timeout count unavailable"
-          : `no result artifact; host timeout #${timeouts} recorded`,
+        detail: "no result artifact; durable charge stays unreconciled",
       });
       continue;
     }
@@ -389,15 +381,17 @@ export async function ingestMatrixResults(
         continue;
       }
     }
-    entries.push({
-      cellId: cell.cellId,
-      disposition: "ingested",
-      detail: null,
-    });
     ingested++;
     // The model ran to completion: break any consecutive-timeout streak so a
     // later isolated timeout does not trigger decomposition on stale history.
-    await resetCellTimeouts(deps, bounds, cell.taskId);
+    const reset = await resetCellTimeouts(deps, bounds, cell);
+    entries.push({
+      cellId: cell.cellId,
+      disposition: reset ? "ingested" : "state_error",
+      detail: reset
+        ? null
+        : "receipt settled; timeout reset unavailable or conflicted",
+    });
   }
 
   return { waveId: plan.waveId, entries, ingested };
