@@ -1,4 +1,5 @@
 import type { GitSha } from "./brands.ts";
+import { parseSelfMergeProof } from "./self-merge.ts";
 import {
   expectExactKeys,
   expectGitSha,
@@ -60,7 +61,12 @@ export function parseTarget(input: unknown, path: string): WorkTargetV1 {
   );
   expectExactKeys(
     obj,
-    hasCandidateStateKey ? TARGET_CANDIDATE_KEYS : TARGET_KEYS,
+    [
+      ...(hasCandidateStateKey ? TARGET_CANDIDATE_KEYS : TARGET_KEYS),
+      ...(Object.prototype.hasOwnProperty.call(obj, "selfMerge")
+        ? ["selfMerge"]
+        : []),
+    ],
     path,
   );
   const base = expectGitSha(obj.base, `${path}.base`);
@@ -76,13 +82,26 @@ export function parseTarget(input: unknown, path: string): WorkTargetV1 {
   );
   const head = expectNullable(obj.head, `${path}.head`, expectGitSha);
   const pr = expectNullable(obj.pr, `${path}.pr`, expectPositiveInt);
-  if (!hasCandidateStateKey) return { base, branch, checkpoint, head, pr };
+  const selfMerge = obj.selfMerge === undefined
+    ? undefined
+    : parseSelfMergeProof(obj.selfMerge, `${path}.selfMerge`);
+  if (
+    selfMerge !== undefined &&
+    (selfMerge.stage !== "issue_closed" || selfMerge.base !== base ||
+      selfMerge.head !== head || selfMerge.pr !== pr ||
+      selfMerge.headRef !== branch)
+  ) fail(path, "invalid_lifecycle", "self merge receipt binding mismatch");
+  const receipt = selfMerge === undefined ? {} : { selfMerge };
+  if (!hasCandidateStateKey) {
+    return { base, branch, checkpoint, head, pr, ...receipt };
+  }
   return {
     base,
     branch,
     checkpoint,
     head,
     pr,
+    ...receipt,
     candidateState: parseCandidateState(
       obj.candidateState,
       `${path}.candidateState`,

@@ -1,4 +1,5 @@
 import type { GitSha, WorkItemId } from "./brands.ts";
+import type { SelfMergeProofV1 } from "./self-merge.ts";
 import type {
   ReviewFindingV1,
   ReviewReceiptV1,
@@ -270,7 +271,12 @@ export interface ReviewObservationV1 {
 }
 
 export type MergeOutcomeV1 =
-  | { outcome: "merged"; head: GitSha; mergeSha: GitSha }
+  | {
+    outcome: "merged";
+    head: GitSha;
+    mergeSha: GitSha;
+    selfMerge?: SelfMergeProofV1;
+  }
   | { outcome: "ambiguous"; head: GitSha | null; mergeSha: GitSha | null }
   | {
     outcome: "blocked";

@@ -53,6 +53,11 @@ import {
   portOk,
 } from "../contracts/ports.ts";
 import { createDeadline } from "./http.ts";
+import {
+  parseSelfMergeCommit,
+  type SelfMergeClosureV1,
+  type SelfMergeCommitV1,
+} from "./self-merge-git.ts";
 
 export type GitPushStatusV1 =
   | "applied"
@@ -66,6 +71,11 @@ export interface GitPushResultV1 {
 }
 
 export interface GitExecutorV1 {
+  readSelfMergeCommit?(sha: GitSha): Promise<PortResultV1<SelfMergeCommitV1>>;
+  proveSelfMergeCommit?(
+    ref: string,
+    proof: SelfMergeClosureV1,
+  ): Promise<PortResultV1<boolean>>;
   /**
    * Current exact identity of the remote ref, or null when it does not exist.
    * A malformed/duplicate remote response is `invalid`, never "absent".
@@ -468,6 +478,152 @@ export class DenoGitExecutor implements GitExecutorV1 {
       if (hooksDir !== null) {
         await Deno.remove(hooksDir, { recursive: true }).catch(() => {});
       }
+    }
+  }
+
+  async readSelfMergeCommit(
+    sha: GitSha,
+  ): Promise<PortResultV1<SelfMergeCommitV1>> {
+    if (!SHA_RE.test(sha)) {
+      return portError("invalid", "self merge commit identity invalid");
+    }
+    let present = await this.verifiedCommit(sha);
+    if (!present.ok) return present;
+    if (!present.value) {
+      const fetched = await this.runGit([
+        "fetch",
+        "--no-tags",
+        this.options.remoteUrl,
+        sha,
+      ], null);
+      if (!fetched.ok) {
+        return portError("unavailable", "self merge commit unavailable");
+      }
+      present = await this.verifiedCommit(sha);
+      if (!present.ok || !present.value) {
+        return portError("unavailable", "self merge commit unavailable");
+      }
+    }
+    const shallow = await this.runGit(
+      ["rev-parse", "--is-shallow-repository"],
+      null,
+    );
+    const replacements = await this.runGit([
+      "for-each-ref",
+      "--format=%(refname)",
+      "refs/replace",
+    ], null);
+    const objects = await this.runGit(["count-objects", "-v"], null);
+    if (
+      !shallow.ok || shallow.stdout.trim() !== "false" || !replacements.ok ||
+      replacements.stdout.trim() !== "" || !objects.ok ||
+      /^alternate:/m.test(objects.stdout)
+    ) return portError("invalid", "self merge object store is masked");
+    const raw = await this.runGit([
+      "--no-replace-objects",
+      "cat-file",
+      "-p",
+      sha,
+    ], null);
+    const commit = raw.ok ? parseSelfMergeCommit(sha, raw.stdout) : null;
+    if (commit === null) {
+      return portError("invalid", "self merge commit malformed");
+    }
+    const sources: SelfMergeCommitV1["sources"] = {
+      workflow: null,
+      harness: null,
+      emitter: null,
+    };
+    for (
+      const [key, path] of [["workflow", ".github/workflows/ci.yml"], [
+        "harness",
+        "test-local.ts",
+      ], ["emitter", "ops/native-ci-proof.ts"]] as const
+    ) {
+      const blob = await this.runGit([
+        "rev-parse",
+        "--verify",
+        `${sha}:${path}`,
+      ], null);
+      if (blob.ok && SHA_RE.test(blob.stdout.trim())) {
+        sources[key] = blob.stdout.trim() as GitSha;
+      }
+    }
+    const pipeline: SelfMergeCommitV1["pipeline"] = {
+      workflows: null,
+      operations: null,
+      config: null,
+      lock: null,
+    };
+    for (
+      const [key, path] of [["workflows", ".github"], ["operations", "ops"], [
+        "config",
+        "deno.json",
+      ], ["lock", "deno.lock"]] as const
+    ) {
+      const object = await this.runGit([
+        "rev-parse",
+        "--verify",
+        `${sha}:${path}`,
+      ], null);
+      if (object.ok && SHA_RE.test(object.stdout.trim())) {
+        pipeline[key] = object.stdout.trim() as GitSha;
+      }
+    }
+    return portOk({ ...commit, sources, pipeline });
+  }
+
+  async proveSelfMergeCommit(
+    ref: string,
+    proof: SelfMergeClosureV1,
+  ): Promise<PortResultV1<boolean>> {
+    const full = fullRefOf(ref);
+    if (!isValidRef(full)) {
+      return portError("invalid", "self merge ref malformed");
+    }
+    const temp = await Deno.makeTempDir({
+      prefix: "sentinel-self-merge-proof-",
+    });
+    try {
+      const fresh = new DenoGitExecutor({
+        ...this.options,
+        localDir: temp,
+        gitHome: temp,
+      });
+      const init = await fresh.runGit(["init", "--bare", "-q"], null);
+      if (!init.ok) {
+        return portError("unavailable", "self merge fresh store unavailable");
+      }
+      const fetch = await fresh.runGit([
+        "fetch",
+        "--no-tags",
+        this.options.remoteUrl,
+        full,
+      ], null);
+      if (!fetch.ok) {
+        return portError("unavailable", "self merge fresh store unavailable");
+      }
+      const fetchedTip = await fresh.runGit(["rev-parse", "FETCH_HEAD"], null);
+      if (!fetchedTip.ok || !SHA_RE.test(fetchedTip.stdout.trim())) {
+        return portError("unavailable", "self merge fetched tip unavailable");
+      }
+      const commit = await fresh.readSelfMergeCommit(proof.merge);
+      if (!commit.ok) return commit;
+      const ancestor = await fresh.isAncestor(proof.base, proof.head);
+      if (!ancestor.ok) return ancestor;
+      const contains = await fresh.isAncestor(
+        proof.merge,
+        fetchedTip.stdout.trim() as GitSha,
+      );
+      if (!contains.ok) return contains;
+      return portOk(
+        contains.value && ancestor.value && commit.value.tree === proof.tree &&
+          commit.value.parents.length === 2 &&
+          commit.value.parents[0] === proof.base &&
+          commit.value.parents[1] === proof.head,
+      );
+    } finally {
+      await Deno.remove(temp, { recursive: true }).catch(() => {});
     }
   }
 

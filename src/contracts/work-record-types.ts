@@ -9,6 +9,7 @@ import type {
   RepositoryIdentityV1,
   SeverityV1,
 } from "./shared.ts";
+import type { SelfMergeProofV1 } from "./self-merge.ts";
 
 export type NextStepV1 = "work" | "review" | "delivery" | "blocked" | "done";
 export type WorkWaitReasonV1 =
@@ -123,6 +124,7 @@ export interface IncompleteOperationV1 {
    * clearing a failure deletes the key.
    */
   failure?: OperationFailureV1;
+  selfMerge?: SelfMergeProofV1;
 }
 
 /** Explicit selection urgency attached to a work item at intake. */
@@ -174,6 +176,7 @@ export interface WorkTargetV1 {
    * for records the candidate-preservation writer owns. Never injected.
    */
   candidateState?: CandidateStateV1;
+  selfMerge?: SelfMergeProofV1;
 }
 
 export interface WorkCountersV1 {

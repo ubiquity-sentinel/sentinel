@@ -1,4 +1,5 @@
 import type { GitSha, WorkItemId } from "./brands.ts";
+import type { SelfMergeExecutionV1 } from "./self-merge.ts";
 import type { GitHubRateLimitV1 } from "./github-cooldown.ts";
 import type { PortResultV1, WriteOutcomeV1 } from "./ports.ts";
 import type {
@@ -81,6 +82,7 @@ export interface GitHubPort {
   ): Promise<PortResultV1<ReviewObservationV1>>;
   mergePullRequest(
     request: MergeRequestV1,
+    execution?: SelfMergeExecutionV1,
   ): Promise<PortResultV1<MergeOutcomeV1>>;
   closeIssue(issueNumber: number): Promise<PortResultV1<IssueCloseOutcomeV1>>;
   closeAlreadySatisfiedTask?(

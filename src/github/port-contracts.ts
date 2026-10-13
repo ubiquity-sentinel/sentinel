@@ -11,6 +11,8 @@ import type {
 } from "./review-service.ts";
 
 export interface GitHubPortOptionsV1 {
+  /** Protected host-only self strategy; ignored for every foreign target. */
+  selfMergeEnabled?: boolean;
   repository: RepositoryIdentityV1;
   /** REST API base; default `https://api.github.com`. */
   apiBaseUrl?: string;

@@ -5,6 +5,9 @@ import type {
   MergeRequestV1,
   PortResultV1,
 } from "../contracts/ports.ts";
+import type { SelfMergeExecutionV1 } from "../contracts/self-merge.ts";
+import { executeSelfMerge } from "./port-self-merge.ts";
+import { decideCiGate } from "../repair/loop-checks.ts";
 import { tryParse } from "../contracts/validation.ts";
 import {
   mergeSemanticRefusal,
@@ -32,6 +35,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
 
   async mergePullRequest(
     request: MergeRequestV1,
+    execution?: SelfMergeExecutionV1,
   ): Promise<PortResultV1<MergeOutcomeV1>> {
     // 1. Strict parse against the trusted adapter policy: the request can
     // never name another repository or select the trusted reviewer.
@@ -47,6 +51,24 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       return portError("invalid", "merge request is malformed");
     }
     const merge = parsed.value;
+    const native = () =>
+      executeSelfMerge(
+        {
+          client: this.client,
+          git: this.git,
+          clock: this.clock,
+          author: this.trustedPrAuthor,
+          gated: (call) => this.gatedRemoteCall(call),
+          authorize: (applied) =>
+            this.authorizeSelfMerge(merge, execution!, applied),
+        },
+        merge,
+        execution,
+      );
+    if (
+      this.selfMergeEnabled && execution?.proof !== null &&
+      execution?.proof !== undefined
+    ) return native();
     // 2. Current authoritative PR and exact identities.
     const pull = await this.client.readPullRequest(merge.pullRequestNumber);
     if (!pull.ok) return pull;
@@ -119,7 +141,12 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     const protectionEvaluation = evaluateEffectiveProtections(
       protections.value,
     );
-    if (!protectionEvaluation.ok) {
+    const conditionalSelf = this.selfMergeEnabled && execution !== undefined &&
+      protections.value.activeRuleTypes.length === 0 &&
+      protections.value.unsupportedRuleTypes.length === 0 &&
+      !protections.value.bypassUnknown &&
+      protections.value.bypassActors.length === 0;
+    if (!protectionEvaluation.ok && !conditionalSelf) {
       // Bounded operational diagnostic: the evaluator's own reason plus the
       // normalized protections record; never raw API bodies or messages.
       console.error(JSON.stringify({
@@ -206,6 +233,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     ) {
       return blocked("review_required", pull.value.head);
     }
+    if (conditionalSelf) return native();
     // 8. Expected-head merge. REST has no atomic base CAS: the strict
     // up-to-date protection is what rejects a base movement after this last
     // precheck; a rejection is reconciled against the re-observed PR.
@@ -278,5 +306,87 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       }
     }
     return blocked("protection_required", after.value.head);
+  }
+
+  private async authorizeSelfMerge(
+    merge: MergeRequestV1,
+    context: SelfMergeExecutionV1,
+    applied: boolean,
+  ): Promise<PortResultV1<void>> {
+    if (this.clock.now() >= context.deadline) {
+      return portError("unavailable", "self merge deadline reached");
+    }
+    const pull = await this.client.readPullRequest(merge.pullRequestNumber);
+    if (!pull.ok) return pull;
+    if (
+      pull.value === null || pull.value.head !== merge.expectedHead ||
+      pull.value.headRef !== context.headRef ||
+      pull.value.author !== this.trustedPrAuthor ||
+      pull.value.baseRef !== "development" ||
+      pull.value.body !== `Resolves #${context.issueNumber}` ||
+      (!applied &&
+        (pull.value.state !== "open" || pull.value.base !== merge.expectedBase))
+    ) return portError("conflict", "self merge current PR identity mismatch");
+    const rules = await this.readEffectiveProtections("development");
+    if (!rules.ok) return rules;
+    if (
+      rules.value.activeRuleTypes.length !== 0 ||
+      rules.value.unsupportedRuleTypes.length !== 0 ||
+      rules.value.bypassUnknown || rules.value.bypassActors.length !== 0
+    ) {
+      return portError(
+        "invalid",
+        "self merge requires authenticated empty rules",
+      );
+    }
+    const observed = await this.currentReviewEvidence(
+      merge.pullRequestNumber,
+      merge,
+      applied ? merge.expectedBase : undefined,
+    );
+    if (!observed.ok) return observed;
+    if (
+      observed.normalized === null ||
+      !completedReviewMatchesReceipt(observed.normalized, merge.review) ||
+      !(await this.resolutionsTrusted(merge.review, pull.value))
+    ) {
+      return portError(
+        "invalid",
+        "self merge current native review unavailable",
+      );
+    }
+    const checks = await this.client.readChecks(merge.expectedHead);
+    if (!checks.ok) return checks;
+    if (
+      checks.value.head !== merge.expectedHead ||
+      decideCiGate(checks.value.checks) !== "proceed"
+    ) return portError("unavailable", "self merge current CI unavailable");
+    const issue = await this.client.readIssue(context.issueNumber!);
+    if (!issue.ok) return issue;
+    if (issue.value === null || issue.value.number !== context.issueNumber) {
+      return portError("invalid", "self merge task unavailable");
+    }
+    const text = {
+      issueNumber: issue.value.number,
+      title: issue.value.title,
+      body: issue.value.body,
+    };
+    const task = await checkReviewTaskStatement({
+      ...text,
+      digest: await reviewTaskStatementDigest(text),
+    });
+    if (
+      !task.ok ||
+      mergeSemanticRefusal(merge, {
+          issueNumber: issue.value.number,
+          task: task.statement,
+        }) !== null
+    ) {
+      return portError(
+        "invalid",
+        "self merge current task acceptance mismatch",
+      );
+    }
+    return portOk(undefined);
   }
 }
