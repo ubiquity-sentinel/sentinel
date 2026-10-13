@@ -28,6 +28,7 @@ import type {
   RepairStateSnapshotV1,
 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import type { VpsReleaseRecordV1 } from "../contracts/vps-release.ts";
 import type { OpContext, StateGitOps } from "./state-git.ts";
 import { parseBlobBatch } from "./state-batch.ts";
 import {
@@ -90,6 +91,7 @@ export function recordFiles(
       }
     };
     add("release_record", release.releases);
+    add("vps_release_record", release.vpsReleases ?? []);
     add("hosted_runtime", release.hostedRuntimes);
     add("hosted_release", release.hostedReleases);
     // Release-role cooldowns use the same kind-less fragment convention as
@@ -336,6 +338,11 @@ export async function readCommitTree(
         sequence: manifest.sequence,
         updatedAt: manifest.updatedAt,
         releases: orderRecords(records.releases) as ReleaseRecordV1[],
+        ...(records.vpsReleases.length === 0 ? {} : {
+          vpsReleases: orderRecords(
+            records.vpsReleases,
+          ) as VpsReleaseRecordV1[],
+        }),
         hostedRuntimes: orderRecords(
           records.hostedRuntimes,
         ) as HostedRuntimeRecordV1[],

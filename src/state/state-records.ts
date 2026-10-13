@@ -27,6 +27,7 @@ import {
   fail,
 } from "../contracts/validation.ts";
 import { parseWorkRecordV1 } from "../contracts/work-record.ts";
+import { parseVpsReleaseRecordV1 } from "../contracts/vps-release.ts";
 import type { GitSha } from "../contracts/brands.ts";
 
 export type StateKind = "repair" | "release";
@@ -154,6 +155,12 @@ export const RECORD_COLLECTIONS: Record<StateKind, RecordCollection[]> = {
     },
   ],
   release: [
+    {
+      directory: "vpsReleases",
+      kind: "vps_release_record",
+      parse: parseVpsReleaseRecordV1,
+      rows: [],
+    },
     {
       directory: "releases",
       kind: "release_record",

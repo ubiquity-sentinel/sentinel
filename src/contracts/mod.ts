@@ -22,6 +22,8 @@ export * from "./review-receipt.ts";
 export * from "./budget-reservation.ts";
 export * from "./replay-result.ts";
 export * from "./release.ts";
+export * from "./vps-release.ts";
+export * from "./ports-vps-release.ts";
 export * from "./github-cooldown.ts";
 export * from "./state-snapshots.ts";
 // Hosted supervisor records (separate from Deno release records).

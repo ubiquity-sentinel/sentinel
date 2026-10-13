@@ -1,0 +1,122 @@
+{
+  "version": "v1",
+  "kind": "vps_release_record",
+  "id": "vps-f5492897fe0a42570dcbb2f9315b6419a186f4b520657803195d737c2e897533",
+  "request": {
+    "version": "v1",
+    "kind": "release_request",
+    "id": "release-vps-fixture",
+    "target": {
+      "repository": {
+        "owner": "ubiquity",
+        "name": "ai.ubq.fi",
+        "installationId": 7
+      },
+      "environment": "production"
+    },
+    "revision": "aafb7ee0598699bb7fb8a72ea133693ed64462da",
+    "source": {
+      "pullRequest": 7,
+      "reviewRequestId": "review-fixture",
+      "reviewReceiptId": "review-receipt-fixture",
+      "head": "aafb7ee0598699bb7fb8a72ea133693ed64462da",
+      "base": "6dc35d06e757107b91eb58232bd15e5f671d79b4"
+    },
+    "status": "open",
+    "failureReason": null,
+    "createdAt": 1786000000000
+  },
+  "requestDigest": "f2bde98fd81f0c822244614c8296d062ccf68f762c37b02f1fbbbded828e48a1",
+  "driver": {
+    "schema": 1,
+    "kind": "vps_driver_receipt",
+    "abi": "uos-vps-deployment-v1",
+    "operationId": "f5492897fe0a42570dcbb2f9315b6419a186f4b520657803195d737c2e897533",
+    "binding": {
+      "requestId": "release-vps-fixture",
+      "requestDigest": "f2bde98fd81f0c822244614c8296d062ccf68f762c37b02f1fbbbded828e48a1",
+      "repository": "ubiquity/ai.ubq.fi",
+      "installationId": 7,
+      "environment": "production",
+      "revision": "aafb7ee0598699bb7fb8a72ea133693ed64462da",
+      "source": {
+        "pullRequest": 7,
+        "head": "aafb7ee0598699bb7fb8a72ea133693ed64462da",
+        "base": "6dc35d06e757107b91eb58232bd15e5f671d79b4",
+        "reviewRequestId": "review-fixture",
+        "reviewReceiptId": "review-receipt-fixture"
+      }
+    },
+    "controllerSha": "cccccccccccccccccccccccccccccccccccccccc",
+    "driverSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "candidate": {
+      "runtime": "vps",
+      "gitSha": "aafb7ee0598699bb7fb8a72ea133693ed64462da",
+      "deploymentId": "vps-aafb7ee0598699bb7fb8a72ea133693ed64462da",
+      "sourceArchiveSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "immutableTreeSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "prior": {
+      "target": "releases/6dc35d06e757107b91eb58232bd15e5f671d79b4",
+      "identity": {
+        "runtime": "vps",
+        "gitSha": "6dc35d06e757107b91eb58232bd15e5f671d79b4",
+        "deploymentId": "vps-6dc35d06e757107b91eb58232bd15e5f671d79b4",
+        "sourceArchiveSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "immutableTreeSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "listenerPort": 7999,
+      "launcherProfileSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "unitSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "phase": "prepared",
+    "sequence": 1,
+    "createdAt": 1786000000000,
+    "updatedAt": 1786000000000,
+    "intent": null,
+    "loopback": null,
+    "public": null,
+    "restoration": null,
+    "settlement": null,
+    "error": null
+  },
+  "phase": "requested",
+  "intent": null,
+  "policy": {
+    "windowMs": 1800000,
+    "sampleIntervalMs": 30000,
+    "minSamples": 60,
+    "minRequests": 50,
+    "baselineWindowMs": 1800000,
+    "baselineMinSamples": 60,
+    "thresholds": [
+      {
+        "metric": "five_xx_rate",
+        "maxRate": 0.02,
+        "maxIncrease": 0.01
+      },
+      {
+        "metric": "timeout_rate",
+        "maxRate": 0.01,
+        "maxIncrease": 0.01
+      },
+      {
+        "metric": "stream_failure_rate",
+        "maxRate": 0.01,
+        "maxIncrease": 0.01
+      }
+    ]
+  },
+  "monitoring": {
+    "startedAt": null,
+    "lastObservedAt": null,
+    "continuous": false,
+    "baseline": [],
+    "samples": []
+  },
+  "acceptance": null,
+  "inference": null,
+  "error": null,
+  "createdAt": 1786000000000,
+  "updatedAt": 1786000000000
+}
