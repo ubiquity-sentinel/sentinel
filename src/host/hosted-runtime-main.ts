@@ -101,6 +101,9 @@ function logHostedDiagnostic(diagnostic: HostedModelDiagnosticV1): void {
 export function emitHostedRuntimeCliResult(
   result: HostedRuntimeLauncherResultV1,
 ): 0 | 1 {
+  for (const settlement of result.reviewOwnerSettlements ?? []) {
+    console.log(JSON.stringify(settlement));
+  }
   if (result.matrixCarrier !== undefined) {
     console.log(JSON.stringify(result.matrixCarrier));
   }

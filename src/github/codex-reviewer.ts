@@ -169,7 +169,14 @@ export interface CodexStructuredReviewerOptionsV1 {
    */
   model?: string;
   /** Trusted host capability opening the app-server session for one cwd. */
-  openSession: (input: { cwd: string }) => CodexSessionV1;
+  openSession: (
+    input: {
+      cwd: string;
+      requestId?: string;
+      invocationId?: string;
+      ownerRunId?: string;
+    },
+  ) => CodexSessionV1;
   /** Trusted absolute isolated session directory (read-only review cwd). */
   sessionCwd: string;
   /** Testable clock; defaults to `Date.now`. */
@@ -205,7 +212,7 @@ export class CodexStructuredReviewer {
    */
   private readonly model: string;
   private readonly sessionCwd: string;
-  private readonly openSession: (input: { cwd: string }) => CodexSessionV1;
+  private readonly openSession: CodexStructuredReviewerOptionsV1["openSession"];
   private readonly now: () => number;
   /** Required trusted configured named permission profile. */
   private readonly permissionProfile: string;
@@ -319,7 +326,12 @@ export class CodexStructuredReviewer {
       );
     };
     try {
-      session = this.openSession({ cwd: this.sessionCwd });
+      session = this.openSession({
+        cwd: this.sessionCwd,
+        requestId,
+        invocationId,
+        ownerRunId,
+      });
       session.open?.();
       const initialized = await racePromise(
         this.initialize(session),

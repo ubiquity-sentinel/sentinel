@@ -9,6 +9,11 @@ import type {
 } from "./codex-reviewer.ts";
 import type { GitHubApiClient } from "./client.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
+import type {
+  ReviewOwnerCustodyV1,
+  ReviewOwnerSettlementResolverV1,
+} from "./review-owner-evidence.ts";
 
 /** Trusted immutable snapshot capability (satisfied by `GitReviewSnapshot`). */
 export interface GitReviewSnapshotCaptureV1 {
@@ -34,6 +39,12 @@ export interface GitHubCodexReviewTransportOptionsV1 {
   clock: Clock;
   /** Owning run identity persisted in every journal execution record. */
   ownerRunId: string;
+  /** Additive trusted native owner; absent legacy callers keep their original bytes. */
+  ownerExecution?: HostedExecutionIntentV1;
+  /** Private launcher custody channel, never supplied by a model. */
+  ownerCustody?: ReviewOwnerCustodyV1;
+  /** Read-only self-scope native resolver, distinct from this target's client. */
+  ownerSettlement?: ReviewOwnerSettlementResolverV1;
   /** Concrete trusted Git snapshot producer (public capture capability). */
   snapshot: GitReviewSnapshotCaptureV1;
   /** Concrete structured reviewer (public prepare capability). */

@@ -1,6 +1,8 @@
 // journal metadata.
 
 import type { GitSha } from "../contracts/brands.ts";
+import { parseHostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
+import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 import {
   expectBoolean,
   expectCount,
@@ -21,6 +23,7 @@ import {
 import { expectStrictJson } from "./journal-json.ts";
 import {
   expectJournalExactKeys,
+  expectJournalExactKeysWithOptional,
   parseReviewResultV1,
 } from "./review-result-parser.ts";
 import { expectBoundedId, expectModelId } from "./journal-text.ts";
@@ -88,6 +91,8 @@ export interface ReviewJournalIntentV1 {
   publisher: string;
   requestId: string;
   requestedAt: number;
+  /** Trusted future owner binding; absence is preserved for old journals. */
+  ownerExecution?: HostedExecutionIntentV1;
 }
 
 export interface ReviewJournalRunningV1
@@ -183,20 +188,37 @@ export function parseReviewJournalValue(input: unknown): ReviewJournalV1 {
     "$.phase",
   );
   if (phase === "intent") {
-    expectJournalExactKeys(obj, INTENT_KEYS, "$");
+    expectJournalExactKeysWithOptional(
+      obj,
+      INTENT_KEYS,
+      ["ownerExecution"],
+      "$",
+    );
     return { ...parseCommon(obj), phase: "intent" };
   }
   if (phase === "running") {
-    expectJournalExactKeys(obj, [...INTENT_KEYS, ...RUNNING_EXTRA_KEYS], "$");
+    expectJournalExactKeysWithOptional(
+      obj,
+      [...INTENT_KEYS, ...RUNNING_EXTRA_KEYS],
+      ["ownerExecution"],
+      "$",
+    );
     const common = parseCommon(obj);
+    const execution = parseExecution(obj.execution, "$.execution");
+    checkOwnerExecution(common, execution);
     return {
       ...common,
       phase: "running",
       reviewId: expectPositiveInt(obj.reviewId, "$.reviewId"),
-      execution: parseExecution(obj.execution, "$.execution"),
+      execution,
     };
   }
-  expectJournalExactKeys(obj, [...INTENT_KEYS, ...READY_EXTRA_KEYS], "$");
+  expectJournalExactKeysWithOptional(
+    obj,
+    [...INTENT_KEYS, ...READY_EXTRA_KEYS],
+    ["ownerExecution"],
+    "$",
+  );
   const common = parseCommon(obj);
   const completedAt = expectTimestamp(obj.completedAt, "$.completedAt");
   if (completedAt < common.requestedAt) {
@@ -211,6 +233,7 @@ export function parseReviewJournalValue(input: unknown): ReviewJournalV1 {
   const execution = obj.execution === null
     ? null
     : parseReadyExecution(obj.execution, "$.execution");
+  if (execution !== null) checkOwnerExecution(common, execution);
   if (result.verdict !== "unavailable") {
     if (execution === null) {
       fail(
@@ -263,6 +286,16 @@ export function parseCommon(
       "expected GitHub repository name",
     );
   }
+  const ownerExecution = Object.hasOwn(obj, "ownerExecution")
+    ? parseHostedExecutionIntentV1(obj.ownerExecution, "$.ownerExecution")
+    : undefined;
+  if (ownerExecution !== undefined && ownerExecution.purpose !== "ordinary") {
+    fail(
+      "$.ownerExecution",
+      "invalid_lifecycle",
+      "review owner requires ordinary execution",
+    );
+  }
   return {
     version,
     phase: "intent",
@@ -278,7 +311,24 @@ export function parseCommon(
     publisher: expectBoundedId(obj.publisher, "$.publisher", MaxText.login),
     requestId: expectBoundedId(obj.requestId, "$.requestId", MaxText.recordId),
     requestedAt: expectTimestamp(obj.requestedAt, "$.requestedAt"),
+    ...(ownerExecution === undefined ? {} : { ownerExecution }),
   };
+}
+
+function checkOwnerExecution(
+  journal: ReviewJournalIntentV1,
+  execution: ReviewJournalExecutionV1,
+): void {
+  if (
+    journal.ownerExecution !== undefined &&
+    execution.ownerRunId !== journal.ownerExecution.id
+  ) {
+    fail(
+      "$.execution.ownerRunId",
+      "invalid_lifecycle",
+      "review execution owner does not bind the native execution",
+    );
+  }
 }
 
 export function parseExecution(

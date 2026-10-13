@@ -8,6 +8,8 @@ import {
   HOSTED_SUPERVISOR_WORKFLOW_PATH,
 } from "../contracts/hosted-supervisor.ts";
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
+import type { ReviewOwnerCustodyBroker } from "./review-owner-custody.ts";
+import type { HostedReviewOwnerSettlementV1 } from "../github/review-owner-evidence.ts";
 import type {
   Clock,
   PortErrorKindV1,
@@ -244,6 +246,8 @@ export interface HostedRuntimeLauncherInputV1 {
   onDiagnostic?: (diagnostic: HostedModelDiagnosticV1) => void;
   /** Native workflow JSON only: planDigest and optional cellId, never credentials. */
   stdin?: string;
+  /** Concrete launcher-owned broker; final trusted composition belongs to m08. */
+  reviewCustody?: ReviewOwnerCustodyBroker;
 }
 
 export type HostedRuntimeLauncherStatusV1 =
@@ -335,6 +339,8 @@ export interface HostedRuntimeLauncherResultV1 {
    * default; they never attest health, terminal, settlement or any authority.
    */
   diagnostics: HostedModelDiagnosticV1[];
+  /** Launcher-created actual reviewer close proofs, distinct from advisory diagnostics. */
+  reviewOwnerSettlements?: HostedReviewOwnerSettlementV1[];
   /**
    * Advisory-only, sanitized summary of a settled nonzero child exit that
    * produced no status record. It carries a closed category and a few
