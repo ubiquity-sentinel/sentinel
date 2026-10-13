@@ -47,6 +47,7 @@ Deno.test("createPullRequest: publishes the requested body byte-for-byte", async
         201,
         pullWire({
           number: 21,
+          body: sourceBody,
           head: { ref: "sentinel/fix-1", sha: SHA1 },
         }),
       ),
@@ -96,6 +97,7 @@ Deno.test("createPullRequest: reuses only the exact own open PR, blocks collisio
       httpRespond("GET", "/git/ref/heads/sentinel/fix-1", 200, refWire(SHA1)),
       httpRespond("GET", "/pulls?head=", 200, [pullWire({
         number: 21,
+        body: createRequest().body,
         head: { ref: "sentinel/fix-1", sha: SHA1 },
       })]),
     ],
@@ -152,6 +154,7 @@ Deno.test("createPullRequest: duplicate/ambiguous publication is reconciled by d
       httpRespond("POST", "/repos/ubiquity/sentinel/pulls", 422, {}),
       httpRespond("GET", "/pulls?head=", 200, [pullWire({
         number: 24,
+        body: createRequest().body,
         head: { ref: "sentinel/fix-1", sha: SHA1 },
       })]),
     ],

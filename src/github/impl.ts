@@ -323,6 +323,9 @@ export class GitHubPortImpl extends GitHubPortMerge implements GitHubPort {
     if (current.value === null) {
       return portError("not_found", "issue not found");
     }
+    if (current.value.number !== issueNumber) {
+      return portError("conflict", "issue closure identity mismatch");
+    }
     if (current.value.state === "closed") {
       return portOk("already_closed");
     }
@@ -331,12 +334,17 @@ export class GitHubPortImpl extends GitHubPortMerge implements GitHubPort {
       // The patch may still have applied (lost response): reconcile.
       const after = await this.client.readIssue(issueNumber);
       if (!after.ok) return after;
-      if (after.value !== null && after.value.state === "closed") {
+      if (
+        after.value !== null && after.value.number === issueNumber &&
+        after.value.state === "closed"
+      ) {
         return portOk("closed");
       }
       return closed;
     }
-    if (closed.value.state !== "closed") {
+    if (
+      closed.value.number !== issueNumber || closed.value.state !== "closed"
+    ) {
       return portError("conflict", "issue closure was not applied");
     }
     return portOk("closed");
