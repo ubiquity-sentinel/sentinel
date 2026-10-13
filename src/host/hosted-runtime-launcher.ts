@@ -46,6 +46,9 @@ import {
   scanChildStatusRecords,
 } from "./hosted-runtime-status.ts";
 import type { ChildStatusV1 } from "./hosted-runtime-status.ts";
+import { canonicalStringify } from "../contracts/canonical.ts";
+import { runRepairOwnerWithReviewCustody } from "./review-owner-custody.ts";
+import type { HostedReviewOwnerSettlementV1 } from "../github/review-owner-evidence.ts";
 
 /**
  * Verify the launcher and runtime checkouts as clean worktrees at their exact
@@ -126,7 +129,20 @@ async function launchHostedRuntime(
     ? undefined
     : createHostedDiagnosticStream(execution, input.onDiagnostic);
 
-  const run = await input.process.run({
+  const custody = input.reviewCustody;
+  let childStdin = stdin;
+  if (custody !== undefined) {
+    if (
+      identity.job !== "repair" ||
+      canonicalStringify(custody.execution) !== canonicalStringify(execution)
+    ) throw new Error(HOSTED_RUNTIME_STATIC_EXECUTION);
+    const descriptor = await custody.start(sentinelDir);
+    childStdin = JSON.stringify({
+      ...(stdin === undefined ? {} : JSON.parse(stdin)),
+      reviewCustody: descriptor,
+    });
+  }
+  const command = {
     executable: input.denoExecutable,
     args: [
       "run",
@@ -135,7 +151,7 @@ async function launchHostedRuntime(
         ? HOSTED_RUNTIME_CHILD_ENTRYPOINT
         : "src/host/matrix-actions.ts",
     ],
-    ...(stdin === undefined ? {} : { stdin }),
+    ...(childStdin === undefined ? {} : { stdin: childStdin }),
     cwd: dirs.runtime,
     env: childEnv,
     maxDurationMs: HOSTED_RUNTIME_DEADLINE_MS,
@@ -143,7 +159,23 @@ async function launchHostedRuntime(
     ...(diagnosticStream === undefined
       ? {}
       : { onStdoutChunk: diagnosticStream }),
-  });
+  };
+  let reviewOwnerSettlements: HostedReviewOwnerSettlementV1[] = [];
+  let run: ReplayCommandResultV1;
+  try {
+    if (custody === undefined) run = await input.process.run(command);
+    else {
+      const owned = await runRepairOwnerWithReviewCustody(
+        custody,
+        input.process,
+        command,
+      );
+      run = owned.run;
+      reviewOwnerSettlements = owned.settlements;
+    }
+  } finally {
+    await custody?.dispose();
+  }
   const finishedAt = input.clock.now();
   // A backward or invalid clock is a refusal: no terminal instant is ever
   // fabricated to hide it.
@@ -161,7 +193,10 @@ async function launchHostedRuntime(
   });
   // Advisory summaries are attached independently of the resolved status and
   // never replace the trusted terminal or the existing unhealthy exit.
-  return attachDiagnostics(resolved, run, execution);
+  const result = attachDiagnostics(resolved, run, execution);
+  return reviewOwnerSettlements.length === 0
+    ? result
+    : { ...result, reviewOwnerSettlements };
 }
 
 interface LauncherTerminalInputV1 {

@@ -16,6 +16,13 @@ import type {
 import { portOk } from "../contracts/ports.ts";
 import { GitHubReviewTransportJournal } from "./review-transport-journal.ts";
 import {
+  parseReviewOwnerSettlementCarrier,
+  reviewOwnerRegistration,
+  sameReviewOwnerRegistration,
+} from "./review-owner-evidence.ts";
+import type { ReviewOwnerPendingJournalV1 } from "./review-owner-evidence.ts";
+import { canonicalStringify } from "../contracts/canonical.ts";
+import {
   DETAIL_FAILURE,
   DETAIL_PUBLISH,
   DETAIL_READBACK,
@@ -159,6 +166,9 @@ export abstract class GitHubReviewTransportPublication
       expectedHead: journal.expectedHead,
       expectedBase: journal.expectedBase,
       requestedAt: journal.requestedAt,
+      ...(journal.ownerExecution === undefined
+        ? {}
+        : { ownerExecution: journal.ownerExecution }),
       latestStartAt: now,
       settleBy: now,
       task: null,
@@ -245,6 +255,130 @@ export abstract class GitHubReviewTransportPublication
       requestId: op.requestId,
       requestedAt: op.requestedAt,
     });
+  }
+
+  /** Finalize journal work only: no adoption or reconstruction of the former model session. */
+  protected async recoverAuthenticatedOwner(
+    journal: ReviewOwnerPendingJournalV1,
+    review: GitHubReviewWireV1,
+  ): Promise<boolean> {
+    if (
+      this.ownerSettlement === undefined ||
+      journal.ownerExecution === undefined || review.body === null ||
+      review.state !== "pending" || review.submittedAt !== null
+    ) return false;
+    try {
+      const registration = await reviewOwnerRegistration(
+        this.repository,
+        review.id,
+        journal,
+        review.body,
+      );
+      const resolved = await this.ownerSettlement.read(registration);
+      if (!resolved.ok || resolved.value === null) return false;
+      const proof = resolved.value;
+      const carrier = parseReviewOwnerSettlementCarrier(proof.record.carrier);
+      if (
+        !sameReviewOwnerRegistration(registration, {
+          repository: carrier.repository,
+          reviewId: carrier.reviewId,
+          journal: carrier.journal,
+          bodyDigest: carrier.bodyDigest,
+        }) ||
+        canonicalStringify(proof.record.execution) !==
+          canonicalStringify(journal.ownerExecution) ||
+        !Number.isSafeInteger(proof.jobId) || proof.jobId < 1 ||
+        proof.finishedAt < carrier.settledAt ||
+        proof.observedAt < proof.finishedAt ||
+        this.clock.now() < proof.observedAt
+      ) return false;
+      const fresh = await this.client.readPullReview(
+        journal.prNumber,
+        review.id,
+      );
+      if (
+        !fresh.ok || fresh.value === null || fresh.value.id !== review.id ||
+        fresh.value.author !== this.publisher ||
+        fresh.value.commitSha !== journal.expectedHead ||
+        fresh.value.state !== "pending" || fresh.value.submittedAt !== null ||
+        fresh.value.body !== review.body
+      ) return false;
+      const result: ReviewResultV1 = {
+        verdict: "unavailable",
+        summary: staticUnavailableSummary(DETAIL_FAILURE),
+        findings: [],
+      };
+      const ready: ReviewJournalReadyV1 = {
+        ...journal,
+        phase: "ready",
+        reviewId: review.id,
+        completedAt: this.clock.now(),
+        result,
+        resultDigest: await reviewResultDigest(result),
+        execution: null,
+      };
+      const body = this.render(ready);
+      if (body === null) return false;
+      const op: OwnedReviewV1 = {
+        operationKey: journal.operationKey,
+        requestId: journal.requestId,
+        prNumber: journal.prNumber,
+        expectedHead: journal.expectedHead,
+        expectedBase: journal.expectedBase,
+        requestedAt: journal.requestedAt,
+        ownerExecution: journal.ownerExecution,
+        latestStartAt: this.clock.now(),
+        settleBy: this.clock.now(),
+        task: null,
+        phase: "ready",
+        reviewId: review.id,
+        remoteJournal: true,
+        prepared: null,
+        preparedExecution: null,
+        closePromise: null,
+        submission: null,
+        submissionSettled: false,
+        running: null,
+        runningSettled: true,
+        done: false,
+        processSettled: true,
+        readyDurable: false,
+        fault: null,
+      };
+      // This owns only a bounded publication, never the already settled remote session.
+      this.operations.set(op.operationKey, op);
+      const publication = (async () => {
+        try {
+          const update = await this.client.updatePendingReview(
+            op.prNumber,
+            review.id,
+            body,
+          );
+          if (
+            !update.ok ||
+            (await this.readPhase(op, review.id, { phase: "ready", body }))
+                .kind !== "ok"
+          ) return false;
+          op.readyDurable = true;
+          const published = await this.submitPublication(op, review.id, body);
+          if (published) op.phase = "published";
+          return published;
+        } catch {
+          op.fault = DETAIL_PUBLISH;
+          return false;
+        } finally {
+          op.done = true;
+        }
+      })();
+      op.submission = publication.then(() => {
+        op.submissionSettled = true;
+      });
+      const published = await publication;
+      if (!published) op.fault ??= DETAIL_PUBLISH;
+      return published;
+    } catch {
+      return false;
+    }
   }
 
   /**

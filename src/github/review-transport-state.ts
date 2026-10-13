@@ -27,6 +27,12 @@ import type {
 import type { GitHubApiClient } from "./client.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { ReviewTaskStatementV1 } from "../contracts/review-receipt.ts";
+import { parseHostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
+import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
+import type {
+  ReviewOwnerCustodyV1,
+  ReviewOwnerSettlementResolverV1,
+} from "./review-owner-evidence.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import { reviewRecordId } from "./review-normalize.ts";
 import {
@@ -50,6 +56,9 @@ export abstract class GitHubReviewTransportState {
   protected readonly publisher: string;
   protected readonly clock: Clock;
   protected readonly ownerRunId: string;
+  protected readonly ownerExecution?: HostedExecutionIntentV1;
+  protected readonly ownerCustody?: ReviewOwnerCustodyV1;
+  protected readonly ownerSettlement?: ReviewOwnerSettlementResolverV1;
   protected readonly snapshot: GitReviewSnapshotCaptureV1;
   protected readonly reviewer: CodexReviewPrepareCapabilityV1;
   protected readonly maxActiveReviews: number | null;
@@ -61,7 +70,16 @@ export abstract class GitHubReviewTransportState {
     this.repository = options.repository;
     this.publisher = options.publisher;
     this.clock = options.clock;
-    this.ownerRunId = options.ownerRunId;
+    this.ownerExecution = options.ownerExecution === undefined
+      ? undefined
+      : parseHostedExecutionIntentV1(options.ownerExecution);
+    if (
+      this.ownerExecution !== undefined &&
+      this.ownerExecution.purpose !== "ordinary"
+    ) throw new TypeError("review owner requires ordinary execution");
+    this.ownerRunId = this.ownerExecution?.id ?? options.ownerRunId;
+    this.ownerCustody = options.ownerCustody;
+    this.ownerSettlement = options.ownerSettlement;
     this.snapshot = options.snapshot;
     this.reviewer = options.reviewer;
     const maxActive = options.maxActiveReviews ?? null;
@@ -181,6 +199,9 @@ export abstract class GitHubReviewTransportState {
       expectedHead: request.expectedHead as GitSha,
       expectedBase: request.expectedBase as GitSha,
       requestedAt: now,
+      ...(this.ownerExecution === undefined
+        ? {}
+        : { ownerExecution: this.ownerExecution }),
       latestStartAt: request.latestStartAt,
       settleBy: request.settleBy,
       task,
@@ -236,6 +257,9 @@ export abstract class GitHubReviewTransportState {
       publisher: this.publisher,
       requestId: op.requestId,
       requestedAt: op.requestedAt,
+      ...(op.ownerExecution === undefined
+        ? {}
+        : { ownerExecution: op.ownerExecution }),
     };
   }
 

@@ -9,6 +9,7 @@ import type { GitHubReviewWireV1 } from "./wire.ts";
 import type { ReviewJournalV1 } from "./review-journal.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { ReviewTaskStatementV1 } from "../contracts/review-receipt.ts";
+import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 
 /** The single finite review bound used for a submission that must fit. */
 export const REVIEW_TRANSPORT_TOTAL_MS = MAX_REVIEW_TOTAL_MS;
@@ -107,6 +108,7 @@ export interface OwnedReviewV1 {
   expectedHead: GitSha;
   expectedBase: GitSha;
   requestedAt: number;
+  ownerExecution?: HostedExecutionIntentV1;
   latestStartAt: number;
   settleBy: number;
   /**

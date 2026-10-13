@@ -164,6 +164,12 @@ export class GitHubCodexReviewTransport extends GitHubReviewTransportLifecycle
       // binding path; recovery never manufactures a completed model verdict.
       return await this.readReview(request);
     }
+    if (
+      local === undefined && bound.journal.phase !== "ready" &&
+      await this.recoverAuthenticatedOwner(bound.journal, bound.review)
+    ) {
+      return await this.readReview(request);
+    }
 
     // A durable ready journal awaiting publication is recovered EXACTLY here,
     // on the actual observation path: the original body and identities are

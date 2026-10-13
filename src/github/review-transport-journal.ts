@@ -19,6 +19,7 @@ import {
   DETAIL_RECONCILE,
   type OwnedReviewV1,
 } from "./review-transport-policy.ts";
+import { reviewOwnerRegistration } from "./review-owner-evidence.ts";
 
 export abstract class GitHubReviewTransportJournal
   extends GitHubReviewTransportState {
@@ -297,6 +298,23 @@ export abstract class GitHubReviewTransportJournal
         return { kind: "error", detail: DETAIL_READBACK };
       }
     }
+    if (
+      journal.phase !== "ready" && this.ownerCustody !== undefined &&
+      journal.ownerExecution !== undefined
+    ) {
+      try {
+        await this.ownerCustody.register(
+          await reviewOwnerRegistration(
+            this.repository,
+            reviewId,
+            journal,
+            expected.body,
+          ),
+        );
+      } catch {
+        return { kind: "error", detail: DETAIL_READBACK };
+      }
+    }
     return { kind: "ok", journal };
   }
 
@@ -318,6 +336,10 @@ export abstract class GitHubReviewTransportJournal
     if (journal.requestId !== op.requestId) return false;
     if (journal.publisher !== this.publisher) return false;
     if (journal.requestedAt !== op.requestedAt) return false;
+    if (
+      canonicalStringify(journal.ownerExecution ?? null) !==
+        canonicalStringify(op.ownerExecution ?? null)
+    ) return false;
     if (journal.phase === "intent") return true;
     return journal.reviewId === reviewId;
   }
