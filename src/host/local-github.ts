@@ -1,4 +1,10 @@
 import type { GitSha } from "../contracts/brands.ts";
+import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
+import type {
+  ReviewOwnerCustodyV1,
+  ReviewOwnerSettlementResolverV1,
+} from "../github/review-owner-evidence.ts";
+import { ReviewOwnerChannelClient } from "./review-owner-channel.ts";
 import {
   type Clock,
   type GitHubCooldownGateV1,
@@ -143,10 +149,24 @@ export interface LocalGitHubInputV1 {
    * callers keep the frozen sentinel base branch.
    */
   baseBranch?: string;
+  /** Protected native owner and its private surviving parent channel. */
+  ownerExecution?: HostedExecutionIntentV1;
+  ownerCustody?: ReviewOwnerCustodyV1;
+  /** Separate authenticated Sentinel self-scope reader, never the target client. */
+  ownerSettlement?: ReviewOwnerSettlementResolverV1;
+  /** Trusted opt-in; the port additionally requires the exact reserved self scope. */
+  selfMergeEnabled?: boolean;
 }
 
 /** Compose the one authenticated GitHub port over the shared cooldown gate. */
 export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
+  const custody = input.ownerCustody;
+  if (
+    (input.ownerExecution !== undefined || custody !== undefined) &&
+    (!(custody instanceof ReviewOwnerChannelClient) ||
+      input.ownerExecution === undefined ||
+      custody.descriptor.ownerRunId !== input.ownerExecution.id)
+  ) throw new TypeError("native review owner custody unavailable");
   // The port is composed for exactly ONE repository. Omitted callers keep the
   // frozen sentinel identity (installation scope 0); a multi-target host
   // supplies the committed target's own identity, including its App
@@ -238,20 +258,22 @@ export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
     model: input.reviewModelId ?? DEFAULT_REVIEW_MODEL_ID,
     sessionCwd: input.reviewCheckout,
     permissionProfile: "sentinel-review",
-    openSession: ({ cwd }) =>
-      input.tracker.open(() =>
-        new CodexSubprocessSession({
-          command: [input.codexExecutable, "app-server"],
-          cwd,
-          env: codexChildEnv(
-            input.reviewClientHome,
-            input.reviewTmpDir,
-            input.reviewDenoDir,
-            input.trustedPath,
-          ),
-          operationDeadlineMs: REVIEW_SESSION_DEADLINE_MS,
-        })
-      ),
+    openSession: (value) =>
+      custody instanceof ReviewOwnerChannelClient
+        ? custody.openSession(value)
+        : input.tracker.open(() =>
+          new CodexSubprocessSession({
+            command: [input.codexExecutable, "app-server"],
+            cwd: value.cwd,
+            env: codexChildEnv(
+              input.reviewClientHome,
+              input.reviewTmpDir,
+              input.reviewDenoDir,
+              input.trustedPath,
+            ),
+            operationDeadlineMs: REVIEW_SESSION_DEADLINE_MS,
+          })
+        ),
   });
   const reviewService = new GitHubCodexReviewTransport({
     client,
@@ -259,6 +281,13 @@ export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
     publisher: input.login,
     clock: input.clock,
     ownerRunId: input.invocationId,
+    ...(input.ownerExecution === undefined
+      ? {}
+      : { ownerExecution: input.ownerExecution }),
+    ...(custody === undefined ? {} : { ownerCustody: custody }),
+    ...(input.ownerSettlement === undefined
+      ? {}
+      : { ownerSettlement: input.ownerSettlement }),
     snapshot: snapshotSource,
     reviewer,
     // Explicit uncapped review concurrency: no artificial in-flight bound.
@@ -284,6 +313,9 @@ export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
       maxOutputBytes: GIT_MAX_OUTPUT_BYTES,
     },
     includeIssueRelations: true,
+    ...(input.selfMergeEnabled === undefined
+      ? {}
+      : { selfMergeEnabled: input.selfMergeEnabled }),
   });
   if (ensureCandidateObjects !== undefined) {
     // Wrap the SAME executor instance the port holds (never a parallel one):
