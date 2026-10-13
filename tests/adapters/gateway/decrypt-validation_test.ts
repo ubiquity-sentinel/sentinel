@@ -183,7 +183,7 @@ Deno.test("gateway decrypt: frozen upstream cross-field relationships are enforc
       }),
     ],
     ["unknown upstream key", v2Upstream({ bogus_key: true })],
-    ["upstream version 2", v2Upstream({ version: 2 })],
+    ["legacy upstream version 1", v2Upstream({ version: 1 })],
     ["non-boolean truncation flag", v2Upstream({ bytes_truncated: "yes" })],
     ["attempts not an array", v2Upstream({ attempts: {} })],
     [

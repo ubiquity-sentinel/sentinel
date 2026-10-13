@@ -280,6 +280,8 @@ interface CraftedV2Variant {
 }
 
 /** Independently crafted v2 capture: valid manifest + encrypted envelope. */
+import { currentMetadata } from "./current-format-helpers.ts";
+
 export async function craftV2Capture(
   keyBytes: Uint8Array<ArrayBuffer>,
   variant: CraftedV2Variant,
@@ -287,8 +289,8 @@ export async function craftV2Capture(
   manifest: GatewayReplayManifestV1;
   ciphertext: Uint8Array<ArrayBuffer>;
 }> {
-  const metadata = variant.metadata;
   const body = variant.body;
+  const metadata = currentMetadata(variant.metadata, body);
   const capturedAtMs = variant.capturedAtMs ??
     (metadata.captured_at_ms as number);
   const fingerprint = variant.fingerprint ??

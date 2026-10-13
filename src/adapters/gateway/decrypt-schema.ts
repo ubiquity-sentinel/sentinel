@@ -1,21 +1,34 @@
 /** Producer HKDF/AAD namespace (source: sentinel_replay_capture.ts, frozen). */
+import {
+  GATEWAY_CAPTURE_MAX_METADATA_BYTES,
+  GATEWAY_CAPTURE_MAX_UPSTREAM_BYTES,
+  GATEWAY_CAPTURE_MAX_UPSTREAM_CHUNKS,
+  GATEWAY_CAPTURE_METADATA_VERSION,
+  GATEWAY_CAPTURE_UPSTREAM_PROVIDERS,
+  GATEWAY_CAPTURE_UPSTREAM_VERSION,
+  type GatewayCaptureAttemptMetadataV2,
+  type GatewayCaptureFactsV3,
+  type GatewayCaptureProviderV2,
+} from "../../contracts/gateway-capture.ts";
+
 export const RETAINED_NAMESPACE = "uos-sentinel-replay-v1";
 /** v2 fingerprint frame namespace (frozen upstream capture cutover). */
 export const RETAINED_FINGERPRINT_NAMESPACE = "uos-sentinel-replay-v2";
 export const RETAINED_KEY_BYTES = 32;
 export const RETAINED_IV_BYTES = 12;
 /** Private plaintext metadata version after the upstream capture cutover. */
-export const RETAINED_METADATA_VERSION = 2;
+export const RETAINED_METADATA_VERSION = GATEWAY_CAPTURE_METADATA_VERSION;
 /** The v1 request-only metadata version: unsupported, never upstream proof. */
 export const RETAINED_LEGACY_METADATA_VERSION = 1;
 /** Frozen private upstream snapshot version. */
-export const RETAINED_UPSTREAM_VERSION = 1;
+export const RETAINED_UPSTREAM_VERSION = GATEWAY_CAPTURE_UPSTREAM_VERSION;
 /** Aggregate upstream capture bounds (frozen; once hit the producer truncates). */
 export const RETAINED_UPSTREAM_MAX_ATTEMPTS = 8;
-export const RETAINED_UPSTREAM_MAX_DECODED_BYTES = 131_072;
-export const RETAINED_UPSTREAM_MAX_CHUNKS = 256;
+export const RETAINED_UPSTREAM_MAX_DECODED_BYTES =
+  GATEWAY_CAPTURE_MAX_UPSTREAM_BYTES;
+export const RETAINED_UPSTREAM_MAX_CHUNKS = GATEWAY_CAPTURE_MAX_UPSTREAM_CHUNKS;
 /** Producer `MAX_REPLAY_METADATA_BYTES`. */
-export const RETAINED_METADATA_MAX_BYTES = 256 * 1_024;
+export const RETAINED_METADATA_MAX_BYTES = GATEWAY_CAPTURE_MAX_METADATA_BYTES;
 /** Producer `MAX_ACCEPTED_JSON_BODY_BYTES`. */
 export const RETAINED_BODY_MAX_BYTES = 32 * 1_024 * 1_024;
 /** Producer `MAX_REPLAY_PLAINTEXT_BYTES`. */
@@ -62,6 +75,13 @@ export const METADATA_KEYS = [
   "git_sha",
   "deno_revision",
   "upstream",
+  "settings",
+  "capture_status",
+  "replay_coverage",
+  "unavailable",
+  "body_sha256",
+  "body_bytes",
+  "downstream",
 ] as const;
 export const OBSERVATION_KEYS = [
   "status",
@@ -80,6 +100,10 @@ export const CLIENT_OBSERVATION_KEYS = [
   "failure_kind",
   "framing_valid",
   "provider_route",
+  "error_code",
+  "error_param",
+  "terminal_body_base64",
+  "terminal_body_truncated",
 ] as const;
 
 /** Frozen private upstream envelope keys (docs/contracts.md §12). */
@@ -96,13 +120,14 @@ export const UPSTREAM_ATTEMPT_KEYS = [
   "content_type",
   "chunks_base64",
   "terminal",
+  "headers",
+  "headers_truncated",
+  "chunk_times_ms",
+  "started_at_ms",
+  "headers_at_ms",
+  "ended_at_ms",
 ] as const;
-const UPSTREAM_PROVIDERS = [
-  "chatgpt_codex",
-  "surplus",
-  "metered",
-  "cerebras",
-] as const;
+const UPSTREAM_PROVIDERS = GATEWAY_CAPTURE_UPSTREAM_PROVIDERS;
 const UPSTREAM_CONTENT_TYPES = [
   "text/event-stream",
   "application/json",
@@ -127,7 +152,8 @@ export type RetainedUpstreamContentType =
 export type RetainedUpstreamTerminal = (typeof UPSTREAM_TERMINALS)[number];
 
 /** One authenticated provider dispatch attempt (frozen snake_case). */
-export interface RetainedUpstreamAttemptWire {
+export interface RetainedUpstreamAttemptWire
+  extends GatewayCaptureAttemptMetadataV2 {
   provider: RetainedUpstreamProvider;
   /** null until headers; otherwise an HTTP status code. */
   status: number | null;
@@ -140,7 +166,7 @@ export interface RetainedUpstreamAttemptWire {
 
 /** Authenticated private upstream trace (frozen snake_case, no extras). */
 export interface RetainedUpstreamWire {
-  version: 1;
+  version: 2;
   attempts: RetainedUpstreamAttemptWire[];
   attempts_truncated: boolean;
   bytes_truncated: boolean;
@@ -167,6 +193,10 @@ export interface RetainedClientObservationWire {
   failure_kind: string | null;
   framing_valid: boolean;
   provider_route: string;
+  error_code: string | null;
+  error_param: string | null;
+  terminal_body_base64: string | null;
+  terminal_body_truncated: boolean;
 }
 
 /**
@@ -193,11 +223,16 @@ export interface RetainedGatewayClientObservationV1 {
   failureKind: string | null;
   framingValid: boolean;
   providerRoute: string;
+  errorCode: string | null;
+  errorParam: string | null;
+  terminalBodyBase64: string | null;
+  terminalBodyTruncated: boolean;
 }
 
 /** One authenticated upstream dispatch attempt (frozen snake_case names). */
-export interface RetainedGatewayUpstreamAttemptV1 {
-  provider: "chatgpt_codex" | "surplus" | "metered" | "cerebras";
+export interface RetainedGatewayUpstreamAttemptV1
+  extends GatewayCaptureAttemptMetadataV2 {
+  provider: GatewayCaptureProviderV2;
   status: number | null;
   content_type: "text/event-stream" | "application/json" | "other" | null;
   chunks_base64: readonly string[];
@@ -210,7 +245,7 @@ export interface RetainedGatewayUpstreamAttemptV1 {
  * the frozen terminals and truncation booleans only.
  */
 export interface RetainedGatewayUpstreamV1 {
-  version: 1;
+  version: 2;
   attempts: readonly RetainedGatewayUpstreamAttemptV1[];
   attempts_truncated: boolean;
   bytes_truncated: boolean;
@@ -228,6 +263,8 @@ export interface RetainedGatewayCaptureV1 {
   captureId: string;
   /** Producer HMAC identity over the authenticated request + failure signature. */
   fingerprint: string;
+  /** Stable incident classification SHA, derived from authenticated client observation. */
+  classificationDigest: string;
   /** Producer HMAC identity over the authenticated request. */
   caseGroupDigest: string;
   capturedAt: number;
@@ -249,6 +286,8 @@ export interface RetainedGatewayCaptureV1 {
    * sanitized and never a replay fixture.
    */
   upstream: RetainedGatewayUpstreamV1;
+  /** Current private settings, downstream outcome, coverage and exact request digest. */
+  metadata: GatewayCaptureFactsV3;
   /** Private plaintext request body; never sanitized, never a replay fixture. */
   body: Uint8Array<ArrayBuffer>;
 }
@@ -319,7 +358,7 @@ export type EnvelopeResult =
       | "unsupported_metadata_version";
   };
 
-export interface ParsedRetainedMetadata {
+export interface ParsedRetainedMetadata extends GatewayCaptureFactsV3 {
   version: number;
   captured_at_ms: number;
   endpoint: string;

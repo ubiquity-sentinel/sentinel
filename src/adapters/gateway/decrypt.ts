@@ -78,6 +78,9 @@ export type { RetainedCaptureResultV1 } from "./decrypt-schema.ts";
  * producer key bytes; verified 32-byte length, then every producer identity is
  * recomputed. The caller-owned key and ciphertext buffers are never mutated.
  */
+import { authenticatedClassificationDigest } from "./capture-binding.ts";
+import { captureFactsMatchBytes } from "./decrypt-rich.ts";
+
 export async function decryptRetainedGatewayCapture(
   artifact: StoredArtifactV1,
   keyBytes: Uint8Array<ArrayBuffer>,
@@ -128,6 +131,11 @@ export async function decryptRetainedGatewayCapture(
     if (!envelope.ok) return fail(envelope.reason);
 
     const metadata = envelope.metadata;
+    if (
+      metadata.body_bytes !== metadata.bodyBytes.byteLength ||
+      metadata.body_sha256 !== await sha256Hex(metadata.bodyBytes)
+    ) return fail("tampered_metadata");
+    if (!captureFactsMatchBytes(metadata)) return fail("tampered_metadata");
 
     const hmacResult = await verifyProducerIdentities(
       keyBytes,
@@ -142,6 +150,11 @@ export async function decryptRetainedGatewayCapture(
         version: 1,
         captureId: manifest.captureId,
         fingerprint: manifest.fingerprint,
+        classificationDigest: await authenticatedClassificationDigest({
+          endpoint: metadata.endpoint,
+          method: metadata.method,
+          clientObservation: mapClientObservation(metadata.client_observation),
+        }),
         caseGroupDigest: manifest.caseGroupDigest,
         capturedAt: manifest.capturedAt,
         expiresAt: manifest.expiresAt,
@@ -156,6 +169,15 @@ export async function decryptRetainedGatewayCapture(
         observation: mapObservation(metadata.observation),
         clientObservation: mapClientObservation(metadata.client_observation),
         upstream: mapUpstream(metadata.upstream),
+        metadata: {
+          settings: metadata.settings,
+          capture_status: metadata.capture_status,
+          replay_coverage: metadata.replay_coverage,
+          unavailable: [...metadata.unavailable],
+          body_sha256: metadata.body_sha256,
+          body_bytes: metadata.body_bytes,
+          downstream: metadata.downstream,
+        },
         body: cloneBytes(metadata.bodyBytes),
       },
     };
@@ -227,6 +249,10 @@ function mapClientObservation(
     failureKind: observation.failure_kind,
     framingValid: observation.framing_valid,
     providerRoute: observation.provider_route,
+    errorCode: observation.error_code,
+    errorParam: observation.error_param,
+    terminalBodyBase64: observation.terminal_body_base64,
+    terminalBodyTruncated: observation.terminal_body_truncated,
   };
 }
 

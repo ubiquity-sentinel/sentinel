@@ -34,8 +34,8 @@ export const RETAINED_CASE_GROUP_NAMESPACE =
 export const RETAINED_TTL_MS = 48 * 60 * 60 * 1_000;
 /** Frozen aggregate upstream bounds. */
 export const UPSTREAM_MAX_ATTEMPTS = 8;
-export const UPSTREAM_MAX_DECODED_BYTES = 131_072;
-export const UPSTREAM_MAX_CHUNKS = 256;
+export const UPSTREAM_MAX_DECODED_BYTES = 4 * 1024 * 1024;
+export const UPSTREAM_MAX_CHUNKS = 4096;
 
 export const CAPTURE_ID_V2 = "synthetic-v2-capture-1";
 export const CAPTURED_AT_V2 = 1_788_811_200_000;

@@ -169,6 +169,12 @@ function makeAttempt(
 ): RetainedGatewayUpstreamAttemptV1 {
   const { chunks = [], ...rest } = overrides;
   return {
+    headers: {},
+    headers_truncated: false,
+    chunk_times_ms: chunks.map(() => 0),
+    started_at_ms: 0,
+    headers_at_ms: (rest.status ?? null) === null ? null : 0,
+    ended_at_ms: rest.terminal === "pending" ? null : 0,
     provider: "chatgpt_codex",
     status: null,
     content_type: null,
@@ -188,7 +194,7 @@ function makeTrace(
   > = {},
 ): RetainedGatewayUpstreamV1 {
   return {
-    version: 1,
+    version: 2,
     attempts: [...attempts],
     attempts_truncated: overrides.attempts_truncated ?? false,
     bytes_truncated: overrides.bytes_truncated ?? false,
@@ -236,6 +242,30 @@ function makeCapture(
     version: 1,
     captureId: options.captureId ?? CAPTURE_ID,
     fingerprint: options.fingerprint ?? FINGERPRINT,
+    classificationDigest: "a".repeat(64),
+    metadata: {
+      settings: {
+        source: "unavailable",
+        provider_route: "chatgpt_codex",
+        model_requested: null,
+        reasoning_requested: null,
+        stream_requested: null,
+        stream_observed: true,
+      },
+      capture_status: "ready",
+      replay_coverage: "full",
+      unavailable: [],
+      body_sha256: "0".repeat(64),
+      body_bytes: body.byteLength,
+      downstream: {
+        terminal_type: null,
+        failure_kind: "gateway_error",
+        error_code: null,
+        error_param: null,
+        body_base64: null,
+        body_truncated: false,
+      },
+    },
     caseGroupDigest: options.caseGroupDigest ?? CASE_GROUP_DIGEST,
     capturedAt: 1_700_000_000_000,
     expiresAt: 1_700_000_000_000 + 48 * 60 * 60 * 1_000,
@@ -257,6 +287,10 @@ function makeCapture(
       providerRoute: "chatgpt_codex",
     },
     clientObservation: {
+      errorCode: null,
+      errorParam: null,
+      terminalBodyBase64: null,
+      terminalBodyTruncated: false,
       status: 200,
       stream: true,
       completed: false,
@@ -363,7 +397,7 @@ Deno.test("sanitize: responses replay redacts request and SSE body, links IDs, k
   assert.equal(attempt.status, 200);
   assert.equal(attempt.content_type, "text/event-stream");
   assert.equal(attempt.terminal, "eof");
-  assert.equal(fixture.upstream.version, 1);
+  assert.equal(fixture.upstream.version, 2);
   assert.equal(fixture.upstream.attempts_truncated, false);
   assert.equal(fixture.upstream.bytes_truncated, false);
   assert.equal(fixture.upstream.chunks_truncated, false);
@@ -621,6 +655,12 @@ Deno.test("sanitize: eof, read_error, cancelled and headerless fetch_error termi
     );
   }
   assert.deepEqual(out[3], {
+    headers: {},
+    headers_truncated: false,
+    chunk_times_ms: [],
+    started_at_ms: 0,
+    headers_at_ms: null,
+    ended_at_ms: 0,
     provider: "chatgpt_codex",
     status: null,
     content_type: null,
@@ -644,6 +684,12 @@ Deno.test("sanitize: valid bodyless 204/205/304 responses stay bodyless", async 
     const result = await sanitizeGatewayReplay(capture, POLICY);
     assert.ok(result.ok);
     assert.deepEqual(result.value.fixture.upstream.attempts[0], {
+      headers: {},
+      headers_truncated: false,
+      chunk_times_ms: [],
+      started_at_ms: 0,
+      headers_at_ms: 0,
+      ended_at_ms: 0,
       provider: "chatgpt_codex",
       status,
       content_type: "other",
@@ -984,12 +1030,10 @@ Deno.test("sanitize: attempt, chunk, aggregate-byte and source-body bounds are e
 });
 
 Deno.test("sanitize: transformed expansion beyond the aggregate byte bound is refused", async () => {
-  // 2100 SSE data events (data line + blank boundary): 2100 * 55 decoded
-  // bytes (within the 131072 bound) but 2100 * 66 transformed bytes (beyond
-  // it), because every "x" becomes the 12-character "fixture text". The node
-  // budget (3 touches per data line) stays under the shared 8192 limit.
-  const line = 'data:{"type":"response.output_text.delta","delta":"x"}\n\n';
-  const count = 2100;
+  // Empty comments expand to the fixed public comment without consuming JSON
+  // nodes: 600000 source bytes become 5400000, exceeding the current 4MiB cap.
+  const line = ":\n";
+  const count = 300000;
   const body = line.repeat(count);
   const capture = makeCapture(textBytes(JSON.stringify(RESPONSES_REQUEST)), {
     upstream: makeTrace([

@@ -67,7 +67,7 @@ export const GATEWAY_REPLAY_TTL_MS = 48 * 60 * 60 * 1_000;
  * size. Manifests outside these bounds never come from the current producer.
  */
 export const GATEWAY_REPLAY_MAX_CIPHERTEXT_BYTES = 32 * 1_024 * 1_024 +
-  256 * 1_024 + 4 + 1_024 * 1_024 + 16;
+  8 * 1_024 * 1_024 + 4 + 1_024 * 1_024 + 16;
 export const GATEWAY_REPLAY_MAX_CHUNKS = Math.ceil(
   GATEWAY_REPLAY_MAX_CIPHERTEXT_BYTES / GATEWAY_REPLAY_CHUNK_BYTES,
 );

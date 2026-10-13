@@ -1,4 +1,5 @@
 import type { RetainedGatewayCaptureV1 } from "../../src/adapters/gateway/decrypt.ts";
+import { createHash } from "node:crypto";
 import { asEncryptedArtifactDigest } from "../../src/contracts/brands.ts";
 import type {
   CommandId,
@@ -113,6 +114,30 @@ export function makeCapture(
     version: 1,
     captureId: CAPTURE_ID,
     fingerprint: "f".repeat(64),
+    classificationDigest: "e".repeat(64),
+    metadata: {
+      settings: {
+        source: "recorded_request_body",
+        provider_route: "synthetic",
+        model_requested: "synthetic-model",
+        reasoning_requested: null,
+        stream_requested: true,
+        stream_observed: true,
+      },
+      capture_status: "ready",
+      replay_coverage: "full",
+      unavailable: [],
+      body_sha256: createHash("sha256").update(encode(bodyText)).digest("hex"),
+      body_bytes: encode(bodyText).byteLength,
+      downstream: {
+        terminal_type: null,
+        failure_kind: "missing_sse_terminal",
+        error_code: null,
+        error_param: null,
+        body_base64: "e30=",
+        body_truncated: false,
+      },
+    },
     caseGroupDigest: "g".repeat(64),
     capturedAt: 1_788_811_200_000,
     expiresAt: 1_788_864_000_000,
@@ -134,6 +159,10 @@ export function makeCapture(
       providerRoute: "synthetic",
     },
     clientObservation: {
+      errorCode: null,
+      errorParam: null,
+      terminalBodyBase64: "e30=",
+      terminalBodyTruncated: false,
       status: 502,
       stream: true,
       completed: false,
@@ -143,8 +172,14 @@ export function makeCapture(
       providerRoute: "synthetic",
     },
     upstream: {
-      version: 1,
+      version: 2,
       attempts: [{
+        headers: { "content-type": "text/event-stream" },
+        headers_truncated: false,
+        chunk_times_ms: [0],
+        started_at_ms: 0,
+        headers_at_ms: 0,
+        ended_at_ms: 0,
         provider: "chatgpt_codex",
         status: 200,
         content_type: "text/event-stream",
@@ -172,8 +207,14 @@ export function composedRequestBytes(): Uint8Array {
 
 export function composedUpstreamBytes(): Uint8Array {
   return encode(JSON.stringify({
-    version: 1,
+    version: 2,
     attempts: [{
+      headers: { "content-type": "text/event-stream" },
+      headers_truncated: false,
+      chunk_times_ms: [0],
+      started_at_ms: 0,
+      headers_at_ms: 0,
+      ended_at_ms: 0,
       provider: "chatgpt_codex",
       status: 200,
       content_type: "text/event-stream",

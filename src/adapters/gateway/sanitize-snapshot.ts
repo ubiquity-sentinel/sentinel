@@ -301,7 +301,7 @@ export function snapshotCapture(
   }
   // The upstream value is read exactly once here; the same stored value is
   // handed to the synchronous bounded transform and then its snapshot.
-  const upstream = capture.upstream;
+  const upstream = snapshotValue(capture.upstream) as RetainedGatewayUpstreamV1;
   return {
     captureId,
     fingerprint,

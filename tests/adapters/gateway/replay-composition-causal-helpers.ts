@@ -171,7 +171,7 @@ export async function craftedCausalResponder(
       return jsonResponse(makeIndexPage([
         makeIndexRow({
           incident_id: INCIDENT_A,
-          fingerprint: crafted.manifest.fingerprint as string,
+          fingerprint: crafted.classificationDigest,
           failing_revision: GIT_SHA,
           provenance: {
             endpoint: "https://ai.ubq.fi",

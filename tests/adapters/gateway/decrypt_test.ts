@@ -40,7 +40,6 @@ import {
   goldenManifest,
   goldenV2Ciphertext,
   goldenV2Key,
-  PUBLIC_SYNTHETIC_UPSTREAM_SSE,
   readGolden,
   readV2Golden,
   RECORDED_PRODUCER_SOURCE_SHA_V2,
@@ -55,7 +54,6 @@ import {
   expectStaticFailure,
   v2Body,
 } from "./decrypt-test-helpers.ts";
-import type { ProducerGoldenV2Expected } from "./decrypt-fixtures.ts";
 import { parseGatewayReplayManifestV1 } from "../../../src/adapters/gateway/wire.ts";
 import {
   craftV2Capture,
@@ -106,24 +104,12 @@ Deno.test("gateway decrypt: the producer v1 golden is an explicit unsupported-me
   }
 });
 
-Deno.test("gateway decrypt: the actual producer v2 golden authenticates and decrypts to the producer's public synthetic request and upstream bytes", async () => {
+Deno.test("gateway decrypt: archived producer v2 plaintext is explicitly unsupported", async () => {
   const golden = readV2Golden();
-  assert.equal(
-    golden.sourceSha,
-    RECORDED_PRODUCER_SOURCE_SHA_V2,
-    "fixture must come from the recorded actual producer source",
-  );
-  const expected = golden.expected as unknown as ProducerGoldenV2Expected;
-  // The producer's private metadata stays version 2; the decryptor's
-  // normalized capture result is version 1 — distinct objects, never conflated.
-  assert.equal(expected.version, 2);
+  assert.equal(golden.sourceSha, RECORDED_PRODUCER_SOURCE_SHA_V2);
   const manifest = parseGatewayReplayManifestV1(golden.exported.manifest);
   const ciphertext = goldenV2Ciphertext();
-  assert.equal(ciphertext.byteLength, manifest.ciphertextBytes);
   const keyBytes = goldenV2Key();
-  const beforeKey = new Uint8Array(keyBytes);
-  const beforeCiphertext = new Uint8Array(ciphertext);
-
   const { artifact, cleanup } = await retainThroughStore(
     ciphertext,
     manifest,
@@ -131,85 +117,11 @@ Deno.test("gateway decrypt: the actual producer v2 golden authenticates and decr
   );
   try {
     const result = await decryptRetainedGatewayCapture(artifact, keyBytes);
-    assert.equal(
-      result.ok,
-      true,
-      "actual producer v2 golden must authenticate and decrypt",
+    expectStaticFailure(
+      result,
+      "unsupported_metadata_version",
+      "retained capture metadata version is unsupported",
     );
-    if (!result.ok) return;
-    const value = result.value;
-    assert.equal(value.version, 1, "normalized capture is version 1");
-    // Authenticated manifest identity.
-    assert.equal(value.captureId, manifest.captureId);
-    assert.equal(value.fingerprint, manifest.fingerprint);
-    assert.equal(value.caseGroupDigest, manifest.caseGroupDigest);
-    assert.equal(value.capturedAt, expected.captured_at_ms);
-    assert.equal(value.expiresAt, manifest.expiresAt);
-    // Producer private metadata: exact request identity and observations.
-    assert.equal(value.requestId, expected.request_id);
-    assert.equal(value.endpoint, expected.endpoint);
-    assert.equal(value.method, expected.method);
-    assert.equal(value.contentType, expected.content_type);
-    assert.deepEqual(
-      value.compatibilityHeaders,
-      expected.compatibility_headers,
-    );
-    assert.equal(value.failureSignature, expected.failure_signature);
-    assert.equal(value.gitSha, expected.git_sha);
-    assert.equal(value.denoRevision, expected.deno_revision);
-    assert.deepEqual(value.observation, {
-      status: expected.observation.status,
-      stream: expected.observation.stream,
-      completed: expected.observation.completed,
-      terminalType: expected.observation.terminal_type,
-      failureKind: expected.observation.failure_kind,
-      syntheticTerminalType: expected.observation.synthetic_terminal_type,
-      providerRoute: expected.observation.provider_route,
-    });
-    assert.deepEqual(value.clientObservation, {
-      status: expected.client_observation.status,
-      stream: expected.client_observation.stream,
-      completed: expected.client_observation.completed,
-      terminalType: expected.client_observation.terminal_type,
-      failureKind: expected.client_observation.failure_kind,
-      framingValid: expected.client_observation.framing_valid,
-      providerRoute: expected.client_observation.provider_route,
-    });
-    // Exact original request bytes: the producer recorded this public
-    // synthetic body and the decryptor must return it byte-for-byte.
-    assert.deepEqual(
-      value.body,
-      new TextEncoder().encode(expected.body),
-      "exact original request bytes must round trip",
-    );
-    assert.equal(
-      new TextDecoder().decode(value.body),
-      expected.body,
-      "request body fixture string must match exactly",
-    );
-    // Full validated upstream must equal the producer-recorded trace.
-    assert.deepEqual(value.upstream, expected.upstream);
-    const attempt = value.upstream.attempts[0]!;
-    assert.equal(attempt.provider, "chatgpt_codex");
-    assert.equal(attempt.status, 200);
-    assert.equal(attempt.content_type, "text/event-stream");
-    assert.equal(attempt.terminal, "eof");
-    assert.equal(value.upstream.attempts_truncated, false);
-    assert.equal(value.upstream.bytes_truncated, false);
-    assert.equal(value.upstream.chunks_truncated, false);
-    // Independent atob decode proves the raw recorded SSE bytes at rest.
-    assert.equal(
-      atob(attempt.chunks_base64[0]!),
-      PUBLIC_SYNTHETIC_UPSTREAM_SSE,
-      "first attempt must decode to the public synthetic raw SSE body",
-    );
-    // Producer response headers (e.g. x-request-id) never enter the private
-    // trace: the public-header-excluded marker must be absent.
-    assert.ok(
-      !JSON.stringify(value.upstream).includes("public-header-excluded"),
-      "response headers must not appear in the upstream trace",
-    );
-    assertBuffersUnchanged(beforeKey, beforeCiphertext, keyBytes, ciphertext);
   } finally {
     await cleanup();
   }
@@ -277,6 +189,10 @@ Deno.test("gateway decrypt: independently crafted v2 capture round-trips through
       providerRoute: "synthetic",
     });
     assert.deepEqual(value.clientObservation, {
+      errorCode: null,
+      errorParam: null,
+      terminalBodyBase64: "e30=",
+      terminalBodyTruncated: false,
       status: 502,
       stream: true,
       completed: false,
@@ -288,7 +204,7 @@ Deno.test("gateway decrypt: independently crafted v2 capture round-trips through
     // Exact request must round trip byte-for-byte.
     assert.deepEqual(value.body, body, "exact request bytes must round trip");
     // Private raw upstream trace: exact frozen snake_case shape and bytes.
-    assert.equal(value.upstream.version, 1);
+    assert.equal(value.upstream.version, 2);
     assert.equal(value.upstream.attempts_truncated, false);
     assert.equal(value.upstream.bytes_truncated, false);
     assert.equal(value.upstream.chunks_truncated, false);

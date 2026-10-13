@@ -158,9 +158,7 @@ Deno.test("composition: actual golden capture becomes replay metadata plus a det
     assert.equal(requestValue.endpoint, "/v1/responses");
     assert.equal(requestValue.method, "POST");
     assert.equal(requestValue.contentType, "application/json");
-    assert.deepEqual(requestValue.compatibilityHeaders, {
-      accept: "text/event-stream",
-    });
+    assert.deepEqual(requestValue.compatibilityHeaders, {});
     const requestBody = JSON.parse(requestValue.body as string) as Record<
       string,
       unknown
@@ -168,23 +166,23 @@ Deno.test("composition: actual golden capture becomes replay metadata plus a det
     assert.deepEqual(requestBody, {
       input: "fixture text",
       model: "synthetic-model",
-      stream: true,
+      stream: false,
     });
     // Sanitized upstream: original SSE data is re-encoded with fixture ids.
     const upstreamValue = parseEntry(resolved, "upstream");
-    assert.equal(upstreamValue.version, 1);
+    assert.equal(upstreamValue.version, 2);
     const attempts = upstreamValue.attempts as Array<Record<string, unknown>>;
     assert.equal(attempts.length, 1);
-    assert.equal(attempts[0]!.provider, "chatgpt_codex");
+    assert.equal(attempts[0]!.provider, "deepseek");
     assert.equal(attempts[0]!.status, 200);
-    assert.equal(attempts[0]!.content_type, "text/event-stream");
+    assert.equal(attempts[0]!.content_type, "application/json");
     assert.equal(attempts[0]!.terminal, "eof");
     const chunkBytes = decodeStandardBase64(
       (attempts[0]!.chunks_base64 as string[])[0]!,
     );
     assert.equal(
       new TextDecoder().decode(chunkBytes),
-      'data: {"type":"response.created","response":{"id":"fixture_id_1"}}\n\n',
+      '{"id":"fixture_id_1","object":"response","status":"completed","output":[]}',
     );
     // The bundle digest is also distinct from the sanitizer payload digest
     // (public fixture envelope), never interchangeable.

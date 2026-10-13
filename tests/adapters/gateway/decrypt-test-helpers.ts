@@ -1,4 +1,5 @@
 import { CAPTURED_AT_V2, readGolden } from "./decrypt-fixtures.ts";
+import { currentAttempt } from "./current-format-helpers.ts";
 import { standardBase64 } from "./decrypt-crypto-helpers.ts";
 import type { GatewayReplayManifestV1 } from "../../../src/adapters/gateway/wire.ts";
 import { parseGatewayReplayManifestV1 } from "../../../src/adapters/gateway/wire.ts";
@@ -13,21 +14,21 @@ import assert from "node:assert/strict";
 export function v2Attempt(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
-  return {
+  return currentAttempt({
     provider: "surplus",
     status: 200,
     content_type: "text/event-stream",
     chunks_base64: [] as string[],
     terminal: "eof",
     ...overrides,
-  };
+  });
 }
 
 export function v2Upstream(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    version: 1,
+    version: 2,
     attempts: [] as Record<string, unknown>[],
     attempts_truncated: false,
     bytes_truncated: false,
@@ -46,7 +47,7 @@ export function baseMetadata(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    version: 2,
+    version: 3,
     captured_at_ms: CAPTURED_AT_V2,
     endpoint: "/v1/responses",
     method: "POST",

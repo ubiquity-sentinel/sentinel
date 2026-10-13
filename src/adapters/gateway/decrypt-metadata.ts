@@ -23,6 +23,12 @@ import { parseUpstream } from "./decrypt-upstream.ts";
  * Provenance-free envelope layout: 4-byte big-endian metadata length,
  * metadata JSON, then the exact request bytes (producer `decodePlaintext`).
  */
+import {
+  isDownstreamBody,
+  parseCaptureFactsV3,
+  richNullableText,
+} from "./decrypt-rich.ts";
+
 export function decodeEnvelope(
   bytes: Uint8Array<ArrayBuffer>,
 ): EnvelopeResult {
@@ -82,7 +88,7 @@ function parseMetadataObject(
   // Hard cutover: request-only v1 plaintext is unsupported and never counts
   // as upstream evidence; check the version before shape validation so the
   // real v1 golden gets the explicit unsupported error.
-  if (obj.version === RETAINED_LEGACY_METADATA_VERSION) {
+  if (obj.version === RETAINED_LEGACY_METADATA_VERSION || obj.version === 2) {
     return { ok: false, reason: "unsupported_metadata_version" };
   }
   if (obj.version !== RETAINED_METADATA_VERSION) {
@@ -124,6 +130,8 @@ function parseMetadataObject(
   if (clientObservation === null) {
     return { ok: false, reason: "invalid_plaintext" };
   }
+  const facts = parseCaptureFactsV3(obj, clientObservation, observation);
+  if (facts === null) return { ok: false, reason: "invalid_plaintext" };
   for (const key of ["request_id", "git_sha", "deno_revision"] as const) {
     if (obj[key] === null || typeof obj[key] !== "string") {
       return { ok: false, reason: "invalid_plaintext" };
@@ -136,6 +144,7 @@ function parseMetadataObject(
   return {
     ok: true,
     value: {
+      ...facts,
       version: obj.version as number,
       captured_at_ms: obj.captured_at_ms as number,
       endpoint: obj.endpoint as string,
@@ -197,6 +206,7 @@ function parseClientObservation(
   const obj = value as Record<string, unknown>;
   if (!hasExactKeys(obj, CLIENT_OBSERVATION_KEYS)) return null;
   if (!Number.isSafeInteger(obj.status)) return null;
+  if ((obj.status as number) < 0 || (obj.status as number) > 599) return null;
   if (typeof obj.stream !== "boolean") return null;
   if (typeof obj.completed !== "boolean") return null;
   for (const key of ["terminal_type", "failure_kind"] as const) {
@@ -204,6 +214,12 @@ function parseClientObservation(
   }
   if (typeof obj.framing_valid !== "boolean") return null;
   if (typeof obj.provider_route !== "string") return null;
+  if (
+    !richNullableText(obj.error_code) ||
+    !richNullableText(obj.error_param, true) ||
+    !isDownstreamBody(obj.terminal_body_base64) ||
+    typeof obj.terminal_body_truncated !== "boolean"
+  ) return null;
   return {
     status: obj.status as number,
     stream: obj.stream as boolean,
@@ -212,6 +228,10 @@ function parseClientObservation(
     failure_kind: obj.failure_kind as string | null,
     framing_valid: obj.framing_valid as boolean,
     provider_route: obj.provider_route as string,
+    error_code: obj.error_code as string | null,
+    error_param: obj.error_param as string | null,
+    terminal_body_base64: obj.terminal_body_base64 as string | null,
+    terminal_body_truncated: obj.terminal_body_truncated as boolean,
   };
 }
 

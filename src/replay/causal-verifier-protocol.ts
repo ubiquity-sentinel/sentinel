@@ -138,6 +138,12 @@ export function plainUpstream(
   return {
     version: upstream.version,
     attempts: upstream.attempts.map((attempt) => ({
+      headers: { ...attempt.headers },
+      headers_truncated: attempt.headers_truncated,
+      chunk_times_ms: [...attempt.chunk_times_ms],
+      started_at_ms: attempt.started_at_ms,
+      headers_at_ms: attempt.headers_at_ms,
+      ended_at_ms: attempt.ended_at_ms,
       provider: attempt.provider,
       status: attempt.status,
       content_type: attempt.content_type,

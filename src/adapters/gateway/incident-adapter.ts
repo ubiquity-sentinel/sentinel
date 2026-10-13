@@ -92,6 +92,11 @@ const ARTIFACT_CONTENT_TYPE = "application/octet-stream";
 const INDEX_LIMIT_MIN = 1;
 const INDEX_LIMIT_MAX = 100;
 
+import type {
+  GatewayCaptureBindingReaderV1,
+  GatewayCaptureBindingV1,
+} from "./capture-binding.ts";
+
 export interface GatewayRetryPolicyV1 {
   /**
    * Total additional attempts shared across the adapter instance (one run).
@@ -138,7 +143,8 @@ function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export class GatewayIncidentAdapter implements IncidentAdapter {
+export class GatewayIncidentAdapter
+  implements IncidentAdapter, GatewayCaptureBindingReaderV1 {
   private readonly config: RepositoryConfigV1;
   private readonly baseUrl: string;
   private readonly transport: GatewayTransportV1;
@@ -191,6 +197,42 @@ export class GatewayIncidentAdapter implements IncidentAdapter {
     this.store = store;
     this.retryBudget = retryBudget;
     this.retryBaseDelayMs = retryBaseDelayMs;
+  }
+
+  async readGatewayCaptureBinding(
+    incidentId: string,
+  ): Promise<PortResultV1<GatewayCaptureBindingV1 | null>> {
+    if (!GATEWAY_INCIDENT_ID.test(incidentId)) {
+      return portError(
+        "invalid",
+        "incident id is not in the frozen provider-UUID format",
+      );
+    }
+    const scan = await this.scanIndexForIncident(incidentId);
+    if (!scan.ok) return scan;
+    if (scan.value.coverage.status !== "complete") {
+      return portError(
+        "unavailable",
+        "gateway source binding coverage is incomplete",
+      );
+    }
+    const row = scan.value.row;
+    if (row === null || row.evidenceRef === null) return portOk(null);
+    const identity = parseArtifactRefIdentity(row.evidenceRef.ref);
+    if (
+      identity === null || identity.incidentId !== incidentId ||
+      row.evidenceRef.digest === null || row.evidenceExpiresAt === null
+    ) return portError("invalid", "gateway source capture binding is invalid");
+    return portOk({
+      incidentId,
+      classificationDigest: row.fingerprint,
+      captureId: identity.captureId,
+      artifactRef: row.evidenceRef.ref,
+      ciphertextDigest: row.evidenceRef.digest,
+      originalRevision: row.failingRevision,
+      capturedAt: row.provenance.capturedAt,
+      sourceExpiresAt: row.evidenceExpiresAt,
+    });
   }
 
   async listUnresolvedIncidents(

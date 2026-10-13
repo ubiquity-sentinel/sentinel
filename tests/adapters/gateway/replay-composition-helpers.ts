@@ -141,7 +141,9 @@ function goldenRow(digest: string): Record<string, unknown> {
   };
   return makeIndexRow({
     incident_id: INCIDENT_A,
-    fingerprint: manifest.fingerprint,
+    fingerprint:
+      (readGolden() as unknown as { index: { fingerprint: string } }).index
+        .fingerprint,
     failing_revision: GIT_SHA,
     provenance: {
       endpoint: "https://ai.ubq.fi",
@@ -231,7 +233,7 @@ export function assertNoPrivateMarkers(value: unknown): void {
 
 export const FIXTURE_REPLAY_SCRIPT =
   `const incident = "provider-00000000-0000-4000-8000-000000000001";
-const capture = "synthetic-capture-2";
+const capture = "${CAPTURE_ID_V2}";
 const base = "tests/fixtures/gateway-replay/" + incident + "/" + capture;
 const request = JSON.parse(await Deno.readTextFile(base + "/request.json"));
 const upstream = JSON.parse(await Deno.readTextFile(base + "/upstream.json"));
@@ -295,7 +297,7 @@ export async function readCrafted(
       return jsonResponse(makeIndexPage([
         makeIndexRow({
           incident_id: INCIDENT_A,
-          fingerprint: crafted.manifest.fingerprint as string,
+          fingerprint: crafted.classificationDigest,
           failing_revision: GIT_SHA,
           provenance: {
             endpoint: "https://ai.ubq.fi",
