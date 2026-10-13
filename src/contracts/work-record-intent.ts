@@ -1,4 +1,5 @@
 import { isGitSha } from "./brands.ts";
+import { parseSelfMergeProof } from "./self-merge.ts";
 import {
   expectEnum,
   expectExactKeys,
@@ -34,7 +35,7 @@ export const INTENT_KEYS = [
   "resultId",
 ] as const;
 /** Additive intent keys absent from rows written before they existed. */
-export const INTENT_OPTIONAL_KEYS = ["failure"] as const;
+export const INTENT_OPTIONAL_KEYS = ["failure", "selfMerge"] as const;
 
 export const OPERATION_FAILURE_KEYS = [
   "kind",
@@ -283,6 +284,16 @@ export function parseIntent(
       );
     }
   }
+  const selfMerge = obj.selfMerge === undefined
+    ? undefined
+    : parseSelfMergeProof(obj.selfMerge, `${path}.selfMerge`);
+  if (
+    selfMerge !== undefined &&
+    (kind !== "merge" || selfMerge.operationKey !== key ||
+      selfMerge.pr !== pr || selfMerge.head !== expectedHead ||
+      selfMerge.base !== observedBase || selfMerge.headRef !== branch ||
+      selfMerge.requestId !== requestId || selfMerge.resultId !== resultId)
+  ) fail(path, "invalid_lifecycle", "self merge intent binding mismatch");
   return {
     kind,
     key,
@@ -293,6 +304,7 @@ export function parseIntent(
     pr,
     requestId,
     resultId,
+    ...(selfMerge === undefined ? {} : { selfMerge }),
     ...(obj.failure === undefined ? {} : {
       failure: parseOperationFailure(obj.failure, `${path}.failure`),
     }),

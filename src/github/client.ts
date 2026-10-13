@@ -16,7 +16,7 @@ import type { GitHubReviewWireV1 } from "./wire.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import { parseReviewWire } from "./wire.ts";
 import type { GitSha } from "../contracts/brands.ts";
-import { GitHubClientReviewOwner } from "./client-review-owner.ts";
+import { GitHubClientNativeCi } from "./client-native-ci.ts";
 import { validateReviewOperationInput } from "./client-review-wire.ts";
 import { parseWire, repoPath } from "./client-response.ts";
 import type {
@@ -24,7 +24,7 @@ import type {
   ReviewMutationOutcomeV1,
 } from "./client-contracts.ts";
 
-export class GitHubApiClient extends GitHubClientReviewOwner {
+export class GitHubApiClient extends GitHubClientNativeCi {
   // -------------------------------------------------------------------------
   // Review journal operations (pending-draft lifecycle)
   // -------------------------------------------------------------------------

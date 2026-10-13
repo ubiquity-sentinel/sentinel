@@ -219,6 +219,20 @@ export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
   const counters = parseCounters(obj.counters, "$.counters");
   const evidence = parseEvidenceRefs(obj.evidence, "$.evidence");
   const intent = expectNullable(obj.intent, "$.intent", parseIntent);
+  for (const proof of [intent?.selfMerge, target.selfMerge]) {
+    if (
+      proof !== undefined &&
+      (repository.owner !== "ubiquity" || repository.name !== "sentinel" ||
+        repository.installationId !== 0 || proof.taskId !== id ||
+        proof.issueNumber !== issueNumber)
+    ) {
+      fail(
+        "$.intent",
+        "invalid_lifecycle",
+        "self merge durable owner binding mismatch",
+      );
+    }
+  }
 
   if (intent?.kind === "already_satisfied_closure") {
     if (

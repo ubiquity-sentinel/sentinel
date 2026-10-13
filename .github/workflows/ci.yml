@@ -49,4 +49,4 @@ jobs:
       - name: Credential-free local harness
         run: |
           export PATH="/usr/local/bin:$PATH"
-          /usr/local/bin/deno task test:local
+          /usr/local/bin/deno run --frozen --allow-read=.,"$GITHUB_EVENT_PATH" --allow-run=git,deno --allow-env=PATH,GITHUB_EVENT_NAME,GITHUB_EVENT_PATH,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_WORKFLOW_SHA ops/native-ci-proof.ts

@@ -445,6 +445,8 @@ export interface StructuredReviewFixtureV1 {
 }
 
 export interface StructuredReviewFixtureOptionsV1 {
+  head?: GitSha;
+  base?: GitSha;
   result?: ReviewResultV1;
   reviewId?: number;
   completedAt?: number;
@@ -471,8 +473,8 @@ export async function structuredCompletedFixture(
     phase: "ready",
     repository: { owner: REPO.owner, name: REPO.name },
     prNumber: 1,
-    expectedHead: SHA1,
-    expectedBase: SHA2,
+    expectedHead: options.head ?? SHA1,
+    expectedBase: options.base ?? SHA2,
     operationKey,
     publisher: REVIEWER,
     requestId,
@@ -508,7 +510,12 @@ export async function structuredCompletedFixture(
   const body = renderReviewJournalBody(journal);
   return {
     body,
-    review: reviewWire({ id: reviewId, state: "COMMENTED", body }),
+    review: reviewWire({
+      id: reviewId,
+      state: "COMMENTED",
+      body,
+      commit_id: options.head ?? SHA1,
+    }),
     service: completedServiceRead({
       resultDigest: journal.resultDigest,
       completedAt: journal.completedAt,
@@ -516,7 +523,8 @@ export async function structuredCompletedFixture(
       githubReviewId: reviewId,
       operationKey,
       requestId,
-      expectedBase: SHA2,
+      expectedHead: options.head ?? SHA1,
+      expectedBase: options.base ?? SHA2,
       // The durable journal is the only source of the task acceptance, exactly
       // as the production transport binds its service receipt
       // (`journal.result.taskAcceptance ?? null`). A fixture that published a

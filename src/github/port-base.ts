@@ -42,6 +42,7 @@ import {
 } from "./port-contracts.ts";
 
 export abstract class GitHubPortBase {
+  protected readonly selfMergeEnabled: boolean;
   /**
    * Exact trusted review publisher identity configured for this port. The
    * repair loop reads this value for every review request/receipt binding;
@@ -61,6 +62,10 @@ export abstract class GitHubPortBase {
   protected readonly cooldownGate: GitHubCooldownGateV1;
 
   constructor(options: GitHubPortOptionsV1) {
+    this.selfMergeEnabled = options.selfMergeEnabled === true &&
+      options.repository.owner === "ubiquity" &&
+      options.repository.name === "sentinel" &&
+      options.repository.installationId === 0;
     this.repository = options.repository;
     this.clock = options.clock;
     this.git = options.git;

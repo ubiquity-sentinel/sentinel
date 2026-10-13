@@ -1,6 +1,7 @@
 /** Repair loop internals: merge. */
 import type { GitSha } from "../contracts/brands.ts";
 import { parseMergeRequestV1 } from "../contracts/merge-request.ts";
+import { selfMergeExecution } from "./loop-self-merge.ts";
 import type { MergeOutcomeV1, PortErrorV1 } from "../contracts/ports.ts";
 import {
   parseReleaseRequestV1,
@@ -248,7 +249,12 @@ export async function executeMerge(
     };
   }
 
-  const merged = await deps.github.mergePullRequest(mergeRequest);
+  const self = selfMergeExecution(deps, context, withIntent);
+  const merged = await deps.github.mergePullRequest(
+    mergeRequest,
+    self.execution,
+  );
+  if (self.failure !== null) return self.failure;
   if (!merged.ok) {
     emitMergePortError(
       "merge_port_error",
@@ -262,13 +268,13 @@ export async function executeMerge(
       deps,
       context,
       setWait(
-        withIntent,
+        self.record,
         { reason: "unavailable", since: now, until: now + CHECK_POLL_MS },
         now,
       ),
     );
   }
-  return handleMergeOutcome(deps, context, withIntent, merged.value, receipt);
+  return handleMergeOutcome(deps, context, self.record, merged.value, receipt);
 }
 
 /**
@@ -288,7 +294,13 @@ export async function handleMergeOutcome(
 ): Promise<StepResultV1> {
   const now = deps.clock.now();
   if (outcome.outcome === "merged") {
-    const cleared = clearIntent(record, now);
+    const cleared = clearIntent(
+      outcome.selfMerge === undefined ? record : {
+        ...record,
+        target: { ...record.target, selfMerge: outcome.selfMerge },
+      },
+      now,
+    );
     // GitHub may already have auto-closed the issue through the published
     // "Resolves #N" link. The trusted read-only context still yields the same
     // canonical title/body digest, so a successful merge is never left
@@ -361,6 +373,44 @@ export async function reconcileMergeIntent(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): Promise<StepResultV1> {
+  if (record.intent?.selfMerge !== undefined) {
+    const receipt = mergeIntentReceipt(context.snapshot.reviews, record);
+    if (
+      receipt === null || record.target.pr === null ||
+      record.target.head === null
+    ) {
+      return {
+        kind: "state_error",
+        detail: "self merge recovery binding unavailable",
+      };
+    }
+    const self = selfMergeExecution(deps, context, record);
+    const result = await deps.github.mergePullRequest({
+      pullRequestNumber: record.target.pr,
+      expectedHead: record.target.head,
+      expectedBase: record.target.base,
+      review: receipt,
+    }, self.execution);
+    if (self.failure !== null) return self.failure;
+    if (!result.ok) {
+      return persistWork(
+        deps,
+        context,
+        setWait(self.record, {
+          reason: "unavailable",
+          since: deps.clock.now(),
+          until: deps.clock.now() + CHECK_POLL_MS,
+        }, deps.clock.now()),
+      );
+    }
+    return handleMergeOutcome(
+      deps,
+      context,
+      self.record,
+      result.value,
+      receipt,
+    );
+  }
   if (record.target.pr === null || record.target.head === null) {
     return { kind: "state_error", detail: "merge intent without identity" };
   }

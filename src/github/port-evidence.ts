@@ -34,6 +34,7 @@ export abstract class GitHubPortEvidence extends GitHubPortBase {
       expectedHead: GitSha;
       review: { requestId: string; id: string };
     },
+    provedBase?: GitSha,
   ): Promise<
     | { ok: true; normalized: ReviewNormalizationV1 | null }
     | { ok: false; error: PortErrorV1 }
@@ -88,7 +89,10 @@ export abstract class GitHubPortEvidence extends GitHubPortBase {
       service: service.value,
       repository: this.repository,
       expectedOperationKey: operationKey,
-      pullRequest: pull.value,
+      pullRequest: provedBase === undefined || !this.selfMergeEnabled ||
+          pull.value === null
+        ? pull.value
+        : { ...pull.value, base: provedBase },
       reviews: reviews.value,
       comments: comments.value,
       expectedReviewer: this.trustedReviewer,
