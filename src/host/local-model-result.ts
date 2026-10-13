@@ -8,6 +8,10 @@ import type {
 } from "../contracts/ports.ts";
 import { localCheckoutKey } from "./local-checkout.ts";
 import {
+  type ModelBoundaryDiagnosticV1,
+  readModelBoundaryDiagnostic,
+} from "../repair/model-port-diagnostics.ts";
+import {
   localModelResultReason,
   type LocalModelResultReasonV1,
 } from "./local-model-reason.ts";
@@ -20,6 +24,7 @@ import { ensurePrivateDir, joinPath, writePrivateFile } from "./local-io.ts";
  * credential content is ever serialized.
  */
 export interface LocalModelResultProjectionV1 {
+  boundaryDiagnostic?: ModelBoundaryDiagnosticV1;
   version: "v1";
   kind: "local_model_result";
   taskId: string;
@@ -110,8 +115,10 @@ function projectLocalModelResult(
     };
   }
   const receipt = result.value;
+  const boundaryDiagnostic = readModelBoundaryDiagnostic(receipt, request);
   return {
     ...common,
+    ...(boundaryDiagnostic === null ? {} : { boundaryDiagnostic }),
     result: {
       ok: true,
       outcome: receipt.outcome,

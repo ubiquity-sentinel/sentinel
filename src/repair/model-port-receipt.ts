@@ -6,6 +6,7 @@ import type {
   PortResultV1,
 } from "../contracts/ports.ts";
 import { portError, portOk } from "../contracts/ports.ts";
+import { retainModelBoundaryDiagnostic } from "./model-port-diagnostics.ts";
 import { LocalCheckoutResolver } from "./model-port-checkout.ts";
 import type { CodexImplementationPortOptionsV1 } from "./model-port-session.ts";
 import type { AwaitedSettlementV1 } from "./model-port-settlement.ts";
@@ -322,6 +323,10 @@ export async function finishReceipt(
     }
     : null;
   const actual = buildActual(thread.threadId, turnId, settled, verified);
+  const complete = (receipt: ModelRunReceiptV1) => {
+    retainModelBoundaryDiagnostic(receipt, request, settled.boundaryDiagnostic);
+    return portOk(receipt);
+  };
   if (settled.loopStopped) {
     // Own early loop stop: the model/session did not fail as an application
     // defect and no candidate may be produced — even if a completed runtime
@@ -329,7 +334,7 @@ export async function finishReceipt(
     // the evidence but only interrupted/no-candidate accounting is
     // permitted without successful output. The receipt carries only the
     // sanitized marker.
-    return portOk({
+    return complete({
       invocationId,
       outcome: settled.terminal?.status === "failed" ? "failed" : "interrupted",
       actual,
@@ -342,7 +347,7 @@ export async function finishReceipt(
     // terminal. The run may retain failed ACCOUNTING with the explicit
     // `host-timeout` origin and the exact invocation/thread/turn identities,
     // but it never pretends a terminal was observed (observed status null).
-    return portOk({
+    return complete({
       invocationId,
       outcome: "failed",
       actual,
@@ -351,7 +356,7 @@ export async function finishReceipt(
     });
   }
   if (settled.terminal.status !== "completed") {
-    return portOk({
+    return complete({
       invocationId,
       outcome: settled.terminal.status === "interrupted"
         ? "interrupted"
@@ -361,7 +366,7 @@ export async function finishReceipt(
       error: settled.terminal.error ?? null,
     });
   }
-  return portOk({
+  return complete({
     invocationId,
     outcome: "completed",
     actual,

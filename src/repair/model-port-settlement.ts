@@ -2,6 +2,11 @@
 import type { ModelRunRequestV1 } from "../contracts/ports.ts";
 import type { CodexSessionV1 } from "./codex-transport.ts";
 import { FailedCommandLoopGuard } from "./failed-command-loop.ts";
+import {
+  closedModelErrorInfo,
+  type ModelBoundaryDiagnosticV1,
+  type ModelInterruptCauseV1,
+} from "./model-port-diagnostics.ts";
 import type {
   ModelRerouteV1,
   SessionResultItemV1,
@@ -29,6 +34,7 @@ import {
 } from "./model-port-policy.ts";
 
 export interface AwaitedSettlementV1 {
+  boundaryDiagnostic: ModelBoundaryDiagnosticV1;
   /** Observed runtime terminal; null when the host's own bounds elapsed first. */
   terminal: {
     status: "completed" | "interrupted" | "failed";
@@ -69,6 +75,8 @@ export async function awaitSettlement(
   maxOutputChars: number,
 ): Promise<() => AwaitedSettlementV1> {
   let outputChars = 0;
+  let interruptCause: ModelInterruptCauseV1 = "none";
+  let errorInfo: ReturnType<typeof closedModelErrorInfo> | null = null;
   // Bounded COMPLETE correlated routing events for this exact thread/turn
   // (well-formed events for other threads/turns are ignored at receipt);
   // a malformed or matching off-route-model event fails closed immediately.
@@ -162,8 +170,9 @@ export async function awaitSettlement(
    * uses the same immediate grace, so a stopped run never waits for the old
    * duration ceiling. Once the wait is settled, no callback sends anything.
    */
-  const requestInterrupt = () => {
+  const requestInterrupt = (cause: Exclude<ModelInterruptCauseV1, "none">) => {
     if (stopped || interruptRequested) return;
+    interruptCause = cause;
     interruptRequested = true;
     clearTimeout(settleTimer);
     settleTimer = setTimeout(() => {
@@ -191,7 +200,7 @@ export async function awaitSettlement(
   const earlyLoopInterrupt = () => {
     if (loopStopped || stopped) return;
     loopStopped = true;
-    requestInterrupt();
+    requestInterrupt("failed_command_loop");
   };
 
   /**
@@ -613,6 +622,7 @@ export async function awaitSettlement(
     const error = typeof turnError?.message === "string"
       ? turnError.message.slice(0, 300)
       : null;
+    errorInfo = status === "completed" ? null : closedModelErrorInfo(turnError);
     terminal = {
       status,
       error,
@@ -650,7 +660,7 @@ export async function awaitSettlement(
     // through an event-specific early return.
     outputChars += JSON.stringify(params ?? {}).length;
     if (method !== "turn/completed" && outputChars > maxOutputChars) {
-      requestInterrupt();
+      requestInterrupt("output_limit");
     }
     if (method === "item/started") {
       collectStarted(params);
@@ -678,7 +688,10 @@ export async function awaitSettlement(
   // interrupt path re-arms the settlement grace immediately
   // (see requestInterrupt), so the initial arm is only the fully initialized
   // placeholder never observed by a live interrupt.
-  const durationTimer = setTimeout(requestInterrupt, request.maxDurationMs);
+  const durationTimer = setTimeout(
+    () => requestInterrupt("duration_limit"),
+    request.maxDurationMs,
+  );
   let settleTimer: ReturnType<typeof setTimeout>;
   settleTimer = setTimeout(() => {
     // Final host timeout: no runtime terminal was ever observed, so the
@@ -708,6 +721,16 @@ export async function awaitSettlement(
   return () => {
     evidenceFinalized = true;
     return {
+      boundaryDiagnostic: {
+        errorCode: terminal === null
+          ? "model_unknown"
+          : errorInfo?.errorCode ?? null,
+        httpStatusCode: errorInfo?.httpStatusCode ?? null,
+        interruptCause,
+        maxDurationMs: request.maxDurationMs,
+        maxOutputChars,
+        interruptSettlementGraceMs: graceMs,
+      },
       terminal,
       terminalOrigin,
       unavailable,
