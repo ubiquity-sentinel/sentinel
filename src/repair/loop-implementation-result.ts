@@ -69,6 +69,7 @@ export async function settleFailedImplementation(
     detail,
     now,
   );
+  if (blocked.kind === "state_error") return blocked;
   // The attempt-memory entry is persisted in the SAME state commit as the
   // blocker it describes (atomic memory + outcome, never a torn pair).
   const memory = await attemptMemorySettlementMutationV1({
@@ -125,6 +126,7 @@ export async function handleModelReceipt(
       incompleteMessage,
       now,
     );
+    if (blocked.kind === "state_error") return blocked;
     const memory = await attemptMemorySettlementMutationV1({
       record,
       detail: incompleteMessage,
@@ -231,11 +233,14 @@ export async function handleImplementationUncertainty(
     reservationId !== null && reservationId !== undefined &&
     reservationId !== ""
   ) {
-    await deps.budget.settleModelStart({
+    const settled = await deps.budget.settleModelStart({
       id: reservationId,
       outcome: "ambiguous",
       proofRef: null,
     });
+    if (settled.status !== "settled" && settled.status !== "idempotent") {
+      return { kind: "state_error", detail: "budget settlement failed" };
+    }
   }
   // The ambiguous settlement above writes the SAME authoritative repair state,
   // so the block is applied against the reread head exactly like the adjacent
