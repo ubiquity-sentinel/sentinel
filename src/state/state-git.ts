@@ -20,6 +20,13 @@ export interface GitRunResultV1 {
   code: number;
   stdout: string;
   stderr: string;
+  /** Present when rawOutput was requested; never decoded before framing. */
+  stdoutBytes?: Uint8Array;
+}
+
+interface GitByteOptions {
+  stdin?: Uint8Array;
+  rawOutput?: boolean;
 }
 
 /**
@@ -30,7 +37,10 @@ export interface GitRunResultV1 {
 export interface GitRunnerV1 {
   runGit(
     args: string[],
-    opts: { cwd: string; env?: Readonly<Record<string, string>> },
+    opts: GitByteOptions & {
+      cwd: string;
+      env?: Readonly<Record<string, string>>;
+    },
   ): Promise<GitRunResultV1>;
 }
 
@@ -65,7 +75,10 @@ export class DenoGitRunner implements GitRunnerV1 {
 
   async runGit(
     args: string[],
-    opts: { cwd: string; env?: Readonly<Record<string, string>> },
+    opts: GitByteOptions & {
+      cwd: string;
+      env?: Readonly<Record<string, string>>;
+    },
   ): Promise<GitRunResultV1> {
     const command = new Deno.Command("git", {
       args,
@@ -80,13 +93,48 @@ export class DenoGitRunner implements GitRunnerV1 {
         ...this.extraEnv,
         ...opts.env,
       },
+      stdin: opts.stdin === undefined ? "null" : "piped",
       stdout: "piped",
       stderr: "piped",
     });
-    const result = await command.output();
-    const stdout = new TextDecoder().decode(result.stdout);
+    let result: Deno.CommandOutput;
+    const stdin = opts.stdin;
+    if (stdin === undefined) {
+      result = await command.output();
+    } else {
+      const child = command.spawn();
+      const writer = child.stdin.getWriter();
+      // Drain output while writing input so a large batch cannot deadlock
+      // when Git fills stdout before consuming the remaining object ids.
+      const [output, input] = await Promise.allSettled([
+        child.output(),
+        (async () => {
+          try {
+            await writer.write(stdin);
+          } finally {
+            try {
+              await writer.close();
+            } finally {
+              writer.releaseLock();
+            }
+          }
+        })(),
+      ]);
+      if (output.status === "rejected") throw output.reason;
+      if (input.status === "rejected") throw input.reason;
+      result = output.value;
+    }
+    const stdout = opts.rawOutput
+      ? ""
+      : new TextDecoder().decode(result.stdout);
     const stderr = new TextDecoder().decode(result.stderr);
-    return { ok: result.success, code: result.code, stdout, stderr };
+    return {
+      ok: result.success,
+      code: result.code,
+      stdout,
+      stderr,
+      ...(opts.rawOutput ? { stdoutBytes: result.stdout } : {}),
+    };
   }
 }
 
@@ -177,9 +225,14 @@ export class StateGitTransport {
     op: OpContext,
     args: string[],
     env?: Readonly<Record<string, string>>,
+    options?: GitByteOptions,
   ): Promise<GitRunResultV1> {
     try {
-      return await this.runner.runGit(args, { cwd: op.directory, env });
+      return await this.runner.runGit(args, {
+        cwd: op.directory,
+        env,
+        ...options,
+      });
     } catch {
       // A throwing transport (or local spawn failure) is a sanitized git
       // failure with no exception text: never leak paths, URLs or remote
@@ -291,7 +344,8 @@ export class StateGitTransport {
   protected readCommitTree(op: OpContext, commitSha: string, kind: StateKind) {
     return readCommitTree(
       {
-        git: (context, args) => this.git(context, args),
+        git: (context, args, options) =>
+          this.git(context, args, undefined, options),
         gitFailure: (kind, operation, result) =>
           this.gitFailure(kind, operation, result),
       },
@@ -340,7 +394,11 @@ export class StateGitTransport {
 }
 
 export interface StateGitOps {
-  git(op: OpContext, args: string[]): Promise<GitRunResultV1>;
+  git(
+    op: OpContext,
+    args: string[],
+    options?: GitByteOptions,
+  ): Promise<GitRunResultV1>;
   gitFailure(
     kind: PortErrorV1["kind"],
     operation: string,
