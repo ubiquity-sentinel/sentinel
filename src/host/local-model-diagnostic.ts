@@ -1,4 +1,10 @@
 import { type GitSha, isGitSha, isSha256Hex } from "../contracts/brands.ts";
+import {
+  isModelBoundaryReasonCode,
+  type ModelBoundaryDiagnosticV1,
+  parseModelBoundaryDiagnostic,
+  readModelBoundaryDiagnostic,
+} from "../repair/model-port-diagnostics.ts";
 import type {
   ModelRunReceiptV1,
   ModelRunRequestV1,
@@ -13,6 +19,7 @@ import {
 } from "./local-model-reason.ts";
 
 export interface LocalModelDiagnosticV1 {
+  boundaryDiagnostic?: ModelBoundaryDiagnosticV1;
   version: "v1";
   kind: "sentinel_model_diagnostic";
   taskKey: string;
@@ -82,7 +89,11 @@ export function parseLocalModelDiagnosticV1(
     return null;
   }
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).length !== LOCAL_DIAGNOSTIC_KEYS.length) return null;
+  const hasBoundary = Object.hasOwn(record, "boundaryDiagnostic");
+  if (
+    Object.keys(record).length !==
+      LOCAL_DIAGNOSTIC_KEYS.length + Number(hasBoundary)
+  ) return null;
   if (!LOCAL_DIAGNOSTIC_KEYS.every((key) => Object.hasOwn(record, key))) {
     return null;
   }
@@ -99,6 +110,10 @@ export function parseLocalModelDiagnosticV1(
   const durationMs = record.durationMs;
   const outputChars = record.outputChars;
   const candidatePresent = record.candidatePresent;
+  const boundaryDiagnostic = hasBoundary
+    ? parseModelBoundaryDiagnostic(record.boundaryDiagnostic)
+    : null;
+  if (hasBoundary && boundaryDiagnostic === null) return null;
 
   if (version !== "v1") return null;
   if (kind !== "sentinel_model_diagnostic") return null;
@@ -120,6 +135,7 @@ export function parseLocalModelDiagnosticV1(
   }
 
   if (outcome === "port_error") {
+    if (hasBoundary) return null;
     // A port error has one fixed shape: its kind, no terminal, no counters and
     // no candidate. Any other combination is not this record.
     if (reason !== "runtime_error") return null;
@@ -168,8 +184,21 @@ export function parseLocalModelDiagnosticV1(
     return null;
   }
   if (typeof candidatePresent !== "boolean") return null;
-  // A settled session carries no seam failure, so its code is exactly null.
-  if (record.reasonCode !== null) return null;
+  if (
+    boundaryDiagnostic !== null && observedTerminalStatus === "completed" &&
+    boundaryDiagnostic.errorCode !== null
+  ) return null;
+  if (
+    boundaryDiagnostic !== null && terminalOrigin === "host-timeout" &&
+    boundaryDiagnostic.errorCode !== "model_unknown"
+  ) return null;
+  const reasonCode = record.reasonCode;
+  if (boundaryDiagnostic === null) {
+    if (reasonCode !== null) return null;
+  } else if (
+    reasonCode !== boundaryDiagnostic.errorCode ||
+    (reasonCode !== null && !isModelBoundaryReasonCode(reasonCode))
+  ) return null;
   return {
     version: "v1",
     kind: "sentinel_model_diagnostic",
@@ -184,7 +213,8 @@ export function parseLocalModelDiagnosticV1(
     durationMs,
     outputChars,
     candidatePresent,
-    reasonCode: null,
+    reasonCode,
+    ...(boundaryDiagnostic === null ? {} : { boundaryDiagnostic }),
   };
 }
 
@@ -219,6 +249,7 @@ function projectLocalModelDiagnostic(
     };
   }
   const receipt = result.value;
+  const boundaryDiagnostic = readModelBoundaryDiagnostic(receipt, request);
   return {
     version: "v1",
     kind: "sentinel_model_diagnostic",
@@ -233,7 +264,8 @@ function projectLocalModelDiagnostic(
     durationMs: receipt.actual.durationMs,
     outputChars: receipt.actual.outputChars,
     candidatePresent: receipt.candidate !== null,
-    reasonCode: null,
+    reasonCode: boundaryDiagnostic?.errorCode ?? null,
+    ...(boundaryDiagnostic === null ? {} : { boundaryDiagnostic }),
   };
 }
 

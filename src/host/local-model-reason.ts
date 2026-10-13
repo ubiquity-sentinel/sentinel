@@ -5,6 +5,15 @@ import type {
 } from "../contracts/ports.ts";
 import { LOOP_STOP_MARKER } from "../repair/model-port.ts";
 import {
+  IDENTITY_POLICY_DETAIL,
+  MODEL_POLICY_DETAIL,
+  OUTPUT_EVIDENCE_DETAIL,
+  PERMISSION_PROFILE_POLICY_DETAIL,
+  PROVIDER_POLICY_DETAIL,
+  RECEIPT_MISMATCH_DETAIL,
+  UNAVAILABLE_RECEIPT_DETAIL,
+} from "../repair/model-port-policy.ts";
+import {
   STATIC_CHECKOUT,
   STATIC_GIT_BOUND,
   STATIC_GIT_FAILED,
@@ -70,6 +79,22 @@ const HOST_REASON_CODES: readonly (readonly [string, string])[] = [
   [STATIC_GIT_BOUND, "git_output_over_bound"],
   [STATIC_LOCAL_CANDIDATE, "local_candidate_unavailable"],
   [STATIC_GITHUB_LOGIN, "authenticated_login_unavailable"],
+  [IDENTITY_POLICY_DETAIL, "model_identity_unavailable"],
+  [MODEL_POLICY_DETAIL, "model_route_policy_mismatch"],
+  [OUTPUT_EVIDENCE_DETAIL, "model_output_evidence_unavailable"],
+  [PERMISSION_PROFILE_POLICY_DETAIL, "model_permission_profile_invalid"],
+  [PROVIDER_POLICY_DETAIL, "model_provider_invalid"],
+  [RECEIPT_MISMATCH_DETAIL, "model_receipt_mismatch"],
+  [UNAVAILABLE_RECEIPT_DETAIL, "model_runtime_identity_unverified"],
+  ["model session process group did not settle", "model_session_unsettled"],
+  [
+    "thread/start response does not acknowledge the requested provider/model/effort",
+    "model_thread_identity_mismatch",
+  ],
+  [
+    "thread/start response does not acknowledge the configured permission profile",
+    "model_permission_acknowledgement_mismatch",
+  ],
 ];
 
 /** Exact code for one of this module's own static strings, else null. */
