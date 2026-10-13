@@ -36,13 +36,22 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+        with:
+          bun-version: 1.4.0
       - name: Install hermetic harness system dependencies
         run: |
           # The replay isolation policy resolves fixed system tools, so the
-          # runner needs bwrap and a real (non-symlink) /usr/local/bin/deno.
+          # runner needs bwrap and real (non-symlink) Deno, Node and Bun
+          # binaries at the dependency cache's fixed /usr/local/bin paths.
           sudo apt-get update
           sudo apt-get install -y bubblewrap
           sudo install -m755 "$(command -v deno)" /usr/local/bin/deno
+          sudo install -m755 "$(command -v node)" /usr/local/bin/node
+          sudo install -m755 "$(command -v bun)" /usr/local/bin/bun
           # CI-only: this disposable Ubuntu runner must allow unprivileged
           # user namespaces for bwrap. Never change this on a shared host.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
