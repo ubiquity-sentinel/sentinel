@@ -58,7 +58,62 @@ jobs:
             ancestor_dir=$(dirname "$ancestor_dir")
           done
           mkdir -p "$RUNNER_TEMP/gateway-home" "$RUNNER_TEMP/gateway-deno"
-          git ls-files -z | xargs -0 sha256sum > "$RUNNER_TEMP/gateway-inputs-before.txt"
+          cat > "$RUNNER_TEMP/gateway-manifest.cjs" <<'MANIFEST'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const crypto = require('node:crypto');
+          const cp = require('node:child_process');
+          const assert = require('node:assert/strict');
+          const root = fs.realpathSync(process.cwd());
+          const git = args => cp.execFileSync('git', args, { encoding: 'utf8' }).trim();
+          const head = git(['rev-parse', 'HEAD']);
+          assert.equal(head, process.env.GITHUB_SHA);
+          git(['diff', '--cached', '--quiet', 'HEAD', '--']);
+          const tree = cp.execFileSync('git', ['ls-tree', '-r', '-z', 'HEAD'], { encoding: 'utf8' });
+          const entries = tree.split('\0').filter(Boolean).map(record => {
+            const match = record.match(/^([0-7]{6}) (blob|commit) ([0-9a-f]{40})\t([\s\S]+)$/);
+            assert.ok(match, 'Unsupported Git tree entry');
+            const [, mode, type, oid, name] = match;
+            const parts = name.split('/');
+            assert.ok(parts.every(part => part && part !== '.' && part !== '..'));
+            for (let i = 1; i < parts.length; i++) {
+              const parent = fs.lstatSync(path.join(root, ...parts.slice(0, i)));
+              assert.ok(parent.isDirectory() && !parent.isSymbolicLink(), 'Symlinked input ancestor');
+            }
+            const file = path.join(root, name);
+            let stat;
+            try { stat = fs.lstatSync(file); } catch (error) {
+              if (mode === '160000' && error.code === 'ENOENT') return { path: name, mode, oid, checkout: 'absent' };
+              throw error;
+            }
+            if (mode === '160000') {
+              assert.equal(type, 'commit');
+              assert.ok(stat.isDirectory() && !stat.isSymbolicLink(), 'Invalid gitlink checkout');
+              // Submodules are not installed; never ask Git in an uninitialized
+              // directory, where it would silently resolve the parent repository.
+              assert.equal(fs.readdirSync(file).length, 0, 'Unexpected populated gitlink checkout');
+              return { path: name, mode, oid, checkout: 'empty-uninitialized', checkoutMode: stat.mode & 0o777 };
+            }
+            assert.equal(type, 'blob');
+            let bytes;
+            if (mode === '120000') {
+              assert.ok(stat.isSymbolicLink(), 'Expected symlink input');
+              bytes = fs.readlinkSync(file, { encoding: 'buffer' });
+            } else {
+              assert.ok(mode === '100644' || mode === '100755', 'Unsupported input mode');
+              assert.ok(stat.isFile() && !stat.isSymbolicLink(), 'Expected regular input');
+              assert.equal(Boolean(stat.mode & 0o111), mode === '100755');
+              const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+              try { assert.ok(fs.fstatSync(fd).isFile()); bytes = fs.readFileSync(fd); } finally { fs.closeSync(fd); }
+            }
+            const blob = crypto.createHash('sha1').update(Buffer.from('blob ' + bytes.length + '\0')).update(bytes).digest('hex');
+            assert.equal(blob, oid, 'Tracked input differs from committed Git object');
+            return { path: name, mode, oid, sha256: crypto.createHash('sha256').update(bytes).digest('hex'), checkoutMode: stat.mode & 0o777 };
+          });
+          console.log(JSON.stringify({ head, entries }));
+          MANIFEST
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP/gateway-home" GITHUB_SHA="$source_sha" \
+            node "$RUNNER_TEMP/gateway-manifest.cjs" > "$RUNNER_TEMP/gateway-inputs-before.txt"
           {
             printf 'Controller SHA: %s\nSource SHA: %s\n' "$CONTROLLER_SHA" "$source_sha"
             deno --version
@@ -87,7 +142,9 @@ jobs:
           gate_status=${PIPESTATUS[0]}
           set -e
           printf 'Literal gateway exit: %s\n' "$gate_status" | tee "$RUNNER_TEMP/gateway-gate-result.txt"
-          sha256sum -c "$RUNNER_TEMP/gateway-inputs-before.txt"
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP/gateway-home" GITHUB_SHA=9d83f306a92b11a0929c414b445fc8a1367e01d9 \
+            node "$RUNNER_TEMP/gateway-manifest.cjs" > "$RUNNER_TEMP/gateway-inputs-after.txt"
+          cmp "$RUNNER_TEMP/gateway-inputs-before.txt" "$RUNNER_TEMP/gateway-inputs-after.txt"
           test -z "$(git status --porcelain --untracked-files=no)"
           test "$(git rev-parse HEAD)" = 9d83f306a92b11a0929c414b445fc8a1367e01d9
           test "$gate_status" -eq 0
@@ -101,6 +158,7 @@ jobs:
           path: |
             ${{ runner.temp }}/gateway-runtime.txt
             ${{ runner.temp }}/gateway-inputs-before.txt
+            ${{ runner.temp }}/gateway-inputs-after.txt
             ${{ runner.temp }}/gateway-verify.log
             ${{ runner.temp }}/gateway-gate-result.txt
           if-no-files-found: warn
