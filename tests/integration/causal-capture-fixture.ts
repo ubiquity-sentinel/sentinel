@@ -1,6 +1,11 @@
 import type { CommandId, GitSha } from "../../src/contracts/brands.ts";
 import type { ArtifactStoreLimitsV1 } from "../../src/adapters/gateway/store.ts";
 import { CAPTURE_ID_A, sha256hex } from "../adapters/gateway/helpers.ts";
+import {
+  currentAttempt,
+  currentClassification,
+  currentMetadata,
+} from "../adapters/gateway/current-format-helpers.ts";
 
 export const INDEX_PATH = "/admin/sentinel/incidents";
 export const REPLAY_PATH = "/admin/sentinel/replay-captures";
@@ -276,6 +281,7 @@ interface CraftedCaptureV1 {
   chunks: string[];
   digest: string;
   fingerprint: string;
+  classificationDigest: string;
 }
 
 /**
@@ -297,14 +303,14 @@ export async function craftCapture(
     ? `data: {"type":"response.completed","response":{"id":"${SENTINEL}"}}\n\n`
     : `data: {"type":"response.created","response":{"id":"${SENTINEL}"}}\n\n`;
   const upstream = {
-    version: 1,
-    attempts: [{
+    version: 2,
+    attempts: [currentAttempt({
       provider: "chatgpt_codex",
       status: 200,
       content_type: "text/event-stream",
       chunks_base64: [standardBase64(TEXT_ENCODER.encode(chunkData))],
       terminal: "eof",
-    }],
+    })],
     attempts_truncated: false,
     bytes_truncated: false,
     chunks_truncated: false,
@@ -312,8 +318,8 @@ export async function craftCapture(
   const bodyInput = options.bodyInput ??
     `{"model":"synthetic-model","input":"${SENTINEL}","stream":true}`;
   const body = TEXT_ENCODER.encode(bodyInput);
-  const metadata = {
-    version: 2,
+  const metadata = currentMetadata({
+    version: 3,
     captured_at_ms: capturedAtMs,
     endpoint: "/v1/responses",
     method: "POST",
@@ -338,12 +344,19 @@ export async function craftCapture(
       failure_kind: "missing_sse_terminal",
       framing_valid: true,
       provider_route: "synthetic",
+      error_code: null,
+      error_param: null,
+      // Exact failure body returned by the original synthetic toy handler.
+      terminal_body_base64: standardBase64(
+        TEXT_ENCODER.encode("stream terminated unexpectedly"),
+      ),
+      terminal_body_truncated: false,
     },
     request_id: SENTINEL,
     git_sha: originalSha,
     deno_revision: "synthetic-revision-2",
     upstream,
-  };
+  }, body);
   const fingerprint = await v2Fingerprint(keyBytes, metadata, body);
   const caseGroupDigest = await v2CaseGroup(keyBytes, metadata, body);
   const plaintext = encodeEnvelope(metadata, body);
@@ -370,5 +383,6 @@ export async function craftCapture(
     chunks: [toBase64Url(ciphertext)],
     digest: await sha256hex(ciphertext),
     fingerprint,
+    classificationDigest: currentClassification(metadata),
   };
 }

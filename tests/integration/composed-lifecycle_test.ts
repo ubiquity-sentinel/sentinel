@@ -92,6 +92,7 @@ import {
   PRODUCER_COMMIT,
 } from "./composed-lifecycle-release.ts";
 import { submittedTaskAcceptance } from "./composed-lifecycle-ports.ts";
+import { persistVpsDelivery } from "../repair/vps-delivery-fixtures.ts";
 import { DenoReleaseRESTClient } from "../../src/release/port.ts";
 import { GithubBuildReceiptResolver } from "../../src/release/build-receipt-resolver.ts";
 import { DEP_0 } from "../release/helpers.ts";
@@ -482,6 +483,14 @@ Deno.test(
       assert.equal(released.promoteCalls(), 1, "no second promotion");
       records = await released.records();
       assert.equal(records.length, 1, "no record for the receipt-less request");
+
+      rig.clock.advance(Math.max(0, released.clock.now() - rig.clock.now()));
+      await persistVpsDelivery(
+        rig.store,
+        released.options.stateWrite,
+        rig.clock,
+        requestOne,
+      );
 
       // ---- Run 4: the repair loop observes the accepted release and
       // performs the issue/delivery bookkeeping: the accepted request's issue
