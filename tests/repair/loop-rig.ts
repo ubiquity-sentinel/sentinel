@@ -157,8 +157,12 @@ export async function makeRig(
   const github = options.githubPort ??
     new FakeGithub({ baseSha: SHA1, ...options.github });
   const incidents = new FakeIncidents({
-    summaries: options.summaries === false ? [] : [summaryFixture()],
-    evidence: options.summaries === false ? null : evidenceFixture(),
+    summaries: options.summaries === false
+      ? []
+      : [{ ...summaryFixture(), repository: configs[0].repository }],
+    evidence: options.summaries === false
+      ? null
+      : { ...evidenceFixture(), repository: configs[0].repository },
     ...options.incidents,
   });
   const replay = new FakeReplay(options.replay);
@@ -221,6 +225,7 @@ export async function makeRig(
       hostedReleases: [],
       githubCooldowns: [],
       releases: [monitoredReleaseRecord("rel-1", "accepted", {
+        repository: configs[0].repository,
         requestId,
         requestRevision: SHA3,
         candidate: { identity: DEP_2, buildTransactionId: "txn-rel-1" },
