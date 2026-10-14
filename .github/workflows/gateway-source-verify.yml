@@ -1,5 +1,5 @@
 name: Gateway source verification
-run-name: Gateway source bfa99c93 via ${{ github.sha }}
+run-name: Gateway source 21e4a2a9 via ${{ github.sha }}
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: gateway-source-verify-bfa99c93
+  group: gateway-source-verify-21e4a2a9
   cancel-in-progress: false
 
 jobs:
@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ubiquity/ai.ubq.fi
-          ref: bfa99c93e4dedd08c36d8dfd34e15b037baacac5
+          ref: 21e4a2a94b3de80a67cb95159ff3249723efca8f
           fetch-depth: 0
           persist-credentials: false
           path: gateway
@@ -43,7 +43,7 @@ jobs:
           CONTROLLER_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          source_sha=bfa99c93e4dedd08c36d8dfd34e15b037baacac5
+          source_sha=21e4a2a94b3de80a67cb95159ff3249723efca8f
           test "$(git rev-parse HEAD)" = "$source_sha"
           test -z "$(git status --porcelain --untracked-files=no)"
           if find . -path './.git' -prune -o \( -name '.env' -o -name '.env.*' -o -name '.data' \) -print -quit | grep -q .; then
@@ -121,7 +121,7 @@ jobs:
             bun --version
           } | tee "$RUNNER_TEMP/gateway-runtime.txt"
           env -i PATH="$PATH" HOME="$RUNNER_TEMP/gateway-home" DENO_DIR="$RUNNER_TEMP/gateway-deno" GITHUB_SHA="$source_sha" \
-            sh -c 'test "$#" = 4 && test -n "$PATH" && test -n "$HOME" && test -n "$DENO_DIR" && test "$GITHUB_SHA" = bfa99c93e4dedd08c36d8dfd34e15b037baacac5 && test -z "${GITHUB_TOKEN+x}${CONTROLLER_SHA+x}${UOS_AI_TOKEN+x}${DENO_DEPLOY_TOKEN+x}${SENTINEL_REPLAY_KEY+x}${CEREBRAS_API_KEY+x}${DEEPSEEK_API_KEY+x}${LITHOSAI_API_KEY+x}${VOYAGEAI_API_KEY+x}${METERED_API_KEY+x}${SURPLUS_API_KEY+x}${OPENROUTER_API_KEY+x}${IMAGE_BASE_MODEL+x}${NODE_OPTIONS+x}"' \
+            sh -c 'test "$#" = 4 && test -n "$PATH" && test -n "$HOME" && test -n "$DENO_DIR" && test "$GITHUB_SHA" = 21e4a2a94b3de80a67cb95159ff3249723efca8f && test -z "${GITHUB_TOKEN+x}${CONTROLLER_SHA+x}${UOS_AI_TOKEN+x}${DENO_DEPLOY_TOKEN+x}${SENTINEL_REPLAY_KEY+x}${CEREBRAS_API_KEY+x}${DEEPSEEK_API_KEY+x}${LITHOSAI_API_KEY+x}${VOYAGEAI_API_KEY+x}${METERED_API_KEY+x}${SURPLUS_API_KEY+x}${OPENROUTER_API_KEY+x}${IMAGE_BASE_MODEL+x}${NODE_OPTIONS+x}"' \
             clean-env PATH HOME DENO_DIR GITHUB_SHA
       - name: Install public locked tooling
         shell: bash
@@ -138,15 +138,15 @@ jobs:
           log="$RUNNER_TEMP/gateway-verify.log"
           set +e
           env -i PATH="$PATH" HOME="$RUNNER_TEMP/gateway-home" DENO_DIR="$RUNNER_TEMP/gateway-deno" \
-            GITHUB_SHA=bfa99c93e4dedd08c36d8dfd34e15b037baacac5 sh scripts/verify.sh 2>&1 | tee "$log"
+            GITHUB_SHA=21e4a2a94b3de80a67cb95159ff3249723efca8f sh scripts/verify.sh 2>&1 | tee "$log"
           gate_status=${PIPESTATUS[0]}
           set -e
           printf 'Literal gateway exit: %s\n' "$gate_status" | tee "$RUNNER_TEMP/gateway-gate-result.txt"
-          env -i PATH="$PATH" HOME="$RUNNER_TEMP/gateway-home" GITHUB_SHA=bfa99c93e4dedd08c36d8dfd34e15b037baacac5 \
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP/gateway-home" GITHUB_SHA=21e4a2a94b3de80a67cb95159ff3249723efca8f \
             node "$RUNNER_TEMP/gateway-manifest.cjs" > "$RUNNER_TEMP/gateway-inputs-after.txt"
           cmp "$RUNNER_TEMP/gateway-inputs-before.txt" "$RUNNER_TEMP/gateway-inputs-after.txt"
           test -z "$(git status --porcelain --untracked-files=no)"
-          test "$(git rev-parse HEAD)" = bfa99c93e4dedd08c36d8dfd34e15b037baacac5
+          test "$(git rev-parse HEAD)" = 21e4a2a94b3de80a67cb95159ff3249723efca8f
           test "$gate_status" -eq 0
           grep -Fx 'verify: OK' "$log"
           printf 'Tracked inputs unchanged; literal gate accepted.\n' >> "$RUNNER_TEMP/gateway-gate-result.txt"
@@ -154,7 +154,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: gateway-verify-bfa99c93-${{ github.sha }}
+          name: gateway-verify-21e4a2a9-${{ github.sha }}
           path: |
             ${{ runner.temp }}/gateway-runtime.txt
             ${{ runner.temp }}/gateway-inputs-before.txt
