@@ -1,3 +1,4 @@
+import { completeMetricsWork } from "../release/vps-metrics-fixtures.ts";
 /** Public synthetic delivery identities; real consumers own every state transition. */
 import assert from "node:assert/strict";
 import { buildHostedReleaseRequest } from "../../ops/hosted-autonomy-delivery.ts";
@@ -151,6 +152,7 @@ export async function persistVpsDelivery(
     driverSha256: blueprint.driver.driverSha256,
     policy: blueprint.policy,
     logsLagMs: 0,
+    metricsWork: completeMetricsWork(),
     clock,
     port: composeVpsReleasePort({
       driver,

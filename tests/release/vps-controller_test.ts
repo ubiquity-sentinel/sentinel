@@ -1,3 +1,4 @@
+import { completeMetricsWork } from "./vps-metrics-fixtures.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import {
@@ -16,7 +17,12 @@ import {
   type VpsReceipt,
   type VpsSettlement,
 } from "../../src/contracts/vps-release-wire.ts";
-import { VpsReleaseController } from "../../src/release/vps-controller.ts";
+import {
+  runVpsReleaseController,
+  type VpsControllerOptionsV1,
+  VpsReleaseController,
+} from "../../src/release/vps-controller.ts";
+import { portOk } from "../../src/contracts/ports.ts";
 import { verifyCommittedSettlement } from "../../src/host/vps-release.ts";
 import {
   composeVpsReleasePort,
@@ -178,7 +184,7 @@ async function scenario(failures = 0) {
         proofDigest: "f".repeat(64),
       }),
   });
-  const options = {
+  const options: VpsControllerOptionsV1 = {
     stateRead: state,
     stateWrite: state,
     repository: fixture.request.target.repository,
@@ -187,6 +193,7 @@ async function scenario(failures = 0) {
     driverSha256: fixture.driver.driverSha256,
     policy: fixture.policy,
     logsLagMs: 0,
+    metricsWork: completeMetricsWork(),
     port,
     clock: { now: () => now },
   };
@@ -335,5 +342,102 @@ Deno.test("VPS controller: unobserved gap resets coverage and CAS refusal preven
     assert.equal(refused.driver.activations, 0);
   } finally {
     await refused.context.cleanup();
+  }
+});
+
+Deno.test("VPS controller: collecting cohorts never advance and delayed maturity catches up without resetting healthy observation", async () => {
+  const rig = await scenario();
+  try {
+    await rig.controller.run();
+    await rig.controller.run();
+    await rig.controller.run();
+    const epoch = (await rig.record()).monitoring.startedAt;
+    const sampleMetrics = rig.options.port.sampleMetrics;
+    let collecting = true;
+    rig.options.port.sampleMetrics = (input) =>
+      collecting
+        ? Promise.resolve(portOk({
+          ...input,
+          sampledAt: rig.options.clock.now(),
+          requestCount: null,
+          fiveXxCount: null,
+          timeoutCount: null,
+          streamFailureCount: null,
+          upstreamWideFault: null,
+          coverage: "incomplete",
+          coverageDigest: null,
+        }))
+        : sampleMetrics(input);
+    rig.options.metricsWork.progress = () =>
+      Promise.resolve({
+        state: collecting ? "collecting" : "complete",
+        reason: null,
+      });
+    for (let tick = 0; tick < 5; tick++) {
+      rig.advance(30_000);
+      await rig.controller.run();
+    }
+    const pending = await rig.record();
+    assert.equal(pending.monitoring.startedAt, epoch);
+    assert.equal(pending.monitoring.samples.length, 0);
+    assert.equal(pending.monitoring.continuous, true);
+    collecting = false;
+    rig.advance(30_000);
+    await rig.controller.run();
+    const mature = await rig.record();
+    assert.equal(mature.monitoring.startedAt, epoch);
+    assert.equal(mature.monitoring.samples.length, 5);
+    assert.equal(mature.monitoring.samples[0].windowStart, epoch);
+  } finally {
+    await rig.context.cleanup();
+  }
+});
+
+Deno.test("VPS controller: real runner counts health query and state work inside absolute observation cadence", async () => {
+  const rig = await scenario();
+  try {
+    const health = rig.options.port.sampleHealth;
+    rig.options.port.sampleHealth = (identity, surface, port) => {
+      rig.advance(500);
+      return health(identity, surface, port);
+    };
+    const metrics = rig.options.port.sampleMetrics;
+    rig.options.port.sampleMetrics = (input) => {
+      rig.advance(100);
+      return metrics(input);
+    };
+    const write = rig.state.writeRelease.bind(rig.state);
+    rig.options.stateWrite = {
+      writeRelease: async (snapshot, head) => {
+        const result = await write(snapshot, head);
+        rig.advance(500);
+        return result;
+      },
+    };
+    const waits: number[] = [];
+    const result = await runVpsReleaseController(
+      new VpsReleaseController(rig.options),
+      rig.options.clock,
+      (ms) => {
+        waits.push(ms);
+        rig.advance(ms);
+        return Promise.resolve();
+      },
+      rig.options.clock.now() + 65 * 30_000,
+    );
+    assert.ok(
+      result.ok && result.value.phase === "accepted",
+      JSON.stringify(result),
+    );
+    const accepted = await rig.record();
+    assert.equal(accepted.monitoring.samples.length, 60);
+    assert.equal(accepted.monitoring.continuous, true);
+    assert.ok(
+      waits.some((ms) => ms < 30_000),
+      "work time reduces the wait instead of manufacturing an observation gap",
+    );
+    assert.ok(waits.every((ms) => ms > 0 && ms <= 30_000));
+  } finally {
+    await rig.context.cleanup();
   }
 });

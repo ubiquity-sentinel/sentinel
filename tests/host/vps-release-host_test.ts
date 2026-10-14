@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { completeMetricsWork } from "../release/vps-metrics-fixtures.ts";
 import type { VpsReleasePortV1 } from "../../src/contracts/ports-vps-release.ts";
 import { asGitSha } from "../../src/contracts/brands.ts";
 import { portOk } from "../../src/contracts/ports.ts";
@@ -42,6 +43,16 @@ const options: TrustedVpsReleaseHostOptionsV1 = {
     moduleSha256: "d".repeat(64),
   },
   policy: stabilityPolicy(),
+  retention: { evidenceMaxAgeMs: 1_800_000, evidenceMaxBytes: 1_048_576 },
+  joinStorage: {
+    load: () => Promise.resolve(null),
+    save: () => Promise.resolve(false),
+  },
+  cipher: {
+    seal: () => Promise.reject(new Error("absent test cipher")),
+    open: () => Promise.reject(new Error("absent test cipher")),
+  },
+  journalCommand: () => Promise.reject(new Error("absent test journal")),
   logsLagMs: 0,
   timeoutKinds: [],
   upstreamWideKinds: [],
@@ -84,6 +95,7 @@ Deno.test("VPS entrypoint: expired absolute deadline calls no driver, telemetry 
     },
   });
   const result = await runVpsReleaseEntrypoint({
+    metricsWork: completeMetricsWork(),
     ...options,
     driverSha256: options.pinnedDriver.moduleSha256,
     port,

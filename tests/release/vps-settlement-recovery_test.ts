@@ -1,3 +1,4 @@
+import { completeMetricsWork } from "./vps-metrics-fixtures.ts";
 import assert from "node:assert/strict";
 import { asGitSha } from "../../src/contracts/brands.ts";
 import { portOk, type StateReadView } from "../../src/contracts/ports.ts";
@@ -276,6 +277,7 @@ Deno.test("VPS controller: already persisted terminal retries original settlemen
       driverSha256: fixture.driver.driverSha256,
       policy: fixture.policy,
       logsLagMs: 0,
+      metricsWork: completeMetricsWork(),
       port,
       clock: { now: () => rig.now + 1000 },
     });

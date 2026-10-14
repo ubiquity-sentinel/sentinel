@@ -1,3 +1,4 @@
+import { completeMetricsWork } from "../release/vps-metrics-fixtures.ts";
 import assert from "node:assert/strict";
 import {
   authenticateReleaseBridgeJob,
@@ -841,6 +842,7 @@ async function controllerRig(failures = 0) {
     driverSha256: auth.pin.driver.moduleSha256,
     policy: fixture.policy,
     logsLagMs: 0,
+    metricsWork: completeMetricsWork(),
     clock: { now: auth.now },
     wait: (ms) => {
       auth.advance(ms);

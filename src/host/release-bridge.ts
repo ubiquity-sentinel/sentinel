@@ -679,6 +679,31 @@ export function createReleaseBridgeStateReadView(
     readReleaseAt: state.readReleaseAt?.bind(state),
   };
 }
+/** Production composition boundary; pins override caller-independent trusted host identity. */
+export function createReleaseBridgeHostOptions(
+  host: ReleaseBridgeCapabilities["host"],
+  state: StateReadView & ReleaseStateWriter,
+  pin: ReleaseBridgeInstallation,
+): TrustedVpsReleaseHostOptionsV1 {
+  return {
+    ...host,
+    stateRead: createReleaseBridgeStateReadView(state),
+    stateWrite: state,
+    repository: {
+      owner: "ubiquity",
+      name: "ai.ubq.fi",
+      installationId: pin.targetInstallationId,
+    },
+    environment: "production",
+    controllerSha: pin.controller.revision,
+    targetRoot: TARGET,
+    pinnedDriver: {
+      releaseRoot: pin.driver.root,
+      identity: pin.driver.identity,
+      moduleSha256: pin.driver.moduleSha256,
+    },
+  };
+}
 export async function requireReleaseBridgeState(
   state: StateReadView & ReleaseStateWriter,
 ): Promise<void> {
@@ -845,24 +870,11 @@ export async function runReleaseBridge(
     if (!await capabilities.claimReplay(job.replayDigest, job.expiresAt)) {
       refuse("replay_rejected");
     }
-    const options: TrustedVpsReleaseHostOptionsV1 = {
-      ...capabilities.host,
-      stateRead: createReleaseBridgeStateReadView(state),
-      stateWrite: state,
-      repository: {
-        owner: "ubiquity",
-        name: "ai.ubq.fi",
-        installationId: pin.targetInstallationId,
-      },
-      environment: "production",
-      controllerSha: pin.controller.revision,
-      targetRoot: TARGET,
-      pinnedDriver: {
-        releaseRoot: pin.driver.root,
-        identity: pin.driver.identity,
-        moduleSha256: pin.driver.moduleSha256,
-      },
-    };
+    const options = createReleaseBridgeHostOptions(
+      capabilities.host,
+      state,
+      pin,
+    );
     const composed = await composeTrustedVpsReleaseHost(options);
     if (!composed.ok) refuse("capability_unavailable");
     const result = await dispatchReleaseBridgeController(
