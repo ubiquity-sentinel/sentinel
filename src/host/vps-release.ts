@@ -13,13 +13,28 @@ import {
 } from "../contracts/shared.ts";
 import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { parseVpsReleaseRecordV1 } from "../contracts/vps-release.ts";
-import type { StabilityPolicyV1 } from "../contracts/repository-policy.ts";
+import {
+  parseRetentionPolicy,
+  type RetentionPolicyV1,
+  type StabilityPolicyV1,
+} from "../contracts/repository-policy.ts";
+import type {
+  VpsBoundedJournalCommand,
+  VpsJoinCipher,
+  VpsJoinStorage,
+  VpsJournalRequest,
+  VpsMetricsOptions,
+  VpsMetricsScope,
+  VpsMetricsWork,
+  VpsQueryLimits,
+} from "../release/vps-metrics.ts";
 import { validateStabilityPolicy } from "../release/config.ts";
 import {
   canonicalVps,
   isHealthyVps,
   parseVpsIdentity,
   parseVpsReceipt,
+  sameVps,
   sha256,
   type VpsBinding,
   vpsDigest,
@@ -52,12 +67,16 @@ type VpsCoverage = {
   digest: string;
 };
 type JournalReader = {
-  read(start: number, end: number): Promise<string>;
-  coverage(start: number, end: number): Promise<VpsCoverage | null>;
+  read(start: number, end: number, limits: VpsQueryLimits): Promise<string>;
+  coverage(
+    start: number,
+    end: number,
+    limits: VpsQueryLimits,
+  ): Promise<VpsCoverage | null>;
 };
 interface MetricsModule {
   createVpsJournalReader(
-    run: VpsCommand,
+    run: VpsBoundedJournalCommand,
     root: string,
     coverage: JournalReader["coverage"],
   ): JournalReader;
@@ -67,7 +86,8 @@ interface MetricsModule {
     lagMs: number,
     timeoutKinds: readonly string[],
     upstreamWideKinds: readonly string[],
-  ) => {
+    options: VpsMetricsOptions,
+  ) => VpsMetricsWork & {
     sample(
       input: { identity: VpsIdentity; windowStart: number; windowEnd: number },
     ): Promise<VpsMetricsSample>;
@@ -89,6 +109,10 @@ export interface TrustedVpsReleaseHostOptionsV1 {
     moduleSha256: string;
   };
   policy: StabilityPolicyV1;
+  retention: RetentionPolicyV1;
+  joinStorage: VpsJoinStorage;
+  cipher: VpsJoinCipher;
+  journalCommand: VpsBoundedJournalCommand;
   logsLagMs: number;
   timeoutKinds: readonly string[];
   upstreamWideKinds: readonly string[];
@@ -215,6 +239,74 @@ export async function verifyCommittedSettlement(
     fresh.value.ref === current.value.ref;
 }
 
+/** Bind joins to the unique exact committed release operation, never caller supplied timestamps. */
+export async function readVpsMetricsScope(
+  state: StateReadView,
+  input: VpsJournalRequest,
+  installationId: number,
+  environment: "production" | "isolated",
+  controllerSha: string,
+  driverSha256: string,
+  saved?: { stateHead: string; stateSequence: number },
+): Promise<VpsMetricsScope> {
+  const current = await state.readRelease();
+  if (!current.ok || current.value.status !== "found") {
+    throw new Error("VPS metrics context unavailable");
+  }
+  let read = current;
+  if (saved && current.value.head !== saved.stateHead) {
+    if (!state.readReleaseAt) {
+      throw new Error("VPS metrics history unavailable");
+    }
+    const historic = await state.readReleaseAt({
+      commit: asGitSha(saved.stateHead),
+      expectedHead: current.value.head,
+    });
+    if (
+      !historic.ok || historic.value.status !== "found" ||
+      historic.value.head !== saved.stateHead
+    ) throw new Error("VPS metrics history unavailable");
+    read = historic;
+  }
+  if (!read.ok || read.value.status !== "found") {
+    throw new Error("VPS metrics context unavailable");
+  }
+  const snapshot = parseReleaseStateSnapshotV1(read.value.snapshot);
+  if (saved && snapshot.sequence !== saved.stateSequence) {
+    throw new Error("VPS metrics history sequence mismatch");
+  }
+  const records = (snapshot.vpsReleases ?? []).map(parseVpsReleaseRecordV1)
+    .filter((record) =>
+      record.request.target.repository.owner === "ubiquity" &&
+      record.request.target.repository.name === "ai.ubq.fi" &&
+      record.request.target.repository.installationId === installationId &&
+      record.request.target.environment === environment &&
+      record.driver.controllerSha === controllerSha &&
+      record.driver.driverSha256 === driverSha256 &&
+      record.phase === "monitoring" &&
+      (sameVps(input.identity, record.driver.candidate) ||
+        sameVps(input.identity, record.driver.prior.identity))
+    );
+  if (records.length !== 1 || records[0].monitoring.startedAt === null) {
+    throw new Error("VPS metrics context ambiguous");
+  }
+  const record = records[0],
+    baselineEnd = Math.floor(record.driver.createdAt / 30_000) * 30_000;
+  return {
+    operationId: record.driver.operationId,
+    requestDigest: record.requestDigest,
+    controllerSha,
+    driverSha256,
+    candidate: record.driver.candidate,
+    prior: record.driver.prior.identity,
+    monitoringStartedAt: record.monitoring.startedAt!,
+    baselineStart: baselineEnd - record.policy.baselineWindowMs,
+    baselineEnd,
+    stateHead: read.value.head,
+    stateSequence: snapshot.sequence,
+  };
+}
+
 /** Missing launcher/writer/policy inputs remain unavailable; no transport is invented. */
 export async function composeTrustedVpsReleaseHost(
   options: TrustedVpsReleaseHostOptionsV1,
@@ -226,6 +318,7 @@ export async function composeTrustedVpsReleaseHost(
     );
     const identity = parseVpsIdentity(options.pinnedDriver.identity);
     const driverSha256 = sha256(options.pinnedDriver.moduleSha256);
+    const retention = parseRetentionPolicy(options.retention, "$.retention");
     if (
       repository.owner !== "ubiquity" || repository.name !== "ai.ubq.fi" ||
       repository.installationId < 1 ||
@@ -240,6 +333,11 @@ export async function composeTrustedVpsReleaseHost(
       typeof options.verifySource !== "function" ||
       typeof options.journalCoverage !== "function" ||
       typeof options.readInferenceProof !== "function" ||
+      typeof options.joinStorage?.load !== "function" ||
+      typeof options.joinStorage?.save !== "function" ||
+      typeof options.cipher?.seal !== "function" ||
+      typeof options.cipher?.open !== "function" ||
+      typeof options.journalCommand !== "function" ||
       typeof options.wait !== "function" ||
       !Number.isSafeInteger(options.deadline) ||
       options.deadline <= options.clock.now()
@@ -306,7 +404,7 @@ export async function composeTrustedVpsReleaseHost(
         ),
     });
     const reader = metricsModule.createVpsJournalReader(
-      run,
+      options.journalCommand,
       options.targetRoot,
       options.journalCoverage,
     );
@@ -316,6 +414,22 @@ export async function composeTrustedVpsReleaseHost(
       options.logsLagMs,
       options.timeoutKinds,
       options.upstreamWideKinds,
+      {
+        retention,
+        storage: options.joinStorage,
+        cipher: options.cipher,
+        deadline: options.deadline,
+        context: (input, saved) =>
+          readVpsMetricsScope(
+            stateRead,
+            input,
+            repository.installationId,
+            options.environment,
+            options.controllerSha,
+            driverSha256,
+            saved,
+          ),
+      },
     );
     return portOk({
       stateRead,
@@ -326,6 +440,7 @@ export async function composeTrustedVpsReleaseHost(
       driverSha256,
       policy: options.policy,
       logsLagMs: options.logsLagMs,
+      metricsWork: metrics,
       clock: options.clock,
       port: composeVpsReleasePort({
         driver,

@@ -29,6 +29,7 @@ import {
 import type { StabilityPolicyV1 } from "../contracts/repository-policy.ts";
 import { validateStabilityPolicy } from "./config.ts";
 import { evaluateVpsAcceptance } from "./vps-acceptance.ts";
+import type { VpsMetricsWork } from "./vps-metrics.ts";
 
 export interface VpsControllerOptionsV1 {
   stateRead: StateReadView;
@@ -41,6 +42,7 @@ export interface VpsControllerOptionsV1 {
   logsLagMs: number;
   port: VpsReleasePortV1;
   clock: Clock;
+  metricsWork: VpsMetricsWork;
 }
 export type VpsCycleV1 = {
   status: "idle" | "waiting" | "advanced" | "blocked" | "conflict";
@@ -88,7 +90,9 @@ export class VpsReleaseController {
       options.repository.installationId < 1 ||
       !["production", "isolated"].includes(options.environment) ||
       !validateStabilityPolicy(options.policy).ok ||
-      !Number.isSafeInteger(options.logsLagMs) || options.logsLagMs < 0
+      !Number.isSafeInteger(options.logsLagMs) || options.logsLagMs < 0 ||
+      typeof options.metricsWork?.beginTick !== "function" ||
+      typeof options.metricsWork?.progress !== "function"
     ) throw new TypeError("VPS controller configuration is invalid");
   }
   private result(
@@ -421,31 +425,25 @@ export class VpsReleaseController {
         (now - monitor.startedAt - 30_000 - this.options.logsLagMs) / 30_000,
       ),
     );
-    if (due - samples.length > 1) {
-      return this.write(
-        context,
-        this.patch(record, {
-          monitoring: {
-            startedAt: now,
-            lastObservedAt: now,
-            continuous: false,
-            baseline,
-            samples: [],
-          },
-          acceptance: null,
-          inference: null,
-        }),
-      );
-    }
-    if (due > samples.length) {
+    this.options.metricsWork.beginTick(now);
+    let candidateThisRun = 0, baselineCollecting = false;
+    while (due > samples.length && candidateThisRun < 64) {
       const windowStart = monitor.startedAt + samples.length * 30_000;
-      const sample = await this.options.port.sampleMetrics({
+      const input = {
         identity: record.driver.candidate,
         windowStart,
         windowEnd: windowStart + 30_000,
-      });
+      };
+      const sample = await this.options.port.sampleMetrics(input);
+      const progress = await this.options.metricsWork.progress(input);
+      if (
+        sample.ok && sameVps(sample.value.identity, record.driver.candidate) &&
+        sample.value.coverage === "incomplete" &&
+        progress.state === "collecting"
+      ) break;
       if (
         !sample.ok || sample.value.coverage !== "complete" ||
+        progress.state !== "complete" ||
         !sameVps(sample.value.identity, record.driver.candidate)
       ) {
         return this.write(
@@ -463,27 +461,34 @@ export class VpsReleaseController {
           }),
         );
       }
+      candidateThisRun++;
       samples.push(sample.value);
-      const baselineEnd = Math.floor(record.driver.createdAt / 30_000) * 30_000,
-        baselineStart = baselineEnd - record.policy.baselineWindowMs;
-      let baselineThisRun = 0;
-      while (
-        baseline.length < record.policy.baselineWindowMs / 30_000 &&
-        baselineThisRun < 64
-      ) {
-        const start = baselineStart + baseline.length * 30_000;
-        const sample = await this.options.port.sampleMetrics({
-          identity: record.driver.prior.identity,
-          windowStart: start,
-          windowEnd: start + 30_000,
-        });
-        if (
-          !sample.ok || sample.value.coverage !== "complete" ||
-          !sameVps(sample.value.identity, record.driver.prior.identity)
-        ) break;
-        baseline.push(sample.value);
-        baselineThisRun++;
+    }
+    const baselineEnd = Math.floor(record.driver.createdAt / 30_000) * 30_000,
+      baselineStart = baselineEnd - record.policy.baselineWindowMs;
+    let baselineThisRun = 0;
+    while (
+      baseline.length < record.policy.baselineWindowMs / 30_000 &&
+      baselineThisRun < 64
+    ) {
+      const start = baselineStart + baseline.length * 30_000;
+      const input = {
+        identity: record.driver.prior.identity,
+        windowStart: start,
+        windowEnd: start + 30_000,
+      };
+      const sample = await this.options.port.sampleMetrics(input);
+      const progress = await this.options.metricsWork.progress(input);
+      if (progress.state === "collecting") {
+        baselineCollecting = true;
+        break;
       }
+      if (
+        !sample.ok || sample.value.coverage !== "complete" ||
+        !sameVps(sample.value.identity, record.driver.prior.identity)
+      ) break;
+      baseline.push(sample.value);
+      baselineThisRun++;
     }
     const next = this.patch(record, {
       monitoring: {
@@ -494,7 +499,9 @@ export class VpsReleaseController {
         samples,
       },
     });
-    if (samples.length < 60) return this.write(context, next);
+    if (samples.length < 60 || baselineCollecting) {
+      return this.write(context, next);
+    }
     const acceptance = evaluateVpsAcceptance(record.policy, baseline, samples);
     if (acceptance.objectiveFailure) {
       return this.write(
@@ -521,18 +528,35 @@ export class VpsReleaseController {
     const inference = await this.options.port.readInferenceProof(
       record.driver.candidate,
     );
+    const proofNow = this.options.clock.now();
+    if (proofNow > now + 30_000) {
+      return this.write(
+        context,
+        this.patch(next, {
+          monitoring: {
+            startedAt: proofNow,
+            lastObservedAt: proofNow,
+            continuous: false,
+            baseline,
+            samples: [],
+          },
+          acceptance: null,
+          inference: null,
+        }),
+      );
+    }
     if (
       !inference.ok || inference.value === null ||
       inference.value.revision !== record.request.revision ||
       inference.value.observedAt < record.createdAt ||
-      inference.value.observedAt > now
+      inference.value.observedAt > proofNow
     ) return this.write(context, this.patch(next, { acceptance }));
     return this.write(
       context,
       this.patch(next, {
         acceptance,
         inference: inference.value,
-        intent: { action: "accept", persistedAt: now },
+        intent: { action: "accept", persistedAt: proofNow },
       }),
     );
   }
@@ -545,6 +569,7 @@ export async function runVpsReleaseController(
   wait: (ms: number) => Promise<void>,
   deadline: number,
 ): Promise<PortResultV1<VpsCycleV1>> {
+  let cycleStartedAt = clock.now();
   let result = await controller.run();
   for (
     let count = 0;
@@ -556,10 +581,12 @@ export async function runVpsReleaseController(
       result.value.phase === "accepted" ||
       result.value.phase === "rolled_back" || result.value.phase === "failed"
     ) return result;
-    const before = clock.now();
-    if (before + 30_000 > deadline) return result;
-    await wait(30_000);
-    if (clock.now() <= before) return result;
+    const before = clock.now(), due = cycleStartedAt + 30_000;
+    if (due > deadline || before >= deadline) return result;
+    const remaining = Math.max(0, due - before);
+    if (remaining > 0) await wait(remaining);
+    if (remaining > 0 && clock.now() <= before) return result;
+    cycleStartedAt = clock.now();
     result = await controller.run();
   }
   return result;
