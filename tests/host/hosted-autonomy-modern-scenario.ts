@@ -434,7 +434,13 @@ export async function modernRecoveryScenario(
           return value;
         };
         try {
-          await assert.rejects(run);
+          if (fault === "deadline") {
+            const deferred = await run();
+            assert.equal(deferred.status, "skipped");
+            assert(deferred.actions.includes("matrix-history:deferred"));
+          } else {
+            await assert.rejects(run);
+          }
         } finally {
           f.rig.state.readReleaseAt = originalHistoryRead;
           f.clock.now = () => T0 + 60_000;
@@ -494,8 +500,9 @@ export async function modernRecoveryScenario(
         assert.equal(lateWrites, 0);
         continueCustody.resolve();
         const outcome = await lateRun;
-        assert(outcome.error instanceof Error);
-        assert.match(outcome.error.message, /deadline exhausted/);
+        assert.equal(outcome.error, null);
+        assert.equal(outcome.value?.status, "skipped");
+        assert(outcome.value?.actions.includes("matrix-history:deferred"));
         assert.equal(lateWrites, 0);
       } finally {
         continueCustody.resolve();
