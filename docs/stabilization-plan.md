@@ -251,7 +251,7 @@ Documentation checks apply to the refreshed planning deliverable, followed by re
 
 Before a major cutover or final acceptance, the integration owner obtains the required fresh read-only GPT-6.1 Sol/max audit against the exact candidate and evidence. Record local validation, source integration, installed runtime, target deployment and observed autonomous delivery separately in the sole ledger. Any remaining blocker names one owner and the next concrete action.
 
-Immediate continuation action: commit the owner-updated ledger and handoff after their applicable documentation checks, then publish the exact restored candidate on codex/stabilization-plan-gfb96206486 for ordinary deterministic CI without touching sentinel-supervisor, production pointers or preserved root work.
+Immediate continuation action: validate the owner's canonical preservation/publication update, commit only those canonical docs, and publish the existing codex/master-plan-gfa795549e5 branch by non-force push after exact expected-ref readback; ordinary deterministic CI, current shipping integration and installation/live acceptance stay separate, and sentinel-supervisor, production pointers and preserved root work remain untouched.
 
 Conditional goal sentence, usable only after that ownership and base reconciliation:
 
