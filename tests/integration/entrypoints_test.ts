@@ -176,8 +176,13 @@ Deno.test(
   "lifecycle: actual entrypoints drive discovery, work, review, merge, release promotion/acceptance and closure",
   async () => {
     const rig = await makeRepairRig("lifecycle", {
+      // Deno controller acceptance belongs to this non-VPS fixture target.
+      configOverrides: { repository: REPO_2 },
       github: {
-        candidateLifecycle: exactCandidateLifecycle({ head: SHA3 }),
+        candidateLifecycle: exactCandidateLifecycle({
+          head: SHA3,
+          repository: REPO_2,
+        }),
       },
     });
     try {
@@ -190,6 +195,7 @@ Deno.test(
       let state = await rig.snapshot();
       const work = state.work[0]!;
       assert.ok(work, "one work record");
+      assert.deepEqual(work.repository, REPO_2);
       assert.equal(work.nextStep, "review");
       assert.equal(work.wait?.reason, "review_pending");
       assert.equal(work.target.pr, 7);
@@ -206,7 +212,7 @@ Deno.test(
       // One durable reservation per independently admitted start.
       assert.equal(state.reservations.length, 2);
       assert.deepEqual(
-        state.reservations.map((r) => r.purpose),
+        state.reservations.map((r) => r.purpose).sort(),
         ["implementation", "review_request"],
       );
       assert.ok(
@@ -233,12 +239,19 @@ Deno.test(
       assert.equal(state.work[0]!.wait?.reason, "unavailable");
       assert.equal(state.releaseRequests.length, 1);
       const requestId = state.releaseRequests[0]!.id;
+      assert.deepEqual(state.releaseRequests[0]!.target.repository, REPO_2);
+      assert.ok(
+        state.reviews.every((review) =>
+          review.repository.name === REPO_2.name &&
+          review.repository.installationId === REPO_2.installationId
+        ),
+      );
       assert.equal(state.releaseRequests[0]!.revision, SHA3);
       assert.equal(state.releaseRequests[0]!.source.pullRequest, 7);
 
       // Release entrypoint WITHOUT a trusted resolver: the receipt capability
       // is unavailable, so the controller waits and never promotes.
-      const noResolver = await makeReleaseRig(rig.ctx);
+      const noResolver = await makeReleaseRig(rig.ctx, { repository: REPO_2 });
       const waiting = await noResolver.run();
       assert.ok(waiting.ok, JSON.stringify(waiting));
       if (waiting.ok) {
@@ -260,6 +273,7 @@ Deno.test(
       // to the exact accepted merged SHA: candidate/prior attestation, 204
       // promotion, post-effect identity proof, 30-minute window acceptance.
       const released = await makeReleaseRig(rig.ctx, {
+        repository: REPO_2,
         resolver: new ScriptedResolver(),
       });
       released.resolver!.outcome = {
@@ -293,6 +307,7 @@ Deno.test(
       assert.equal(released.promoteCalls(), 1, "one promotion");
       let records = await released.records();
       assert.equal(records.length, 1);
+      assert.deepEqual(records[0]!.repository, REPO_2);
       // A scheduled entrypoint keeps the active monitoring window alive and
       // completes all 60 required 30-second samples before returning.
       assert.equal(records[0]!.phase, "accepted");

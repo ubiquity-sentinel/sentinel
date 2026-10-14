@@ -22,6 +22,7 @@ import {
 import { makeRig, seededSnapshot, SHA4 } from "./loop-rig.ts";
 import { completedReceipt, deliveryRecord } from "./loop-review-fixtures.ts";
 import { exactOpenPr, positiveLifecycle } from "./loop-candidate-fixtures.ts";
+import { REPO_2 } from "../budget/helpers.ts";
 
 Deno.test("merge reconciliation rejects an observed merged head different from the reviewed head", async () => {
   const rig = await makeRig("mergehead", {
@@ -197,6 +198,7 @@ Deno.test("base refresh preserves merged own PR identity for guarded maintenance
 Deno.test("trusted merge survives a transient post-merge task read", async () => {
   const rig = await makeRig("merge-task-read", {
     summaries: false,
+    configOverrides: { repository: REPO_2 },
     github: {
       mergeOutcome: { outcome: "merged", head: SHA3, mergeSha: SHA2 },
       candidateLifecycle: {
@@ -206,8 +208,9 @@ Deno.test("trusted merge survives a transient post-merge task read", async () =>
     },
   });
   try {
-    const record = deliveryRecord(SHA3);
+    const record = deliveryRecord(SHA3, { repository: REPO_2 });
     const receipt = completedReceipt(7, SHA3, SHA1, {
+      repository: REPO_2,
       id: await reviewReceiptId(reviewOperationKey(7, SHA3, 1), SHA3),
     });
     const written = await rig.store.writeRepair(
@@ -271,6 +274,8 @@ Deno.test("trusted merge survives a transient post-merge task read", async () =>
     assert.equal(state.work[0].intent, null);
     assert.equal(state.releaseRequests.length, 1);
     const request = state.releaseRequests[0];
+    assert.deepEqual(request.target.repository, REPO_2);
+    assert.deepEqual(receipt.repository, record.repository);
     assert.equal(request.revision, SHA2);
     assert.deepEqual(request.source, {
       pullRequest: 7,
@@ -295,6 +300,7 @@ Deno.test("trusted merge survives a transient post-merge task read", async () =>
       hostedReleases: [],
       githubCooldowns: [],
       releases: [monitoredReleaseRecord(accepted.id, "accepted", {
+        repository: REPO_2,
         requestId: request.id,
         requestRevision: request.revision,
         candidate: { identity, buildTransactionId: "txn-merged" },

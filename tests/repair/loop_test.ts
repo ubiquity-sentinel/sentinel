@@ -29,11 +29,13 @@ import {
   summaryFixture,
 } from "./loop-rig.ts";
 import { exactOpenPr, positiveLifecycle } from "./loop-candidate-fixtures.ts";
+import { REPO_2 } from "../budget/helpers.ts";
 
 Deno.test(
   "acceptance: incident through exact merge, release request, acceptance and closure",
   async () => {
     const rig = await makeRig("lifecycle", {
+      configOverrides: { repository: REPO_2 },
       github: { candidateLifecycle: positiveLifecycle() },
     });
     try {
@@ -62,7 +64,7 @@ Deno.test(
       // implementation and the review request each charge the shared budget.
       assert.equal(state.reservations.length, 2);
       assert.deepEqual(
-        state.reservations.map((reservation) => reservation.purpose),
+        state.reservations.map((reservation) => reservation.purpose).sort(),
         ["implementation", "review_request"],
       );
       assert.ok(
@@ -167,6 +169,7 @@ Deno.test(
   "delivery: a cancelled release request parks the record with its reason",
   async () => {
     const rig = await makeRig("cancelledrelease", {
+      configOverrides: { repository: REPO_2 },
       github: { candidateLifecycle: positiveLifecycle() },
     });
     try {
@@ -486,6 +489,7 @@ Deno.test("closure failure retries closure only", async () => {
   // Closure applies to issue tasks; seed an issue work record (no incidents).
   const rig = await makeRig("closure", {
     summaries: false,
+    configOverrides: { repository: REPO_2 },
     github: {
       closeFailNext: true,
       candidateLifecycle: positiveLifecycle(),
@@ -501,7 +505,7 @@ Deno.test("closure failure retries closure only", async () => {
       updatedAt: T0,
       incidents: [],
       evidence: [],
-      work: [workRecord("issue-1")],
+      work: [workRecord("issue-1", { repository: REPO_2 })],
       reservations: [],
       reviews: [],
       replays: [],

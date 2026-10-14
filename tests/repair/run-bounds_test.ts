@@ -517,7 +517,11 @@ Deno.test(
     );
     const observed = state.work.find((work) => work.id === observing.id)!;
     assert.equal(observed.nextStep, "review");
-    assert.equal(observed.wait?.reason, "review_pending");
+    // The 95-minute jump exceeds this attempt's 20-minute settle bound.
+    // Recovery clears the dead wait; the cutoff forbids another review start.
+    assert.equal(observed.wait, null);
+    assert.equal(observed.counters.reviewRounds, 1);
+    assert.equal(rig.github.calls.includes("requestReview"), false);
   },
 );
 

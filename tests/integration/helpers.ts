@@ -291,8 +291,12 @@ export async function makeRepairRig(
   const budget = new RollingStartBudget({ clock, state: store, configs });
   const github = new FakeGithub({ baseSha: SHA1, ...options.github });
   const incidents = new FakeIncidents({
-    summaries: options.summaries === false ? [] : [summaryFixture()],
-    evidence: options.summaries === false ? null : evidenceFixture(),
+    summaries: options.summaries === false
+      ? []
+      : [{ ...summaryFixture(), repository: configs[0].repository }],
+    evidence: options.summaries === false
+      ? null
+      : { ...evidenceFixture(), repository: configs[0].repository },
   });
   const replay = new FakeReplay(options.replay);
   const model = new FakeModel({
@@ -464,6 +468,8 @@ export interface ReleaseRigV1 {
 }
 
 export interface ReleaseRigOptionsV1 {
+  /** Exact fixture target shared with the repair rig. */
+  repository?: RepositoryIdentityV1;
   /**
    * When omitted, the entrypoint injects UnavailableBuildReceiptResolver
    * (the production default): the controller waits and never promotes.
@@ -511,7 +517,7 @@ export function makeReleaseRig(
       clock,
       stateRead: store,
       stateWrite: store,
-      repository: REPO,
+      repository: options.repository ?? REPO,
       environment: "production",
       target: config,
       policy: stabilityPolicy(),
