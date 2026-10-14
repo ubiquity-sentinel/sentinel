@@ -12,6 +12,10 @@ Sentinel runs in GitHub Actions. Per the owner directive of 2026-10-07 (commit `
 
 Every development-triggered hosted end-to-end/runtime/supervisor dispatch, retry or rerun needs explicit user approval for that identified attempt after local preparation; earlier activation/recovery permissions do not authorize this task's next attempt. The scheduled autonomous dispatcher and the runtime's own retries are runtime behavior, not development-triggered attempts.
 
+## Source-only stabilization installer preparation
+
+The 2026-10-14 takeover implementation prepares a separate fixed stabilization transition for immutable candidate `2cf3a988313c12876faca8ff30fd85473073181c` from the exact healthy generation-74 revision `4baeaf67d9677a317bc37831486c075b143fe68f`. This is local controller preparation, not installation authority. Reuse the existing installer interfaces and native CI, ancestry, quiescence, prior-proof, expected-state and one-shot rollback gates; add no CLI, environment variable, credential, workflow input or persisted schema. Preserve all existing generation-75 retry constants and provenance as a distinct revision-bound transition. Changed live state must hold for reconciliation, not widen this transition. The primary records isolated module r28-stabilization-install in the stabilization handoff and integrates its source only after focused checks and an independent exact-delta audit. Publishing an installer-capable controller to sentinel-supervisor and each identified hosted attempt remain separately gated; release and the restricted bridge remain disabled/setup_only.
+
 ## Concurrent issue processing
 
 Use isolated concurrent issue workers across configured targets, one trusted state/integration coordinator and exclusive serialized merge/promotion ownership. Artificial hourly/weekly model-start, unfinished-PR, concurrent-review, review-drain and ordinary hourly-delay caps are lifted. GitHub/provider capacity and configured session/deadline safeguards still apply.
