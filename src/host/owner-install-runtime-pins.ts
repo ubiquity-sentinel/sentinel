@@ -260,6 +260,17 @@ export const OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_REVISION =
   "4baeaf67d9677a317bc37831486c075b143fe68f" as GitSha;
 export const OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_GENERATION =
   75;
+/**
+ * Fixed stabilization transition from the exact healthy generation 74 prior.
+ * This candidate is distinct from the legacy generation 75 retry above.
+ * Its failed generation 75 restores only this recorded prior once at 76.
+ */
+export const OWNER_DEVELOPMENT_INSTALL_STABILIZATION_PRIOR_REVISION =
+  "4baeaf67d9677a317bc37831486c075b143fe68f" as GitSha;
+export const OWNER_DEVELOPMENT_INSTALL_STABILIZATION_PRIOR_GENERATION = 74;
+export const OWNER_DEVELOPMENT_INSTALL_STABILIZATION_REVISION =
+  "c8d2e87468399abb54cc9d9a749ae7b400835bbb" as GitSha;
+export const OWNER_DEVELOPMENT_INSTALL_STABILIZATION_GENERATION = 75;
 /** Monotonic rollback target the failed generation 45 candidate rolled to. */
 export const OWNER_DEVELOPMENT_INSTALL_ROLLBACK_TARGET_GENERATION =
   OWNER_DEVELOPMENT_INSTALL_ASSIGN_FIRST_GENERATION + 2;

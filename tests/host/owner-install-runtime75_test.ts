@@ -386,21 +386,27 @@ Deno.test(
       ).status,
       "no_change",
     );
-    assert.equal(
-      planOwnerDevelopmentInstall(
-        releaseSnapshot({
-          runtime: runtimeRecord({
-            revision: MISMATCH_DISPOSITION_RUNTIME_REVISION,
-            generation: 74,
-            healthyProof: healthyProof(
-              MISMATCH_DISPOSITION_RUNTIME_REVISION,
-              74,
-            ),
-          }),
+    const stabilizationInstall = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: MISMATCH_DISPOSITION_RUNTIME_REVISION,
+          generation: 74,
+          healthyProof: healthyProof(
+            MISMATCH_DISPOSITION_RUNTIME_REVISION,
+            74,
+          ),
         }),
-        NOW,
-      ).status,
-      "no_change",
+      }),
+      NOW,
     );
+    assert.equal(stabilizationInstall.status, "install");
+    if (stabilizationInstall.status !== "install") {
+      throw new Error("expected stabilization install");
+    }
+    assert.equal(
+      stabilizationInstall.move.nextRevision,
+      "c8d2e87468399abb54cc9d9a749ae7b400835bbb",
+    );
+    assert.equal(stabilizationInstall.move.nextGeneration, 75);
   },
 );

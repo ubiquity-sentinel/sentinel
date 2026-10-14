@@ -830,7 +830,7 @@ Deno.test(
     );
     assert.equal(dispositionRollback.move.nextGeneration, 75);
 
-    // A healthy generation 74 completes the owner development installation.
+    // A healthy generation 74 selects the separately pinned stabilization runtime.
     const dispositionComplete = planOwnerDevelopmentInstall(
       releaseSnapshot({
         runtime: runtimeRecord({
@@ -845,7 +845,15 @@ Deno.test(
       }),
       NOW,
     );
-    assert.equal(dispositionComplete.status, "no_change");
+    assert.equal(dispositionComplete.status, "install");
+    if (dispositionComplete.status !== "install") {
+      throw new Error("expected stabilization install");
+    }
+    assert.equal(
+      dispositionComplete.move.nextRevision,
+      "c8d2e87468399abb54cc9d9a749ae7b400835bbb",
+    );
+    assert.equal(dispositionComplete.move.nextGeneration, 75);
   },
 );
 
