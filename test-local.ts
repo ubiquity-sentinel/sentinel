@@ -45,6 +45,17 @@ const steps: { name: string; args: string[] }[] = [
   { name: "fmt", args: ["fmt", "--check"] },
   { name: "lint", args: ["lint"] },
   {
+    name: "size",
+    args: [
+      "run",
+      "--frozen",
+      "--allow-read=.",
+      "--allow-run=git",
+      "ops/code-size.ts",
+      "check",
+    ],
+  },
+  {
     name: "check",
     args: [
       "check",
@@ -75,6 +86,7 @@ const steps: { name: string; args: string[] }[] = [
     name: "test",
     args: [
       "test",
+      "--ignore=tests/replay/dependency-cache_test.ts",
       `--allow-read=.,/usr,/bin,${Deno.execPath()}`,
       "--allow-run",
       "--allow-write",
@@ -89,6 +101,17 @@ const steps: { name: string; args: string[] }[] = [
       "tests/repair/",
       "tests/release/",
       "tests/integration/",
+    ],
+  },
+  {
+    name: "dependency-cache",
+    args: [
+      "test",
+      `--allow-read=.,/usr,/bin,${Deno.execPath()},/opt/node-lts/bin/node,/tmp`,
+      "--allow-run",
+      "--allow-write=/tmp",
+      "--allow-env=PATH,NODE_V8_COVERAGE",
+      "tests/replay/dependency-cache_test.ts",
     ],
   },
 ];

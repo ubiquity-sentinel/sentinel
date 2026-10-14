@@ -22,22 +22,40 @@ permissions:
 jobs:
   test-local:
     runs-on: ubuntu-latest
+    # Bounded like every other Sentinel job. The full harness takes ~15 minutes
+    # on a hosted Linux runner; without a bound a wedged runner keeps this
+    # REQUIRED check "in progress" for the six-hour workflow default, which
+    # silently blocks every development delivery and the owner-install
+    # verification that requires a completed successful check on an exact
+    # revision (observed 2026-09-17: one run sat in the harness step for 57
+    # minutes and had to be cancelled and re-run by hand). Three times the
+    # observed duration leaves no false timeout.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+        with:
+          bun-version: 1.4.0
       - name: Install hermetic harness system dependencies
         run: |
           # The replay isolation policy resolves fixed system tools, so the
-          # runner needs bwrap and a real (non-symlink) /usr/local/bin/deno.
+          # runner needs bwrap and real (non-symlink) Deno, Node and Bun
+          # binaries at the dependency cache's fixed /usr/local/bin paths.
           sudo apt-get update
           sudo apt-get install -y bubblewrap
           sudo install -m755 "$(command -v deno)" /usr/local/bin/deno
+          sudo install -m755 "$(command -v node)" /usr/local/bin/node
+          sudo install -m755 "$(command -v bun)" /usr/local/bin/bun
           # CI-only: this disposable Ubuntu runner must allow unprivileged
           # user namespaces for bwrap. Never change this on a shared host.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Credential-free local harness
         run: |
           export PATH="/usr/local/bin:$PATH"
-          /usr/local/bin/deno task test:local
+          /usr/local/bin/deno run --frozen --allow-read=.,"$GITHUB_EVENT_PATH" --allow-run=git,deno --allow-env=PATH,GITHUB_EVENT_NAME,GITHUB_EVENT_PATH,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_WORKFLOW_SHA ops/native-ci-proof.ts

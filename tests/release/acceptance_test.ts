@@ -15,303 +15,31 @@
 // restart after durable intent. No real network, model, or production state
 // branch is touched.
 import assert from "node:assert/strict";
-
-import type { PortResultV1 } from "../../src/contracts/ports.ts";
-import type { ReleaseRecordV1 } from "../../src/contracts/release.ts";
 import { parseReleaseRecordV1 } from "../../src/contracts/release.ts";
-import type {
-  DeploymentIdentityV1,
-  MetricsSampleV1,
-} from "../../src/contracts/shared.ts";
-import type { StabilityPolicyV1 } from "../../src/contracts/repository-config.ts";
 import type { ReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
-import {
-  ReleaseController,
-  type ReleaseControllerOptions,
-  type ReleaseCycleResultV1,
-} from "../../src/release/controller.ts";
-import { portOk } from "../../src/contracts/ports.ts";
-import { DenoReleaseRESTClient } from "../../src/release/port.ts";
-import {
-  buildAcceptanceResult,
-  evaluateAcceptance,
-  nextAlignedWindowStart,
-} from "../../src/release/acceptance.ts";
+import { nextAlignedWindowStart } from "../../src/release/acceptance.ts";
 import { RELEASE_SAMPLE_INTERVAL_MS } from "../../src/release/config.ts";
 import {
-  asTransport,
+  acceptedEvent,
   DEP_0,
   DEP_1,
   DEP_X,
-  type GitCtxV1,
-  installREST,
-  logRoute,
   LOGS_RE,
-  makeGitCtx,
-  MANAGED_URL,
   PROMOTE_RE,
-  promoteRoute,
-  publishRepairRequest,
-  requestFor,
-  ScriptedResolver,
-  ScriptedTransport,
   stabilityPolicy,
   storeAt,
-  T0,
   targetConfig,
-  TestClock,
+  terminalEvent,
 } from "./helpers.ts";
-
-interface ScenarioV1 {
-  ctx: GitCtxV1;
-  transport: ScriptedTransport;
-  clock: TestClock;
-  controller: ReleaseController;
-  resolver: ScriptedResolver;
-  policy: StabilityPolicyV1;
-  records(): Promise<ReleaseRecordV1[]>;
-  cleanup(): Promise<void>;
-}
-
-async function makeScenario(
-  overrides: {
-    logs?: Parameters<typeof logRoute>[1];
-    policy?: StabilityPolicyV1;
-    deployments?: DeploymentIdentityV1[];
-    promote?:
-      | { target: DeploymentIdentityV1; lost?: boolean; reject?: boolean }
-      | null;
-    request?: ReturnType<typeof requestFor>;
-    resolver?: ScriptedResolver;
-  } = {},
-): Promise<ScenarioV1> {
-  const ctx = await makeGitCtx("acceptance");
-  const env = ctx.env;
-  void env;
-  const config = targetConfig();
-  const transport = new ScriptedTransport(config);
-  const deployments = overrides.deployments ?? [DEP_0, DEP_1];
-  installREST(transport, deployments);
-  transport.health();
-  if (overrides.logs) {
-    logRoute(transport, overrides.logs);
-  }
-  const promote = overrides.promote === undefined
-    ? { target: DEP_1 }
-    : overrides.promote;
-  if (promote !== null) {
-    promoteRoute(transport, promote.target, promote);
-  }
-  const clock = new TestClock(T0);
-  const resolver = overrides.resolver ?? new ScriptedResolver();
-  const policy = overrides.policy ?? stabilityPolicy();
-  const state = storeAt(ctx, "controller", "release");
-  const request = overrides.request ?? requestFor();
-  const published = await publishRepairRequest(ctx, request);
-  assert.ok(published.length === 40, "repair request must be published");
-  const options: ReleaseControllerOptions = {
-    repository: request.target.repository,
-    environment: request.target.environment,
-    target: config,
-    policy,
-    stateRead: state,
-    stateWrite: state,
-    deno: portClient(transport, config, clock),
-    resolver,
-    clock,
-  };
-  const controller = new ReleaseController(options);
-  return {
-    ctx,
-    transport,
-    clock,
-    controller,
-    resolver,
-    policy,
-    records: async () => {
-      const store = storeAt(ctx, "read", "release");
-      const read = await store.readRelease();
-      if (!read.ok || read.value.status !== "found") return [];
-      return read.value.snapshot.releases;
-    },
-    cleanup: () => ctx.cleanup(),
-  };
-}
-
-function portClient(
-  transport: ScriptedTransport,
-  config: ReturnType<typeof targetConfig>,
-  clock: TestClock,
-): DenoReleaseRESTClient {
-  return new DenoReleaseRESTClient({
-    transport: asTransport(transport),
-    auth: { bearerToken: () => Promise.resolve(portOk("deno-token")) },
-    config,
-    clock,
-  });
-}
-
-function assertCycle(
-  result: PortResultV1<ReleaseCycleResultV1>,
-  status: ReleaseCycleResultV1["status"],
-): void {
-  assert.ok(result.ok, "expected a cycle result");
-  if (!result.ok) return;
-  assert.equal(result.value.status, status);
-}
-
-async function promoteToMonitoring(
-  scene: ScenarioV1,
-): Promise<ReleaseRecordV1> {
-  assertCycle(await scene.controller.run(), "advanced"); // record created
-  scene.clock.advance(1);
-  assertCycle(await scene.controller.run(), "advanced"); // promoting → monitoring
-  const records = await scene.records();
-  if (records.length !== 1) throw new Error("expected one record");
-  assert.equal(records[0].phase, "monitoring");
-  return records[0];
-}
-
-/**
- * Steps the monitoring window one slot per run: each run's observation is at
- * most one interval late, so the acceptance window is continuously sampled
- * (no unobserved gap). Returns the number of slots actually persisted.
- */
-async function stepSlots(
-  scene: ScenarioV1,
-  count: number,
-): Promise<number> {
-  const records = await scene.records();
-  const record = records[0];
-  if (record.monitoring.startedAt === null) {
-    throw new Error("missing window start");
-  }
-  const startedAt = record.monitoring.startedAt;
-  for (let k = 0; k < count; k++) {
-    // Slot k ends at startedAt + (k+1)*interval; it is due only after the
-    // trusted log lag has elapsed. Exactly one slot is due per run.
-    scene.clock.at(
-      startedAt + (k + 1) * RELEASE_SAMPLE_INTERVAL_MS + 5_000 + 1,
-    );
-    const result = await scene.controller.run();
-    assert.ok(result.ok, "expected a cycle result");
-    if (result.ok) assert.equal(result.value.status, "persisted");
-  }
-  const after = await scene.records();
-  return after[0].monitoring.samples;
-}
-
-/**
- * Persists `slotCount` candidate slots plus the complete baseline through the
- * REAL metrics port (exact windows, exact identities, real cohort counts) in
- * one deterministic record, exactly as the controller's per-slot runs would
- * have persisted them, then lets one controller run collect the final slot
- * and evaluate the window. This keeps the full-window tests bounded while
- * every sample remains real port evidence validated by the contract parser.
- */
-async function seedMonitorWindow(
-  scene: ScenarioV1,
-  slotCount: number,
-): Promise<void> {
-  const records = await scene.records();
-  const record = records[0];
-  if (record.monitoring.startedAt === null) {
-    throw new Error("missing window start");
-  }
-  const startedAt = record.monitoring.startedAt;
-  const client = portClient(scene.transport, targetConfig(), scene.clock);
-  const policy = scene.policy;
-  const interval = RELEASE_SAMPLE_INTERVAL_MS;
-  const lag = targetConfig().logsLagMs;
-  const now = startedAt + (slotCount + 1) * interval + lag + 1;
-  scene.clock.at(now);
-
-  const baseline: MetricsSampleV1[] = [];
-  const baselineStart = record.prior.verifiedHealthyAt -
-    policy.baselineWindowMs;
-  const expectedBaseline = policy.baselineWindowMs / interval;
-  for (let k = 0; k < expectedBaseline; k++) {
-    const sample = await client.sampleMetrics({
-      baseUrl: MANAGED_URL,
-      metricsPath: "/health",
-      identity: record.prior.identity,
-      windowStart: baselineStart + k * interval,
-      windowEnd: baselineStart + (k + 1) * interval,
-      domain: "ai.ubq.fi",
-    });
-    assert.ok(sample.ok, "baseline slot must sample through the port");
-    if (!sample.ok) throw new Error("baseline slot unavailable");
-    baseline.push(sample.value);
-  }
-  const samples: MetricsSampleV1[] = [];
-  for (let k = 0; k < slotCount; k++) {
-    const sample = await client.sampleMetrics({
-      baseUrl: MANAGED_URL,
-      metricsPath: "/health",
-      identity: record.candidate.identity,
-      windowStart: startedAt + k * interval,
-      windowEnd: startedAt + (k + 1) * interval,
-      domain: "ai.ubq.fi",
-    });
-    assert.ok(sample.ok, "candidate slot must sample through the port");
-    if (!sample.ok) throw new Error("candidate slot unavailable");
-    samples.push(sample.value);
-  }
-
-  const evaluation = evaluateAcceptance(policy, baseline, samples);
-  const acceptance = buildAcceptanceResult(
-    record.candidate.identity,
-    baseline,
-    samples,
-    evaluation,
-  );
-  const seeded = parseReleaseRecordV1({
-    ...record,
-    monitoring: {
-      startedAt,
-      samples: slotCount,
-      continuous: true,
-      lastSampleAt: now,
-    },
-    acceptance,
-    updatedAt: now,
-  });
-  const store = storeAt(scene.ctx, "seed", "release");
-  const read = await store.readRelease();
-  assert.ok(read.ok, "release state must be readable");
-  if (!read.ok) throw new Error("release state unavailable");
-  if (read.value.status !== "found") throw new Error("missing release state");
-  const priorSnapshot = read.value.snapshot;
-  const next: ReleaseStateSnapshotV1 = {
-    version: "v1",
-    kind: "release_state_snapshot",
-    stateHead: read.value.head,
-    sequence: priorSnapshot.sequence + 1,
-    updatedAt: now,
-    releases: priorSnapshot.releases.map((entry) =>
-      entry.id === seeded.id ? seeded : entry
-    ),
-    hostedRuntimes: priorSnapshot.hostedRuntimes,
-    hostedReleases: priorSnapshot.hostedReleases,
-    githubCooldowns: priorSnapshot.githubCooldowns,
-  };
-  const written = await store.writeRelease(next, read.value.head);
-  assert.ok(written.ok, "seeded window must be applied");
-  if (written.ok) assert.equal(written.value.status, "applied");
-}
-
-/**
- * Completes the acceptance window: seeds `slotCount - 1` persisted slots
- * (continuous, real port evidence), then one controller run collects the
- * final due slot and evaluates the window.
- */
-async function completeWindow(
-  scene: ScenarioV1,
-  slotCount = 60,
-): Promise<PortResultV1<ReleaseCycleResultV1>> {
-  await seedMonitorWindow(scene, slotCount - 1);
-  return scene.controller.run();
-}
+import {
+  assertCycle,
+  completeWindow,
+  makeRestartController,
+  makeScenario,
+  promoteToMonitoring,
+  seedMonitorWindow,
+  stepSlots,
+} from "./acceptance-helpers.ts";
 
 Deno.test("checkpoint: discovery binds exactly one build and persists candidate+prior", async () => {
   const scene = await makeScenario({
@@ -460,6 +188,7 @@ Deno.test(
       const written = await store.writeRelease(snapshot, read.value.head);
       assert.ok(written.ok, "null-counter fixture must be applied");
 
+      scene.clock.advance(RELEASE_SAMPLE_INTERVAL_MS);
       assertCycle(await scene.controller.run(), "advanced");
       const records = await scene.records();
       assert.equal(records[0].phase, "failed");
@@ -553,14 +282,14 @@ Deno.test("checkpoint: an interrupted monitor resets continuity and the observat
     if (firstStart === null) throw new Error("missing start");
     // One healthy slot persists, then the log source becomes unreadable for
     // the next slot: continuity restarts and nothing is reconstructed.
-    scene.clock.at(firstStart + 35_000);
+    scene.clock.at(firstStart + 65_000);
     assertCycle(await scene.controller.run(), "persisted");
     let records = await scene.records();
     assert.equal(records[0].monitoring.samples, 1);
     assert.notEqual(records[0].monitoring.startedAt, null);
     const secondStart = records[0].monitoring.startedAt!;
     scene.transport.logsReject = true;
-    scene.clock.at(secondStart + 65_000);
+    scene.clock.at(secondStart + 95_000);
     assertCycle(await scene.controller.run(), "persisted");
     records = await scene.records();
     assert.equal(records[0].monitoring.samples, 0);
@@ -619,7 +348,7 @@ Deno.test("checkpoint: managed pass plus Cloudflare-identified 403 warns only", 
     await promoteToMonitoring(scene);
     scene.transport.customStatus = 403;
     scene.transport.customCloudflare = true;
-    scene.clock.advance(35_001);
+    scene.clock.advance(65_001);
     const result = await scene.controller.run();
     assert.ok(result.ok);
     if (result.ok) {
@@ -764,6 +493,89 @@ Deno.test("checkpoint: consecutive slots persist their exact windows with contin
   }
 });
 
+Deno.test(
+  "checkpoint: a future adjacent terminal is revisited without losing the slot",
+  async () => {
+    const scene = await makeScenario();
+    try {
+      const record = await promoteToMonitoring(scene);
+      const startedAt = record.monitoring.startedAt;
+      if (startedAt === null) throw new Error("missing window start");
+      const interval = RELEASE_SAMPLE_INTERVAL_MS;
+      const lag = targetConfig().logsLagMs;
+
+      scene.transport.any(
+        "GET",
+        new RegExp("^/v2/apps/[^/]+/logs$"),
+        (url) => {
+          const revisionId = url.searchParams.get("revision_id");
+          const start = Date.parse(url.searchParams.get("start") ?? "0");
+          if (revisionId !== DEP_1.revisionId) {
+            return {
+              kind: "response",
+              status: 200,
+              body: JSON.stringify({ logs: [], next_cursor: null }),
+            };
+          }
+          const slot = Math.round((start - startedAt) / interval);
+          const events: { at: number; message: string }[] = [];
+          if (slot >= 0 && slot <= 3) {
+            if (slot < 3) {
+              const at = startedAt + (slot + 1) * interval - 1;
+              events.push({
+                at,
+                message: acceptedEvent({
+                  requestId: `boundary-${slot}`,
+                  identity: DEP_1,
+                  timestamp: at,
+                }),
+              });
+            }
+            if (slot > 0) {
+              const at = startedAt + slot * interval + 10_000;
+              events.push({
+                at,
+                message: terminalEvent({
+                  requestId: `boundary-${slot - 1}`,
+                  identity: DEP_1,
+                  timestamp: at,
+                }),
+              });
+            }
+          }
+          const visible = events.filter((event) =>
+            event.at + lag <= scene.clock.now()
+          );
+          return {
+            kind: "response",
+            status: 200,
+            body: JSON.stringify({
+              logs: visible.map((event) => ({
+                timestamp: new Date(event.at).toISOString(),
+                level: "info",
+                message: event.message,
+                revision_id: DEP_1.revisionId,
+              })),
+              next_cursor: null,
+            }),
+          };
+        },
+      );
+
+      for (let slot = 0; slot < 3; slot++) {
+        scene.clock.at(startedAt + (slot + 2) * interval + lag + 1);
+        assertCycle(await scene.controller.run(), "persisted");
+      }
+      const after = await scene.records();
+      assert.equal(after[0].monitoring.startedAt, startedAt);
+      assert.equal(after[0].monitoring.samples, 3);
+      assert.equal(after[0].acceptance?.samples.length, 3);
+    } finally {
+      await scene.cleanup();
+    }
+  },
+);
+
 Deno.test("checkpoint: an unobserved monitoring gap restarts the window, historical slots are never accepted", async () => {
   const scene = await makeScenario({
     logs: { accept: 100, fails: { fiveXx: 1 } },
@@ -772,8 +584,8 @@ Deno.test("checkpoint: an unobserved monitoring gap restarts the window, histori
     const record = await promoteToMonitoring(scene);
     const startedAt = record.monitoring.startedAt;
     if (startedAt === null) throw new Error("missing start");
-    // Slot 0 is due after its window end plus the trusted lag; collect it.
-    scene.clock.at(startedAt + 35_000);
+    // Slot 0 is due after its following window and the trusted lag; collect it.
+    scene.clock.at(startedAt + 65_000);
     assertCycle(await scene.controller.run(), "persisted");
     let records = await scene.records();
     assert.equal(records[0].monitoring.samples, 1);
@@ -782,14 +594,14 @@ Deno.test("checkpoint: an unobserved monitoring gap restarts the window, histori
     // than one interval late, so two slots are overdue — an unobserved gap.
     // The window must restart fresh; the historical slot telemetry must never
     // be queried or accepted as continuous coverage.
-    scene.clock.at(startedAt + 95_000);
+    scene.clock.at(startedAt + 125_000);
     assertCycle(await scene.controller.run(), "persisted");
     records = await scene.records();
     assert.equal(records[0].monitoring.samples, 0);
     assert.notEqual(records[0].monitoring.startedAt, startedAt);
     assert.equal(
       records[0].monitoring.startedAt,
-      nextAlignedWindowStart(RELEASE_SAMPLE_INTERVAL_MS, startedAt + 95_000),
+      nextAlignedWindowStart(RELEASE_SAMPLE_INTERVAL_MS, startedAt + 125_000),
     );
     assert.equal(records[0].acceptance, null);
     assert.equal(
@@ -813,7 +625,7 @@ Deno.test("checkpoint: a degraded managed health sample never advances the accep
     // The candidate identity serves 200 with exact identity headers but the
     // required body marker is missing: the managed sample is NOT healthy.
     scene.transport.managedBodyMissing = true;
-    scene.clock.at(startedAt + 35_000);
+    scene.clock.at(startedAt + 65_000);
     assertCycle(await scene.controller.run(), "persisted");
     const records = await scene.records();
     assert.equal(records[0].monitoring.samples, 0);
@@ -838,7 +650,7 @@ Deno.test("checkpoint: missing baseline telemetry persists explicit insufficient
     const record = await promoteToMonitoring(scene);
     const startedAt = record.monitoring.startedAt;
     if (startedAt === null) throw new Error("missing start");
-    scene.clock.at(startedAt + 35_000);
+    scene.clock.at(startedAt + 65_000);
     const result = await scene.controller.run(); // must resolve, never throw
     assert.ok(result.ok, "the missing baseline must not crash the run");
     if (!result.ok) return;
@@ -916,19 +728,3 @@ Deno.test("checkpoint: any other custom-domain failure blocks acceptance", async
     await scene.cleanup();
   }
 });
-
-function makeRestartController(scene: ScenarioV1): ReleaseController {
-  const config = targetConfig();
-  const state = storeAt(scene.ctx, "restart", "release");
-  return new ReleaseController({
-    repository: { owner: "ubiquity", name: "ai.ubq.fi", installationId: 7 },
-    environment: "production",
-    target: config,
-    policy: stabilityPolicy(),
-    stateRead: state,
-    stateWrite: state,
-    deno: portClient(scene.transport, config, scene.clock),
-    resolver: scene.resolver,
-    clock: scene.clock,
-  });
-}

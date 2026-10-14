@@ -52,6 +52,8 @@ import {
   UnavailableBuildReceiptResolver,
 } from "./release/resolver.ts";
 
+import { portError } from "./contracts/ports.ts";
+
 export interface ReleaseEntrypointDepsV1 {
   clock: Clock;
   /** Read-only repair + release view (open release requests live on the
@@ -80,6 +82,44 @@ export interface ReleaseEntrypointDepsV1 {
    * trusted host capability and carries no release or state authority.
    */
   wait?: (durationMs: number) => Promise<void>;
+}
+
+/** Explicit release-role VPS entrypoint; direct startup still has no promotion authority. */
+export type VpsReleaseEntrypointDepsV1 =
+  & import("./release/vps-controller.ts").VpsControllerOptionsV1
+  & {
+    wait(durationMs: number): Promise<void>;
+    deadline: number;
+  };
+
+export async function runVpsReleaseEntrypoint(
+  deps: VpsReleaseEntrypointDepsV1,
+): Promise<PortResultV1<import("./release/vps-controller.ts").VpsCycleV1>> {
+  const { VpsReleaseController, runVpsReleaseController } = await import(
+    "./release/vps-controller.ts"
+  );
+  if (
+    !Number.isSafeInteger(deps.deadline) || deps.deadline <= deps.clock.now() ||
+    typeof deps.wait !== "function"
+  ) {
+    return portError("invalid", "VPS release entrypoint deadline is invalid");
+  }
+  const controller = new VpsReleaseController(deps);
+  const result = await runVpsReleaseController(
+    controller,
+    deps.clock,
+    deps.wait,
+    deps.deadline,
+  );
+  if (
+    result.ok &&
+    (result.value.phase === "rolled_back" || result.value.phase === "failed") &&
+    deps.clock.now() < deps.deadline
+  ) {
+    // The existing controller settles the committed terminal disposition on its next step.
+    return controller.run();
+  }
+  return result;
 }
 
 /**
@@ -159,8 +199,11 @@ async function nextSampleDelay(
   if (record?.monitoring.startedAt === null || record === undefined) {
     return null;
   }
+  // The next candidate slot is sampled only after the following adjacent
+  // slot has also passed the source lag, allowing boundary-spanning cohorts
+  // to be correlated before the slot becomes durable acceptance evidence.
   const nextDueAt = record.monitoring.startedAt +
-    (record.monitoring.samples + 1) * RELEASE_SAMPLE_INTERVAL_MS + logsLagMs;
+    (record.monitoring.samples + 2) * RELEASE_SAMPLE_INTERVAL_MS + logsLagMs;
   // A zero/negative delay means the state became due while it was being read;
   // yield one millisecond before retrying so the entrypoint cannot busy-loop.
   return Math.max(1, nextDueAt - now);

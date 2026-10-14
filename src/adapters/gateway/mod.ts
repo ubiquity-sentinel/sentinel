@@ -81,3 +81,7 @@ export {
   type GatewayReplayCompositionOptionsV1,
   type ReplayFixtureTestIdentityV1,
 } from "./replay-composition.ts";
+export type {
+  GatewayCaptureBindingReaderV1,
+  GatewayCaptureBindingV1,
+} from "./capture-binding.ts";

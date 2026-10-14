@@ -1,7 +1,8 @@
 /**
- * m04-repair selection tests: the frozen plan priority order, WIP cap,
- * dependency and wait/terminal/blocked skipping, plus stable repo/source
- * tie-breaks. Pure functions only; no ports, no Git, no model calls.
+ * m04-repair selection tests: the frozen plan priority order, unfinished-PR
+ * accounting, dependency and wait/terminal/blocked skipping, plus stable
+ * repo/source tie-breaks. Pure functions only; no ports, no Git, no model
+ * calls.
  */
 import assert from "node:assert/strict";
 
@@ -9,10 +10,19 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
+  countUnfinishedPullRequests,
+  hasPublishedIdentity,
   isEligible,
-  MAX_UNFINISHED_PRS,
   rankEligibleWork,
+  rankReviewDrain,
+  RETIRED_MERGED_MESSAGE,
 } from "../../src/repair/selection.ts";
+import {
+  applyHostedRetirements,
+  HOSTED_AUTONOMY_RETIRED,
+  hostedIssueKey,
+  planHostedRetirements,
+} from "../../ops/hosted-autonomy.ts";
 import { SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
 import { repairConfigs } from "./helpers.ts";
 
@@ -36,6 +46,8 @@ function snapshot(
     replays: [],
     releaseRequests: [],
     githubCooldowns: [],
+    attemptMemory: [],
+    lessons: [],
     ...extra,
   };
 }
@@ -256,13 +268,13 @@ Deno.test("selection: waiting, blocked, terminal and dependency records are skip
   assert.equal(ranked.skipped[dependent.id], "dependency");
 });
 
-Deno.test("selection: WIP cap skips fresh publications at three unfinished PRs", () => {
+Deno.test("selection: fresh publications are admitted despite three unfinished PRs", () => {
   const fresh = work("issue-1", {
     source: { kind: "issue", id: "1", revision: SHA2 },
     classification: { severity: "P2", priority: 9 },
   });
   const prs = Array.from(
-    { length: MAX_UNFINISHED_PRS },
+    { length: 3 },
     (_, index) =>
       work(`issue-${index + 10}`, {
         source: { kind: "issue", id: `${index + 10}`, revision: SHA2 },
@@ -282,8 +294,9 @@ Deno.test("selection: WIP cap skips fresh publications at three unfinished PRs",
     repairConfigs(),
     NOW,
   );
-  assert.deepEqual(ranked.ordered, []);
-  assert.equal(ranked.skipped[fresh.id], "wip");
+  assert.deepEqual(ranked.ordered, [fresh.id]);
+  assert.equal(ranked.skipped[fresh.id], undefined);
+  for (const pr of prs) assert.equal(ranked.skipped[pr.id], "waiting");
 });
 
 Deno.test("selection: an existing-PR correction is never WIP-skipped", () => {
@@ -300,7 +313,7 @@ Deno.test("selection: an existing-PR correction is never WIP-skipped", () => {
     },
   });
   const prs = Array.from(
-    { length: MAX_UNFINISHED_PRS },
+    { length: 3 },
     (_, index) =>
       work(`issue-${index + 10}`, {
         source: { kind: "issue", id: `${index + 10}`, revision: SHA2 },
@@ -323,14 +336,14 @@ Deno.test("selection: an existing-PR correction is never WIP-skipped", () => {
   assert.deepEqual(
     ranked.ordered,
     [correction.id],
-    "the correction of an already-owned PR remains eligible at the cap",
+    "the correction of an already-owned PR remains eligible",
   );
   assert.equal(ranked.skipped[correction.id], undefined);
 });
 
 // ---------------------------------------------------------------------------
 // M15 V1 candidate state: candidate presence alone never excludes a record.
-// WIP, dependency, terminal/blocked and wait rules still apply to candidates.
+// Dependency, terminal/blocked and wait rules still apply to candidates.
 // ---------------------------------------------------------------------------
 
 const CANDIDATE_REF = `refs/heads/sentinel-candidates/${"ab".repeat(32)}`;
@@ -413,9 +426,9 @@ Deno.test("selection: candidate state alone never excludes an eligible record", 
   }
 });
 
-Deno.test("selection: candidate records still obey WIP, dependency, wait and terminal rules", () => {
+Deno.test("selection: candidate records still obey dependency, wait and terminal rules", () => {
   const candidatePrs = Array.from(
-    { length: MAX_UNFINISHED_PRS },
+    { length: 3 },
     (_, index) =>
       candidateWork(`candidate-pr-${index}`, {
         source: { kind: "issue", id: `p${index}`, revision: SHA2 },
@@ -457,14 +470,18 @@ Deno.test("selection: candidate records still obey WIP, dependency, wait and ter
     blocked,
   ]);
   const ranked = rankEligibleWork(snap, repairConfigs(), NOW);
-  assert.deepEqual(ranked.ordered, []);
+  assert.deepEqual(
+    ranked.ordered,
+    [fresh.id],
+    "an unfinished candidate PR never gates an unrelated fresh record",
+  );
   for (const record of candidatePrs) {
     assert.equal(ranked.skipped[record.id], "waiting", record.id);
   }
   assert.equal(
     ranked.skipped[fresh.id],
-    "wip",
-    "three unfinished candidate PRs still occupy the cap",
+    undefined,
+    "three unfinished candidate PRs do not occupy any admission cap",
   );
   assert.equal(
     ranked.skipped[dependent.id],
@@ -475,3 +492,518 @@ Deno.test("selection: candidate records still obey WIP, dependency, wait and ter
   assert.equal(ranked.skipped[done.id], "terminal");
   assert.equal(ranked.skipped[blocked.id], "blocked");
 });
+
+// ---------------------------------------------------------------------------
+// Retired PR WIP: the EXACT hosted retirement disposition — source issue
+// closed, pull request definitively closed unmerged, parked by
+// applyHostedRetirements with kind `other`, the static retirement message and
+// intent/wait cleared — no longer occupies one of the three unfinished-PR
+// slots. Every other blocked, open or waiting pull request still does.
+// ---------------------------------------------------------------------------
+
+function prRecord(
+  id: string,
+  issueNumber: number,
+  pr: number,
+  overrides: Record<string, unknown> = {},
+): WorkRecordV1 {
+  return work(id, {
+    source: { kind: "issue", id: String(issueNumber), revision: SHA2 },
+    related: { incidentId: null, issueNumber },
+    classification: { severity: "P2", priority: 9 },
+    target: {
+      base: SHA1,
+      branch: `sentinel/repair/${id}`,
+      checkpoint: null,
+      head: SHA2,
+      pr,
+    },
+    nextStep: "review",
+    wait: { reason: "review_pending", since: T0, until: T0 + 3_600_000 },
+    counters: { attempts: 1, retries: 0, reviewRounds: 1 },
+    ...overrides,
+  });
+}
+
+function freshIssue(id: string, issueNumber: number): WorkRecordV1 {
+  return work(id, {
+    source: { kind: "issue", id: String(issueNumber), revision: SHA2 },
+    related: { incidentId: null, issueNumber },
+    classification: { severity: "P2", priority: 9 },
+  });
+}
+
+Deno.test(
+  "retired PR WIP: exact retirements stop consuming the cap while a merged unaccepted PR still does",
+  () => {
+    const ai120 = prRecord("issue-ubiquity-ai.ubq.fi-120", 120, 375);
+    const sentinel61 = prRecord("issue-ubiquity-sentinel-61", 61, 63);
+    // ai#264 / PR393: human-merged but unaccepted, so it is NOT the retirement
+    // disposition and must keep occupying its slot.
+    const humanMerged264 = prRecord(
+      "issue-ubiquity-ai.ubq.fi-264",
+      264,
+      393,
+      { nextStep: "delivery" },
+    );
+    const fresh = freshIssue("issue-ubiquity-ai.ubq.fi-999", 999);
+    const initial = snapshot([ai120, sentinel61, humanMerged264, fresh]);
+    const closedIssues = new Set([
+      hostedIssueKey(ai120.repository, 120),
+      hostedIssueKey(sentinel61.repository, 61),
+    ]);
+    const plans = planHostedRetirements(
+      initial,
+      closedIssues,
+      new Set([ai120.id, sentinel61.id]),
+    );
+    assert.deepEqual(
+      plans.map((plan) => plan.id).sort(),
+      [ai120.id, sentinel61.id].sort(),
+      "both closed-unmerged PRs are retired by the actual helper",
+    );
+    const retired = applyHostedRetirements(initial, SHA1, plans, NOW);
+    for (const id of [ai120.id, sentinel61.id]) {
+      const record = retired.work.find((item) => item.id === id);
+      assert.ok(record, id);
+      assert.equal(record.nextStep, "blocked");
+      assert.equal(record.blocker?.kind, "other");
+      assert.equal(record.blocker?.message, HOSTED_AUTONOMY_RETIRED);
+      assert.equal(record.wait, null);
+      assert.equal(record.intent, null);
+      assert.equal(record.target.pr !== null, true, `${id} retains its PR`);
+      assert.equal(record.target.head, SHA2, `${id} retains its head`);
+      assert.equal(record.counters.reviewRounds, 1, `${id} keeps its counters`);
+    }
+    const ranked = rankEligibleWork(retired, repairConfigs(), NOW);
+    // Two retired PRs plus one real unfinished PR is two counted slots, so the
+    // fresh issue is admitted. Before the fix the count is three and this is [].
+    assert.deepEqual(ranked.ordered, [fresh.id]);
+    assert.equal(ranked.skipped[fresh.id], undefined);
+    assert.equal(ranked.skipped[ai120.id], "blocked");
+    assert.equal(ranked.skipped[sentinel61.id], "blocked");
+    assert.equal(ranked.skipped[humanMerged264.id], "waiting");
+  },
+);
+
+Deno.test(
+  "retired PR WIP: terminal blocks free the cap while an open waiting PR still counts",
+  () => {
+    const genericBlocked = prRecord(
+      "issue-ubiquity-ai.ubq.fi-301",
+      301,
+      401,
+      {
+        nextStep: "blocked",
+        wait: null,
+        blocker: {
+          kind: "other",
+          message: "model run ended without a trusted receipt",
+          since: T0,
+        },
+      },
+    );
+    const unavailableBlocked = prRecord(
+      "issue-ubiquity-ai.ubq.fi-302",
+      302,
+      402,
+      {
+        nextStep: "blocked",
+        wait: null,
+        blocker: {
+          kind: "unavailable",
+          message: "review transport unavailable",
+          since: T0,
+        },
+      },
+    );
+    const openWaiting = prRecord("issue-ubiquity-ai.ubq.fi-303", 303, 403);
+    const fresh = freshIssue("issue-ubiquity-ai.ubq.fi-999", 999);
+    const snapshotWithAll = snapshot([
+      genericBlocked,
+      unavailableBlocked,
+      openWaiting,
+      fresh,
+    ]);
+    // A blocked record can never deliver its PR, so it never occupies a slot:
+    // the two terminal blocks are free, only the live waiting PR counts.
+    assert.equal(countUnfinishedPullRequests(snapshotWithAll.work), 1);
+    const ranked = rankEligibleWork(snapshotWithAll, repairConfigs(), NOW);
+    assert.deepEqual(ranked.ordered, [fresh.id]);
+    assert.equal(ranked.skipped[fresh.id], undefined);
+    assert.equal(ranked.skipped[genericBlocked.id], "blocked");
+    assert.equal(ranked.skipped[unavailableBlocked.id], "blocked");
+    assert.equal(ranked.skipped[openWaiting.id], "waiting");
+  },
+);
+
+Deno.test(
+  "selection: a repair whose own PR was merged outside the trusted path stops consuming the WIP cap",
+  () => {
+    const merged = work("issue-77", {
+      target: {
+        base: SHA1,
+        branch: "sentinel/repair/issue-77",
+        checkpoint: null,
+        head: SHA2,
+        pr: 7,
+      },
+      nextStep: "blocked",
+      blocker: { kind: "other", message: RETIRED_MERGED_MESSAGE, since: T0 },
+      intent: null,
+      wait: null,
+    });
+    assert.equal(countUnfinishedPullRequests([merged]), 0);
+    // Control: the identical live record (not parked) still consumes one slot.
+    const open = work("issue-78", {
+      target: {
+        base: SHA1,
+        branch: "sentinel/repair/issue-78",
+        checkpoint: null,
+        head: SHA2,
+        pr: 8,
+      },
+      nextStep: "work",
+      intent: null,
+      wait: null,
+    });
+    assert.equal(countUnfinishedPullRequests([open]), 1);
+    assert.equal(countUnfinishedPullRequests([merged, open]), 1);
+  },
+);
+
+Deno.test(
+  "selection: every terminal-block shape frees the cap (79/PR83, 80/PR84, 138/PR499)",
+  () => {
+    const reviewAdmissionSettled = work("issue-ubiquity-sentinel-79", {
+      target: {
+        base: SHA1,
+        branch: "sentinel/repair/issue-ubiquity-sentinel-79",
+        checkpoint: null,
+        head: SHA2,
+        pr: 83,
+      },
+      nextStep: "blocked",
+      blocker: {
+        kind: "unavailable",
+        message: "review admission already settled without an intent",
+        since: T0,
+      },
+      intent: null,
+      wait: null,
+    });
+    const reviewIntentResidual = work("issue-ubiquity-sentinel-80", {
+      target: {
+        base: SHA1,
+        branch: "sentinel/repair/issue-ubiquity-sentinel-80",
+        checkpoint: null,
+        head: SHA2,
+        pr: 84,
+      },
+      nextStep: "blocked",
+      blocker: {
+        kind: "unavailable",
+        message: "review produced no verdict within the bounded review wait",
+        since: T0,
+      },
+      wait: null,
+      intent: {
+        kind: "review_request",
+        key: `review:84:${SHA2}`,
+        startedAt: T0,
+        branch: "sentinel/repair/issue-ubiquity-sentinel-80",
+        expectedHead: SHA2,
+        observedBase: SHA1,
+        pr: 84,
+        requestId: null,
+        resultId: null,
+      },
+    });
+    const baseRefreshConflict = work("issue-ubiquity-ai.ubq.fi-138", {
+      target: {
+        base: SHA1,
+        branch: "sentinel/repair/issue-ubiquity-ai.ubq.fi-138",
+        checkpoint: null,
+        head: SHA2,
+        pr: 499,
+      },
+      nextStep: "blocked",
+      blocker: {
+        kind: "other",
+        message: "base refresh has conflicts",
+        since: T0,
+      },
+      intent: null,
+      wait: null,
+    });
+    assert.equal(
+      countUnfinishedPullRequests([
+        reviewAdmissionSettled,
+        reviewIntentResidual,
+        baseRefreshConflict,
+      ]),
+      0,
+    );
+    // A fresh publication is admitted on the freed slots; the three offenders
+    // are skipped as terminal, never as over-cap.
+    const fresh = freshIssue("issue-ubiquity-ai.ubq.fi-999", 999);
+    const ranked = rankEligibleWork(
+      snapshot([
+        reviewAdmissionSettled,
+        reviewIntentResidual,
+        baseRefreshConflict,
+        fresh,
+      ]),
+      repairConfigs(),
+      NOW,
+    );
+    assert.deepEqual(ranked.ordered, [fresh.id]);
+    assert.equal(ranked.skipped[fresh.id], undefined);
+  },
+);
+
+Deno.test(
+  "selection: a transient review-quota record frees the cap and is drained oldest/highest priority first",
+  () => {
+    const lowPriorityOld = prRecord("issue-1", 1, 7, {
+      nextStep: "review",
+      wait: { reason: "review_quota", since: T0, until: T0 + 60_000 },
+      classification: { severity: "P3", priority: 5 },
+      firstSeenAt: T0 - 900_000,
+      createdAt: T0 - 900_000,
+    });
+    const highPriorityYoung = prRecord("issue-2", 2, 8, {
+      nextStep: "review",
+      wait: { reason: "review_quota", since: T0, until: T0 + 60_000 },
+      classification: { severity: "P2", priority: 9 },
+      firstSeenAt: T0 - 60_000,
+      createdAt: T0 - 60_000,
+    });
+    const missingPriorityOldest = prRecord("issue-3", 3, 9, {
+      nextStep: "review",
+      wait: { reason: "review_quota", since: T0, until: T0 + 60_000 },
+      classification: { severity: "P2", priority: null },
+      firstSeenAt: T0 - 1_800_000,
+      createdAt: T0 - 1_800_000,
+    });
+    // A quota record is still a real unfinished PR for delivery purposes but it
+    // never consumes a NEW-publication slot, so production continues.
+    assert.equal(
+      countUnfinishedPullRequests([
+        lowPriorityOld,
+        highPriorityYoung,
+        missingPriorityOldest,
+      ]),
+      0,
+    );
+    // Drain order: recognized priority first (9 before 5), missing priority
+    // last, ties oldest first.
+    assert.deepEqual(
+      rankReviewDrain(
+        snapshot([lowPriorityOld, highPriorityYoung, missingPriorityOldest]),
+      ),
+      [highPriorityYoung.id, lowPriorityOld.id, missingPriorityOldest.id],
+    );
+    // A pending (non-quota) review is not a drain candidate.
+    const pending = prRecord("issue-4", 4, 10, {
+      nextStep: "review",
+      wait: { reason: "review_pending", since: T0, until: T0 + 60_000 },
+    });
+    assert.deepEqual(
+      rankReviewDrain(snapshot([pending, highPriorityYoung])),
+      [highPriorityYoung.id],
+    );
+  },
+);
+
+Deno.test(
+  "selection: an in-flight pull_request intent with no persisted PR keeps its published identity",
+  () => {
+    const inFlight = work("issue-141", {
+      source: { kind: "issue", id: "141", revision: SHA2 },
+      related: { incidentId: null, issueNumber: 141 },
+      target: {
+        base: SHA1,
+        branch: "sentinel/repair/issue-141",
+        checkpoint: null,
+        head: SHA2,
+        pr: null,
+      },
+      nextStep: "work",
+      intent: {
+        kind: "pull_request",
+        key: `pr:${SHA2}`,
+        startedAt: T0,
+        branch: "sentinel/repair/issue-141",
+        expectedHead: SHA2,
+        observedBase: SHA1,
+        pr: null,
+        requestId: null,
+        resultId: null,
+      },
+    });
+    assert.equal(hasPublishedIdentity(inFlight), true);
+    const saturated = [
+      prRecord("issue-1", 1, 7),
+      prRecord("issue-2", 2, 8),
+      prRecord("issue-3", 3, 9),
+      inFlight,
+    ];
+    const ranked = rankEligibleWork(snapshot(saturated), repairConfigs(), NOW);
+    assert.equal(
+      ranked.skipped[inFlight.id],
+      undefined,
+      "an in-flight publication is never WIP-skipped",
+    );
+    assert.ok(ranked.ordered.includes(inFlight.id));
+  },
+);
+
+/** Backlog record with an exact age, so oldest-first ordering is explicit. */
+function agedIssue(
+  id: string,
+  issueNumber: number,
+  firstSeenAt: number,
+  overrides: Record<string, unknown> = {},
+): WorkRecordV1 {
+  return work(id, {
+    source: { kind: "issue", id: String(issueNumber), revision: SHA2 },
+    related: { incidentId: null, issueNumber },
+    classification: { severity: "P2", priority: 9 },
+    firstSeenAt,
+    createdAt: firstSeenAt,
+    counters: { attempts: 0, retries: 0, reviewRounds: 0 },
+    ...overrides,
+  });
+}
+
+/**
+ * The documented per-record no-progress budget. Pinned as a literal so this
+ * case can be run against a revision without the budget and fail on ORDERING
+ * (a setup/import error would prove nothing).
+ */
+const BUDGET = 3;
+
+Deno.test(
+  "no-progress budget: a stalled oldest record yields to a younger record that advanced",
+  () => {
+    const older = agedIssue("issue-1", 1, T0 - 900_000, {
+      counters: {
+        attempts: 0,
+        retries: 0,
+        reviewRounds: 0,
+        stalled: BUDGET,
+      },
+    });
+    const younger = agedIssue("issue-2", 2, T0 - 60_000);
+    const ranked = rankEligibleWork(
+      snapshot([older, younger]),
+      repairConfigs(),
+      NOW,
+    );
+    assert.deepEqual(ranked.ordered, [younger.id, older.id]);
+    assert.equal(
+      ranked.skipped[older.id],
+      undefined,
+      "demotion is ordering, never a skip",
+    );
+
+    // Boundary: one execution under the budget keeps the oldest-first order,
+    // so the budget is a bound and not a blanket reordering.
+    const withinBudget = agedIssue("issue-1", 1, T0 - 900_000, {
+      counters: {
+        attempts: 0,
+        retries: 0,
+        reviewRounds: 0,
+        stalled: BUDGET - 1,
+      },
+    });
+    const bounded = rankEligibleWork(
+      snapshot([withinBudget, younger]),
+      repairConfigs(),
+      NOW,
+    );
+    assert.deepEqual(bounded.ordered, [withinBudget.id, younger.id]);
+  },
+);
+
+Deno.test(
+  "no-progress budget: demotion never crosses a plan bucket",
+  () => {
+    const stalledDelivery = prRecord("issue-1", 1, 7, {
+      nextStep: "delivery",
+      wait: null,
+      counters: {
+        attempts: 1,
+        retries: 0,
+        reviewRounds: 1,
+        stalled: BUDGET + 4,
+      },
+    });
+    const advancing = agedIssue("issue-2", 2, T0 - 60_000);
+    const ranked = rankEligibleWork(
+      snapshot([stalledDelivery, advancing]),
+      repairConfigs(),
+      NOW,
+    );
+    assert.deepEqual(
+      ranked.ordered,
+      [stalledDelivery.id, advancing.id],
+      "delivery bookkeeping stays ahead of new work even when demoted",
+    );
+  },
+);
+
+Deno.test(
+  "selection: unfinished publications never gate a new publication",
+  () => {
+    // Three unfinished pull requests previously saturated the removed cap.
+    const saturated = [
+      prRecord("issue-1", 1, 7),
+      prRecord("issue-2", 2, 8),
+      prRecord("issue-3", 3, 9),
+    ];
+    // A record whose durable intent already names a published PR is recovering
+    // an EXISTING publication (retiring a closed one, observing its review) and
+    // stays selectable.
+    const carrier = work("issue-4", {
+      source: { kind: "issue", id: "4", revision: SHA2 },
+      related: { incidentId: null, issueNumber: 4 },
+      classification: { severity: "P2", priority: 9 },
+      firstSeenAt: T0 - 900_000,
+      createdAt: T0 - 900_000,
+      intent: {
+        kind: "review_request",
+        key: `review:21:${SHA2}`,
+        startedAt: T0,
+        branch: "sentinel/repair/issue-4",
+        expectedHead: SHA2,
+        observedBase: SHA1,
+        pr: 21,
+        requestId: null,
+        resultId: null,
+      },
+    });
+    // A record with no published identity at all is a NEW publication and is
+    // admitted on the same terms.
+    const fresh = freshIssue("issue-5", 5);
+
+    const ranked = rankEligibleWork(
+      snapshot([...saturated, carrier, fresh]),
+      repairConfigs(),
+      NOW,
+    );
+    assert.deepEqual(
+      ranked.ordered,
+      [carrier.id, fresh.id],
+      "priority then oldest-first ordering survives cap removal",
+    );
+    assert.equal(ranked.skipped[carrier.id], undefined, "never skipped");
+    assert.equal(ranked.skipped[fresh.id], undefined, "no admission cap");
+    assert.equal(
+      countUnfinishedPullRequests(snapshot([...saturated, carrier]).work),
+      3,
+      "accounting still counts only records holding a target PR",
+    );
+  },
+);

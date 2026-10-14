@@ -120,21 +120,21 @@ All records have `version: "v1"` and a `kind`; fields below are complete.
 Per-repository configuration; the only credential surface is a restricted
 reference — no secret literal is allowed in any field.
 
-| Field                   | Type                                             | Semantics                                                                                                                                                                                                                                                                                                                                  |
-| ----------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `repository`            | `{ owner, name, installationId }`                | GitHub identity + App installation reference                                                                                                                                                                                                                                                                                               |
-| `baseBranch`            | string                                           | primary source branch                                                                                                                                                                                                                                                                                                                      |
-| `adapter`               | `{ kind: "gateway", baseUrl }`                   | exact adapter kind — only `"gateway"` in v1                                                                                                                                                                                                                                                                                                |
-| `commands.replay/.test` | `CommandId`                                      | trusted command IDs only; the config never carries shell argv (model-supplied commands are outside the contract). Registry lookup is **own-property only**: a configured id like `constructor` against an empty registry is rejected instead of resolving to an inherited `Object.prototype` member                                        |
-| `commandRegistry`       | `CommandRegistryV1`                              | required concrete registry (file/injected config — never env/flag); references the same IDs and is checked to contain them                                                                                                                                                                                                                 |
-| `protectedPaths`        | string[]                                         | path prefixes that must never be modified                                                                                                                                                                                                                                                                                                  |
-| `build.projectId`       | string \| null                                   | Deno Deploy project id; null = not deployed                                                                                                                                                                                                                                                                                                |
-| `build.acceptance`      | object \| null                                   | `healthPath`, `metricsPath`, `managedBodyMarker`, `managedHeaders` (non-secret identity markers), `domain`                                                                                                                                                                                                                                 |
-| `secretRef`             | string \| null                                   | restricted storage reference to host-injected credentials; must be a ref, never a literal URL/query/userinfo                                                                                                                                                                                                                               |
-| `liveStartLimits`       | `{ perHour, perSevenDays }` \| null              | rolling model-start caps; **null = inference not enabled**; `perSevenDays` is an explicit nullable cap: `null` means **no weekly admission cap** (never a wildcard, `Infinity`, huge number or zero), a missing/undefined/malformed weekly value is invalid, and `perHour <= perSevenDays` is enforced only when the weekly cap is numeric |
-| `sessionBound`          | `{ maxDurationMs, maxOutputChars }` \| null      | declared supported session bounds                                                                                                                                                                                                                                                                                                          |
-| `retention`             | `{ evidenceMaxAgeMs, evidenceMaxBytes }` \| null | owner-approved evidence retention bound                                                                                                                                                                                                                                                                                                    |
-| `stabilityPolicy`       | object \| null                                   | declared metrics/denominators, `windowMs`/`sampleIntervalMs`, `minSamples`, `minRequests`, baseline window/samples, owner thresholds; empty threshold list rejected; `sampleIntervalMs <= windowMs` enforced                                                                                                                               |
+| Field                   | Type                                             | Semantics                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repository`            | `{ owner, name, installationId }`                | GitHub identity + App installation reference                                                                                                                                                                                                                                                                                                                                            |
+| `baseBranch`            | string                                           | primary source branch                                                                                                                                                                                                                                                                                                                                                                   |
+| `adapter`               | `{ kind: "gateway", baseUrl }`                   | exact adapter kind — only `"gateway"` in v1                                                                                                                                                                                                                                                                                                                                             |
+| `commands.replay/.test` | `CommandId`                                      | trusted command IDs only; the config never carries shell argv (model-supplied commands are outside the contract). Registry lookup is **own-property only**: a configured id like `constructor` against an empty registry is rejected instead of resolving to an inherited `Object.prototype` member                                                                                     |
+| `commandRegistry`       | `CommandRegistryV1`                              | required concrete registry (file/injected config — never env/flag); references the same IDs and is checked to contain them                                                                                                                                                                                                                                                              |
+| `protectedPaths`        | string[]                                         | path prefixes that must never be modified                                                                                                                                                                                                                                                                                                                                               |
+| `build.projectId`       | string \| null                                   | Deno Deploy project id; null = not deployed                                                                                                                                                                                                                                                                                                                                             |
+| `build.acceptance`      | object \| null                                   | `healthPath`, `metricsPath`, `managedBodyMarker`, `managedHeaders` (non-secret identity markers), `domain`                                                                                                                                                                                                                                                                              |
+| `secretRef`             | string \| null                                   | restricted storage reference to host-injected credentials; must be a ref, never a literal URL/query/userinfo                                                                                                                                                                                                                                                                            |
+| `liveStartLimits`       | `{ perHour, perSevenDays }` \| null              | rolling model-start caps; **a null record = inference not enabled** (never "unlimited"); inside a present record each cap is an explicit nullable cap: `null` means **no admission cap for that window** (never a wildcard, `Infinity`, huge number or zero), a missing/undefined/malformed value is invalid, and `perHour <= perSevenDays` is enforced only when both caps are numeric |
+| `sessionBound`          | `{ maxDurationMs, maxOutputChars }` \| null      | declared supported session bounds                                                                                                                                                                                                                                                                                                                                                       |
+| `retention`             | `{ evidenceMaxAgeMs, evidenceMaxBytes }` \| null | owner-approved evidence retention bound                                                                                                                                                                                                                                                                                                                                                 |
+| `stabilityPolicy`       | object \| null                                   | declared metrics/denominators, `windowMs`/`sampleIntervalMs`, `minSamples`, `minRequests`, baseline window/samples, owner thresholds; empty threshold list rejected; `sampleIntervalMs <= windowMs` enforced                                                                                                                                                                            |
 
 `CommandRegistryV1 { version, commands }` binds each `CommandId` to
 `CommandSpecV1 { executable, args, maxDurationMs, maxOutputBytes }`:
@@ -638,26 +638,29 @@ Rules:
 
 - **One global budget.** All repositories charge the same rolling caps.
   Admission policy is the complete supplied config set: the requested repository
-  must be in the set, every config must carry non-null `liveStartLimits` and
-  `sessionBound`, the hour cap must be a positive safe integer and identical
-  across the whole set, and `perSevenDays` must agree exactly — a numeric cap
-  keeps the positive/invariant checks, explicit `null` means no weekly cap, and
-  a null/numeric mix across repositories is a conflict, never an inferred
-  fallback. Missing, null or mismatched policies return `disabled`; no
-  default/fallback caps, no per-repo independent budget. Workflow single-writer
-  serialization and one deployed config are caller responsibilities — the
-  controller invents no distributed policy negotiation.
+  must be in the set, every config must carry a non-null `liveStartLimits`
+  record and `sessionBound`, each cap must be either a positive safe integer or
+  explicit `null` (no cap for that window), and both fields must agree exactly
+  across the whole set — a numeric cap keeps the positive/invariant checks
+  (`perHour <= perSevenDays` only when both are numeric), explicit `null` means
+  no cap for that window, and a null/numeric mix across repositories is a
+  conflict, never an inferred fallback. A null `liveStartLimits` record still
+  means inference is not enabled. Missing, non-positive or mismatched policies
+  return `disabled`; no default/fallback caps, no per-repo independent budget.
+  Workflow single-writer serialization and one deployed config are caller
+  responsibilities — the controller invents no distributed policy negotiation.
 - **Charging.** Millisecond rolling intervals `(now - duration, now]`; every
   `reserved`/`submitted`/`ambiguous` reservation charges at its `createdAt`;
   only `confirmed_not_submitted` with a validated restricted `proofRef` is
   refunded. Windows never reset on midnight or process restart. The earliest
   `retryAt` under every enforced cap sorts charged timestamps (each enforced
   window's cap-th most recent charge must fall out), so several excess entries
-  are handled exactly, not by assuming one; an explicit null weekly cap enforces
-  the rolling hour only. Timestamp/window and snapshot-sequence arithmetic stays
-  inside the safe-integer range: any overflow or invalid arithmetic input is a
-  typed failure (`unavailable`) and nothing is written, never an unsafe
-  `retryAt` or `NaN`.
+  are handled exactly, not by assuming one; each cap explicitly `null` enforces
+  nothing for that window while every admitted start still records its durable
+  reservation. Timestamp/window and snapshot-sequence arithmetic stays inside
+  the safe-integer range: any overflow or invalid arithmetic input is a typed
+  failure (`unavailable`) and nothing is written, never an unsafe `retryAt` or
+  `NaN`.
 - **Identity deduplication.** Exact logical identity
   (repository/taskId/head/attempt/purpose) is compared **before** any duplicate
   classification: the same derived id plus the same logical identity returns
@@ -703,10 +706,10 @@ the same global repair snapshot.
 
 `earliestRetryAt(reservations, now, limits)` and `isCharged(reservation)` are
 the pure rolling-window helpers. `earliestRetryAt` validates every input with
-the frozen reservation parser, plus a nonnegative safe-integer `now`, a positive
-safe-integer hour cap, a weekly cap that is either a positive safe-integer with
-`perHour <= perSevenDays` or explicit `null` (no weekly cap; a missing or
-malformed weekly value is invalid, never permissive); invalid input or timestamp
+the frozen reservation parser, plus a nonnegative safe-integer `now`, and for
+each cap either a positive safe-integer (with `perHour <= perSevenDays` when
+both are numeric) or explicit `null` (no cap for that window; a missing or
+malformed value is invalid, never permissive); invalid input or timestamp
 overflow throws one fixed sanitized `RangeError` that never echoes a value. The
 controller catches it at its boundary, returns `unavailable` and writes nothing
 — an unsafe `retryAt` or `NaN` is never produced. Windows are
@@ -888,19 +891,14 @@ capability, which is exactly the boundary §10 documents for Wave C.
 
 ## 11. Proposed gateway producer HTTP contract
 
-**Status: proposed and frozen as a producer/consumer mapping contract — not
-implemented by the current target.** At the recorded setup snapshot the gateway
-repository (`ubiquity/ai.ubq.fi`, root `development` at
-`aafb7ee0598699bb7fb8a72ea133693ed64462da`) exposes the existing super-admin
-replay export but has **no unresolved-discovery index**: captures and the
-incident outbox expire after 48 hours, the old Sentinel runtime owner remains
-active, and no target writes are authorized here. m06-gateway may implement this
-schema only after target-ownership reconciliation and owner approval. The
-synthetic fixture `tests/fixtures/contracts/gateway-index-v1.json` maps rows
-into frozen `IncidentSummaryV1` records through the test-only conversion (§8);
-it proves schema mapping only, never live discovery, and no new shared port
-interface is added (m02's `IncidentAdapter` returns the existing
-`IncidentPageV1`).
+**Status: frozen producer/consumer mapping implemented by gateway revision
+`a858a6ed6cc72a8ff9ed0f1cbc310803120d5726`.** The original setup snapshot
+`aafb7ee0598699bb7fb8a72ea133693ed64462da` had no discovery index. Current
+synthetic factory evidence exercises actual index and replay export handlers,
+not privileged live capture acceptance. The unchanged `gateway-index-v1.json`
+fixture remains historical schema mapping evidence; `IncidentAdapter` still
+returns the existing `IncidentPageV1` and persisted incident/evidence records
+are unchanged.
 
 ### Existing replay export (unmodified)
 
@@ -1009,6 +1007,20 @@ summary record itself carries no expiry field.
 
 ### Artifact identity and integrity
 
+The index `fingerprint` is SHA-256 of the producer's safe failure
+classification, while manifest `fingerprint` is a capture HMAC. They are
+distinct domains and must never be compared as equal.
+`GatewayCaptureBindingReaderV1.readGatewayCaptureBinding` reads the authentic
+incident-filtered index and returns a private typed binding for the exact
+incident, artifact ref, capture ID, ciphertext digest, original revision,
+capture timestamp and source expiry. Composition selects only that bound
+capture, then verifies AES-GCM, both HMACs, classification digest, revision,
+time and expiry. Classification uses the producer's exact JSON field order:
+endpoint, method, status, stream, completed, framing_valid, terminal. The
+endpoint/method and client observation come from authenticated plaintext.
+Fixture resolution reauthenticates the retained exact capture and bundle digest;
+no global evidence/state schema or original identity is rewritten.
+
 - The replay **manifest fingerprint is an HMAC identity** over the capture —
   never a ciphertext digest. Chunks are decoded in order (encrypted base64url),
   `chunk_count`/`ciphertext_bytes` and the manifest identity are verified, and
@@ -1038,52 +1050,74 @@ never by asserting the current TTL already meets the contract. Live
 owner-approved retention/storage bounds and the target producer seam remain
 activation blockers (plan §10).
 
-## 12. Private upstream capture cutover (implementation contract, 2026-09-07)
+## 12. Private upstream capture contract (current producer cutover, 2026-10-13)
 
-Primary architecture decision, 2026-09-07. Governs the next coordinated
-producer/consumer implementation on the existing Sentinel canonical lane and
-target m06 lane. Not a completion receipt. No worker owns this file. This
-replaces tentative upstream notes for format decisions.
+This updates the 2026-09-07 request/upstream contract against actual producer
+`a858a6ed6cc72a8ff9ed0f1cbc310803120d5726`. Metadata v3 and upstream v2 were
+introduced by producer `4f138b1e5b9a6cf0ede1a95066d33ace02511f1b`; archived
+v1/v2 goldens retain their original provenance and are explicitly unsupported by
+the current decryptor. This format contract is not live activation or delivery
+acceptance.
 
 ## Transport and metadata
 
-Keep outer manifest version 1, gzip/binary framing, existing ciphertext
-chunking, AES/HKDF salt and AAD unchanged. Hard-cut over private plaintext
-metadata from version 1 to version 2 in producer and consumer together. Existing
-request-only v1 plaintext is unsupported by the new decryptors, never upstream
-proof. Do not add legacy fallback. Keep existing 256 KiB metadata and 32 MiB
-request bounds; preserve exact request bytes. New required metadata key
-`upstream` has this exact shape:
+Keep outer manifest version 1, gzip/binary framing, 48KiB ciphertext chunks,
+48-hour source lifetime, AES/HKDF salt and AAD unchanged. The private consumer
+requires metadata version 3 and upstream version 2 with exact closed keys; old
+versions are unsupported, never a legacy fallback. Producer bounds are 8MiB
+metadata and 32MiB request bytes. Preserve exact request bytes and verify the
+authenticated `body_sha256`/`body_bytes` against them. Required `upstream` has
+this exact shape:
 
-- version: 1
+- version: 2
 - attempts: array, at most 8, in actual dispatch order
 - attempts_truncated: boolean
 - bytes_truncated: boolean
 - chunks_truncated: boolean
 
-Each attempt has exactly provider, status, content_type, chunks_base64,
-terminal. Provider is a trusted literal enum
-chatgpt_codex/surplus/metered/cerebras. status is null until headers, otherwise
-integer 100..599. content_type is null before headers, otherwise
-text/event-stream, application/json or other; normalize MIME before semicolon
-without retaining arbitrary text. chunks_base64 is an ordered array of canonical
-padded standard-base64 strings. terminal is pending, fetch_error, eof,
-read_error or cancelled. Before-header attempts have no chunks; fetch_error
-requires null status/content_type. Header-bearing read_error/cancelled/eof
-require a status. A pending attempt can have no headers or partially consumed
-body. No free-form error, URLs, request IDs, headers, account IDs, timestamps or
-durations.
+Each attempt has exactly
+`provider,status,content_type,chunks_base64,terminal,headers,headers_truncated,chunk_times_ms,started_at_ms,headers_at_ms,ended_at_ms`.
+Provider literals are
+`chatgpt_codex,surplus,metered,cerebras,deepseek,lithos,openrouter`; type-only
+unaccepted producer literals do not widen this set. Status is null until
+headers, otherwise integer 100..599; MIME is null before headers, otherwise
+`text/event-stream`, `application/json` or `other`. Chunks are canonical padded
+standard base64. Terminal is `pending,fetch_error,eof,read_error,cancelled`;
+pre-header attempts have no chunks, fetch errors have no headers, and other
+settled terminals require a status. Times are finite nonnegative integers:
+header/end order must agree with status/terminal, pending alone has null end,
+chunk times are nondecreasing and match the exact chunk count, and elapsed/chunk
+timing is bounded by seven days. Authentication headers, cookies, URLs, account
+IDs and request IDs are excluded.
 
-Aggregate bounds: 131072 decoded bytes, 256 chunks, 8 attempts. Once a
-respective bound prevents capture, set its truncation flag permanently. Store a
-copied prefix of the current chunk only if bytes remain; the flag discloses
-omitted tail. Do not split a chunk for convenience. Omit empty chunks. No
-unbounded omitted counter. Snapshot clones only these finite bytes. Encode
-base64 only for snapshot serialization; internal retained buffers are zeroable
-Uint8Arrays. Validate canonical base64, exact keys, aggregate byte/chunk bounds
-and cross-field consistency on both producer and consumer. Crypto-authenticated
-JSON is still untrusted input to strict parsing. Existing metadata cap may
-reject a capture; never silently drop upstream to make it fit.
+The response header names are exactly
+`cache-control,content-length,content-type,openai-processing-ms,retry-after,x-ratelimit-limit-requests,x-ratelimit-limit-tokens,x-ratelimit-remaining-requests,x-ratelimit-remaining-tokens,x-ratelimit-reset-requests,x-ratelimit-reset-tokens`.
+Values are canonical nonempty trimmed strings at most 512 characters. All
+private header/timing fields remain in the full canonical upstream HMAC frame
+and private causal verifier input.
+
+Metadata v3 additionally requires exact
+`settings,capture_status,replay_coverage,unavailable,body_sha256,body_bytes,downstream`
+fields. Settings distinguish recorded requested model/reasoning/stream from
+observed provider/stream; they are recomputed from authenticated original
+request bytes. The rich client observation and downstream fields retain bounded
+error code/param and at most 64KiB of canonical base64 terminal body; their
+identities must agree. Coverage/status/reasons are recomputed from the
+authenticated trace and downstream availability. Complete fixture composition
+requires ready/full coverage with no unavailable reasons and truthful EOF on
+every nontruncated attempt. None of these restricted facts becomes public
+diagnostics.
+
+Aggregate bounds: 4MiB decoded bytes, 4096 chunks, 8 attempts. Once a respective
+bound prevents capture, set its truncation flag permanently. Store a copied
+prefix of the current chunk only if bytes remain; the flag discloses omitted
+tail. Do not split a chunk for convenience. Omit empty chunks. No unbounded
+omitted counter. Snapshot clones only these finite bytes. Encode base64 only for
+snapshot serialization; internal retained buffers are zeroable Uint8Arrays.
+Validate canonical base64, exact keys, aggregate byte/chunk bounds and
+cross-field consistency on both producer and consumer. Crypto-authenticated JSON
+is still untrusted input to strict parsing. Existing metadata cap may reject a
+capture; never silently drop upstream to make it fit.
 
 `upstreamCaptured` in the domain replay contract remains unavailable until
 trusted sanitization creates a verified fixture digest. A raw transcript is
@@ -1110,6 +1144,17 @@ namespace. Decryptors recompute the same v2 HMAC and verify old case-group HMAC,
 exact capture timestamp and failure signature.
 
 ## Passive request-owned recorder and provider boundaries
+
+The sanitized request envelope remains version 1; its upstream payload is
+version 2. It preserves response control headers and relative attempt/chunk
+timing while replacing absolute times with an origin of zero. Content length is
+recomputed from sanitized bytes; safe numeric/rate-limit values and fixed
+cache-control literals survive, while other header values are omitted with
+`headers_truncated`. Any public fixture remains redacted with unverified
+equivalence until the existing actual causal verifier proves the original
+failure and candidate success. The complete original v2 trace, metadata v3
+settings/downstream/coverage and their identities remain restricted; no private
+fact is dropped from authentication or used as fabricated coverage.
 
 One internal request-owned recorder, carried through existing UsageContext and
 provider options. No global fetch interception, clone/tee, new product

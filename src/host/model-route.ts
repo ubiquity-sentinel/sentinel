@@ -1,0 +1,292 @@
+/**
+ * Trusted model-route resolver (gateway PRIMARY, DeepSeek-direct FALLBACK).
+ *
+ * The hosted UOS gateway (`https://ai.ubq.fi/v1`, `gpt-reserve`, `max`
+ * reasoning) stays the primary route. Exactly one explicit, deterministic
+ * selection decides which endpoint and model id a run requests, and the
+ * selected model id is the id the runtime actually submits and records — a
+ * route is never swapped per request and a receipt never keeps one model id
+ * while another was requested.
+ *
+ * Selection precedence (first matching branch wins; every branch explicit):
+ *   1. Owner override: a non-empty, bounded `http`/`https`
+ *      `SENTINEL_MODEL_BASE_URL` selects that endpoint with
+ *      `SENTINEL_MODEL_ID` (default `deepseek-flash`) and provider
+ *      `deepseek`; it requires a non-empty `SENTINEL_DEEPSEEK_API_KEY`.
+ *   2. Fallback: `SENTINEL_MODEL_FALLBACK === "deepseek"` together with a
+ *      non-empty `SENTINEL_DEEPSEEK_API_KEY` selects the DeepSeek-direct
+ *      endpoint (`https://api.deepseek.com/v1`) and `deepseek-flash`.
+ *   3. Gateway: the existing primary route (`uos`, `gpt-reserve` or a
+ *      declared valid `SENTINEL_MODEL_ID`, no key environment; the caller
+ *      keeps its existing `UOS_AI_TOKEN` input).
+ *
+ * Every route also carries `failoverModel`: the model id the implementation
+ * port retries with when the primary model is rate limited (HTTP 429) by the
+ * gateway. It resolves from `SENTINEL_MODEL_FAILOVER_ID` (default
+ * `gpt-6-luna`), always on the same gateway endpoint with the same
+ * credentials and the frozen `max` reasoning. An unset, empty or invalid
+ * value yields the default; the failover never changes provider, endpoint,
+ * or key — only the model id on a 429.
+ *
+ * The structured-review model is resolved SEPARATELY by
+ * `resolveReviewModelId`: it is never the shared implementation route's
+ * model, so pointing reviews at `codex-auto-review` cannot hijack the
+ * implementation worker's model. An unset or invalid review model id yields
+ * the invalid empty sentinel, which the structured reviewer refuses at
+ * prepare before any session opens.
+ *
+ * An unknown, malformed or incomplete value never fabricates a route: every
+ * invalid case resolves to the gateway route, and only an EMPTY value counts
+ * as unset. The resolver is pure and dependency-free, reads no credential
+ * value and returns only the NAME of the environment variable that holds the
+ * selected route's key — never the key.
+ */
+
+/** Exact trusted route one run requests and records. */
+export interface ModelRouteV1 {
+  readonly provider: "uos" | "deepseek";
+  readonly baseUrl: string;
+  readonly model: string;
+  readonly reasoning: "max";
+  readonly apiKeyEnv: string | null;
+  /**
+   * Gateway failover model id for HTTP 429 (rate limited) on the primary
+   * model. Same gateway endpoint, same credentials, frozen `max` reasoning —
+   * only the model id changes, and only on a 429. Resolved from
+   * `SENTINEL_MODEL_FAILOVER_ID` (default `gpt-6-luna`).
+   */
+  readonly failoverModel: string;
+}
+
+/** Static fail-closed error for a malformed resolver input (never a route). */
+export const MODEL_ROUTE_INVALID =
+  "sentinel model route rejected: environment input is not a mapping";
+
+/** The existing primary gateway route. */
+export const GATEWAY_PROVIDER = "uos";
+export const GATEWAY_BASE_URL = "https://ai.ubq.fi/v1";
+const GATEWAY_MODEL_ID = "gpt-reserve";
+/** The DeepSeek-direct fallback route. */
+const DEEPSEEK_PROVIDER = "deepseek";
+const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
+const DEEPSEEK_MODEL_ID = "deepseek-flash";
+const DEEPSEEK_API_KEY_ENV = "SENTINEL_DEEPSEEK_API_KEY";
+/** Dedicated gateway failover model override (never the route's model). */
+const FAILOVER_MODEL_ID_ENV = "SENTINEL_MODEL_FAILOVER_ID";
+/** The failover model used when `SENTINEL_MODEL_FAILOVER_ID` is unset. */
+export const DEFAULT_FAILOVER_MODEL_ID = "gpt-6-luna";
+/** Explicit owner-override inputs. */
+const MODEL_BASE_URL_ENV = "SENTINEL_MODEL_BASE_URL";
+const MODEL_ID_ENV = "SENTINEL_MODEL_ID";
+const MODEL_FALLBACK_ENV = "SENTINEL_MODEL_FALLBACK";
+/** Dedicated structured-review model override (never the route's model). */
+const REVIEW_MODEL_ID_ENV = "SENTINEL_REVIEW_MODEL_ID";
+/** The only `SENTINEL_MODEL_FALLBACK` value that selects the fallback route. */
+const FALLBACK_SELECTOR = "deepseek";
+/** The frozen reasoning effort of every route. */
+const REASONING = "max";
+/** Private finite bounds (no new configuration surface). */
+const MAX_BASE_URL_CHARS = 2_048;
+const MAX_MODEL_ID_CHARS = 256;
+
+/** A DECLARED environment value: a non-empty string; null when unset or empty. */
+function declared(
+  env: Record<string, string | undefined>,
+  name: string,
+): string | null {
+  const value = env[name];
+  if (typeof value !== "string" || value.length === 0) return null;
+  return value;
+}
+
+/**
+ * A key is usable only when it carries non-whitespace content: a declared but
+ * blank key is never a usable route key.
+ */
+function isUsableKey(value: string | null): boolean {
+  return value !== null && value.trim().length > 0;
+}
+
+/**
+ * A bounded absolute `http`/`https` endpoint: within the private bound, no
+ * leading/trailing whitespace, no control characters or inner whitespace, a
+ * parseable URL and a nonempty host. Anything else is invalid.
+ */
+function isBoundedBaseUrl(value: string): boolean {
+  if (value.length > MAX_BASE_URL_CHARS || value.trim() !== value) return false;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x20 || code === 0x7f) return false;
+  }
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") &&
+      url.host.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A bounded model id: a nonempty, exactly-trimmed string within the private
+ * bound with no control characters. The route resolver never rewrites it.
+ */
+function isBoundedModelId(value: string): boolean {
+  if (value.length === 0 || value.length > MAX_MODEL_ID_CHARS) return false;
+  if (value.trim() !== value) return false;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return false;
+  }
+  return true;
+}
+
+/** The frozen primary gateway route (model id optionally overridden). */
+function gatewayRoute(
+  failoverModel: string,
+  model: string = GATEWAY_MODEL_ID,
+): ModelRouteV1 {
+  return {
+    provider: GATEWAY_PROVIDER,
+    baseUrl: GATEWAY_BASE_URL,
+    model,
+    reasoning: REASONING,
+    apiKeyEnv: null,
+    failoverModel,
+  };
+}
+
+/** A DeepSeek-direct route carrying only the key's environment variable name. */
+function deepseekRoute(
+  baseUrl: string,
+  model: string,
+  failoverModel: string,
+): ModelRouteV1 {
+  return {
+    provider: DEEPSEEK_PROVIDER,
+    baseUrl,
+    model,
+    reasoning: REASONING,
+    apiKeyEnv: DEEPSEEK_API_KEY_ENV,
+    failoverModel,
+  };
+}
+
+/**
+ * Resolve exactly one model route from the trusted environment mapping.
+ *
+ * Pure and total: every input yields a route, and no invalid/unknown value can
+ * fabricate a non-gateway route. A malformed mapping (not an object) is the
+ * one fail-closed refusal.
+ */
+export function resolveModelRoute(
+  env: Record<string, string | undefined>,
+): ModelRouteV1 {
+  if (env === null || typeof env !== "object" || Array.isArray(env)) {
+    throw new Error(MODEL_ROUTE_INVALID);
+  }
+  const failoverModel = resolveFailoverModelId(env);
+  // A declared key must carry non-whitespace content to be usable; a declared
+  // but blank key selects nothing.
+  const deepseekKey = declared(env, DEEPSEEK_API_KEY_ENV);
+  const usableKey = isUsableKey(deepseekKey);
+  const overrideBaseUrl = declared(env, MODEL_BASE_URL_ENV);
+  if (overrideBaseUrl !== null) {
+    // An explicitly attempted override never degrades into a different
+    // fabricated route: an invalid endpoint, an invalid model id or a missing
+    // key keeps the gateway primary. Only an EMPTY value counts as unset.
+    if (!isBoundedBaseUrl(overrideBaseUrl) || !usableKey) {
+      return gatewayRoute(failoverModel);
+    }
+    const overrideModelId = declared(env, MODEL_ID_ENV);
+    if (overrideModelId !== null && !isBoundedModelId(overrideModelId)) {
+      return gatewayRoute(failoverModel);
+    }
+    return deepseekRoute(
+      overrideBaseUrl,
+      overrideModelId ?? DEEPSEEK_MODEL_ID,
+      failoverModel,
+    );
+  }
+  if (
+    declared(env, MODEL_FALLBACK_ENV) === FALLBACK_SELECTOR && usableKey
+  ) {
+    return deepseekRoute(DEEPSEEK_BASE_URL, DEEPSEEK_MODEL_ID, failoverModel);
+  }
+  // Gateway route: `SENTINEL_MODEL_ID`, when declared and valid, overrides
+  // the gateway model id; an unset, empty or invalid value yields the default
+  // (`gpt-reserve`). Endpoint, credentials and failover never change.
+  const gatewayModelId = declared(env, MODEL_ID_ENV);
+  if (gatewayModelId !== null && isBoundedModelId(gatewayModelId)) {
+    return gatewayRoute(failoverModel, gatewayModelId);
+  }
+  return gatewayRoute(failoverModel);
+}
+
+/**
+ * Resolve the gateway failover model id from the trusted environment mapping.
+ *
+ * The failover model is the model id the implementation port retries with
+ * when the primary gateway model is rate limited (HTTP 429). It always runs
+ * on the same gateway endpoint with the same credentials and the frozen
+ * `max` reasoning — only the model id changes. An unset, empty, blank or
+ * invalid value yields the default (`gpt-6-luna`); a declared-but-invalid
+ * value never disables the failover or fabricates an off-gateway route.
+ *
+ * Pure and total like `resolveModelRoute`: a malformed mapping (not an
+ * object) is the one fail-closed refusal.
+ */
+export function resolveFailoverModelId(
+  env: Record<string, string | undefined>,
+): string {
+  if (env === null || typeof env !== "object" || Array.isArray(env)) {
+    throw new Error(MODEL_ROUTE_INVALID);
+  }
+  const declaredModelId = declared(env, FAILOVER_MODEL_ID_ENV);
+  if (declaredModelId === null || declaredModelId.trim().length === 0) {
+    return DEFAULT_FAILOVER_MODEL_ID;
+  }
+  if (!isBoundedModelId(declaredModelId)) {
+    return DEFAULT_FAILOVER_MODEL_ID;
+  }
+  return declaredModelId;
+}
+
+/** The review model used when `SENTINEL_REVIEW_MODEL_ID` is unset or blank. */
+export const DEFAULT_REVIEW_MODEL_ID = "codex-auto-review";
+
+/**
+ * Resolve the dedicated structured-review model id from the trusted
+ * environment mapping.
+ *
+ * The review model is NEVER the shared implementation route's model:
+ * `SENTINEL_REVIEW_MODEL_ID` names the model the structured reviewer
+ * submits (the owner's preferred review route, `codex-auto-review` on the
+ * gateway endpoint) while implementation keeps its own route-selected model.
+ * A declared value must satisfy the same bounded model-id contract as the
+ * route resolver. An unset, empty or blank value yields the owner's preferred
+ * default (`codex-auto-review`), so a production configuration that never
+ * sets the variable still reviews on the preferred model instead of
+ * refusing; a declared-but-invalid value (padded, over-long or carrying
+ * control characters) yields the invalid empty sentinel, which the
+ * structured reviewer refuses at prepare before any session opens — reviews
+ * never silently run on the implementation model.
+ *
+ * Pure and total like `resolveModelRoute`: a malformed mapping (not an
+ * object) is the one fail-closed refusal.
+ */
+export function resolveReviewModelId(
+  env: Record<string, string | undefined>,
+): string {
+  if (env === null || typeof env !== "object" || Array.isArray(env)) {
+    throw new Error(MODEL_ROUTE_INVALID);
+  }
+  const declaredModelId = declared(env, REVIEW_MODEL_ID_ENV);
+  if (declaredModelId === null || declaredModelId.trim().length === 0) {
+    return DEFAULT_REVIEW_MODEL_ID;
+  }
+  if (!isBoundedModelId(declaredModelId)) {
+    return "";
+  }
+  return declaredModelId;
+}

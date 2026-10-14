@@ -52,6 +52,7 @@ import {
 import type {
   ReviewReceiptV1,
   ReviewStatusV1,
+  ReviewTaskAcceptanceV1,
 } from "../contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { SeverityV1 } from "../contracts/shared.ts";
@@ -89,6 +90,12 @@ export interface ReviewNormalizationV1 {
   findings: ParsedFindingV1[];
   /** Findings that carried a label but could not be fully retained. */
   findingsUncounted: number;
+  /**
+   * Accepted task acceptance of a completed verdict, or null. Only a
+   * completed observation can carry one; the merge gate refuses an
+   * issue-backed delivery without a positive acceptance.
+   */
+  taskAcceptance: ReviewTaskAcceptanceV1 | null;
 }
 
 export interface ReviewNormalizationInputV1 {
@@ -205,17 +212,26 @@ export async function normalizeReviewObservation(
     resultId: string | null,
     summary: string | null,
     findings: ParsedFindingV1[] = [],
+    /**
+     * Terminal instant of a STANDING durable journal that carries no accepted
+     * verdict, or null while nothing terminal is bound to this operation. A
+     * non-null value is the only evidence that distinguishes "this attempt is
+     * over with no verdict" from "this attempt has not concluded yet", and it
+     * is derived exclusively from the transport's own bound record.
+     */
+    terminalAt: number | null = null,
   ): Promise<ReviewObservationV1> => ({
     status: "unavailable",
     requestId,
     reviewer: null,
     resultId,
-    completedAt: null,
+    completedAt: terminalAt,
     observedHead,
     observedBase: reviewedBase,
     findings: await toReviewFindings(findings),
     summary,
     receivedAt: input.receivedAt,
+    taskAcceptance: null,
   });
 
   // 1. The service receipt must bind the exact submission identity the port
@@ -242,10 +258,22 @@ export async function normalizeReviewObservation(
       findings: [],
       summary: null,
       receivedAt: input.receivedAt,
+      taskAcceptance: null,
     });
   }
   if (service.status === "unavailable") {
-    return portOk(await unavailable(null, null));
+    // The transport reports `unavailable` both for a standing durable journal
+    // that carries no accepted verdict and for an operation with no terminal
+    // record at all. Only the bound record's own completion instant can prove
+    // the former; its static reason is the bound summary and is preserved.
+    return portOk(
+      await unavailable(
+        service.resultId,
+        service.summary,
+        [],
+        service.completedAt,
+      ),
+    );
   }
 
   // The service claims completion; verify every machine-verifiable part.
@@ -340,6 +368,13 @@ export async function normalizeReviewObservation(
   if (findings.length > findingCap) {
     return portOk(await unavailable(service.resultId, service.summary));
   }
+  // The durable journal's acceptance and the transport receipt's acceptance
+  // are the SAME evidence. A contradictory pair is unavailable, never a
+  // verdict; absent on either side stays "no acceptance".
+  const journalAcceptance = journal.result.taskAcceptance ?? null;
+  if (!sameTaskAcceptance(journalAcceptance, service.taskAcceptance)) {
+    return portOk(await unavailable(service.resultId, service.summary));
+  }
 
   return portOk({
     status: "completed",
@@ -352,6 +387,7 @@ export async function normalizeReviewObservation(
     findings: await toReviewFindings(findings),
     summary: journal.result.summary,
     receivedAt: input.receivedAt,
+    taskAcceptance: journalAcceptance,
   });
 }
 
@@ -388,6 +424,19 @@ function journalMatchesService(
   if (journal.completedAt !== service.completedAt) return false;
   if (journal.resultDigest !== service.resultDigest) return false;
   return true;
+}
+
+/** Exact equality of two task acceptances; `null`/absent is "no acceptance". */
+function sameTaskAcceptance(
+  left: ReviewTaskAcceptanceV1 | null,
+  right: ReviewTaskAcceptanceV1 | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  if (left.issueNumber !== right.issueNumber) return false;
+  if (left.taskDigest !== right.taskDigest) return false;
+  if (left.verdict !== right.verdict) return false;
+  if (left.evidence.length !== right.evidence.length) return false;
+  return left.evidence.every((item, index) => item === right.evidence[index]);
 }
 
 /**
@@ -494,8 +543,45 @@ export interface ReviewSubmissionRecordV1 {
   expectedReviewer: string;
 }
 
+/** Fixed prefix of the transport's durable per-operation review record id. */
+export const REVIEW_RECORD_PREFIX = "review-";
+
 export function reviewRecordId(operationKey: string): string {
-  return `review-${operationKey}`.slice(0, 256);
+  return `${REVIEW_RECORD_PREFIX}${operationKey}`.slice(0, 256);
+}
+
+/**
+ * Exact operation key named by one durable review request id.
+ *
+ * The transport's request id IS its durable record identity: the fixed prefix
+ * plus the operation key the record was created for. A consumer that must bind
+ * to the exact submission a receipt records (the merge gate) recovers the key
+ * from that evidence instead of guessing it from the pull request, so a bounded
+ * later attempt of the same head is bound exactly like the first one. Anything
+ * that does not carry the exact prefix is not a review record identity and
+ * yields null, and every consumer then fails closed.
+ */
+export function operationKeyOfReviewRequest(
+  requestId: string | null | undefined,
+): string | null {
+  if (typeof requestId !== "string") return null;
+  if (!requestId.startsWith(REVIEW_RECORD_PREFIX)) return null;
+  const key = requestId.slice(REVIEW_RECORD_PREFIX.length);
+  return key.length === 0 ? null : key;
+}
+
+/**
+ * True only when one recovered operation key names the SAME pull request and
+ * head: the first-attempt identity or a later attempt of that exact head. A key
+ * naming another pull request or another head is never accepted.
+ */
+export function reviewOperationKeyBindsHead(
+  operationKey: string,
+  pullRequestNumber: number,
+  head: GitSha,
+): boolean {
+  const first = `review:${pullRequestNumber}:${head}`;
+  return operationKey === first || operationKey.startsWith(`${first}:`);
 }
 
 /**
@@ -534,6 +620,7 @@ export function deriveReviewReceiptV1(
     findings: observation.findings,
     findingsUncounted: unknownFindingsCount,
     unresolvedSeverities: deriveUnresolvedSeverities(observation.findings),
+    taskAcceptance: observation.taskAcceptance,
     submittedAt: submission.submittedAt,
     completedAt: observation.status === "completed"
       ? observation.completedAt
@@ -560,6 +647,20 @@ export function completedReviewMatchesReceipt(
   if (normalized.reviewer !== receipt.observedReviewer) return false;
   if (normalized.observedHead !== receipt.pullRequest.head) return false;
   if (normalized.observedBase !== receipt.pullRequest.base) return false;
+  // A durable receipt written before the semantic acceptance boundary omits
+  // taskAcceptance entirely; that absence is "no acceptance", exactly like the
+  // explicit null a fresh change-only normalization carries. Normalize before
+  // comparing so legacy absence matches the null it equals — never a copied
+  // acceptance, and never evidence: an issue-backed delivery still needs the
+  // positive bound acceptance evaluated by the semantic gate.
+  if (
+    !sameTaskAcceptance(
+      normalized.taskAcceptance,
+      receipt.taskAcceptance ?? null,
+    )
+  ) {
+    return false;
+  }
   const current = normalized.findings.map((finding) =>
     `${finding.id}\u0000${finding.severity}\u0000${
       finding.path ?? ""

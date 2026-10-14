@@ -1,11 +1,10 @@
 // createPullRequest / closeIssue suite: deterministic-head publication with
 // exact branch precondition, reuse of the exact own PR, foreign/human
-// collisions, duplicate-publication reconciliation, auto-close keyword
-// removal (source body otherwise preserved) and idempotent issue closure
-// with lost-response reconciliation.
+// collisions, duplicate-publication reconciliation, byte-for-byte body
+// publication (including GitHub closing keywords) and idempotent issue
+// closure with lost-response reconciliation.
 import assert from "node:assert/strict";
 
-import { sanitizeAutoCloseKeywords } from "../../src/github/text.ts";
 import {
   httpRespond,
   issueWire,
@@ -33,7 +32,11 @@ function createRequest(
   };
 }
 
-Deno.test("createPullRequest: publishes with source body preserved except close keywords", async () => {
+Deno.test("createPullRequest: publishes the requested body byte-for-byte", async () => {
+  // The loop builds `Resolves #N` for an issue-backed repair; the port must
+  // publish that body unchanged so GitHub links the issue and the merge
+  // closes it. No keyword stripping happens anywhere on this path.
+  const sourceBody = "Resolves #123\n";
   const { port, transport } = makePort({
     script: [
       httpRespond("GET", "/git/ref/heads/sentinel/fix-1", 200, refWire(SHA1)),
@@ -44,12 +47,15 @@ Deno.test("createPullRequest: publishes with source body preserved except close 
         201,
         pullWire({
           number: 21,
+          body: sourceBody,
           head: { ref: "sentinel/fix-1", sha: SHA1 },
         }),
       ),
     ],
   });
-  const result = await port.createPullRequest(createRequest());
+  const result = await port.createPullRequest(
+    createRequest({ body: sourceBody }),
+  );
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.deepEqual(result.value, {
@@ -63,7 +69,7 @@ Deno.test("createPullRequest: publishes with source body preserved except close 
   assert.equal(body.head, "ubiquity:sentinel/fix-1");
   assert.equal(body.base, "development");
   assert.equal(body.title, "fix the bug");
-  assert.equal(body.body, "Body with #123 mention.");
+  assert.equal(body.body, sourceBody, "body published byte-for-byte");
 });
 
 Deno.test("createPullRequest: missing or mismatched head branch fails closed", async () => {
@@ -91,6 +97,7 @@ Deno.test("createPullRequest: reuses only the exact own open PR, blocks collisio
       httpRespond("GET", "/git/ref/heads/sentinel/fix-1", 200, refWire(SHA1)),
       httpRespond("GET", "/pulls?head=", 200, [pullWire({
         number: 21,
+        body: createRequest().body,
         head: { ref: "sentinel/fix-1", sha: SHA1 },
       })]),
     ],
@@ -147,6 +154,7 @@ Deno.test("createPullRequest: duplicate/ambiguous publication is reconciled by d
       httpRespond("POST", "/repos/ubiquity/sentinel/pulls", 422, {}),
       httpRespond("GET", "/pulls?head=", 200, [pullWire({
         number: 24,
+        body: createRequest().body,
         head: { ref: "sentinel/fix-1", sha: SHA1 },
       })]),
     ],
@@ -365,29 +373,6 @@ Deno.test("closeIssue: idempotent closure with lost-response reconciliation", as
   const missing = await port5.closeIssue(99);
   assert.equal(missing.ok, false);
   if (!missing.ok) assert.equal(missing.error.kind, "not_found");
-});
-
-Deno.test("sanitizeAutoCloseKeywords: removes close keywords, preserves everything else", () => {
-  assert.equal(
-    sanitizeAutoCloseKeywords("Fixes #123 and closes #124"),
-    "#123 and #124",
-  );
-  assert.equal(
-    sanitizeAutoCloseKeywords("This resolves #5 and references #6"),
-    "This #5 and references #6",
-  );
-  assert.equal(
-    sanitizeAutoCloseKeywords("plain text without refs #123 alone"),
-    "plain text without refs #123 alone",
-  );
-  assert.equal(sanitizeAutoCloseKeywords("touch #12"), "touch #12");
-  assert.equal(sanitizeAutoCloseKeywords(""), "");
-  // Only the keyword form is removed; the body is otherwise byte-identical.
-  const body = "Closes #9\n\nBody paragraph remains.";
-  assert.equal(
-    sanitizeAutoCloseKeywords(body),
-    "#9\n\nBody paragraph remains.",
-  );
 });
 
 // Author identity used in fixture helpers stays consistent.

@@ -1,0 +1,266 @@
+import {
+  type GitHubPort,
+  type IncidentAdapter,
+  portError,
+  portOk,
+  type RepairStateWriter,
+  type ReplayPort,
+  type StateReadView,
+} from "../src/contracts/ports.ts";
+import {
+  CLOSED_C_WAVE,
+  type ClosedCWaveRecoveryDepsV1,
+} from "../src/host/modern-matrix-recovery.ts";
+import { createGitBundleImporter } from "../src/host/matrix-git.ts";
+import {
+  createDefaultBranchResolver,
+  loadTargetConfigsV1,
+} from "../src/host/targets.ts";
+import {
+  parseAppInstallationId,
+  scopeTargetConfigV1,
+} from "../src/host/actions.ts";
+import type { GitSha } from "../src/contracts/brands.ts";
+import { RollingStartBudget } from "../src/budget/mod.ts";
+import { GitHubApiClient } from "../src/github/client.ts";
+import {
+  fetchHttpTransport,
+  type HttpTransportV1,
+} from "../src/github/http.ts";
+import { HostedRepairCooldownGate } from "../src/host/hosted-cooldown.ts";
+import { parseCooldownModeV1 } from "../src/contracts/cooldown-mode.ts";
+import {
+  createActionsMatrixArtifactHttpTransport,
+  createActionsMatrixArtifactTransport,
+} from "../src/host/matrix-artifacts.ts";
+import type { HistoricalMatrixQuarantineDepsV1 } from "../src/host/matrix-actions.ts";
+import {
+  createLocalRepositoryConfig,
+  prepareSourceRepository,
+  refreshDevelopment,
+} from "../src/host/local.ts";
+import { HOSTED_HISTORICAL_RELEASE_WITNESSES } from "./hosted-autonomy-matrix-bindings.ts";
+
+/** The maintenance slice has no implementation, review or publication capability. */
+export async function createHostedClosedMatrixRecovery(input: {
+  state: StateReadView & RepairStateWriter;
+  clock: { now(): number };
+  token: string;
+  apiToken: string;
+  sourceDir: string;
+  scratch: string;
+  artifactRoot: string;
+  appInstallationId?: string;
+  cooldownMode?: string;
+  http?: HttpTransportV1;
+  artifactHttp?: HttpTransportV1;
+}): Promise<ClosedCWaveRecoveryDepsV1> {
+  const http = input.http ?? fetchHttpTransport();
+  const template = createLocalRepositoryConfig();
+  const targets = await loadTargetConfigsV1({
+    template,
+    root: input.sourceDir,
+    resolveDefaultBranch: createDefaultBranchResolver({
+      http,
+      token: input.apiToken,
+    }),
+  });
+  const configs = targets.configs.map((config) =>
+    scopeTargetConfigV1(
+      config,
+      template.repository,
+      parseAppInstallationId(input.appInstallationId),
+    )
+  );
+  const gate = new HostedRepairCooldownGate({
+    state: input.state,
+    clock: input.clock,
+    mode: parseCooldownModeV1(input.cooldownMode),
+  });
+  const client = new GitHubApiClient({
+    repository: template.repository,
+    apiBaseUrl: "https://api.github.com",
+    http,
+    clock: input.clock,
+    auth: {
+      authorizationHeader: () =>
+        Promise.resolve(portOk(`Bearer ${input.token}`)),
+    },
+    cooldownGate: gate,
+  });
+  const budget = new RollingStartBudget({
+    state: input.state,
+    clock: input.clock,
+    configs,
+  });
+  function refused<T>(): T {
+    return new Proxy({}, {
+      get: () => () =>
+        Promise.reject(new Error("C maintenance capability refused")),
+    }) as T;
+  }
+  const mirror = (config: typeof configs[number]) =>
+    input.scratch + "/sources/" + config.repository.owner + "-" +
+    config.repository.name;
+  await Deno.mkdir(input.scratch + "/sources", {
+    recursive: true,
+    mode: 0o700,
+  });
+  return {
+    state: input.state,
+    clock: input.clock,
+    configs,
+    cycleFor: () => ({
+      state: input.state,
+      clock: input.clock,
+      configs,
+      controllerSha: CLOSED_C_WAVE.runtimeSha,
+      github: refused<GitHubPort>(),
+      githubCooldown: gate,
+      incidents: refused<IncidentAdapter>(),
+      replay: refused<ReplayPort>(),
+      model: {
+        modelId: "gpt-reserve",
+        runModel: () => {
+          throw new Error("C maintenance model refused");
+        },
+      },
+      budget,
+      externalImplementations: true,
+    }),
+    prepareTarget: async (config) => {
+      const host = {
+        stateRoot: input.scratch,
+        sourceDir: input.sourceDir,
+        controllerSha: CLOSED_C_WAVE.runtimeSha,
+        githubToken: input.apiToken,
+        modelToken: "",
+        codexExecutable: "",
+        denoExecutable: Deno.execPath(),
+        trustedPath: "/usr/bin:/bin",
+      };
+      const remoteUrl =
+        `https://github.com/${config.repository.owner}/${config.repository.name}.git`;
+      await prepareSourceRepository(
+        mirror(config),
+        host,
+        input.scratch,
+        config.repository.name === template.repository.name &&
+          config.repository.owner === template.repository.owner
+          ? undefined
+          : remoteUrl,
+      );
+      await refreshDevelopment(
+        mirror(config),
+        host,
+        input.scratch,
+        gate,
+        config.repository.installationId,
+        { remoteUrl, baseBranch: config.baseBranch },
+      );
+    },
+    importerFor: (config, bundlesDir) =>
+      createGitBundleImporter({ repositoryDir: mirror(config), bundlesDir }),
+    transportFor: (state) =>
+      createActionsMatrixArtifactTransport({
+        state,
+        clock: input.clock,
+        token: input.token,
+        artifactRoot: input.artifactRoot,
+        http: input.artifactHttp ?? createActionsMatrixArtifactHttpTransport(),
+      }),
+    readExecution: (execution) => client.readHostedExecution(execution),
+  };
+}
+
+/** Existing native token and read-only artifact route; no release writer or model. */
+export function createHostedHistoricalMatrixQuarantine(input: {
+  state: StateReadView & RepairStateWriter;
+  clock: { now(): number };
+  token: string;
+  artifactRoot: string;
+  http?: HttpTransportV1;
+  artifactHttp?: HttpTransportV1;
+  cooldownMode?: string;
+  /**
+   * Explicit authenticated not-started revalidation of already-quarantined
+   * records. Defaults to false so every existing caller keeps the original
+   * closed quarantine pass; the trusted production maintenance route enables
+   * it explicitly.
+   */
+  revalidateNotStarted?: boolean;
+  historicalReleaseWitnesses?: readonly {
+    commit: GitSha;
+    executionId: string;
+    logDigest: string;
+    reservationIds: readonly string[];
+  }[];
+}): HistoricalMatrixQuarantineDepsV1 {
+  const witnesses = input.historicalReleaseWitnesses ??
+    HOSTED_HISTORICAL_RELEASE_WITNESSES;
+  const client = new GitHubApiClient({
+    repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+    apiBaseUrl: "https://api.github.com",
+    http: input.http ?? fetchHttpTransport(),
+    clock: input.clock,
+    auth: {
+      authorizationHeader: () =>
+        Promise.resolve(portOk(`Bearer ${input.token}`)),
+    },
+    cooldownGate: new HostedRepairCooldownGate({
+      state: input.state,
+      clock: input.clock,
+      mode: parseCooldownModeV1(input.cooldownMode),
+    }),
+  });
+  return {
+    state: input.state,
+    clock: input.clock,
+    revalidateNotStarted: input.revalidateNotStarted === true,
+    budget: new RollingStartBudget({
+      state: input.state,
+      clock: input.clock,
+      configs: [],
+    }),
+    readExecution: (execution) => client.readHostedExecution(execution),
+    historicalReleaseWitnesses: witnesses.map((witness) => ({
+      ...witness,
+      reject: (proof, expectedHead, _revalidateNotStarted, deadline) => {
+        const historicalState: StateReadView = {
+          readRepair: () => input.state.readRepair(),
+          readRelease: () =>
+            input.state.readReleaseAt
+              ? input.state.readReleaseAt({
+                commit: witness.commit,
+                expectedHead,
+              })
+              : Promise.resolve(
+                portError(
+                  "unavailable",
+                  "historical release reader unavailable",
+                ),
+              ),
+        };
+        return createActionsMatrixArtifactTransport({
+          state: historicalState,
+          clock: input.clock,
+          token: input.token,
+          artifactRoot: input.artifactRoot,
+          http: input.artifactHttp ??
+            createActionsMatrixArtifactHttpTransport(),
+        }).rejectHistorical!({
+          proof,
+          revalidateNotStarted: input.revalidateNotStarted === true,
+          ...(deadline === undefined ? {} : { deadline }),
+        });
+      },
+    })),
+    transport: createActionsMatrixArtifactTransport({
+      state: input.state,
+      clock: input.clock,
+      token: input.token,
+      artifactRoot: input.artifactRoot,
+      http: input.artifactHttp ?? createActionsMatrixArtifactHttpTransport(),
+    }),
+  };
+}

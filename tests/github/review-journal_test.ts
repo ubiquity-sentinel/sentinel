@@ -7,14 +7,19 @@ import { RecordParseError, tryParse } from "../../src/contracts/validation.ts";
 import {
   findingMessage,
   isJournalBoundExceeded,
+  MAX_FINDING_BODY,
   MAX_FINDING_MESSAGE,
+  MAX_FINDING_PATH,
+  MAX_FINDING_TITLE,
   MAX_FINDINGS,
   MAX_JOURNAL_BYTES,
+  MAX_RESULT_SUMMARY,
   parseReviewJournalBody,
   parseReviewJournalMetadata,
   parseReviewResultJson,
   parseReviewResultV1,
   renderReviewJournalBody,
+  REVIEW_RESULT_OUTPUT_SCHEMA,
   reviewResultDigest,
 } from "../../src/github/review-journal.ts";
 import type {
@@ -70,7 +75,7 @@ function runningExecution(overrides: Record<string, unknown> = {}) {
     invocationId: "inv-1",
     threadId: "thread-1",
     submittedProvider: "codex-provider",
-    model: "gpt-5.6-luna",
+    model: "gpt-reserve",
     reasoning: "max",
     startMayOccur: true,
     ...overrides,
@@ -89,7 +94,7 @@ function readyExecution(overrides: Record<string, unknown> = {}) {
       turnId: "turn-1",
       terminalOrigin: "runtime",
       observedTerminalStatus: "completed",
-      observedModel: "gpt-5.6-luna",
+      observedModel: "gpt-reserve",
       observedReasoning: "max",
       durationMs: 4200,
       outputChars: 512,
@@ -265,6 +270,85 @@ Deno.test("strict result: unavailable shape allows an empty finding list only", 
   assert.equal(parsed2.execution, null);
 });
 
+Deno.test("strict result: task acceptance is exact, bounded and never invented", async () => {
+  const acceptance = {
+    issueNumber: 263,
+    taskDigest: "b".repeat(64),
+    verdict: "fulfilled" as const,
+    evidence: ["the launcher loads the selected immutable release config"],
+  };
+  const withAcceptance: ReviewResultV1 = {
+    ...cleanResult(),
+    taskAcceptance: acceptance,
+  };
+  const parsed = await parseReviewResultV1(
+    JSON.parse(JSON.stringify(withAcceptance)),
+  );
+  assert.deepEqual(parsed.taskAcceptance, acceptance);
+
+  // A result written before the boundary stays keyless: absence is preserved,
+  // never defaulted into a passing acceptance.
+  const legacy = await parseReviewResultV1({
+    verdict: "clean",
+    summary: "no issues found",
+    findings: [],
+  });
+  assert.equal("taskAcceptance" in legacy, false);
+  assert.equal(legacy.taskAcceptance ?? null, null);
+
+  // A definitive verdict without evidence is not an acceptance.
+  assert.throws(() =>
+    parseReviewResultV1({
+      verdict: "clean",
+      summary: "no issues found",
+      findings: [],
+      taskAcceptance: { ...acceptance, evidence: [] },
+    })
+  );
+  // An unavailable verdict can never carry completion evidence.
+  assert.throws(() =>
+    parseReviewResultV1({
+      verdict: "unavailable",
+      summary: "no result",
+      findings: [],
+      taskAcceptance: acceptance,
+    })
+  );
+  // The acceptance is part of the digested durable result: it round-trips
+  // through the rendered journal exactly.
+  const journal = await readyJournal(withAcceptance);
+  const round = asReady(
+    await parseReviewJournalBody(renderReviewJournalBody(journal)),
+  );
+  assert.deepEqual(round.result.taskAcceptance, acceptance);
+  assert.equal(
+    canonicalStringify(round),
+    canonicalStringify(journal),
+    "the bound acceptance is covered by the journal digest",
+  );
+  // The model-facing schema exposes the bound shape (optional: only a review
+  // asked with a task statement may carry it).
+  const taskSchema = (REVIEW_RESULT_OUTPUT_SCHEMA as {
+    properties: { taskAcceptance: { additionalProperties: boolean } };
+  }).properties.taskAcceptance;
+  assert.equal(taskSchema.additionalProperties, false);
+});
+
+Deno.test("strict result: a pre-acceptance journal body stays fully readable", async () => {
+  // The exact legacy shape: a ready journal whose result has NO
+  // taskAcceptance key, digested and rendered by the old writer.
+  const legacyJournal = await readyJournal(cleanResult());
+  const body = renderReviewJournalBody(legacyJournal);
+  const parsed = asReady(await parseReviewJournalBody(body));
+  assert.equal(parsed.resultDigest, legacyJournal.resultDigest);
+  assert.equal(parsed.result.taskAcceptance ?? null, null);
+  assert.equal(
+    canonicalStringify(parsed),
+    canonicalStringify(legacyJournal),
+    "old durable state stays byte-identical and readable",
+  );
+});
+
 Deno.test("strict result: intent and running journal phases roundtrip", async () => {
   const intent = intentJournal();
   const parsedIntent = await parseReviewJournalBody(
@@ -363,8 +447,12 @@ Deno.test("strict result: unknown priority, invalid lines and bad paths are reje
     "path backslash": { path: "src\\x.ts" },
     "path drive": { path: "C:/src/x.ts" },
     "path newline": { path: "src\nx.ts" },
+    // Trailing-line endings are parser-authoritative: the schema pattern is
+    // only a producer-side narrowing and anchor semantics may differ.
+    "path trailing newline": { path: "src/x.ts\n" },
     "title empty": { title: "" },
     "title newline": { title: "a\nb" },
+    "title trailing newline": { title: "a\n" },
     "body return": { body: "a\r\nb" },
     "body control": { body: "a\u0000b" },
   };
@@ -751,12 +839,14 @@ Deno.test("journal: completed verdicts require real runtime completion evidence"
   });
   await assert.rejects(
     parseReviewJournalBody(renderReviewJournalBody(wrongModel)),
-    /observedModel.*expected one of/,
+    /observedModel.*does not match submitted configuration/,
   );
+  // A configured model must still be a bounded identity: a malformed value is
+  // rejected, while any bounded configured id is a first-class identity.
   assert.throws(() =>
     parseReviewJournalMetadata(JSON.stringify({
       ...runningJournal(),
-      execution: runningExecution({ model: "gpt-4" }),
+      execution: runningExecution({ model: "bad\nmodel" }),
     }))
   );
   assert.throws(() =>
@@ -766,6 +856,86 @@ Deno.test("journal: completed verdicts require real runtime completion evidence"
     }))
   );
 });
+
+Deno.test(
+  "journal: configured review model identity roundtrips and mismatched or malformed models are rejected",
+  async () => {
+    const configured = "route-selected-review-model";
+
+    // A nondefault configured model is a first-class durable identity in both
+    // the running and ready journal phases, never a hardcoded literal.
+    const running = parseReviewJournalMetadata(
+      JSON.stringify(runningJournal({
+        execution: runningExecution({ model: configured }),
+      })),
+    );
+    assert.equal(running.phase, "running");
+    if (running.phase === "running") {
+      assert.equal(running.execution.model, configured);
+    }
+
+    const ready = await readyJournal(cleanResult(), {
+      execution: readyExecution({
+        model: configured,
+        actual: { ...readyExecution().actual, observedModel: configured },
+      }),
+    });
+    const parsedReady = await parseReviewJournalBody(
+      renderReviewJournalBody(ready),
+    );
+    assert.equal(parsedReady.phase, "ready");
+    if (parsedReady.phase === "ready") {
+      assert.equal(parsedReady.execution?.model, configured);
+      assert.equal(parsedReady.execution?.actual.observedModel, configured);
+      assert.equal(parsedReady.execution?.actual.observedReasoning, "max");
+    }
+
+    // The observed actual must still equal the submitted configured identity:
+    // a default literal or any other model is refused, never relabeled.
+    for (const wrongActual of ["gpt-reserve", "other-review-model"]) {
+      const mismatch = await readyJournal(cleanResult(), {
+        execution: readyExecution({
+          model: configured,
+          actual: { ...readyExecution().actual, observedModel: wrongActual },
+        }),
+      });
+      await assert.rejects(
+        parseReviewJournalBody(renderReviewJournalBody(mismatch)),
+        /does not match submitted configuration/,
+      );
+    }
+
+    // Malformed configured identities fail closed: empty, whitespace-only,
+    // untrimmed, control-bearing and over-bound values are all rejected.
+    const malformed = [
+      "",
+      " ",
+      " model",
+      "model ",
+      "bad\nmodel",
+      "x".repeat(257),
+    ];
+    for (const bad of malformed) {
+      assert.throws(
+        () =>
+          parseReviewJournalMetadata(JSON.stringify(runningJournal({
+            execution: runningExecution({ model: bad }),
+          }))),
+        `running execution model ${JSON.stringify(bad)} must be rejected`,
+      );
+      const malformedActual = await readyJournal(cleanResult(), {
+        execution: readyExecution({
+          model: configured,
+          actual: { ...readyExecution().actual, observedModel: bad },
+        }),
+      });
+      await assert.rejects(
+        parseReviewJournalBody(renderReviewJournalBody(malformedActual)),
+        `observed model ${JSON.stringify(bad)} must be rejected`,
+      );
+    }
+  },
+);
 
 Deno.test("journal: rendered body overflow is unavailable, never partial", async () => {
   const big: ReviewFindingV1[] = Array.from({ length: 100 }, (_, i) =>
@@ -831,3 +1001,206 @@ function countOccurrences(text: string, needle: string): number {
     at = found + needle.length;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Structured review contract: the producer output schema must bind the
+// single-field text rules the strict parser enforces (control characters and
+// relative-path syntax) through the supported `pattern` keyword. Cross-field
+// constraints (verdict/findings cardinality, line ordering, duplicate
+// findings) have no supported keyword and are pinned by the reviewer's
+// submitted instructions instead.
+// ---------------------------------------------------------------------------
+
+function schemaNode(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function requiredSchemaNode(
+  value: unknown,
+  label: string,
+): Record<string, unknown> {
+  const node = schemaNode(value);
+  if (node === null) assert.fail(`${label} must be an object`);
+  return node;
+}
+
+Deno.test(
+  "structured review contract: producer schema binds every single-field parser bound and pattern with supported keywords",
+  () => {
+    const root = requiredSchemaNode(REVIEW_RESULT_OUTPUT_SCHEMA, "schema root");
+    const props = requiredSchemaNode(root.properties, "schema properties");
+    const verdict = requiredSchemaNode(props.verdict, "verdict schema");
+    const summary = requiredSchemaNode(props.summary, "summary schema");
+    const findings = requiredSchemaNode(props.findings, "findings schema");
+    const items = requiredSchemaNode(findings.items, "findings items schema");
+    const itemProps = requiredSchemaNode(
+      items.properties,
+      "finding properties",
+    );
+    const priority = requiredSchemaNode(itemProps.priority, "priority schema");
+    const title = requiredSchemaNode(itemProps.title, "title schema");
+    const body = requiredSchemaNode(itemProps.body, "body schema");
+    const path = requiredSchemaNode(itemProps.path, "path schema");
+    const lineStart = requiredSchemaNode(
+      itemProps.lineStart,
+      "lineStart schema",
+    );
+    const lineEnd = requiredSchemaNode(itemProps.lineEnd, "lineEnd schema");
+
+    /** The actual schema pattern, compiled exactly as a validator would. */
+    const patternOf = (
+      label: string,
+      schema: Record<string, unknown>,
+    ): RegExp => {
+      const pattern = schema.pattern;
+      assert.equal(typeof pattern, "string", `${label} must carry a pattern`);
+      assert.notEqual(pattern, "", `${label} pattern must not be empty`);
+      return new RegExp(pattern as string);
+    };
+    const summaryPattern = patternOf("summary", summary);
+    const titlePattern = patternOf("title", title);
+    const bodyPattern = patternOf("body", body);
+    const pathPattern = patternOf("path", path);
+
+    // A strict-valid result must still be accepted by the parser.
+    for (const valid of [cleanResult(), findingsResult()]) {
+      assert.doesNotThrow(() => parseReviewResultV1(valid));
+    }
+
+    const baseFinding = {
+      priority: 1,
+      title: "plain title",
+      body: "plain body",
+      path: "src/github/client.ts",
+      lineStart: 1,
+      lineEnd: 1,
+    };
+    const summaryResult = (value: string): unknown => ({
+      verdict: "clean",
+      summary: value,
+      findings: [],
+    });
+    const findingResult = (
+      field: "title" | "body" | "path",
+      value: string,
+    ): unknown => ({
+      verdict: "findings",
+      summary: "ok",
+      findings: [{ ...baseFinding, [field]: value }],
+    });
+
+    // Representative control-character and path-syntax values: for these
+    // listed cases the producer schema pattern and the strict parser agree.
+    // The schema only narrows producer output; the strict parser remains
+    // authoritative, including for trailing-line endings and cross-field
+    // bounds the pattern cannot express.
+    type FieldCase = {
+      field: "summary" | "title" | "body" | "path";
+      value: string;
+      accepted: boolean;
+    };
+    const patterns: Record<FieldCase["field"], RegExp> = {
+      summary: summaryPattern,
+      title: titlePattern,
+      body: bodyPattern,
+      path: pathPattern,
+    };
+    const cases: FieldCase[] = [
+      { field: "summary", value: "plain summary", accepted: true },
+      {
+        field: "summary",
+        value: "line one\nline two\twith tab",
+        accepted: true,
+      },
+      { field: "summary", value: "a\u0001b", accepted: false },
+      { field: "summary", value: "a\rb", accepted: false },
+      { field: "body", value: "", accepted: true },
+      { field: "body", value: "body\nline\twith tab", accepted: true },
+      { field: "body", value: "a\u0000b", accepted: false },
+      { field: "body", value: "a\rb", accepted: false },
+      { field: "title", value: "plain title", accepted: true },
+      { field: "title", value: "a\nb", accepted: false },
+      { field: "title", value: "a\tb", accepted: false },
+      { field: "title", value: "a\u0001b", accepted: false },
+      { field: "path", value: "src/github/review-journal.ts", accepted: true },
+      { field: "path", value: ".hidden/x.ts", accepted: true },
+      { field: "path", value: "C:", accepted: true },
+      { field: "path", value: "/etc/passwd", accepted: false },
+      { field: "path", value: "C:/src/x.ts", accepted: false },
+      { field: "path", value: "src\\x.ts", accepted: false },
+      { field: "path", value: "src/../x.ts", accepted: false },
+      { field: "path", value: "./x.ts", accepted: false },
+      { field: "path", value: "src//x.ts", accepted: false },
+      { field: "path", value: "src/", accepted: false },
+      { field: "path", value: "src\nx.ts", accepted: false },
+    ];
+    for (const item of cases) {
+      const label = `${item.field} ${JSON.stringify(item.value)}`;
+      assert.equal(
+        patterns[item.field].test(item.value),
+        item.accepted,
+        `${label}: the producer schema pattern must decide it`,
+      );
+      const result = item.field === "summary"
+        ? summaryResult(item.value)
+        : findingResult(item.field, item.value);
+      assert.equal(
+        tryParse(parseReviewResultV1, result).ok,
+        item.accepted,
+        `${label}: the strict parser must decide it identically`,
+      );
+    }
+
+    assert.equal(root.type, "object");
+    assert.equal(root.additionalProperties, false);
+    assert.deepEqual(root.required, [
+      "verdict",
+      "summary",
+      "findings",
+      "taskAcceptance",
+    ]);
+    assert.deepEqual(verdict.enum, ["clean", "findings", "unavailable"]);
+    assert.equal(summary.minLength, 1);
+    assert.equal(summary.maxLength, MAX_RESULT_SUMMARY);
+    assert.equal(findings.maxItems, MAX_FINDINGS);
+    assert.equal(items.additionalProperties, false);
+    assert.deepEqual(items.required, [
+      "priority",
+      "title",
+      "body",
+      "path",
+      "lineStart",
+      "lineEnd",
+    ]);
+    assert.equal(title.minLength, 1);
+    assert.equal(title.maxLength, MAX_FINDING_TITLE);
+    assert.equal(body.maxLength, MAX_FINDING_BODY);
+    assert.equal(path.minLength, 1);
+    assert.equal(path.maxLength, MAX_FINDING_PATH);
+    assert.deepEqual(priority.enum, [0, 1, 2, 3]);
+    assert.equal(lineStart.minimum, 1);
+    assert.equal(lineEnd.minimum, 1);
+
+    // Only ordinary supported keywords may appear at the root, and the
+    // unsupported keywords are never used anywhere in the schema.
+    for (
+      const keyword of ["allOf", "if", "then", "else", "anyOf", "oneOf"]
+    ) {
+      assert.equal(
+        keyword in root,
+        false,
+        `root keyword ${keyword} is not allowed`,
+      );
+    }
+    const serialized = JSON.stringify(REVIEW_RESULT_OUTPUT_SCHEMA);
+    for (const keyword of ["uniqueItems", "$data", "$ref"]) {
+      assert.equal(
+        serialized.includes(`"${keyword}"`),
+        false,
+        `unsupported schema keyword ${keyword} is not allowed`,
+      );
+    }
+  },
+);

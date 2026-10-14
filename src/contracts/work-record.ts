@@ -1,31 +1,13 @@
-/**
- * WorkRecordV1: the durable per-work-item record owned by the repair state.
- * Source identity, controller SHA and the original failing revision are
- * immutable; target/checkpoint/head/PR and the lifecycle fields move forward.
- * Waiting is a reason on a next step, never a second conflicting lifecycle.
- */
-
 import {
   asIncidentFingerprint,
   asSourceSnapshotDigest,
   asWorkItemId,
-  isGitSha,
 } from "./brands.ts";
-import type {
-  GitSha,
-  IncidentFingerprint,
-  SourceSnapshotDigest,
-  WorkItemId,
-} from "./brands.ts";
+import type { WorkItemId } from "./brands.ts";
 import {
   parseEvidenceRefs,
   parseRepositoryIdentity,
   parseSeverity,
-} from "./shared.ts";
-import type {
-  EvidenceRefV1,
-  RepositoryIdentityV1,
-  SeverityV1,
 } from "./shared.ts";
 import {
   expectArray,
@@ -33,6 +15,7 @@ import {
   expectCount,
   expectEnum,
   expectExactKeys,
+  expectExactKeysWithOptional,
   expectGitSha,
   expectNonEmptyString,
   expectNullable,
@@ -47,173 +30,22 @@ import {
   MaxItems,
   MaxText,
 } from "./validation.ts";
-
-export type NextStepV1 = "work" | "review" | "delivery" | "blocked" | "done";
-export type WorkWaitReasonV1 =
-  | "budget_cap"
-  | "review_pending"
-  | "backoff"
-  | "unavailable"
-  | "manual";
-export type BlockerKindV1 =
-  | "stale_source"
-  | "missing_evidence"
-  | "evidence_expired"
-  | "dependency"
-  | "review_quota"
-  | "unavailable"
-  | "other";
-export type IncompleteOpKindV1 =
-  | "pull_request"
-  | "review_request"
-  | "merge"
-  | "issue_closure"
-  | "push"
-  | "implementation"
-  | "replay"
-  | "base_refresh"
-  | "candidate_preservation";
-export type TaskSourceKindV1 = "issue" | "incident" | "review_backlog";
-
-export interface WorkWaitV1 {
-  reason: WorkWaitReasonV1;
-  since: number;
-  /** Timestamp the wait ends (next retry/review arrival); null when unknown. */
-  until: number | null;
-}
-
-export interface WorkBlockerV1 {
-  kind: BlockerKindV1;
-  message: string;
-  since: number;
-}
+import type {
+  SelectionUrgencyV1,
+  WorkBlockerV1,
+  WorkCountersV1,
+  WorkRecordV1,
+  WorkWaitV1,
+} from "./work-record-types.ts";
+import { parseTarget } from "./work-record-target.ts";
+import { parseIntent } from "./work-record-intent.ts";
 
 /**
- * Typed exact identity of an incomplete external operation. Recovery after a
- * push/review/merge needs the exact head, observed base, deterministic branch,
- * PR number and the external request/result identities — never a free-text
- * detail or model-supplied JSON. `pr`/`requestId`/`resultId` stay null until
- * the object exists; the key remains the deterministic idempotency key.
- *
- * `base_refresh` reuses these fields: `expectedHead` is the old candidate,
- * `observedBase` the newly observed configured base and `resultId` the exact
- * deterministic prepared commit once generated (null before preparation). It
- * has no external request id, and `target` stays on the old base/head until the
- * prepared commit was actually published.
+ * WorkRecordV1: the durable per-work-item record owned by the repair state.
+ * Source identity, controller SHA and the original failing revision are
+ * immutable; target/checkpoint/head/PR and the lifecycle fields move forward.
+ * Waiting is a reason on a next step, never a second conflicting lifecycle.
  */
-export interface IncompleteOperationV1 {
-  kind: IncompleteOpKindV1;
-  /** Deterministic idempotency key for the persisted-before-effects intent. */
-  key: string;
-  startedAt: number;
-  /** Deterministic branch the operation uses; null when not branch-scoped. */
-  branch: string | null;
-  /** Exact head expected/pushed; null when not applicable. */
-  expectedHead: GitSha | null;
-  /** Base observed before starting; null when not applicable. */
-  observedBase: GitSha | null;
-  /** PR number; null before creation or for non-PR operations. */
-  pr: number | null;
-  /** External request id (e.g. review request); null before it exists. */
-  requestId: string | null;
-  /** External result id (e.g. review result, merge SHA); null before result. */
-  resultId: string | null;
-}
-
-/** Explicit selection urgency attached to a work item at intake. */
-export interface SelectionUrgencyV1 {
-  /** Active production incident feeding this work item. */
-  activeProduction: boolean;
-  /** Reproducible unresolved 5xx group. */
-  reproducible5xx: boolean;
-  /** Known severe security/data-loss work. */
-  severeSecurityOrDataLoss: boolean;
-}
-
-/**
- * V1 candidate-preservation binding for one produced Git candidate. Written
- * only by the trusted future candidate-preservation writer; this reader never
- * produces it. `operationKey` is the producing operation key (the existing
- * bounded intent-key identity), and `ref` is the exact preservation ref.
- */
-export interface CandidatePreservationV1 {
-  operationKey: string;
-  base: GitSha;
-  head: GitSha;
-  ref: string;
-}
-
-/**
- * V1 candidate state attached to a work target. `preserved: null` means the
- * record is parked before/without a preserved candidate and is NOT evidence
- * that any candidate is durable. Absence of the whole group is the exact
- * legacy shape and is never defaulted when parsing.
- */
-export interface CandidateStateV1 {
-  preserved: CandidatePreservationV1 | null;
-  publishedHead: GitSha | null;
-}
-
-export interface WorkTargetV1 {
-  /** Target base validated at the last action. */
-  base: GitSha;
-  /** Checkpoint branch name; null when no checkpoint branch exists. */
-  branch: string | null;
-  checkpoint: { branch: string; sha: GitSha } | null;
-  /** Candidate head; null until a candidate is produced. */
-  head: GitSha | null;
-  /** PR number; null until published. */
-  pr: number | null;
-  /**
-   * Optional V1 candidate state. Absent on every legacy record; present only
-   * for records the candidate-preservation writer owns. Never injected.
-   */
-  candidateState?: CandidateStateV1;
-}
-
-export interface WorkCountersV1 {
-  /** Total candidate invocations (work actions actually run). */
-  attempts: number;
-  /** Automatic retries of failed work; observation never increments either. */
-  retries: number;
-  /** Codex review rounds used on this work item. */
-  reviewRounds: number;
-}
-
-export interface WorkRecordV1 {
-  version: "v1";
-  kind: "work";
-  /** Repository this work item belongs to (stable source identity). */
-  repository: RepositoryIdentityV1;
-  id: WorkItemId;
-  /** Immutable source identity: kind plus the exact captured revision. */
-  source: { kind: TaskSourceKindV1; id: string; revision: string };
-  related: { incidentId: string | null; issueNumber: number | null };
-  /** Stable incident fingerprint for incident tasks; null otherwise. */
-  fingerprint: IncidentFingerprint | null;
-  /** Original failing target revision; immutable, never rewritten on resume. */
-  failingRevision: GitSha | null;
-  /** Digest of the captured source snapshot (provenance), if captured. */
-  sourceSnapshotDigest: SourceSnapshotDigest | null;
-  classification: { severity: SeverityV1; priority: number | null };
-  /** Explicit selection urgency; no module-owned side map is required. */
-  urgency: SelectionUrgencyV1;
-  /** Other work items that must complete first (bounded, exact ids). */
-  dependencies: WorkItemId[];
-  /** Sentinel controller commit that owns this record; immutable. */
-  controller: { sha: GitSha };
-  target: WorkTargetV1;
-  nextStep: NextStepV1;
-  wait: WorkWaitV1 | null;
-  blocker: WorkBlockerV1 | null;
-  counters: WorkCountersV1;
-  evidence: EvidenceRefV1[];
-  intent: IncompleteOperationV1 | null;
-  /** Source first seen (incident) / issue creation; null when unknown. */
-  firstSeenAt: number | null;
-  createdAt: number;
-  updatedAt: number;
-}
 
 /**
  * True when a record carries V1 candidate state: either a candidateState group
@@ -260,42 +92,11 @@ const URGENCY_KEYS = [
   "severeSecurityOrDataLoss",
 ] as const;
 const CONTROLLER_KEYS = ["sha"] as const;
-const TARGET_KEYS = ["base", "branch", "checkpoint", "head", "pr"] as const;
-const TARGET_CANDIDATE_KEYS = [...TARGET_KEYS, "candidateState"] as const;
-const CANDIDATE_STATE_KEYS = ["preserved", "publishedHead"] as const;
-const CANDIDATE_PRESERVATION_KEYS = [
-  "operationKey",
-  "base",
-  "head",
-  "ref",
-] as const;
-/** Exact preservation ref identity: one 64-hex digest ref body, no variants. */
-const PRESERVATION_REF_PATTERN =
-  /^refs\/heads\/sentinel-candidates\/[0-9a-f]{64}$/;
-/** A producing reservation id is the trusted derived 64-hex SHA-256 id. */
-const CANDIDATE_PRESERVATION_KEY_PATTERN = /^impl:[0-9a-f]{64}$/;
-/**
- * Candidate descriptors may also carry the exact base-refresh operation key
- * (the identity `baseRefreshIntentKey` derives). The implementation-reservation
- * form above remains the only key admitted for a candidate_preservation intent.
- */
-const CANDIDATE_DESCRIPTOR_BASE_REFRESH_KEY_PATTERN =
-  /^base_refresh:([1-9][0-9]*):[0-9a-f]{40}:[0-9a-f]{40}$/;
-const CHECKPOINT_KEYS = ["branch", "sha"] as const;
 const WAIT_KEYS = ["reason", "since", "until"] as const;
 const BLOCKER_KEYS = ["kind", "message", "since"] as const;
 const COUNTERS_KEYS = ["attempts", "retries", "reviewRounds"] as const;
-const INTENT_KEYS = [
-  "kind",
-  "key",
-  "startedAt",
-  "branch",
-  "expectedHead",
-  "observedBase",
-  "pr",
-  "requestId",
-  "resultId",
-] as const;
+/** Additive counter keys absent from rows written before they existed. */
+const COUNTERS_OPTIONAL_KEYS = ["stalled", "timeouts"] as const;
 
 export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
   const obj = expectRecord(input, "$");
@@ -418,6 +219,36 @@ export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
   const counters = parseCounters(obj.counters, "$.counters");
   const evidence = parseEvidenceRefs(obj.evidence, "$.evidence");
   const intent = expectNullable(obj.intent, "$.intent", parseIntent);
+  for (const proof of [intent?.selfMerge, target.selfMerge]) {
+    if (
+      proof !== undefined &&
+      (repository.owner !== "ubiquity" || repository.name !== "sentinel" ||
+        repository.installationId !== 0 || proof.taskId !== id ||
+        proof.issueNumber !== issueNumber)
+    ) {
+      fail(
+        "$.intent",
+        "invalid_lifecycle",
+        "self merge durable owner binding mismatch",
+      );
+    }
+  }
+
+  if (intent?.kind === "already_satisfied_closure") {
+    if (
+      sourceKind !== "issue" ||
+      (nextStep !== "delivery" && nextStep !== "blocked") ||
+      intent.expectedHead !== target.head ||
+      intent.observedBase !== target.base ||
+      intent.pr !== target.pr || intent.branch !== target.branch
+    ) {
+      fail(
+        "$.intent",
+        "invalid_lifecycle",
+        "already-satisfied closure must bind its issue delivery target",
+      );
+    }
+  }
 
   const firstSeenAt = expectNullable(
     obj.firstSeenAt,
@@ -564,163 +395,20 @@ function expectPriority(value: unknown, path: string): number {
   return expectPositiveInt(value, path);
 }
 
-function parseTarget(input: unknown, path: string): WorkTargetV1 {
-  const obj = expectRecord(input, path);
-  // Absence of `candidateState` is the exact legacy shape. A present key (even
-  // `undefined`, which expectExactKeys treats as missing) is the new shape and
-  // must carry a complete, exact group — a default is never injected.
-  const hasCandidateStateKey = Object.prototype.hasOwnProperty.call(
-    obj,
-    "candidateState",
-  );
-  expectExactKeys(
-    obj,
-    hasCandidateStateKey ? TARGET_CANDIDATE_KEYS : TARGET_KEYS,
-    path,
-  );
-  const base = expectGitSha(obj.base, `${path}.base`);
-  const branch = expectNullableString(
-    obj.branch,
-    `${path}.branch`,
-    MaxText.branch,
-  );
-  const checkpoint = expectNullable(
-    obj.checkpoint,
-    `${path}.checkpoint`,
-    parseCheckpoint,
-  );
-  const head = expectNullable(obj.head, `${path}.head`, expectGitSha);
-  const pr = expectNullable(obj.pr, `${path}.pr`, expectPositiveInt);
-  if (!hasCandidateStateKey) return { base, branch, checkpoint, head, pr };
-  return {
-    base,
-    branch,
-    checkpoint,
-    head,
-    pr,
-    candidateState: parseCandidateState(
-      obj.candidateState,
-      `${path}.candidateState`,
-      { base, branch, head },
-    ),
-  };
-}
-
-function parseCandidateState(
-  input: unknown,
-  path: string,
-  target: { base: GitSha; branch: string | null; head: GitSha | null },
-): CandidateStateV1 {
-  const obj = expectRecord(input, path);
-  expectExactKeys(obj, CANDIDATE_STATE_KEYS, path);
-  if (target.branch === null) {
-    fail(
-      path,
-      "invalid_lifecycle",
-      "candidateState requires a nonnull target branch",
-    );
-  }
-  const preserved = expectNullable(
-    obj.preserved,
-    `${path}.preserved`,
-    (value, preservedPath) =>
-      parseCandidatePreservation(value, preservedPath, target),
-  );
-  const publishedHead = expectNullable(
-    obj.publishedHead,
-    `${path}.publishedHead`,
-    expectGitSha,
-  );
-  // A null candidate head cannot carry preservation evidence or a published
-  // head: both would claim an exact SHA the target does not hold.
-  if (target.head === null && (preserved !== null || publishedHead !== null)) {
-    fail(
-      path,
-      "invalid_lifecycle",
-      "a null target head requires null preserved and publishedHead",
-    );
-  }
-  return { preserved, publishedHead };
-}
-
-/**
- * Candidate descriptors may carry either trusted producing-operation key form:
- * the implementation reservation or the exact base-refresh identity. This
- * checks descriptor syntax only; the producing consumer still verifies the full
- * operation/task/repository/reservation/head/base/ref binding before effects,
- * and a candidate_preservation INTENT key stays implementation-only.
- */
-function expectCandidateDescriptorOperationKey(
-  value: unknown,
-  path: string,
-): string {
-  const key = expectNonEmptyString(value, path, MaxText.token);
-  if (CANDIDATE_PRESERVATION_KEY_PATTERN.test(key)) return key;
-  const baseRefresh = CANDIDATE_DESCRIPTOR_BASE_REFRESH_KEY_PATTERN.exec(key);
-  if (baseRefresh !== null) {
-    // Canonical positive integer PR: the pattern already forbids zero,
-    // negatives, signs and leading zeros; the value must also be a safe integer.
-    const pr = Number(baseRefresh[1]);
-    if (Number.isSafeInteger(pr) && String(pr) === baseRefresh[1]) return key;
-  }
-  fail(
-    path,
-    "invalid_pattern",
-    "expected impl:<64-hex reservation id> or base_refresh:<PR>:<40-hex old head>:<40-hex new base>",
-  );
-}
-
-function parseCandidatePreservation(
-  input: unknown,
-  path: string,
-  target: { base: GitSha; head: GitSha | null },
-): CandidatePreservationV1 {
-  const obj = expectRecord(input, path);
-  expectExactKeys(obj, CANDIDATE_PRESERVATION_KEYS, path);
-  const operationKey = expectCandidateDescriptorOperationKey(
-    obj.operationKey,
-    `${path}.operationKey`,
-  );
-  const base = expectGitSha(obj.base, `${path}.base`);
-  const head = expectGitSha(obj.head, `${path}.head`);
-  const ref = expectPattern(
-    obj.ref,
-    `${path}.ref`,
-    PRESERVATION_REF_PATTERN,
-    "invalid_pattern",
-    "expected refs/heads/sentinel-candidates/<64-hex>",
-    MaxText.ref,
-  );
-  // The descriptor must describe THIS target: a preserved candidate bound to
-  // another base/head is corrupted state, never silently rebound.
-  if (base !== target.base || head !== target.head) {
-    fail(
-      path,
-      "invalid_lifecycle",
-      "preserved candidate base/head must equal target base/head",
-    );
-  }
-  return { operationKey, base, head, ref };
-}
-
-function parseCheckpoint(
-  input: unknown,
-  path: string,
-): { branch: string; sha: GitSha } {
-  const obj = expectRecord(input, path);
-  expectExactKeys(obj, CHECKPOINT_KEYS, path);
-  return {
-    branch: expectNonEmptyString(obj.branch, `${path}.branch`, MaxText.branch),
-    sha: expectGitSha(obj.sha, `${path}.sha`),
-  };
-}
-
 function parseWait(input: unknown, path: string): WorkWaitV1 {
   const obj = expectRecord(input, path);
   expectExactKeys(obj, WAIT_KEYS, path);
   const reason = expectEnum(
     obj.reason,
-    ["budget_cap", "review_pending", "backoff", "unavailable", "manual"],
+    [
+      "budget_cap",
+      "review_pending",
+      "review_quota",
+      "ci_pending",
+      "backoff",
+      "unavailable",
+      "manual",
+    ],
     `${path}.reason`,
   );
   const since = expectTimestamp(obj.since, `${path}.since`);
@@ -763,226 +451,17 @@ function parseBlocker(input: unknown, path: string): WorkBlockerV1 {
 
 function parseCounters(input: unknown, path: string): WorkCountersV1 {
   const obj = expectRecord(input, path);
-  expectExactKeys(obj, COUNTERS_KEYS, path);
+  expectExactKeysWithOptional(obj, COUNTERS_KEYS, COUNTERS_OPTIONAL_KEYS, path);
   return {
     attempts: expectCount(obj.attempts, `${path}.attempts`),
     retries: expectCount(obj.retries, `${path}.retries`),
     reviewRounds: expectCount(obj.reviewRounds, `${path}.reviewRounds`),
-  };
-}
-
-function parseIntent(input: unknown, path: string): IncompleteOperationV1 {
-  const obj = expectRecord(input, path);
-  expectExactKeys(obj, INTENT_KEYS, path);
-  const kind = expectEnum(
-    obj.kind,
-    [
-      "pull_request",
-      "review_request",
-      "merge",
-      "issue_closure",
-      "push",
-      "implementation",
-      "replay",
-      "base_refresh",
-      "candidate_preservation",
-    ],
-    `${path}.kind`,
-  );
-  const expectedHead = expectNullable(
-    obj.expectedHead,
-    `${path}.expectedHead`,
-    expectGitSha,
-  );
-  const observedBase = expectNullable(
-    obj.observedBase,
-    `${path}.observedBase`,
-    expectGitSha,
-  );
-  const pr = expectNullable(obj.pr, `${path}.pr`, expectPositiveInt);
-  const branch = expectNullableString(
-    obj.branch,
-    `${path}.branch`,
-    MaxText.branch,
-  );
-  const requestId = expectNullableString(
-    obj.requestId,
-    `${path}.requestId`,
-    MaxText.recordId,
-  );
-  const resultId = expectNullableString(
-    obj.resultId,
-    `${path}.resultId`,
-    MaxText.recordId,
-  );
-  const startedAt = expectTimestamp(obj.startedAt, `${path}.startedAt`);
-  const key = expectNonEmptyString(obj.key, `${path}.key`, MaxText.token);
-
-  // Fail-closed exact-identity rules per operation kind.
-  if (kind === "pull_request" || kind === "push") {
-    if (expectedHead === null) {
-      fail(
-        `${path}.expectedHead`,
-        "invalid_lifecycle",
-        "push/PR intent requires an expected head",
-      );
-    }
-    if (branch === null) {
-      fail(
-        `${path}.branch`,
-        "invalid_lifecycle",
-        "push/PR intent requires a deterministic branch",
-      );
-    }
-    if (kind === "push" && pr !== null) {
-      fail(
-        `${path}.pr`,
-        "invalid_lifecycle",
-        "push intent has no PR before creation",
-      );
-    }
-    if (kind === "push" && (requestId !== null || resultId !== null)) {
-      fail(
-        `${path}.requestId`,
-        "invalid_lifecycle",
-        "push intent has no external request/result identity",
-      );
-    }
-  }
-  if (kind === "review_request" || kind === "merge") {
-    if (pr === null) {
-      fail(
-        `${path}.pr`,
-        "invalid_lifecycle",
-        "review/merge intent requires a PR number",
-      );
-    }
-    if (expectedHead === null) {
-      fail(
-        `${path}.expectedHead`,
-        "invalid_lifecycle",
-        "review/merge intent requires the expected head",
-      );
-    }
-  }
-  if (kind === "review_request" && branch === null) {
-    fail(
-      `${path}.branch`,
-      "invalid_lifecycle",
-      "review_request intent requires a deterministic branch",
-    );
-  }
-  if (kind === "base_refresh") {
-    // Exact old candidate/new base binding plus the exact PR and branch; the
-    // prepared commit result id is a Git SHA once it exists, never free text.
-    if (branch === null) {
-      fail(
-        `${path}.branch`,
-        "invalid_lifecycle",
-        "base_refresh intent requires a deterministic branch",
-      );
-    }
-    if (expectedHead === null) {
-      fail(
-        `${path}.expectedHead`,
-        "invalid_lifecycle",
-        "base_refresh intent requires the old candidate head",
-      );
-    }
-    if (observedBase === null) {
-      fail(
-        `${path}.observedBase`,
-        "invalid_lifecycle",
-        "base_refresh intent requires the observed new base",
-      );
-    }
-    if (pr === null) {
-      fail(
-        `${path}.pr`,
-        "invalid_lifecycle",
-        "base_refresh intent requires a PR number",
-      );
-    }
-    if (requestId !== null) {
-      fail(
-        `${path}.requestId`,
-        "invalid_lifecycle",
-        "base_refresh intent has no external request id",
-      );
-    }
-    if (resultId !== null && !isGitSha(resultId)) {
-      fail(
-        `${path}.resultId`,
-        "invalid_lifecycle",
-        "base_refresh result id must be an exact git SHA",
-      );
-    }
-  }
-  if (kind === "candidate_preservation") {
-    // Shape only: this reader never derives the preservation ref or writes it.
-    // The key binds one producing reservation (`impl:<requestId>`), `branch`
-    // is the full preservation ref (NOT target.branch), and the base/head are
-    // exact nonnull SHAs; there is no PR or external result identity.
-    if (!CANDIDATE_PRESERVATION_KEY_PATTERN.test(key)) {
-      fail(
-        `${path}.key`,
-        "invalid_lifecycle",
-        "candidate_preservation key must be impl:<producing reservation id>",
-      );
-    }
-    if (requestId === null || key !== `impl:${requestId}`) {
-      fail(
-        `${path}.requestId`,
-        "invalid_lifecycle",
-        "candidate_preservation requestId must be the producing reservation id",
-      );
-    }
-    if (branch === null || !PRESERVATION_REF_PATTERN.test(branch)) {
-      fail(
-        `${path}.branch`,
-        "invalid_lifecycle",
-        "candidate_preservation branch must be the exact preservation ref",
-      );
-    }
-    if (expectedHead === null) {
-      fail(
-        `${path}.expectedHead`,
-        "invalid_lifecycle",
-        "candidate_preservation requires the expected candidate head",
-      );
-    }
-    if (observedBase === null) {
-      fail(
-        `${path}.observedBase`,
-        "invalid_lifecycle",
-        "candidate_preservation requires the observed base",
-      );
-    }
-    if (pr !== null) {
-      fail(
-        `${path}.pr`,
-        "invalid_lifecycle",
-        "candidate_preservation has no PR",
-      );
-    }
-    if (resultId !== null) {
-      fail(
-        `${path}.resultId`,
-        "invalid_lifecycle",
-        "candidate_preservation has no external result id",
-      );
-    }
-  }
-  return {
-    kind,
-    key,
-    startedAt,
-    branch,
-    expectedHead,
-    observedBase,
-    pr,
-    requestId,
-    resultId,
+    ...(obj.stalled === undefined
+      ? {}
+      : { stalled: expectCount(obj.stalled, `${path}.stalled`) }),
+    ...(obj.timeouts === undefined
+      ? {}
+      : { timeouts: expectCount(obj.timeouts, `${path}.timeouts`) }),
   };
 }
 
@@ -1004,3 +483,21 @@ function parseDependencies(input: unknown, path: string): WorkItemId[] {
       ),
   );
 }
+
+export type {
+  BlockerKindV1,
+  CandidatePreservationV1,
+  CandidateStateV1,
+  IncompleteOperationV1,
+  IncompleteOpKindV1,
+  NextStepV1,
+  OperationFailureV1,
+  SelectionUrgencyV1,
+  TaskSourceKindV1,
+  WorkBlockerV1,
+  WorkCountersV1,
+  WorkRecordV1,
+  WorkTargetV1,
+  WorkWaitReasonV1,
+  WorkWaitV1,
+} from "./work-record-types.ts";

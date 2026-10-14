@@ -5,11 +5,17 @@
 # selected runtime executes in supervisor.yml's repair job with its own
 # sentinel-repair concurrency, so dispatch never holds the runtime group.
 name: sentinel-repair
+run-name: ${{ inputs.sentinel_dispatch_request && format('sentinel-repair request {0}', inputs.sentinel_dispatch_request) || '' }}
 
 on:
-  schedule:
-    - cron: "0 * * * *"
+  # Owner decision 2026-10-05: scheduled cron triggers disabled; manual dispatch only.
   workflow_dispatch:
+    inputs:
+      sentinel_dispatch_request:
+        description: Internal operator dispatch identity
+        required: false
+        type: string
+        default: ""
 
 permissions:
   actions: write

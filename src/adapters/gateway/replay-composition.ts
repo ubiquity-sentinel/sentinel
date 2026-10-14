@@ -130,6 +130,8 @@ import { GATEWAY_INCIDENT_ID } from "./wire.ts";
 // ---------------------------------------------------------------------------
 
 /** Caller-supplied trusted inputs for the gateway replay composition. */
+import type { GatewayCaptureBindingReaderV1 } from "./capture-binding.ts";
+
 export interface GatewayReplayCompositionOptionsV1 {
   /** Wrapped incident adapter; discovery/retention stay delegated/read-only. */
   adapter: IncidentAdapter;
@@ -416,6 +418,7 @@ function sanitizeErrorToPort(
 export class GatewayReplayComposition
   implements IncidentAdapter, FixtureResolverV1, ReplayFixtureTestIdentityV1 {
   private readonly adapter: IncidentAdapter;
+  private readonly bindingReader: GatewayCaptureBindingReaderV1;
   private readonly store: ArtifactStoreV1;
   private readonly keyBytes: Uint8Array<ArrayBuffer>;
   private readonly policy: GatewaySanitizerPolicyV1;
@@ -479,7 +482,18 @@ export class GatewayReplayComposition
     validateExpectedFailure(options.expectedFailure);
     const policy = copyPolicy(options.policy);
     validatePolicyShape(policy);
+    const bindingReader = options.adapter as
+      & IncidentAdapter
+      & Partial<GatewayCaptureBindingReaderV1>;
+    if (typeof bindingReader.readGatewayCaptureBinding !== "function") {
+      throw new TypeError(
+        "GatewayReplayComposition requires authenticated source capture binding",
+      );
+    }
     this.adapter = options.adapter;
+    this.bindingReader = bindingReader as
+      & IncidentAdapter
+      & GatewayCaptureBindingReaderV1;
     this.store = options.store;
     // Copy the caller's key capability: caller buffers are never mutated and
     // no key material is ever persisted.
@@ -537,6 +551,18 @@ export class GatewayReplayComposition
     }
     const now = this.safeNow();
     if (!now.ok) return now.error;
+    const bound = await this.bindingReader.readGatewayCaptureBinding(
+      incidentId,
+    );
+    if (!bound.ok) return bound;
+    const binding = bound.value;
+    if (binding === null) return portOk(evidence);
+    if (
+      binding.incidentId !== incidentId ||
+      binding.classificationDigest !== evidence.fingerprint ||
+      binding.originalRevision !== evidence.failingRevision ||
+      binding.capturedAt !== evidence.provenance.capturedAt
+    ) return portError("invalid", STATIC_BINDING_MISMATCH);
 
     let identityMismatch = 0;
     for (const artifact of evidence.artifacts) {
@@ -544,6 +570,11 @@ export class GatewayReplayComposition
       if (identity === null || identity.incidentId !== evidence.incidentId) {
         return portError("invalid", STATIC_WRONG_ARTIFACT);
       }
+      if (
+        artifact.ref !== binding.artifactRef ||
+        artifact.digest !== binding.ciphertextDigest ||
+        identity.captureId !== binding.captureId
+      ) continue;
       const loaded = await this.loadCapture(
         evidence.incidentId,
         identity.captureId,
@@ -559,8 +590,10 @@ export class GatewayReplayComposition
       }
       const capture = loaded.capture;
       if (
-        capture.fingerprint !== evidence.fingerprint ||
-        capture.gitSha !== evidence.failingRevision
+        capture.classificationDigest !== evidence.fingerprint ||
+        capture.gitSha !== evidence.failingRevision ||
+        capture.capturedAt !== binding.capturedAt ||
+        capture.expiresAt !== binding.sourceExpiresAt
       ) {
         identityMismatch += 1;
         continue;
@@ -568,7 +601,12 @@ export class GatewayReplayComposition
       // A partial/truncated/error/cancelled trace is NOT a fixture source:
       // keep the typed missing-evidence result (replay null) and never fail
       // the whole read over it — the evidence record itself is valid.
-      if (!isCompleteTruthfulUpstream(capture.upstream)) {
+      if (
+        !isCompleteTruthfulUpstream(capture.upstream) ||
+        capture.metadata.capture_status !== "ready" ||
+        capture.metadata.replay_coverage !== "full" ||
+        capture.metadata.unavailable.length !== 0
+      ) {
         continue;
       }
       const composed = await this.composeFixture(

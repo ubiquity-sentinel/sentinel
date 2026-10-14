@@ -1,0 +1,133 @@
+{
+  "sourceSha": "a858a6ed6cc72a8ff9ed0f1cbc310803120d5726",
+  "schema": "gateway-metadata-v3-upstream-v2",
+  "factory": "actual request recorder -> persistEncryptedSentinelReplay -> authenticated admin projection; public synthetic bytes only",
+  "syntheticKeyHex": "4242424242424242424242424242424242424242424242424242424242424242",
+  "index": {
+    "incident_id": "provider-12345678-1234-4abc-8def-1234567890ab",
+    "fingerprint": "fe1de74a9d28eec85723a4e6efe63e8a039e215155af58235f02707fa2afd43c",
+    "severity": "P2",
+    "first_seen_at_ms": 1791883761669,
+    "last_seen_at_ms": 1791883761669,
+    "count": 1,
+    "failing_revision": "a858a6ed6cc72a8ff9ed0f1cbc310803120d5726",
+    "error_type": "http_error",
+    "context": {
+      "message": "Gateway observed a provider failure for this incident group.",
+      "location": null,
+      "sample": []
+    },
+    "provenance": {
+      "endpoint": "https://ai.ubq.fi/v1/responses",
+      "captured_at_ms": 1791883761669,
+      "captured_by": null
+    },
+    "evidence_ref": {
+      "ref": "artifact://sentinel/provider-12345678-1234-4abc-8def-1234567890ab/current-synthetic-capture",
+      "digest": "4137b99e086684200c2bc347f3002bc392e146e62a46d0b90693bd5f3fad4d49"
+    },
+    "evidence_expires_at_ms": 1792056561669
+  },
+  "exported": {
+    "manifest": {
+      "version": 1,
+      "capture_id": "current-synthetic-capture",
+      "fingerprint": "4238bfe52dc5dd33eb4118f53cc42f45a2be74d1fe74f1ce4b02474b5124faee",
+      "case_group_digest": "4cbee7b7a20b367d983989413c199e29b012b98b74676dc556d2cffcb47870b4",
+      "captured_at_ms": 1791883761669,
+      "expires_at_ms": 1792056561669,
+      "algorithm": "AES-256-GCM",
+      "compression": "gzip",
+      "iv": "AQEBAQEBAQEBAQEB",
+      "chunk_count": 1,
+      "ciphertext_bytes": 972
+    },
+    "chunks": [
+      "Hj0pxdP2cwlplr3phxL1j7va-NusZwMVOvmTk3gTXkLp3jFr66fqDZE-DWLxfLQBJVhvzibK64oe2rOoBlhzTxiCipMpt5cp5Lz4_cIgTgv_w3lgxD0Upd6wecdA2445cGye5bQqoJcirEkP4f_skIs2nveUWRB2a4Kw9lg4rvjNgs_JNrXl0gUlKSgGI8JTlrb1NSrEvw-yF9Vk3wFszFNIpBC0abItdvq1FIUjAGzzpD_ZCB6UlkaIO1pOLstxmYwFYuRyhI-QQtiDDGcduzRo0ZL613aYJ-t_kQtkfAXgDNVDwySJlPGkn5tMNsdTfnK-k-W3TYytBFn_YJuLEzn8qcuisflGVZFDECWqblcLR2rZw-q6JNURyMBLRSQ2iPNcIDB9xBAuUYBLVTS5l1gFoCtZS89BRMOVMBULckDCxxqciCkhbIHiT4qNVC76yi8NfYYyUgaXU7QW_QqI3aS-1XEI32yttcKpyyPeYPY_NVmB-nuQLGzg8xiNwtuRH2QOQo-LAXCoOD4riibHUgsTl5MH7M-ahMAJ1Ysy1uh4gzSENgGKArCr1Rz-SXipNqezHQheuKbZ_oOMdObhlFwl1xz8VGjGKGMOGhdyiaNq7P7Aigdz2fV9khfmKJdN9EgmTW2cDEAJYRlnbqvl42I_ws_2GnMBy6ejguSBslEU1lxZU76Sd2_CX-bqXSgUKkqQfeBlHXmCrk2GVBgWclGBczSRMiXFBF9NDRE_ufHqmJSU7_ckvpn9KdKVGRmJDtHyYY2iEPOuwgNfDO06_wcp-qObhBWaRKcWUITIRMEmOYvho9jg2YF2uXXwOzd_VmdAZgl2yP8lAKusKANR9Cu3FnyB29NnKn5aCXzwJvkpd1GoBS4bdebDCBQsrH2SV09gFYoL2EUN4YFa_FB-4f8tWpcpUQX2nBz_SJc5WXH43sX-8pr8Zq22DVz25Ti9A93sD-peUGe1EFgEvNEtiCARgzUI2NaIoeIEj4XaKC41Vso641eEc6OUFpxuBJsJkNwJCdnHic4Ec-JuxeXi4t6aij6GM5EsLS8E1fGC6CwmbrfPaSiw-sUL7lgqW_xMwq_bJwIzNmg76CouaGG8TREBH9UCVFpNyxGOJkfz5-UUxrigeCUAGgz9LiQ6ze2dVh9JbvZnOx2XSDF6jQ75TtjLKohycRYxeJD7M_VGS1xHyXWBwp2zmPBUP7C2gcfyG3RfgeVSnlviePWDRH5IsYR48FHu-SaXxTD3aV2mToM8KLmzMYGwSZTpazt9U1bzCUw3hNPnVv7s0cj4"
+    ]
+  },
+  "expected": {
+    "version": 3,
+    "captured_at_ms": 1791883761669,
+    "endpoint": "/v1/responses",
+    "method": "POST",
+    "content_type": "application/json",
+    "compatibility_headers": {},
+    "failure_signature": "{\"status\":502,\"stream\":false,\"completed\":false,\"terminal_type\":\"http.error\",\"failure_kind\":\"upstream_timeout\",\"framing_valid\":true,\"provider_route\":\"deepseek\"}",
+    "observation": {
+      "status": 502,
+      "stream": false,
+      "completed": false,
+      "terminal_type": "http.error",
+      "failure_kind": "upstream_timeout",
+      "synthetic_terminal_type": null,
+      "provider_route": "deepseek"
+    },
+    "client_observation": {
+      "status": 502,
+      "stream": false,
+      "completed": false,
+      "terminal_type": "http.error",
+      "failure_kind": "upstream_timeout",
+      "framing_valid": true,
+      "provider_route": "deepseek",
+      "error_code": "server_error",
+      "error_param": null,
+      "terminal_body_base64": "eyJlcnJvciI6eyJ0eXBlIjoic2VydmVyX2Vycm9yIiwibWVzc2FnZSI6InB1YmxpYyBzeW50aGV0aWMgdGVybWluYWwifX0=",
+      "terminal_body_truncated": false
+    },
+    "request_id": "synthetic-request",
+    "git_sha": "a858a6ed6cc72a8ff9ed0f1cbc310803120d5726",
+    "deno_revision": "vps-a858a6ed6cc72a8ff9ed0f1cbc310803120d5726",
+    "upstream": {
+      "version": 2,
+      "attempts": [
+        {
+          "provider": "deepseek",
+          "status": 200,
+          "content_type": "application/json",
+          "chunks_base64": [
+            "eyJpZCI6InByaXZhdGUtcmVzcG9uc2UtaWQiLCJvYmplY3QiOiJyZXNwb25zZSIsInN0YXR1cyI6ImNvbXBsZXRlZCIsIm91dHB1dCI6W119"
+          ],
+          "terminal": "eof",
+          "headers": {
+            "content-type": "application/json",
+            "retry-after": "1"
+          },
+          "headers_truncated": false,
+          "chunk_times_ms": [
+            6
+          ],
+          "started_at_ms": 1791883761669,
+          "headers_at_ms": 1791883761673,
+          "ended_at_ms": 1791883761675
+        }
+      ],
+      "attempts_truncated": false,
+      "bytes_truncated": false,
+      "chunks_truncated": false
+    },
+    "settings": {
+      "source": "recorded_request_body",
+      "provider_route": "deepseek",
+      "model_requested": "synthetic-model",
+      "reasoning_requested": null,
+      "stream_requested": false,
+      "stream_observed": false
+    },
+    "capture_status": "ready",
+    "replay_coverage": "full",
+    "unavailable": [],
+    "body_sha256": "2b82dad80e89c339a0ede9d934612cb1163f147a30090ac5c0bebd959a48221a",
+    "body_bytes": 73,
+    "downstream": {
+      "terminal_type": "http.error",
+      "failure_kind": "upstream_timeout",
+      "error_code": "server_error",
+      "error_param": null,
+      "body_base64": "eyJlcnJvciI6eyJ0eXBlIjoic2VydmVyX2Vycm9yIiwibWVzc2FnZSI6InB1YmxpYyBzeW50aGV0aWMgdGVybWluYWwifX0=",
+      "body_truncated": false
+    },
+    "body": "{\"model\":\"synthetic-model\",\"input\":\"private-request-text\",\"stream\":false}"
+  }
+}

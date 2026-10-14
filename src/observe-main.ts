@@ -22,7 +22,10 @@ import {
   type RepositoryConfigV1,
 } from "./contracts/repository-config.ts";
 import type { GatewayTransportV1 } from "./adapters/gateway/http.ts";
-import { GatewayIncidentAdapter } from "./adapters/gateway/incident-adapter.ts";
+import {
+  GatewayIncidentAdapter,
+  type GatewayRetryPolicyV1,
+} from "./adapters/gateway/incident-adapter.ts";
 import {
   type ArtifactStoreLimitsV1,
   LocalArtifactStore,
@@ -55,6 +58,12 @@ export interface ObserveConfigV1 {
   limits?: ArtifactStoreLimitsV1;
   transport?: GatewayTransportV1;
   clock?: Clock;
+  /**
+   * Opt-in bounded retry for transient gateway producer faults (HTTP 5xx,
+   * transport rejection). Absent or budget 0 preserves the exact
+   * fail-closed single-attempt behavior.
+   */
+  retry?: GatewayRetryPolicyV1;
 }
 
 export interface ObserveResultV1 {
@@ -63,6 +72,14 @@ export interface ObserveResultV1 {
   pages: number;
   incidents: number;
   evidenceRecords: number;
+  /**
+   * Incidents whose evidence could not be represented at all. These are
+   * recorded, counted and named — never silently dropped and never fabricated
+   * into a clean read.
+   */
+  blockedIncidents: number;
+  /** First bounded per-incident detail, for run-log diagnosis. */
+  blockedDetail: string | null;
   retainedCiphertexts: number;
   retainedCiphertextBytes: number;
 }
@@ -79,7 +96,6 @@ export type ObserveConfigurationErrorCodeV1 =
   | "observe_config_invalid"
   | "observe_auth_missing"
   | "observe_auth_invalid"
-  | "observe_auth_expired"
   | "observe_replay_key_missing"
   | "observe_replay_key_invalid"
   | "observe_store_unavailable";
@@ -189,6 +205,11 @@ export function parseObserveReplayKey(value: string): Uint8Array<ArrayBuffer> {
  * encrypted capture bytes and their non-plaintext manifest metadata under
  * `storeRoot`; no remote claim, issue, PR, branch, model or release write is
  * reachable from this capability set.
+ *
+ * Per-incident refusal is not a pass failure. An incident the adapter cannot
+ * represent is counted in `blockedIncidents` (with one bounded detail) and the
+ * pass continues; only a global fault aborts it. A blocked incident is never
+ * reported as read and no evidence is ever fabricated for it.
  */
 export async function runReadOnlyObservation(
   input: ObserveConfigV1,
@@ -234,12 +255,18 @@ export async function runReadOnlyObservation(
     auth,
     clock,
     store,
+    // Observe runs are manually dispatched and must survive transient
+    // producer 5xx flake without an operator redispatch: a bounded retry
+    // budget keeps a full outage failing fast.
+    retry: input.retry ?? { budget: 3, baseDelayMs: 1000 },
   });
 
   let cursor: string | null = null;
   let pages = 0;
   let incidents = 0;
   let evidenceRecords = 0;
+  let blockedIncidents = 0;
+  let blockedDetail: string | null = null;
   for (;;) {
     pages++;
     if (pages > MAX_PAGES) {
@@ -271,7 +298,19 @@ export async function runReadOnlyObservation(
     }
     for (const item of page.value.items) {
       const evidence = await adapter.readIncident(item.id);
-      if (!evidence.ok) return evidence;
+      if (!evidence.ok) {
+        // `invalid` is a per-incident verdict: the adapter refused to
+        // represent THIS incident (for example its replay export exceeds the
+        // contract artifact-count bound), which says nothing about the others.
+        // Aborting the whole pass here discarded every remaining incident and
+        // kept the scheduled observer red indefinitely. Global faults —
+        // authentication, rate limiting, transport or index unavailability —
+        // stay fail-closed and still abort the pass.
+        if (evidence.error.kind !== "invalid") return evidence;
+        blockedIncidents++;
+        blockedDetail ??= evidence.error.detail;
+        continue;
+      }
       if (evidence.value !== null) evidenceRecords++;
     }
     cursor = page.value.nextCursor;
@@ -292,6 +331,8 @@ export async function runReadOnlyObservation(
       pages,
       incidents,
       evidenceRecords,
+      blockedIncidents,
+      blockedDetail,
       retainedCiphertexts: stats.value.count,
       retainedCiphertextBytes: stats.value.totalBytes,
     },
@@ -316,16 +357,17 @@ async function main(): Promise<void> {
       storeRoot: STORE_ROOT,
     });
     if (!result.ok) {
-      // Map auth_failed to auth_expired when credentials are rejected; the
-      // gateway adapter already returns auth_failed for 401/403, which is
-      // the definitive signal that the current token is no longer accepted.
-      // Missing/expired and invalid credentials converge to the same blocked
-      // end state so the workflow can decide how to proceed.
-      const reason = result.error.kind === "auth_failed"
-        ? "auth_expired"
-        : result.error.kind;
+      // Preserve auth_failed: this result has no expiry evidence and can
+      // represent malformed local headers or a permission-related response.
+      // The typed detail is a fixed adapter/observer literal (never a payload,
+      // credential or key-derived value). Without it a CI-only failure reports
+      // only a bare kind and cannot be diagnosed from the run log.
       console.error(
-        JSON.stringify({ status: "blocked", reason }),
+        JSON.stringify({
+          status: "blocked",
+          reason: result.error.kind,
+          detail: result.error.detail,
+        }),
       );
       Deno.exit(2);
     }

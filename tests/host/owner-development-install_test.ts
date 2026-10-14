@@ -1,3 +1,37 @@
+import assert from "node:assert/strict";
+import { canonicalStringify } from "../../src/contracts/canonical.ts";
+import {
+  buildOwnerDevelopmentInstallSnapshot,
+  OWNER_DEVELOPMENT_INSTALL_READER_GENERATION,
+  planOwnerDevelopmentInstall,
+} from "../../src/host/owner-development-install.ts";
+import {
+  AGGREGATE,
+  CANCELLED_RELEASE_RUNTIME_REVISION,
+  EARLY_FRAME_RUNTIME_REVISION,
+  LEARNING_RUNTIME_REVISION,
+  MEMORY_RUNTIME_REVISION,
+  MISMATCH_DISPOSITION_RUNTIME_REVISION,
+  NOW,
+  ORIGINAL,
+  READER,
+  STACKED_MERGE_RUNTIME_REVISION,
+  STATE_HEAD,
+  UNRELATED,
+  VERSIONED_RUNTIME_REVISION,
+} from "./owner-install-fixture-constants.ts";
+import {
+  acceptedRelease,
+  cooldown,
+  executionIntent,
+  failedProof,
+  healthyProof,
+  notStartedProof,
+  releaseSnapshot,
+  requestedRelease,
+  runtimeRecord,
+} from "./owner-install-fixture-proofs.ts";
+
 /**
  * Owner-authorized development installation: the pure planning and
  * serialization boundary only. These tests build parsed release snapshots with
@@ -5,302 +39,6 @@
  * intended snapshot movement and the canonical state-file bytes. No store,
  * network, Git write, model, credential or paid call is touched.
  */
-import assert from "node:assert/strict";
-
-import type { GitSha } from "../../src/contracts/brands.ts";
-import { canonicalStringify } from "../../src/contracts/canonical.ts";
-import { parseGitHubCooldownV1 } from "../../src/contracts/github-cooldown.ts";
-import type { GitHubCooldownV1 } from "../../src/contracts/github-cooldown.ts";
-import {
-  HOSTED_RUNTIME_ID,
-  parseHostedExecutionIntentV1,
-  parseHostedNotStartedProofV1,
-  parseHostedReleaseRecordV1,
-  parseHostedRunProofV1,
-  parseHostedRuntimeRecordV1,
-} from "../../src/contracts/hosted-supervisor.ts";
-import type {
-  HostedExecutionPurposeV1,
-  HostedNotStartedProofV1,
-  HostedReleaseRecordV1,
-  HostedRunProofV1,
-  HostedRuntimeRecordV1,
-} from "../../src/contracts/hosted-supervisor.ts";
-import { parseReleaseRequestV1 } from "../../src/contracts/release.ts";
-import { parseReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
-import type { ReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
-import {
-  buildOwnerDevelopmentInstallSnapshot,
-  OWNER_DEVELOPMENT_INSTALL_AGGREGATE_GENERATION,
-  OWNER_DEVELOPMENT_INSTALL_AGGREGATE_REVISION,
-  OWNER_DEVELOPMENT_INSTALL_ORIGINAL_GENERATION,
-  OWNER_DEVELOPMENT_INSTALL_ORIGINAL_REVISION,
-  OWNER_DEVELOPMENT_INSTALL_READER_GENERATION,
-  OWNER_DEVELOPMENT_INSTALL_READER_REVISION,
-  ownerDevelopmentInstallCommitMessage,
-  ownerDevelopmentInstallFiles,
-  planOwnerDevelopmentInstall,
-} from "../../src/host/owner-development-install.ts";
-
-const T0 = 1_700_000_000_000;
-const NOW = T0 + 10_000;
-const LAUNCHER = "f".repeat(40) as GitSha;
-const STATE_HEAD = "a".repeat(40) as GitSha;
-const PRIOR_STATE_HEAD = "b".repeat(40) as GitSha;
-const UNRELATED = "e".repeat(40) as GitSha;
-const DIGEST = "d".repeat(64);
-
-const ORIGINAL = OWNER_DEVELOPMENT_INSTALL_ORIGINAL_REVISION;
-const READER = OWNER_DEVELOPMENT_INSTALL_READER_REVISION;
-const AGGREGATE = OWNER_DEVELOPMENT_INSTALL_AGGREGATE_REVISION;
-
-function hostedProof(input: {
-  runId: number;
-  purpose: HostedExecutionPurposeV1;
-  releaseId: string | null;
-  revision: GitSha;
-  generation: number;
-  outcome: "healthy" | "failed";
-}): HostedRunProofV1 {
-  const failed = input.outcome === "failed";
-  return parseHostedRunProofV1({
-    execution: parseHostedExecutionIntentV1({
-      id: `${input.runId}:1:repair`,
-      runId: input.runId,
-      runAttempt: 1,
-      launcherSha: LAUNCHER,
-      purpose: input.purpose,
-      revision: input.revision,
-      generation: input.generation,
-      releaseId: input.releaseId,
-      createdAt: T0,
-    }),
-    workflowId: 357012162,
-    workflowPath: ".github/workflows/supervisor.yml",
-    repository: "ubiquity/sentinel",
-    ref: "refs/heads/sentinel-supervisor",
-    jobId: 9,
-    startedAt: T0 + 1000,
-    finishedAt: T0 + 2000,
-    observedAt: T0 + 3000,
-    outcome: input.outcome,
-    startupReady: !failed,
-    settled: true,
-    baseSha: failed ? null : input.revision,
-    terminalAt: failed ? null : T0 + 1500,
-    logDigest: DIGEST,
-  });
-}
-
-function healthyProof(
-  revision: GitSha,
-  generation: number,
-  runId = 31,
-): HostedRunProofV1 {
-  return hostedProof({
-    runId,
-    purpose: "ordinary",
-    releaseId: null,
-    revision,
-    generation,
-    outcome: "healthy",
-  });
-}
-
-function failedProof(
-  revision: GitSha,
-  generation: number,
-  runId = 32,
-): HostedRunProofV1 {
-  return hostedProof({
-    runId,
-    purpose: "ordinary",
-    releaseId: null,
-    revision,
-    generation,
-    outcome: "failed",
-  });
-}
-
-function notStartedProof(
-  revision: GitSha,
-  generation: number,
-): HostedNotStartedProofV1 {
-  return parseHostedNotStartedProofV1({
-    execution: parseHostedExecutionIntentV1({
-      id: "33:1:repair",
-      runId: 33,
-      runAttempt: 1,
-      launcherSha: LAUNCHER,
-      purpose: "ordinary",
-      revision,
-      generation,
-      releaseId: null,
-      createdAt: T0,
-    }),
-    workflowId: 357012162,
-    workflowPath: ".github/workflows/supervisor.yml",
-    repository: "ubiquity/sentinel",
-    ref: "refs/heads/sentinel-supervisor",
-    jobId: 9,
-    finishedAt: T0 + 2000,
-    observedAt: T0 + 3000,
-    outcome: "not_started",
-    evidenceDigest: DIGEST,
-  });
-}
-
-function executionIntent(
-  revision: GitSha,
-  generation: number,
-): HostedRuntimeRecordV1["execution"] {
-  return parseHostedExecutionIntentV1({
-    id: "34:1:repair",
-    runId: 34,
-    runAttempt: 1,
-    launcherSha: LAUNCHER,
-    purpose: "ordinary",
-    revision,
-    generation,
-    releaseId: null,
-    createdAt: T0,
-  });
-}
-
-function runtimeRecord(input: {
-  revision: GitSha;
-  generation: number;
-  healthyProof?: HostedRunProofV1 | null;
-  executionProof?: HostedRuntimeRecordV1["lastExecutionProof"];
-  execution?: HostedRuntimeRecordV1["execution"];
-}): HostedRuntimeRecordV1 {
-  return parseHostedRuntimeRecordV1({
-    version: "v1",
-    kind: "hosted_runtime",
-    id: HOSTED_RUNTIME_ID,
-    activeRevision: input.revision,
-    generation: input.generation,
-    lastHealthyProof: input.healthyProof ?? null,
-    lastExecutionProof: input.executionProof ?? null,
-    nextOrdinaryAt: T0,
-    execution: input.execution ?? null,
-    createdAt: T0,
-    updatedAt: T0 + 3000,
-  });
-}
-
-function cooldown(retryNotBefore: number | null): GitHubCooldownV1 {
-  return parseGitHubCooldownV1({
-    installationId: 0,
-    retryNotBefore,
-    observedAt: T0,
-    observationId: DIGEST,
-    secondaryBackoff: 0,
-  });
-}
-
-function releaseSnapshot(input: {
-  runtime?: HostedRuntimeRecordV1 | null;
-  hostedReleases?: HostedReleaseRecordV1[];
-  cooldowns?: GitHubCooldownV1[];
-  sequence?: number;
-}): ReleaseStateSnapshotV1 {
-  return parseReleaseStateSnapshotV1({
-    version: "v1",
-    kind: "release_state_snapshot",
-    stateHead: PRIOR_STATE_HEAD,
-    sequence: input.sequence ?? 10,
-    updatedAt: T0 + 3000,
-    releases: [],
-    hostedRuntimes: input.runtime === undefined || input.runtime === null
-      ? []
-      : [input.runtime],
-    hostedReleases: input.hostedReleases ?? [],
-    githubCooldowns: input.cooldowns ?? [],
-  });
-}
-
-function releaseRequest() {
-  return parseReleaseRequestV1({
-    version: "v1",
-    kind: "release_request",
-    id: "release-1",
-    target: {
-      repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
-      environment: "production",
-    },
-    revision: AGGREGATE,
-    source: {
-      pullRequest: 1,
-      reviewRequestId: "review-request-1",
-      reviewReceiptId: "review-receipt-1",
-      head: AGGREGATE,
-      base: ORIGINAL,
-    },
-    status: "open",
-    failureReason: null,
-    createdAt: T0 - 3000,
-  });
-}
-
-function requestedRelease(): HostedReleaseRecordV1 {
-  return parseHostedReleaseRecordV1({
-    version: "v1",
-    kind: "hosted_release",
-    id: "release-1",
-    request: releaseRequest(),
-    priorRevision: ORIGINAL,
-    phase: "requested",
-    priorProof: null,
-    candidateProof: null,
-    rollbackProof: null,
-    pointerIntent: null,
-    createdAt: T0 - 2000,
-    updatedAt: T0,
-  });
-}
-
-function acceptedRelease(): HostedReleaseRecordV1 {
-  return parseHostedReleaseRecordV1({
-    version: "v1",
-    kind: "hosted_release",
-    id: "release-1",
-    request: releaseRequest(),
-    priorRevision: ORIGINAL,
-    phase: "accepted",
-    priorProof: hostedProof({
-      runId: 41,
-      purpose: "prior",
-      releaseId: "release-1",
-      revision: ORIGINAL,
-      generation: OWNER_DEVELOPMENT_INSTALL_ORIGINAL_GENERATION,
-      outcome: "healthy",
-    }),
-    candidateProof: hostedProof({
-      runId: 42,
-      purpose: "candidate",
-      releaseId: "release-1",
-      revision: AGGREGATE,
-      generation: OWNER_DEVELOPMENT_INSTALL_AGGREGATE_GENERATION,
-      outcome: "healthy",
-    }),
-    rollbackProof: null,
-    pointerIntent: null,
-    createdAt: T0 - 2000,
-    updatedAt: T0 + 3000,
-  });
-}
-
-async function rawSha256(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(text),
-  );
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 Deno.test(
   "owner development install plan: original generation 5 installs the reader only with its exact healthy proof",
   () => {
@@ -577,273 +315,648 @@ Deno.test(
 );
 
 Deno.test(
-  "owner development install plan: completed and unrelated pointers do nothing",
+  "owner development install plan: generation 69 learning install follows a healthy 68 and rolls back once",
   () => {
-    const originalHealthy = healthyProof(ORIGINAL, 5, 71);
-    const readerHealthy = healthyProof(READER, 6, 72);
-    const aggregateHealthy = healthyProof(AGGREGATE, 7, 73);
-
-    // Post-rollback targets never reattempt installation.
-    assert.equal(
-      planOwnerDevelopmentInstall(
-        releaseSnapshot({
-          runtime: runtimeRecord({
-            revision: ORIGINAL,
-            generation: 7,
-            healthyProof: originalHealthy,
-          }),
+    const memoryHealthy = healthyProof(MEMORY_RUNTIME_REVISION, 68, 141);
+    const learningInstall = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: MEMORY_RUNTIME_REVISION,
+          generation: 68,
+          healthyProof: memoryHealthy,
         }),
-        NOW,
-      ).status,
-      "no_change",
-    );
-    assert.equal(
-      planOwnerDevelopmentInstall(
-        releaseSnapshot({
-          runtime: runtimeRecord({
-            revision: READER,
-            generation: 8,
-            healthyProof: readerHealthy,
-          }),
-        }),
-        NOW,
-      ).status,
-      "no_change",
-    );
-    assert.equal(
-      planOwnerDevelopmentInstall(
-        releaseSnapshot({
-          runtime: runtimeRecord({
-            revision: AGGREGATE,
-            generation: 7,
-            healthyProof: aggregateHealthy,
-          }),
-        }),
-        NOW,
-      ).status,
-      "no_change",
-    );
-    assert.equal(
-      planOwnerDevelopmentInstall(
-        releaseSnapshot({
-          runtime: runtimeRecord({
-            revision: UNRELATED,
-            generation: 9,
-            healthyProof: healthyProof(UNRELATED, 9, 74),
-          }),
-        }),
-        NOW,
-      ).status,
-      "no_change",
-    );
-
-    // No hosted runtime is the supervisor's own seeding work, not this gate.
-    assert.equal(
-      planOwnerDevelopmentInstall(releaseSnapshot({}), NOW).status,
-      "waiting",
-    );
-
-    // An active hosted release waits even when the final revision is healthy.
-    assert.equal(
-      planOwnerDevelopmentInstall(
-        releaseSnapshot({
-          runtime: runtimeRecord({
-            revision: AGGREGATE,
-            generation: 7,
-            healthyProof: aggregateHealthy,
-          }),
-          hostedReleases: [requestedRelease()],
-        }),
-        NOW,
-      ).status,
-      "waiting",
-    );
-  },
-);
-
-Deno.test(
-  "owner development install snapshot: only the planned runtime fields change and historical proof is preserved",
-  () => {
-    const readerHealthy = healthyProof(READER, 6, 81);
-    const originalHealthy = healthyProof(ORIGINAL, 5, 82);
-
-    const installState = releaseSnapshot({
-      runtime: runtimeRecord({
-        revision: READER,
-        generation: 6,
-        healthyProof: readerHealthy,
-        executionProof: readerHealthy,
       }),
-      hostedReleases: [acceptedRelease()],
-      cooldowns: [cooldown(NOW - 1)],
-    });
-    const rollbackState = releaseSnapshot({
-      runtime: runtimeRecord({
-        revision: READER,
-        generation: 6,
-        healthyProof: originalHealthy,
-        executionProof: failedProof(READER, 6, 83),
-      }),
-      hostedReleases: [acceptedRelease()],
-      cooldowns: [cooldown(NOW - 1)],
-    });
-
-    for (const state of [installState, rollbackState]) {
-      const before = canonicalStringify(state);
-      const plan = planOwnerDevelopmentInstall(state, NOW);
-      assert.ok(plan.status === "install" || plan.status === "rollback");
-      if (plan.status !== "install" && plan.status !== "rollback") {
-        throw new Error("expected a move");
-      }
-      const planned = buildOwnerDevelopmentInstallSnapshot(
-        state,
-        STATE_HEAD,
-        plan.move,
-        NOW,
-      );
-      const priorRuntime = state.hostedRuntimes[0];
-      const nextRuntime = planned.hostedRuntimes[0];
-
-      assert.equal(planned.version, "v1");
-      assert.equal(planned.kind, "release_state_snapshot");
-      assert.equal(planned.sequence, state.sequence + 1);
-      assert.equal(planned.stateHead, STATE_HEAD);
-      assert.equal(planned.updatedAt, NOW);
-      assert.equal(
-        canonicalStringify(planned.releases),
-        canonicalStringify(state.releases),
-      );
-      assert.equal(
-        canonicalStringify(planned.hostedReleases),
-        canonicalStringify(state.hostedReleases),
-      );
-      assert.equal(
-        canonicalStringify(planned.githubCooldowns),
-        canonicalStringify(state.githubCooldowns),
-      );
-      assert.equal(planned.hostedRuntimes.length, 1);
-      assert.equal(nextRuntime.id, priorRuntime.id);
-      assert.equal(nextRuntime.activeRevision, plan.move.nextRevision);
-      assert.equal(nextRuntime.generation, plan.move.nextGeneration);
-      assert.equal(nextRuntime.nextOrdinaryAt, NOW);
-      assert.equal(nextRuntime.updatedAt, NOW);
-      assert.equal(nextRuntime.createdAt, priorRuntime.createdAt);
-      assert.equal(nextRuntime.execution, null);
-      assert.equal(
-        canonicalStringify(nextRuntime.lastHealthyProof),
-        canonicalStringify(priorRuntime.lastHealthyProof),
-      );
-      assert.equal(
-        canonicalStringify(nextRuntime.lastExecutionProof),
-        canonicalStringify(priorRuntime.lastExecutionProof),
-      );
-      // The planning boundary never mutates its input snapshot.
-      assert.equal(canonicalStringify(state), before);
-    }
-
-    // A move that does not bind the exact read pointer is refused outright.
-    const plan = planOwnerDevelopmentInstall(installState, NOW);
-    if (plan.status !== "install") throw new Error("expected install");
-    assert.throws(() =>
-      buildOwnerDevelopmentInstallSnapshot(
-        installState,
-        STATE_HEAD,
-        { ...plan.move, priorGeneration: 2 },
-        NOW,
-      )
-    );
-  },
-);
-
-Deno.test(
-  "owner development install files: canonical manifest, digest record path and bounded commit record",
-  async () => {
-    const proof = healthyProof(READER, 6, 91);
-    const state = releaseSnapshot({
-      runtime: runtimeRecord({
-        revision: READER,
-        generation: 6,
-        healthyProof: proof,
-        executionProof: proof,
-      }),
-      hostedReleases: [acceptedRelease()],
-    });
-    const plan = planOwnerDevelopmentInstall(state, NOW);
-    if (plan.status !== "install") throw new Error("expected install");
-    const planned = buildOwnerDevelopmentInstallSnapshot(
-      state,
-      STATE_HEAD,
-      plan.move,
       NOW,
     );
-
-    const files = await ownerDevelopmentInstallFiles(planned, STATE_HEAD);
-    assert.equal(files.manifest.path, "manifest.json");
-    const manifest = JSON.parse(files.manifest.text);
-    assert.equal(manifest.version, "v1");
-    assert.equal(manifest.kind, "release_state_manifest");
-    assert.equal(manifest.sequence, state.sequence + 1);
-    assert.equal(manifest.updatedAt, NOW);
-    assert.equal(manifest.stateHead, STATE_HEAD);
+    assert.equal(learningInstall.status, "install");
+    if (learningInstall.status !== "install") {
+      throw new Error("expected install");
+    }
+    assert.equal(learningInstall.move.priorRevision, MEMORY_RUNTIME_REVISION);
+    assert.equal(learningInstall.move.priorGeneration, 68);
+    assert.equal(learningInstall.move.nextRevision, LEARNING_RUNTIME_REVISION);
+    assert.equal(learningInstall.move.nextGeneration, 69);
     assert.equal(
-      files.manifest.text,
-      `${canonicalStringify(manifest)}\n`,
+      canonicalStringify(learningInstall.move.priorHealthyProof),
+      canonicalStringify(memoryHealthy),
     );
 
-    const runtime = planned.hostedRuntimes[0];
-    const digest = await rawSha256(HOSTED_RUNTIME_ID);
-    assert.equal(
-      files.record.path,
-      `hostedRuntimes/${digest}.json`,
+    // A failed generation 69 restores the recorded generation 68 revision
+    // exactly once at monotonic generation 70; the post-rollback pointer is
+    // then terminal.
+    const learningRollback = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: LEARNING_RUNTIME_REVISION,
+          generation: 69,
+          healthyProof: memoryHealthy,
+          executionProof: failedProof(LEARNING_RUNTIME_REVISION, 69, 142),
+        }),
+      }),
+      NOW,
     );
-    assert.match(files.record.path, /^hostedRuntimes\/[0-9a-f]{64}\.json$/);
+    assert.equal(learningRollback.status, "rollback");
+    if (learningRollback.status !== "rollback") {
+      throw new Error("expected rollback");
+    }
     assert.equal(
-      files.record.text,
-      `${canonicalStringify(runtime)}\n`,
+      learningRollback.move.priorRevision,
+      LEARNING_RUNTIME_REVISION,
     );
-    const reread = JSON.parse(files.record.text);
-    assert.equal(reread.id, HOSTED_RUNTIME_ID);
-    assert.equal(reread.activeRevision, plan.move.nextRevision);
-    assert.equal(reread.generation, plan.move.nextGeneration);
-    assert.equal(reread.nextOrdinaryAt, NOW);
+    assert.equal(learningRollback.move.priorGeneration, 69);
+    assert.equal(learningRollback.move.nextRevision, MEMORY_RUNTIME_REVISION);
+    assert.equal(learningRollback.move.nextGeneration, 70);
+    assert.equal(
+      canonicalStringify(learningRollback.move.priorHealthyProof),
+      canonicalStringify(memoryHealthy),
+    );
 
-    const record = {
-      version: "v1" as const,
-      kind: "owner_development_install" as const,
-      authority: "owner" as const,
-      action: plan.move.action,
-      authorizedAt: NOW,
-      priorRevision: plan.move.priorRevision,
-      priorGeneration: plan.move.priorGeneration,
-      nextRevision: plan.move.nextRevision,
-      nextGeneration: plan.move.nextGeneration,
-      stateHead: STATE_HEAD,
-      priorHealthyProof: plan.move.priorHealthyProof,
-      nonce: "a".repeat(64),
+    // Without the recorded generation 68 healthy proof the learning install
+    // waits instead of moving the pointer.
+    assert.equal(
+      planOwnerDevelopmentInstall(
+        releaseSnapshot({
+          runtime: runtimeRecord({
+            revision: MEMORY_RUNTIME_REVISION,
+            generation: 68,
+            healthyProof: null,
+          }),
+        }),
+        NOW,
+      ).status,
+      "waiting",
+    );
+  },
+);
+
+Deno.test(
+  "owner development install plan: generation 70 versioned-recovery install follows a healthy 69 and rolls back once",
+  () => {
+    const learningHealthy = healthyProof(LEARNING_RUNTIME_REVISION, 69, 151);
+    const versionedInstall = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: LEARNING_RUNTIME_REVISION,
+          generation: 69,
+          healthyProof: learningHealthy,
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(versionedInstall.status, "install");
+    if (versionedInstall.status !== "install") {
+      throw new Error("expected install");
+    }
+    assert.equal(
+      versionedInstall.move.priorRevision,
+      LEARNING_RUNTIME_REVISION,
+    );
+    assert.equal(versionedInstall.move.priorGeneration, 69);
+    assert.equal(
+      versionedInstall.move.nextRevision,
+      VERSIONED_RUNTIME_REVISION,
+    );
+    assert.equal(versionedInstall.move.nextGeneration, 70);
+    assert.equal(
+      canonicalStringify(versionedInstall.move.priorHealthyProof),
+      canonicalStringify(learningHealthy),
+    );
+
+    // A failed generation 70 restores the recorded generation 69 revision
+    // once at monotonic generation 71.
+    const versionedRollback = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: VERSIONED_RUNTIME_REVISION,
+          generation: 70,
+          healthyProof: learningHealthy,
+          executionProof: failedProof(VERSIONED_RUNTIME_REVISION, 70, 152),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(versionedRollback.status, "rollback");
+    if (versionedRollback.status !== "rollback") {
+      throw new Error("expected rollback");
+    }
+    assert.equal(
+      versionedRollback.move.priorRevision,
+      VERSIONED_RUNTIME_REVISION,
+    );
+    assert.equal(versionedRollback.move.priorGeneration, 70);
+    assert.equal(
+      versionedRollback.move.nextRevision,
+      LEARNING_RUNTIME_REVISION,
+    );
+    assert.equal(versionedRollback.move.nextGeneration, 71);
+    assert.equal(
+      canonicalStringify(versionedRollback.move.priorHealthyProof),
+      canonicalStringify(learningHealthy),
+    );
+
+    // A failed generation 69 still falls through to the learning rung's own
+    // rollback, never to the versioned rung.
+    const learningFailed = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: LEARNING_RUNTIME_REVISION,
+          generation: 69,
+          healthyProof: healthyProof(MEMORY_RUNTIME_REVISION, 68, 153),
+          executionProof: failedProof(LEARNING_RUNTIME_REVISION, 69, 154),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(learningFailed.status, "rollback");
+    if (learningFailed.status !== "rollback") {
+      throw new Error("expected rollback");
+    }
+    assert.equal(learningFailed.move.nextRevision, MEMORY_RUNTIME_REVISION);
+    assert.equal(learningFailed.move.nextGeneration, 70);
+  },
+);
+
+Deno.test(
+  "owner development install plan: generation 71 cancelled-release settlement install follows a healthy 70 and rolls back once",
+  () => {
+    const versionedHealthy = healthyProof(VERSIONED_RUNTIME_REVISION, 70, 161);
+    const settlementInstall = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: VERSIONED_RUNTIME_REVISION,
+          generation: 70,
+          healthyProof: versionedHealthy,
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(settlementInstall.status, "install");
+    if (settlementInstall.status !== "install") {
+      throw new Error("expected install");
+    }
+    assert.equal(
+      settlementInstall.move.priorRevision,
+      VERSIONED_RUNTIME_REVISION,
+    );
+    assert.equal(settlementInstall.move.priorGeneration, 70);
+    assert.equal(
+      settlementInstall.move.nextRevision,
+      CANCELLED_RELEASE_RUNTIME_REVISION,
+    );
+    assert.equal(settlementInstall.move.nextGeneration, 71);
+    assert.equal(
+      canonicalStringify(settlementInstall.move.priorHealthyProof),
+      canonicalStringify(versionedHealthy),
+    );
+
+    // A failed generation 71 restores the recorded generation 70 revision
+    // once at monotonic generation 72.
+    const settlementRollback = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: CANCELLED_RELEASE_RUNTIME_REVISION,
+          generation: 71,
+          healthyProof: versionedHealthy,
+          executionProof: failedProof(
+            CANCELLED_RELEASE_RUNTIME_REVISION,
+            71,
+            162,
+          ),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(settlementRollback.status, "rollback");
+    if (settlementRollback.status !== "rollback") {
+      throw new Error("expected rollback");
+    }
+    assert.equal(
+      settlementRollback.move.priorRevision,
+      CANCELLED_RELEASE_RUNTIME_REVISION,
+    );
+    assert.equal(settlementRollback.move.priorGeneration, 71);
+    assert.equal(
+      settlementRollback.move.nextRevision,
+      VERSIONED_RUNTIME_REVISION,
+    );
+    assert.equal(settlementRollback.move.nextGeneration, 72);
+    assert.equal(
+      canonicalStringify(settlementRollback.move.priorHealthyProof),
+      canonicalStringify(versionedHealthy),
+    );
+
+    // A failed generation 70 still falls through to the versioned rung's own
+    // rollback, never to the settlement rung.
+    const versionedFailed = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: VERSIONED_RUNTIME_REVISION,
+          generation: 70,
+          healthyProof: healthyProof(LEARNING_RUNTIME_REVISION, 69, 163),
+          executionProof: failedProof(VERSIONED_RUNTIME_REVISION, 70, 164),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(versionedFailed.status, "rollback");
+    if (versionedFailed.status !== "rollback") {
+      throw new Error("expected rollback");
+    }
+    assert.equal(versionedFailed.move.nextRevision, LEARNING_RUNTIME_REVISION);
+    assert.equal(versionedFailed.move.nextGeneration, 71);
+  },
+);
+
+Deno.test(
+  "owner development install plan: generation 72 stacked-merge verification install follows a healthy 71 and rolls back once",
+  () => {
+    const cancelledHealthy = healthyProof(
+      CANCELLED_RELEASE_RUNTIME_REVISION,
+      71,
+      171,
+    );
+    const stackedInstall = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: CANCELLED_RELEASE_RUNTIME_REVISION,
+          generation: 71,
+          healthyProof: cancelledHealthy,
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(stackedInstall.status, "install");
+    if (stackedInstall.status !== "install") {
+      throw new Error("expected install");
+    }
+    assert.equal(
+      stackedInstall.move.priorRevision,
+      CANCELLED_RELEASE_RUNTIME_REVISION,
+    );
+    assert.equal(stackedInstall.move.priorGeneration, 71);
+    assert.equal(
+      stackedInstall.move.nextRevision,
+      STACKED_MERGE_RUNTIME_REVISION,
+    );
+    assert.equal(stackedInstall.move.nextGeneration, 72);
+    assert.equal(
+      canonicalStringify(stackedInstall.move.priorHealthyProof),
+      canonicalStringify(cancelledHealthy),
+    );
+
+    // A failed generation 72 restores the recorded generation 71 revision
+    // once at monotonic generation 73.
+    const stackedRollback = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: STACKED_MERGE_RUNTIME_REVISION,
+          generation: 72,
+          healthyProof: cancelledHealthy,
+          executionProof: failedProof(
+            STACKED_MERGE_RUNTIME_REVISION,
+            72,
+            172,
+          ),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(stackedRollback.status, "rollback");
+    if (stackedRollback.status !== "rollback") {
+      throw new Error("expected rollback");
+    }
+    assert.equal(
+      stackedRollback.move.priorRevision,
+      STACKED_MERGE_RUNTIME_REVISION,
+    );
+    assert.equal(stackedRollback.move.priorGeneration, 72);
+    assert.equal(
+      stackedRollback.move.nextRevision,
+      CANCELLED_RELEASE_RUNTIME_REVISION,
+    );
+    assert.equal(stackedRollback.move.nextGeneration, 73);
+
+    // A failed generation 71 still falls through to the cancelled-delivery
+    // rung's own rollback, never to the stacked-merge rung.
+    const cancelledFailed = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: CANCELLED_RELEASE_RUNTIME_REVISION,
+          generation: 71,
+          healthyProof: healthyProof(VERSIONED_RUNTIME_REVISION, 70, 173),
+          executionProof: failedProof(
+            CANCELLED_RELEASE_RUNTIME_REVISION,
+            71,
+            174,
+          ),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(cancelledFailed.status, "rollback");
+    if (cancelledFailed.status !== "rollback") {
+      throw new Error("expected rollback");
+    }
+    assert.equal(cancelledFailed.move.nextRevision, VERSIONED_RUNTIME_REVISION);
+    assert.equal(cancelledFailed.move.nextGeneration, 72);
+  },
+);
+
+Deno.test(
+  "owner development install plan: generation 73 early-frame diagnostics install follows a healthy 72 and rolls back once",
+  () => {
+    const stackedHealthy = healthyProof(
+      STACKED_MERGE_RUNTIME_REVISION,
+      72,
+      181,
+    );
+    const earlyFrameInstall = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: STACKED_MERGE_RUNTIME_REVISION,
+          generation: 72,
+          healthyProof: stackedHealthy,
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(earlyFrameInstall.status, "install");
+    if (earlyFrameInstall.status !== "install") {
+      throw new Error("expected install");
+    }
+    assert.equal(
+      earlyFrameInstall.move.priorRevision,
+      STACKED_MERGE_RUNTIME_REVISION,
+    );
+    assert.equal(earlyFrameInstall.move.priorGeneration, 72);
+    assert.equal(
+      earlyFrameInstall.move.nextRevision,
+      EARLY_FRAME_RUNTIME_REVISION,
+    );
+    assert.equal(earlyFrameInstall.move.nextGeneration, 73);
+
+    // A failed generation 73 restores the recorded generation 72 revision
+    // once at monotonic generation 74.
+    const earlyFrameRollback = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: EARLY_FRAME_RUNTIME_REVISION,
+          generation: 73,
+          healthyProof: stackedHealthy,
+          executionProof: failedProof(EARLY_FRAME_RUNTIME_REVISION, 73, 182),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(earlyFrameRollback.status, "rollback");
+    if (earlyFrameRollback.status !== "rollback") {
+      throw new Error("expected rollback");
+    }
+    assert.equal(
+      earlyFrameRollback.move.nextRevision,
+      STACKED_MERGE_RUNTIME_REVISION,
+    );
+    assert.equal(earlyFrameRollback.move.nextGeneration, 74);
+
+    // A generation 72 pointer carrying BOTH a healthy proof and a failed
+    // settlement still takes the original rollback path: the successor never
+    // installs over a failed candidate.
+    const stackedBoth = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: STACKED_MERGE_RUNTIME_REVISION,
+          generation: 72,
+          healthyProof: stackedHealthy,
+          executionProof: failedProof(STACKED_MERGE_RUNTIME_REVISION, 72, 185),
+        }),
+      }),
+      NOW,
+    );
+    // With no recorded healthy proof for the rollback predecessor the chain
+    // waits instead of installing: the successor still never installs over a
+    // failed candidate.
+    assert.equal(stackedBoth.status, "waiting");
+
+    // A failed generation 72 still falls through to the stacked-merge rung's
+    // own rollback, never to the early-frame rung.
+    const stackedFailed = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: STACKED_MERGE_RUNTIME_REVISION,
+          generation: 72,
+          healthyProof: healthyProof(
+            CANCELLED_RELEASE_RUNTIME_REVISION,
+            71,
+            183,
+          ),
+          executionProof: failedProof(STACKED_MERGE_RUNTIME_REVISION, 72, 184),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(stackedFailed.status, "rollback");
+    if (stackedFailed.status !== "rollback") {
+      throw new Error("expected rollback");
+    }
+    assert.equal(
+      stackedFailed.move.nextRevision,
+      CANCELLED_RELEASE_RUNTIME_REVISION,
+    );
+    assert.equal(stackedFailed.move.nextGeneration, 73);
+  },
+);
+
+Deno.test(
+  "owner development install plan: generation 74 mismatch-disposition install follows a healthy 73 and rolls back once",
+  () => {
+    const earlyFrameHealthy = healthyProof(
+      EARLY_FRAME_RUNTIME_REVISION,
+      73,
+      191,
+    );
+    const dispositionInstall = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: EARLY_FRAME_RUNTIME_REVISION,
+          generation: 73,
+          healthyProof: earlyFrameHealthy,
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(dispositionInstall.status, "install");
+    if (dispositionInstall.status !== "install") {
+      throw new Error("expected install");
+    }
+    assert.equal(
+      dispositionInstall.move.priorRevision,
+      EARLY_FRAME_RUNTIME_REVISION,
+    );
+    assert.equal(dispositionInstall.move.priorGeneration, 73);
+    assert.equal(
+      dispositionInstall.move.nextRevision,
+      MISMATCH_DISPOSITION_RUNTIME_REVISION,
+    );
+    assert.equal(dispositionInstall.move.nextGeneration, 74);
+    assert.equal(
+      canonicalStringify(dispositionInstall.move.priorHealthyProof),
+      canonicalStringify(earlyFrameHealthy),
+    );
+
+    // A failed generation 74 restores the recorded generation 73 revision
+    // once at monotonic generation 75.
+    const dispositionRollback = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: MISMATCH_DISPOSITION_RUNTIME_REVISION,
+          generation: 74,
+          healthyProof: earlyFrameHealthy,
+          executionProof: failedProof(
+            MISMATCH_DISPOSITION_RUNTIME_REVISION,
+            74,
+            192,
+          ),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(dispositionRollback.status, "rollback");
+    if (dispositionRollback.status !== "rollback") {
+      throw new Error("expected rollback");
+    }
+    assert.equal(
+      dispositionRollback.move.nextRevision,
+      EARLY_FRAME_RUNTIME_REVISION,
+    );
+    assert.equal(dispositionRollback.move.nextGeneration, 75);
+
+    // A healthy generation 74 completes the owner development installation.
+    const dispositionComplete = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: MISMATCH_DISPOSITION_RUNTIME_REVISION,
+          generation: 74,
+          healthyProof: healthyProof(
+            MISMATCH_DISPOSITION_RUNTIME_REVISION,
+            74,
+            193,
+          ),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(dispositionComplete.status, "no_change");
+  },
+);
+
+Deno.test(
+  "owner development install plan: generation 75 mismatch-disposition retry installs only after the once-only generation 74 rollback",
+  () => {
+    const stackedHealthy = healthyProof(
+      STACKED_MERGE_RUNTIME_REVISION,
+      72,
+      201,
+    );
+    const source = releaseSnapshot({
+      runtime: runtimeRecord({
+        revision: STACKED_MERGE_RUNTIME_REVISION,
+        generation: 72,
+        healthyProof: stackedHealthy,
+      }),
+    });
+    const earlyInstall = planOwnerDevelopmentInstall(source, NOW);
+    if (earlyInstall.status !== "install") {
+      throw new Error("expected early install");
+    }
+    const early = buildOwnerDevelopmentInstallSnapshot(
+      source,
+      STATE_HEAD,
+      earlyInstall.move,
+      NOW,
+    );
+    const failed = {
+      ...early,
+      hostedRuntimes: [{
+        ...early.hostedRuntimes[0],
+        lastExecutionProof: failedProof(EARLY_FRAME_RUNTIME_REVISION, 73, 202),
+      }],
     };
-    const message = ownerDevelopmentInstallCommitMessage(record);
-    assert.ok(message.startsWith("owner-development-install\n\n"));
-    assert.ok(message.length < 8_192);
-    const lines = message.trim().split("\n");
-    const parsed = JSON.parse(lines[lines.length - 1]);
-    assert.equal(parsed.kind, "owner_development_install");
-    assert.equal(parsed.authority, "owner");
-    assert.equal(parsed.action, "install");
-    assert.equal(parsed.authorizedAt, NOW);
-    assert.equal(parsed.priorRevision, plan.move.priorRevision);
-    assert.equal(parsed.priorGeneration, plan.move.priorGeneration);
-    assert.equal(parsed.nextRevision, AGGREGATE);
-    assert.equal(parsed.nextGeneration, 7);
-    assert.equal(parsed.stateHead, STATE_HEAD);
-    assert.equal(parsed.nonce, "a".repeat(64));
+    const earlyRollback = planOwnerDevelopmentInstall(failed, NOW + 1);
+    if (earlyRollback.status !== "rollback") {
+      throw new Error("expected early rollback");
+    }
+    const restored = buildOwnerDevelopmentInstallSnapshot(
+      failed,
+      STATE_HEAD,
+      earlyRollback.move,
+      NOW + 1,
+    );
+    assert.deepEqual(
+      restored.hostedRuntimes[0].lastHealthyProof,
+      stackedHealthy,
+    );
+    const retryInstall = planOwnerDevelopmentInstall(restored, NOW + 2);
+    assert.equal(retryInstall.status, "install");
+    if (retryInstall.status !== "install") {
+      throw new Error("expected install");
+    }
     assert.equal(
-      canonicalStringify(parsed.priorHealthyProof),
-      canonicalStringify(proof),
+      retryInstall.move.priorRevision,
+      STACKED_MERGE_RUNTIME_REVISION,
+    );
+    assert.equal(retryInstall.move.priorGeneration, 74);
+    assert.equal(
+      retryInstall.move.nextRevision,
+      MISMATCH_DISPOSITION_RUNTIME_REVISION,
+    );
+    assert.equal(retryInstall.move.nextGeneration, 75);
+    assert.equal(
+      canonicalStringify(retryInstall.move.priorHealthyProof),
+      canonicalStringify(stackedHealthy),
     );
 
-    // A malformed record is refused instead of serialized.
-    assert.throws(() =>
-      ownerDevelopmentInstallCommitMessage({ ...record, nonce: "not-a-nonce" })
+    // A failed generation 75 restores the recorded generation 72 revision
+    // once at monotonic generation 76.
+    const retryRollback = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: MISMATCH_DISPOSITION_RUNTIME_REVISION,
+          generation: 75,
+          healthyProof: stackedHealthy,
+          executionProof: failedProof(
+            MISMATCH_DISPOSITION_RUNTIME_REVISION,
+            75,
+            202,
+          ),
+        }),
+      }),
+      NOW,
     );
+    assert.equal(retryRollback.status, "rollback");
+    if (retryRollback.status !== "rollback") {
+      throw new Error("expected rollback");
+    }
+    assert.equal(
+      retryRollback.move.nextRevision,
+      STACKED_MERGE_RUNTIME_REVISION,
+    );
+    assert.equal(retryRollback.move.nextGeneration, 76);
+
+    // A healthy generation 75 completes the chain.
+    const retryComplete = planOwnerDevelopmentInstall(
+      releaseSnapshot({
+        runtime: runtimeRecord({
+          revision: MISMATCH_DISPOSITION_RUNTIME_REVISION,
+          generation: 75,
+          healthyProof: healthyProof(
+            MISMATCH_DISPOSITION_RUNTIME_REVISION,
+            75,
+            203,
+          ),
+        }),
+      }),
+      NOW,
+    );
+    assert.equal(retryComplete.status, "no_change");
   },
 );

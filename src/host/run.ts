@@ -31,6 +31,11 @@ import type { ReleaseCycleResultV1 } from "../release/controller.ts";
 import type { RepairEntrypointOptionsV1 } from "../main.ts";
 import { runRepairEntrypoint } from "../main.ts";
 import { runReleaseEntrypoint } from "../release-main.ts";
+import { runVpsReleaseEntrypoint } from "../release-main.ts";
+import {
+  composeTrustedVpsReleaseHost,
+  type TrustedVpsReleaseHostOptionsV1,
+} from "./vps-release.ts";
 import { composeRepairHost, type RepairHostOptionsV1 } from "./repair.ts";
 import { composeReleaseHost, type ReleaseHostOptionsV1 } from "./release.ts";
 
@@ -59,4 +64,13 @@ export function runComposedReleaseHost(
   options: ReleaseHostOptionsV1,
 ): Promise<PortResultV1<ReleaseCycleResultV1>> {
   return runReleaseEntrypoint(composeReleaseHost(options));
+}
+
+/** Actual pinned-driver/controller path with explicit native release-writer custody. */
+export async function runComposedVpsReleaseHost(
+  options: TrustedVpsReleaseHostOptionsV1,
+): Promise<PortResultV1<import("../release/vps-controller.ts").VpsCycleV1>> {
+  const composed = await composeTrustedVpsReleaseHost(options);
+  if (!composed.ok) return composed;
+  return runVpsReleaseEntrypoint(composed.value);
 }

@@ -4,309 +4,43 @@
  * (attempt/jobs/log redirect/log lines). No network, model, token or Git.
  */
 import assert from "node:assert/strict";
-
-import type { GitSha } from "../../src/contracts/brands.ts";
-import type { GitHubRateLimitV1 } from "../../src/contracts/github-cooldown.ts";
-import { parseHostedRuntimeTerminalV1 } from "../../src/contracts/hosted-execution.ts";
-import {
-  parseHostedExecutionIntentV1,
-  parseHostedRunProofV1,
-} from "../../src/contracts/hosted-supervisor.ts";
-import type {
-  HostedExecutionIntentV1,
-  HostedExecutionSettlementV1,
-} from "../../src/contracts/hosted-supervisor.ts";
-import type {
-  Clock,
-  GitHubCooldownGateV1,
-  PortResultV1,
-} from "../../src/contracts/ports.ts";
-import { portError, portOk } from "../../src/contracts/ports.ts";
-import { parseReleaseRequestV1 } from "../../src/contracts/release.ts";
-import type { ReleaseRequestV1 } from "../../src/contracts/release.ts";
 import { MaxText, tryParse } from "../../src/contracts/validation.ts";
-import { GitHubApiClient } from "../../src/github/client.ts";
-import type {
-  HttpRequestV1,
-  HttpResponseV1,
-  HttpTransportV1,
-} from "../../src/github/http.ts";
-
-const API_BASE = "https://api.github.com";
-const REPO = "ubiquity/sentinel";
-const LAUNCHER = "1".repeat(40) as GitSha;
-const REVISION = "2".repeat(40) as GitSha;
-const PR_HEAD = "3".repeat(40) as GitSha;
-const PR_BASE = "4".repeat(40) as GitSha;
-const RUN_ID = 900;
-const RUN_ATTEMPT = 2;
-const JOB_ID = 901;
-const PR_NUMBER = 55;
-const SIGNED_URL =
-  "https://productionresultssa17.blob.core.windows.net/logs/abc?sv=1&sig=x";
-const SIGNED_PATH = "/logs/abc";
-
-const T0 = 1_786_000_000_000;
-const JOB_STARTED = T0 + 500;
-const STEP_STARTED = T0 + 900;
-const TERM_STARTED = T0 + 1000;
-const TERM_AT = T0 + 1200;
-const TERM_FINISHED = T0 + 1500;
-const STEP_FINISHED = T0 + 2000;
-const JOB_FINISHED = T0 + 2500;
-const OBSERVED = T0 + 4000;
-
-const ATTEMPT_PATH =
-  `/repos/${REPO}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}`;
-const JOBS_PATH = `${ATTEMPT_PATH}/jobs`;
-const JOB_LOG_PATH = `/repos/${REPO}/actions/jobs/${JOB_ID}/logs`;
-const COMPARE_PATH = `/repos/${REPO}/compare/${REVISION}...development`;
-const PULL_PATH = `/repos/${REPO}/pulls/${PR_NUMBER}`;
-const COMMIT_PATH = `/repos/${REPO}/commits/${REVISION}`;
-
-class LocalClock implements Clock {
-  constructor(private t: number) {}
-  now(): number {
-    return this.t;
-  }
-}
-
-class FakeGate implements GitHubCooldownGateV1 {
-  readonly admissions: number[] = [];
-  readonly recorded: GitHubRateLimitV1[] = [];
-  deny = false;
-  beforeRequest(installationId: number): Promise<PortResultV1<void>> {
-    this.admissions.push(installationId);
-    return Promise.resolve(
-      this.deny
-        ? portError("rate_limited", "installation is cooling down")
-        : portOk(undefined),
-    );
-  }
-  recordRateLimit(
-    _installationId: number,
-    rateLimit: GitHubRateLimitV1,
-  ): Promise<PortResultV1<void>> {
-    this.recorded.push(rateLimit);
-    return Promise.resolve(portOk(undefined));
-  }
-}
-
-type Handler = (
-  request: HttpRequestV1,
-) => HttpResponseV1 | Promise<HttpResponseV1>;
-
-class ScriptedHttp {
-  readonly calls: HttpRequestV1[] = [];
-  private readonly routes = new Map<string, Handler>();
-  on(method: string, path: string, handler: Handler): void {
-    this.routes.set(`${method} ${path}`, handler);
-  }
-  readonly transport: HttpTransportV1 = (request) => {
-    this.calls.push(request);
-    const url = new URL(request.url);
-    const handler = this.routes.get(`${request.method} ${url.pathname}`);
-    if (handler === undefined) return Promise.reject(new Error("unscripted"));
-    return Promise.resolve(handler(request));
-  };
-  callsTo(path: string): HttpRequestV1[] {
-    return this.calls.filter((call) => new URL(call.url).pathname === path);
-  }
-}
-
-function response(
-  status: number,
-  body: unknown,
-  headers: Record<string, string> = {},
-): HttpResponseV1 {
-  return {
-    status,
-    headers: new Headers(headers),
-    bodyText: typeof body === "string" ? body : JSON.stringify(body),
-  };
-}
-
-function iso(ms: number): string {
-  return new Date(ms).toISOString();
-}
-
-interface RigV1 {
-  http: ScriptedHttp;
-  gate: FakeGate;
-  client: GitHubApiClient;
-}
-
-function makeRig(clockAt = OBSERVED): RigV1 {
-  const http = new ScriptedHttp();
-  const gate = new FakeGate();
-  const client = new GitHubApiClient({
-    repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
-    apiBaseUrl: API_BASE,
-    http: http.transport,
-    auth: {
-      authorizationHeader: () => Promise.resolve(portOk("Bearer test-token")),
-    },
-    cooldownGate: gate,
-    clock: new LocalClock(clockAt),
-  });
-  return { http, gate, client };
-}
-
-function intent(
-  overrides: Record<string, unknown> = {},
-): HostedExecutionIntentV1 {
-  return parseHostedExecutionIntentV1({
-    id: `${RUN_ID}:${RUN_ATTEMPT}:repair`,
-    runId: RUN_ID,
-    runAttempt: RUN_ATTEMPT,
-    launcherSha: LAUNCHER,
-    purpose: "ordinary",
-    revision: REVISION,
-    generation: 2,
-    releaseId: null,
-    createdAt: T0,
-    ...overrides,
-  });
-}
-
-function attemptBody(
-  overrides: {
-    status?: string;
-    conclusion?: string | null;
-    runId?: number;
-    attempt?: number;
-    workflowId?: number;
-    path?: string;
-    headSha?: string;
-    branch?: string;
-    repo?: string;
-    updatedAt?: number;
-  } = {},
-): Record<string, unknown> {
-  return {
-    id: overrides.runId ?? RUN_ID,
-    run_attempt: overrides.attempt ?? RUN_ATTEMPT,
-    workflow_id: overrides.workflowId ?? 357012162,
-    path: overrides.path ?? ".github/workflows/supervisor.yml",
-    head_sha: overrides.headSha ?? LAUNCHER,
-    head_branch: overrides.branch ?? "sentinel-supervisor",
-    event: "workflow_dispatch",
-    status: overrides.status ?? "completed",
-    conclusion: overrides.conclusion === undefined
-      ? "success"
-      : overrides.conclusion,
-    repository: { full_name: overrides.repo ?? REPO },
-    head_repository: { full_name: overrides.repo ?? REPO },
-    run_started_at: iso(JOB_STARTED),
-    updated_at: iso(overrides.updatedAt ?? JOB_FINISHED),
-  };
-}
-
-function runtimeStep(
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
-  return {
-    name: "Run selected Sentinel runtime",
-    status: "completed",
-    conclusion: "success",
-    started_at: iso(STEP_STARTED),
-    completed_at: iso(STEP_FINISHED),
-    ...overrides,
-  };
-}
-
-function jobBody(
-  overrides: {
-    id?: number;
-    name?: string;
-    runId?: number;
-    attempt?: number;
-    headSha?: string;
-    status?: string;
-    conclusion?: string | null;
-    startedAt?: number;
-    completedAt?: number;
-    steps?: Array<Record<string, unknown>>;
-  } = {},
-): Record<string, unknown> {
-  return {
-    id: overrides.id ?? JOB_ID,
-    name: overrides.name ?? "repair",
-    run_id: overrides.runId ?? RUN_ID,
-    run_attempt: overrides.attempt ?? RUN_ATTEMPT,
-    head_sha: overrides.headSha ?? LAUNCHER,
-    status: overrides.status ?? "completed",
-    conclusion: overrides.conclusion === undefined
-      ? "success"
-      : overrides.conclusion,
-    started_at: iso(overrides.startedAt ?? JOB_STARTED),
-    completed_at: iso(overrides.completedAt ?? JOB_FINISHED),
-    steps: overrides.steps ?? [runtimeStep()],
-  };
-}
-
-function jobsBody(jobs: unknown[], total = jobs.length): unknown {
-  return { total_count: total, jobs };
-}
-
-function terminalRecord(
-  executionIntent: HostedExecutionIntentV1 = intent(),
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
-  return {
-    version: "v1",
-    kind: "hosted_runtime_terminal",
-    execution: executionIntent,
-    controllerSha: REVISION,
-    startedAt: TERM_STARTED,
-    finishedAt: TERM_FINISHED,
-    outcome: "healthy",
-    startupReady: true,
-    settled: true,
-    baseSha: LAUNCHER,
-    ...overrides,
-  };
-}
-
-function logText(
-  records: Array<Record<string, unknown>>,
-  at: number = TERM_AT,
-): string {
-  return `2026-09-12T21:59:59.0000000Z Starting job\n${
-    records.map((record) => `${iso(at)} ${JSON.stringify(record)}`).join("\n")
-  }\n`;
-}
-
-function scriptLog(rig: RigV1, text: string, location = SIGNED_URL): void {
-  rig.http.on(
-    "GET",
-    JOB_LOG_PATH,
-    () => response(302, "", { location }),
-  );
-  rig.http.on("GET", SIGNED_PATH, () => response(200, text));
-}
-
-function scriptAttemptAndJobs(
-  rig: RigV1,
-  attempt: Record<string, unknown>,
-  jobs: unknown,
-  headers: Record<string, string> = {},
-): void {
-  rig.http.on("GET", ATTEMPT_PATH, () => response(200, attempt));
-  rig.http.on("GET", JOBS_PATH, () => response(200, jobs, headers));
-}
-
-function settlementProof(
-  result: PortResultV1<HostedExecutionSettlementV1 | null>,
-): Extract<HostedExecutionSettlementV1, { outcome: "healthy" | "failed" }> {
-  assert.ok(result.ok, JSON.stringify(result));
-  if (!result.ok) throw new Error("expected settlement");
-  assert.ok(result.value !== null);
-  if (result.value === null || result.value.outcome === "not_started") {
-    throw new Error("expected a run proof");
-  }
-  return result.value;
-}
+import { parseHostedRuntimeTerminalV1 } from "../../src/contracts/hosted-execution.ts";
+import { parseHostedRunProofV1 } from "../../src/contracts/hosted-supervisor.ts";
+import {
+  API_BASE,
+  attemptBody,
+  intent,
+  iso,
+  JOB_FINISHED,
+  JOB_ID,
+  JOB_LOG_PATH,
+  JOB_STARTED,
+  jobBody,
+  JOBS_PATH,
+  jobsBody,
+  LAUNCHER,
+  logText,
+  makeRig,
+  OBSERVED,
+  postStep,
+  response,
+  REVISION,
+  type RigV1,
+  RUN_ATTEMPT,
+  RUN_ID,
+  runtimeStep,
+  scriptAttemptAndJobs,
+  scriptLog,
+  settlementProof,
+  SIGNED_PATH,
+  STEP_FINISHED,
+  T0,
+  TERM_AT,
+  TERM_FINISHED,
+  TERM_STARTED,
+  terminalRecord,
+} from "./hosted-execution-helpers.ts";
 
 Deno.test("hosted execution: healthy finalizer settles while the attempt is in_progress", async () => {
   const rig = makeRig();
@@ -333,20 +67,6 @@ Deno.test("hosted execution: healthy finalizer settles while the attempt is in_p
   assert.equal(signed[0].redirect, "error");
   assert.ok(rig.gate.admissions.length >= 1);
 });
-
-/**
- * Real GitHub post-action step names exceed the 64-char label bound; the step
- * name alone uses the wider path bound while the job name keeps the label one.
- */
-function postStep(name: string): Record<string, unknown> {
-  return {
-    name,
-    status: "completed",
-    conclusion: "success",
-    started_at: iso(STEP_FINISHED + 100),
-    completed_at: iso(STEP_FINISHED + 200),
-  };
-}
 
 Deno.test("hosted execution: real pinned post-action step names do not exceed the runtime step-name bound", async () => {
   const rig = makeRig();
@@ -461,7 +181,224 @@ Deno.test("hosted execution: an explicit failed terminal or failed job is a fail
   );
 });
 
-Deno.test("hosted execution: skipped or absent completed repair jobs are explicit not_started", async () => {
+Deno.test("hosted execution: a started runtime step that concluded failure with no terminal settles as failed, never stranded", async () => {
+  // The real 2026-09-20 case: the gateway was unreachable, the child runtime
+  // step started and then exited non-zero BEFORE it could publish a
+  // `hosted_runtime_terminal` line. The attempt and job are completed, so no
+  // later observation can ever produce a terminal. Returning unavailable here
+  // strands the pointer's saved execution forever and the supervisor can never
+  // advance; the honest, observable settlement is an explicit failure.
+  const stranded = makeRig();
+  scriptAttemptAndJobs(
+    stranded,
+    attemptBody(),
+    jobsBody([
+      jobBody({
+        conclusion: "failure",
+        steps: [runtimeStep({ conclusion: "failure" })],
+      }),
+    ]),
+  );
+  scriptLog(
+    stranded,
+    "2026-09-20T10:23:05.4041704Z hosted runtime result is unavailable\n",
+  );
+  const proof = settlementProof(
+    await stranded.client.readHostedExecution(intent()),
+  );
+  assert.equal(proof.outcome, "failed");
+  assert.equal(proof.startupReady, false);
+  assert.equal(proof.baseSha, null);
+  assert.equal(proof.settled, true);
+  assert.equal(proof.jobId, JOB_ID);
+  assert.equal(proof.logDigest.length, 64);
+
+  // A successful runtime step with no terminal stays unavailable: nothing
+  // observable failed, so there is no honest failed settlement to publish.
+  const contradictory = makeRig();
+  scriptAttemptAndJobs(
+    contradictory,
+    attemptBody(),
+    jobsBody([jobBody({ steps: [runtimeStep()] })]),
+  );
+  scriptLog(contradictory, "2026-09-20T10:23:05.4041704Z nothing to see\n");
+  assert.equal(
+    (await contradictory.client.readHostedExecution(intent())).ok,
+    false,
+  );
+});
+
+Deno.test("hosted execution: failed job with a started cancelled runtime step settles only without a terminal", async (t) => {
+  const interruptedLog = `${
+    iso(STEP_FINISHED)
+  } ##[error]The runner has received a shutdown signal.\n`;
+  const stranded = makeRig();
+  scriptAttemptAndJobs(
+    stranded,
+    attemptBody({ conclusion: "failure" }),
+    jobsBody([
+      jobBody({
+        conclusion: "failure",
+        steps: [runtimeStep({ number: 10, conclusion: "cancelled" })],
+      }),
+    ]),
+  );
+  scriptLog(stranded, interruptedLog);
+  const proof = settlementProof(
+    await stranded.client.readHostedExecution(intent()),
+  );
+  assert.deepEqual(proof.execution, intent());
+  assert.equal(proof.outcome, "failed");
+  assert.equal(proof.startupReady, false);
+  assert.equal(proof.baseSha, null);
+  assert.equal(proof.settled, true);
+  assert.equal(proof.jobId, JOB_ID);
+  assert.equal(proof.startedAt, JOB_STARTED);
+  assert.equal(proof.finishedAt, JOB_FINISHED);
+  assert.equal(proof.terminalAt, STEP_FINISHED);
+  assert.equal(
+    proof.logDigest,
+    [
+      ...new Uint8Array(
+        await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(interruptedLog),
+        ),
+      ),
+    ].map((byte) => byte.toString(16).padStart(2, "0")).join(""),
+  );
+
+  const controls: Array<{
+    name: string;
+    attempt?: Parameters<typeof attemptBody>[0];
+    job?: Parameters<typeof jobBody>[0];
+    step?: Record<string, unknown>;
+    sibling?: Parameters<typeof jobBody>[0];
+    log?: string;
+    location?: string;
+  }> = [
+    { name: "successful job", job: { conclusion: "success" } },
+    {
+      name: "unfinished attempt",
+      attempt: { status: "in_progress", conclusion: null },
+    },
+    {
+      name: "unfinished native cell",
+      sibling: { status: "in_progress", conclusion: null },
+    },
+    { name: "foreign launcher", job: { headSha: REVISION } },
+    { name: "foreign attempt", job: { attempt: RUN_ATTEMPT + 1 } },
+    { name: "missing step start", step: { started_at: null } },
+    { name: "inverted step", step: { started_at: iso(STEP_FINISHED + 1) } },
+    { name: "future step", step: { completed_at: iso(OBSERVED + 60_000) } },
+    { name: "healthy terminal", log: logText([terminalRecord()]) },
+    {
+      name: "failed terminal",
+      log: logText([
+        terminalRecord(intent(), {
+          outcome: "failed",
+          startupReady: false,
+          baseSha: null,
+        }),
+      ]),
+    },
+    {
+      name: "malformed terminal",
+      log: `${iso(TERM_AT)} {"kind":"hosted_runtime_terminal","execution":\n`,
+    },
+    { name: "untrusted log", location: "https://evil.example/log" },
+  ];
+  for (const control of controls) {
+    await t.step(control.name, async () => {
+      const rig = makeRig();
+      const jobs = [jobBody({
+        conclusion: "failure",
+        ...control.job,
+        steps: [
+          runtimeStep({ number: 10, conclusion: "cancelled", ...control.step }),
+        ],
+      })];
+      if (control.sibling) {
+        jobs.push(
+          jobBody({
+            id: JOB_ID + 1,
+            name: "matrix_cell (fixture)",
+            ...control.sibling,
+          }),
+        );
+      }
+      scriptAttemptAndJobs(
+        rig,
+        attemptBody({ conclusion: "failure", ...control.attempt }),
+        jobsBody(jobs),
+      );
+      scriptLog(rig, control.log ?? interruptedLog, control.location);
+      assert.equal(
+        (await rig.client.readHostedExecution(intent())).ok,
+        false,
+        control.name,
+      );
+    });
+  }
+});
+
+Deno.test("hosted execution: completed/skipped repair with inverted provider timestamps still settles not_started", async () => {
+  const rig = makeRig();
+  scriptAttemptAndJobs(
+    rig,
+    attemptBody(),
+    jobsBody([
+      jobBody({
+        conclusion: "skipped",
+        startedAt: JOB_FINISHED + 1000,
+        completedAt: JOB_FINISHED,
+        steps: [],
+      }),
+    ]),
+  );
+  const result = await rig.client.readHostedExecution(intent());
+  assert.ok(
+    result.ok && result.value?.outcome === "not_started",
+    JSON.stringify(result),
+  );
+  if (result.ok && result.value?.outcome === "not_started") {
+    assert.equal(result.value.jobId, JOB_ID);
+    assert.equal(result.value.finishedAt, JOB_FINISHED);
+    assert.equal(result.value.execution.id, intent().id);
+    assert.equal(result.value.evidenceDigest.length, 64);
+  }
+
+  const executedInverted = makeRig();
+  scriptAttemptAndJobs(
+    executedInverted,
+    attemptBody(),
+    jobsBody([
+      jobBody({
+        conclusion: "success",
+        startedAt: JOB_FINISHED + 1000,
+        completedAt: JOB_FINISHED,
+        steps: [],
+      }),
+    ]),
+  );
+  const refused = await executedInverted.client.readHostedExecution(intent());
+  assert.ok(!refused.ok, JSON.stringify(refused));
+  if (!refused.ok) assert.equal(refused.error.kind, "invalid");
+
+  const missingCompletion = makeRig();
+  scriptAttemptAndJobs(
+    missingCompletion,
+    attemptBody(),
+    jobsBody([{
+      ...jobBody({ conclusion: "skipped", steps: [] }),
+      completed_at: null,
+    }]),
+  );
+  const missing = await missingCompletion.client.readHostedExecution(intent());
+  assert.ok(!missing.ok, JSON.stringify(missing));
+});
+
+Deno.test("hosted execution: skipped, cancelled, timed-out or absent completed repair jobs are explicit not_started", async () => {
   const skipped = makeRig();
   scriptAttemptAndJobs(
     skipped,
@@ -476,6 +413,34 @@ Deno.test("hosted execution: skipped or absent completed repair jobs are explici
     assert.equal(skippedResult.value.execution.id, intent().id);
     assert.equal(skippedResult.value.evidenceDigest.length, 64);
   }
+
+  const cancelled = makeRig();
+  scriptAttemptAndJobs(
+    cancelled,
+    attemptBody(),
+    jobsBody([jobBody({ conclusion: "cancelled" })]),
+  );
+  const cancelledResult = await cancelled.client.readHostedExecution(intent());
+  assert.ok(
+    cancelledResult.ok && cancelledResult.value?.outcome === "not_started",
+  );
+  if (
+    cancelledResult.ok && cancelledResult.value?.outcome === "not_started"
+  ) {
+    assert.equal(cancelledResult.value.jobId, JOB_ID);
+    assert.equal(cancelledResult.value.finishedAt, JOB_FINISHED);
+  }
+
+  const timedOut = makeRig();
+  scriptAttemptAndJobs(
+    timedOut,
+    attemptBody(),
+    jobsBody([jobBody({ conclusion: "timed_out" })]),
+  );
+  const timedOutResult = await timedOut.client.readHostedExecution(intent());
+  assert.ok(
+    timedOutResult.ok && timedOutResult.value?.outcome === "not_started",
+  );
 
   const absent = makeRig();
   scriptAttemptAndJobs(absent, attemptBody(), jobsBody([]));
@@ -725,246 +690,4 @@ Deno.test("hosted execution: the durable gate denies before HTTP and rate limits
     assert.equal(limitedResult.error.kind, "rate_limited");
   }
   assert.equal(limited.gate.recorded.length, 1);
-});
-
-/** Real compare API shape: no head_commit; counters match the status. */
-function compareBody(overrides: Record<string, unknown> = {}): unknown {
-  const status = typeof overrides.status === "string"
-    ? overrides.status
-    : "ahead";
-  const counters = status === "identical"
-    ? { ahead_by: 0, behind_by: 0, total_commits: 0 }
-    : status === "behind"
-    ? { ahead_by: 0, behind_by: 2, total_commits: 2 }
-    : status === "diverged"
-    ? { ahead_by: 2, behind_by: 1, total_commits: 3 }
-    : { ahead_by: 3, behind_by: 0, total_commits: 3 };
-  return {
-    status,
-    base_commit: { sha: REVISION },
-    merge_base_commit: { sha: REVISION },
-    ...counters,
-    ...overrides,
-  };
-}
-
-Deno.test("hosted execution: revision ancestry accepts ahead/identical only with the exact base and merge base", async () => {
-  const ahead = makeRig();
-  ahead.http.on("GET", COMPARE_PATH, () => response(200, compareBody()));
-  const aheadResult = await ahead.client.verifyHostedRevision(REVISION);
-  assert.ok(aheadResult.ok && aheadResult.value === true);
-
-  const identical = makeRig();
-  identical.http.on(
-    "GET",
-    COMPARE_PATH,
-    () => response(200, compareBody({ status: "identical" })),
-  );
-  const identicalResult = await identical.client.verifyHostedRevision(
-    REVISION,
-  );
-  assert.ok(identicalResult.ok && identicalResult.value === true);
-
-  for (
-    const body of [
-      compareBody({ status: "behind" }),
-      compareBody({ status: "diverged" }),
-      compareBody({ base_commit: { sha: LAUNCHER } }),
-      compareBody({ merge_base_commit: { sha: LAUNCHER } }),
-    ]
-  ) {
-    const rig = makeRig();
-    rig.http.on("GET", COMPARE_PATH, () => response(200, body));
-    const result = await rig.client.verifyHostedRevision(REVISION);
-    assert.ok(result.ok && result.value === false, JSON.stringify(result));
-  }
-
-  // Malformed counters or a missing counter field are unavailable.
-  for (
-    const body of [
-      compareBody({ total_commits: 1 }),
-      compareBody({ status: "identical", ahead_by: 1, total_commits: 1 }),
-      { status: "ahead", base_commit: { sha: REVISION } },
-    ]
-  ) {
-    const rig = makeRig();
-    rig.http.on("GET", COMPARE_PATH, () => response(200, body));
-    assert.equal(
-      (await rig.client.verifyHostedRevision(REVISION)).ok,
-      false,
-      JSON.stringify(body),
-    );
-  }
-});
-
-function requestFixture(
-  overrides: Record<string, unknown> = {},
-): ReleaseRequestV1 {
-  return parseReleaseRequestV1({
-    version: "v1",
-    kind: "release_request",
-    id: "release-hosted-1",
-    target: {
-      repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
-      environment: "production",
-    },
-    revision: REVISION,
-    source: {
-      pullRequest: PR_NUMBER,
-      reviewRequestId: "review-req-1",
-      reviewReceiptId: "review-receipt-1",
-      head: PR_HEAD,
-      base: PR_BASE,
-    },
-    status: "open",
-    failureReason: null,
-    createdAt: T0,
-    ...overrides,
-  });
-}
-
-Deno.test("hosted execution: release requests require the merged two-parent PR plus exact ancestry", async () => {
-  const good = makeRig();
-  good.http.on("GET", PULL_PATH, () =>
-    response(200, {
-      number: PR_NUMBER,
-      state: "closed",
-      merged: true,
-      merge_commit_sha: REVISION,
-      head: {
-        sha: PR_HEAD,
-        ref: "sentinel/repair/x",
-        repo: { full_name: REPO },
-      },
-      base: { ref: "development", repo: { full_name: REPO } },
-    }));
-  good.http.on("GET", COMMIT_PATH, () =>
-    response(200, {
-      sha: REVISION,
-      parents: [{ sha: PR_BASE }, { sha: PR_HEAD }],
-    }));
-  good.http.on("GET", COMPARE_PATH, () => response(200, compareBody()));
-  const verified = await good.client.verifyHostedReleaseRequest(
-    requestFixture(),
-  );
-  assert.ok(verified.ok && verified.value === true);
-
-  const wrongParents = makeRig();
-  wrongParents.http.on("GET", PULL_PATH, () =>
-    response(200, {
-      number: PR_NUMBER,
-      state: "closed",
-      merged: true,
-      merge_commit_sha: REVISION,
-      head: {
-        sha: PR_HEAD,
-        ref: "sentinel/repair/x",
-        repo: { full_name: REPO },
-      },
-      base: { ref: "development", repo: { full_name: REPO } },
-    }));
-  wrongParents.http.on("GET", COMMIT_PATH, () =>
-    response(200, {
-      sha: REVISION,
-      parents: [{ sha: PR_BASE }, { sha: LAUNCHER }],
-    }));
-  const mismatch = await wrongParents.client.verifyHostedReleaseRequest(
-    requestFixture(),
-  );
-  assert.ok(mismatch.ok && mismatch.value === false);
-
-  // Foreign scope, cancelled or review-less requests never reach the network.
-  for (
-    const request of [
-      requestFixture({ status: "cancelled", failureReason: "cancelled" }),
-      requestFixture({
-        target: {
-          repository: {
-            owner: "ubiquity",
-            name: "sentinel",
-            installationId: 7,
-          },
-          environment: "production",
-        },
-      }),
-      requestFixture({
-        source: {
-          pullRequest: PR_NUMBER,
-          reviewRequestId: "review-req-1",
-          reviewReceiptId: null,
-          head: PR_HEAD,
-          base: PR_BASE,
-        },
-      }),
-    ]
-  ) {
-    const rig = makeRig();
-    const result = await rig.client.verifyHostedReleaseRequest(request);
-    assert.ok(result.ok && result.value === false);
-    assert.equal(rig.http.calls.length, 0);
-  }
-});
-
-Deno.test("hosted execution: future, inverted or early-terminal metadata is refused", async () => {
-  const futureAttempt = makeRig();
-  scriptAttemptAndJobs(
-    futureAttempt,
-    attemptBody({ updatedAt: OBSERVED + 5000 }),
-    jobsBody([jobBody()]),
-  );
-  scriptLog(futureAttempt, logText([terminalRecord()]));
-  assert.equal(
-    (await futureAttempt.client.readHostedExecution(intent())).ok,
-    false,
-  );
-
-  const futureJob = makeRig();
-  scriptAttemptAndJobs(
-    futureJob,
-    attemptBody(),
-    jobsBody([
-      jobBody({
-        completedAt: OBSERVED + 5000,
-        steps: [runtimeStep({ completedAt: OBSERVED + 5000 })],
-      }),
-    ]),
-  );
-  scriptLog(futureJob, logText([terminalRecord()]));
-  assert.equal(
-    (await futureJob.client.readHostedExecution(intent())).ok,
-    false,
-  );
-
-  const invertedAttempt = makeRig();
-  scriptAttemptAndJobs(
-    invertedAttempt,
-    attemptBody({ updatedAt: T0 - 1000 }),
-    jobsBody([jobBody()]),
-  );
-  scriptLog(invertedAttempt, logText([terminalRecord()]));
-  assert.equal(
-    (await invertedAttempt.client.readHostedExecution(intent())).ok,
-    false,
-  );
-
-  const invertedJob = makeRig();
-  scriptAttemptAndJobs(
-    invertedJob,
-    attemptBody(),
-    jobsBody([jobBody({ startedAt: JOB_FINISHED, completedAt: JOB_STARTED })]),
-  );
-  scriptLog(invertedJob, logText([terminalRecord()]));
-  assert.equal(
-    (await invertedJob.client.readHostedExecution(intent())).ok,
-    false,
-  );
-
-  // A terminal emitted before its own finish cannot be trusted.
-  const earlyTerminal = makeRig();
-  scriptAttemptAndJobs(earlyTerminal, attemptBody(), jobsBody([jobBody()]));
-  scriptLog(earlyTerminal, logText([terminalRecord()], TERM_FINISHED - 3000));
-  assert.equal(
-    (await earlyTerminal.client.readHostedExecution(intent())).ok,
-    false,
-  );
 });

@@ -5,11 +5,17 @@
 # authenticated ai.ubq.fi incident index and replay export, then write the
 # provider's encrypted capture bytes to the runner's private workspace.
 name: sentinel-observe
+run-name: ${{ inputs.sentinel_dispatch_request && format('sentinel-observe request {0}', inputs.sentinel_dispatch_request) || '' }}
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"
+  # Owner decision 2026-10-05: scheduled cron triggers disabled; manual dispatch only.
   workflow_dispatch:
+    inputs:
+      sentinel_dispatch_request:
+        description: Internal operator dispatch identity
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read

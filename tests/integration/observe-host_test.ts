@@ -6,6 +6,20 @@ import {
   parseObserveReplayKey,
   runReadOnlyObservation,
 } from "../../src/observe-main.ts";
+import {
+  FakeClock,
+  FINGERPRINT_B,
+  INCIDENT_A,
+  INCIDENT_B,
+  jsonResponse,
+  makeCapture,
+  makeIndexPage,
+  makeIndexRow,
+  makeReplayPage,
+  sha256hex,
+  syntheticBytes,
+  T0,
+} from "../adapters/gateway/helpers.ts";
 
 function base64For(bytes: Uint8Array): string {
   let text = "";
@@ -52,6 +66,116 @@ Deno.test("observe auth parser keeps header values out of diagnostics", () => {
   );
 });
 
+Deno.test(
+  "observe keeps malformed credentials and forbidden responses as auth_failed",
+  async () => {
+    const config = await loadObserveConfig();
+    const keyBytes = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
+    const cases = [
+      {
+        name: "empty auth-header value",
+        authHeaders: parseObserveAuthHeaders('{"authorization":""}'),
+        expectedDetail: "gateway credentials are unavailable",
+        expectedRequests: 0,
+      },
+      {
+        name: "permission-related 403",
+        authHeaders: { authorization: "Bearer test" },
+        expectedDetail: "gateway authentication failed",
+        expectedRequests: 1,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const root = await Deno.makeTempDir({
+        prefix: "sentinel-observe-auth-failure-test-",
+        dir: Deno.cwd(),
+      });
+      let requests = 0;
+      try {
+        const result = await runReadOnlyObservation({
+          config,
+          authHeaders: testCase.authHeaders,
+          keyBytes,
+          storeRoot: root,
+          transport: () => {
+            requests++;
+            return Promise.resolve(new Response(null, { status: 403 }));
+          },
+        });
+        assert.equal(result.ok, false, testCase.name);
+        if (result.ok) continue;
+        assert.equal(result.error.kind, "auth_failed", testCase.name);
+        assert.notEqual(result.error.kind, "auth_expired", testCase.name);
+        assert.equal(result.error.detail, testCase.expectedDetail);
+        assert.equal(requests, testCase.expectedRequests);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    }
+  },
+);
+
+/**
+ * Hosted regression: an unmapped gateway edge status (502/503) failed closed,
+ * but the diagnostic erased the numeric HTTP status, so an edge rejection was
+ * indistinguishable from a generic producer outage. The typed failure must
+ * retain the status without echoing the response body or credentials.
+ */
+Deno.test(
+  "observe keeps unmapped gateway statuses unavailable without leaking bodies or credentials",
+  async () => {
+    const config = await loadObserveConfig();
+    const keyBytes = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
+    const marker = "sensitive-gateway-body-marker";
+
+    for (const status of [503, 502]) {
+      const root = await Deno.makeTempDir({
+        prefix: "sentinel-observe-gateway-unavailable-test-",
+        dir: Deno.cwd(),
+      });
+      let requests = 0;
+      try {
+        const result = await runReadOnlyObservation({
+          config,
+          authHeaders: { authorization: "Bearer test" },
+          keyBytes,
+          storeRoot: root,
+          transport: () => {
+            requests++;
+            return Promise.resolve(
+              new Response(`{"error":"${marker}"}`, {
+                status,
+                headers: { "content-type": "application/json" },
+              }),
+            );
+          },
+        });
+        assert.equal(result.ok, false, `HTTP ${status}`);
+        if (result.ok) continue;
+        assert.equal(result.error.kind, "unavailable", `HTTP ${status}`);
+        assert.equal(
+          result.error.detail,
+          `gateway producer is unavailable (HTTP ${status})`,
+        );
+        // The read-only observer retries transient 5xx within a bounded
+        // shared budget (default 3): 1 initial attempt + 3 retries, then the
+        // original fault surfaces unchanged.
+        assert.equal(requests, 4, `HTTP ${status}`);
+        const diagnostic = JSON.stringify(result.error);
+        assert.equal(diagnostic.includes(marker), false, `HTTP ${status}`);
+        assert.equal(
+          diagnostic.includes("Bearer test"),
+          false,
+          `HTTP ${status}`,
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    }
+  },
+);
+
 Deno.test("read-only observation retains no plaintext for an empty index", async () => {
   const config = await loadObserveConfig();
   const root = await Deno.makeTempDir({
@@ -91,6 +215,99 @@ Deno.test("read-only observation retains no plaintext for an empty index", async
     for await (const entry of Deno.readDir(`${root}/entries`)) {
       assert.fail(`unexpected retained entry: ${entry.name}`);
     }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+/**
+ * Production regression: the scheduled observer stayed red on every run
+ * because one incident whose replay export exceeded the contract
+ * artifact-count bound aborted the entire pass. That incident is now counted
+ * and the pass continues, so every other incident's evidence is still read.
+ */
+Deno.test("observe blocks one unrepresentable incident without losing the pass", async () => {
+  const config = await loadObserveConfig();
+  const root = await Deno.makeTempDir({
+    prefix: "sentinel-observe-bound-test-",
+    dir: Deno.cwd(),
+  });
+  const keyBytes = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
+  const now = T0 + 1_000;
+  // One more capture than GATEWAY_MAX_ARTIFACTS_PER_EVIDENCE (16): the adapter
+  // refuses to represent this incident's evidence record.
+  const captures = Array.from(
+    { length: 17 },
+    (_, index) =>
+      makeCapture(syntheticBytes(64, index + 1), {
+        capture_id: `cap-${index}`,
+        captured_at_ms: T0,
+      }),
+  );
+  // A digest that matches none of them, so the walk cannot resolve the
+  // reference before it reaches the bound.
+  const absentDigest = await sha256hex(syntheticBytes(64, 99));
+  const overBoundRow = makeIndexRow({
+    incident_id: INCIDENT_A,
+    evidence_ref: {
+      ref: "artifact://sentinel/absent/cap-none",
+      digest: absentDigest,
+    },
+    evidence_expires_at_ms: now + 48 * 60 * 60 * 1_000,
+  });
+  const cleanRow = makeIndexRow({
+    incident_id: INCIDENT_B,
+    fingerprint: FINGERPRINT_B,
+    evidence_ref: null,
+    evidence_expires_at_ms: null,
+  });
+  const replayRequests: string[] = [];
+  try {
+    const result = await runReadOnlyObservation({
+      config,
+      authHeaders: { authorization: "Bearer test" },
+      keyBytes,
+      storeRoot: root,
+      clock: new FakeClock(now),
+      transport: (input) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/admin/sentinel/incidents") {
+          const filter = url.searchParams.get("incident_id");
+          const rows = filter === null
+            ? [overBoundRow, cleanRow]
+            : [filter === INCIDENT_A ? overBoundRow : cleanRow];
+          return Promise.resolve(jsonResponse(makeIndexPage(rows)));
+        }
+        if (url.pathname === "/admin/sentinel/replay-captures") {
+          const cursor = url.searchParams.get("cursor");
+          const index = cursor === null ? 0 : Number(cursor);
+          replayRequests.push(String(index));
+          const next = index + 1 < captures.length ? String(index + 1) : null;
+          return Promise.resolve(
+            jsonResponse(makeReplayPage(captures[index]!, next)),
+          );
+        }
+        return Promise.resolve(jsonResponse({ error: "unexpected" }, 404));
+      },
+    });
+    if (!result.ok) {
+      assert.fail(
+        `one unrepresentable incident must not abort the pass: ${
+          JSON.stringify(result)
+        }`,
+      );
+    }
+    assert.equal(result.value.incidents, 2);
+    // The bounded incident is named, not silently dropped...
+    assert.equal(result.value.blockedIncidents, 1);
+    assert.equal(
+      result.value.blockedDetail,
+      "replay export exceeds the contract artifact-count bound",
+    );
+    // ...and the incident after it was still read.
+    assert.equal(result.value.evidenceRecords, 1);
+    // The walk stopped AT the bound instead of exhausting the export.
+    assert.equal(replayRequests.length, 17);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

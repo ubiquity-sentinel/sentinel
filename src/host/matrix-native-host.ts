@@ -1,0 +1,210 @@
+/** Native matrix planner and cell executable composition. */
+import type {
+  MatrixCellGrantV1,
+  MatrixCellResultV1,
+} from "../contracts/matrix.ts";
+import { createRunBounds, prepareMatrixIntakeV1 } from "../repair/loop.ts";
+import {
+  childRunDeadlineV1,
+  runActionsRepairHost,
+  runActionsTargetCycles,
+} from "./actions.ts";
+import {
+  type MatrixPlanReportV1,
+  runMatrixCell,
+  runMatrixPlanEntrypoint,
+} from "./matrix.ts";
+import { createGitBundleExporter } from "./matrix-git.ts";
+import {
+  type ActionsMatrixHostDepsV1,
+  configured,
+  disabledResult,
+  hostOf,
+  matrixPlanCarrierOf,
+  parseCarrier,
+  readMatrixNativeCarrier,
+  readPlan,
+  targetDeps,
+  writeResult,
+} from "./matrix-actions-shared.ts";
+
+export async function runActionsMatrixHost(
+  deps: ActionsMatrixHostDepsV1 = {},
+): Promise<
+  (MatrixPlanReportV1 & { planDigest: string }) | MatrixCellResultV1
+> {
+  const job = deps.env === undefined
+    ? Deno.env.get("GITHUB_JOB")
+    : deps.env.GITHUB_JOB;
+  if (job !== "matrix_plan" && job !== "matrix_cell") {
+    throw new Error("matrix executable requires its native job identity");
+  }
+  const carrier = job === "matrix_cell"
+    ? parseCarrier(deps.carrier ?? await readMatrixNativeCarrier(true), true)
+    : null;
+  let result:
+    | (MatrixPlanReportV1 & { planDigest: string })
+    | MatrixCellResultV1
+    | null = null;
+  await runActionsRepairHost({
+    ...deps,
+    job,
+    runTargetCycles: async (input) => {
+      const host = hostOf(input);
+      if (job === "matrix_plan") {
+        const deadline = Math.min(
+          input.deadline,
+          childRunDeadlineV1(host.execution.createdAt),
+        );
+        // Only source intake and fresh branch assignment precede the manifest.
+        // The serialized aggregate retains unrelated lifecycle reconciliation.
+        const cycles = await runActionsTargetCycles({
+          ...input,
+          deadline,
+          modelStartsEnabled: false,
+          externalImplementations: true,
+          runCycle: async (deps, options) => {
+            const outcome = await prepareMatrixIntakeV1(deps, {
+              ...options,
+              runStartedAt: host.execution.createdAt,
+            });
+            if (outcome.status === "state_error") {
+              throw new Error("matrix intake authoritative state failed");
+            }
+            return outcome;
+          },
+        });
+        const configs = input.configs.filter((config) =>
+          cycles.addressed.includes(
+            config.repository.owner + "/" + config.repository.name,
+          )
+        );
+        const first = configs[0];
+        if (first === undefined) {
+          throw new Error("matrix planner addressed no configured target");
+        }
+        const pooled = { ...input, configs };
+        result = await runMatrixPlanEntrypoint({
+          deps: targetDeps(pooled, first),
+          options: {
+            waveId: host.execution.id,
+            run: host.run,
+            runtimeSha: input.controllerSha,
+            generation: host.execution.generation,
+            deadline,
+            runStartedAt: host.execution.createdAt,
+            plannedAt: input.clock.now(),
+            modelStartsEnabled: input.modelStartsEnabled,
+            githubForRepository: (repository) =>
+              pooled.composeGithub(configured(pooled, repository)),
+          },
+          planPath: host.artifactRoot + "/plan.json",
+        });
+        const planned = result;
+        const include = planned.plan.cells.map((cell) => ({
+          cellId: cell.cellId,
+          planDigest: planned.planDigest,
+        }));
+        const output = deps.env === undefined
+          ? Deno.env.get("GITHUB_OUTPUT")
+          : deps.env.GITHUB_OUTPUT;
+        if (output === undefined || output.length === 0) {
+          throw new Error("native matrix planner output is unavailable");
+        }
+        await Deno.writeTextFile(
+          output,
+          "matrix=" + JSON.stringify({ include }) + "\nplanDigest=" +
+            result.planDigest + "\nhasCells=" + String(include.length > 0) +
+            "\n",
+          { append: true },
+        );
+        console.log(JSON.stringify(matrixPlanCarrierOf({
+          waveId: result.plan.waveId,
+          run: host.run,
+          controllerSha: input.controllerSha,
+          generation: host.execution.generation,
+          planDigest: result.planDigest,
+          prepared: result.prepared,
+        })));
+        return cycles;
+      }
+      if (carrier === null) {
+        throw new Error("matrix cell lacks native selection");
+      }
+      const plan = await readPlan(host.artifactRoot, carrier.planDigest);
+      if (
+        plan.run.runId !== host.run.runId ||
+        plan.run.runAttempt !== host.run.runAttempt ||
+        plan.run.launcherSha !== host.run.launcherSha
+      ) throw new Error("matrix plan belongs to another native execution");
+      const cell = plan.cells.find((entry) => entry.cellId === carrier.cellId);
+      if (cell === undefined) {
+        throw new Error("native matrix cell is absent from its plan");
+      }
+      const grant: MatrixCellGrantV1 = {
+        waveId: plan.waveId,
+        run: plan.run,
+        cell,
+      };
+      if (
+        cell.runtimeSha !== input.controllerSha ||
+        cell.generation !== host.execution.generation
+      ) throw new Error("matrix cell runtime identity is stale");
+      const config = configured(input, cell.repository);
+      if (!input.modelStartsEnabled) {
+        result = disabledResult(grant, input.clock.now());
+      } else {
+        await input.prepareTarget?.(config);
+        const github = input.composeGithub(config);
+        // A queued cell anchors its OWN bounded start window at this trusted
+        // child invocation, never at the earlier prepare-time execution
+        // creation: a long planner run or runner queue must not spend the
+        // cell's window before its runner starts. The child's own absolute
+        // deadline and every generation/lease/binding check below are
+        // unchanged, so a cell with insufficient remaining time in its own
+        // actual execution still refuses.
+        const cellOrigin = input.runOrigin ?? host.execution.createdAt;
+        result = await runMatrixCell(
+          {
+            clock: input.clock,
+            bounds: createRunBounds(targetDeps(input, config), {
+              deadline: Math.min(
+                input.deadline,
+                childRunDeadlineV1(cellOrigin),
+              ),
+              runStartedAt: cellOrigin,
+              modelStartsEnabled: input.modelStartsEnabled,
+            }),
+            sessionBound: config.sessionBound,
+            state: {
+              readRepair: () => input.state.readRepair(),
+              readRelease: () => input.state.readRelease(),
+            },
+            github: { readIssue: (number) => github.readIssue(number) },
+            model: input.model,
+            bundle: createGitBundleExporter({
+              repositoryDir: host.sourcePathFor(config),
+              outputDir: host.artifactRoot,
+            }),
+          },
+          grant,
+          {
+            run: host.run,
+            runtimeSha: input.controllerSha,
+            generation: host.execution.generation,
+          },
+          input.clock.now(),
+        );
+      }
+      await writeResult(host.artifactRoot, result);
+      return {
+        outcome: { status: "idle", detail: "matrix cell settled" },
+        addressed: [config.repository.owner + "/" + config.repository.name],
+        skipped: [],
+        failed: [],
+      };
+    },
+  });
+  if (result === null) throw new Error("matrix executable produced no result");
+  return result;
+}

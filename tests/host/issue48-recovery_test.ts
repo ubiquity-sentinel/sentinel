@@ -9,6 +9,49 @@
  * callback. The workflow test inspects the bounded YAML source directly.
  */
 import assert from "node:assert/strict";
+import { assertSupervisorMaintenanceContract } from "./workflow-contract.ts";
+
+Deno.test("workflow maintenance contract: rejects mixed recovery and ordinary admission", async () => {
+  const text = await Deno.readTextFile(
+    ROOT + "/.github/workflows/supervisor.yml",
+  );
+  const skippedIf = "    if: $" + "{{ false }}";
+  const protectedIf = "    if: github.ref == 'refs/heads/sentinel-supervisor'";
+  const ordinary = text
+    .replace(skippedIf, protectedIf)
+    .replace(
+      "needs.maintenance.result == 'skipped'",
+      "needs.maintenance.result == 'success'",
+    )
+    .replaceAll(" --startup-recovery", "")
+    .replaceAll(" --owner-startup-recovery-only", "");
+  // The retired --startup-recovery markers no longer exist; scoped recovery
+  // is exactly the suppressed maintenance writer plus the plain supervisor
+  // verification runs.
+  const recovery = ordinary
+    .replace(protectedIf, skippedIf)
+    .replace(
+      "needs.maintenance.result == 'success'",
+      "needs.maintenance.result == 'skipped'",
+    );
+  assert.equal(assertSupervisorMaintenanceContract(ordinary), "ordinary");
+  assert.equal(assertSupervisorMaintenanceContract(recovery), "recovery");
+  for (
+    const malformed of [
+      recovery.replace(skippedIf, protectedIf),
+      recovery.replace(
+        "needs.maintenance.result == 'skipped'",
+        "needs.maintenance.result == 'success'",
+      ),
+      recovery.replace(
+        "run: deno task supervisor:run",
+        "run: deno task supervisor:run --owner-startup-recovery-only",
+      ),
+      recovery.replace("needs: maintenance\n", ""),
+      ordinary.replace(" && needs.maintenance.result == 'success'", ""),
+    ]
+  ) assert.throws(() => assertSupervisorMaintenanceContract(malformed));
+});
 
 import type { GitSha, WorkItemId } from "../../src/contracts/brands.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
@@ -75,6 +118,7 @@ const REPOSITORY = "ubiquity/sentinel";
 const PR_NUMBER = 51;
 const PR_HEAD = "1a".repeat(20) as GitSha;
 const PR_BASE = "2b".repeat(20) as GitSha;
+const BASE_REF = "development";
 const OTHER_SHA = "3c".repeat(20) as GitSha;
 const RUNTIME_REVISION = "4d".repeat(20) as GitSha;
 const NOW = T0 + 10_000;
@@ -188,6 +232,8 @@ function repairFixture(
     replays: [],
     releaseRequests: [],
     githubCooldowns: [],
+    attemptMemory: [],
+    lessons: [],
     ...overrides,
   });
 }
@@ -242,6 +288,8 @@ function intendedSnapshot(
     replays: prior.replays,
     releaseRequests: prior.releaseRequests,
     githubCooldowns: prior.githubCooldowns,
+    attemptMemory: [],
+    lessons: [],
   });
 }
 
@@ -261,6 +309,7 @@ function bindingFor(
     pullRequestNumber: PR_NUMBER,
     pullRequestHead: PR_HEAD,
     pullRequestBase: PR_BASE,
+    pullRequestBaseRef: BASE_REF,
     pullRequestRepository: REPOSITORY,
     targetId: TARGET_ID,
   };
@@ -345,6 +394,7 @@ async function makeRig(
       state: "open",
       head: PR_HEAD,
       base: PR_BASE,
+      baseRef: BASE_REF,
       repository: REPOSITORY,
     },
     counters,
@@ -520,6 +570,100 @@ Deno.test("issue48 recovery: applies the fixed CAS transition then stays skipped
   }
 });
 
+Deno.test("issue48 recovery: an advanced live PR base still applies the pinned transition", async () => {
+  const rig = await makeRig("advanced-base");
+  try {
+    // Another commit landed on the target branch after the reviewed PR was
+    // published: the live PR view reports the advanced base.sha while the
+    // durable record still pins the exact reviewed historical base.
+    const liveAdvancedBase = "5e".repeat(20) as GitSha;
+    assert.notEqual(liveAdvancedBase, rig.binding.pullRequestBase);
+    const result = await runRig(rig, {
+      prView: { ...rig.prView, base: liveAdvancedBase },
+    });
+    // Regression: this was pull_request_mismatch while the live base head was
+    // still compared against the saved historical base.
+    assert.equal(result.reason, "applied");
+    assert.equal(result.status, "applied");
+    assert.equal(result.beforeHead, rig.repairHead);
+    assert.equal(rig.counters.writes, 1);
+    assert.equal(rig.counters.prReads, 1);
+    const appliedHead = result.appliedHead;
+    if (appliedHead === null) throw new Error("expected a proved applied head");
+
+    // The release pin and every other state branch stayed untouched.
+    assert.equal(await remoteHead(rig.ctx, RELEASE_STATE_REF), rig.releaseHead);
+
+    // Whole-state equality: the one CAS transition changed only the four target
+    // lifecycle fields, and every historical PR/repo/number/state binding,
+    // digest and pin stays byte-for-byte.
+    const intended = intendedSnapshot(
+      rig.seed,
+      TARGET_ID,
+      rig.repairHead,
+      NOW,
+    );
+    const read = await rig.repair.readRepair();
+    if (!read.ok || read.value.status !== "found") {
+      throw new Error("expected applied state");
+    }
+    assert.equal(read.value.head, appliedHead);
+    assert.equal(
+      canonicalStringify(read.value.snapshot),
+      canonicalStringify(intended),
+    );
+
+    const after = read.value.snapshot.work.find((record) =>
+      record.id === TARGET_ID
+    );
+    if (after === undefined) throw new Error("expected the target work record");
+    // The saved HISTORICAL base identity remains pinned to the record and to
+    // the reviewed binding; only the live base.sha moved.
+    assert.equal(after.target.base, PR_BASE);
+    assert.equal(after.target.base, rig.binding.pullRequestBase);
+    assert.equal(after.target.head, PR_HEAD);
+    assert.equal(after.target.pr, PR_NUMBER);
+    assert.equal(after.related.issueNumber, 48);
+    assert.equal(after.nextStep, "work");
+    assert.equal(after.blocker, null);
+    assert.equal(after.intent, null);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("issue48 recovery: a mismatched historical target base still refuses", async () => {
+  const rig = await makeRig("historical-base", {
+    repair: repairFixture({
+      work: [
+        targetRecord({
+          target: {
+            base: OTHER_SHA,
+            branch: null,
+            checkpoint: null,
+            head: PR_HEAD,
+            pr: PR_NUMBER,
+          },
+        }),
+        workRecord("issue-ubiquity-sentinel-58"),
+      ],
+    }),
+  });
+  try {
+    // The live PR itself matches the reviewed binding; the refusal must come
+    // from the durable record's historical base no longer matching it, so no
+    // loosened live-base comparison may skip the saved identity check.
+    await expectRejected(
+      rig,
+      await runRig(rig),
+      "target_precondition_mismatch",
+    );
+    assert.equal(rig.counters.prReads, 1);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
 Deno.test("issue48 recovery: bounded preflight rejections write nothing", async () => {
   const rig = await makeRig("reject");
   try {
@@ -557,9 +701,11 @@ Deno.test("issue48 recovery: bounded preflight rejections write nothing", async 
       await runRig(rig, { prView: { ...rig.prView, head: OTHER_SHA } }),
       "pull_request_mismatch",
     );
+    // A live base SHA advance is ordinary, but a PR retargeted to another
+    // base branch is refused on the stable branch identity.
     await expectRejected(
       rig,
-      await runRig(rig, { prView: { ...rig.prView, base: OTHER_SHA } }),
+      await runRig(rig, { prView: { ...rig.prView, baseRef: "main" } }),
       "pull_request_mismatch",
     );
     await expectRejected(
@@ -706,6 +852,7 @@ Deno.test("issue48 recovery: missing repair state is a bounded failure", async (
           state: "open" as const,
           head: PR_HEAD,
           base: PR_BASE,
+          baseRef: BASE_REF,
           repository: REPOSITORY,
         })),
     });
@@ -934,6 +1081,7 @@ Deno.test("issue48 recovery: supervisor workflow dependency and locking contract
   const text = await Deno.readTextFile(
     `${ROOT}/.github/workflows/supervisor.yml`,
   );
+  const mode = assertSupervisorMaintenanceContract(text);
   assert.ok(text.includes("name: sentinel-supervisor"));
   assert.ok(text.includes("workflow_dispatch:"));
   assert.ok(!text.includes("schedule:"));
@@ -950,10 +1098,14 @@ Deno.test("issue48 recovery: supervisor workflow dependency and locking contract
   );
   const maintenance = text.slice(maintenanceAt, prepareAt);
   assert.ok(
-    maintenance.includes("if: github.ref == 'refs/heads/sentinel-supervisor'"),
+    maintenance.includes(
+      mode === "ordinary"
+        ? "if: github.ref == 'refs/heads/sentinel-supervisor'"
+        : "if: ${{ false }}",
+    ),
   );
   assert.ok(maintenance.includes("runs-on: ubuntu-latest"));
-  assert.ok(maintenance.includes("timeout-minutes: 5"));
+  assert.ok(maintenance.includes("timeout-minutes: 15"));
   assert.ok(maintenance.includes("group: sentinel-repair"));
   assert.ok(maintenance.includes("cancel-in-progress: false"));
   assert.ok(
@@ -969,53 +1121,119 @@ Deno.test("issue48 recovery: supervisor workflow dependency and locking contract
   assert.ok(maintenance.includes("ref: ${{ github.sha }}"));
   assert.ok(maintenance.includes("fetch-depth: 0"));
   assert.ok(maintenance.includes("persist-credentials: false"));
-  assert.ok(maintenance.includes("ops/issue48-recovery.ts"));
+  // The maintenance job's bounded one-shot is now the hosted autonomy pass,
+  // which supersedes the issue-48-specific quota helper (that helper and its
+  // own tests remain in the tree, it is simply no longer wired into the job).
+  assert.ok(maintenance.includes("ops/hosted-autonomy.ts"));
   assert.ok(maintenance.includes("--no-lock"));
-  assert.ok(maintenance.includes("--allow-run=git"));
-  assert.ok(maintenance.includes("--allow-net=api.github.com"));
+  assert.match(maintenance, /--allow-run\s/);
+  assert.ok(!maintenance.includes("--allow-run="));
+  assert.match(maintenance, /--allow-env=[^\r\n]*\bNODE_V8_COVERAGE\b/);
+  assert.ok(
+    maintenance.includes(
+      '--allow-net="api.github.com,*.blob.core.windows.net"',
+    ),
+  );
   assert.ok(maintenance.includes("GITHUB_TOKEN: ${{ github.token }}"));
+  // The pass authenticates its code-change writes as the `ubiquity-sentinel`
+  // App: it mounts the protected environment, resolves the committed targets
+  // and mints the installation token from the environment secret.
+  assert.ok(maintenance.includes("environment:"));
+  assert.ok(maintenance.includes("name: sentinel-supervisor"));
+  assert.ok(maintenance.includes("create-github-app-token"));
+  assert.ok(
+    maintenance.includes(
+      "private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}",
+    ),
+  );
+  assert.ok(maintenance.includes("client-id: Iv23liHUJNXds9mU3j7Q"));
+  assert.ok(
+    maintenance.includes(
+      "Resolve the committed target repositories",
+    ),
+  );
+  assert.ok(
+    maintenance.includes(
+      "repositories: ${{ steps.targets.outputs.repositories }}",
+    ),
+  );
+  assert.ok(
+    maintenance.includes(
+      "SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}",
+    ),
+  );
+  assert.ok(
+    maintenance.includes("GITHUB_JOB,SENTINEL_SUPERVISOR_TOKEN"),
+    "the autonomy pass may read the minted App token",
+  );
+  const readSecrets = [
+    ...new Set(
+      [...maintenance.matchAll(/secrets\.[A-Z0-9_]+/g)].map((match) =>
+        match[0]
+      ),
+    ),
+  ];
+  assert.deepEqual(
+    readSecrets,
+    ["secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY"],
+    "the maintenance job reads exactly the App private key",
+  );
   for (
     const forbidden of [
-      "environment:",
-      "secrets.",
-      "SENTINEL_SUPERVISOR_TOKEN",
       "UOS_AI_TOKEN",
       "setup-node",
       "codex",
-      "actions: write",
-      "issues: write",
-      "pull-requests: write",
-      "checks:",
       "statuses:",
     ]
   ) {
     assert.ok(!maintenance.includes(forbidden), `forbidden: ${forbidden}`);
   }
   const permissionsAt = maintenance.indexOf("permissions:");
+  const environmentAt = maintenance.indexOf("environment:");
   const concurrencyAt = maintenance.indexOf("concurrency:");
-  assert.ok(permissionsAt > 0 && concurrencyAt > permissionsAt);
+  assert.ok(
+    permissionsAt > 0 && environmentAt > permissionsAt &&
+      concurrencyAt > environmentAt,
+  );
+  // The job's authority is exactly what the bounded autonomy pass needs and
+  // nothing more: it writes repair state, merges an already-reviewed head with
+  // an expected-head CAS under the runtime's own acceptance criteria (no
+  // P0/P1 plus a green deterministic check) and closes a delivered issue. The
+  // App token it mints authenticates those code-change writes as
+  // `ubiquity-sentinel[bot]`; it still starts no model and holds no promotion,
+  // proof or acceptance authority.
   assert.equal(
-    maintenance.slice(permissionsAt, concurrencyAt).replace(/\s+/g, " ").trim(),
-    "permissions: contents: write pull-requests: read",
+    maintenance.slice(permissionsAt, environmentAt).replace(/\s+/g, " ").trim(),
+    "permissions: contents: write pull-requests: write checks: read issues: write actions: write",
+  );
+  assert.equal(
+    maintenance.slice(environmentAt, concurrencyAt).replace(/\s+/g, " ").trim(),
+    "environment: name: sentinel-supervisor",
+    "the maintenance job mounts the protected environment",
   );
 
-  // A maintenance failure must never skip a valid ordinary run: prepare still
-  // runs (always()) and repair requires prepare success explicitly.
+  // Ordinary prepare requires successful maintenance. The pinned recovery-only
+  // controller may skip it only with the complete mutually exclusive contract.
+  // Repair still requires prepare success explicitly.
   const prepare = text.slice(prepareAt, repairAt);
   assert.ok(prepare.includes("needs: maintenance"));
   assert.ok(
     prepare.includes(
-      "if: always() && github.ref == 'refs/heads/sentinel-supervisor'",
+      `if: always() && needs.maintenance.result == '${
+        mode === "ordinary" ? "success" : "skipped"
+      }' && github.ref == 'refs/heads/sentinel-supervisor'`,
     ),
   );
   const repair = text.slice(repairAt, finalizeAt);
   assert.ok(
     repair.includes(
-      "if: ${{ !cancelled() && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' }}",
+      "if: ${{ !cancelled() && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && (needs.prepare.outputs.modelStartsEnabled != 'true' || needs.matrix_plan.result == 'success') }}",
     ),
   );
   const finalize = text.slice(finalizeAt);
-  assert.ok(finalize.includes("needs: [prepare, repair]"));
+  assert.ok(
+    finalize.includes("needs: [prepare, matrix_plan, matrix_cell, repair]"),
+  );
   assert.ok(
     finalize.includes(
       "if: always() && github.ref == 'refs/heads/sentinel-supervisor'",
@@ -1077,7 +1295,7 @@ function prPayload(): Record<string, unknown> {
     state: "open",
     merged: false,
     head: { sha: PR_HEAD, repo: { full_name: REPOSITORY } },
-    base: { sha: PR_BASE, repo: { full_name: REPOSITORY } },
+    base: { sha: PR_BASE, ref: BASE_REF, repo: { full_name: REPOSITORY } },
   };
 }
 
@@ -1108,8 +1326,40 @@ Deno.test("issue48 recovery: bounded PR read accepts valid in-budget JSON", asyn
     state: "open",
     head: PR_HEAD,
     base: PR_BASE,
+    baseRef: BASE_REF,
     repository: REPOSITORY,
   });
+});
+
+Deno.test("issue48 recovery: malformed live base ref is refused", async () => {
+  const read = (payload: Record<string, unknown>) =>
+    readGitHubPullRequest(
+      PR_NUMBER,
+      PR_READ_TOKEN,
+      () =>
+        Promise.resolve(new Response(JSON.stringify(payload), { status: 200 })),
+    );
+  const missing = {
+    ...prPayload(),
+    base: { sha: PR_BASE, repo: { full_name: REPOSITORY } },
+  };
+  const empty = {
+    ...prPayload(),
+    base: { sha: PR_BASE, ref: "", repo: { full_name: REPOSITORY } },
+  };
+  const overlong = {
+    ...prPayload(),
+    base: {
+      sha: PR_BASE,
+      ref: "d".repeat(257),
+      repo: { full_name: REPOSITORY },
+    },
+  };
+  for (const payload of [missing, empty, overlong]) {
+    const result = await read(payload);
+    if (result.ok) throw new Error("expected a malformed base ref refusal");
+    assert.equal(result.error.kind, "invalid");
+  }
 });
 
 Deno.test("issue48 recovery: oversized streamed PR bytes are cancelled early", async () => {

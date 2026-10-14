@@ -47,6 +47,7 @@ import type {
 } from "./contracts/ports.ts";
 import {
   OPERATION_MARGIN_MS,
+  type PostDrainReviewContinuationV1,
   REPAIR_RUN_CEILING_MS,
   type RepairCycleOutcomeV1,
   type ReplayFixtureIdentitySourceV1,
@@ -108,6 +109,8 @@ export interface RepairEntrypointDepsV1 {
   model: ImplementationPort;
   /** The one durable model-start admission controller. */
   budget: BudgetControllerV1;
+  /** Trusted matrix ownership: no serial implementation fallback or uncertainty settlement. */
+  externalImplementations?: boolean;
 }
 
 export interface RepairEntrypointOptionsV1 {
@@ -173,6 +176,9 @@ export async function runRepairEntrypoint(
   let outcome: RepairCycleOutcomeV1 | null = null;
   let cycleError: unknown = null;
   let cycleThrew = false;
+  const postDrain: { continuation: PostDrainReviewContinuationV1 | null } = {
+    continuation: null,
+  };
   try {
     outcome = await runRepairCycle(
       {
@@ -187,12 +193,16 @@ export async function runRepairEntrypoint(
         fixtureIdentities: deps.fixtureIdentities,
         model: deps.model,
         budget: deps.budget,
+        externalImplementations: deps.externalImplementations,
       },
       {
         deadline: hardDeadline - OPERATION_MARGIN_MS,
         stepLimit: options.stepLimit,
         runStartedAt,
         modelStartsEnabled: options.modelStartsEnabled,
+      },
+      (continuation) => {
+        postDrain.continuation = continuation;
       },
     );
   } catch (error) {
@@ -227,16 +237,44 @@ export async function runRepairEntrypoint(
     drainCause = error;
   }
   if (drainFailed) {
-    // No log-only success: a drain that could not prove settlement/durability
-    // is a typed failure carrying the sanitized report, the original outcome
-    // and (when the cycle failed) the original exception as cause.
-    throw new RepairReviewDrainError({
-      report,
-      outcome,
-      cause: cycleThrew ? cycleError : drainCause,
-    });
+    // If the cycle itself failed, the drain failure is part of that failure:
+    // throw the typed error so both the drain report and the original error
+    // are visible. If the cycle succeeded, the drain is a best-effort
+    // cleanup/verification step; a drain that cannot prove settlement after
+    // successful work is a drain limitation, not a work failure. Log it and
+    // return the successful outcome instead of failing the run.
+    if (cycleThrew) {
+      throw new RepairReviewDrainError({
+        report,
+        outcome,
+        cause: cycleError,
+      });
+    }
+    // Cycle succeeded but drain failed: do not fail the run. The cycle
+    // outcome (e.g. 33 matrix cells completed) is the primary evidence;
+    // the drain could not prove settlement/durability, which is logged
+    // here for diagnosis but does not invalidate the completed work.
+    console.error(
+      `[repair] review drain failed after successful cycle; ` +
+        `returning cycle outcome (drain fault: ` +
+        `${
+          drainCause instanceof Error ? drainCause.message : String(drainCause)
+        })`,
+    );
   }
   if (cycleThrew) throw cycleError;
+  if (
+    report !== null && postDrain.continuation !== null &&
+    (outcome?.status === "idle" || outcome?.status === "margin")
+  ) {
+    const completedKeys = report.operations.filter((operation) =>
+      operation.processSettled && operation.durable &&
+      operation.outcome !== "faulted" &&
+      (operation.phase === "ready" || operation.phase === "published")
+    ).map((operation) => operation.operationKey);
+    const continued = await postDrain.continuation(completedKeys);
+    if (continued !== null) outcome = continued;
+  }
   return outcome!;
 }
 

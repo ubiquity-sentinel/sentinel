@@ -7,6 +7,10 @@
  */
 
 import type { GitSha } from "./brands.ts";
+import { parseAttemptMemoryRecordV1 } from "./attempt-memory.ts";
+import type { AttemptMemoryRecordV1 } from "./attempt-memory.ts";
+import { parseMemoryLessonsRecordV1 } from "./memory-lessons.ts";
+import type { MemoryLessonsRecordV1 } from "./memory-lessons.ts";
 import { parseBudgetReservationV1 } from "./budget-reservation.ts";
 import type { BudgetReservationV1 } from "./budget-reservation.ts";
 import { parseGitHubCooldownV1 } from "./github-cooldown.ts";
@@ -23,6 +27,10 @@ import { parseIncidentEvidenceV1, parseIncidentSummaryV1 } from "./incident.ts";
 import type { IncidentEvidenceV1, IncidentSummaryV1 } from "./incident.ts";
 import { parseReleaseRecordV1, parseReleaseRequestV1 } from "./release.ts";
 import type { ReleaseRecordV1, ReleaseRequestV1 } from "./release.ts";
+import {
+  parseVpsReleaseRecordV1,
+  type VpsReleaseRecordV1,
+} from "./vps-release.ts";
 import { parseReplayResultV1 } from "./replay-result.ts";
 import type { ReplayResultV1 } from "./replay-result.ts";
 import { parseReviewReceiptV1 } from "./review-receipt.ts";
@@ -58,6 +66,19 @@ export interface RepairStateSnapshotV1 {
   replays: ReplayResultV1[];
   releaseRequests: ReleaseRequestV1[];
   githubCooldowns: GitHubCooldownV1[];
+  /**
+   * Durable attempt memory (the loop-breaker). One record per attempt family
+   * — (repository, task, base, purpose) — each carrying bounded entries keyed
+   * by the canonical attempt fingerprint. Written only by trusted repair
+   * writers, appended in the same commit as the settlement it describes.
+   */
+  attemptMemory: AttemptMemoryRecordV1[];
+  /**
+   * Deterministic per-repository lesson digest (the curated long-term memory
+   * view), recomputed by trusted writers from `attemptMemory`. It is a view,
+   * never an authority: the source records stay the record of truth.
+   */
+  lessons: MemoryLessonsRecordV1[];
 }
 
 export interface ReleaseStateSnapshotV1 {
@@ -67,6 +88,8 @@ export interface ReleaseStateSnapshotV1 {
   sequence: number;
   updatedAt: number;
   releases: ReleaseRecordV1[];
+  /** Absent on canonical legacy snapshots; never represented as Deno records. */
+  vpsReleases?: VpsReleaseRecordV1[];
   /**
    * Hosted supervisor records (separate from Deno release records). The
    * runtime pointer is at most one record; hosted releases are one per exact
@@ -98,6 +121,8 @@ const REPAIR_KEYS = [
   "replays",
   "releaseRequests",
   "githubCooldowns",
+  "attemptMemory",
+  "lessons",
 ] as const;
 const RELEASE_KEYS = [
   "version",
@@ -171,6 +196,18 @@ export function parseRepairStateSnapshotV1(
     MaxItems.snapshotRecords,
     parseGitHubCooldownV1,
   );
+  const attemptMemory = expectArray(
+    obj.attemptMemory,
+    "$.attemptMemory",
+    MaxItems.snapshotRecords,
+    parseAttemptMemoryRecordV1,
+  );
+  const lessons = expectArray(
+    obj.lessons,
+    "$.lessons",
+    MaxItems.snapshotRecords,
+    parseMemoryLessonsRecordV1,
+  );
 
   // Frozen parsers reject duplicate ids instead of last-wins maps; a record
   // set that lost one of two same-id records is corrupted state, not a merge.
@@ -181,6 +218,8 @@ export function parseRepairStateSnapshotV1(
   expectUniqueIds(reviews, "$.reviews");
   expectUniqueIds(replays, "$.replays");
   expectUniqueIds(releaseRequests, "$.releaseRequests");
+  expectUniqueIds(attemptMemory, "$.attemptMemory");
+  expectUniqueIds(lessons, "$.lessons");
   // Cooldowns have no string id; one record per affected installation.
   expectUniqueInstallationIds(githubCooldowns, "$.githubCooldowns");
 
@@ -198,6 +237,8 @@ export function parseRepairStateSnapshotV1(
     replays,
     releaseRequests,
     githubCooldowns,
+    attemptMemory,
+    lessons,
   };
 }
 
@@ -205,7 +246,13 @@ export function parseReleaseStateSnapshotV1(
   input: unknown,
 ): ReleaseStateSnapshotV1 {
   const obj = expectRecord(input, "$");
-  expectExactKeys(obj, RELEASE_KEYS, "$");
+  expectExactKeys(
+    obj,
+    Object.hasOwn(obj, "vpsReleases")
+      ? [...RELEASE_KEYS, "vpsReleases"]
+      : RELEASE_KEYS,
+    "$",
+  );
   expectVersion(obj.version, "$.version");
   expectEnum(obj.kind, ["release_state_snapshot"], "$.kind");
 
@@ -249,6 +296,16 @@ export function parseReleaseStateSnapshotV1(
   // Cooldowns have no string id; one record per affected installation.
   expectUniqueInstallationIds(githubCooldowns, "$.githubCooldowns");
 
+  const vpsReleases = Object.hasOwn(obj, "vpsReleases")
+    ? expectArray(
+      obj.vpsReleases,
+      "$.vpsReleases",
+      MaxItems.snapshotRecords,
+      parseVpsReleaseRecordV1,
+    )
+    : undefined;
+  if (vpsReleases !== undefined) expectUniqueIds(vpsReleases, "$.vpsReleases");
+
   return {
     version: "v1",
     kind: "release_state_snapshot",
@@ -256,6 +313,7 @@ export function parseReleaseStateSnapshotV1(
     sequence,
     updatedAt,
     releases,
+    ...(vpsReleases === undefined ? {} : { vpsReleases }),
     hostedRuntimes,
     hostedReleases,
     githubCooldowns,

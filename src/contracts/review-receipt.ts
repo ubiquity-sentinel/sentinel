@@ -1,10 +1,3 @@
-/**
- * ReviewReceiptV1: strict normalized evidence of one Codex review request.
- * Completion is never inferred from silence or reactions — the receipt only
- * records a machine-verifiable completed outcome; anything else is pending or
- * unavailable. The receipt binds the exact PR head and observed base.
- */
-
 import { asFindingFingerprint } from "./brands.ts";
 import type { FindingFingerprint, GitSha } from "./brands.ts";
 import {
@@ -19,6 +12,7 @@ import {
   expectCount,
   expectEnum,
   expectExactKeys,
+  expectExactKeysWithOptional,
   expectGitSha,
   expectNonEmptyString,
   expectNullable,
@@ -34,6 +28,15 @@ import {
   MaxItems,
   MaxText,
 } from "./validation.ts";
+import { parseReviewTaskAcceptance } from "./review-task-acceptance.ts";
+import type { ReviewTaskAcceptanceV1 } from "./review-task-acceptance.ts";
+
+/**
+ * ReviewReceiptV1: strict normalized evidence of one Codex review request.
+ * Completion is never inferred from silence or reactions — the receipt only
+ * records a machine-verifiable completed outcome; anything else is pending or
+ * unavailable. The receipt binds the exact PR head and observed base.
+ */
 
 export type ReviewStatusV1 = "completed" | "pending" | "unavailable";
 
@@ -79,6 +82,16 @@ export interface ReviewReceiptV1 {
   findingsUncounted: number;
   /** Distinct unresolved severities, derived from unresolved findings. */
   unresolvedSeverities: SeverityV1[];
+  /**
+   * Positive task acceptance evidence, an explicit null when the review
+   * reported none, or absent entirely on a receipt written before the semantic
+   * acceptance boundary existed. PRESENCE IS SEMANTIC: absence is preserved
+   * through decoding and canonical serialization (it is never rewritten as an
+   * explicit null), so a legacy receipt stays byte-verifiable in state. Every
+   * authorization surface reads `taskAcceptance ?? null`; absence and null are
+   * both "no acceptance" and can never authorize an issue-backed delivery.
+   */
+  taskAcceptance?: ReviewTaskAcceptanceV1 | null;
   submittedAt: number;
   completedAt: number | null;
   observedAt: number;
@@ -103,6 +116,14 @@ const KEYS = [
   "completedAt",
   "observedAt",
 ] as const;
+/**
+ * Additive optional key: a receipt written before the semantic acceptance
+ * boundary existed omits it entirely, and the parser preserves that absence
+ * rather than injecting a default. An explicit null decodes as null and an
+ * explicit acceptance decodes under the strict bounded parser; neither the
+ * legacy absence nor an explicit null is ever a passing acceptance.
+ */
+const OPTIONAL_KEYS = ["taskAcceptance"] as const;
 const PULL_REQUEST_KEYS = ["number", "head", "base"] as const;
 const FINDING_KEYS = [
   "id",
@@ -117,7 +138,7 @@ const RESOLUTION_KEYS = ["authorizingIdentity", "reference"] as const;
 
 export function parseReviewReceiptV1(input: unknown): ReviewReceiptV1 {
   const obj = expectRecord(input, "$");
-  expectExactKeys(obj, KEYS, "$");
+  expectExactKeysWithOptional(obj, KEYS, OPTIONAL_KEYS, "$");
   expectVersion(obj.version, "$.version");
   expectEnum(obj.kind, ["review_receipt"], "$.kind");
 
@@ -188,6 +209,19 @@ export function parseReviewReceiptV1(input: unknown): ReviewReceiptV1 {
     obj.unresolvedSeverities,
     "$.unresolvedSeverities",
   );
+  // ABSENCE IS SEMANTIC: a receipt written before the semantic acceptance
+  // boundary carries no key at all, so the absent field stays absent and is
+  // never defaulted to an explicit null — that default would change the
+  // record's canonical bytes and reject the very blob that stored it. An
+  // explicit null stays explicitly null; every other value must be the strict
+  // bounded acceptance.
+  const taskAcceptance = obj.taskAcceptance === undefined
+    ? undefined
+    : expectNullable(
+      obj.taskAcceptance,
+      "$.taskAcceptance",
+      parseReviewTaskAcceptance,
+    );
 
   const submittedAt = expectTimestamp(obj.submittedAt, "$.submittedAt");
   const completedAt = expectNullable(
@@ -244,6 +278,16 @@ export function parseReviewReceiptV1(input: unknown): ReviewReceiptV1 {
         "non-completed review cannot record completion",
       );
     }
+    // Only a completed review can carry a task verdict; a pending/unavailable
+    // receipt claiming acceptance would be completion evidence without a
+    // completed review. An absent legacy field is not a claim.
+    if (taskAcceptance !== null && taskAcceptance !== undefined) {
+      fail(
+        "$.taskAcceptance",
+        "invalid_lifecycle",
+        "non-completed review cannot carry a task acceptance",
+      );
+    }
     if (outcome === "unavailable" && resultId !== null) {
       fail(
         "$.resultId",
@@ -280,9 +324,9 @@ export function parseReviewReceiptV1(input: unknown): ReviewReceiptV1 {
     );
   }
 
-  return {
-    version: "v1",
-    kind: "review_receipt",
+  const receipt = {
+    version: "v1" as const,
+    kind: "review_receipt" as const,
     id,
     requestId,
     expectedReviewer,
@@ -299,6 +343,12 @@ export function parseReviewReceiptV1(input: unknown): ReviewReceiptV1 {
     completedAt,
     observedAt,
   };
+  // The optional acceptance key is emitted only when the record carried it:
+  // emitting an explicit null for an absent legacy field would change the
+  // record's canonical bytes and reject the stored blob on read.
+  return taskAcceptance === undefined
+    ? receipt
+    : { ...receipt, taskAcceptance };
 }
 
 function parseFinding(input: unknown, path: string): ReviewFindingV1 {
@@ -393,3 +443,31 @@ function parseUnresolvedSeverities(value: unknown, path: string): SeverityV1[] {
     return severity;
   }).sort((a, b) => SEVERITY_ORDER[a] - SEVERITY_ORDER[b]);
 }
+
+export {
+  checkReviewTaskStatement,
+  MAX_REVIEW_TASK_BODY,
+  MAX_REVIEW_TASK_TITLE,
+  MAX_TASK_ACCEPTANCE_EVIDENCE,
+  MAX_TASK_ACCEPTANCE_EVIDENCE_CHARS,
+  parseReviewTaskAcceptance,
+  REVIEW_TASK_DIGEST_DETAIL,
+  REVIEW_TASK_SHAPE_DETAIL,
+  reviewTaskAcceptanceRefusal,
+  reviewTaskStatementDigest,
+  TASK_ACCEPTANCE_ALREADY_SATISFIED_DETAIL,
+  TASK_ACCEPTANCE_CONTEXT_DETAIL,
+  TASK_ACCEPTANCE_DIGEST_DETAIL,
+  TASK_ACCEPTANCE_MISMATCH_DETAIL,
+  TASK_ACCEPTANCE_MISSING_DETAIL,
+  TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL,
+  TASK_ACCEPTANCE_UNBOUND_DETAIL,
+  TASK_ACCEPTANCE_UNCERTAIN_DETAIL,
+} from "./review-task-acceptance.ts";
+
+export type {
+  ReviewTaskAcceptanceV1,
+  ReviewTaskStatementCheckV1,
+  ReviewTaskStatementV1,
+  TaskAcceptanceVerdictV1,
+} from "./review-task-acceptance.ts";

@@ -92,6 +92,21 @@ const ARTIFACT_CONTENT_TYPE = "application/octet-stream";
 const INDEX_LIMIT_MIN = 1;
 const INDEX_LIMIT_MAX = 100;
 
+import type {
+  GatewayCaptureBindingReaderV1,
+  GatewayCaptureBindingV1,
+} from "./capture-binding.ts";
+
+export interface GatewayRetryPolicyV1 {
+  /**
+   * Total additional attempts shared across the adapter instance (one run).
+   * 0 disables retry; bounded so a full producer outage still fails fast.
+   */
+  budget: number;
+  /** Linear backoff base in milliseconds: the delay before retry n is baseDelayMs * n. */
+  baseDelayMs: number;
+}
+
 export interface GatewayIncidentAdapterOptionsV1 {
   /** Trusted parsed repository configuration (never an untrusted wire value). */
   config: RepositoryConfigV1;
@@ -100,18 +115,47 @@ export interface GatewayIncidentAdapterOptionsV1 {
   clock: Clock;
   /** Bounded restricted local evidence store (deterministic ingestion). */
   store: ArtifactStoreV1;
+  /**
+   * Opt-in bounded retry for transient gateway producer faults (HTTP 5xx,
+   * transport rejection). Absent or budget 0 preserves the exact
+   * fail-closed single-attempt behavior.
+   */
+  retry?: GatewayRetryPolicyV1;
 }
 
-export class GatewayIncidentAdapter implements IncidentAdapter {
+/** Retry-policy validation bounds (constructor rejects outside these). */
+const RETRY_BUDGET_MAX = 10;
+const RETRY_DELAY_MAX_MS = 10_000;
+
+/** Details that mark a gateway fault as transient and safe to retry (read-only GETs only). */
+const TRANSIENT_TRANSPORT_DETAIL = "gateway transport is unavailable";
+const TRANSIENT_STATUS_PATTERN = /HTTP 5\d\d/;
+
+function isTransientGatewayFault(
+  error: { kind: string; detail: string },
+): boolean {
+  if (error.kind !== "unavailable") return false;
+  return error.detail === TRANSIENT_TRANSPORT_DETAIL ||
+    TRANSIENT_STATUS_PATTERN.test(error.detail);
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export class GatewayIncidentAdapter
+  implements IncidentAdapter, GatewayCaptureBindingReaderV1 {
   private readonly config: RepositoryConfigV1;
   private readonly baseUrl: string;
   private readonly transport: GatewayTransportV1;
   private readonly auth: GatewayAuthProviderV1;
   private readonly clock: Clock;
   private readonly store: ArtifactStoreV1;
+  private readonly retryBaseDelayMs: number;
+  private retryBudget: number;
 
   constructor(options: GatewayIncidentAdapterOptionsV1) {
-    const { config, transport, auth, clock, store } = options;
+    const { config, transport, auth, clock, store, retry } = options;
     if (config.adapter.kind !== "gateway") {
       throw new Error(
         "GatewayIncidentAdapter requires a gateway adapter config",
@@ -123,12 +167,72 @@ export class GatewayIncidentAdapter implements IncidentAdapter {
     if (typeof baseUrl !== "string" || baseUrl.length === 0) {
       throw new Error("GatewayIncidentAdapter requires a configured base URL");
     }
+    let retryBudget = 0;
+    let retryBaseDelayMs = 0;
+    if (retry !== undefined) {
+      if (
+        !Number.isSafeInteger(retry.budget) || retry.budget < 0 ||
+        retry.budget > RETRY_BUDGET_MAX
+      ) {
+        throw new Error(
+          "GatewayIncidentAdapter requires a retry budget in 0..10",
+        );
+      }
+      if (
+        !Number.isSafeInteger(retry.baseDelayMs) || retry.baseDelayMs < 0 ||
+        retry.baseDelayMs > RETRY_DELAY_MAX_MS
+      ) {
+        throw new Error(
+          "GatewayIncidentAdapter requires a retry base delay in 0..10000ms",
+        );
+      }
+      retryBudget = retry.budget;
+      retryBaseDelayMs = retry.baseDelayMs;
+    }
     this.config = config;
     this.baseUrl = baseUrl;
     this.transport = transport;
     this.auth = auth;
     this.clock = clock;
     this.store = store;
+    this.retryBudget = retryBudget;
+    this.retryBaseDelayMs = retryBaseDelayMs;
+  }
+
+  async readGatewayCaptureBinding(
+    incidentId: string,
+  ): Promise<PortResultV1<GatewayCaptureBindingV1 | null>> {
+    if (!GATEWAY_INCIDENT_ID.test(incidentId)) {
+      return portError(
+        "invalid",
+        "incident id is not in the frozen provider-UUID format",
+      );
+    }
+    const scan = await this.scanIndexForIncident(incidentId);
+    if (!scan.ok) return scan;
+    if (scan.value.coverage.status !== "complete") {
+      return portError(
+        "unavailable",
+        "gateway source binding coverage is incomplete",
+      );
+    }
+    const row = scan.value.row;
+    if (row === null || row.evidenceRef === null) return portOk(null);
+    const identity = parseArtifactRefIdentity(row.evidenceRef.ref);
+    if (
+      identity === null || identity.incidentId !== incidentId ||
+      row.evidenceRef.digest === null || row.evidenceExpiresAt === null
+    ) return portError("invalid", "gateway source capture binding is invalid");
+    return portOk({
+      incidentId,
+      classificationDigest: row.fingerprint,
+      captureId: identity.captureId,
+      artifactRef: row.evidenceRef.ref,
+      ciphertextDigest: row.evidenceRef.digest,
+      originalRevision: row.failingRevision,
+      capturedAt: row.provenance.capturedAt,
+      sourceExpiresAt: row.evidenceExpiresAt,
+    });
   }
 
   async listUnresolvedIncidents(
@@ -318,21 +422,37 @@ export class GatewayIncidentAdapter implements IncidentAdapter {
     return { ok: true, value: now };
   }
 
-  private requestJson(
+  private async requestJson(
     path: string,
     query: URLSearchParams,
     byteCap: number,
   ): Promise<PortResultV1<{ status: number; body: unknown }>> {
-    return gatewayRead(
-      {
-        baseUrl: this.baseUrl,
-        path,
-        query,
-        responseByteCap: byteCap,
-      },
-      this.transport,
-      this.auth,
-    );
+    // Bounded transient retry: read-only GETs are idempotent, so a 5xx or a
+    // rejected transport may be retried. The budget is shared across the
+    // adapter instance (one run), so a full producer outage still fails fast
+    // instead of multiplying the per-request time bound across pages.
+    let attempt = 0;
+    for (;;) {
+      const result = await gatewayRead(
+        {
+          baseUrl: this.baseUrl,
+          path,
+          query,
+          responseByteCap: byteCap,
+        },
+        this.transport,
+        this.auth,
+      );
+      if (
+        result.ok || this.retryBudget <= 0 ||
+        !isTransientGatewayFault(result.error)
+      ) {
+        return result;
+      }
+      this.retryBudget -= 1;
+      attempt += 1;
+      await sleepMs(this.retryBaseDelayMs * attempt);
+    }
   }
 
   private async scanIndexForIncident(
@@ -477,11 +597,16 @@ export class GatewayIncidentAdapter implements IncidentAdapter {
     let candidates = 0;
     const pending: GatewayReplayCaptureV1[] = [];
     const matchedArtifacts: StoredArtifactV1[] = [];
+    // The single source-expiry verdict, shared by the walk's retention filter
+    // and its artifact-count bound: a capture that can never be retained must
+    // not consume the bound of the array it would never join.
+    const sourceExpired = (capture: GatewayReplayCaptureV1): boolean =>
+      capture.manifest.expiresAt <= now;
     const walked = await this.walkReplayCaptures(
       row.incidentId,
       now,
       async (capture) => {
-        if (capture.manifest.expiresAt <= now) {
+        if (sourceExpired(capture)) {
           // Source-expired: excluded from the binding pool and from retention.
           return portOk(false);
         }
@@ -506,6 +631,7 @@ export class GatewayIncidentAdapter implements IncidentAdapter {
         }
         return portOk(false);
       },
+      (capture) => !sourceExpired(capture),
     );
     if (!walked.ok) return walked;
     if (!matched) {
@@ -564,6 +690,12 @@ export class GatewayIncidentAdapter implements IncidentAdapter {
    * everything already retained; a single page is still governed by the
    * response/per-artifact caps.
    *
+   * The artifact-count bound caps the retained `artifacts` array, so only a
+   * capture the caller could actually retain may consume it:
+   * `countsAgainstArtifactBound` is asked per capture and a false answer
+   * leaves the bound untouched. The page bound (`GATEWAY_MAX_SCAN_PAGES`)
+   * still bounds the walk itself, so this never makes fetching unbounded.
+   *
    * `visit` returns true to stop fetching early (for example when the exact
    * target capture was found).
    */
@@ -573,6 +705,9 @@ export class GatewayIncidentAdapter implements IncidentAdapter {
     visit: (
       capture: GatewayReplayCaptureV1,
     ) => PortResultV1<boolean> | Promise<PortResultV1<boolean>>,
+    countsAgainstArtifactBound: (
+      capture: GatewayReplayCaptureV1,
+    ) => boolean = () => true,
   ): Promise<PortResultV1<void>> {
     let cursor: string | null = null;
     const seen = new Set<string>();
@@ -633,7 +768,8 @@ export class GatewayIncidentAdapter implements IncidentAdapter {
             "replay export repeated the same capture",
           );
         }
-        if (captures + 1 > GATEWAY_MAX_ARTIFACTS_PER_EVIDENCE) {
+        const retainable = countsAgainstArtifactBound(capture);
+        if (retainable && captures + 1 > GATEWAY_MAX_ARTIFACTS_PER_EVIDENCE) {
           return portError(
             "invalid",
             "replay export exceeds the contract artifact-count bound",
@@ -649,7 +785,7 @@ export class GatewayIncidentAdapter implements IncidentAdapter {
           );
         }
         captureIds.add(capture.manifest.captureId);
-        captures += 1;
+        if (retainable) captures += 1;
         aggregateBytes += capture.manifest.ciphertextBytes;
         const visited = await visit(capture);
         if (!visited.ok) return visited;

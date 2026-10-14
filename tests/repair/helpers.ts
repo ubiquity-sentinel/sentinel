@@ -12,6 +12,7 @@ import type { FixtureDigest, GitSha } from "../../src/contracts/brands.ts";
 import type {
   CandidatePreservationRequestV1,
   Clock,
+  GitHubCheckV1,
   GitHubIssueV1,
   GitHubPort,
   GitHubPullRequestV1,
@@ -44,6 +45,7 @@ import { repositoryConfig } from "../budget/helpers.ts";
 import type { MergeRequestV1 } from "../../src/contracts/merge-request.ts";
 import type { IncidentSummaryV1 } from "../../src/contracts/incident.ts";
 import type { IncidentEvidenceV1 } from "../../src/contracts/incident.ts";
+import type { ReviewTaskStatementV1 } from "../../src/contracts/review-receipt.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 
 /** Deterministic fake clock with explicit ticks; never real waits. */
@@ -213,6 +215,10 @@ export interface FakeGithubOptionsV1 {
   mergeFailNext?: boolean;
   closeOutcome?: "closed" | "already_closed";
   closeFailNext?: boolean;
+  /** One transient failure of the next issue-assignment call. */
+  assignFailNext?: boolean;
+  /** Override the checks returned by readChecks. Defaults to one green check. */
+  checks?: GitHubCheckV1[];
 }
 
 /** Recording fake GitHubPort; product logic never lives here. */
@@ -241,6 +247,34 @@ export class FakeGithub implements GitHubPort {
   reviewObservations: ReviewObservationV1 | null = null;
   reviewStatus: "pending" | "completed" | "unavailable" = "pending";
   completedReviewAt: number | null = null;
+  /**
+   * Opt-in exact per-operation observations. A key present here answers for
+   * that exact review operation; every other key keeps the blanket behavior.
+   */
+  readonly reviewObservationsByKey = new Map<string, ReviewObservationV1>();
+  /**
+   * Opt-in operation keys with NO bound durable record at all. The transport's
+   * unbound receipt is reproduced exactly: `unavailable` with no journal base,
+   * no terminal instant and no reviewer.
+   */
+  readonly unboundReviewKeys = new Set<string>();
+  /** Every review operation key observed, in call order. */
+  readonly observedReviewKeys: string[] = [];
+  /** Every review request identity submitted, in call order. */
+  readonly reviewRequestIdentities: {
+    operationKey: string;
+    prNumber: number;
+    expectedHead: string;
+  }[] = [];
+  /**
+   * Exact task statement the last review submission carried, or null. The
+   * loop must send the live issue task for issue-backed work; `completeReview`
+   * echoes it back as the reviewer's bound acceptance so a fake completion
+   * reproduces the production binding instead of inventing one.
+   */
+  lastReviewTask: ReviewTaskStatementV1 | null = null;
+  /** Every task statement submitted, in call order (null = no task). */
+  readonly reviewRequestTasks: (ReviewTaskStatementV1 | null)[] = [];
   prNumber = 7;
   releasedHead: GitSha | null = null;
   private readonly options: FakeGithubOptionsV1;
@@ -273,7 +307,28 @@ export class FakeGithub implements GitHubPort {
     const issue = this.options.issues?.find((candidate) =>
       candidate.number === issueNumber
     );
-    if (issue === undefined) return Promise.resolve(portOk(null));
+    if (issue === undefined) {
+      // The blanket fake (no issues table configured) answers with a
+      // deterministic OPEN issue, exactly as `listOpenIssues` synthesizes from
+      // its options: an issue-backed review request then carries the live task
+      // statement instead of stalling on an unconfigured fixture. A test that
+      // needs a missing/closed issue passes an explicit table or uses
+      // RelationsFakeGithub.latest.
+      if (this.options.issues === undefined) {
+        return Promise.resolve(portOk({
+          number: issueNumber,
+          title: `issue ${issueNumber}`,
+          body: "",
+          state: "open",
+          author: null,
+          labels: [],
+          createdAt: T0,
+          updatedAt: T0,
+          closedAt: null,
+        }));
+      }
+      return Promise.resolve(portOk(null));
+    }
     return Promise.resolve(portOk({
       number: issueNumber,
       title: issue.title ?? `issue ${issueNumber}`,
@@ -346,7 +401,22 @@ export class FakeGithub implements GitHubPort {
   }
 
   readChecks(_head: GitSha) {
-    return Promise.resolve(portOk({ head: _head, checks: [] }));
+    if (this.options.checks !== undefined) {
+      return Promise.resolve(
+        portOk({ head: _head, checks: this.options.checks }),
+      );
+    }
+    // Default: one green check so the CI gate passes. Tests that need
+    // pending/failed/empty checks override via options.checks.
+    const green: GitHubCheckV1 = {
+      name: "ci",
+      status: "completed",
+      conclusion: "success",
+      head: _head,
+      startedAt: 1,
+      completedAt: 2,
+    };
+    return Promise.resolve(portOk({ head: _head, checks: [green] }));
   }
 
   readProtections(_baseBranch: string) {
@@ -479,9 +549,11 @@ export class FakeGithub implements GitHubPort {
       }));
     }
     // One deterministic head ref owns exactly one open PR: a repeated create
-    // for the same branch reuses the tracked PR instead of allocating another.
+    // for the same branch reuses the tracked open PR instead of allocating
+    // another. A closed or merged PR is never reused — the real adapter
+    // publishes a replacement for the same head ref — so the fake matches it.
     const existing = [...this.candidatePullRequests.values()].find((pr) =>
-      pr.headRef === request.headRef
+      pr.headRef === request.headRef && pr.state === "open"
     );
     if (existing !== undefined) {
       this.prNumber = existing.number;
@@ -531,7 +603,7 @@ export class FakeGithub implements GitHubPort {
     return Promise.resolve(portOk({ outcome: "applied", number, head }));
   }
 
-  requestReview(_request: unknown): Promise<
+  requestReview(request: unknown): Promise<
     PortResultV1<{
       outcome: "applied" | "ambiguous";
       requestId: string | null;
@@ -539,6 +611,24 @@ export class FakeGithub implements GitHubPort {
     }>
   > {
     this.calls.push("requestReview");
+    const identity = request as {
+      operationKey?: unknown;
+      prNumber?: unknown;
+      expectedHead?: unknown;
+      task?: unknown;
+    };
+    this.reviewRequestIdentities.push({
+      operationKey: typeof identity.operationKey === "string"
+        ? identity.operationKey
+        : "",
+      prNumber: typeof identity.prNumber === "number" ? identity.prNumber : 0,
+      expectedHead: typeof identity.expectedHead === "string"
+        ? identity.expectedHead
+        : "",
+    });
+    const task = identity.task;
+    this.lastReviewTask = isTaskStatement(task) ? task : null;
+    this.reviewRequestTasks.push(this.lastReviewTask);
     if (this.options.reviewRequestFailNext) {
       this.options.reviewRequestFailNext = false;
       return Promise.resolve(
@@ -566,8 +656,30 @@ export class FakeGithub implements GitHubPort {
     return Promise.resolve(this.drainResult);
   }
 
-  observeReview(_request: unknown): Promise<PortResultV1<ReviewObservationV1>> {
+  observeReview(request: unknown): Promise<PortResultV1<ReviewObservationV1>> {
     this.calls.push("observeReview");
+    const operationKey =
+      typeof (request as { operationKey?: unknown }).operationKey === "string"
+        ? (request as { operationKey: string }).operationKey
+        : "";
+    this.observedReviewKeys.push(operationKey);
+    if (this.unboundReviewKeys.has(operationKey)) {
+      return Promise.resolve(portOk({
+        status: "unavailable",
+        requestId: "review-req-unbound",
+        reviewer: null,
+        resultId: null,
+        completedAt: null,
+        observedHead: this.releasedHead,
+        observedBase: null,
+        findings: [],
+        summary: "head binding mismatch",
+        receivedAt: T0,
+        taskAcceptance: null,
+      }));
+    }
+    const exact = this.reviewObservationsByKey.get(operationKey);
+    if (exact !== undefined) return Promise.resolve(portOk(exact));
     if (this.options.reviewUnavailable) {
       return Promise.resolve(
         portError("unavailable", "review transport failure"),
@@ -585,6 +697,7 @@ export class FakeGithub implements GitHubPort {
         findings: [],
         summary: null,
         receivedAt: T0,
+        taskAcceptance: null,
       }));
     }
     return Promise.resolve(portOk(this.reviewObservation()));
@@ -634,6 +747,15 @@ export class FakeGithub implements GitHubPort {
     ));
   }
 
+  assignIssue(issueNumber: number): Promise<PortResultV1<void>> {
+    this.calls.push(`assignIssue:${issueNumber}`);
+    if (this.options.assignFailNext) {
+      this.options.assignFailNext = false;
+      return Promise.resolve(portError("unavailable", "assign failed"));
+    }
+    return Promise.resolve(portOk(undefined));
+  }
+
   closeIssue(
     issueNumber: number,
   ): Promise<PortResultV1<"closed" | "already_closed">> {
@@ -670,7 +792,15 @@ export class FakeGithub implements GitHubPort {
     return callback(recorded);
   }
 
-  /** Deliver a completed review for the current release head. */
+  /**
+   * Deliver a completed review for the current release head.
+   *
+   * When the last submission carried a source-issue task statement (the
+   * production contract for issue-backed work), the completion carries the
+   * reviewer's acceptance BOUND TO THAT EXACT statement, exactly as a real
+   * task-bound review result must. Without a submitted task no acceptance is
+   * invented, so a change-only completion can never authorize delivery.
+   */
   completeReview(findings: unknown[] = [], at: number = T0 + 1000): void {
     this.reviewStatus = "completed";
     this.completedReviewAt = at;
@@ -685,6 +815,14 @@ export class FakeGithub implements GitHubPort {
       findings: findings as never[],
       summary: null,
       receivedAt: at + 1,
+      taskAcceptance: this.lastReviewTask === null ? null : {
+        issueNumber: this.lastReviewTask.issueNumber,
+        taskDigest: this.lastReviewTask.digest,
+        verdict: "fulfilled",
+        evidence: [
+          "The exact candidate change satisfies the submitted task statement.",
+        ],
+      },
     };
   }
 
@@ -700,6 +838,7 @@ export class FakeGithub implements GitHubPort {
       findings: [],
       summary: null,
       receivedAt: T0 + 1001,
+      taskAcceptance: null,
     };
   }
 
@@ -722,6 +861,16 @@ export class FakeGithub implements GitHubPort {
     };
     return { ...base, ...this.options.pullRequest };
   }
+}
+
+/** Narrow shape check for the task statement a test submission carried. */
+function isTaskStatement(value: unknown): value is ReviewTaskStatementV1 {
+  if (typeof value !== "object" || value === null) return false;
+  const task = value as Record<string, unknown>;
+  return typeof task.issueNumber === "number" &&
+    typeof task.title === "string" &&
+    typeof task.body === "string" &&
+    typeof task.digest === "string";
 }
 
 export interface FakeIncidentOptionsV1 {
@@ -928,7 +1077,7 @@ export class FakeModel implements ImplementationPort {
           : this.options.outcome === "failed"
           ? "failed"
           : "completed",
-        observedModel: "gpt-5.6-luna",
+        observedModel: "gpt-reserve",
         observedReasoning: "max",
         durationMs: 100,
         outputChars: 500,
