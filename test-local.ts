@@ -91,16 +91,8 @@ const steps: { name: string; args: string[] }[] = [
       "--allow-run",
       "--allow-write",
       "--allow-env=PATH,NODE_V8_COVERAGE",
-      "tests/contracts/",
-      "tests/state/",
-      "tests/budget/",
-      "tests/github/",
-      "tests/host/",
-      "tests/adapters/gateway/",
-      "tests/replay/",
-      "tests/repair/",
-      "tests/release/",
-      "tests/integration/",
+      // Deno applies the ignore reliably when discovery has one root.
+      "tests/",
     ],
   },
   {
