@@ -74,3 +74,121 @@ Deno.test("test:local failure path removes its temp home before exiting", async 
     await Deno.remove(disposable, { recursive: true }).catch(() => {});
   }
 });
+
+Deno.test("test:local multi-root discovery keeps dependency cache in its isolated step", async () => {
+  const disposable = await Deno.makeTempDir({
+    prefix: "sentinel-harness-failure-discovery-",
+    dir: rootDir,
+  });
+  try {
+    const directories = [
+      "contracts",
+      "state",
+      "budget",
+      "github",
+      "host",
+      "adapters/gateway",
+      "replay",
+      "repair",
+      "release",
+      "integration",
+    ];
+    for (const directory of directories) {
+      await Deno.mkdir(`${disposable}/tests/${directory}`, { recursive: true });
+    }
+    await Deno.writeTextFile(`${disposable}/deno.json`, "{}");
+    await Deno.writeTextFile(
+      `${disposable}/tests/contracts/main_test.ts`,
+      `Deno.test("main permission boundary", async () => {
+  const access = await Deno.permissions.query({ name: "read", path: "/tmp" });
+  if (access.state === "granted") throw new Error("main gained temp access");
+});\n`,
+    );
+    await Deno.writeTextFile(
+      `${disposable}/tests/replay/dependency-cache_test.ts`,
+      `Deno.test("isolated cache permission boundary", async () => {
+  const temp = await Deno.permissions.query({ name: "read", path: "/tmp" });
+  const workspace = await Deno.permissions.query({ name: "write", path: "." });
+  const network = await Deno.permissions.query({ name: "net" });
+  const credential = await Deno.permissions.query({ name: "env", variable: "GITHUB_TOKEN" });
+  if (temp.state !== "granted") throw new Error("cache entered main step");
+  if (workspace.state === "granted" || network.state === "granted" || credential.state === "granted") {
+    throw new Error("isolated cache boundary widened");
+  }
+});\n`,
+    );
+    // Skip unrelated toolchain checks, but execute both actual test commands.
+    // Recording argv also proves the isolated step keeps its narrow grants.
+    const commandsPath = `${disposable}/commands.jsonl`;
+    const shimPath = `${disposable}/shim.ts`;
+    await Deno.writeTextFile(
+      shimPath,
+      `await Deno.writeTextFile(${
+        JSON.stringify(commandsPath)
+      }, JSON.stringify(Deno.args) + "\\n", { append: true });
+const child = new Deno.Command(${JSON.stringify(Deno.execPath())}, {
+  args: Deno.args, stdout: "inherit", stderr: "inherit",
+}).spawn();
+Deno.exit((await child.status).code);\n`,
+    );
+    const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    const bin = `${disposable}/bin`;
+    await Deno.mkdir(bin);
+    await Deno.writeTextFile(
+      `${bin}/deno`,
+      `#!/bin/sh
+if [ "$1" != test ]; then exit 0; fi
+exec ${shellQuote(Deno.execPath())} run --no-config --allow-write=${
+        shellQuote(disposable)
+      } --allow-run=${shellQuote(Deno.execPath())} ${shellQuote(shimPath)} "$@"
+`,
+    );
+    await Deno.chmod(`${bin}/deno`, 0o700);
+    const result = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-env=PATH",
+        "--allow-run=deno",
+        "--allow-write",
+        `${rootDir}/test-local.ts`,
+      ],
+      cwd: disposable,
+      clearEnv: true,
+      env: {
+        PATH: `${bin}:${Deno.env.get("PATH") ?? "/usr/bin:/bin"}`,
+        HOME: `${disposable}/home`,
+        DENO_DIR: `${disposable}/deno-cache`,
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const output = new TextDecoder().decode(result.stdout) +
+      new TextDecoder().decode(result.stderr);
+    assert.equal(result.code, 0, output);
+    const commands: string[][] = (await Deno.readTextFile(commandsPath)).trim()
+      .split("\n").map((line) => JSON.parse(line));
+    assert.equal(commands.length, 2, output);
+    assert.equal(
+      commands[0].find((arg) => arg.startsWith("--allow-read=")),
+      `--allow-read=.,/usr,/bin,${Deno.execPath()}`,
+    );
+    assert.deepEqual(commands[1], [
+      "test",
+      `--allow-read=.,/usr,/bin,${Deno.execPath()},/opt/node-lts/bin/node,/tmp`,
+      "--allow-run",
+      "--allow-write=/tmp",
+      "--allow-env=PATH,NODE_V8_COVERAGE",
+      "tests/replay/dependency-cache_test.ts",
+    ]);
+    assert.equal(
+      (output.match(/main permission boundary \.\.\./g) ?? []).length,
+      1,
+    );
+    assert.equal(
+      (output.match(/isolated cache permission boundary \.\.\./g) ?? []).length,
+      1,
+    );
+  } finally {
+    await Deno.remove(disposable, { recursive: true });
+  }
+});
