@@ -636,6 +636,7 @@ Deno.test("release bridge: native real Git facade writes release only with expec
     assert.equal("writeRepair" in rig.state, false);
     assert.deepEqual(Object.keys(rig.state).sort(), [
       "readRelease",
+      "readReleaseAt",
       "readRepair",
       "writeRelease",
     ]);
