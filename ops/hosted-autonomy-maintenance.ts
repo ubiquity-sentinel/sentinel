@@ -13,6 +13,8 @@ import type {
   HostedAutonomyResultV1,
 } from "./hosted-autonomy-types.ts";
 import { recoverHostedHistoricalC63 } from "./hosted-autonomy-historical-recovery.ts";
+import { isDeferredCurrentMatrixHistoryBudget } from "./hosted-autonomy-policy.ts";
+import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 
 /** Recover authenticated matrix custody before ordinary retry and delivery. */
 export async function runHostedMatrixMaintenance(
@@ -65,13 +67,24 @@ export async function runHostedMatrixMaintenance(
     }
   }
   let custodyDeferred = false;
-  const currentMatrix = await recoverHostedCurrentMatrix(
-    deps,
-    closedBinding,
-    () => {
-      custodyDeferred = true;
-    },
-  );
+  let currentMatrix: HostedAutonomyResultV1 | null;
+  try {
+    currentMatrix = await recoverHostedCurrentMatrix(
+      deps,
+      closedBinding,
+      () => {
+        custodyDeferred = true;
+      },
+    );
+  } catch (error) {
+    if (
+      error instanceof CurrentMatrixRecoveryIntegrityFailure ||
+      !isDeferredCurrentMatrixHistoryBudget(error)
+    ) throw error;
+    // Defer this bounded pre-pass; the runner rereads state before delivery.
+    actions.push("matrix-history:deferred");
+    return null;
+  }
   if (currentMatrix?.status === "applied") return currentMatrix;
   if (deps.historicalMatrix) {
     let count: number;
