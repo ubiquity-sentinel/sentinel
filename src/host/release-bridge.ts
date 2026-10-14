@@ -665,7 +665,18 @@ export function createNativeReleaseBridgeState(token: string, paths = {
   return {
     readRepair: () => store.readRepair(),
     readRelease: () => store.readRelease(),
+    readReleaseAt: store.readReleaseAt?.bind(store),
     writeRelease: (snapshot, head) => store.writeRelease(snapshot, head),
+  };
+}
+/** The execution bridge passes only this read-only native state view to its host. */
+export function createReleaseBridgeStateReadView(
+  state: StateReadView,
+): StateReadView {
+  return {
+    readRepair: () => state.readRepair(),
+    readRelease: () => state.readRelease(),
+    readReleaseAt: state.readReleaseAt?.bind(state),
   };
 }
 export async function requireReleaseBridgeState(
@@ -836,10 +847,7 @@ export async function runReleaseBridge(
     }
     const options: TrustedVpsReleaseHostOptionsV1 = {
       ...capabilities.host,
-      stateRead: {
-        readRepair: () => state.readRepair(),
-        readRelease: () => state.readRelease(),
-      },
+      stateRead: createReleaseBridgeStateReadView(state),
       stateWrite: state,
       repository: {
         owner: "ubiquity",

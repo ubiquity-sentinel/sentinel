@@ -1,5 +1,5 @@
 /** Standalone release-role composition over an owner-pinned actual VPS driver. */
-import type { GitSha } from "../contracts/brands.ts";
+import { asGitSha, type GitSha } from "../contracts/brands.ts";
 import type {
   Clock,
   PortResultV1,
@@ -16,7 +16,10 @@ import { parseVpsReleaseRecordV1 } from "../contracts/vps-release.ts";
 import type { StabilityPolicyV1 } from "../contracts/repository-policy.ts";
 import { validateStabilityPolicy } from "../release/config.ts";
 import {
+  canonicalVps,
+  isHealthyVps,
   parseVpsIdentity,
+  parseVpsReceipt,
   sha256,
   type VpsBinding,
   vpsDigest,
@@ -102,15 +105,28 @@ export interface TrustedVpsReleaseHostOptionsV1 {
 }
 
 /** Real release-state readback supplies target settlement; no caller boolean substitutes. */
-async function verifyCommittedSettlement(
+export async function verifyCommittedSettlement(
   state: StateReadView,
   receipt: VpsReceipt,
   settlement: VpsSettlement,
+  now: number,
 ): Promise<boolean> {
-  const read = await state.readRelease();
+  const current = await state.readRelease();
+  if (
+    !current.ok || current.value.status !== "found" || receipt.updatedAt > now
+  ) return false;
+  let read: Awaited<ReturnType<StateReadView["readRelease"]>> = current;
+  if (current.value.head !== settlement.stateRevision) {
+    if (receipt.settlement === null || !state.readReleaseAt) return false;
+    read = await state.readReleaseAt({
+      commit: asGitSha(settlement.stateRevision),
+      expectedHead: current.value.head,
+    });
+  }
   if (
     !read.ok || read.value.status !== "found" ||
-    read.value.head !== settlement.stateRevision
+    read.value.head !== settlement.stateRevision ||
+    read.value.ref !== current.value.ref
   ) return false;
   const snapshot = parseReleaseStateSnapshotV1(read.value.snapshot);
   const records = (snapshot.vpsReleases ?? []).filter((entry) =>
@@ -122,13 +138,81 @@ async function verifyCommittedSettlement(
     record.requestDigest !== receipt.binding.requestDigest ||
     record.driver.driverSha256 !== receipt.driverSha256 ||
     record.driver.controllerSha !== receipt.controllerSha ||
-    await vpsDigest(record) !== settlement.digest ||
-    await vpsDigest(record.driver) !== await vpsDigest(receipt)
+    await vpsDigest(record) !== settlement.digest
   ) return false;
-  return settlement.disposition === "accepted"
+  const committed = settlement.disposition === "accepted"
     ? record.intent?.action === "accept" &&
       record.acceptance?.passed === true && record.inference !== null
     : record.phase === settlement.disposition;
+  if (!committed) return false;
+  if (
+    settlement.disposition === "accepted" &&
+    (record.driver.phase !== "ingress_applied" || !record.driver.loopback ||
+      !record.driver.public || !isHealthyVps(record.driver.loopback) ||
+      !isHealthyVps(record.driver.public))
+  ) return false;
+  if (
+    settlement.disposition === "rolled_back" &&
+    record.driver.phase !== "rolled_back"
+  ) return false;
+  if (
+    settlement.disposition === "failed" && record.driver.intent === null &&
+    record.intent?.action !== "fail"
+  ) return false;
+  const predecessorDigest = await vpsDigest(record.driver);
+  if (receipt.settlement === null) {
+    return predecessorDigest === await vpsDigest(receipt);
+  }
+  if (
+    receipt.phase !== settlement.disposition ||
+    canonicalVps(receipt.settlement) !== canonicalVps({
+        stateRevision: settlement.stateRevision,
+        disposition: settlement.disposition,
+        digest: settlement.digest,
+      }) ||
+    record.driver.settlement !== null ||
+    receipt.updatedAt < record.driver.updatedAt
+  ) return false;
+  const derived = parseVpsReceipt({
+    ...record.driver,
+    phase: settlement.disposition,
+    sequence: record.driver.sequence + 1,
+    updatedAt: receipt.updatedAt,
+    settlement: receipt.settlement,
+    error: settlement.disposition === "failed"
+      ? "acceptance_insufficient"
+      : record.driver.error,
+  });
+  const terminalDigest = await vpsDigest(receipt);
+  if (await vpsDigest(derived) !== terminalDigest) return false;
+  const live = parseReleaseStateSnapshotV1(current.value.snapshot)
+    .vpsReleases?.filter((entry) =>
+      entry.driver.operationId === receipt.operationId
+    ) ?? [];
+  if (live.length !== 1) return false;
+  for (
+    const key of [
+      "request",
+      "requestDigest",
+      "policy",
+      "intent",
+      "acceptance",
+      "inference",
+      "createdAt",
+    ] as const
+  ) {
+    if (canonicalVps(live[0][key]) !== canonicalVps(record[key])) return false;
+  }
+  const liveDriverDigest = await vpsDigest(live[0].driver);
+  if (
+    (liveDriverDigest !== predecessorDigest &&
+      liveDriverDigest !== terminalDigest) ||
+    (live[0].phase !== record.phase && live[0].phase !== settlement.disposition)
+  ) return false;
+  const fresh = await state.readRelease();
+  return fresh.ok && fresh.value.status === "found" &&
+    fresh.value.head === current.value.head &&
+    fresh.value.ref === current.value.ref;
 }
 
 /** Missing launcher/writer/policy inputs remain unavailable; no transport is invented. */
@@ -197,6 +281,7 @@ export async function composeTrustedVpsReleaseHost(
     const stateRead: StateReadView = {
       readRepair: () => options.stateRead.readRepair(),
       readRelease: () => options.stateRead.readRelease(),
+      readReleaseAt: options.stateRead.readReleaseAt?.bind(options.stateRead),
     };
     const stateWrite: ReleaseStateWriter = {
       writeRelease: (snapshot, expectedHead) =>
@@ -213,7 +298,12 @@ export async function composeTrustedVpsReleaseHost(
       now: () => options.clock.now(),
       verifySource: options.verifySource,
       verifySettlement: (receipt: VpsReceipt, settlement: VpsSettlement) =>
-        verifyCommittedSettlement(stateRead, receipt, settlement),
+        verifyCommittedSettlement(
+          stateRead,
+          receipt,
+          settlement,
+          options.clock.now(),
+        ),
     });
     const reader = metricsModule.createVpsJournalReader(
       run,

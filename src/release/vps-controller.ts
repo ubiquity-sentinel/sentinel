@@ -24,6 +24,7 @@ import {
   vpsDigest,
   type VpsMutation,
   type VpsReceipt,
+  type VpsSettlement,
 } from "../contracts/vps-release-wire.ts";
 import type { StabilityPolicyV1 } from "../contracts/repository-policy.ts";
 import { validateStabilityPolicy } from "./config.ts";
@@ -60,6 +61,22 @@ export async function vpsMutation(receipt: VpsReceipt): Promise<VpsMutation> {
     requestDigest: receipt.binding.requestDigest,
     expectedSequence: receipt.sequence,
     expectedDigest: await vpsDigest(receipt),
+  };
+}
+async function settlementFor(
+  receipt: VpsReceipt,
+  record: VpsReleaseRecordV1,
+  stateRevision: GitSha,
+): Promise<VpsSettlement> {
+  return {
+    ...await vpsMutation(receipt),
+    ...(receipt.settlement ?? {
+      stateRevision,
+      disposition: record.intent?.action === "accept"
+        ? "accepted"
+        : record.phase as "rolled_back" | "failed",
+      digest: await vpsDigest(record),
+    }),
   };
 }
 
@@ -233,20 +250,35 @@ export class VpsReleaseController {
           operationId: record.driver.operationId,
           requestDigest: record.requestDigest,
         });
-        if (!observed.ok) {
+        if (
+          !observed.ok ||
+          observed.value.operationId !== record.driver.operationId ||
+          observed.value.binding.requestDigest !== record.requestDigest ||
+          canonicalVps(observed.value.binding) !==
+            canonicalVps(record.driver.binding) ||
+          canonicalVps(observed.value.prior) !==
+            canonicalVps(record.driver.prior) ||
+          !sameVps(observed.value.candidate, record.driver.candidate) ||
+          observed.value.controllerSha !== record.driver.controllerSha ||
+          observed.value.driverSha256 !== record.driver.driverSha256
+        ) {
           return this.result("waiting", record, "terminal_driver_unavailable");
         }
-        if (observed.value.settlement === null && context.head !== null) {
-          const settled = await this.options.port.settle({
-            ...await vpsMutation(observed.value),
-            stateRevision: context.head,
-            disposition: record.phase as "accepted" | "rolled_back" | "failed",
-            digest: await vpsDigest(record),
-          });
+        if (context.head === null) {
           return this.result(
-            settled.ok ? "advanced" : "waiting",
+            "waiting",
             record,
-            settled.ok ? null : "terminal_settlement_unavailable",
+            "terminal_settlement_unavailable",
+          );
+        }
+        const settled = await this.options.port.settle(
+          await settlementFor(observed.value, record, context.head),
+        );
+        if (!settled.ok || settled.value.phase !== record.phase) {
+          return this.result(
+            "waiting",
+            record,
+            "terminal_settlement_unavailable",
           );
         }
       }
@@ -337,14 +369,9 @@ export class VpsReleaseController {
       if (
         context.head === null || !record.acceptance?.passed || !record.inference
       ) return this.result("blocked", current, "acceptance_intent_invalid");
-      const settled = observed.value.phase === "accepted"
-        ? observed
-        : await this.options.port.settle({
-          ...await vpsMutation(observed.value),
-          stateRevision: context.head,
-          disposition: "accepted",
-          digest: await vpsDigest(record),
-        });
+      const settled = await this.options.port.settle(
+        await settlementFor(observed.value, record, context.head),
+      );
       if (!settled.ok || settled.value.phase !== "accepted") {
         return this.result("waiting", current, "acceptance_settlement_pending");
       }

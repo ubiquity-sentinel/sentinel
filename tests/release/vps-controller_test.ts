@@ -13,9 +13,11 @@ import {
   type VpsMutation,
   type VpsOperation,
   type VpsPrepare,
+  type VpsReceipt,
   type VpsSettlement,
 } from "../../src/contracts/vps-release-wire.ts";
 import { VpsReleaseController } from "../../src/release/vps-controller.ts";
+import { verifyCommittedSettlement } from "../../src/host/vps-release.ts";
 import {
   composeVpsReleasePort,
   type NativeVpsDriverV1,
@@ -33,6 +35,12 @@ class FakeNativeVpsDriver implements NativeVpsDriverV1 {
   receipt = structuredClone(fixture.driver);
   activations = 0;
   restorations = 0;
+  settlements = 0;
+  interruptAfterSettlement = 0;
+  cleanupFailures = 0;
+  verifySettlement:
+    | ((receipt: VpsReceipt, input: VpsSettlement) => Promise<boolean>)
+    | null = null;
   constructor(private readonly now: () => number) {}
   inspectPrior() {
     return Promise.resolve(this.receipt.prior);
@@ -97,7 +105,25 @@ class FakeNativeVpsDriver implements NativeVpsDriverV1 {
     });
     return this.receipt;
   }
-  settle(input: VpsSettlement) {
+  async settle(input: VpsSettlement) {
+    assert.equal(input.expectedSequence, this.receipt.sequence);
+    assert.equal(input.expectedDigest, await vpsDigest(this.receipt));
+    if (this.verifySettlement) {
+      assert.equal(await this.verifySettlement(this.receipt, input), true);
+    }
+    this.settlements++;
+    if (this.receipt.settlement !== null) {
+      assert.deepEqual(this.receipt.settlement, {
+        stateRevision: input.stateRevision,
+        disposition: input.disposition,
+        digest: input.digest,
+      });
+      if (this.cleanupFailures > 0) {
+        this.cleanupFailures--;
+        throw new Error("pin cleanup unavailable");
+      }
+      return this.receipt;
+    }
     this.receipt = parseVpsReceipt({
       ...this.receipt,
       phase: input.disposition,
@@ -110,7 +136,11 @@ class FakeNativeVpsDriver implements NativeVpsDriverV1 {
       },
       error: input.disposition === "failed" ? "acceptance_insufficient" : null,
     });
-    return Promise.resolve(this.receipt);
+    if (this.interruptAfterSettlement > 0) {
+      this.interruptAfterSettlement--;
+      throw new Error("interrupted after terminal persistence");
+    }
+    return this.receipt;
   }
 }
 
@@ -232,6 +262,44 @@ Deno.test("VPS controller: objective failure persists rollback intent and restor
       fixture.driver.prior.identity.gitSha,
     );
     assert.equal(rig.driver.restorations, 1);
+  } finally {
+    await rig.context.cleanup();
+  }
+});
+Deno.test("VPS controller: interrupted acceptance retries pin cleanup before final state and after head advancement", async () => {
+  const rig = await scenario();
+  try {
+    rig.driver.verifySettlement = (receipt, input) =>
+      verifyCommittedSettlement(
+        rig.state,
+        receipt,
+        input,
+        rig.options.clock.now(),
+      );
+    rig.driver.interruptAfterSettlement = 1;
+    await rig.controller.run();
+    await rig.controller.run();
+    await rig.controller.run();
+    for (let slot = 0; slot < 64; slot++) {
+      rig.advance(30_000);
+      await rig.controller.run();
+      if (rig.driver.receipt.phase === "accepted") break;
+    }
+    assert.equal(rig.driver.receipt.phase, "accepted");
+    assert.equal((await rig.record()).phase, "monitoring");
+    const terminal = structuredClone(rig.driver.receipt);
+    rig.driver.cleanupFailures = 1;
+    const blocked = await rig.controller.run();
+    assert.ok(blocked.ok && blocked.value.status === "waiting");
+    assert.equal((await rig.record()).phase, "monitoring");
+    await rig.controller.run();
+    assert.equal((await rig.record()).phase, "accepted");
+    const resumed = await rig.controller.run();
+    assert.ok(resumed.ok && resumed.value.status === "idle");
+    assert.deepEqual(rig.driver.receipt, terminal);
+    assert.equal(rig.driver.settlements, 4);
+    assert.equal(rig.driver.activations, 1);
+    assert.equal(rig.driver.restorations, 0);
   } finally {
     await rig.context.cleanup();
   }
