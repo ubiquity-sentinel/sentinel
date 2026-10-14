@@ -129,7 +129,7 @@ export async function makeRepairRig(
   const capture = await craftCapture(keyBytes, toy.originalSha, T0);
   const row = makeIndexRow({
     incident_id: INCIDENT_A,
-    fingerprint: capture.manifest.fingerprint,
+    fingerprint: capture.classificationDigest,
     failing_revision: toy.originalSha,
     severity: "P1",
     first_seen_at_ms: T0,
@@ -242,7 +242,7 @@ export async function makeRepairRig(
     github,
     transport,
     gatewayStore,
-    fingerprint: capture.manifest.fingerprint as string,
+    fingerprint: capture.classificationDigest,
     candidateRegistry,
     sessions,
     replayRuntime,

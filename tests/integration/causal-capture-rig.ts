@@ -128,7 +128,7 @@ export async function makeCausalRig(
   );
   const row = makeIndexRow({
     incident_id: INCIDENT_A,
-    fingerprint: capture.fingerprint,
+    fingerprint: capture.classificationDigest,
     failing_revision: toy.originalSha,
     severity: "P1",
     first_seen_at_ms: T0,
