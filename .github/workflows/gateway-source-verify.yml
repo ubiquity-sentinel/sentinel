@@ -1,0 +1,107 @@
+name: Gateway source verification
+run-name: Gateway source 9d83f306 via ${{ github.sha }}
+
+on:
+  push:
+    branches:
+      - codex/master-plan-gfa795549e5
+    paths:
+      - .github/workflows/gateway-source-verify.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gateway-source-verify-9d83f306
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ubiquity/ai.ubq.fi
+          ref: 9d83f306a92b11a0929c414b445fc8a1367e01d9
+          fetch-depth: 0
+          persist-credentials: false
+          path: gateway
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+        with:
+          bun-version: 1.4.0
+      - name: Bind source and clean application environment
+        shell: bash
+        working-directory: gateway
+        env:
+          CONTROLLER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          source_sha=9d83f306a92b11a0929c414b445fc8a1367e01d9
+          test "$(git rev-parse HEAD)" = "$source_sha"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          if find . -path './.git' -prune -o \( -name '.env' -o -name '.env.*' -o -name '.data' \) -print -quit | grep -q .; then
+            echo '::error::Private configuration is forbidden in the gateway checkout.'
+            exit 1
+          fi
+          ancestor_dir="$PWD"
+          while :; do
+            test ! -e "$ancestor_dir/.env"
+            test ! -L "$ancestor_dir/.env"
+            test "$ancestor_dir" != / || break
+            ancestor_dir=$(dirname "$ancestor_dir")
+          done
+          mkdir -p "$RUNNER_TEMP/gateway-home" "$RUNNER_TEMP/gateway-deno"
+          git ls-files -z | xargs -0 sha256sum > "$RUNNER_TEMP/gateway-inputs-before.txt"
+          {
+            printf 'Controller SHA: %s\nSource SHA: %s\n' "$CONTROLLER_SHA" "$source_sha"
+            deno --version
+            node --version
+            bun --version
+          } | tee "$RUNNER_TEMP/gateway-runtime.txt"
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP/gateway-home" DENO_DIR="$RUNNER_TEMP/gateway-deno" GITHUB_SHA="$source_sha" \
+            sh -c 'test "$#" = 4 && test -n "$PATH" && test -n "$HOME" && test -n "$DENO_DIR" && test "$GITHUB_SHA" = 9d83f306a92b11a0929c414b445fc8a1367e01d9 && test -z "${GITHUB_TOKEN+x}${CONTROLLER_SHA+x}${UOS_AI_TOKEN+x}${DENO_DEPLOY_TOKEN+x}${SENTINEL_REPLAY_KEY+x}${CEREBRAS_API_KEY+x}${DEEPSEEK_API_KEY+x}${LITHOSAI_API_KEY+x}${VOYAGEAI_API_KEY+x}${METERED_API_KEY+x}${SURPLUS_API_KEY+x}${OPENROUTER_API_KEY+x}${IMAGE_BASE_MODEL+x}${NODE_OPTIONS+x}"' \
+            clean-env PATH HOME DENO_DIR GITHUB_SHA
+      - name: Install public locked tooling
+        shell: bash
+        working-directory: gateway/tools/lint
+        run: |
+          set -euo pipefail
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP/gateway-home" DENO_DIR="$RUNNER_TEMP/gateway-deno" \
+            bun install --frozen-lockfile --ignore-scripts
+      - name: Run literal gateway verification
+        shell: bash
+        working-directory: gateway
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/gateway-verify.log"
+          set +e
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP/gateway-home" DENO_DIR="$RUNNER_TEMP/gateway-deno" \
+            GITHUB_SHA=9d83f306a92b11a0929c414b445fc8a1367e01d9 sh scripts/verify.sh 2>&1 | tee "$log"
+          gate_status=${PIPESTATUS[0]}
+          set -e
+          printf 'Literal gateway exit: %s\n' "$gate_status" | tee "$RUNNER_TEMP/gateway-gate-result.txt"
+          sha256sum -c "$RUNNER_TEMP/gateway-inputs-before.txt"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          test "$(git rev-parse HEAD)" = 9d83f306a92b11a0929c414b445fc8a1367e01d9
+          test "$gate_status" -eq 0
+          grep -Fx 'verify: OK' "$log"
+          printf 'Tracked inputs unchanged; literal gate accepted.\n' >> "$RUNNER_TEMP/gateway-gate-result.txt"
+      - name: Retain exact gate evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gateway-verify-9d83f306-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/gateway-runtime.txt
+            ${{ runner.temp }}/gateway-inputs-before.txt
+            ${{ runner.temp }}/gateway-verify.log
+            ${{ runner.temp }}/gateway-gate-result.txt
+          if-no-files-found: warn
+          retention-days: 14
