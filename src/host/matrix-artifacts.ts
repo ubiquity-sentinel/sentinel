@@ -46,6 +46,10 @@ import {
   createMatrixArtifactMarker,
 } from "./matrix-artifact-native.ts";
 import { recoverMatrixArtifactWaves } from "./matrix-artifact-wave.ts";
+import {
+  blockedCandidateBinding,
+  blockedCandidateMatchesProducer,
+} from "./matrix-blocked-candidate.ts";
 
 export function createActionsMatrixArtifactHttpTransport(
   fetchFn: FetchLikeV1 = globalThis.fetch as unknown as FetchLikeV1,
@@ -209,6 +213,11 @@ export function createActionsMatrixArtifactTransport(
           // authenticated not-started revalidation; every other blocked class
           // refuses here exactly as before.
           const recoverable = task.nextStep === "work" ||
+            blockedCandidateMatchesProducer(
+              task,
+              input.currentRun &&
+                { ...input.currentRun, revision: input.runtimeSha },
+            ) ||
             (input.revalidateNotStarted === true &&
               task.nextStep === "blocked" &&
               task.blocker?.kind === "other" &&
@@ -331,6 +340,19 @@ export function createActionsMatrixArtifactTransport(
         }
         if (new Set(plans.map((row) => row.name)).size !== plans.length) {
           refuse();
+        }
+        for (const request of requested.values()) {
+          const task = snapshot.work.find((row) => row.id === request.taskId)!;
+          const binding = blockedCandidateBinding(task);
+          if (!binding) continue;
+          const artifact = plans.find((row) =>
+            row.name ===
+              `sentinel-matrix-plan-${binding.runId}-${binding.runAttempt}`
+          );
+          if (
+            artifact?.id !== binding.artifactId ||
+            artifact.digest !== binding.archiveDigest
+          ) refuse();
         }
         if (input.rejectionProof && requested.size > 0 && plans.length !== 1) {
           refuse();

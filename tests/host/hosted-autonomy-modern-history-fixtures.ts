@@ -31,6 +31,7 @@ export async function prepareModernHistory(input: {
   base: GitSha;
   releaseBefore: Awaited<ReturnType<StateReadView["readRelease"]>>;
   target: Awaited<ReturnType<typeof makeRemoteCtx>>;
+  runtimeSha?: GitSha;
 }) {
   const { f, native, base, target } = input;
   let releaseBefore = input.releaseBefore;
@@ -44,6 +45,7 @@ export async function prepareModernHistory(input: {
     ...native.lastExecutionProof,
     execution: {
       ...f.execution,
+      revision: input.runtimeSha ?? f.execution.revision,
       id: "72:2:repair",
       runId: 72,
       createdAt: T0 + 31_000,
@@ -62,6 +64,7 @@ export async function prepareModernHistory(input: {
   const currentStartedAt = latestProof.startedAt;
   const execution = latestProof.execution;
   const cell = structuredClone(f.cells[0]);
+  cell.runtimeSha = execution.revision;
   cell.taskId = "current-plan-only" as WorkItemId;
   cell.reservationId = "e".repeat(64);
   cell.intentKey = implementationIntentKey(cell.reservationId);
@@ -275,6 +278,7 @@ export async function prepareModernHistory(input: {
 
   const heldRuntime = {
     ...native,
+    activeRevision: execution.revision,
     execution: latestProof.execution,
     updatedAt: f.clock.now(),
   };
@@ -320,6 +324,7 @@ export async function prepareModernHistory(input: {
   });
   const runtime = {
     ...native,
+    activeRevision: execution.revision,
     execution: null,
     lastExecutionProof: latestProof,
     lastHealthyProof: latestProof,
