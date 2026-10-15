@@ -4,6 +4,7 @@ import {
   buildOwnerDevelopmentInstallSnapshot,
   planOwnerDevelopmentInstall,
 } from "../../src/host/owner-development-install.ts";
+import { OWNER_DEVELOPMENT_INSTALL_STABILIZATION_REVISION } from "../../src/host/owner-install-runtime-pins.ts";
 import {
   EARLY_FRAME_RUNTIME_REVISION,
   LAUNCHER,
@@ -405,7 +406,7 @@ Deno.test(
     }
     assert.equal(
       stabilizationInstall.move.nextRevision,
-      "c8d2e87468399abb54cc9d9a749ae7b400835bbb",
+      OWNER_DEVELOPMENT_INSTALL_STABILIZATION_REVISION,
     );
     assert.equal(stabilizationInstall.move.nextGeneration, 75);
   },
