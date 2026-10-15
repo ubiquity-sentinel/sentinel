@@ -31,13 +31,14 @@ export abstract class GitHubClientIssues extends GitHubClientHttp {
     );
     if (!collected.ok) return collected;
     const issues: GitHubIssueV1[] = [];
+    let enrich = this.includeIssueRelations;
     for (const item of collected.value) {
       // Issue-vs-PR distinction: `/issues` lists pull requests too and GitHub
       // marks them with a `pull_request` key; a PR is never an issue here.
       const parsed = parseWith(item, (v) => parseIssueWire(v, "$"));
       if (!parsed.ok) return parsed;
       if (parsed.value.kind === "issue") {
-        if (!this.includeIssueRelations) {
+        if (!enrich) {
           issues.push(parsed.value.issue);
           continue;
         }
@@ -50,6 +51,10 @@ export abstract class GitHubClientIssues extends GitHubClientHttp {
           parsed.value.issue.number,
         );
         if (!relations.ok) {
+          // A rate limit applies to every later read of this listing: the
+          // remaining issues are listed without relations instead of each
+          // spending one more refused request.
+          if (relations.error.kind === "rate_limited") enrich = false;
           issues.push(parsed.value.issue);
           continue;
         }
