@@ -92,8 +92,17 @@ export async function recoverHostedCurrentMatrix(
         row.id === HOSTED_RUNTIME_ID
       );
       const saved = producerRuntime?.lastExecutionProof;
+      // An owner install moves the active pointer to a later generation and
+      // keeps the previous ordinary proof. That snapshot is not the proof's
+      // custody snapshot: read past it to the older snapshot of the same
+      // execution instead of failing every later maintenance on it. Any other
+      // pointer mismatch still reaches the producer's integrity refusal.
+      const ownerInstall = producerRuntime !== undefined && !!saved &&
+        saved.outcome !== "not_started" &&
+        saved.execution.releaseId === null &&
+        producerRuntime.generation > saved.execution.generation;
       if (
-        producerRuntime?.execution === null && saved &&
+        producerRuntime?.execution === null && saved && !ownerInstall &&
         saved.outcome !== "not_started" &&
         saved.execution.purpose === "ordinary"
       ) {
