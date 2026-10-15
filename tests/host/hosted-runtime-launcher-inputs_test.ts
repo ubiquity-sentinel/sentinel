@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { buildChildEnvironment } from "../../src/host/hosted-runtime-child.ts";
-import { HOSTED_RUNTIME_CHILD_ENV_KEYS } from "../../src/host/hosted-runtime-identity.ts";
+import type { HostedRuntimeJobV1 } from "../../src/host/hosted-runtime-identity.ts";
 import {
   HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS,
   readHostedLauncherInputs,
@@ -18,11 +18,10 @@ const ROOT = decodeURIComponent(HERE.pathname).replace(
   "",
 );
 
-const IDENTITY = {
-  runId: 1,
-  runAttempt: 1,
-  launcherSha: "a".repeat(40) as GitSha,
-  job: "repair" as const,
+const LAUNCHER_JOBS = ["matrix_plan", "matrix_cell", "repair"] as const;
+/** The one job-scoped launcher input, read only for the planning job. */
+const JOB_INPUTS: Readonly<Record<string, readonly string[]>> = {
+  matrix_plan: ["GITHUB_OUTPUT"],
 };
 const DIRS = { home: "/h", tmp: "/t", denoDir: "/d" };
 const IDENTITY_KEYS = [
@@ -36,6 +35,15 @@ const IDENTITY_KEYS = [
   "GITHUB_JOB",
 ];
 
+function identity(job: HostedRuntimeJobV1) {
+  return {
+    runId: 1,
+    runAttempt: 1,
+    launcherSha: "a".repeat(40) as GitSha,
+    job,
+  };
+}
+
 Deno.test("hosted launcher: the workflow's cooldown switch reaches the child", () => {
   const host: Record<string, string> = {
     PATH: "/usr/bin",
@@ -44,32 +52,51 @@ Deno.test("hosted launcher: the workflow's cooldown switch reaches the child", (
     SENTINEL_COOLDOWN_MODE: "off",
   };
   const inputs = readHostedLauncherInputs((key) => host[key]);
-  const child = buildChildEnvironment(inputs, IDENTITY, DIRS);
+  const child = buildChildEnvironment(inputs, identity("repair"), DIRS);
   assert.equal(child.SENTINEL_COOLDOWN_MODE, "off");
   // An unset switch stays absent, so the child keeps its enforcing default.
   const unset = readHostedLauncherInputs((key) =>
     key === "SENTINEL_COOLDOWN_MODE" ? undefined : host[key]
   );
-  const enforced = buildChildEnvironment(unset, IDENTITY, DIRS);
+  const enforced = buildChildEnvironment(unset, identity("repair"), DIRS);
   assert.equal(Object.hasOwn(enforced, "SENTINEL_COOLDOWN_MODE"), false);
 });
 
-Deno.test("hosted launcher: every host value the child forwards is a launcher input", () => {
-  // Offer a distinct marker for every child key; a key whose marker reaches
-  // the child is copied from the host environment, so the launcher must
-  // read it or the setting never arrives.
-  const marker = (key: string) => `marker-${key}`;
-  const offered: Record<string, string> = {};
-  for (const key of [...HOSTED_RUNTIME_CHILD_ENV_KEYS, ...IDENTITY_KEYS]) {
-    offered[key] = marker(key);
-  }
-  const child = buildChildEnvironment(offered, IDENTITY, DIRS);
-  const copied = Object.keys(child).filter((key) => child[key] === marker(key));
-  assert.ok(copied.includes("SENTINEL_COOLDOWN_MODE"));
+Deno.test("hosted launcher: every host key the child builder reads is a launcher input", () => {
   const read = new Set<string>(HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS);
-  for (const key of copied) {
-    assert.ok(read.has(key), `the launcher must read forwarded ${key}`);
+  for (const job of LAUNCHER_JOBS) {
+    // Record every key the production child builder consults, whatever list
+    // it comes from, by offering a value for any key it asks for.
+    const consulted = new Set<string>();
+    const host = new Proxy({} as Record<string, string | undefined>, {
+      get(_target, key) {
+        if (typeof key !== "string") return undefined;
+        consulted.add(key);
+        return `value-${key}`;
+      },
+    });
+    const child = buildChildEnvironment(host, identity(job), DIRS);
+    assert.equal(child.SENTINEL_COOLDOWN_MODE, "value-SENTINEL_COOLDOWN_MODE");
+    const allowed = new Set([...read, ...(JOB_INPUTS[job] ?? [])]);
+    for (const key of consulted) {
+      assert.ok(allowed.has(key), `${job}: the launcher must read ${key}`);
+    }
   }
+});
+
+Deno.test("hosted launcher: the entrypoint reads its inputs only through the named list", async () => {
+  // A re-inlined env object (the shape that once dropped the cooldown switch)
+  // would bypass the list the tests above pin.
+  const source = await Deno.readTextFile(
+    `${ROOT}/src/host/hosted-runtime-main.ts`,
+  );
+  assert.ok(source.includes("...readHostedLauncherInputs(),"));
+  const reads = source.match(/Deno\.env\.get\(/g) ?? [];
+  assert.equal(
+    reads.length,
+    2,
+    "only the list reader and the matrix_plan GITHUB_OUTPUT read touch env",
+  );
 });
 
 Deno.test("hosted launcher: every hosted-runtime step grants every launcher input", async () => {
@@ -77,34 +104,47 @@ Deno.test("hosted launcher: every hosted-runtime step grants every launcher inpu
     `${ROOT}/.github/workflows/supervisor.yml`,
   );
   const lines = workflow.split("\n");
-  const grantPrefix = "--allow-env=";
-  let steps = 0;
+  const references = lines.filter((line) =>
+    !line.trim().startsWith("#") && line.includes("src/host/hosted-runtime.ts")
+  );
+  const jobs: string[] = [];
   lines.forEach((line, index) => {
     if (line.trim() !== "src/host/hosted-runtime.ts") return;
-    steps++;
-    // The grant is the nearest preceding --allow-env line of the same run.
+    // The owning job is the nearest preceding two-space job key.
+    let job: string | undefined;
+    for (let at = index; at >= 0 && job === undefined; at--) {
+      const match = /^ {2}([a-z_]+):\s*$/.exec(lines[at]);
+      if (match !== null) job = match[1];
+    }
+    assert.ok(job !== undefined, `no job owns line ${index + 1}`);
+    jobs.push(job);
+    // The grant must belong to this invocation's own command: scan back only
+    // to the line that starts it.
     let grant: string | undefined;
-    for (let at = index - 1; at >= 0 && grant === undefined; at--) {
+    for (let at = index - 1; at >= 0; at--) {
       const text = lines[at].trim();
-      if (text.startsWith("run:")) break;
-      if (text.startsWith(grantPrefix)) grant = text;
+      if (text.startsWith("--allow-env=")) grant = text;
+      // The command may be the tail of a pipeline ("fi | deno run").
+      if (/(^|\|\s*)deno run\b/.test(text)) break;
+      assert.ok(!text.startsWith("run:"), `line ${index + 1} has no deno run`);
     }
     assert.ok(grant !== undefined, `no --allow-env for line ${index + 1}`);
     const granted = new Set(
-      grant.slice(grantPrefix.length).replace(/\s*\\$/, "").split(","),
+      grant.slice("--allow-env=".length).replace(/\s*\\$/, "").split(","),
     );
-    for (
-      const key of [...HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS, ...IDENTITY_KEYS]
-    ) {
+    const required = [
+      ...HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS,
+      ...IDENTITY_KEYS,
+      ...(JOB_INPUTS[job] ?? []),
+    ];
+    for (const key of required) {
       assert.ok(
         granted.has(key),
-        `hosted-runtime step at line ${index + 1} must grant ${key}`,
+        `${job} (line ${index + 1}) must grant ${key}`,
       );
     }
   });
-  assert.equal(
-    steps,
-    3,
-    "matrix_plan, matrix_cell and repair run the launcher",
-  );
+  // Every reference is one of the recognised standalone invocations.
+  assert.equal(references.length, jobs.length);
+  assert.deepEqual(jobs.sort(), [...LAUNCHER_JOBS].sort());
 });

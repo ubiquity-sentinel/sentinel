@@ -21,9 +21,10 @@ import { runHostedRuntimeWithReviewCustody } from "./review-owner-host.ts";
 
 /**
  * The exact process inputs the launcher reads besides the native identity.
- * Every optional key the child environment forwards must be read here, or a
- * workflow setting is silently dropped before the child (the cooldown switch
- * once was), and every hosted-runtime step must grant each of them.
+ * Every key the child environment forwards for all jobs must be read here, or
+ * a workflow setting is silently dropped before the child (the cooldown switch
+ * once was); the matrix_plan-only GITHUB_OUTPUT is read conditionally below.
+ * Every hosted-runtime step must grant each of these keys.
  */
 export const HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS = [
   "HOME",
