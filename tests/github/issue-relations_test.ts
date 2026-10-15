@@ -367,3 +367,37 @@ Deno.test(
     );
   },
 );
+
+Deno.test(
+  "issue relations: a rate-limited relations read stops enrichment for the rest of the listing",
+  async () => {
+    const { client, transport } = makeClient([
+      httpRespond("GET", "/issues", 200, [
+        issueWire({ number: 7 }),
+        issueWire({ number: 8 }),
+        issueWire({ number: 9 }),
+      ]),
+      httpRespond("POST", "/graphql", 200, relationsWire()),
+      httpRespond("POST", "/graphql", 429, { message: "rate limited" }, {
+        "retry-after": "60",
+      }),
+    ], true);
+
+    const result = await client.listOpenIssues();
+    // Every issue is still listed; the ones after the limit carry no
+    // relations, exactly as for any failed relations read.
+    assert.equal(result.ok, true, JSON.stringify(result));
+    if (result.ok) {
+      assert.deepEqual(result.value.map((issue) => issue.number), [7, 8, 9]);
+      assert.notEqual(result.value[0].relations, undefined);
+      assert.equal(result.value[1].relations, undefined);
+      assert.equal(result.value[2].relations, undefined);
+    }
+    // No further refused request is spent once GitHub has limited the
+    // installation: issue 9 never reaches GraphQL.
+    assert.equal(
+      transport.requests.filter((request) => request.method === "POST").length,
+      2,
+    );
+  },
+);
