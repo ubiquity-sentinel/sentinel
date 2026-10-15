@@ -64,11 +64,11 @@ export function localModelResultReason(
  * is the exact validated request base.
  */
 /**
- * Fixed code table for this module's own static failure strings. It exists so a
- * failed model run names the exact seam it failed at instead of reporting only
- * `unavailable`. Every code is a literal defined HERE; text that is not in this
- * table maps to null, so no server output, probe output, path, or payload can
- * ever reach the advisory line.
+ * Exact allow-list of static host failures and CodexProtocolError.detail codes.
+ * The protocol detail is a closed local enum, never the exception message or
+ * server response. Every exported code is a literal defined here; other text
+ * maps to null, so no server output, probe output, path, or payload can reach
+ * the advisory line. A protocol code identifies its class, not a failing stage.
  */
 const HOST_REASON_CODES: readonly (readonly [string, string])[] = [
   [STATIC_MODEL_INPUT, "model_request_invalid"],
@@ -95,9 +95,17 @@ const HOST_REASON_CODES: readonly (readonly [string, string])[] = [
     "thread/start response does not acknowledge the configured permission profile",
     "model_permission_acknowledgement_mismatch",
   ],
+  ["malformed_line", "codex_malformed_line"],
+  ["unexpected_frame", "codex_unexpected_frame"],
+  ["unknown_request_id", "codex_unknown_request_id"],
+  ["server_error", "codex_server_error"],
+  ["timeout_without_terminal", "codex_timeout_without_terminal"],
+  ["child_exited_without_terminal", "codex_child_exited_without_terminal"],
+  ["stream_output_bound_exceeded", "codex_stream_output_bound_exceeded"],
+  ["operation_deadline", "codex_operation_deadline"],
 ];
 
-/** Exact code for one of this module's own static strings, else null. */
+/** Exact code for an allow-listed static host or protocol detail, else null. */
 export function hostReasonCode(detail: unknown): string | null {
   if (typeof detail !== "string") return null;
   for (const [text, code] of HOST_REASON_CODES) {
@@ -106,7 +114,7 @@ export function hostReasonCode(detail: unknown): string | null {
   return null;
 }
 
-/** True only for one of this module's own reason-code literals. */
+/** True only for one of this module's explicit reason-code literals. */
 export function isHostReasonCode(value: unknown): value is string {
   return typeof value === "string" &&
     HOST_REASON_CODES.some(([, code]) => code === value);

@@ -79,7 +79,7 @@ export async function recoverMatrixArtifactWaves(context: {
   const recovered: MatrixAuthenticatedWaveV1[] = [];
   const rejected: MatrixRejectedWaveV1[] = [];
   const seen = new Set<string>();
-  for (const artifact of plans) {
+  artifactWaves: for (const artifact of plans) {
     const [, runId, runAttempt] = (artifact.name as string).match(
       /^sentinel-matrix-plan-(\d+)-(\d+)$/,
     )!;
@@ -357,6 +357,20 @@ export async function recoverMatrixArtifactWaves(context: {
         job.name === `matrix_cell (${cell.cellId})`
       );
       if (cellJobs.length !== 1) refuse();
+      if (cellJobs[0].status === "in_progress") {
+        if (
+          !input.currentRun || !sameRun(input.currentRun, run) ||
+          attempt.status !== "in_progress" ||
+          cellJobs[0].run_id !== run.runId ||
+          cellJobs[0].run_attempt !== run.runAttempt ||
+          cellJobs[0].head_sha !== run.launcherSha ||
+          cellJobs[0].conclusion !== null
+        ) refuse();
+        positive(cellJobs[0].id);
+        // Publication can precede native completion. Defer the entire wave:
+        // omitted results otherwise become synthetic timeouts at ingestion.
+        continue artifactWaves;
+      }
       const cellMarker = await marker(
         cellJobs[0],
         "Run isolated issue cell",
