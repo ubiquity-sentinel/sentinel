@@ -16,6 +16,7 @@ import {
   reviewOperationKey,
   reviewReceiptId,
 } from "./keys.ts";
+import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { gateDeliveryOnChecks } from "./loop-checks.ts";
 import { configFor, sameRepositoryIdentity } from "./loop-records.ts";
@@ -503,6 +504,18 @@ export async function reconcileMergeIntent(
       kind: "margin",
       detail: "merge gate crossed the total run deadline",
     };
+  }
+  // The pull request was just observed open and unmerged, so this intent's
+  // merge never happened. Once the configured base has moved, the reviewed
+  // base no longer authorizes the merge and every re-armed attempt is refused
+  // again; replace the stale merge intent with the durable base refresh so the
+  // candidate is refreshed and re-reviewed instead of looping on backoff.
+  if (
+    record.source.kind === "issue" &&
+    deps.github.prepareBaseRefresh !== undefined
+  ) {
+    const refresh = await ensureBaseRefreshIntent(deps, context, record);
+    if (refresh !== null) return refresh;
   }
   return executeMerge(deps, context, record);
 }
