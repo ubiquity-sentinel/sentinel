@@ -281,6 +281,28 @@ Deno.test(
             overrides: { findings: [], unresolvedSeverities: [] },
           })],
         },
+        {
+          // A P2/P3-only review was deliverable and never required the
+          // correction this proof would restore.
+          name: "only non-blocking severities",
+          reviews: [legacyReview({
+            id: "review-a",
+            head: ctx.head,
+            base: SHA1,
+            overrides: {
+              findings: (["P2", "P3"] as const).map((severity, index) => ({
+                id: `finding-${index}`,
+                severity,
+                path: null,
+                message: "non-blocking finding",
+                fingerprint: String(index).repeat(64),
+                resolved: false,
+                resolutionEvidence: null,
+              })),
+              unresolvedSeverities: ["P2", "P3"],
+            },
+          })],
+        },
       ];
       for (const entry of cases) {
         const loader = countingCandidateLoader();

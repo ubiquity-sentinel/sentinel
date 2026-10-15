@@ -384,9 +384,10 @@ export function recordMatrixTimeout(
 }
 
 /**
- * Clear the consecutive-timeout counter after the record makes progress (any
- * ingested non-missing cell result). A progressing record's bytes return to
- * their original shape.
+ * Clear the consecutive-timeout counter after the record makes progress (an
+ * ingested cell result whose session ended inside its duration bound; a cell
+ * cut off at the bound keeps the count). A progressing record's bytes return
+ * to their original shape.
  */
 export function clearMatrixTimeouts(
   record: WorkRecordV1,

@@ -85,6 +85,39 @@ export async function settleFailedImplementation(
   });
 }
 
+/**
+ * The configured session duration bound ended the run (an interrupted runtime
+ * terminal or the host's own timeout at the bound), as opposed to an output
+ * bound, a loop stop or an early failure.
+ */
+export function sessionBoundExhausted(
+  receipt: ModelRunReceiptV1,
+  config: RepositoryConfigV1,
+): boolean {
+  const bound = config.sessionBound;
+  if (bound === null || receipt.error === ATTEMPT_DETAIL_LOOP_STOP) {
+    return false;
+  }
+  if (
+    receipt.outcome !== "interrupted" &&
+    receipt.actual.terminalOrigin !== "host-timeout"
+  ) return false;
+  return receipt.actual.outputChars <= bound.maxOutputChars &&
+    receipt.actual.durationMs >= bound.maxDurationMs;
+}
+
+/** One more consecutive time-bound exhaustion (see recordMatrixTimeout). */
+function countSessionTimeout(record: WorkRecordV1, now: number): WorkRecordV1 {
+  return {
+    ...record,
+    counters: {
+      ...record.counters,
+      timeouts: (record.counters.timeouts ?? 0) + 1,
+    },
+    updatedAt: now,
+  };
+}
+
 export async function handleModelReceipt(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
@@ -119,7 +152,7 @@ export async function handleModelReceipt(
       incompleteMessage =
         "model candidate changed only generated/cache artifacts";
     }
-    const blocked = await settleAndBlock(
+    const settled = await settleAndBlock(
       deps,
       reservationId,
       "ambiguous",
@@ -127,7 +160,13 @@ export async function handleModelReceipt(
       incompleteMessage,
       now,
     );
-    if (blocked.kind === "state_error") return blocked;
+    if (settled.kind === "state_error") return settled;
+    // A session the configured duration bound cut off proves the whole task
+    // does not fit one session: it counts toward decomposition exactly like a
+    // matrix host timeout, so the planner splits it instead of replaying it.
+    const blocked = sessionBoundExhausted(receipt, config)
+      ? countSessionTimeout(settled, now)
+      : settled;
     const memory = await attemptMemorySettlementMutationV1({
       record,
       detail: incompleteMessage,

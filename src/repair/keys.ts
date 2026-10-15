@@ -47,9 +47,15 @@ export function workItemIdForPullRequest(
   );
 }
 
-/** Deterministic isolated candidate branch; git ref bodies allow [._/-]. */
+/**
+ * Deterministic isolated candidate branch. Ref components allow only
+ * [A-Za-z0-9._-] (git and the push validator), so a decomposition part's ':'
+ * separator maps to '-'. Every colon-free id keeps its exact branch, and a
+ * part branch (`issue-<slug>-<n>-part-<i>-of-<k>`) can never equal a whole
+ * issue, pull request or incident branch of the same repository.
+ */
 export function candidateBranch(workId: WorkItemId): string {
-  return `sentinel/repair/${workId}`;
+  return `sentinel/repair/${workId.replaceAll(":", "-")}`;
 }
 
 /** Operation key for one implementation start, derived from the durable reservation id. */

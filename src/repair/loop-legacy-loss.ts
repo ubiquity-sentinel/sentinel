@@ -14,7 +14,10 @@ import {
   legacyDependenciesDone,
   sameRepositoryIdentity,
 } from "./loop-records.ts";
-import { headRejectedByReview } from "./loop-review-records.ts";
+import {
+  hasBlockingFindings,
+  headRejectedByReview,
+} from "./loop-review-records.ts";
 import { persistTransition, replaceWorkMutation } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -115,7 +118,7 @@ export function legacyLossPhase(
  * The proof's historical review must be the authentic completed H0/B0
  * correction review: exact scope, PR, predecessor head and lost base, the
  * configured trusted reviewer as both expected and observed identity, and at
- * least one unresolved finding severity.
+ * least one unresolved P0/P1 finding.
  */
 export function legacyLossReviewMatches(
   snapshot: RepairStateSnapshotV1,
@@ -126,7 +129,7 @@ export function legacyLossReviewMatches(
   const review = snapshot.reviews.find((entry) => entry.id === proof.reviewId);
   if (review === undefined) return false;
   return review.outcome === "completed" && review.resultId !== null &&
-    review.completedAt !== null && review.unresolvedSeverities.length > 0 &&
+    review.completedAt !== null && hasBlockingFindings(review) &&
     review.expectedReviewer === reviewer &&
     review.observedReviewer === reviewer &&
     review.pullRequest.number === proof.pr &&

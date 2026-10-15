@@ -5,6 +5,7 @@ import {
   HOSTED_AUTONOMY_MAX_RETRIES,
   planHostedRetries,
 } from "../../ops/hosted-autonomy.ts";
+import { HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS } from "../../ops/hosted-autonomy-policy.ts";
 import { reservation, SHA1, T0 } from "../state/helpers.ts";
 import {
   authorizingReceipt,
@@ -305,3 +306,204 @@ Deno.test(
 );
 
 /** The runtime's exact diagnosed candidate ref-identity blocker message. */
+
+Deno.test(
+  "hosted autonomy: uncertain outcomes are re-admitted only after their matrix evidence expired",
+  () => {
+    const reservationId = "uncertain-charge";
+    const uncertain = (message: string) =>
+      blockedRecord({
+        blocker: { kind: "other", message, since: T0 + 1000 },
+        counters: { attempts: 1, retries: 0, reviewRounds: 0 },
+        target: {
+          base: BASE,
+          branch: "sentinel/repair/issue-ubiquity-sentinel-48",
+          checkpoint: null,
+          head: null,
+          pr: null,
+        },
+        evidence: [],
+        intent: {
+          kind: "implementation",
+          key: `impl:${reservationId}`,
+          startedAt: T0,
+          branch: "sentinel/repair/issue-ubiquity-sentinel-48",
+          expectedHead: null,
+          observedBase: BASE,
+          pr: null,
+          requestId: reservationId,
+          resultId: null,
+        },
+      });
+    const charge = (outcome: "ambiguous" | "reserved") =>
+      reservation(reservationId, {
+        taskId: TARGET,
+        head: BASE,
+        attempt: 1,
+        purpose: "implementation",
+        outcome,
+        settledAt: outcome === "reserved" ? null : T0 + 500,
+      });
+    // The clock starts at the charge's own admission, not a refreshed blocker.
+    const expired = T0 + HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS;
+    for (
+      const message of [
+        "implementation outcome uncertain; awaiting authoritative disposition",
+        "implementation outcome uncertain; original admission retained without usable artifact evidence",
+        "authenticated historical matrix manifest rejected: reservation_after_manifest; model outcome uncertain",
+      ]
+    ) {
+      const snapshot = repairSnapshot([uncertain(message)], [], [], [
+        charge("ambiguous"),
+      ]);
+      assert.equal(
+        planHostedRetries(snapshot, expired - 1, ATTEMPT_RUNTIME).length,
+        0,
+        `${message}: no grant while late evidence could still arrive`,
+      );
+      const plans = planHostedRetries(snapshot, expired, ATTEMPT_RUNTIME);
+      assert.equal(plans.length, 1, message);
+      assert.equal(plans[0].nextStep, "work");
+      const next = applyHostedRetries(snapshot, SHA1, plans, expired);
+      const applied = next.work[0];
+      assert.equal(applied.nextStep, "work");
+      assert.equal(applied.blocker, null);
+      assert.equal(applied.intent, null);
+      assert.equal(applied.counters.attempts, 1);
+      // The uncertain charge stays settled ambiguous: never refunded.
+      assert.deepEqual(next.reservations, snapshot.reservations);
+      // An unsettled admission is still in flight and is never cleared.
+      const unsettled = repairSnapshot([uncertain(message)], [], [], [
+        charge("reserved"),
+      ]);
+      assert.equal(
+        planHostedRetries(unsettled, expired, ATTEMPT_RUNTIME).length,
+        0,
+      );
+    }
+  },
+);
+Deno.test(
+  "hosted autonomy: evidence expiry never re-admits produced, foreign or refunded admissions",
+  () => {
+    const id = "uncertain-charge";
+    const branch = "sentinel/repair/issue-ubiquity-sentinel-48";
+    const message =
+      "implementation outcome uncertain; awaiting authoritative disposition";
+    const expired = T0 + HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS;
+    const target = {
+      base: BASE,
+      branch,
+      checkpoint: null,
+      head: null,
+      pr: null,
+    };
+    const intent = {
+      kind: "implementation" as const,
+      key: `impl:${id}`,
+      startedAt: T0,
+      branch,
+      expectedHead: null,
+      observedBase: BASE,
+      pr: null,
+      requestId: id,
+      resultId: null,
+    };
+    const record = (overrides: Record<string, unknown> = {}) =>
+      blockedRecord({
+        blocker: { kind: "other", message, since: T0 + 1000 },
+        counters: { attempts: 1, retries: 0, reviewRounds: 0 },
+        target,
+        evidence: [],
+        intent,
+        ...overrides,
+      });
+    const charge = (overrides: Record<string, unknown> = {}) =>
+      reservation(id, {
+        taskId: TARGET,
+        head: BASE,
+        attempt: 1,
+        purpose: "implementation",
+        outcome: "ambiguous",
+        settledAt: T0 + 500,
+        ...overrides,
+      });
+    const grants = (work: unknown, charges: unknown[]) =>
+      planHostedRetries(
+        repairSnapshot([work as never], [], [], charges as never),
+        expired,
+        ATTEMPT_RUNTIME,
+      ).length;
+    assert.equal(grants(record(), [charge()]), 1, "baseline grant");
+    assert.equal(
+      grants(record(), [charge({ purpose: "retry" })]),
+      1,
+      "a retry admission is still an implementation charge",
+    );
+    // A produced candidate is never discarded on age.
+    assert.equal(
+      grants(record({ target: { ...target, head: SHA1 } }), [charge()]),
+      0,
+    );
+    assert.equal(
+      grants(record({ target: { ...target, head: SHA1, pr: 12 } }), [charge()]),
+      0,
+    );
+    // A charge for another task, a submitted or refunded charge, and a
+    // missing charge never prove the uncertain admission.
+    assert.equal(grants(record(), [charge({ taskId: "issue-other" })]), 0);
+    assert.equal(grants(record(), [charge({ outcome: "submitted" })]), 0);
+    assert.equal(
+      grants(record(), [charge({
+        outcome: "confirmed_not_submitted",
+        proofRef: "artifact://proof/not-submitted",
+      })]),
+      0,
+    );
+    assert.equal(grants(record(), []), 0);
+    // Without a retained intent the blocker's own age is the only anchor.
+    assert.equal(
+      planHostedRetries(
+        repairSnapshot([record({ intent: null })], []),
+        T0 + 1000 + HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS - 1,
+        ATTEMPT_RUNTIME,
+      ).length,
+      0,
+    );
+    assert.equal(
+      planHostedRetries(
+        repairSnapshot([record({ intent: null })], []),
+        T0 + 1000 + HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS,
+        ATTEMPT_RUNTIME,
+      ).length,
+      1,
+    );
+  },
+);
+Deno.test(
+  "hosted autonomy: a retry keeps the consecutive time-bound exhaustions that drive decomposition",
+  () => {
+    const record = blockedRecord({
+      blocker: {
+        kind: "other",
+        message: "model run did not complete with a trusted candidate",
+        since: T0 + 3000,
+      },
+      counters: { attempts: 1, retries: 0, reviewRounds: 0, timeouts: 1 },
+      target: {
+        base: BASE,
+        branch: "sentinel/repair/issue-ubiquity-sentinel-48",
+        checkpoint: null,
+        head: null,
+        pr: null,
+      },
+      evidence: [],
+    });
+    const snapshot = repairSnapshot([record], []);
+    const plans = planHostedRetries(snapshot, T0 + 5000, ATTEMPT_RUNTIME);
+    assert.equal(plans.length, 1);
+    const next = applyHostedRetries(snapshot, SHA1, plans, T0 + 5000);
+    assert.equal(next.work[0].nextStep, "work");
+    assert.equal(next.work[0].counters.timeouts, 1);
+  },
+);

@@ -906,7 +906,8 @@ export function fullRefOf(ref: string): string {
   return ref.startsWith("refs/") ? ref : `refs/${ref}`;
 }
 
-function isValidRef(ref: string): boolean {
+/** Strict ref-name check every remote read, push and proof applies. */
+export function isValidRef(ref: string): boolean {
   if (!ref.startsWith("refs/")) return false;
   const parts = ref.slice("refs/".length).split("/");
   for (const part of parts) {

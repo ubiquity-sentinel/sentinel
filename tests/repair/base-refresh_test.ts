@@ -28,7 +28,7 @@ import { DenoGitExecutor } from "../../src/github/git-executor.ts";
 import type { BaseRefreshObserverV1 } from "../../src/host/local.ts";
 import { createPrepareBaseRefresh } from "../../src/host/local.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
-import { baseRefreshIntentKey } from "../../src/repair/keys.ts";
+import { baseRefreshIntentKey, mergeIntentKey } from "../../src/repair/keys.ts";
 import {
   isRetiredTargetRecord,
   RETIRED_MERGED_MESSAGE,
@@ -1199,6 +1199,85 @@ Deno.test(
       advanced.target.base,
       SHA2,
       "the refreshed base is the target",
+    );
+  },
+);
+
+Deno.test(
+  "base refresh: a stale merge intent on an open pull request becomes the refresh once the base moved",
+  async () => {
+    const fake = new RefreshGithub(SHA2, OLD_HEAD);
+    const github: GitHubPort = fake;
+    const rig = makeRig(github);
+    github.prepareBaseRefresh = (request) => {
+      fake.prepareCalls.push(request);
+      return Promise.resolve(portError("unavailable", "prepared unavailable"));
+    };
+    const receipt = completedReceipt(7, OLD_HEAD, SHA1);
+    const mergeIntent = {
+      kind: "merge" as const,
+      key: mergeIntentKey(7, OLD_HEAD),
+      startedAt: T0 - CHECK_POLL_MS,
+      branch: BRANCH,
+      expectedHead: OLD_HEAD,
+      observedBase: SHA1,
+      pr: 7,
+      requestId: receipt.requestId,
+      resultId: receipt.resultId,
+    };
+    await rig.seed([deliveryRecord(OLD_HEAD, { intent: mergeIntent })], {
+      reviews: [receipt],
+    });
+
+    const outcome = await rig.run();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    const work = (await rig.snapshot()).work[0];
+    assert.ok(
+      !fake.calls.includes("merge"),
+      "the refused stale merge is not re-armed",
+    );
+    assert.equal(work.nextStep, "delivery");
+    assert.equal(work.intent?.kind, "base_refresh");
+    assert.equal(work.intent?.expectedHead, OLD_HEAD);
+    assert.equal(work.intent?.observedBase, SHA2);
+    assert.equal(work.target.base, SHA1, "target stays on the reviewed base");
+    assert.equal(work.target.head, OLD_HEAD);
+    assert.equal(rig.model.requests.length, 0);
+
+    // An unmoved base keeps the exact merge reconciliation.
+    const steady = new RefreshGithub(SHA1, OLD_HEAD);
+    const steadyRig = makeRig(steady);
+    steady.prepareBaseRefresh = () => {
+      throw new Error("an unmoved base never prepares a refresh");
+    };
+    await steadyRig.seed([deliveryRecord(OLD_HEAD, { intent: mergeIntent })], {
+      reviews: [receipt],
+    });
+    await steadyRig.run();
+    const kept = (await steadyRig.snapshot()).work[0];
+    assert.equal(
+      kept.intent?.kind,
+      "merge",
+      "an unmoved base keeps the exact merge intent",
+    );
+
+    // A merge sent within the last poll may still land and move the base by
+    // itself: the fresh intent is never replaced by a refresh.
+    const landing = new RefreshGithub(SHA2, OLD_HEAD);
+    const landingRig = makeRig(landing);
+    landing.prepareBaseRefresh = () => {
+      throw new Error("a fresh merge intent never prepares a refresh");
+    };
+    await landingRig.seed([
+      deliveryRecord(OLD_HEAD, {
+        intent: { ...mergeIntent, startedAt: T0 - CHECK_POLL_MS + 1 },
+      }),
+    ], { reviews: [receipt] });
+    await landingRig.run();
+    assert.notEqual(
+      (await landingRig.snapshot()).work[0].intent?.kind,
+      "base_refresh",
+      "a merge that may still be landing is not attributed to a moved base",
     );
   },
 );

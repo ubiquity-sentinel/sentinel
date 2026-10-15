@@ -13,12 +13,15 @@ export const MATRIX_CELL_RESULT_VERSION = "v1" as const;
 /** Native GitHub Actions matrix ceiling; the planner never throttles below it. */
 export const MAX_MATRIX_CELLS = 256;
 /**
- * Consecutive matrix-cell host timeouts after which the planner decomposes an
- * issue into serial sub-tasks instead of granting the whole issue again. Each
- * part is independently completable within the cell timeout, so a timeout
- * discards at most one part's work instead of the whole issue's.
+ * Consecutive time-bound exhaustions (a matrix-cell host timeout, or a session
+ * cut off by its configured duration bound) after which the planner decomposes
+ * an issue into serial sub-tasks instead of granting the whole issue again.
+ * One exhaustion already proves the whole task does not fit one session, so a
+ * replay of the same scope is never planned. Each part is independently
+ * completable within the session bound, so a later timeout discards at most
+ * one part's work instead of the whole issue's.
  */
-export const MATRIX_DECOMPOSE_AFTER_TIMEOUTS = 2;
+export const MATRIX_DECOMPOSE_AFTER_TIMEOUTS = 1;
 /** Upper bound on sub-task parts for one decomposed issue. */
 export const MATRIX_DECOMPOSE_MAX_PARTS = 4;
 

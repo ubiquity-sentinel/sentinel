@@ -112,19 +112,24 @@ function decompositionChildrenOf(
 /**
  * True when the planner should decompose this record instead of granting the
  * whole issue again: it is a whole issue (not itself a part), it has timed
- * out at least MATRIX_DECOMPOSE_AFTER_TIMEOUTS times, and it has no children
- * yet. Children never decompose further (no infinite recursion).
+ * out at least MATRIX_DECOMPOSE_AFTER_TIMEOUTS times, it has no candidate or
+ * pull request of its own, and it has no children yet. Children never
+ * decompose further (no infinite recursion).
  */
-function isDecompositionEligible(
+export function isDecompositionEligible(
   record: {
     id: string;
     source: { kind: string };
     counters: { timeouts?: number };
+    target: { head: string | null; pr: number | null };
   },
   snapshot: { work: readonly { id: string }[] },
 ): boolean {
   if (record.source.kind !== "issue") return false;
   if (isDecompositionChildId(record.id)) return false;
+  // A record in correction already owns a candidate and pull request; splitting
+  // it would orphan that publication, so only a fresh implementation splits.
+  if (record.target.head !== null || record.target.pr !== null) return false;
   if ((record.counters.timeouts ?? 0) < MATRIX_DECOMPOSE_AFTER_TIMEOUTS) {
     return false;
   }
@@ -148,14 +153,17 @@ async function persistDecompositionChildren(
   const freshParent = snapshot.work.find((w) => w.id === parent.id);
   if (freshParent === undefined) return false;
   const children = createDecompositionChildren(freshParent, now);
+  // The write binds the head this read observed (as every other state writer
+  // does); only an applied write persists the children.
   const next = {
     ...snapshot,
+    stateHead: read.value.head,
     work: [...snapshot.work, ...children],
     sequence: snapshot.sequence + 1,
-    updatedAt: now,
+    updatedAt: Math.max(now, snapshot.updatedAt),
   };
-  const written = await deps.state.writeRepair(next, snapshot.stateHead);
-  return written.ok;
+  const written = await deps.state.writeRepair(next, read.value.head);
+  return written.ok && written.value.status === "applied";
 }
 
 /**

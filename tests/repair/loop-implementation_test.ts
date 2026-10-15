@@ -319,7 +319,7 @@ Deno.test("P1 findings trigger a fresh bounded implementation/candidate/replay p
     rig.clock.advance(15 * 60_000 + 1);
     rig.github.completeReview([{
       id: "finding-2",
-      severity: "P2",
+      severity: "P1",
       path: "src/github/text.ts",
       message: "second required fix",
       fingerprint: "b".repeat(64),
@@ -384,5 +384,59 @@ Deno.test("P1 findings trigger a fresh bounded implementation/candidate/replay p
     assert.equal(state4.reservations[0].outcome, "submitted", "charged");
   } finally {
     await rig4.ctx.cleanup();
+  }
+});
+
+Deno.test("P2/P3-only findings never spend a correction round", async () => {
+  const rig = await makeRig("p2nocorrection", {
+    model: { heads: [SHA3, SHA4] },
+    github: { candidateLifecycle: positiveLifecycle() },
+  });
+  try {
+    const first = await rig.run();
+    assert.equal(first.status, "idle", JSON.stringify(first));
+    assert.equal(rig.model.requests.length, 1);
+    assert.equal((await rig.snapshot()).work[0].target.head, SHA3);
+
+    rig.clock.advance(15 * 60_000 + 1);
+    rig.github.completeReview([{
+      id: "finding-p2",
+      severity: "P2",
+      path: "src/app.ts",
+      message: "optional improvement",
+      fingerprint: "b".repeat(64),
+      resolved: false,
+      resolutionEvidence: null,
+    }, {
+      id: "finding-p3",
+      severity: "P3",
+      path: null,
+      message: "nit",
+      fingerprint: "c".repeat(64),
+      resolved: false,
+      resolutionEvidence: null,
+    }], rig.clock.now());
+    const second = await rig.run();
+    assert.equal(second.status, "idle", JSON.stringify(second));
+    assert.equal(
+      rig.model.requests.length,
+      1,
+      "non-blocking findings open no correction implementation",
+    );
+    const work = (await rig.snapshot()).work[0];
+    assert.equal(
+      work.nextStep,
+      "delivery",
+      "a non-blocking verdict proceeds to delivery",
+    );
+    assert.equal(work.target.head, SHA3, "the reviewed head is kept");
+    assert.equal(work.counters.reviewRounds, 1, "no extra review round");
+    assert.deepEqual(
+      rig.github.pushes.map((push) => push.sha),
+      [SHA3],
+      "no corrected head is pushed",
+    );
+  } finally {
+    await rig.ctx.cleanup();
   }
 });

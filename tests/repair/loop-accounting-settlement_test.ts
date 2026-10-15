@@ -178,10 +178,17 @@ for (
         afterRetry.work.find((item) => item.id === taskId)!.nextStep,
         "blocked",
       );
+      // Only a settlement in the run that started the model carries an
+      // authenticated producing runtime; reconciling a saved intent later
+      // preserves the charge without fabricating a memory outcome.
+      const authenticatedProducer = mode === "healthy" &&
+        consumer !== "saved-intent";
       assert.equal(
         afterRetry.attemptMemory.length,
-        1,
-        "one terminal memory follows verified settlement",
+        authenticatedProducer ? 1 : 0,
+        authenticatedProducer
+          ? "one terminal memory follows verified settlement"
+          : "saved-intent settlement never fabricates a memory outcome",
       );
       assert.equal(afterCharge.outcome, "ambiguous");
       assert.ok(afterCharge.settledAt !== null);

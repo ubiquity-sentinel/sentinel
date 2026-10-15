@@ -18,6 +18,7 @@ import {
   sameRepositoryIdentity,
 } from "./loop-records.ts";
 import {
+  hasBlockingFindings,
   isUnboundReviewObservation,
   reviewSubmittedAt,
   reviewWaitSince,
@@ -76,7 +77,7 @@ export async function recoverMissingTaskReview(
     receipt.pullRequest.base !== record.target.base ||
     receipt.expectedReviewer !== deps.github.reviewerIdentity ||
     receipt.observedReviewer !== deps.github.reviewerIdentity ||
-    receipt.findingsUncounted !== 0 || receipt.unresolvedSeverities.length !== 0
+    receipt.findingsUncounted !== 0 || hasBlockingFindings(receipt)
   ) return null;
   if (
     config === null || config.liveStartLimits === null ||
@@ -153,7 +154,7 @@ export async function recoverMissingTaskReview(
       existing.expectedReviewer !== receipt.expectedReviewer ||
       existing.observedReviewer !== receipt.observedReviewer ||
       existing.findingsUncounted !== 0 ||
-      existing.unresolvedSeverities.length !== 0
+      hasBlockingFindings(existing)
     )
   ) {
     return {
@@ -254,7 +255,7 @@ export async function applyObservedReview(
       ),
     );
   }
-  const unresolved = receipt.unresolvedSeverities.length > 0;
+  const unresolved = hasBlockingFindings(receipt);
   // A completed code-quality verdict is still not a delivery. For an
   // issue-backed record the receipt must also carry the reviewer's POSITIVE
   // task acceptance bound to this exact source issue AND to the TRUSTED live

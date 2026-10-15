@@ -405,7 +405,9 @@ Deno.test(
     }
     assert.equal(
       stabilizationInstall.move.nextRevision,
-      "c8d2e87468399abb54cc9d9a749ae7b400835bbb",
+      // The installed generation-75 revision, spelled out so a pin edit
+      // cannot silently move the expectation with it.
+      "da9d6b437b6cb2725deed081b50778b7dc46a9a5",
     );
     assert.equal(stabilizationInstall.move.nextGeneration, 75);
   },

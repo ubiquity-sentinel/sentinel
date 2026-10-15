@@ -19,6 +19,7 @@ import {
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import { HISTORICAL_C63 } from "./hosted-autonomy-matrix-bindings.ts";
+import { evidenceExpired } from "./hosted-autonomy-evidence-expiry.ts";
 
 /**
  * Durable reservations charged to one task, across every purpose and outcome
@@ -275,6 +276,10 @@ export function planHostedRetries(
       blocker.message.startsWith(item.prefix)
     );
     if (rule === undefined) continue;
+    if (
+      rule.minBlockedMs !== undefined &&
+      !evidenceExpired(record, snapshot.reservations, now, rule.minBlockedMs)
+    ) continue;
     if (!intentClosable(record, snapshot.reservations)) continue;
     // A work-returning grant only exists to buy another implementation run.
     // Once every review round is spent, that run cannot become a reviewed
@@ -433,6 +438,11 @@ export function applyHostedRetries(
             : record.counters.attempts - plan.grant,
           retries: record.counters.retries,
           reviewRounds: plan.reviewRounds ?? record.counters.reviewRounds,
+          // A retry is not progress: the consecutive time-bound exhaustions
+          // that drive decomposition survive it.
+          ...(record.counters.timeouts === undefined
+            ? {}
+            : { timeouts: record.counters.timeouts }),
         },
         updatedAt: now,
       };

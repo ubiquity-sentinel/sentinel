@@ -16,6 +16,7 @@ import {
   reviewOperationKey,
   reviewReceiptId,
 } from "./keys.ts";
+import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { gateDeliveryOnChecks } from "./loop-checks.ts";
 import { configFor, sameRepositoryIdentity } from "./loop-records.ts";
@@ -451,13 +452,15 @@ export async function reconcileMergeIntent(
   }
   const pull = pr.value;
   if (pull === null) {
+    // An unobservable pull request is re-read after one poll, never parked.
+    const at = deps.clock.now();
     return persistWork(
       deps,
       context,
       setWait(
         record,
-        { reason: "unavailable", since: deps.clock.now(), until: null },
-        deps.clock.now(),
+        { reason: "unavailable", since: at, until: at + CHECK_POLL_MS },
+        at,
       ),
     );
   }
@@ -503,6 +506,23 @@ export async function reconcileMergeIntent(
       kind: "margin",
       detail: "merge gate crossed the total run deadline",
     };
+  }
+  // The pull request was just observed open and unmerged, so this intent's
+  // merge never happened. Once the configured base has moved, the reviewed
+  // base no longer authorizes the merge and every re-armed attempt is refused
+  // again; replace the stale merge intent with the durable base refresh so the
+  // candidate is refreshed and re-reviewed instead of looping on backoff.
+  // A merge sent within the last poll window may still be landing (an
+  // ambiguous response is reconciled immediately), and its own merge would
+  // move the base; only an intent at least one poll old is treated as stale.
+  if (
+    record.source.kind === "issue" &&
+    deps.github.prepareBaseRefresh !== undefined &&
+    record.intent !== null &&
+    deps.clock.now() - record.intent.startedAt >= CHECK_POLL_MS
+  ) {
+    const refresh = await ensureBaseRefreshIntent(deps, context, record);
+    if (refresh !== null) return refresh;
   }
   return executeMerge(deps, context, record);
 }
