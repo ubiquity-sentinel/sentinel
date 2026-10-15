@@ -20,6 +20,36 @@ import { readNativeMatrixStdin, runtimeJob } from "./hosted-runtime-matrix.ts";
 import { runHostedRuntimeWithReviewCustody } from "./review-owner-host.ts";
 
 /**
+ * The exact process inputs the launcher reads besides the native identity.
+ * Every optional key the child environment forwards must be read here, or a
+ * workflow setting is silently dropped before the child (the cooldown switch
+ * once was), and every hosted-runtime step must grant each of them.
+ */
+export const HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS = [
+  "HOME",
+  "PATH",
+  "GITHUB_TOKEN",
+  "SENTINEL_SUPERVISOR_TOKEN",
+  "SENTINEL_MODEL_BASE_URL",
+  "SENTINEL_MODEL_ID",
+  "SENTINEL_MODEL_FALLBACK",
+  "SENTINEL_REVIEW_MODEL_ID",
+  "SENTINEL_DEEPSEEK_API_KEY",
+  "SENTINEL_APP_INSTALLATION_ID",
+  "SENTINEL_COOLDOWN_MODE",
+  "UOS_AI_TOKEN",
+] as const;
+
+/** Named reads of exactly the launcher inputs; the reader is a test seam. */
+export function readHostedLauncherInputs(
+  read: (key: string) => string | undefined = (key) => Deno.env.get(key),
+): Record<string, string | undefined> {
+  const inputs: Record<string, string | undefined> = {};
+  for (const key of HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS) inputs[key] = read(key);
+  return inputs;
+}
+
+/**
  * Production entrypoint: fixed launcher cwd, fixed sibling runtime, the actual
  * Deno executable and the existing native token for a read-only release-state
  * read in the private ignored launcher scratch. The optional App token is read
@@ -30,23 +60,11 @@ export async function runHostedRuntimeMain(): Promise<
   HostedRuntimeLauncherResultV1
 > {
   try {
-    // Only the named keys are read: the eight identity fields plus the four
-    // existing process inputs. No unrestricted env access is required.
+    // Only the named keys are read: the eight identity fields plus the fixed
+    // launcher inputs. No unrestricted env access is required.
     const env: Record<string, string | undefined> = {
       ...readHostedIdentityEnv(),
-      HOME: Deno.env.get("HOME"),
-      PATH: Deno.env.get("PATH"),
-      GITHUB_TOKEN: Deno.env.get("GITHUB_TOKEN"),
-      SENTINEL_SUPERVISOR_TOKEN: Deno.env.get("SENTINEL_SUPERVISOR_TOKEN"),
-      SENTINEL_MODEL_BASE_URL: Deno.env.get("SENTINEL_MODEL_BASE_URL"),
-      SENTINEL_MODEL_ID: Deno.env.get("SENTINEL_MODEL_ID"),
-      SENTINEL_MODEL_FALLBACK: Deno.env.get("SENTINEL_MODEL_FALLBACK"),
-      SENTINEL_REVIEW_MODEL_ID: Deno.env.get("SENTINEL_REVIEW_MODEL_ID"),
-      SENTINEL_DEEPSEEK_API_KEY: Deno.env.get("SENTINEL_DEEPSEEK_API_KEY"),
-      SENTINEL_APP_INSTALLATION_ID: Deno.env.get(
-        "SENTINEL_APP_INSTALLATION_ID",
-      ),
-      UOS_AI_TOKEN: Deno.env.get("UOS_AI_TOKEN"),
+      ...readHostedLauncherInputs(),
     };
     // Native identity is the first check: a malformed job identity fails
     // before any credential, checkout or state setup.
