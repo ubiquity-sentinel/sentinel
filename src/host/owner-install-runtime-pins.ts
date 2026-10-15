@@ -272,6 +272,17 @@ export const OWNER_DEVELOPMENT_INSTALL_STABILIZATION_PRIOR_GENERATION = 74;
 export const OWNER_DEVELOPMENT_INSTALL_STABILIZATION_REVISION =
   "da9d6b437b6cb2725deed081b50778b7dc46a9a5" as GitSha;
 export const OWNER_DEVELOPMENT_INSTALL_STABILIZATION_GENERATION = 75;
+/**
+ * Fixed runtime-memory and bounded-bootstrap successor. Only the exact R2
+ * generation 75 healthy settlement permits installation at 76; its first
+ * failed candidate restores that retained R2 proof once at generation 77.
+ */
+export const OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_PRIOR_REVISION =
+  "da9d6b437b6cb2725deed081b50778b7dc46a9a5" as GitSha;
+export const OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_PRIOR_GENERATION = 75;
+export const OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_REVISION =
+  "fb182e7dd2b03f007da30b0697a05ff188fbd4fe" as GitSha;
+export const OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_GENERATION = 76;
 /** Monotonic rollback target the failed generation 45 candidate rolled to. */
 export const OWNER_DEVELOPMENT_INSTALL_ROLLBACK_TARGET_GENERATION =
   OWNER_DEVELOPMENT_INSTALL_ASSIGN_FIRST_GENERATION + 2;

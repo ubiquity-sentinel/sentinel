@@ -31,6 +31,10 @@ import {
   OWNER_DEVELOPMENT_INSTALL_STACKED_MERGE_PRIOR_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_STACKED_MERGE_PRIOR_REVISION,
   OWNER_DEVELOPMENT_INSTALL_STACKED_MERGE_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_GENERATION,
+  OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_PRIOR_GENERATION,
+  OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_PRIOR_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_REVISION,
   OWNER_DEVELOPMENT_INSTALL_VERSIONED_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_VERSIONED_PRIOR_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_VERSIONED_PRIOR_REVISION,
@@ -52,6 +56,54 @@ export function planOwnerInstallMemory(
   context: OwnerInstallPlanContextV1,
 ): OwnerDevelopmentInstallPlanV1 | undefined {
   const { runtime, revision, generation, healthy, failed } = context;
+  // A failed R2 prior retains the existing stabilization rollback below.
+  if (
+    revision === OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_PRIOR_REVISION &&
+    generation === OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_PRIOR_GENERATION &&
+    healthy !== null && failed === null
+  ) {
+    return movePlan(
+      "install",
+      runtime,
+      OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_REVISION,
+      OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_GENERATION,
+      healthy,
+      "install the fixed throughput runtime after its exact generation 75 healthy proof",
+    );
+  }
+
+  if (
+    revision === OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_REVISION &&
+    generation === OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_GENERATION
+  ) {
+    if (failed !== null) {
+      const prior = healthyProofFor(
+        runtime,
+        OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_PRIOR_REVISION,
+        OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_PRIOR_GENERATION,
+      );
+      if (prior === null) {
+        return waiting(
+          "the exact recorded generation 75 healthy proof for the throughput rollback is unavailable",
+        );
+      }
+      return movePlan(
+        "rollback",
+        runtime,
+        OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_PRIOR_REVISION,
+        runtime.generation + 1,
+        prior,
+        "roll back the failed throughput runtime to its recorded proven predecessor",
+      );
+    }
+    if (healthy !== null) {
+      return noChange("the owner development installation is complete");
+    }
+    return waiting(
+      "the throughput generation 76 healthy proof is not recorded",
+    );
+  }
+
   // This exact revision-bound transition is separate from the historical
   // generation 75 retry below. A failed prior keeps its original rollback.
   if (

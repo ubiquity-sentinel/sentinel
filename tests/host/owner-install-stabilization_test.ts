@@ -505,7 +505,12 @@ for (
     );
     try {
       assert.equal(await fixture.run(), 0);
-      assert.equal(fixture.reports.at(-1)?.status, "no_change");
+      // This fixture only authenticates R2 source; healthy75 now waits for
+      // exact R3 ancestry/CI rather than restoring the older runtime.
+      assert.equal(
+        fixture.reports.at(-1)?.status,
+        name === "healthy candidate" ? "waiting" : "no_change",
+      );
       assert.equal(fixture.patches(), 0);
       assert.equal(await fixture.head(), fixture.beforeHead);
       assert.ok(fixture.requests.every((request) => request.method === "GET"));
