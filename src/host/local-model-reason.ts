@@ -5,6 +5,15 @@ import type {
 } from "../contracts/ports.ts";
 import { LOOP_STOP_MARKER } from "../repair/model-port.ts";
 import {
+  IDENTITY_POLICY_DETAIL,
+  MODEL_POLICY_DETAIL,
+  OUTPUT_EVIDENCE_DETAIL,
+  PERMISSION_PROFILE_POLICY_DETAIL,
+  PROVIDER_POLICY_DETAIL,
+  RECEIPT_MISMATCH_DETAIL,
+  UNAVAILABLE_RECEIPT_DETAIL,
+} from "../repair/model-port-policy.ts";
+import {
   STATIC_CHECKOUT,
   STATIC_GIT_BOUND,
   STATIC_GIT_FAILED,
@@ -55,9 +64,10 @@ export function localModelResultReason(
  * is the exact validated request base.
  */
 /**
- * Exact allow-list of static host failures and CodexProtocolError.detail codes.
- * The protocol detail is a closed local enum, never the exception message or
- * server response. Every exported code is a literal defined here; other text
+ * Exact allow-list of authored host/native failures and closed protocol codes.
+ * Native details are fixed local strings or the CodexProtocolError.detail enum,
+ * never an exception message or server response. Every exported code is a
+ * literal defined here; other text
  * maps to null, so no server output, probe output, path, or payload can reach
  * the advisory line. A protocol code identifies its class, not a failing stage.
  */
@@ -70,6 +80,31 @@ const HOST_REASON_CODES: readonly (readonly [string, string])[] = [
   [STATIC_GIT_BOUND, "git_output_over_bound"],
   [STATIC_LOCAL_CANDIDATE, "local_candidate_unavailable"],
   [STATIC_GITHUB_LOGIN, "authenticated_login_unavailable"],
+  [IDENTITY_POLICY_DETAIL, "model_identity_unavailable"],
+  [MODEL_POLICY_DETAIL, "model_route_policy_mismatch"],
+  [OUTPUT_EVIDENCE_DETAIL, "model_output_evidence_unavailable"],
+  [PERMISSION_PROFILE_POLICY_DETAIL, "model_permission_profile_invalid"],
+  [PROVIDER_POLICY_DETAIL, "model_provider_invalid"],
+  [RECEIPT_MISMATCH_DETAIL, "model_receipt_mismatch"],
+  [UNAVAILABLE_RECEIPT_DETAIL, "model_runtime_identity_unverified"],
+  ["model session process group did not settle", "model_session_unsettled"],
+  ["malformed reroute identity", "model_reroute_identity_malformed"],
+  ["malformed matching reroute", "model_reroute_malformed"],
+  ["reroute evidence exceeded bound", "model_reroute_evidence_over_bound"],
+  ["run routed off required Luna/max", "model_route_off_policy"],
+  ["malformed terminal thread id", "model_terminal_thread_id_malformed"],
+  ["malformed terminal turn", "model_terminal_turn_malformed"],
+  ["malformed terminal turn id", "model_terminal_turn_id_malformed"],
+  ["malformed terminal turn status", "model_terminal_status_malformed"],
+  ["routing evidence exceeded output bound", "model_routing_output_over_bound"],
+  [
+    "notification registration failed",
+    "model_notification_registration_failed",
+  ],
+  [
+    "candidate checkout could not be committed",
+    "model_candidate_commit_failed",
+  ],
   ["malformed_line", "codex_malformed_line"],
   ["unexpected_frame", "codex_unexpected_frame"],
   ["unknown_request_id", "codex_unknown_request_id"],
