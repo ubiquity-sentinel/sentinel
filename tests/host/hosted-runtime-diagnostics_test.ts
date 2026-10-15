@@ -10,7 +10,10 @@ import { HOSTED_RUNTIME_FAILED_DETAIL } from "../../src/host/hosted-runtime.ts";
 import { emitLocalModelDiagnostic } from "../../src/host/local-model-diagnostic.ts";
 import { parseLocalModelDiagnosticV1 } from "../../src/host/local.ts";
 import { CodexProtocolError } from "../../src/repair/codex-transport.ts";
-import { unavailableFor } from "../../src/repair/model-port-policy.ts";
+import {
+  DEFAULT_INTERRUPT_SETTLEMENT_GRACE_MS,
+  unavailableFor,
+} from "../../src/repair/model-port-policy.ts";
 import {
   createRequestRuntimeReceiptVerifier,
   finishReceipt,
@@ -633,6 +636,14 @@ Deno.test("hosted runtime: native completion refusals retain closed codes throug
       provider: "sentinel-host",
     };
     const settled: AwaitedSettlementV1 = {
+      boundaryDiagnostic: {
+        errorCode: null,
+        httpStatusCode: null,
+        interruptCause: "none",
+        maxDurationMs: request.maxDurationMs,
+        maxOutputChars: request.maxOutputChars,
+        interruptSettlementGraceMs: DEFAULT_INTERRUPT_SETTLEMENT_GRACE_MS,
+      },
       terminal: { status: "completed", error: null, durationMs: 5 },
       terminalOrigin: "runtime",
       unavailable: null,
