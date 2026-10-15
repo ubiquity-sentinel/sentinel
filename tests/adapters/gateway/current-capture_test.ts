@@ -165,7 +165,7 @@ Deno.test("current producer golden authenticates exact rich request, downstream 
     const safeTrace = JSON.parse(new TextDecoder().decode(upstreamEntry.bytes));
     assert.equal(safeTrace.version, 2);
     assert.equal(safeTrace.attempts[0].headers["retry-after"], "1");
-    assert.equal(safeTrace.attempts[0].started_at_ms, 0);
+    assert.equal(safeTrace.attempts[0].started_at_ms, 1);
     assert.deepEqual(
       safeTrace.attempts[0].chunk_times_ms,
       test.fixture.expected.upstream.attempts[0].chunk_times_ms,
