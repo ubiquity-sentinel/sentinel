@@ -118,7 +118,7 @@ export function legacyLossPhase(
  * The proof's historical review must be the authentic completed H0/B0
  * correction review: exact scope, PR, predecessor head and lost base, the
  * configured trusted reviewer as both expected and observed identity, and at
- * least one unresolved finding severity.
+ * least one unresolved P0/P1 finding.
  */
 export function legacyLossReviewMatches(
   snapshot: RepairStateSnapshotV1,

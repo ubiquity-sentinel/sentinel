@@ -384,6 +384,103 @@ Deno.test(
   },
 );
 Deno.test(
+  "hosted autonomy: evidence expiry never re-admits produced, foreign or refunded admissions",
+  () => {
+    const id = "uncertain-charge";
+    const branch = "sentinel/repair/issue-ubiquity-sentinel-48";
+    const message =
+      "implementation outcome uncertain; awaiting authoritative disposition";
+    const expired = T0 + HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS;
+    const target = {
+      base: BASE,
+      branch,
+      checkpoint: null,
+      head: null,
+      pr: null,
+    };
+    const intent = {
+      kind: "implementation" as const,
+      key: `impl:${id}`,
+      startedAt: T0,
+      branch,
+      expectedHead: null,
+      observedBase: BASE,
+      pr: null,
+      requestId: id,
+      resultId: null,
+    };
+    const record = (overrides: Record<string, unknown> = {}) =>
+      blockedRecord({
+        blocker: { kind: "other", message, since: T0 + 1000 },
+        counters: { attempts: 1, retries: 0, reviewRounds: 0 },
+        target,
+        evidence: [],
+        intent,
+        ...overrides,
+      });
+    const charge = (overrides: Record<string, unknown> = {}) =>
+      reservation(id, {
+        taskId: TARGET,
+        head: BASE,
+        attempt: 1,
+        purpose: "implementation",
+        outcome: "ambiguous",
+        settledAt: T0 + 500,
+        ...overrides,
+      });
+    const grants = (work: unknown, charges: unknown[]) =>
+      planHostedRetries(
+        repairSnapshot([work as never], [], [], charges as never),
+        expired,
+        ATTEMPT_RUNTIME,
+      ).length;
+    assert.equal(grants(record(), [charge()]), 1, "baseline grant");
+    assert.equal(
+      grants(record(), [charge({ purpose: "retry" })]),
+      1,
+      "a retry admission is still an implementation charge",
+    );
+    // A produced candidate is never discarded on age.
+    assert.equal(
+      grants(record({ target: { ...target, head: SHA1 } }), [charge()]),
+      0,
+    );
+    assert.equal(
+      grants(record({ target: { ...target, head: SHA1, pr: 12 } }), [charge()]),
+      0,
+    );
+    // A charge for another task, a submitted or refunded charge, and a
+    // missing charge never prove the uncertain admission.
+    assert.equal(grants(record(), [charge({ taskId: "issue-other" })]), 0);
+    assert.equal(grants(record(), [charge({ outcome: "submitted" })]), 0);
+    assert.equal(
+      grants(record(), [charge({
+        outcome: "confirmed_not_submitted",
+        proofRef: "artifact://proof/not-submitted",
+      })]),
+      0,
+    );
+    assert.equal(grants(record(), []), 0);
+    // Without a retained intent the blocker's own age is the only anchor.
+    assert.equal(
+      planHostedRetries(
+        repairSnapshot([record({ intent: null })], []),
+        T0 + 1000 + HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS - 1,
+        ATTEMPT_RUNTIME,
+      ).length,
+      0,
+    );
+    assert.equal(
+      planHostedRetries(
+        repairSnapshot([record({ intent: null })], []),
+        T0 + 1000 + HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS,
+        ATTEMPT_RUNTIME,
+      ).length,
+      1,
+    );
+  },
+);
+Deno.test(
   "hosted autonomy: a retry keeps the consecutive time-bound exhaustions that drive decomposition",
   () => {
     const record = blockedRecord({

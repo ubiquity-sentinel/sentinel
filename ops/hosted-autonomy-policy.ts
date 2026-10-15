@@ -150,6 +150,14 @@ export const HOSTED_AUTONOMY_TRUSTED_AUTHORS: readonly string[] = [
 ];
 
 /**
+ * Age after which a blocked implementation's producing evidence can no longer
+ * arrive. Matrix plan and cell artifacts are uploaded with `retention-days: 7`
+ * (supervisor.yml), so after eight days no late result can be imported for the
+ * retained admission and its uncertainty can never be resolved by evidence.
+ */
+export const HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS = 8 * 24 * 60 * 60 * 1000;
+
+/**
  * The exact transient blockers the retry pass may clear, with the step the
  * record returns to. A blocker outside this closed set is never touched.
  *
@@ -160,20 +168,16 @@ export const HOSTED_AUTONOMY_TRUSTED_AUTHORS: readonly string[] = [
  * wait. Both return to `review`, where the runtime rehydrates its standing
  * review before any new charge and continues inside its own round allowance.
  */
-/**
- * Age after which a blocked implementation's producing evidence can no longer
- * arrive. Matrix plan and cell artifacts are uploaded with `retention-days: 7`
- * (supervisor.yml), so after eight days no late result can be imported for the
- * retained admission and its uncertainty can never be resolved by evidence.
- */
-export const HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS = 8 * 24 * 60 * 60 * 1000;
-
 export const HOSTED_AUTONOMY_RETRYABLE: readonly {
   readonly prefix: string;
   readonly nextStep: "work" | "review";
   /**
-   * Minimum time the blocker must have stood before a grant. Set only for
-   * uncertain outcomes whose evidence must first be provably expired.
+   * Minimum age of the retained admission's evidence before a grant, measured
+   * from the creation of the exact charge the intent names (the blocker's own
+   * `since` only when no intent is retained). Set only for uncertain outcomes
+   * whose evidence must first be provably expired; `evidenceExpired` also
+   * requires an unproduced record and a settled-ambiguous implementation
+   * charge.
    */
   readonly minBlockedMs?: number;
 }[] = [

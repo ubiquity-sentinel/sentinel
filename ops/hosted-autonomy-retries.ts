@@ -19,7 +19,7 @@ import {
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import { HISTORICAL_C63 } from "./hosted-autonomy-matrix-bindings.ts";
-import { evidenceAnchor } from "./hosted-autonomy-evidence-expiry.ts";
+import { evidenceExpired } from "./hosted-autonomy-evidence-expiry.ts";
 
 /**
  * Durable reservations charged to one task, across every purpose and outcome
@@ -276,10 +276,10 @@ export function planHostedRetries(
       blocker.message.startsWith(item.prefix)
     );
     if (rule === undefined) continue;
-    if (rule.minBlockedMs !== undefined) {
-      const anchor = evidenceAnchor(record, snapshot.reservations);
-      if (anchor === null || now - anchor < rule.minBlockedMs) continue;
-    }
+    if (
+      rule.minBlockedMs !== undefined &&
+      !evidenceExpired(record, snapshot.reservations, now, rule.minBlockedMs)
+    ) continue;
     if (!intentClosable(record, snapshot.reservations)) continue;
     // A work-returning grant only exists to buy another implementation run.
     // Once every review round is spent, that run cannot become a reviewed

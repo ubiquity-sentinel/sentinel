@@ -4,7 +4,6 @@ import {
   buildOwnerDevelopmentInstallSnapshot,
   planOwnerDevelopmentInstall,
 } from "../../src/host/owner-development-install.ts";
-import { OWNER_DEVELOPMENT_INSTALL_STABILIZATION_REVISION } from "../../src/host/owner-install-runtime-pins.ts";
 import {
   EARLY_FRAME_RUNTIME_REVISION,
   LAUNCHER,
@@ -406,7 +405,9 @@ Deno.test(
     }
     assert.equal(
       stabilizationInstall.move.nextRevision,
-      OWNER_DEVELOPMENT_INSTALL_STABILIZATION_REVISION,
+      // The installed generation-75 revision, spelled out so a pin edit
+      // cannot silently move the expectation with it.
+      "da9d6b437b6cb2725deed081b50778b7dc46a9a5",
     );
     assert.equal(stabilizationInstall.move.nextGeneration, 75);
   },

@@ -13,6 +13,7 @@ import { portError, portOk } from "../contracts/ports.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { ReplayRuntimeV1 } from "../replay/runtime.ts";
+import { hasBlockingFindings } from "../repair/loop-review-records.ts";
 import { sameRepository } from "./actions-candidates-shared.ts";
 
 // ---------------------------------------------------------------------------
@@ -101,7 +102,8 @@ export interface ActionsLegacyLossProverInputV1 {
  * The exact historical predecessor correction review: completed with machine-
  * verifiable result/completion identity, bound to the same full repository and
  * PR, the observed predecessor head H0 and the original base B0, reviewed by
- * the trusted reviewer, with nonempty unresolved severities. More than one
+ * the trusted reviewer, with an unresolved P0/P1 finding (a P2/P3-only
+ * review is deliverable and never required a correction). More than one
  * match is resolved deterministically by review id — never by time or list
  * order.
  */
@@ -117,7 +119,7 @@ export function historicalCorrectionReview(
     review.outcome === "completed" &&
     review.resultId !== null &&
     review.completedAt !== null &&
-    review.unresolvedSeverities.length > 0 &&
+    hasBlockingFindings(review) &&
     review.expectedReviewer === reviewer &&
     review.observedReviewer === reviewer &&
     review.pullRequest.number === pr &&
