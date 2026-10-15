@@ -19,10 +19,7 @@ import {
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import { HISTORICAL_C63 } from "./hosted-autonomy-matrix-bindings.ts";
-import {
-  evidenceAnchor,
-  lostCandidateRetry,
-} from "./hosted-autonomy-evidence-expiry.ts";
+import { evidenceAnchor } from "./hosted-autonomy-evidence-expiry.ts";
 
 /**
  * Durable reservations charged to one task, across every purpose and outcome
@@ -206,8 +203,6 @@ export interface RetryPlanV1 {
   advanceBase: boolean;
   /** Exact base observed for an advancing plan. */
   observedBase: string | null;
-  /** Restart from the base: the unrestorable candidate is not carried over. */
-  resetCandidate?: boolean;
   detail: string;
 }
 
@@ -277,20 +272,6 @@ export function planHostedRetries(
       continue;
     }
     if (!Number.isSafeInteger(now)) continue;
-    if (lostCandidateRetry(record, snapshot, now)) {
-      plans.push({
-        id: record.id,
-        repository: record.repository,
-        grant: 0,
-        nextStep: "work",
-        reviewRounds: null,
-        advanceBase: false,
-        observedBase: null,
-        resetCandidate: true,
-        detail: `${blocker.kind}:lost_candidate`,
-      });
-      continue;
-    }
     const rule = HOSTED_AUTONOMY_RETRYABLE.find((item) =>
       blocker.message.startsWith(item.prefix)
     );
@@ -443,18 +424,8 @@ export function applyHostedRetries(
           resultId: null,
         }
         : null;
-      const target = plan.resetCandidate === true
-        ? {
-          base: record.target.base,
-          branch: candidateBranch(record.id),
-          checkpoint: null,
-          head: null,
-          pr: null,
-        }
-        : record.target;
       return {
         ...record,
-        target,
         nextStep: plan.nextStep,
         wait: null,
         blocker: null,

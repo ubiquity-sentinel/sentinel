@@ -168,17 +168,6 @@ export const HOSTED_AUTONOMY_TRUSTED_AUTHORS: readonly string[] = [
  */
 export const HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS = 8 * 24 * 60 * 60 * 1000;
 
-/**
- * Blocked candidate-preservation classes whose candidate can only ever be
- * restored from its producing matrix artifact (the runtime-mismatch recovery
- * and the unresolved preservation uncertainty). Once that artifact is past
- * retention the task restarts; see lostCandidateRetry.
- */
-export const HOSTED_AUTONOMY_LOST_CANDIDATE: readonly string[] = [
-  "authenticated historical matrix runtime mismatch; ",
-  "candidate preservation unresolved; ",
-];
-
 export const HOSTED_AUTONOMY_RETRYABLE: readonly {
   readonly prefix: string;
   readonly nextStep: "work" | "review";
