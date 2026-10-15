@@ -9,6 +9,7 @@ import {
 } from "./attempt-policy.ts";
 import { candidateBranch, implementationIntentKey } from "./keys.ts";
 import {
+  CHECK_POLL_MS,
   checkGithubCooldown,
   cooldownProofRef,
   implementationModelId,
@@ -278,12 +279,14 @@ export async function prepareImplementationStart(
     reservation.status === "ambiguous" ||
     reservation.status === "unavailable"
   ) {
+    // Re-attempted after one poll: an admission that was in fact recorded is
+    // then refused as a duplicate (never a second start), never parked.
     return persistWork(
       deps,
       context,
       setWait(
         record,
-        { reason: "unavailable", since: now, until: null },
+        { reason: "unavailable", since: now, until: now + CHECK_POLL_MS },
         now,
       ),
     );

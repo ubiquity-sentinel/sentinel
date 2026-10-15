@@ -452,13 +452,15 @@ export async function reconcileMergeIntent(
   }
   const pull = pr.value;
   if (pull === null) {
+    // An unobservable pull request is re-read after one poll, never parked.
+    const at = deps.clock.now();
     return persistWork(
       deps,
       context,
       setWait(
         record,
-        { reason: "unavailable", since: deps.clock.now(), until: null },
-        deps.clock.now(),
+        { reason: "unavailable", since: at, until: at + CHECK_POLL_MS },
+        at,
       ),
     );
   }
