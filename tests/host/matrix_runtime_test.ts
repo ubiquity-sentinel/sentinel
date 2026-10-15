@@ -1,3 +1,4 @@
+import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 /** Trusted provider routes and charged interrupted-output refusal. */
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
@@ -248,7 +249,11 @@ Deno.test("matrix runtime: authenticated interrupted output overage stays charge
     );
     const read = await rig.store.readRepair();
     assert.ok(read.ok && read.value.status === "found");
-    const retries = planHostedRetries(read.value.snapshot, rig.clock.now());
+    const retries = planHostedRetries(
+      read.value.snapshot,
+      rig.clock.now(),
+      ATTEMPT_RUNTIME,
+    );
     assert.equal(retries.length, 1);
     const retried = await rig.store.writeRepair(
       applyHostedRetries(

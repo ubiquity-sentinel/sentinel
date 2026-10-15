@@ -19,6 +19,7 @@ import { SystemClock } from "../contracts/ports.ts";
 import type { GitHubCooldownGateV1, GitHubPort } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { RepairCycleOutcomeV1 } from "../repair/loop.ts";
+import { DEFAULT_STEP_LIMIT } from "../repair/loop-bounds.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import { RollingStartBudget } from "../budget/mod.ts";
 import { HostedRepairCooldownGate } from "./hosted-cooldown.ts";
@@ -718,7 +719,9 @@ export async function runActionsRepairHost(
       budget,
       deadline,
       runOrigin,
-      stepLimit: STEP_LIMIT,
+      stepLimit: execution.purpose === "bootstrap"
+        ? DEFAULT_STEP_LIMIT
+        : STEP_LIMIT,
       // Only an ordinary hosted execution may start a model. Bootstrap, prior,
       // candidate and rollback runs execute the deterministic entrypoint with
       // no model starts while keeping every budget, limit and source behavior.

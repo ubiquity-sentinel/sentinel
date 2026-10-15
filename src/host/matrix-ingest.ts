@@ -280,7 +280,7 @@ export async function ingestMatrixResults(
         continue;
       }
       const step = await settleFailedImplementation(
-        deps,
+        { ...deps, controllerSha: cell.runtimeSha },
         context,
         record,
         cell.reservationId,
@@ -343,7 +343,7 @@ export async function ingestMatrixResults(
         }
       }
       const step = await handleModelReceipt(
-        deps,
+        { ...deps, controllerSha: cell.runtimeSha },
         context,
         record,
         cell.reservationId,
@@ -362,7 +362,7 @@ export async function ingestMatrixResults(
       const failureDetail = result.detail ??
         "matrix cell produced no trusted receipt";
       const step = await settleFailedImplementation(
-        deps,
+        { ...deps, controllerSha: cell.runtimeSha },
         context,
         record,
         cell.reservationId,

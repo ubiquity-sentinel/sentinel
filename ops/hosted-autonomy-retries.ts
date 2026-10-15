@@ -3,7 +3,7 @@ import {
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
 import { attemptEquivalenceRefusalForRecordV1 } from "../src/repair/attempt-policy.ts";
-import type { GitSha } from "../src/contracts/brands.ts";
+import { type GitSha, isGitSha } from "../src/contracts/brands.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import {
   candidateBranch,
@@ -11,7 +11,6 @@ import {
   reviewOperationKey,
 } from "../src/repair/keys.ts";
 import {
-  HOSTED_AUTONOMY_MAX_IMPLEMENTATION_ATTEMPTS,
   HOSTED_AUTONOMY_MAX_RETRIES,
   HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS,
   HOSTED_AUTONOMY_RETRYABLE,
@@ -159,10 +158,31 @@ export function plannedReviewRounds(
   return rounds;
 }
 
+/** Existing charges bound this finite monotonic implementation-index scan. */
+function implementationAttemptFloor(
+  snapshot: RepairStateSnapshotV1,
+  record: RepairStateSnapshotV1["work"][number],
+): number {
+  let floor = record.counters.attempts;
+  for (const reservation of snapshot.reservations) {
+    if (
+      reservation.taskId !== record.id ||
+      !sameRepository(reservation.repository, record.repository)
+    ) continue;
+    if (
+      reservation.purpose !== "implementation" &&
+      reservation.purpose !== "retry"
+    ) continue;
+    floor = Math.max(floor, reservation.attempt);
+  }
+  return floor;
+}
+
 export interface RetryPlanV1 {
   id: string;
   /** The exact repository scope this plan belongs to. */
   repository: RepositoryIdentityV1;
+  /** Retained API shape; implementation retries use zero and never lower history. */
   grant: number;
   nextStep: "work" | "review";
   /**
@@ -175,13 +195,9 @@ export interface RetryPlanV1 {
    */
   reviewRounds: number | null;
   /**
-   * True when every identity at the record's CURRENT base is already
-   * charged, so the only way to admit another attempt is the runtime's own
-   * deterministic base refresh: the plan persists that intent and the loop
-   * republishes the candidate on the newest base, which gives fresh
-   * reservation identities. A review-returning plan advances the base for the
-   * same reason once every review identity inside the runtime's own round
-   * allowance is spent at the current head.
+   * A verified newer target base is reconciled through the existing refresh
+   * intent. Review-returning plans still require this once their current-head
+   * review identities are exhausted; implementation indices stay monotonic.
    */
   advanceBase: boolean;
   /** Exact base observed for an advancing plan. */
@@ -191,7 +207,7 @@ export interface RetryPlanV1 {
 
 /**
  * Bounded, closed retry planning for one snapshot. Every returned plan has an
- * unused next-attempt identity, respects every attempt ceiling and stays inside
+ * unused next-attempt identity, respects memory/review limits and stays inside
  * the per-task automatic-retry budget.
  *
  * `baseTips` is keyed by `hostedRepositoryKey`: each record is planned against
@@ -212,10 +228,13 @@ export interface RetryDenialV1 {
 export function planHostedRetries(
   snapshot: RepairStateSnapshotV1,
   now: number,
+  /** Authenticated installed runtime from the authoritative release snapshot. */
+  runtimeSha: GitSha,
   baseTips: ReadonlyMap<string, string | null> = new Map(),
   closedIssues: ReadonlySet<string> = new Set(),
   onDenied?: (denial: RetryDenialV1) => void,
 ): RetryPlanV1[] {
+  if (!isGitSha(runtimeSha)) return [];
   const plans: RetryPlanV1[] = [];
   for (const record of snapshot.work) {
     if (record.nextStep !== "blocked") continue;
@@ -284,6 +303,7 @@ export function planHostedRetries(
           record,
           snapshot,
           now,
+          runtimeSha,
         });
         if (equivalence.refuse) {
           onDenied?.({
@@ -341,80 +361,22 @@ export function planHostedRetries(
       });
       continue;
     }
-    const attempts = record.counters.attempts;
-    let grant: number | null = null;
-    for (
-      let candidate = 0;
-      candidate <= 3 && candidate <= attempts;
-      candidate++
-    ) {
-      const remaining = attempts - candidate;
-      // No work-returning grant may land at or above the runtime's own
-      // implementation ceiling: admission there is refused outright, so such a
-      // grant would only re-block the record instead of buying a run.
-      if (remaining >= HOSTED_AUTONOMY_MAX_IMPLEMENTATION_ATTEMPTS) {
-        continue;
-      }
-      // The identity the runtime will charge is fixed by the counters AFTER
-      // this grant: the loop admits corrections with purpose `retry`, and only
-      // a zero-attempt record is admitted as `implementation`.
-      const purpose = remaining === 0 ? "implementation" : "retry";
-      if (
-        usedAttempts(snapshot, record.id, base, purpose).has(remaining + 1)
-      ) {
-        continue;
-      }
-      // The frozen record invariant is `retries <= attempts`, and this pass
-      // only lowers attempts (the preserved `retries` counter is history), so a
-      // grant is valid only while it does not cut attempts below retries.
-      if (record.counters.retries > remaining) continue;
-      grant = candidate;
-      break;
-    }
-    if (grant === null) {
-      // Every attempt number at this base is charged. The runtime's own base
-      // refresh is what gives an unused identity.
-      const pr = record.target.pr;
-      const head = record.target.head;
-      const branch = record.target.branch;
-      if (
-        pr === null || head === null ||
-        branch === null || baseTip === null || baseTip === base
-      ) {
-        continue;
-      }
-      const ceilingGrant = attempts -
-        (HOSTED_AUTONOMY_MAX_IMPLEMENTATION_ATTEMPTS - 1);
-      if (ceilingGrant < 0 || ceilingGrant > 3) continue;
-      if (
-        attempts - ceilingGrant >= HOSTED_AUTONOMY_MAX_IMPLEMENTATION_ATTEMPTS
-      ) {
-        continue;
-      }
-      // Same invariant: the grant lowers attempts, so the preserved retries
-      // counter must still fit under the lowered ceiling.
-      if (record.counters.retries > attempts - ceilingGrant) continue;
-      plans.push({
-        id: record.id,
-        repository: record.repository,
-        grant: ceilingGrant,
-        nextStep: "work",
-        reviewRounds: null,
-        advanceBase: true,
-        observedBase: baseTip,
-        detail: `${blocker.kind}:${rule.prefix}:base-advance`,
-      });
-      continue;
-    }
+    // The runtime retired the four-attempt ceiling. Do not lower history or
+    // search its old indices: the next start uses an unused monotonic index.
+    const floor = implementationAttemptFloor(snapshot, record);
+    if (!Number.isSafeInteger(floor + 1)) continue;
+    const advancing = baseTip !== null && baseTip !== base;
     plans.push({
       id: record.id,
       repository: record.repository,
-      grant,
+      grant: 0,
       nextStep: "work",
       reviewRounds: null,
-      advanceBase: false,
-      observedBase: null,
-      detail: `${blocker.kind}:${rule.prefix}`,
+      advanceBase: advancing,
+      observedBase: advancing ? baseTip : null,
+      detail: `${blocker.kind}:${rule.prefix}${
+        advancing ? ":base-advance" : ""
+      }`,
     });
   }
   return plans;
@@ -436,6 +398,11 @@ export function applyHostedRetries(
     work: snapshot.work.map((record) => {
       const plan = byId.get(record.id);
       if (plan === undefined) return record;
+      if (plan.nextStep === "work" && plan.grant !== 0) {
+        throw new TypeError(
+          "implementation retry cannot lower charged attempt history",
+        );
+      }
       const refresh = plan.advanceBase && plan.observedBase !== null &&
           record.target.pr !== null && record.target.head !== null &&
           record.target.branch !== null
@@ -459,12 +426,11 @@ export function applyHostedRetries(
         blocker: null,
         intent: refresh,
         counters: {
-          // Only the attempt ceiling moves: the grant buys an unused identity
-          // by lowering attempts, while the preserved `retries` counter (and
-          // every other counter) stays exactly as it was. A review-returning
-          // plan carries its computed floor, which is only ever at or above the
-          // current counter — never a reset.
-          attempts: record.counters.attempts - plan.grant,
+          // Reconcile a legacy lowered counter to actual charged indices.
+          // The next reservation stays counters.attempts + 1, never reused.
+          attempts: plan.nextStep === "work"
+            ? implementationAttemptFloor(snapshot, record)
+            : record.counters.attempts - plan.grant,
           retries: record.counters.retries,
           reviewRounds: plan.reviewRounds ?? record.counters.reviewRounds,
         },

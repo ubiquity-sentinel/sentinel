@@ -4,6 +4,8 @@ import type {
 } from "../src/contracts/ports.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
+import { HOSTED_RUNTIME_ID } from "../src/contracts/hosted-supervisor.ts";
+import { parseReleaseStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
@@ -143,6 +145,20 @@ export async function runHostedRetryPass(
   );
   if (disposition !== null) return disposition;
 
+  // Maintenance runs from the protected launcher, which need not be the
+  // installed runtime. Only the authenticated release pointer supplies it.
+  let runtimeSha: GitSha | null = null;
+  try {
+    runtimeSha = parseReleaseStateSnapshotV1(context.releaseSnapshot)
+      .hostedRuntimes.find((runtime) => runtime.id === HOSTED_RUNTIME_ID)
+      ?.activeRevision ?? null;
+  } catch {
+    // Invalid/missing runtime custody never falls back to checkout or origin.
+  }
+  if (runtimeSha === null) {
+    return skipped("release_not_terminal", observedHead, actions);
+  }
+
   // ---- retry pass ---------------------------------------------------------
   // A task whose pull request is already merged or closed is delivered or
   // abandoned: retrying it would only spend model starts on a branch that can
@@ -165,6 +181,7 @@ export async function runHostedRetryPass(
   const planned = planHostedRetries(
     snapshot,
     deps.clock.now(),
+    runtimeSha,
     retryTips,
     closedIssues,
     (denial) => {

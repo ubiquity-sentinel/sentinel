@@ -20,7 +20,7 @@ import {
 import { concurrencyInstallerFixture } from "./owner-install-fixture.ts";
 
 // Exact literals keep the original-base RED a semantic failure, not an import failure.
-const STABILIZATION = "c8d2e87468399abb54cc9d9a749ae7b400835bbb" as GitSha;
+const STABILIZATION = "da9d6b437b6cb2725deed081b50778b7dc46a9a5" as GitSha;
 const PRIOR = MISMATCH_DISPOSITION_RUNTIME_REVISION;
 
 function healthyPrior(): ReleaseStateSnapshotV1 {

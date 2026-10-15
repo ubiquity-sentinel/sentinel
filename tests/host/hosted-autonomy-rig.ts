@@ -1,4 +1,5 @@
 import { MemoryState } from "../repair/helpers.ts";
+import { HOSTED_RUNTIME_ID } from "../../src/contracts/hosted-supervisor.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type {
   PortResultV1,
@@ -112,6 +113,7 @@ export function repairSnapshot(
 
 export function releaseSnapshot(
   hostedReleases: unknown[] = [],
+  runtimeSha: GitSha | null = SHA1,
 ): ReleaseStateSnapshotV1 {
   return parseReleaseStateSnapshotV1({
     version: "v1",
@@ -120,7 +122,19 @@ export function releaseSnapshot(
     sequence: 1,
     updatedAt: T0,
     releases: [],
-    hostedRuntimes: [],
+    hostedRuntimes: runtimeSha === null ? [] : [{
+      version: "v1",
+      kind: "hosted_runtime",
+      id: HOSTED_RUNTIME_ID,
+      activeRevision: runtimeSha,
+      generation: 1,
+      lastHealthyProof: null,
+      lastExecutionProof: null,
+      nextOrdinaryAt: T0,
+      execution: null,
+      createdAt: T0,
+      updatedAt: T0,
+    }],
     hostedReleases,
     githubCooldowns: [],
   });

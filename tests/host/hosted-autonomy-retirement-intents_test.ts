@@ -1,3 +1,4 @@
+import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 import assert from "node:assert/strict";
 import {
   applyHostedRetirements,
@@ -54,7 +55,10 @@ Deno.test(
     assert.equal(parked.nextStep, "blocked");
     assert.equal(parked.blocker?.message, HOSTED_AUTONOMY_RETIRED);
     // The retirement reason matches no retryable prefix.
-    assert.equal(planHostedRetries(next, T0 + 900000).length, 0);
+    assert.equal(
+      planHostedRetries(next, T0 + 900000, ATTEMPT_RUNTIME).length,
+      0,
+    );
   },
 );
 
@@ -239,7 +243,10 @@ Deno.test(
         }),
       ],
     );
-    assert.equal(planHostedRetries(unsettled, T0 + 5000).length, 0);
+    assert.equal(
+      planHostedRetries(unsettled, T0 + 5000, ATTEMPT_RUNTIME).length,
+      0,
+    );
 
     const settled = repairSnapshot(
       [
@@ -275,6 +282,7 @@ Deno.test(
       planHostedRetries(
         settled,
         T0 + 5000,
+        ATTEMPT_RUNTIME,
       ).length,
       1,
     );

@@ -851,7 +851,7 @@ Deno.test(
     }
     assert.equal(
       dispositionComplete.move.nextRevision,
-      "c8d2e87468399abb54cc9d9a749ae7b400835bbb",
+      "da9d6b437b6cb2725deed081b50778b7dc46a9a5",
     );
     assert.equal(dispositionComplete.move.nextGeneration, 75);
   },
