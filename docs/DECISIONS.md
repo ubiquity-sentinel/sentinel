@@ -114,6 +114,14 @@ Use fast module checks and directly affected production-consumer boundaries with
 
 Preserve candidate durability, exact reviewed heads, independent state/promotion ownership, healthy prior identity and exact rollback. Gateway deployment follows its current trusted VPS contract; Deno target receipts cannot establish VPS delivery. Finite encrypted evidence retention, objective telemetry and uninterrupted acceptance coverage remain activation requirements in [activation-checklist.md](activation-checklist.md).
 
+## Frozen Bun reader compatibility
+
+The 2026-10-15 gateway deployment prerequisite permits a trusted, exact-source registry to select the frozen causal reader's runtime. Legacy captures retain their recorded Git SHA and Deno binding. Bun captures require the pinned Linux ARM64 Bun binary, authenticated schema-3 artifact, lockfile and dependency/native graphs, and the fixed pre-import confinement bootstrap. Unknown bindings or unsupported platforms refuse; dotenv loading and dependency installation remain disabled.
+
+The Bun reader applies the existing gateway Landlock/seccomp helper before importing captured source and verifies source, helper, configuration and graph identity at every launch. Acceptance requires the actual original/composed causal pair, production `prepareReplayRequest` proof consumption, and native read/write/network/process denial evidence bound to the selected final gateway artifact. This prerequisite does not change repaired-candidate execution, target policy, model routing or Sentinel runtime promotion; the broader recovery task remains paused.
+
+Sanitized v2 upstream attempts use a fixed positive synthetic clock origin of 1 because the frozen gateway reader rejects zero absolute attempt timestamps. Preserve relative durations, chunk offsets and null fields, and refuse unsafe integer results. New fixture digests describe the new canonical bytes; existing stored refs, proofs and captured-source identities are never rewritten, and a recomposition mismatch continues to refuse.
+
 ## Historical retry disposition (consumed)
 
 The sixteen historical retry admissions stuck by the missing-artifact matrix wave 37354374590 are consumed. All sixteen bound retry reservations settled `ambiguous` on 2026-10-09, the records were re-admitted, and issue 398 and issue 541 were delivered by the runtime and closed (PRs 955 and 958); the remaining entries carry their own fresh intents or blockers. [ops/historical-retry-disposition.ts](../ops/historical-retry-disposition.ts) reports `already_applied` and writes nothing once every bound reservation is settled `ambiguous`, regardless of later record movement, and the one-shot maintenance step was removed from [supervisor.yml](../.github/workflows/supervisor.yml).

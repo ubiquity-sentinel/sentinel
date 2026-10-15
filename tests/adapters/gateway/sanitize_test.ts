@@ -658,9 +658,9 @@ Deno.test("sanitize: eof, read_error, cancelled and headerless fetch_error termi
     headers: {},
     headers_truncated: false,
     chunk_times_ms: [],
-    started_at_ms: 0,
+    started_at_ms: 1,
     headers_at_ms: null,
-    ended_at_ms: 0,
+    ended_at_ms: 1,
     provider: "chatgpt_codex",
     status: null,
     content_type: null,
@@ -687,9 +687,9 @@ Deno.test("sanitize: valid bodyless 204/205/304 responses stay bodyless", async 
       headers: {},
       headers_truncated: false,
       chunk_times_ms: [],
-      started_at_ms: 0,
-      headers_at_ms: 0,
-      ended_at_ms: 0,
+      started_at_ms: 1,
+      headers_at_ms: 1,
+      ended_at_ms: 1,
       provider: "chatgpt_codex",
       status,
       content_type: "other",
@@ -697,6 +697,75 @@ Deno.test("sanitize: valid bodyless 204/205/304 responses stay bodyless", async 
       terminal: "eof",
     });
   }
+});
+
+Deno.test("sanitize: positive synthetic clocks preserve privacy, offsets, nulls and safe integers", async () => {
+  const sanitizeAttempt = async (attempt: RetainedGatewayUpstreamAttemptV1) =>
+    await sanitizeGatewayReplay(
+      makeCapture(textBytes(JSON.stringify(RESPONSES_REQUEST)), {
+        upstream: makeTrace([attempt]),
+      }),
+      POLICY,
+    );
+  const timed = (start: number) =>
+    makeAttempt({
+      status: 200,
+      content_type: "text/event-stream",
+      chunks: [b64(textBytes(responsesSseText()))],
+      chunk_times_ms: [7],
+      terminal: "eof",
+      started_at_ms: start,
+      headers_at_ms: start + 3,
+      ended_at_ms: start + 20,
+    });
+  const first = await sanitizeAttempt(timed(1_000_000));
+  const later = await sanitizeAttempt(timed(2_000_000));
+  const nearMaximum = await sanitizeAttempt(
+    timed(Number.MAX_SAFE_INTEGER - 20),
+  );
+  assert.ok(first.ok && later.ok && nearMaximum.ok);
+  const out = first.value.fixture.upstream.attempts[0]!;
+  assert.equal(out.started_at_ms, 1);
+  assert.equal(out.headers_at_ms, 4);
+  assert.equal(out.ended_at_ms, 21);
+  assert.deepEqual(out.chunk_times_ms, [7]);
+  assert.deepEqual(later.value.fixture.upstream, first.value.fixture.upstream);
+  assert.deepEqual(
+    nearMaximum.value.fixture.upstream,
+    first.value.fixture.upstream,
+  );
+  const beforeHeaders = await sanitizeAttempt(makeAttempt({
+    terminal: "fetch_error",
+    started_at_ms: Number.MAX_SAFE_INTEGER,
+    headers_at_ms: null,
+    ended_at_ms: Number.MAX_SAFE_INTEGER,
+  }));
+  assert.ok(beforeHeaders.ok);
+  assert.equal(
+    beforeHeaders.value.fixture.upstream.attempts[0]!.headers_at_ms,
+    null,
+  );
+  assert.equal(
+    beforeHeaders.value.fixture.upstream.attempts[0]!.ended_at_ms,
+    1,
+  );
+  const maximumHeader = await sanitizeAttempt({
+    ...timed(Number.MAX_SAFE_INTEGER - 20),
+    chunk_times_ms: [20],
+    headers_at_ms: Number.MAX_SAFE_INTEGER,
+    ended_at_ms: Number.MAX_SAFE_INTEGER,
+  });
+  assert.ok(maximumHeader.ok);
+  assert.equal(
+    maximumHeader.value.fixture.upstream.attempts[0]!.headers_at_ms,
+    21,
+  );
+  const overflowingHeader = await sanitizeAttempt({
+    ...timed(0),
+    headers_at_ms: Number.MAX_SAFE_INTEGER,
+    ended_at_ms: Number.MAX_SAFE_INTEGER,
+  });
+  assert.equal(overflowingHeader.ok, false);
 });
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,18 @@ import type { GatewayCausalProofV1 } from "./causal-proof.ts";
 import type { ExpectedFailureV1, ReplayFixtureEntryV1 } from "./fixture.ts";
 import type { ReplayIsolationCapabilityV1 } from "./isolation-capability.ts";
 import type { ReplayRuntimeV1 } from "./runtime.ts";
+import type { BunFrozenReaderBindingV1 } from "./bun-frozen-reader.ts";
+import type { ReplayDependencyCacheV1 } from "./dependency-cache.ts";
+
+/** Host-owned exact-source selection; never capture-supplied commands. */
+export type GatewayCausalReaderBindingV1 =
+  | {
+    kind: "deno";
+    sourceSha: string;
+    denoPath: string;
+    dependencyCache?: ReplayDependencyCacheV1;
+  }
+  | BunFrozenReaderBindingV1;
 
 /**
  * Trusted causal-proof verifier input. The private capture is consumed in
@@ -62,6 +74,8 @@ export interface GatewayLocalCausalVerifierOptionsV1 {
   consumerUpstreamPath: string;
   /** Installed Deno binary (absolute path; trusted host input). */
   denoPath: string;
+  /** An explicit registry refuses every source SHA absent from the registry. */
+  readerBindings?: readonly GatewayCausalReaderBindingV1[];
   /** Wall-clock bound for one consumer execution. */
   maxDurationMs: number;
   /** Combined retained output bound for one consumer execution. */

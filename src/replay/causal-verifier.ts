@@ -17,6 +17,12 @@ import type {
   GatewayLocalCausalVerifierOptionsV1,
 } from "./causal-verifier-contracts.ts";
 import { CausalVerifierExecution } from "./causal-verifier-execution.ts";
+import type { PreparedCausalReaderV1 } from "./causal-verifier-execution.ts";
+import {
+  materializeBunReaderSnapshot,
+  prepareBunFrozenReader,
+} from "./bun-frozen-reader.ts";
+import { BUN_READER_PREFLIGHT_STDOUT } from "./bun-reader-bootstrap.ts";
 import {
   buildSentinelReplayInputMetadata,
   SENTINEL_REPLAY_INPUT_PATH,
@@ -218,9 +224,10 @@ export class GatewayLocalCausalVerifier implements GatewayCausalVerifierV1 {
     } else if (this.execution.isolationRunner === null) {
       return null;
     }
-    let denoResolved: string;
+    let reader: PreparedCausalReaderV1 | null;
     try {
-      denoResolved = await Deno.realPath(this.options.denoPath);
+      reader = await this.execution.selectReader(originalSha);
+      if (reader === null) return null;
     } catch {
       return null;
     }
@@ -245,8 +252,26 @@ export class GatewayLocalCausalVerifier implements GatewayCausalVerifierV1 {
       // Two INDEPENDENT exact-original-SHA snapshots (two full --no-local
       // clones; never the shared source working directory). Each run gets
       // its OWN home/cache; no cache is shared between the two executions.
-      await this.execution.cloneAt(taskDir, originalDir, originalSha);
-      await this.execution.cloneAt(taskDir, sanitizedDir, originalSha);
+      if (reader.kind === "bun") {
+        await materializeBunReaderSnapshot(reader, originalDir);
+        await materializeBunReaderSnapshot(reader, sanitizedDir);
+        const preflight = await this.execution.preflightBunReader(
+          originalDir,
+          reader,
+        );
+        if (!runSettled(preflight)) {
+          if (uncertainRun(preflight)) preserveScratch = true;
+          return null;
+        }
+        if (
+          preflight.exitCode !== 0 || preflight.truncated ||
+          preflight.stderr.byteLength !== 0 ||
+          decodeFatal(preflight.stdout) !== BUN_READER_PREFLIGHT_STDOUT
+        ) return null;
+      } else {
+        await this.execution.cloneAt(taskDir, originalDir, originalSha);
+        await this.execution.cloneAt(taskDir, sanitizedDir, originalSha);
+      }
 
       // The trusted consumer must exist at the exact original SHA as a regular
       // file (never a symlink), and the WHOLE snapshot preflight — the fixed
@@ -319,7 +344,7 @@ export class GatewayLocalCausalVerifier implements GatewayCausalVerifierV1 {
       const originalRun = await this.execution.runConsumer(
         originalDir,
         originalHome,
-        denoResolved,
+        reader,
       );
       if (!runSettled(originalRun)) {
         // Unsettled original run: abort BEFORE the sanitized execution and
@@ -339,7 +364,7 @@ export class GatewayLocalCausalVerifier implements GatewayCausalVerifierV1 {
       const sanitizedRun = await this.execution.runConsumer(
         sanitizedDir,
         sanitizedHome,
-        denoResolved,
+        reader,
       );
       if (!runSettled(sanitizedRun)) {
         if (uncertainRun(sanitizedRun)) preserveScratch = true;
@@ -352,6 +377,7 @@ export class GatewayLocalCausalVerifier implements GatewayCausalVerifierV1 {
       if (sanitizedObservation === null) {
         return null;
       }
+      if (reader.kind === "bun") await prepareBunFrozenReader(reader.binding);
 
       const expectedFailureIdentity = await deriveExpectedFailureIdentity(
         input.expectedFailure,

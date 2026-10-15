@@ -409,6 +409,17 @@ function transformAttempt(
   if (metadata === null || outChunks.length > metadata.chunk_times_ms.length) {
     failUpstream();
   }
+  // A fixed positive epoch hides recorded wall time and satisfies the frozen reader.
+  const headersAtMs = metadata.headers_at_ms === null
+    ? null
+    : 1 + (metadata.headers_at_ms - metadata.started_at_ms);
+  const endedAtMs = metadata.ended_at_ms === null
+    ? null
+    : 1 + (metadata.ended_at_ms - metadata.started_at_ms);
+  if (
+    (headersAtMs !== null && !Number.isSafeInteger(headersAtMs)) ||
+    (endedAtMs !== null && !Number.isSafeInteger(endedAtMs))
+  ) failUpstream();
   const headers: Record<string, string> = {};
   let headersTruncated = metadata.headers_truncated;
   for (const [name, value] of Object.entries(metadata.headers)) {
@@ -432,13 +443,9 @@ function transformAttempt(
     headers,
     headers_truncated: headersTruncated,
     chunk_times_ms: metadata.chunk_times_ms.slice(0, outChunks.length),
-    started_at_ms: 0,
-    headers_at_ms: metadata.headers_at_ms === null
-      ? null
-      : metadata.headers_at_ms - metadata.started_at_ms,
-    ended_at_ms: metadata.ended_at_ms === null
-      ? null
-      : metadata.ended_at_ms - metadata.started_at_ms,
+    started_at_ms: 1,
+    headers_at_ms: headersAtMs,
+    ended_at_ms: endedAtMs,
     provider,
     status,
     content_type: contentType,

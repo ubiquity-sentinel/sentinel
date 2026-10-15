@@ -8,7 +8,19 @@ import type {
   ReplayCommandResultV1,
   ReplayRuntimeV1,
 } from "./runtime.ts";
-import type { GatewayLocalCausalVerifierOptionsV1 } from "./causal-verifier-contracts.ts";
+import type {
+  GatewayCausalReaderBindingV1,
+  GatewayLocalCausalVerifierOptionsV1,
+} from "./causal-verifier-contracts.ts";
+import {
+  prepareBunFrozenReader,
+  type PreparedBunReaderV1,
+  verifyBunReaderBootstrap,
+} from "./bun-frozen-reader.ts";
+import {
+  BUN_READER_BOOTSTRAP_PATH,
+  BUN_READER_PREFLIGHT_PATH,
+} from "./bun-reader-bootstrap.ts";
 import {
   CAUSAL_CONSUMER_PATH,
   CAUSAL_SANDBOX_EXEC_PATH,
@@ -53,9 +65,14 @@ const GIT_OUTPUT_BYTES = 64 * 1024;
 const MAX_LIMIT_MS = 600_000;
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
+export type PreparedCausalReaderV1 =
+  | { kind: "deno"; executable: string }
+  | PreparedBunReaderV1;
+
 export class CausalVerifierExecution {
   private readonly path: string;
   private readonly runtime: ReplayRuntimeV1;
+  private readonly readerBindings?: readonly GatewayCausalReaderBindingV1[];
   readonly sandboxExecPath: string;
   readonly osName: string;
   /**
@@ -197,6 +214,63 @@ export class CausalVerifierExecution {
       validateReplayIsolationCapability(options.isolation)?.run ?? null;
     this.path = Deno.env.get("PATH") ?? "/usr/bin:/bin";
     this.runtime = options.runtime ?? new DenoReplayRuntime(this.path);
+    this.readerBindings = options.readerBindings === undefined
+      ? undefined
+      : structuredClone(options.readerBindings);
+    if (
+      this.readerBindings !== undefined &&
+      (this.readerBindings.length === 0 ||
+        new Set(this.readerBindings.map((reader) => reader.sourceSha)).size !==
+          this.readerBindings.length)
+    ) {
+      throw new TypeError(
+        "causal reader registry must contain unique exact sources",
+      );
+    }
+  }
+
+  /** Resolve once before private writes; explicit registries never fall back. */
+  async selectReader(
+    sourceSha: GitSha,
+  ): Promise<PreparedCausalReaderV1 | null> {
+    const binding = this.readerBindings?.find((reader) =>
+      reader.sourceSha === sourceSha
+    );
+    if (this.readerBindings !== undefined && binding === undefined) return null;
+    if (binding?.kind === "bun") {
+      if (this.osName !== "linux") return null;
+      return await prepareBunFrozenReader(binding);
+    }
+    if (binding !== undefined && binding.kind !== "deno") return null;
+    const executable = await Deno.realPath(
+      binding?.denoPath ?? this.options.denoPath,
+    );
+    if (!(await Deno.stat(executable)).isFile) return null;
+    return { kind: "deno", executable };
+  }
+
+  /** A real confined public child establishes ABI/TSYNC before private fixture writes. */
+  async preflightBunReader(
+    snapshotDir: string,
+    reader: PreparedBunReaderV1,
+  ): Promise<ReplayCommandResultV1> {
+    if (this.osName !== "linux" || this.isolationRunner === null) {
+      throw new Error("Bun causal reader requires its Linux boundary");
+    }
+    await verifyBunReaderBootstrap(snapshotDir, reader, true);
+    return await this.isolationRunner({
+      executable: reader.binding.runtime.path,
+      args: [
+        "--no-env-file",
+        "--no-install",
+        "run",
+        `${snapshotDir}/${BUN_READER_PREFLIGHT_PATH}`,
+      ],
+      cwd: snapshotDir,
+      env: { BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0", NO_COLOR: "1" },
+      maxDurationMs: Math.min(this.options.maxDurationMs, 10_000),
+      maxOutputBytes: 4096,
+    }, "read-only");
   }
 
   async cloneAt(
@@ -265,8 +339,28 @@ export class CausalVerifierExecution {
   async runConsumer(
     snapshotDir: string,
     homeDir: string,
-    denoResolved: string,
+    reader: PreparedCausalReaderV1,
   ): Promise<ReplayCommandResultV1> {
+    if (reader.kind === "bun") {
+      if (this.osName !== "linux" || this.isolationRunner === null) {
+        throw new Error("Bun causal reader requires its Linux boundary");
+      }
+      await verifyBunReaderBootstrap(snapshotDir, reader);
+      return await this.isolationRunner({
+        executable: reader.binding.runtime.path,
+        args: [
+          "--no-env-file",
+          "--no-install",
+          "run",
+          `${snapshotDir}/${BUN_READER_BOOTSTRAP_PATH}`,
+        ],
+        cwd: snapshotDir,
+        env: { BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0", NO_COLOR: "1" },
+        maxDurationMs: this.options.maxDurationMs,
+        maxOutputBytes: this.options.maxOutputBytes,
+      }, "read-only");
+    }
+    const denoResolved = reader.executable;
     const fixedArgs = [
       "run",
       "--no-prompt",

@@ -31,6 +31,8 @@ import {
   parseObserveReplayKey,
 } from "../observe-main.ts";
 import { GatewayLocalCausalVerifier } from "../replay/causal-verifier.ts";
+import type { GatewayCausalReaderBindingV1 } from "../replay/causal-verifier-contracts.ts";
+import { prepareBunFrozenReader } from "../replay/bun-frozen-reader.ts";
 import {
   materializeDependencyCache,
   removeDependencyRun,
@@ -58,7 +60,9 @@ export interface TrustedGatewayRuntimeV1 {
     /** A supplied backend is used by BOTH capture and replay without substitution. */
     store?: ArtifactStoreV1;
   };
-  dependencyCache: ReplayDependencyCacheV1;
+  dependencyCache?: ReplayDependencyCacheV1;
+  /** Explicit trusted exact-source registry. An unmatched capture never falls back. */
+  readerBindings?: readonly GatewayCausalReaderBindingV1[];
   sanitizer: GatewaySanitizerPolicyV1;
   replayPolicy: ReplayPolicyV1;
   testIds: readonly string[];
@@ -151,7 +155,12 @@ export async function createTrustedGatewayCapabilities(input: {
     validateTarget(config, prepared);
     const authority = {
       ...input.authority,
-      dependencyCache: { ...input.authority.dependencyCache },
+      dependencyCache: input.authority.dependencyCache === undefined
+        ? undefined
+        : { ...input.authority.dependencyCache },
+      readerBindings: input.authority.readerBindings === undefined
+        ? undefined
+        : structuredClone(input.authority.readerBindings),
       testIds: [...input.authority.testIds],
       replayPolicy: {
         ...input.authority.replayPolicy,
@@ -200,28 +209,70 @@ export async function createTrustedGatewayCapabilities(input: {
         "https://github.com/ubiquity/ai.ubq.fi.git"
     ) return portError("invalid", UNAVAILABLE);
     // Verify the actual pinned bytes, protected inputs and runtime BEFORE capture intake.
-    const dependencyRun = await materializeDependencyCache(
-      authority.dependencyCache,
-      prepared.sourcePath,
-      authority.scratchDir,
-    );
-    await removeDependencyRun(dependencyRun);
-    const manifest = JSON.parse(
-      await Deno.readTextFile(
-        `${authority.dependencyCache.root}/manifest.json`,
-      ),
-    ) as { runtime: unknown };
+    let dependencyIdentity: unknown = null;
+    const readerIdentities: unknown[] = [];
+    if (authority.readerBindings !== undefined) {
+      if (
+        authority.readerBindings.length === 0 ||
+        new Set(authority.readerBindings.map((reader) => reader.sourceSha))
+            .size !== authority.readerBindings.length ||
+        !authority.readerBindings.some((reader) =>
+          reader.sourceSha === prepared.sourceSha
+        )
+      ) return portError("invalid", UNAVAILABLE);
+      for (const reader of authority.readerBindings) {
+        if (!isGitSha(reader.sourceSha)) {
+          return portError("invalid", UNAVAILABLE);
+        }
+        if (reader.kind === "bun") {
+          const verified = await prepareBunFrozenReader(reader);
+          readerIdentities.push({
+            binding: verified.binding,
+            manifest: verified.manifest,
+            bootstrapDigest: verified.bootstrapDigest,
+            preflightDigest: verified.preflightDigest,
+          });
+        } else if (reader.kind === "deno" && reader.denoPath.startsWith("/")) {
+          readerIdentities.push(reader);
+        } else return portError("invalid", UNAVAILABLE);
+      }
+    }
+    if (
+      authority.readerBindings === undefined ||
+      authority.readerBindings.some((reader) =>
+        reader.kind === "deno" && reader.sourceSha === prepared.sourceSha
+      )
+    ) {
+      const cache = authority.readerBindings?.find((reader) =>
+        reader.kind === "deno" && reader.sourceSha === prepared.sourceSha
+      );
+      const selectedCache = cache?.kind === "deno"
+        ? cache.dependencyCache ?? authority.dependencyCache
+        : authority.dependencyCache;
+      if (selectedCache === undefined) return portError("invalid", UNAVAILABLE);
+      const dependencyRun = await materializeDependencyCache(
+        selectedCache,
+        prepared.sourcePath,
+        authority.scratchDir,
+      );
+      await removeDependencyRun(dependencyRun);
+      const manifest = JSON.parse(
+        await Deno.readTextFile(`${selectedCache.root}/manifest.json`),
+      ) as { runtime: unknown };
+      dependencyIdentity = {
+        sourceSha: selectedCache.sourceSha,
+        manifestDigest: selectedCache.manifestDigest,
+        runtime: manifest.runtime,
+      };
+    }
     const scopeDigest = await canonicalStringifySha256({
       domain: "uos-sentinel-gateway-host-scope-v1",
       config,
       sourceSha: prepared.sourceSha,
       controllerSha: prepared.controllerSha,
       execution: prepared.execution ?? null,
-      dependencyCache: {
-        sourceSha: authority.dependencyCache.sourceSha,
-        manifestDigest: authority.dependencyCache.manifestDigest,
-        runtime: manifest.runtime,
-      },
+      dependencyCache: dependencyIdentity,
+      readerBindings: readerIdentities,
       testIds: authority.testIds,
       failure: authority.failure,
       sanitizer: authority.sanitizer,
@@ -277,6 +328,22 @@ export async function createTrustedGatewayCapabilities(input: {
       clock: input.clock,
       verifier: {
         verify: (value) => {
+          const binding = authority.readerBindings?.find((reader) =>
+            reader.sourceSha === value.capture.gitSha
+          );
+          if (authority.readerBindings !== undefined && binding === undefined) {
+            return Promise.resolve(null);
+          }
+          const causalIsolation = binding?.kind === "bun"
+            ? new LinuxReplayIsolation(authority.scratchDir, {
+              bunReader: binding,
+            })
+            : binding?.kind === "deno"
+            ? new LinuxReplayIsolation(authority.scratchDir, {
+              dependencyCache: binding.dependencyCache ??
+                authority.dependencyCache,
+            })
+            : isolation;
           const root =
             `tests/fixtures/gateway-replay/${value.incidentId}/${value.captureId}`;
           return new GatewayLocalCausalVerifier({
@@ -286,13 +353,14 @@ export async function createTrustedGatewayCapabilities(input: {
             consumerRequestPath: `${root}/request.json`,
             consumerUpstreamPath: `${root}/upstream.json`,
             denoPath: prepared.denoExecutable,
+            readerBindings: authority.readerBindings,
             maxDurationMs:
               config.commandRegistry.commands[config.commands.replay]
                 .maxDurationMs,
             maxOutputBytes:
               config.commandRegistry.commands[config.commands.replay]
                 .maxOutputBytes,
-            isolation,
+            isolation: causalIsolation,
             runtime,
           }).verify(value);
         },

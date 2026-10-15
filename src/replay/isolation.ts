@@ -55,6 +55,17 @@ import type {
   ReplayCommandResultV1,
   ReplayRuntimeV1,
 } from "./runtime.ts";
+import {
+  type BunFrozenReaderBindingV1,
+  prepareBunFrozenReader,
+  type PreparedBunReaderV1,
+  verifyBunReaderBootstrap,
+} from "./bun-frozen-reader.ts";
+import {
+  BUN_READER_BOOTSTRAP_PATH,
+  BUN_READER_EXECUTABLE,
+  BUN_READER_PREFLIGHT_PATH,
+} from "./bun-reader-bootstrap.ts";
 
 /** Checkout mount mode for one isolated replay command run. */
 export type ReplayCheckoutAccessV1 = "read-only" | "read-write";
@@ -66,6 +77,8 @@ export interface LinuxReplayIsolationOptions {
   osName?: string;
   /** Trusted pinned public seed; every run validates it and owns a private Deno copy. */
   dependencyCache?: ReplayDependencyCacheV1;
+  /** Exact host-owned immutable Bun reader; only its fixed read-only bootstrap can run. */
+  bunReader?: BunFrozenReaderBindingV1;
 }
 
 /** Fixed bubblewrap binary; never configurable. */
@@ -110,6 +123,7 @@ export class LinuxReplayIsolation {
   private readonly osName: string;
   private readonly scratchRoot: string;
   private readonly dependencyCache?: ReplayDependencyCacheV1;
+  private readonly bunReader?: BunFrozenReaderBindingV1;
 
   constructor(scratchRoot: string, options: LinuxReplayIsolationOptions = {}) {
     this.scratchRoot = requireTrustedScratchRoot(scratchRoot);
@@ -118,6 +132,14 @@ export class LinuxReplayIsolation {
     this.dependencyCache = options.dependencyCache === undefined
       ? undefined
       : { ...options.dependencyCache };
+    this.bunReader = options.bunReader === undefined
+      ? undefined
+      : structuredClone(options.bunReader);
+    if (this.bunReader !== undefined && this.dependencyCache !== undefined) {
+      throw new TypeError(
+        "Bun reader and legacy Deno cache require separate isolation instances",
+      );
+    }
     this.attestation = {
       version: "v1",
       host: "linux-bwrap-namespace",
@@ -164,7 +186,38 @@ export class LinuxReplayIsolation {
       );
     }
 
-    const executable = await resolveExecutable(input.executable, checkout);
+    let bun: PreparedBunReaderV1 | undefined;
+    if (this.bunReader !== undefined) {
+      const preflight =
+        input.args[3] === `${checkout}/${BUN_READER_PREFLIGHT_PATH}`;
+      if (
+        access !== "read-only" ||
+        input.executable !== this.bunReader.runtime.path ||
+        JSON.stringify(input.args) !== JSON.stringify([
+            "--no-env-file",
+            "--no-install",
+            "run",
+            `${checkout}/${
+              preflight ? BUN_READER_PREFLIGHT_PATH : BUN_READER_BOOTSTRAP_PATH
+            }`,
+          ])
+      ) {
+        return rejected(
+          "isolation rejected: Bun reader requires the fixed read-only bootstrap",
+        );
+      }
+      try {
+        bun = await prepareBunFrozenReader(this.bunReader);
+        await verifyBunReaderBootstrap(checkout, bun, preflight);
+      } catch {
+        return rejected(
+          "isolation rejected: frozen Bun reader integrity mismatch",
+        );
+      }
+    }
+    const executable = bun === undefined
+      ? await resolveExecutable(input.executable, checkout)
+      : { ok: true as const, path: BUN_READER_EXECUTABLE };
     if (!executable.ok) return rejected(executable.reason);
     if (!(await isRegularFile(BWRAP_PATH))) {
       return rejected(
@@ -197,6 +250,7 @@ export class LinuxReplayIsolation {
         input.args,
         access,
         dependencies,
+        bun,
       ),
       // The host cwd is irrelevant: bwrap enters the exact checkout with
       // `--chdir` after the mount setup.
@@ -414,6 +468,7 @@ function bwrapArgs(
   argv: readonly string[],
   access: ReplayCheckoutAccessV1,
   dependencies?: ReplayDependencyRunV1,
+  bun?: PreparedBunReaderV1,
 ): string[] {
   const args: string[] = [
     "--unshare-all",
@@ -467,6 +522,25 @@ function bwrapArgs(
       "PATH",
       `/tmp/public-tools:${SANDBOX_PATH}`,
     );
+  }
+  if (bun !== undefined) {
+    args.push(
+      "--dir",
+      "/tmp/sentinel-bun-runtime",
+      "--ro-bind",
+      bun.binding.runtime.path,
+      BUN_READER_EXECUTABLE,
+      "--setenv",
+      "BUN_RUNTIME_TRANSPILER_CACHE_PATH",
+      "0",
+    );
+    for (const name of ["node_modules", ".uos-permissions", ".native"]) {
+      args.push(
+        "--ro-bind",
+        `${bun.binding.artifact.root}/${name}`,
+        `${checkout}/${name}`,
+      );
+    }
   }
   args.push(
     "--chdir",
