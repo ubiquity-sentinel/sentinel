@@ -6,6 +6,7 @@ import {
   runMatrixCell,
 } from "../../src/host/matrix.ts";
 import { isDecompositionEligible } from "../../src/host/matrix-planner.ts";
+import { isValidRef } from "../../src/github/git-executor.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { isDecompositionChildId } from "../../src/repair/transitions.ts";
@@ -118,6 +119,11 @@ Deno.test("matrix session exhaustion: the next plan splits the whole issue", asy
       next.plan.cells[0].request.scopeNote?.includes("part 1 of 2"),
       "the part session is told to bound its scope",
     );
+    // Each persisted part can actually publish: its candidate branch passes
+    // the push validator (a ':' in the id would be refused at every push).
+    for (const part of parts) {
+      assert.ok(isValidRef(`refs/heads/${part.target.branch}`), part.id);
+    }
   } finally {
     await rig.cleanup();
   }

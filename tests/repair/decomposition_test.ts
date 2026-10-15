@@ -26,6 +26,9 @@ import {
   recordMatrixTimeout,
   setIntent,
 } from "../../src/repair/transitions.ts";
+import { isValidRef } from "../../src/github/git-executor.ts";
+import { isDurableCandidateBranch } from "../../src/host/actions-candidates-shared.ts";
+import { candidateBranch } from "../../src/repair/keys.ts";
 import { SHA1, SHA2, T0 } from "../state/helpers.ts";
 
 const NOW = T0 + 60_000;
@@ -124,6 +127,29 @@ Deno.test("createDecompositionChildren builds serial parts", () => {
     );
     assert.equal(child.nextStep, "work");
   });
+});
+
+Deno.test("every decomposition part publishes on a valid, distinct git branch", async () => {
+  const parent = timedOutParent(MATRIX_DECOMPOSE_MAX_PARTS);
+  const children = createDecompositionChildren(parent, NOW);
+  // A colon-free whole id keeps its exact historical branch.
+  assert.equal(candidateBranch(parent.id), `sentinel/repair/${parent.id}`);
+  const branches = new Set<string>([candidateBranch(parent.id)]);
+  for (const child of children) {
+    const branch = child.target.branch ?? "";
+    assert.equal(branch, candidateBranch(child.id));
+    branches.add(branch);
+    // The production push/read validator and git itself accept the branch.
+    assert.ok(isValidRef(`refs/heads/${branch}`), branch);
+    assert.ok(isDurableCandidateBranch(branch), branch);
+    const format = await new Deno.Command("git", {
+      args: ["check-ref-format", `refs/heads/${branch}`],
+      stdout: "null",
+      stderr: "null",
+    }).output();
+    assert.equal(format.code, 0, `git rejects ${branch}`);
+  }
+  assert.equal(branches.size, children.length + 1, "branches never collide");
 });
 
 Deno.test("decomposition part count grows with timeouts up to the cap", () => {
