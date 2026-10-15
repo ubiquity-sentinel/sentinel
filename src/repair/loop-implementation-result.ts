@@ -75,6 +75,7 @@ export async function settleFailedImplementation(
     record,
     detail,
     now,
+    runtimeSha: deps.controllerSha,
     ...(classification === undefined ? {} : { classification }),
   });
   return persistAfterSettlement(deps, context.bounds, (draft) => {
@@ -129,6 +130,7 @@ export async function handleModelReceipt(
       record,
       detail: incompleteMessage,
       now,
+      runtimeSha: deps.controllerSha,
     });
     return persistAfterSettlement(deps, context.bounds, (draft) => {
       replaceWorkMutation(blocked)(draft);
@@ -211,6 +213,7 @@ export async function handleModelReceipt(
   const successMemory = await attemptMemorySuccessMutationV1({
     record,
     now,
+    runtimeSha: deps.controllerSha,
   });
   return persistTransition(deps, afterSettlement, (draft) => {
     replaceWorkMutation(setIntent(withCandidate, preservationIntent, now))(
@@ -242,13 +245,9 @@ export async function handleImplementationUncertainty(
   // settled-budget paths (a pre-settlement CAS is refused as state_error).
   const now = deps.clock.now();
   const blocked = markBlocked(record, "other", ATTEMPT_DETAIL_UNCERTAIN, now);
-  const memory = await attemptMemorySettlementMutationV1({
-    record,
-    detail: ATTEMPT_DETAIL_UNCERTAIN,
-    now,
-  });
+  // The saved intent has no authenticated producing runtime. Preserve its
+  // charge and blocked custody without fabricating a new memory outcome.
   return persistAfterSettlement(deps, context.bounds, (draft) => {
     replaceWorkMutation(blocked)(draft);
-    memory(draft);
   });
 }

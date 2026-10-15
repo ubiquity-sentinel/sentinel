@@ -103,7 +103,7 @@ export const HOSTED_AUTONOMY_REQUIRED_CHECK = "test-local";
  */
 export const HOSTED_AUTONOMY_MAX_RETRIES = 200;
 
-/** The runtime's own implementation-attempt ceiling. */
+/** Retired implementation ceiling, retained only for exported API compatibility. */
 export const HOSTED_AUTONOMY_MAX_IMPLEMENTATION_ATTEMPTS = 4;
 
 /**

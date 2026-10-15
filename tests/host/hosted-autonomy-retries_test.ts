@@ -1,3 +1,4 @@
+import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 import assert from "node:assert/strict";
 import {
   applyHostedRetries,
@@ -43,6 +44,7 @@ Deno.test(
     const plans = planHostedRetries(
       snapshot,
       T0 + 5000,
+      ATTEMPT_RUNTIME,
     );
     assert.equal(plans.length, 1);
     assert.equal(plans[0].id, TARGET);
@@ -90,11 +92,16 @@ Deno.test(
       planHostedRetries(
         capFixture(HOSTED_AUTONOMY_MAX_RETRIES - 1),
         T0 + 5000,
+        ATTEMPT_RUNTIME,
       ).length,
       1,
     );
     assert.equal(
-      planHostedRetries(capFixture(HOSTED_AUTONOMY_MAX_RETRIES), T0 + 5000)
+      planHostedRetries(
+        capFixture(HOSTED_AUTONOMY_MAX_RETRIES),
+        T0 + 5000,
+        ATTEMPT_RUNTIME,
+      )
         .length,
       0,
     );
@@ -114,8 +121,16 @@ Deno.test(
     // at this head, and the preserved counter is history: without a newer base
     // this pass fails closed instead of zeroing a charged counter or re-using
     // an identity the runtime would refuse as a duplicate.
-    assert.equal(planHostedRetries(reviewRounds, T0 + 5000).length, 0);
-    const plans = planHostedRetries(reviewRounds, T0 + 5000, selfTips(SHA1));
+    assert.equal(
+      planHostedRetries(reviewRounds, T0 + 5000, ATTEMPT_RUNTIME).length,
+      0,
+    );
+    const plans = planHostedRetries(
+      reviewRounds,
+      T0 + 5000,
+      ATTEMPT_RUNTIME,
+      selfTips(SHA1),
+    );
     assert.equal(plans.length, 1);
     assert.equal(plans[0].nextStep, "review");
     assert.equal(plans[0].advanceBase, true);
@@ -137,11 +152,12 @@ Deno.test(
     const budgetPlans = planHostedRetries(
       budget,
       T0 + 5000,
+      ATTEMPT_RUNTIME,
     );
     assert.equal(budgetPlans.length, 1);
-    assert.equal(budgetPlans[0].grant, 1);
+    assert.equal(budgetPlans[0].grant, 0);
     const budgetNext = applyHostedRetries(budget, SHA1, budgetPlans, T0 + 5000);
-    assert.equal(budgetNext.work[0].counters.attempts, 3);
+    assert.equal(budgetNext.work[0].counters.attempts, 4);
 
     const foreign = repairSnapshot([
       blockedRecord({
@@ -152,7 +168,10 @@ Deno.test(
         },
       }),
     ]);
-    assert.equal(planHostedRetries(foreign, T0 + 5000).length, 0);
+    assert.equal(
+      planHostedRetries(foreign, T0 + 5000, ATTEMPT_RUNTIME).length,
+      0,
+    );
   },
 );
 
@@ -201,22 +220,29 @@ Deno.test(
       charges,
     );
     const now = T0 + 5000;
-    // With no newer base the task stays put: nothing may invent an identity.
-    assert.equal(planHostedRetries(snapshot, now, selfTips(BASE)).length, 0);
+    // A fresh monotonic identity exists even at the same unchanged base.
+    assert.equal(
+      planHostedRetries(snapshot, now, ATTEMPT_RUNTIME, selfTips(BASE)).length,
+      1,
+    );
     // With a newer base the runtime's own refresh gives fresh identities.
     const newerBase = SHA1;
-    const plans = planHostedRetries(snapshot, now, selfTips(newerBase));
+    const plans = planHostedRetries(
+      snapshot,
+      now,
+      ATTEMPT_RUNTIME,
+      selfTips(newerBase),
+    );
     assert.equal(plans.length, 1);
     assert.equal(plans[0].advanceBase, true);
-    assert.equal(plans[0].grant, 1);
+    assert.equal(plans[0].grant, 0);
     assert.equal(plans[0].observedBase, newerBase);
     const next = applyHostedRetries(snapshot, SHA1, plans, now);
     const applied = next.work[0];
     assert.equal(applied.nextStep, "work");
     assert.equal(applied.blocker, null);
-    // The applied record is valid (the frozen parser accepted it) with only
-    // attempts lowered: retries and review rounds are untouched history.
-    assert.equal(applied.counters.attempts, 3);
+    // Charged counters, retries and review rounds are untouched history.
+    assert.equal(applied.counters.attempts, 4);
     assert.equal(applied.counters.retries, 3);
     assert.equal(applied.counters.reviewRounds, 1);
     assert.deepEqual(applied.target, record.target);
@@ -244,7 +270,7 @@ Deno.test(
 );
 
 Deno.test(
-  "hosted autonomy: a task whose retries reached its attempts is left alone, never invalid",
+  "hosted autonomy: monotonic retry allocation preserves retries equal to attempts",
   () => {
     const record = blockedRecord({
       blocker: {
@@ -262,14 +288,15 @@ Deno.test(
       },
     });
     const snapshot = repairSnapshot([record], [authorizingReceipt()]);
-    // `retries <= attempts` is a frozen invariant and this pass only lowers
-    // attempts, so neither a normal grant nor the base-advance grant that would
-    // land at 3 is representable here: the plan refuses instead of writing an
-    // invalid snapshot, even with a newer base available.
-    assert.equal(planHostedRetries(snapshot, T0 + 5000).length, 0);
+    // Keeping both counters at 4 preserves retries <= attempts and selects 5.
     assert.equal(
-      planHostedRetries(snapshot, T0 + 5000, selfTips(SHA1)).length,
-      0,
+      planHostedRetries(snapshot, T0 + 5000, ATTEMPT_RUNTIME).length,
+      1,
+    );
+    assert.equal(
+      planHostedRetries(snapshot, T0 + 5000, ATTEMPT_RUNTIME, selfTips(SHA1))
+        .length,
+      1,
     );
     const next = applyHostedRetries(snapshot, SHA1, [], T0 + 5000);
     assert.equal(next.work[0].counters.attempts, 4);

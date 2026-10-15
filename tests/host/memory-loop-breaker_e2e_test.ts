@@ -1,3 +1,4 @@
+import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 // Named end-to-end scenario for the durable memory loop breaker.
 //
 // The changed lifecycle is exercised through the REAL production consumers on
@@ -195,6 +196,7 @@ Deno.test(
           const plans = planHostedRetries(
             blocked.value.snapshot,
             clock.now(),
+            ATTEMPT_RUNTIME,
           );
           assert.equal(plans.length, 1, `round ${round}: expected a grant`);
           const reopened = applyHostedRetries(
@@ -261,6 +263,7 @@ Deno.test(
       const refusedPlans = planHostedRetries(
         fresh.value.snapshot,
         clock.now(),
+        ATTEMPT_RUNTIME,
         new Map(),
         new Set(),
         (denial) => denials.push({ id: denial.id, reason: denial.reason }),
@@ -304,6 +307,7 @@ Deno.test(
       const fairPlans = planHostedRetries(
         withUnrelated,
         clock.now(),
+        ATTEMPT_RUNTIME,
         new Map(),
         new Set(),
         (denial) => fairDenials.push({ id: denial.id }),

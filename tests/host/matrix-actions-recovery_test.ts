@@ -1,3 +1,4 @@
+import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 /** Closed C mixed ingestion, charge retention and fresh-mirror recovery. */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -410,6 +411,7 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
     const retryPlans = planHostedRetries(
       originalCharges.value.snapshot,
       r.clock.now(),
+      ATTEMPT_RUNTIME,
     );
     assert.equal(
       retryPlans.length,

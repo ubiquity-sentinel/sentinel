@@ -1,3 +1,4 @@
+import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 import assert from "node:assert/strict";
 import { candidateBranch, reviewOperationKey } from "../../src/repair/keys.ts";
 import {
@@ -27,11 +28,15 @@ Deno.test(
       counters: { attempts: 2, retries: 0, reviewRounds: 1 },
     });
     const snapshot = repairSnapshot([record], [authorizingReceipt()]);
-    assert.equal(planHostedRetries(snapshot, T0 + 5000).length, 1);
+    assert.equal(
+      planHostedRetries(snapshot, T0 + 5000, ATTEMPT_RUNTIME).length,
+      1,
+    );
     assert.equal(
       planHostedRetries(
         snapshot,
         T0 + 5000,
+        ATTEMPT_RUNTIME,
         selfTips(null),
         new Set([hostedIssueKey(SELF_REPO, 48)]),
       ).length,
@@ -42,6 +47,7 @@ Deno.test(
       planHostedRetries(
         snapshot,
         T0 + 5000,
+        ATTEMPT_RUNTIME,
         selfTips(null),
         new Set([hostedIssueKey(FOREIGN_REPO, 48)]),
       ).length,
@@ -91,9 +97,17 @@ Deno.test(
     const now = T0 + 5000;
     // Three charged identities are the whole space at this head and the base
     // has not moved: nothing may invent a fourth round at the same head.
-    assert.equal(planHostedRetries(snapshot, now, selfTips(BASE)).length, 0);
+    assert.equal(
+      planHostedRetries(snapshot, now, ATTEMPT_RUNTIME, selfTips(BASE)).length,
+      0,
+    );
     const newerBase = SHA1;
-    const plans = planHostedRetries(snapshot, now, selfTips(newerBase));
+    const plans = planHostedRetries(
+      snapshot,
+      now,
+      ATTEMPT_RUNTIME,
+      selfTips(newerBase),
+    );
     assert.equal(plans.length, 1);
     assert.equal(plans[0].nextStep, "review");
     assert.equal(plans[0].advanceBase, true);
@@ -181,7 +195,12 @@ Deno.test(
       [charge],
     );
     const now = T0 + 5000;
-    const plans = planHostedRetries(snapshot, now, selfTips(BASE));
+    const plans = planHostedRetries(
+      snapshot,
+      now,
+      ATTEMPT_RUNTIME,
+      selfTips(BASE),
+    );
     assert.equal(plans.length, 1);
     assert.equal(plans[0].nextStep, "review");
     assert.equal(plans[0].advanceBase, false);
@@ -257,6 +276,7 @@ Deno.test(
           charges,
         ),
         T0 + 5000,
+        ATTEMPT_RUNTIME,
         selfTips(BASE),
       ).length;
     /** The exact review charge of one round, settled and still charged. */

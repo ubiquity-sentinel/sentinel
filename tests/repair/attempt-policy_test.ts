@@ -163,6 +163,7 @@ Deno.test("attempt policy: a trusted call-site classification overrides the deri
     counters: { attempts: 1, retries: 0, reviewRounds: 0 },
   });
   const mutation = await attemptMemorySettlementMutationV1({
+    runtimeSha: SHA1,
     record,
     detail: "planned base is no longer current",
     now: T0 + 3000,
@@ -274,6 +275,7 @@ Deno.test("attempt policy: refusal checks the latest outcome against current bas
   const snapshot = snapshotWith([memory], record);
 
   const sameEvidence = attemptEquivalenceRefusalForRecordV1({
+    runtimeSha: SHA1,
     record,
     snapshot,
     now: T0 + 2000,
@@ -281,14 +283,10 @@ Deno.test("attempt policy: refusal checks the latest outcome against current bas
   assert.equal(sameEvidence.refuse, true);
 
   // A different runtime revision is changed evidence.
-  const otherController = workRecord(TASK, {
-    controller: { sha: SHA2 },
-    nextStep: "blocked",
-    blocker: { kind: "other", message: DETAIL, since: T0 + 1000 },
-  });
   assert.equal(
     attemptEquivalenceRefusalForRecordV1({
-      record: otherController,
+      runtimeSha: SHA2,
+      record,
       snapshot,
       now: T0 + 2000,
     }).refuse,
@@ -309,6 +307,7 @@ Deno.test("attempt policy: refusal checks the latest outcome against current bas
   });
   assert.equal(
     attemptEquivalenceRefusalForRecordV1({
+      runtimeSha: SHA1,
       record: otherBase,
       snapshot,
       now: T0 + 2000,
@@ -320,6 +319,7 @@ Deno.test("attempt policy: refusal checks the latest outcome against current bas
   const belowCap = snapshotWith([await memoryRecord({}, { count: 1 })], record);
   assert.equal(
     attemptEquivalenceRefusalForRecordV1({
+      runtimeSha: SHA1,
       record,
       snapshot: belowCap,
       now: T0 + 2000,
@@ -335,6 +335,7 @@ Deno.test("attempt policy: the settlement mutation merges into the draft it is a
     counters: { attempts: 2, retries: 1, reviewRounds: 0 },
   });
   const mutation = await attemptMemorySettlementMutationV1({
+    runtimeSha: SHA1,
     record,
     detail: DETAIL,
     now: T0 + 3000,
@@ -373,13 +374,9 @@ Deno.test("attempt policy: the settlement mutation merges into the draft it is a
   assert.equal(second.attemptMemory[0].id, first.id);
 
   // A different runtime revision records a distinct entry beside the first.
-  const otherRevision = workRecord(TASK, {
-    controller: { sha: SHA2 },
-    nextStep: "blocked",
-    blocker: { kind: "other", message: DETAIL, since: T0 + 1000 },
-  });
   const revisionMutation = await attemptMemorySettlementMutationV1({
-    record: otherRevision,
+    runtimeSha: SHA2,
+    record,
     detail: DETAIL,
     now: T0 + 4000,
   });
@@ -417,7 +414,7 @@ Deno.test("attempt policy: prior-attempt facts are newest-first and exclude olde
   });
   const snapshot = snapshotWith([memory], record);
 
-  const facts = priorAttemptFactsForRecordV1(snapshot, record);
+  const facts = priorAttemptFactsForRecordV1(snapshot, record, SHA1);
   assert.equal(facts.length, 1);
   assert.equal(facts[0].detail, DETAIL);
   assert.equal(facts[0].count, 2);
@@ -425,7 +422,7 @@ Deno.test("attempt policy: prior-attempt facts are newest-first and exclude olde
 
   // No memory at this base: no facts, no prompt section.
   assert.equal(
-    priorAttemptFactsForRecordV1(snapshotWith([]), record).length,
+    priorAttemptFactsForRecordV1(snapshotWith([]), record, SHA1).length,
     0,
   );
   // A different base is a different family: still no facts.
@@ -440,7 +437,10 @@ Deno.test("attempt policy: prior-attempt facts are newest-first and exclude olde
     nextStep: "blocked",
     blocker: { kind: "other", message: DETAIL, since: T0 + 1000 },
   });
-  assert.equal(priorAttemptFactsForRecordV1(snapshot, movedBase).length, 0);
+  assert.equal(
+    priorAttemptFactsForRecordV1(snapshot, movedBase, SHA1).length,
+    0,
+  );
 });
 
 Deno.test("attempt policy: cross-task repository lessons are deduped, bounded and revision-scoped", async () => {
@@ -483,7 +483,7 @@ Deno.test("attempt policy: cross-task repository lessons are deduped, bounded an
     distinctDetail,
   ], record);
 
-  const facts = repositoryPriorFactsForRecordV1(snapshot, record);
+  const facts = repositoryPriorFactsForRecordV1(snapshot, record, SHA1);
   assert.equal(facts.length, 2);
   // Newest first; the duplicate detail keeps the highest count seen.
   assert.equal(facts[0].detail, ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT);
@@ -496,7 +496,7 @@ Deno.test("attempt policy: cross-task repository lessons are deduped, bounded an
   );
   // Cap respected.
   assert.equal(
-    repositoryPriorFactsForRecordV1(snapshot, record, 1).length,
+    repositoryPriorFactsForRecordV1(snapshot, record, SHA1, 1).length,
     1,
   );
 });
@@ -507,6 +507,7 @@ Deno.test("attempt policy: an accepted candidate records success on the family",
     counters: { attempts: 2, retries: 1, reviewRounds: 0 },
   });
   const mutation = await attemptMemorySuccessMutationV1({
+    runtimeSha: SHA2,
     record,
     now: T0 + 9000,
   });
@@ -524,7 +525,8 @@ Deno.test("attempt policy: an accepted candidate records success on the family",
   assert.equal(applied.attemptMemory.length, 1);
   assert.equal(applied.attemptMemory[0].successes, 1);
   assert.equal(applied.attemptMemory[0].lastSuccessAtMs, T0 + 9000);
-  assert.equal(applied.attemptMemory[0].lastSuccessRevision, SHA1);
+  assert.equal(applied.attemptMemory[0].lastSuccessRevision, SHA2);
+  assert.equal(applied.work[0].controller.sha, record.controller.sha);
   assert.equal(applied.attemptMemory[0].entries.length, 0);
 
   // A second success increments; failures recorded afterwards keep their
@@ -541,6 +543,34 @@ Deno.test("attempt policy: an accepted candidate records success on the family",
   })());
   assert.equal(second.attemptMemory[0].successes, 2);
   assert.equal(second.attemptMemory[0].lastSuccessAtMs, T0 + 9000);
+});
+
+Deno.test("attempt policy: missing runtime proof cannot fall back to immutable origin", async () => {
+  const record = workRecord(TASK), runtimeSha = undefined as unknown as GitSha;
+  assert.throws(
+    () =>
+      attemptEquivalenceRefusalForRecordV1({
+        record,
+        snapshot: snapshotWith([], record),
+        now: T0,
+        runtimeSha,
+      }),
+    /authenticated attempt runtime/,
+  );
+  await assert.rejects(
+    () =>
+      attemptMemorySettlementMutationV1({
+        record,
+        detail: DETAIL,
+        now: T0,
+        runtimeSha,
+      }),
+    /authenticated attempt runtime/,
+  );
+  await assert.rejects(
+    () => attemptMemorySuccessMutationV1({ record, now: T0, runtimeSha }),
+    /authenticated attempt runtime/,
+  );
 });
 
 Deno.test("attempt policy: worked-before failures are reported as versioned regressions", async () => {
