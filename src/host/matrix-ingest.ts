@@ -14,6 +14,7 @@ import {
   settleFailedImplementation,
 } from "../repair/loop.ts";
 import { ATTEMPT_DETAIL_INTERRUPTED_BOUND } from "../repair/attempt-policy.ts";
+import { sessionBoundExhausted } from "../repair/loop-implementation-result.ts";
 import type { MatrixBundleImporterV1 } from "./matrix-git.ts";
 import {
   configForRepository,
@@ -185,6 +186,7 @@ export async function ingestMatrixResults(
       });
       continue;
     }
+    let exhausted = false;
     const intent = record.intent;
     if (
       intent?.kind === "candidate_preservation" &&
@@ -296,6 +298,7 @@ export async function ingestMatrixResults(
         continue;
       }
     } else if (result.status === "completed" && result.receipt !== null) {
+      exhausted = sessionBoundExhausted(result.receipt, config);
       if (
         !verifyMatrixReceiptV1(
           result.receipt,
@@ -382,6 +385,17 @@ export async function ingestMatrixResults(
       }
     }
     ingested++;
+    // A session the duration bound cut off is itself a time-bound exhaustion
+    // (counted by the receipt consumer); only a run that ended inside its
+    // bound breaks the streak.
+    if (exhausted) {
+      entries.push({
+        cellId: cell.cellId,
+        disposition: "ingested",
+        detail: null,
+      });
+      continue;
+    }
     // The model ran to completion: break any consecutive-timeout streak so a
     // later isolated timeout does not trigger decomposition on stale history.
     const reset = await resetCellTimeouts(deps, bounds, cell);

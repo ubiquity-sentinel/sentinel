@@ -90,7 +90,7 @@ export async function settleFailedImplementation(
  * terminal or the host's own timeout at the bound), as opposed to an output
  * bound, a loop stop or an early failure.
  */
-function sessionBoundExhausted(
+export function sessionBoundExhausted(
   receipt: ModelRunReceiptV1,
   config: RepositoryConfigV1,
 ): boolean {
