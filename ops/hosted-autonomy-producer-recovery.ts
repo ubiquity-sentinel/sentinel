@@ -20,6 +20,11 @@ import type {
   HostedAutonomyResultV1,
 } from "./hosted-autonomy-types.ts";
 import { HISTORICAL_RECOVERY_PROVIDERS } from "./hosted-autonomy-matrix-bindings.ts";
+import {
+  blockedCandidateBinding,
+  blockedCandidateMatchesProducer,
+} from "../src/host/matrix-blocked-candidate.ts";
+import { restoreBlockedCandidate } from "./hosted-autonomy-blocked-candidate.ts";
 
 export class CurrentMatrixRecoveryIntegrityFailure extends Error {
   constructor(
@@ -144,7 +149,9 @@ export async function recoverHostedMatrixProducer(
   const requests = before.snapshot.work.flatMap((record) => {
     const intent = record.intent;
     if (
-      record.nextStep !== "work" || !intent ||
+      (record.nextStep !== "work" &&
+        !blockedCandidateMatchesProducer(record, saved.execution)) ||
+      !intent ||
       !["implementation", "candidate_preservation"].includes(intent.kind) ||
       dedicated.has(intent.requestId ?? "")
     ) return [];
@@ -341,6 +348,35 @@ export async function recoverHostedMatrixProducer(
         }`
         : `entry count ${report.entries.length} != cell count ${cells.length}`;
       throw new Error(`current matrix ingestion incomplete (${detail})`);
+    }
+    for (const cell of cells) {
+      const original = before.snapshot.work.find((row) =>
+        row.id === cell.taskId
+      )!;
+      if (!blockedCandidateBinding(original)) continue;
+      const entry = report.entries.find((row) => row.cellId === cell.cellId);
+      if (
+        entry?.disposition !== "duplicate" ||
+        entry.detail !==
+          "receipt already consumed; exact saved candidate objects rehydrated"
+      ) continue;
+      await custody();
+      if (
+        await restoreBlockedCandidate({
+          record: original,
+          wave,
+          state,
+          github: ports.cycleFor(config).github,
+          clock: deps.clock,
+          readbackFailure: (write) =>
+            new CurrentMatrixRecoveryIntegrityFailure(
+              "current matrix candidate preservation readback changed",
+              before.head,
+              appliedHead,
+              write,
+            ),
+        })
+      ) ingested++;
     }
     // Non-silent accounting for owner-parallel disposals: tolerated
     // dispositions are still counted and reported with fixed keys only.

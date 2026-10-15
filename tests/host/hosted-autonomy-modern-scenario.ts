@@ -22,7 +22,11 @@ import {
 } from "../repair/helpers.ts";
 import { repositoryConfig } from "../budget/helpers.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
-import { portError, portOk } from "../../src/contracts/ports.ts";
+import {
+  type GitHubPort,
+  portError,
+  portOk,
+} from "../../src/contracts/ports.ts";
 import { createReleaseStateStore } from "../../src/state/mod.ts";
 import {
   createHostedClosedMatrixRecovery,
@@ -38,10 +42,29 @@ import { BASE, ENV, SELF_REPO } from "./hosted-autonomy-fixtures.ts";
 import { historicalMalformedRig } from "./hosted-autonomy-historical-fixtures.ts";
 import { prepareModernHistory } from "./hosted-autonomy-modern-history-fixtures.ts";
 import { captureHostedAutonomyMain } from "./hosted-autonomy-rig.ts";
+import { candidatePreservationRef } from "../../src/repair/keys.ts";
+import { createHostedCandidateRecoveryPort } from "../../ops/hosted-autonomy-candidate-port.ts";
+import { runRepairCycle } from "../../src/repair/loop.ts";
+
+export type BlockedCandidateCase =
+  | "valid"
+  | "wrong-run"
+  | "wrong-runtime"
+  | "wrong-artifact"
+  | "wrong-archive"
+  | "wrong-candidate"
+  | "wrong-task"
+  | "cas-conflict"
+  | "changed-record"
+  | "post-write-readback-drift"
+  | "wrong-preservation-readback"
+  | "unsupported-reason"
+  | "missing-artifact";
 
 export async function modernRecoveryScenario(
   history = false,
   throughMain = false,
+  blockedCandidate?: BlockedCandidateCase,
 ) {
   const targetRoot = await Deno.makeTempDir({
     prefix: "sentinel-modern-target-",
@@ -57,6 +80,7 @@ export async function modernRecoveryScenario(
   await checked(target.work, ["add", "repair.txt"]);
   await checked(target.work, ["commit", "-q", "-m", "base"]);
   const base = await checked(target.work, ["rev-parse", "HEAD"]) as GitSha;
+  const consumerRevision = "3".repeat(40) as GitSha;
   if (history) {
     await checked(target.work, ["update-ref", "refs/heads/development", base]);
     await checked(target.work, ["checkout", "-q", "-b", "offline-candidate"]);
@@ -235,6 +259,104 @@ export async function modernRecoveryScenario(
       }),
       externalImplementations: true,
     };
+    if (blockedCandidate) {
+      const read = await f.rig.state.readRepair();
+      assert(read.ok && read.value.status === "found");
+      const planArtifact = f.artifacts.find((row) => row.id === 501)!;
+      const planner = f.jobs.find((row) => row.name === "matrix_plan")!;
+      let message =
+        `authenticated historical matrix runtime mismatch; producer=${f.nativeRun.runId}:${f.nativeRun.runAttempt}; runtime=${f.execution.revision}; plan=${await matrixDigestV1(
+          f.plan,
+        )}; artifact=${planArtifact.id}; archive=${planArtifact.digest}; planner=${planner.id}; result=${await matrixDigestV1(
+          results[1],
+        )}; original admission retained`;
+      if (blockedCandidate === "wrong-run") {
+        message = message.replace(
+          `producer=${f.nativeRun.runId}:`,
+          "producer=999:",
+        );
+      }
+      if (blockedCandidate === "wrong-runtime") {
+        message = message.replace(
+          `runtime=${f.execution.revision}`,
+          `runtime=${"f".repeat(40)}`,
+        );
+      }
+      if (blockedCandidate === "wrong-artifact") {
+        message = message.replace(
+          `artifact=${planArtifact.id};`,
+          "artifact=999;",
+        );
+      }
+      if (blockedCandidate === "wrong-archive") {
+        message = message.replace(
+          `archive=${planArtifact.digest};`,
+          `archive=sha256:${"f".repeat(64)};`,
+        );
+      }
+      if (blockedCandidate === "unsupported-reason") {
+        message = "candidate touches a protected path";
+      }
+      const head = blockedCandidate === "wrong-candidate"
+        ? "f".repeat(40) as GitSha
+        : candidate;
+      const at = T0 + 30_000;
+      const work = await Promise.all(
+        read.value.snapshot.work.map(async (row) =>
+          row.id === f.cells[1].taskId
+            ? {
+              ...row,
+              nextStep: "blocked" as const,
+              blocker: { kind: "other" as const, message, since: at },
+              wait: null,
+              intent: {
+                ...row.intent!,
+                kind: "candidate_preservation" as const,
+                startedAt: at,
+                branch: await candidatePreservationRef(
+                  row.repository,
+                  row.id,
+                  row.intent!.key,
+                ),
+                expectedHead: head,
+              },
+              target: {
+                ...row.target,
+                head,
+                candidateState: { preserved: null, publishedHead: null },
+              },
+              updatedAt: at,
+            }
+            : {
+              ...row,
+              nextStep: "blocked" as const,
+              blocker: {
+                kind: "other" as const,
+                message: "unsupported blocked fixture",
+                since: at,
+              },
+              wait: null,
+              updatedAt: at,
+            }
+        ),
+      );
+      const written = await f.rig.state.writeRepair({
+        ...read.value.snapshot,
+        stateHead: read.value.head,
+        sequence: read.value.snapshot.sequence + 1,
+        updatedAt: f.clock.now(),
+        work,
+        reservations: read.value.snapshot.reservations.map((row) =>
+          row.id === f.cells[1].reservationId
+            ? { ...row, outcome: "submitted" as const, settledAt: at }
+            : row
+        ),
+      }, read.value.head);
+      assert(written.ok && written.value.status === "applied");
+      if (blockedCandidate === "missing-artifact") {
+        f.artifacts.splice(f.artifacts.findIndex((row) => row.id === 503), 1);
+      }
+    }
     const before = await f.rig.state.readRepair();
     let releaseBefore = await f.rig.state.readRelease();
     assert(before.ok && before.value.status === "found");
@@ -250,9 +372,36 @@ export async function modernRecoveryScenario(
         base,
         releaseBefore,
         target,
+        runtimeSha: blockedCandidate ? consumerRevision : undefined,
       });
       releaseBefore = prepared.releaseBefore;
       recoveryHttp = prepared.recoveryHttp;
+    }
+    if (blockedCandidate) {
+      const originalHttp = recoveryHttp;
+      recoveryHttp = async (request) => {
+        const path = new URL(request.url).pathname;
+        const prefix = "/repos/ubiquity/sentinel/git/ref/";
+        if (path.startsWith(prefix)) {
+          const ref = "refs/" + decodeURIComponent(path.slice(prefix.length));
+          const observed = await gitRun(target.work, [
+            "rev-parse",
+            "--verify",
+            ref,
+          ], ENV);
+          return {
+            status: observed.ok ? 200 : 404,
+            headers: new Headers(),
+            bodyText: observed.ok
+              ? JSON.stringify({
+                ref,
+                object: { sha: observed.stdout.trim(), type: "commit" },
+              })
+              : "{}",
+          };
+        }
+        return originalHttp(request);
+      };
     }
     let expireCustody = false;
     const custodyEntered = Promise.withResolvers<void>();
@@ -260,6 +409,7 @@ export async function modernRecoveryScenario(
     let nativeWriterProbe = false;
     let nativeWriterAttempted = false;
     let mainExit: number | null = null;
+    let recoveryPort: GitHubPort | undefined;
     const run = async (main = false): Promise<HostedAutonomyResultV1> => {
       const previous = Deno.cwd();
       Deno.chdir(f.checkout);
@@ -285,6 +435,43 @@ export async function modernRecoveryScenario(
               const readExecution = actual.readExecution;
               return {
                 ...actual,
+                ...(blockedCandidate
+                  ? {
+                    cycleFor: (config: typeof actual.configs[number]) => ({
+                      ...actual.cycleFor(config),
+                      github: recoveryPort = (() => {
+                        const port = createHostedCandidateRecoveryPort({
+                          state,
+                          clock: f.clock,
+                          gate: new HostedRepairCooldownGate({
+                            state,
+                            clock: f.clock,
+                          }),
+                          config,
+                          token: "offline-native-token",
+                          http: recoveryHttp,
+                          sourcePath: mirror,
+                          scratch,
+                          remoteUrl: `file://${target.work}`,
+                        });
+                        return blockedCandidate ===
+                            "wrong-preservation-readback"
+                          ? new Proxy(port, {
+                            get: (_, key) =>
+                              key === "readRef"
+                                ? async (ref: string) => {
+                                  const observed = await port.readRef(ref);
+                                  return observed.ok && observed.value
+                                    ? portOk({ ...observed.value, sha: base })
+                                    : observed;
+                                }
+                                : Reflect.get(port, key),
+                          })
+                          : port;
+                      })(),
+                    }),
+                  }
+                  : {}),
                 prepareTarget: async (config) => {
                   await actual.prepareTarget(config);
                   if (expireCustody) {
@@ -385,6 +572,260 @@ export async function modernRecoveryScenario(
         Deno.chdir(previous);
       }
     };
+    if (blockedCandidate) {
+      if (blockedCandidate === "wrong-task") {
+        assert(before.ok && before.value.status === "found");
+        const record = before.value.snapshot.work.find((row) =>
+          row.id === f.cells[1].taskId
+        )!;
+        const port = createHostedCandidateRecoveryPort({
+          state: f.rig.state,
+          clock: f.clock,
+          gate: new HostedRepairCooldownGate({
+            state: f.rig.state,
+            clock: f.clock,
+          }),
+          config,
+          token: "offline-native-token",
+          http: recoveryHttp,
+          sourcePath: mirror,
+          scratch,
+          remoteUrl: `file://${target.work}`,
+        });
+        const refused = await port.preserveCandidate({
+          taskId: f.cells[0].taskId,
+          candidate: {
+            operationKey: record.intent!.key,
+            base: record.target.base,
+            head: record.target.head!,
+            ref: record.intent!.branch!,
+          },
+          publishedHead: null,
+        });
+        assert.equal(refused.ok, false);
+        assert.deepEqual(await f.rig.state.readRepair(), before);
+        assert.deepEqual(model.requests, []);
+        return;
+      }
+      let competing: Awaited<ReturnType<typeof f.rig.state.readRepair>> | null =
+        null;
+      const originalWrite = f.rig.state.writeRepair;
+      if (blockedCandidate === "post-write-readback-drift") {
+        f.rig.state.writeRepair = async (next, head) => {
+          const written = await originalWrite(next, head);
+          if (
+            written.ok && written.value.status === "applied" &&
+            next.work.some((row) =>
+              row.id === f.cells[1].taskId && row.nextStep === "work"
+            )
+          ) {
+            const read = f.rig.state.readRepair;
+            f.rig.state.readRepair = () => {
+              f.rig.state.readRepair = read;
+              return Promise.resolve(before);
+            };
+          }
+          return written;
+        };
+      }
+      if (
+        blockedCandidate === "cas-conflict" ||
+        blockedCandidate === "changed-record"
+      ) {
+        f.rig.state.writeRepair = async (next, head) => {
+          if (
+            next.work.some((row) =>
+              row.id === f.cells[1].taskId && row.nextStep === "work"
+            )
+          ) {
+            if (blockedCandidate === "changed-record") {
+              const read = await f.rig.state.readRepair();
+              assert(read.ok && read.value.status === "found");
+              await originalWrite({
+                ...read.value.snapshot,
+                stateHead: read.value.head,
+                sequence: read.value.snapshot.sequence + 1,
+                work: read.value.snapshot.work.map((row) =>
+                  row.id === f.cells[1].taskId
+                    ? {
+                      ...row,
+                      counters: {
+                        ...row.counters,
+                        stalled: (row.counters.stalled ?? 0) + 1,
+                      },
+                    }
+                    : row
+                ),
+              }, read.value.head);
+              competing = await f.rig.state.readRepair();
+            }
+            return portOk({ status: "conflict" as const, currentHead: head });
+          }
+          return originalWrite(next, head);
+        };
+      }
+      const result = await run(
+        blockedCandidate === "post-write-readback-drift",
+      ).catch((error: unknown) => error);
+      const after = await f.rig.state.readRepair();
+      assert(before.ok && before.value.status === "found");
+      assert(after.ok && after.value.status === "found");
+      if (blockedCandidate === "post-write-readback-drift") {
+        assert(!(result instanceof Error), String(result));
+        const reported = result as HostedAutonomyResultV1;
+        assert.equal(mainExit, 1, "post-write integrity drift must fail main");
+        assert.equal(reported.status, "failed");
+        assert.equal(reported.beforeHead, before.value.head);
+        assert.equal(reported.appliedHead, after.value.head);
+        assert.notEqual(reported.appliedHead, before.value.head);
+        assert.deepEqual(
+          after.value.snapshot.reservations,
+          before.value.snapshot.reservations,
+        );
+      } else if (blockedCandidate === "valid") {
+        assert(!(result instanceof Error), String(result));
+        const recovered = after.value.snapshot.work.find((row) =>
+          row.id === f.cells[1].taskId
+        )!;
+        assert.equal(
+          recovered.nextStep,
+          "work",
+          "exact native candidate must leave its historical mismatch block",
+        );
+        assert.equal(recovered.blocker, null);
+        assert.equal(recovered.intent, null);
+        assert.equal(recovered.target.head, candidate);
+        assert.equal(
+          recovered.target.candidateState?.preserved?.head,
+          candidate,
+        );
+        assert.equal(
+          await checked(target.work, [
+            "rev-parse",
+            recovered.target.candidateState!.preserved!.ref,
+          ]),
+          candidate,
+        );
+        assert.deepEqual(
+          after.value.snapshot.reservations,
+          before.value.snapshot.reservations,
+        );
+        assert.deepEqual(
+          after.value.snapshot.work.filter((row) => row.id !== recovered.id),
+          before.value.snapshot.work.filter((row) => row.id !== recovered.id),
+        );
+        await run();
+        assert.deepEqual(
+          await f.rig.state.readRepair(),
+          after,
+          "completed recovery is idempotent",
+        );
+        assert(recoveryPort);
+        for (
+          const method of [
+            "pushHead",
+            "createPullRequest",
+            "requestReview",
+            "observeReview",
+            "mergePullRequest",
+            "closeIssue",
+            "assignIssue",
+          ]
+        ) {
+          await assert.rejects(
+            () => Reflect.get(recoveryPort!, method)({}),
+            /C maintenance capability refused/,
+          );
+        }
+        const publication = new FakeGithub({
+          baseSha: base,
+          openIssues: [],
+          candidateLifecycle: {
+            prepareBaseRefresh: () => {
+              throw new Error("the stable synthetic base must not refresh");
+            },
+            refs: {
+              [recovered.target.candidateState!.preserved!.ref]: candidate,
+            },
+          },
+          reviewRequestedAt: f.clock.now(),
+        });
+        assert.notEqual(consumerRevision, f.execution.revision);
+        const published = await runRepairCycle({
+          ...cycle,
+          controllerSha: consumerRevision,
+          github: publication,
+        }, {
+          deadline: f.clock.now() + 3600_000,
+          stepLimit: 12,
+        });
+        assert.notEqual(
+          published.status,
+          "state_error",
+          JSON.stringify(published),
+        );
+        const reviewed = await f.rig.state.readRepair();
+        assert(reviewed.ok && reviewed.value.status === "found");
+        const ready = reviewed.value.snapshot.work.find((row) =>
+          row.id === recovered.id
+        )!;
+        assert.equal(
+          ready.nextStep,
+          "review",
+          JSON.stringify({
+            published,
+            wait: ready.wait,
+            blocker: ready.blocker,
+            intent: ready.intent?.kind,
+            calls: publication.calls,
+          }),
+        );
+        assert.equal(ready.wait?.reason, "review_pending");
+        assert.equal(ready.target.head, candidate);
+        assert.equal(ready.target.candidateState?.publishedHead, candidate);
+        assert.equal(
+          publication.calls.filter((call) => call === "createPr").length,
+          1,
+        );
+        assert.equal(
+          publication.calls.filter((call) => call === "requestReview").length,
+          1,
+        );
+        assert.deepEqual(
+          reviewed.value.snapshot.reservations.filter((row) =>
+            row.purpose !== "review_request"
+          ),
+          before.value.snapshot.reservations,
+          "original implementation charges survive through publication",
+        );
+        const originalReservationIds = new Set(
+          before.value.snapshot.reservations.map((row) => row.id),
+        );
+        assert.deepEqual(
+          reviewed.value.snapshot.reservations.filter((row) =>
+            !originalReservationIds.has(row.id)
+          ).map((row) => row.purpose),
+          ["review_request"],
+          "only the ordinary review is newly charged",
+        );
+      } else if (blockedCandidate === "changed-record") {
+        assert(competing !== null, "competing owner must reach the CAS seam");
+        assert.deepEqual(
+          after,
+          competing,
+          "CAS never overwrites a changed owner record",
+        );
+      } else {
+        assert.deepEqual(
+          after,
+          before,
+          "unproven or unsupported recovery must leave every state byte unchanged",
+        );
+      }
+      assert.deepEqual(model.requests, []);
+      assert.deepEqual(await f.rig.state.readRelease(), releaseBefore);
+      return;
+    }
     const originalReleaseRead = f.rig.state.readRelease;
     if (history) {
       const originalHistoryRead = f.rig.state.readReleaseAt!;

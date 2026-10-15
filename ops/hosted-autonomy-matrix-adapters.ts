@@ -1,5 +1,4 @@
 import {
-  type GitHubPort,
   type IncidentAdapter,
   portError,
   portOk,
@@ -40,6 +39,7 @@ import {
   refreshDevelopment,
 } from "../src/host/local.ts";
 import { HOSTED_HISTORICAL_RELEASE_WITNESSES } from "./hosted-autonomy-matrix-bindings.ts";
+import { createHostedCandidateRecoveryPort } from "./hosted-autonomy-candidate-port.ts";
 
 /** The maintenance slice has no implementation, review or publication capability. */
 export async function createHostedClosedMatrixRecovery(input: {
@@ -110,12 +110,23 @@ export async function createHostedClosedMatrixRecovery(input: {
     state: input.state,
     clock: input.clock,
     configs,
-    cycleFor: () => ({
+    cycleFor: (config) => ({
       state: input.state,
       clock: input.clock,
       configs,
       controllerSha: CLOSED_C_WAVE.runtimeSha,
-      github: refused<GitHubPort>(),
+      github: createHostedCandidateRecoveryPort({
+        state: input.state,
+        clock: input.clock,
+        gate,
+        config,
+        token: input.apiToken,
+        http,
+        sourcePath: mirror(config),
+        scratch: input.scratch,
+        remoteUrl:
+          `https://github.com/${config.repository.owner}/${config.repository.name}.git`,
+      }),
       githubCooldown: gate,
       incidents: refused<IncidentAdapter>(),
       replay: refused<ReplayPort>(),

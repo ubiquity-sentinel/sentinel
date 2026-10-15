@@ -8,6 +8,7 @@ import type {
   HostedAutonomyResultV1,
 } from "./hosted-autonomy-types.ts";
 import { HISTORICAL_C63 } from "./hosted-autonomy-matrix-bindings.ts";
+import { isMatrixRecoveryPending } from "../src/host/matrix-blocked-candidate.ts";
 
 export async function recoverHostedCurrentMatrix(
   deps: HostedAutonomyDepsV1,
@@ -39,9 +40,8 @@ export async function recoverHostedCurrentMatrix(
   }
   if (
     !repair.value.snapshot.work.some((row) =>
-      row.nextStep === "work" && row.intent &&
-      ["implementation", "candidate_preservation"].includes(row.intent.kind) &&
-      !dedicated.has(row.intent.requestId ?? "")
+      isMatrixRecoveryPending(row) &&
+      !dedicated.has(row.intent?.requestId ?? "")
     )
   ) return null;
   const current = release.value;
@@ -69,9 +69,8 @@ export async function recoverHostedCurrentMatrix(
   const proofs = new Map<string, string>();
   const covered = new Set<string>();
   const pending = repair.value.snapshot.work.filter((row) =>
-    row.nextStep === "work" && row.intent &&
-    ["implementation", "candidate_preservation"].includes(row.intent.kind) &&
-    !dedicated.has(row.intent.requestId ?? "")
+    isMatrixRecoveryPending(row) &&
+    !dedicated.has(row.intent?.requestId ?? "")
   );
   const scan = async () => {
     let producer = current;
