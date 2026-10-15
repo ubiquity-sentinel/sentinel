@@ -13,7 +13,7 @@ import { concurrencyInstallerFixture } from "./owner-install-fixture.ts";
 
 // Fixed literals let the unchanged source fail semantically before new exports exist.
 const R2 = "da9d6b437b6cb2725deed081b50778b7dc46a9a5" as GitSha;
-const R3 = "2b48a66378bb684db92a6d415327b720522ba0aa" as GitSha;
+const R3 = "0baae9d108e958cb82a581ea26a081d9855546ee" as GitSha;
 const OLD = "4baeaf67d9677a317bc37831486c075b143fe68f" as GitSha;
 
 function healthyPrior(): ReleaseStateSnapshotV1 {
