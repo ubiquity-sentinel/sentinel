@@ -64,9 +64,10 @@ export function localModelResultReason(
  * is the exact validated request base.
  */
 /**
- * Exact allow-list of static host failures and CodexProtocolError.detail codes.
- * The protocol detail is a closed local enum, never the exception message or
- * server response. Every exported code is a literal defined here; other text
+ * Exact allow-list of authored host/native failures and closed protocol codes.
+ * Native details are fixed local strings or the CodexProtocolError.detail enum,
+ * never an exception message or server response. Every exported code is a
+ * literal defined here; other text
  * maps to null, so no server output, probe output, path, or payload can reach
  * the advisory line. A protocol code identifies its class, not a failing stage.
  */
@@ -94,6 +95,23 @@ const HOST_REASON_CODES: readonly (readonly [string, string])[] = [
   [
     "thread/start response does not acknowledge the configured permission profile",
     "model_permission_acknowledgement_mismatch",
+  ],
+  ["malformed reroute identity", "model_reroute_identity_malformed"],
+  ["malformed matching reroute", "model_reroute_malformed"],
+  ["reroute evidence exceeded bound", "model_reroute_evidence_over_bound"],
+  ["run routed off required Luna/max", "model_route_off_policy"],
+  ["malformed terminal thread id", "model_terminal_thread_id_malformed"],
+  ["malformed terminal turn", "model_terminal_turn_malformed"],
+  ["malformed terminal turn id", "model_terminal_turn_id_malformed"],
+  ["malformed terminal turn status", "model_terminal_status_malformed"],
+  ["routing evidence exceeded output bound", "model_routing_output_over_bound"],
+  [
+    "notification registration failed",
+    "model_notification_registration_failed",
+  ],
+  [
+    "candidate checkout could not be committed",
+    "model_candidate_commit_failed",
   ],
   ["malformed_line", "codex_malformed_line"],
   ["unexpected_frame", "codex_unexpected_frame"],
