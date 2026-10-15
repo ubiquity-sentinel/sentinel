@@ -1,4 +1,8 @@
-import type { PortErrorV1, PortResultV1 } from "../contracts/ports.ts";
+import type {
+  PortErrorV1,
+  PortResultV1,
+  ReleaseHistoryViewV1,
+} from "../contracts/ports.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import type {
   ReleaseStateSnapshotV1,
@@ -7,6 +11,7 @@ import type {
 import type { GitSha } from "../contracts/brands.ts";
 import type { StateKind } from "./state-records.ts";
 import { readCommitTree } from "./state-codec.ts";
+import { openReleaseHistoryView } from "./state-history.ts";
 
 /** The two fixed state refs; roles read both, each role writes only its own. */
 export const REPAIR_STATE_REF = "refs/heads/sentinel-state/repair";
@@ -343,6 +348,20 @@ export class StateGitTransport {
       head: fetched as GitSha,
       snapshot: snapshot.value,
     });
+  }
+
+  /** One bounded local view of the fixed release history (state-history.ts). */
+  openReleaseHistory(
+    input: { expectedHead: GitSha },
+  ): Promise<PortResultV1<ReleaseHistoryViewV1>> {
+    return openReleaseHistoryView({
+      scratchDir: this.scratchDir,
+      ref: RELEASE_REF,
+      loadComplete: (op) =>
+        this.loadRemote(op, RELEASE_REF, "release", "complete"),
+      git: (op, args) => this.git(op, args),
+      readTree: (op, commit) => this.readCommitTree(op, commit, "release"),
+    }, input.expectedHead);
   }
 
   protected readCommitTree(op: OpContext, commitSha: string, kind: StateKind) {

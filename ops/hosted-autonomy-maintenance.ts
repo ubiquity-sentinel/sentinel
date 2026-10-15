@@ -7,10 +7,15 @@ import {
 import { HOSTED_RUNTIME_ID } from "../src/contracts/hosted-supervisor.ts";
 import { runHistoricalMatrixQuarantine } from "../src/host/matrix-actions.ts";
 import { HistoricalQuarantineIncomplete } from "./hosted-autonomy-state.ts";
-import { recoverHostedCurrentMatrix } from "./hosted-autonomy-current-recovery.ts";
+import {
+  dedicatedMatrixReservations,
+  recoverHostedCurrentMatrix,
+} from "./hosted-autonomy-current-recovery.ts";
+import { restoreExistingCandidateRefs } from "./hosted-autonomy-existing-candidate.ts";
 import type {
   HostedAutonomyDepsV1,
   HostedAutonomyResultV1,
+  HostedClosedMatrixDepsV1,
 } from "./hosted-autonomy-types.ts";
 import { recoverHostedHistoricalC63 } from "./hosted-autonomy-historical-recovery.ts";
 import { isDeferredCurrentMatrixHistoryBudget } from "./hosted-autonomy-policy.ts";
@@ -22,11 +27,12 @@ export async function runHostedMatrixMaintenance(
   actions: string[],
 ): Promise<HostedAutonomyResultV1 | null> {
   let closedBinding: ClosedCWaveBindingV1 = CLOSED_C_WAVE;
+  let closed: HostedClosedMatrixDepsV1 | undefined;
   if (deps.closedMatrix) {
     const read = await deps.state.readRepair();
     // Missing or temporarily unavailable repair custody defers the closed and
     // current matrix pre-passes instead of failing the maintenance pass.
-    const closed = read.ok && read.value.status === "found"
+    closed = read.ok && read.value.status === "found"
       ? await deps.closedMatrix()
       : undefined;
     closedBinding = closed?.binding ?? CLOSED_C_WAVE;
@@ -66,6 +72,17 @@ export async function runHostedMatrixMaintenance(
       };
     }
   }
+  // A parked preserved candidate whose exact deterministic preservation ref
+  // already exists needs no artifact and no history walk.
+  if (closed !== undefined) {
+    const restored = await restoreExistingCandidateRefs({
+      deps,
+      ports: closed,
+      dedicated: dedicatedMatrixReservations(deps, closedBinding),
+      actions,
+    });
+    if (restored !== null) return restored;
+  }
   let custodyDeferred = false;
   let currentMatrix: HostedAutonomyResultV1 | null;
   try {
@@ -75,6 +92,9 @@ export async function runHostedMatrixMaintenance(
       () => {
         custodyDeferred = true;
       },
+      // A producer whose plan evidence expired or was never listed is a
+      // typed skip: nothing is written and later passes still run.
+      (kind) => actions.push(`current-matrix:unrecoverable:${kind}`),
     );
   } catch (error) {
     if (

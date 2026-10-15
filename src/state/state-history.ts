@@ -1,0 +1,102 @@
+/**
+ * One bounded read-only view of the fixed release history: exactly one
+ * complete fetch of the freshly verified ref, which must equal the expected
+ * head. Every later read applies readReleaseAt's own commit checks — identity
+ * format, ancestry of that head and the validated tree decoder — against the
+ * fetched object store without another remote round trip. The view never
+ * re-proves that the head is still current, so a caller that acts on a read
+ * re-verifies custody first. close() removes the private workdir.
+ */
+import type { GitSha } from "../contracts/brands.ts";
+import type { PortResultV1, ReleaseHistoryViewV1 } from "../contracts/ports.ts";
+import { portError, portOk } from "../contracts/ports.ts";
+import type {
+  ReleaseStateSnapshotV1,
+  RepairStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
+import type { GitRunResultV1, LoadedState, OpContext } from "./state-git.ts";
+
+/** The store's own bound transport operations for its fixed release ref. */
+export interface ReleaseHistoryOpsV1 {
+  scratchDir: string;
+  ref: string;
+  loadComplete(op: OpContext): Promise<PortResultV1<LoadedState>>;
+  git(op: OpContext, args: string[]): Promise<GitRunResultV1>;
+  readTree(
+    op: OpContext,
+    commit: string,
+  ): Promise<PortResultV1<RepairStateSnapshotV1 | ReleaseStateSnapshotV1>>;
+}
+
+export async function openReleaseHistoryView(
+  ops: ReleaseHistoryOpsV1,
+  expectedHead: GitSha,
+): Promise<PortResultV1<ReleaseHistoryViewV1>> {
+  const malformed = () =>
+    portError("invalid", "historical release identity is malformed");
+  if (!/^[0-9a-f]{40}$/.test(expectedHead)) return malformed();
+  let directory: string;
+  try {
+    directory = await Deno.makeTempDir({
+      prefix: "state-history-",
+      dir: ops.scratchDir,
+    });
+  } catch {
+    return portError(
+      "unavailable",
+      "state operation could not allocate a protected working directory",
+    );
+  }
+  const op: OpContext = { directory };
+  let closed = false;
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    try {
+      await Deno.remove(directory, { recursive: true });
+    } catch {
+      // Best-effort scratch cleanup; results are unaffected.
+    }
+  };
+  const loaded = await ops.loadComplete(op);
+  if (
+    !loaded.ok || loaded.value.status !== "found" ||
+    loaded.value.head !== expectedHead
+  ) {
+    await close();
+    if (!loaded.ok) return loaded;
+    return portError(
+      "conflict",
+      "historical release head changed or is absent",
+    );
+  }
+  return portOk({
+    close,
+    readAt: async (commit: GitSha) => {
+      if (closed) {
+        return portError("unavailable", "historical release view is closed");
+      }
+      if (!/^[0-9a-f]{40}$/.test(commit)) return malformed();
+      const ancestor = await ops.git(op, [
+        "merge-base",
+        "--is-ancestor",
+        commit,
+        expectedHead,
+      ]);
+      if (!ancestor.ok) {
+        return portError(
+          "invalid",
+          "historical release commit is missing or not an ancestor",
+        );
+      }
+      const snapshot = await ops.readTree(op, commit);
+      if (!snapshot.ok) return snapshot;
+      return portOk({
+        status: "found" as const,
+        snapshot: snapshot.value as ReleaseStateSnapshotV1,
+        head: commit,
+        ref: ops.ref,
+      });
+    },
+  });
+}

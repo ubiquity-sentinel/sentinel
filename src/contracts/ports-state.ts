@@ -41,6 +41,15 @@ export interface StateReadView {
     expectedHead: GitSha;
   }): Promise<PortResultV1<StateReadResultV1<ReleaseStateSnapshotV1>>>;
   /**
+   * Optional bounded history capability: one complete fetch of the fixed
+   * release ref, which must equal `expectedHead`, then local ancestor reads
+   * (see ReleaseHistoryViewV1). It never re-proves that the head is still
+   * current; a caller that acts on what it read re-verifies custody first.
+   */
+  openReleaseHistory?(input: {
+    expectedHead: GitSha;
+  }): Promise<PortResultV1<ReleaseHistoryViewV1>>;
+  /**
    * Optional local-activation capability, owned only by hosts that own the
    * private local release scope. It reads the exact strict private receipt for
    * one local Sentinel release request: a missing receipt is an explicit null,
@@ -64,6 +73,19 @@ export interface StateReadView {
   readHostedRelease?(
     request: ReleaseRequestV1,
   ): Promise<PortResultV1<HostedReleaseRecordV1 | null>>;
+}
+
+/**
+ * One opened local view of the release history under a verified head. Each
+ * read proves the commit is an ancestor of that head in the fetched object
+ * store and decodes it with the same validated tree reader as readReleaseAt.
+ */
+export interface ReleaseHistoryViewV1 {
+  readAt(
+    commit: GitSha,
+  ): Promise<PortResultV1<StateReadResultV1<ReleaseStateSnapshotV1>>>;
+  /** Removes the private workdir; later reads are unavailable. */
+  close(): Promise<void>;
 }
 
 export interface RepairStateWriter {

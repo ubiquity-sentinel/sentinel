@@ -6,10 +6,7 @@ import {
   type ReplayPort,
   type StateReadView,
 } from "../src/contracts/ports.ts";
-import {
-  CLOSED_C_WAVE,
-  type ClosedCWaveRecoveryDepsV1,
-} from "../src/host/modern-matrix-recovery.ts";
+import { CLOSED_C_WAVE } from "../src/host/modern-matrix-recovery.ts";
 import { createGitBundleImporter } from "../src/host/matrix-git.ts";
 import {
   createDefaultBranchResolver,
@@ -23,9 +20,14 @@ import type { GitSha } from "../src/contracts/brands.ts";
 import { RollingStartBudget } from "../src/budget/mod.ts";
 import { GitHubApiClient } from "../src/github/client.ts";
 import {
+  createDeadline,
   fetchHttpTransport,
   type HttpTransportV1,
 } from "../src/github/http.ts";
+import { createMatrixArtifactHttp } from "../src/host/matrix-artifact-http.ts";
+import { refuse } from "../src/host/matrix-artifact-values.ts";
+import { CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE } from "./hosted-autonomy-policy.ts";
+import type { HostedClosedMatrixDepsV1 } from "./hosted-autonomy-types.ts";
 import { HostedRepairCooldownGate } from "../src/host/hosted-cooldown.ts";
 import { parseCooldownModeV1 } from "../src/contracts/cooldown-mode.ts";
 import {
@@ -54,8 +56,10 @@ export async function createHostedClosedMatrixRecovery(input: {
   cooldownMode?: string;
   http?: HttpTransportV1;
   artifactHttp?: HttpTransportV1;
-}): Promise<ClosedCWaveRecoveryDepsV1> {
+}): Promise<HostedClosedMatrixDepsV1> {
   const http = input.http ?? fetchHttpTransport();
+  const artifactHttp = input.artifactHttp ??
+    createActionsMatrixArtifactHttpTransport();
   const template = createLocalRepositoryConfig();
   const targets = await loadTargetConfigsV1({
     template,
@@ -178,11 +182,56 @@ export async function createHostedClosedMatrixRecovery(input: {
         clock: input.clock,
         token: input.token,
         artifactRoot: input.artifactRoot,
-        http: input.artifactHttp ?? createActionsMatrixArtifactHttpTransport(),
+        http: artifactHttp,
       }),
     readExecution: (execution) => client.readHostedExecution(execution),
+    // The same authenticated, exhaustively paginated native listing the
+    // transport reads; it never downloads an archive.
+    readPlanArtifact: async (run, deadlineAt) => {
+      const startedAt = input.clock.now();
+      const until = Math.min(startedAt + PLAN_LISTING_MAX_MS, deadlineAt);
+      if (!Number.isSafeInteger(until) || until <= startedAt) {
+        throw new Error(CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE);
+      }
+      const deadline = createDeadline(until - startedAt);
+      try {
+        const reader = createMatrixArtifactHttp(
+          {
+            state: input.state,
+            clock: input.clock,
+            token: input.token,
+            artifactRoot: input.artifactRoot,
+            http: artifactHttp,
+          },
+          until,
+          deadline,
+          { id: null },
+        );
+        const name = `sentinel-matrix-plan-${run.runId}-${run.runAttempt}`;
+        const rows = (await reader.pages(
+          `/runs/${run.runId}/artifacts`,
+          "artifacts",
+        )).filter((row) => row.name === name);
+        if (rows.length === 0) return null;
+        const [row] = rows;
+        if (
+          rows.length !== 1 || !Number.isSafeInteger(row.id) ||
+          typeof row.expired !== "boolean"
+        ) refuse();
+        return {
+          id: row.id as number,
+          digest: typeof row.digest === "string" ? row.digest : null,
+          expired: row.expired,
+        };
+      } finally {
+        deadline.dispose();
+      }
+    },
   };
 }
+
+/** One bounded plan listing; the shared walk deadline still applies. */
+const PLAN_LISTING_MAX_MS = 30_000;
 
 /** Existing native token and read-only artifact route; no release writer or model. */
 export function createHostedHistoricalMatrixQuarantine(input: {
