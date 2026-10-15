@@ -40,13 +40,13 @@ Before reading an unfamiliar code file whole, use `deno task size:report` to ins
 - Validation order is failing local case, repaired case, affected module, directly affected integration boundary, then one named target-specific local lifecycle scenario on the same integrated candidate. Reuse connected evidence when it already covers that lifecycle; only add the missing boundary. Whole-repository sweeps need the user's explicit request for that workload. Documentation-only changes need documentation checks.
 - Before publication, check cheap current file-size/static constraints on the exact candidate and its current-base merge input wherever CI tests that merge. Reuse unchanged-input evidence; this is not a new whole-suite gate or policy ceiling.
 
-### Hosted approval boundary
+### Authorized hosted continuation
 
-Every development-triggered hosted end-to-end or runtime/supervisor dispatch, retry or rerun requires explicit user approval for that identified attempt. A request to implement, fix, finish, test or deliver, and old activation/continuation permissions, do not grant this approval.
+Within an authorized Sentinel task, continue through protected publication, hosted end-to-end verification and runtime/supervisor dispatch, including necessary corrected candidates, retries and reruns, without repeated user approval.
 
-First complete the locally reviewable candidate and checks. For approval, identify the exact workflow, target, SHA, expected duration and remaining hosted-only assertion. One approval covers one attempt; retries and changed candidates need fresh approval. Do not bypass this boundary through API/CLI calls, triggering pushes, alternate workflows, forced eligibility or live invocation. Read-only existing CI evidence may be inspected.
+First complete the locally reviewable candidate and applicable checks. Before each hosted execution, record the exact workflow, target, SHA, expected duration and remaining hosted-only assertion; retain the resulting evidence. Keep local, hosted, installed and live acceptance separate.
 
-If an approved attempt fails, retain its logs, reproduce/fix locally and repeat only affected validation. If reproduction needs the hosted environment, identify the exact gap and smallest hosted-only probe for approval. Keep local and hosted verification separate; pending approval is not live acceptance. Include this boundary in worker assignments and continuations, and reread current rules before dispatch.
+After a failure, retain its logs, diagnose and reproduce/fix locally, and repeat only affected validation before the next attempt. When reproduction requires the hosted environment, identify the exact gap and use the smallest proving probe within the authorized task. Preserve integrity, custody, durable accounting, current-head review and CI, target ownership and exclusive promotion authority. Independent credential, security and numeric retention approvals remain required, and whole-repository local sweeps still require explicit authorization. Include these boundaries in worker assignments and continuations.
 
 ## Ownership and acceptance
 

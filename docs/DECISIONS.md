@@ -1,12 +1,12 @@
 # Sentinel decisions
 
-These are current owner decisions for Sentinel. [AGENTS.md](../AGENTS.md) governs execution, [MASTER-PLAN.md](../MASTER-PLAN.md) defines scope and invariants, and [build-status.md](build-status.md) records current ownership and acceptance. Superseded choices, task-specific exceptions and consumed permissions remain in Git history; they grant no fresh hosted approval.
+These are current owner decisions for Sentinel. [AGENTS.md](../AGENTS.md) governs execution, [MASTER-PLAN.md](../MASTER-PLAN.md) defines scope and invariants, and [build-status.md](build-status.md) records current ownership and acceptance. Superseded choices, task-specific exceptions and consumed permissions remain in Git history; current task authorization governs continuation.
 
 ## Runtime and dispatch
 
 Sentinel runs in GitHub Actions. Per the owner directive of 2026-10-07 (commit `5aac94da8`, "Make it fully autonomous"), `supervisor-dispatch.yml` runs every five minutes and dispatches the exact protected `sentinel-supervisor` ref; `observe.yml` and `repair.yml` stay manual-only, and `sentinel-release` remains disabled. The installed trusted-host CLI stays available for explicit dispatch: `sentinel status`, `sentinel run observe`, `sentinel run supervisor`, and `sentinel receipts <run-id>`. The supervisor uses the exact protected `sentinel-supervisor` ref and authenticated execution receipts; neither time nor list order selects a runtime.
 
-Every development-triggered hosted end-to-end/runtime/supervisor dispatch, retry or rerun needs explicit user approval for that identified attempt after local preparation; earlier activation/recovery permissions do not authorize this task's next attempt. The scheduled autonomous dispatcher and the runtime's own retries are runtime behavior, not development-triggered attempts.
+On 2026-10-15, the owner removed the repeated approval rule for hosted execution and changed candidates. This supersedes the former attempt-specific confirmation requirement. Within an authorized Sentinel task, continue through protected publication, hosted end-to-end verification, runtime/supervisor dispatch and necessary corrected candidates, retries or reruns without repeated approval. Complete applicable local checks first, retain exact workflow/target/SHA and result evidence, and diagnose failures before retrying. Preserve integrity, custody, durable accounting, review/CI, target ownership and exclusive promotion authority. Independent credential, security and numeric retention approvals and explicit whole-repository local-sweep authorization remain required. The scheduled autonomous dispatcher and the runtime's own retries retain their existing runtime behavior.
 
 ## Concurrent issue processing
 
