@@ -11,6 +11,82 @@ import {
 import { gitRun, REPO, testGitEnv } from "../state/helpers.ts";
 import { FakeCodexSession } from "./model-port-helpers.ts";
 
+Deno.test("local candidate committer: command refusals remain false and expose only closed branch codes", async () => {
+  const original = Deno.Command;
+  const base = "a".repeat(40) as GitSha;
+  const head = "b".repeat(40);
+  try {
+    for (
+      const reason of [
+        "head_unavailable",
+        "ancestry_unverified",
+        "status_unavailable",
+        "unmerged_entries",
+        "staging_failed",
+        "staged_diff_empty",
+        "staged_diff_failed",
+        "commit_failed",
+        "committed_head_unavailable",
+        "committed_head_unchanged",
+      ] as const
+    ) {
+      let headReads = 0;
+      Deno.Command = class extends original {
+        private args: string[];
+        constructor(command: string | URL, options: Deno.CommandOptions = {}) {
+          super(command, options);
+          this.args = options.args ?? [];
+        }
+        override output(): Promise<Deno.CommandOutput> {
+          const args = this.args.slice(2);
+          let code = 0;
+          let stdout = "";
+          if (args[0] === "rev-parse") {
+            const first = headReads++ === 0;
+            stdout = first ? base : head;
+            if (
+              first && reason === "head_unavailable" ||
+              !first && reason === "committed_head_unavailable"
+            ) stdout = "invalid";
+            if (!first && reason === "committed_head_unchanged") stdout = base;
+          } else if (args[0] === "merge-base") {
+            if (reason === "ancestry_unverified") code = 1;
+          } else if (args[0] === "status") {
+            if (reason === "status_unavailable") code = 1;
+            stdout = reason === "unmerged_entries"
+              ? "UU conflict\0"
+              : " M src.ts\0";
+          } else if (args[0] === "add") {
+            if (reason === "staging_failed") code = 1;
+          } else if (args[0] === "diff") {
+            code = reason === "staged_diff_empty"
+              ? 0
+              : reason === "staged_diff_failed"
+              ? 128
+              : 1;
+          } else if (args.includes("commit")) {
+            if (reason === "commit_failed") code = 1;
+          } else throw new Error("unexpected committer command");
+          return Promise.resolve({
+            code,
+            success: code === 0,
+            signal: null,
+            stdout: new TextEncoder().encode(stdout),
+            stderr: new TextEncoder().encode(
+              "private git stderr must not escape",
+            ),
+          });
+        }
+      };
+      const committer = new LocalCandidateCommitter("/unused-fixture");
+      assert.equal(await committer.commit(base), false, reason);
+      assert.equal(committer.refusalCode, reason);
+    }
+  } finally {
+    Deno.Command = original;
+  }
+});
+
 Deno.test(
   "issue95: completed descendant candidates reject pending edits through the model port",
   async (t) => {
@@ -79,7 +155,7 @@ Deno.test(
             assert.equal(result.error.kind, "unavailable");
             assert.equal(
               result.error.detail,
-              "candidate checkout could not be committed",
+              "candidate descendant checkout has pending edits",
             );
           }
           assert.equal((await run(["rev-parse", "HEAD"])).trim(), head);
@@ -115,10 +191,19 @@ Deno.test(
       result = await run(["commit", "-q", "-m", "base"]);
       assert.ok(result.ok, result.stderr);
       const base = await sha();
+      const committer = new LocalCandidateCommitter(root);
+      assert.equal(await committer.commit(base), false);
+      assert.equal(Reflect.get(committer, "refusalCode"), "unchanged_base");
+      assert.equal(
+        await sha(),
+        base,
+        "a clean base never creates an empty commit",
+      );
       await Deno.writeTextFile(`${root}/src.ts`, "after\n");
 
-      const committed = await new LocalCandidateCommitter(root).commit(base);
+      const committed = await committer.commit(base);
       assert.equal(committed, true);
+      assert.equal(Reflect.get(committer, "refusalCode"), null);
       const head = await sha();
       assert.notEqual(head, base);
       const resolved = await new LocalCheckoutResolver(root, base).resolve();

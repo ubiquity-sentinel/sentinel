@@ -22,6 +22,46 @@ export interface CheckoutResolverV1 {
  */
 export interface CandidateCommitterV1 {
   commit(base: GitSha): Promise<boolean>;
+  /** Advisory only; absent or unknown values retain the generic failure. */
+  readonly refusalCode?: CandidateCommitRefusalCodeV1 | null;
+}
+
+export const CANDIDATE_COMMIT_REFUSAL_DETAILS = {
+  head_unavailable: "candidate checkout head is unavailable",
+  ancestry_unverified: "candidate checkout ancestry is unverified",
+  status_unavailable: "candidate checkout status is unavailable",
+  dirty_descendant: "candidate descendant checkout has pending edits",
+  unchanged_base: "candidate checkout is unchanged at base",
+  unmerged_entries: "candidate checkout contains unmerged entries",
+  staging_failed: "candidate checkout staging failed",
+  staged_diff_empty: "candidate checkout staged diff is empty",
+  staged_diff_failed: "candidate checkout staged diff is unavailable",
+  commit_failed: "candidate checkout git commit failed",
+  committed_head_unavailable: "candidate committed head is unavailable",
+  committed_head_unchanged: "candidate committed head is unchanged",
+} as const;
+
+export type CandidateCommitRefusalCodeV1 =
+  keyof typeof CANDIDATE_COMMIT_REFUSAL_DETAILS;
+
+/** Only authored literals cross this boundary; getters cannot change failure. */
+export function candidateCommitRefusalDetail(
+  committer: CandidateCommitterV1,
+): string {
+  try {
+    const code: unknown = committer.refusalCode;
+    if (
+      typeof code === "string" &&
+      Object.hasOwn(CANDIDATE_COMMIT_REFUSAL_DETAILS, code)
+    ) {
+      return CANDIDATE_COMMIT_REFUSAL_DETAILS[
+        code as CandidateCommitRefusalCodeV1
+      ];
+    }
+  } catch {
+    // Diagnostic access is best effort and cannot replace the original refusal.
+  }
+  return "candidate checkout could not be committed";
 }
 
 /**
@@ -31,15 +71,22 @@ export interface CandidateCommitterV1 {
  * validation; an unrelated or malformed checkout fails closed.
  */
 export class LocalCandidateCommitter implements CandidateCommitterV1 {
+  private refusal: CandidateCommitRefusalCodeV1 | null = null;
+
+  get refusalCode(): CandidateCommitRefusalCodeV1 | null {
+    return this.refusal;
+  }
+
   constructor(
     private readonly checkoutDir: string,
     private readonly message = "sentinel: autonomous repair candidate",
   ) {}
 
   async commit(base: GitSha): Promise<boolean> {
+    this.refusal = null;
     const before = await this.run(["rev-parse", "HEAD"]);
     if (before === null || !/^[0-9a-f]{40}$/.test(before.trim())) {
-      return false;
+      return this.refuse("head_unavailable");
     }
     const beforeSha = before.trim() as GitSha;
     const ancestry = await this.runResult([
@@ -48,7 +95,9 @@ export class LocalCandidateCommitter implements CandidateCommitterV1 {
       base,
       beforeSha,
     ]);
-    if (ancestry === null || ancestry.code !== 0) return false;
+    if (ancestry === null || ancestry.code !== 0) {
+      return this.refuse("ancestry_unverified");
+    }
 
     const status = await this.run([
       "status",
@@ -56,11 +105,13 @@ export class LocalCandidateCommitter implements CandidateCommitterV1 {
       "-z",
       "--untracked-files=all",
     ]);
-    if (status === null) return false;
+    if (status === null) return this.refuse("status_unavailable");
     // Preserve a model-created descendant only when its checkout is clean;
     // otherwise the resolver would omit the pending edits from the receipt.
-    if (beforeSha !== base) return status.length === 0;
-    if (status.length === 0) return false;
+    if (beforeSha !== base) {
+      return status.length === 0 || this.refuse("dirty_descendant");
+    }
+    if (status.length === 0) return this.refuse("unchanged_base");
     // Unmerged entries cannot be made into a trusted candidate by guessing at
     // conflict resolution. Keep every other path under the host's normal
     // protected-path and review gates.
@@ -72,17 +123,22 @@ export class LocalCandidateCommitter implements CandidateCommitterV1 {
         return x === "U" || y === "U" || (x === "A" && y === "A") ||
           (x === "D" && y === "D");
       })
-    ) return false;
+    ) return this.refuse("unmerged_entries");
 
     const staged = await this.runResult(["add", "-A", "--", "."]);
-    if (staged === null || staged.code !== 0) return false;
+    if (staged === null || staged.code !== 0) {
+      return this.refuse("staging_failed");
+    }
     const diff = await this.runResult([
       "diff",
       "--cached",
       "--quiet",
       "--exit-code",
     ]);
-    if (diff === null || diff.code === 0 || diff.code !== 1) return false;
+    if (diff === null || diff.code !== 0 && diff.code !== 1) {
+      return this.refuse("staged_diff_failed");
+    }
+    if (diff.code === 0) return this.refuse("staged_diff_empty");
     const committed = await this.runResult([
       "-c",
       "user.name=ubiquity-sentinel[bot]",
@@ -93,10 +149,19 @@ export class LocalCandidateCommitter implements CandidateCommitterV1 {
       "-m",
       this.message,
     ]);
-    if (committed === null || committed.code !== 0) return false;
+    if (committed === null || committed.code !== 0) {
+      return this.refuse("commit_failed");
+    }
     const after = await this.run(["rev-parse", "HEAD"]);
-    if (after === null || !/^[0-9a-f]{40}$/.test(after.trim())) return false;
-    return after.trim() !== base;
+    if (after === null || !/^[0-9a-f]{40}$/.test(after.trim())) {
+      return this.refuse("committed_head_unavailable");
+    }
+    return after.trim() !== base || this.refuse("committed_head_unchanged");
+  }
+
+  private refuse(code: CandidateCommitRefusalCodeV1): false {
+    this.refusal = code;
+    return false;
   }
 
   private async run(args: string[]): Promise<string | null> {

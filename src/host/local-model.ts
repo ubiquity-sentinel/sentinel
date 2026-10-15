@@ -260,11 +260,14 @@ export class LocalCheckoutModelPort implements ImplementationPort {
     });
 
     const commitBase = prepared.commitBase;
+    const localCommitter = new LocalCandidateCommitter(prepared.checkout);
     const committer: CandidateCommitterV1 = {
       // Later review corrections commit uncommitted edits atop the saved
       // candidate; the default resolver still binds request.base.
-      commit: () =>
-        new LocalCandidateCommitter(prepared.checkout).commit(commitBase),
+      commit: () => localCommitter.commit(commitBase),
+      get refusalCode() {
+        return localCommitter.refusalCode;
+      },
     };
     const port = new CodexImplementationPort({
       openSession: () =>

@@ -100,7 +100,11 @@ export async function gateDeliveryOnChecks(
       context,
       setWait(
         record,
-        { reason: "ci_pending", since, until: since + CHECK_POLL_MS },
+        {
+          reason: "ci_pending",
+          since,
+          until: deps.clock.now() + CHECK_POLL_MS,
+        },
         now,
       ),
     );
