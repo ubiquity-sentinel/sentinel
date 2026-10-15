@@ -650,12 +650,12 @@ Deno.test("issue48 recovery: a mismatched historical target base still refuses",
     }),
   });
   try {
-    // The live PR itself matches the reviewed binding; the refusal must come
-    // from the durable record's historical base no longer matching it, so no
-    // loosened live-base comparison may skip the saved identity check.
+    // The live PR has advanced its base.sha but still targets the reviewed
+    // branch. The refusal must come from the durable record's historical base
+    // no longer matching, so the live-base comparison cannot skip that check.
     await expectRejected(
       rig,
-      await runRig(rig),
+      await runRig(rig, { prView: { ...rig.prView, base: OTHER_SHA } }),
       "target_precondition_mismatch",
     );
     assert.equal(rig.counters.prReads, 1);
