@@ -6,7 +6,9 @@ import {
   reviewOperationKey,
   reviewReceiptId,
 } from "../../src/repair/keys.ts";
-import { SHA1, SHA3, workRecord } from "../state/helpers.ts";
+import { reservation, SHA1, SHA3, T0, workRecord } from "../state/helpers.ts";
+import { portError } from "../../src/contracts/ports.ts";
+import { REVIEW_BOUND_MS } from "../../src/repair/loop-bounds.ts";
 import { makeRig, seededSnapshot } from "./loop-rig.ts";
 import {
   noVerdictObservation,
@@ -369,6 +371,194 @@ Deno.test(
         rig.github.calls.filter((call) => call === "mergePr").length,
         0,
         "nothing merges without an accepted review",
+      );
+    } finally {
+      await rig.ctx.cleanup();
+    }
+  },
+);
+
+Deno.test(
+  "review no-verdict: an expired pending attempt recovers into a fresh bounded round",
+  async () => {
+    const { rig, work } = await rigAtReviewWait("review-expired-pending");
+    try {
+      rig.clock.advance(REVIEW_BOUND_MS + 1);
+      const first = await rig.run();
+      assert.equal(first.status, "idle", JSON.stringify(first));
+      const state = await rig.snapshot();
+      const record = state.work[0]!;
+      assert.equal(record.nextStep, "review");
+      assert.equal(record.wait?.reason, "review_pending");
+      assert.equal(
+        record.counters.reviewRounds,
+        2,
+        "the dead round is not re-counted; only the fresh round is added",
+      );
+      assert.equal(record.intent, null);
+      assert.equal(
+        rig.github.reviewRequestIdentities.at(-1)!.operationKey,
+        reviewOperationKey(7, work.target.head!, 2),
+      );
+      assert.equal(rig.github.calls.includes("merge"), false);
+      assert.equal(
+        rig.github.calls.some((call) => call.startsWith("closeIssue:")),
+        false,
+      );
+    } finally {
+      await rig.ctx.cleanup();
+    }
+  },
+);
+
+Deno.test(
+  "review expiry: an ambiguous intent preserves every admitted round across repeated expiry",
+  async () => {
+    const taskId = asWorkItemId("issue-777");
+    const branch = candidateBranch(taskId);
+    const rig = await makeRig("review-expired-intent", {
+      summaries: false,
+      github: {
+        reviewUnavailable: true,
+        candidateLifecycle: {
+          ...positiveLifecycle(),
+          refs: { [`refs/heads/${branch}`]: SHA3 },
+          pullRequests: [exactOpenPr(7, SHA3, branch)],
+        },
+      },
+    });
+    try {
+      const originalCharge = reservation("expired-original", {
+        taskId,
+        head: SHA3,
+        attempt: 1,
+        purpose: "review_request",
+        outcome: "ambiguous",
+        settledAt: T0,
+      });
+      const seeded = await rig.store.writeRepair(
+        seededSnapshot([
+          workRecord(taskId, {
+            source: { kind: "issue", id: "777", revision: SHA1 },
+            related: { incidentId: null, issueNumber: 777 },
+            target: {
+              base: SHA1,
+              branch,
+              checkpoint: null,
+              head: SHA3,
+              pr: 7,
+            },
+            nextStep: "review",
+            wait: {
+              reason: "review_quota",
+              since: T0,
+              until: T0 + 1,
+            },
+            intent: {
+              kind: "review_request",
+              key: reviewOperationKey(7, SHA3),
+              startedAt: T0,
+              branch,
+              expectedHead: SHA3,
+              observedBase: SHA1,
+              pr: 7,
+              requestId: originalCharge.id,
+              resultId: null,
+            },
+          }),
+        ], { reservations: [originalCharge] }),
+        null,
+      );
+      assert.ok(seeded.ok && seeded.value.status === "applied");
+      rig.clock.advance(REVIEW_BOUND_MS + 1);
+      const first = await rig.run();
+      assert.equal(first.status, "idle", JSON.stringify(first));
+      const state = await rig.snapshot();
+      const record = state.work[0]!;
+      assert.equal(record.intent, null, "the dead ambiguous intent is cleared");
+      assert.equal(
+        record.counters.reviewRounds,
+        2,
+        "the dead ambiguous round and the fresh submitted round are both durable",
+      );
+      assert.equal(
+        record.wait?.reason,
+        "review_pending",
+        "the recovered record parks on its fresh bounded round",
+      );
+      assert.ok(
+        state.reservations.some((reservation) =>
+          reservation.purpose === "review_request" &&
+          reservation.attempt === 2 &&
+          reservation.outcome === "submitted"
+        ),
+        "a fresh uniquely admitted round was requested",
+      );
+      assert.equal(
+        rig.github.reviewRequestIdentities.at(-1)!.operationKey,
+        reviewOperationKey(7, SHA3, 2),
+      );
+      assert.deepEqual(
+        state.reservations.find((charge) => charge.id === originalCharge.id),
+        originalCharge,
+        "the original ambiguous charge is preserved byte-for-byte",
+      );
+      rig.clock.advance(REVIEW_BOUND_MS + 1);
+      await rig.run();
+      const next = (await rig.snapshot()).work[0]!;
+      assert.equal(next.nextStep, "review");
+      assert.equal(next.counters.reviewRounds, 3);
+      assert.equal(
+        rig.github.reviewRequestIdentities.at(-1)!.operationKey,
+        reviewOperationKey(7, SHA3, 3),
+        "the next expiry never reuses the already submitted second admission",
+      );
+      assert.equal(rig.github.calls.includes("merge"), false);
+      assert.equal(
+        rig.github.calls.some((call) => call.startsWith("closeIssue:")),
+        false,
+      );
+    } finally {
+      await rig.ctx.cleanup();
+    }
+  },
+);
+
+Deno.test(
+  "review expiry: submitted no-intent quota waits retain their deadline through drain",
+  async () => {
+    const { rig } = await rigAtReviewWait("review-quota-expiry");
+    try {
+      rig.github.observeReview = () =>
+        Promise.resolve(portError("unavailable", "review unavailable"));
+      rig.clock.advance(15 * 60_000 + 1);
+      await rig.run();
+      const waitingState = await rig.snapshot();
+      const waiting = waitingState.work[0]!;
+      assert.equal(waiting.wait?.reason, "review_quota");
+      assert.equal(waiting.intent, null);
+      const priorRequests = rig.github.reviewRequestIdentities.length;
+      rig.clock.advance(REVIEW_BOUND_MS + 1);
+      await rig.run();
+      const recoveredState = await rig.snapshot();
+      const recovered = recoveredState.work[0]!;
+      assert.equal(
+        rig.github.reviewRequestIdentities.length,
+        priorRequests + 1,
+        "quota drain cannot postpone the expired submitted attempt",
+      );
+      assert.equal(recovered.counters.reviewRounds, 2);
+      for (const charge of waitingState.reservations) {
+        assert.deepEqual(
+          recoveredState.reservations.find((entry) => entry.id === charge.id),
+          charge,
+          "all original charges remain unchanged",
+        );
+      }
+      assert.equal(rig.github.calls.includes("merge"), false);
+      assert.equal(
+        rig.github.calls.some((call) => call.startsWith("closeIssue:")),
+        false,
       );
     } finally {
       await rig.ctx.cleanup();

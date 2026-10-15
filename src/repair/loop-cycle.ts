@@ -33,7 +33,7 @@ import type {
 } from "./loop-types.ts";
 import { executeStep } from "./loop-work.ts";
 import { rankEligibleWork, rankReviewDrain } from "./selection.ts";
-import { clearWait } from "./transitions.ts";
+import { setWait } from "./transitions.ts";
 
 /** One run of the bounded repair loop. */
 export async function runRepairCycle(
@@ -360,7 +360,11 @@ export async function releaseReviewQuotaWait(
     attempted.add(id);
     const record = context.snapshot.work.find((work) => work.id === id);
     if (record === undefined) continue;
-    const released = clearWait(record, deps.clock.now());
+    // Release eligibility without erasing the submitted attempt's deadline.
+    // A confirmed submission no longer has an intent, so this wait is its
+    // only durable start anchor until observation settles or replaces it.
+    const now = deps.clock.now();
+    const released = setWait(record, { ...record.wait!, until: now }, now);
     if (!declaredOperationFits(deps, context, released)) continue;
     const persisted = await persistWork(deps, context, released);
     return persisted;
