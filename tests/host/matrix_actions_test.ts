@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import type { WorkItemId } from "../../src/contracts/brands.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { parseHostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
-import { portOk } from "../../src/contracts/ports.ts";
+import { portError, portOk } from "../../src/contracts/ports.ts";
+import { DEFAULT_STEP_LIMIT } from "../../src/repair/loop-bounds.ts";
 import {
   parseReleaseStateSnapshotV1,
   parseRepairStateSnapshotV1,
@@ -30,6 +31,169 @@ import {
   workRecord,
 } from "../state/helpers.ts";
 import { rig } from "./matrix-actions-fixtures.ts";
+
+for (const scenario of ["bootstrap", "ordinary", "failed preflight"] as const) {
+  Deno.test(`bootstrap pass: ${scenario} preserves pending work and mandatory drain`, async () => {
+    const purpose = scenario === "ordinary" ? "ordinary" : "bootstrap";
+    const r = await rig(false, purpose, true);
+    try {
+      const count = DEFAULT_STEP_LIMIT + 8;
+      const repository = {
+        owner: "ubiquity",
+        name: "sentinel",
+        installationId: 0,
+      };
+      const records = await Promise.all(
+        Array.from({ length: count }, async (_, index) => {
+          const id = `bootstrap-wait-${index + 1}`;
+          const requestId = (index + 1).toString(16).padStart(64, "0");
+          return workRecord(id, {
+            repository,
+            target: {
+              base: r.sha,
+              head: r.sha,
+              branch: candidateBranch(id as WorkItemId),
+              checkpoint: null,
+              pr: null,
+              candidateState: { preserved: null, publishedHead: null },
+            },
+            counters: { attempts: 1, retries: 0, reviewRounds: 0 },
+            intent: {
+              kind: "candidate_preservation",
+              key: implementationIntentKey(requestId),
+              startedAt: T0,
+              branch: await candidatePreservationRef(
+                repository,
+                id as WorkItemId,
+                implementationIntentKey(requestId),
+              ),
+              expectedHead: r.sha,
+              observedBase: r.sha,
+              pr: null,
+              requestId,
+              resultId: null,
+            },
+          });
+        }),
+      );
+      const charges = records.map((record) =>
+        reservation(record.intent!.requestId!, {
+          repository,
+          taskId: record.id,
+          head: r.sha,
+          attempt: 1,
+          outcome: "submitted",
+          settledAt: T0 + 1,
+        })
+      );
+      const seeded = await r.store.writeRepair(
+        parseRepairStateSnapshotV1({
+          version: "v1",
+          kind: "repair_state_snapshot",
+          stateHead: null,
+          sequence: 1,
+          updatedAt: r.clock.now(),
+          incidents: [],
+          evidence: [],
+          work: records,
+          reservations: charges,
+          reviews: [],
+          replays: [],
+          releaseRequests: [],
+          githubCooldowns: [],
+          attemptMemory: [],
+          lessons: [],
+        }),
+        null,
+      );
+      assert.ok(seeded.ok && seeded.value.status === "applied");
+      const github = r.github.get("ubiquity/sentinel")!;
+      github.listOpenIssues = () => Promise.resolve(portOk([]));
+      let preserved = 0;
+      github.preserveCandidate = () => {
+        preserved++;
+        return Promise.resolve(
+          portError("unavailable", "fixture preservation pending"),
+        );
+      };
+      let modelCalls = 0;
+      let artifactScans = 0;
+      const deps = await r.job(`bounded-${purpose}`, "repair");
+      const run = () =>
+        runActionsRepairHost({
+          ...deps,
+          state: r.store,
+          preflight: () =>
+            scenario === "failed preflight"
+              ? Promise.reject(new Error("fixture startup unavailable"))
+              : Promise.resolve(),
+          model: {
+            modelId: "gpt-reserve",
+            runModel: () => {
+              modelCalls++;
+              throw new Error("verification must not start a model");
+            },
+          },
+          runTargetCycles: (input) => {
+            assert.equal(input.modelStartsEnabled, false);
+            assert.equal(input.host?.execution.purpose, purpose);
+            return runActionsMatrixAggregateCycles({
+              ...input,
+              configs: input.configs.filter((config) =>
+                config.repository.name === "sentinel"
+              ),
+            }, {
+              recover: () => {
+                artifactScans++;
+                return Promise.resolve([]);
+              },
+            });
+          },
+        });
+      if (scenario === "failed preflight") {
+        await assert.rejects(run, /hosted Codex startup unavailable/);
+      } else {
+        const result = await run();
+        assert.equal(result.startupReady, true);
+        assert.equal(
+          preserved,
+          purpose === "bootstrap" ? DEFAULT_STEP_LIMIT : count,
+        );
+        assert.equal(
+          result.outcome.status,
+          purpose === "bootstrap" ? "step_limit" : "idle",
+        );
+      }
+      assert.equal(
+        preserved,
+        purpose === "bootstrap" ? DEFAULT_STEP_LIMIT : count,
+      );
+      assert.equal(
+        artifactScans,
+        1,
+        "initial artifact verification is retained",
+      );
+      assert.equal(
+        github.drains.length,
+        1,
+        "real entrypoint still performs mandatory review drain",
+      );
+      assert.equal(modelCalls, 0);
+      const after = await r.store.readRepair();
+      assert.ok(after.ok && after.value.status === "found");
+      assert.deepEqual(after.value.snapshot.reservations, charges);
+      for (const original of records) {
+        const row: WorkRecordV1 = after.value.snapshot.work.find((record) =>
+          record.id === original.id
+        )!;
+        assert.deepEqual(row.intent, original.intent);
+        assert.deepEqual(row.target, original.target);
+      }
+    } finally {
+      await r.cleanup();
+    }
+  });
+}
 
 Deno.test("preservation maintenance: real repair startup skips five blocked candidates and retains PR893", async () => {
   const r = await rig(true, "prior");
