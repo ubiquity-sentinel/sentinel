@@ -1,8 +1,13 @@
 /** Hosted hosted-runtime-diagnostics_test responsibility. */
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
+import { portError } from "../../src/contracts/ports.ts";
 import { HOSTED_RUNTIME_FAILED_DETAIL } from "../../src/host/hosted-runtime.ts";
+import { emitLocalModelDiagnostic } from "../../src/host/local-model-diagnostic.ts";
 import { parseLocalModelDiagnosticV1 } from "../../src/host/local.ts";
+import { CodexProtocolError } from "../../src/repair/codex-transport.ts";
+import { unavailableFor } from "../../src/repair/model-port-policy.ts";
+import { captureConsoleLog, modelRequest } from "./local-test-helpers.ts";
 import {
   childLine,
   diagnosticLine,
@@ -438,7 +443,7 @@ Deno.test("hosted runtime: malformed, oversized, unknown-field or forged advisor
 
 Deno.test("hosted runtime: an installed-runtime advisory keeps its static reason code and refuses any other", async () => {
   // Decoder contract first: the installed pinned runtime emits the required
-  // `reasonCode`, either one of its own eight static seam codes or null.
+  // `reasonCode`, either one of its own static seam codes or null.
   const known = runtimeDiagnosticLine("model_checkout_unavailable");
   const knownParsed = parseLocalModelDiagnosticV1(JSON.parse(known));
   assert.deepEqual(knownParsed, JSON.parse(known), known);
@@ -452,7 +457,7 @@ Deno.test("hosted runtime: an installed-runtime advisory keeps its static reason
   delete missingCode.reasonCode;
   assert.equal(parseLocalModelDiagnosticV1(missingCode), null);
 
-  // Only the exact eight static literals are codes: a raw error or provider
+  // Only the exact allow-listed static literals are codes: a raw error or provider
   // string, an unknown word, a near-miss code, an empty string and a code on
   // a settled record are all still refused.
   for (
@@ -488,6 +493,113 @@ Deno.test("hosted runtime: an installed-runtime advisory keeps its static reason
     assert.equal(result.terminal?.outcome, "healthy");
     assert.equal(result.diagnostics.length, 1);
     assert.deepEqual(result.diagnostics[0]?.diagnostic, JSON.parse(known));
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("hosted runtime: emitted closed protocol codes survive the strict launcher without exposing messages", async () => {
+  const rig = await makeRig();
+  try {
+    await seedRelease(rig);
+    const request = modelRequest();
+    const raw =
+      "Authorization: Bearer secret-fixture https://private.invalid/?key=secret-fixture";
+    const emit = (detail: string): string => {
+      const captured = captureConsoleLog();
+      try {
+        const result = portError("unavailable", detail);
+        const original = structuredClone(result);
+        emitLocalModelDiagnostic(
+          request,
+          result,
+          rig.clock.now(),
+          "c".repeat(64),
+        );
+        assert.deepEqual(
+          result,
+          original,
+          "advisory emission preserves the port error",
+        );
+        assert.equal(captured.lines.length, 1);
+        return captured.lines[0];
+      } finally {
+        captured.restore();
+      }
+    };
+    const cases: [CodexProtocolError["detail"], string][] = [
+      ["malformed_line", "codex_malformed_line"],
+      ["unexpected_frame", "codex_unexpected_frame"],
+      ["unknown_request_id", "codex_unknown_request_id"],
+      ["server_error", "codex_server_error"],
+      ["timeout_without_terminal", "codex_timeout_without_terminal"],
+      ["child_exited_without_terminal", "codex_child_exited_without_terminal"],
+      ["stream_output_bound_exceeded", "codex_stream_output_bound_exceeded"],
+      ["operation_deadline", "codex_operation_deadline"],
+    ];
+    let lastLine = "";
+    for (const [detail, code] of cases) {
+      const failure = unavailableFor(new CodexProtocolError(detail, raw));
+      assert.equal(failure.kind, "unavailable");
+      assert.equal(failure.detail, detail);
+      const line = emit(failure.detail);
+      assert.equal(line.includes("secret-fixture"), false);
+      assert.equal(JSON.parse(line).reasonCode, code);
+      rig.process.child = exited(`${line}\n${childLine(rig.execution)}\n`);
+      const result = await launch(rig);
+      assert.equal(result.status, "healthy");
+      assert.equal(result.terminal?.outcome, "healthy");
+      assert.equal(result.diagnostics.length, 1);
+      assert.equal(result.diagnostics[0]?.diagnostic.reasonCode, code);
+      assert.deepEqual(result.diagnostics[0]?.execution, rig.execution);
+      assert.equal(result.diagnostics[0]?.diagnostic.errorKind, "unavailable");
+      lastLine = line;
+    }
+    // Diagnostics do not turn an existing failed child into a success.
+    rig.process.child = exited(`${lastLine}\n`, 3);
+    const failed = await launch(rig);
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.terminal?.outcome, "failed");
+    assert.equal(
+      failed.diagnostics[0]?.diagnostic.reasonCode,
+      "codex_operation_deadline",
+    );
+
+    for (
+      const detail of [
+        raw,
+        `server_error ${raw}`,
+        `operation_deadline\n${raw}`,
+        "unknown_protocol_detail",
+        unavailableFor(new Error(raw)).detail,
+      ]
+    ) {
+      const line = emit(detail);
+      assert.equal(JSON.parse(line).reasonCode, null);
+      assert.equal(line.includes("secret-fixture"), false);
+      rig.process.child = exited(`${line}\n${childLine(rig.execution)}\n`);
+      const result = await launch(rig);
+      assert.equal(result.status, "healthy");
+      assert.equal(result.diagnostics[0]?.diagnostic.reasonCode, null);
+      assert.equal(
+        JSON.stringify(result.diagnostics).includes("secret-fixture"),
+        false,
+      );
+    }
+    for (
+      const forged of [
+        raw,
+        `codex_server_error ${raw}`,
+        "codex_unknown_protocol_detail",
+      ]
+    ) {
+      rig.process.child = exited(
+        `${runtimeDiagnosticLine(forged)}\n${childLine(rig.execution)}\n`,
+      );
+      const result = await launch(rig);
+      assert.equal(result.status, "healthy");
+      assert.deepEqual(result.diagnostics, []);
+    }
   } finally {
     await rig.cleanup();
   }
