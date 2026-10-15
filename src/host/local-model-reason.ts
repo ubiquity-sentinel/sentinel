@@ -4,6 +4,7 @@ import type {
   PortResultV1,
 } from "../contracts/ports.ts";
 import { LOOP_STOP_MARKER } from "../repair/model-port.ts";
+import { CANDIDATE_COMMIT_REFUSAL_DETAILS as COMMIT_REFUSAL } from "../repair/model-port-checkout.ts";
 import {
   IDENTITY_POLICY_DETAIL,
   MODEL_POLICY_DETAIL,
@@ -104,6 +105,24 @@ const HOST_REASON_CODES: readonly (readonly [string, string])[] = [
   [
     "candidate checkout could not be committed",
     "model_candidate_commit_failed",
+  ],
+  [COMMIT_REFUSAL.head_unavailable, "model_candidate_head_unavailable"],
+  [COMMIT_REFUSAL.ancestry_unverified, "model_candidate_ancestry_unverified"],
+  [COMMIT_REFUSAL.status_unavailable, "model_candidate_status_unavailable"],
+  [COMMIT_REFUSAL.dirty_descendant, "model_candidate_dirty_descendant"],
+  [COMMIT_REFUSAL.unchanged_base, "model_candidate_unchanged_base"],
+  [COMMIT_REFUSAL.unmerged_entries, "model_candidate_unmerged_entries"],
+  [COMMIT_REFUSAL.staging_failed, "model_candidate_staging_failed"],
+  [COMMIT_REFUSAL.staged_diff_empty, "model_candidate_staged_diff_empty"],
+  [COMMIT_REFUSAL.staged_diff_failed, "model_candidate_staged_diff_failed"],
+  [COMMIT_REFUSAL.commit_failed, "model_candidate_git_commit_failed"],
+  [
+    COMMIT_REFUSAL.committed_head_unavailable,
+    "model_candidate_committed_head_unavailable",
+  ],
+  [
+    COMMIT_REFUSAL.committed_head_unchanged,
+    "model_candidate_committed_head_unchanged",
   ],
   ["malformed_line", "codex_malformed_line"],
   ["unexpected_frame", "codex_unexpected_frame"],
