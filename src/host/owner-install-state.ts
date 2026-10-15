@@ -84,7 +84,7 @@ export async function verifyOwnerDevelopmentInstallRevision(
     "GET",
     `/repos/${OWNER_DEVELOPMENT_INSTALL_REPOSITORY}/compare/${revision}...${
       startupLauncher ?? OWNER_DEVELOPMENT_INSTALL_DEVELOPMENT_BRANCH
-    }`,
+    }?per_page=1&page=2`,
   );
   if (!compare.ok) {
     return { verified: false, detail: "revision ancestry is unavailable" };
