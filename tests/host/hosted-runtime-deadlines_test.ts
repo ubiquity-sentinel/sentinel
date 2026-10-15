@@ -174,7 +174,7 @@ Deno.test("hosted runtime: source preparation is charged against the one absolut
   assert.deepEqual(control.outcome, foreignOutcome);
 });
 
-Deno.test("hosted runtime: the real child announces its run window before its own setup begins", async () => {
+Deno.test("hosted runtime: the real child announces its run window before its own setup begins, inside the launcher bound from the same spawn instant", async () => {
   // The child's origin is the earliest instant it can observe for ITSELF, and
   // the ONE absolute deadline is derived from it before any identity, state,
   // source or target preparation. Proved on the actual entrypoint: its first
@@ -199,6 +199,9 @@ Deno.test("hosted runtime: the real child announces its run window before its ow
     // Executable resolution only stats PATH entries; this file never runs.
     await Deno.writeTextFile(`${bin}/codex`, "");
 
+    // The launcher arms its own bound at the instant it spawns the child, so
+    // this is the origin the launcher measures from.
+    const spawnedAt = Date.now();
     const child = await new Deno.Command(Deno.execPath(), {
       // The launcher's fixed child invocation is `run -A <entrypoint>`; the
       // child environment below is complete and controlled by this test.
@@ -247,6 +250,23 @@ Deno.test("hosted runtime: the real child announces its run window before its ow
     // It is emitted before the first credential read, so it is the child's
     // first advisory line.
     assert.equal(lines[0], windowLine);
+
+    // Measured from the launcher's own origin (the spawn instant), not by
+    // comparing the two constants: the child cannot anchor before it was
+    // spawned, and the real drain cushion before the launcher kills the child
+    // is the nominal two minutes less only the child's own startup. Setup was
+    // charged to the child's budget, so a slow setup cannot erode it.
+    const originAt = parsed.originAt as number;
+    const deadlineAt = parsed.deadlineAt as number;
+    const nominalCushion = HOSTED_RUNTIME_DEADLINE_MS - childRunDeadlineV1(0);
+    assert.equal(nominalCushion, 2 * 60_000);
+    assert.ok(originAt >= spawnedAt, `${originAt} < ${spawnedAt}`);
+    const cushion = spawnedAt + HOSTED_RUNTIME_DEADLINE_MS - deadlineAt;
+    assert.equal(cushion, nominalCushion - (originAt - spawnedAt));
+    assert.ok(
+      cushion >= 60_000,
+      `drain cushion ${cushion} ms after ${originAt - spawnedAt} ms startup`,
+    );
   } finally {
     await Deno.remove(root, { recursive: true }).catch(() => {});
   }
