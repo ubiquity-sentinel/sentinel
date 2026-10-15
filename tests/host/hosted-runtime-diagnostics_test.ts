@@ -706,6 +706,73 @@ Deno.test("hosted runtime: native completion refusals retain closed codes throug
       ],
     ];
     // These are actual pre-session guards; no fake session may even open.
+    for (
+      const [refusalCode, expected] of [
+        ["head_unavailable", "model_candidate_head_unavailable"],
+        ["ancestry_unverified", "model_candidate_ancestry_unverified"],
+        ["status_unavailable", "model_candidate_status_unavailable"],
+        ["dirty_descendant", "model_candidate_dirty_descendant"],
+        ["unchanged_base", "model_candidate_unchanged_base"],
+        ["unmerged_entries", "model_candidate_unmerged_entries"],
+        ["staging_failed", "model_candidate_staging_failed"],
+        ["staged_diff_empty", "model_candidate_staged_diff_empty"],
+        ["staged_diff_failed", "model_candidate_staged_diff_failed"],
+        ["commit_failed", "model_candidate_git_commit_failed"],
+        [
+          "committed_head_unavailable",
+          "model_candidate_committed_head_unavailable",
+        ],
+        [
+          "committed_head_unchanged",
+          "model_candidate_committed_head_unchanged",
+        ],
+        ["unknown private value", "model_candidate_commit_failed"],
+        ["__proto__", "model_candidate_commit_failed"],
+      ]
+    ) {
+      failures.push([
+        await finishReceipt(
+          {
+            ...options,
+            commitCandidate: {
+              commit: () => Promise.resolve(false),
+              refusalCode: refusalCode as never,
+            },
+          },
+          null,
+          null,
+          request,
+          "invocation-1",
+          thread,
+          "turn-1",
+          settled,
+          verify,
+        ),
+        expected,
+      ]);
+    }
+    failures.push([
+      await finishReceipt(
+        {
+          ...options,
+          commitCandidate: {
+            commit: () => Promise.resolve(false),
+            get refusalCode(): never {
+              throw new Error("private getter failure");
+            },
+          },
+        },
+        null,
+        null,
+        request,
+        "invocation-1",
+        thread,
+        "turn-1",
+        settled,
+        verify,
+      ),
+      "model_candidate_commit_failed",
+    ]);
     const noSession = {
       ...options,
       openSession: () => {

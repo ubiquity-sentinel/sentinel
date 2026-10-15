@@ -23,6 +23,94 @@ import { makeRig, seededSnapshot, SHA4 } from "./loop-rig.ts";
 import { completedReceipt, deliveryRecord } from "./loop-review-fixtures.ts";
 import { exactOpenPr, positiveLifecycle } from "./loop-candidate-fixtures.ts";
 import { REPO_2 } from "../budget/helpers.ts";
+import { CHECK_POLL_MS } from "../../src/repair/loop-bounds.ts";
+
+Deno.test("pending CI observation rearms from the fresh clock and preserves wait history", async () => {
+  const taskId = asWorkItemId("issue-ci-rearm");
+  const branch = candidateBranch(taskId);
+  const rig = await makeRig("ci-rearm", {
+    summaries: false,
+    github: {
+      openIssues: [],
+      checks: [{
+        name: "ci",
+        status: "in_progress",
+        conclusion: null,
+        head: SHA3,
+        startedAt: T0,
+        completedAt: null,
+      }],
+      candidateLifecycle: {
+        ...positiveLifecycle(),
+        refs: { [`refs/heads/${branch}`]: SHA3 },
+        pullRequests: [exactOpenPr(7, SHA3, branch)],
+      },
+    },
+  });
+  try {
+    const record = workRecord(taskId, {
+      source: { kind: "issue", id: "1", revision: SHA1 },
+      related: { incidentId: null, issueNumber: 1 },
+      target: { base: SHA1, branch, checkpoint: null, head: SHA3, pr: 7 },
+      nextStep: "delivery",
+      wait: { reason: "ci_pending", since: T0, until: T0 + CHECK_POLL_MS },
+      counters: { attempts: 1, retries: 0, reviewRounds: 1 },
+    });
+    const proof = completedReceipt(7, SHA3, SHA1, {
+      id: await reviewReceiptId(reviewOperationKey(7, SHA3, 1), SHA3),
+      findings: [],
+      unresolvedSeverities: [],
+    });
+    const originalCharge = reservation("ci-prior-implementation", {
+      taskId,
+      head: SHA1,
+      purpose: "implementation",
+      outcome: "submitted",
+      settledAt: T0 + 1000,
+    });
+    const written = await rig.store.writeRepair(
+      seededSnapshot([record], {
+        reviews: [proof],
+        reservations: [originalCharge],
+      }),
+      null,
+    );
+    assert.ok(written.ok && written.value.status === "applied");
+    rig.clock.advance(2 * CHECK_POLL_MS);
+    const readChecks = rig.github.readChecks.bind(rig.github);
+    let observations = 0;
+    rig.github.readChecks = (head) => {
+      observations++;
+      // A captured executeMerge timestamp is stale by the time CI responds.
+      if (observations === 1) rig.clock.advance(CHECK_POLL_MS + 1);
+      return readChecks(head);
+    };
+    const outcome = await rig.entry();
+    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    assert.equal(observations, 1, "pending CI is observed once per due pass");
+    const after = await rig.snapshot();
+    const pending = after.work[0];
+    assert.equal(pending.wait?.reason, "ci_pending");
+    assert.equal(pending.wait?.since, T0);
+    assert.equal(pending.wait?.until, rig.clock.now() + CHECK_POLL_MS);
+    assert.ok(pending.wait!.until! > rig.clock.now());
+    assert.deepEqual(pending.target, record.target);
+    assert.equal(pending.intent, record.intent);
+    assert.deepEqual(after.reservations, [originalCharge]);
+    assert.deepEqual(after.reviews, [proof]);
+    assert.equal(after.releaseRequests.length, 0);
+    assert.equal(rig.github.calls.filter((call) => call === "merge").length, 0);
+    assert.equal(rig.model.requests.length, 0);
+    assert.equal(
+      rig.github.drains.length,
+      1,
+      "production exit still drains reviews",
+    );
+    assert.equal(rig.github.drains[0].interrupt, true);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
 
 Deno.test("merge reconciliation rejects an observed merged head different from the reviewed head", async () => {
   const rig = await makeRig("mergehead", {

@@ -7,7 +7,10 @@ import type {
 } from "../contracts/ports.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import { retainModelBoundaryDiagnostic } from "./model-port-diagnostics.ts";
-import { LocalCheckoutResolver } from "./model-port-checkout.ts";
+import {
+  candidateCommitRefusalDetail,
+  LocalCheckoutResolver,
+} from "./model-port-checkout.ts";
 import type { CodexImplementationPortOptionsV1 } from "./model-port-session.ts";
 import type { AwaitedSettlementV1 } from "./model-port-settlement.ts";
 import {
@@ -300,7 +303,7 @@ export async function finishReceipt(
       if (!committed) {
         return portError(
           "unavailable",
-          "candidate checkout could not be committed",
+          candidateCommitRefusalDetail(options.commitCandidate),
         );
       }
     }
