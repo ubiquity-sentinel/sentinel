@@ -192,3 +192,23 @@ exec ${shellQuote(Deno.execPath())} run --no-config --allow-write=${
     await Deno.remove(disposable, { recursive: true });
   }
 });
+
+Deno.test("test:integration grants what its own integration cases require", async () => {
+  // Integration cases spawn real Deno children (Deno.execPath()) and the real
+  // replay runtime, whose node child-process layer reads NODE_V8_COVERAGE, so
+  // the task carries the same grants the aggregate test task already has.
+  const manifest = JSON.parse(
+    await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
+  ) as { tasks: Record<string, string> };
+  const task = manifest.tasks["test:integration"];
+  assert.ok(/--allow-run(\s|$)/.test(task), "bare --allow-run");
+  assert.ok(
+    task.includes("$(deno eval 'console.log(Deno.execPath())')"),
+    "read access to the running Deno executable",
+  );
+  assert.ok(
+    /--allow-env=\S*NODE_V8_COVERAGE/.test(task),
+    "the replay runtime may read NODE_V8_COVERAGE",
+  );
+  assert.ok(task.endsWith("tests/integration/"));
+});
