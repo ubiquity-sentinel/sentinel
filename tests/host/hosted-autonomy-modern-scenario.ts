@@ -211,6 +211,8 @@ export async function modernRecoveryScenario(
       adapter: { kind: "github" },
       liveStartLimits: { perHour: null, perSevenDays: null },
     });
+    // Keep maintenance and the executing model port on this real Git base.
+    f.github.readBaseTip = () => Promise.resolve(base);
     const model = new FakeModel();
     const github = new FakeGithub({ baseSha: base, openIssues: [] });
     const cycle = {
@@ -768,6 +770,7 @@ export async function modernRecoveryScenario(
     assert.equal(retried.nextStep, "work");
     assert.equal(retried.blocker, null);
     assert.equal(retried.intent, null);
+    assert.equal(retried.target.base, base);
     assert.deepEqual({
       ...replayState.value.snapshot,
       stateHead: after.value.snapshot.stateHead,
