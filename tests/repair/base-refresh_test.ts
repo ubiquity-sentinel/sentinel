@@ -1217,7 +1217,7 @@ Deno.test(
     const mergeIntent = {
       kind: "merge" as const,
       key: mergeIntentKey(7, OLD_HEAD),
-      startedAt: T0 - 100,
+      startedAt: T0 - CHECK_POLL_MS,
       branch: BRANCH,
       expectedHead: OLD_HEAD,
       observedBase: SHA1,
@@ -1259,6 +1259,25 @@ Deno.test(
       kept.intent?.kind,
       "merge",
       "an unmoved base keeps the exact merge intent",
+    );
+
+    // A merge sent within the last poll may still land and move the base by
+    // itself: the fresh intent is never replaced by a refresh.
+    const landing = new RefreshGithub(SHA2, OLD_HEAD);
+    const landingRig = makeRig(landing);
+    landing.prepareBaseRefresh = () => {
+      throw new Error("a fresh merge intent never prepares a refresh");
+    };
+    await landingRig.seed([
+      deliveryRecord(OLD_HEAD, {
+        intent: { ...mergeIntent, startedAt: T0 - CHECK_POLL_MS + 1 },
+      }),
+    ], { reviews: [receipt] });
+    await landingRig.run();
+    assert.notEqual(
+      (await landingRig.snapshot()).work[0].intent?.kind,
+      "base_refresh",
+      "a merge that may still be landing is not attributed to a moved base",
     );
   },
 );

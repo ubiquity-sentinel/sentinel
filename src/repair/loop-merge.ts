@@ -510,9 +510,14 @@ export async function reconcileMergeIntent(
   // base no longer authorizes the merge and every re-armed attempt is refused
   // again; replace the stale merge intent with the durable base refresh so the
   // candidate is refreshed and re-reviewed instead of looping on backoff.
+  // A merge sent within the last poll window may still be landing (an
+  // ambiguous response is reconciled immediately), and its own merge would
+  // move the base; only an intent at least one poll old is treated as stale.
   if (
     record.source.kind === "issue" &&
-    deps.github.prepareBaseRefresh !== undefined
+    deps.github.prepareBaseRefresh !== undefined &&
+    record.intent !== null &&
+    deps.clock.now() - record.intent.startedAt >= CHECK_POLL_MS
   ) {
     const refresh = await ensureBaseRefreshIntent(deps, context, record);
     if (refresh !== null) return refresh;
