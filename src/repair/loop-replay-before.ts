@@ -204,9 +204,11 @@ export async function ensureBeforeReplay(
     return null;
   }
   if (result.outcome === "unavailable") {
+    // A bounded re-observation, like every other replay wait here: an
+    // unavailable runtime must never park the task indefinitely.
     return setWait(
       record,
-      { reason: "unavailable", since: now, until: null },
+      { reason: "unavailable", since: now, until: now + CHECK_POLL_MS },
       now,
     );
   }

@@ -8,7 +8,7 @@ import {
 import type { EvidenceRefV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { replayEvidenceRef, replayResultId } from "./keys.ts";
-import { MAX_OUTPUT_LIMIT_BYTES } from "./loop-bounds.ts";
+import { CHECK_POLL_MS, MAX_OUTPUT_LIMIT_BYTES } from "./loop-bounds.ts";
 import { evidenceForRecord, isCausalReplayResult } from "./loop-evidence.ts";
 import { configFor, mergeEvidence } from "./loop-records.ts";
 import { sameStringArray } from "./loop-replay-evidence.ts";
@@ -131,12 +131,13 @@ export async function candidateValidated(
     outputLimitBytes: MAX_OUTPUT_LIMIT_BYTES,
   });
   if (!run.ok || run.value.outcome === "unavailable") {
+    const at = deps.clock.now();
     return {
       kind: "blocked",
       record: setWait(
         record,
-        { reason: "unavailable", since: deps.clock.now(), until: null },
-        deps.clock.now(),
+        { reason: "unavailable", since: at, until: at + CHECK_POLL_MS },
+        at,
       ),
     };
   }

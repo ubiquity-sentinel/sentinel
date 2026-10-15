@@ -72,6 +72,7 @@ import type { ReplayResultV1 } from "../../src/contracts/replay-result.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { candidateBranch } from "../../src/repair/keys.ts";
+import { CHECK_POLL_MS } from "../../src/repair/loop-bounds.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { createRepairStateStore } from "../../src/state/mod.ts";
 import { runRepairEntrypoint } from "../../src/main.ts";
@@ -655,8 +656,20 @@ Deno.test(
       assert.equal(work.nextStep, "work", JSON.stringify(work.blocker));
       assert.equal(work.blocker, null, "no missing-evidence fabrication");
       assert.equal(work.wait?.reason, "unavailable", JSON.stringify(work.wait));
+      assert.equal(
+        work.wait?.until,
+        work.wait!.since + CHECK_POLL_MS,
+        "an unavailable replay is re-observed, never parked forever",
+      );
       assert.equal(beforeRig.replay.requests.length, 1, "one before run");
       assert.equal(beforeRig.model.requests.length, 0, "no model start");
+      beforeRig.clock.advance(CHECK_POLL_MS + 1);
+      await beforeRig.run(6);
+      assert.equal(
+        beforeRig.replay.requests.length,
+        2,
+        "the expired wait re-runs the original replay",
+      );
       assert.deepEqual(
         state.evidence[0],
         bundle,

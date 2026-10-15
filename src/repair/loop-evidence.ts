@@ -7,6 +7,7 @@ import type {
 } from "../contracts/shared.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { CHECK_POLL_MS } from "./loop-bounds.ts";
 import { mergeEvidence, sameRepositoryIdentity } from "./loop-records.ts";
 import type { RepairCycleDepsV1 } from "./loop-types.ts";
 import { markBlocked, setWait } from "./transitions.ts";
@@ -107,11 +108,12 @@ export async function ensureEvidence(
   }
   const read = await deps.incidents.readIncident(incidentId);
   if (!read.ok) {
+    const at = deps.clock.now();
     return {
       record: setWait(
         record,
-        { reason: "unavailable", since: deps.clock.now(), until: null },
-        deps.clock.now(),
+        { reason: "unavailable", since: at, until: at + CHECK_POLL_MS },
+        at,
       ),
       evidence: null,
     };
