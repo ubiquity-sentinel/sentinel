@@ -18,6 +18,7 @@ import {
   sameRepositoryIdentity,
 } from "./loop-records.ts";
 import {
+  hasBlockingFindings,
   isUnboundReviewObservation,
   reviewSubmittedAt,
   reviewWaitSince,
@@ -254,7 +255,7 @@ export async function applyObservedReview(
       ),
     );
   }
-  const unresolved = receipt.unresolvedSeverities.length > 0;
+  const unresolved = hasBlockingFindings(receipt);
   // A completed code-quality verdict is still not a delivery. For an
   // issue-backed record the receipt must also carry the reviewer's POSITIVE
   // task acceptance bound to this exact source issue AND to the TRUSTED live

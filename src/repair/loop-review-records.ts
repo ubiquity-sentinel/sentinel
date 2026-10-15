@@ -26,9 +26,20 @@ export function rejectedReceipt(
       review.pullRequest.head === head &&
       review.outcome === "completed",
   );
-  return receipt !== undefined && receipt.unresolvedSeverities.length > 0
-    ? receipt
-    : null;
+  return receipt !== undefined && hasBlockingFindings(receipt) ? receipt : null;
+}
+
+/**
+ * Only unresolved P0/P1 findings reject a head, exactly as the merge gate
+ * decides: unresolved P2/P3 findings never block delivery, so they must not
+ * spend a correction round either.
+ */
+export function hasBlockingFindings(
+  receipt: Pick<ReviewReceiptV1, "unresolvedSeverities">,
+): boolean {
+  return receipt.unresolvedSeverities.some((severity) =>
+    severity === "P0" || severity === "P1"
+  );
 }
 
 export function headRejectedByReview(
@@ -62,7 +73,7 @@ export function correctionFindings(
     .filter((review) =>
       review.pullRequest.number === current.pullRequest.number &&
       review.outcome === "completed" &&
-      review.unresolvedSeverities.length > 0 &&
+      hasBlockingFindings(review) &&
       review.id !== current.id
     )
     .sort((a, b) => b.observedAt - a.observedAt)
