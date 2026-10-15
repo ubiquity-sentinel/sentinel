@@ -424,7 +424,11 @@ Deno.test("P2/P3-only findings never spend a correction round", async () => {
       "non-blocking findings open no correction implementation",
     );
     const work = (await rig.snapshot()).work[0];
-    assert.notEqual(work.nextStep, "work", "the head is not rejected");
+    assert.equal(
+      work.nextStep,
+      "delivery",
+      "a non-blocking verdict proceeds to delivery",
+    );
     assert.equal(work.target.head, SHA3, "the reviewed head is kept");
     assert.equal(work.counters.reviewRounds, 1, "no extra review round");
     assert.deepEqual(

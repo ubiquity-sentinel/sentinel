@@ -14,7 +14,10 @@ import {
   legacyDependenciesDone,
   sameRepositoryIdentity,
 } from "./loop-records.ts";
-import { headRejectedByReview } from "./loop-review-records.ts";
+import {
+  hasBlockingFindings,
+  headRejectedByReview,
+} from "./loop-review-records.ts";
 import { persistTransition, replaceWorkMutation } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -126,7 +129,7 @@ export function legacyLossReviewMatches(
   const review = snapshot.reviews.find((entry) => entry.id === proof.reviewId);
   if (review === undefined) return false;
   return review.outcome === "completed" && review.resultId !== null &&
-    review.completedAt !== null && review.unresolvedSeverities.length > 0 &&
+    review.completedAt !== null && hasBlockingFindings(review) &&
     review.expectedReviewer === reviewer &&
     review.observedReviewer === reviewer &&
     review.pullRequest.number === proof.pr &&

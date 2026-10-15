@@ -77,7 +77,7 @@ export async function recoverMissingTaskReview(
     receipt.pullRequest.base !== record.target.base ||
     receipt.expectedReviewer !== deps.github.reviewerIdentity ||
     receipt.observedReviewer !== deps.github.reviewerIdentity ||
-    receipt.findingsUncounted !== 0 || receipt.unresolvedSeverities.length !== 0
+    receipt.findingsUncounted !== 0 || hasBlockingFindings(receipt)
   ) return null;
   if (
     config === null || config.liveStartLimits === null ||
@@ -154,7 +154,7 @@ export async function recoverMissingTaskReview(
       existing.expectedReviewer !== receipt.expectedReviewer ||
       existing.observedReviewer !== receipt.observedReviewer ||
       existing.findingsUncounted !== 0 ||
-      existing.unresolvedSeverities.length !== 0
+      hasBlockingFindings(existing)
     )
   ) {
     return {

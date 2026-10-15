@@ -35,11 +35,19 @@ import { exactOpenPr, positiveLifecycle } from "./loop-candidate-fixtures.ts";
 Deno.test(
   "missing task review recovery: legacy clean review gets one charged task-bound round",
   async () => {
-    for (const phase of ["blocked", "review"] as const) {
+    // Unresolved P2/P3 findings never block delivery, so a legacy verdict
+    // carrying only those is recovered exactly like a clean one.
+    for (
+      const [phase, nonBlocking] of [
+        ["blocked", false],
+        ["review", false],
+        ["blocked", true],
+      ] as const
+    ) {
       const head = SHA2;
       const operationKey = `review:7:${head}:attempt-2`;
       const nextKey = `review:7:${head}:attempt-3`;
-      const rig = await makeRig(`missing-task-${phase}`, {
+      const rig = await makeRig(`missing-task-${phase}-${nonBlocking}`, {
         summaries: false,
         github: {
           candidateLifecycle: {
@@ -66,6 +74,20 @@ Deno.test(
             submittedAt: T0 + 1000,
             completedAt: observation.completedAt,
             observedAt: observation.receivedAt,
+            ...(nonBlocking
+              ? {
+                findings: [{
+                  id: "finding-p2",
+                  severity: "P2",
+                  path: "src/app.ts",
+                  message: "optional improvement",
+                  fingerprint: "e".repeat(64),
+                  resolved: false,
+                  resolutionEvidence: null,
+                }],
+                unresolvedSeverities: ["P2"],
+              }
+              : {}),
           },
         );
         assert.equal(Object.hasOwn(legacy, "taskAcceptance"), false);
