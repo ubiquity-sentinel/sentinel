@@ -13,15 +13,20 @@ import type { MatrixAuthenticatedWaveV1 } from "../src/host/matrix-artifact-port
 import { matrixDigestV1 } from "../src/contracts/matrix.ts";
 import { blockedCandidateBinding } from "../src/host/matrix-blocked-candidate.ts";
 
-export async function restoreBlockedCandidate(input: {
+export interface BlockedCandidatePreservationInputV1 {
   record: WorkRecordV1;
-  wave: MatrixAuthenticatedWaveV1;
   state: StateReadView & RepairStateWriter;
   github: GitHubPort;
   clock: Clock;
   readbackFailure(write: PortResultV1<StateWriteResultV1>): Error;
-}): Promise<boolean> {
-  const { record, wave, state, github, clock } = input;
+}
+
+export async function restoreBlockedCandidate(
+  input: BlockedCandidatePreservationInputV1 & {
+    wave: MatrixAuthenticatedWaveV1;
+  },
+): Promise<boolean> {
+  const { record, wave } = input;
   const binding = blockedCandidateBinding(record);
   const intent = record.intent;
   const result = wave.results.find((row) =>
@@ -33,6 +38,24 @@ export async function restoreBlockedCandidate(input: {
     binding.plannerJobId !== wave.provenance.plannerJobId ||
     binding.resultDigest !== await matrixDigestV1(result)
   ) return false;
+  return await preserveBlockedCandidate(input);
+}
+
+/**
+ * The trusted tail every blocked-candidate recovery shares: the record must
+ * still be byte-identical in state, the trusted preserver must prove the
+ * exact candidate on its deterministic preservation ref, and one
+ * expected-head CAS returns the record to `work` with that preserved
+ * descriptor. The charge stays as it is: nothing is refunded or started.
+ */
+export async function preserveBlockedCandidate(
+  input: BlockedCandidatePreservationInputV1,
+): Promise<boolean> {
+  const { record, state, github, clock } = input;
+  const intent = record.intent;
+  if (!blockedCandidateBinding(record) || !intent || !intent.branch) {
+    return false;
+  }
   const before = await state.readRepair();
   if (
     !before.ok || before.value.status !== "found" ||

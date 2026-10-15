@@ -7,7 +7,6 @@ import {
 import type { ReleaseStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
-import { implementationIntentKey } from "../src/repair/keys.ts";
 import type {
   PortResultV1,
   RepairStateWriter,
@@ -15,16 +14,16 @@ import type {
   StateWriteResultV1,
 } from "../src/contracts/ports.ts";
 import { CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE } from "./hosted-autonomy-policy.ts";
-import type {
-  HostedAutonomyDepsV1,
-  HostedAutonomyResultV1,
-} from "./hosted-autonomy-types.ts";
+import type { HostedAutonomyDepsV1 } from "./hosted-autonomy-types.ts";
 import { HISTORICAL_RECOVERY_PROVIDERS } from "./hosted-autonomy-matrix-bindings.ts";
-import {
-  blockedCandidateBinding,
-  blockedCandidateMatchesProducer,
-} from "../src/host/matrix-blocked-candidate.ts";
+import { blockedCandidateBinding } from "../src/host/matrix-blocked-candidate.ts";
 import { restoreBlockedCandidate } from "./hosted-autonomy-blocked-candidate.ts";
+import {
+  type HostedProducerRecoveryV1,
+  producerPointerConsistent,
+  producerRequests,
+  unrecoverablePlan,
+} from "./hosted-autonomy-producer-requests.ts";
 
 export class CurrentMatrixRecoveryIntegrityFailure extends Error {
   constructor(
@@ -38,6 +37,11 @@ export class CurrentMatrixRecoveryIntegrityFailure extends Error {
   }
 }
 
+/** Reads one historical release snapshot of the walk's verified history. */
+export type HostedProducerReaderV1 = (
+  commit: GitSha,
+) => ReturnType<NonNullable<HostedAutonomyDepsV1["state"]["readReleaseAt"]>>;
+
 export async function recoverHostedMatrixProducer(
   deps: HostedAutonomyDepsV1,
   current: { head: GitSha; snapshot: ReleaseStateSnapshotV1 },
@@ -46,7 +50,42 @@ export async function recoverHostedMatrixProducer(
   covered: Set<string>,
   dedicated: ReadonlySet<string>,
   onDeferred: () => void,
-): Promise<{ result: HostedAutonomyResultV1 | null; deferred: boolean }> {
+  readProducer?: HostedProducerReaderV1,
+): Promise<HostedProducerRecoveryV1> {
+  try {
+    return await recoverProducerWithinBudget(
+      deps,
+      current,
+      producer,
+      deadlineAt,
+      covered,
+      dedicated,
+      onDeferred,
+      readProducer,
+    );
+  } catch (error) {
+    // Past the walk's budget every availability failure (a transport
+    // refusal, a listing or operation timeout) is the bounded deferral, so
+    // the later retry and delivery passes still run. Integrity stays fatal,
+    // and every applied write was already custody-checked by compare-and-swap.
+    if (
+      !(error instanceof CurrentMatrixRecoveryIntegrityFailure) &&
+      deps.clock.now() >= deadlineAt
+    ) throw new Error(CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE);
+    throw error;
+  }
+}
+
+async function recoverProducerWithinBudget(
+  deps: HostedAutonomyDepsV1,
+  current: { head: GitSha; snapshot: ReleaseStateSnapshotV1 },
+  producer: { head: GitSha; snapshot: ReleaseStateSnapshotV1 },
+  deadlineAt: number,
+  covered: Set<string>,
+  dedicated: ReadonlySet<string>,
+  onDeferred: () => void,
+  readProducer: HostedProducerReaderV1 | undefined,
+): Promise<HostedProducerRecoveryV1> {
   const checkDeadline = () => {
     if (deps.clock.now() >= deadlineAt) {
       throw new Error(CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE);
@@ -74,11 +113,7 @@ export async function recoverHostedMatrixProducer(
       !["accepted", "rolled_back", "cancelled"].includes(row.phase)
     )
   ) throw new Error("current matrix producer custody unavailable");
-  if (
-    saved.execution.releaseId !== null ||
-    runtime.activeRevision !== saved.execution.revision ||
-    runtime.generation !== saved.execution.generation
-  ) {
+  if (!producerPointerConsistent(runtime, saved.execution)) {
     throw new CurrentMatrixRecoveryIntegrityFailure(
       "current matrix producer custody unavailable",
       before.head,
@@ -107,10 +142,14 @@ export async function recoverHostedMatrixProducer(
     }
     if (producer.head !== current.head) {
       if (bounded) checkDeadline();
-      const prior = await deps.state.readReleaseAt?.({
-        commit: producer.head,
-        expectedHead: current.head,
-      });
+      // The release head was just re-proved unchanged, so the walk's
+      // verified history view still holds exactly this producer commit.
+      const prior = readProducer
+        ? await readProducer(producer.head)
+        : await deps.state.readReleaseAt?.({
+          commit: producer.head,
+          expectedHead: current.head,
+        });
       if (bounded) checkDeadline();
       if (!prior?.ok || prior.value.status !== "found") {
         throw new Error("current matrix producer custody unavailable");
@@ -181,51 +220,27 @@ export async function recoverHostedMatrixProducer(
       return written;
     },
   };
+  // The exact request bindings are pure facts of the repair snapshot: compute
+  // them before building any matrix port, so a producer no record binds to
+  // costs no target or artifact read.
+  const bound = producerRequests(
+    before.snapshot,
+    saved.execution,
+    dedicated,
+    integrityFault,
+  );
+  if (bound.length === 0) return { result: null, deferred: false };
   // Native reads, cooldown, budget and consumer writes all use this SAME
   // composed writer; changing only cycle.state would leave captured writers.
   checkDeadline();
   const ports = await deps.closedMatrix!(state);
   checkDeadline();
-  const requests = before.snapshot.work.flatMap((record) => {
-    const intent = record.intent;
-    if (
-      (record.nextStep !== "work" &&
-        !blockedCandidateMatchesProducer(record, saved.execution)) ||
-      !intent ||
-      !["implementation", "candidate_preservation"].includes(intent.kind) ||
-      dedicated.has(intent.requestId ?? "")
-    ) return [];
-    const charge = before.snapshot.reservations.find((row) =>
-      row.id === intent.requestId
-    );
-    if (
-      !charge || record.source.kind !== "issue" ||
-      canonicalStringify(charge.repository) !==
-        canonicalStringify(record.repository) ||
-      charge.taskId !== record.id || charge.head !== record.target.base ||
-      charge.attempt !== record.counters.attempts ||
-      !["implementation", "retry"].includes(charge.purpose) ||
-      charge.outcome === "confirmed_not_submitted" ||
-      intent.key !== implementationIntentKey(charge.id) ||
-      intent.observedBase !== record.target.base || intent.resultId !== null
-    ) {
-      throw integrityFault("current matrix request binding unavailable");
-    }
-    if (
-      !ports.configs.some((config) =>
-        canonicalStringify(config.repository) ===
-          canonicalStringify(record.repository)
-      )
-    ) return [];
-    return [{
-      taskId: record.id,
-      repository: record.repository,
-      reservationId: charge.id,
-      intentKey: intent.key,
-      expectedBase: record.target.base,
-      attempt: record.counters.attempts,
-    }];
-  });
+  const requests = bound.filter((request) =>
+    ports.configs.some((config) =>
+      canonicalStringify(config.repository) ===
+        canonicalStringify(request.repository)
+    )
+  );
   if (requests.length === 0) return { result: null, deferred: false };
   const producerState: StateReadView & RepairStateWriter = {
     ...state,
@@ -270,6 +285,32 @@ export async function recoverHostedMatrixProducer(
       canonicalStringify({ ...saved, observedAt: 0 })
   ) {
     throw integrityFault("current matrix native proof changed");
+  }
+  // An expired or unlisted blocker-bound plan can never be read again: that
+  // producer is unrecoverable, which is a typed skip that writes nothing,
+  // never an escaping transport refusal that would starve every later pass.
+  if (ports.readPlanArtifact) {
+    checkDeadline();
+    const kind = await unrecoverablePlan(
+      () =>
+        ports.readPlanArtifact!({
+          runId: saved.execution.runId,
+          runAttempt: saved.execution.runAttempt,
+        }, deadlineAt),
+      requests,
+      before.snapshot.work,
+    );
+    checkDeadline();
+    if (kind !== null) {
+      return {
+        result: null,
+        deferred: false,
+        unrecoverable: {
+          kind,
+          reservations: requests.map((request) => request.reservationId),
+        },
+      };
+    }
   }
   await custody();
   const waves = await transport.recover({

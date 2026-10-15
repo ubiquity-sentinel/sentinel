@@ -59,7 +59,11 @@ export type BlockedCandidateCase =
   | "post-write-readback-drift"
   | "wrong-preservation-readback"
   | "unsupported-reason"
-  | "missing-artifact";
+  | "missing-artifact"
+  | "expired-plan"
+  | "unlisted-plan"
+  | "existing-ref"
+  | "existing-ref-conflict";
 
 export async function modernRecoveryScenario(
   history = false,
@@ -355,6 +359,39 @@ export async function modernRecoveryScenario(
       assert(written.ok && written.value.status === "applied");
       if (blockedCandidate === "missing-artifact") {
         f.artifacts.splice(f.artifacts.findIndex((row) => row.id === 503), 1);
+      }
+      if (blockedCandidate === "expired-plan") {
+        f.artifacts.find((row) => row.id === 501)!.expired = true;
+      }
+      if (
+        blockedCandidate === "unlisted-plan" ||
+        blockedCandidate === "existing-ref" ||
+        blockedCandidate === "existing-ref-conflict"
+      ) {
+        // Native-ref recovery needs no matrix artifact at all.
+        f.artifacts.splice(0, f.artifacts.length);
+      }
+      // The hosted surface reads candidate preservation refs from the real
+      // target repository; every other branch stays on the stable base.
+      f.github.readBaseTip = async (branch: string) => {
+        if (!branch.startsWith("sentinel-candidates/")) return base;
+        const observed = await gitRun(target.work, [
+          "rev-parse",
+          "--verify",
+          "refs/heads/" + branch,
+        ], ENV);
+        return observed.ok ? observed.stdout.trim() : null;
+      };
+      if (
+        blockedCandidate === "existing-ref" ||
+        blockedCandidate === "existing-ref-conflict"
+      ) {
+        const blockedRow = work.find((row) => row.id === f.cells[1].taskId)!;
+        await checked(target.work, [
+          "update-ref",
+          blockedRow.intent!.branch!,
+          blockedCandidate === "existing-ref" ? candidate : base,
+        ]);
       }
     }
     const before = await f.rig.state.readRepair();
@@ -682,11 +719,54 @@ export async function modernRecoveryScenario(
           after.value.snapshot.reservations,
           before.value.snapshot.reservations,
         );
-      } else if (blockedCandidate === "valid") {
+      } else if (
+        blockedCandidate === "valid" || blockedCandidate === "existing-ref"
+      ) {
         assert(!(result instanceof Error), String(result));
         const recovered = after.value.snapshot.work.find((row) =>
           row.id === f.cells[1].taskId
         )!;
+        const original = before.value.snapshot.work.find((row) =>
+          row.id === recovered.id
+        )!;
+        // Artifact and native-ref recovery leave the exact same record.
+        assert.deepEqual(recovered, {
+          ...original,
+          nextStep: "work",
+          blocker: null,
+          wait: null,
+          intent: null,
+          target: {
+            ...original.target,
+            candidateState: {
+              preserved: {
+                operationKey: original.intent!.key,
+                base: original.target.base,
+                head: original.target.head!,
+                ref: original.intent!.branch!,
+              },
+              publishedHead: original.target.candidateState!.publishedHead,
+            },
+          },
+          updatedAt: recovered.updatedAt,
+        });
+        if (blockedCandidate === "existing-ref") {
+          assert.deepEqual(
+            (result as HostedAutonomyResultV1).actions,
+            [`existing-ref:${recovered.id}:preserved`],
+          );
+          // The existing ref keeps its single original update: re-proved,
+          // never rewritten.
+          assert.equal(
+            await checked(target.work, [
+              "reflog",
+              "show",
+              "--format=%H",
+              original.intent!.branch!,
+            ]),
+            candidate,
+          );
+        }
         assert.equal(
           recovered.nextStep,
           "work",
@@ -808,6 +888,29 @@ export async function modernRecoveryScenario(
           ["review_request"],
           "only the ordinary review is newly charged",
         );
+      } else if (
+        blockedCandidate === "expired-plan" ||
+        blockedCandidate === "unlisted-plan" ||
+        blockedCandidate === "existing-ref-conflict"
+      ) {
+        // An unrecoverable producer is a typed skip: the run completes its
+        // later passes instead of escaping, and nothing is written.
+        assert(!(result instanceof Error), String(result));
+        const reported = result as HostedAutonomyResultV1;
+        assert.notEqual(reported.status, "failed", JSON.stringify(reported));
+        for (
+          const action of blockedCandidate === "expired-plan"
+            ? ["current-matrix:unrecoverable:expired"]
+            : blockedCandidate === "unlisted-plan"
+            ? ["current-matrix:unrecoverable:unlisted"]
+            : [
+              `existing-ref:${f.cells[1].taskId}:conflict`,
+              "current-matrix:unrecoverable:unlisted",
+            ]
+        ) {
+          assert(reported.actions.includes(action), JSON.stringify(reported));
+        }
+        assert.deepEqual(after, before);
       } else if (blockedCandidate === "changed-record") {
         assert(competing !== null, "competing owner must reach the CAS seam");
         assert.deepEqual(

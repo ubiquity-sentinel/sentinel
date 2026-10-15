@@ -10,7 +10,7 @@ import { CurrentMatrixRecoveryIntegrityFailure } from "../../ops/hosted-autonomy
 import { HOSTED_RUNTIME_ID } from "../../src/contracts/hosted-supervisor.ts";
 import { CLOSED_C_WAVE } from "../../src/host/modern-matrix-recovery.ts";
 import { implementationIntentKey } from "../../src/repair/keys.ts";
-import { SHA1, workRecord } from "../state/helpers.ts";
+import { reservation, SHA1, workRecord } from "../state/helpers.ts";
 
 const OLD = "a".repeat(40);
 const NEW = "b".repeat(40);
@@ -102,8 +102,11 @@ function history(install: Record<string, unknown>) {
 }
 
 function walk(snapshots: Record<string, unknown>) {
-  // One in-flight implementation is enough to start the history walk.
+  // One in-flight implementation with its exact charge is enough to start the
+  // history walk; the producer binds that charge before any matrix port.
+  const charge = reservation("pending-charge", { taskId: "issue-1" });
   const pending = workRecord("issue-1", {
+    counters: { attempts: 1, retries: 0, reviewRounds: 0 },
     intent: {
       kind: "implementation",
       key: implementationIntentKey("pending-charge"),
@@ -130,7 +133,7 @@ function walk(snapshots: Record<string, unknown>) {
           value: {
             status: "found",
             head: "f".repeat(40),
-            snapshot: { work: [pending], reservations: [] },
+            snapshot: { work: [pending], reservations: [charge] },
           },
         }),
       readRelease: () => found(HEADS[0]),

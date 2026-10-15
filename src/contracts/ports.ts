@@ -156,6 +156,7 @@ export type {
 } from "./ports-release.ts";
 
 export type {
+  ReleaseHistoryViewV1,
   ReleaseStateWriter,
   RepairStateWriter,
   StateReadResultV1,

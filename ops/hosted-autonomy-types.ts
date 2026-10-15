@@ -5,6 +5,7 @@ import type { ReviewTaskStatementV1 } from "../src/contracts/review-receipt.ts";
 import type { HistoricalMatrixQuarantineDepsV1 } from "../src/host/matrix-actions.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { MismatchDispositionObservationsV1 } from "./runtime-mismatch-recovery-disposition.ts";
+import type { HostedPlanArtifactV1 } from "./hosted-autonomy-producer-requests.ts";
 import type {
   RepairStateWriter,
   StateReadView,
@@ -181,6 +182,18 @@ export interface HostedSelfObservationV1 {
   fileIssue(input: { title: string; body: string }): Promise<number | null>;
 }
 
+/**
+ * The protected maintenance matrix slice. `readPlanArtifact` is the
+ * launcher-only native listing of one producer run's exact plan artifact (null
+ * when unlisted); when absent, the authenticated transport alone decides.
+ */
+export type HostedClosedMatrixDepsV1 = ClosedCWaveRecoveryDepsV1 & {
+  readPlanArtifact?(
+    run: { runId: number; runAttempt: number },
+    deadline: number,
+  ): Promise<HostedPlanArtifactV1 | null>;
+};
+
 export interface HostedAutonomyDepsV1 {
   state: StateReadView & RepairStateWriter;
   /**
@@ -195,7 +208,7 @@ export interface HostedAutonomyDepsV1 {
   historicalMatrix?: HistoricalMatrixQuarantineDepsV1;
   closedMatrix?: (
     state?: StateReadView & RepairStateWriter,
-  ) => Promise<ClosedCWaveRecoveryDepsV1>;
+  ) => Promise<HostedClosedMatrixDepsV1>;
   /** Charged uncertainty only; no producer, artifact, health or release authority. */
   uncertainMatrix?: () => ReturnType<typeof runMatrixUncertaintyMaintenance>;
 }
