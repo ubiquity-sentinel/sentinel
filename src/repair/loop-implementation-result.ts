@@ -214,7 +214,7 @@ export async function handleModelReceipt(
   // The verified prior published head: retained from existing V1 candidate
   // state, or proved by an ACTUAL owned-branch observation of the exact prior
   // target head for a legacy record. Model output never establishes it.
-  const priorPublishedHead = await verifiedPublishedHead(deps, context, record);
+  const priorPublished = await verifiedPublishedHead(deps, context, record);
   const operationKey = implementationIntentKey(reservationId);
   const preservationRef = await candidatePreservationRef(
     record.repository,
@@ -243,10 +243,17 @@ export async function handleModelReceipt(
       ? null
       : { branch: candidateBranch(record.id), sha: candidate!.checkpointSha },
   }, now);
-  const withCandidate = setCandidateState(noted, {
-    preserved: null,
-    publishedHead: priorPublishedHead,
-  }, now);
+  // A legacy record whose predecessor observation was unavailable keeps its
+  // legacy shape: an unverified observation is never stored as a verified
+  // absent head, which would terminally refuse the legitimate predecessor ref
+  // once reads recover. Its publication re-observes the branch through the
+  // legacy path, and its next candidate retries the observation.
+  const withCandidate = priorPublished.kind === "unavailable"
+    ? noted
+    : setCandidateState(noted, {
+      preserved: null,
+      publishedHead: priorPublished.head,
+    }, now);
   if (protectedHit) {
     const blocked = markBlocked(
       withCandidate,
@@ -271,9 +278,11 @@ export async function handleModelReceipt(
     runtimeSha: deps.controllerSha,
   });
   return persistTransition(deps, afterSettlement, (draft) => {
-    replaceWorkMutation(setIntent(withCandidate, preservationIntent, now))(
-      draft,
-    );
+    replaceWorkMutation(
+      withCandidate.target.candidateState === undefined
+        ? withCandidate
+        : setIntent(withCandidate, preservationIntent, now),
+    )(draft);
     successMemory(draft);
   });
 }
