@@ -345,6 +345,7 @@ export async function planMatrixWave(
         record,
         snapshot: context.snapshot,
         now,
+        runtimeSha: deps.controllerSha,
       }).refuse
     ) {
       memoryRefused++;

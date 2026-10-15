@@ -1,4 +1,12 @@
+import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 import assert from "node:assert/strict";
+import { deriveReservationId } from "../../src/budget/mod.ts";
+import { budget } from "../budget/controller-fixtures.ts";
+import {
+  FakeClock,
+  MemoryRepairState,
+  repositoryConfig,
+} from "../budget/helpers.ts";
 import {
   applyHostedRetries,
   planHostedRetries,
@@ -93,11 +101,11 @@ Deno.test(
 );
 
 Deno.test(
-  "hosted autonomy: an attempt-ceiling grant never re-plans a charged retry identity",
+  "hosted autonomy: monotonic retries never re-plan a charged identity",
   () => {
     // The loop admits corrections with purpose `retry` and identity
     // (task, base, attempt, purpose); attempt 4 at this base is already
-    // settled, so a grant of 1 would be refused as a duplicate admission.
+    // settled, so preserve the counter and select the unused next identity.
     const record = blockedRecord({
       blocker: {
         kind: "review_quota",
@@ -107,6 +115,7 @@ Deno.test(
       counters: { attempts: 4, retries: 1, reviewRounds: 1 },
     });
     const charged = reservation("charged-retry", {
+      repository: record.repository,
       taskId: TARGET,
       head: BASE,
       attempt: 4,
@@ -117,13 +126,55 @@ Deno.test(
     const plans = planHostedRetries(
       repairSnapshot([record], [authorizingReceipt()], [], [charged]),
       T0 + 5000,
+      ATTEMPT_RUNTIME,
     );
     assert.equal(plans.length, 1);
+    assert.equal(plans[0].grant, 0);
     const remaining = 4 - plans[0].grant;
-    assert.equal(remaining, 2);
-    assert.notEqual(remaining + 1, 4);
+    assert.equal(remaining, 4);
+    assert.equal(remaining + 1, 5);
   },
 );
+
+Deno.test("hosted autonomy: foreign charges cannot raise our floor or authorize an ID collision", async () => {
+  const record = blockedRecord({
+    counters: { attempts: 3, retries: 0, reviewRounds: 1 },
+  });
+  const request = {
+    repository: record.repository,
+    taskId: record.id,
+    head: BASE,
+    attempt: 4,
+    purpose: "retry" as const,
+  };
+  const foreign = reservation(await deriveReservationId(request), {
+    taskId: record.id,
+    head: BASE,
+    attempt: 4,
+    purpose: "retry",
+    outcome: "submitted",
+    settledAt: T0 + 1000,
+  });
+  assert.notDeepEqual(foreign.repository, record.repository);
+  const snapshot = repairSnapshot([record], [], [], [foreign]);
+  const plans = planHostedRetries(snapshot, T0 + 5000, ATTEMPT_RUNTIME);
+  assert.equal(plans.length, 1);
+  const applied = applyHostedRetries(snapshot, SHA1, plans, T0 + 5000);
+  assert.equal(applied.work[0].counters.attempts, 3);
+  assert.deepEqual(applied.reservations, snapshot.reservations);
+
+  const state = new MemoryRepairState();
+  state.seed(snapshot);
+  const controller = budget(new FakeClock(T0 + 5000), state, [
+    repositoryConfig(undefined, undefined, {
+      repository: record.repository,
+      adapter: { kind: "github" },
+    }),
+  ]);
+  assert.equal((await controller.reserveModelStart(request)).status, "invalid");
+  assert.equal(state.writes, 0);
+  assert.deepEqual(state.current().snapshot?.reservations, [foreign]);
+});
 
 Deno.test(
   "hosted autonomy: no attempt-ceiling grant is spent once the review budget is spent",
@@ -139,7 +190,10 @@ Deno.test(
     const snapshot = repairSnapshot([record], [authorizingReceipt()]);
     // Every review round is spent, so another implementation run can never
     // become a reviewed verdict: the grant is provably futile.
-    assert.equal(planHostedRetries(snapshot, T0 + 5000).length, 0);
+    assert.equal(
+      planHostedRetries(snapshot, T0 + 5000, ATTEMPT_RUNTIME).length,
+      0,
+    );
     // With a review round left the same blocker is still retryable.
     const earlier = repairSnapshot(
       [blockedRecord({
@@ -152,12 +206,15 @@ Deno.test(
       })],
       [authorizingReceipt()],
     );
-    assert.equal(planHostedRetries(earlier, T0 + 5000).length, 1);
+    assert.equal(
+      planHostedRetries(earlier, T0 + 5000, ATTEMPT_RUNTIME).length,
+      1,
+    );
   },
 );
 
 Deno.test(
-  "hosted autonomy: a transient blocker at the attempt ceiling advances the base, never a zero grant",
+  "hosted autonomy: a retired attempt ceiling preserves counters and reconciles a newer base",
   () => {
     const record = blockedRecord({
       counters: { attempts: 4, retries: 0, reviewRounds: 1 },
@@ -176,17 +233,20 @@ Deno.test(
       chargedAttempts(),
     );
     const newerBase = SHA1;
-    const plans = planHostedRetries(snapshot, T0 + 5000, selfTips(newerBase));
+    const plans = planHostedRetries(
+      snapshot,
+      T0 + 5000,
+      ATTEMPT_RUNTIME,
+      selfTips(newerBase),
+    );
     assert.equal(plans.length, 1);
-    // A grant of 0 would leave attempts at 4, exactly where the runtime refuses
-    // admission: the grant must land below the ceiling through the runtime's
-    // own base refresh instead of re-blocking the record unchanged.
-    assert.equal(plans[0].grant, 1);
+    // The retired ceiling never lowers history; the next unique index is 5.
+    assert.equal(plans[0].grant, 0);
     assert.equal(plans[0].advanceBase, true);
     assert.equal(plans[0].nextStep, "work");
     const applied = applyHostedRetries(snapshot, SHA1, plans, T0 + 5000)
       .work[0];
-    assert.equal(applied.counters.attempts, 3);
+    assert.equal(applied.counters.attempts, 4);
     assert.equal(applied.counters.retries, 0);
     assert.ok(
       applied.intent !== null && applied.intent.kind === "base_refresh",
@@ -216,7 +276,8 @@ Deno.test(
       chargedAttempts(),
     );
     assert.equal(
-      planHostedRetries(earlier, T0 + 5000, selfTips(SHA1)).length,
+      planHostedRetries(earlier, T0 + 5000, ATTEMPT_RUNTIME, selfTips(SHA1))
+        .length,
       1,
     );
     // ...but once every review round is spent another implementation run can
@@ -230,8 +291,16 @@ Deno.test(
       [],
       chargedAttempts(),
     );
-    assert.equal(planHostedRetries(spent, T0 + 5000, selfTips(SHA1)).length, 0);
-    assert.equal(planHostedRetries(spent, T0 + 5000, selfTips(BASE)).length, 0);
+    assert.equal(
+      planHostedRetries(spent, T0 + 5000, ATTEMPT_RUNTIME, selfTips(SHA1))
+        .length,
+      0,
+    );
+    assert.equal(
+      planHostedRetries(spent, T0 + 5000, ATTEMPT_RUNTIME, selfTips(BASE))
+        .length,
+      0,
+    );
   },
 );
 
@@ -242,6 +311,7 @@ Deno.test(
       counters: { attempts: 3, retries: 0, reviewRounds: 1 },
     });
     const reservedRetry = reservation("reserved-retry", {
+      repository: record.repository,
       taskId: TARGET,
       head: BASE,
       attempt: 4,
@@ -254,20 +324,18 @@ Deno.test(
       [],
       [reservedRetry],
     );
-    const plans = planHostedRetries(snapshot, T0 + 5000);
+    const plans = planHostedRetries(snapshot, T0 + 5000, ATTEMPT_RUNTIME);
     assert.equal(plans.length, 1);
-    // Identity 4 is already reserved and the runtime refuses that duplicate
-    // instead of starting a second session, so the grant must step to identity
-    // 3 rather than re-plan 4 forever.
-    assert.equal(plans[0].grant, 1);
+    // Reserved identity 4 stays charged; a later start must use 5, not reuse 3.
+    assert.equal(plans[0].grant, 0);
     const applied = applyHostedRetries(snapshot, SHA1, plans, T0 + 5000)
       .work[0];
-    assert.equal(applied.counters.attempts, 2);
-    assert.equal(applied.counters.attempts + 1, 3);
+    assert.equal(applied.counters.attempts, 4);
+    assert.equal(applied.counters.attempts + 1, 5);
     assert.ok(
       !snapshot.reservations.some((entry) =>
         entry.taskId === TARGET && entry.head === BASE &&
-        entry.attempt === 3 && entry.purpose === "retry"
+        entry.attempt === 5 && entry.purpose === "retry"
       ),
     );
 
@@ -283,6 +351,7 @@ Deno.test(
       counters: { attempts: 1, retries: 0, reviewRounds: 3 },
     });
     const reservedReview = reservation("reserved-review", {
+      repository: reviewRecord.repository,
       taskId: TARGET,
       head: BASE,
       attempt: 2,
@@ -295,10 +364,14 @@ Deno.test(
       [],
       [reservedReview],
     );
-    assert.equal(planHostedRetries(reviewSnapshot, T0 + 5000).length, 0);
+    assert.equal(
+      planHostedRetries(reviewSnapshot, T0 + 5000, ATTEMPT_RUNTIME).length,
+      0,
+    );
     const reviewPlans = planHostedRetries(
       reviewSnapshot,
       T0 + 5000,
+      ATTEMPT_RUNTIME,
       selfTips(SHA1),
     );
     assert.equal(reviewPlans.length, 1);

@@ -1,3 +1,4 @@
+import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 /** Actual maintenance consumer and charged state transitions over disposable Git. */
 import assert from "node:assert/strict";
 import type { GitSha, WorkItemId } from "../../src/contracts/brands.ts";
@@ -529,7 +530,10 @@ Deno.test("uncertainty maintenance parks five submitted preservation admissions 
     );
     assert.deepEqual(await f.release.readRelease(), beforeRelease);
     assert.equal(result.reason, "release_not_terminal");
-    assert.deepEqual(planHostedRetries(after.value.snapshot, NOW), []);
+    assert.deepEqual(
+      planHostedRetries(after.value.snapshot, NOW, ATTEMPT_RUNTIME),
+      [],
+    );
     assert.deepEqual(
       planHostedRetirements(
         after.value.snapshot,

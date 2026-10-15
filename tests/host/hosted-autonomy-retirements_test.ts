@@ -1,3 +1,4 @@
+import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 import assert from "node:assert/strict";
 import {
   createHostedAutonomyGitHub,
@@ -288,7 +289,11 @@ Deno.test(
     assert.equal(record.blocker?.message, HOSTED_AUTONOMY_RETIRED);
     assert.equal(record.intent, null);
     // Terminal: the retirement reason matches no retryable prefix.
-    assert.equal(planHostedRetries(read.value.snapshot, T0 + 900000).length, 0);
+    assert.equal(
+      planHostedRetries(read.value.snapshot, T0 + 900000, ATTEMPT_RUNTIME)
+        .length,
+      0,
+    );
     await Deno.remove(rig.tmp, { recursive: true });
   },
 );

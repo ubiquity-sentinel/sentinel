@@ -40,7 +40,7 @@ import {
   recordAttemptSuccessV1,
 } from "../contracts/attempt-memory.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
-import type { GitSha } from "../contracts/brands.ts";
+import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import type {
   PriorAttemptFactV1,
   RepositoryRegressionFactV1,
@@ -246,19 +246,22 @@ function sameRepository(
 
 /**
  * The latest-entry refusal check the retry pass uses. Synchronous: it only
- * compares stored fields against the record's current base/revision, so no
+ * compares the current base and supplied authenticated runtime, so no
  * digest recomputation is needed for the common decision.
  */
 export function attemptEquivalenceRefusalForRecordV1(input: {
   record: WorkRecordV1;
   snapshot: RepairStateSnapshotV1;
   now: number;
+  /** Authenticated selected runtime, never the work record's intake origin. */
+  runtimeSha: GitSha;
   purpose?: AttemptPurposeV1;
   policy?: AttemptEquivalencePolicyV1;
 }): {
   refuse: boolean;
   entry: AttemptMemoryRecordV1["entries"][number] | null;
 } {
+  const runtimeSha = requireAttemptRuntime(input.runtimeSha);
   const purpose = input.purpose ?? "implementation";
   const memory = input.snapshot.attemptMemory.find((candidate) =>
     sameRepository(candidate.repository, input.record.repository) &&
@@ -269,13 +272,11 @@ export function attemptEquivalenceRefusalForRecordV1(input: {
   if (memory === undefined || memory.entries.length === 0) {
     return { refuse: false, entry: null };
   }
-  // Entries are oldest-first; the last entry is the most recent outcome.
-  const entry = memory.entries[memory.entries.length - 1];
-  if (entry.controllerSha !== input.record.controller.sha) {
-    // The runtime revision changed since that outcome: the approach
-    // generation is different, so this is changed evidence.
-    return { refuse: false, entry };
-  }
+  // Late imports from an older runtime cannot mask this runtime's failures.
+  const entry = memory.entries.findLast((entry) =>
+    entry.controllerSha === runtimeSha
+  );
+  if (entry === undefined) return { refuse: false, entry: null };
   const decision = decideEquivalentAttemptV1({
     record: memory,
     fingerprint: entry.fingerprint,
@@ -292,7 +293,7 @@ export const MAX_PRIOR_ATTEMPT_FACTS = 8;
 /**
  * Bounded, newest-first verified facts for the current approach generation of
  * one work item: entries of its attempt-memory family at the record's exact
- * base whose runtime revision equals the record's current controller. Entries
+ * base whose runtime revision equals the supplied authenticated runtime. Entries
  * from older revisions are deliberately excluded — they describe a different
  * approach generation, and the prompt must not advise a session to avoid
  * failures that the current runtime already replaced. Pure; returns [] when no
@@ -301,8 +302,10 @@ export const MAX_PRIOR_ATTEMPT_FACTS = 8;
 export function priorAttemptFactsForRecordV1(
   snapshot: RepairStateSnapshotV1,
   record: WorkRecordV1,
+  runtimeSha: GitSha,
   maxFacts: number = MAX_PRIOR_ATTEMPT_FACTS,
 ): PriorAttemptFactV1[] {
+  requireAttemptRuntime(runtimeSha);
   const purpose: AttemptPurposeV1 = "implementation";
   const memory = snapshot.attemptMemory.find((candidate) =>
     sameRepository(candidate.repository, record.repository) &&
@@ -314,7 +317,7 @@ export function priorAttemptFactsForRecordV1(
   const facts: PriorAttemptFactV1[] = [];
   for (let index = memory.entries.length - 1; index >= 0; index--) {
     const entry = memory.entries[index];
-    if (entry.controllerSha !== record.controller.sha) continue;
+    if (entry.controllerSha !== runtimeSha) continue;
     facts.push({
       detail: entry.detail,
       stage: entry.stage,
@@ -345,6 +348,7 @@ export function repositoryRegressionFactsV1(
   currentRevision: GitSha,
   maxFacts: number = MAX_REGRESSION_FACTS,
 ): RepositoryRegressionFactV1[] {
+  requireAttemptRuntime(currentRevision);
   const failures = new Map<string, { count: number; lastAtMs: number }>();
   for (const memory of snapshot.attemptMemory) {
     if (!sameRepository(memory.repository, repository)) continue;
@@ -394,7 +398,7 @@ export const MAX_REPOSITORY_LESSONS = 5;
 
 /**
  * Bounded cross-task learning: the most recent distinct failure modes recorded
- * for OTHER work items in the same repository at the record's current runtime
+ * for OTHER work items in the same repository at the authenticated runtime
  * revision. This is the OpenClaw "memory search" analog made deterministic:
  * a new task sees what already failed elsewhere in this repository under this
  * exact revision, so a fresh session inherits the repository's operational
@@ -404,14 +408,16 @@ export const MAX_REPOSITORY_LESSONS = 5;
 export function repositoryPriorFactsForRecordV1(
   snapshot: RepairStateSnapshotV1,
   record: WorkRecordV1,
+  runtimeSha: GitSha,
   maxFacts: number = MAX_REPOSITORY_LESSONS,
 ): PriorAttemptFactV1[] {
+  requireAttemptRuntime(runtimeSha);
   const byDetail = new Map<string, PriorAttemptFactV1>();
   for (const memory of snapshot.attemptMemory) {
     if (!sameRepository(memory.repository, record.repository)) continue;
     if (memory.taskId === record.id) continue;
     for (const entry of memory.entries) {
-      if (entry.controllerSha !== record.controller.sha) continue;
+      if (entry.controllerSha !== runtimeSha) continue;
       const prior = byDetail.get(entry.detail);
       if (
         prior === undefined || entry.count > prior.count ||
@@ -440,7 +446,10 @@ export function repositoryPriorFactsForRecordV1(
 export async function attemptMemorySuccessMutationV1(input: {
   record: WorkRecordV1;
   now: number;
+  /** Authenticated producing runtime of this accepted attempt. */
+  runtimeSha: GitSha;
 }): Promise<(draft: RepairStateSnapshotV1) => void> {
+  const runtimeSha = requireAttemptRuntime(input.runtimeSha);
   const purpose: AttemptPurposeV1 = "implementation";
   const base = input.record.target.base;
   const id = await attemptMemoryIdV1({
@@ -466,7 +475,7 @@ export async function attemptMemorySuccessMutationV1(input: {
     const next = recordAttemptSuccessV1(
       existing,
       input.now,
-      input.record.controller.sha,
+      runtimeSha,
     );
     const sorted = [...draft.attemptMemory];
     if (index === -1) {
@@ -492,6 +501,8 @@ export async function attemptMemorySettlementMutationV1(input: {
   record: WorkRecordV1;
   detail: string;
   now: number;
+  /** Authenticated producing runtime; missing identity must not be invented. */
+  runtimeSha: GitSha;
   /**
    * Trusted call-site classification (stage/failure class) when the caller has
    * structured knowledge the detail string does not carry — e.g. the matrix
@@ -505,7 +516,7 @@ export async function attemptMemorySettlementMutationV1(input: {
 }): Promise<(draft: RepairStateSnapshotV1) => void> {
   const purpose: AttemptPurposeV1 = "implementation";
   const base = input.record.target.base;
-  const controllerSha = input.record.controller.sha;
+  const controllerSha = requireAttemptRuntime(input.runtimeSha);
   const classification = input.classification ??
     classifyAttemptDetailV1(input.detail);
   const id = await attemptMemoryIdV1({
@@ -549,4 +560,11 @@ export async function attemptMemorySettlementMutationV1(input: {
       draft.attemptMemory[index] = merged;
     }
   };
+}
+
+function requireAttemptRuntime(runtimeSha: GitSha): GitSha {
+  if (!isGitSha(runtimeSha)) {
+    throw new TypeError("authenticated attempt runtime revision is required");
+  }
+  return runtimeSha;
 }

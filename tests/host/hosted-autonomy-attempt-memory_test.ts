@@ -1,3 +1,4 @@
+import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
@@ -17,14 +18,19 @@ import {
   ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT,
   ATTEMPT_TRANSIENT_DECAY_MS,
 } from "../../src/repair/attempt-policy.ts";
-import { SHA1, T0 } from "../state/helpers.ts";
+import { SHA1, SHA2, T0 } from "../state/helpers.ts";
 import {
   BASE,
   blockedRecord,
   SELF_REPO,
   TARGET,
 } from "./hosted-autonomy-fixtures.ts";
-import { repairSnapshot } from "./hosted-autonomy-rig.ts";
+import {
+  makeRig,
+  releaseSnapshot,
+  repairSnapshot,
+  run,
+} from "./hosted-autonomy-rig.ts";
 
 async function attemptMemoryFixture(
   input: {
@@ -90,7 +96,7 @@ Deno.test(
     });
     const base = repairSnapshot([record]);
     // One reservation below the cap permits the ordinary grant...
-    assert.equal(planHostedRetries(base, T0 + 5000).length, 1);
+    assert.equal(planHostedRetries(base, T0 + 5000, ATTEMPT_RUNTIME).length, 1);
 
     // ...but four equivalent transient outcomes at the same base and runtime
     // revision exhaust the tolerated count: the grant is refused and reported.
@@ -99,9 +105,16 @@ Deno.test(
       await attemptMemoryFixture({ count: 4 }),
     ]);
     assert.equal(
-      planHostedRetries(refused, T0 + 5000, new Map(), new Set(), (denial) => {
-        denials.push({ id: denial.id, reason: denial.reason });
-      }).length,
+      planHostedRetries(
+        refused,
+        T0 + 5000,
+        ATTEMPT_RUNTIME,
+        new Map(),
+        new Set(),
+        (denial) => {
+          denials.push({ id: denial.id, reason: denial.reason });
+        },
+      ).length,
       0,
     );
     assert.equal(denials.length, 1);
@@ -113,29 +126,75 @@ Deno.test(
       await attemptMemoryFixture({ count: 4, lastAtMs: T0 + 1000 }),
     ]);
     assert.equal(
-      planHostedRetries(decayed, T0 + 1000 + ATTEMPT_TRANSIENT_DECAY_MS)
+      planHostedRetries(
+        decayed,
+        T0 + 1000 + ATTEMPT_TRANSIENT_DECAY_MS,
+        ATTEMPT_RUNTIME,
+      )
         .length,
       1,
     );
 
     // Changed evidence re-opens the grant: a new runtime revision or a moved
     // base is exactly what the refusal message demands.
-    const otherRevision = withAttemptMemory(base, [
-      await attemptMemoryFixture({
-        count: 4,
-        controllerSha: "0123456789abcdef0123456789abcdef01234567" as GitSha,
-      }),
-    ]);
-    assert.equal(planHostedRetries(otherRevision, T0 + 5000).length, 1);
+    assert.equal(planHostedRetries(refused, T0 + 5000, SHA2).length, 1);
+    assert.equal(refused.work[0].controller.sha, record.controller.sha);
     const otherBase = withAttemptMemory(base, [
       await attemptMemoryFixture({
         count: 4,
         base: "0123456789abcdef0123456789abcdef01234567" as GitSha,
       }),
     ]);
-    assert.equal(planHostedRetries(otherBase, T0 + 5000).length, 1);
+    assert.equal(
+      planHostedRetries(otherBase, T0 + 5000, ATTEMPT_RUNTIME).length,
+      1,
+    );
   },
 );
+
+Deno.test("hosted autonomy: retry memory uses the authenticated installed pointer and refuses missing runtime", async () => {
+  const record = blockedRecord({
+    counters: { attempts: 2, retries: 0, reviewRounds: 1 },
+    target: {
+      base: BASE,
+      branch: null,
+      checkpoint: null,
+      head: null,
+      pr: null,
+    },
+  });
+  const repair = withAttemptMemory(repairSnapshot([record]), [
+    await attemptMemoryFixture({ count: 4 }),
+  ]);
+  for (const runtime of [SHA1, SHA2, null]) {
+    const { rig } = await makeRig("runtime-attempt-pointer", {
+      repair,
+      release: releaseSnapshot([], runtime),
+    });
+    try {
+      const result = await run(rig);
+      const after = await rig.state.readRepair();
+      assert.ok(after.ok && after.value.status === "found");
+      assert.equal(
+        after.value.snapshot.work[0].controller.sha,
+        record.controller.sha,
+      );
+      assert.deepEqual(
+        after.value.snapshot.attemptMemory,
+        repair.attemptMemory,
+      );
+      if (runtime === SHA2) {
+        assert.equal(result.status, "applied");
+        assert.equal(after.value.snapshot.work[0].nextStep, "work");
+      } else {
+        assert.equal(rig.writes, 0);
+        assert.equal(after.value.snapshot.work[0].nextStep, "blocked");
+      }
+    } finally {
+      await Deno.remove(rig.tmp, { recursive: true });
+    }
+  }
+});
 
 Deno.test(
   "hosted autonomy: a transient model-run failure is retried under the attempt-memory gate",
@@ -147,7 +206,7 @@ Deno.test(
     });
     const snapshot = repairSnapshot([record]);
     // The family is retryable: a work-returning grant is planned.
-    const plans = planHostedRetries(snapshot, T0 + 5000);
+    const plans = planHostedRetries(snapshot, T0 + 5000, ATTEMPT_RUNTIME);
     assert.equal(plans.length, 1);
     assert.equal(plans[0].id, TARGET);
     assert.equal(plans[0].nextStep, "work");
@@ -159,9 +218,16 @@ Deno.test(
       await attemptMemoryFixture({ detail, count: 4 }),
     ]);
     assert.equal(
-      planHostedRetries(refused, T0 + 5000, new Map(), new Set(), (denial) => {
-        denials.push({ reason: denial.reason });
-      }).length,
+      planHostedRetries(
+        refused,
+        T0 + 5000,
+        ATTEMPT_RUNTIME,
+        new Map(),
+        new Set(),
+        (denial) => {
+          denials.push({ reason: denial.reason });
+        },
+      ).length,
       0,
     );
     assert.equal(denials.length, 1);
@@ -174,7 +240,11 @@ Deno.test(
       }),
     ]);
     assert.equal(
-      planHostedRetries(decayed, T0 + 1000 + ATTEMPT_TRANSIENT_DECAY_MS)
+      planHostedRetries(
+        decayed,
+        T0 + 1000 + ATTEMPT_TRANSIENT_DECAY_MS,
+        ATTEMPT_RUNTIME,
+      )
         .length,
       1,
     );
@@ -193,7 +263,11 @@ Deno.test(
       },
       counters: { attempts: 2, retries: 0, reviewRounds: 0 },
     });
-    const plans = planHostedRetries(repairSnapshot([record]), T0 + 5000);
+    const plans = planHostedRetries(
+      repairSnapshot([record]),
+      T0 + 5000,
+      ATTEMPT_RUNTIME,
+    );
     assert.equal(plans.length, 1);
     assert.equal(plans[0].id, TARGET);
     assert.equal(plans[0].nextStep, "work");
@@ -212,7 +286,7 @@ Deno.test(
       counters: { attempts: 2, retries: 0, reviewRounds: 1 },
     });
     const base = repairSnapshot([record]);
-    assert.equal(planHostedRetries(base, T0 + 5000).length, 1);
+    assert.equal(planHostedRetries(base, T0 + 5000, ATTEMPT_RUNTIME).length, 1);
     // One prior no-progress outcome is tolerated; two are not.
     assert.equal(
       planHostedRetries(
@@ -224,6 +298,7 @@ Deno.test(
           }),
         ]),
         T0 + 5000,
+        ATTEMPT_RUNTIME,
       ).length,
       1,
     );
@@ -237,6 +312,7 @@ Deno.test(
           }),
         ]),
         T0 + 5000,
+        ATTEMPT_RUNTIME,
       ).length,
       0,
     );

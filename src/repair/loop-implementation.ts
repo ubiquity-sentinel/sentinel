@@ -196,15 +196,20 @@ export async function prepareImplementationStart(
   const rejectedHead = headRejectedByReview(context.snapshot, record);
   const findings = correctionFindings(context.snapshot, record);
   const part = decompositionPartOf(record.id);
-  const priorAttempts = priorAttemptFactsForRecordV1(context.snapshot, record);
+  const priorAttempts = priorAttemptFactsForRecordV1(
+    context.snapshot,
+    record,
+    deps.controllerSha,
+  );
   const repositoryLessons = repositoryPriorFactsForRecordV1(
     context.snapshot,
     record,
+    deps.controllerSha,
   );
   const regressions = repositoryRegressionFactsV1(
     context.snapshot,
     record.repository,
-    record.controller.sha,
+    deps.controllerSha,
   );
   const request: ModelRunRequestV1 = {
     taskId: record.id,
