@@ -23,6 +23,10 @@ import {
   OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_PRIOR_REVISION,
   OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_RETRY_REVISION,
   OWNER_DEVELOPMENT_INSTALL_MISMATCH_DISPOSITION_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_STABILIZATION_GENERATION,
+  OWNER_DEVELOPMENT_INSTALL_STABILIZATION_PRIOR_GENERATION,
+  OWNER_DEVELOPMENT_INSTALL_STABILIZATION_PRIOR_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_STABILIZATION_REVISION,
   OWNER_DEVELOPMENT_INSTALL_STACKED_MERGE_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_STACKED_MERGE_PRIOR_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_STACKED_MERGE_PRIOR_REVISION,
@@ -48,6 +52,55 @@ export function planOwnerInstallMemory(
   context: OwnerInstallPlanContextV1,
 ): OwnerDevelopmentInstallPlanV1 | undefined {
   const { runtime, revision, generation, healthy, failed } = context;
+  // This exact revision-bound transition is separate from the historical
+  // generation 75 retry below. A failed prior keeps its original rollback.
+  if (
+    revision === OWNER_DEVELOPMENT_INSTALL_STABILIZATION_PRIOR_REVISION &&
+    generation === OWNER_DEVELOPMENT_INSTALL_STABILIZATION_PRIOR_GENERATION &&
+    healthy !== null && failed === null
+  ) {
+    return movePlan(
+      "install",
+      runtime,
+      OWNER_DEVELOPMENT_INSTALL_STABILIZATION_REVISION,
+      OWNER_DEVELOPMENT_INSTALL_STABILIZATION_GENERATION,
+      healthy,
+      "install the fixed stabilization runtime after its exact generation 74 healthy proof",
+    );
+  }
+
+  if (
+    revision === OWNER_DEVELOPMENT_INSTALL_STABILIZATION_REVISION &&
+    generation === OWNER_DEVELOPMENT_INSTALL_STABILIZATION_GENERATION
+  ) {
+    if (failed !== null) {
+      const prior = healthyProofFor(
+        runtime,
+        OWNER_DEVELOPMENT_INSTALL_STABILIZATION_PRIOR_REVISION,
+        OWNER_DEVELOPMENT_INSTALL_STABILIZATION_PRIOR_GENERATION,
+      );
+      if (prior === null) {
+        return waiting(
+          "the exact recorded generation 74 healthy proof for the stabilization rollback is unavailable",
+        );
+      }
+      return movePlan(
+        "rollback",
+        runtime,
+        OWNER_DEVELOPMENT_INSTALL_STABILIZATION_PRIOR_REVISION,
+        runtime.generation + 1,
+        prior,
+        "roll back the failed stabilization runtime to its recorded proven predecessor",
+      );
+    }
+    if (healthy !== null) {
+      return noChange("the owner development installation is complete");
+    }
+    return waiting(
+      "the stabilization generation 75 healthy proof is not recorded",
+    );
+  }
+
   // Early-frame diagnostics rung. Only a HEALTHY generation 72 record takes
   // this branch; a failed 72 falls through to the stacked-merge rung's own
   // rollback below, so its rollback semantics stay as recorded.
