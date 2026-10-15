@@ -1,12 +1,23 @@
 /** Hosted hosted-runtime-diagnostics_test responsibility. */
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
-import { portError } from "../../src/contracts/ports.ts";
+import {
+  type ModelRunReceiptV1,
+  portError,
+  type PortResultV1,
+} from "../../src/contracts/ports.ts";
 import { HOSTED_RUNTIME_FAILED_DETAIL } from "../../src/host/hosted-runtime.ts";
 import { emitLocalModelDiagnostic } from "../../src/host/local-model-diagnostic.ts";
 import { parseLocalModelDiagnosticV1 } from "../../src/host/local.ts";
 import { CodexProtocolError } from "../../src/repair/codex-transport.ts";
 import { unavailableFor } from "../../src/repair/model-port-policy.ts";
+import {
+  createRequestRuntimeReceiptVerifier,
+  finishReceipt,
+} from "../../src/repair/model-port-receipt.ts";
+import { CodexImplementationPort } from "../../src/repair/model-port-session.ts";
+import type { AwaitedSettlementV1 } from "../../src/repair/model-port-settlement.ts";
+import { FakeCodexSession } from "../repair/model-port-helpers.ts";
 import { captureConsoleLog, modelRequest } from "./local-test-helpers.ts";
 import {
   childLine,
@@ -600,6 +611,227 @@ Deno.test("hosted runtime: emitted closed protocol codes survive the strict laun
       assert.equal(result.status, "healthy");
       assert.deepEqual(result.diagnostics, []);
     }
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("hosted runtime: native completion refusals retain closed codes through the production emitter and launcher", async () => {
+  const rig = await makeRig();
+  try {
+    await seedRelease(rig);
+    const request = modelRequest();
+    const options = {
+      openSession: () => Promise.resolve(new FakeCodexSession()),
+      checkoutDir: ".",
+      modelProvider: "sentinel-host",
+    };
+    const thread = {
+      threadId: "thread-1",
+      model: request.model,
+      effort: "max",
+      provider: "sentinel-host",
+    };
+    const settled: AwaitedSettlementV1 = {
+      terminal: { status: "completed", error: null, durationMs: 5 },
+      terminalOrigin: "runtime",
+      unavailable: null,
+      outputChars: 10,
+      reroutes: [],
+      resultItems: [{ itemId: "output-1", type: "agentMessage" }],
+      loopStopped: false,
+    };
+    const verify = createRequestRuntimeReceiptVerifier("sentinel-host");
+    const finish = (
+      state = settled,
+      identity = thread,
+      config = options,
+      custom = null as Parameters<typeof finishReceipt>[1],
+    ) =>
+      finishReceipt(
+        config,
+        custom,
+        null,
+        request,
+        "invocation-1",
+        identity,
+        "turn-1",
+        state,
+        verify,
+      );
+    const failures: [PortResultV1<ModelRunReceiptV1>, string][] = [
+      [
+        await finish(settled, { ...thread, threadId: "" }),
+        "model_identity_unavailable",
+      ],
+      [
+        await finish({ ...settled, resultItems: [] }),
+        "model_output_evidence_unavailable",
+      ],
+      [
+        await finish(settled, { ...thread, model: "unacknowledged-model" }),
+        "model_runtime_identity_unverified",
+      ],
+      [
+        await finish(settled, thread, options, () => null),
+        "model_receipt_mismatch",
+      ],
+      [
+        await finishReceipt(
+          {
+            ...options,
+            commitCandidate: { commit: () => Promise.resolve(false) },
+          },
+          null,
+          null,
+          request,
+          "invocation-1",
+          thread,
+          "turn-1",
+          settled,
+          verify,
+        ),
+        "model_candidate_commit_failed",
+      ],
+    ];
+    // These are actual pre-session guards; no fake session may even open.
+    const noSession = {
+      ...options,
+      openSession: () => {
+        throw new Error("unexpected session start");
+      },
+    };
+    for (
+      const [port, code] of [
+        [
+          new CodexImplementationPort({
+            ...noSession,
+            modelId: "different-route",
+          }),
+          "model_route_policy_mismatch",
+        ],
+        [
+          new CodexImplementationPort({ ...noSession, modelProvider: "" }),
+          "model_provider_invalid",
+        ],
+        [
+          new CodexImplementationPort({
+            ...noSession,
+            permissionProfile: "danger-full-access",
+          }),
+          "model_permission_profile_invalid",
+        ],
+      ] as const
+    ) failures.push([await port.runModel(request), code]);
+    const session = Object.assign(new FakeCodexSession(), {
+      isSettled: () => false,
+    });
+    failures.push([
+      await new CodexImplementationPort({
+        ...options,
+        openSession: () => Promise.resolve(session),
+        interruptSettlementGraceMs: 20,
+      }).runModel(request),
+      "model_session_unsettled",
+    ]);
+    assert.equal(session.closed, true);
+    // Existing settlement producers author only these fixed strings; exercise
+    // their real finishReceipt boundary without duplicating notification tests.
+    for (
+      const [detail, code] of [
+        ["malformed reroute identity", "model_reroute_identity_malformed"],
+        ["malformed matching reroute", "model_reroute_malformed"],
+        [
+          "reroute evidence exceeded bound",
+          "model_reroute_evidence_over_bound",
+        ],
+        ["run routed off required Luna/max", "model_route_off_policy"],
+        ["malformed terminal thread id", "model_terminal_thread_id_malformed"],
+        ["malformed terminal turn", "model_terminal_turn_malformed"],
+        ["malformed terminal turn id", "model_terminal_turn_id_malformed"],
+        ["malformed terminal turn status", "model_terminal_status_malformed"],
+        [
+          "routing evidence exceeded output bound",
+          "model_routing_output_over_bound",
+        ],
+        [
+          "notification registration failed",
+          "model_notification_registration_failed",
+        ],
+      ]
+    ) {
+      failures.push([
+        await finish({ ...settled, unavailable: { detail } }),
+        code,
+      ]);
+    }
+    const emit = (result: PortResultV1<ModelRunReceiptV1>) => {
+      const capture = captureConsoleLog();
+      const original = structuredClone(result);
+      try {
+        emitLocalModelDiagnostic(
+          request,
+          result,
+          rig.clock.now(),
+          "c".repeat(64),
+        );
+        assert.deepEqual(result, original);
+        assert.equal(capture.lines.length, 1);
+        return capture.lines[0];
+      } finally {
+        capture.restore();
+      }
+    };
+    const stateBefore = await rig.releaseHead();
+    for (const [failure, code] of failures) {
+      assert.ok(!failure.ok);
+      if (failure.ok) throw new Error("expected native refusal");
+      assert.equal(failure.error.kind, "unavailable");
+      const line = emit(failure);
+      assert.equal(JSON.parse(line).reasonCode, code);
+      assert.equal(line.includes(failure.error.detail), false);
+      rig.process.child = exited(`${line}\n`, 3);
+      const result = await launch(rig);
+      assert.equal(result.status, "failed");
+      assert.equal(result.terminal?.outcome, "failed");
+      assert.equal(result.diagnostics[0]?.diagnostic.reasonCode, code);
+      assert.equal(result.diagnostics[0]?.diagnostic.candidatePresent, false);
+      assert.equal(
+        result.diagnostics[0]?.diagnostic.observedTerminalStatus,
+        null,
+      );
+      assert.deepEqual(result.diagnostics[0]?.execution, rig.execution);
+    }
+    assert.equal(
+      await rig.releaseHead(),
+      stateBefore,
+      "diagnostics never rewrite authoritative state",
+    );
+    const raw =
+      "Bearer secret-completion-fixture https://private.invalid/?key=secret-completion-fixture";
+    for (
+      const detail of [
+        raw,
+        `malformed terminal turn ${raw}`,
+        `run routed off required Luna/max\n${raw}`,
+      ]
+    ) {
+      const line = emit(await finish({ ...settled, unavailable: { detail } }));
+      assert.equal(JSON.parse(line).reasonCode, null);
+      assert.equal(line.includes("secret-completion-fixture"), false);
+      rig.process.child = exited(`${line}\n`, 3);
+      const result = await launch(rig);
+      assert.equal(result.status, "failed");
+      assert.equal(result.diagnostics[0]?.diagnostic.reasonCode, null);
+      assert.equal(
+        JSON.stringify(result.diagnostics).includes(
+          "secret-completion-fixture",
+        ),
+        false,
+      );
+    }
+    rig.process.child = exited(`${runtimeDiagnosticLine(raw)}\n`, 3);
+    assert.deepEqual((await launch(rig)).diagnostics, []);
   } finally {
     await rig.cleanup();
   }
