@@ -383,3 +383,30 @@ Deno.test(
     }
   },
 );
+Deno.test(
+  "hosted autonomy: a retry keeps the consecutive time-bound exhaustions that drive decomposition",
+  () => {
+    const record = blockedRecord({
+      blocker: {
+        kind: "other",
+        message: "model run did not complete with a trusted candidate",
+        since: T0 + 3000,
+      },
+      counters: { attempts: 1, retries: 0, reviewRounds: 0, timeouts: 1 },
+      target: {
+        base: BASE,
+        branch: "sentinel/repair/issue-ubiquity-sentinel-48",
+        checkpoint: null,
+        head: null,
+        pr: null,
+      },
+      evidence: [],
+    });
+    const snapshot = repairSnapshot([record], []);
+    const plans = planHostedRetries(snapshot, T0 + 5000, ATTEMPT_RUNTIME);
+    assert.equal(plans.length, 1);
+    const next = applyHostedRetries(snapshot, SHA1, plans, T0 + 5000);
+    assert.equal(next.work[0].nextStep, "work");
+    assert.equal(next.work[0].counters.timeouts, 1);
+  },
+);

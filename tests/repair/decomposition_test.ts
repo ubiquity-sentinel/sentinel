@@ -96,7 +96,8 @@ Deno.test("decomposition id helpers round-trip without pattern matching", () => 
 Deno.test("createDecompositionChildren builds serial parts", () => {
   const parent = timedOutParent(MATRIX_DECOMPOSE_AFTER_TIMEOUTS);
   const children = createDecompositionChildren(parent, NOW);
-  assert.equal(children.length, MATRIX_DECOMPOSE_AFTER_TIMEOUTS);
+  // At least two parts: one exhaustion already splits the whole task.
+  assert.equal(children.length, Math.max(MATRIX_DECOMPOSE_AFTER_TIMEOUTS, 2));
   children.forEach((child, i) => {
     const index = i + 1;
     assert.equal(child.id, `${parent.id}:part-${index}-of-${children.length}`);

@@ -1030,6 +1030,8 @@ export interface FakeModelOptionsV1 {
   changedPaths?: string[];
   checkoutSha?: GitSha | null;
   outcome?: ModelRunReceiptV1["outcome"];
+  /** Reported session duration (default 100 ms). */
+  durationMs?: number;
   /** Return a port error instead of a receipt (e.g. unavailable boundary). */
   portError?: boolean;
   throwNext?: boolean;
@@ -1079,7 +1081,7 @@ export class FakeModel implements ImplementationPort {
           : "completed",
         observedModel: "gpt-reserve",
         observedReasoning: "max",
-        durationMs: 100,
+        durationMs: this.options.durationMs ?? 100,
         outputChars: 500,
       },
       candidate: completed

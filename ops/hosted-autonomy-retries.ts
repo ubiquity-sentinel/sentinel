@@ -438,6 +438,11 @@ export function applyHostedRetries(
             : record.counters.attempts - plan.grant,
           retries: record.counters.retries,
           reviewRounds: plan.reviewRounds ?? record.counters.reviewRounds,
+          // A retry is not progress: the consecutive time-bound exhaustions
+          // that drive decomposition survive it.
+          ...(record.counters.timeouts === undefined
+            ? {}
+            : { timeouts: record.counters.timeouts }),
         },
         updatedAt: now,
       };

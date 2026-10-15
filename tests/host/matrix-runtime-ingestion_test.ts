@@ -9,6 +9,10 @@ import { resetCellTimeouts } from "../../src/host/matrix-ingest-state.ts";
 import { createRunBounds } from "../../src/repair/loop.ts";
 import { portError, portOk } from "../../src/contracts/ports.ts";
 import { T0 } from "../state/helpers.ts";
+import { asWorkItemId } from "../../src/contracts/brands.ts";
+import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
+import { candidateBranch } from "../../src/repair/keys.ts";
+import { decompositionChildId } from "../../src/repair/transitions.ts";
 import {
   activeIntent,
   ACTUAL,
@@ -21,6 +25,17 @@ import {
   snapshot,
   WAVE,
 } from "./matrix-runtime-fixtures.ts";
+
+/** Part 1 of 2 of a decomposed issue carrying one consecutive timeout. */
+function timedOutPart(issue: WorkRecordV1): WorkRecordV1 {
+  const id = asWorkItemId(decompositionChildId(issue.id, 1, 2));
+  return {
+    ...issue,
+    id,
+    target: { ...issue.target, branch: candidateBranch(id) },
+    counters: { ...issue.counters, timeouts: 1 },
+  };
+}
 
 Deno.test("matrix ingestion: missing, stale and foreign grants preserve exact admission without a write", async () => {
   const rig = await makeRig([990001], 1);
@@ -85,12 +100,11 @@ Deno.test("matrix ingestion: missing, stale and foreign grants preserve exact ad
 Deno.test("matrix ingestion: settled exact candidate resets its timeout streak through real Git CAS", async () => {
   const rig = await makeRig([990002], 1);
   try {
-    const issue = freshIssue(990002, rig.base);
+    // A whole issue with any time-bound exhaustion is decomposed instead of
+    // planned again, so the streak that resets is a decomposition part's.
+    const issue = timedOutPart(freshIssue(990002, rig.base));
     const seeded = await rig.store.writeRepair(
-      seedSnapshot([{
-        ...issue,
-        counters: { ...issue.counters, timeouts: 1 },
-      }]),
+      seedSnapshot([issue]),
       null,
     );
     assert.ok(seeded.ok && seeded.value.status === "applied");
@@ -143,12 +157,11 @@ Deno.test("matrix ingestion: settled exact candidate resets its timeout streak t
 Deno.test("matrix ingestion: timeout reset refuses unbound admission and incomplete CAS proof", async (t) => {
   const rig = await makeRig([990004], 1);
   try {
-    const issue = freshIssue(990004, rig.base);
+    // A whole issue with any time-bound exhaustion is decomposed instead of
+    // planned again, so the streak that resets is a decomposition part's.
+    const issue = timedOutPart(freshIssue(990004, rig.base));
     const seeded = await rig.store.writeRepair(
-      seedSnapshot([{
-        ...issue,
-        counters: { ...issue.counters, timeouts: 1 },
-      }]),
+      seedSnapshot([issue]),
       null,
     );
     assert.ok(seeded.ok && seeded.value.status === "applied");
