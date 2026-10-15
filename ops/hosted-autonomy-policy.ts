@@ -160,9 +160,33 @@ export const HOSTED_AUTONOMY_TRUSTED_AUTHORS: readonly string[] = [
  * wait. Both return to `review`, where the runtime rehydrates its standing
  * review before any new charge and continues inside its own round allowance.
  */
+/**
+ * Age after which a blocked implementation's producing evidence can no longer
+ * arrive. Matrix plan and cell artifacts are uploaded with `retention-days: 7`
+ * (supervisor.yml), so after eight days no late result can be imported for the
+ * retained admission and its uncertainty can never be resolved by evidence.
+ */
+export const HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS = 8 * 24 * 60 * 60 * 1000;
+
+/**
+ * Blocked candidate-preservation classes whose candidate can only ever be
+ * restored from its producing matrix artifact (the runtime-mismatch recovery
+ * and the unresolved preservation uncertainty). Once that artifact is past
+ * retention the task restarts; see lostCandidateRetry.
+ */
+export const HOSTED_AUTONOMY_LOST_CANDIDATE: readonly string[] = [
+  "authenticated historical matrix runtime mismatch; ",
+  "candidate preservation unresolved; ",
+];
+
 export const HOSTED_AUTONOMY_RETRYABLE: readonly {
   readonly prefix: string;
   readonly nextStep: "work" | "review";
+  /**
+   * Minimum time the blocker must have stood before a grant. Set only for
+   * uncertain outcomes whose evidence must first be provably expired.
+   */
+  readonly minBlockedMs?: number;
 }[] = [
   {
     prefix: "model run ended without a trusted receipt",
@@ -218,6 +242,26 @@ export const HOSTED_AUTONOMY_RETRYABLE: readonly {
   {
     prefix: "model admission refused: duplicate",
     nextStep: "work",
+  },
+  {
+    // An uncertain implementation outcome stays charged (its admission is
+    // already settled ambiguous, which intentClosable requires) and is never
+    // refunded. Once its matrix evidence is past retention no late result can
+    // be imported for it, so the open task gets a fresh, separately charged
+    // admission instead of staying parked forever. This covers both the
+    // runtime's own uncertainty detail and the matrix ingester's
+    // "original admission retained without usable artifact evidence" form.
+    prefix: "implementation outcome uncertain",
+    nextStep: "work",
+    minBlockedMs: HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS,
+  },
+  {
+    // A historical matrix manifest that authenticated but was rejected for
+    // ordering (for example reservation_after_manifest) leaves the model
+    // outcome uncertain in exactly the same way.
+    prefix: "authenticated historical matrix manifest rejected:",
+    nextStep: "work",
+    minBlockedMs: HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS,
   },
 ];
 

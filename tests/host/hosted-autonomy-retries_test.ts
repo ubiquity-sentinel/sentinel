@@ -5,6 +5,7 @@ import {
   HOSTED_AUTONOMY_MAX_RETRIES,
   planHostedRetries,
 } from "../../ops/hosted-autonomy.ts";
+import { HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS } from "../../ops/hosted-autonomy-policy.ts";
 import { reservation, SHA1, T0 } from "../state/helpers.ts";
 import {
   authorizingReceipt,
@@ -305,3 +306,164 @@ Deno.test(
 );
 
 /** The runtime's exact diagnosed candidate ref-identity blocker message. */
+
+Deno.test(
+  "hosted autonomy: uncertain outcomes are re-admitted only after their matrix evidence expired",
+  () => {
+    const reservationId = "uncertain-charge";
+    const uncertain = (message: string) =>
+      blockedRecord({
+        blocker: { kind: "other", message, since: T0 + 1000 },
+        counters: { attempts: 1, retries: 0, reviewRounds: 0 },
+        target: {
+          base: BASE,
+          branch: "sentinel/repair/issue-ubiquity-sentinel-48",
+          checkpoint: null,
+          head: null,
+          pr: null,
+        },
+        evidence: [],
+        intent: {
+          kind: "implementation",
+          key: `impl:${reservationId}`,
+          startedAt: T0,
+          branch: "sentinel/repair/issue-ubiquity-sentinel-48",
+          expectedHead: null,
+          observedBase: BASE,
+          pr: null,
+          requestId: reservationId,
+          resultId: null,
+        },
+      });
+    const charge = (outcome: "ambiguous" | "reserved") =>
+      reservation(reservationId, {
+        taskId: TARGET,
+        head: BASE,
+        attempt: 1,
+        purpose: "implementation",
+        outcome,
+        settledAt: outcome === "reserved" ? null : T0 + 500,
+      });
+    // The clock starts at the charge's own admission, not a refreshed blocker.
+    const expired = T0 + HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS;
+    for (
+      const message of [
+        "implementation outcome uncertain; awaiting authoritative disposition",
+        "implementation outcome uncertain; original admission retained without usable artifact evidence",
+        "authenticated historical matrix manifest rejected: reservation_after_manifest; model outcome uncertain",
+      ]
+    ) {
+      const snapshot = repairSnapshot([uncertain(message)], [], [], [
+        charge("ambiguous"),
+      ]);
+      assert.equal(
+        planHostedRetries(snapshot, expired - 1, ATTEMPT_RUNTIME).length,
+        0,
+        `${message}: no grant while late evidence could still arrive`,
+      );
+      const plans = planHostedRetries(snapshot, expired, ATTEMPT_RUNTIME);
+      assert.equal(plans.length, 1, message);
+      assert.equal(plans[0].nextStep, "work");
+      const next = applyHostedRetries(snapshot, SHA1, plans, expired);
+      const applied = next.work[0];
+      assert.equal(applied.nextStep, "work");
+      assert.equal(applied.blocker, null);
+      assert.equal(applied.intent, null);
+      assert.equal(applied.counters.attempts, 1);
+      // The uncertain charge stays settled ambiguous: never refunded.
+      assert.deepEqual(next.reservations, snapshot.reservations);
+      // An unsettled admission is still in flight and is never cleared.
+      const unsettled = repairSnapshot([uncertain(message)], [], [], [
+        charge("reserved"),
+      ]);
+      assert.equal(
+        planHostedRetries(unsettled, expired, ATTEMPT_RUNTIME).length,
+        0,
+      );
+    }
+  },
+);
+
+Deno.test(
+  "hosted autonomy: an unrestorable preserved candidate restarts from its base after artifact expiry",
+  () => {
+    const requestId = "d".repeat(64);
+    const branch = "sentinel/repair/issue-ubiquity-sentinel-48";
+    const lost = (message: string) =>
+      blockedRecord({
+        blocker: { kind: "other", message, since: T0 + 9_000_000_000 },
+        counters: { attempts: 3, retries: 0, reviewRounds: 0 },
+        target: {
+          base: BASE,
+          branch,
+          checkpoint: null,
+          head: HEAD,
+          pr: null,
+          candidateState: { preserved: null, publishedHead: null },
+        },
+        evidence: [],
+        intent: {
+          kind: "candidate_preservation",
+          key: `impl:${requestId}`,
+          startedAt: T0,
+          branch: `refs/heads/sentinel-candidates/${"c".repeat(64)}`,
+          expectedHead: HEAD,
+          observedBase: BASE,
+          pr: null,
+          requestId,
+          resultId: null,
+        },
+      });
+    const charge = (outcome: "submitted" | "reserved") =>
+      reservation(requestId, {
+        taskId: TARGET,
+        head: BASE,
+        attempt: 3,
+        purpose: "retry",
+        outcome,
+        settledAt: outcome === "reserved" ? null : T0 + 500,
+      });
+    const expired = T0 + HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS;
+    for (
+      const message of [
+        "authenticated historical matrix runtime mismatch; producer=1:1; runtime=" +
+        "a".repeat(40) + "; original admission retained",
+        "candidate preservation unresolved; exact candidate and submitted admission retained",
+      ]
+    ) {
+      const snapshot = repairSnapshot([lost(message)], [], [], [
+        charge("submitted"),
+      ]);
+      assert.equal(
+        planHostedRetries(snapshot, expired - 1, ATTEMPT_RUNTIME).length,
+        0,
+        "the producing artifact may still restore the candidate",
+      );
+      const plans = planHostedRetries(snapshot, expired, ATTEMPT_RUNTIME);
+      assert.equal(plans.length, 1, message);
+      assert.equal(plans[0].resetCandidate, true);
+      const next = applyHostedRetries(snapshot, SHA1, plans, expired);
+      const applied = next.work[0];
+      assert.equal(applied.nextStep, "work");
+      assert.equal(applied.blocker, null);
+      assert.equal(applied.intent, null);
+      assert.deepEqual(applied.target, {
+        base: BASE,
+        branch,
+        checkpoint: null,
+        head: null,
+        pr: null,
+      });
+      assert.equal(applied.counters.attempts, 3);
+      assert.deepEqual(next.reservations, snapshot.reservations);
+      // A charge still in flight is never taken away from its producer.
+      const inFlight = repairSnapshot([lost(message)], [], [], [
+        charge("reserved"),
+      ]);
+      assert.equal(
+        planHostedRetries(inFlight, expired, ATTEMPT_RUNTIME).length,
+        0,
+      );
+    }
+  },
+);
