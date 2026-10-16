@@ -16,6 +16,14 @@ import type { ModelRunRequestV1 } from "../contracts/ports.ts";
 
 export const MATRIX_ARTIFACT_RECOVERY_MAX_MS = 120_000;
 
+/**
+ * How long after a cell job of the consumer's own in-progress run completes
+ * its native job log may still be unserved (no log yet, or no cell marker in
+ * it yet). Inside it the wave is deferred like a running cell; past it the
+ * unserved log is the plain fail-closed refusal again.
+ */
+export const MATRIX_CELL_LOG_SETTLE_MS = 5 * 60_000;
+
 /** Shared wire value: artifact readers must not import their executable caller. */
 export const HISTORICAL_MATRIX_QUARANTINE =
   "authenticated historical matrix manifest rejected: reservation_after_manifest; model outcome uncertain";

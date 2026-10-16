@@ -48,6 +48,20 @@ const MARKER_KEYS = {
   ],
 };
 
+/**
+ * A completed native job whose log body, or whose marker in it, is not served
+ * yet. Only the cell marker raises it, and the wave reader turns it into a
+ * deferral or the plain refusal: it never leaves the transport.
+ */
+export class MatrixNativeLogUnserved extends Error {
+  constructor() {
+    super("matrix native job log not served yet");
+  }
+}
+export function unservedLog(): never {
+  throw new MatrixNativeLogUnserved();
+}
+
 export function createMatrixArtifactMarker(
   options: MatrixArtifactOptionsV1,
   download: MatrixArtifactReaderV1["download"],
@@ -59,6 +73,7 @@ export function createMatrixArtifactMarker(
     kind: keyof typeof MARKER_KEYS,
     run: MatrixRunIdentityV1,
     expectedRuntime: string | null = input.runtimeSha,
+    unserved: () => never = refuse,
   ): Promise<Json> => {
     if (
       job.run_id !== run.runId || job.run_attempt !== run.runAttempt ||
@@ -84,6 +99,7 @@ export function createMatrixArtifactMarker(
     const response = await download(
       `/jobs/${positive(job.id)}/logs`,
       false,
+      unserved,
     );
     const found: Json[] = [];
     for (const line of response.bodyText.split("\n")) {
@@ -112,6 +128,8 @@ export function createMatrixArtifactMarker(
       positive(value.generation);
       found.push(value);
     }
+    // A log without the marker yet is unserved; two markers are a conflict.
+    if (found.length === 0) unserved();
     if (found.length !== 1) refuse();
     return found[0];
   };

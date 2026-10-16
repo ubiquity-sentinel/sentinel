@@ -127,18 +127,22 @@ export function createMatrixArtifactHttp(
     }
     refuse();
   };
+  // `unserved` classifies only a body that is not served (yet): an API answer
+  // other than the redirect, or storage other than 200. A foreign redirect
+  // target, the deadline and every bound still refuse.
   const download = async (
     path: string,
     binary: boolean,
+    unserved: () => never = refuse,
   ): Promise<HttpResponseV1> => {
     const redirect = await get(`${API}${path}`);
-    if (redirect.status !== 302) refuse();
+    if (redirect.status !== 302) unserved();
     const response = await get(
       storageUrl(redirect.headers.get("location")),
       binary,
       true,
     );
-    if (response.status !== 200) refuse();
+    if (response.status !== 200) unserved();
     return response;
   };
 

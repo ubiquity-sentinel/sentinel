@@ -20,6 +20,7 @@ import { candidateBranch } from "../repair/keys.ts";
 import { isCiCorrectionFinding } from "../repair/ci-rejection.ts";
 import { conflictResolutionInFlight } from "../repair/conflict-resolution.ts";
 import {
+  MATRIX_CELL_LOG_SETTLE_MS,
   type MatrixArtifactRequestV1,
   type MatrixAuthenticatedWaveV1,
   MatrixMissingCellArtifactError,
@@ -29,6 +30,7 @@ import {
 import { MatrixHistoricalRuntimeMismatch } from "./matrix-artifact-port.ts";
 import {
   bytesDigest,
+  instant,
   type Json,
   positive,
   record,
@@ -45,7 +47,11 @@ import type {
 import type { GitSha } from "../contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { createMatrixArtifactArchive } from "./matrix-artifact-archive.ts";
-import type { createMatrixArtifactMarker } from "./matrix-artifact-native.ts";
+import {
+  type createMatrixArtifactMarker,
+  MatrixNativeLogUnserved,
+  unservedLog,
+} from "./matrix-artifact-native.ts";
 
 const API = `https://api.github.com/repos/${REPOSITORY}/actions`;
 
@@ -398,13 +404,35 @@ export async function recoverMatrixArtifactWaves(context: {
         // omitted results otherwise become synthetic timeouts at ingestion.
         continue artifactWaves;
       }
-      const cellMarker = await marker(
-        cellJobs[0],
-        "Run isolated issue cell",
-        "sentinel_matrix_cell",
-        run,
-        waveRuntime,
-      );
+      let cellMarker: Json;
+      try {
+        cellMarker = await marker(
+          cellJobs[0],
+          "Run isolated issue cell",
+          "sentinel_matrix_cell",
+          run,
+          waveRuntime,
+          unservedLog,
+        );
+      } catch (error) {
+        if (!(error instanceof MatrixNativeLogUnserved)) throw error;
+        // The job, its step and their times are already authenticated as
+        // completed; only its log, or the marker in it, is not served yet.
+        // Live (run 38881893136): a scan reached a cell seconds after its job
+        // completed and refused the whole run; the next run authenticated the
+        // same artifacts. For the consumer's own
+        // in-progress run, shortly after completion, defer the entire wave
+        // exactly like a running cell: nothing is ingested and every
+        // producer stays charged. Elsewhere, or past the bound, it refuses.
+        if (
+          !input.rejectionProof && input.currentRun !== undefined &&
+          sameRun(input.currentRun, run) &&
+          attempt.status === "in_progress" &&
+          options.clock.now() - instant(cellJobs[0].completed_at) <=
+            MATRIX_CELL_LOG_SETTLE_MS
+        ) continue artifactWaves;
+        refuse();
+      }
       if (
         cellMarker.cellId !== cell.cellId ||
         cellMarker.reservationId !== cell.reservationId ||

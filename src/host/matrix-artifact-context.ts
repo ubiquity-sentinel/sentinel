@@ -31,5 +31,9 @@ export type MatrixArtifactDeadlineV1 = ReturnType<typeof createDeadline>;
 export interface MatrixArtifactReaderV1 {
   json(path: string): Promise<Json>;
   pages(path: string, key: string): Promise<Json[]>;
-  download(path: string, binary: boolean): Promise<HttpResponseV1>;
+  download(
+    path: string,
+    binary: boolean,
+    unserved?: () => never,
+  ): Promise<HttpResponseV1>;
 }

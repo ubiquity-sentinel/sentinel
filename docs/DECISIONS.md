@@ -124,6 +124,8 @@ The system is version-controlled and regression-aware: a recorded success stores
 
 Bounded self-upkeep passes defer instead of failing the run: exhausting a recovery pass's budget, absent custody or an unavailable producer is reported with an explicit bounded reason, writes nothing and lets prepare, matrix_plan and delivery continue. Only integrity faults (tampered, conflicting or changed custody) fail closed.
 
+The progressive matrix consumer treats a cell of its own in-progress run whose job has completed but whose native job log, or the cell marker in it, is not served yet like a still-running cell (generation 78): for up to five minutes after the job's authenticated completion the whole wave is skipped for that scan, nothing is ingested and every producer stays charged and unresolved. A served log that conflicts, a log of any other run, and a log still unserved past that bound keep the plain fail-closed refusal.
+
 A release request the trusted controller cancelled or marked failed is terminal delivery evidence: the affected delivery record is parked blocked with the recorded failure reason instead of waiting for release acceptance that can no longer exist.
 
 A trusted already-merged pull request is verified by its exact head binding plus the recorded base's proven ancestry, not by first-parent equality: the base branch may advance between the reviewed snapshot and an external trusted merge, and the merge is still the reviewed delivery. A divergent, unproven or differently-parented merge is refused.
