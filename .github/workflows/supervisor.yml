@@ -421,6 +421,14 @@ jobs:
             exit 1
           fi
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
+      # Up to twenty cells start together, and the model gateway answers a
+      # burst of simultaneous session starts with HTTP 429 (live: all 17 cells
+      # that reached the model in the same second failed, while cells arriving
+      # 30-90 s later succeeded). Spreading starts by matrix position, at most
+      # 114 s, costs each cell under two minutes of its five-hour window. It
+      # runs before the App token mint so the token keeps its whole hour.
+      - name: Stagger the cell's model start
+        run: sleep $(( ${{ strategy.job-index }} % 20 * 6 ))
       - name: Mint the scoped sentinel App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
