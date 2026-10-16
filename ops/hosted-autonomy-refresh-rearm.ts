@@ -15,10 +15,14 @@
  * the corrected validator qualifies (a generation number never does: a
  * rollback advances it too), and only a refusal written before that runtime
  * was activated is re-armed, so the corrected validator's own refusal stays
- * blocked. The record's exact publication is then restored from its OWN
- * repository surface — the managed branch and the preservation ref both at
- * the exact head, exactly one open pull request from that branch by a trusted
- * author against the configured base, at that head — and the record returns
+ * blocked. Each allowlist entry pins its own activation bound, because an
+ * owner install, that runtime's bootstrap and the bootstrap's settlement all
+ * happen in one workflow run after that run's maintenance: no maintenance
+ * ever observes the earlier generation's settlement under the new pointer.
+ * The record's exact publication is then restored from its OWN repository
+ * surface — the managed branch and the preservation ref both at the exact
+ * head, exactly one open pull request from that branch by a trusted author
+ * against the configured base, at that head — and the record returns
  * to `delivery`, where the runtime's own refresh path observes the moved base,
  * prepares, preserves and publishes the refreshed head and requests a fresh
  * review. Nothing is charged, refunded, pushed, merged or reviewed here, and
@@ -50,31 +54,71 @@ import {
 } from "./hosted-autonomy-policy.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
-import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
+import type {
+  HostedAutonomyResultV1,
+  HostedRefreshRearmRuntimeV1,
+} from "./hosted-autonomy-types.ts";
 
 /**
  * Exact runtime revisions whose publication validator bounds only the base
- * edge of a refresh merge. A generation number never qualifies on its own: a
- * rollback advances it too (a failed 77 restores 41bb853a1 at generation 78).
- * Empty until the generation-77 launcher names that runtime's exact revision.
+ * edge of a refresh merge, each with an instant no later than its first
+ * activation: the instant of the launcher commit that pins the entry, which
+ * is written before that commit is pushed and so before its owner-install
+ * rung can install the revision. A generation number never qualifies on its
+ * own: a rollback advances it too (a failed 77 restores 41bb853a1 at
+ * generation 78). Empty until the generation-77 launcher names that
+ * runtime's exact revision.
  */
-export const HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES: readonly string[] = [];
+export const HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES:
+  readonly HostedRefreshRearmRuntimeV1[] = [];
+
+/** Every recorded execution creation of one revision in release custody. */
+function executionsOf(
+  release: ReleaseStateSnapshotV1,
+  revision: string,
+): number[] {
+  const created: number[] = [];
+  for (const row of release.hostedReleases) {
+    for (
+      const proof of [row.priorProof, row.candidateProof, row.rollbackProof]
+    ) {
+      if (proof?.execution.revision === revision) {
+        created.push(proof.execution.createdAt);
+      }
+    }
+  }
+  for (const runtime of release.hostedRuntimes) {
+    for (
+      const proof of [runtime.lastHealthyProof, runtime.lastExecutionProof]
+    ) {
+      if (proof?.execution.revision === revision) {
+        created.push(proof.execution.createdAt);
+      }
+    }
+  }
+  return created;
+}
 
 /**
  * The earliest instant a refresh refusal can be a corrected validator's own,
- * read only from release custody that never moves forward: every hosted
- * release proof of an allowlisted runtime (immutable once written), and each
- * pointer settlement left by a generation EARLIER than the installed one
+ * read only from the launcher's pinned activation bounds and release custody
+ * that never moves forward: each allowlisted runtime's pinned bound, every
+ * hosted release proof of an allowlisted runtime (immutable once written), and
+ * each pointer settlement left by a generation EARLIER than the installed one
  * (written before the pointer moved). An allowlisted runtime's settlement
  * contributes its execution start, any other its observation instant. The
  * installed generation's own settlements are replaced on every run and never
- * count. null when the installed runtime is not allowlisted or nothing
- * qualifies, so nothing is re-armed.
+ * count. A pinned bound that is not a positive safe integer, or that is later
+ * than any recorded execution of its own revision, is provably not that
+ * runtime's activation bound and never counts. null when the installed
+ * runtime is not allowlisted or nothing qualifies, so nothing is re-armed.
  */
 export function refreshFixActivation(
   release: ReleaseStateSnapshotV1,
-  runtimes: readonly string[] = HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES,
+  pinned: readonly HostedRefreshRearmRuntimeV1[] =
+    HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES,
 ): number | null {
+  const runtimes = pinned.map((row) => row.revision);
   const runtime = release.hostedRuntimes.find((row) =>
     row.id === HOSTED_RUNTIME_ID
   );
@@ -82,6 +126,13 @@ export function refreshFixActivation(
     return null;
   }
   const bounds: number[] = [];
+  for (const row of pinned) {
+    const bound = row.activatedNotBefore;
+    if (
+      Number.isSafeInteger(bound) && bound > 0 &&
+      executionsOf(release, row.revision).every((at) => at >= bound)
+    ) bounds.push(bound);
+  }
   for (const row of release.hostedReleases) {
     for (
       const proof of [row.priorProof, row.candidateProof, row.rollbackProof]
@@ -210,7 +261,7 @@ export async function runHostedRefreshRearmPass(
 ): Promise<HostedAutonomyResultV1 | null> {
   const { deps, snapshot, observedHead, actions, revisions } = context;
   const now = deps.clock.now();
-  const runtimes = deps.refreshRearmRuntimes ??
+  const pinned = deps.refreshRearmRuntimes ??
     HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES;
   // Unparseable release custody proves no corrected runtime: nothing re-arms.
   let release: ReleaseStateSnapshotV1 | null = null;
@@ -224,10 +275,8 @@ export async function runHostedRefreshRearmPass(
   );
   const runtime: Runtime = {
     fixed: installed !== undefined &&
-      runtimes.includes(installed.activeRevision),
-    activation: release === null
-      ? null
-      : refreshFixActivation(release, runtimes),
+      pinned.some((row) => row.revision === installed.activeRevision),
+    activation: release === null ? null : refreshFixActivation(release, pinned),
   };
   const rearmed = new Map<string, number>();
   for (const record of snapshot.work) {

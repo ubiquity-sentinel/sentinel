@@ -26,7 +26,13 @@ import {
   HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES,
   refreshFixActivation,
 } from "../../ops/hosted-autonomy-refresh-rearm.ts";
-import type { ReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import type { HostedRefreshRearmRuntimeV1 } from "../../ops/hosted-autonomy-types.ts";
+import {
+  parseReleaseStateSnapshotV1,
+  type ReleaseStateSnapshotV1,
+} from "../../src/contracts/state-snapshots.ts";
+import type { GitSha } from "../../src/contracts/brands.ts";
+import { buildOwnerDevelopmentInstallSnapshot } from "../../src/host/owner-install-snapshot.ts";
 import {
   releaseAt,
   settlementProof,
@@ -59,6 +65,12 @@ const REFUSAL =
 const R76 = "41bb853a1bedfc0422bf903dfabbe23bf714b44f";
 /** A stand-in corrected runtime revision. */
 const R77 = "7".repeat(40);
+/** The instant of the launcher commit that pins R77: after the refusal. */
+const PINNED = T0 + 3 * 60 * 60 * 1000;
+const pin = (
+  revision: string,
+  activatedNotBefore = PINNED,
+): HostedRefreshRearmRuntimeV1 => ({ revision, activatedNotBefore });
 
 /**
  * R77 installed at generation 77 over generation 76, whose healthy proof was
@@ -165,7 +177,7 @@ function runAt(
   facts: Facts,
   now: number,
   /** null runs the production allowlist. */
-  runtimes: readonly string[] | null = [R77],
+  runtimes: readonly HostedRefreshRearmRuntimeV1[] | null = [pin(R77)],
 ): Promise<HostedAutonomyResultV1> {
   return runHostedAutonomy({
     state: state as unknown as StateReadView & RepairStateWriter,
@@ -311,7 +323,7 @@ async function expectRetained(
   record: WorkRecordV1,
   release: ReleaseStateSnapshotV1,
   reason: string,
-  runtimes: readonly string[] | null = [R77],
+  runtimes: readonly HostedRefreshRearmRuntimeV1[] | null = [pin(R77)],
 ): Promise<void> {
   const state = new TransitionState(snapshotOf([record], [CHARGE]), release);
   await expectStateRetained(state, reason, runtimes);
@@ -320,7 +332,7 @@ async function expectRetained(
 async function expectStateRetained(
   state: TransitionState,
   reason: string,
-  runtimes: readonly string[] | null,
+  runtimes: readonly HostedRefreshRearmRuntimeV1[] | null,
 ): Promise<void> {
   const before = canonicalStringify(state.snapshot);
   const result = await runAt(state, {}, T0 + 2 * DAY, runtimes);
@@ -385,8 +397,112 @@ Deno.test("refresh re-arm: a refusal written after the corrected runtime's activ
   await expectRetained(record, at, "activation");
 });
 
-Deno.test("refresh re-arm: once the installed generation's own proofs replaced the earlier settlements, its activation is unknown and nothing re-arms", async () => {
+/**
+ * The supervisor workflow's real order: run N's maintenance sees generation 76
+ * installed; its prepare installs R77 at 77 (the owner-install rung) and
+ * starts R77's bootstrap; its finalize settles that bootstrap healthy, which
+ * replaces both earlier-generation proofs. Every later maintenance sees only
+ * R77's own proofs.
+ */
+function ownerInstalledAndBootstrapped(at: number): ReleaseStateSnapshotV1 {
+  const g76 = releaseAt({
+    revision: R76,
+    generation: 76,
+    healthy: {
+      revision: R76,
+      generation: 76,
+      createdAt: at - 60 * 60 * 1000,
+      observedAt: at - 30 * 60 * 1000,
+    },
+  });
+  const installed = buildOwnerDevelopmentInstallSnapshot(
+    g76,
+    SHA3 as GitSha,
+    {
+      action: "install",
+      priorRevision: R76 as GitSha,
+      priorGeneration: 76,
+      nextRevision: R77 as GitSha,
+      nextGeneration: 77,
+      priorHealthyProof: g76.hostedRuntimes[0]!.lastHealthyProof!,
+    },
+    at + 60_000,
+  );
+  const boot = settlementProof({
+    revision: R77,
+    generation: 77,
+    createdAt: at + 120_000,
+    observedAt: at + 30 * 60_000,
+  });
+  const bootstrap = {
+    ...boot,
+    execution: { ...boot.execution, purpose: "bootstrap" },
+  };
+  return parseReleaseStateSnapshotV1({
+    ...installed,
+    sequence: installed.sequence + 1,
+    hostedRuntimes: [{
+      ...installed.hostedRuntimes[0]!,
+      execution: null,
+      lastExecutionProof: bootstrap,
+      lastHealthyProof: bootstrap,
+      updatedAt: at + 30 * 60_000,
+    }],
+  });
+}
+
+Deno.test("refresh re-arm: a healthy owner install whose bootstrap settled in the install run re-arms a refusal before its pinned bound", async () => {
+  // The launcher commit pins R77 at PINNED and installs it a day later.
+  const installedAt = PINNED + DAY;
+  const release = ownerInstalledAndBootstrapped(installedAt);
+  assert.equal(release.hostedRuntimes[0]!.activeRevision, R77);
+  assert.equal(
+    release.hostedRuntimes[0]!.lastHealthyProof!.execution.generation,
+    77,
+    "the earlier generation's settlements are gone",
+  );
+  for (const now of [installedAt + 60 * 60 * 1000, installedAt + 30 * DAY]) {
+    const record = await refusedRefresh();
+    const state = new TransitionState(snapshotOf([record], [CHARGE]), release);
+    const result = await runAt(state, {}, now);
+    assert.equal(result.status, "applied", JSON.stringify(result));
+    assert(result.actions.includes(`refresh:${ID}:rearmed:1012`));
+    assert.equal(state.writes, 1);
+    assert.equal(state.snapshot.work[0]!.nextStep, "delivery");
+    assert.equal(state.snapshot.work[0]!.target.pr, 1012);
+  }
+});
+
+Deno.test("refresh re-arm: after a healthy owner install, a refusal at or after the pinned bound is the corrected runtime's own", async () => {
+  const installedAt = PINNED + DAY;
+  const release = ownerInstalledAndBootstrapped(installedAt);
+  for (const since of [PINNED, installedAt + 60 * 60 * 1000]) {
+    const record = await refusedRefresh();
+    const state = new TransitionState(
+      snapshotOf([{ ...record, blocker: { ...record.blocker!, since } }], [
+        CHARGE,
+      ]),
+      release,
+    );
+    const before = canonicalStringify(state.snapshot);
+    const result = await runAt(state, {}, installedAt + 30 * DAY);
+    assert.equal(state.writes, 0, JSON.stringify(result));
+    assert.equal(canonicalStringify(state.snapshot), before);
+    assert(
+      result.actions.includes(`refresh:${ID}:retained:activation`),
+      JSON.stringify(result),
+    );
+  }
+});
+
+Deno.test("refresh re-arm: a pinned bound later than the runtime's own recorded execution never counts", async () => {
+  // R77 already executed before this pin: the pin is not its activation
+  // bound, and with only its own proofs nothing else qualifies.
   const record = await refusedRefresh();
+  const release = ownerInstalledAndBootstrapped(T0 + DAY);
+  await expectRetained(record, release, "activation", [
+    pin(R77, T0 + DAY + 10 * 60_000),
+  ]);
   await expectRetained(
     record,
     releaseAt({
@@ -399,11 +515,6 @@ Deno.test("refresh re-arm: once the installed generation's own proofs replaced t
         observedAt: T0 + 2 * 60 * 60 * 1000,
       },
     }),
-    "activation",
-  );
-  await expectRetained(
-    record,
-    releaseAt({ revision: R77, generation: 77, healthy: null, settled: null }),
     "activation",
   );
 });
@@ -427,7 +538,7 @@ Deno.test("refresh re-arm: a preserved descriptor bound to another base keeps th
       },
     }],
   };
-  await expectStateRetained(state, "shape", [R77]);
+  await expectStateRetained(state, "shape", [pin(R77)]);
 });
 
 Deno.test("refresh re-arm: activation reads only custody that never moves forward", () => {
@@ -435,9 +546,12 @@ Deno.test("refresh re-arm: activation reads only custody that never moves forwar
   const runtime = fixed.hostedRuntimes[0]!;
   // An earlier generation's settlement of an uncorrected runtime: observed
   // before the pointer moved.
-  assert.equal(refreshFixActivation(fixed, [R77]), T0 + 2 * 60 * 60 * 1000);
+  assert.equal(
+    refreshFixActivation(fixed, [pin(R77)]),
+    T0 + 2 * 60 * 60 * 1000,
+  );
   assert.equal(refreshFixActivation(fixed, []), null);
-  assert.equal(refreshFixActivation(fixed, [R76]), null);
+  assert.equal(refreshFixActivation(fixed, [pin(R76)]), null);
   // An earlier generation's settlement of a corrected runtime: the fix
   // already ran from that execution's creation.
   const corrected = settlementProof({
@@ -450,7 +564,7 @@ Deno.test("refresh re-arm: activation reads only custody that never moves forwar
     refreshFixActivation({
       ...fixed,
       hostedRuntimes: [{ ...runtime, lastExecutionProof: corrected as never }],
-    }, [R77]),
+    }, [pin(R77)]),
     T0 - 5000,
   );
   // Every hosted release proof of an allowlisted runtime is immutable; the
@@ -472,7 +586,7 @@ Deno.test("refresh re-arm: activation reads only custody that never moves forwar
       },
     ],
   } as unknown as ReleaseStateSnapshotV1;
-  assert.equal(refreshFixActivation(released, [R77]), T0 + 500);
+  assert.equal(refreshFixActivation(released, [pin(R77)]), T0 + 500);
   // The installed generation's own settlements are replaced every run.
   const proven = {
     ...released,
@@ -482,11 +596,25 @@ Deno.test("refresh re-arm: activation reads only custody that never moves forwar
       lastExecutionProof: proof(R77, T0 - 7000),
     }],
   } as unknown as ReleaseStateSnapshotV1;
-  assert.equal(refreshFixActivation(proven, [R77]), T0 + 500);
+  assert.equal(refreshFixActivation(proven, [pin(R77)]), T0 + 500);
+  // R77's own recorded executions predate this pin, so it is not R77's
+  // activation bound and never counts.
   assert.equal(
-    refreshFixActivation({ ...proven, hostedReleases: [] }, [R77]),
+    refreshFixActivation({ ...proven, hostedReleases: [] }, [pin(R77)]),
     null,
   );
+  // With no settlement at all, the pinned bound alone is the activation; a
+  // bound that is not a positive safe integer never counts.
+  const bare = releaseAt({
+    revision: R77,
+    generation: 77,
+    healthy: null,
+    settled: null,
+  });
+  assert.equal(refreshFixActivation(bare, [pin(R77)]), PINNED);
+  for (const bound of [0, -1, Number.NaN, 1.5, Number.MAX_VALUE]) {
+    assert.equal(refreshFixActivation(bare, [pin(R77, bound)]), null);
+  }
 });
 
 Deno.test("refresh re-arm: release custody the parser refuses proves no corrected runtime", async () => {

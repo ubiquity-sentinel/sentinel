@@ -242,10 +242,23 @@ export interface HostedAutonomyDepsV1 {
   /** Charged uncertainty only; no producer, artifact, health or release authority. */
   uncertainMatrix?: () => ReturnType<typeof runMatrixUncertaintyMaintenance>;
   /**
-   * Exact corrected runtime revisions for the refresh re-arm. Production never
-   * sets it and uses HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES.
+   * Exact corrected runtime revisions for the refresh re-arm, each with its
+   * pinned activation bound. Production never sets it and uses
+   * HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES.
    */
-  refreshRearmRuntimes?: readonly string[];
+  refreshRearmRuntimes?: readonly HostedRefreshRearmRuntimeV1[];
+}
+
+/** One corrected runtime the refresh re-arm trusts, pinned in launcher source. */
+export interface HostedRefreshRearmRuntimeV1 {
+  /** The exact runtime revision; never a generation number. */
+  revision: string;
+  /**
+   * Epoch milliseconds no later than the revision's first activation: the
+   * instant of the launcher commit that pins this entry, which precedes the
+   * owner install that commit performs.
+   */
+  activatedNotBefore: number;
 }
 
 /** Fixed safe categories for maintenance failure logging; never raw text. */
