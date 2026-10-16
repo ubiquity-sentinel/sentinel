@@ -363,8 +363,14 @@ Deno.test("refresh re-arm: a rollback that advanced the generation to 78 on gene
   await expectRetained(record, rollback, "runtime", null);
 });
 
-Deno.test("refresh re-arm: the shipped allowlist is empty, so an unnamed corrected runtime never re-arms", async () => {
-  assert.deepEqual(HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES, []);
+Deno.test("refresh re-arm: the shipped allowlist names only generation 77, so an unnamed corrected runtime never re-arms", async () => {
+  assert.deepEqual(
+    HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES.map((row) => row.revision),
+    ["ab3613e0224ff92266bed21dde6f40e6b0aab54a"],
+  );
+  for (const row of HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES) {
+    assert.ok(Number.isSafeInteger(row.activatedNotBefore));
+  }
   const record = await refusedRefresh();
   await expectRetained(record, FIXED(), "runtime", null);
   await expectRetained(record, FIXED(), "runtime", []);

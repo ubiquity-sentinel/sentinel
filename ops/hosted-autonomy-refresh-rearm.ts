@@ -66,11 +66,17 @@ import type {
  * is written before that commit is pushed and so before its owner-install
  * rung can install the revision. A generation number never qualifies on its
  * own: a rollback advances it too (a failed 77 restores 41bb853a1 at
- * generation 78). Empty until the generation-77 launcher names that
- * runtime's exact revision.
+ * generation 78).
  */
 export const HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES:
-  readonly HostedRefreshRearmRuntimeV1[] = [];
+  readonly HostedRefreshRearmRuntimeV1[] = [
+    // Generation 77 (the review-snapshot base-edge bound, a2a0d537e), pinned
+    // by its launcher commit at 1792139532000.
+    {
+      revision: "ab3613e0224ff92266bed21dde6f40e6b0aab54a",
+      activatedNotBefore: 1792139532000,
+    },
+  ];
 
 /** Every recorded execution creation of one revision in release custody. */
 function executionsOf(
