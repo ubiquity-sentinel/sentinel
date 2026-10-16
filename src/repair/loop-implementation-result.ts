@@ -18,6 +18,7 @@ import {
   attemptMemorySettlementMutationV1,
   attemptMemorySuccessMutationV1,
 } from "./attempt-policy.ts";
+import { conflictResolutionInFlight } from "./conflict-resolution.ts";
 import { isProviderThrottledReceiptV1 } from "./model-port-retry.ts";
 import {
   candidateBranch,
@@ -26,6 +27,7 @@ import {
 } from "./keys.ts";
 import { persistAfterSettlement, settleAndBlock } from "./loop-accounting.ts";
 import { MATRIX_PREDECESSOR_DEFERRED } from "./loop-bounds.ts";
+import { handleConflictResolutionReceipt } from "./loop-conflict-resolution.ts";
 import { verifiedPublishedHead } from "./loop-preservation.ts";
 import { touchesProtected } from "./loop-records.ts";
 import {
@@ -131,8 +133,12 @@ export async function handleModelReceipt(
 ): Promise<StepResultV1> {
   const now = deps.clock.now();
   const candidate = receipt.candidate;
+  // A conflict resolution's change set is read against the merged base, and
+  // its merge must be a new commit over the published candidate.
+  const conflictBase = conflictResolutionInFlight(record.intent);
   const completed = receipt.outcome === "completed" && candidate !== null &&
     candidate.head !== null && candidate.head !== record.target.base &&
+    (conflictBase === null || candidate.head !== record.target.head) &&
     candidate.changedPaths.length > 0 &&
     // A nonempty diff is not a repair: a candidate whose ENTIRE change set is
     // obvious generated/cache output (build products, logs, caches, OS junk)
@@ -194,6 +200,16 @@ export async function handleModelReceipt(
     });
   }
   const head = candidate!.head!;
+  if (conflictBase !== null) {
+    return handleConflictResolutionReceipt(
+      deps,
+      context,
+      record,
+      reservationId,
+      { head, changedPaths: candidate!.changedPaths },
+      config,
+    );
+  }
   const protectedHit = candidate!.changedPaths.some((path) =>
     touchesProtected(config.protectedPaths, path)
   );

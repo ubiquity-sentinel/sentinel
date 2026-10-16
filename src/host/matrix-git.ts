@@ -83,6 +83,12 @@ export interface MatrixBundleImportRequestV1 {
   digest: string;
   head: GitSha;
   checkpointSha: GitSha | null;
+  /**
+   * Further exact commits the imported head must descend from: a conflict
+   * resolution's published candidate and the base it merged. Absent for
+   * every other cell, whose import is unchanged.
+   */
+  ancestors?: readonly GitSha[];
 }
 
 export interface MatrixBundleImporterV1 {
@@ -216,6 +222,18 @@ export function createGitBundleImporter(input: {
         ]) !== 0
       ) {
         return false;
+      }
+      for (const ancestor of request.ancestors ?? []) {
+        if (
+          await runGit(input.repositoryDir, [
+            "merge-base",
+            "--is-ancestor",
+            ancestor,
+            request.head,
+          ]) !== 0
+        ) {
+          return false;
+        }
       }
       if (request.checkpointSha !== null) {
         if (

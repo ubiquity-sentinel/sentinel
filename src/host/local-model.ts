@@ -29,7 +29,13 @@ import {
   ensureTaskCheckout,
   importCandidate,
   localCheckoutKey,
+  prepareMergeCheckout,
 } from "./local-checkout.ts";
+import {
+  LocalMergeCommitter,
+  LocalMergeResolver,
+  type PlannedMergeV1,
+} from "../repair/model-port-checkout.ts";
 import { writeLocalModelResult } from "./local-model-result.ts";
 import { commitObjectPresent } from "./local-git.ts";
 import {
@@ -166,6 +172,16 @@ export class LocalCheckoutModelPort implements ImplementationPort {
     if (!isGitSha(checkoutBase)) {
       return portError("unavailable", STATIC_MODEL_INPUT);
     }
+    // A conflict resolution merges a distinct new base into the published
+    // candidate it continues; any other shape is not a valid merge request.
+    const mergeBase = request.mergeBase;
+    if (
+      mergeBase !== undefined &&
+      (!isGitSha(mergeBase) || request.checkoutBase === undefined ||
+        mergeBase === request.base || mergeBase === checkoutBase)
+    ) {
+      return portError("unavailable", STATIC_MODEL_INPUT);
+    }
     // A valid request whose exact checkout cannot be prepared exits through the
     // SAME finalized-result path as a completed run: the failure is persisted
     // privately and its static reason code is emitted. No candidate exists, so
@@ -203,37 +219,31 @@ export class LocalCheckoutModelPort implements ImplementationPort {
     // prepared. Requiring it here is what turns a mirror that was fetched
     // before the branch moved into a bounded, gated catch-up instead of an
     // unexplained checkout refusal for every record pinned to the newer base.
-    if (
-      !await commitObjectPresent({
-        sourcePath,
-        sha: checkoutBase,
-        scratch: this.input.scratch,
-        trustedPath: this.input.trustedPath,
-      })
-    ) {
-      if (this.input.ensureBaseObject === undefined) {
-        return await failCheckout();
-      }
+    // A conflict resolution needs the base it merges in the same way.
+    const objectReady = async (sha: GitSha): Promise<boolean> => {
+      const present = () =>
+        commitObjectPresent({
+          sourcePath,
+          sha,
+          scratch: this.input.scratch,
+          trustedPath: this.input.trustedPath,
+        });
+      if (await present()) return true;
+      if (this.input.ensureBaseObject === undefined) return false;
       let ensured: PortResultV1<void>;
       try {
         ensured = await this.input.ensureBaseObject({
           repository: request.repository,
-          base: checkoutBase,
+          base: sha,
         });
       } catch {
-        return await failCheckout();
+        return false;
       }
-      if (!ensured.ok) return await failCheckout();
-      if (
-        !await commitObjectPresent({
-          sourcePath,
-          sha: checkoutBase,
-          scratch: this.input.scratch,
-          trustedPath: this.input.trustedPath,
-        })
-      ) {
-        return await failCheckout();
-      }
+      return ensured.ok && await present();
+    };
+    if (!await objectReady(checkoutBase)) return await failCheckout();
+    if (mergeBase !== undefined && !await objectReady(mergeBase)) {
+      return await failCheckout();
     }
     const prepared = await ensureTaskCheckout({
       taskId: request.taskId,
@@ -245,6 +255,28 @@ export class LocalCheckoutModelPort implements ImplementationPort {
       trustedPath: this.input.trustedPath,
     });
     if (!prepared.ok) return await failCheckout();
+    // A conflict resolution starts from the exact published candidate with
+    // the base merged in and its conflicts left in the tree; the trusted
+    // merge committer and resolver below replace the ordinary pair.
+    let planned: PlannedMergeV1 | null = null;
+    if (mergeBase !== undefined) {
+      if (prepared.commitBase !== checkoutBase) return await failCheckout();
+      const merge = await prepareMergeCheckout({
+        checkout: prepared.checkout,
+        head: checkoutBase,
+        mergeBase,
+        sourcePath,
+        stateRoot: this.input.stateRoot,
+        scratch: this.input.scratch,
+        trustedPath: this.input.trustedPath,
+      });
+      if (!merge.ok) return await failCheckout();
+      planned = {
+        head: checkoutBase,
+        mergeBase,
+        conflictedPaths: merge.conflictedPaths,
+      };
+    }
 
     const clientHome = joinPath(this.input.stateRoot, "clients", key);
     const tmpDir = joinPath(this.input.stateRoot, "tmp", key);
@@ -263,10 +295,13 @@ export class LocalCheckoutModelPort implements ImplementationPort {
     });
 
     const commitBase = prepared.commitBase;
-    const localCommitter = new LocalCandidateCommitter(prepared.checkout);
+    const localCommitter: CandidateCommitterV1 = planned === null
+      ? new LocalCandidateCommitter(prepared.checkout)
+      : new LocalMergeCommitter(prepared.checkout, planned);
     const committer: CandidateCommitterV1 = {
       // Later review corrections commit uncommitted edits atop the saved
-      // candidate; the default resolver still binds request.base.
+      // candidate; the default resolver still binds request.base. A merge
+      // commits onto exactly the planned candidate.
       commit: () => localCommitter.commit(commitBase),
       get refusalCode() {
         return localCommitter.refusalCode;
@@ -298,6 +333,9 @@ export class LocalCheckoutModelPort implements ImplementationPort {
       sessionStartedAt,
       permissionProfile: "sentinel-local",
       commitCandidate: committer,
+      ...(planned === null
+        ? {}
+        : { checkout: new LocalMergeResolver(prepared.checkout, planned) }),
     });
 
     // The durable request keeps the reviewed development base for state

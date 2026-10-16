@@ -274,6 +274,14 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "src/repair/ci-rejection.ts",
       "src/repair/loop-ci-correction.ts",
       "ops/hosted-autonomy-ci-retries.ts",
+      // The conflict resolution decides when a base-refresh conflict is
+      // charged, exactly what the trusted host commits for it (the merge
+      // committer and resolver) and when the launcher re-admits a conflict
+      // block. A model-authored candidate must never weaken them.
+      "src/repair/conflict-resolution.ts",
+      "src/repair/loop-conflict-resolution.ts",
+      "src/repair/model-port-checkout.ts",
+      "ops/hosted-autonomy-conflict-retries.ts",
       // The launcher files that apply that re-admission gate, supply the
       // authenticated runtime record it trusts, and define its blocker prefix
       // and review-round ceiling.

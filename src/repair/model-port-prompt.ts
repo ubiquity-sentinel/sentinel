@@ -54,6 +54,20 @@ export function buildPrompt(
           .join("\n"),
     );
   }
+  if (request.mergeBase !== undefined) {
+    // A base-refresh conflict resolution: the trusted host prepared the merge
+    // and commits it; the session only resolves the conflicted files.
+    parts.push(
+      "Merge conflict resolution: the current checkout is the published " +
+        `candidate ${request.checkoutBase ?? request.base} with the updated ` +
+        `base revision ${request.mergeBase} merged in, and the merge stopped ` +
+        "on conflicts: the conflicted files contain conflict markers. " +
+        "Resolve every conflict so the result keeps this candidate's intended " +
+        "change on top of the updated base, remove every conflict marker and " +
+        "keep the base's own changes. Do not abort, restart or redo the " +
+        "merge: the trusted host commits it with exactly these two parents.",
+    );
+  }
   if (request.priorAttempts !== undefined && request.priorAttempts.length > 0) {
     // Bounded VERIFIED facts from durable attempt memory. An unchanged replay
     // of any listed approach has already been refused upstream by the trusted

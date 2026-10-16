@@ -272,6 +272,12 @@ export interface HostedAutonomyDepsV1 {
    * HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES.
    */
   refreshRearmRuntimes?: readonly HostedRefreshRearmRuntimeV1[];
+  /**
+   * Exact conflict-resolution runtime revisions for the conflict
+   * re-admission, each with its pinned activation bound. Production never
+   * sets it and uses HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES.
+   */
+  conflictResolutionRuntimes?: readonly HostedRefreshRearmRuntimeV1[];
 }
 
 /** One corrected runtime the refresh re-arm trusts, pinned in launcher source. */

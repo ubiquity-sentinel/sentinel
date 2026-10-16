@@ -293,3 +293,91 @@ async function readCheckoutMapping(
     return null;
   }
 }
+
+/** Fixed identity of the trusted merge preparation (no commit is written). */
+const MERGE_IDENTITY = [
+  "-c",
+  "user.name=ubiquity-sentinel[bot]",
+  "-c",
+  "user.email=319834869+ubiquity-sentinel[bot]@users.noreply.github.com",
+];
+
+/**
+ * Prepare a base-refresh CONFLICT RESOLUTION checkout: the persistent task
+ * checkout must sit exactly and cleanly on the published candidate `head`;
+ * the exact `mergeBase` is fetched from the already-ensured local source
+ * (never the network) and merged with `--no-ff --no-commit`, so the merge
+ * stops with its conflicts left in the tree and MERGE_HEAD naming the base.
+ * Returns the exact conflicted paths the trusted committer later checks for
+ * leftover markers. Any other state (moved or dirty checkout, missing base,
+ * an unexpected merge exit or MERGE_HEAD) fails closed with no commit, ref or
+ * mapping change beyond the in-progress merge itself.
+ */
+export async function prepareMergeCheckout(input: {
+  checkout: string;
+  head: GitSha;
+  mergeBase: GitSha;
+  sourcePath: string;
+  stateRoot: string;
+  scratch: string;
+  trustedPath: string;
+}): Promise<{ ok: true; conflictedPaths: string[] } | { ok: false }> {
+  const git = async (args: string[]) => {
+    try {
+      return await runTrustedGitResult({
+        args: ["-C", input.checkout, ...args],
+        cwd: input.stateRoot,
+        scratch: input.scratch,
+        trustedPath: input.trustedPath,
+      });
+    } catch {
+      return { code: -1, stdout: "" };
+    }
+  };
+  const head = await git(["rev-parse", "HEAD"]);
+  if (head.code !== 0 || head.stdout.trim() !== input.head) {
+    return { ok: false };
+  }
+  const status = await git(["status", "--porcelain", "--untracked-files=all"]);
+  if (status.code !== 0 || status.stdout.trim().length !== 0) {
+    return { ok: false };
+  }
+  const fetched = await git([
+    "fetch",
+    "--no-tags",
+    input.sourcePath,
+    input.mergeBase,
+  ]);
+  if (fetched.code !== 0) return { ok: false };
+  const present = await git(["cat-file", "-e", `${input.mergeBase}^{commit}`]);
+  if (present.code !== 0) return { ok: false };
+  const merged = await git([
+    ...MERGE_IDENTITY,
+    "-c",
+    "rerere.enabled=false",
+    "merge",
+    "--no-ff",
+    "--no-commit",
+    "--no-edit",
+    input.mergeBase,
+  ]);
+  // 0: merged cleanly (still uncommitted); 1: stopped on conflicts.
+  if (merged.code !== 0 && merged.code !== 1) return { ok: false };
+  const mergeHead = await git(["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+  if (mergeHead.code !== 0 || mergeHead.stdout.trim() !== input.mergeBase) {
+    return { ok: false };
+  }
+  const unmerged = await git([
+    "diff",
+    "--name-only",
+    "--diff-filter=U",
+    "-z",
+  ]);
+  if (unmerged.code !== 0) return { ok: false };
+  return {
+    ok: true,
+    conflictedPaths: unmerged.stdout.split("\0").filter((path) =>
+      path.length > 0
+    ),
+  };
+}

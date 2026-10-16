@@ -127,6 +127,24 @@ export function parseMatrixModelRequestV1(
   const checkoutBase = obj.checkoutBase === undefined
     ? undefined
     : expectGitSha(obj.checkoutBase, `${path}.checkoutBase`);
+  const mergeBase = obj.mergeBase === undefined
+    ? undefined
+    : expectGitSha(obj.mergeBase, `${path}.mergeBase`);
+  const base = expectGitSha(obj.base, `${path}.base`);
+  // A conflict resolution merges a NEW base into the published candidate it
+  // continues: never without that candidate, never the durable base itself
+  // and never the candidate.
+  if (
+    mergeBase !== undefined &&
+    (checkoutBase === undefined || mergeBase === base ||
+      mergeBase === checkoutBase)
+  ) {
+    fail(
+      `${path}.mergeBase`,
+      "invalid_lifecycle",
+      "mergeBase requires a distinct checkoutBase and base",
+    );
+  }
   const scopeNote = obj.scopeNote === undefined
     ? undefined
     : expectNonEmptyString(obj.scopeNote, `${path}.scopeNote`, MAX_TEXT_CHARS);
@@ -214,8 +232,9 @@ export function parseMatrixModelRequestV1(
       MAX_ID_CHARS,
     ) as WorkItemId,
     repository: parseRepositoryIdentity(obj.repository, `${path}.repository`),
-    base: expectGitSha(obj.base, `${path}.base`),
+    base,
     ...(checkoutBase === undefined ? {} : { checkoutBase }),
+    ...(mergeBase === undefined ? {} : { mergeBase }),
     ...(scopeNote === undefined ? {} : { scopeNote }),
     issue,
     evidence,

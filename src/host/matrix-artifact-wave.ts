@@ -18,6 +18,7 @@ import {
 } from "../contracts/matrix.ts";
 import { candidateBranch } from "../repair/keys.ts";
 import { isCiCorrectionFinding } from "../repair/ci-rejection.ts";
+import { conflictResolutionInFlight } from "../repair/conflict-resolution.ts";
 import {
   type MatrixArtifactRequestV1,
   type MatrixAuthenticatedWaveV1,
@@ -242,30 +243,39 @@ export async function recoverMatrixArtifactWaves(context: {
         (task.source.kind !== "issue" ||
           cell.request.checkoutBase !== task.target.head ||
           task.target.pr === null ||
-          (cell.request.reviewFindings?.length ?? 0) === 0 ||
-          // A correction continues only from a head that a completed review
-          // refused, or from a head reviewed clean against this exact base
-          // whose live CI attribution the trusted planner carried as its own
-          // digest-bound CI finding (no CI evidence is ever persisted).
-          (!snapshot.reviews.some((review) =>
-            sameRepo(review.repository, task.repository) &&
-            review.pullRequest.number === task.target.pr &&
-            review.pullRequest.head === cell.request.checkoutBase &&
-            review.outcome === "completed" &&
-            review.unresolvedSeverities.length > 0
-          ) &&
-            !(isCiCorrectionFinding(cell.request.reviewFindings![0]) &&
-              cell.request.base === task.target.base &&
-              snapshot.reviews.some((review) =>
+          // A conflict resolution continues the published candidate its
+          // marked implementation intent was admitted for: no findings, the
+          // durable base unchanged and the marker naming this exact merged
+          // base (generation 78+; generation 77 refuses the key itself).
+          (cell.request.mergeBase !== undefined
+            ? cell.request.reviewFindings !== undefined ||
+              cell.request.base !== task.target.base ||
+              conflictResolutionInFlight(task.intent) !==
+                cell.request.mergeBase
+            : (cell.request.reviewFindings?.length ?? 0) === 0 ||
+              // A correction continues only from a head that a completed review
+              // refused, or from a head reviewed clean against this exact base
+              // whose live CI attribution the trusted planner carried as its own
+              // digest-bound CI finding (no CI evidence is ever persisted).
+              (!snapshot.reviews.some((review) =>
                 sameRepo(review.repository, task.repository) &&
                 review.pullRequest.number === task.target.pr &&
                 review.pullRequest.head === cell.request.checkoutBase &&
-                review.pullRequest.base === task.target.base &&
                 review.outcome === "completed" &&
-                !review.unresolvedSeverities.some((severity) =>
-                  severity === "P0" || severity === "P1"
-                )
-              ))))
+                review.unresolvedSeverities.length > 0
+              ) &&
+                !(isCiCorrectionFinding(cell.request.reviewFindings![0]) &&
+                  cell.request.base === task.target.base &&
+                  snapshot.reviews.some((review) =>
+                    sameRepo(review.repository, task.repository) &&
+                    review.pullRequest.number === task.target.pr &&
+                    review.pullRequest.head === cell.request.checkoutBase &&
+                    review.pullRequest.base === task.target.base &&
+                    review.outcome === "completed" &&
+                    !review.unresolvedSeverities.some((severity) =>
+                      severity === "P0" || severity === "P1"
+                    )
+                  )))))
       ) refuse();
       const reservation = snapshot.reservations.find((row) =>
         row.id === cell.reservationId

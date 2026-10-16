@@ -17,8 +17,11 @@
  * closed-issue gates.
  *
  * A deterministic merge conflict ("base refresh has conflicts[ at <base>]")
- * is deliberately not re-admitted: the conflicting candidate cannot be
- * published over the current base, so it stays a visible terminal block.
+ * is not re-admitted by this rule: the conflicting candidate cannot be
+ * published over the current base without a resolution, so only the
+ * conflict-resolution rule (`hosted-autonomy-conflict-retries.ts`, which
+ * shares this verification) may return it, and only to a runtime that
+ * resolves it.
  *
  * The transition writes generation-76 shapes only (no new key, field or enum
  * value), so a rollback still parses every record. It relies on the
@@ -99,6 +102,12 @@ export interface BaseRefreshCandidateV1 {
   branch: string;
   /** The exact published head the branch and its open PR must carry. */
   head: GitSha;
+  /**
+   * Action detail of the verified re-admission; absent for this rule's own
+   * credential-expiry class. The conflict re-admission
+   * (`hosted-autonomy-conflict-retries.ts`) shares this verification.
+   */
+  detail?: string;
 }
 
 /** A verified re-admission, applied by `applyBaseRefreshReadmissions`. */
@@ -220,7 +229,7 @@ export function decideBaseRefreshReadmission(
       id: candidate.id,
       repository: candidate.repository,
       pullRequest: pull.number,
-      detail: READMISSION_DETAIL,
+      detail: candidate.detail ?? READMISSION_DETAIL,
     },
   };
 }

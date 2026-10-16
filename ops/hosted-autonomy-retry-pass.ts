@@ -2,7 +2,10 @@ import type {
   PortResultV1,
   StateWriteResultV1,
 } from "../src/contracts/ports.ts";
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import type {
+  ReleaseStateSnapshotV1,
+  RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import {
   HOSTED_RUNTIME_ID,
@@ -40,6 +43,10 @@ import {
   planBaseRefreshReadmissions,
   verifyBaseRefreshReadmissions,
 } from "./hosted-autonomy-base-refresh-retries.ts";
+import {
+  planConflictReadmissions,
+  verifyConflictReadmissions,
+} from "./hosted-autonomy-conflict-retries.ts";
 
 /** Read-only source facts shared by bookkeeping and the later retry grant. */
 export async function readHostedClosedIssues(
@@ -177,10 +184,13 @@ export async function runHostedRetryPass(
   // installed runtime. Only the authenticated release pointer supplies it.
   let runtimeSha: GitSha | null = null;
   let installedRuntime: HostedRuntimeRecordV1 | null = null;
+  let release: ReleaseStateSnapshotV1 | null = null;
   try {
-    installedRuntime = parseReleaseStateSnapshotV1(context.releaseSnapshot)
-      .hostedRuntimes.find((runtime) => runtime.id === HOSTED_RUNTIME_ID) ??
-      null;
+    release = parseReleaseStateSnapshotV1(context.releaseSnapshot);
+    const installed = release.hostedRuntimes.find((runtime) =>
+      runtime.id === HOSTED_RUNTIME_ID
+    );
+    installedRuntime = installed ?? null;
     runtimeSha = installedRuntime?.activeRevision ?? null;
   } catch {
     // Invalid/missing runtime custody never falls back to checkout or origin.
@@ -311,6 +321,26 @@ export async function runHostedRetryPass(
     ),
     scopeFor,
     actions,
+  );
+  // The refresh-conflict block has its own exact rule (see
+  // hosted-autonomy-conflict-retries.ts), inert unless the installed runtime
+  // is a proven conflict-resolution runtime; its blocker matches neither set
+  // above, and its re-admission shares this one write.
+  readmissions.push(
+    ...await verifyConflictReadmissions(
+      snapshot,
+      planConflictReadmissions(
+        snapshot,
+        release,
+        closedIssues,
+        (denial) => {
+          actions.push(`retry:${denial.id}:denied:${denial.reason}`);
+        },
+        deps.conflictResolutionRuntimes,
+      ),
+      scopeFor,
+      actions,
+    ),
   );
   if (plans.length > 0 || readmissions.length > 0) {
     const now = deps.clock.now();

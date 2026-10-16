@@ -3,6 +3,7 @@ import {
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
 import { attemptEquivalenceRefusalForRecordV1 } from "../src/repair/attempt-policy.ts";
+import { conflictMarkerBase } from "../src/repair/conflict-resolution.ts";
 import { type GitSha, isGitSha } from "../src/contracts/brands.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { candidateBranch, reviewOperationKey } from "../src/repair/keys.ts";
@@ -302,6 +303,17 @@ export function planHostedRetries(
     }
     const blocker = record.blocker;
     if (blocker === null) continue;
+    // A conflict resolution that was charged and did not publish keeps the
+    // conflict marker on its retained intent: its one charge per base tip is
+    // spent, so no blocker class of this table re-admits it.
+    if (conflictMarkerBase(record.intent) !== null) {
+      onDenied?.({
+        id: record.id,
+        repository: record.repository,
+        reason: "conflict_resolution_spent",
+      });
+      continue;
+    }
     if (
       taskReservationCount(snapshot, record.id) >= HOSTED_AUTONOMY_MAX_RETRIES
     ) {

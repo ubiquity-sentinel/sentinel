@@ -11,6 +11,7 @@ import type {
   IncompleteOperationV1,
   WorkRecordV1,
 } from "../contracts/work-record.ts";
+import { conflictMarkerBase } from "./conflict-resolution.ts";
 import { CHECK_POLL_MS } from "./loop-bounds.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
@@ -126,6 +127,12 @@ function isCredentialFailure(failure: BaseRefreshFailureV1): boolean {
  * persisted prepared result), so a credential expiry never accumulates toward
  * the terminal block. Every other `auth_failed` counts, with the closed
  * permission suffix on its detail.
+ *
+ * An intent carrying the conflict marker (a pending or resolved conflict
+ * resolution, `conflict-resolution.ts`) keeps the marker as its failure
+ * record: only `attempts` grows, and `attempts - 1` failures are counted
+ * against the same bound, so a failed execution never erases the base tip
+ * whose one resolution charge is pending or already spent.
  */
 export function failBaseRefresh(
   deps: RepairCycleDepsV1,
@@ -144,8 +151,12 @@ export function failBaseRefresh(
     ? `${failure.detail}${BASE_REFRESH_PERMISSION_SUFFIX}`
     : failure.detail;
   const at = deps.clock.now();
+  const marker = conflictMarkerBase(intent) === null
+    ? undefined
+    : intent.failure;
   const attempts = (intent.failure?.attempts ?? 0) + 1;
-  if (attempts >= MAX_BASE_REFRESH_FAILURES) {
+  const failures = marker === undefined ? attempts : attempts - 1;
+  if (failures >= MAX_BASE_REFRESH_FAILURES) {
     return persistWork(
       deps,
       context,
@@ -153,7 +164,7 @@ export function failBaseRefresh(
         markTerminalBlocked(
           record,
           "other",
-          `base refresh failed ${attempts} consecutive times: ${failure.kind} ${detail}`,
+          `base refresh failed ${failures} consecutive times: ${failure.kind} ${detail}`,
           at,
         ),
         at,
@@ -168,7 +179,9 @@ export function failBaseRefresh(
         record,
         {
           ...intent,
-          failure: { kind: failure.kind, detail, atMs: at, attempts },
+          failure: marker === undefined
+            ? { kind: failure.kind, detail, atMs: at, attempts }
+            : { ...marker, atMs: at, attempts },
         },
         at,
       ),

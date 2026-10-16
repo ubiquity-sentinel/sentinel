@@ -1,4 +1,5 @@
 /** Repair loop internals: implementation. */
+import type { GitSha } from "../contracts/brands.ts";
 import type { ModelRunRequestV1 } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
@@ -19,7 +20,13 @@ import {
   runBoundsProofRef,
 } from "./loop-bounds.ts";
 import { ciCorrectionRouteOpen } from "./ci-rejection.ts";
+import {
+  conflictMarker,
+  conflictResolutionAdmissible,
+  conflictResolutionRouteOpen,
+} from "./conflict-resolution.ts";
 import { confirmCiCorrection } from "./loop-ci-correction.ts";
+import { confirmConflictResolution } from "./loop-conflict-resolution.ts";
 import {
   correctionFindings,
   headAwaitsCiCorrection,
@@ -100,6 +107,23 @@ export async function prepareImplementationStart(
     return { kind: "deferred", detail: cooling.detail };
   }
 
+  // A pending refresh-conflict resolution is re-confirmed against the live
+  // base and published branch before anything is charged; it continues the
+  // published candidate with the conflicting base to merge and carries no
+  // review findings (no review rejected that head).
+  let conflict: { head: GitSha; mergeBase: GitSha } | null = null;
+  if (
+    conflictResolutionAdmissible(
+      conflictResolutionRouteOpen(deps),
+      context.snapshot,
+      record,
+    ) !== null
+  ) {
+    const confirmed = await confirmConflictResolution(deps, context, record);
+    if (confirmed.kind !== "confirmed") return confirmed;
+    conflict = { head: confirmed.head, mergeBase: confirmed.mergeBase };
+  }
+
   // A reviewed head awaiting a CI correction carries no persisted CI evidence
   // (generation 76 could not parse it): the attribution is re-derived from the
   // live check runs here, before anything is charged. Anything but a live
@@ -108,7 +132,10 @@ export async function prepareImplementationStart(
     | { severity: string; path: string | null; message: string }
     | null = null;
   const ciRouteOpen = ciCorrectionRouteOpen(deps);
-  if (headAwaitsCiCorrection(context.snapshot, record, ciRouteOpen)) {
+  if (
+    conflict === null &&
+    headAwaitsCiCorrection(context.snapshot, record, ciRouteOpen)
+  ) {
     const confirmed = await confirmCiCorrection(deps, context, record);
     if (confirmed.kind !== "confirmed") return confirmed;
     ciFinding = confirmed.finding;
@@ -216,7 +243,9 @@ export async function prepareImplementationStart(
     record,
     ciRouteOpen,
   );
-  const findings = correctionFindings(context.snapshot, record, ciFinding);
+  const findings = conflict !== null
+    ? null
+    : correctionFindings(context.snapshot, record, ciFinding);
   const part = decompositionPartOf(record.id);
   const priorAttempts = priorAttemptFactsForRecordV1(
     context.snapshot,
@@ -237,7 +266,9 @@ export async function prepareImplementationStart(
     taskId: record.id,
     repository: record.repository,
     base: record.target.base,
-    ...(rejectedHead && record.target.head !== null
+    ...(conflict !== null
+      ? { checkoutBase: conflict.head, mergeBase: conflict.mergeBase }
+      : rejectedHead && record.target.head !== null
       ? { checkoutBase: record.target.head }
       : {}),
     issue,
@@ -328,12 +359,25 @@ export async function prepareImplementationStart(
   }
 
   const attempted = startAttempt(current, deps.clock.now());
-  const intent = implementationIntent(
+  const started = implementationIntent(
     durable.reservation.id,
     attempted,
     deps.clock.now(),
   );
+  // A conflict resolution's implementation intent carries the conflict
+  // marker (the only addition), so its receipt and every non-success outcome
+  // stay bound to the one base tip this charge was spent on.
+  const intent = conflict === null ? started : {
+    ...started,
+    failure: conflictMarker(conflict.mergeBase, deps.clock.now()),
+  };
   const withIntent = setIntent(attempted, intent, deps.clock.now());
+  // A refunded (provably never submitted) start returns a conflict
+  // resolution to its pending intent; any other start clears its intent.
+  const unsent = (at: number): WorkRecordV1 =>
+    conflict === null || record.intent === null
+      ? clearIntent(withIntent, at)
+      : setIntent(withIntent, record.intent, at);
   const persisted = await persistTransition(
     deps,
     fresh,
@@ -377,7 +421,7 @@ export async function prepareImplementationStart(
     if (afterRefund === null) {
       return { kind: "state_error", detail: "repair state unavailable" };
     }
-    const cleared = clearIntent(withIntent, deps.clock.now());
+    const cleared = unsent(deps.clock.now());
     const persisted = await persistTransition(
       deps,
       afterRefund,
@@ -419,7 +463,7 @@ export async function prepareImplementationStart(
     if (afterRefund === null) {
       return { kind: "state_error", detail: "repair state unavailable" };
     }
-    const cleared = clearIntent(withIntent, deps.clock.now());
+    const cleared = unsent(deps.clock.now());
     const persisted = await persistTransition(
       deps,
       afterRefund,

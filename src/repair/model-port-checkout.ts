@@ -39,6 +39,9 @@ export const CANDIDATE_COMMIT_REFUSAL_DETAILS = {
   commit_failed: "candidate checkout git commit failed",
   committed_head_unavailable: "candidate committed head is unavailable",
   committed_head_unchanged: "candidate committed head is unchanged",
+  merge_identity_mismatch: "candidate merge checkout is not the planned merge",
+  conflict_markers: "candidate merge checkout keeps conflict markers",
+  merge_parents_mismatch: "candidate merge commit parents are not exact",
 } as const;
 
 export type CandidateCommitRefusalCodeV1 =
@@ -270,5 +273,203 @@ export class LocalCheckoutResolver implements CheckoutResolverV1 {
     const status = await command.output();
     if (status.code !== 0) return null;
     return new TextDecoder().decode(status.stdout);
+  }
+}
+
+/** Exact planned merge of one conflict-resolution checkout. */
+export interface PlannedMergeV1 {
+  /** Published candidate the checkout continues (first parent). */
+  head: GitSha;
+  /** Base tip merged into it (second parent). */
+  mergeBase: GitSha;
+  /** Paths the trusted merge preparation left conflicted. */
+  conflictedPaths: readonly string[];
+}
+
+/** A conflict-marker line Git writes (`<<<<<<< ours` / `>>>>>>> theirs`). */
+const CONFLICT_MARKER_LINE = /^(?:<{7}|>{7})(?: |$)/m;
+
+/**
+ * Trusted committer of a base-refresh CONFLICT RESOLUTION. The trusted host
+ * prepared the merge (`prepareMergeCheckout`): HEAD must still be exactly the
+ * published candidate and MERGE_HEAD exactly the planned base, and no path
+ * the preparation left conflicted may keep a conflict marker. The resolved
+ * tree is then committed as the merge itself, so the result has exactly the
+ * two parents (candidate, base) and publishing it is a fast-forward of the
+ * candidate. The model session never commits; a moved, aborted or redone
+ * merge fails closed.
+ */
+export class LocalMergeCommitter implements CandidateCommitterV1 {
+  private refusal: CandidateCommitRefusalCodeV1 | null = null;
+
+  get refusalCode(): CandidateCommitRefusalCodeV1 | null {
+    return this.refusal;
+  }
+
+  constructor(
+    private readonly checkoutDir: string,
+    private readonly planned: PlannedMergeV1,
+    private readonly message = "sentinel: resolve base refresh conflicts",
+  ) {}
+
+  async commit(base: GitSha): Promise<boolean> {
+    this.refusal = null;
+    const { head, mergeBase } = this.planned;
+    if (base !== head) return this.refuse("merge_identity_mismatch");
+    const before = await runCheckoutGit(this.checkoutDir, [
+      "rev-parse",
+      "HEAD",
+    ]);
+    if (before === null || before.code !== 0) {
+      return this.refuse("head_unavailable");
+    }
+    const merging = await runCheckoutGit(this.checkoutDir, [
+      "rev-parse",
+      "-q",
+      "--verify",
+      "MERGE_HEAD",
+    ]);
+    if (
+      before.stdout.trim() !== head || merging === null ||
+      merging.code !== 0 || merging.stdout.trim() !== mergeBase
+    ) return this.refuse("merge_identity_mismatch");
+    for (const path of this.planned.conflictedPaths) {
+      if (await keepsConflictMarker(`${this.checkoutDir}/${path}`)) {
+        return this.refuse("conflict_markers");
+      }
+    }
+    const staged = await runCheckoutGit(this.checkoutDir, [
+      "add",
+      "-A",
+      "--",
+      ".",
+    ]);
+    if (staged === null || staged.code !== 0) {
+      return this.refuse("staging_failed");
+    }
+    const unmerged = await runCheckoutGit(this.checkoutDir, [
+      "diff",
+      "--cached",
+      "--name-only",
+      "--diff-filter=U",
+    ]);
+    if (unmerged === null || unmerged.code !== 0) {
+      return this.refuse("staged_diff_failed");
+    }
+    if (unmerged.stdout.trim().length > 0) {
+      return this.refuse("unmerged_entries");
+    }
+    const committed = await runCheckoutGit(this.checkoutDir, [
+      "-c",
+      "user.name=ubiquity-sentinel[bot]",
+      "-c",
+      "user.email=319834869+ubiquity-sentinel[bot]@users.noreply.github.com",
+      "commit",
+      "--no-verify",
+      "-m",
+      this.message,
+    ]);
+    if (committed === null || committed.code !== 0) {
+      return this.refuse("commit_failed");
+    }
+    const after = await runCheckoutGit(this.checkoutDir, ["rev-parse", "HEAD"]);
+    const merged = after?.code === 0 ? after.stdout.trim() : "";
+    if (!/^[0-9a-f]{40}$/.test(merged)) {
+      return this.refuse("committed_head_unavailable");
+    }
+    const parents = await runCheckoutGit(this.checkoutDir, [
+      "rev-list",
+      "--parents",
+      "-n",
+      "1",
+      merged,
+    ]);
+    return parents?.code === 0 &&
+        parents.stdout.trim() === `${merged} ${head} ${mergeBase}` ||
+      this.refuse("merge_parents_mismatch");
+  }
+
+  private refuse(code: CandidateCommitRefusalCodeV1): false {
+    this.refusal = code;
+    return false;
+  }
+}
+
+/**
+ * Resolver of a conflict-resolution checkout: the ordinary clean-checkout
+ * identity read bound to the MERGED base (so the changed paths are the
+ * candidate's own change set as its pull request shows it against that base,
+ * never the base's history), plus the proof that the head is a new commit
+ * descending from the published candidate.
+ */
+export class LocalMergeResolver implements CheckoutResolverV1 {
+  constructor(
+    private readonly checkoutDir: string,
+    private readonly planned: Pick<PlannedMergeV1, "head" | "mergeBase">,
+  ) {}
+
+  async resolve(): Promise<
+    {
+      head: GitSha | null;
+      checkpointSha: GitSha | null;
+      changedPaths: string[];
+    } | null
+  > {
+    const resolved = await new LocalCheckoutResolver(
+      this.checkoutDir,
+      this.planned.mergeBase,
+    ).resolve();
+    if (
+      resolved === null || resolved.head === null ||
+      resolved.head === this.planned.head
+    ) return null;
+    const descends = await runCheckoutGit(this.checkoutDir, [
+      "merge-base",
+      "--is-ancestor",
+      this.planned.head,
+      resolved.head,
+    ]);
+    return descends?.code === 0 ? resolved : null;
+  }
+}
+
+/** True when a regular file still holds a Git conflict-marker line. */
+async function keepsConflictMarker(path: string): Promise<boolean> {
+  try {
+    const info = await Deno.lstat(path);
+    if (!info.isFile) return false;
+    const text = new TextDecoder().decode(await Deno.readFile(path));
+    return CONFLICT_MARKER_LINE.test(text);
+  } catch (error) {
+    // A resolution may delete a conflicted path; anything else is unproven.
+    return !(error instanceof Deno.errors.NotFound);
+  }
+}
+
+/** Local git in one checkout with a cleared, credential-free environment. */
+async function runCheckoutGit(
+  checkoutDir: string,
+  args: string[],
+): Promise<{ code: number; stdout: string } | null> {
+  try {
+    const result = await new Deno.Command("git", {
+      args: ["-C", checkoutDir, ...args],
+      clearEnv: true,
+      env: {
+        PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
+        HOME: checkoutDir,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_SYSTEM: "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    return {
+      code: result.code,
+      stdout: new TextDecoder().decode(result.stdout),
+    };
+  } catch {
+    return null;
   }
 }

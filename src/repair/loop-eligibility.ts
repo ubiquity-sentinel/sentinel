@@ -6,6 +6,10 @@ import type {
   WorkRecordV1,
 } from "../contracts/work-record.ts";
 import { ciCorrectionRouteOpen } from "./ci-rejection.ts";
+import {
+  conflictResolutionAdmissible,
+  conflictResolutionRouteOpen,
+} from "./conflict-resolution.ts";
 import { OPERATION_MARGIN_MS } from "./loop-bounds.ts";
 import { configFor } from "./loop-records.ts";
 import { headNeedsCorrection } from "./loop-review-records.ts";
@@ -50,9 +54,18 @@ export function isMatrixImplementationReadyV1(
   now: number,
   /** `ciCorrectionRouteOpen(deps)` of the planning run. */
   ciRouteOpen = true,
+  /** `conflictResolutionRouteOpen(deps)` of the planning run. */
+  conflictRouteOpen = false,
 ): boolean {
   if (record.source.kind !== "issue") return false;
   if (record.nextStep !== "work") return false;
+  // A pending refresh-conflict resolution is the one live intent a grant may
+  // start from (its admission re-confirms the conflict before any charge).
+  if (
+    conflictResolutionAdmissible(conflictRouteOpen, snapshot, record) !== null
+  ) {
+    return config.sessionBound !== null;
+  }
   if (
     record.intent !== null &&
     !isStaleImplementationIntent(record.intent, now)
@@ -82,10 +95,14 @@ export function isModelStartAction(
   record: WorkRecordV1,
   /** `ciCorrectionRouteOpen(deps)` of the run. */
   ciRouteOpen = true,
+  /** `conflictResolutionRouteOpen(deps)` of the run. */
+  conflictRouteOpen = false,
 ): boolean {
   return record.nextStep === "work" &&
     (record.target.head === null ||
-      headNeedsCorrection(snapshot, record, ciRouteOpen));
+      headNeedsCorrection(snapshot, record, ciRouteOpen) ||
+      conflictResolutionAdmissible(conflictRouteOpen, snapshot, record) !==
+        null);
 }
 
 /**
@@ -112,7 +129,12 @@ export function declaredOperationFits(
     record.intent === null && record.target.branch === null
   ) return true;
   if (
-    isModelStartAction(context.snapshot, record, ciCorrectionRouteOpen(deps))
+    isModelStartAction(
+      context.snapshot,
+      record,
+      ciCorrectionRouteOpen(deps),
+      conflictResolutionRouteOpen(deps),
+    )
   ) {
     if (now >= bounds.modelCutoff) return false;
     const bound = config.sessionBound;

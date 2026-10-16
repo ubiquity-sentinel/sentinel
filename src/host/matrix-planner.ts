@@ -27,6 +27,10 @@ import {
 } from "../repair/loop.ts";
 import { attemptEquivalenceRefusalForRecordV1 } from "../repair/attempt-policy.ts";
 import { ciCorrectionRouteOpen } from "../repair/ci-rejection.ts";
+import {
+  conflictResolutionRouteOpen,
+  pendingConflictResolution,
+} from "../repair/conflict-resolution.ts";
 import { rankEligibleWork } from "../repair/selection.ts";
 import {
   createDecompositionChildren,
@@ -289,6 +293,10 @@ export async function planMatrixWave(
   // (`ciCorrectionRouteOpen`): in process, and in hosted runs from generation
   // 78, whose rollback target isolates the cell.
   const ciRouteOpen = ciCorrectionRouteOpen(deps);
+  // A pending refresh-conflict resolution is granted only where its cell
+  // survives a rollback (`conflictResolutionRouteOpen`); closed in hosted
+  // runs until `HOSTED_CONFLICT_RESOLUTIONS` is set.
+  const conflictRouteOpen = conflictResolutionRouteOpen(deps);
 
   while (cells.length < limit) {
     const readAt = deps.clock.now();
@@ -333,6 +341,7 @@ export async function planMatrixWave(
           config,
           now,
           ciRouteOpen,
+          conflictRouteOpen,
         );
     });
     if (nextId === undefined) break;
@@ -349,6 +358,7 @@ export async function planMatrixWave(
         config,
         now,
         ciRouteOpen,
+        conflictRouteOpen,
       )
     ) {
       notReady++;
@@ -358,7 +368,12 @@ export async function planMatrixWave(
     // sub-tasks instead of being granted whole again. Skip the parent this
     // wave; the children enter normal selection on the next wave. This is a
     // structured strategy change, so it takes precedence over the memory gate.
-    if (isDecompositionEligible(record, context.snapshot)) {
+    // A pending conflict resolution continues one published candidate and is
+    // never decomposed.
+    if (
+      pendingConflictResolution(record.intent) === null &&
+      isDecompositionEligible(record, context.snapshot)
+    ) {
       const decomposed = await persistDecompositionChildren(deps, record, now);
       if (decomposed) continue;
       // Persist failed: fall through to a normal grant rather than stalling.

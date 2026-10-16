@@ -354,6 +354,14 @@ export async function ingestMatrixResults(
           digest: result.bundle.digest,
           head: candidateHead,
           checkpointSha: result.bundle.checkpointSha,
+          // A conflict resolution must be a merge of exactly its published
+          // candidate and the base it was planned to merge.
+          ...(cell.request.mergeBase === undefined ||
+              cell.request.checkoutBase === undefined
+            ? {}
+            : {
+              ancestors: [cell.request.checkoutBase, cell.request.mergeBase],
+            }),
         });
         if (!imported) {
           entries.push({

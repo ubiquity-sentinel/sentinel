@@ -12,7 +12,12 @@ import {
   MATRIX_IMPLEMENTATION_DEFERRED,
 } from "./loop-bounds.ts";
 import { ciCorrectionRouteOpen } from "./ci-rejection.ts";
+import {
+  conflictResolutionAdmissible,
+  conflictResolutionRouteOpen,
+} from "./conflict-resolution.ts";
 import { correctFailedHeadBeforeRefresh } from "./loop-ci-correction.ts";
+import { executeConflictResolutionStep } from "./loop-conflict-resolution.ts";
 import { retryAlreadySatisfiedClosure, retryClosure } from "./loop-closure.ts";
 import { ensureEvidence } from "./loop-evidence.ts";
 import {
@@ -117,8 +122,24 @@ export async function executeWorkStep(
 
   // A saved base-refresh intent is reconciled wherever it is observed (the
   // work step as well as delivery): the old candidate is preserved until the
-  // exact deterministic prepared commit was actually published.
+  // exact deterministic prepared commit was actually published. A pending
+  // conflict resolution on an open route is the one refresh intent that
+  // starts model work: its charged attempt runs as an implementation step.
   if (record.intent !== null && record.intent.kind === "base_refresh") {
+    if (
+      conflictResolutionAdmissible(
+        conflictResolutionRouteOpen(deps),
+        context.snapshot,
+        record,
+      ) !== null
+    ) {
+      return executeConflictResolutionStep(
+        deps,
+        context,
+        record,
+        () => executeImplementationStep(deps, context, record, config),
+      );
+    }
     return executeBaseRefreshIntent(deps, context, record);
   }
 

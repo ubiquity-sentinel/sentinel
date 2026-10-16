@@ -1,10 +1,17 @@
 /** Repair loop internals: base refresh. */
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import { BASE_REFRESH_CONFLICT_DETAIL } from "../contracts/ports.ts";
+import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type {
   IncompleteOperationV1,
   WorkRecordV1,
 } from "../contracts/work-record.ts";
+import {
+  conflictResolutionRouteOpen,
+  conflictResolutionShape,
+  pendingConflictRecord,
+  resolvedConflictResolution,
+} from "./conflict-resolution.ts";
 import { candidatePreservationRef } from "./keys.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import {
@@ -159,8 +166,11 @@ export async function ensureBaseRefreshIntent(
  * lost responses leave the same durable intent with a bounded wait AND a
  * bounded failure record, and after MAX_BASE_REFRESH_FAILURES consecutive
  * failed executions the record blocks with a classified message instead of
- * re-arming that wait forever, while a known merge conflict blocks the task
- * with the existing blocker fields and retains the candidate. On success
+ * re-arming that wait forever, while a known merge conflict either schedules
+ * the one charged conflict resolution of that exact base (route open, shape
+ * held) or blocks the task with the existing blocker fields, retaining the
+ * candidate either way. A resolved conflict merge skips the regeneration and
+ * is published through the same preserve/push tail. On success
  * the target advances to the exact new base/prepared head, the intent is
  * cleared and nextStep returns to `work`, so the existing publication and
  * fresh-review admission handle the exact new head (an old review is never
@@ -205,143 +215,32 @@ export async function executeBaseRefreshIntent(
       detail: "base refresh without repository configuration",
     };
   }
-  // The record's OWN publication may have been merged or closed unmerged while
-  // this intent was parked across runs. A refresh can never complete against a
-  // published disposition, so it is reconciled before any refresh work: a
-  // human merge is terminal for capacity and is never republished, and a
-  // closed-unmerged pull request retires the closed publication so the next
-  // publish step creates its replacement for the same preserved candidate. A
-  // foreign branch at that number and an unreadable observation change nothing
-  // (the observation is a bounded failure, never a fabricated disposition).
-  const pull = await deps.github.readPullRequest(record.target.pr);
-  if (!pull.ok) {
-    return failBaseRefresh(deps, context, record, intent, {
-      kind: pull.error.kind,
-      detail: BASE_REFRESH_PR_OBSERVATION_DETAIL,
-      portDetail: pull.error.detail,
-    });
-  }
-  if (pull.value !== null && pull.value.headRef === record.target.branch) {
-    if (pull.value.state === "merged") {
-      const at = deps.clock.now();
-      return persistWork(
-        deps,
-        context,
-        clearIntent(
-          markBlocked(record, "other", RETIRED_MERGED_MESSAGE, at),
-          at,
-        ),
-      );
-    }
-    if (pull.value.state === "closed" && pull.value.mergeSha === null) {
-      const at = deps.clock.now();
-      return persistWork(
-        deps,
-        context,
-        clearIntent(retireClosedPublication(record, at, "work"), at),
-      );
-    }
-  }
-  const prepare = deps.github.prepareBaseRefresh?.bind(deps.github);
-  if (prepare === undefined) {
-    // Capability absence is an explicit bounded wait: the durable intent and
-    // the old candidate are preserved and no deprecated path is taken. The
-    // bounded failure record still applies, so a permanently missing
-    // capability becomes a classified blocker instead of a silent loop.
-    return failBaseRefresh(deps, context, record, intent, {
-      kind: "unavailable",
-      detail: BASE_REFRESH_CAPABILITY_DETAIL,
-    });
-  }
+  const reconciled = await reconcileRefreshPublication(
+    deps,
+    context,
+    record,
+    intent,
+  );
+  if (reconciled !== null) return reconciled;
   const expectedBase: GitSha = observedBase;
-  const prepared = await prepare({
-    pullRequestNumber: record.target.pr,
-    branch: record.target.branch,
-    expectedHead: record.target.head,
-    previousBase: record.target.base,
-    expectedBase,
-    ...(persistedPrepared === null ? {} : { preparedHead: persistedPrepared }),
-  });
-  if (!prepared.ok) {
-    if (
-      prepared.error.kind === "conflict" &&
-      prepared.error.detail === BASE_REFRESH_CONFLICT_DETAIL
-    ) {
-      // A known deterministic merge conflict: retain the candidate, spend no
-      // model work and block with the existing blocker fields. The exact base
-      // the candidate conflicts with is recorded in the existing message (the
-      // legacy bare "base refresh has conflicts" stays a valid blocker). It is
-      // a terminal block: no launcher rule re-admits it. Every other failure
-      // (identity mismatch, moved base, bounds, unavailable objects) keeps the
-      // exact durable intent and waits bounded below.
-      const at = deps.clock.now();
-      return persistWork(
-        deps,
-        context,
-        markTerminalBlocked(
-          clearIntent(record, at),
-          "other",
-          `base refresh has conflicts at ${expectedBase}`,
-          at,
-        ),
-      );
-    }
-    if (persistedPrepared === null) {
-      // No authorized push can exist before the prepared result was persisted.
-      // Re-observe the configured base under the shared cooldown: a SECOND
-      // movement after this intent was written clears ONLY this unprepared
-      // intent so the next step plans a fresh one against the newest base.
-      // Target, source, counters, reviews, evidence and history are preserved.
-      const cooling = await checkGithubCooldown(
-        deps,
-        record.repository,
-        context.bounds,
-      );
-      if (cooling.kind === "state_error") {
-        return { kind: "state_error", detail: cooling.detail };
-      }
-      if (cooling.kind === "deferred") {
-        return { kind: "deferred", detail: cooling.detail };
-      }
-      const currentBase = await deps.github.readRef(
-        `refs/heads/${config.baseBranch}`,
-      );
-      const observedAt = deps.clock.now();
-      if (!currentBase.ok || currentBase.value === null) {
-        // A failed ref read retains the exact intent with a bounded wait and a
-        // bounded failure record (never a fabricated "unchanged" base).
-        return failBaseRefresh(deps, context, record, intent, {
-          kind: currentBase.ok ? "unavailable" : currentBase.error.kind,
-          detail: BASE_REFRESH_BASE_READ_DETAIL,
-          ...(currentBase.ok ? {} : { portDetail: currentBase.error.detail }),
-        });
-      }
-      if (currentBase.value.sha !== expectedBase) {
-        // Clear only this unprepared intent; the same run replans a fresh
-        // refresh against the newly observed base before any model/review
-        // spend. No other intent is ever cleared here.
-        return persistWork(deps, context, clearIntent(record, observedAt));
-      }
-    }
-    return failBaseRefresh(deps, context, record, intent, {
-      kind: prepared.error.kind,
-      detail: BASE_REFRESH_UNPREPARED_DETAIL,
-      portDetail: prepared.error.detail,
-    });
-  }
-  const preparedHead = prepared.value;
-  if (!isGitSha(preparedHead)) {
-    return {
-      kind: "state_error",
-      detail: "base refresh prepared identity invalid",
-    };
-  }
-  if (persistedPrepared !== null && persistedPrepared !== preparedHead) {
-    // The persisted deterministic result must regenerate byte-identically.
-    return {
-      kind: "state_error",
-      detail: "base refresh prepared identity mismatch",
-    };
+  // A model-resolved conflict merge was charged and settled when its receipt
+  // was consumed and can never be regenerated: it is published exactly like a
+  // persisted prepared result (preserved, lease-pushed over H, then the target
+  // advances). Every other refresh regenerates its deterministic commit.
+  const resolvedMerge = resolvedConflictResolution(intent);
+  let preparedHead: GitSha;
+  if (resolvedMerge !== null) {
+    preparedHead = resolvedMerge;
+  } else {
+    const prepared = await prepareRefreshHead(
+      deps,
+      context,
+      record,
+      intent,
+      config,
+    );
+    if (prepared.kind !== "regenerated") return prepared;
+    preparedHead = prepared.head;
   }
   // Persist the exact prepared result BEFORE any push: a crash after a
   // successful push is then recoverable from the durable intent alone. The
@@ -502,4 +401,211 @@ export async function executeBaseRefreshIntent(
     updatedAt: doneAt,
   };
   return persistWork(deps, context, refreshed);
+}
+
+/**
+ * The record's OWN publication may have been merged or closed unmerged while
+ * a refresh intent was parked across runs. A refresh can never complete
+ * against a published disposition, so it is reconciled before any refresh
+ * work: a human merge is terminal for capacity and is never republished, and
+ * a closed-unmerged pull request retires the closed publication so the next
+ * publish step creates its replacement for the same preserved candidate. A
+ * resolved conflict merge whose pull request was closed keeps the terminal
+ * conflict block instead: its one charge per base tip is spent, and a
+ * republished H would only conflict at the same base again. A foreign branch
+ * at that number and an unreadable observation change nothing (the
+ * observation is a bounded failure, never a fabricated disposition). Returns
+ * null when the publication is still the record's open pull request.
+ */
+export async function reconcileRefreshPublication(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  intent: IncompleteOperationV1,
+): Promise<StepResultV1 | null> {
+  if (record.target.pr === null) return null;
+  const pull = await deps.github.readPullRequest(record.target.pr);
+  if (!pull.ok) {
+    return failBaseRefresh(deps, context, record, intent, {
+      kind: pull.error.kind,
+      detail: BASE_REFRESH_PR_OBSERVATION_DETAIL,
+      portDetail: pull.error.detail,
+    });
+  }
+  if (pull.value === null || pull.value.headRef !== record.target.branch) {
+    return null;
+  }
+  const at = deps.clock.now();
+  if (pull.value.state === "merged") {
+    return persistWork(
+      deps,
+      context,
+      clearIntent(markBlocked(record, "other", RETIRED_MERGED_MESSAGE, at), at),
+    );
+  }
+  if (pull.value.state !== "closed" || pull.value.mergeSha !== null) {
+    return null;
+  }
+  if (resolvedConflictResolution(intent) !== null) {
+    return persistWork(
+      deps,
+      context,
+      markTerminalBlocked(
+        record,
+        "other",
+        `base refresh has conflicts at ${intent.observedBase}`,
+        at,
+      ),
+    );
+  }
+  return persistWork(
+    deps,
+    context,
+    clearIntent(retireClosedPublication(record, at, "work"), at),
+  );
+}
+
+/**
+ * Regenerate the deterministic refresh commit through the optional trusted
+ * port capability (a fresh run reproduces the identical SHA after a runner
+ * disappeared). A known merge conflict schedules the one charged conflict
+ * resolution of this exact (head, base) while that route is open and the
+ * record keeps its shape (`conflict-resolution.ts`); otherwise it blocks with
+ * the existing terminal conflict message.
+ */
+async function prepareRefreshHead(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  intent: IncompleteOperationV1,
+  config: RepositoryConfigV1,
+): Promise<{ kind: "regenerated"; head: GitSha } | StepResultV1> {
+  const expectedBase = intent.observedBase;
+  const persistedPrepared = intent.resultId;
+  if (
+    expectedBase === null || !isGitSha(expectedBase) ||
+    (persistedPrepared !== null && !isGitSha(persistedPrepared)) ||
+    record.target.pr === null || record.target.head === null ||
+    record.target.branch === null
+  ) {
+    return {
+      kind: "state_error",
+      detail: "base refresh intent identity mismatch",
+    };
+  }
+  const prepare = deps.github.prepareBaseRefresh?.bind(deps.github);
+  if (prepare === undefined) {
+    // Capability absence is an explicit bounded wait: the durable intent and
+    // the old candidate are preserved and no deprecated path is taken. The
+    // bounded failure record still applies, so a permanently missing
+    // capability becomes a classified blocker instead of a silent loop.
+    return failBaseRefresh(deps, context, record, intent, {
+      kind: "unavailable",
+      detail: BASE_REFRESH_CAPABILITY_DETAIL,
+    });
+  }
+  const prepared = await prepare({
+    pullRequestNumber: record.target.pr,
+    branch: record.target.branch,
+    expectedHead: record.target.head,
+    previousBase: record.target.base,
+    expectedBase,
+    ...(persistedPrepared === null ? {} : { preparedHead: persistedPrepared }),
+  });
+  if (!prepared.ok) {
+    if (
+      prepared.error.kind === "conflict" &&
+      prepared.error.detail === BASE_REFRESH_CONFLICT_DETAIL
+    ) {
+      const at = deps.clock.now();
+      // An open conflict-resolution route schedules ONE charged resolution
+      // of this exact conflict: the pending refresh intent keeps its key and
+      // the PR identity and carries the conflict marker; nothing is charged
+      // until the resolution is admitted.
+      if (
+        conflictResolutionRouteOpen(deps) &&
+        conflictResolutionShape(record, context.snapshot)
+      ) {
+        return persistWork(
+          deps,
+          context,
+          pendingConflictRecord(record, intent, expectedBase, at),
+        );
+      }
+      // Otherwise a known deterministic merge conflict retains the candidate,
+      // spends no model work and blocks with the existing blocker fields. The
+      // exact base the candidate conflicts with is recorded in the existing
+      // message (the legacy bare "base refresh has conflicts" stays a valid
+      // blocker). Every other failure (identity mismatch, moved base, bounds,
+      // unavailable objects) keeps the exact durable intent and waits bounded
+      // below.
+      return persistWork(
+        deps,
+        context,
+        markTerminalBlocked(
+          clearIntent(record, at),
+          "other",
+          `base refresh has conflicts at ${expectedBase}`,
+          at,
+        ),
+      );
+    }
+    if (persistedPrepared === null) {
+      // No authorized push can exist before the prepared result was persisted.
+      // Re-observe the configured base under the shared cooldown: a SECOND
+      // movement after this intent was written clears ONLY this unprepared
+      // intent so the next step plans a fresh one against the newest base.
+      // Target, source, counters, reviews, evidence and history are preserved.
+      const cooling = await checkGithubCooldown(
+        deps,
+        record.repository,
+        context.bounds,
+      );
+      if (cooling.kind === "state_error") {
+        return { kind: "state_error", detail: cooling.detail };
+      }
+      if (cooling.kind === "deferred") {
+        return { kind: "deferred", detail: cooling.detail };
+      }
+      const currentBase = await deps.github.readRef(
+        `refs/heads/${config.baseBranch}`,
+      );
+      const observedAt = deps.clock.now();
+      if (!currentBase.ok || currentBase.value === null) {
+        // A failed ref read retains the exact intent with a bounded wait and a
+        // bounded failure record (never a fabricated "unchanged" base).
+        return failBaseRefresh(deps, context, record, intent, {
+          kind: currentBase.ok ? "unavailable" : currentBase.error.kind,
+          detail: BASE_REFRESH_BASE_READ_DETAIL,
+          ...(currentBase.ok ? {} : { portDetail: currentBase.error.detail }),
+        });
+      }
+      if (currentBase.value.sha !== expectedBase) {
+        // Clear only this unprepared intent; the same run replans a fresh
+        // refresh against the newly observed base before any model/review
+        // spend. No other intent is ever cleared here.
+        return persistWork(deps, context, clearIntent(record, observedAt));
+      }
+    }
+    return failBaseRefresh(deps, context, record, intent, {
+      kind: prepared.error.kind,
+      detail: BASE_REFRESH_UNPREPARED_DETAIL,
+      portDetail: prepared.error.detail,
+    });
+  }
+  const preparedHead = prepared.value;
+  if (!isGitSha(preparedHead)) {
+    return {
+      kind: "state_error",
+      detail: "base refresh prepared identity invalid",
+    };
+  }
+  if (persistedPrepared !== null && persistedPrepared !== preparedHead) {
+    // The persisted deterministic result must regenerate byte-identically.
+    return {
+      kind: "state_error",
+      detail: "base refresh prepared identity mismatch",
+    };
+  }
+  return { kind: "regenerated", head: preparedHead };
 }

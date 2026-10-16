@@ -132,6 +132,15 @@ const HOST_REASON_CODES: readonly (readonly [string, string])[] = [
     COMMIT_REFUSAL.committed_head_unchanged,
     "model_candidate_committed_head_unchanged",
   ],
+  [
+    COMMIT_REFUSAL.merge_identity_mismatch,
+    "model_candidate_merge_identity_mismatch",
+  ],
+  [COMMIT_REFUSAL.conflict_markers, "model_candidate_conflict_markers"],
+  [
+    COMMIT_REFUSAL.merge_parents_mismatch,
+    "model_candidate_merge_parents_mismatch",
+  ],
   ["malformed_line", "codex_malformed_line"],
   ["unexpected_frame", "codex_unexpected_frame"],
   ["unknown_request_id", "codex_unknown_request_id"],

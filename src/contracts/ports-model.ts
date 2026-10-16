@@ -63,6 +63,14 @@ export interface ModelRunRequestV1 {
    * present only when the correction must continue from that candidate.
    */
   checkoutBase?: GitSha;
+  /**
+   * Exact base tip a base-refresh CONFLICT RESOLUTION merges into the
+   * candidate. Present only together with `checkoutBase` (the published
+   * candidate): the checkout is that candidate with this base merged in and
+   * its conflicts left in the tree, and the trusted host commits the merge
+   * with exactly those two parents. Never equal to `base` or `checkoutBase`.
+   */
+  mergeBase?: GitSha;
   issue: { number: number; title: string; body: string } | null;
   evidence: EvidenceRefV1[];
   /**
