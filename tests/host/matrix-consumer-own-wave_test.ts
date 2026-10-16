@@ -215,3 +215,57 @@ Deno.test({
     await assertGen76Parses(run.after);
   },
 });
+
+Deno.test("matrix consumer: a reservation within the skew allowance is this run's own, an earlier wave's is not", async () => {
+  const { matrixConsumerProducersV1, MATRIX_CONSUMER_OWN_SKEW_MS } =
+    await import("../../src/host/matrix-aggregate.ts");
+  const { repairSnapshot } = await import("./hosted-autonomy-rig.ts");
+  const { reservation, T0, workRecord } = await import("../state/helpers.ts");
+  const { implementationIntentKey } = await import("../../src/repair/keys.ts");
+  const planned = T0 + 60 * MINUTE;
+  const row = (id: string) =>
+    workRecord(id, {
+      intent: {
+        kind: "implementation",
+        key: implementationIntentKey(`res-${id}`),
+        startedAt: T0,
+        branch: null,
+        expectedHead: null,
+        observedBase: null,
+        pr: null,
+        requestId: `res-${id}`,
+        resultId: null,
+      },
+    });
+  const snapshot = repairSnapshot(
+    [row("skewed"), row("earlier"), row("after")],
+    [],
+    [],
+    [
+      // Planner clock 30 s behind the execution creator: still own.
+      reservation("res-skewed", {
+        taskId: "skewed",
+        createdAt: planned - 30_000,
+      }),
+      // An earlier wave, minutes older: never own.
+      reservation("res-earlier", {
+        taskId: "earlier",
+        createdAt: planned - 5 * MINUTE,
+      }),
+      reservation("res-after", {
+        taskId: "after",
+        createdAt: planned + 45_000,
+      }),
+    ],
+  );
+  const producers = matrixConsumerProducersV1(snapshot, planned);
+  assert.equal(MATRIX_CONSUMER_OWN_SKEW_MS, MINUTE);
+  assert.deepEqual(
+    producers.live.map((p) => p.reservationId).sort(),
+    ["res-after", "res-earlier", "res-skewed"],
+  );
+  assert.deepEqual(
+    producers.own.map((p) => p.reservationId).sort(),
+    ["res-after", "res-skewed"],
+  );
+});

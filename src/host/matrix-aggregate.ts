@@ -138,6 +138,9 @@ export interface MatrixConsumerProducersV1 {
   readonly own: readonly MatrixArtifactRequestV1[];
 }
 
+/** Runner clock-skew allowance when classing a reservation as this run's own. */
+export const MATRIX_CONSUMER_OWN_SKEW_MS = 60_000;
+
 /**
  * The producers the progressive consumer recovers. The mandatory initial scan
  * recovers every `charged` producer, whatever wave planned it, so a lost
@@ -181,9 +184,14 @@ export function matrixConsumerProducersV1(
   const live = charged.filter((request) =>
     reservedAt.has(request.reservationId)
   );
+  // A small allowance for clock skew between the runner that created the
+  // execution and the planner's runner: an earlier wave's reservations are
+  // many minutes older (its cells, aggregate, finalize and this run's
+  // maintenance and prepare all came between), so they stay excluded.
+  const since = plannedSince - MATRIX_CONSUMER_OWN_SKEW_MS;
   const own = live.filter((request) => {
     const at = reservedAt.get(request.reservationId);
-    return at !== undefined && at >= plannedSince;
+    return at !== undefined && at >= since;
   });
   return { charged, live, own };
 }
