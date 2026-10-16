@@ -459,7 +459,7 @@ async function recoverProducerWithinBudget(
     await custody();
     await ports.prepareTarget(config);
     checkDeadline();
-    const report = await ingestMatrixResults(
+    const report = await (ports.ingest ?? ingestMatrixResults)(
       {
         ...ports.cycleFor(config),
         state,

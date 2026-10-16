@@ -13,6 +13,7 @@ import {
   parseHostedRunProofV1,
 } from "../../src/contracts/hosted-supervisor.ts";
 import { matrixDigestV1 } from "../../src/contracts/matrix.ts";
+import type { MatrixPlanV1 } from "../../src/contracts/matrix-identity.ts";
 import { portError, portOk } from "../../src/contracts/ports.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
@@ -249,6 +250,11 @@ export async function walkRig(input: {
   writesOnNative?: (runId: number) => boolean;
   /** The applying wave carries results, and its consumer's state read fails. */
   ingestStateUnavailable?: boolean;
+  /**
+   * The applying wave's consumer defers every cell on an unavailable
+   * observation its receipt needs (`deferred`): nothing is consumed.
+   */
+  consumerDefers?: boolean;
   wrapState?: (state: Record<PropertyKey, unknown>) => void;
 }) {
   const root = await Deno.makeTempDir({
@@ -433,10 +439,24 @@ export async function walkRig(input: {
         prepareTarget: input.applies
           ? () => {
             if (input.ingestStateUnavailable) repairUnavailable = true;
-            else repair.head = APPLIED;
+            else if (!input.consumerDefers) repair.head = APPLIED;
             return Promise.resolve();
           }
           : refused,
+        ...(input.consumerDefers
+          ? {
+            ingest: (_: unknown, plan: MatrixPlanV1) =>
+              Promise.resolve({
+                waveId: plan.waveId,
+                entries: plan.cells.map((cell) => ({
+                  cellId: cell.cellId,
+                  disposition: "deferred" as const,
+                  detail: "predecessor observation unavailable",
+                })),
+                ingested: 0,
+              }),
+          }
+          : {}),
         importerFor: input.applies ? () => ({}) : refused,
         transportFor: (passState: NonNullable<typeof writer>) => {
           writer = passState;

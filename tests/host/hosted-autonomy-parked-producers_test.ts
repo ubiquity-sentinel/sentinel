@@ -291,6 +291,7 @@ for (
   const [what, writer] of [
     ["native read writes through the ports' writer", "native"],
     ["consumer defers on an unavailable repair read", "consumer"],
+    ["consumer defers on an unavailable receipt observation", "deferred"],
   ] as const
 ) {
   Deno.test(`a parked producer whose ${what} ends the walk`, async () => {
@@ -309,10 +310,11 @@ for (
         [FIRST_RUN, { id: 7001, digest: ARCHIVE, expired: false }],
       ]),
       writesOnNative: (runId) => writer === "native" && runId === FIRST_RUN,
-      applies: writer === "consumer"
-        ? (runId) => runId === FIRST_RUN
-        : undefined,
+      applies: writer !== "native" ? (runId) => runId === FIRST_RUN : undefined,
       ingestStateUnavailable: writer === "consumer",
+      // The generation-77 consumer's `deferred` (nothing consumed) is the
+      // same deferral that may have written as an unavailable repair read.
+      consumerDefers: writer === "deferred",
     });
     try {
       const outcome = await captured(rig.walk);
@@ -321,7 +323,7 @@ for (
       assert.deepEqual(rig.calls.native, [FIRST_RUN]);
       assert.deepEqual(
         rig.calls.recovered,
-        writer === "consumer" ? [FIRST_RUN] : [],
+        writer === "native" ? [] : [FIRST_RUN],
       );
       assert.deepEqual(walkLines(outcome.lines), ["deferred_producer"]);
     } finally {

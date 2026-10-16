@@ -3,6 +3,7 @@ import type { runMatrixUncertaintyMaintenance } from "../src/host/matrix-uncerta
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { ReviewTaskStatementV1 } from "../src/contracts/review-receipt.ts";
 import type { HistoricalMatrixQuarantineDepsV1 } from "../src/host/matrix-actions.ts";
+import type { ingestMatrixResults } from "../src/host/matrix.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { MismatchDispositionObservationsV1 } from "./runtime-mismatch-recovery-disposition.ts";
 import type { HostedPlanArtifactV1 } from "./hosted-autonomy-producer-requests.ts";
@@ -216,6 +217,11 @@ export type HostedClosedMatrixDepsV1 = ClosedCWaveRecoveryDepsV1 & {
     run: { runId: number; runAttempt: number },
     deadline: number,
   ): Promise<HostedPlanArtifactV1 | null>;
+  /**
+   * A producer pass's matrix consumer. Production never sets it and uses
+   * ingestMatrixResults; a test substitutes the consumer's exact report.
+   */
+  ingest?: typeof ingestMatrixResults;
 };
 
 export interface HostedAutonomyDepsV1 {
