@@ -18,6 +18,7 @@ import type {
 } from "./hosted-runtime-identity.ts";
 import { readNativeMatrixStdin, runtimeJob } from "./hosted-runtime-matrix.ts";
 import { APP_TOKEN_MINTED_NOT_BEFORE_ENV } from "./hosted-app-token-window.ts";
+import { reviewCommandItemRefusalLines } from "./hosted-runtime-status.ts";
 import { runHostedRuntimeWithReviewCustody } from "./review-owner-host.ts";
 
 /**
@@ -164,9 +165,30 @@ export function emitHostedRuntimeCliResult(
   ) {
     console.log(JSON.stringify(result.launcherRejection));
   }
+  printReviewCommandRefusals(result);
   if (result.status !== "healthy") {
     console.error(result.detail);
     return 1;
   }
   return 0;
+}
+
+/**
+ * Advisory only, printed after every evidence line: the refused reviewer
+ * command predicates the child reported, re-validated and capped. A failure to
+ * print is swallowed, so it can never change the exit status.
+ */
+function printReviewCommandRefusals(
+  result: HostedRuntimeLauncherResultV1,
+): void {
+  if (result.reviewCommandRefusals === undefined) return;
+  try {
+    for (
+      const line of reviewCommandItemRefusalLines(result.reviewCommandRefusals)
+    ) {
+      console.log(line);
+    }
+  } catch {
+    // Advisory only.
+  }
 }

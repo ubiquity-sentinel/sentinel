@@ -5,12 +5,18 @@ import { canonicalStringify } from "../contracts/canonical.ts";
 import { parseHostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 import { tryParse } from "../contracts/validation.ts";
+import type { ReplayCommandResultV1 } from "../replay/runtime.ts";
 import type { ChildStatusScanV1 } from "./hosted-runtime-diagnostics.ts";
 import {
   ACCEPTED_CHILD_LOGINS,
   HOSTED_TERMINAL_LOOKING,
   isNonNegativeSafeInteger,
   MAX_DETAIL_CHARS,
+  MAX_REVIEW_COMMAND_REFUSALS,
+} from "./hosted-runtime-identity.ts";
+import type {
+  ReviewCommandItemRefusalsV1,
+  ReviewCommandItemRefusalV1,
 } from "./hosted-runtime-identity.ts";
 
 /**
@@ -85,6 +91,161 @@ function isRefusedCommandItemAdvisory(
 ): boolean {
   return record.event === "sentinel_review_command_item_refused" &&
     hasExactKeys(record, REFUSED_COMMAND_ITEM_KEYS);
+}
+
+/**
+ * The only text a refused-command string field may carry into the job log:
+ * closed allow-lists of the runtime's own site names and item types and of the
+ * Codex app-server's command-execution status and source enums. Any other
+ * value, including model- or Codex-controlled text, becomes "other".
+ */
+const REFUSAL_SITES: ReadonlySet<string> = new Set([
+  "start",
+  "duplicate-start",
+  "completion",
+  "completion-mismatch",
+]);
+const REFUSAL_TYPES: ReadonlySet<string> = new Set([
+  "commandExecution",
+  "other",
+]);
+const REFUSAL_STATUSES: ReadonlySet<string> = new Set([
+  "inProgress",
+  "completed",
+  "failed",
+  "declined",
+]);
+const REFUSAL_SOURCES: ReadonlySet<string> = new Set([
+  "agent",
+  "userShell",
+  "unifiedExecStartup",
+  "unifiedExecInteraction",
+]);
+
+const REFUSAL_FLAG_KEYS = [
+  "idBounded",
+  "commandBounded",
+  "hasActions",
+  "cwdMatches",
+  "knownItem",
+] as const;
+
+function refusalToken(value: string, allowed: ReadonlySet<string>): string {
+  return allowed.has(value) ? value : "other";
+}
+
+function isPresence(value: unknown): value is "absent" | "present" {
+  return value === "absent" || value === "present";
+}
+
+/**
+ * Strict re-parse of one runtime refused-command advisory: the exact event and
+ * key set, booleans, closed enums, a non-negative count or null. A value of any
+ * other type refuses the whole line; a string field outside its closed
+ * allow-list is kept only as "other". The result is rebuilt field by field, so
+ * nothing the child printed is ever echoed.
+ */
+export function parseReviewCommandItemRefusal(
+  value: unknown,
+): ReviewCommandItemRefusalV1 | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (!isRefusedCommandItemAdvisory(record)) return null;
+  const { site, type, status, source, commandChars, provenance } = record;
+  if (typeof site !== "string" || typeof type !== "string") return null;
+  if (status !== null && typeof status !== "string") return null;
+  if (source !== null && typeof source !== "string") return null;
+  if (!REFUSAL_FLAG_KEYS.every((key) => typeof record[key] === "boolean")) {
+    return null;
+  }
+  if (commandChars !== null && !isNonNegativeSafeInteger(commandChars)) {
+    return null;
+  }
+  if (provenance !== "agent-origin" && provenance !== "refused") return null;
+  if (!isPresence(record.pluginId) || !isPresence(record.scriptPath)) {
+    return null;
+  }
+  return {
+    event: "sentinel_review_command_item_refused",
+    site: refusalToken(site, REFUSAL_SITES),
+    type: refusalToken(type, REFUSAL_TYPES),
+    status: status === null ? null : refusalToken(status, REFUSAL_STATUSES),
+    idBounded: record.idBounded as boolean,
+    commandBounded: record.commandBounded as boolean,
+    commandChars,
+    hasActions: record.hasActions as boolean,
+    cwdMatches: record.cwdMatches as boolean,
+    source: source === null ? null : refusalToken(source, REFUSAL_SOURCES),
+    provenance,
+    pluginId: record.pluginId,
+    scriptPath: record.scriptPath,
+    knownItem: record.knownItem as boolean,
+  };
+}
+
+/**
+ * Every accepted refused-command advisory of one complete settled child
+ * capture, capped at MAX_REVIEW_COMMAND_REFUSALS with the rest only counted.
+ * Null when none was accepted. It never reads or affects the child record.
+ */
+export function scanReviewCommandItemRefusals(
+  run: ReplayCommandResultV1,
+): ReviewCommandItemRefusalsV1 | null {
+  if (run.truncated || !run.settled) return null;
+  if (run.outcome !== "exited" && run.outcome !== "timed_out") return null;
+  const refusals: ReviewCommandItemRefusalV1[] = [];
+  let dropped = 0;
+  for (const rawLine of new TextDecoder().decode(run.stdout).split("\n")) {
+    const line = rawLine.trim();
+    if (!line.startsWith("{")) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const refusal = parseReviewCommandItemRefusal(value);
+    if (refusal === null) continue;
+    if (refusals.length < MAX_REVIEW_COMMAND_REFUSALS) refusals.push(refusal);
+    else dropped += 1;
+  }
+  return refusals.length === 0 ? null : { refusals, dropped };
+}
+
+/**
+ * The job-log lines for one capped advisory set: each refusal re-validated and
+ * re-serialized in the runtime emitter's fixed key order, then one
+ * dropped-count summary when the cap was reached. Neither line carries a
+ * `kind`, so no job-log evidence scanner ever reads it.
+ */
+export function reviewCommandItemRefusalLines(
+  advisories: ReviewCommandItemRefusalsV1,
+): string[] {
+  const lines: string[] = [];
+  let dropped = isNonNegativeSafeInteger(advisories.dropped)
+    ? advisories.dropped
+    : 0;
+  for (const candidate of advisories.refusals) {
+    const refusal = parseReviewCommandItemRefusal(candidate);
+    if (refusal === null) continue;
+    if (lines.length >= MAX_REVIEW_COMMAND_REFUSALS) {
+      dropped += 1;
+      continue;
+    }
+    lines.push(JSON.stringify(Object.fromEntries(
+      REFUSED_COMMAND_ITEM_KEYS.map((key) => [key, refusal[key]]),
+    )));
+  }
+  if (dropped > 0) {
+    lines.push(JSON.stringify({
+      event: "sentinel_review_command_item_refusals_dropped",
+      printed: lines.length,
+      dropped,
+    }));
+  }
+  return lines;
 }
 
 export interface ChildStatusV1 {

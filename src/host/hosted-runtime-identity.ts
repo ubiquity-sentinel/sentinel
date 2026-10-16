@@ -331,6 +331,39 @@ export interface HostedMergeEventV1 {
   merge: SentinelMergeEventV1;
 }
 
+/** Bound on the refused reviewer command advisories one launcher run prints. */
+export const MAX_REVIEW_COMMAND_REFUSALS = 50;
+
+/**
+ * Launcher re-serialization of one runtime `sentinel_review_command_item_refused`
+ * advisory (`reportRefusedCommandItem` in src/github/reviewer-session-state.ts).
+ * Every value is a boolean, a closed enum, a bounded count, null or a bounded
+ * token; any other string the child printed is replaced by "other".
+ */
+export interface ReviewCommandItemRefusalV1 {
+  event: "sentinel_review_command_item_refused";
+  site: string;
+  type: string;
+  status: string | null;
+  idBounded: boolean;
+  commandBounded: boolean;
+  commandChars: number | null;
+  hasActions: boolean;
+  cwdMatches: boolean;
+  source: string | null;
+  provenance: "agent-origin" | "refused";
+  pluginId: "absent" | "present";
+  scriptPath: "absent" | "present";
+  knownItem: boolean;
+}
+
+/** The capped refused-command advisories of one settled child capture. */
+export interface ReviewCommandItemRefusalsV1 {
+  refusals: ReviewCommandItemRefusalV1[];
+  /** Accepted advisories beyond the cap; counted, never printed. */
+  dropped: number;
+}
+
 export interface HostedRuntimeLauncherResultV1 {
   status: HostedRuntimeLauncherStatusV1;
   /** The trusted terminal, or null when no honest proof exists. */
@@ -364,6 +397,13 @@ export interface HostedRuntimeLauncherResultV1 {
    * or delivery and can never change the wait, intent or exit status.
    */
   mergeEvents?: HostedMergeEventV1[];
+  /**
+   * Advisory-only refused reviewer command predicates re-parsed from settled
+   * child stdout, printed so a refusal is diagnosable from the job log. They
+   * never attest health, terminal, settlement or delivery and can never
+   * change the resolved status or exit.
+   */
+  reviewCommandRefusals?: ReviewCommandItemRefusalsV1;
   /** Authenticated native matrix log carrier; never aggregate terminal proof. */
   matrixCarrier?: Record<string, unknown>;
   /**
