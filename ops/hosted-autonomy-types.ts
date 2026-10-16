@@ -85,6 +85,18 @@ export interface HostedAutonomyHeadPullV1 {
   author: string | null;
 }
 
+/**
+ * One workflow run on an exact head, as the complete run listing reports it.
+ * `runAttempt` is GitHub's own durable re-run counter for that run.
+ */
+export interface HostedAutonomyHeadRunV1 {
+  id: number;
+  headSha: string;
+  status: string;
+  conclusion: string | null;
+  runAttempt: number;
+}
+
 export interface HostedAutonomyGitHubV1 {
   /**
    * The repository's own default branch, or null when it cannot be read. Only
@@ -164,6 +176,19 @@ export interface HostedAutonomyGitHubV1 {
   listParkedRuns(head: string): Promise<number[]>;
   /** Approve one parked workflow run; true when the approval was accepted. */
   approveRun(id: number): Promise<boolean>;
+  /**
+   * Every workflow run on exactly this commit, read from the complete listing
+   * and bound to that head, or null when it cannot be proven complete and
+   * well formed. Optional: a surface without it re-runs nothing.
+   */
+  listHeadRuns?(
+    head: string,
+  ): Promise<readonly HostedAutonomyHeadRunV1[] | null>;
+  /**
+   * Re-run the failed jobs of one workflow run; true when GitHub accepted the
+   * request (any 2xx, whatever the body). Optional, like `listHeadRuns`.
+   */
+  rerunFailedJobs?(id: number): Promise<boolean>;
 
   /** Optional trusted effect evidence; absent means no disposition reads or writes. */
   mismatchDisposition?: MismatchDispositionObservationsV1;

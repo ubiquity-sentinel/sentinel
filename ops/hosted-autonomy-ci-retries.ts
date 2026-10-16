@@ -8,17 +8,26 @@
  * spending one, and a broken head on a moved base is corrected before any
  * refresh. Charges, counters and the publication identity are untouched.
  *
- * The rule is inert unless the AUTHENTICATED installed runtime is an exact
- * allowlisted CI-correction revision at generation 77 or later that holds its
- * own healthy proof for that exact pointer. Under any other runtime a
- * re-admitted head would only be re-gated and blocked again (or, under a
+ * The correction rule is inert unless the AUTHENTICATED installed runtime is
+ * an exact allowlisted CI-correction revision at generation 77 or later that
+ * holds its own healthy proof for that exact pointer. Under any other runtime
+ * a re-admitted head would only be re-gated and blocked again (or, under a
  * rolled-back generation 76, refreshed and re-reviewed).
+ *
+ * The green-head rule (`ciGreenRedeliveryEligible`) needs no such runtime: a
+ * head whose CI is green NOW on its unchanged reviewed base passes any
+ * runtime's merge gate, so it never reaches a correction route, open or
+ * closed. It is how a flaked run that the launcher re-ran
+ * (ops/hosted-autonomy-ci-rerun.ts) returns to delivery, review rounds spent
+ * or not.
  */
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
+import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { ciCorrectable } from "../src/repair/ci-rejection.ts";
 import {
   HOSTED_AUTONOMY_CI_FAILED_PREFIX,
+  hostedRepositoryKey,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 
@@ -73,14 +82,44 @@ export function ciRedeliveryEligible(
   snapshot: RepairStateSnapshotV1,
   record: WorkRow,
 ): boolean {
+  return ciCorrectable(record) && ciGateParked(snapshot, record);
+}
+
+/**
+ * `ciRedeliveryEligible` without the review-round ceiling, for a head whose
+ * CI is green again (the caller proves that and the unchanged base). The
+ * shape is still the runtime's own predicate, evaluated as if no round were
+ * spent: the ceiling only bounds corrections, and a green head needs none.
+ */
+export function ciGreenRedeliveryEligible(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRow,
+): boolean {
+  return ciCorrectable({
+    ...record,
+    counters: { ...record.counters, reviewRounds: 0 },
+  }) && ciGateParked(snapshot, record);
+}
+
+/** One exact head of one repository, as the green-head set carries it. */
+export function ciGreenHeadKey(
+  repository: RepositoryIdentityV1,
+  head: string,
+): string {
+  return `${hostedRepositoryKey(repository)}@${head}`;
+}
+
+/** Parked on its own merge-gate CI failure after a clean review, unreleased. */
+function ciGateParked(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRow,
+): boolean {
   const blocker = record.blocker;
   if (
     blocker === null || blocker.kind !== "other" ||
     !blocker.message.startsWith(HOSTED_AUTONOMY_CI_FAILED_PREFIX)
   ) return false;
-  if (record.related.issueNumber === null || !ciCorrectable(record)) {
-    return false;
-  }
+  if (record.related.issueNumber === null) return false;
   const { head, pr, base } = record.target;
   // The gate that failed ran after review authorization: the exact head must
   // hold its completed, non-rejecting review against this base.

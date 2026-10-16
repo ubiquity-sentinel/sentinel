@@ -8,12 +8,14 @@ import { HOSTED_AUTONOMY_REQUIRED_CHECK } from "./hosted-autonomy-policy.ts";
 import { createHostedMismatchDispositionObservations } from "./hosted-autonomy-mismatch-github.ts";
 import type {
   HostedAutonomyGitHubV1,
+  HostedAutonomyHeadRunV1,
   HostedAutonomyPullV1,
   HostedSelfJobV1,
   HostedSelfRunV1,
 } from "./hosted-autonomy-types.ts";
 import {
   API_BASE,
+  createHostedAutonomyEffect,
   createHostedAutonomyRequest,
   LISTING_PAGE_SIZE,
   MAX_COMPARE_RESPONSE_BYTES,
@@ -40,6 +42,7 @@ export function createHostedAutonomyGitHub(
   const scope = `${repository.owner}/${repository.name}`;
 
   const request = createHostedAutonomyRequest(token);
+  const effect = createHostedAutonomyEffect(token);
   async function readPull(
     number: number,
     baseBranch: string | null,
@@ -138,6 +141,15 @@ export function createHostedAutonomyGitHub(
     return runs;
   }
 
+  /** Complete workflow-run listing for exactly one commit. */
+  const readHeadRuns = (head: string) =>
+    readCompleteListing(
+      (page) =>
+        `/repos/${scope}/actions/runs?head_sha=${head}&per_page=${RUN_LISTING_PAGE_SIZE}&page=${page}`,
+      "workflow_runs",
+      RUN_LISTING_PAGE_SIZE,
+    );
+
   return {
     mismatchDisposition: createHostedMismatchDispositionObservations(
       token,
@@ -215,12 +227,7 @@ export function createHostedAutonomyGitHub(
       // The approval listing gates the same delivery as the checks themselves,
       // so it is read completely too: a parked run on a later page must still
       // be found, and an unproven listing approves nothing.
-      const runs = await readCompleteListing(
-        (page) =>
-          `/repos/${scope}/actions/runs?head_sha=${head}&per_page=${RUN_LISTING_PAGE_SIZE}&page=${page}`,
-        "workflow_runs",
-        RUN_LISTING_PAGE_SIZE,
-      );
+      const runs = await readHeadRuns(head);
       if (runs === null) return [];
       return runs
         .filter((run) =>
@@ -236,6 +243,39 @@ export function createHostedAutonomyGitHub(
         `/repos/${scope}/actions/runs/${id}/approve`,
       );
       return approved !== null;
+    },
+    async listHeadRuns(head: string) {
+      // The once-per-head re-run decision reads GitHub's own run_attempt, so
+      // the listing must be complete and every run bound to this exact head
+      // and well formed; anything else is unprovable and re-runs nothing.
+      const runs = await readHeadRuns(head);
+      if (runs === null) return null;
+      const parsed: HostedAutonomyHeadRunV1[] = [];
+      for (const run of runs) {
+        const attempt = run["run_attempt"];
+        const status = run["status"];
+        const conclusion = run["conclusion"];
+        if (
+          run["head_sha"] !== head ||
+          typeof attempt !== "number" || !Number.isSafeInteger(attempt) ||
+          attempt < 1 || typeof status !== "string" ||
+          (conclusion !== null && typeof conclusion !== "string")
+        ) return null;
+        parsed.push({
+          id: run["id"] as number,
+          headSha: head,
+          status,
+          conclusion,
+          runAttempt: attempt,
+        });
+      }
+      return parsed;
+    },
+    rerunFailedJobs(id: number) {
+      return effect(
+        "POST",
+        `/repos/${scope}/actions/runs/${id}/rerun-failed-jobs`,
+      );
     },
     async readIssueOpen(number: number) {
       const issue = await request("GET", `/repos/${scope}/issues/${number}`);

@@ -18,6 +18,8 @@ import { evidenceExpired } from "./hosted-autonomy-evidence-expiry.ts";
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
 import {
   ciCorrectionRuntimeProven,
+  ciGreenHeadKey,
+  ciGreenRedeliveryEligible,
   ciRedeliveryEligible,
 } from "./hosted-autonomy-ci-retries.ts";
 
@@ -240,10 +242,16 @@ export function planHostedRetries(
    * planned only when it is an allowlisted generation-77+ CI-correction
    * runtime holding its own healthy proof (`ciCorrectionRuntimeProven`);
    * `ciAllowlist` replaces the pinned allowlist for tests only.
+   *
+   * `ciGreenHeads` holds `ciGreenHeadKey` values for heads whose CI the
+   * caller read as all green on their own repository surface. A CI-parked
+   * head in it returns to delivery under any runtime when its base tip is
+   * still exactly the reviewed base (`ciGreenRedeliveryEligible`).
    */
   options: {
     ciRuntime?: HostedRuntimeRecordV1 | null;
     ciAllowlist?: ReadonlySet<string>;
+    ciGreenHeads?: ReadonlySet<string>;
   } = {},
 ): RetryPlanV1[] {
   if (!isGitSha(runtimeSha)) return [];
@@ -251,6 +259,7 @@ export function planHostedRetries(
   const ciCorrection = ciRuntime !== null &&
     ciRuntime.activeRevision === runtimeSha &&
     ciCorrectionRuntimeProven(ciRuntime, options.ciAllowlist);
+  const ciGreenHeads = options.ciGreenHeads ?? new Set<string>();
   const plans: RetryPlanV1[] = [];
   for (const record of snapshot.work) {
     if (record.nextStep !== "blocked") continue;
@@ -287,7 +296,18 @@ export function planHostedRetries(
     // installed runtime's CI attribution: no charge, no base advance and no
     // counter movement here; the runtime decides correction or deferral.
     if (rule.nextStep === "delivery") {
-      if (!ciCorrection || !ciRedeliveryEligible(snapshot, record)) continue;
+      const corrected = ciCorrection && ciRedeliveryEligible(snapshot, record);
+      // A head that is green again on its exact reviewed base (a re-run
+      // flake) passes any runtime's merge gate, so it needs no correction
+      // route and no review round.
+      const head = record.target.head;
+      const green = !corrected && head !== null &&
+        record.target.base !== null &&
+        baseTips.get(hostedRepositoryKey(record.repository)) ===
+          record.target.base &&
+        ciGreenHeads.has(ciGreenHeadKey(record.repository, head)) &&
+        ciGreenRedeliveryEligible(snapshot, record);
+      if (!corrected && !green) continue;
       plans.push({
         id: record.id,
         repository: record.repository,
@@ -296,7 +316,9 @@ export function planHostedRetries(
         reviewRounds: null,
         advanceBase: false,
         observedBase: null,
-        detail: `${blocker.kind}:${rule.prefix.trimEnd()}`,
+        detail: `${blocker.kind}:${rule.prefix.trimEnd()}${
+          green ? ":green" : ""
+        }`,
       });
       continue;
     }

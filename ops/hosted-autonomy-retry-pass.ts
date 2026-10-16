@@ -18,6 +18,10 @@ import {
   type RetryPlanV1,
 } from "./hosted-autonomy-retries.ts";
 import { hostedIssueKey, sameRepository } from "./hosted-autonomy-policy.ts";
+import {
+  ciGreenHeadKey,
+  ciGreenRedeliveryEligible,
+} from "./hosted-autonomy-ci-retries.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
 import { runHostedMismatchDispositionPass } from "./hosted-autonomy-mismatch-pass.ts";
 import { runHostedPreservationDispositionPass } from "./hosted-autonomy-preservation-disposition.ts";
@@ -200,6 +204,31 @@ export async function runHostedRetryPass(
   // records exactly as before, and the identity is always the pair
   // (repository, issue number).
   const closedIssues = context.closedIssues;
+  // A head parked on its merge-gate CI failure whose base tip is still the
+  // reviewed base is read for green CI on its OWN repository surface (a
+  // re-run flake); only a head proven all green there can re-admit.
+  const ciGreenHeads = new Set<string>();
+  for (const record of snapshot.work) {
+    const head = record.target.head;
+    if (
+      record.nextStep !== "blocked" || head === null ||
+      !ciGreenRedeliveryEligible(snapshot, record) ||
+      closedIssues.has(
+        hostedIssueKey(record.repository, record.related.issueNumber!),
+      )
+    ) continue;
+    const scope = await scopeFor(record.repository);
+    if (
+      scope.surface === null || retryTips.get(scope.key) !== record.target.base
+    ) continue;
+    let green = false;
+    try {
+      green = await scope.surface.hasAllChecksGreen(head);
+    } catch {
+      green = false;
+    }
+    if (green) ciGreenHeads.add(ciGreenHeadKey(record.repository, head));
+  }
   const planned = planHostedRetries(
     snapshot,
     deps.clock.now(),
@@ -211,7 +240,7 @@ export async function runHostedRetryPass(
     },
     // The same authenticated record carries the healthy proof the CI
     // re-admission requires; nothing else can activate that rule.
-    { ciRuntime: installedRuntime },
+    { ciRuntime: installedRuntime, ciGreenHeads },
   );
   const plans: RetryPlanV1[] = [];
   for (const plan of planned) {

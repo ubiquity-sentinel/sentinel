@@ -37,6 +37,7 @@ import {
   isGatewayVpsRepository,
 } from "../src/repair/vps-delivery.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
+import { runHostedCiRerunPass } from "./hosted-autonomy-ci-rerun.ts";
 
 export async function runHostedDeliveryPass(
   context: HostedAutonomyPassContextV1,
@@ -78,6 +79,9 @@ export async function runHostedDeliveryPass(
       );
     }
   }
+  // A clean-reviewed head parked on a failed CI run against its green,
+  // current base gets that run re-run once (state-free; see the module).
+  await runHostedCiRerunPass(context);
 
   // ---- delivery pass ------------------------------------------------------
   // Each repository's base tip is read once in this pass from that repository's
@@ -178,6 +182,18 @@ export async function runHostedDeliveryPass(
 
     let revision: string | null = null;
     if (pull.state === "open" && pull.merged === false) {
+      // A Gateway release request binds only a record in `review` or
+      // `delivery` (gatewayRequestBindsDelivery). A spent-round record parked
+      // `blocked` is merged only after a grant re-admits it; merged from
+      // `blocked`, its request (and so its release and issue closure) could
+      // never be recorded.
+      if (
+        gateway && record.nextStep !== "review" &&
+        record.nextStep !== "delivery"
+      ) {
+        actions.push(`delivery:${record.id}:gateway_not_admitted`);
+        continue;
+      }
       // The base must be exactly the reviewed base, and the repository's own
       // deterministic check must already have succeeded on the exact head.
       const baseTip = await deliveryTip(scope);

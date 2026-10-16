@@ -11,11 +11,17 @@ import {
 } from "../../ops/hosted-autonomy.ts";
 import {
   ciCorrectionRuntimeProven,
+  ciGreenHeadKey,
+  ciGreenRedeliveryEligible,
   ciRedeliveryEligible,
   HOSTED_AUTONOMY_CI_CORRECTION_MIN_GENERATION,
   HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES,
 } from "../../ops/hosted-autonomy-ci-retries.ts";
-import { HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS } from "../../ops/hosted-autonomy-policy.ts";
+import {
+  HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS,
+  hostedRepositoryKey,
+} from "../../ops/hosted-autonomy-policy.ts";
+import { parseWorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
   CI_CORRECTION_REVIEW_ROUNDS,
   ciCorrectable,
@@ -42,6 +48,7 @@ import {
   BASE,
   blockedRecord,
   finding,
+  FOREIGN_REPO,
   HEAD,
   SELF_REPO,
   selfTips,
@@ -386,4 +393,168 @@ Deno.test("hosted autonomy: no runtime is allowlisted for CI re-admission while 
   if (!HOSTED_CI_CORRECTIONS) {
     assert.equal(HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES.size, 0);
   }
+});
+
+// ---- green-head re-admission ---------------------------------------------
+
+/** The self scope's base tip and green-head set, as the retry pass builds them. */
+function greenPlan(
+  snapshot: ReturnType<typeof repairSnapshot>,
+  options: {
+    tip?: string | null;
+    green?: ReadonlySet<string>;
+    ciRuntime?: HostedRuntimeRecordV1 | null;
+  } = {},
+) {
+  return planHostedRetries(
+    snapshot,
+    T0 + 9000,
+    RUNTIME,
+    selfTips(options.tip === undefined ? BASE : options.tip),
+    new Set(),
+    undefined,
+    {
+      ciRuntime: options.ciRuntime ?? null,
+      ciGreenHeads: options.green ?? new Set([ciGreenHeadKey(SELF_REPO, HEAD)]),
+    },
+  );
+}
+
+const spent = (rounds = 4) =>
+  ciBlocked({ counters: { attempts: 4, retries: 0, reviewRounds: rounds } });
+
+Deno.test("hosted autonomy: a spent-round head whose CI turned green on its current base returns to delivery uncharged", () => {
+  // The flake path: no CI-correction runtime is installed (the route stays
+  // closed under generation 77), every review round is spent, and the exact
+  // reviewed head is now green on the unchanged base.
+  for (const rounds of [0, 2, 3, 4, 7]) {
+    const snapshot = repairSnapshot(
+      [spent(rounds)],
+      [authorizingReceipt()],
+      [],
+      CHARGES,
+    );
+    const plans = greenPlan(snapshot);
+    assert.equal(plans.length, 1, `review rounds ${rounds}`);
+    assert.equal(plans[0].nextStep, "delivery");
+    assert.equal(plans[0].grant, 0);
+    assert.equal(plans[0].reviewRounds, null);
+    assert.equal(plans[0].advanceBase, false);
+    assert.equal(plans[0].observedBase, null);
+    assert.equal(plans[0].detail, "other:CI checks failed::green");
+    // The existing grant shape: no charge, counters, target and publication
+    // unchanged; blocker, wait and intent cleared.
+    const next = applyHostedRetries(snapshot, SHA1, plans, T0 + 9000);
+    const record = next.work[0];
+    assert.equal(record.nextStep, "delivery");
+    assert.equal(record.blocker, null);
+    assert.equal(record.wait, null);
+    assert.equal(record.intent, null);
+    assert.deepEqual(record.counters, snapshot.work[0].counters);
+    assert.deepEqual(record.target, snapshot.work[0].target);
+    assert.deepEqual(next.reservations, snapshot.reservations);
+    assert.deepEqual(next.reviews, snapshot.reviews);
+    assert.deepEqual(parseWorkRecordV1(structuredClone(record)), record);
+  }
+});
+
+Deno.test("hosted autonomy: the green-head re-admission needs the exact green head on the unchanged reviewed base", async (t) => {
+  const snapshot = (
+    records = [spent()],
+    reviews: unknown[] = [authorizingReceipt()],
+    releaseRequests: unknown[] = [],
+  ) => repairSnapshot(records, reviews, releaseRequests, CHARGES);
+  assert.equal(greenPlan(snapshot()).length, 1, "control");
+  await t.step("a head that is not green stays parked", () => {
+    assert.equal(greenPlan(snapshot(), { green: new Set() }).length, 0);
+    assert.equal(
+      greenPlan(snapshot(), {
+        green: new Set([ciGreenHeadKey(SELF_REPO, SHA2 as GitSha)]),
+      }).length,
+      0,
+      "another head",
+    );
+    assert.equal(
+      greenPlan(snapshot(), {
+        green: new Set([ciGreenHeadKey(FOREIGN_REPO, HEAD)]),
+      }).length,
+      0,
+      "the same head in another repository",
+    );
+  });
+  await t.step("a moved or unreadable base stays parked", () => {
+    assert.equal(greenPlan(snapshot(), { tip: SHA2 }).length, 0);
+    assert.equal(greenPlan(snapshot(), { tip: null }).length, 0);
+  });
+  await t.step("the reviewed, unreleased shape is still required", () => {
+    assert.equal(greenPlan(snapshot(undefined, [])).length, 0, "no receipt");
+    assert.equal(
+      greenPlan(snapshot(undefined, [authorizingReceipt({
+        findings: [finding("P1")],
+        unresolvedSeverities: ["P1"],
+      })])).length,
+      0,
+      "a rejecting receipt",
+    );
+    const released = releaseRequest("ci-green-release", {
+      target: { repository: SELF_REPO, environment: "production" },
+      revision: SHA2,
+      source: {
+        pullRequest: 51,
+        reviewRequestId: "review-req-1",
+        reviewReceiptId: null,
+        head: HEAD,
+        base: BASE,
+      },
+    });
+    assert.equal(
+      greenPlan(snapshot(undefined, undefined, [released])).length,
+      0,
+    );
+    const record = spent();
+    assert.equal(
+      greenPlan(snapshot([blockedRecord({
+        blocker: CI_BLOCKER,
+        counters: record.counters,
+        target: {
+          ...record.target,
+          candidateState: { preserved: null, publishedHead: HEAD },
+        },
+      })])).length,
+      0,
+      "an undescribed candidate",
+    );
+    assert.equal(
+      greenPlan(snapshot([ciBlocked({
+        counters: spent().counters,
+        blocker: {
+          ...CI_BLOCKER,
+          message: "CI checks failed without base evidence: lint(failure)",
+        },
+      })])).length,
+      0,
+      "the runtime's unattributed block",
+    );
+  });
+});
+
+Deno.test("hosted autonomy: the green-head rule is the CI re-admission shape without the review-round ceiling", () => {
+  const reviews = [authorizingReceipt()];
+  for (
+    let rounds = 0;
+    rounds <= HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS + 3;
+    rounds++
+  ) {
+    const snapshot = repairSnapshot([spent(rounds)], reviews, [], CHARGES);
+    const record = snapshot.work[0];
+    assert.equal(ciGreenRedeliveryEligible(snapshot, record), true);
+    assert.equal(
+      ciRedeliveryEligible(snapshot, record),
+      rounds < HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS,
+    );
+  }
+  assert.equal(
+    ciGreenHeadKey(SELF_REPO, HEAD),
+    `${hostedRepositoryKey(SELF_REPO)}@${HEAD}`,
+  );
 });

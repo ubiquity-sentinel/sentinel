@@ -56,6 +56,36 @@ export function createHostedAutonomyRequest(token: string) {
 }
 
 /**
+ * Bounded effect request whose only evidence is GitHub's own acceptance: true
+ * for any 2xx answer, whatever its body. The re-run endpoints answer 201 with
+ * an empty body, which the JSON reader above reads as a refusal; the body here
+ * is never parsed or returned, and a timeout or network error is false.
+ */
+export function createHostedAutonomyEffect(token: string) {
+  return async function effect(method: string, path: string) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${API_BASE}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          accept: "application/vnd.github+json",
+          "user-agent": "sentinel-hosted-autonomy",
+        },
+        signal: controller.signal,
+      });
+      await response.body?.cancel();
+      return response.status >= 200 && response.status < 300;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
+/**
  * Complete listing read for ONE GitHub list endpoint. Every page is read
  * until the response's own `total_count` is covered, and the read is refused
  * (null) whenever it cannot be proven complete and consistent:

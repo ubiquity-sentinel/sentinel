@@ -287,7 +287,10 @@ export const HOSTED_AUTONOMY_RETRYABLE: readonly {
     // generation-77+ CI-correction revision holding its own healthy proof
     // (`ciCorrectionRuntimeProven`), and for any shape but the exact
     // reviewed, unreleased publication with a review round left
-    // (`ciRedeliveryEligible`).
+    // (`ciRedeliveryEligible`) — except for a head whose CI the retry pass
+    // read as all green again on its unchanged reviewed base (a re-run
+    // flake), which re-admits under any runtime and any spent round count
+    // (`ciGreenRedeliveryEligible`).
     prefix: HOSTED_AUTONOMY_CI_FAILED_PREFIX,
     nextStep: "delivery",
   },
