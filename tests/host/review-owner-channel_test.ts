@@ -289,6 +289,31 @@ Deno.test("review channel: a gap that outlives the deadline skips exactly that c
   }
 });
 
+Deno.test("review channel: frames released by a skip never restart the shared deadline", async () => {
+  const directory = await tempChannel();
+  // 1, 3, 5 and 7 were never written; 2, 4 and 6 sit between them and 8 is
+  // visible from the first listing. Every frame was listed with the hole, so
+  // the frames each skip releases are not progress: all four counters go
+  // after about one deadline, never one deadline each (2 s).
+  for (const counter of [2, 4, 6, 8]) {
+    await writeEvent(directory, counter, "A", "item/started", { seq: counter });
+  }
+  const skips = captureSkips();
+  const started = Date.now();
+  const { client, seqs } = openClient(directory, 500);
+  try {
+    assert.ok(await waitFor(() => seqs.length >= 4, 5_000));
+    const elapsed = Date.now() - started;
+    assert.deepEqual(seqs, [2, 4, 6, 8]);
+    assert.deepEqual(skippedCounters(skips.lines, 500), [1, 3, 5, 7]);
+    assert.ok(elapsed >= 500 && elapsed < 1_000, "elapsed " + elapsed);
+  } finally {
+    await client.close();
+    skips.restore();
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
 Deno.test("review channel: counters already missing under one later frame share a single deadline", async () => {
   const directory = await tempChannel();
   // 2, 3, 4 and 7 were never written; 8 is visible from the first listing.
