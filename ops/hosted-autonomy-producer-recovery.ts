@@ -15,7 +15,10 @@ import type {
 } from "../src/contracts/ports.ts";
 import { CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE } from "./hosted-autonomy-policy.ts";
 import type { HostedAutonomyDepsV1 } from "./hosted-autonomy-types.ts";
-import { HISTORICAL_RECOVERY_PROVIDERS } from "./hosted-autonomy-matrix-bindings.ts";
+import {
+  HISTORICAL_RECOVERY_PROVIDERS,
+  RECOVERY_ROUTE_FAILOVER_MODEL,
+} from "./hosted-autonomy-matrix-bindings.ts";
 import { blockedCandidateBinding } from "../src/host/matrix-blocked-candidate.ts";
 import { restoreBlockedCandidate } from "./hosted-autonomy-blocked-candidate.ts";
 import {
@@ -407,6 +410,8 @@ async function recoverProducerWithinBudget(
       {
         deadline: deadlineAt,
         expectedProvider: HISTORICAL_RECOVERY_PROVIDERS,
+        // The producer route's 429 failover, from launcher source only.
+        failoverModel: RECOVERY_ROUTE_FAILOVER_MODEL,
         bundleImporter: ports.importerFor(config, wave.bundlesDir),
       },
     ).catch((error: unknown) => {

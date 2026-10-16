@@ -29,22 +29,47 @@ export function sameRepository(
 }
 
 /**
+ * Whether `observed` is a model the trusted route could have run for the
+ * planned `requested` model: exactly the planned model, or the route's
+ * configured HTTP 429 failover model. The port's failover is a separate
+ * self-consistent attempt inside the same admission whose receipt truthfully
+ * records the failover model, so it binds to the same planned request. The
+ * failover id comes only from the trusted host's own route resolution, never
+ * from the artifact; an absent or empty id accepts exactly the planned model.
+ */
+function routeModelMatches(
+  observed: string,
+  requested: string,
+  failoverModel: string | undefined,
+): boolean {
+  if (observed === requested) return true;
+  return typeof failoverModel === "string" && failoverModel.length > 0 &&
+    observed === failoverModel;
+}
+
+/**
  * Re-verify a deserialized receipt projection against the exact planned
- * request and the host's trusted expected provider. The production model port
- * verifies raw request/runtime session evidence in-process; an artifact cannot
- * inherit that trust, so the projection is re-checked here and any mismatch
- * refuses the result before a state update.
+ * request and the host's trusted expected provider (and trusted route
+ * failover model). The production model port verifies raw request/runtime
+ * session evidence in-process; an artifact cannot inherit that trust, so the
+ * projection is re-checked here and any mismatch refuses the result before a
+ * state update.
  */
 export function receiptIdentityMatches(
   receipt: ModelRunReceiptV1,
   request: { model: string; reasoning: string },
   expectedProvider: string | readonly string[],
+  failoverModel?: string,
 ): boolean {
   const accepted = typeof expectedProvider === "string"
     ? [expectedProvider]
     : expectedProvider;
   return receipt.actual.evidenceKind === "request-runtime" &&
-    receipt.actual.observedModel === request.model &&
+    routeModelMatches(
+      receipt.actual.observedModel,
+      request.model,
+      failoverModel,
+    ) &&
     receipt.actual.observedReasoning === request.reasoning &&
     accepted.includes(receipt.actual.provider);
 }
@@ -58,8 +83,11 @@ export function verifyMatrixReceiptV1(
     maxOutputChars: number;
   },
   expectedProvider: string | readonly string[],
+  failoverModel?: string,
 ): boolean {
-  if (!receiptIdentityMatches(receipt, request, expectedProvider)) return false;
+  if (
+    !receiptIdentityMatches(receipt, request, expectedProvider, failoverModel)
+  ) return false;
   if (receipt.actual.durationMs > request.maxDurationMs) return false;
   if (receipt.actual.outputChars > request.maxOutputChars) return false;
   if (receipt.outcome === "completed") {
@@ -76,13 +104,19 @@ export function interruptedOutputFailure(
   result: MatrixCellResultV1,
   cell: MatrixCellPlanV1,
   expectedProvider: string | readonly string[],
+  failoverModel?: string,
 ): boolean {
   const receipt = result.receipt;
   if (
     result.status !== "completed" || receipt === null ||
     receipt.outcome !== "interrupted" || receipt.candidate !== null ||
     result.bundle !== null ||
-    !receiptIdentityMatches(receipt, cell.request, expectedProvider)
+    !receiptIdentityMatches(
+      receipt,
+      cell.request,
+      expectedProvider,
+      failoverModel,
+    )
   ) return false;
   const actual = receipt.actual;
   return actual.terminalOrigin === "runtime" &&

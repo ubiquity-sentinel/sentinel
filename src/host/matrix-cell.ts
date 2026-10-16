@@ -16,6 +16,8 @@ import type {
 } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import { OPERATION_MARGIN_MS, type RunBoundsV1 } from "../repair/loop.ts";
+import { ATTEMPT_DETAIL_PROVIDER_THROTTLED } from "../repair/attempt-policy.ts";
+import { isProviderThrottledReceiptV1 } from "../repair/model-port-retry.ts";
 import type { MatrixBundleExporterV1 } from "./matrix-git.ts";
 import { sameRepository } from "./matrix-identity.ts";
 
@@ -231,6 +233,15 @@ export async function runMatrixCell(
   const receipt = await deps.model.runModel(cell.request);
   if (!receipt.ok) {
     return refuse("failed", `model run failed (${receipt.error.kind})`);
+  }
+  // The gateway throttled the whole turn (HTTP 429 even after the port's
+  // failover and bounded backoff) and nothing was produced: transient
+  // provider unavailability, settled exactly like the port-unavailable
+  // refusal above (charged ambiguous, transient memory). Its raw receipt
+  // never leaves the cell, so a final failover-model receipt cannot be
+  // rejected against the planned primary model and strand the admission.
+  if (isProviderThrottledReceiptV1(receipt.value, cell.request)) {
+    return refuse("failed", ATTEMPT_DETAIL_PROVIDER_THROTTLED);
   }
   // Candidate objects must be durably carried by a real bounded bundle before
   // a completed result exists: a candidate head with no transferred objects

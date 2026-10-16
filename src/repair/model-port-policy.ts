@@ -1,5 +1,4 @@
 /** Internal finite bounds, protocol validation and static error policy. */
-import type { ModelRunReceiptV1, PortResultV1 } from "../contracts/ports.ts";
 import { CodexProtocolError } from "./codex-transport.ts";
 
 /** Max model task prompt characters (private finite bound). */
@@ -319,21 +318,6 @@ export function unavailableFor(
     ? error.detail
     : "codex session unavailable";
   return { kind: "unavailable", detail };
-}
-
-/**
- * Whether a model attempt failed because the gateway rate limited the
- * primary model (HTTP 429). Only a failed runtime receipt whose provider
- * error message names rate limiting qualifies — transport, auth, policy,
- * timeout and loop-stop outcomes never trigger the failover.
- */
-export function isRateLimitedResult(
-  result: PortResultV1<ModelRunReceiptV1>,
-): boolean {
-  if (!result.ok) return false;
-  const receipt = result.value;
-  if (receipt.outcome !== "failed") return false;
-  return isRateLimitMessage(receipt.error);
 }
 
 /**

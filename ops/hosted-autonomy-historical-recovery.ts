@@ -20,6 +20,7 @@ import { createLocalRepositoryConfig } from "../src/host/local.ts";
 import {
   HISTORICAL_C63,
   HISTORICAL_RECOVERY_PROVIDERS,
+  RECOVERY_ROUTE_FAILOVER_MODEL,
 } from "./hosted-autonomy-matrix-bindings.ts";
 
 /** Only these three authenticated failed cells may bypass legacy rejection. */
@@ -318,7 +319,11 @@ export async function recoverHostedHistoricalC63(
       cells: wave.plan.cells.filter((cell) => selected.has(cell.reservationId)),
     },
     wave.results,
-    { deadline: deadlineAt, expectedProvider: HISTORICAL_RECOVERY_PROVIDERS },
+    {
+      deadline: deadlineAt,
+      expectedProvider: HISTORICAL_RECOVERY_PROVIDERS,
+      failoverModel: RECOVERY_ROUTE_FAILOVER_MODEL,
+    },
   );
   if (report.ingested !== pending.length) {
     throw new Error("historical matrix settlement incomplete");

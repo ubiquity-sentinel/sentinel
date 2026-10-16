@@ -77,6 +77,7 @@ export async function runActionsMatrixAggregateCycles(
         }),
       transportFor: (state) => host.createArtifactTransport(state),
       readExecution: host.readExecution,
+      failoverModel: host.failoverModel,
     }, false);
     console.log(
       JSON.stringify({ kind: "sentinel_closed_c_recovery", ...recovered }),
@@ -210,6 +211,7 @@ export async function runActionsMatrixAggregateCycles(
           {
             deadline: input.deadline,
             expectedProvider: host.expectedProvider,
+            failoverModel: host.failoverModel,
             bundleImporter: createGitBundleImporter({
               repositoryDir: host.sourcePathFor(config),
               bundlesDir: wave.bundlesDir,

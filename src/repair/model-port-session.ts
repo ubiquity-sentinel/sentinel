@@ -1,5 +1,6 @@
 /** Public implementation adapter: session admission, protocol starts and failover. */
 import type {
+  Clock,
   ImplementationPort,
   ModelRunReceiptV1,
   ModelRunRequestV1,
@@ -19,10 +20,14 @@ import {
 import { buildPrompt } from "./model-port-prompt.ts";
 import { awaitSettlement } from "./model-port-settlement.ts";
 import {
+  isProviderThrottledResultV1,
+  retryRateLimitedV1,
+  sessionBudgetAnchorV1,
+} from "./model-port-retry.ts";
+import {
   DEFAULT_INTERRUPT_SETTLEMENT_GRACE_MS,
   DEFAULT_MODEL_ID,
   isBoundedId,
-  isRateLimitedResult,
   isValidModelId,
   isValidPermissionProfile,
   isValidProvider,
@@ -74,9 +79,20 @@ export interface CodexImplementationPortOptionsV1 {
    * same credentials, frozen `max` reasoning — only the model id changes,
    * and only on a 429. The retry is a fresh, self-consistent attempt: its
    * request names the failover model and its receipt records exactly that.
-   * An invalid value (or one equal to the primary) disables the failover.
+   * When the failover is ALSO rate limited, a bounded backoff alternates the
+   * primary and the failover inside the same admission and the remaining
+   * session budget (see `model-port-retry.ts`). An invalid value (or one
+   * equal to the primary) disables the failover and that backoff.
    */
   failoverModelId?: string;
+  /** 429 backoff clock and sleep (injectable; default system time). */
+  clock?: Clock;
+  sleep?: (ms: number) => Promise<void>;
+  /**
+   * The caller's model start boundary: the 429 backoff never extends past it
+   * plus the request's duration bound (default: `runModel` entry).
+   */
+  sessionStartedAt?: number;
   /**
    * Optional trusted host-defined named permission profile. When present it
    * must match /^[A-Za-z][A-Za-z0-9_-]{0,63}$/ and is never a built-in
@@ -125,6 +141,9 @@ export class CodexImplementationPort implements ImplementationPort {
   readonly failoverModelId: string;
   /** Receipt verifier bound to the failover model; null when disabled. */
   private readonly failoverVerifier: ReceiptVerifierV1 | null;
+  private readonly backoff: Required<
+    Pick<CodexImplementationPortOptionsV1, "clock" | "sleep">
+  >;
 
   constructor(options: CodexImplementationPortOptionsV1) {
     this.options = options;
@@ -158,6 +177,11 @@ export class CodexImplementationPort implements ImplementationPort {
       DEFAULT_INTERRUPT_SETTLEMENT_GRACE_MS;
     this.permissionProfile = options.permissionProfile ?? null;
     this.localIteration = options.localIteration === true;
+    this.backoff = {
+      clock: options.clock ?? { now: () => Date.now() },
+      sleep: options.sleep ??
+        ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+    };
   }
 
   async runModel(
@@ -173,6 +197,9 @@ export class CodexImplementationPort implements ImplementationPort {
     ) {
       return portError("unavailable", MODEL_POLICY_DETAIL);
     }
+    const { clock, sleep } = this.backoff;
+    const budgetEndsAt = request.maxDurationMs +
+      sessionBudgetAnchorV1(clock.now(), this.options.sessionStartedAt);
     const primary = await this.runAttempt(
       request,
       this.modelId,
@@ -181,30 +208,55 @@ export class CodexImplementationPort implements ImplementationPort {
     // Gateway 429 failover: when the primary model is rate limited, retry
     // ONCE with the failover model on the same endpoint and credentials.
     // Every other failure returns as-is — the failover engages ONLY on 429.
-    if (this.failoverVerifier !== null && isRateLimitedResult(primary)) {
-      console.error(
-        `[sentinel] model ${this.modelId} rate limited (429); failing over ` +
-          `to ${this.failoverModelId} with max reasoning`,
-      );
-      return await this.runAttempt(
-        { ...request, model: this.failoverModelId },
-        this.failoverModelId,
-        this.failoverVerifier,
-      );
-    }
-    return primary;
+    const failoverVerifier = this.failoverVerifier;
+    if (
+      failoverVerifier === null ||
+      !isProviderThrottledResultV1(primary, request)
+    ) return primary;
+    console.error(
+      `[sentinel] model ${this.modelId} rate limited (429); failing over ` +
+        `to ${this.failoverModelId} with max reasoning`,
+    );
+    const failoverRequest = { ...request, model: this.failoverModelId };
+    const failover = await this.runAttempt(
+      failoverRequest,
+      this.failoverModelId,
+      failoverVerifier,
+    );
+    if (!isProviderThrottledResultV1(failover, request)) return failover;
+    // Both throttled: bounded backoff in this admission and session budget,
+    // alternating fresh attempts each certified by its own model's verifier.
+    return await retryRateLimitedV1({
+      request,
+      models: [this.modelId, this.failoverModelId],
+      budgetEndsAt,
+      last: failover,
+      now: () => clock.now(),
+      sleep,
+      attempt: (model, windowMs) =>
+        model === this.modelId
+          ? this.runAttempt(request, this.modelId, this.coreVerifier, windowMs)
+          : this.runAttempt(
+            failoverRequest,
+            this.failoverModelId,
+            failoverVerifier,
+            windowMs,
+          ),
+    });
   }
 
   /**
    * One self-consistent model attempt: the request names exactly the model
    * this attempt submits, and the receipt records exactly that model. The
    * failover retry is a separate attempt with its own verifier, never a
-   * mid-run model swap.
+   * mid-run model swap. A backoff retry passes `durationBoundMs`, the
+   * remaining session budget, which only ever shortens the request's bound.
    */
   private async runAttempt(
     request: ModelRunRequestV1,
     expectedModel: string,
     verifier: ReceiptVerifierV1,
+    durationBoundMs?: number,
   ): Promise<PortResultV1<ModelRunReceiptV1>> {
     // The attempt's request must name exactly the model this attempt submits;
     // the receipt then truthfully records the model that was requested.
@@ -253,6 +305,7 @@ export class CodexImplementationPort implements ImplementationPort {
         thread.threadId,
         turn.turnId,
         request.maxOutputChars,
+        durationBoundMs,
       );
       // The model must be fully closed, including its owned process group,
       // before the trusted host inspects or commits the checkout. A direct

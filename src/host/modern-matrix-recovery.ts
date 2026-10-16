@@ -425,6 +425,11 @@ export interface ClosedCWaveRecoveryDepsV1 {
     execution: HostedExecutionIntentV1,
   ): Promise<PortResultV1<HostedExecutionSettlementV1 | null>>;
   binding?: ClosedCWaveBindingV1;
+  /**
+   * The trusted host's route HTTP 429 failover model id (never read from an
+   * artifact); see `MatrixIngestOptionsV1.failoverModel`.
+   */
+  failoverModel?: string;
 }
 function sameRepo(
   a: { owner: string; name: string; installationId: number },
@@ -815,6 +820,7 @@ export async function ingestClosedCWave(
       {
         deadline: deps.clock.now() + 240_000,
         expectedProvider: binding.expectedProvider,
+        failoverModel: deps.failoverModel,
         bundleImporter: importer,
       },
     );

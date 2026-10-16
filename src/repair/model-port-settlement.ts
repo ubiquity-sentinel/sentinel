@@ -64,6 +64,8 @@ export interface AwaitedSettlementV1 {
  * final routing/terminal evidence at the exact moment the caller has also
  * completed its close/settlement/transport checks. A routing notification
  * delivered during close is therefore still validated into the receipt.
+ * `durationBoundMs` (a 429 backoff retry's remaining session budget) can only
+ * shorten the request's duration bound; the diagnostic keeps the request's.
  */
 export async function awaitSettlement(
   checkoutDir: string,
@@ -73,7 +75,11 @@ export async function awaitSettlement(
   threadId: string,
   turnId: string,
   maxOutputChars: number,
+  durationBoundMs: number = request.maxDurationMs,
 ): Promise<() => AwaitedSettlementV1> {
+  const boundMs = Number.isSafeInteger(durationBoundMs) && durationBoundMs > 0
+    ? Math.min(durationBoundMs, request.maxDurationMs)
+    : request.maxDurationMs;
   let outputChars = 0;
   let interruptCause: ModelInterruptCauseV1 = "none";
   let errorInfo: ReturnType<typeof closedModelErrorInfo> | null = null;
@@ -690,7 +696,7 @@ export async function awaitSettlement(
   // placeholder never observed by a live interrupt.
   const durationTimer = setTimeout(
     () => requestInterrupt("duration_limit"),
-    request.maxDurationMs,
+    boundMs,
   );
   let settleTimer: ReturnType<typeof setTimeout>;
   settleTimer = setTimeout(() => {
@@ -698,7 +704,7 @@ export async function awaitSettlement(
     // settlement keeps the null observed terminal and the `host-timeout`
     // origin — never a synthesized failed terminal.
     settleNow();
-  }, request.maxDurationMs + graceMs + SETTLE_GRACE_MS_EXTRA);
+  }, boundMs + graceMs + SETTLE_GRACE_MS_EXTRA);
 
   try {
     session.onNotification((event) => onEvent(event.method, event.params));

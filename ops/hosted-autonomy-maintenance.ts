@@ -18,6 +18,7 @@ import type {
   HostedClosedMatrixDepsV1,
 } from "./hosted-autonomy-types.ts";
 import { recoverHostedHistoricalC63 } from "./hosted-autonomy-historical-recovery.ts";
+import { RECOVERY_ROUTE_FAILOVER_MODEL } from "./hosted-autonomy-matrix-bindings.ts";
 import { isDeferredCurrentMatrixHistoryBudget } from "./hosted-autonomy-policy.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 
@@ -53,7 +54,11 @@ export async function runHostedMatrixMaintenance(
       read.ok && read.value.status === "found" && closed !== undefined &&
       closedCWaveNeedsRecovery(read.value.snapshot, closed.binding)
     ) {
-      const recovered = await ingestClosedCWave(closed);
+      const recovered = await ingestClosedCWave({
+        ...closed,
+        // The producer route's 429 failover, from launcher source only.
+        failoverModel: RECOVERY_ROUTE_FAILOVER_MODEL,
+      });
       console.log(
         JSON.stringify({ kind: "sentinel_closed_c_recovery", ...recovered }),
       );
