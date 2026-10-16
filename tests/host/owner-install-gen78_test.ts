@@ -307,16 +307,17 @@ Deno.test("owner install gen78: connected R78 failure restores exact P77 once at
   }
 });
 
-Deno.test("owner install gen78: healthy R78 is complete", () =>
+// A healthy R78 now installs generation 79 (owner-install-gen79_test.ts).
+Deno.test("owner install gen78: a generation 78 pointer off R78 with its own healthy proof stays outside the chain", () =>
   expectUnmoved(
     runtimeRecord({
-      revision: R78,
+      revision: UNRELATED,
       generation: 78,
-      healthyProof: healthyProof(R78, 78, 504),
-      executionProof: healthyProof(R78, 78, 504),
+      healthyProof: healthyProof(UNRELATED, 78, 504),
+      executionProof: healthyProof(UNRELATED, 78, 504),
     }),
     "no_change",
-    "the owner development installation is complete",
+    "the runtime pointer is outside the owner installation chain",
   ));
 
 Deno.test("owner install gen78: restored P77 at79 never reinstalls R78", async (t) => {

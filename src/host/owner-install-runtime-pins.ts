@@ -319,6 +319,21 @@ export const OWNER_DEVELOPMENT_INSTALL_GEN78_PRIOR_GENERATION =
 export const OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION =
   "474f87eb639f97cd72b9bc4b9e56101488f841aa" as GitSha;
 export const OWNER_DEVELOPMENT_INSTALL_GEN78_GENERATION = 78;
+/**
+ * Generation 78 successor: the development runtime with the hosted
+ * conflict-resolution route open (one charged merge attempt per base tip for
+ * a base refresh that conflicts). Only the exact generation 78 healthy
+ * settlement with no failed settlement permits installation at 79; its first
+ * failed candidate restores that retained generation 78 proof once at
+ * generation 80.
+ */
+export const OWNER_DEVELOPMENT_INSTALL_GEN79_PRIOR_REVISION =
+  OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION;
+export const OWNER_DEVELOPMENT_INSTALL_GEN79_PRIOR_GENERATION =
+  OWNER_DEVELOPMENT_INSTALL_GEN78_GENERATION;
+export const OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION =
+  "7979797979797979797979797979797979797979" as GitSha;
+export const OWNER_DEVELOPMENT_INSTALL_GEN79_GENERATION = 79;
 /** Monotonic rollback target the failed generation 45 candidate rolled to. */
 export const OWNER_DEVELOPMENT_INSTALL_ROLLBACK_TARGET_GENERATION =
   OWNER_DEVELOPMENT_INSTALL_ASSIGN_FIRST_GENERATION + 2;
