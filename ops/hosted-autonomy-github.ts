@@ -29,6 +29,20 @@ import {
   revisionIntegratedIntoBase,
 } from "./hosted-autonomy-github-pull.ts";
 
+/** GitHub's `created_at` wire format: UTC, whole or fractional seconds. */
+const RUN_CREATED_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+
+/**
+ * A run's `created_at` in epoch milliseconds, or null for an unknown age. Only
+ * a strict UTC timestamp counts: a lenient parse (`"1"` reads as 2001) could
+ * make a fresh run look old enough to settle its head.
+ */
+function runCreatedAt(value: unknown): number | null {
+  if (typeof value !== "string" || !RUN_CREATED_AT.test(value)) return null;
+  const parsed = Date.parse(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 /**
  * Live GitHub surface this helper needs, over one repository token. The
  * factory takes the target repository identity and builds EVERY REST path for
@@ -247,7 +261,9 @@ export function createHostedAutonomyGitHub(
     async listHeadRuns(head: string) {
       // The once-per-head re-run decision reads GitHub's own run_attempt, so
       // the listing must be complete and every run bound to this exact head
-      // and well formed; anything else is unprovable and re-runs nothing.
+      // and well formed; anything else is unprovable and re-runs nothing. A
+      // missing or malformed `created_at` is only an unknown age, which never
+      // settles a head, so it does not void the listing.
       const runs = await readHeadRuns(head);
       if (runs === null) return null;
       const parsed: HostedAutonomyHeadRunV1[] = [];
@@ -267,6 +283,7 @@ export function createHostedAutonomyGitHub(
           status,
           conclusion,
           runAttempt: attempt,
+          createdAt: runCreatedAt(run["created_at"]),
         });
       }
       return parsed;

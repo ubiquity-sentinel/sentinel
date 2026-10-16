@@ -74,8 +74,14 @@ import {
 } from "../../ops/hosted-autonomy-scopes.ts";
 import type {
   HostedAutonomyDepsV1,
+  HostedAutonomyHeadRunV1,
   HostedAutonomyPullV1,
 } from "../../ops/hosted-autonomy-types.ts";
+import {
+  assertGen78Parses,
+  gen78Available,
+  loadGen78Modules,
+} from "../state/gen77-contracts.ts";
 
 /** An installed runtime that carries the CI correction route. */
 const RUNTIME = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a" as GitSha;
@@ -762,6 +768,141 @@ Deno.test("hosted autonomy: one retry pass admits at most HOSTED_AUTONOMY_CI_COR
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });
   }
+});
+
+// ---- a head GitHub will no longer re-run ----------------------------------
+
+/** GitHub refuses a re-run more than 30 days after the run's first attempt. */
+const GITHUB_RERUN_WINDOW_MS = 30 * 86_400_000;
+/** A run a minute past that window. */
+const EXPIRED = GITHUB_RERUN_WINDOW_MS + 60_000;
+/** The retry pass's own clock (`retryPass`). */
+const PASS_NOW = T0 + 5_000_000;
+
+/** A CI-parked, correction-eligible head whose candidate is preserved. */
+function preservedCiBlocked() {
+  const record = ciBlocked();
+  return {
+    ...record,
+    target: {
+      ...record.target,
+      candidateState: {
+        preserved: {
+          operationKey: `impl:${"d".repeat(64)}`,
+          base: BASE,
+          head: HEAD,
+          ref: `refs/heads/sentinel-candidates/${"c".repeat(64)}`,
+        },
+        publishedHead: HEAD,
+      },
+    },
+  };
+}
+
+/**
+ * One retry pass over that record on its unchanged base, its only failed run
+ * first created `age` milliseconds before the pass. The surface can list and
+ * re-run runs, so only the run's age can settle the head.
+ */
+async function windowPass(name: string, age: number) {
+  const record = preservedCiBlocked();
+  const snapshot = repairSnapshot(
+    [record],
+    [authorizingReceipt()],
+    [],
+    CHARGES,
+  );
+  const { rig, github } = await makeRig(`ci-rerun-window-${name}`, {
+    repair: snapshot,
+    baseTip: BASE,
+    issueOpen: true,
+  });
+  const listed: string[] = [];
+  const reruns: number[] = [];
+  rig.githubFor = () => ({
+    ...github,
+    readPull: (number: number) => Promise.resolve(pullAt(number, HEAD, true)),
+    hasAllChecksGreen: () => Promise.resolve(false),
+    listHeadRuns: (head: string) => {
+      listed.push(head);
+      return Promise.resolve([{
+        id: 4242,
+        headSha: head,
+        status: "completed",
+        conclusion: "failure",
+        runAttempt: 1,
+        createdAt: PASS_NOW - age,
+      } as HostedAutonomyHeadRunV1]);
+    },
+    rerunFailedJobs: (id: number) => {
+      reruns.push(id);
+      return Promise.reject(new Error("the retry pass never re-runs"));
+    },
+  });
+  try {
+    const pass = await withPinnedRuntime(() => retryPass(rig));
+    return { ...pass, record, snapshot, listed, reruns };
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+}
+
+Deno.test("hosted autonomy: a CI-parked head whose failed run is past GitHub's re-run window is admitted for its correction", async () => {
+  const { result, actions, after, record, snapshot, listed, reruns } =
+    await windowPass("expired", EXPIRED);
+  assert.equal(result?.status, "applied", JSON.stringify(actions));
+  assert.deepEqual(actions, [
+    `retry:${record.id}:grant=0:other:CI checks failed:`,
+  ]);
+  assert.deepEqual(listed, [HEAD], "one listing, no re-run request");
+  assert.deepEqual(reruns, []);
+  const admitted = after.work[0];
+  assert.equal(admitted.nextStep, "delivery");
+  assert.equal(admitted.blocker, null);
+  assert.equal(admitted.intent, null);
+  // Nothing is charged or refunded and the preserved candidate is untouched:
+  // the installed runtime's own CI gate decides from here.
+  assert.deepEqual(admitted.counters, record.counters);
+  assert.deepEqual(admitted.target, record.target);
+  assert.deepEqual(after.reservations, snapshot.reservations);
+  assert.deepEqual(after.reviews, snapshot.reviews);
+});
+
+Deno.test("hosted autonomy: a CI-parked head inside GitHub's re-run window waits for its re-run", async () => {
+  const { result, actions, after, record, listed, reruns } = await windowPass(
+    "inside",
+    GITHUB_RERUN_WINDOW_MS - 2 * 3_600_000,
+  );
+  assert.equal(result, null, JSON.stringify(actions));
+  assert.deepEqual(actions, []);
+  assert.deepEqual(listed, [HEAD]);
+  assert.deepEqual(reruns, [], "the delivery pass re-runs, never this one");
+  assert.deepEqual(after.work[0], record);
+});
+
+Deno.test({
+  name:
+    "hosted autonomy: the rollback runtime (generation 78) parses the window re-admission and agrees the head is correctable",
+  ignore: !(await gen78Available()),
+  fn: async () => {
+    const { after, record } = await windowPass("gen78", EXPIRED);
+    assert.equal(after.work[0].nextStep, "delivery");
+    await assertGen78Parses(after);
+    const loaded = await loadGen78Modules(["src/repair/ci-rejection.ts"]);
+    try {
+      const [gen78] = loaded.modules as [{
+        ciCorrectable(record: unknown): boolean;
+        CI_CORRECTION_REVIEW_ROUNDS: number;
+        HOSTED_CI_CORRECTIONS: boolean;
+      }];
+      assert.equal(gen78.ciCorrectable(structuredClone(record)), true);
+      assert.equal(gen78.CI_CORRECTION_REVIEW_ROUNDS, 3);
+      assert.equal(gen78.HOSTED_CI_CORRECTIONS, true);
+      assert.equal(ciCorrectable(record), true);
+    } finally {
+      await loaded.dispose();
+    }
+  },
 });
 
 Deno.test("hosted autonomy: the runtime's unattributed CI block keeps the free re-run and green re-admission, never a correction", () => {

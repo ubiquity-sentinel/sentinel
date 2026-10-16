@@ -224,6 +224,15 @@ Deno.test("gateway delivery: a green head parked on the runtime's unattributed C
 // ---- re-run pass ----------------------------------------------------------
 
 const RUN_ID = 38866783198;
+/**
+ * GitHub refuses a re-run more than 30 days after the run's first attempt;
+ * the launcher stops an hour short of that, so it never spends a request on a
+ * run GitHub is about to refuse.
+ */
+const GITHUB_RERUN_WINDOW_MS = 30 * 86_400_000;
+const RERUN_MARGIN_MS = 3_600_000;
+/** A run a minute past GitHub's window: any re-run request is refused. */
+const EXPIRED = GITHUB_RERUN_WINDOW_MS + 60_000;
 
 function headRun(
   overrides: Partial<HostedAutonomyHeadRunV1> = {},
@@ -234,9 +243,16 @@ function headRun(
     status: "completed",
     conclusion: "failure",
     runAttempt: 1,
+    createdAt: T0 - 60_000,
     ...overrides,
   };
 }
+
+/** A run first created `age` milliseconds before T0. */
+const aged = (
+  age: number,
+  overrides: Partial<HostedAutonomyHeadRunV1> = {},
+) => headRun({ createdAt: T0 - age, ...overrides });
 
 interface FakeOptions {
   runs?: HostedAutonomyHeadRunV1[] | null;
@@ -248,6 +264,8 @@ interface FakeOptions {
   /** Whether the readback shows the attempt advanced. */
   confirm?: boolean;
   capabilities?: boolean;
+  /** GitHub's clock: a run older than its re-run window is refused. */
+  now?: number;
 }
 
 function fakeSurface(options: FakeOptions = {}) {
@@ -285,6 +303,11 @@ function fakeSurface(options: FakeOptions = {}) {
         ),
       rerunFailedJobs: (id: number) => {
         reruns.push(id);
+        const created = runs?.find((item) => item.id === id)?.createdAt;
+        if (
+          typeof created === "number" &&
+          (options.now ?? T0) - created > GITHUB_RERUN_WINDOW_MS
+        ) return Promise.resolve(false);
         const accepted = options.accepted ?? true;
         if (accepted && (options.confirm ?? true) && runs !== null) {
           runs = runs.map((item) =>
@@ -309,12 +332,13 @@ async function rerunPass(
   snapshot: RepairStateSnapshotV1,
   surface: HostedAutonomyGitHubV1,
   closedIssues: Set<string> = new Set(),
+  now = T0,
 ): Promise<string[]> {
   const actions: string[] = [];
   const deps = {
     state: undefined,
     githubFor: () => surface,
-    clock: { now: () => T0 },
+    clock: { now: () => now },
   } as unknown as HostedAutonomyDepsV1;
   const context = {
     deps,
@@ -575,24 +599,55 @@ Deno.test("ci re-run: a timed-out run is re-run, and the pass is bounded", async
   assert.equal(HOSTED_AUTONOMY_CI_RERUNS_PER_PASS, 3);
   assert.equal(many.reruns.length, HOSTED_AUTONOMY_CI_RERUNS_PER_PASS);
   assert.equal(actions.length, HOSTED_AUTONOMY_CI_RERUNS_PER_PASS);
+
+  // The first head's failed run is past GitHub's re-run window: GitHub would
+  // refuse it on every pass, so it is skipped before it spends the budget and
+  // the heads behind it are re-run instead.
+  const expired = fakeSurface({
+    runs: heads.map((headSha, index) =>
+      index === 0
+        ? aged(EXPIRED, { id: 500, headSha })
+        : headRun({ id: 500 + index, headSha })
+    ),
+  });
+  const behind: HostedAutonomyGitHubV1 = {
+    ...expired.surface,
+    readPull: surface.readPull,
+  };
+  const snapshot = blockedSnapshot(records, reviews);
+  const first = await rerunPass(snapshot, behind);
+  assert.deepEqual(expired.reruns, [501, 502, 503]);
+  assert.deepEqual(
+    first,
+    [1, 2, 3].map((index) =>
+      `rerun:${records[index].id}:run=${500 + index}:sent`
+    ),
+  );
+  const second = await rerunPass(snapshot, behind);
+  assert.deepEqual(expired.reruns, [501, 502, 503, 504]);
+  assert.deepEqual(second, [`rerun:${records[4].id}:run=504:sent`]);
 });
 
 Deno.test("ci re-run: run selection is once per exact head", () => {
-  assert.deepEqual(ciRerunRuns(null, HEAD), []);
-  assert.deepEqual(ciRerunRuns([], HEAD), []);
-  assert.deepEqual(ciRerunRuns([headRun()], HEAD), [RUN_ID]);
+  assert.deepEqual(ciRerunRuns(null, HEAD, T0), []);
+  assert.deepEqual(ciRerunRuns([], HEAD, T0), []);
+  assert.deepEqual(ciRerunRuns([headRun()], HEAD, T0), [RUN_ID]);
   assert.deepEqual(
-    ciRerunRuns([headRun(), headRun({ id: 7, conclusion: "timed_out" })], HEAD),
+    ciRerunRuns(
+      [headRun(), headRun({ id: 7, conclusion: "timed_out" })],
+      HEAD,
+      T0,
+    ),
     [RUN_ID, 7],
   );
-  assert.deepEqual(ciRerunRuns([headRun({ headSha: SHA2 })], HEAD), []);
+  assert.deepEqual(ciRerunRuns([headRun({ headSha: SHA2 })], HEAD, T0), []);
   assert.deepEqual(
-    ciRerunRuns([headRun(), headRun({ id: 7, runAttempt: 2 })], HEAD),
+    ciRerunRuns([headRun(), headRun({ id: 7, runAttempt: 2 })], HEAD, T0),
     [],
     "any re-run attempt on the head ends the path",
   );
   for (const conclusion of ["success", "cancelled", "skipped", null]) {
-    assert.deepEqual(ciRerunRuns([headRun({ conclusion })], HEAD), []);
+    assert.deepEqual(ciRerunRuns([headRun({ conclusion })], HEAD, T0), []);
   }
 });
 
@@ -675,6 +730,7 @@ async function settledFor(
   surface: HostedAutonomyGitHubV1,
   tip: string | null = BASE,
   closedIssues: Set<string> = new Set(),
+  now = T0,
 ): Promise<{ settled: Set<string>; listings: number }> {
   let listings = 0;
   const counted: HostedAutonomyGitHubV1 = {
@@ -689,7 +745,7 @@ async function settledFor(
   const deps = {
     state: undefined,
     githubFor: () => counted,
-    clock: { now: () => T0 },
+    clock: { now: () => now },
   } as unknown as HostedAutonomyDepsV1;
   const context = {
     deps,
@@ -809,6 +865,129 @@ Deno.test("ci re-run: a correction waits for the head's once-per-head re-run to 
   });
 });
 
+Deno.test("ci re-run: a head past GitHub's re-run window is settled and never re-run", async (t) => {
+  // GitHub records nothing for a refused re-run (the run stays at attempt 1),
+  // so without the window rule such a head stayed pending and was re-requested
+  // on every pass until the base moved. Its age is GitHub's own `created_at`.
+  const snapshot = blockedSnapshot([correctable()]);
+  const settled = (
+    runs: HostedAutonomyHeadRunV1[] | null,
+    tip: string | null = BASE,
+    now = T0,
+  ) => settledFor(snapshot, fakeSurface({ runs }).surface, tip, new Set(), now);
+  await t.step("an expired failed run settles the head", async () => {
+    const { settled: heads, listings } = await settled([aged(EXPIRED)]);
+    assert.deepEqual(heads, new Set([GATEWAY_HEAD]));
+    assert.equal(listings, 1);
+  });
+  await t.step(
+    "the launcher stops an hour inside GitHub's window",
+    async () => {
+      const inside = aged(GITHUB_RERUN_WINDOW_MS - RERUN_MARGIN_MS - 1);
+      const past = aged(GITHUB_RERUN_WINDOW_MS - RERUN_MARGIN_MS);
+      assert.deepEqual(ciRerunRuns([inside], HEAD, T0), [RUN_ID]);
+      assert.deepEqual(ciRerunRuns([past], HEAD, T0), []);
+      assert.deepEqual((await settled([inside])).settled, new Set());
+      assert.deepEqual(
+        (await settled([past])).settled,
+        new Set([GATEWAY_HEAD]),
+      );
+    },
+  );
+  await t.step("one expired failed run settles the whole head", async () => {
+    const runs = [headRun(), aged(EXPIRED, { id: 7, conclusion: "timed_out" })];
+    assert.deepEqual(ciRerunRuns(runs, HEAD, T0), []);
+    assert.deepEqual((await settled(runs)).settled, new Set([GATEWAY_HEAD]));
+  });
+  await t.step("an old run that did not fail changes nothing", async () => {
+    const runs = [aged(EXPIRED, { id: 7, conclusion: "success" }), headRun()];
+    assert.deepEqual(ciRerunRuns(runs, HEAD, T0), [RUN_ID]);
+    assert.deepEqual((await settled(runs)).settled, new Set());
+  });
+  await t.step("an unknown age or clock keeps today's behaviour", async () => {
+    const unknown = [headRun({ createdAt: null })];
+    assert.deepEqual(ciRerunRuns(unknown, HEAD, T0), [RUN_ID]);
+    assert.deepEqual((await settled(unknown)).settled, new Set());
+    assert.deepEqual(
+      await rerunPass(
+        blockedSnapshot(),
+        fakeSurface({ runs: unknown }).surface,
+      ),
+      [SENT],
+    );
+    for (const now of [NaN, Infinity, T0 + 0.5]) {
+      assert.deepEqual(ciRerunRuns([aged(EXPIRED)], HEAD, now), [RUN_ID]);
+      assert.deepEqual(
+        (await settled([aged(EXPIRED)], BASE, now)).settled,
+        new Set(),
+      );
+      const blind = fakeSurface({ runs: [aged(EXPIRED)] });
+      assert.deepEqual(
+        await rerunPass(blockedSnapshot(), blind.surface, new Set(), now),
+        [SENT.replace(":sent", ":refused")],
+      );
+      assert.deepEqual(blind.reruns, [RUN_ID]);
+    }
+  });
+  await t.step("every earlier guard still decides first", async () => {
+    const tipless = await settled([aged(EXPIRED)], null);
+    assert.deepEqual(tipless.settled, new Set(), "an unreadable tip waits");
+    assert.equal(tipless.listings, 0);
+    assert.deepEqual((await settled(null)).settled, new Set());
+    const throwing: HostedAutonomyGitHubV1 = {
+      ...fakeSurface({ runs: [aged(EXPIRED)] }).surface,
+      listHeadRuns: () => Promise.reject(new Error("offline")),
+    };
+    assert.deepEqual((await settledFor(snapshot, throwing)).settled, new Set());
+    const closed = await settledFor(
+      snapshot,
+      fakeSurface({ runs: [aged(EXPIRED)] }).surface,
+      BASE,
+      new Set([hostedIssueKey(GATEWAY, correctable().related.issueNumber!)]),
+    );
+    assert.deepEqual(closed.settled, new Set(), "a closed issue is skipped");
+    assert.equal(closed.listings, 0);
+    const spent = await settledFor(
+      blockedSnapshot([gatewayRecord("blocked")]),
+      fakeSurface({ runs: [aged(EXPIRED)] }).surface,
+    );
+    assert.deepEqual(spent.settled, new Set(), "no correction is possible");
+    assert.equal(spent.listings, 0);
+  });
+  await t.step("the re-run pass skips it before any other read", async () => {
+    const reads: string[] = [];
+    const { surface, reruns } = fakeSurface({ runs: [aged(EXPIRED)] });
+    const counted: HostedAutonomyGitHubV1 = {
+      ...surface,
+      readIssueOpen: (number) => {
+        reads.push("issue");
+        return surface.readIssueOpen(number);
+      },
+      readPull: (number, baseBranch) => {
+        reads.push("pull");
+        return surface.readPull(number, baseBranch);
+      },
+      readBaseTip: (branch) => {
+        reads.push("tip");
+        return surface.readBaseTip(branch);
+      },
+      hasAllChecksGreen: (sha) => {
+        reads.push("green");
+        return surface.hasAllChecksGreen(sha);
+      },
+      listHeadRuns: (head) => {
+        reads.push("runs");
+        return surface.listHeadRuns!(head);
+      },
+    };
+    for (let pass = 0; pass < 2; pass++) {
+      assert.deepEqual(await rerunPass(blockedSnapshot(), counted), []);
+    }
+    assert.deepEqual(reruns, [], "no request GitHub would refuse");
+    assert.deepEqual(reads, ["runs", "runs"]);
+  });
+});
+
 // ---- GitHub surface ---------------------------------------------------------
 
 Deno.test("ci re-run: the GitHub surface lists a head's runs completely and re-runs failed jobs", async () => {
@@ -826,12 +1005,15 @@ Deno.test("ci re-run: the GitHub surface lists a head's runs completely and re-r
   };
   const surface = () =>
     createHostedAutonomyGitHub("fixture-token", GATEWAY as never);
+  // GitHub's own wire format: whole seconds, UTC, `Z`.
+  const CREATED = new Date(T0 - 60_000).toISOString().replace(".000Z", "Z");
   const wire = (overrides: Record<string, unknown> = {}) => ({
     id: RUN_ID,
     head_sha: HEAD,
     status: "completed",
     conclusion: "failure",
     run_attempt: 1,
+    created_at: CREATED,
     ...overrides,
   });
   const page = (url: string) => Number(new URL(url).searchParams.get("page"));
@@ -876,6 +1058,43 @@ Deno.test("ci re-run: the GitHub surface lists a head's runs completely and re-r
       null,
       "an incomplete listing is unprovable",
     );
+    // The run's first-attempt creation time is its re-run window's start; a
+    // fraction of a second is kept. Anything else is an unknown age, which
+    // never settles a head and never nulls the listing.
+    install(() =>
+      jsonResponse({
+        total_count: 1,
+        workflow_runs: [wire({ created_at: "2026-10-16T05:28:16.250Z" })],
+      })
+    );
+    assert.deepEqual(await surface().listHeadRuns!(HEAD), [
+      headRun({ createdAt: Date.UTC(2026, 9, 16, 5, 28, 16, 250) }),
+    ]);
+    for (
+      const created of [
+        undefined,
+        null,
+        T0,
+        "1",
+        "2026-10-16",
+        "2026-10-16 05:28:16Z",
+        "2026-10-16T05:28:16+00:00",
+        "2026-13-16T05:28:16Z",
+        "not a date",
+      ]
+    ) {
+      install(() =>
+        jsonResponse({
+          total_count: 1,
+          workflow_runs: [wire({ created_at: created })],
+        })
+      );
+      assert.deepEqual(
+        await surface().listHeadRuns!(HEAD),
+        [headRun({ createdAt: null })],
+        String(created),
+      );
+    }
 
     // GitHub answers the re-run with 201 and an empty body: any 2xx is sent.
     calls.length = 0;

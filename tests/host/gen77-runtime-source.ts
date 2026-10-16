@@ -8,12 +8,19 @@
  * disposable directory under the repository root and imports the requested
  * modules from it, so R77's own fixtures and rigs run R77's own code. No
  * network, no checkout mutation. A checkout without the pinned commit reports
- * `gen77Available() === false` so callers mark the case ignored.
+ * `gen77Available() === false` so callers mark the case ignored. The same
+ * helpers exist for the installed generation-78 runtime (R78), the rollback
+ * target of generation 79: `gen78Available` and `loadGen78Modules`.
  */
-import { OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION } from "../../src/host/owner-install-runtime-pins.ts";
+import {
+  OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION,
+} from "../../src/host/owner-install-runtime-pins.ts";
 
 /** Installed generation-77 runtime revision (the rollback target of 78). */
 export const GEN77_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION;
+/** Installed generation-78 runtime revision (the rollback target of 79). */
+export const GEN78_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION;
 
 const ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname)
   .replace(/\/$/, "");
@@ -25,11 +32,10 @@ const GIT_ENV = {
   GIT_TERMINAL_PROMPT: "0",
 };
 
-/** True when the pinned generation-77 commit is in the local object store. */
-export async function gen77Available(): Promise<boolean> {
+async function revisionAvailable(revision: string): Promise<boolean> {
   try {
     const probe = await new Deno.Command("git", {
-      args: ["-C", ROOT, "cat-file", "-e", `${GEN77_RUNTIME}^{commit}`],
+      args: ["-C", ROOT, "cat-file", "-e", `${revision}^{commit}`],
       clearEnv: true,
       env: GIT_ENV,
       stdout: "null",
@@ -41,19 +47,49 @@ export async function gen77Available(): Promise<boolean> {
   }
 }
 
+/** True when the pinned generation-77 commit is in the local object store. */
+export function gen77Available(): Promise<boolean> {
+  return revisionAvailable(GEN77_RUNTIME);
+}
+
+/** True when the pinned generation-78 commit is in the local object store. */
+export function gen78Available(): Promise<boolean> {
+  return revisionAvailable(GEN78_RUNTIME);
+}
+
+interface LoadedRuntimeV1 {
+  modules: Record<string, unknown>[];
+  dispose(): Promise<void>;
+}
+
 /**
  * Import `paths` (repository-relative, e.g. `src/host/matrix-artifacts.ts` or
  * `tests/repair/ci-correction-rig.ts`) from the generation-77 tree. The
  * extracted tree stays until `dispose`, so the modules' own lazy imports and
  * the temporary rigs they create under their own root still resolve.
  */
-export async function loadGen77Modules(paths: readonly string[]): Promise<{
-  modules: Record<string, unknown>[];
-  dispose(): Promise<void>;
-}> {
+export function loadGen77Modules(
+  paths: readonly string[],
+): Promise<LoadedRuntimeV1> {
+  return loadRevisionModules(GEN77_RUNTIME, 77, paths);
+}
+
+/** `loadGen77Modules` for the generation-78 `src/` and `tests/` trees. */
+export function loadGen78Modules(
+  paths: readonly string[],
+): Promise<LoadedRuntimeV1> {
+  return loadRevisionModules(GEN78_RUNTIME, 78, paths);
+}
+
+async function loadRevisionModules(
+  revision: string,
+  generation: number,
+  paths: readonly string[],
+): Promise<LoadedRuntimeV1> {
+  const label = `generation-${generation}`;
   const dir = await Deno.makeTempDir({
     dir: ROOT,
-    prefix: "sentinel-gen77-runtime-",
+    prefix: `sentinel-gen${generation}-runtime-`,
   });
   const dispose = () => Deno.remove(dir, { recursive: true }).catch(() => {});
   try {
@@ -63,7 +99,7 @@ export async function loadGen77Modules(paths: readonly string[]): Promise<{
         ROOT,
         "archive",
         "--format=tar",
-        GEN77_RUNTIME,
+        revision,
         "src",
         "tests",
       ],
@@ -72,7 +108,7 @@ export async function loadGen77Modules(paths: readonly string[]): Promise<{
       stdout: "piped",
       stderr: "null",
     }).output();
-    if (!archive.success) throw new Error("generation-77 source unavailable");
+    if (!archive.success) throw new Error(`${label} source unavailable`);
     await Deno.writeFile(`${dir}/tree.tar`, archive.stdout);
     const extracted = await new Deno.Command("tar", {
       args: ["-xf", `${dir}/tree.tar`, "-C", dir],
@@ -81,7 +117,7 @@ export async function loadGen77Modules(paths: readonly string[]): Promise<{
       stdout: "null",
       stderr: "null",
     }).output();
-    if (!extracted.success) throw new Error("generation-77 source unreadable");
+    if (!extracted.success) throw new Error(`${label} source unreadable`);
     const modules: Record<string, unknown>[] = [];
     for (const path of paths) {
       modules.push(await import(new URL(`file://${dir}/${path}`).href));

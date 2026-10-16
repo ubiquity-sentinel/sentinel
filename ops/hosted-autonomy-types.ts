@@ -88,6 +88,9 @@ export interface HostedAutonomyHeadPullV1 {
 /**
  * One workflow run on an exact head, as the complete run listing reports it.
  * `runAttempt` is GitHub's own durable re-run counter for that run.
+ * `createdAt` is the run's first-attempt creation time (GitHub's `created_at`,
+ * epoch milliseconds), where GitHub's re-run window starts; null when GitHub
+ * did not report it as a strict UTC timestamp (an unknown age).
  */
 export interface HostedAutonomyHeadRunV1 {
   id: number;
@@ -95,6 +98,7 @@ export interface HostedAutonomyHeadRunV1 {
   status: string;
   conclusion: string | null;
   runAttempt: number;
+  createdAt: number | null;
 }
 
 export interface HostedAutonomyGitHubV1 {

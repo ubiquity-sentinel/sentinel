@@ -11,6 +11,12 @@
  * head that fails again stays parked until a CI-correction runtime may
  * correct it (`readCiRerunSettled`).
  *
+ * GitHub refuses a re-run more than 30 days after the run's first attempt and
+ * records nothing for the refusal (the run stays at attempt 1), so a head
+ * whose failed run is that old is never re-run and counts as settled at once:
+ * its age (GitHub's own `created_at`) is the stateless proof that the re-run
+ * can no longer act. An unknown age never settles a head.
+ *
  * The pass charges, refunds and decides nothing about the failure: it only
  * asks GitHub to repeat the repository's own deterministic check on the exact
  * reviewed head, at most `HOSTED_AUTONOMY_CI_RERUNS_PER_PASS` runs per pass.
@@ -31,29 +37,55 @@ import type { HostedAutonomyHeadRunV1 } from "./hosted-autonomy-types.ts";
 /** Bound on workflow runs one maintenance pass re-runs. */
 export const HOSTED_AUTONOMY_CI_RERUNS_PER_PASS = 3;
 
+/** GitHub refuses a re-run more than 30 days after the run's first attempt. */
+export const HOSTED_AUTONOMY_CI_RERUN_WINDOW_MS = 30 * 86_400_000;
+/**
+ * The launcher stops this far inside GitHub's window (clock skew and the time
+ * between passes), so it never spends a request GitHub is about to refuse.
+ */
+export const HOSTED_AUTONOMY_CI_RERUN_WINDOW_MARGIN_MS = 3_600_000;
+
 /** Run conclusions that can be a flake worth one more attempt. */
 const RERUNNABLE: readonly string[] = ["failure", "timed_out"];
 
 type WorkRow = RepairStateSnapshotV1["work"][number];
 
 /**
+ * True only when the run's known first-attempt creation time is at least the
+ * re-run window (less the margin) before `now`. An unknown age or an invalid
+ * clock is never expired.
+ */
+export function ciRerunExpired(
+  run: HostedAutonomyHeadRunV1,
+  now: number,
+): boolean {
+  return Number.isSafeInteger(now) && run.createdAt !== null &&
+    now - run.createdAt >=
+      HOSTED_AUTONOMY_CI_RERUN_WINDOW_MS -
+        HOSTED_AUTONOMY_CI_RERUN_WINDOW_MARGIN_MS;
+}
+
+/**
  * The runs to re-run on one exact head: every completed run that ended
  * `failure` or `timed_out`, and none at all once any run on the head is past
- * its first attempt (or the listing is unprovable).
+ * its first attempt (or the listing is unprovable), or once any of those
+ * failed runs is past GitHub's re-run window: the head is re-run whole or not
+ * at all, and GitHub would refuse that run.
  */
 export function ciRerunRuns(
   runs: readonly HostedAutonomyHeadRunV1[] | null,
   head: string,
+  now: number,
 ): number[] {
   if (runs === null) return [];
   const bound = runs.filter((run) => run.headSha === head);
   if (bound.some((run) => run.runAttempt > 1)) return [];
-  return bound
-    .filter((run) =>
-      run.status === "completed" && run.conclusion !== null &&
-      RERUNNABLE.includes(run.conclusion)
-    )
-    .map((run) => run.id);
+  const failed = bound.filter((run) =>
+    run.status === "completed" && run.conclusion !== null &&
+    RERUNNABLE.includes(run.conclusion)
+  );
+  if (failed.some((run) => ciRerunExpired(run, now))) return [];
+  return failed.map((run) => run.id);
 }
 
 /**
@@ -82,9 +114,10 @@ function rerunShape(
  * because this pass can no longer re-run them: the head is outside the re-run
  * shape (for example a legacy record without candidate state), its surface
  * cannot list or re-run runs, the base tip moved off the reviewed base, the
- * head's run listing shows a run past attempt 1 or nothing re-runnable, or it
- * holds more failed runs than one pass may re-run. An unreadable surface, base
- * tip or run listing is never settled: the correction waits for the flake.
+ * head's run listing shows a run past attempt 1 or nothing re-runnable (which
+ * includes a failed run past GitHub's re-run window), or it holds more failed
+ * runs than one pass may re-run. An unreadable surface, base tip or run
+ * listing is never settled: the correction waits for the flake.
  * `tips` holds the base tips the caller read, keyed by scope. Reads one run
  * listing per correction-eligible head whose tip is still its reviewed base.
  */
@@ -93,6 +126,7 @@ export async function readCiRerunSettled(
   tips: ReadonlyMap<string, string | null>,
 ): Promise<Set<string>> {
   const { snapshot, scopeFor, closedIssues } = context;
+  const now = context.deps.clock.now();
   const settled = new Set<string>();
   for (const record of snapshot.work) {
     const head = record.target.head;
@@ -131,7 +165,7 @@ export async function readCiRerunSettled(
       runs = null;
     }
     if (runs === null) continue;
-    const ids = ciRerunRuns(runs, head);
+    const ids = ciRerunRuns(runs, head, now);
     if (ids.length === 0 || ids.length > HOSTED_AUTONOMY_CI_RERUNS_PER_PASS) {
       settled.add(key);
     }
@@ -144,6 +178,7 @@ export async function runHostedCiRerunPass(
   context: HostedAutonomyPassContextV1,
 ): Promise<void> {
   const { snapshot, actions, scopeFor, readTip, readPull } = context;
+  const now = context.deps.clock.now();
   let budget = HOSTED_AUTONOMY_CI_RERUNS_PER_PASS;
   const tips = new Map<string, string | null>();
   for (const record of snapshot.work) {
@@ -165,9 +200,11 @@ export async function runHostedCiRerunPass(
     } catch {
       runs = null;
     }
-    const ids = ciRerunRuns(runs, head);
+    const ids = ciRerunRuns(runs, head, now);
     // A head is re-run whole or not at all: a partial re-run would end the
-    // once-per-head path with a failed run never repeated.
+    // once-per-head path with a failed run never repeated. A head GitHub would
+    // refuse (a failed run past its re-run window) has no ids, so it is
+    // skipped here, before any other read and before it spends the budget.
     if (ids.length === 0 || ids.length > budget) continue;
     let open: boolean | null;
     try {
