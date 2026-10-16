@@ -9,6 +9,7 @@ import {
   runActionsMatrixAggregateCycles,
 } from "../../src/host/matrix-actions.ts";
 import { runActionsRepairHost } from "../../src/host/actions.ts";
+import { MATRIX_ARTIFACT_RECOVERY_MAX_MS } from "../../src/host/matrix-artifact-port.ts";
 import { markBlocked } from "../../src/repair/transitions.ts";
 import { gitRun, type workRecord } from "../state/helpers.ts";
 import { rig } from "./matrix-actions-fixtures.ts";
@@ -18,7 +19,7 @@ import { createFreshMatrixArchives } from "./matrix-actions-archive-fixtures.ts"
 export async function freshMatrixArtifacts(
   noStart17 = false,
   nativeScopedOnly = false,
-  progressive: "none" | "settle" | "missing" | "single" = "none",
+  progressive: "none" | "settle" | "missing" | "single" | "short" = "none",
   historicalRuntimeIsolation = false,
 ) {
   const r = await rig(true, "ordinary", noStart17);
@@ -266,6 +267,9 @@ export async function freshMatrixArtifacts(
     if (progressive !== "none") {
       const fast = results[0]!;
       const slow = results[1]!;
+      // `short` is the single-scan contract again, with a consumer window
+      // shorter than one whole scan budget instead of none at all.
+      const single = progressive === "single" || progressive === "short";
       const fastName = "sentinel-matrix-cell-71-1-" + fast.cellId;
       const slowName = "sentinel-matrix-cell-71-1-" + slow.cellId;
       const observed: { fast: boolean; slow: boolean }[] = [];
@@ -282,15 +286,17 @@ export async function freshMatrixArtifacts(
       const allow = (row: Record<string, unknown>) => {
         const name = String(row["name"]);
         if (name === fastName) {
-          return progressive === "single" ||
+          return single ||
             (progressive === "settle" && listings >= 2);
         }
         if (name === slowName) return progressive === "settle" && listings >= 4;
         return true;
       };
-      const options: MatrixAggregateOptionsV1 = progressive === "single"
+      const options: MatrixAggregateOptionsV1 = single
         ? {
-          maxWaitMs: 0,
+          maxWaitMs: progressive === "short"
+            ? MATRIX_ARTIFACT_RECOVERY_MAX_MS - 1
+            : 0,
           pollWait: (ms) => {
             waits.push(ms);
             r.clock.advance(ms);
@@ -298,7 +304,9 @@ export async function freshMatrixArtifacts(
           },
         }
         : {
-          maxWaitMs: 180_000,
+          // Scans start at 0, 60 and 120 s: a later scan starts only with its
+          // whole scan budget still inside the window.
+          maxWaitMs: 120_000 + MATRIX_ARTIFACT_RECOVERY_MAX_MS,
           pollWait: async (ms) => {
             waits.push(ms);
             r.clock.advance(ms);
@@ -353,14 +361,16 @@ export async function freshMatrixArtifacts(
         allow,
       );
       assert.equal(result?.status, "ran");
-      if (progressive === "single") {
+      if (single) {
         // The documented maxWaitMs 0 contract is exactly one authenticated
-        // recovery, even though that recovery consumed the fast cell.
-        assert.deepEqual(waits, [], "maxWaitMs 0 never waits");
+        // recovery, even though that recovery consumed the fast cell. A window
+        // shorter than one whole scan budget is the same: a later scan that
+        // reached the window's end mid-download would refuse the whole run.
+        assert.deepEqual(waits, [], "a window this short never waits");
         assert.equal(
           listings,
           1,
-          "maxWaitMs 0 performs exactly one authenticated recovery",
+          "a window this short performs exactly one authenticated recovery",
         );
       } else {
         assert.deepEqual(waits, [60_000, 60_000]);
@@ -416,7 +426,7 @@ export async function freshMatrixArtifacts(
           "each ingested candidate re-armed one unavailable wait",
         );
         assert.equal(stalledOf(slow.taskId), 1);
-      } else if (progressive === "single") {
+      } else if (single) {
         assert.equal(
           stalledOf(fast.taskId),
           1,
@@ -457,7 +467,7 @@ export async function freshMatrixArtifacts(
           ),
           "each cell is settled exactly once by real ingestion",
         );
-      } else if (progressive === "single") {
+      } else if (single) {
         // One recovery consumed the fast cell; the slower live producer keeps
         // its exact charge and intent because the window had already closed.
         const fastRecord: ReturnType<typeof workRecord> | undefined = final

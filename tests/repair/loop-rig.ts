@@ -133,6 +133,8 @@ export async function makeRig(
      * local-scope delivery records are eligible and their consumer is real.
      */
     localScope?: boolean;
+    /** Run the cycle as a hosted (matrix) run does. */
+    externalImplementations?: boolean;
   } = {},
 ): Promise<RigV1> {
   const ctx = await makeCtx(prefix);
@@ -188,6 +190,9 @@ export async function makeRig(
       replay,
       model,
       budget,
+      ...(options.externalImplementations === undefined
+        ? {}
+        : { externalImplementations: options.externalImplementations }),
     }, { deadline: clock.now() + deadlineMs, stepLimit: 16 });
   // The actual production entrypoint: the hosted receipt capability is only
   // reachable through this path, exactly as the hosted Actions host wires it.

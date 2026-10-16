@@ -3,6 +3,11 @@ import type { ReviewObservationV1 } from "../contracts/ports.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { ciCorrectionShape } from "./ci-rejection.ts";
+import {
+  releaseRequestMatchesDelivery,
+  sameRepositoryIdentity,
+} from "./loop-records.ts";
 
 /**
  * A completed review receipt with unresolved P0/P1 findings bound to the
@@ -49,6 +54,62 @@ export function headRejectedByReview(
   return rejectedReceipt(snapshot, record) !== null;
 }
 
+/**
+ * A completed review that refused nothing binds this exact PR/head/base: the
+ * head was authorized as reviewed against the record's current base.
+ */
+export function headAcceptedByReview(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRecordV1,
+): boolean {
+  return snapshot.reviews.some((review) =>
+    sameRepositoryIdentity(review.repository, record.repository) &&
+    review.pullRequest.number === record.target.pr &&
+    review.pullRequest.head === record.target.head &&
+    review.pullRequest.base === record.target.base &&
+    review.outcome === "completed" && !hasBlockingFindings(review)
+  );
+}
+
+/**
+ * Snapshot-only shape of a reviewed head the delivery gate returned to `work`
+ * for a CI correction: an accepted, unreleased head on its reviewed base with
+ * a review round left. Nothing persisted names the CI failure (generation 76
+ * could not parse it), so this shape only makes the record ELIGIBLE: the
+ * correction itself starts only after the attribution is re-derived from live
+ * check runs (`confirmCiCorrection`), and anything else returns the head to
+ * the delivery gate that owns it.
+ */
+export function headAwaitsCiCorrection(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRecordV1,
+  /** `ciCorrectionRouteOpen(deps)`: a closed route awaits nothing. */
+  ciRouteOpen = true,
+): boolean {
+  return ciRouteOpen && record.nextStep === "work" &&
+    ciCorrectionShape(record) &&
+    !headRejectedByReview(snapshot, record) &&
+    headAcceptedByReview(snapshot, record) &&
+    !snapshot.releaseRequests.some((request) =>
+      releaseRequestMatchesDelivery(request, record)
+    );
+}
+
+/**
+ * The record's current head must be corrected, never re-published or
+ * re-reviewed: a completed review rejected it with an unresolved P0/P1, or it
+ * is a reviewed head awaiting its live-verified CI correction.
+ */
+export function headNeedsCorrection(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRecordV1,
+  /** `ciCorrectionRouteOpen(deps)`: closed, only a review rejection counts. */
+  ciRouteOpen = true,
+): boolean {
+  return headRejectedByReview(snapshot, record) ||
+    headAwaitsCiCorrection(snapshot, record, ciRouteOpen);
+}
+
 /** Bounded batch of the exact unresolved findings a correction must resolve. */
 export const MAX_CORRECTION_FINDINGS = 8;
 
@@ -61,15 +122,22 @@ export const MAX_CORRECTION_HISTORY_RECEIPTS = 3;
 export function correctionFindings(
   snapshot: RepairStateSnapshotV1,
   record: WorkRecordV1,
+  /** The live-verified CI finding of this exact head, never persisted. */
+  ciFinding: { severity: string; path: string | null; message: string } | null =
+    null,
 ): { severity: string; path: string | null; message: string }[] | null {
   const current = rejectedReceipt(snapshot, record);
-  if (current === null) return null;
-  // The candidate that rejected this attempt FIRST, then the unresolved
-  // findings of the most recent earlier rejections of the SAME pull request:
-  // one receipt is not enough evidence when the task has been refused several
-  // times for different cases of the same rule, which is exactly how a
-  // correction converges on the rule instead of the last reported case.
-  const history = snapshot.reviews
+  if (current === null && ciFinding === null) return null;
+  // The rejection of this exact candidate FIRST (its live CI failure, then its
+  // review), then the unresolved findings of the most recent earlier
+  // rejections of the SAME pull request: one receipt is not enough evidence
+  // when the task has been refused several times for different cases of the
+  // same rule, which is exactly how a correction converges on the rule
+  // instead of the last reported case. A CI correction of a head no review
+  // rejected carries no history: a later review ACCEPTED that head, which
+  // superseded every earlier rejection of the pull request, so only the live
+  // CI failure is the correction's to resolve.
+  const history = current === null ? [] : snapshot.reviews
     .filter((review) =>
       review.pullRequest.number === current.pullRequest.number &&
       review.outcome === "completed" &&
@@ -80,8 +148,8 @@ export function correctionFindings(
     .slice(0, MAX_CORRECTION_HISTORY_RECEIPTS);
   const seen = new Set<string>();
   const findings: { severity: string; path: string | null; message: string }[] =
-    [];
-  for (const review of [current, ...history]) {
+    ciFinding === null ? [] : [ciFinding];
+  for (const review of current === null ? [] : [current, ...history]) {
     for (const finding of review.findings) {
       if (finding.resolved) continue;
       const message = finding.message.slice(0, MAX_CORRECTION_FINDING_CHARS);

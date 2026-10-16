@@ -487,8 +487,11 @@ async function recoverProducerWithinBudget(
     // `missing`, so it must not fail the maintenance pass after that write.
     // "foreign", "binding_mismatch", and "absent" are expected when the owner
     // works in parallel (manual PRs, rebased branches); they are benign and
-    // must not fail maintenance. Unavailable repair settlement defers the
-    // same charged intent instead of becoming a proven integrity failure.
+    // must not fail maintenance. Unavailable repair settlement, or an
+    // unavailable observation the receipt needs (`deferred`, nothing
+    // consumed), defers the same charged intent instead of becoming a proven
+    // integrity failure.
+    const deferrals = ["state_error", "deferred"];
     const benignDispositions = [
       "ingested",
       "duplicate",
@@ -499,7 +502,7 @@ async function recoverProducerWithinBudget(
     ];
     const badEntries = report.entries.filter(
       (entry) =>
-        entry.disposition !== "state_error" &&
+        !deferrals.includes(entry.disposition) &&
         !benignDispositions.includes(entry.disposition),
     );
     if (
@@ -508,7 +511,7 @@ async function recoverProducerWithinBudget(
     ) {
       throw integrityFault("current matrix ingestion incomplete");
     }
-    if (report.entries.some((entry) => entry.disposition === "state_error")) {
+    if (report.entries.some((entry) => deferrals.includes(entry.disposition))) {
       // An earlier cell or target of this consumer may have written, through
       // whichever writer it holds: this deferral never counts as write-free.
       writes.attempted = true;

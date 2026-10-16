@@ -1,12 +1,7 @@
 /** Repair loop internals: cycle. */
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
-import {
-  createRunBounds,
-  DEFAULT_STEP_LIMIT,
-  MATRIX_ARTIFACT_DEFERRED,
-  MATRIX_IMPLEMENTATION_DEFERRED,
-} from "./loop-bounds.ts";
+import { createRunBounds, DEFAULT_STEP_LIMIT } from "./loop-bounds.ts";
 import { declaredOperationFits } from "./loop-eligibility.ts";
 import { pollIntake } from "./loop-intake.ts";
 import { bridgeLegacyLoss } from "./loop-legacy-loss.ts";
@@ -56,8 +51,6 @@ export async function runRepairCycle(
   // bounds are deferred so that lower-ranked deterministic work still runs;
   // the run ends in the existing typed "margin" outcome when nothing remains.
   const deferred = new Set<string>();
-  const matrixDeferred = new Set<string>();
-  let horizonDeferred = false;
 
   // One run-local attempt per task and legacy-loss phase: a phase is never
   // proved twice in the same run, even after a state reload.
@@ -292,14 +285,18 @@ export async function runRepairCycle(
       // This record cannot start under the current bounds; keep looking for
       // eligible deterministic work before giving up (never block it).
       deferred.add(id);
-      horizonDeferred = true;
       cannotFit = `next operation for ${id} cannot fit`;
     }
     if (selected === null) {
-      // Only matrix ownership can leave this deterministic continuation open.
-      // A horizon refusal anywhere in the run remains a real margin exit.
-      tracking.postDrainAllowed = !horizonDeferred &&
-        rank.ordered.every((id) => matrixDeferred.has(id));
+      // Every remaining record was deferred: matrix ownership, a model start
+      // past the horizon, a cooldown or a transient read. None of these stops
+      // deterministic work, which this loop keeps running for lower-ranked
+      // records up to the run deadline. The post-drain continuation is only
+      // that deterministic work for the reviews drained in this run (no model
+      // start or charge, the original deadline and step budget, a cooldown
+      // re-check and exact identity), so it stays open here; every other
+      // margin exit keeps it closed.
+      tracking.postDrainAllowed = true;
       return {
         status: "margin",
         detail: deferred.size > 0
@@ -313,10 +310,6 @@ export async function runRepairCycle(
     context.executionBaseline = null;
     if (result.kind === "deferred") {
       deferred.add(selected.id);
-      if (
-        result === MATRIX_IMPLEMENTATION_DEFERRED ||
-        result === MATRIX_ARTIFACT_DEFERRED
-      ) matrixDeferred.add(selected.id);
       continue;
     }
     if (result.kind === "state_error") {

@@ -20,35 +20,50 @@ import {
 } from "./transitions.ts";
 
 /**
- * The exact previously published candidate head for one record, or null.
+ * One publication observation for the exact previously published candidate
+ * head: verified (the head, or null when nothing was published at the prior
+ * head) or unavailable (a cooldown or a failed ref read proved nothing).
+ */
+export type PublishedHeadObservationV1 =
+  | { kind: "verified"; head: GitSha | null }
+  | { kind: "unavailable" };
+
+/**
+ * The exact previously published candidate head for one record.
  *
  * Existing V1 candidate state carries the verified value. A legacy record has
  * no such value: the exact prior target head counts as published ONLY after
  * the actual owned-branch ref was observed at that exact SHA. An unavailable
- * read never becomes publication proof.
+ * read never becomes publication proof, and never becomes proof of absence
+ * either: it stays unavailable so the caller does not persist it as a
+ * verified null that a recovered read of the legitimate predecessor head
+ * would contradict.
  */
 export async function verifiedPublishedHead(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
-): Promise<GitSha | null> {
+): Promise<PublishedHeadObservationV1> {
   const existing = record.target.candidateState;
-  if (existing !== undefined) return existing.publishedHead;
+  if (existing !== undefined) {
+    return { kind: "verified", head: existing.publishedHead };
+  }
   const priorHead = record.target.head;
-  if (priorHead === null) return null;
+  if (priorHead === null) return { kind: "verified", head: null };
   const cooling = await checkGithubCooldown(
     deps,
     record.repository,
     context.bounds,
   );
-  if (cooling.kind !== "ok") return null;
+  if (cooling.kind !== "ok") return { kind: "unavailable" };
   const read = await deps.github.readRef(
     `refs/heads/${candidateBranch(record.id)}`,
   );
-  if (!read.ok || read.value === null || read.value.sha !== priorHead) {
-    return null;
+  if (!read.ok) return { kind: "unavailable" };
+  if (read.value === null || read.value.sha !== priorHead) {
+    return { kind: "verified", head: null };
   }
-  return priorHead;
+  return { kind: "verified", head: priorHead };
 }
 
 /**

@@ -39,6 +39,8 @@ export type MatrixIngestDispositionV1 =
   | "binding_mismatch"
   | "receipt_rejected"
   | "candidate_unavailable"
+  /** Consumption needs an unavailable observation; nothing was consumed. */
+  | "deferred"
   | "state_error";
 
 export interface MatrixIngestEntryV1 {
@@ -374,6 +376,16 @@ export async function ingestMatrixResults(
         entries.push({
           cellId: cell.cellId,
           disposition: "state_error",
+          detail: step.detail,
+        });
+        continue;
+      }
+      // The receipt was not consumed: the reservation and the implementation
+      // intent stay charged and bound for a later scan.
+      if (step.kind === "deferred") {
+        entries.push({
+          cellId: cell.cellId,
+          disposition: "deferred",
           detail: step.detail,
         });
         continue;

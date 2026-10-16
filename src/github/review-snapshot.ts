@@ -371,7 +371,14 @@ export class GitReviewSnapshot extends GitSnapshotCapture {
         for (const blob of listed.blobs) candidateBlobs.add(blob);
         continue;
       }
-      for (const parent of parents) {
+      // A commit with the trusted base as a parent is completely described by
+      // its base edge: every entry missing from that edge IS the trusted base
+      // entry. Its other edges (H1 -> H2 of a base refresh) only replay trusted
+      // base history, which grows with every base movement and must never make
+      // a refresh structurally over-bound; any other parent is trusted history
+      // (base or `publishedHead`) or newly exposed and inspected on its own.
+      const edgeParents = parents.includes(base) ? [base] : parents;
+      for (const parent of edgeParents) {
         const edge = await readTracked(
           [
             "diff",

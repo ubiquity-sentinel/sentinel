@@ -57,12 +57,21 @@ export function isProviderThrottledReceiptV1(
     receipt.actual.observedTerminalStatus !== "failed" ||
     receipt.error === LOOP_STOP_MARKER
   ) return false;
-  if (isRateLimitMessage(receipt.error)) return true;
-  if (request === undefined) return false;
-  const diagnostic = readModelBoundaryDiagnostic(receipt, request);
-  return diagnostic !== null && diagnostic.interruptCause === "none" &&
-    (diagnostic.httpStatusCode === 429 ||
-      diagnostic.errorCode === "model_rate_limit_exceeded");
+  const diagnostic = request === undefined
+    ? null
+    : readModelBoundaryDiagnostic(receipt, request);
+  // A definite structured HTTP status is authoritative over the prose: a
+  // message that merely mentions rate limiting never reclassifies it.
+  if (diagnostic !== null && diagnostic.httpStatusCode !== null) {
+    return diagnostic.interruptCause === "none" &&
+      (diagnostic.httpStatusCode === 429 ||
+        diagnostic.errorCode === "model_rate_limit_exceeded");
+  }
+  if (
+    diagnostic !== null && diagnostic.interruptCause === "none" &&
+    diagnostic.errorCode === "model_rate_limit_exceeded"
+  ) return true;
+  return isRateLimitMessage(receipt.error);
 }
 
 /** {@link isProviderThrottledReceiptV1} over a port result. */
@@ -147,6 +156,30 @@ export interface RateLimitRetryInputV1 {
     model: string,
     windowMs: number,
   ): Promise<PortResultV1<ModelRunReceiptV1>>;
+}
+
+/**
+ * The window of the single immediate failover attempt after a throttled
+ * primary: what remains of the session budget, never more than the request's
+ * bound, or null when less than the minimum useful window (the retry minimum,
+ * or half of a shorter bound) remains. The failover is then not started, so
+ * the admission's run-deadline fit holds.
+ */
+export function failoverWindowMsV1(
+  bound: number,
+  budgetEndsAt: number,
+  now: number,
+): number | null {
+  if (
+    !Number.isSafeInteger(bound) || bound <= 0 ||
+    !Number.isFinite(budgetEndsAt) || !Number.isFinite(now)
+  ) return null;
+  const windowMs = Math.min(bound, budgetEndsAt - now);
+  const minWindowMs = Math.min(
+    RATE_LIMIT_RETRY_MIN_WINDOW_MS,
+    Math.floor(bound / 2),
+  );
+  return windowMs > 0 && windowMs >= minWindowMs ? Math.floor(windowMs) : null;
 }
 
 /**

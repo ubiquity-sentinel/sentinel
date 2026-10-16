@@ -130,7 +130,7 @@ async function launchHostedRuntime(
     home: childHome,
     tmp: childTmp,
     denoDir: childDenoDir,
-  });
+  }, startedAt);
   // Streaming is attached only here, after the exact execution identity has
   // been verified, and only to the actual child command: the bounded Git
   // identity reads above never see a sink.

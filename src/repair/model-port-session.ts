@@ -20,6 +20,7 @@ import {
 import { buildPrompt } from "./model-port-prompt.ts";
 import { awaitSettlement } from "./model-port-settlement.ts";
 import {
+  failoverWindowMsV1,
   isProviderThrottledResultV1,
   retryRateLimitedV1,
   sessionBudgetAnchorV1,
@@ -213,6 +214,14 @@ export class CodexImplementationPort implements ImplementationPort {
       failoverVerifier === null ||
       !isProviderThrottledResultV1(primary, request)
     ) return primary;
+    // The failover runs in what remains of the session budget, never a fresh
+    // full bound: a primary that ran long before its 429 leaves less.
+    const failoverWindowMs = failoverWindowMsV1(
+      request.maxDurationMs,
+      budgetEndsAt,
+      clock.now(),
+    );
+    if (failoverWindowMs === null) return primary;
     console.error(
       `[sentinel] model ${this.modelId} rate limited (429); failing over ` +
         `to ${this.failoverModelId} with max reasoning`,
@@ -222,6 +231,7 @@ export class CodexImplementationPort implements ImplementationPort {
       failoverRequest,
       this.failoverModelId,
       failoverVerifier,
+      failoverWindowMs,
     );
     if (!isProviderThrottledResultV1(failover, request)) return failover;
     // Both throttled: bounded backoff in this admission and session budget,

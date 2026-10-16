@@ -4,7 +4,10 @@ import type {
 } from "../src/contracts/ports.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
-import { HOSTED_RUNTIME_ID } from "../src/contracts/hosted-supervisor.ts";
+import {
+  HOSTED_RUNTIME_ID,
+  type HostedRuntimeRecordV1,
+} from "../src/contracts/hosted-supervisor.ts";
 import { parseReleaseStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
@@ -24,6 +27,11 @@ import {
   candidateRefRevalidation,
   type CandidateRefRevalidationV1,
 } from "./hosted-autonomy-candidate-refs.ts";
+import {
+  applyBaseRefreshReadmissions,
+  planBaseRefreshReadmissions,
+  verifyBaseRefreshReadmissions,
+} from "./hosted-autonomy-base-refresh-retries.ts";
 
 /** Read-only source facts shared by bookkeeping and the later retry grant. */
 export async function readHostedClosedIssues(
@@ -160,10 +168,12 @@ export async function runHostedRetryPass(
   // Maintenance runs from the protected launcher, which need not be the
   // installed runtime. Only the authenticated release pointer supplies it.
   let runtimeSha: GitSha | null = null;
+  let installedRuntime: HostedRuntimeRecordV1 | null = null;
   try {
-    runtimeSha = parseReleaseStateSnapshotV1(context.releaseSnapshot)
-      .hostedRuntimes.find((runtime) => runtime.id === HOSTED_RUNTIME_ID)
-      ?.activeRevision ?? null;
+    installedRuntime = parseReleaseStateSnapshotV1(context.releaseSnapshot)
+      .hostedRuntimes.find((runtime) => runtime.id === HOSTED_RUNTIME_ID) ??
+      null;
+    runtimeSha = installedRuntime?.activeRevision ?? null;
   } catch {
     // Invalid/missing runtime custody never falls back to checkout or origin.
   }
@@ -199,6 +209,9 @@ export async function runHostedRetryPass(
     (denial) => {
       actions.push(`retry:${denial.id}:denied:${denial.reason}`);
     },
+    // The same authenticated record carries the healthy proof the CI
+    // re-admission requires; nothing else can activate that rule.
+    { ciRuntime: installedRuntime },
   );
   const plans: RetryPlanV1[] = [];
   for (const plan of planned) {
@@ -226,14 +239,36 @@ export async function runHostedRetryPass(
       actions.push(`retry:${plan.id}:skipped:pr_not_open`);
     }
   }
-  if (plans.length > 0) {
+  // The base-refresh credential-expiry block has its own exact rule (see
+  // hosted-autonomy-base-refresh-retries.ts): local gates first, then the
+  // owned open PR on the exact branch and the branch's published head are
+  // verified through each record's OWN repository surface. Its blocker
+  // messages match no prefix above, so the two sets are disjoint and share
+  // this one write.
+  const readmissions = await verifyBaseRefreshReadmissions(
+    planBaseRefreshReadmissions(
+      snapshot,
+      runtimeSha,
+      closedIssues,
+      (denial) => {
+        actions.push(`retry:${denial.id}:denied:${denial.reason}`);
+      },
+    ),
+    scopeFor,
+    actions,
+  );
+  if (plans.length > 0 || readmissions.length > 0) {
     const now = deps.clock.now();
     if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
       return skipped("clock_invalid", observedHead, actions);
     }
     let next: RepairStateSnapshotV1;
     try {
-      next = applyHostedRetries(snapshot, observedHead as GitSha, plans, now);
+      next = applyBaseRefreshReadmissions(
+        applyHostedRetries(snapshot, observedHead as GitSha, plans, now),
+        readmissions,
+        now,
+      );
     } catch {
       return skipped("snapshot_invalid", observedHead, actions);
     }
@@ -265,6 +300,9 @@ export async function runHostedRetryPass(
     observedHead = readback.value.head;
     for (const plan of plans) {
       actions.push(`retry:${plan.id}:grant=${plan.grant}:${plan.detail}`);
+    }
+    for (const readmission of readmissions) {
+      actions.push(`retry:${readmission.id}:readmit:${readmission.detail}`);
     }
     return {
       kind: "hosted_autonomy",

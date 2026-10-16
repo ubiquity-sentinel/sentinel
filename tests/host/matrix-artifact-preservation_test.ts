@@ -6,6 +6,7 @@ import { matrixDigestV1 } from "../../src/contracts/matrix.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { fetchHttpTransport } from "../../src/github/http.ts";
 import { candidatePreservationRef } from "../../src/repair/keys.ts";
+import { ciCorrectionFinding } from "../../src/repair/ci-rejection.ts";
 import {
   gitRun,
   REPO,
@@ -294,6 +295,110 @@ Deno.test("matrix artifacts: review correction checkout binds prior candidate be
         parseRepairStateSnapshotV1(rig.repair);
         const recovered = await rig.transport.recover(rig.input);
         assert.equal(recovered[0].results[0].bundle!.head, SHA3);
+      },
+    );
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
+
+Deno.test("matrix artifacts: a live-verified CI correction binds the checkout to the reviewed head", async (t) => {
+  const rig = await fixture();
+  // Re-bind the trusted planner's request (and every digest/marker/archive
+  // over it) to the given correction findings.
+  const bind = async (
+    reviewFindings: {
+      severity: string;
+      path: string | null;
+      message: string;
+    }[],
+  ) => {
+    rig.cell.request.checkoutBase = SHA2;
+    rig.cell.request.reviewFindings = reviewFindings;
+    rig.cell.requestDigest = await matrixDigestV1(rig.cell.request);
+    rig.result.requestDigest = rig.cell.requestDigest;
+    rig.result.bundle!.head = SHA3;
+    rig.result.receipt!.candidate!.head = SHA3;
+    rig.plannerMarker.planDigest = await matrixDigestV1(rig.plan);
+    rig.logs.set(401, ISO + " " + JSON.stringify(rig.plannerMarker) + "\n");
+    rig.cellMarker.resultDigest = await matrixDigestV1(rig.result);
+    rig.logs.set(402, ISO + " " + JSON.stringify(rig.cellMarker) + "\n");
+    await rig.setArchive(
+      501,
+      rig.planName,
+      await zip([{ name: "plan.json", content: bytes(rig.plan) }]),
+    );
+    await rig.setArchive(
+      502,
+      rig.cellName,
+      await zip([
+        { name: "result.json", content: bytes(rig.result) },
+        { name: rig.result.bundle!.file, content: rig.bundle },
+      ]),
+    );
+  };
+  try {
+    rig.repair.work[0].target.head = SHA2;
+    rig.repair.work[0].target.pr = 12;
+    rig.repair.work[0].createdAt = T0 - 10_000;
+    // The head passed review against its base but broke a check that passed
+    // there: no rejecting receipt exists and NO CI evidence is persisted. The
+    // trusted planner re-derived the attribution from live check runs and
+    // carried it only in its own digest-bound request.
+    const accepted = reviewReceipt("accepted-review", {
+      pullRequest: { number: 12, head: SHA2, base: SHA1 },
+      outcome: "completed",
+      observedReviewer: "chatgpt-codex-connector[bot]",
+      resultId: "accepted-result",
+      summary: "accepted",
+      findings: [],
+      unresolvedSeverities: [],
+      submittedAt: T0 - 2_000,
+      completedAt: T0 - 1_000,
+      observedAt: T0 - 500,
+    });
+    rig.repair.reviews.push(accepted);
+    await bind([
+      ciCorrectionFinding(SHA1, [{
+        name: "validate",
+        status: "completed",
+        conclusion: "failure",
+        head: SHA2,
+        startedAt: T0,
+        completedAt: T0 + 1,
+      }]),
+    ]);
+    parseRepairStateSnapshotV1(rig.repair);
+    assert.deepEqual(
+      Object.keys(rig.repair.work[0].target).sort(),
+      ["base", "branch", "checkpoint", "head", "pr"],
+      "the generation-76 target shape",
+    );
+    const first = await rig.transport.recover(rig.input);
+    assert.equal(first[0].results[0].bundle!.head, SHA3);
+    await t.step("an accepted review of another base refuses", async () => {
+      rig.repair.reviews[rig.repair.reviews.length - 1] = {
+        ...accepted,
+        pullRequest: { ...accepted.pullRequest, base: SHA3 },
+      };
+      parseRepairStateSnapshotV1(rig.repair);
+      await assert.rejects(() => rig.transport.recover(rig.input));
+    });
+    await t.step("no accepted review of the head refuses", async () => {
+      rig.repair.reviews.pop();
+      parseRepairStateSnapshotV1(rig.repair);
+      await assert.rejects(() => rig.transport.recover(rig.input));
+      rig.repair.reviews.push(accepted);
+    });
+    await t.step(
+      "an ordinary finding on an accepted head refuses",
+      async () => {
+        await bind([{
+          severity: "P1",
+          path: null,
+          message: "Required CI checks failed on this candidate: validate",
+        }]);
+        await assert.rejects(() => rig.transport.recover(rig.input));
       },
     );
   } finally {

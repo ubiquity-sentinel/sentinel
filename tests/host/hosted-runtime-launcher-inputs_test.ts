@@ -9,6 +9,7 @@ import type { HostedRuntimeJobV1 } from "../../src/host/hosted-runtime-identity.
 import {
   HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS,
   readHostedLauncherInputs,
+  readJobScopedLauncherEnv,
 } from "../../src/host/hosted-runtime-main.ts";
 
 const HERE = new URL(import.meta.url);
@@ -19,11 +20,18 @@ const ROOT = decodeURIComponent(HERE.pathname).replace(
 );
 
 const LAUNCHER_JOBS = ["matrix_plan", "matrix_cell", "repair"] as const;
-/** The one job-scoped launcher input, read only for the planning job. */
+/**
+ * Job-scoped launcher inputs: each is read only for the one job whose step
+ * grants it (the planner's output file; the repair job's App-token mint bound).
+ */
 const JOB_INPUTS: Readonly<Record<string, readonly string[]>> = {
   matrix_plan: ["GITHUB_OUTPUT"],
+  repair: ["SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE"],
 };
+const MINT_BOUND = "SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE";
 const DIRS = { home: "/h", tmp: "/t", denoDir: "/d" };
+/** The launcher's own clock when it builds the child environment. */
+const NOW = 1_800_000_000_000;
 const IDENTITY_KEYS = [
   "GITHUB_RUN_ID",
   "GITHUB_RUN_ATTEMPT",
@@ -52,13 +60,13 @@ Deno.test("hosted launcher: the workflow's cooldown switch reaches the child", (
     SENTINEL_COOLDOWN_MODE: "off",
   };
   const inputs = readHostedLauncherInputs((key) => host[key]);
-  const child = buildChildEnvironment(inputs, identity("repair"), DIRS);
+  const child = buildChildEnvironment(inputs, identity("repair"), DIRS, NOW);
   assert.equal(child.SENTINEL_COOLDOWN_MODE, "off");
   // An unset switch stays absent, so the child keeps its enforcing default.
   const unset = readHostedLauncherInputs((key) =>
     key === "SENTINEL_COOLDOWN_MODE" ? undefined : host[key]
   );
-  const enforced = buildChildEnvironment(unset, identity("repair"), DIRS);
+  const enforced = buildChildEnvironment(unset, identity("repair"), DIRS, NOW);
   assert.equal(Object.hasOwn(enforced, "SENTINEL_COOLDOWN_MODE"), false);
 });
 
@@ -72,14 +80,46 @@ Deno.test("hosted launcher: every host key the child builder reads is a launcher
       get(_target, key) {
         if (typeof key !== "string") return undefined;
         consulted.add(key);
+        // The mint bound is an epoch instant the builder validates; any
+        // other value would refuse the launch instead of revealing a read.
+        if (key === MINT_BOUND) return String(NOW - 60_000);
         return `value-${key}`;
       },
     });
-    const child = buildChildEnvironment(host, identity(job), DIRS);
+    const child = buildChildEnvironment(host, identity(job), DIRS, NOW);
     assert.equal(child.SENTINEL_COOLDOWN_MODE, "value-SENTINEL_COOLDOWN_MODE");
     const allowed = new Set([...read, ...(JOB_INPUTS[job] ?? [])]);
     for (const key of consulted) {
       assert.ok(allowed.has(key), `${job}: the launcher must read ${key}`);
+    }
+    // The repair child really consumed the bound: it receives the derived
+    // window, and no other job consults or forwards it.
+    assert.equal(consulted.has(MINT_BOUND), job === "repair", job);
+    assert.equal(
+      Object.hasOwn(child, "SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER"),
+      job === "repair",
+      job,
+    );
+  }
+});
+
+Deno.test("hosted launcher: each job reads exactly its own job-scoped inputs", () => {
+  for (const job of LAUNCHER_JOBS) {
+    const asked: string[] = [];
+    const scoped = readJobScopedLauncherEnv(job, (key) => {
+      asked.push(key);
+      return `value-${key}`;
+    });
+    assert.deepEqual(asked.sort(), [...(JOB_INPUTS[job] ?? [])].sort(), job);
+    assert.deepEqual(Object.keys(scoped).sort(), asked, job);
+    // A job-scoped input is never also a fixed input every job reads.
+    for (const key of asked) {
+      assert.ok(
+        !(HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS as readonly string[]).includes(
+          key,
+        ),
+        key,
+      );
     }
   }
 });
@@ -95,7 +135,7 @@ Deno.test("hosted launcher: the entrypoint reads its inputs only through the nam
   assert.equal(
     reads.length,
     2,
-    "only the list reader and the matrix_plan GITHUB_OUTPUT read touch env",
+    "only the list reader and the job-scoped input reader touch env",
   );
 });
 

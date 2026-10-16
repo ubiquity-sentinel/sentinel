@@ -3,6 +3,7 @@ import {
   repairConfigs,
   REPO,
   SHA1,
+  SHA2,
   SHA3,
   T0,
 } from "./helpers.ts";
@@ -28,6 +29,11 @@ import { GitHubCodexReviewTransport } from "../../src/github/codex-review-transp
 import type { ReviewDrainReportV1 } from "../../src/contracts/ports.ts";
 import { runRepairEntrypoint } from "../../src/main.ts";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
+import {
+  assertGen76Parses,
+  assertGen76Shape,
+  gen76Available,
+} from "../state/gen76-contracts.ts";
 
 export async function postDrainTaskScenario(
   mode:
@@ -47,6 +53,7 @@ export async function postDrainTaskScenario(
     | "matrix-horizon"
     | "matrix-deadline"
     | "matrix-step-limit"
+    | "unbound-intent"
     | "lost-merge" = "expired",
 ): Promise<void> {
   const head = SHA3;
@@ -176,7 +183,65 @@ export async function postDrainTaskScenario(
         pr: null,
       },
     });
-    const seededWork = matrixOwned
+    // Live shape (ai.ubq.fi 647/604): an ambiguous review submission whose
+    // attempt never bound a journal is deferred by every cycle, so the cycle
+    // ends in "margin" with a deferral that is neither matrix nor horizon.
+    const stuckBranch = "sentinel/repair/issue-4";
+    const stuckKey = `review:8:${SHA2}:attempt-2`;
+    const stuckCharge = reservation("stuck-review-attempt-2", {
+      taskId: "issue-4",
+      attempt: 2,
+      head: SHA2,
+      purpose: "review_request",
+      outcome: "ambiguous",
+      createdAt: T0 - 46 * 60_000,
+      settledAt: T0 - 45 * 60_000,
+      proofRef: null,
+    });
+    const stuckWork = workRecord("issue-4", {
+      source: { kind: "issue", id: "4", revision: SHA1 },
+      related: { incidentId: null, issueNumber: 4 },
+      target: {
+        base: SHA1,
+        branch: stuckBranch,
+        checkpoint: null,
+        head: SHA2,
+        pr: 8,
+      },
+      nextStep: "review",
+      wait: {
+        reason: "review_pending",
+        since: T0 - 60 * 60_000,
+        until: T0 - 45 * 60_000,
+      },
+      intent: {
+        kind: "review_request",
+        key: stuckKey,
+        startedAt: T0 - 45 * 60_000,
+        branch: stuckBranch,
+        expectedHead: SHA2,
+        observedBase: SHA1,
+        pr: 8,
+        requestId: stuckCharge.id,
+        resultId: null,
+      },
+      counters: { attempts: 1, retries: 0, reviewRounds: 1 },
+      createdAt: T0 - 60 * 60_000,
+      updatedAt: T0 - 45 * 60_000,
+    });
+    if (mode === "unbound-intent") {
+      rig.github.candidatePullRequests.set(8, {
+        ...rig.github.candidatePullRequests.get(7)!,
+        number: 8,
+        title: "repair issue 4",
+        body: "Resolves #4",
+        head: SHA2,
+        headRef: stuckBranch,
+      });
+    }
+    const seededWork = mode === "unbound-intent"
+      ? [work, stuckWork]
+      : matrixOwned
       ? mode === "matrix-fresh"
         ? [work, freshMatrixWork]
         : mode === "matrix-horizon"
@@ -187,7 +252,9 @@ export async function postDrainTaskScenario(
       : collision
       ? [foreign, work]
       : [work];
-    const charges = matrixOwned && mode !== "matrix-fresh"
+    const charges = mode === "unbound-intent"
+      ? [charge, stuckCharge]
+      : matrixOwned && mode !== "matrix-fresh"
       ? [matrixCharge, charge]
       : mode === "foreign-only"
       ? [foreignCharge]
@@ -342,7 +409,7 @@ export async function postDrainTaskScenario(
       if (matrixOwned) {
         assert.equal(
           rig.github.calls.filter((call) => call === "merge").length,
-          mode === "matrix-deferred" || mode === "matrix-fresh" ? 1 : 0,
+          mode === "matrix-deadline" || mode === "matrix-step-limit" ? 0 : 1,
           `completed drained review must advance only within the original bounds: ${
             JSON.stringify(outcome)
           }`,
@@ -378,8 +445,7 @@ export async function postDrainTaskScenario(
       }
       assert.equal(
         outcome.status,
-        mode === "deadline" || mode === "matrix-deadline" ||
-          mode === "matrix-horizon"
+        mode === "deadline" || mode === "matrix-deadline"
           ? "margin"
           : mode === "matrix-step-limit"
           ? "step_limit"
@@ -393,6 +459,9 @@ export async function postDrainTaskScenario(
     const positive = mode === "expired" || mode === "future" ||
       mode === "lost-merge" || mode === "foreign-first" ||
       mode === "matrix-deferred" || mode === "matrix-fresh" ||
+      // A horizon or a non-matrix deferral of OTHER work ends the cycle in
+      // "margin" while the drained review still has deterministic time left.
+      mode === "matrix-horizon" || mode === "unbound-intent" ||
       // Drain failure after a successful cycle is non-fatal: the cycle
       // completes and delivers exactly like a positive run; only the drain
       // report carries the fault.
@@ -416,6 +485,30 @@ export async function postDrainTaskScenario(
     }
     assert.deepEqual(state.reservations, charges);
     assert.equal(state.work[0].target.head, head);
+    if (mode === "matrix-horizon") {
+      assert.deepEqual(
+        state.work.find((record) => record.id === freshMatrixWork.id),
+        freshMatrixWork,
+        "a horizon-deferred fresh record is never started or rewritten",
+      );
+    }
+    if (mode === "matrix-horizon" || mode === "unbound-intent") {
+      // Every post-drain write is an existing transition the generation-76
+      // rollback runtime still parses.
+      assertGen76Shape(state);
+      if (await gen76Available()) await assertGen76Parses(state);
+    }
+    if (mode === "unbound-intent") {
+      assert.ok(
+        rig.github.observedReviewKeys.includes(stuckKey),
+        "the cycle visited and deferred the unbound review intent",
+      );
+      assert.deepEqual(
+        state.work.find((record) => record.id === stuckWork.id),
+        stuckWork,
+        "the post-drain continuation never touches another record",
+      );
+    }
     assert.equal(
       rig.github.calls.filter((call) => call === "merge").length,
       positive ? 1 : 0,

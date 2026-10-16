@@ -106,6 +106,15 @@ export const MATRIX_ARTIFACT_DEFERRED: StepResultV1 = {
 };
 
 /**
+ * A hosted ingest of a legacy record's candidate whose predecessor observation
+ * was unavailable: the receipt is not consumed (see `handleModelReceipt`).
+ */
+export const MATRIX_PREDECESSOR_DEFERRED: StepResultV1 = {
+  kind: "deferred",
+  detail: "predecessor publication observation unavailable; receipt kept",
+};
+
+/**
  * Effective run bounds for one trusted run. The matrix planner and the repair
  * cycle share this exact construction so a planned cell can never run under
  * looser bounds than the run that admitted it.

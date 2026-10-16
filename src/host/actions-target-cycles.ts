@@ -23,6 +23,7 @@ import type { MatrixRunIdentityV1 } from "../contracts/matrix.ts";
 import type { MatrixArtifactTransportV1 } from "./matrix-artifact-port.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
 import { runRepairEntrypoint } from "../main.ts";
+import { OPERATION_MARGIN_MS } from "../repair/loop-bounds.ts";
 import type { ActionsCiApprovalSummaryV1 } from "./actions-ci.ts";
 import type { TargetSlugV1 } from "./targets.ts";
 import type { ModelRouteV1 } from "./model-route.ts";
@@ -280,6 +281,20 @@ export async function runActionsTargetCycles(
       }
       const slug = `${config.repository.owner}/${config.repository.name}`;
       if (input.prepareTarget !== undefined) {
+        // An earlier cycle's mandatory review drain may run up to the
+        // deadline. A later target's preparation (an authenticated clone or
+        // fetch, each bounded only by its own Git timeout) is not begun
+        // inside the final operation margin, the same margin in which every
+        // cycle stops planning GitHub work, so it never runs into the end of
+        // the run's App-token window. The first addressed target keeps the
+        // existing rule, so a pass still reports an outcome exactly as before.
+        if (
+          addressed.length > 0 &&
+          input.deadline - input.clock.now() < OPERATION_MARGIN_MS
+        ) {
+          skipFrom(index);
+          break;
+        }
         try {
           await input.prepareTarget(config);
         } catch (error) {
@@ -339,12 +354,21 @@ export async function runActionsTargetCycles(
 
 /**
  * The ONE absolute deadline for one child run: the earliest origin this child
- * can observe for itself plus the unchanged 110-minute budget. It is the only
- * place that arithmetic exists, so no cycle can ever receive a deadline
- * anchored anywhere else.
+ * can observe for itself plus the unchanged 110-minute budget, never later than
+ * the instant before which the run's one App token is certainly valid when the
+ * trusted launcher forwarded it (`hosted-app-token-window.ts`): GitHub work
+ * planned past that instant could only fail authentication, so it waits for the
+ * next run's fresh token instead. It is the only place that arithmetic exists,
+ * so no cycle can ever receive a deadline anchored anywhere else.
  */
-export function childRunDeadlineV1(runOrigin: number): number {
-  return runOrigin + RUN_DEADLINE_MS;
+export function childRunDeadlineV1(
+  runOrigin: number,
+  appTokenNotAfter?: number,
+): number {
+  const budget = runOrigin + RUN_DEADLINE_MS;
+  return appTokenNotAfter === undefined
+    ? budget
+    : Math.min(budget, appTokenNotAfter);
 }
 
 /**

@@ -22,6 +22,7 @@ import {
   RUN_LISTING_PAGE_SIZE,
 } from "./hosted-autonomy-github-listing.ts";
 import {
+  parseHostedAutonomyHeadPulls,
   parseHostedAutonomyPull,
   revisionIntegratedIntoBase,
 } from "./hosted-autonomy-github-pull.ts";
@@ -194,6 +195,22 @@ export function createHostedAutonomyGitHub(
       );
     },
     readPull,
+    async listPullsByHeadRef(branch: string) {
+      // One bounded page filtered by GitHub to this repository's exact head
+      // ref; the parser refuses a full page (unprovable completeness), a fork
+      // and any item whose head ref is not exactly this branch.
+      const head = encodeURIComponent(`${repository.owner}:${branch}`);
+      const listing = await request(
+        "GET",
+        `/repos/${scope}/pulls?state=all&head=${head}&per_page=${LISTING_PAGE_SIZE}`,
+      );
+      return parseHostedAutonomyHeadPulls(
+        listing,
+        scope,
+        branch,
+        LISTING_PAGE_SIZE,
+      );
+    },
     async listParkedRuns(head: string) {
       // The approval listing gates the same delivery as the checks themselves,
       // so it is read completely too: a parked run on a later page must still

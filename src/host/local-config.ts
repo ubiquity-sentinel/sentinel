@@ -98,6 +98,14 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "MASTER-PLAN.md",
       "deno.json",
       "ops/code-size.ts",
+      // The launcher's credential-expiry re-admission returns terminal
+      // base-refresh blocks to work and restores their PR identity
+      // (admission) without any charge.
+      "ops/hosted-autonomy-base-refresh-retries.ts",
+      // The PR facts that re-admission trusts: the head-ref pull listing and
+      // its parser (forks, other heads and unprovable full pages refused).
+      "ops/hosted-autonomy-github.ts",
+      "ops/hosted-autonomy-github-pull.ts",
       "docs/build-status.md",
       // The committed target setting decides which repositories this
       // deployment may repair. A model worker must never be able to add itself
@@ -197,6 +205,7 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "src/host/hosted-runtime-matrix.ts",
       "src/host/hosted-runtime-main.ts",
       "src/host/hosted-runtime-frame-labels.ts",
+      "src/host/hosted-app-token-window.ts",
       "src/host/local-release.ts",
       "src/host/local-supervisor.ts",
       "src/host/local.ts",
@@ -259,7 +268,21 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "src/repair/loop-review-result.ts",
       "src/repair/loop-review-recovery.ts",
       "src/repair/loop-checks.ts",
+      // CI attribution decides whether a reviewed head is corrected (a charged
+      // round), deferred on a red base or blocked; the launcher rule decides
+      // its re-admission. A model-authored candidate must never weaken them.
+      "src/repair/ci-rejection.ts",
+      "src/repair/loop-ci-correction.ts",
+      "ops/hosted-autonomy-ci-retries.ts",
+      // The launcher files that apply that re-admission gate, supply the
+      // authenticated runtime record it trusts, and define its blocker prefix
+      // and review-round ceiling.
+      "ops/hosted-autonomy-retries.ts",
+      "ops/hosted-autonomy-retry-pass.ts",
+      "ops/hosted-autonomy-policy.ts",
       "src/repair/loop-base-refresh.ts",
+      // Bounded base-refresh failure accounting and the terminal block.
+      "src/repair/loop-base-refresh-failure.ts",
       "src/repair/loop-merge.ts",
       "src/repair/loop-release.ts",
       "src/repair/loop-closure.ts",
@@ -267,6 +290,8 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       // Decides provider-throttling settlement and the bounded 429 retry
       // inside one charged admission.
       "src/repair/model-port-retry.ts",
+      // Applies the failover window and the bounded retry to one session.
+      "src/repair/model-port-session.ts",
       // Decides the route's 429 failover model, which the trusted matrix
       // ingesters (runtime and launcher recovery) accept besides the plan's.
       "src/host/model-route.ts",

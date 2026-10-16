@@ -12,6 +12,10 @@ type TargetPolicyV1 = Pick<
 // Gateway AGENTS.md reserves credentials, deployment, capture/replay authority
 // and verification tooling to trusted owners. Preserve inherited protections
 // as well; choosing a repository must never remove an existing restriction.
+// The gateway moved from Deno to Bun (d28cefa): the Deno configuration entries
+// stay, and the Bun files that took over their role (scripts, dependencies,
+// lockfile, runtime, compiler, formatter and dead-code configuration) carry
+// the same protection.
 const GATEWAY_PROTECTED_PATHS = [
   ".env",
   ".data/",
@@ -22,15 +26,23 @@ const GATEWAY_PROTECTED_PATHS = [
   "docs/DECISIONS.md",
   "deno.json",
   "deno.lock",
+  "package.json",
+  "bun.lock",
+  "bunfig.toml",
+  "tsconfig.json",
+  "tsconfig.lint.json",
+  "knip.json",
   "ops/",
   "tools/lint/",
   ".prettierrc.json",
+  ".prettierrc",
   ".prettierignore",
   "file-size-baseline.json",
   "scripts/verify.sh",
   "scripts/_bootstrap.sh",
   "scripts/format.sh",
   "scripts/lint.sh",
+  "scripts/knip.sh",
   "scripts/file-size-ratchet.ts",
   "scripts/replay.ts",
   "scripts/replay-chat-stream.ts",
