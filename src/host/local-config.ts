@@ -259,6 +259,18 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "src/repair/loop-review-result.ts",
       "src/repair/loop-review-recovery.ts",
       "src/repair/loop-checks.ts",
+      // CI attribution decides whether a reviewed head is corrected (a charged
+      // round), deferred on a red base or blocked; the launcher rule decides
+      // its re-admission. A model-authored candidate must never weaken them.
+      "src/repair/ci-rejection.ts",
+      "src/repair/loop-ci-correction.ts",
+      "ops/hosted-autonomy-ci-retries.ts",
+      // The launcher files that apply that re-admission gate, supply the
+      // authenticated runtime record it trusts, and define its blocker prefix
+      // and review-round ceiling.
+      "ops/hosted-autonomy-retries.ts",
+      "ops/hosted-autonomy-retry-pass.ts",
+      "ops/hosted-autonomy-policy.ts",
       "src/repair/loop-base-refresh.ts",
       "src/repair/loop-merge.ts",
       "src/repair/loop-release.ts",

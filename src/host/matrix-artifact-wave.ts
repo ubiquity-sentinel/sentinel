@@ -17,6 +17,7 @@ import {
   parseMatrixPlanV1,
 } from "../contracts/matrix.ts";
 import { candidateBranch } from "../repair/keys.ts";
+import { isCiCorrectionFinding } from "../repair/ci-rejection.ts";
 import {
   type MatrixArtifactRequestV1,
   type MatrixAuthenticatedWaveV1,
@@ -242,13 +243,29 @@ export async function recoverMatrixArtifactWaves(context: {
           cell.request.checkoutBase !== task.target.head ||
           task.target.pr === null ||
           (cell.request.reviewFindings?.length ?? 0) === 0 ||
-          !snapshot.reviews.some((review) =>
+          // A correction continues only from a head that a completed review
+          // refused, or from a head reviewed clean against this exact base
+          // whose live CI attribution the trusted planner carried as its own
+          // digest-bound CI finding (no CI evidence is ever persisted).
+          (!snapshot.reviews.some((review) =>
             sameRepo(review.repository, task.repository) &&
             review.pullRequest.number === task.target.pr &&
             review.pullRequest.head === cell.request.checkoutBase &&
             review.outcome === "completed" &&
             review.unresolvedSeverities.length > 0
-          ))
+          ) &&
+            !(isCiCorrectionFinding(cell.request.reviewFindings![0]) &&
+              cell.request.base === task.target.base &&
+              snapshot.reviews.some((review) =>
+                sameRepo(review.repository, task.repository) &&
+                review.pullRequest.number === task.target.pr &&
+                review.pullRequest.head === cell.request.checkoutBase &&
+                review.pullRequest.base === task.target.base &&
+                review.outcome === "completed" &&
+                !review.unresolvedSeverities.some((severity) =>
+                  severity === "P0" || severity === "P1"
+                )
+              ))))
       ) refuse();
       const reservation = snapshot.reservations.find((row) =>
         row.id === cell.reservationId

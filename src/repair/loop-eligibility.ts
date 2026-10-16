@@ -7,7 +7,7 @@ import type {
 } from "../contracts/work-record.ts";
 import { OPERATION_MARGIN_MS } from "./loop-bounds.ts";
 import { configFor } from "./loop-records.ts";
-import { headRejectedByReview } from "./loop-review-records.ts";
+import { headNeedsCorrection } from "./loop-review-records.ts";
 import type { LoopContextV1, RepairCycleDepsV1 } from "./loop-types.ts";
 
 /**
@@ -61,7 +61,7 @@ export function isMatrixImplementationReadyV1(
   if (record.target.branch === null) return false;
   if (config.sessionBound === null) return false;
   return record.target.head === null ||
-    headRejectedByReview(snapshot, record);
+    headNeedsCorrection(snapshot, record);
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ export function isModelStartAction(
 ): boolean {
   return record.nextStep === "work" &&
     (record.target.head === null ||
-      headRejectedByReview(snapshot, record));
+      headNeedsCorrection(snapshot, record));
 }
 
 /**

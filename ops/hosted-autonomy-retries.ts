@@ -15,6 +15,11 @@ import {
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import { evidenceExpired } from "./hosted-autonomy-evidence-expiry.ts";
+import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
+import {
+  ciCorrectionRuntimeProven,
+  ciRedeliveryEligible,
+} from "./hosted-autonomy-ci-retries.ts";
 
 /**
  * Durable reservations charged to one task, across every purpose and outcome
@@ -180,7 +185,8 @@ export interface RetryPlanV1 {
   repository: RepositoryIdentityV1;
   /** Retained API shape; implementation retries use zero and never lower history. */
   grant: number;
-  nextStep: "work" | "review";
+  /** `delivery` re-gates a reviewed head; it charges and refreshes nothing. */
+  nextStep: "work" | "review" | "delivery";
   /**
    * The exact review-round counter a review-returning plan persists, or null
    * when the counter is preserved. It is the computed floor — the highest
@@ -229,8 +235,22 @@ export function planHostedRetries(
   baseTips: ReadonlyMap<string, string | null> = new Map(),
   closedIssues: ReadonlySet<string> = new Set(),
   onDenied?: (denial: RetryDenialV1) => void,
+  /**
+   * The authenticated installed runtime record. The CI re-admission is
+   * planned only when it is an allowlisted generation-77+ CI-correction
+   * runtime holding its own healthy proof (`ciCorrectionRuntimeProven`);
+   * `ciAllowlist` replaces the pinned allowlist for tests only.
+   */
+  options: {
+    ciRuntime?: HostedRuntimeRecordV1 | null;
+    ciAllowlist?: ReadonlySet<string>;
+  } = {},
 ): RetryPlanV1[] {
   if (!isGitSha(runtimeSha)) return [];
+  const ciRuntime = options.ciRuntime ?? null;
+  const ciCorrection = ciRuntime !== null &&
+    ciRuntime.activeRevision === runtimeSha &&
+    ciCorrectionRuntimeProven(ciRuntime, options.ciAllowlist);
   const plans: RetryPlanV1[] = [];
   for (const record of snapshot.work) {
     if (record.nextStep !== "blocked") continue;
@@ -263,6 +283,23 @@ export function planHostedRetries(
       !evidenceExpired(record, snapshot.reservations, now, rule.minBlockedMs)
     ) continue;
     if (!intentClosable(record, snapshot.reservations)) continue;
+    // A delivery-returning grant re-gates the exact reviewed head under the
+    // installed runtime's CI attribution: no charge, no base advance and no
+    // counter movement here; the runtime decides correction or deferral.
+    if (rule.nextStep === "delivery") {
+      if (!ciCorrection || !ciRedeliveryEligible(snapshot, record)) continue;
+      plans.push({
+        id: record.id,
+        repository: record.repository,
+        grant: 0,
+        nextStep: "delivery",
+        reviewRounds: null,
+        advanceBase: false,
+        observedBase: null,
+        detail: `${blocker.kind}:${rule.prefix.trimEnd()}`,
+      });
+      continue;
+    }
     // A work-returning grant only exists to buy another implementation run.
     // Once every review round is spent, that run cannot become a reviewed
     // verdict, so the grant is provably futile and is never planned: the

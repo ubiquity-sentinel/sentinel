@@ -11,6 +11,7 @@ import {
   MATRIX_ARTIFACT_DEFERRED,
   MATRIX_IMPLEMENTATION_DEFERRED,
 } from "./loop-bounds.ts";
+import { correctFailedHeadBeforeRefresh } from "./loop-ci-correction.ts";
 import { retryAlreadySatisfiedClosure, retryClosure } from "./loop-closure.ts";
 import { ensureEvidence } from "./loop-evidence.ts";
 import {
@@ -27,7 +28,7 @@ import { observeReleaseAcceptance } from "./loop-release.ts";
 import { ensureBeforeReplay } from "./loop-replay-before.ts";
 import { candidateValidated } from "./loop-replay-validation.ts";
 import { observeReview } from "./loop-review-observation.ts";
-import { headRejectedByReview } from "./loop-review-records.ts";
+import { headNeedsCorrection } from "./loop-review-records.ts";
 import { recoverClosedReviewWait } from "./loop-review-recovery.ts";
 import { persistTransition, persistWork } from "./loop-state.ts";
 import type {
@@ -168,7 +169,7 @@ export async function executeWorkStep(
 
   if (
     record.target.head === null ||
-    headRejectedByReview(context.snapshot, record)
+    headNeedsCorrection(context.snapshot, record)
   ) {
     return executeImplementationStep(deps, context, record, config);
   }
@@ -296,7 +297,14 @@ export async function executeDeliveryStep(
     record.intent === null && record.source.kind === "issue" &&
     deps.github.prepareBaseRefresh !== undefined
   ) {
-    const refresh = await ensureBaseRefreshIntent(deps, context, record);
+    // A reviewed head whose own change already broke its checks is corrected
+    // before it could be refreshed and re-reviewed onto the moved base.
+    const refresh = await ensureBaseRefreshIntent(
+      deps,
+      context,
+      record,
+      () => correctFailedHeadBeforeRefresh(deps, context, record),
+    );
     if (refresh !== null) return refresh;
   }
   return executeMerge(deps, context, record);

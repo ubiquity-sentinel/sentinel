@@ -43,12 +43,14 @@ export function baseRefreshIntentKey(
  * immutable record identities, counters, evidence and reviews are untouched;
  * the target stays on the old base/head until publication succeeded. Returns
  * null when the base did not move (the existing merge path is unchanged), or
- * an explicit step result for a wait/refusal/deferral.
+ * an explicit step result for a wait/refusal/deferral. `beforeRefresh` runs
+ * only once the base was observed to move, before the intent is written.
  */
 export async function ensureBaseRefreshIntent(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
+  beforeRefresh?: () => Promise<StepResultV1 | null>,
 ): Promise<StepResultV1 | null> {
   const config = configFor(deps, record.repository);
   if (config === null) return null;
@@ -92,6 +94,10 @@ export async function ensureBaseRefreshIntent(
   }
   const observedBase = ref.value.sha;
   if (observedBase === record.target.base) return null;
+  // The caller may settle the reviewed head first (a CI-rejected candidate is
+  // corrected instead of refreshed); null keeps the ordinary refresh.
+  const settled = beforeRefresh === undefined ? null : await beforeRefresh();
+  if (settled !== null) return settled;
   const intent: IncompleteOperationV1 = {
     kind: "base_refresh",
     key: baseRefreshIntentKey(
