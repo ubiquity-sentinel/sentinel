@@ -21,12 +21,15 @@ import type {
 } from "../contracts/work-record.ts";
 import { attemptMemorySuccessMutationV1 } from "./attempt-policy.ts";
 import {
+  CONFLICT_MERGE_PRESERVE_WINDOW_MS,
+  CONFLICT_PROTECTED_DETAIL,
   conflictMarker,
   conflictMarkerBase,
   conflictResolutionAdmissible,
+  conflictResolutionInFlight,
   conflictResolutionRouteOpen,
 } from "./conflict-resolution.ts";
-import { baseRefreshIntentKey } from "./keys.ts";
+import { baseRefreshIntentKey, candidatePreservationRef } from "./keys.ts";
 import { persistAfterSettlement } from "./loop-accounting.ts";
 import {
   BASE_REFRESH_BASE_READ_DETAIL,
@@ -45,8 +48,7 @@ import type {
 } from "./loop-types.ts";
 import { clearIntent, markBlocked } from "./transitions.ts";
 
-/** Blocker of a resolved merge that touches a protected path. */
-export const CONFLICT_PROTECTED_DETAIL = "candidate touches a protected path";
+export { CONFLICT_PROTECTED_DETAIL } from "./conflict-resolution.ts";
 
 /**
  * The work step of an admissible pending resolution: the record's own pull
@@ -146,6 +148,83 @@ export async function confirmConflictResolution(
     });
   }
   return { kind: "confirmed", head, mergeBase };
+}
+
+/**
+ * A hosted conflict-resolution receipt kept unconsumed: its merge could not
+ * yet be preserved on the remote (see `preserveConflictMerge`).
+ */
+export const CONFLICT_MERGE_PRESERVATION_DEFERRED: StepResultV1 = {
+  kind: "deferred",
+  detail: "resolved merge not yet preserved; receipt kept",
+};
+
+/**
+ * Hosted only, BEFORE a completed resolution receipt is consumed: preserve
+ * the trusted merge M under the deterministic refresh binding of (PR, H, B),
+ * the exact operation ref the resolved intent later publishes through.
+ *
+ * A hosted job's mirror is its own: M reaches only the mirror of the
+ * aggregate job that imported its bundle, and the resolved intent cannot be
+ * regenerated. Once M is on the remote, any later job (a fresh mirror, or the
+ * rollback target) reconciles that ref and imports M from it. A transient
+ * failure (unavailable, rate limited, credential, a thrown port) keeps the
+ * receipt unconsumed: nothing is written, the one charge stays `reserved`
+ * and the marked implementation intent stays bound, so a later scan of the
+ * retained artifact retries in its own mirror. That holds only while the
+ * admission is younger than `CONFLICT_MERGE_PRESERVE_WINDOW_MS`; past it, and
+ * on a definite refusal (invalid, conflict, not found), the receipt is
+ * consumed exactly as before and the publication's bounded failure
+ * accounting owns the outcome. A merge touching a protected path is never
+ * preserved (it blocks charged without publishing). Returns null to consume.
+ */
+export async function preserveConflictMerge(
+  deps: RepairCycleDepsV1,
+  record: WorkRecordV1,
+  merged: { head: GitSha; changedPaths: readonly string[] },
+  config: RepositoryConfigV1,
+): Promise<StepResultV1 | null> {
+  if (deps.externalImplementations !== true) return null;
+  const intent = record.intent;
+  const mergeBase = conflictResolutionInFlight(intent);
+  const { head, pr } = record.target;
+  const publishedHead = record.target.candidateState?.publishedHead ?? null;
+  if (
+    intent === null || mergeBase === null || head === null || pr === null ||
+    publishedHead !== head || merged.head === head ||
+    merged.changedPaths.some((path) =>
+      touchesProtected(config.protectedPaths, path)
+    )
+  ) return null;
+  const operationKey = baseRefreshIntentKey(pr, head, mergeBase);
+  let preserved;
+  try {
+    preserved = await deps.github.preserveCandidate({
+      taskId: record.id,
+      candidate: {
+        operationKey,
+        base: mergeBase,
+        head: merged.head,
+        ref: await candidatePreservationRef(
+          record.repository,
+          record.id,
+          operationKey,
+        ),
+      },
+      publishedHead,
+    });
+  } catch {
+    preserved = null;
+  }
+  if (preserved !== null && preserved.ok) return null;
+  const refused = preserved !== null &&
+    (preserved.error.kind === "invalid" ||
+      preserved.error.kind === "conflict" ||
+      preserved.error.kind === "not_found");
+  if (refused) return null;
+  return deps.clock.now() - intent.startedAt < CONFLICT_MERGE_PRESERVE_WINDOW_MS
+    ? CONFLICT_MERGE_PRESERVATION_DEFERRED
+    : null;
 }
 
 /**

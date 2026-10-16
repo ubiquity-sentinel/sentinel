@@ -195,8 +195,9 @@ export const PRESERVATION_UNRECOVERABLE_PREFIX =
  * is never re-admitted here: only its own exact rule in
  * `hosted-autonomy-conflict-retries.ts` may return it, once, to a proven
  * conflict-resolution runtime (inert while that allowlist is empty), and a
- * charged resolution's marker refuses every class of this table
- * (`planHostedRetries`). The exact per-job credential-expiry messages ("base
+ * charged resolution's marker refuses every class of this table while its
+ * settled charge names the still-current base tip (`conflictMarkerVerdict`
+ * in `planHostedRetries`). The exact per-job credential-expiry messages ("base
  * refresh failed 3 consecutive times: auth_failed ...") need the owned open
  * PR and published head verified on the exact branch and a target-specific
  * transition, so they have their own exact rule in

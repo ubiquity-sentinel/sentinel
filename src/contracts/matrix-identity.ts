@@ -65,8 +65,8 @@ export const REQUEST_REQUIRED = [
 export const REQUEST_OPTIONAL = [
   "checkoutBase",
   // Generation 78+: a conflict-resolution cell. Generation 77 refuses this
-  // key, so no hosted run plans it while that runtime can be rolled back to
-  // (`HOSTED_CONFLICT_RESOLUTIONS`).
+  // key, so hosted runs plan it only from generation 79, whose rollback
+  // target (generation 78) accepts it (`HOSTED_CONFLICT_RESOLUTIONS`).
   "mergeBase",
   "reviewFindings",
   "scopeNote",

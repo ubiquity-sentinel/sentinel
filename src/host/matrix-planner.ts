@@ -29,6 +29,7 @@ import { attemptEquivalenceRefusalForRecordV1 } from "../repair/attempt-policy.t
 import { ciCorrectionRouteOpen } from "../repair/ci-rejection.ts";
 import {
   conflictResolutionRouteOpen,
+  HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE,
   pendingConflictResolution,
 } from "../repair/conflict-resolution.ts";
 import { rankEligibleWork } from "../repair/selection.ts";
@@ -294,9 +295,14 @@ export async function planMatrixWave(
   // 78, whose rollback target isolates the cell.
   const ciRouteOpen = ciCorrectionRouteOpen(deps);
   // A pending refresh-conflict resolution is granted only where its cell
-  // survives a rollback (`conflictResolutionRouteOpen`); closed in hosted
-  // runs until `HOSTED_CONFLICT_RESOLUTIONS` is set.
+  // survives a rollback (`conflictResolutionRouteOpen`): in process, and in
+  // hosted runs from generation 79, whose rollback target isolates the cell.
   const conflictRouteOpen = conflictResolutionRouteOpen(deps);
+  // At most HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE of them per wave: a rollback
+  // isolates every one still unconsumed, so this bounds that exposure. A
+  // pending resolution past the cap is not considered (nothing charged or
+  // written) and stays pending for a later wave.
+  let conflictCells = 0;
 
   while (cells.length < limit) {
     const readAt = deps.clock.now();
@@ -328,6 +334,10 @@ export async function planMatrixWave(
       if (attemptedIds.has(id)) return false;
       const record = context.snapshot.work.find((work) => work.id === id);
       if (record === undefined) return false;
+      if (
+        conflictCells >= HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE &&
+        pendingConflictResolution(record.intent) !== null
+      ) return false;
       // A decomposed parent is superseded by its children; grant the parts,
       // never the whole issue again.
       if (decompositionChildrenOf(context.snapshot, record.id).length > 0) {
@@ -449,6 +459,7 @@ export async function planMatrixWave(
       continue;
     }
     const request = outcome.request;
+    if (request.mergeBase !== undefined) conflictCells++;
     const cellId = await matrixCellIdV1(
       options.waveId,
       record.id,

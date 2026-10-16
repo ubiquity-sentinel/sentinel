@@ -1,12 +1,12 @@
 /**
  * Generation-77 rollback behavior of the conflict-resolution states. A failed
- * generation 78 restores R77 (ab3613e02) once, and R77's OWN repair loop then
- * executes whatever generation 78 left: a pending resolution and a resolved
+ * generation 78 restored R77 (ab3613e02) once, and R77's OWN repair loop then
+ * executes whatever a later runtime left: a pending resolution and a resolved
  * merge both run as an ordinary refresh that conflicts again and writes R77's
- * terminal block, with nothing charged and nothing pushed. A hosted
- * generation-78 run (route closed) writes exactly R77's terminal block, and
- * R77's strict matrix parser refuses a conflict-resolution cell, which is why
- * no hosted run plans one while R77 is the rollback target.
+ * terminal block, with nothing charged and nothing pushed. R77's strict
+ * matrix parser refuses a conflict-resolution cell, which is why generation
+ * 78 kept the hosted route closed; generation 79 opens it with generation 78
+ * as its rollback target (`conflict-resolution-gen78_test.ts`).
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -202,26 +202,23 @@ Deno.test({
 
 Deno.test({
   name:
-    "rollback: a hosted generation-78 run writes exactly R77's terminal conflict block",
+    "rollback: R77 terminal-blocks the pending resolution a hosted run of this tree writes",
   ignore: !available,
   fn: async () => {
     const ctx = await makeConflictGit();
     const r77 = await gen77Loop();
     try {
-      const seed = await publishedCandidate(ctx);
-      const r77Github = conflictGithub(ctx);
-      const expected = await r77.run(ctx, r77Github, seed);
-      assertTerminalConflict(ctx, r77Github, expected);
-      const hostedGithub = conflictGithub(ctx);
-      const hosted = conflictRig(hostedGithub, new ConflictModel(ctx), {
+      const hosted = conflictRig(conflictGithub(ctx), new ConflictModel(ctx), {
         externalImplementations: true,
       });
-      await hosted.seed([seed]);
+      await hosted.seed([await publishedCandidate(ctx)]);
       await hosted.run();
-      const actual = await hosted.snapshot();
-      assert.deepEqual(actual.work, expected.work, "byte-identical record");
-      assert.deepEqual(actual.reservations, expected.reservations);
-      assert.deepEqual(hostedGithub.calls, r77Github.calls);
+      const pending = (await hosted.snapshot()).work[0];
+      assert.equal(pending.intent?.kind, "base_refresh");
+      assert.equal(pending.intent?.resultId, null);
+      assert.equal(pending.intent?.failure?.kind, "conflict");
+      const github = conflictGithub(ctx);
+      assertTerminalConflict(ctx, github, await r77.run(ctx, github, pending));
     } finally {
       await r77.dispose();
       await ctx.cleanup();
@@ -288,7 +285,7 @@ Deno.test("matrix model: a conflict-resolution request names a distinct candidat
 
 Deno.test({
   name:
-    "rollback: R77's strict matrix parser refuses a conflict-resolution cell (the hosted route stays closed)",
+    "rollback: R77's strict matrix parser refuses a conflict-resolution cell (why generation 78 kept the hosted route closed)",
   ignore: !available,
   fn: async () => {
     const r77 = await loadGen77Parsers();

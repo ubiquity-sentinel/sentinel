@@ -19,9 +19,14 @@
  * - in flight: the ordinary implementation intent + marker;
  * - resolved:  the `base_refresh` intent (P, H, B) with result M + marker.
  *
- * Generation 77 runs a pending or resolved intent as an ordinary refresh,
- * which conflicts again and writes today's terminal block (nothing charged,
- * nothing pushed).
+ * A hosted ingest preserves M under the refresh binding of (P, H, B) before
+ * it consumes the receipt (`preserveConflictMerge`), writing nothing else, so
+ * any later job reconciles M from the remote instead of its own mirror.
+ *
+ * Generation 77, and generation 78 in a hosted run (route closed), runs a
+ * pending intent as an ordinary refresh, which conflicts again and writes the
+ * terminal block (nothing charged, nothing pushed); generation 78 publishes a
+ * resolved intent exactly like this tree.
  */
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import { BASE_REFRESH_CONFLICT_DETAIL } from "../contracts/ports.ts";
@@ -40,20 +45,22 @@ import { headRejectedByReview } from "./loop-review-records.ts";
  * Whether a HOSTED run may open a conflict resolution. A hosted resolution
  * runs as a matrix cell, and a cell planned in one run may be consumed only
  * by a later run, which after a failed generation's rollback runs the
- * rollback target's code. Generation 77 (ab3613e02), the rollback target of
- * generation 78, refuses every form of that cell: its strict request keys
- * reject `mergeBase`, and its wave gate refuses a `checkoutBase` cell no
- * review rejected before its runtime-mismatch isolation, so every later
- * repair run would fail while the charge stays unconsumed. Hosted runs
- * therefore keep generation 77's terminal conflict block. This tree's
- * consumers accept the cell (`matrix-model.ts`, `matrix-artifact-wave.ts`),
- * so only a runtime whose rollback target is this tree or later may set it.
+ * rollback target's code. Generation 77 (ab3613e02) refused every form of
+ * that cell, so generation 78 kept the route closed. Generation 78
+ * (474f87eb6), the rollback target of generation 79, handles or isolates
+ * everything the open route writes, proven by tests that run its own code:
+ * its strict plan parser accepts the `mergeBase` request, its wave gate
+ * authenticates the bound cell and its runtime-mismatch isolation parks the
+ * record with the admission (marker and `reserved` charge) retained; its
+ * hosted loop terminal-blocks a pending intent uncharged, defers an in-flight
+ * one, and publishes a resolved merge like this tree. So the route is open
+ * in hosted runs from generation 79 on.
  */
-export const HOSTED_CONFLICT_RESOLUTIONS = false;
+export const HOSTED_CONFLICT_RESOLUTIONS = true;
 
 /**
  * The conflict-resolution route is open for this run: always in process, and
- * in a hosted (matrix) run only once `HOSTED_CONFLICT_RESOLUTIONS` is set.
+ * in a hosted (matrix) run while `HOSTED_CONFLICT_RESOLUTIONS` is set.
  */
 export function conflictResolutionRouteOpen(
   deps: { externalImplementations?: boolean },
@@ -67,6 +74,25 @@ export function conflictResolutionRouteOpen(
  * ceiling, which a test pins to `HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS`.
  */
 export const CONFLICT_RESOLUTION_REVIEW_ROUNDS = CI_CORRECTION_REVIEW_ROUNDS;
+
+/**
+ * Bound on conflict-resolution cells one hosted wave grants. Every cell still
+ * unconsumed when a failed generation rolls back is isolated by the rollback
+ * target with its admission retained (blocked for the owner, its charge kept),
+ * so this bounds that exposure per wave; a pending resolution past the cap
+ * stays pending, uncharged, for a later wave.
+ */
+export const HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE = 4;
+
+/**
+ * How long after its admission a hosted conflict-resolution receipt is kept
+ * unconsumed while the preservation of its merge fails transiently (see
+ * `preserveConflictMerge`). Past it the receipt is consumed as before.
+ */
+export const CONFLICT_MERGE_PRESERVE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Blocker of a resolved merge that touches a protected path. */
+export const CONFLICT_PROTECTED_DETAIL = "candidate touches a protected path";
 
 /** Operation-failure kind of the conflict marker. */
 export const CONFLICT_MARKER_KIND = "conflict";

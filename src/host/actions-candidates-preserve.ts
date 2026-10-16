@@ -18,6 +18,7 @@ import {
   candidatePreservationRef,
   implementationIntentKey,
 } from "../repair/keys.ts";
+import { conflictResolutionInFlight } from "../repair/conflict-resolution.ts";
 import { DenoReplayRuntime } from "../replay/runtime.ts";
 import { githubGitAuthEnv } from "./local.ts";
 import {
@@ -44,8 +45,10 @@ import { freshStoreProof } from "./actions-candidates-proof.ts";
  * one nonterminal self-scope record for the task, present candidate state whose
  * recorded published head equals the request, and one of the two exact
  * operation shapes — a pending `candidate_preservation` intent bound to a
- * genuine submitted implementation reservation, or a persisted `base_refresh`
- * result bound to its deterministic key and the retained original descriptor.
+ * genuine submitted implementation reservation, a persisted `base_refresh`
+ * result bound to its deterministic key and the retained original descriptor,
+ * or an in-flight conflict resolution whose trusted merge the hosted ingest
+ * preserves under that same refresh binding before it consumes the receipt.
  *
  * Then, in one bounded sequence: read the exact operation ref (a different
  * existing SHA is a conflict; the exact existing SHA is reconciliation and is
@@ -256,6 +259,72 @@ export function createCandidatePreserver(
         return portError("unavailable", STATIC_PRESERVE_BINDING);
       }
       operationKey = intent.key;
+    } else if (intent.kind === "implementation") {
+      // (c) An in-flight conflict resolution (`conflict-resolution.ts`): the
+      // record still holds the marked implementation intent of its ONE
+      // charge (never ambiguous or refunded) and the published candidate H
+      // with its retained descriptor. The descriptor is the trusted merge M
+      // of H and the marked base B under the deterministic refresh binding
+      // of (PR, H, B), the exact binding (b) the resolved intent later
+      // publishes through, so the hosted ingest makes M durable before the
+      // receipt is consumed.
+      const mergeBase = conflictResolutionInFlight(intent);
+      const { pr, head, branch, base } = record.target;
+      const preserved = candidateState.preserved;
+      if (
+        mergeBase === null || record.nextStep !== "work" || pr === null ||
+        head === null || branch === null || preserved === null ||
+        publishedHead !== head || preserved.base !== base ||
+        preserved.head !== head
+      ) {
+        return portError("unavailable", STATIC_PRESERVE_BINDING);
+      }
+      if (
+        candidate.base !== mergeBase || candidate.head === head ||
+        candidate.head === mergeBase ||
+        candidate.operationKey !== baseRefreshIntentKey(pr, head, mergeBase)
+      ) {
+        return portError("unavailable", STATIC_PRESERVE_BINDING);
+      }
+      if (
+        intent.requestId === null ||
+        intent.key !== implementationIntentKey(intent.requestId) ||
+        intent.observedBase !== base || intent.expectedHead !== null ||
+        intent.resultId !== null || intent.pr !== null
+      ) {
+        return portError("unavailable", STATIC_PRESERVE_BINDING);
+      }
+      const matching = reservations.filter((entry) =>
+        entry.id === intent.requestId
+      );
+      if (matching.length !== 1) {
+        return portError("unavailable", STATIC_PRESERVE_BINDING);
+      }
+      const reservation = matching[0]!;
+      if (
+        reservation.taskId !== record.id ||
+        !sameRepository(reservation.repository, record.repository) ||
+        // `reserved` until the receipt is consumed; `submitted` only when a
+        // consumption settled it but failed to persist the resolved intent,
+        // and the same receipt is re-ingested.
+        (reservation.outcome !== "reserved" &&
+          reservation.outcome !== "submitted") ||
+        (reservation.purpose !== "implementation" &&
+          reservation.purpose !== "retry") ||
+        reservation.head !== base ||
+        reservation.attempt !== record.counters.attempts
+      ) {
+        return portError("unavailable", STATIC_PRESERVE_BINDING);
+      }
+      const preservedRef = await candidatePreservationRef(
+        record.repository,
+        record.id,
+        preserved.operationKey,
+      );
+      if (preservedRef !== preserved.ref) {
+        return portError("unavailable", STATIC_PRESERVE_BINDING);
+      }
+      operationKey = candidate.operationKey;
     } else {
       return portError("unavailable", STATIC_PRESERVE_BINDING);
     }

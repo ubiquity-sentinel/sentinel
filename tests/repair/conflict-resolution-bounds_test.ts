@@ -2,10 +2,12 @@
  * Bounds of the base-refresh conflict resolution through the REAL loop:
  * at most one charge per (task, base tip), a failed or unresolvable
  * resolution keeps the block with no loop and no refund, a protected path or
- * a merge missing the base never publishes, the round ceiling and the closed
- * hosted route keep today's exact terminal block, and a base that moves
- * before admission clears the pending intent with nothing charged. Every
- * snapshot written here parses under the generation-77 rollback runtime.
+ * a merge missing the base never publishes, the round ceiling keeps today's
+ * exact terminal block, a hosted run writes the uncharged pending resolution
+ * and defers its admission to the trusted matrix planner, and a base that
+ * moves before admission clears the pending intent with nothing charged.
+ * Every snapshot written here parses under the generation-77 and generation-78
+ * rollback runtimes.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -24,7 +26,12 @@ import {
   isModelStartAction,
 } from "../../src/repair/loop-eligibility.ts";
 import { HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS } from "../../ops/hosted-autonomy-policy.ts";
-import { assertGen77Parses, gen77Available } from "../state/gen77-contracts.ts";
+import {
+  assertGen77Parses,
+  assertGen78Parses,
+  gen77Available,
+  gen78Available,
+} from "../state/gen77-contracts.ts";
 import {
   BRANCH,
   conflictGithub,
@@ -69,8 +76,8 @@ function charges(state: RepairStateSnapshotV1) {
   );
 }
 
-Deno.test("conflict resolution: the hosted route stays closed, the round ceiling is the review ceiling and the decision files are protected", () => {
-  assert.equal(HOSTED_CONFLICT_RESOLUTIONS, false);
+Deno.test("conflict resolution: the hosted route is open, the round ceiling is the review ceiling and the decision files are protected", () => {
+  assert.equal(HOSTED_CONFLICT_RESOLUTIONS, true);
   assert.equal(
     CONFLICT_RESOLUTION_REVIEW_ROUNDS,
     HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS,
@@ -235,25 +242,23 @@ Deno.test(
 );
 
 Deno.test(
-  "conflict resolution: a hosted run keeps the exact terminal conflict block while the route is closed",
+  "conflict resolution: a hosted run writes the uncharged pending resolution and never starts a model in process",
   async () => {
     const run = await scenario({}, {}, { externalImplementations: true });
     try {
-      assert.equal(run.work.nextStep, "blocked");
-      assert.equal(
-        run.work.blocker?.message,
-        `base refresh has conflicts at ${run.ctx.base}`,
-      );
-      assert.equal(run.work.target.pr, null);
-      assert.equal(run.work.intent, null);
-      assert.deepEqual(run.state.reservations, []);
-      assert.equal(run.model.requests.length, 0);
-      assert.ok(
-        !run.rig.written.some((snapshot) =>
-          conflictMarkerBase(snapshot.work[0].intent) !== null
-        ),
-        "no marker is ever written by a closed route",
-      );
+      assert.equal(run.work.nextStep, "work");
+      assert.equal(run.work.blocker, null, JSON.stringify(run.work.blocker));
+      assert.equal(run.work.target.pr, PR, "the PR identity is kept");
+      assert.equal(run.work.target.head, run.ctx.head);
+      assert.equal(run.work.intent?.kind, "base_refresh");
+      assert.equal(run.work.intent?.resultId, null);
+      assert.equal(conflictMarkerBase(run.work.intent), run.ctx.base);
+      assert.deepEqual(run.state.reservations, [], "nothing charged");
+      assert.equal(run.model.requests.length, 0, "the matrix admits it");
+      assert.deepEqual(run.github.pushes, []);
+      for (const snapshot of run.rig.written) {
+        if (await gen78Available()) await assertGen78Parses(snapshot);
+      }
     } finally {
       await run.ctx.cleanup();
     }
@@ -284,21 +289,19 @@ async function marked(
 }
 
 Deno.test(
-  "conflict resolution: a hosted run with the route closed runs a pending resolution as an ordinary refresh",
+  "conflict resolution: a hosted run defers a pending resolution to the matrix planner, writing nothing",
   async () => {
     const ctx = await makeConflictGit();
     try {
       const github = conflictGithub(ctx);
       const model = new ConflictModel(ctx);
       const rig = conflictRig(github, model, { externalImplementations: true });
-      await rig.seed([await marked(ctx, null)]);
-      await rig.run();
+      const pending = await marked(ctx, null);
+      await rig.seed([pending]);
+      const outcome = await rig.run();
+      assert.notEqual(outcome.status, "state_error", JSON.stringify(outcome));
       const state = await rig.snapshot();
-      assert.equal(
-        state.work[0].blocker?.message,
-        `base refresh has conflicts at ${ctx.base}`,
-      );
-      assert.equal(state.work[0].intent, null);
+      assert.deepEqual(state.work[0], pending, "left for the planner");
       assert.deepEqual(state.reservations, []);
       assert.equal(model.requests.length, 0);
       assert.deepEqual(github.pushes, []);
@@ -367,7 +370,7 @@ Deno.test(
 
 Deno.test({
   name:
-    "rollback: every bounded conflict-resolution snapshot parses under the generation-77 runtime",
+    "rollback: every bounded conflict-resolution snapshot parses under the generation-77 and generation-78 runtimes",
   ignore: !(await gen77Available()),
   fn: async () => {
     const cases: [ResolverOptionsV1, number][] = [
@@ -381,6 +384,7 @@ Deno.test({
         assert.ok(run.rig.written.length > 0);
         for (const snapshot of run.rig.written) {
           await assertGen77Parses(snapshot);
+          if (await gen78Available()) await assertGen78Parses(snapshot);
         }
       } finally {
         await run.ctx.cleanup();

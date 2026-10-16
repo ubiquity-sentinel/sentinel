@@ -27,7 +27,10 @@ import {
 } from "./keys.ts";
 import { persistAfterSettlement, settleAndBlock } from "./loop-accounting.ts";
 import { MATRIX_PREDECESSOR_DEFERRED } from "./loop-bounds.ts";
-import { handleConflictResolutionReceipt } from "./loop-conflict-resolution.ts";
+import {
+  handleConflictResolutionReceipt,
+  preserveConflictMerge,
+} from "./loop-conflict-resolution.ts";
 import { verifiedPublishedHead } from "./loop-preservation.ts";
 import { touchesProtected } from "./loop-records.ts";
 import {
@@ -201,12 +204,17 @@ export async function handleModelReceipt(
   }
   const head = candidate!.head!;
   if (conflictBase !== null) {
+    const merged = { head, changedPaths: candidate!.changedPaths };
+    // A hosted merge is made durable on the remote before its receipt is
+    // consumed; a transient failure keeps the receipt and its charge.
+    const kept = await preserveConflictMerge(deps, record, merged, config);
+    if (kept !== null) return kept;
     return handleConflictResolutionReceipt(
       deps,
       context,
       record,
       reservationId,
-      { head, changedPaths: candidate!.changedPaths },
+      merged,
       config,
     );
   }

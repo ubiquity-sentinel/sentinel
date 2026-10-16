@@ -3,7 +3,10 @@ import {
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
 import { attemptEquivalenceRefusalForRecordV1 } from "../src/repair/attempt-policy.ts";
-import { conflictMarkerBase } from "../src/repair/conflict-resolution.ts";
+import {
+  CONFLICT_PROTECTED_DETAIL,
+  conflictMarkerBase,
+} from "../src/repair/conflict-resolution.ts";
 import { type GitSha, isGitSha } from "../src/contracts/brands.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { candidateBranch, reviewOperationKey } from "../src/repair/keys.ts";
@@ -182,6 +185,79 @@ function implementationAttemptFloor(
   return floor;
 }
 
+/**
+ * The retry table's verdict on a blocked record whose retained intent carries
+ * the conflict marker of base tip `marked` (`conflict-resolution.ts`). The one
+ * charge per (task, base tip) is the reservation the intent names:
+ *
+ * - `class`: no SETTLED charge of this task is named (missing or still
+ *   `reserved`, a refresh intent that names none, or refunded by the
+ *   runtime's own `confirmed_not_submitted` path), so the record's own
+ *   blocker class decides; its settled-intent rule (`intentClosable`)
+ *   refuses an unsettled implementation charge, so nothing is planned or
+ *   refunded for an in-flight or isolated admission;
+ * - `deny`: the settled charge is bound to another task, repository or
+ *   purpose (`conflict_resolution_unbound`), or it is charged (`submitted` or
+ *   `ambiguous`, never refunded) while the base tip is unreadable or still
+ *   the marked tip (`conflict_resolution_spent`), or the moved tip has no
+ *   publication to refresh onto it or is the record's own base
+ *   (`conflict_resolution_unpublished`);
+ * - `rebase`: the charge is spent and the target moved past the marked tip,
+ *   so the record returns to a plain refresh at `observedBase` (no marker,
+ *   the PR and charges kept); a renewed conflict there costs at most one
+ *   charge at that new tip. Age or generation alone never qualifies, and the
+ *   caller re-pends only a blocker class this table already retries: a
+ *   protected-path resolution, or any other class the table never retries,
+ *   has no attempt-memory brake and stays owner-terminal at every tip
+ *   (`conflict_resolution_protected`, `conflict_resolution_terminal`).
+ */
+export function conflictMarkerVerdict(
+  snapshot: RepairStateSnapshotV1,
+  record: RepairStateSnapshotV1["work"][number],
+  marked: string,
+  tip: string | null,
+):
+  | { kind: "class" }
+  | { kind: "deny"; reason: string }
+  | { kind: "rebase"; observedBase: string } {
+  const intent = record.intent;
+  const requestId = intent?.requestId ?? null;
+  if (intent === null || requestId === null || requestId === "") {
+    return { kind: "class" };
+  }
+  const charge = snapshot.reservations.find((row) => row.id === requestId);
+  if (charge === undefined || charge.outcome === "reserved") {
+    return { kind: "class" };
+  }
+  if (
+    charge.taskId !== record.id ||
+    !sameRepository(charge.repository, record.repository) ||
+    (charge.purpose !== "implementation" && charge.purpose !== "retry")
+  ) return { kind: "deny", reason: "conflict_resolution_unbound" };
+  if (charge.outcome === "confirmed_not_submitted") return { kind: "class" };
+  if (tip === null || !isGitSha(tip) || tip === marked) {
+    return { kind: "deny", reason: "conflict_resolution_spent" };
+  }
+  const { pr, head, branch, base } = record.target;
+  if (pr === null || head === null || branch === null || tip === base) {
+    return { kind: "deny", reason: "conflict_resolution_unpublished" };
+  }
+  return { kind: "rebase", observedBase: tip };
+}
+
+/** Detail suffix of a moved-tip re-pend of a spent conflict resolution. */
+export const CONFLICT_BASE_ADVANCE_SUFFIX = ":conflict_resolution:base-advance";
+
+/**
+ * A plan returning a spent conflict resolution to a refresh at a moved tip,
+ * where the installed runtime may charge one more resolution (counted by the
+ * retry pass against `HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS`).
+ */
+export function conflictBaseAdvancePlan(plan: RetryPlanV1): boolean {
+  return plan.advanceBase === true &&
+    plan.detail.endsWith(CONFLICT_BASE_ADVANCE_SUFFIX);
+}
+
 export interface RetryPlanV1 {
   id: string;
   /** The exact repository scope this plan belongs to. */
@@ -303,17 +379,6 @@ export function planHostedRetries(
     }
     const blocker = record.blocker;
     if (blocker === null) continue;
-    // A conflict resolution that was charged and did not publish keeps the
-    // conflict marker on its retained intent: its one charge per base tip is
-    // spent, so no blocker class of this table re-admits it.
-    if (conflictMarkerBase(record.intent) !== null) {
-      onDenied?.({
-        id: record.id,
-        repository: record.repository,
-        reason: "conflict_resolution_spent",
-      });
-      continue;
-    }
     if (
       taskReservationCount(snapshot, record.id) >= HOSTED_AUTONOMY_MAX_RETRIES
     ) {
@@ -323,6 +388,74 @@ export function planHostedRetries(
     const rule = HOSTED_AUTONOMY_RETRYABLE.find((item) =>
       blocker.message.startsWith(item.prefix)
     );
+    // A conflict resolution that was charged and did not publish keeps the
+    // conflict marker on its retained intent: one charge per (task, base tip).
+    const marked = conflictMarkerBase(record.intent);
+    if (marked !== null) {
+      const tip = baseTips.get(hostedRepositoryKey(record.repository)) ?? null;
+      const verdict = conflictMarkerVerdict(snapshot, record, marked, tip);
+      if (verdict.kind === "deny") {
+        onDenied?.({
+          id: record.id,
+          repository: record.repository,
+          reason: verdict.reason,
+        });
+        continue;
+      }
+      if (verdict.kind === "rebase") {
+        // Only a class this table already retries returns at a moved tip: a
+        // resolution blocked for a protected path (or any other class the
+        // table never retries) records no attempt memory, so re-pending it
+        // would charge one more resolution per base move. It stays
+        // owner-terminal like the same block without a marker.
+        if (rule === undefined) {
+          onDenied?.({
+            id: record.id,
+            repository: record.repository,
+            reason: blocker.message === CONFLICT_PROTECTED_DETAIL
+              ? "conflict_resolution_protected"
+              : "conflict_resolution_terminal",
+          });
+          continue;
+        }
+        // The class's own evidence-expiry wait still applies.
+        if (
+          rule.minBlockedMs !== undefined &&
+          !evidenceExpired(
+            record,
+            snapshot.reservations,
+            now,
+            rule.minBlockedMs,
+          )
+        ) continue;
+        if (
+          record.counters.reviewRounds >= HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS
+        ) {
+          onDenied?.({
+            id: record.id,
+            repository: record.repository,
+            reason: "conflict_resolution_rounds_spent",
+          });
+          continue;
+        }
+        if (
+          !Number.isSafeInteger(
+            implementationAttemptFloor(snapshot, record) + 1,
+          )
+        ) continue;
+        plans.push({
+          id: record.id,
+          repository: record.repository,
+          grant: 0,
+          nextStep: "work",
+          reviewRounds: null,
+          advanceBase: true,
+          observedBase: verdict.observedBase,
+          detail: `${blocker.kind}${CONFLICT_BASE_ADVANCE_SUFFIX}`,
+        });
+        continue;
+      }
+    }
     if (rule === undefined) continue;
     if (
       rule.minBlockedMs !== undefined &&

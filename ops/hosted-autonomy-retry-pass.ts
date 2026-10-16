@@ -18,6 +18,7 @@ import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import {
   applyHostedRetries,
   ciCorrectionPlan,
+  conflictBaseAdvancePlan,
   planHostedRetries,
   type RetryPlanV1,
 } from "./hosted-autonomy-retries.ts";
@@ -44,6 +45,7 @@ import {
   verifyBaseRefreshReadmissions,
 } from "./hosted-autonomy-base-refresh-retries.ts";
 import {
+  HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS,
   planConflictReadmissions,
   verifyConflictReadmissions,
 } from "./hosted-autonomy-conflict-retries.ts";
@@ -267,10 +269,14 @@ export async function runHostedRetryPass(
   // after the pull request checks below. A plan dropped there (closed,
   // merged or unreadable) holds no slot, so such records ordered first never
   // starve the rest; one past the cap is not read and waits for a later pass.
+  // The conflict-resolution cap is counted the same way over the moved-tip
+  // re-pends here and the conflict re-admissions below, which share it.
   let ciCorrections = 0;
+  let conflictResolutions = 0;
   const admit = (plan: RetryPlanV1) => {
     plans.push(plan);
     if (ciCorrectionPlan(plan)) ciCorrections++;
+    if (conflictBaseAdvancePlan(plan)) conflictResolutions++;
   };
   for (const plan of planned) {
     if (
@@ -278,6 +284,13 @@ export async function runHostedRetryPass(
       ciCorrections >= HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS
     ) {
       actions.push(`retry:${plan.id}:skipped:ci_correction_cap`);
+      continue;
+    }
+    if (
+      conflictBaseAdvancePlan(plan) &&
+      conflictResolutions >= HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS
+    ) {
+      actions.push(`retry:${plan.id}:skipped:conflict_resolution_cap`);
       continue;
     }
     const record = snapshot.work.find((item) =>
@@ -325,7 +338,8 @@ export async function runHostedRetryPass(
   // The refresh-conflict block has its own exact rule (see
   // hosted-autonomy-conflict-retries.ts), inert unless the installed runtime
   // is a proven conflict-resolution runtime; its blocker matches neither set
-  // above, and its re-admission shares this one write.
+  // above, and its re-admission shares this one write and the slots of the
+  // conflict-resolution cap the moved-tip re-pends above left.
   readmissions.push(
     ...await verifyConflictReadmissions(
       snapshot,
@@ -340,6 +354,7 @@ export async function runHostedRetryPass(
       ),
       scopeFor,
       actions,
+      HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS - conflictResolutions,
     ),
   );
   if (plans.length > 0 || readmissions.length > 0) {

@@ -1,11 +1,13 @@
 /**
  * The hosted shape of a conflict resolution: a matrix cell. The trusted
  * planner grants it only on an open route (a runtime whose rollback target
- * consumes the cell); a hosted run of this tree keeps it closed
- * (`HOSTED_CONFLICT_RESOLUTIONS`) because generation 77 refuses the cell. This
- * tree's consumer accepts exactly the bound cell, so the runtime installed
- * after generation 78 may open the route with generation 78 as its rollback
- * target.
+ * consumes the cell). Generation 78 kept the hosted route closed because
+ * generation 77 refuses the cell; generation 78's consumer accepts exactly the
+ * bound cell (`matrix-conflict-gen78_test.ts` runs its own code), so this tree
+ * opens the hosted route (`HOSTED_CONFLICT_RESOLUTIONS`) with generation 78 as
+ * its rollback target. One wave grants at most
+ * `HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE` conflict cells, the most a rollback
+ * can isolate from it.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -18,6 +20,8 @@ import {
   conflictMarker,
   conflictMarkerBase,
   HOSTED_CONFLICT_RESOLUTIONS,
+  HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE,
+  pendingConflictResolution,
 } from "../../src/repair/conflict-resolution.ts";
 import {
   baseRefreshIntentKey,
@@ -105,17 +109,112 @@ Deno.test("matrix planner: an open route grants one conflict-resolution cell con
   }
 });
 
-Deno.test("matrix planner: a hosted run grants no conflict-resolution cell while its rollback target refuses it", async () => {
-  assert.equal(HOSTED_CONFLICT_RESOLUTIONS, false);
+Deno.test("matrix planner: a hosted run grants the same single conflict-resolution cell", async () => {
+  assert.equal(HOSTED_CONFLICT_RESOLUTIONS, true);
   const rig = await pendingRig();
   try {
-    const before = await snapshot(rig);
     const report = await planMatrixWave(
       { ...rig.deps, externalImplementations: true },
       rig.planOptions(),
     );
-    assert.equal(report.plan.cells.length, 0, JSON.stringify(report));
-    assert.deepEqual(await snapshot(rig), before, "nothing charged or written");
+    assert.equal(report.plan.cells.length, 1, JSON.stringify(report));
+    const request = report.plan.cells[0].request;
+    assert.equal(request.base, SHA1, "the durable reviewed base");
+    assert.equal(request.checkoutBase, SHA2, "the published candidate");
+    assert.equal(request.mergeBase, rig.base, "the conflicting base tip");
+    const after = await snapshot(rig);
+    assert.equal(conflictMarkerBase(after.work[0].intent), rig.base);
+    assert.equal(after.reservations.length, 1, "one charged resolution");
+    const again = await planMatrixWave(
+      { ...rig.deps, externalImplementations: true },
+      rig.planOptions(),
+    );
+    assert.equal(again.plan.cells.length, 0, "never a second cell");
+    assert.deepEqual(await snapshot(rig), after);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+/** `count` pending resolutions, each on its own published candidate. */
+async function pendingWaveRig(count: number) {
+  const numbers = Array.from({ length: count }, (_, i) => 411 + i);
+  const rig = await makeRig(numbers, 1);
+  const operationKey = implementationIntentKey("cd".repeat(32));
+  const records = await Promise.all(numbers.map(async (number, i) => {
+    const id = `issue-${number}`;
+    const branch = `sentinel/repair/${id}`;
+    rig.github.candidateRefs.set(`refs/heads/${branch}`, SHA2);
+    return workRecord(id, {
+      source: { kind: "issue", id: String(number), revision: rig.base },
+      related: { incidentId: null, issueNumber: number },
+      target: {
+        base: SHA1,
+        branch,
+        checkpoint: null,
+        head: SHA2,
+        pr: 20 + i,
+        candidateState: {
+          preserved: {
+            operationKey,
+            base: SHA1,
+            head: SHA2,
+            ref: await candidatePreservationRef(
+              REPO,
+              id as never,
+              operationKey,
+            ),
+          },
+          publishedHead: SHA2,
+        },
+      },
+      nextStep: "work",
+      counters: { attempts: 1, retries: 0, reviewRounds: 1 },
+      intent: {
+        kind: "base_refresh",
+        key: baseRefreshIntentKey(20 + i, SHA2, rig.base),
+        startedAt: T0,
+        branch,
+        expectedHead: SHA2,
+        observedBase: rig.base,
+        pr: 20 + i,
+        requestId: null,
+        resultId: null,
+        failure: conflictMarker(rig.base, T0),
+      },
+      firstSeenAt: T0 - 60_000,
+    });
+  }));
+  const written = await rig.store.writeRepair(
+    parseRepairStateSnapshotV1(seedSnapshot(records)),
+    null,
+  );
+  assert.ok(written.ok && written.value.status === "applied");
+  return rig;
+}
+
+Deno.test("matrix planner: one wave grants at most the per-wave cap of conflict-resolution cells; the rest stay pending, uncharged", async () => {
+  assert.equal(HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE, 4);
+  const rig = await pendingWaveRig(6);
+  try {
+    const deps = { ...rig.deps, externalImplementations: true };
+    const first = await planMatrixWave(deps, rig.planOptions());
+    assert.equal(first.plan.cells.length, 4, JSON.stringify(first));
+    assert.ok(
+      first.plan.cells.every((cell) => cell.request.mergeBase === rig.base),
+    );
+    const after = await snapshot(rig);
+    assert.equal(after.reservations.length, 4, "four charged resolutions");
+    const waiting = after.work.filter((work) =>
+      pendingConflictResolution(work.intent) !== null
+    );
+    assert.equal(waiting.length, 2, "the rest stay pending, uncharged");
+    const second = await planMatrixWave(deps, {
+      ...rig.planOptions(),
+      waveId: "wave-conflict-cap-2",
+    });
+    assert.equal(second.plan.cells.length, 2, JSON.stringify(second));
+    assert.equal((await snapshot(rig)).reservations.length, 6);
   } finally {
     await rig.cleanup();
   }
@@ -236,7 +335,7 @@ Deno.test("matrix consumer: a bound conflict cell passes the wave gate; a foreig
 
 Deno.test({
   name:
-    "rollback: generation 77's consumer refuses a conflict cell outright (why the hosted route stays closed)",
+    "rollback: generation 77's consumer refuses a conflict cell outright (why generation 78 kept the hosted route closed)",
   ignore: !(await gen77Available()),
   async fn() {
     const gen77 = await loadGen77Modules([
