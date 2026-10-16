@@ -43,13 +43,48 @@ export function scanChildStatusRecords(stdout: string): ChildStatusScanV1 {
     const record = value as Record<string, unknown>;
     // ANY own status property is a top-level attempt: a false/null/number
     // status is rejected by the strict child parser, never skipped as noise.
+    // The one exception is the runtime's exact refused-command advisory,
+    // which can never parse as a child result.
     if (!Object.hasOwn(record, "status")) continue;
+    if (isRefusedCommandItemAdvisory(record)) continue;
     count += 1;
     if (count === 1) found = record;
   }
   if (count === 0) return { kind: "none" };
   if (count > 1) return { kind: "uncertain" };
   return { kind: "one", value: found };
+}
+
+/**
+ * The installed runtime's bounded reviewer advisory
+ * (`reportRefusedCommandItem` in src/github/reviewer-session-state.ts) carries
+ * the refused item's own `status`. Counting it made every run with one refused
+ * reviewer command unavailable beside a valid record. Only the exact event and
+ * key set is skipped; its keys exclude every child-result key but `status`, so
+ * it can neither hide nor become a child record.
+ */
+const REFUSED_COMMAND_ITEM_KEYS = [
+  "event",
+  "site",
+  "type",
+  "status",
+  "idBounded",
+  "commandBounded",
+  "commandChars",
+  "hasActions",
+  "cwdMatches",
+  "source",
+  "provenance",
+  "pluginId",
+  "scriptPath",
+  "knownItem",
+] as const;
+
+function isRefusedCommandItemAdvisory(
+  record: Record<string, unknown>,
+): boolean {
+  return record.event === "sentinel_review_command_item_refused" &&
+    hasExactKeys(record, REFUSED_COMMAND_ITEM_KEYS);
 }
 
 export interface ChildStatusV1 {
