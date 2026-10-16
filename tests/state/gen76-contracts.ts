@@ -14,7 +14,10 @@
  * always runs and pins the generation-76 key sets as literals.
  */
 import assert from "node:assert/strict";
-import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import type {
+  ReleaseStateSnapshotV1,
+  RepairStateSnapshotV1,
+} from "../../src/contracts/state-snapshots.ts";
 
 /** Installed generation-76 runtime revision (the rollback target). */
 export const GEN76_RUNTIME = "41bb853a1bedfc0422bf903dfabbe23bf714b44f";
@@ -58,12 +61,13 @@ export async function gen76Available(): Promise<boolean> {
 
 export interface Gen76ParsersV1 {
   parseRepairStateSnapshotV1(input: unknown): RepairStateSnapshotV1;
+  parseReleaseStateSnapshotV1(input: unknown): ReleaseStateSnapshotV1;
 }
 
 let cached: Promise<Gen76ParsersV1> | null = null;
 
 /**
- * Import the generation-76 snapshot parser from the pinned commit. The
+ * Import the generation-76 snapshot parsers from the pinned commit. The
  * extracted tree is removed right after the import (the module graph is held
  * in memory), so no scratch directory is left in the repository root.
  */
@@ -101,6 +105,7 @@ export function loadGen76Parsers(): Promise<Gen76ParsersV1> {
       );
       return {
         parseRepairStateSnapshotV1: module.parseRepairStateSnapshotV1,
+        parseReleaseStateSnapshotV1: module.parseReleaseStateSnapshotV1,
       } as Gen76ParsersV1;
     } finally {
       await Deno.remove(tmp, { recursive: true }).catch(() => {});

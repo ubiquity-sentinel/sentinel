@@ -58,6 +58,9 @@ export const HOSTED_RUNTIME_CHILD_ENV_KEYS = [
   "PATH",
   "GITHUB_TOKEN",
   "SENTINEL_SUPERVISOR_TOKEN",
+  // Repair only, beside the App token: the instant before which that one
+  // token is certainly valid (`hosted-app-token-window.ts`).
+  "SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER",
   "SENTINEL_MODEL_BASE_URL",
   "SENTINEL_MODEL_ID",
   "SENTINEL_MODEL_FALLBACK",

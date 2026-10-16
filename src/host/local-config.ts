@@ -201,6 +201,7 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "src/host/hosted-runtime-matrix.ts",
       "src/host/hosted-runtime-main.ts",
       "src/host/hosted-runtime-frame-labels.ts",
+      "src/host/hosted-app-token-window.ts",
       "src/host/local-release.ts",
       "src/host/local-supervisor.ts",
       "src/host/local.ts",

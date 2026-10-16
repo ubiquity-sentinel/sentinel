@@ -14,9 +14,12 @@ import {
   OBSERVED_BASE,
   OTHER_REVISION,
   requiredChildEnvKeys,
+  ROOT,
   RUN_ID,
   seedRelease,
 } from "./hosted-runtime-fixture.ts";
+import { buildChildEnvironment } from "../../src/host/hosted-runtime-child.ts";
+import { readJobScopedLauncherEnv } from "../../src/host/hosted-runtime-main.ts";
 
 Deno.test("hosted runtime: the sentinel App bot login is accepted and an absent App token still forwards the strict child environment", async () => {
   // App-login transition case: a child at or after the migration reports
@@ -348,5 +351,169 @@ Deno.test("hosted runtime: a settled timeout is an objective failure and a backw
     assert.equal(result.terminal, null);
   } finally {
     await rig.cleanup();
+  }
+});
+
+Deno.test("hosted runtime: the repair child learns when its one App token stops being certainly valid", async () => {
+  // The workflow records the runner instant immediately BEFORE the repair
+  // job's single App-token mint. GitHub expires that token one hour after its
+  // creation, so the launcher forwards the instant 58 minutes after the bound:
+  // before it the token is certainly valid, never a guess past its expiry.
+  const rig = await makeRig();
+  try {
+    await seedRelease(rig);
+    const mintedNotBefore = T0 - 3 * 60_000;
+    const minted = {
+      ...rig.env,
+      SENTINEL_SUPERVISOR_TOKEN: APP_TOKEN,
+      SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: String(mintedNotBefore),
+    };
+    rig.process.child = exited(childLine(rig.execution));
+    const bounded = await launch(rig, { env: minted });
+    assert.equal(bounded.status, "healthy", JSON.stringify(bounded));
+    let child = rig.process.childCalls().at(-1);
+    assert.ok(child !== undefined);
+    assert.equal(
+      child.env.SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER,
+      String(mintedNotBefore + 58 * 60_000),
+    );
+    assert.equal(
+      "SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE" in child.env,
+      false,
+      "only the derived bound crosses, never the raw workflow value",
+    );
+    assert.deepEqual(
+      Object.keys(child.env).sort(),
+      [
+        ...requiredChildEnvKeys(),
+        "SENTINEL_SUPERVISOR_TOKEN",
+        "SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER",
+      ].sort(),
+    );
+
+    // Without an App token every write uses the job-lifetime native token:
+    // there is no one-hour credential to bound, so no window crosses.
+    const nativeOnly: Record<string, string> = { ...minted };
+    delete nativeOnly.SENTINEL_SUPERVISOR_TOKEN;
+    rig.process.child = exited(childLine(rig.execution));
+    const native = await launch(rig, { env: nativeOnly });
+    assert.equal(native.status, "healthy", JSON.stringify(native));
+    child = rig.process.childCalls().at(-1);
+    assert.ok(child !== undefined);
+    assert.deepEqual(Object.keys(child.env).sort(), requiredChildEnvKeys());
+
+    // A blank bound is an absent one: the legacy child environment exactly.
+    rig.process.child = exited(childLine(rig.execution));
+    const blank = await launch(rig, {
+      env: { ...minted, SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: "" },
+    });
+    assert.equal(blank.status, "healthy", JSON.stringify(blank));
+    child = rig.process.childCalls().at(-1);
+    assert.ok(child !== undefined);
+    assert.equal("SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER" in child.env, false);
+
+    // The bound and the launcher read the same runner wall clock seconds
+    // apart: a small clock step between the two reads is not a refusal.
+    rig.process.child = exited(childLine(rig.execution));
+    const stepped = await launch(rig, {
+      env: {
+        ...minted,
+        SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: String(T0 + 60_000),
+      },
+    });
+    assert.equal(stepped.status, "healthy", JSON.stringify(stepped));
+    child = rig.process.childCalls().at(-1);
+    assert.ok(child !== undefined);
+    assert.equal(
+      child.env.SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER,
+      String(T0 + 60_000 + 58 * 60_000),
+    );
+
+    // A malformed bound, or one clearly after the launcher's own clock (a
+    // lower bound on a mint that already happened cannot lie in the future),
+    // refuses the run before any child exists instead of guessing a window.
+    for (
+      const malformed of [
+        "soon",
+        "1.5",
+        "-1",
+        "0",
+        " 1",
+        "1e12",
+        "9".repeat(17),
+        String(T0 + 60_001),
+      ]
+    ) {
+      const spawned = rig.process.childCalls().length;
+      const refused = await launch(rig, {
+        env: {
+          ...minted,
+          SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: malformed,
+        },
+      });
+      assert.equal(refused.status, "unavailable", malformed);
+      assert.equal(refused.terminal, null, malformed);
+      assert.equal(rig.process.childCalls().length, spawned, malformed);
+    }
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("hosted runtime: only the repair job reads or forwards the App-token mint bound", async () => {
+  const workflow = await Deno.readTextFile(
+    `${ROOT}/.github/workflows/supervisor.yml`,
+  );
+  /** The exact `--allow-env` names one job's runtime step grants. */
+  const grantedFor = (job: string, step: string): Set<string> => {
+    const start = workflow.indexOf(`\n  ${job}:\n`);
+    assert.ok(start >= 0, job);
+    const at = workflow.indexOf(`- name: ${step}\n`, start);
+    assert.ok(at > start, step);
+    const grant = /--allow-env=(\S+)/.exec(workflow.slice(at));
+    assert.ok(grant !== null, step);
+    return new Set(grant[1].split(","));
+  };
+  const steps = {
+    repair: "Run selected Sentinel runtime",
+    matrix_plan: "Plan isolated issue matrix",
+    matrix_cell: "Run isolated issue cell",
+  } as const;
+  for (const job of ["repair", "matrix_plan", "matrix_cell"] as const) {
+    // A name the step does not grant would refuse the whole launch, so the
+    // launcher may ask only for what that exact step grants.
+    const granted = grantedFor(job, steps[job]);
+    const asked: string[] = [];
+    const scoped = readJobScopedLauncherEnv(job, (name) => {
+      asked.push(name);
+      return `value-of-${name}`;
+    });
+    for (const name of asked) {
+      assert.ok(granted.has(name), `${job} grants ${name}`);
+    }
+    assert.equal(
+      asked.includes("SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE"),
+      job === "repair",
+      `${job} reads the mint bound only in repair`,
+    );
+    assert.deepEqual(Object.keys(scoped).sort(), [...asked].sort());
+
+    // Cells and the planner keep their own windows even if a bound is given.
+    if (job === "repair") continue;
+    const child = buildChildEnvironment(
+      {
+        PATH: "/usr/bin:/bin",
+        GITHUB_TOKEN: "test-native-token",
+        UOS_AI_TOKEN: "test-model-token",
+        SENTINEL_SUPERVISOR_TOKEN: APP_TOKEN,
+        SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: String(T0 - 60_000),
+        GITHUB_OUTPUT: "/tmp/github-output",
+      },
+      { runId: RUN_ID, runAttempt: 1, launcherSha: OTHER_REVISION, job },
+      { home: "/tmp/home", tmp: "/tmp/tmp", denoDir: "/tmp/deno" },
+      T0,
+    );
+    assert.equal("SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER" in child, false, job);
+    assert.equal(child.SENTINEL_SUPERVISOR_TOKEN, APP_TOKEN, job);
   }
 });

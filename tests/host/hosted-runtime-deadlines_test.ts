@@ -19,6 +19,7 @@ import {
   unavailableIncidents,
   unavailableReplay,
 } from "../../src/host/local.ts";
+import { OPERATION_MARGIN_MS } from "../../src/repair/loop-bounds.ts";
 import { createReleaseStateStore } from "../../src/state/mod.ts";
 import { makeRemoteCtx, T0, testGitEnv } from "../state/helpers.ts";
 import {
@@ -106,7 +107,7 @@ Deno.test("hosted runtime: source preparation is charged against the one absolut
       prepared.push(slug);
       // The self mirror is prepared before the loop; a foreign target's own
       // mirror seed and base refresh consume clock time here.
-      if (slug !== "ubiquity/sentinel") clock.advance(3 * 60_000);
+      if (slug !== "ubiquity/sentinel") clock.advance(6 * 60_000);
       return Promise.resolve();
     },
     runCycle: (deps, options) => {
@@ -114,9 +115,10 @@ Deno.test("hosted runtime: source preparation is charged against the one absolut
       cycles.push(slug);
       assert.equal(options.deadline, deadline);
       if (slug === "ubiquity/sentinel") {
-        // The self cycle consumes the budget up to two minutes before the ONE
-        // absolute deadline.
-        clock.advance(deadline - clock.now() - 2 * 60_000);
+        // The self cycle consumes the budget up to the operation margin
+        // before the ONE absolute deadline, the latest instant a later
+        // target's preparation still begins.
+        clock.advance(deadline - clock.now() - OPERATION_MARGIN_MS);
         return Promise.resolve(selfOutcome);
       }
       return Promise.resolve(foreignOutcome);

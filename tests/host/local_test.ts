@@ -57,6 +57,27 @@ function expectedShellPath(fallback: string): string {
   return `${bin}:${fallback}`;
 }
 
+/**
+ * The supervisor installs the target's pinned Bun as one real executable at
+ * the platform path; the sandbox reads exactly that file, and Bun keeps every
+ * cache out of the checkout (the model shell's HOME): its transpiler cache is
+ * off and its install cache lives in the task's private temp directory.
+ */
+function assertSandboxBun(text: string, tmpDir: string): void {
+  const filesystem = text.slice(
+    text.indexOf(".filesystem]"),
+    text.indexOf('.filesystem.":workspace_roots"]'),
+  );
+  assert.match(filesystem, /^"\/usr\/local\/bin\/bun" = "read"$/m);
+  assert.ok(!filesystem.includes('"/usr/local/bin" ='), "never the directory");
+  const shell = text.slice(text.indexOf("[shell_environment_policy.set]"));
+  assert.match(shell, /^BUN_RUNTIME_TRANSPILER_CACHE_PATH = "0"$/m);
+  assert.ok(
+    shell.includes(`BUN_INSTALL_CACHE_DIR = ${JSON.stringify(tmpDir)}`),
+    "Bun's install cache is the task's private temp directory",
+  );
+}
+
 Deno.test("local Codex config isolates the model client", () => {
   const text = renderLocalCodexConfig({
     profile: "sentinel-local",
@@ -91,6 +112,7 @@ Deno.test("local Codex config isolates the model client", () => {
   );
   assert.match(text, /^"\/private\/tmp\/key" = "write"$/m);
   assert.match(text, /^"\/private\/deno\/key" = "write"$/m);
+  assertSandboxBun(text, "/private/tmp/key");
   assert.match(
     text,
     /^\[permissions\.sentinel-local\.filesystem\.":workspace_roots"\]$/m,
@@ -148,6 +170,7 @@ Deno.test("review Codex config is read-only", () => {
   assert.match(text, /^\[permissions\.sentinel-review\.network\]$/m);
   assert.match(text, /^enabled = false$/m);
   assert.ok(text.includes(`PATH = "${expectedShellPath("/usr/bin:/bin")}"`));
+  assertSandboxBun(text, "/private/tmp/review");
   assert.ok(!text.includes('= "write"'));
   assert.ok(!text.includes("sentinel-local"));
 });

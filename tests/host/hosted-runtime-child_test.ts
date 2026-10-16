@@ -369,6 +369,7 @@ Deno.test("hosted runtime: actions environment allowlist", async () => {
     "PATH",
     "GITHUB_TOKEN",
     "SENTINEL_SUPERVISOR_TOKEN",
+    "SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER",
     "UOS_AI_TOKEN",
     "SENTINEL_MODEL_BASE_URL",
     "SENTINEL_MODEL_ID",

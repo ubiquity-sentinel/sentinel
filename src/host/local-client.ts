@@ -53,6 +53,14 @@ const COMMAND_LINE_TOOLS_GIT_CORE =
   "/Library/Developer/CommandLineTools/usr/share/git-core";
 
 /**
+ * The one real Bun executable the hosted supervisor installs for Bun-only
+ * targets (`.github/workflows/supervisor.yml`). The sandbox reads exactly this
+ * file instead of relying on the `:minimal` platform set to cover it; a host
+ * without it simply has no such file.
+ */
+export const SANDBOX_BUN_EXECUTABLE = "/usr/local/bin/bun";
+
+/**
  * Render the per-client Codex configuration: the route's provider over its
  * configured endpoint, top-level approval/login/permission defaults, the proved
  * flat filesystem and network permission tables (relative grants live under
@@ -94,6 +102,7 @@ export function renderLocalCodexConfig(input: LocalCodexConfigInputV1): string {
     `${toml(input.codexExecutable)} = "read"`,
     `${toml(input.codexDistributionDir)} = "read"`,
     `${toml(input.denoExecutable)} = "read"`,
+    `${toml(SANDBOX_BUN_EXECUTABLE)} = "read"`,
   ];
   if (profile === "sentinel-local") {
     for (const grant of input.writeGrants) {
@@ -126,6 +135,11 @@ export function renderLocalCodexConfig(input: LocalCodexConfigInputV1): string {
     `HOME = ${toml(input.shellHome)}`,
     `TMPDIR = ${toml(input.shellTmpDir)}`,
     `DENO_DIR = ${toml(input.shellDenoDir)}`,
+    // HOME is the checkout, where Bun would otherwise keep its caches: the
+    // transpiler cache is off and the install cache is the task's private
+    // temp directory, so no Bun cache file ever lands in a candidate.
+    'BUN_RUNTIME_TRANSPILER_CACHE_PATH = "0"',
+    `BUN_INSTALL_CACHE_DIR = ${toml(input.shellTmpDir)}`,
     "",
   );
   return lines.join("\n");

@@ -17,14 +17,16 @@ import type {
   HostedRuntimeLauncherResultV1,
 } from "./hosted-runtime-identity.ts";
 import { readNativeMatrixStdin, runtimeJob } from "./hosted-runtime-matrix.ts";
+import { APP_TOKEN_MINTED_NOT_BEFORE_ENV } from "./hosted-app-token-window.ts";
 import { runHostedRuntimeWithReviewCustody } from "./review-owner-host.ts";
 
 /**
  * The exact process inputs the launcher reads besides the native identity.
  * Every key the child environment forwards for all jobs must be read here, or
  * a workflow setting is silently dropped before the child (the cooldown switch
- * once was); the matrix_plan-only GITHUB_OUTPUT is read conditionally below.
- * Every hosted-runtime step must grant each of these keys.
+ * once was); the job-scoped inputs (`readJobScopedLauncherEnv`) are read only
+ * for the one job whose step grants them. Every hosted-runtime step must grant
+ * each of these keys.
  */
 export const HOSTED_RUNTIME_LAUNCHER_INPUT_KEYS = [
   "HOME",
@@ -71,9 +73,10 @@ export async function runHostedRuntimeMain(): Promise<
     // before any credential, checkout or state setup.
     const job = runtimeJob(env.GITHUB_JOB);
     parseHostedEnvironment(env, job);
-    if (job === "matrix_plan") {
-      env.GITHUB_OUTPUT = Deno.env.get("GITHUB_OUTPUT");
-    }
+    Object.assign(
+      env,
+      readJobScopedLauncherEnv(job, (name) => Deno.env.get(name)),
+    );
     const stdin = job === "matrix_plan"
       ? undefined
       : await readNativeMatrixStdin();
@@ -105,6 +108,24 @@ export async function runHostedRuntimeMain(): Promise<
   } catch {
     return unavailableResult();
   }
+}
+
+/**
+ * Job-scoped launcher inputs. Each name is read ONLY in the one job whose
+ * workflow step grants it, so a cell or the planner never requests a name its
+ * own `--allow-env` grant lacks (that read would refuse the whole launch).
+ */
+export function readJobScopedLauncherEnv(
+  job: "repair" | "matrix_plan" | "matrix_cell",
+  read: (name: string) => string | undefined,
+): Record<string, string | undefined> {
+  if (job === "matrix_plan") return { GITHUB_OUTPUT: read("GITHUB_OUTPUT") };
+  if (job === "repair") {
+    return {
+      [APP_TOKEN_MINTED_NOT_BEFORE_ENV]: read(APP_TOKEN_MINTED_NOT_BEFORE_ENV),
+    };
+  }
+  return {};
 }
 
 /**
