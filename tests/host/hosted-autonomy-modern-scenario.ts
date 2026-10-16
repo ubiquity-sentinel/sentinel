@@ -523,7 +523,8 @@ export async function modernRecoveryScenario(
                       const value = await originalReleaseRead();
                       custodyEntered.resolve();
                       await continueCustody.promise;
-                      f.clock.now = () => T0 + 120_001;
+                      // Past the five-minute walk bound (started at T0 + 60 s).
+                      f.clock.now = () => T0 + 360_001;
                       return value;
                     };
                   }
@@ -958,7 +959,9 @@ export async function modernRecoveryScenario(
           }
           const value = await originalHistoryRead(input);
           assert(value.ok && value.value.status === "found");
-          if (fault === "deadline") f.clock.now = () => T0 + 120_001;
+          // Past the five-minute current-matrix walk bound from its start at
+          // T0 + 60 s.
+          if (fault === "deadline") f.clock.now = () => T0 + 360_001;
           if (fault === "wrong-head") {
             return portOk({
               ...value.value,
