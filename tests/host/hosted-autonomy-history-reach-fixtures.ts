@@ -14,7 +14,13 @@ import {
 } from "../../src/contracts/hosted-supervisor.ts";
 import { matrixDigestV1 } from "../../src/contracts/matrix.ts";
 import type { MatrixPlanV1 } from "../../src/contracts/matrix-identity.ts";
-import { portError, portOk } from "../../src/contracts/ports.ts";
+import {
+  portError,
+  portOk,
+  type RepairStateWriter,
+  type StateReadView,
+} from "../../src/contracts/ports.ts";
+import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
 import { CLOSED_C_WAVE } from "../../src/host/modern-matrix-recovery.ts";
@@ -527,3 +533,279 @@ export const walkRows = (lines: string[]) =>
   );
 export const walkLines = (lines: string[]) =>
   walkRows(lines).map((row) => row.outcome);
+
+/**
+ * The live late-cell cadence over two ordinary producers. The older producer
+ * (FIRST_RUN) holds an in-flight record its own repair job never preserved;
+ * the newer one (FIRST_RUN + 1) holds an unconsumed cell that this
+ * maintenance pass consumes. Each wave plans only its own producer's cell.
+ * Repair state is an in-memory compare-and-swap store, the consumer is the
+ * ingest port seam with the real consumer's dispositions, and the trusted
+ * preserver records each preservation and serves the ref it created. The
+ * walk, the producer pass and the preservation tail are the real ones.
+ */
+export async function preservationWalkRig() {
+  const root = await Deno.makeTempDir({
+    prefix: "sentinel-preservation-walk-",
+    dir: decodeURIComponent(new URL("../../", import.meta.url).pathname),
+  });
+  const remote = await releaseHistory(root, 2);
+  let now = T0 + 10_000_000;
+  const clock = { now: () => ++now };
+  const store = createReleaseStateStore({
+    scratchDir: `${root}/release`,
+    remoteUrl: remote,
+    runner: new DenoGitRunner(`${root}/git-home`),
+  });
+  const older = { runId: FIRST_RUN, requestId: "0".repeat(63) + "1" };
+  const newer = { runId: FIRST_RUN + 1, requestId: "0".repeat(63) + "2" };
+  const candidates = new Map([
+    [older.requestId, "4".repeat(40) as GitSha],
+    [newer.requestId, "5".repeat(40) as GitSha],
+  ]);
+  const ref = (requestId: string) =>
+    `refs/heads/sentinel-candidates/${
+      requestId.replace(/^0+/, "").padStart(
+        64,
+        "f",
+      )
+    }`;
+  // The older record as the live loop leaves it: the consumer settled its
+  // charge and saved the pending preservation, its own job waits unavailable.
+  const inflight = workRecord("inflight-older", {
+    counters: { attempts: 1, retries: 0, reviewRounds: 0, stalled: 2 },
+    target: {
+      base: SHA1,
+      branch: "sentinel/repair/inflight-older",
+      checkpoint: null,
+      head: candidates.get(older.requestId)!,
+      pr: null,
+      candidateState: { preserved: null, publishedHead: null },
+    },
+    intent: {
+      kind: "candidate_preservation",
+      key: implementationIntentKey(older.requestId),
+      startedAt: T0,
+      branch: ref(older.requestId),
+      expectedHead: candidates.get(older.requestId)!,
+      observedBase: SHA1,
+      pr: null,
+      requestId: older.requestId,
+      resultId: null,
+    },
+    wait: { reason: "unavailable", since: T0 + 1, until: T0 + 300_001 },
+  });
+  const fresh = working("unconsumed-newer", newer.requestId);
+  let writes = 0;
+  const repair = {
+    status: "found" as const,
+    head: "e".repeat(40) as GitSha,
+    ref: null,
+    snapshot: {
+      version: "v1",
+      kind: "repair_state",
+      sequence: 1,
+      stateHead: null as GitSha | null,
+      updatedAt: T0,
+      work: [inflight, fresh.record],
+      reservations: [
+        reservation(older.requestId, {
+          taskId: inflight.id,
+          head: SHA1,
+          outcome: "submitted",
+          settledAt: T0 + 1,
+        }),
+        fresh.charge,
+      ],
+      reviews: [],
+      releaseRequests: [],
+    } as unknown as RepairStateSnapshotV1,
+  };
+  const calls = {
+    recovered: [] as number[],
+    preserved: [] as string[],
+    ingested: [] as string[],
+  };
+  const refs = new Map<string, GitSha>();
+  const state: Record<PropertyKey, unknown> = new Proxy(store, {
+    get(target, key) {
+      if (key === "readRepair") {
+        return () => Promise.resolve(portOk(structuredClone(repair)));
+      }
+      if (key === "writeRepair") {
+        return (next: RepairStateSnapshotV1, expectedHead: GitSha) => {
+          if (expectedHead !== repair.head) {
+            return Promise.resolve(
+              portOk({ status: "conflict" as const, currentHead: repair.head }),
+            );
+          }
+          repair.head = (++writes).toString(16).padStart(40, "a") as GitSha;
+          repair.snapshot = structuredClone(next);
+          return Promise.resolve(
+            portOk({ status: "applied" as const, head: repair.head }),
+          );
+        };
+      }
+      const value = Reflect.get(target, key, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as unknown as Record<PropertyKey, unknown>;
+  const bindings = [
+    { ...older, taskId: inflight.id },
+    { ...newer, taskId: fresh.record.id },
+  ];
+  const wave = async (runId: number) => {
+    const run = { runId, runAttempt: 1, launcherSha: LAUNCHER };
+    const own = bindings.filter((row) => row.runId === runId);
+    const plan = {
+      waveId: execution(runId).id,
+      run,
+      cells: own.map((row) => ({
+        cellId: `cell-${row.taskId}`,
+        taskId: row.taskId,
+        repository: REPO,
+        reservationId: row.requestId,
+        intentKey: implementationIntentKey(row.requestId),
+        expectedBase: SHA1,
+        runtimeSha: RUNTIME,
+        generation: GENERATION,
+      })),
+    };
+    return {
+      plan,
+      provenance: { run },
+      planDigest: await matrixDigestV1(plan),
+      results: own.map((row) => ({
+        cellId: `cell-${row.taskId}`,
+        taskId: row.taskId,
+        reservationId: row.requestId,
+        receipt: { candidate: { head: candidates.get(row.requestId)! } },
+        bundle: { head: candidates.get(row.requestId)! },
+      })),
+      bundlesDir: `${root}/bundles`,
+    };
+  };
+  // The real consumer's dispositions: an unconsumed implementation intent is
+  // settled into the pending preservation (`ingested`); an already consumed
+  // one rehydrates its exact saved objects (`duplicate`).
+  const ingest = async (
+    cycle: { state: RepairStateWriter & StateReadView },
+    plan: MatrixPlanV1,
+  ) => {
+    const entries = [];
+    let ingested = 0;
+    for (const cell of plan.cells) {
+      const read = await cycle.state.readRepair();
+      assert(read.ok && read.value.status === "found");
+      const record = read.value.snapshot.work.find((row) =>
+        row.id === cell.taskId
+      )!;
+      if (record.intent?.kind === "candidate_preservation") {
+        entries.push({
+          cellId: cell.cellId,
+          disposition: "duplicate" as const,
+          detail:
+            "receipt already consumed; exact saved candidate objects rehydrated",
+        });
+        continue;
+      }
+      assert.equal(record.intent?.kind, "implementation");
+      const at = clock.now();
+      const head = candidates.get(cell.reservationId)!;
+      const written = await cycle.state.writeRepair({
+        ...read.value.snapshot,
+        stateHead: read.value.head,
+        sequence: read.value.snapshot.sequence + 1,
+        updatedAt: at,
+        work: read.value.snapshot.work.map((row) =>
+          row.id === record.id
+            ? {
+              ...row,
+              intent: {
+                ...row.intent!,
+                kind: "candidate_preservation" as const,
+                startedAt: at,
+                branch: ref(cell.reservationId),
+                expectedHead: head,
+              },
+              target: {
+                ...row.target,
+                branch: `sentinel/repair/${row.id}`,
+                head,
+                candidateState: { preserved: null, publishedHead: null },
+              },
+              updatedAt: at,
+            }
+            : row
+        ),
+        reservations: read.value.snapshot.reservations.map((row) =>
+          row.id === cell.reservationId
+            ? { ...row, outcome: "submitted" as const, settledAt: at }
+            : row
+        ),
+      }, read.value.head);
+      assert(written.ok && written.value.status === "applied");
+      calls.ingested.push(record.id);
+      ingested++;
+      entries.push({
+        cellId: cell.cellId,
+        disposition: "ingested" as const,
+        detail: null,
+      });
+    }
+    return { waveId: plan.waveId, entries, ingested };
+  };
+  const github = {
+    preserveCandidate: (
+      request: { candidate: { ref: string; head: GitSha } },
+    ) => {
+      calls.preserved.push(request.candidate.ref);
+      refs.set(request.candidate.ref, request.candidate.head);
+      return Promise.resolve(portOk(undefined));
+    },
+    readRef: (name: string) =>
+      Promise.resolve(
+        portOk(refs.has(name) ? { ref: name, sha: refs.get(name)! } : null),
+      ),
+  };
+  const transport = {
+    confirmCompletedExecution: () => Promise.resolve(true),
+    recover: async (request: { currentRun?: { runId: number } }) => {
+      const runId = request.currentRun!.runId;
+      calls.recovered.push(runId);
+      return [await wave(runId)];
+    },
+  };
+  const deps = {
+    clock,
+    state,
+    closedMatrix: () =>
+      Promise.resolve({
+        state,
+        clock,
+        configs: [{ repository: REPO }],
+        cycleFor: () => ({ clock, github }),
+        prepareTarget: () => Promise.resolve(),
+        ingest,
+        importerFor: () => ({}),
+        transportFor: () => transport,
+        readExecution: (saved: { runId: number }) =>
+          Promise.resolve(portOk(proof(saved.runId))),
+      }),
+  };
+  const walk = () =>
+    (recoverHostedCurrentMatrix as (...args: unknown[]) => Promise<unknown>)(
+      deps,
+      CLOSED_C_WAVE,
+      () => {},
+    ) as Promise<{ status: string; actions: string[] } | null>;
+  return {
+    calls,
+    older: { taskId: inflight.id, ref: ref(older.requestId), ...older },
+    newer: { taskId: fresh.record.id, ref: ref(newer.requestId), ...newer },
+    candidates,
+    repair: () => structuredClone(repair),
+    walk,
+    cleanup: () => Deno.remove(root, { recursive: true }),
+  };
+}

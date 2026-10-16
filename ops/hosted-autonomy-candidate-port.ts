@@ -13,7 +13,7 @@ import { composeGitHubHost } from "../src/host/github.ts";
 import { createCandidatePreserver } from "../src/host/actions-candidates-preserve.ts";
 import { createLocalCandidateLoader } from "../src/host/local-candidate.ts";
 import { githubGitAuthEnv } from "../src/host/local.ts";
-import { restorableParkedCandidate } from "./hosted-autonomy-blocked-candidate.ts";
+import { restorableCandidate } from "./hosted-autonomy-blocked-candidate.ts";
 
 export function createHostedCandidateRecoveryPort(input: {
   state: StateReadView;
@@ -76,7 +76,7 @@ export function createHostedCandidateRecoveryPort(input: {
     const read = await input.state.readRepair();
     if (!read.ok || read.value.status !== "found") return false;
     return read.value.snapshot.work.some((row) =>
-      restorableParkedCandidate(row) && row.intent?.branch === ref &&
+      restorableCandidate(row) && row.intent?.branch === ref &&
       row.repository.owner === input.config.repository.owner &&
       row.repository.name === input.config.repository.name &&
       row.repository.installationId === input.config.repository.installationId

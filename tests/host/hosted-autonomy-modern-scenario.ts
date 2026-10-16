@@ -45,6 +45,7 @@ import { captureHostedAutonomyMain } from "./hosted-autonomy-rig.ts";
 import { candidatePreservationRef } from "../../src/repair/keys.ts";
 import { MATRIX_PRESERVATION_UNCERTAINTY_DETAIL } from "../../src/host/matrix-uncertainty-maintenance.ts";
 import { createHostedCandidateRecoveryPort } from "../../ops/hosted-autonomy-candidate-port.ts";
+import { isInflightPreservation } from "../../ops/hosted-autonomy-blocked-candidate.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
 
 export type BlockedCandidateCase =
@@ -67,10 +68,38 @@ export type BlockedCandidateCase =
   | "existing-ref-conflict"
   | "existing-ref-parked";
 
+/** The restored record's state, its exact predecessor and the cycle deps. */
+export interface InflightStateV1 {
+  state: HostedAutonomyDepsV1["state"];
+  clock: { now(): number };
+  config: ReturnType<typeof repositoryConfig>;
+  taskId: string;
+  candidate: GitSha;
+  base: GitSha;
+}
+
+/**
+ * The same candidate parked in flight (`work`, no blocker) instead of blocked.
+ * `consumed` leaves the producer's cell unconsumed instead: this maintenance
+ * pass's own consumer settles it into the pending preservation, as live
+ * maintenance does with the cells that finish after their repair job, and the
+ * same pass must finish that preservation. `beforeRestore` runs once over the
+ * exact pre-restore state; `afterRestore` replaces the built-in publication
+ * run over the restored state.
+ */
+export interface InflightCaseV1 {
+  wait: "unavailable" | "review_pending" | null;
+  published?: "ancestor" | "unrelated";
+  consumed?: boolean;
+  beforeRestore?: (input: InflightStateV1) => Promise<void>;
+  afterRestore?: (input: InflightStateV1) => Promise<void>;
+}
+
 export async function modernRecoveryScenario(
   history = false,
   throughMain = false,
   blockedCandidate?: BlockedCandidateCase,
+  inflight?: InflightCaseV1,
 ) {
   const targetRoot = await Deno.makeTempDir({
     prefix: "sentinel-modern-target-",
@@ -105,10 +134,28 @@ export async function modernRecoveryScenario(
     ]);
     await checked(mirror, ["config", "protocol.https.allow", "never"]);
   }
+  if (inflight?.published) {
+    await Deno.writeTextFile(target.work + "/repair.txt", "published\n");
+    await checked(target.work, ["commit", "-q", "-am", "published"]);
+  }
   await Deno.writeTextFile(target.work + "/repair.txt", "candidate\n");
   await checked(target.work, ["add", "repair.txt"]);
   await checked(target.work, ["commit", "-q", "-m", "candidate"]);
   const candidate = await checked(target.work, ["rev-parse", "HEAD"]) as GitSha;
+  // The PR head the candidate was built on, or a sibling (in the trusted
+  // mirror) it never descends from.
+  const publishedHead = !inflight?.published
+    ? null
+    : inflight.published === "ancestor"
+    ? await checked(target.work, ["rev-parse", "HEAD^"]) as GitSha
+    : await checked(mirror, [
+      "commit-tree",
+      base + "^{tree}",
+      "-p",
+      base,
+      "-m",
+      "unrelated",
+    ]) as GitSha;
   const f = await historicalMalformedRig(
     true,
     2,
@@ -312,12 +359,24 @@ export async function modernRecoveryScenario(
       const at = T0 + 30_000;
       const work = await Promise.all(
         read.value.snapshot.work.map(async (row) =>
-          row.id === f.cells[1].taskId
+          row.id === f.cells[1].taskId && inflight?.consumed
+            ? row
+            : row.id === f.cells[1].taskId
             ? {
               ...row,
-              nextStep: "blocked" as const,
-              blocker: { kind: "other" as const, message, since: at },
-              wait: null,
+              ...(inflight
+                ? {
+                  nextStep: "work" as const,
+                  blocker: null,
+                  wait: inflight.wait === null
+                    ? null
+                    : { reason: inflight.wait, since: at, until: at + 300_000 },
+                }
+                : {
+                  nextStep: "blocked" as const,
+                  blocker: { kind: "other" as const, message, since: at },
+                  wait: null,
+                }),
               intent: {
                 ...row.intent!,
                 kind: "candidate_preservation" as const,
@@ -332,7 +391,8 @@ export async function modernRecoveryScenario(
               target: {
                 ...row.target,
                 head,
-                candidateState: { preserved: null, publishedHead: null },
+                pr: publishedHead === null ? row.target.pr : 1106,
+                candidateState: { preserved: null, publishedHead },
               },
               updatedAt: at,
             }
@@ -356,7 +416,7 @@ export async function modernRecoveryScenario(
         updatedAt: f.clock.now(),
         work,
         reservations: read.value.snapshot.reservations.map((row) =>
-          row.id === f.cells[1].reservationId
+          row.id === f.cells[1].reservationId && !inflight?.consumed
             ? { ...row, outcome: "submitted" as const, settledAt: at }
             : row
         ),
@@ -401,6 +461,15 @@ export async function modernRecoveryScenario(
         ]);
       }
     }
+    const inflightState: InflightStateV1 = {
+      state: f.rig.state,
+      clock: f.clock,
+      config,
+      taskId: f.cells[1].taskId,
+      candidate,
+      base,
+    };
+    await inflight?.beforeRestore?.(inflightState);
     const before = await f.rig.state.readRepair();
     let releaseBefore = await f.rig.state.readRelease();
     assert(before.ok && before.value.status === "found");
@@ -623,20 +692,39 @@ export async function modernRecoveryScenario(
         const record = before.value.snapshot.work.find((row) =>
           row.id === f.cells[1].taskId
         )!;
-        const port = createHostedCandidateRecoveryPort({
-          state: f.rig.state,
-          clock: f.clock,
-          gate: new HostedRepairCooldownGate({
+        const portFor = (repository = config.repository) =>
+          createHostedCandidateRecoveryPort({
             state: f.rig.state,
             clock: f.clock,
-          }),
-          config,
-          token: "offline-native-token",
-          http: recoveryHttp,
-          sourcePath: mirror,
-          scratch,
-          remoteUrl: `file://${target.work}`,
-        });
+            gate: new HostedRepairCooldownGate({
+              state: f.rig.state,
+              clock: f.clock,
+            }),
+            config: { ...config, repository },
+            token: "offline-native-token",
+            http: recoveryHttp,
+            sourcePath: mirror,
+            scratch,
+            remoteUrl: `file://${target.work}`,
+          });
+        const port = portFor();
+        const own = record.intent!.branch!;
+        // The gate opens only the exact bound ref in its own repository.
+        assert.equal((await port.readRef(own)).ok, true);
+        for (
+          const [gate, ref] of [
+            [port, own.slice(0, -64) + "0".repeat(64)],
+            [portFor({ ...config.repository, name: "other" }), own],
+          ] as const
+        ) {
+          assert.deepEqual(
+            await gate.readRef(ref),
+            portError(
+              "unavailable",
+              "historical preservation binding unavailable",
+            ),
+          );
+        }
         const refused = await port.preserveCandidate({
           taskId: f.cells[0].taskId,
           candidate: {
@@ -654,6 +742,7 @@ export async function modernRecoveryScenario(
       }
       let competing: Awaited<ReturnType<typeof f.rig.state.readRepair>> | null =
         null;
+      let casRefused = 0;
       const originalWrite = f.rig.state.writeRepair;
       if (blockedCandidate === "post-write-readback-drift") {
         f.rig.state.writeRepair = async (next, head) => {
@@ -661,7 +750,8 @@ export async function modernRecoveryScenario(
           if (
             written.ok && written.value.status === "applied" &&
             next.work.some((row) =>
-              row.id === f.cells[1].taskId && row.nextStep === "work"
+              row.id === f.cells[1].taskId && row.nextStep === "work" &&
+              row.intent === null
             )
           ) {
             const read = f.rig.state.readRepair;
@@ -680,7 +770,8 @@ export async function modernRecoveryScenario(
         f.rig.state.writeRepair = async (next, head) => {
           if (
             next.work.some((row) =>
-              row.id === f.cells[1].taskId && row.nextStep === "work"
+              row.id === f.cells[1].taskId && row.nextStep === "work" &&
+              row.intent === null
             )
           ) {
             if (blockedCandidate === "changed-record") {
@@ -704,6 +795,7 @@ export async function modernRecoveryScenario(
               }, read.value.head);
               competing = await f.rig.state.readRepair();
             }
+            casRefused++;
             return portOk({ status: "conflict" as const, currentHead: head });
           }
           return originalWrite(next, head);
@@ -728,7 +820,9 @@ export async function modernRecoveryScenario(
           before.value.snapshot.reservations,
         );
       } else if (
-        blockedCandidate === "valid" || blockedCandidate === "existing-ref" ||
+        (blockedCandidate === "valid" && inflight?.wait !== "review_pending" &&
+          inflight?.published !== "unrelated") ||
+        blockedCandidate === "existing-ref" ||
         blockedCandidate === "existing-ref-parked"
       ) {
         assert(!(result instanceof Error), String(result));
@@ -738,27 +832,58 @@ export async function modernRecoveryScenario(
         const original = before.value.snapshot.work.find((row) =>
           row.id === recovered.id
         )!;
-        // Artifact and native-ref recovery leave the exact same record.
-        assert.deepEqual(recovered, {
-          ...original,
-          nextStep: "work",
-          blocker: null,
-          wait: null,
-          intent: null,
-          target: {
-            ...original.target,
-            candidateState: {
-              preserved: {
-                operationKey: original.intent!.key,
-                base: original.target.base,
-                head: original.target.head!,
-                ref: original.intent!.branch!,
-              },
-              publishedHead: original.target.candidateState!.publishedHead,
+        const consumedCharge = inflight?.consumed
+          ? f.cells[1].reservationId
+          : null;
+        if (inflight?.consumed) {
+          // This pass consumed the cell and finished its preservation from
+          // the objects its own ingest imported: nothing is left in flight.
+          assert.equal(original.intent?.kind, "implementation");
+          assert.deepEqual(recovered.target.candidateState, {
+            preserved: {
+              operationKey: original.intent!.key,
+              base: original.target.base,
+              head: candidate,
+              ref: await candidatePreservationRef(
+                original.repository,
+                original.id,
+                original.intent!.key,
+              ),
             },
-          },
-          updatedAt: recovered.updatedAt,
-        });
+            publishedHead: null,
+          });
+          assert.equal(recovered.wait, null);
+          assert.deepEqual(recovered.counters, original.counters);
+          // Its own consumption settled the charge it already held; nothing
+          // is refunded, started or added.
+          const settled = after.value.snapshot.reservations.find((row) =>
+            row.id === consumedCharge
+          )!;
+          assert.equal(settled.outcome, "submitted");
+          assert.notEqual(settled.settledAt, null);
+        } else {
+          // Artifact and native-ref recovery leave the exact same record.
+          assert.deepEqual(recovered, {
+            ...original,
+            nextStep: "work",
+            blocker: null,
+            wait: null,
+            intent: null,
+            target: {
+              ...original.target,
+              candidateState: {
+                preserved: {
+                  operationKey: original.intent!.key,
+                  base: original.target.base,
+                  head: original.target.head!,
+                  ref: original.intent!.branch!,
+                },
+                publishedHead: original.target.candidateState!.publishedHead,
+              },
+            },
+            updatedAt: recovered.updatedAt,
+          });
+        }
         if (
           blockedCandidate === "existing-ref" ||
           blockedCandidate === "existing-ref-parked"
@@ -777,6 +902,11 @@ export async function modernRecoveryScenario(
               original.intent!.branch!,
             ]),
             candidate,
+          );
+        } else if (inflight) {
+          assert.deepEqual(
+            (result as HostedAutonomyResultV1).actions,
+            ["current-matrix:ingested:1"],
           );
         }
         assert.equal(
@@ -798,8 +928,17 @@ export async function modernRecoveryScenario(
           ]),
           candidate,
         );
+        const charges = before.value.snapshot.reservations;
         assert.deepEqual(
-          after.value.snapshot.reservations,
+          after.value.snapshot.reservations.map((row) => {
+            if (row.id !== consumedCharge) return row;
+            const charged = charges.find((prior) => prior.id === row.id)!;
+            return {
+              ...row,
+              outcome: charged.outcome,
+              settledAt: charged.settledAt,
+            };
+          }),
           before.value.snapshot.reservations,
         );
         assert.deepEqual(
@@ -828,6 +967,11 @@ export async function modernRecoveryScenario(
             () => Reflect.get(recoveryPort!, method)({}),
             /C maintenance capability refused/,
           );
+        }
+        if (inflight?.afterRestore || inflight?.published) {
+          await inflight.afterRestore?.(inflightState);
+          assert.deepEqual(model.requests, []);
+          return;
         }
         const publication = new FakeGithub({
           baseSha: base,
@@ -887,7 +1031,7 @@ export async function modernRecoveryScenario(
           reviewed.value.snapshot.reservations.filter((row) =>
             row.purpose !== "review_request"
           ),
-          before.value.snapshot.reservations,
+          after.value.snapshot.reservations,
           "original implementation charges survive through publication",
         );
         const originalReservationIds = new Set(
@@ -923,6 +1067,53 @@ export async function modernRecoveryScenario(
           assert(reported.actions.includes(action), JSON.stringify(reported));
         }
         assert.deepEqual(after, before);
+      } else if (inflight?.consumed && blockedCandidate === "cas-conflict") {
+        // A preservation this pass could not finish leaves exactly its
+        // consumption, never a failed run: the record waits in flight, still
+        // charged, and its producer's next (duplicate) visit finishes it.
+        assert(!(result instanceof Error), String(result));
+        assert.deepEqual((result as HostedAutonomyResultV1).actions, [
+          "current-matrix:ingested:1",
+        ]);
+        assert.equal(casRefused, 1, "the same pass must reach its CAS");
+        const waiting = after.value.snapshot.work.find((row) =>
+          row.id === f.cells[1].taskId
+        )!;
+        assert.equal(isInflightPreservation(waiting), true);
+        assert.equal(waiting.target.head, candidate);
+        const charge = after.value.snapshot.reservations.find((row) =>
+          row.id === f.cells[1].reservationId
+        )!;
+        assert.equal(charge.outcome, "submitted");
+        f.rig.state.writeRepair = originalWrite;
+        const revisited = await run();
+        assert.deepEqual(revisited.actions, ["current-matrix:ingested:1"]);
+        const finished = await f.rig.state.readRepair();
+        assert(finished.ok && finished.value.status === "found");
+        const preserved = finished.value.snapshot.work.find((row) =>
+          row.id === waiting.id
+        )!;
+        assert.deepEqual(preserved, {
+          ...waiting,
+          intent: null,
+          target: {
+            ...waiting.target,
+            candidateState: {
+              preserved: {
+                operationKey: waiting.intent!.key,
+                base: waiting.target.base,
+                head: candidate,
+                ref: waiting.intent!.branch!,
+              },
+              publishedHead: null,
+            },
+          },
+          updatedAt: preserved.updatedAt,
+        });
+        assert.deepEqual(
+          finished.value.snapshot.reservations,
+          after.value.snapshot.reservations,
+        );
       } else if (blockedCandidate === "changed-record") {
         assert(competing !== null, "competing owner must reach the CAS seam");
         assert.deepEqual(

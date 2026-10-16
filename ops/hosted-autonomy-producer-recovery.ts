@@ -21,7 +21,11 @@ import {
   RECOVERY_ROUTE_FAILOVER_MODEL,
 } from "./hosted-autonomy-matrix-bindings.ts";
 import { blockedCandidateBinding } from "../src/host/matrix-blocked-candidate.ts";
-import { restoreBlockedCandidate } from "./hosted-autonomy-blocked-candidate.ts";
+import {
+  isInflightPreservation,
+  restoreBlockedCandidate,
+  restoreInflightCandidate,
+} from "./hosted-autonomy-blocked-candidate.ts";
 import {
   type HostedProducerRecoveryV1,
   type HostedProducerScopeV1,
@@ -518,21 +522,55 @@ async function recoverProducerWithinBudget(
       onDeferred();
       return { result: null, deferred: true };
     }
+    // A cell this consumer just consumed leaves its exact candidate in
+    // flight: maintenance never runs the work step, and a native-carrier
+    // repair job never holds this producer's objects. The ingest has just
+    // imported them into the mirror under this proven wave, so the
+    // preservation finishes here, in the same pass. Left in flight, every
+    // late-cell group would cost a later applied run of its own, and older
+    // groups would starve behind newer ones.
+    const consumed = report.entries.some((entry) =>
+      entry.disposition === "ingested"
+    );
+    let settled: typeof before.snapshot.work = [];
+    if (consumed) {
+      await custody();
+      const read = await state.readRepair();
+      if (read.ok && read.value.status === "found") {
+        settled = read.value.snapshot.work;
+      }
+    }
     for (const cell of cells) {
-      const original = before.snapshot.work.find((row) =>
-        row.id === cell.taskId
-      )!;
-      if (!blockedCandidateBinding(original)) continue;
       const entry = report.entries.find((row) => row.cellId === cell.cellId);
-      if (
-        entry?.disposition !== "duplicate" ||
-        entry.detail !==
+      let record: (typeof settled)[number];
+      let restore: typeof restoreInflightCandidate;
+      if (entry?.disposition === "ingested") {
+        const fresh = settled.find((row) => row.id === cell.taskId);
+        if (
+          fresh === undefined || !isInflightPreservation(fresh) ||
+          fresh.intent?.requestId !== cell.reservationId ||
+          fresh.intent.key !== cell.intentKey
+        ) continue;
+        record = fresh;
+        restore = restoreInflightCandidate;
+      } else if (
+        entry?.disposition === "duplicate" &&
+        entry.detail ===
           "receipt already consumed; exact saved candidate objects rehydrated"
-      ) continue;
+      ) {
+        // An earlier consumer settled it and never finished the work step
+        // (a repair job that failed right after its write). A parked
+        // candidate binds to its blocker's producer; an in-flight one (its
+        // own repair job never held these objects) to this exact cell.
+        record = before.snapshot.work.find((row) => row.id === cell.taskId)!;
+        const parked = blockedCandidateBinding(record) !== null;
+        if (!parked && !isInflightPreservation(record)) continue;
+        restore = parked ? restoreBlockedCandidate : restoreInflightCandidate;
+      } else continue;
       await custody();
       if (
-        await restoreBlockedCandidate({
-          record: original,
+        await restore({
+          record,
           wave,
           state,
           github: ports.cycleFor(config).github,
@@ -544,7 +582,7 @@ async function recoverProducerWithinBudget(
               appliedHead,
               write,
             ),
-        })
+        }) && entry.disposition === "duplicate"
       ) ingested++;
     }
     // Non-silent accounting for owner-parallel disposals: tolerated
