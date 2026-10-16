@@ -22,10 +22,15 @@ import { RECOVERY_ROUTE_FAILOVER_MODEL } from "./hosted-autonomy-matrix-bindings
 import { isDeferredCurrentMatrixHistoryBudget } from "./hosted-autonomy-policy.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 
-/** Recover authenticated matrix custody before ordinary retry and delivery. */
+/**
+ * Recover authenticated matrix custody before ordinary retry and delivery.
+ * `dedicated` receives the reservations the dedicated matrix recoveries own,
+ * so later passes leave their records to them exactly as this one does.
+ */
 export async function runHostedMatrixMaintenance(
   deps: HostedAutonomyDepsV1,
   actions: string[],
+  dedicated: Set<string> = new Set(),
 ): Promise<HostedAutonomyResultV1 | null> {
   let closedBinding: ClosedCWaveBindingV1 = CLOSED_C_WAVE;
   let closed: HostedClosedMatrixDepsV1 | undefined;
@@ -77,13 +82,16 @@ export async function runHostedMatrixMaintenance(
       };
     }
   }
+  for (const id of dedicatedMatrixReservations(deps, closedBinding)) {
+    dedicated.add(id);
+  }
   // A parked preserved candidate whose exact deterministic preservation ref
   // already exists needs no artifact and no history walk.
   if (closed !== undefined) {
     const restored = await restoreExistingCandidateRefs({
       deps,
       ports: closed,
-      dedicated: dedicatedMatrixReservations(deps, closedBinding),
+      dedicated,
       actions,
     });
     if (restored !== null) return restored;

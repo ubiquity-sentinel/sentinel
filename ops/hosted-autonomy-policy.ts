@@ -158,6 +158,15 @@ export const HOSTED_AUTONOMY_TRUSTED_AUTHORS: readonly string[] = [
 export const HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS = 8 * 24 * 60 * 60 * 1000;
 
 /**
+ * Blocker prefix the preservation disposition writes once a parked candidate
+ * is proven unrecoverable (ops/hosted-autonomy-preservation-disposition.ts).
+ * The consumed admission stays charged; only a fresh, separately charged
+ * admission can continue the open task.
+ */
+export const PRESERVATION_UNRECOVERABLE_PREFIX =
+  "candidate preservation unrecoverable";
+
+/**
  * The exact transient blockers the retry pass may clear, with the step the
  * record returns to. A blocker outside this closed set is never touched.
  *
@@ -255,6 +264,13 @@ export const HOSTED_AUTONOMY_RETRYABLE: readonly {
     prefix: "authenticated historical matrix manifest rejected:",
     nextStep: "work",
     minBlockedMs: HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS,
+  },
+  {
+    // Written only by the preservation disposition after native proof that
+    // the parked candidate can never be preserved; the record then holds no
+    // candidate, intent or descriptor, and its consumed charge stays charged.
+    prefix: PRESERVATION_UNRECOVERABLE_PREFIX,
+    nextStep: "work",
   },
 ];
 

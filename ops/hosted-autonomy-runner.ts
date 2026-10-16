@@ -28,7 +28,12 @@ export async function runHostedAutonomy(
   deps: HostedAutonomyDepsV1,
 ): Promise<HostedAutonomyResultV1> {
   const actions: string[] = [];
-  const maintenance = await runHostedMatrixMaintenance(deps, actions);
+  const dedicatedReservations = new Set<string>();
+  const maintenance = await runHostedMatrixMaintenance(
+    deps,
+    actions,
+    dedicatedReservations,
+  );
   if (maintenance !== null) return maintenance;
   const revisions: string[] = [];
   const initial = await readRepairSafely(deps.state);
@@ -64,6 +69,7 @@ export async function runHostedAutonomy(
     releaseSnapshot: releaseRead.value.snapshot,
     closedIssues: new Set(),
     foreignMerged: new Map(),
+    dedicatedReservations,
     ...scopes,
   };
   // Ready delivery bookkeeping precedes unrelated retry grants. Restrict this

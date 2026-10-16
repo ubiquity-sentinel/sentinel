@@ -18,3 +18,6 @@ Deno.test("blocked candidate recovery: an existing exact preservation ref restor
 
 Deno.test("blocked candidate recovery: a preservation ref at another head is left untouched", () =>
   modernRecoveryScenario(true, false, "existing-ref-conflict"));
+
+Deno.test("blocked candidate recovery: a custody-parked candidate on its exact preservation ref is restored", () =>
+  modernRecoveryScenario(true, false, "existing-ref-parked"));

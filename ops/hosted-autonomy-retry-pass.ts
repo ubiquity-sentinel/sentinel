@@ -17,6 +17,8 @@ import {
 import { hostedIssueKey, sameRepository } from "./hosted-autonomy-policy.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
 import { runHostedMismatchDispositionPass } from "./hosted-autonomy-mismatch-pass.ts";
+import { runHostedPreservationDispositionPass } from "./hosted-autonomy-preservation-disposition.ts";
+import { runHostedRefreshRearmPass } from "./hosted-autonomy-refresh-rearm.ts";
 import {
   applyCandidateRefRevalidations,
   candidateRefRevalidation,
@@ -144,6 +146,16 @@ export async function runHostedRetryPass(
     releaseHead,
   );
   if (disposition !== null) return disposition;
+
+  // A parked candidate proven unrecoverable is handed to the retry authority
+  // below in a later run, through its own write and readback.
+  const preservation = await runHostedPreservationDispositionPass(context);
+  if (preservation !== null) return preservation;
+
+  // An intact preserved candidate whose refresh the old validator refused
+  // returns to its own delivery once the corrected runtime is installed.
+  const rearmed = await runHostedRefreshRearmPass(context);
+  if (rearmed !== null) return rearmed;
 
   // Maintenance runs from the protected launcher, which need not be the
   // installed runtime. Only the authenticated release pointer supplies it.

@@ -1,6 +1,7 @@
 /**
  * Preserved-candidate recovery from native ref evidence. A record the
- * historical runtime-mismatch isolation parked (its exact candidate head and
+ * historical runtime-mismatch isolation or the historical matrix custody
+ * (MATRIX_PRESERVATION_UNCERTAINTY_DETAIL) parked (its exact candidate head and
  * charged implementation retained, nothing preserved yet) whose deterministic
  * sentinel-candidates preservation ref already exists at exactly that head
  * needs no matrix artifact: the head SHA already binds the content. The SAME
@@ -14,9 +15,11 @@ import { canonicalStringify } from "../src/contracts/canonical.ts";
 import type { GitHubPort } from "../src/contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../src/contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
-import { blockedCandidateBinding } from "../src/host/matrix-blocked-candidate.ts";
 import { candidatePreservationRef } from "../src/repair/keys.ts";
-import { preserveBlockedCandidate } from "./hosted-autonomy-blocked-candidate.ts";
+import {
+  preserveBlockedCandidate,
+  restorableParkedCandidate,
+} from "./hosted-autonomy-blocked-candidate.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 import type {
   HostedAutonomyDepsV1,
@@ -45,7 +48,7 @@ export async function restoreExistingCandidateRefs(input: {
   ]);
   if (!read.ok || read.value.status !== "found") return null;
   const candidates = read.value.snapshot.work.filter((record) =>
-    blockedCandidateBinding(record) !== null &&
+    restorableParkedCandidate(record) &&
     !dedicated.has(record.intent?.requestId ?? "")
   );
   if (candidates.length === 0) return null;

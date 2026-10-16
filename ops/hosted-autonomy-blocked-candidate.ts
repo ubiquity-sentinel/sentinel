@@ -12,6 +12,37 @@ import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import type { MatrixAuthenticatedWaveV1 } from "../src/host/matrix-artifact-port.ts";
 import { matrixDigestV1 } from "../src/contracts/matrix.ts";
 import { blockedCandidateBinding } from "../src/host/matrix-blocked-candidate.ts";
+import { MATRIX_PRESERVATION_UNCERTAINTY_DETAIL } from "../src/host/matrix-uncertainty-maintenance.ts";
+import { implementationIntentKey } from "../src/repair/keys.ts";
+
+/**
+ * The second closed parked-preservation class: historical matrix custody
+ * parked the exact candidate with its submitted admission and a pending
+ * preservation intent (MATRIX_PRESERVATION_UNCERTAINTY_DETAIL). It carries no
+ * producer binding, so only native ref evidence can restore it.
+ */
+export function isParkedPreservation(record: WorkRecordV1): boolean {
+  const intent = record.intent;
+  return record.nextStep === "blocked" && record.wait === null &&
+    record.blocker?.kind === "other" &&
+    record.blocker.message === MATRIX_PRESERVATION_UNCERTAINTY_DETAIL &&
+    record.source.kind === "issue" &&
+    intent?.kind === "candidate_preservation" && intent.requestId !== null &&
+    intent.key === implementationIntentKey(intent.requestId) &&
+    intent.branch !== null &&
+    intent.expectedHead === record.target.head &&
+    intent.observedBase === record.target.base &&
+    intent.resultId === null && intent.pr === null &&
+    record.target.head !== null &&
+    record.target.head !== record.target.base &&
+    record.target.candidateState?.preserved === null;
+}
+
+/** Either parked class whose exact preservation ref may restore it. */
+export function restorableParkedCandidate(record: WorkRecordV1): boolean {
+  return blockedCandidateBinding(record) !== null ||
+    isParkedPreservation(record);
+}
 
 export interface BlockedCandidatePreservationInputV1 {
   record: WorkRecordV1;
@@ -53,7 +84,7 @@ export async function preserveBlockedCandidate(
 ): Promise<boolean> {
   const { record, state, github, clock } = input;
   const intent = record.intent;
-  if (!blockedCandidateBinding(record) || !intent || !intent.branch) {
+  if (!restorableParkedCandidate(record) || !intent || !intent.branch) {
     return false;
   }
   const before = await state.readRepair();

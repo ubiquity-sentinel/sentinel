@@ -66,6 +66,12 @@ export interface MismatchDispositionObservationsV1 {
   >;
   /** true only when the producer workflow run is PROVEN terminal. */
   readRunTerminal(runId: number): Promise<boolean | null>;
+  /**
+   * true only when the exact commit object is PROVEN absent from the
+   * repository (exact 404), false when it is present, null when unreadable.
+   * Optional: a surface without it never proves a candidate lost.
+   */
+  readCommitAbsent?(sha: string): Promise<boolean | null>;
 }
 
 export interface MismatchDispositionRetainedV1 {

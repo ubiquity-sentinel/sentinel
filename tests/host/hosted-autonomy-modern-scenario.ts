@@ -43,6 +43,7 @@ import { historicalMalformedRig } from "./hosted-autonomy-historical-fixtures.ts
 import { prepareModernHistory } from "./hosted-autonomy-modern-history-fixtures.ts";
 import { captureHostedAutonomyMain } from "./hosted-autonomy-rig.ts";
 import { candidatePreservationRef } from "../../src/repair/keys.ts";
+import { MATRIX_PRESERVATION_UNCERTAINTY_DETAIL } from "../../src/host/matrix-uncertainty-maintenance.ts";
 import { createHostedCandidateRecoveryPort } from "../../ops/hosted-autonomy-candidate-port.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
 
@@ -63,7 +64,8 @@ export type BlockedCandidateCase =
   | "expired-plan"
   | "unlisted-plan"
   | "existing-ref"
-  | "existing-ref-conflict";
+  | "existing-ref-conflict"
+  | "existing-ref-parked";
 
 export async function modernRecoveryScenario(
   history = false,
@@ -301,6 +303,9 @@ export async function modernRecoveryScenario(
       if (blockedCandidate === "unsupported-reason") {
         message = "candidate touches a protected path";
       }
+      if (blockedCandidate === "existing-ref-parked") {
+        message = MATRIX_PRESERVATION_UNCERTAINTY_DETAIL;
+      }
       const head = blockedCandidate === "wrong-candidate"
         ? "f".repeat(40) as GitSha
         : candidate;
@@ -366,7 +371,8 @@ export async function modernRecoveryScenario(
       if (
         blockedCandidate === "unlisted-plan" ||
         blockedCandidate === "existing-ref" ||
-        blockedCandidate === "existing-ref-conflict"
+        blockedCandidate === "existing-ref-conflict" ||
+        blockedCandidate === "existing-ref-parked"
       ) {
         // Native-ref recovery needs no matrix artifact at all.
         f.artifacts.splice(0, f.artifacts.length);
@@ -384,13 +390,14 @@ export async function modernRecoveryScenario(
       };
       if (
         blockedCandidate === "existing-ref" ||
-        blockedCandidate === "existing-ref-conflict"
+        blockedCandidate === "existing-ref-conflict" ||
+        blockedCandidate === "existing-ref-parked"
       ) {
         const blockedRow = work.find((row) => row.id === f.cells[1].taskId)!;
         await checked(target.work, [
           "update-ref",
           blockedRow.intent!.branch!,
-          blockedCandidate === "existing-ref" ? candidate : base,
+          blockedCandidate === "existing-ref-conflict" ? base : candidate,
         ]);
       }
     }
@@ -720,7 +727,8 @@ export async function modernRecoveryScenario(
           before.value.snapshot.reservations,
         );
       } else if (
-        blockedCandidate === "valid" || blockedCandidate === "existing-ref"
+        blockedCandidate === "valid" || blockedCandidate === "existing-ref" ||
+        blockedCandidate === "existing-ref-parked"
       ) {
         assert(!(result instanceof Error), String(result));
         const recovered = after.value.snapshot.work.find((row) =>
@@ -750,7 +758,10 @@ export async function modernRecoveryScenario(
           },
           updatedAt: recovered.updatedAt,
         });
-        if (blockedCandidate === "existing-ref") {
+        if (
+          blockedCandidate === "existing-ref" ||
+          blockedCandidate === "existing-ref-parked"
+        ) {
           assert.deepEqual(
             (result as HostedAutonomyResultV1).actions,
             [`existing-ref:${recovered.id}:preserved`],

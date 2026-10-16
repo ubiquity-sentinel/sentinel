@@ -14,38 +14,50 @@ export function createHostedMismatchDispositionObservations(
 ): MismatchDispositionObservationsV1 {
   const scope = `${repository.owner}/${repository.name}`;
   const request = createHostedAutonomyRequest(token);
+  /** Exact 404 proves absence; only the named identity proves presence. */
+  const probeAbsent = async (
+    path: string,
+    present: (body: Record<string, unknown>) => boolean,
+  ): Promise<boolean | null> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${API_BASE}${path}`, {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${token}`,
+          accept: "application/vnd.github+json",
+          "user-agent": "sentinel-hosted-autonomy",
+        },
+        signal: controller.signal,
+      });
+      // Only an exact 404 proves absence; any other failure is unreadable.
+      if (response.status === 404) return true;
+      if (response.status < 200 || response.status >= 300) return null;
+      const text = await response.text();
+      if (text.length > MAX_RESPONSE_BYTES) return null;
+      const parsed = JSON.parse(text) as unknown;
+      if (typeof parsed !== "object" || parsed === null) return null;
+      return present(parsed as Record<string, unknown>) ? false : null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   return {
-    async readRefAbsent(ref: string) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-      try {
-        const response = await fetch(
-          `${API_BASE}/repos/${scope}/git/ref/${ref.replace(/^refs\//, "")}`,
-          {
-            method: "GET",
-            headers: {
-              authorization: `Bearer ${token}`,
-              accept: "application/vnd.github+json",
-              "user-agent": "sentinel-hosted-autonomy",
-            },
-            signal: controller.signal,
-          },
-        );
-        // Only an exact 404 proves absence; any other failure is unreadable.
-        if (response.status === 404) return true;
-        if (response.status < 200 || response.status >= 300) return null;
-        const text = await response.text();
-        if (text.length > MAX_RESPONSE_BYTES) return null;
-        const parsed = JSON.parse(text) as unknown;
-        if (typeof parsed !== "object" || parsed === null) return null;
-        const objectRef = (parsed as Record<string, unknown>)["ref"];
-        return typeof objectRef === "string" ? false : null;
-      } catch {
-        return null;
-      } finally {
-        clearTimeout(timer);
-      }
-    },
+    readRefAbsent: (ref: string) =>
+      probeAbsent(
+        `/repos/${scope}/git/ref/${ref.replace(/^refs\//, "")}`,
+        (body) => typeof body["ref"] === "string",
+      ),
+    readCommitAbsent: (sha: string) =>
+      /^[0-9a-f]{40}$/.test(sha)
+        ? probeAbsent(
+          `/repos/${scope}/git/commits/${sha}`,
+          (body) => body["sha"] === sha,
+        )
+        : Promise.resolve(null),
     async listPullsByHead(branch: string) {
       const pulls = await request(
         "GET",

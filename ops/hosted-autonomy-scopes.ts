@@ -97,6 +97,8 @@ export interface HostedAutonomyPassContextV1 {
   releaseSnapshot: ReleaseStateSnapshotV1;
   closedIssues: Set<string>;
   foreignMerged: Map<string, unknown>;
+  /** Reservations the dedicated matrix recoveries own (never disposed here). */
+  dedicatedReservations: ReadonlySet<string>;
   scopeFor: ReturnType<typeof createHostedAutonomyScopes>["scopeFor"];
   readTip: ReturnType<typeof createHostedAutonomyScopes>["readTip"];
   readPull: ReturnType<typeof createHostedAutonomyScopes>["readPull"];

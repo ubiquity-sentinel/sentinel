@@ -211,6 +211,11 @@ export interface HostedAutonomyDepsV1 {
   ) => Promise<HostedClosedMatrixDepsV1>;
   /** Charged uncertainty only; no producer, artifact, health or release authority. */
   uncertainMatrix?: () => ReturnType<typeof runMatrixUncertaintyMaintenance>;
+  /**
+   * Exact corrected runtime revisions for the refresh re-arm. Production never
+   * sets it and uses HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES.
+   */
+  refreshRearmRuntimes?: readonly string[];
 }
 
 /** Fixed safe categories for maintenance failure logging; never raw text. */
