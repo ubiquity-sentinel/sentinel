@@ -34,6 +34,22 @@ import {
   setWait,
 } from "./transitions.ts";
 
+// The failure accounting moved to loop-base-refresh-failure.ts; this module
+// keeps exporting every name it exported in generation 76, which launcher
+// code (ops/hosted-autonomy-refresh-rearm.ts) imports from here.
+export {
+  BASE_REFRESH_BASE_READ_DETAIL,
+  BASE_REFRESH_CAPABILITY_DETAIL,
+  BASE_REFRESH_FOREIGN_HEAD_DETAIL,
+  BASE_REFRESH_PR_OBSERVATION_DETAIL,
+  BASE_REFRESH_PRESERVE_DETAIL,
+  BASE_REFRESH_PUSH_DETAIL,
+  BASE_REFRESH_REF_READ_DETAIL,
+  BASE_REFRESH_UNPREPARED_DETAIL,
+  failBaseRefresh,
+  MAX_BASE_REFRESH_FAILURES,
+} from "./loop-base-refresh-failure.ts";
+
 /**
  * Deterministic base-refresh intent identity: exact PR, old candidate head and
  * observed new base. Never time- or list-derived, so a restart reproduces the
