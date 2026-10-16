@@ -171,6 +171,15 @@ export const HOSTED_AUTONOMY_CI_FAILED_PREFIX = "CI checks failed: ";
  * without an intent" contradiction), and the legacy bounded no-verdict review
  * wait. Both return to `review`, where the runtime rehydrates its standing
  * review before any new charge and continues inside its own round allowance.
+ *
+ * Base-refresh TERMINAL blocks are deliberately absent from this prefix
+ * table. A deterministic conflict ("base refresh has conflicts[ at <base>]")
+ * is never re-admitted. The exact per-job credential-expiry messages ("base
+ * refresh failed 3 consecutive times: auth_failed ...") need the owned open
+ * PR and published head verified on the exact branch and a target-specific
+ * transition, so they have their own exact rule in
+ * `hosted-autonomy-base-refresh-retries.ts` under the same retry budget and
+ * closed-issue gates.
  */
 export const HOSTED_AUTONOMY_RETRYABLE: readonly {
   readonly prefix: string;

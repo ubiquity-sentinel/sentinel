@@ -98,6 +98,10 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "MASTER-PLAN.md",
       "deno.json",
       "ops/code-size.ts",
+      // The launcher's credential-expiry re-admission returns terminal
+      // base-refresh blocks to work and restores their PR identity
+      // (admission) without any charge.
+      "ops/hosted-autonomy-base-refresh-retries.ts",
       "docs/build-status.md",
       // The committed target setting decides which repositories this
       // deployment may repair. A model worker must never be able to add itself
@@ -272,6 +276,8 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "ops/hosted-autonomy-retry-pass.ts",
       "ops/hosted-autonomy-policy.ts",
       "src/repair/loop-base-refresh.ts",
+      // Bounded base-refresh failure accounting and the terminal block.
+      "src/repair/loop-base-refresh-failure.ts",
       "src/repair/loop-merge.ts",
       "src/repair/loop-release.ts",
       "src/repair/loop-closure.ts",

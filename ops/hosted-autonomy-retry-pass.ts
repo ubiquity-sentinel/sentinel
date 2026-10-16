@@ -25,6 +25,11 @@ import {
   candidateRefRevalidation,
   type CandidateRefRevalidationV1,
 } from "./hosted-autonomy-candidate-refs.ts";
+import {
+  applyBaseRefreshReadmissions,
+  planBaseRefreshReadmissions,
+  verifyBaseRefreshReadmissions,
+} from "./hosted-autonomy-base-refresh-retries.ts";
 
 /** Read-only source facts shared by bookkeeping and the later retry grant. */
 export async function readHostedClosedIssues(
@@ -222,14 +227,36 @@ export async function runHostedRetryPass(
       actions.push(`retry:${plan.id}:skipped:pr_not_open`);
     }
   }
-  if (plans.length > 0) {
+  // The base-refresh credential-expiry block has its own exact rule (see
+  // hosted-autonomy-base-refresh-retries.ts): local gates first, then the
+  // owned open PR on the exact branch and the branch's published head are
+  // verified through each record's OWN repository surface. Its blocker
+  // messages match no prefix above, so the two sets are disjoint and share
+  // this one write.
+  const readmissions = await verifyBaseRefreshReadmissions(
+    planBaseRefreshReadmissions(
+      snapshot,
+      runtimeSha,
+      closedIssues,
+      (denial) => {
+        actions.push(`retry:${denial.id}:denied:${denial.reason}`);
+      },
+    ),
+    scopeFor,
+    actions,
+  );
+  if (plans.length > 0 || readmissions.length > 0) {
     const now = deps.clock.now();
     if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
       return skipped("clock_invalid", observedHead, actions);
     }
     let next: RepairStateSnapshotV1;
     try {
-      next = applyHostedRetries(snapshot, observedHead as GitSha, plans, now);
+      next = applyBaseRefreshReadmissions(
+        applyHostedRetries(snapshot, observedHead as GitSha, plans, now),
+        readmissions,
+        now,
+      );
     } catch {
       return skipped("snapshot_invalid", observedHead, actions);
     }
@@ -261,6 +288,9 @@ export async function runHostedRetryPass(
     observedHead = readback.value.head;
     for (const plan of plans) {
       actions.push(`retry:${plan.id}:grant=${plan.grant}:${plan.detail}`);
+    }
+    for (const readmission of readmissions) {
+      actions.push(`retry:${readmission.id}:readmit:${readmission.detail}`);
     }
     return {
       kind: "hosted_autonomy",

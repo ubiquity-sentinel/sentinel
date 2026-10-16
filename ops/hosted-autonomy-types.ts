@@ -69,6 +69,21 @@ export interface HostedAutonomyPullV1 {
   baseAncestorOfRevision: boolean;
 }
 
+/**
+ * One pull request whose head is EXACTLY a branch of the same repository (no
+ * fork), as listed by head ref. Only the identity facts the base-refresh
+ * credential-expiry re-admission rule verifies are carried.
+ */
+export interface HostedAutonomyHeadPullV1 {
+  number: number;
+  state: "open" | "closed";
+  merged: boolean;
+  headSha: string;
+  headRef: string;
+  baseRef: string;
+  author: string | null;
+}
+
 export interface HostedAutonomyGitHubV1 {
   /**
    * The repository's own default branch, or null when it cannot be read. Only
@@ -107,6 +122,15 @@ export interface HostedAutonomyGitHubV1 {
     number: number,
     baseBranch: string | null,
   ): Promise<HostedAutonomyPullV1 | null>;
+  /**
+   * Every pull request (any state) whose head is exactly `branch` of THIS
+   * repository, or null when that listing cannot be read and proven complete.
+   * Optional: a surface without it re-admits no base-refresh terminal block,
+   * because the owned PR on the exact branch could not be verified.
+   */
+  listPullsByHeadRef?(
+    branch: string,
+  ): Promise<readonly HostedAutonomyHeadPullV1[] | null>;
   /**
    * True when the source issue is open, false when it is closed or missing,
    * null when that cannot be read. Only a definitive false stops a retry.

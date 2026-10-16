@@ -106,6 +106,7 @@ export {
 export {
   type HostedAutonomyDepsV1,
   type HostedAutonomyGitHubV1,
+  type HostedAutonomyHeadPullV1,
   type HostedAutonomyPullV1,
   type HostedAutonomyReasonV1,
   type HostedAutonomyResultV1,
@@ -125,6 +126,14 @@ export {
   type RetryDenialV1,
   type RetryPlanV1,
 } from "./hosted-autonomy-retries.ts";
+export {
+  applyBaseRefreshReadmissions,
+  BASE_REFRESH_AUTH_BLOCKERS,
+  type BaseRefreshCandidateV1,
+  type BaseRefreshReadmissionV1,
+  decideBaseRefreshReadmission,
+  planBaseRefreshReadmissions,
+} from "./hosted-autonomy-base-refresh-retries.ts";
 export { buildHostedReleaseRequest } from "./hosted-autonomy-delivery.ts";
 export {
   applyHostedClosures,
@@ -136,6 +145,7 @@ export {
 export { runSelfObservationPass } from "./hosted-autonomy-observation.ts";
 export { runHostedAutonomy } from "./hosted-autonomy-runner.ts";
 export {
+  parseHostedAutonomyHeadPulls,
   parseHostedAutonomyPull,
   revisionIntegratedIntoBase,
 } from "./hosted-autonomy-github-pull.ts";
