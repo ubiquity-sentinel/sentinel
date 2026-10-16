@@ -82,7 +82,14 @@ export const HOSTED_AUTONOMY_CONFLICT_RESOLUTION_MIN_GENERATION = 79;
  * qualifies.
  */
 export const HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES:
-  readonly HostedRefreshRearmRuntimeV1[] = [];
+  readonly HostedRefreshRearmRuntimeV1[] = [
+    // Generation 79 (R79, which opens the hosted route), pinned by its
+    // launcher commit at 1792185359753.
+    {
+      revision: "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+      activatedNotBefore: 1792185359753,
+    },
+  ];
 
 /**
  * Bound on conflict resolutions one maintenance pass returns to the installed

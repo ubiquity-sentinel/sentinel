@@ -55,6 +55,8 @@ export const HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES: ReadonlySet<string> =
   new Set<string>([
     // Generation 78 (R78), pinned by its launcher commit.
     "474f87eb639f97cd72b9bc4b9e56101488f841aa",
+    // Generation 79 (R79), pinned by its launcher commit.
+    "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
   ]);
 
 /**
