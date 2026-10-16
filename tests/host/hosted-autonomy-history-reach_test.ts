@@ -1,8 +1,9 @@
 /**
- * The current-matrix history walk must reach an old producer inside its 60 s
- * budget: one complete release fetch per walk, local parent reads under the
- * same ancestry/head/sequence/cycle refusals, and no producer custody reads
- * for snapshots no pending record can bind to. An expired or unlisted plan
+ * The current-matrix history walk must reach an old producer inside its 300 s
+ * budget: one complete release fetch per walk, serving the traversal and every
+ * producer pass's own snapshot reads, local parent reads under the same
+ * ancestry/head/sequence/cycle refusals, and no producer custody reads for
+ * snapshots no pending record can bind to. An expired or unlisted plan
  * artifact of one producer is a typed per-producer skip, never an escaping
  * error, while a conflicting artifact identity stays fatal.
  */
@@ -40,8 +41,9 @@ Deno.test("current matrix walk reaches a producer 120 release snapshots back wit
   });
   try {
     await assert.rejects(rig.walk, /^Error: REACHED 1001 blocked-oldest$/);
-    // One complete history fetch for the walk, one for the producer custody.
-    assert(rig.runner.complete <= 2, String(rig.runner.complete));
+    // One complete history fetch for the whole walk: the producer pass's
+    // completion, custody and recovery reads of its snapshot all use it.
+    assert.equal(rig.runner.complete, 1);
     assert.equal(rig.calls.ports, 1);
     assert.deepEqual(rig.calls.recovered, [FIRST_RUN]);
     const left = [];
@@ -55,13 +57,13 @@ Deno.test("current matrix walk reaches a producer 120 release snapshots back wit
 });
 
 Deno.test("a parked traversal stopped at its reserve logs a bounded step diagnostic", async () => {
-  // Each local ancestry proof costs one second and the parked producer is
+  // Each local ancestry proof costs three seconds and the parked producer is
   // never found: with no in-flight work the traversal still stops at the
   // reserve, never at the deadline, and nothing fails.
   const rig = await walkRig({
     producers: 120,
     rows: [blocked("blocked-oldest", FIRST_RUN, 7001)],
-    gitCost: (args) => args[0] === "merge-base" ? 1000 : 0,
+    gitCost: (args) => args[0] === "merge-base" ? 3000 : 0,
   });
   try {
     const outcome = await captured(rig.walk);
@@ -78,9 +80,9 @@ Deno.test("a parked traversal stopped at its reserve logs a bounded step diagnos
       "steps",
     ]);
     assert.equal(row.outcome, "deferred_budget");
-    // 30 s of the 60 s budget at one step per second.
-    assert(Number.isSafeInteger(row.steps) && row.steps >= 25, row.steps);
-    assert(row.steps <= 31, row.steps);
+    // 270 s of the 300 s budget at one step per three seconds.
+    assert(Number.isSafeInteger(row.steps) && row.steps >= 85, row.steps);
+    assert(row.steps <= 91, row.steps);
     assert.equal(row.producers, 0);
     assert(Number.isSafeInteger(row.sequence));
   } finally {
@@ -97,7 +99,7 @@ Deno.test("a producer pass past the walk deadline logs one bounded step diagnost
       digest: ARCHIVE,
       expired: false,
     }]]),
-    recoverCost: () => 61_000,
+    recoverCost: () => 301_000,
   });
   try {
     const outcome = await captured(rig.walk);
@@ -113,26 +115,27 @@ Deno.test("a producer pass past the walk deadline logs one bounded step diagnost
 
 Deno.test("a lost oldest parked group never holds the traversal back from a newer live group", async () => {
   // No in-flight work. The oldest group's plan expired and its producer lies
-  // past the reserve: the traversal stops there and the newer live group's
-  // producer, already found, still runs.
+  // past the reserve (three seconds per local ancestry proof): the traversal
+  // stops there and the newer live group's producer, already found, still
+  // runs.
   const rig = await walkRig({
     producers: 120,
     rows: [
       blocked("blocked-expired", FIRST_RUN, 7001),
-      blocked("blocked-live", FIRST_RUN + 100, 7101),
+      blocked("blocked-live", FIRST_RUN + 115, 7116),
     ],
     plans: new Map([
-      [FIRST_RUN + 100, { id: 7101, digest: ARCHIVE, expired: false }],
+      [FIRST_RUN + 115, { id: 7116, digest: ARCHIVE, expired: false }],
       [FIRST_RUN, { id: 7001, digest: ARCHIVE, expired: true }],
     ]),
-    gitCost: (args) => args[0] === "merge-base" ? 600 : 0,
+    gitCost: (args) => args[0] === "merge-base" ? 3000 : 0,
   });
   try {
     const outcome = await captured(rig.walk);
     assert(outcome.error instanceof Error, String(outcome.error));
-    assert.equal(outcome.error.message, "REACHED 1101 blocked-live");
-    assert.deepEqual(rig.calls.listed, [FIRST_RUN + 100]);
-    assert.deepEqual(rig.calls.recovered, [FIRST_RUN + 100]);
+    assert.equal(outcome.error.message, "REACHED 1116 blocked-live");
+    assert.deepEqual(rig.calls.listed, [FIRST_RUN + 115]);
+    assert.deepEqual(rig.calls.recovered, [FIRST_RUN + 115]);
     assert.deepEqual(walkLines(outcome.lines), ["deferred_budget"]);
   } finally {
     await rig.cleanup();
@@ -224,8 +227,8 @@ Deno.test("an unlisted plan requested only by in-flight work keeps the transport
 });
 
 Deno.test("a blocker-bound producer is reached before a newer in-flight producer exhausts the budget", async () => {
-  // The live shape: in-flight work binds every ordinary producer, and the
-  // newest producer's pass outlives the whole 60 s budget on every run.
+  // In-flight work binds every ordinary producer, and the newest producer's
+  // pass outlives the whole 300 s budget on every run.
   const rig = await walkRig({
     producers: 5,
     rows: [
@@ -237,7 +240,7 @@ Deno.test("a blocker-bound producer is reached before a newer in-flight producer
       digest: ARCHIVE,
       expired: false,
     }]]),
-    recoverCost: (runId) => runId === FIRST_RUN + 4 ? 61_000 : 0,
+    recoverCost: (runId) => runId === FIRST_RUN + 4 ? 301_000 : 0,
   });
   try {
     const outcome = await captured(rig.walk);
@@ -387,7 +390,7 @@ Deno.test("an unfound blocker-bound producer leaves the ordinary walk its budget
       digest: ARCHIVE,
       expired: false,
     }]]),
-    gitCost: (args) => args[0] === "merge-base" ? 1000 : 0,
+    gitCost: (args) => args[0] === "merge-base" ? 3000 : 0,
   });
   try {
     const outcome = await captured(rig.walk);
@@ -584,3 +587,142 @@ Deno.test("release history view proves ancestry locally and refuses a moved head
     await rig.cleanup();
   }
 });
+
+Deno.test("four parked passes that settle nothing and the newer in-flight passes all fit one walk", async () => {
+  // The live shape: four parked groups, oldest first, whose passes each reach
+  // their recovery and settle nothing (40 s each), then the in-flight walk's
+  // nine newer producers that hold no requested cell (5 s each) before the
+  // in-flight work's own producer. A 60 s walk ended inside the second
+  // parked pass on every run and never reached the in-flight producer.
+  const rig = await walkRig({
+    producers: 14,
+    rows: [
+      working("work-in-flight"),
+      ...[0, 1, 2, 3].map((offset) =>
+        blocked(`blocked-${offset}`, FIRST_RUN + offset, 7001 + offset)
+      ),
+    ],
+    plans: new Map(
+      Array.from({ length: 14 }, (_, offset) => [FIRST_RUN + offset, {
+        id: 7001 + offset,
+        digest: ARCHIVE,
+        expired: false,
+      }]),
+    ),
+    settlesNothing: (runId) => runId !== FIRST_RUN + 4,
+    recoverCost: (runId) => runId < FIRST_RUN + 4 ? 40_000 : 5_000,
+  });
+  try {
+    const outcome = await captured(rig.walk);
+    assert(outcome.error instanceof Error, String(outcome.error));
+    assert.equal(outcome.error.message, "REACHED 1005 work-in-flight");
+    assert.deepEqual(rig.calls.recovered, [
+      FIRST_RUN,
+      FIRST_RUN + 1,
+      FIRST_RUN + 2,
+      FIRST_RUN + 3,
+      ...Array.from({ length: 9 }, (_, index) => FIRST_RUN + 13 - index),
+      FIRST_RUN + 4,
+    ]);
+    assert.deepEqual(walkLines(outcome.lines), []);
+    // Every pass read its producer snapshot through the walk's one view.
+    assert.equal(rig.runner.complete, 1);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+type ReleaseRead = {
+  ok: boolean;
+  value: {
+    status: string;
+    head: GitSha;
+    snapshot: { updatedAt: number };
+  };
+};
+
+for (
+  const [fault, refusal] of [
+    ["moved release head", "current matrix release custody changed"],
+    ["changed producer read", "current matrix producer ancestry changed"],
+    ["unreadable producer read", REFUSAL],
+  ] as const
+) {
+  Deno.test(`a producer pass reading through the history view still refuses a ${fault} before recovery`, async () => {
+    const rig = await walkRig({
+      producers: 3,
+      rows: [blocked("blocked-oldest", FIRST_RUN, 7001)],
+      plans: new Map([[FIRST_RUN, {
+        id: 7001,
+        digest: ARCHIVE,
+        expired: false,
+      }]]),
+      wrapState: (state) => {
+        if (fault === "moved release head") {
+          // The walk's own first read is genuine; every later live read
+          // finds the release head moved.
+          const read = state.readRelease as () => Promise<ReleaseRead>;
+          let reads = 0;
+          state.readRelease = async () => {
+            const result = await read();
+            if (++reads === 1 || !result.ok) return result;
+            return portOk({ ...result.value, head: SHA1 });
+          };
+          return;
+        }
+        const open = state.openReleaseHistory as (
+          input: { expectedHead: GitSha },
+        ) => Promise<
+          {
+            ok: boolean;
+            value: {
+              readAt(commit: GitSha): Promise<ReleaseRead>;
+              close(): Promise<void>;
+            };
+          }
+        >;
+        state.openReleaseHistory = async (input: { expectedHead: GitSha }) => {
+          const opened = await open(input);
+          if (!opened.ok) return opened;
+          const view = opened.value;
+          const seen = new Set<GitSha>();
+          return portOk({
+            close: () => view.close(),
+            // The traversal's own read of each commit is genuine; every
+            // later read of it by the producer pass is not.
+            readAt: async (commit: GitSha) => {
+              const read = await view.readAt(commit);
+              if (!seen.has(commit) || !read.ok) {
+                seen.add(commit);
+                return read;
+              }
+              if (fault === "unreadable producer read") {
+                return portError("unavailable", "offline view unavailable");
+              }
+              return portOk({
+                ...read.value,
+                snapshot: {
+                  ...read.value.snapshot,
+                  updatedAt: read.value.snapshot.updatedAt + 1,
+                },
+              });
+            },
+          });
+        };
+      },
+    });
+    try {
+      const outcome = await captured(rig.walk);
+      assert(outcome.error instanceof Error, String(outcome.error));
+      assert.equal(outcome.error.message, refusal);
+      assert.equal(
+        outcome.error instanceof CurrentMatrixRecoveryIntegrityFailure,
+        refusal !== REFUSAL,
+      );
+      assert.deepEqual(rig.calls.confirmed, [FIRST_RUN]);
+      assert.deepEqual(rig.calls.recovered, []);
+    } finally {
+      await rig.cleanup();
+    }
+  });
+}

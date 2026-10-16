@@ -235,6 +235,8 @@ export async function walkRig(input: {
   completed?: (runId: number) => boolean;
   /** The pass of this producer ingests its (empty) wave and moves the head. */
   applies?: (runId: number) => boolean;
+  /** This producer's wave binds no requested cell: the pass settles nothing. */
+  settlesNothing?: (runId: number) => boolean;
   /** The completion read invokes the pass's repair writer before deferring. */
   writesOnConfirm?: (runId: number) => boolean;
   /** The completion read of this producer refuses (provenance conflict). */
@@ -307,18 +309,46 @@ export async function walkRig(input: {
   }) as unknown as Record<PropertyKey, unknown>;
   input.wrapState?.(state);
   const plans = input.plans ?? new Map<number, PlanRow>();
-  let writer: { writeRepair: (...args: unknown[]) => Promise<unknown> } | null =
-    null;
+  let writer: {
+    writeRepair: (...args: unknown[]) => Promise<unknown>;
+    readRelease: () => Promise<
+      {
+        ok: boolean;
+        value?: {
+          status: string;
+          head?: string;
+          snapshot?: { hostedRuntimes: unknown[] };
+        };
+      }
+    >;
+  } | null = null;
+  // The real transport's release read of the pass's state (its completion
+  // custody): a missing or unreadable producer snapshot is refused.
+  const passRelease = async () => {
+    const read = await writer!.readRelease();
+    if (!read.ok || read.value?.status !== "found") throw new Error(REFUSAL);
+    return canonicalStringify({
+      head: read.value.head,
+      runtimes: read.value.snapshot!.hostedRuntimes,
+    });
+  };
   const transport = {
     confirmCompletedExecution: async (saved: { runId: number }) => {
       calls.confirmed.push(saved.runId);
+      // Like the real completion read: release custody before the native
+      // attempt and job reads, and the same custody again after them.
+      const custody = await passRelease();
       if (input.confirmThrows?.(saved.runId)) throw new Error(REFUSAL);
       if (input.writesOnConfirm?.(saved.runId)) {
         // A cooldown hold recorded through the pass's own writer.
         await writer!.writeRepair(repair.snapshot, repair.head).catch(() => {});
         return false;
       }
-      return input.completed?.(saved.runId) ?? true;
+      const completed = input.completed?.(saved.runId) ?? true;
+      if (completed && await passRelease() !== custody) {
+        throw new Error(REFUSAL);
+      }
+      return completed;
     },
     recover: async (request: {
       requests: readonly {
@@ -330,7 +360,20 @@ export async function walkRig(input: {
     }) => {
       const runId = request.currentRun!.runId;
       calls.recovered.push(runId);
+      // The real recovery reads the pass's release snapshot first too.
+      await passRelease();
       now += input.recoverCost?.(runId) ?? 0;
+      if (input.settlesNothing?.(runId)) {
+        const run = { runId, runAttempt: 1, launcherSha: LAUNCHER };
+        const plan = { waveId: execution(runId).id, run, cells: [] };
+        return [{
+          plan,
+          provenance: { run },
+          planDigest: await matrixDigestV1(plan),
+          results: [],
+          bundlesDir: `${root}/bundles`,
+        }];
+      }
       if (input.applies?.(runId)) {
         const run = { runId, runAttempt: 1, launcherSha: LAUNCHER };
         const plan = {

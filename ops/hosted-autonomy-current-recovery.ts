@@ -32,6 +32,16 @@ import {
 } from "./hosted-autonomy-producer-requests.ts";
 
 /**
+ * The whole walk's bound: the history traversals and every producer pass.
+ * Each parked producer's pass runs to its recovery even when it settles
+ * nothing, and the in-flight walk then passes over every newer producer, so
+ * one minute could not reach every parked group and the in-flight producer
+ * behind them. Five minutes still leaves the 15-minute maintenance job most of
+ * its time.
+ */
+const CURRENT_MATRIX_WALK_BUDGET_MS = 300_000;
+
+/**
  * The traversal that finds parked candidates' producers stops reading
  * history back once only this much of the walk budget is left, whether or not
  * in-flight work is pending: the producers it found still get their passes,
@@ -63,7 +73,7 @@ export async function recoverHostedCurrentMatrix(
   onUnrecoverable: (kind: "expired" | "unlisted") => void = () => {},
 ): Promise<HostedAutonomyResultV1 | null> {
   if (!deps.closedMatrix) return null;
-  const deadlineAt = deps.clock.now() + 60_000;
+  const deadlineAt = deps.clock.now() + CURRENT_MATRIX_WALK_BUDGET_MS;
   const dedicated = dedicatedMatrixReservations(deps, binding);
   const [repair, release] = await Promise.all([
     deps.state.readRepair(),

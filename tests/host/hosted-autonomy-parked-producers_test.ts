@@ -235,7 +235,7 @@ Deno.test("without in-flight work the walk ends after the parked producers' pass
 });
 
 Deno.test("the parked traversal stops reading history once every parked producer is found", async () => {
-  // Each local ancestry proof costs one second: reading on past the newest
+  // Each local ancestry proof costs three seconds: reading on past the newest
   // producer to the root would spend the whole budget.
   const rig = await walkRig({
     producers: 120,
@@ -245,7 +245,7 @@ Deno.test("the parked traversal stops reading history once every parked producer
       digest: ARCHIVE,
       expired: false,
     }]]),
-    gitCost: (args) => args[0] === "merge-base" ? 1000 : 0,
+    gitCost: (args) => args[0] === "merge-base" ? 3000 : 0,
   });
   try {
     await assert.rejects(rig.walk, /^Error: REACHED 1120 blocked-newest$/);

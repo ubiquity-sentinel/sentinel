@@ -302,11 +302,19 @@ async function recoverProducerWithinBudget(
       throw integrityFault("current matrix native proof changed");
     }
   };
+  // The transport's completion and recovery reads take an older producer's
+  // snapshot from the walk's verified history view, as custody() does, not
+  // from another complete history fetch each: the commit is immutable and
+  // the view applies the same ancestry and decoder refusals. custody() still
+  // re-proves the live release head before the recovery, every target and
+  // every write.
   const producerState: StateReadView & RepairStateWriter = {
     ...state,
     readRelease: () =>
       producer.head === current.head
         ? state.readRelease()
+        : readProducer
+        ? readProducer(producer.head)
         : deps.state.readReleaseAt!({
           commit: producer.head,
           expectedHead: current.head,
