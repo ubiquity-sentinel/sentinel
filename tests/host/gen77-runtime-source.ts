@@ -10,17 +10,22 @@
  * network, no checkout mutation. A checkout without the pinned commit reports
  * `gen77Available() === false` so callers mark the case ignored. The same
  * helpers exist for the installed generation-78 runtime (R78), the rollback
- * target of generation 79: `gen78Available` and `loadGen78Modules`.
+ * target of generation 79: `gen78Available` and `loadGen78Modules`, and for
+ * the installed generation-79 runtime (R79): `gen79Available` and
+ * `loadGen79Modules`.
  */
 import {
   OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION,
   OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION,
 } from "../../src/host/owner-install-runtime-pins.ts";
 
 /** Installed generation-77 runtime revision (the rollback target of 78). */
 export const GEN77_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION;
 /** Installed generation-78 runtime revision (the rollback target of 79). */
 export const GEN78_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION;
+/** Installed generation-79 runtime revision. */
+export const GEN79_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION;
 
 const ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname)
   .replace(/\/$/, "");
@@ -57,6 +62,11 @@ export function gen78Available(): Promise<boolean> {
   return revisionAvailable(GEN78_RUNTIME);
 }
 
+/** True when the pinned generation-79 commit is in the local object store. */
+export function gen79Available(): Promise<boolean> {
+  return revisionAvailable(GEN79_RUNTIME);
+}
+
 interface LoadedRuntimeV1 {
   modules: Record<string, unknown>[];
   dispose(): Promise<void>;
@@ -79,6 +89,13 @@ export function loadGen78Modules(
   paths: readonly string[],
 ): Promise<LoadedRuntimeV1> {
   return loadRevisionModules(GEN78_RUNTIME, 78, paths);
+}
+
+/** `loadGen77Modules` for the generation-79 `src/` and `tests/` trees. */
+export function loadGen79Modules(
+  paths: readonly string[],
+): Promise<LoadedRuntimeV1> {
+  return loadRevisionModules(GEN79_RUNTIME, 79, paths);
 }
 
 async function loadRevisionModules(

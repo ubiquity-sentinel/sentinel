@@ -12,7 +12,9 @@
  *
  * The same proof runs against the installed generation-78 runtime (R78,
  * 474f87eb6), the rollback target of generation 79 (`gen78Available`,
- * `loadGen78Modules`, `loadGen78Parsers`, `assertGen78Parses`).
+ * `loadGen78Modules`, `loadGen78Parsers`, `assertGen78Parses`), and against
+ * the installed generation-79 runtime (R79, 549c7a691) itself
+ * (`gen79Available`, `loadGen79Parsers`, `assertGen79Parses`).
  *
  * A shallow clone that does not hold the pinned commit cannot run the proof:
  * `gen77Available` (or `gen78Available`) reports that and callers mark the
@@ -28,6 +30,8 @@ import { assertGen76Shape } from "./gen76-contracts.ts";
 export const GEN77_RUNTIME = "ab3613e0224ff92266bed21dde6f40e6b0aab54a";
 /** Installed generation-78 runtime revision (the rollback target of 79). */
 export const GEN78_RUNTIME = "474f87eb639f97cd72b9bc4b9e56101488f841aa";
+/** Installed generation-79 runtime revision. */
+export const GEN79_RUNTIME = "549c7a69186b3d2070aa4e69c92ee846d183ce8f";
 
 const ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname)
   .replace(/\/$/, "");
@@ -62,6 +66,11 @@ export function gen77Available(): Promise<boolean> {
 /** True when the pinned generation-78 commit is in the local object store. */
 export function gen78Available(): Promise<boolean> {
   return revisionAvailable(GEN78_RUNTIME);
+}
+
+/** True when the pinned generation-79 commit is in the local object store. */
+export function gen79Available(): Promise<boolean> {
+  return revisionAvailable(GEN79_RUNTIME);
 }
 
 interface LoadedModulesV1 {
@@ -131,7 +140,7 @@ export interface Gen77ParsersV1 {
   parseRepairStateSnapshotV1(input: unknown): RepairStateSnapshotV1;
   parseMatrixPlanV1(input: unknown): MatrixPlanV1;
 }
-/** The generation-78 parsers have the same shape. */
+/** The generation-78 and generation-79 parsers have the same shape. */
 export type Gen78ParsersV1 = Gen77ParsersV1;
 
 const cached = new Map<string, Promise<Gen77ParsersV1>>();
@@ -177,6 +186,11 @@ export function loadGen78Parsers(): Promise<Gen78ParsersV1> {
   return loadRevisionParsers(GEN78_RUNTIME, 78);
 }
 
+/** The generation-79 snapshot and matrix-plan parsers. */
+export function loadGen79Parsers(): Promise<Gen78ParsersV1> {
+  return loadRevisionParsers(GEN79_RUNTIME, 79);
+}
+
 /**
  * Full rollback proof for one written snapshot: the literal shape guard, then
  * the pinned generation-77 parser (which also re-validates every reservation,
@@ -199,5 +213,17 @@ export async function assertGen78Parses(
 ): Promise<void> {
   assertGen76Shape(snapshot);
   const parsers = await loadGen78Parsers();
+  parsers.parseRepairStateSnapshotV1(JSON.parse(JSON.stringify(snapshot)));
+}
+
+/**
+ * The same proof for one snapshot under the installed generation-79 runtime:
+ * the literal shape guard, then the pinned generation-79 parser.
+ */
+export async function assertGen79Parses(
+  snapshot: RepairStateSnapshotV1,
+): Promise<void> {
+  assertGen76Shape(snapshot);
+  const parsers = await loadGen79Parsers();
   parsers.parseRepairStateSnapshotV1(JSON.parse(JSON.stringify(snapshot)));
 }

@@ -11,9 +11,38 @@ import type {
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import type { MatrixAuthenticatedWaveV1 } from "../src/host/matrix-artifact-port.ts";
 import { matrixDigestV1 } from "../src/contracts/matrix.ts";
+import {
+  DETERMINISTIC_PUBLICATION_DETAILS,
+  PUBLICATION_PROTECTED_DETAIL,
+} from "../src/github/snapshot-policy.ts";
 import { blockedCandidateBinding } from "../src/host/matrix-blocked-candidate.ts";
 import { MATRIX_PRESERVATION_UNCERTAINTY_DETAIL } from "../src/host/matrix-uncertainty-maintenance.ts";
-import { implementationIntentKey } from "../src/repair/keys.ts";
+import {
+  candidatePreservationRef,
+  implementationIntentKey,
+} from "../src/repair/keys.ts";
+import { CONFLICT_PROTECTED_DETAIL } from "../src/repair/conflict-resolution.ts";
+import { clearIntent, markBlocked } from "../src/repair/transitions.ts";
+
+/** The runtime's deterministic trusted-content refusal (loop-preservation.ts). */
+export const PRESERVATION_VALIDATION_REFUSED =
+  "candidate preservation validation refused";
+
+/**
+ * The runtime's terminal owner-reserved block for a candidate that touches a
+ * protected path: R78 and R79 write exactly this message when the
+ * implementation result hits a protected path (loop-implementation-result.ts)
+ * and when a resolved merge does (conflict-resolution.ts). No retry rule and
+ * no preservation disposition class matches it; the owner handles it.
+ */
+export const CANDIDATE_PROTECTED_BLOCKER: string = CONFLICT_PROTECTED_DETAIL;
+
+/**
+ * What one restore wrote: the exact preserved descriptor, the runtime's own
+ * validation-refusal block, the runtime's own protected-path block, or
+ * nothing at all (null).
+ */
+export type CandidateRestoreV1 = "preserved" | "refused" | "protected" | null;
 
 /**
  * The second closed parked-preservation class: historical matrix custody
@@ -77,13 +106,19 @@ export interface BlockedCandidatePreservationInputV1 {
   github: GitHubPort;
   clock: Clock;
   readbackFailure(write: PortResultV1<StateWriteResultV1>): Error;
+  /**
+   * Record the trusted validator's deterministic refusal (see
+   * preserveBlockedCandidate). Only the parked runtime-mismatch restore sets
+   * it; every other caller keeps custody on any failure.
+   */
+  recordRefusal?: true;
 }
 
 export async function restoreBlockedCandidate(
   input: BlockedCandidatePreservationInputV1 & {
     wave: MatrixAuthenticatedWaveV1;
   },
-): Promise<boolean> {
+): Promise<CandidateRestoreV1> {
   const { record, wave } = input;
   const binding = blockedCandidateBinding(record);
   const intent = record.intent;
@@ -95,8 +130,8 @@ export async function restoreBlockedCandidate(
     binding.planDigest !== wave.planDigest ||
     binding.plannerJobId !== wave.provenance.plannerJobId ||
     binding.resultDigest !== await matrixDigestV1(result)
-  ) return false;
-  return await preserveBlockedCandidate(input);
+  ) return null;
+  return await preserveBlockedCandidate({ ...input, recordRefusal: true });
 }
 
 /**
@@ -111,10 +146,10 @@ export async function restoreInflightCandidate(
   input: BlockedCandidatePreservationInputV1 & {
     wave: MatrixAuthenticatedWaveV1;
   },
-): Promise<boolean> {
+): Promise<CandidateRestoreV1> {
   const { record, wave } = input;
   const intent = record.intent;
-  if (!isInflightPreservation(record) || !intent) return false;
+  if (!isInflightPreservation(record) || !intent) return null;
   const cells = wave.plan.cells.filter((cell) =>
     cell.reservationId === intent.requestId
   );
@@ -131,7 +166,7 @@ export async function restoreInflightCandidate(
     results[0].taskId !== record.id ||
     results[0].receipt?.candidate?.head !== record.target.head ||
     results[0].bundle?.head !== record.target.head
-  ) return false;
+  ) return null;
   return await preserveBlockedCandidate(input);
 }
 
@@ -142,14 +177,27 @@ export async function restoreInflightCandidate(
  * expected-head CAS returns the record to `work` with that preserved
  * descriptor (an in-flight record's `unavailable` wait clears with its
  * intent). The charge stays as it is: nothing is refunded or started.
+ *
+ * With `recordRefusal`, the trusted validator's deterministic verdict on
+ * these exact immutable objects, for the record's own deterministic
+ * preservation ref, is the one refusal that is recorded, and only while that
+ * ref reads back as absent (an exact candidate already at its ref keeps
+ * custody). The same CAS clears the intent and blocks the record with the
+ * target, head and descriptor kept. A protected entry verdict is the
+ * runtime's own terminal block for a candidate that touches a protected path
+ * (CANDIDATE_PROTECTED_BLOCKER, loop-implementation-result.ts): no pass
+ * re-admits it for a fresh charge. Every other verdict is the runtime's own
+ * transition for it (loop-preservation.ts), PRESERVATION_VALIDATION_REFUSED,
+ * which the preservation disposition's REFUSED class owns from there. Any
+ * other failure proves nothing and writes nothing.
  */
 export async function preserveBlockedCandidate(
   input: BlockedCandidatePreservationInputV1,
-): Promise<boolean> {
+): Promise<CandidateRestoreV1> {
   const { record, state, github, clock } = input;
   const intent = record.intent;
   if (!restorableCandidate(record) || !intent || !intent.branch) {
-    return false;
+    return null;
   }
   const before = await state.readRepair();
   if (
@@ -157,7 +205,7 @@ export async function preserveBlockedCandidate(
     canonicalStringify(
         before.value.snapshot.work.find((row) => row.id === record.id),
       ) !== canonicalStringify(record)
-  ) return false;
+  ) return null;
   const candidate = {
     operationKey: intent.key,
     base: record.target.base,
@@ -169,19 +217,36 @@ export async function preserveBlockedCandidate(
     candidate,
     publishedHead: record.target.candidateState!.publishedHead,
   });
-  if (!preserved.ok) return false;
-  const observed = await github.readRef(candidate.ref);
-  if (!observed.ok || observed.value?.sha !== candidate.head) return false;
+  let refusal: string | null = null;
+  if (!preserved.ok) {
+    if (
+      input.recordRefusal !== true || preserved.error.kind !== "invalid" ||
+      !DETERMINISTIC_PUBLICATION_DETAILS.includes(preserved.error.detail) ||
+      candidate.ref !== await candidatePreservationRef(
+          record.repository,
+          record.id,
+          intent.key,
+        )
+    ) return null;
+    const observed = await github.readRef(candidate.ref);
+    if (!observed.ok || observed.value !== null) return null;
+    refusal = preserved.error.detail === PUBLICATION_PROTECTED_DETAIL
+      ? CANDIDATE_PROTECTED_BLOCKER
+      : PRESERVATION_VALIDATION_REFUSED;
+  } else {
+    const observed = await github.readRef(candidate.ref);
+    if (!observed.ok || observed.value?.sha !== candidate.head) return null;
+  }
   const fresh = await state.readRepair();
   if (
     !fresh.ok || fresh.value.status !== "found" ||
     fresh.value.head !== before.value.head ||
     canonicalStringify(fresh.value.snapshot) !==
       canonicalStringify(before.value.snapshot)
-  ) return false;
+  ) return null;
   const now = clock.now();
   if (!Number.isSafeInteger(now) || now < fresh.value.snapshot.updatedAt) {
-    return false;
+    return null;
   }
   const next = {
     ...fresh.value.snapshot,
@@ -189,8 +254,11 @@ export async function preserveBlockedCandidate(
     sequence: fresh.value.snapshot.sequence + 1,
     updatedAt: now,
     work: fresh.value.snapshot.work.map((row) =>
-      row.id === record.id
-        ? {
+      row.id !== record.id
+        ? row
+        : refusal !== null
+        ? markBlocked(clearIntent(row, now), "other", refusal, now)
+        : {
           ...row,
           nextStep: "work" as const,
           blocker: null,
@@ -205,16 +273,19 @@ export async function preserveBlockedCandidate(
           },
           updatedAt: now,
         }
-        : row
     ),
   };
   const written = await state.writeRepair(next, fresh.value.head);
-  if (!written.ok || written.value.status !== "applied") return false;
+  if (!written.ok || written.value.status !== "applied") return null;
   const readback = await state.readRepair();
   if (
     !readback.ok || readback.value.status !== "found" ||
     readback.value.head !== written.value.head ||
     canonicalStringify(readback.value.snapshot) !== canonicalStringify(next)
   ) throw input.readbackFailure(written);
-  return true;
+  return refusal === null
+    ? "preserved"
+    : refusal === CANDIDATE_PROTECTED_BLOCKER
+    ? "protected"
+    : "refused";
 }

@@ -445,6 +445,11 @@ async function recoverProducerWithinBudget(
     throw integrityFault("current matrix repair custody changed");
   }
   let ingested = 0;
+  // Exact candidates the trusted validator refused: each write is the
+  // runtime's own refusal block (the owner-terminal protected-path block for
+  // a protected entry verdict), reported, never a silent skip.
+  let refused = 0;
+  let protectedPaths = 0;
   const selected = new Set<string>();
   const selectedTasks = new Set<string>();
   for (const config of ports.configs) {
@@ -568,22 +573,25 @@ async function recoverProducerWithinBudget(
         restore = parked ? restoreBlockedCandidate : restoreInflightCandidate;
       } else continue;
       await custody();
-      if (
-        await restore({
-          record,
-          wave,
-          state,
-          github: ports.cycleFor(config).github,
-          clock: deps.clock,
-          readbackFailure: (write) =>
-            new CurrentMatrixRecoveryIntegrityFailure(
-              "current matrix candidate preservation readback changed",
-              before.head,
-              appliedHead,
-              write,
-            ),
-        }) && entry.disposition === "duplicate"
-      ) ingested++;
+      const restored = await restore({
+        record,
+        wave,
+        state,
+        github: ports.cycleFor(config).github,
+        clock: deps.clock,
+        readbackFailure: (write) =>
+          new CurrentMatrixRecoveryIntegrityFailure(
+            "current matrix candidate preservation readback changed",
+            before.head,
+            appliedHead,
+            write,
+          ),
+      });
+      if (restored === "refused") refused++;
+      if (restored === "protected") protectedPaths++;
+      if (restored === "preserved" && entry.disposition === "duplicate") {
+        ingested++;
+      }
     }
     // Non-silent accounting for owner-parallel disposals: tolerated
     // dispositions are still counted and reported with fixed keys only.
@@ -644,7 +652,15 @@ async function recoverProducerWithinBudget(
       reason: after.value.head === before.head ? "no_change" : "applied",
       beforeHead: before.head,
       appliedHead: after.value.head,
-      actions: [`current-matrix:ingested:${ingested}`],
+      actions: [
+        `current-matrix:ingested:${ingested}`,
+        ...(refused > 0
+          ? [`current-matrix:preservation-refused:${refused}`]
+          : []),
+        ...(protectedPaths > 0
+          ? [`current-matrix:preservation-protected:${protectedPaths}`]
+          : []),
+      ],
       revisions: [],
     },
     deferred: false,

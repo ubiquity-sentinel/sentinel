@@ -44,7 +44,8 @@ export type BlockedCandidateCase =
   | "unlisted-plan"
   | "existing-ref"
   | "existing-ref-conflict"
-  | "existing-ref-parked";
+  | "existing-ref-parked"
+  | "protected-refusal";
 
 /** The restored record's state, its exact predecessor and the cycle deps. */
 export interface InflightStateV1 {

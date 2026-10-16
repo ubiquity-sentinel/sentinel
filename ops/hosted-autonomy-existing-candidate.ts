@@ -127,9 +127,11 @@ export async function restoreExistingCandidateRefs(input: {
           ),
       });
       actions.push(
-        `existing-ref:${record.id}:${done ? "preserved" : "unproven"}`,
+        `existing-ref:${record.id}:${
+          done === "preserved" ? "preserved" : "unproven"
+        }`,
       );
-      if (done) restored++;
+      if (done === "preserved") restored++;
     } catch (error) {
       // A changed readback after an applied write is an integrity fault;
       // an unavailable mirror or preserver only defers this record.

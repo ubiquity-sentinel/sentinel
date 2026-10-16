@@ -32,6 +32,7 @@ import { gitRun, makeRemoteCtx, T0 } from "../state/helpers.ts";
 import { BASE, ENV, SELF_REPO } from "./hosted-autonomy-fixtures.ts";
 import { historicalMalformedRig } from "./hosted-autonomy-historical-fixtures.ts";
 import { prepareModernHistory } from "./hosted-autonomy-modern-history-fixtures.ts";
+import { expectProtectedRefusal } from "./hosted-autonomy-modern-results.ts";
 import { captureHostedAutonomyMain } from "./hosted-autonomy-rig.ts";
 import { candidatePreservationRef } from "../../src/repair/keys.ts";
 import { createHostedCandidateRecoveryPort } from "../../ops/hosted-autonomy-candidate-port.ts";
@@ -220,6 +221,7 @@ export async function modernRecoveryScenario(
       releaseBefore = prepared.releaseBefore;
       recoveryHttp = prepared.recoveryHttp;
     }
+    // The target repository answers every exact git ref read.
     if (blockedCandidate) {
       recoveryHttp = serveTargetRefs(recoveryHttp, target.work);
     }
@@ -267,7 +269,10 @@ export async function modernRecoveryScenario(
                             state,
                             clock: f.clock,
                           }),
-                          config,
+                          // The candidate edits a path the target protects.
+                          config: blockedCandidate === "protected-refusal"
+                            ? { ...config, protectedPaths: ["repair.txt"] }
+                            : config,
                           token: "offline-native-token",
                           http: recoveryHttp,
                           sourcePath: mirror,
@@ -820,6 +825,16 @@ export async function modernRecoveryScenario(
         assert.deepEqual(
           finished.value.snapshot.reservations,
           after.value.snapshot.reservations,
+        );
+      } else if (blockedCandidate === "protected-refusal") {
+        assert(!(result instanceof Error), String(result));
+        await expectProtectedRefusal(
+          result,
+          before,
+          after,
+          target.work,
+          run,
+          () => f.rig.state.readRepair(),
         );
       } else if (blockedCandidate === "changed-record") {
         assert(competing !== null, "competing owner must reach the CAS seam");

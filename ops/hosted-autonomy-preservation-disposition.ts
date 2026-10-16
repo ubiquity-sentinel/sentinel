@@ -54,7 +54,10 @@ import {
   candidateBranch,
   candidatePreservationRef,
 } from "../src/repair/keys.ts";
-import { isParkedPreservation } from "./hosted-autonomy-blocked-candidate.ts";
+import {
+  isParkedPreservation,
+  PRESERVATION_VALIDATION_REFUSED,
+} from "./hosted-autonomy-blocked-candidate.ts";
 import { taskReservationCount } from "./hosted-autonomy-retries.ts";
 import {
   HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS,
@@ -66,9 +69,7 @@ import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
 
-/** The runtime's deterministic trusted-content refusal (loop-preservation.ts). */
-export const PRESERVATION_VALIDATION_REFUSED =
-  "candidate preservation validation refused";
+export { PRESERVATION_VALIDATION_REFUSED };
 
 export const PRESERVATION_ABSENT_BLOCKER =
   `${PRESERVATION_UNRECOVERABLE_PREFIX}: exact candidate absent from the repository past artifact retention; submitted admission retained`;
