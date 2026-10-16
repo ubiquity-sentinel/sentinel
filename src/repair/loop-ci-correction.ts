@@ -25,6 +25,7 @@ import {
   attributeFailedChecks,
   ciCorrectable,
   ciCorrectionFinding,
+  ciCorrectionRouteOpen,
   type CiDispositionV1,
   decideCiDisposition,
   failedChecks,
@@ -127,7 +128,9 @@ export async function routeFailedDeliveryChecks(
   legacyDetail: string,
   now: number,
 ): Promise<StepResultV1> {
-  if (!ciCorrectable(record)) {
+  // A hosted run whose correction cell could outlive a rollback to a runtime
+  // that refuses it keeps the generation-76 block exactly (no base read).
+  if (!ciCorrectionRouteOpen(deps) || !ciCorrectable(record)) {
     return persistBlocked(deps, context, record, legacyDetail, now);
   }
   const disposition = await attributeAgainstBase(deps, record, failed);
@@ -187,7 +190,8 @@ export async function correctFailedHeadBeforeRefresh(
   record: WorkRecordV1,
 ): Promise<StepResultV1 | null> {
   if (
-    !ciCorrectable(record) || !headAcceptedByReview(context.snapshot, record)
+    !ciCorrectionRouteOpen(deps) || !ciCorrectable(record) ||
+    !headAcceptedByReview(context.snapshot, record)
   ) return null;
   const observed = await observeHeadFailure(deps, record);
   if (observed === null || observed.kind !== "candidate") return null;

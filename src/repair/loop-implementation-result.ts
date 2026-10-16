@@ -25,6 +25,7 @@ import {
   implementationIntentKey,
 } from "./keys.ts";
 import { persistAfterSettlement, settleAndBlock } from "./loop-accounting.ts";
+import { MATRIX_PREDECESSOR_DEFERRED } from "./loop-bounds.ts";
 import { verifiedPublishedHead } from "./loop-preservation.ts";
 import { touchesProtected } from "./loop-records.ts";
 import {
@@ -196,6 +197,23 @@ export async function handleModelReceipt(
   const protectedHit = candidate!.changedPaths.some((path) =>
     touchesProtected(config.protectedPaths, path)
   );
+  // The verified prior published head: retained from existing V1 candidate
+  // state, or proved by an ACTUAL owned-branch observation of the exact prior
+  // target head for a legacy record. Model output never establishes it. It is
+  // observed before anything is consumed.
+  const priorPublished = await verifiedPublishedHead(deps, context, record);
+  // A hosted (matrix) ingest never consumes a legacy record's receipt on an
+  // unavailable observation. Hosted admission DOES start legacy records that
+  // carry a head (a review or CI correction), and noting the candidate in the
+  // legacy shape clears the implementation intent with no preservation intent:
+  // no later consumer scan would select the artifact again, and a fresh
+  // runner's mirror can never restore the candidate (legacy restoration
+  // accepts only the task-branch head). The reservation stays reserved and the
+  // intent bound, so the consumer re-ingests the same artifact later.
+  if (
+    priorPublished.kind === "unavailable" &&
+    deps.externalImplementations === true
+  ) return MATRIX_PREDECESSOR_DEFERRED;
   // A verified bad candidate stays charged (submitted) but never publishes.
   const settled = await deps.budget.settleModelStart({
     id: reservationId,
@@ -211,10 +229,6 @@ export async function handleModelReceipt(
   if (afterSettlement === null) {
     return { kind: "state_error", detail: "repair state unavailable" };
   }
-  // The verified prior published head: retained from existing V1 candidate
-  // state, or proved by an ACTUAL owned-branch observation of the exact prior
-  // target head for a legacy record. Model output never establishes it.
-  const priorPublished = await verifiedPublishedHead(deps, context, record);
   const operationKey = implementationIntentKey(reservationId);
   const preservationRef = await candidatePreservationRef(
     record.repository,
@@ -243,11 +257,12 @@ export async function handleModelReceipt(
       ? null
       : { branch: candidateBranch(record.id), sha: candidate!.checkpointSha },
   }, now);
-  // A legacy record whose predecessor observation was unavailable keeps its
-  // legacy shape: an unverified observation is never stored as a verified
-  // absent head, which would terminally refuse the legitimate predecessor ref
-  // once reads recover. Its publication re-observes the branch through the
-  // legacy path, and its next candidate retries the observation.
+  // An in-process (serial) legacy record whose predecessor observation was
+  // unavailable keeps its legacy shape: an unverified observation is never
+  // stored as a verified absent head, which would terminally refuse the
+  // legitimate predecessor ref once reads recover. Its publication re-observes
+  // the branch through the legacy path from the same local checkout, and its
+  // next candidate retries the observation.
   const withCandidate = priorPublished.kind === "unavailable"
     ? noted
     : setCandidateState(noted, {

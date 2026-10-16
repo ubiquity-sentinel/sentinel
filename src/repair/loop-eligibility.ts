@@ -5,6 +5,7 @@ import type {
   IncompleteOperationV1,
   WorkRecordV1,
 } from "../contracts/work-record.ts";
+import { ciCorrectionRouteOpen } from "./ci-rejection.ts";
 import { OPERATION_MARGIN_MS } from "./loop-bounds.ts";
 import { configFor } from "./loop-records.ts";
 import { headNeedsCorrection } from "./loop-review-records.ts";
@@ -47,6 +48,8 @@ export function isMatrixImplementationReadyV1(
   snapshot: RepairStateSnapshotV1,
   config: RepositoryConfigV1,
   now: number,
+  /** `ciCorrectionRouteOpen(deps)` of the planning run. */
+  ciRouteOpen = true,
 ): boolean {
   if (record.source.kind !== "issue") return false;
   if (record.nextStep !== "work") return false;
@@ -61,7 +64,7 @@ export function isMatrixImplementationReadyV1(
   if (record.target.branch === null) return false;
   if (config.sessionBound === null) return false;
   return record.target.head === null ||
-    headNeedsCorrection(snapshot, record);
+    headNeedsCorrection(snapshot, record, ciRouteOpen);
 }
 
 // ---------------------------------------------------------------------------
@@ -77,10 +80,12 @@ export function isMatrixImplementationReadyV1(
 export function isModelStartAction(
   snapshot: RepairStateSnapshotV1,
   record: WorkRecordV1,
+  /** `ciCorrectionRouteOpen(deps)` of the run. */
+  ciRouteOpen = true,
 ): boolean {
   return record.nextStep === "work" &&
     (record.target.head === null ||
-      headNeedsCorrection(snapshot, record));
+      headNeedsCorrection(snapshot, record, ciRouteOpen));
 }
 
 /**
@@ -106,7 +111,9 @@ export function declaredOperationFits(
     deps.externalImplementations === true && record.nextStep === "work" &&
     record.intent === null && record.target.branch === null
   ) return true;
-  if (isModelStartAction(context.snapshot, record)) {
+  if (
+    isModelStartAction(context.snapshot, record, ciCorrectionRouteOpen(deps))
+  ) {
     if (now >= bounds.modelCutoff) return false;
     const bound = config.sessionBound;
     if (bound === null) return true;

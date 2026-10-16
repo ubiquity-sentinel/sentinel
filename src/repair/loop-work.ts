@@ -11,6 +11,7 @@ import {
   MATRIX_ARTIFACT_DEFERRED,
   MATRIX_IMPLEMENTATION_DEFERRED,
 } from "./loop-bounds.ts";
+import { ciCorrectionRouteOpen } from "./ci-rejection.ts";
 import { correctFailedHeadBeforeRefresh } from "./loop-ci-correction.ts";
 import { retryAlreadySatisfiedClosure, retryClosure } from "./loop-closure.ts";
 import { ensureEvidence } from "./loop-evidence.ts";
@@ -169,7 +170,11 @@ export async function executeWorkStep(
 
   if (
     record.target.head === null ||
-    headNeedsCorrection(context.snapshot, record)
+    headNeedsCorrection(
+      context.snapshot,
+      record,
+      ciCorrectionRouteOpen(deps),
+    )
   ) {
     return executeImplementationStep(deps, context, record, config);
   }

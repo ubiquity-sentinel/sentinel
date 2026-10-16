@@ -26,10 +26,11 @@ import {
 export const HOSTED_AUTONOMY_CI_CORRECTION_MIN_GENERATION = 77;
 
 /**
- * Exact reviewed runtime revisions that carry the CI correction route. It is
- * EMPTY until the integration owner pins the reviewed generation-77 revision
- * (that commit does not exist yet), so the re-admission stays inert under
- * every installed runtime until then. It never names 74/75/76.
+ * Exact reviewed runtime revisions that carry the CI correction route. It
+ * never names 74/75/76, and it stays EMPTY while a hosted run keeps that route
+ * closed (`HOSTED_CI_CORRECTIONS`, false in generation 77 because its rollback
+ * target 76 refuses the correction cell): under such a runtime a re-admitted
+ * head is only blocked again. The first runtime that opens it is pinned here.
  */
 export const HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES: ReadonlySet<string> =
   new Set<string>([]);

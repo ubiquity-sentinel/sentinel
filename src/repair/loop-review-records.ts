@@ -83,8 +83,11 @@ export function headAcceptedByReview(
 export function headAwaitsCiCorrection(
   snapshot: RepairStateSnapshotV1,
   record: WorkRecordV1,
+  /** `ciCorrectionRouteOpen(deps)`: a closed route awaits nothing. */
+  ciRouteOpen = true,
 ): boolean {
-  return record.nextStep === "work" && ciCorrectionShape(record) &&
+  return ciRouteOpen && record.nextStep === "work" &&
+    ciCorrectionShape(record) &&
     !headRejectedByReview(snapshot, record) &&
     headAcceptedByReview(snapshot, record) &&
     !snapshot.releaseRequests.some((request) =>
@@ -100,9 +103,11 @@ export function headAwaitsCiCorrection(
 export function headNeedsCorrection(
   snapshot: RepairStateSnapshotV1,
   record: WorkRecordV1,
+  /** `ciCorrectionRouteOpen(deps)`: closed, only a review rejection counts. */
+  ciRouteOpen = true,
 ): boolean {
   return headRejectedByReview(snapshot, record) ||
-    headAwaitsCiCorrection(snapshot, record);
+    headAwaitsCiCorrection(snapshot, record, ciRouteOpen);
 }
 
 /** Bounded batch of the exact unresolved findings a correction must resolve. */

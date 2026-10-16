@@ -18,6 +18,7 @@ import {
   REASONING,
   runBoundsProofRef,
 } from "./loop-bounds.ts";
+import { ciCorrectionRouteOpen } from "./ci-rejection.ts";
 import { confirmCiCorrection } from "./loop-ci-correction.ts";
 import {
   correctionFindings,
@@ -106,7 +107,8 @@ export async function prepareImplementationStart(
   let ciFinding:
     | { severity: string; path: string | null; message: string }
     | null = null;
-  if (headAwaitsCiCorrection(context.snapshot, record)) {
+  const ciRouteOpen = ciCorrectionRouteOpen(deps);
+  if (headAwaitsCiCorrection(context.snapshot, record, ciRouteOpen)) {
     const confirmed = await confirmCiCorrection(deps, context, record);
     if (confirmed.kind !== "confirmed") return confirmed;
     ciFinding = confirmed.finding;
@@ -209,7 +211,11 @@ export async function prepareImplementationStart(
     };
   }
 
-  const rejectedHead = headNeedsCorrection(context.snapshot, record);
+  const rejectedHead = headNeedsCorrection(
+    context.snapshot,
+    record,
+    ciRouteOpen,
+  );
   const findings = correctionFindings(context.snapshot, record, ciFinding);
   const part = decompositionPartOf(record.id);
   const priorAttempts = priorAttemptFactsForRecordV1(

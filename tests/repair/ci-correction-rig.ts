@@ -58,6 +58,8 @@ export interface CiRigOptions {
   candidateState?: { preserved: null; publishedHead: GitSha };
   /** Earlier review receipts of the same PR, seeded before the current one. */
   priorReviews?: RepairStateSnapshotV1["reviews"];
+  /** Run the loop as a hosted (matrix) run does. */
+  hosted?: boolean;
 }
 
 export async function ciRig(prefix: string, options: CiRigOptions) {
@@ -65,6 +67,7 @@ export async function ciRig(prefix: string, options: CiRigOptions) {
   const refreshes: PrepareBaseRefreshRequestV1[] = [];
   const rig = await makeRig(prefix, {
     summaries: false,
+    ...(options.hosted === true ? { externalImplementations: true } : {}),
     model: { heads: [SHA4] },
     github: {
       openIssues: [],

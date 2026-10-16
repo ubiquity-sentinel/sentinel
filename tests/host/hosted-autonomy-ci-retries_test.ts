@@ -19,6 +19,7 @@ import { HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS } from "../../ops/hosted-autonomy-pol
 import {
   CI_CORRECTION_REVIEW_ROUNDS,
   ciCorrectable,
+  HOSTED_CI_CORRECTIONS,
 } from "../../src/repair/ci-rejection.ts";
 import {
   HOSTED_RUNTIME_ID,
@@ -374,5 +375,15 @@ Deno.test("hosted autonomy: the CI re-admission and the runtime correction share
       ciCorrectable(snapshot.work[0]),
       `review rounds ${rounds}`,
     );
+  }
+});
+
+Deno.test("hosted autonomy: no runtime is allowlisted for CI re-admission while hosted CI corrections stay closed", () => {
+  // The launcher pins runtimes cut from its own tree. While a hosted run keeps
+  // the generation-76 terminal CI block (its correction cell could outlive a
+  // rollback to generation 76), a re-admitted head is blocked again by the
+  // merge gate at once and would be re-admitted on every pass.
+  if (!HOSTED_CI_CORRECTIONS) {
+    assert.equal(HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES.size, 0);
   }
 });

@@ -29,6 +29,32 @@ import type { WorkRecordV1 } from "../contracts/work-record.ts";
  */
 export const CI_CORRECTION_REVIEW_ROUNDS = 3;
 
+/**
+ * Whether a HOSTED run may open a CI correction. A hosted correction runs as a
+ * matrix cell, and a cell planned in one run may be consumed only by a later
+ * run, which after a failed generation's rollback runs the rollback target's
+ * code. Generation 76 (41bb853a1), the rollback target of generation 77,
+ * accepts a correction cell only for a head a completed review rejected, and
+ * checks that before its runtime-mismatch isolation: it refuses a CI
+ * correction of a head reviewed clean as a generic provenance refusal that its
+ * historical isolation rethrows, so every later repair run would fail while
+ * the charge stays unconsumed. Hosted runs therefore keep the generation-76
+ * terminal CI block. This tree's consumer accepts the cell
+ * (`matrix-artifact-wave.ts`), so only a runtime whose rollback target is this
+ * tree or later may set it. In-process runs never plan a cell.
+ */
+export const HOSTED_CI_CORRECTIONS = false;
+
+/**
+ * The CI correction route is open for this run: always in process, and in a
+ * hosted (matrix) run only once `HOSTED_CI_CORRECTIONS` is set.
+ */
+export function ciCorrectionRouteOpen(
+  deps: { externalImplementations?: boolean },
+): boolean {
+  return deps.externalImplementations !== true || HOSTED_CI_CORRECTIONS;
+}
+
 /** Bound on the failing checks one correction finding names. */
 export const MAX_CI_CORRECTION_CHECKS = 8;
 

@@ -461,6 +461,54 @@ Deno.test("a broken head on a moved base is corrected instead of refreshed and r
   }
 });
 
+Deno.test("a hosted run keeps the generation-76 terminal CI block: no correction cell may outlive a rollback", async () => {
+  const { rig, charges, checkReads, writes } = await ciRig("ci-hosted", {
+    hosted: true,
+    checks: {
+      [SHA3]: [check("validate", SHA3, "failure")],
+      [SHA1]: [check("validate", SHA1, "success")],
+    },
+  });
+  try {
+    await rig.run();
+    const after = await rig.snapshot();
+    const work = after.work[0];
+    assert.equal(work.nextStep, "blocked", JSON.stringify(work));
+    assert.equal(work.blocker?.message, "CI checks failed: validate(failure)");
+    assert.equal(work.intent, null);
+    assert.equal(rig.model.requests.length, 0, "no correction session");
+    assert.ok(!checkReads.includes(SHA1), "no base attribution read");
+    assert.deepEqual(after.reservations, charges, "nothing charged");
+    assertGeneration76Shapes(writes);
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
+Deno.test("a hosted run refreshes a broken head on a moved base exactly as generation 76", async () => {
+  const { rig, refreshes } = await ciRig("ci-hosted-moved", {
+    hosted: true,
+    baseTip: SHA2,
+    checks: {
+      [SHA3]: [check("validate", SHA3, "failure")],
+      [SHA1]: [check("validate", SHA1, "success")],
+    },
+  });
+  try {
+    await rig.run();
+    const work = (await rig.snapshot()).work[0];
+    assert.equal(rig.model.requests.length, 0, "no correction session");
+    assert.notEqual(work.nextStep, "work", JSON.stringify(work));
+    assert.equal(work.target.head, SHA3);
+    assert.ok(
+      refreshes.some((request) => request.expectedHead === SHA3),
+      "the reviewed head goes to the ordinary base refresh",
+    );
+  } finally {
+    await rig.ctx.cleanup();
+  }
+});
+
 Deno.test("a correction is re-derived from live checks: a base that turned red returns the head to delivery uncharged", async () => {
   // The record was routed to its correction earlier; by the time the session
   // would start, the same check is red on the reviewed base too.

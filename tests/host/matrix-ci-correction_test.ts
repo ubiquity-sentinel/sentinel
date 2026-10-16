@@ -3,14 +3,19 @@
  * attribution from live check runs: the snapshot carries no CI evidence (the
  * generation-76 rollback contract), so a reviewed head back at `work` is only
  * ELIGIBLE, and anything but a live candidate-caused failure returns it to the
- * delivery gate uncharged.
+ * delivery gate uncharged. These cases run the planner with the route open (a
+ * runtime whose rollback target consumes the cell); a hosted run of this tree
+ * keeps it closed (`HOSTED_CI_CORRECTIONS`, matrix-ci-correction-rollback).
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { type GitHubCheckV1, portOk } from "../../src/contracts/ports.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { planMatrixWave } from "../../src/host/matrix.ts";
-import { isCiCorrectionFinding } from "../../src/repair/ci-rejection.ts";
+import {
+  HOSTED_CI_CORRECTIONS,
+  isCiCorrectionFinding,
+} from "../../src/repair/ci-rejection.ts";
 import { SHA2, T0, workRecord } from "../state/helpers.ts";
 import { completedReceipt } from "../repair/loop-review-fixtures.ts";
 import { assertGeneration76Shapes } from "../repair/ci-correction-rig.ts";
@@ -93,6 +98,26 @@ Deno.test("matrix planner: a reviewed head whose base turned red is returned to 
     assert.equal(after.work[0].counters.attempts, 1);
     assert.deepEqual(after.reservations, [], "nothing charged");
     assertGeneration76Shapes([after]);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("matrix planner: a hosted run grants no CI correction cell while its rollback target refuses that cell", async () => {
+  assert.equal(HOSTED_CI_CORRECTIONS, false);
+  const rig = await reviewedRig("success");
+  try {
+    const before = await snapshot(rig);
+    const report = await planMatrixWave(
+      { ...rig.deps, externalImplementations: true },
+      rig.planOptions(),
+    );
+    assert.equal(report.plan.cells.length, 0, JSON.stringify(report));
+    assert.deepEqual(
+      await snapshot(rig),
+      before,
+      "nothing is charged, written or checked",
+    );
   } finally {
     await rig.cleanup();
   }
