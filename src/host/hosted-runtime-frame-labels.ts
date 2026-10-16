@@ -123,6 +123,7 @@ export const EARLY_FAILURE_FRAME_LABELS: ReadonlySet<string> = new Set([
   "local-supervisor-runtime.ts",
   "local-supervisor-shared.ts",
   "loop-accounting.ts",
+  "loop-base-refresh-failure.ts",
   "loop-base-refresh.ts",
   "loop-bounds.ts",
   "loop-checks.ts",

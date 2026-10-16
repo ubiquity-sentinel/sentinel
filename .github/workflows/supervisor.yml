@@ -383,9 +383,11 @@ jobs:
           bun-version: 1.4.0
       # The Codex permission profile lets model commands read only the
       # `:minimal` platform paths plus exact grants (the Codex and Deno
-      # executables), so the runner-home Bun that setup-bun puts on PATH is
-      # invisible inside bubblewrap. A real executable copy at the platform
-      # path is what the sandboxed shell finds; same copy as ci.yml.
+      # executables and, in a runtime whose src/host/local-client.ts carries
+      # `SANDBOX_BUN_EXECUTABLE`, /usr/local/bin/bun itself), so the
+      # runner-home Bun that setup-bun puts on PATH is invisible inside
+      # bubblewrap. A real executable copy at that platform path is what the
+      # sandboxed shell finds; same copy as ci.yml.
       - name: Expose the pinned Bun to the model sandbox
         run: |
           set -euo pipefail
@@ -543,9 +545,11 @@ jobs:
           bun-version: 1.4.0
       # The Codex permission profile lets model commands read only the
       # `:minimal` platform paths plus exact grants (the Codex and Deno
-      # executables), so the runner-home Bun that setup-bun puts on PATH is
-      # invisible inside bubblewrap. A real executable copy at the platform
-      # path is what the sandboxed shell finds; same copy as ci.yml.
+      # executables and, in a runtime whose src/host/local-client.ts carries
+      # `SANDBOX_BUN_EXECUTABLE`, /usr/local/bin/bun itself), so the
+      # runner-home Bun that setup-bun puts on PATH is invisible inside
+      # bubblewrap. A real executable copy at that platform path is what the
+      # sandboxed shell finds; same copy as ci.yml.
       - name: Expose the pinned Bun to the model sandbox
         run: |
           set -euo pipefail

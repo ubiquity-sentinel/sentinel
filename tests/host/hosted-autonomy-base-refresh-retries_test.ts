@@ -296,7 +296,7 @@ Deno.test(
 Deno.test(
   "base refresh re-admission: only the exact credential-expiry messages and terminal shapes qualify",
   () => {
-    assert.equal(BASE_REFRESH_AUTH_BLOCKERS.size, 8);
+    assert.equal(BASE_REFRESH_AUTH_BLOCKERS.size, 6);
     for (const message of BASE_REFRESH_AUTH_BLOCKERS) {
       assert.deepEqual(
         plan([authRecord(message)]).candidates.map((candidate) =>

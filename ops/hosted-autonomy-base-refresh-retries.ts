@@ -36,8 +36,6 @@ import { parseWorkRecordV1 } from "../src/contracts/work-record.ts";
 import { candidateBranch } from "../src/repair/keys.ts";
 import {
   BASE_REFRESH_BASE_READ_DETAIL,
-  BASE_REFRESH_CAPABILITY_DETAIL,
-  BASE_REFRESH_FOREIGN_HEAD_DETAIL,
   BASE_REFRESH_PR_OBSERVATION_DETAIL,
   BASE_REFRESH_PRESERVE_DETAIL,
   BASE_REFRESH_PUSH_DETAIL,
@@ -58,8 +56,10 @@ import type { HostedAutonomyHeadPullV1 } from "./hosted-autonomy-types.ts";
 /**
  * The exact terminal messages a credential expiry produced under generation
  * <= 76: the bounded failure count at its limit, the `auth_failed` kind and
- * one of the closed failure details. Any other text (another kind, count or
- * detail) is not this class. Generation 77 never writes these for a genuine
+ * one of the closed failure details a port error can carry. The missing
+ * capability (always `unavailable`) and the unrelated head (always
+ * `conflict`) never carry `auth_failed`, so they are not listed. Any other
+ * text (another kind, count or detail) is not this class. Generation 77 never writes these for a genuine
  * credential failure (it defers without counting), and a counted
  * `auth_failed` (a 403 permission refusal) carries the closed
  * `BASE_REFRESH_PERMISSION_SUFFIX`, so it is never re-admitted here: a
@@ -68,13 +68,11 @@ import type { HostedAutonomyHeadPullV1 } from "./hosted-autonomy-types.ts";
 export const BASE_REFRESH_AUTH_BLOCKERS: ReadonlySet<string> = new Set(
   [
     BASE_REFRESH_PR_OBSERVATION_DETAIL,
-    BASE_REFRESH_CAPABILITY_DETAIL,
     BASE_REFRESH_UNPREPARED_DETAIL,
     BASE_REFRESH_BASE_READ_DETAIL,
     BASE_REFRESH_PRESERVE_DETAIL,
     BASE_REFRESH_REF_READ_DETAIL,
     BASE_REFRESH_PUSH_DETAIL,
-    BASE_REFRESH_FOREIGN_HEAD_DETAIL,
   ].map((detail) =>
     `base refresh failed ${MAX_BASE_REFRESH_FAILURES} consecutive times: auth_failed ${detail}`
   ),
