@@ -1,5 +1,6 @@
 /** Bounded progressive authenticated matrix recovery and serial delivery. */
 import { matrixDigestV1 } from "../contracts/matrix.ts";
+import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { OPERATION_MARGIN_MS, REVIEW_BOUND_MS } from "../repair/loop-bounds.ts";
 import {
   type ActionsTargetCyclesInputV1,
@@ -10,6 +11,7 @@ import { ingestMatrixResults } from "./matrix.ts";
 import { createGitBundleImporter } from "./matrix-git.ts";
 import {
   MATRIX_ARTIFACT_RECOVERY_MAX_MS,
+  type MatrixArtifactRequestV1,
   type MatrixArtifactTransportV1,
 } from "./matrix-artifact-port.ts";
 import {
@@ -35,8 +37,9 @@ async function transportFor(
 const MATRIX_CONSUMER_POLL_MS = 60_000;
 /**
  * The progressive consumer yields to the ordinary lifecycle after this window
- * even while charged producers are still live: their artifacts stay charged
- * and unresolved for a later recovery instead of being terminalized here.
+ * even while its own charged producers are still live: their artifacts stay
+ * charged and unresolved for a later recovery instead of being terminalized
+ * here.
  */
 const MATRIX_CONSUMER_MAX_WAIT_MS = 20 * 60_000;
 /** Time reserved after progressive consumption for the ordinary lifecycle. */
@@ -125,6 +128,66 @@ function scanRecoveryBound(
   return consumer.window > clock.now() ? consumer.window : deadline;
 }
 
+/** The charged matrix producers of one authoritative snapshot. */
+export interface MatrixConsumerProducersV1 {
+  /** Every producer still holding a matrix intent, from any wave. */
+  readonly charged: readonly MatrixArtifactRequestV1[];
+  /** The charged producers whose reservation is still unconsumed. */
+  readonly live: readonly MatrixArtifactRequestV1[];
+  /** The live producers this execution's own planner admitted. */
+  readonly own: readonly MatrixArtifactRequestV1[];
+}
+
+/**
+ * The producers the progressive consumer recovers. The mandatory initial scan
+ * recovers every `charged` producer, whatever wave planned it, so a lost
+ * candidate object is rehydrated exactly as before. Only an `own` producer can
+ * still deliver during this run: its reservation was made at or after
+ * `plannedSince`, the creation of this execution, which every admission of its
+ * own planner follows. An earlier wave's producer whose reservation is still
+ * "reserved" belongs to a run that has ended, so it never holds the consumer's
+ * polling or a later scan; it stays charged and unresolved for the next run's
+ * initial scan and the launcher maintenance that owns its recovery.
+ */
+export function matrixConsumerProducersV1(
+  snapshot: RepairStateSnapshotV1,
+  plannedSince: number,
+): MatrixConsumerProducersV1 {
+  const handled = closedCWaveHandledReservations(snapshot);
+  const charged = snapshot.work.flatMap((record) => {
+    const intent = record.intent;
+    if (
+      record.nextStep !== "work" ||
+      (intent?.kind !== "implementation" &&
+        intent?.kind !== "candidate_preservation") ||
+      intent.requestId === null || handled.has(intent.requestId)
+    ) {
+      return [];
+    }
+    return [{
+      taskId: record.id,
+      repository: record.repository,
+      reservationId: intent.requestId,
+      intentKey: intent.key,
+      expectedBase: record.target.base,
+      attempt: record.counters.attempts,
+    }];
+  });
+  const reservedAt = new Map(
+    snapshot.reservations
+      .filter((row) => row.outcome === "reserved")
+      .map((row) => [row.id, row.createdAt]),
+  );
+  const live = charged.filter((request) =>
+    reservedAt.has(request.reservationId)
+  );
+  const own = live.filter((request) => {
+    const at = reservedAt.get(request.reservationId);
+    return at !== undefined && at >= plannedSince;
+  });
+  return { charged, live, own };
+}
+
 /** Authenticating/importing receipts precedes ordinary publication/review/delivery. */
 export async function runActionsMatrixAggregateCycles(
   input: ActionsTargetCyclesInputV1,
@@ -190,49 +253,27 @@ export async function runActionsMatrixAggregateCycles(
   // Progressive authenticated consumption: every scan re-reads authoritative
   // state, recovers ONLY completed artifacts for the still-charged producers
   // and ingests each exactly once. The first scan also recovers already-settled
-  // charges so a lost candidate object is rehydrated exactly as before; later
-  // scans wait only for producers whose reservation is still unconsumed, so no
-  // already-ingested artifact is repeatedly downloaded. An empty scan is never
-  // completion: while a charged producer may still deliver, the consumer keeps
-  // polling inside the run's own budget. Late or missing artifacts stay charged
-  // and unresolved instead of being terminalized as a failure or health
-  // verdict, and repeated scans of an already-consumed cell are the existing
-  // duplicate no-op.
+  // charges and every earlier wave's producers so a lost candidate object is
+  // rehydrated exactly as before; later scans wait only for producers this
+  // execution planned whose reservation is still unconsumed, so no
+  // already-ingested artifact is repeatedly downloaded and no ended run's
+  // producer holds the target cycles back. An empty scan is never completion:
+  // while an own producer may still deliver, the consumer keeps polling inside
+  // the run's own budget. Late or missing artifacts stay charged and
+  // unresolved instead of being terminalized as a failure or health verdict,
+  // and repeated scans of an already-consumed cell are the existing duplicate
+  // no-op.
   for (;;) {
     const scan = await input.state.readRepair();
     if (!scan.ok || scan.value.status !== "found") {
       throw new Error("matrix aggregate cannot read authoritative state");
     }
-    const handled = closedCWaveHandledReservations(scan.value.snapshot);
-    const charged = scan.value.snapshot.work.flatMap((record) => {
-      const intent = record.intent;
-      if (
-        record.nextStep !== "work" ||
-        (intent?.kind !== "implementation" &&
-          intent?.kind !== "candidate_preservation") ||
-        intent.requestId === null || handled.has(intent.requestId)
-      ) {
-        return [];
-      }
-      return [{
-        taskId: record.id,
-        repository: record.repository,
-        reservationId: intent.requestId,
-        intentKey: intent.key,
-        expectedBase: record.target.base,
-        attempt: record.counters.attempts,
-      }];
-    });
-    const reservedNow = new Set(
-      scan.value.snapshot.reservations
-        .filter((row) => row.outcome === "reserved")
-        .map((row) => row.id),
-    );
-    const live = charged.filter((request) =>
-      reservedNow.has(request.reservationId)
+    const { charged, own } = matrixConsumerProducersV1(
+      scan.value.snapshot,
+      host.execution.createdAt,
     );
     const initialScan = firstScan;
-    const requests = initialScan ? charged : live;
+    const requests = initialScan ? charged : own;
     firstScan = false;
     if (requests.length === 0) break;
     const unresolved = new Set(
@@ -321,10 +362,11 @@ export async function runActionsMatrixAggregateCycles(
       break;
     }
     if (progressed) continue;
-    // Nothing is left to wait for once every charged producer has been
-    // consumed; a settled charge is rehydrated by the ordinary lifecycle and
-    // by the next run's first scan, never by spinning here.
-    if (live.length === 0) break;
+    // Nothing is left to wait for once every producer this execution planned
+    // has been consumed; a settled charge, or an earlier wave's producer still
+    // reserved after its run ended, is rehydrated by the ordinary lifecycle
+    // and by the next run's first scan, never by spinning here.
+    if (own.length === 0) break;
     if (
       input.clock.now() + MATRIX_CONSUMER_POLL_MS +
           MATRIX_ARTIFACT_RECOVERY_MAX_MS > consumerUntil
