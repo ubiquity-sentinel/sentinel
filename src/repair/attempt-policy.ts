@@ -64,6 +64,16 @@ export const ATTEMPT_DETAIL_ARTIFACT_ONLY =
   "model candidate changed only generated/cache artifacts" as const;
 export const ATTEMPT_DETAIL_UNCERTAIN =
   "implementation outcome uncertain; awaiting authoritative disposition" as const;
+/**
+ * Gateway throttling (HTTP 429) of a whole failed turn with no candidate,
+ * after the port's failover and bounded backoff. Deliberately the EXACT
+ * existing port-unavailable cell detail (`model run failed (unavailable)`):
+ * it already classifies as model/transient_infrastructure (with decay) here,
+ * in the matrix ingester and in the launcher's retryable set, so a throttled
+ * run never writes a new detail, stage or class value.
+ */
+export const ATTEMPT_DETAIL_PROVIDER_THROTTLED =
+  "model run failed (unavailable)" as const;
 
 interface AttemptDetailClassification {
   stage: AttemptStageV1;

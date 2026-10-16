@@ -13,10 +13,12 @@ import { generatedArtifactOnly } from "../github/review-snapshot.ts";
 import {
   ATTEMPT_DETAIL_INCOMPLETE,
   ATTEMPT_DETAIL_LOOP_STOP,
+  ATTEMPT_DETAIL_PROVIDER_THROTTLED,
   ATTEMPT_DETAIL_UNCERTAIN,
   attemptMemorySettlementMutationV1,
   attemptMemorySuccessMutationV1,
 } from "./attempt-policy.ts";
+import { isProviderThrottledReceiptV1 } from "./model-port-retry.ts";
 import {
   candidateBranch,
   candidatePreservationRef,
@@ -137,6 +139,18 @@ export async function handleModelReceipt(
     // code-quality review is — so it is refused here, before publication.
     !generatedArtifactOnly(candidate.changedPaths);
   if (!completed) {
+    // A raw (serial) receipt the gateway throttled settles exactly like the
+    // matrix cell's throttled refusal: transient, never no-progress. An
+    // exported matrix receipt is sanitized and can never match here.
+    if (isProviderThrottledReceiptV1(receipt)) {
+      return settleFailedImplementation(
+        deps,
+        context,
+        record,
+        reservationId,
+        ATTEMPT_DETAIL_PROVIDER_THROTTLED,
+      );
+    }
     // Only OUR sanitized loop-stop marker gets the exact failed_command_loop
     // blocker message; every other incomplete receipt keeps the generic
     // message. The settlement write moved the authoritative head, so the

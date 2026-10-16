@@ -196,6 +196,12 @@ export interface ActionsTargetCyclesInputV1 {
     artifactRoot: string;
     sourcePathFor: (config: RepositoryConfigV1) => string;
     expectedProvider: string;
+    /**
+     * The trusted route's HTTP 429 failover model id (the same value the
+     * implementation port fails over to); a matrix receipt naming it verifies
+     * against its planned primary request. Omitted: the planned model only.
+     */
+    failoverModel?: string;
     matrixCarrier?: import("./matrix-actions-shared.ts").MatrixNativeCarrierV1;
     createArtifactTransport: (
       producerState?: StateReadView,

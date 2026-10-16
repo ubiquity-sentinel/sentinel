@@ -62,6 +62,14 @@ export interface MatrixIngestOptionsV1 {
    */
   expectedProvider: string | readonly string[];
   /**
+   * Trusted HTTP 429 failover model id of the route that produced these
+   * receipts (`ModelRouteV1.failoverModel`). A receipt naming exactly this
+   * model instead of the planned primary verifies like a primary receipt; no
+   * other check is relaxed. It comes from the trusted host's own route
+   * resolution, never from an artifact. Omitted: only the planned model.
+   */
+  failoverModel?: string;
+  /**
    * Trusted per-target bundle importer. A completed result with a candidate
    * head is rejected as `candidate_unavailable` unless its bundle digest and
    * objects verify into this importer's repository.
@@ -219,6 +227,7 @@ export async function ingestMatrixResults(
           result.receipt,
           cell.request,
           options.expectedProvider,
+          options.failoverModel,
         )
       ) {
         entries.push({
@@ -269,7 +278,14 @@ export async function ingestMatrixResults(
       });
       continue;
     }
-    if (interruptedOutputFailure(result, cell, options.expectedProvider)) {
+    if (
+      interruptedOutputFailure(
+        result,
+        cell,
+        options.expectedProvider,
+        options.failoverModel,
+      )
+    ) {
       if (
         reservation.outcome === "ambiguous" && reservation.settledAt !== null &&
         record.nextStep === "blocked"
@@ -304,6 +320,7 @@ export async function ingestMatrixResults(
           result.receipt,
           cell.request,
           options.expectedProvider,
+          options.failoverModel,
         )
       ) {
         // No state update: the reservation/intent stay charged and

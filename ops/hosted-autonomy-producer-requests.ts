@@ -32,6 +32,13 @@ export function producerPointerConsistent(
 }
 
 /**
+ * Which records one producer pass may request: `all` is every record the
+ * producer binds, `blocked` only the runtime-mismatch candidates whose
+ * blocker names exactly this producer.
+ */
+export type HostedProducerScopeV1 = "all" | "blocked";
+
+/**
  * True when at least one pending record could be requested from this exact
  * producer: an in-flight record is requested from every producer, a blocked
  * preserved candidate only from the exact producer its blocker names.
@@ -51,7 +58,9 @@ export function producerWanted(
 /**
  * The exact charged request of every record this producer may settle. A
  * record whose intent and charge do not bind exactly is an integrity fault,
- * whichever repository it belongs to.
+ * whichever repository it belongs to. The `blocked` scope keeps only the
+ * parked candidates bound to exactly this producer, after every record has
+ * passed the same binding refusal.
  */
 export function producerRequests(
   snapshot: {
@@ -61,6 +70,7 @@ export function producerRequests(
   execution: HostedExecutionIntentV1,
   dedicated: ReadonlySet<string>,
   fault: (message: string) => Error,
+  scope: HostedProducerScopeV1 = "all",
 ): MatrixArtifactRequestV1[] {
   return snapshot.work.flatMap((record) => {
     const intent = record.intent;
@@ -87,6 +97,9 @@ export function producerRequests(
     ) {
       throw fault("current matrix request binding unavailable");
     }
+    if (
+      scope === "blocked" && !blockedCandidateMatchesProducer(record, execution)
+    ) return [];
     return [{
       taskId: record.id,
       repository: record.repository,

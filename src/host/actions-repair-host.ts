@@ -737,6 +737,8 @@ export async function runActionsRepairHost(
         artifactRoot: joinPath(sourceDir, "..", ".sentinel-matrix"),
         sourcePathFor: mirrorPathFor,
         expectedProvider: modelRoute.provider,
+        // The failover the port above was constructed with (same resolution).
+        failoverModel: modelRoute.failoverModel,
         ...(matrixCarrier === undefined ? {} : { matrixCarrier }),
         readExecution: (execution) => nativeSelf.readHostedExecution(execution),
         createArtifactTransport: async (producerState) => {

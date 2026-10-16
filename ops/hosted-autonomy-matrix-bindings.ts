@@ -1,4 +1,5 @@
 import type { GitSha } from "../src/contracts/brands.ts";
+import { resolveFailoverModelId } from "../src/host/model-route.ts";
 
 /** Exact authenticated legacy wave identities; no runtime-selected history. */
 /**
@@ -10,6 +11,23 @@ export const HISTORICAL_RECOVERY_PROVIDERS: readonly string[] = [
   "uos",
   "deepseek",
 ];
+
+/**
+ * The HTTP 429 failover model id every hosted producer route carried, which a
+ * recovered receipt may name instead of its planned primary model.
+ *
+ * Trusted without any runtime input: the hosted runtime resolves its route
+ * with `resolveModelRoute` over a fixed named mapping (`actions-repair-host`)
+ * that never includes `SENTINEL_MODEL_FAILOVER_ID`, and no supervisor job
+ * grants or forwards that variable, so every hosted route's `failoverModel`
+ * is this same pure resolver's result for an absent override (the default).
+ * The launcher evaluates that resolver from its own source; it never reads
+ * the id from an artifact, a receipt or the maintenance environment (which
+ * carries no model route at all). A test pins the no-override invariant.
+ */
+export const RECOVERY_ROUTE_FAILOVER_MODEL: string = resolveFailoverModelId(
+  {},
+);
 
 export const HISTORICAL_C63 = {
   executionId: "37354374590:1:repair",

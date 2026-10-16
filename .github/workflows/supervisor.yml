@@ -375,6 +375,22 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
+      # ubiquity/ai.ubq.fi runs only on Bun (since d28cefa); its quality
+      # wrappers refuse anything but Bun 1.4.0. Same pinned action and version
+      # as the deterministic CI gate in ci.yml.
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+        with:
+          bun-version: 1.4.0
+      # The Codex permission profile lets model commands read only the
+      # `:minimal` platform paths plus exact grants (the Codex and Deno
+      # executables), so the runner-home Bun that setup-bun puts on PATH is
+      # invisible inside bubblewrap. A real executable copy at the platform
+      # path is what the sandboxed shell finds; same copy as ci.yml.
+      - name: Expose the pinned Bun to the model sandbox
+        run: |
+          set -euo pipefail
+          sudo install -m755 "$(command -v bun)" /usr/local/bin/bun
+          test "$(/usr/local/bin/bun --version)" = "1.4.0"
       - name: Install pinned Codex app-server
         run: npm install --global @openai/codex@0.154.0
       # GitHub-hosted Linux runners need unprivileged user namespaces for
@@ -405,6 +421,14 @@ jobs:
             exit 1
           fi
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
+      # Up to twenty cells start together, and the model gateway answers a
+      # burst of simultaneous session starts with HTTP 429 (live: all 17 cells
+      # that reached the model in the same second failed, while cells arriving
+      # 30-90 s later succeeded). Spreading starts by matrix position, at most
+      # 114 s, costs each cell under two minutes of its five-hour window. It
+      # runs before the App token mint so the token keeps its whole hour.
+      - name: Stagger the cell's model start
+        run: sleep $(( ${{ strategy.job-index }} % 20 * 6 ))
       - name: Mint the scoped sentinel App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -511,6 +535,22 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
+      # ubiquity/ai.ubq.fi runs only on Bun (since d28cefa); its quality
+      # wrappers refuse anything but Bun 1.4.0. Same pinned action and version
+      # as the deterministic CI gate in ci.yml.
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+        with:
+          bun-version: 1.4.0
+      # The Codex permission profile lets model commands read only the
+      # `:minimal` platform paths plus exact grants (the Codex and Deno
+      # executables), so the runner-home Bun that setup-bun puts on PATH is
+      # invisible inside bubblewrap. A real executable copy at the platform
+      # path is what the sandboxed shell finds; same copy as ci.yml.
+      - name: Expose the pinned Bun to the model sandbox
+        run: |
+          set -euo pipefail
+          sudo install -m755 "$(command -v bun)" /usr/local/bin/bun
+          test "$(/usr/local/bin/bun --version)" = "1.4.0"
       - name: Install pinned Codex app-server
         run: npm install --global @openai/codex@0.154.0
       # GitHub-hosted Linux runners need unprivileged user namespaces for

@@ -264,6 +264,18 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "src/repair/loop-release.ts",
       "src/repair/loop-closure.ts",
       "src/repair/loop-task-context.ts",
+      // Decides provider-throttling settlement and the bounded 429 retry
+      // inside one charged admission.
+      "src/repair/model-port-retry.ts",
+      // Decides the route's 429 failover model, which the trusted matrix
+      // ingesters (runtime and launcher recovery) accept besides the plan's.
+      "src/host/model-route.ts",
+      // Decide whether a model result is provider throttling, which class an
+      // attempt settles as, and which failover id launcher recovery accepts.
+      "src/repair/model-port-policy.ts",
+      "src/repair/model-port-diagnostics.ts",
+      "src/repair/attempt-policy.ts",
+      "ops/hosted-autonomy-matrix-bindings.ts",
       "src/state/",
       "src/budget/",
     ],

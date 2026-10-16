@@ -148,6 +148,9 @@ export class LocalCheckoutModelPort implements ImplementationPort {
   async runModel(
     request: ModelRunRequestV1,
   ): Promise<PortResultV1<ModelRunReceiptV1>> {
+    // The caller's model start boundary: checkout preparation below is
+    // charged to the same session budget a gateway 429 backoff may use.
+    const sessionStartedAt = this.input.clock.now();
     if (
       request === null || typeof request !== "object" || !isGitSha(request.base)
     ) {
@@ -291,6 +294,8 @@ export class LocalCheckoutModelPort implements ImplementationPort {
       modelProvider: this.providerName,
       modelId: this.modelId,
       failoverModelId: this.failoverModelId,
+      clock: this.input.clock,
+      sessionStartedAt,
       permissionProfile: "sentinel-local",
       commitCandidate: committer,
     });
