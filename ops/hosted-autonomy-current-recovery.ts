@@ -32,8 +32,11 @@ import {
 } from "./hosted-autonomy-producer-requests.ts";
 
 /**
- * While in-flight work is pending, the blocker-bound traversal stops reading
- * back once only this much of the walk budget is left for the ordinary walk.
+ * The traversal that finds parked candidates' producers stops reading
+ * history back once only this much of the walk budget is left, whether or not
+ * in-flight work is pending: the producers it found still get their passes,
+ * and a lost group past it never holds a newer one back. It bounds only how
+ * far back that traversal reads, never how long a producer pass may take.
  */
 const BLOCKER_WALK_RESERVE_MS = 30_000;
 
@@ -258,71 +261,101 @@ export async function recoverHostedCurrentMatrix(
       scope,
     );
   };
-  const reported = new Set<string>();
+  // The requests each lost plan was already reported withholding.
+  const reported = new Map<string, Set<string>>();
   const unrecoverable = (
     execution: HostedExecutionIntentV1,
     lost: NonNullable<HostedProducerRecoveryV1["unrecoverable"]>,
   ) => {
     for (const id of lost.reservations) covered.add(id);
-    // A producer both walks reach is one lost plan, reported once.
+    // A producer both walks reach is one lost plan, one unrecoverable action.
+    // The ordinary walk's revisit still logs the requests it newly withholds
+    // (the in-flight work bound there), never the ones already logged.
     const identity = canonicalStringify(execution);
-    if (reported.has(identity)) return;
-    reported.add(identity);
-    onUnrecoverable(lost.kind);
+    const seen = reported.get(identity);
+    const fresh = lost.reservations.filter((id) => !seen?.has(id));
+    if (seen === undefined) {
+      reported.set(identity, new Set(fresh));
+      onUnrecoverable(lost.kind);
+    } else if (fresh.length === 0) {
+      return;
+    } else {
+      for (const id of fresh) seen.add(id);
+    }
     console.log(JSON.stringify({
       kind: "sentinel_current_matrix_producer_unrecoverable",
       runId: execution.runId,
       runAttempt: execution.runAttempt,
       artifact: lost.kind,
-      requests: lost.reservations.length,
+      requests: fresh.length,
     }));
   };
   const scan = async (): Promise<HostedAutonomyResultV1 | null> => {
-    const walked: { done: boolean; result: HostedAutonomyResultV1 | null } = {
-      done: false,
-      result: null,
-    };
+    const walked: { result: HostedAutonomyResultV1 | null } = { result: null };
     // A runtime-mismatch candidate binds to exactly the producer its blocker
     // names (run, attempt and runtime): no other producer, newer or older, can
     // request or settle it, so no newer producer's outcome can withhold it.
-    // Those producers are visited first, under the same refusals, requesting
+    // Those producers are recovered first, under the same refusals, requesting
     // only those candidates: their plan artifacts expire, and newer producers
     // that only in-flight work binds to may otherwise spend every budget.
     const parked = new Set(
       pending.filter((row) => blockedCandidateBinding(row) !== null),
     );
-    // In-flight work keeps the newest-first walk below; while it is pending,
-    // the first traversal leaves that walk its reserve of the budget.
+    // In-flight work keeps the newest-first walk below.
     const inFlight = parked.size < pending.length;
     if (parked.size > 0) {
+      // History is read newest first, so the traversal only records each
+      // parked candidate's producer and stops once every one is found, or at
+      // its reserve: a parked row whose producer lies further back waits for
+      // a later run and is reported as a budget deferral.
+      const found: {
+        producer: typeof current;
+        execution: HostedExecutionIntentV1;
+      }[] = [];
+      let reserved = false;
       await traverse(
-        async (producer, execution) => {
+        (producer, execution) => {
           const bound = [...parked].filter((row) =>
             blockedCandidateMatchesProducer(row, execution)
           );
-          if (bound.length === 0) return false;
-          for (const row of bound) parked.delete(row);
-          const produced = await recover(producer, "blocked");
-          // A deferred pass may already have applied a write: stop as the
-          // ordinary walk does, so one walk never writes past that pass.
-          if (produced.deferred) {
-            report("deferred_producer");
-            walked.done = true;
-          } else if (produced.result?.status === "applied") {
-            walked.done = true;
-            walked.result = produced.result;
-          } else if (produced.unrecoverable) {
-            // Nothing was written. These candidates stay requestable by their
-            // own producer in the walk below, which repeats this classification
-            // for every request it binds there.
-            unrecoverable(execution, produced.unrecoverable);
+          if (bound.length > 0) {
+            for (const row of bound) parked.delete(row);
+            found.push({ producer, execution });
           }
-          return walked.done || parked.size === 0;
+          return Promise.resolve(parked.size === 0);
         },
-        () =>
-          !inFlight || deps.clock.now() < deadlineAt - BLOCKER_WALK_RESERVE_MS,
+        () => {
+          reserved = deps.clock.now() >= deadlineAt - BLOCKER_WALK_RESERVE_MS;
+          return !reserved;
+        },
       );
-      if (walked.done || !inFlight) return walked.result;
+      if (reserved) report("deferred_budget");
+      // Oldest producer first: its plan artifact expires first, and a stalled
+      // newer producer must not starve it. One run still runs at most one
+      // pass that may have written.
+      for (const { producer, execution } of found.reverse()) {
+        const produced = await recover(producer, "blocked");
+        if (produced.result?.status === "applied") return produced.result;
+        if (produced.deferred) report("deferred_producer");
+        else if (produced.unrecoverable) {
+          // These candidates stay requestable by their own producer in the
+          // walk below, which repeats this classification for every request
+          // it binds there.
+          unrecoverable(execution, produced.unrecoverable);
+        }
+        // A deferral or typed skip that may follow a write ends this walk.
+        // One that never invoked a writer settled nothing, so the next parked
+        // producer and the in-flight walk still run; the in-flight walk stops
+        // at this producer again if it reaches it, as before this pass
+        // existed.
+        if (
+          (produced.deferred || produced.unrecoverable) &&
+          produced.mayHaveWritten
+        ) return null;
+      }
+      // Without in-flight work every pending record is parked, and each found
+      // producer was just tried: the walk below would only repeat those passes.
+      if (!inFlight) return null;
     }
     await traverse(async (producer, execution) => {
       // A producer no pending record can bind to costs no custody, target or

@@ -2,6 +2,7 @@ import { ingestMatrixResults } from "../src/host/matrix.ts";
 import { matrixDigestV1 } from "../src/contracts/matrix.ts";
 import {
   HOSTED_RUNTIME_ID,
+  type HostedExecutionSettlementV1,
   parseHostedRunProofV1,
 } from "../src/contracts/hosted-supervisor.ts";
 import type { ReleaseStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
@@ -57,8 +58,12 @@ export async function recoverHostedMatrixProducer(
   readProducer?: HostedProducerReaderV1,
   scope: HostedProducerScopeV1 = "all",
 ): Promise<HostedProducerRecoveryV1> {
+  // Every repair write of this pass (consumer, restore and cooldown) goes
+  // through its one composed writer, which marks this before writing; a
+  // consumer deferral marks it too.
+  const writes = { attempted: false };
   try {
-    return await recoverProducerWithinBudget(
+    const outcome = await recoverProducerWithinBudget(
       deps,
       current,
       producer,
@@ -68,7 +73,9 @@ export async function recoverHostedMatrixProducer(
       onDeferred,
       readProducer,
       scope,
+      writes,
     );
+    return { ...outcome, mayHaveWritten: writes.attempted };
   } catch (error) {
     // Past the walk's budget every availability failure (a transport
     // refusal, a listing or operation timeout) is the bounded deferral, so
@@ -92,7 +99,8 @@ async function recoverProducerWithinBudget(
   onDeferred: () => void,
   readProducer: HostedProducerReaderV1 | undefined,
   scope: HostedProducerScopeV1,
-): Promise<HostedProducerRecoveryV1> {
+  writes: { attempted: boolean },
+): Promise<Omit<HostedProducerRecoveryV1, "mayHaveWritten">> {
   const checkDeadline = () => {
     if (deps.clock.now() >= deadlineAt) {
       throw new Error(CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE);
@@ -188,6 +196,7 @@ async function recoverProducerWithinBudget(
     readRepair: () => deps.state.readRepair(),
     readRelease: () => deps.state.readRelease(),
     writeRepair: async (next, expectedHead) => {
+      writes.attempted = true;
       if (integrityFailure !== null) throw integrityFailure;
       try {
         await custody();
@@ -250,6 +259,49 @@ async function recoverProducerWithinBudget(
     )
   );
   if (requests.length === 0) return { result: null, deferred: false };
+  // An expired or unlisted blocker-bound plan can never be read again: that
+  // producer is unrecoverable, which is a typed skip that writes nothing,
+  // never an escaping transport refusal that would starve every later pass.
+  const lostPlan = async () => {
+    if (!ports.readPlanArtifact) return null;
+    checkDeadline();
+    const kind = await unrecoverablePlan(
+      () =>
+        ports.readPlanArtifact!({
+          runId: saved.execution.runId,
+          runAttempt: saved.execution.runAttempt,
+        }, deadlineAt),
+      requests,
+      before.snapshot.work,
+    );
+    checkDeadline();
+    return kind === null ? null : {
+      result: null,
+      deferred: false,
+      unrecoverable: {
+        kind,
+        reservations: requests.map((request) => request.reservationId),
+      },
+    };
+  };
+  // A readable native settlement must be exactly the saved proof.
+  const proveNative = (value: HostedExecutionSettlementV1) => {
+    if (value.outcome === "not_started") {
+      throw integrityFault("current matrix native proof unavailable");
+    }
+    let proof;
+    try {
+      proof = parseHostedRunProofV1(value);
+    } catch {
+      throw integrityFault("current matrix native proof changed");
+    }
+    if (
+      canonicalStringify({ ...proof, observedAt: 0 }) !==
+        canonicalStringify({ ...saved, observedAt: 0 })
+    ) {
+      throw integrityFault("current matrix native proof changed");
+    }
+  };
   const producerState: StateReadView & RepairStateWriter = {
     ...state,
     readRelease: () =>
@@ -263,10 +315,44 @@ async function recoverProducerWithinBudget(
   checkDeadline();
   const transport = await ports.transportFor(producerState);
   checkDeadline();
-  if (
-    !transport.confirmCompletedExecution ||
-    !await transport.confirmCompletedExecution(saved.execution)
-  ) {
+  // The completion read refuses (throws on) a conflicting attempt or job
+  // provenance and a moved completion custody.
+  const completed = async () =>
+    transport.confirmCompletedExecution !== undefined &&
+    await transport.confirmCompletedExecution(saved.execution);
+  // A parked candidate's own producer lists its plan before the completion
+  // read can defer: an expired or unlisted plan then never defers. Its
+  // completion read still runs first and every refusal it applies throws;
+  // an unconfirmed completion is the typed skip unproved. Its native proof
+  // is then read once: a readable one passes every refusal above, and a
+  // conflicting (invalid) one is refused too, before the typed skip. Only a
+  // pending or unreadable one (an aged-out job log, a transient failure) is
+  // skipped unproved. A failed early listing changes nothing: the pass keeps
+  // its original order, the native reads (and their deferrals) first, then
+  // the same listing and refusal.
+  let listed = false;
+  if (scope === "blocked") {
+    let lost: Awaited<ReturnType<typeof lostPlan>> = null;
+    try {
+      lost = await lostPlan();
+      listed = true;
+    } catch {
+      // Read again below, after the native proof, exactly as before.
+    }
+    if (lost !== null) {
+      checkDeadline();
+      if (!await completed()) return lost;
+      checkDeadline();
+      const native = await ports.readExecution(saved.execution);
+      checkDeadline();
+      if (native.ok && native.value !== null) proveNative(native.value);
+      if (!native.ok && native.error.kind === "invalid") {
+        throw integrityFault("current matrix native proof unavailable");
+      }
+      return lost;
+    }
+  }
+  if (!await completed()) {
     // A producer whose own native run is still in flight is not recoverable
     // yet; stop the history traversal and defer instead of failing.
     onDeferred();
@@ -279,46 +365,10 @@ async function recoverProducerWithinBudget(
     onDeferred();
     return { result: null, deferred: true };
   }
-  if (native.value.outcome === "not_started") {
-    throw integrityFault("current matrix native proof unavailable");
-  }
-  let proof;
-  try {
-    proof = parseHostedRunProofV1(native.value);
-  } catch {
-    throw integrityFault("current matrix native proof changed");
-  }
-  if (
-    canonicalStringify({ ...proof, observedAt: 0 }) !==
-      canonicalStringify({ ...saved, observedAt: 0 })
-  ) {
-    throw integrityFault("current matrix native proof changed");
-  }
-  // An expired or unlisted blocker-bound plan can never be read again: that
-  // producer is unrecoverable, which is a typed skip that writes nothing,
-  // never an escaping transport refusal that would starve every later pass.
-  if (ports.readPlanArtifact) {
-    checkDeadline();
-    const kind = await unrecoverablePlan(
-      () =>
-        ports.readPlanArtifact!({
-          runId: saved.execution.runId,
-          runAttempt: saved.execution.runAttempt,
-        }, deadlineAt),
-      requests,
-      before.snapshot.work,
-    );
-    checkDeadline();
-    if (kind !== null) {
-      return {
-        result: null,
-        deferred: false,
-        unrecoverable: {
-          kind,
-          reservations: requests.map((request) => request.reservationId),
-        },
-      };
-    }
+  proveNative(native.value);
+  if (!listed) {
+    const lost = await lostPlan();
+    if (lost !== null) return lost;
   }
   await custody();
   const waves = await transport.recover({
@@ -451,6 +501,9 @@ async function recoverProducerWithinBudget(
       throw integrityFault("current matrix ingestion incomplete");
     }
     if (report.entries.some((entry) => entry.disposition === "state_error")) {
+      // An earlier cell or target of this consumer may have written, through
+      // whichever writer it holds: this deferral never counts as write-free.
+      writes.attempted = true;
       onDeferred();
       return { result: null, deferred: true };
     }
