@@ -217,3 +217,31 @@ Deno.test("owner install throughput: connected R3 failure restores exact R2 once
     await rollback.close();
   }
 });
+
+Deno.test("owner install throughput: a generation 75 pointer off R2 with its own healthy proof stays outside the chain", async () => {
+  const proof = healthyProof(UNRELATED, 75);
+  const fixture = await concurrencyInstallerFixture(
+    releaseSnapshot({
+      runtime: runtimeRecord({
+        revision: UNRELATED,
+        generation: 75,
+        healthyProof: proof,
+        executionProof: proof,
+      }),
+    }),
+    undefined,
+    R3,
+  );
+  try {
+    assert.equal(await fixture.run(), 0);
+    assert.equal(fixture.reports.at(-1)?.status, "no_change");
+    assert.equal(
+      fixture.reports.at(-1)?.detail,
+      "the runtime pointer is outside the owner installation chain",
+    );
+    assert.equal(fixture.patches(), 0);
+    assert.equal(await fixture.head(), fixture.beforeHead);
+  } finally {
+    await fixture.close();
+  }
+});

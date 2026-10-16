@@ -344,7 +344,8 @@ Deno.test(
 Deno.test(
   "model-port 429 retry: a backoff that cannot fit the remaining session budget never starts",
   async () => {
-    // A 5-second session: no 20-second backoff plus a working window fits.
+    // A 5-second session: the failover fits its remainder, but no 20-second
+    // backoff plus a working window does.
     const short = harness([throttled(1, PRIMARY), throttled(2, FAILOVER)]);
     const tiny = await short.port.runModel(runtimeRequest());
     assert.ok(tiny.ok && tiny.value.outcome === "failed");
@@ -352,13 +353,14 @@ Deno.test(
     assert.deepEqual(short.sleeps, []);
 
     // The session started 29 minutes before this port ran (the admission
-    // anchor): one minute is left, so no backoff starts.
+    // anchor): one minute is left, so neither the failover nor a backoff
+    // starts.
     const late = harness([throttled(1, PRIMARY), throttled(2, FAILOVER)], {
       sessionStartedAt: T0 - 1_740_000,
     });
     const anchored = await late.port.runModel(sessionRequest());
     assert.ok(anchored.ok && anchored.value.outcome === "failed");
-    assert.equal(late.opened(), 2);
+    assert.equal(late.opened(), 1);
     assert.deepEqual(late.sleeps, []);
 
     // A five-minute session fits some, never all four, backoffs, and the

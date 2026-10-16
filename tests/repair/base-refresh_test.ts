@@ -618,7 +618,11 @@ Deno.test(
     const work = state.work[0];
     assert.equal(work.nextStep, "blocked");
     assert.equal(work.blocker?.kind, "other");
-    assert.equal(work.blocker?.message, "base refresh has conflicts");
+    assert.equal(
+      work.blocker?.message,
+      `base refresh has conflicts at ${SHA2}`,
+      "the exact conflicting base is recorded in the existing message",
+    );
     assert.equal(work.intent, null);
     assert.equal(work.target.base, SHA1);
     assert.equal(work.target.head, OLD_HEAD, "the candidate is retained");

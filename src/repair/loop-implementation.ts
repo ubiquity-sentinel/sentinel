@@ -18,9 +18,12 @@ import {
   REASONING,
   runBoundsProofRef,
 } from "./loop-bounds.ts";
+import { ciCorrectionRouteOpen } from "./ci-rejection.ts";
+import { confirmCiCorrection } from "./loop-ci-correction.ts";
 import {
   correctionFindings,
-  headRejectedByReview,
+  headAwaitsCiCorrection,
+  headNeedsCorrection,
 } from "./loop-review-records.ts";
 import {
   loadSnapshot,
@@ -95,6 +98,20 @@ export async function prepareImplementationStart(
   }
   if (cooling.kind === "deferred") {
     return { kind: "deferred", detail: cooling.detail };
+  }
+
+  // A reviewed head awaiting a CI correction carries no persisted CI evidence
+  // (generation 76 could not parse it): the attribution is re-derived from the
+  // live check runs here, before anything is charged. Anything but a live
+  // candidate-caused failure returns the head to its delivery gate.
+  let ciFinding:
+    | { severity: string; path: string | null; message: string }
+    | null = null;
+  const ciRouteOpen = ciCorrectionRouteOpen(deps);
+  if (headAwaitsCiCorrection(context.snapshot, record, ciRouteOpen)) {
+    const confirmed = await confirmCiCorrection(deps, context, record);
+    if (confirmed.kind !== "confirmed") return confirmed;
+    ciFinding = confirmed.finding;
   }
 
   // The issue value is read BEFORE the reservation (and after the initial
@@ -194,8 +211,12 @@ export async function prepareImplementationStart(
     };
   }
 
-  const rejectedHead = headRejectedByReview(context.snapshot, record);
-  const findings = correctionFindings(context.snapshot, record);
+  const rejectedHead = headNeedsCorrection(
+    context.snapshot,
+    record,
+    ciRouteOpen,
+  );
+  const findings = correctionFindings(context.snapshot, record, ciFinding);
   const part = decompositionPartOf(record.id);
   const priorAttempts = priorAttemptFactsForRecordV1(
     context.snapshot,

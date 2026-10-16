@@ -8,6 +8,8 @@ import {
 } from "../src/contracts/state-snapshots.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
+import type { ReleaseRequestV1 } from "../src/contracts/release.ts";
+import { orderRecords } from "../src/state/state-records.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import {
   authorizingReceipt,
@@ -340,7 +342,14 @@ export async function runHostedDeliveryPass(
               : item
           )
           : snapshot.work,
-        releaseRequests: [...snapshot.releaseRequests, request],
+        // The store reads records back ordered by id; build the written list
+        // with its exact comparator so the readback below compares equal.
+        releaseRequests: orderRecords<ReleaseRequestV1>(
+          [...snapshot.releaseRequests, request].map((row) => ({
+            id: row.id,
+            value: row,
+          })),
+        ),
       });
     } catch {
       return skipped("snapshot_invalid", observedHead, actions);

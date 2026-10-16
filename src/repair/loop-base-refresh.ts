@@ -7,6 +7,17 @@ import type {
 } from "../contracts/work-record.ts";
 import { candidatePreservationRef } from "./keys.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
+import {
+  BASE_REFRESH_BASE_READ_DETAIL,
+  BASE_REFRESH_CAPABILITY_DETAIL,
+  BASE_REFRESH_FOREIGN_HEAD_DETAIL,
+  BASE_REFRESH_PR_OBSERVATION_DETAIL,
+  BASE_REFRESH_PRESERVE_DETAIL,
+  BASE_REFRESH_PUSH_DETAIL,
+  BASE_REFRESH_REF_READ_DETAIL,
+  BASE_REFRESH_UNPREPARED_DETAIL,
+  failBaseRefresh,
+} from "./loop-base-refresh-failure.ts";
 import { configFor, retireClosedPublication } from "./loop-records.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
@@ -22,6 +33,22 @@ import {
   setIntent,
   setWait,
 } from "./transitions.ts";
+
+// The failure accounting moved to loop-base-refresh-failure.ts; this module
+// keeps exporting every name it exported in generation 76, which launcher
+// code (ops/hosted-autonomy-refresh-rearm.ts) imports from here.
+export {
+  BASE_REFRESH_BASE_READ_DETAIL,
+  BASE_REFRESH_CAPABILITY_DETAIL,
+  BASE_REFRESH_FOREIGN_HEAD_DETAIL,
+  BASE_REFRESH_PR_OBSERVATION_DETAIL,
+  BASE_REFRESH_PRESERVE_DETAIL,
+  BASE_REFRESH_PUSH_DETAIL,
+  BASE_REFRESH_REF_READ_DETAIL,
+  BASE_REFRESH_UNPREPARED_DETAIL,
+  failBaseRefresh,
+  MAX_BASE_REFRESH_FAILURES,
+} from "./loop-base-refresh-failure.ts";
 
 /**
  * Deterministic base-refresh intent identity: exact PR, old candidate head and
@@ -43,12 +70,14 @@ export function baseRefreshIntentKey(
  * immutable record identities, counters, evidence and reviews are untouched;
  * the target stays on the old base/head until publication succeeded. Returns
  * null when the base did not move (the existing merge path is unchanged), or
- * an explicit step result for a wait/refusal/deferral.
+ * an explicit step result for a wait/refusal/deferral. `beforeRefresh` runs
+ * only once the base was observed to move, before the intent is written.
  */
 export async function ensureBaseRefreshIntent(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
+  beforeRefresh?: () => Promise<StepResultV1 | null>,
 ): Promise<StepResultV1 | null> {
   const config = configFor(deps, record.repository);
   if (config === null) return null;
@@ -92,6 +121,10 @@ export async function ensureBaseRefreshIntent(
   }
   const observedBase = ref.value.sha;
   if (observedBase === record.target.base) return null;
+  // The caller may settle the reviewed head first (a CI-rejected candidate is
+  // corrected instead of refreshed); null keeps the ordinary refresh.
+  const settled = beforeRefresh === undefined ? null : await beforeRefresh();
+  if (settled !== null) return settled;
   const intent: IncompleteOperationV1 = {
     kind: "base_refresh",
     key: baseRefreshIntentKey(
@@ -108,97 +141,6 @@ export async function ensureBaseRefreshIntent(
     resultId: null,
   };
   return persistWork(deps, context, setIntent(record, intent, readAt));
-}
-
-/**
- * Consecutive failed executions of one exact base-refresh intent that are
- * tolerated before the record blocks. The intent is re-armed at most
- * MAX_BASE_REFRESH_FAILURES - 1 times, so no refresh can hold a slot in a
- * silent `unavailable` loop forever.
- */
-export const MAX_BASE_REFRESH_FAILURES = 3;
-
-/** Closed failure details stored in the bounded base-refresh failure record. */
-export const BASE_REFRESH_CAPABILITY_DETAIL =
-  "base refresh port is unavailable";
-
-export const BASE_REFRESH_PR_OBSERVATION_DETAIL =
-  "own pull request could not be observed";
-
-export const BASE_REFRESH_UNPREPARED_DETAIL =
-  "prepared candidate could not be generated";
-
-export const BASE_REFRESH_BASE_READ_DETAIL =
-  "configured base could not be observed";
-
-export const BASE_REFRESH_PRESERVE_DETAIL = "candidate could not be preserved";
-
-export const BASE_REFRESH_REF_READ_DETAIL =
-  "candidate ref could not be observed";
-
-export const BASE_REFRESH_PUSH_DETAIL = "prepared candidate was not published";
-
-export const BASE_REFRESH_FOREIGN_HEAD_DETAIL =
-  "candidate ref carries an unrelated head";
-
-/**
- * One failed execution of the exact base-refresh intent.
- *
- * The bounded failure record is written with the SAME intent — same key, same
- * observedBase, same persisted prepared result — so the state ref alone shows
- * why the refresh cannot finish: only the closed port error kind and a closed
- * detail constant are stored, never raw upstream text. The wait is re-armed
- * only while the consecutive failure count is under MAX_BASE_REFRESH_FAILURES;
- * at the bound the intent is cleared and the record blocks with the classified
- * message, so a livelocked refresh becomes a visible blocker instead of an
- * endless `unavailable` wait. Target, counters, evidence and reviews are
- * preserved.
- */
-export function failBaseRefresh(
-  deps: RepairCycleDepsV1,
-  context: LoopContextV1,
-  record: WorkRecordV1,
-  intent: IncompleteOperationV1,
-  failure: { kind: string; detail: string },
-): Promise<StepResultV1> {
-  const at = deps.clock.now();
-  const attempts = (intent.failure?.attempts ?? 0) + 1;
-  if (attempts >= MAX_BASE_REFRESH_FAILURES) {
-    return persistWork(
-      deps,
-      context,
-      clearIntent(
-        markTerminalBlocked(
-          record,
-          "other",
-          `base refresh failed ${attempts} consecutive times: ${failure.kind} ${failure.detail}`,
-          at,
-        ),
-        at,
-      ),
-    );
-  }
-  return persistWork(
-    deps,
-    context,
-    setWait(
-      setIntent(
-        record,
-        {
-          ...intent,
-          failure: {
-            kind: failure.kind,
-            detail: failure.detail,
-            atMs: at,
-            attempts,
-          },
-        },
-        at,
-      ),
-      { reason: "unavailable", since: at, until: at + CHECK_POLL_MS },
-      at,
-    ),
-  );
 }
 
 /**
@@ -276,6 +218,7 @@ export async function executeBaseRefreshIntent(
     return failBaseRefresh(deps, context, record, intent, {
       kind: pull.error.kind,
       detail: BASE_REFRESH_PR_OBSERVATION_DETAIL,
+      portDetail: pull.error.detail,
     });
   }
   if (pull.value !== null && pull.value.headRef === record.target.branch) {
@@ -325,9 +268,12 @@ export async function executeBaseRefreshIntent(
       prepared.error.detail === BASE_REFRESH_CONFLICT_DETAIL
     ) {
       // A known deterministic merge conflict: retain the candidate, spend no
-      // model work and block with the existing blocker fields. Every other
-      // failure (identity mismatch, moved base, bounds, unavailable objects)
-      // keeps the exact durable intent and waits bounded below.
+      // model work and block with the existing blocker fields. The exact base
+      // the candidate conflicts with is recorded in the existing message (the
+      // legacy bare "base refresh has conflicts" stays a valid blocker). It is
+      // a terminal block: no launcher rule re-admits it. Every other failure
+      // (identity mismatch, moved base, bounds, unavailable objects) keeps the
+      // exact durable intent and waits bounded below.
       const at = deps.clock.now();
       return persistWork(
         deps,
@@ -335,7 +281,7 @@ export async function executeBaseRefreshIntent(
         markTerminalBlocked(
           clearIntent(record, at),
           "other",
-          "base refresh has conflicts",
+          `base refresh has conflicts at ${expectedBase}`,
           at,
         ),
       );
@@ -367,6 +313,7 @@ export async function executeBaseRefreshIntent(
         return failBaseRefresh(deps, context, record, intent, {
           kind: currentBase.ok ? "unavailable" : currentBase.error.kind,
           detail: BASE_REFRESH_BASE_READ_DETAIL,
+          ...(currentBase.ok ? {} : { portDetail: currentBase.error.detail }),
         });
       }
       if (currentBase.value.sha !== expectedBase) {
@@ -379,6 +326,7 @@ export async function executeBaseRefreshIntent(
     return failBaseRefresh(deps, context, record, intent, {
       kind: prepared.error.kind,
       detail: BASE_REFRESH_UNPREPARED_DETAIL,
+      portDetail: prepared.error.detail,
     });
   }
   const preparedHead = prepared.value;
@@ -446,6 +394,7 @@ export async function executeBaseRefreshIntent(
       return failBaseRefresh(deps, context, durable, durableIntent, {
         kind: preserved.error.kind,
         detail: BASE_REFRESH_PRESERVE_DETAIL,
+        portDetail: preserved.error.detail,
       });
     }
   }
@@ -480,6 +429,7 @@ export async function executeBaseRefreshIntent(
     return failBaseRefresh(deps, context, durable, durableIntent, {
       kind: current.ok ? "unavailable" : current.error.kind,
       detail: BASE_REFRESH_REF_READ_DETAIL,
+      ...(current.ok ? {} : { portDetail: current.error.detail }),
     });
   }
   const currentHead = current.value.sha;
@@ -508,6 +458,7 @@ export async function executeBaseRefreshIntent(
       return failBaseRefresh(deps, context, durable, durableIntent, {
         kind: pushed.ok ? "unavailable" : pushed.error.kind,
         detail: BASE_REFRESH_PUSH_DETAIL,
+        ...(pushed.ok ? {} : { portDetail: pushed.error.detail }),
       });
     }
   } else if (currentHead !== preparedHead) {

@@ -8,6 +8,7 @@ import {
   HOSTED_AUTONOMY_TRUSTED_AUTHORS,
 } from "../../ops/hosted-autonomy.ts";
 import type { HostedAutonomyPullV1 } from "../../ops/hosted-autonomy.ts";
+import type { ReleaseRequestV1 } from "../../src/contracts/release.ts";
 import { reservation, SHA1, T0 } from "../state/helpers.ts";
 import {
   authorizingReceipt,
@@ -356,6 +357,53 @@ Deno.test(
     assert.equal(requests[0].source.reviewReceiptId, RECEIPT_ID);
     assert.equal(requests[0].target.environment, "production");
     await Deno.remove(rig.tmp, { recursive: true });
+  },
+);
+
+Deno.test(
+  "hosted autonomy: a new request sorting before recorded ones verifies its readback",
+  async () => {
+    // The store reads release requests back ordered by id, so the written
+    // snapshot must already hold them in that order: an appended request whose
+    // id is not the highest was applied but reported readback_unverified.
+    const added = await releaseRequestId(SELF_REPO, MERGE, 51);
+    let before: ReleaseRequestV1 | null = null;
+    let after: ReleaseRequestV1 | null = null;
+    for (let pr = 100; pr < 400 && (before === null || after === null); pr++) {
+      const other = await buildHostedReleaseRequest(
+        SELF_REPO,
+        SHA1,
+        SHA1,
+        BASE,
+        pr,
+        authorizingReceipt(),
+        T0 + 2000,
+      );
+      if (other === null) throw new Error("fixture request invalid");
+      if (other.id < added) before ??= other;
+      else after ??= other;
+    }
+    if (before === null || after === null) throw new Error("no fixture ids");
+    const { rig, github } = await makeRig("autonomy-request-order", {
+      repair: repairSnapshot([deliveryRecord()], [authorizingReceipt()], [
+        before,
+        after,
+      ]),
+    });
+    try {
+      const result = await run(rig, github);
+      assert.equal(result.status, "applied", JSON.stringify(result));
+      assert.equal(result.reason, "applied");
+      assert.ok(result.actions.some((action) => action.endsWith(`:${added}`)));
+      assert.equal(rig.writes, 1);
+      const requests = await readRequests(rig);
+      assert.deepEqual(
+        requests.map((request) => request.id),
+        [before.id, added, after.id],
+      );
+    } finally {
+      await Deno.remove(rig.tmp, { recursive: true });
+    }
   },
 );
 

@@ -24,6 +24,7 @@ import {
 import type {
   HostedRuntimeLauncherInputV1,
   HostedRuntimeLauncherResultV1,
+  ReviewCommandItemRefusalsV1,
 } from "./hosted-runtime-identity.ts";
 import {
   nativeMatrixStdin,
@@ -44,6 +45,7 @@ import {
 import {
   parseChildStatus,
   scanChildStatusRecords,
+  scanReviewCommandItemRefusals,
 } from "./hosted-runtime-status.ts";
 import type { ChildStatusV1 } from "./hosted-runtime-status.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
@@ -128,7 +130,7 @@ async function launchHostedRuntime(
     home: childHome,
     tmp: childTmp,
     denoDir: childDenoDir,
-  });
+  }, startedAt);
   // Streaming is attached only here, after the exact execution identity has
   // been verified, and only to the actual child command: the bounded Git
   // identity reads above never see a sink.
@@ -326,6 +328,7 @@ function attachDiagnostics(
   const diagnostics = scanChildDiagnostics(run, execution);
   const mergeEvents = scanChildMergeEvents(run, execution);
   const earlyFailure = earlyChildFailureDiagnostic(result, run);
+  const refusals = reviewCommandRefusals(run);
   const withAdvisories = diagnostics.length === 0 && mergeEvents.length === 0
     ? result
     : {
@@ -333,6 +336,24 @@ function attachDiagnostics(
       diagnostics,
       ...(mergeEvents.length === 0 ? {} : { mergeEvents }),
     };
-  if (earlyFailure === null) return withAdvisories;
-  return { ...withAdvisories, earlyFailure };
+  const withRefusals = refusals === null
+    ? withAdvisories
+    : { ...withAdvisories, reviewCommandRefusals: refusals };
+  if (earlyFailure === null) return withRefusals;
+  return { ...withRefusals, earlyFailure };
+}
+
+/**
+ * The runtime's bounded refused reviewer command advisories, re-parsed only so
+ * the CLI result printer can surface their predicates in the job log. A scan
+ * that throws is no advisory: it can never turn a resolved result unavailable.
+ */
+function reviewCommandRefusals(
+  run: ReplayCommandResultV1,
+): ReviewCommandItemRefusalsV1 | null {
+  try {
+    return scanReviewCommandItemRefusals(run);
+  } catch {
+    return null;
+  }
 }

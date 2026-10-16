@@ -285,6 +285,23 @@ export const OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_PRIOR_GENERATION = 75;
 export const OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_REVISION =
   "41bb853a1bedfc0422bf903dfabbe23bf714b44f" as GitSha;
 export const OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_GENERATION = 76;
+/**
+ * Throughput successor: the development runtime with the CI-rejection
+ * correction lane, the unavailable-publication observation (#103), the child
+ * drain cushion test (#82), gateway Bun protected-path parity, the
+ * review-snapshot base-edge bound, the 429 failover budget with exact status,
+ * base-refresh credential deferral, the App token window and review channel
+ * ordering. Only the exact throughput generation 76 healthy settlement with no
+ * failed settlement permits installation at 77; its first failed candidate
+ * restores that retained generation 76 proof once at generation 78.
+ */
+export const OWNER_DEVELOPMENT_INSTALL_GEN77_PRIOR_REVISION =
+  OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_REVISION;
+export const OWNER_DEVELOPMENT_INSTALL_GEN77_PRIOR_GENERATION =
+  OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_GENERATION;
+export const OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION =
+  "ab3613e0224ff92266bed21dde6f40e6b0aab54a" as GitSha;
+export const OWNER_DEVELOPMENT_INSTALL_GEN77_GENERATION = 77;
 /** Monotonic rollback target the failed generation 45 candidate rolled to. */
 export const OWNER_DEVELOPMENT_INSTALL_ROLLBACK_TARGET_GENERATION =
   OWNER_DEVELOPMENT_INSTALL_ASSIGN_FIRST_GENERATION + 2;

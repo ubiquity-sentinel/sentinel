@@ -3,6 +3,7 @@ import type { runMatrixUncertaintyMaintenance } from "../src/host/matrix-uncerta
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { ReviewTaskStatementV1 } from "../src/contracts/review-receipt.ts";
 import type { HistoricalMatrixQuarantineDepsV1 } from "../src/host/matrix-actions.ts";
+import type { ingestMatrixResults } from "../src/host/matrix.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { MismatchDispositionObservationsV1 } from "./runtime-mismatch-recovery-disposition.ts";
 import type { HostedPlanArtifactV1 } from "./hosted-autonomy-producer-requests.ts";
@@ -69,6 +70,21 @@ export interface HostedAutonomyPullV1 {
   baseAncestorOfRevision: boolean;
 }
 
+/**
+ * One pull request whose head is EXACTLY a branch of the same repository (no
+ * fork), as listed by head ref. Only the identity facts the base-refresh
+ * credential-expiry re-admission rule verifies are carried.
+ */
+export interface HostedAutonomyHeadPullV1 {
+  number: number;
+  state: "open" | "closed";
+  merged: boolean;
+  headSha: string;
+  headRef: string;
+  baseRef: string;
+  author: string | null;
+}
+
 export interface HostedAutonomyGitHubV1 {
   /**
    * The repository's own default branch, or null when it cannot be read. Only
@@ -107,6 +123,15 @@ export interface HostedAutonomyGitHubV1 {
     number: number,
     baseBranch: string | null,
   ): Promise<HostedAutonomyPullV1 | null>;
+  /**
+   * Every pull request (any state) whose head is exactly `branch` of THIS
+   * repository, or null when that listing cannot be read and proven complete.
+   * Optional: a surface without it re-admits no base-refresh terminal block,
+   * because the owned PR on the exact branch could not be verified.
+   */
+  listPullsByHeadRef?(
+    branch: string,
+  ): Promise<readonly HostedAutonomyHeadPullV1[] | null>;
   /**
    * True when the source issue is open, false when it is closed or missing,
    * null when that cannot be read. Only a definitive false stops a retry.
@@ -192,6 +217,11 @@ export type HostedClosedMatrixDepsV1 = ClosedCWaveRecoveryDepsV1 & {
     run: { runId: number; runAttempt: number },
     deadline: number,
   ): Promise<HostedPlanArtifactV1 | null>;
+  /**
+   * A producer pass's matrix consumer. Production never sets it and uses
+   * ingestMatrixResults; a test substitutes the consumer's exact report.
+   */
+  ingest?: typeof ingestMatrixResults;
 };
 
 export interface HostedAutonomyDepsV1 {
@@ -211,6 +241,24 @@ export interface HostedAutonomyDepsV1 {
   ) => Promise<HostedClosedMatrixDepsV1>;
   /** Charged uncertainty only; no producer, artifact, health or release authority. */
   uncertainMatrix?: () => ReturnType<typeof runMatrixUncertaintyMaintenance>;
+  /**
+   * Exact corrected runtime revisions for the refresh re-arm, each with its
+   * pinned activation bound. Production never sets it and uses
+   * HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES.
+   */
+  refreshRearmRuntimes?: readonly HostedRefreshRearmRuntimeV1[];
+}
+
+/** One corrected runtime the refresh re-arm trusts, pinned in launcher source. */
+export interface HostedRefreshRearmRuntimeV1 {
+  /** The exact runtime revision; never a generation number. */
+  revision: string;
+  /**
+   * Epoch milliseconds no later than the revision's first activation: the
+   * instant of the launcher commit that pins this entry, which precedes the
+   * owner install that commit performs.
+   */
+  activatedNotBefore: number;
 }
 
 /** Fixed safe categories for maintenance failure logging; never raw text. */

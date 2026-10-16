@@ -86,6 +86,10 @@ import type {
   ActionsTargetCyclesInputV1,
 } from "./actions-target-cycles.ts";
 import {
+  APP_TOKEN_NOT_AFTER_ENV,
+  parseAppTokenNotAfterV1,
+} from "./hosted-app-token-window.ts";
+import {
   ensureRepairStateSeed,
   optionalEnv,
   readControllerSha,
@@ -112,7 +116,22 @@ export async function runActionsRepairHost(
   const readEnv = (name: string): string | undefined =>
     deps.env === undefined ? Deno.env.get(name) : deps.env[name];
   const runOrigin = clock.now();
-  const deadline = childRunDeadlineV1(runOrigin);
+
+  // The protected native identity is validated before any credential, state,
+  // executable or network work: a malformed job identity fails with no request
+  // and no durable write.
+  const identity = parseHostedEnvironment(
+    deps.env ?? readHostedIdentityEnv(),
+    (deps.job ?? "repair") as Parameters<typeof parseHostedEnvironment>[1],
+  );
+
+  // A launcher-forwarded App-token window can only make the deadline earlier:
+  // no GitHub work is planned past the instant the run's one token stops being
+  // certainly valid. A malformed window refuses before any setup.
+  const deadline = childRunDeadlineV1(
+    runOrigin,
+    parseAppTokenNotAfterV1(readEnv(APP_TOKEN_NOT_AFTER_ENV)),
+  );
   // One bounded advisory line, emitted before any setup or credential read, so
   // the hosted log records the exact window this run works on even when the
   // setup that follows fails. It carries no `status` property, so the
@@ -122,14 +141,6 @@ export async function runActionsRepairHost(
     originAt: runOrigin,
     deadlineAt: deadline,
   }));
-
-  // The protected native identity is validated before any credential, state,
-  // executable or network work: a malformed job identity fails with no request
-  // and no durable write.
-  const identity = parseHostedEnvironment(
-    deps.env ?? readHostedIdentityEnv(),
-    (deps.job ?? "repair") as Parameters<typeof parseHostedEnvironment>[1],
-  );
 
   // The trusted model route is resolved EXACTLY ONCE at host start, before any
   // credential read or client composition, and recorded as one bounded

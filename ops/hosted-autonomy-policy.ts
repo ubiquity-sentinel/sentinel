@@ -109,7 +109,8 @@ export const HOSTED_AUTONOMY_MAX_IMPLEMENTATION_ATTEMPTS = 4;
 /**
  * The runtime's own review-round ceiling. A record that has spent every review
  * round can never turn another correction into a reviewed verdict, so the only
- * remaining delivery path is the receipt it already holds.
+ * remaining delivery path is the receipt it already holds. The runtime's CI
+ * correction ceiling (`CI_CORRECTION_REVIEW_ROUNDS`) is pinned equal by test.
  */
 export const HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS = 3;
 
@@ -157,6 +158,18 @@ export const HOSTED_AUTONOMY_TRUSTED_AUTHORS: readonly string[] = [
  */
 export const HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS = 8 * 24 * 60 * 60 * 1000;
 
+/** The runtime's merge-gate CI blocker on a reviewed head (`decideCiGate`). */
+export const HOSTED_AUTONOMY_CI_FAILED_PREFIX = "CI checks failed: ";
+
+/**
+ * Blocker prefix the preservation disposition writes once a parked candidate
+ * is proven unrecoverable (ops/hosted-autonomy-preservation-disposition.ts).
+ * The consumed admission stays charged; only a fresh, separately charged
+ * admission can continue the open task.
+ */
+export const PRESERVATION_UNRECOVERABLE_PREFIX =
+  "candidate preservation unrecoverable";
+
 /**
  * The exact transient blockers the retry pass may clear, with the step the
  * record returns to. A blocker outside this closed set is never touched.
@@ -167,10 +180,19 @@ export const HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS = 8 * 24 * 60 * 60 * 1000;
  * without an intent" contradiction), and the legacy bounded no-verdict review
  * wait. Both return to `review`, where the runtime rehydrates its standing
  * review before any new charge and continues inside its own round allowance.
+ *
+ * Base-refresh TERMINAL blocks are deliberately absent from this prefix
+ * table. A deterministic conflict ("base refresh has conflicts[ at <base>]")
+ * is never re-admitted. The exact per-job credential-expiry messages ("base
+ * refresh failed 3 consecutive times: auth_failed ...") need the owned open
+ * PR and published head verified on the exact branch and a target-specific
+ * transition, so they have their own exact rule in
+ * `hosted-autonomy-base-refresh-retries.ts` under the same retry budget and
+ * closed-issue gates.
  */
 export const HOSTED_AUTONOMY_RETRYABLE: readonly {
   readonly prefix: string;
-  readonly nextStep: "work" | "review";
+  readonly nextStep: "work" | "review" | "delivery";
   /**
    * Minimum age of the retained admission's evidence before a grant, measured
    * from the creation of the exact charge the intent names (the blocker's own
@@ -255,6 +277,26 @@ export const HOSTED_AUTONOMY_RETRYABLE: readonly {
     prefix: "authenticated historical matrix manifest rejected:",
     nextStep: "work",
     minBlockedMs: HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS,
+  },
+  {
+    // A reviewed head parked on its merge-gate CI failure by a runtime that
+    // predates CI attribution. The grant only returns it to `delivery`; the
+    // installed runtime re-observes the head and its reviewed base and owns
+    // the outcome (correction round, red-base wait or terminal block). It is
+    // inert unless the authenticated installed runtime is an allowlisted
+    // generation-77+ CI-correction revision holding its own healthy proof
+    // (`ciCorrectionRuntimeProven`), and for any shape but the exact
+    // reviewed, unreleased publication with a review round left
+    // (`ciRedeliveryEligible`).
+    prefix: HOSTED_AUTONOMY_CI_FAILED_PREFIX,
+    nextStep: "delivery",
+  },
+  {
+    // Written only by the preservation disposition after native proof that
+    // the parked candidate can never be preserved; the record then holds no
+    // candidate, intent or descriptor, and its consumed charge stays charged.
+    prefix: PRESERVATION_UNRECOVERABLE_PREFIX,
+    nextStep: "work",
   },
 ];
 

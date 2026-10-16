@@ -1,7 +1,9 @@
 /** Repair loop internals: checks. */
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { failedChecks, latestChecks } from "./ci-rejection.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
+import { routeFailedDeliveryChecks } from "./loop-ci-correction.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -25,20 +27,10 @@ export function decideCiGate(
   // counts. Recency is by startedAt (when the run began): a newer in-progress
   // rerun must override an older completed run, otherwise we'd merge while
   // CI is still running.
-  const latest = new Map<string, GitHubCheckV1>();
-  for (const check of checks) {
-    const prev = latest.get(check.name);
-    const time = (c: GitHubCheckV1) => c.startedAt ?? c.completedAt ?? -1;
-    if (prev === undefined || time(check) > time(prev)) {
-      latest.set(check.name, check);
-    }
-  }
-  const deduped = [...latest.values()];
+  const deduped = latestChecks(checks);
   // Failed checks are terminal: classify them before pending so a queued
   // check cannot mask a failure (CodeRabbit #131 review).
-  const failed = deduped.filter(
-    (check) => check.status === "completed" && check.conclusion !== "success",
-  );
+  const failed = failedChecks(deduped);
   if (failed.length > 0) {
     const names = failed.map((check) =>
       `${check.name}(${check.conclusion ?? "unknown"})`
@@ -55,12 +47,18 @@ export function decideCiGate(
  * the merge may proceed; otherwise returns the step result (deferred wait for
  * in-progress checks, terminal block for failed checks). Never blocks the
  * turn: in-progress checks persist a bounded `ci_pending` wait.
+ *
+ * `failed: "attribute"` is the pre-merge gate of a reviewed candidate: failed
+ * checks are attributed against the reviewed base instead of blocking at once
+ * (a candidate-caused failure opens a correction round while rounds remain, a
+ * red base defers). Every other caller keeps the terminal block.
  */
 export async function gateDeliveryOnChecks(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
   now: number,
+  failed: "block" | "attribute" = "block",
 ): Promise<StepResultV1 | null> {
   const head = record.target.head;
   if (head === null) {
@@ -107,6 +105,16 @@ export async function gateDeliveryOnChecks(
         },
         now,
       ),
+    );
+  }
+  if (failed === "attribute") {
+    return routeFailedDeliveryChecks(
+      deps,
+      context,
+      record,
+      failedChecks(observed.value.checks),
+      decision.blocked,
+      now,
     );
   }
   return persistWork(

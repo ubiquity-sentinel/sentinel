@@ -57,6 +57,28 @@ Deno.test("target policy: gateway authority is protected without removing inheri
   ) assert.ok(config.protectedPaths.includes(path), path);
 });
 
+Deno.test("target policy: the gateway's Bun configuration keeps the Deno-era protection", () => {
+  // The gateway moved to Bun: the files that took over deno.json, deno.lock and
+  // .prettierrc.json are protected exactly like the files they replaced, which
+  // also stay protected.
+  const config = gateway();
+  for (
+    const path of [
+      "deno.json",
+      "deno.lock",
+      ".prettierrc.json",
+      "package.json",
+      "bun.lock",
+      "bunfig.toml",
+      "tsconfig.json",
+      "tsconfig.lint.json",
+      "knip.json",
+      ".prettierrc",
+      "scripts/knip.sh",
+    ]
+  ) assert.ok(config.protectedPaths.includes(path), path);
+});
+
 Deno.test("target policy: Sentinel policy and non-gateway trusted templates stay unchanged", () => {
   for (const name of ["sentinel", "another-repo"]) {
     const config = createTargetConfigV1(template, {

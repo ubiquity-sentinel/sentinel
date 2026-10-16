@@ -197,9 +197,17 @@ export async function executeMerge(
   // CI gate (async, non-blocking): after review authorization, verify all
   // checks on the exact candidate head are green. Still-running checks park
   // the record in a bounded `ci_pending` wait and the turn completes; the
-  // next turn re-observes. Failed checks terminally block. This matches the
-  // `review_pending` turn-based pattern: no blocking wait inside a turn.
-  const ciGate = await gateDeliveryOnChecks(deps, context, record, now);
+  // next turn re-observes. Failed checks are attributed against the reviewed
+  // base: a candidate-caused failure opens a correction round while rounds
+  // remain, a red base defers, anything else terminally blocks. This matches
+  // the `review_pending` turn-based pattern: no blocking wait inside a turn.
+  const ciGate = await gateDeliveryOnChecks(
+    deps,
+    context,
+    record,
+    now,
+    "attribute",
+  );
   if (ciGate !== null) return ciGate;
   let mergeRequest;
   try {

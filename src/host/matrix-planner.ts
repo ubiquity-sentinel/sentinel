@@ -26,6 +26,7 @@ import {
   type RepairCycleDepsV1,
 } from "../repair/loop.ts";
 import { attemptEquivalenceRefusalForRecordV1 } from "../repair/attempt-policy.ts";
+import { ciCorrectionRouteOpen } from "../repair/ci-rejection.ts";
 import { rankEligibleWork } from "../repair/selection.ts";
 import {
   createDecompositionChildren,
@@ -284,6 +285,9 @@ export async function planMatrixWave(
   // Diagnostic: captured from the last planner iteration for zero-cell runs.
   let lastDiagnostic: MatrixPlanDiagnosticV1 | null = null;
   let memoryRefused = 0;
+  // A CI correction is granted only where its cell survives a rollback
+  // (`ciCorrectionRouteOpen`); the hosted planner keeps generation 76's set.
+  const ciRouteOpen = ciCorrectionRouteOpen(deps);
 
   while (cells.length < limit) {
     const readAt = deps.clock.now();
@@ -322,7 +326,13 @@ export async function planMatrixWave(
       }
       const config = configForRepository(deps, record.repository);
       return config !== null &&
-        isMatrixImplementationReadyV1(record, context.snapshot, config, now);
+        isMatrixImplementationReadyV1(
+          record,
+          context.snapshot,
+          config,
+          now,
+          ciRouteOpen,
+        );
     });
     if (nextId === undefined) break;
     attemptedIds.add(nextId);
@@ -331,7 +341,15 @@ export async function planMatrixWave(
     const config = configForRepository(deps, record.repository);
     if (config === null) continue;
     attempted++;
-    if (!isMatrixImplementationReadyV1(record, context.snapshot, config, now)) {
+    if (
+      !isMatrixImplementationReadyV1(
+        record,
+        context.snapshot,
+        config,
+        now,
+        ciRouteOpen,
+      )
+    ) {
       notReady++;
       continue;
     }

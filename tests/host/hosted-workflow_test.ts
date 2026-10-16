@@ -1152,6 +1152,63 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
   }
 });
 
+Deno.test("hosted workflow: the repair runtime learns a lower bound on its App token mint", async () => {
+  // An installation token expires one hour after it is minted while the repair
+  // job may run for two (live: ai.ubq.fi 641 and 653 terminally blocked after
+  // three `auth_failed` reads of their own still-open pull requests). The
+  // private key never reaches the runtime, so the only safe remedy is that the
+  // runtime knows when its one token stops being certainly valid.
+  const workflow = await Deno.readTextFile(
+    `${ROOT}/.github/workflows/supervisor.yml`,
+  );
+  const lines = jobLines(workflow, "repair");
+  const record = namedStepRange(lines, "Record the App token mint lower bound");
+  const mint = mintStepRange(lines);
+  const runtime = namedStepRange(lines, "Run selected Sentinel runtime");
+  // Recorded IMMEDIATELY before the mint, so the instant can only precede the
+  // token's creation; the runtime runs after both.
+  assert.equal(record.end, mint.start, "no step runs between bound and mint");
+  assert.ok(mint.end <= runtime.start);
+  const recordText = blockText(lines, record);
+  assert.ok(recordText.includes("        id: token-window"));
+  assert.ok(
+    recordText.includes(
+      'echo "mintedNotBefore=$(date +%s%3N)" >> "$GITHUB_OUTPUT"',
+    ),
+    "the bound is the runner's epoch milliseconds before the mint",
+  );
+  assert.ok(!/secrets\.|steps\.app-token|env:/.test(recordText));
+  const runtimeText = blockText(lines, runtime);
+  assert.ok(
+    runtimeText.includes(
+      "SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: ${{ steps.token-window.outputs.mintedNotBefore }}",
+    ),
+    "the runtime step receives the recorded bound",
+  );
+  assert.ok(
+    /--allow-env=\S*SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE/.test(
+      runtimeText,
+    ),
+    "the launcher may read the recorded bound",
+  );
+  // Only the repair consumer is bounded: cells and the planner run model
+  // sessions that never need the App token late and must keep their windows.
+  for (
+    const job of [
+      "maintenance",
+      "prepare",
+      "matrix_plan",
+      "matrix_cell",
+      "finalize",
+    ]
+  ) {
+    assert.ok(
+      !jobLines(workflow, job).join("\n").includes("MINTED_NOT_BEFORE"),
+      `${job} carries no App-token window`,
+    );
+  }
+});
+
 Deno.test("hosted workflow: the release-role store can never write repair state", async () => {
   const rig = await makeRig();
   try {

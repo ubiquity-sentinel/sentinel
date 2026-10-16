@@ -6,6 +6,8 @@ Deno.test("entrypoint: post-drain consumes a completed review before the pending
   postDrainTaskScenario("future"));
 Deno.test("entrypoint: post-drain lost merge response reconciles without repeat charge and closes after production acceptance", () =>
   postDrainTaskScenario("lost-merge"));
+Deno.test("entrypoint: post-drain applies the drained review after an unrelated non-matrix deferral", () =>
+  postDrainTaskScenario("unbound-intent"));
 Deno.test("entrypoint: post-drain foreign-only key collision never reaches the configured observation port", () =>
   postDrainTaskScenario("foreign-only"));
 Deno.test("entrypoint: post-drain foreign-first key collision advances only the configured target", () =>

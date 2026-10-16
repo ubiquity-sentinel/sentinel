@@ -383,9 +383,11 @@ jobs:
           bun-version: 1.4.0
       # The Codex permission profile lets model commands read only the
       # `:minimal` platform paths plus exact grants (the Codex and Deno
-      # executables), so the runner-home Bun that setup-bun puts on PATH is
-      # invisible inside bubblewrap. A real executable copy at the platform
-      # path is what the sandboxed shell finds; same copy as ci.yml.
+      # executables and, in a runtime whose src/host/local-client.ts carries
+      # `SANDBOX_BUN_EXECUTABLE`, /usr/local/bin/bun itself), so the
+      # runner-home Bun that setup-bun puts on PATH is invisible inside
+      # bubblewrap. A real executable copy at that platform path is what the
+      # sandboxed shell finds; same copy as ci.yml.
       - name: Expose the pinned Bun to the model sandbox
         run: |
           set -euo pipefail
@@ -543,9 +545,11 @@ jobs:
           bun-version: 1.4.0
       # The Codex permission profile lets model commands read only the
       # `:minimal` platform paths plus exact grants (the Codex and Deno
-      # executables), so the runner-home Bun that setup-bun puts on PATH is
-      # invisible inside bubblewrap. A real executable copy at the platform
-      # path is what the sandboxed shell finds; same copy as ci.yml.
+      # executables and, in a runtime whose src/host/local-client.ts carries
+      # `SANDBOX_BUN_EXECUTABLE`, /usr/local/bin/bun itself), so the
+      # runner-home Bun that setup-bun puts on PATH is invisible inside
+      # bubblewrap. A real executable copy at that platform path is what the
+      # sandboxed shell finds; same copy as ci.yml.
       - name: Expose the pinned Bun to the model sandbox
         run: |
           set -euo pipefail
@@ -587,6 +591,15 @@ jobs:
             exit 1
           fi
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
+      # The installation token below expires one hour after it is minted, but
+      # this job may run for two, and the private key must never reach the
+      # runtime to renew it. The runner instant recorded IMMEDIATELY before the
+      # mint is a lower bound on the mint, from which the launcher derives when
+      # the token stops being certainly valid; the runtime plans no GitHub work
+      # past that instant. No credential is read or written here.
+      - name: Record the App token mint lower bound
+        id: token-window
+        run: echo "mintedNotBefore=$(date +%s%3N)" >> "$GITHUB_OUTPUT"
       # This mint passes no `permission-*` input on purpose: the token inherits
       # the whole installation grant (contents, pull requests, issues, actions,
       # checks, statuses) so every code change the selected runtime writes is
@@ -604,6 +617,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: ${{ steps.token-window.outputs.mintedNotBefore }}
           UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN }}
           # Installation scope of the `ubiquity-sentinel` App. A scope key, not
           # a secret: every committed target except the sentinel self-repository
@@ -628,7 +642,7 @@ jobs:
           --allow-write \
           --allow-run \
           --allow-net="api.github.com,*.blob.core.windows.net" \
-          --allow-env=HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_COOLDOWN_MODE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB \
+          --allow-env=HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE,SENTINEL_COOLDOWN_MODE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB \
           src/host/hosted-runtime.ts
 
   finalize:

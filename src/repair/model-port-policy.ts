@@ -328,7 +328,8 @@ export function unavailableFor(
 export function isRateLimitMessage(error: string | null): boolean {
   if (error === null || error.length === 0) return false;
   const lower = error.toLowerCase();
-  return lower.includes("429") ||
+  // The status code as a standalone number only: "4290 tokens" is not one.
+  return /(?:^|[^0-9])429(?:[^0-9]|$)/.test(lower) ||
     lower.includes("rate limit") ||
     lower.includes("rate_limit") ||
     lower.includes("ratelimit") ||

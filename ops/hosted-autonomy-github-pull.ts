@@ -1,4 +1,59 @@
-import type { HostedAutonomyPullV1 } from "./hosted-autonomy-types.ts";
+import type {
+  HostedAutonomyHeadPullV1,
+  HostedAutonomyPullV1,
+} from "./hosted-autonomy-types.ts";
+
+/**
+ * Parse one raw `GET /pulls?state=all&head=<owner>:<branch>` page into the
+ * exact-branch pull identities. The listing is refused (null) unless it can
+ * be proven complete and exact: a full page may hide more pulls, and every
+ * item must be a well-formed pull of THIS repository (never a fork) whose
+ * head ref is exactly the requested branch. `merged` is derived from GitHub's
+ * own `merged_at` instant, which the list endpoint always carries.
+ */
+export function parseHostedAutonomyHeadPulls(
+  raw: unknown,
+  scope: string,
+  branch: string,
+  pageSize: number,
+): HostedAutonomyHeadPullV1[] | null {
+  if (!Array.isArray(raw) || raw.length >= pageSize) return null;
+  const pulls: HostedAutonomyHeadPullV1[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") return null;
+    const obj = entry as Record<string, unknown>;
+    const head = obj["head"] as Record<string, unknown> | null | undefined;
+    const base = obj["base"] as Record<string, unknown> | null | undefined;
+    const repo = head?.["repo"] as Record<string, unknown> | null | undefined;
+    const user = obj["user"] as Record<string, unknown> | null | undefined;
+    const number = obj["number"];
+    const state = obj["state"];
+    const mergedAt = obj["merged_at"];
+    const headSha = head?.["sha"];
+    const baseRef = base?.["ref"];
+    if (
+      typeof number !== "number" || !Number.isSafeInteger(number) ||
+      number <= 0 || (state !== "open" && state !== "closed") ||
+      head?.["ref"] !== branch || repo?.["full_name"] !== scope ||
+      typeof headSha !== "string" || !/^[0-9a-f]{40}$/.test(headSha) ||
+      typeof baseRef !== "string" || baseRef.length === 0 ||
+      (mergedAt !== null && typeof mergedAt !== "string")
+    ) {
+      return null;
+    }
+    const login = user?.["login"];
+    pulls.push({
+      number,
+      state,
+      merged: typeof mergedAt === "string",
+      headSha,
+      headRef: branch,
+      baseRef,
+      author: typeof login === "string" ? login : null,
+    });
+  }
+  return pulls;
+}
 
 /**
  * Parse one raw `GET /pulls/{number}` response into the remote merge facts the

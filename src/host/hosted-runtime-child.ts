@@ -18,11 +18,17 @@ import {
   parentDirectory,
 } from "./hosted-runtime-identity.ts";
 import type { HostedRuntimeIdentityV1 } from "./hosted-runtime-identity.ts";
+import {
+  APP_TOKEN_MINTED_NOT_BEFORE_ENV,
+  APP_TOKEN_NOT_AFTER_ENV,
+  deriveAppTokenNotAfterV1,
+} from "./hosted-app-token-window.ts";
 
 export function buildChildEnvironment(
   env: Readonly<Record<string, string | undefined>>,
   identity: HostedRuntimeIdentityV1,
   dirs: { home: string; tmp: string; denoDir: string },
+  now: number,
 ): Record<string, string> {
   const path = env.PATH;
   const githubToken = env.GITHUB_TOKEN;
@@ -100,6 +106,24 @@ export function buildChildEnvironment(
     const output = env.GITHUB_OUTPUT;
     if (!isNonEmptyText(output)) throw new Error(HOSTED_RUNTIME_STATIC_ENV);
     child.GITHUB_OUTPUT = output;
+  }
+  // Only the repair consumer is bounded by its one App token: cells and the
+  // planner keep their own windows. Without an App token every write uses the
+  // job-lifetime native token, so there is nothing to bound. A malformed or
+  // future mint bound refuses here, before any child exists.
+  if (identity.job === "repair" && isNonEmptyText(appToken)) {
+    let notAfter: number | undefined;
+    try {
+      notAfter = deriveAppTokenNotAfterV1(
+        env[APP_TOKEN_MINTED_NOT_BEFORE_ENV],
+        now,
+      );
+    } catch {
+      throw new Error(HOSTED_RUNTIME_STATIC_ENV);
+    }
+    if (notAfter !== undefined) {
+      child[APP_TOKEN_NOT_AFTER_ENV] = String(notAfter);
+    }
   }
   return child;
 }

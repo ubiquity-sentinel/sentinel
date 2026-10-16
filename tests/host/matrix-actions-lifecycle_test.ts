@@ -13,5 +13,7 @@ Deno.test("matrix actions: a live producer without an artifact stays charged, ne
   freshMatrixArtifacts(false, false, "missing"));
 Deno.test("matrix actions: the maxWaitMs-zero single scan consumer performs exactly one authenticated recovery", () =>
   freshMatrixArtifacts(false, false, "single"));
+Deno.test("matrix actions: a consumer window shorter than one scan budget never rescans after consuming a cell", () =>
+  freshMatrixArtifacts(false, false, "short"));
 Deno.test("matrix actions: authenticated historical runtime mismatch isolates one wave and advances unrelated work", () =>
   freshMatrixArtifacts(false, false, "none", true));

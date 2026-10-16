@@ -131,7 +131,7 @@ async function deadlineRig() {
     charge,
     historyRead,
     expire: () => {
-      now += 60001;
+      now += 300001;
     },
     now: () => now,
   };
@@ -151,7 +151,7 @@ Deno.test("maintenance deadline: real history expiry continues reviewed foreign 
     assert.equal(
       historyReads,
       1,
-      "the existing sixty-second bound is retained",
+      "the five-minute walk bound is retained",
     );
     assert.ok(
       result.actions.includes("matrix-history:deferred"),

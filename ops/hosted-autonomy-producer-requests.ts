@@ -113,12 +113,17 @@ export function producerRequests(
 
 /**
  * One producer pass outcome. `unrecoverable` names a producer whose plan
- * evidence can no longer be read (expired or unlisted): nothing was written,
- * and its requested reservations must not be settled by any older producer.
+ * evidence can no longer be read (expired or unlisted): the skip writes
+ * nothing, and its requested reservations must not be settled by any older
+ * producer.
+ * `mayHaveWritten` is false only when the pass never invoked its repair
+ * writer and never deferred inside its consumer, so a deferral or skip then
+ * provably left every record as it was.
  */
 export interface HostedProducerRecoveryV1 {
   result: HostedAutonomyResultV1 | null;
   deferred: boolean;
+  mayHaveWritten: boolean;
   unrecoverable?: {
     kind: "expired" | "unlisted";
     reservations: readonly string[];
