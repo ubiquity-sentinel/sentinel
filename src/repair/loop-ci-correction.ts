@@ -128,8 +128,9 @@ export async function routeFailedDeliveryChecks(
   legacyDetail: string,
   now: number,
 ): Promise<StepResultV1> {
-  // A hosted run whose correction cell could outlive a rollback to a runtime
-  // that refuses it keeps the generation-76 block exactly (no base read).
+  // A run whose correction cell could outlive a rollback to a runtime that
+  // refuses it (`ciCorrectionRouteOpen`) keeps the generation-76 block exactly
+  // (no base read).
   if (!ciCorrectionRouteOpen(deps) || !ciCorrectable(record)) {
     return persistBlocked(deps, context, record, legacyDetail, now);
   }

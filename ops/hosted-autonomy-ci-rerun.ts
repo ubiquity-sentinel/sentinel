@@ -1,20 +1,26 @@
 /**
  * Launcher-only flake path for a reviewed head parked on the runtime's
- * merge-gate CI failure ("CI checks failed: ..."). When the exact head holds
- * a clean review against a base that is still the base tip and is itself all
- * green, the failed workflow run on that head is re-run ONCE. Nothing is
- * written: GitHub's own `run_attempt` is the durable once-per-head record, so
- * a head with any run past attempt 1 is never re-run again, whoever re-ran it
- * and whatever it concluded. A head that turns green is re-admitted to
- * delivery by the retry pass (`ciGreenRedeliveryEligible`); a head that fails
- * again simply stays parked.
+ * merge-gate CI failure ("CI checks failed: ...", or the CI-correction
+ * runtime's "CI checks failed without base evidence: ..."). When the exact
+ * head holds a clean review against a base that is still the base tip and is
+ * itself all green, the failed workflow run on that head is re-run ONCE.
+ * Nothing is written: GitHub's own `run_attempt` is the durable once-per-head
+ * record, so a head with any run past attempt 1 is never re-run again,
+ * whoever re-ran it and whatever it concluded. A head that turns green is
+ * re-admitted to delivery by the retry pass (`ciGreenRedeliveryEligible`); a
+ * head that fails again stays parked until a CI-correction runtime may
+ * correct it (`readCiRerunSettled`).
  *
  * The pass charges, refunds and decides nothing about the failure: it only
  * asks GitHub to repeat the repository's own deterministic check on the exact
  * reviewed head, at most `HOSTED_AUTONOMY_CI_RERUNS_PER_PASS` runs per pass.
  */
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
-import { ciGreenRedeliveryEligible } from "./hosted-autonomy-ci-retries.ts";
+import {
+  ciGreenHeadKey,
+  ciGreenRedeliveryEligible,
+  ciRedeliveryEligible,
+} from "./hosted-autonomy-ci-retries.ts";
 import {
   HOSTED_AUTONOMY_TRUSTED_AUTHORS,
   hostedIssueKey,
@@ -69,6 +75,68 @@ function rerunShape(
     !closedIssues.has(
       hostedIssueKey(record.repository, record.related.issueNumber!),
     );
+}
+
+/**
+ * Heads (`ciGreenHeadKey`) of CI-parked records a correction may re-admit
+ * because this pass can no longer re-run them: the head is outside the re-run
+ * shape (for example a legacy record without candidate state), its surface
+ * cannot list or re-run runs, the base tip moved off the reviewed base, the
+ * head's run listing shows a run past attempt 1 or nothing re-runnable, or it
+ * holds more failed runs than one pass may re-run. An unreadable surface, base
+ * tip or run listing is never settled: the correction waits for the flake.
+ * `tips` holds the base tips the caller read, keyed by scope. Reads one run
+ * listing per correction-eligible head whose tip is still its reviewed base.
+ */
+export async function readCiRerunSettled(
+  context: HostedAutonomyPassContextV1,
+  tips: ReadonlyMap<string, string | null>,
+): Promise<Set<string>> {
+  const { snapshot, scopeFor, closedIssues } = context;
+  const settled = new Set<string>();
+  for (const record of snapshot.work) {
+    const head = record.target.head;
+    if (
+      record.nextStep !== "blocked" || head === null ||
+      !ciRedeliveryEligible(snapshot, record) ||
+      closedIssues.has(
+        hostedIssueKey(record.repository, record.related.issueNumber!),
+      )
+    ) continue;
+    const key = ciGreenHeadKey(record.repository, head);
+    if (!rerunShape(snapshot, record, closedIssues)) {
+      settled.add(key);
+      continue;
+    }
+    const scope = await scopeFor(record.repository);
+    const surface = scope.surface;
+    if (surface === null) continue;
+    if (
+      scope.baseBranch === null || surface.listHeadRuns === undefined ||
+      surface.rerunFailedJobs === undefined
+    ) {
+      settled.add(key);
+      continue;
+    }
+    const tip = tips.get(scope.key) ?? null;
+    if (tip === null) continue;
+    if (tip !== record.target.base) {
+      settled.add(key);
+      continue;
+    }
+    let runs: readonly HostedAutonomyHeadRunV1[] | null;
+    try {
+      runs = await surface.listHeadRuns(head);
+    } catch {
+      runs = null;
+    }
+    if (runs === null) continue;
+    const ids = ciRerunRuns(runs, head);
+    if (ids.length === 0 || ids.length > HOSTED_AUTONOMY_CI_RERUNS_PER_PASS) {
+      settled.add(key);
+    }
+  }
+  return settled;
 }
 
 /** Re-run eligible flaked CI runs; pushes `rerun:` actions, writes nothing. */

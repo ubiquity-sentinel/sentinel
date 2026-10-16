@@ -22,17 +22,19 @@ import {
   applyHostedRetries,
   planHostedRetries,
 } from "../../ops/hosted-autonomy-retries.ts";
+import { ciGreenHeadKey } from "../../ops/hosted-autonomy-ci-retries.ts";
+import { HOSTED_CI_CORRECTIONS } from "../../src/repair/ci-rejection.ts";
 import { healthyProof } from "../host/hosted-autonomy-rig.ts";
 
-/** A generation-77+ runtime carrying the CI correction route (test allowlist). */
+/** A generation-78+ runtime carrying the CI correction route (test allowlist). */
 const RUNTIME = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a" as GitSha;
 const PROVEN_RUNTIME: HostedRuntimeRecordV1 = {
   version: "v1",
   kind: "hosted_runtime",
   id: HOSTED_RUNTIME_ID,
   activeRevision: RUNTIME,
-  generation: 77,
-  lastHealthyProof: healthyProof(RUNTIME, 77, "ci-correction-release"),
+  generation: 78,
+  lastHealthyProof: healthyProof(RUNTIME, 78, "ci-correction-release"),
   lastExecutionProof: null,
   nextOrdinaryAt: T0,
   execution: null,
@@ -461,7 +463,11 @@ Deno.test("a broken head on a moved base is corrected instead of refreshed and r
   }
 });
 
-Deno.test("a hosted run keeps the generation-76 terminal CI block: no correction cell may outlive a rollback", async () => {
+Deno.test("a hosted run routes a candidate-caused failure to its matrix correction, uncharged until the planner grants it", async () => {
+  // Generation 78 opens the hosted route: its rollback target R77 isolates
+  // the correction cell (matrix-ci-correction-gen77) and bounds the awaiting
+  // record's rollback cost (ci-correction-rollback-gen77).
+  assert.equal(HOSTED_CI_CORRECTIONS, true);
   const { rig, charges, checkReads, writes } = await ciRig("ci-hosted", {
     hosted: true,
     checks: {
@@ -473,20 +479,23 @@ Deno.test("a hosted run keeps the generation-76 terminal CI block: no correction
     await rig.run();
     const after = await rig.snapshot();
     const work = after.work[0];
-    assert.equal(work.nextStep, "blocked", JSON.stringify(work));
-    assert.equal(work.blocker?.message, "CI checks failed: validate(failure)");
-    assert.equal(work.intent, null);
-    assert.equal(rig.model.requests.length, 0, "no correction session");
-    assert.ok(!checkReads.includes(SHA1), "no base attribution read");
-    assert.deepEqual(after.reservations, charges, "nothing charged");
+    assert.equal(work.nextStep, "work", JSON.stringify(work));
+    assert.equal(work.blocker, null);
+    assert.equal(work.wait, null);
+    assert.equal(work.intent, null, "the trusted planner owns the grant");
+    assert.equal(work.target.head, SHA3);
+    assert.equal(work.counters.reviewRounds, 1, "no review round is spent");
+    assert.equal(rig.model.requests.length, 0, "no in-process session");
+    assert.ok(checkReads.includes(SHA1), "attributed against its base");
+    assert.deepEqual(after.reservations, charges, "nothing charged yet");
     assertGeneration76Shapes(writes);
   } finally {
     await rig.ctx.cleanup();
   }
 });
 
-Deno.test("a hosted run refreshes a broken head on a moved base exactly as generation 76", async () => {
-  const { rig, refreshes } = await ciRig("ci-hosted-moved", {
+Deno.test("a hosted run corrects a broken head on a moved base before any refresh", async () => {
+  const { rig, refreshes, charges } = await ciRig("ci-hosted-moved", {
     hosted: true,
     baseTip: SHA2,
     checks: {
@@ -496,14 +505,17 @@ Deno.test("a hosted run refreshes a broken head on a moved base exactly as gener
   });
   try {
     await rig.run();
-    const work = (await rig.snapshot()).work[0];
-    assert.equal(rig.model.requests.length, 0, "no correction session");
-    assert.notEqual(work.nextStep, "work", JSON.stringify(work));
+    const after = await rig.snapshot();
+    const work = after.work[0];
+    assert.equal(rig.model.requests.length, 0, "no in-process session");
+    assert.equal(work.nextStep, "work", JSON.stringify(work));
     assert.equal(work.target.head, SHA3);
-    assert.ok(
+    assert.equal(
       refreshes.some((request) => request.expectedHead === SHA3),
-      "the reviewed head goes to the ordinary base refresh",
+      false,
+      "the broken head is never refreshed and re-reviewed",
     );
+    assert.deepEqual(after.reservations, charges, "nothing charged yet");
   } finally {
     await rig.ctx.cleanup();
   }
@@ -564,6 +576,23 @@ Deno.test("the launcher re-admits a legacy CI block into the runtime's own attri
       0,
       "inert without the installed runtime's healthy proof",
     );
+    const proven = {
+      ciRuntime: PROVEN_RUNTIME,
+      ciAllowlist: new Set([RUNTIME]),
+    };
+    assert.equal(
+      planHostedRetries(
+        read.value.snapshot,
+        now,
+        RUNTIME,
+        new Map(),
+        new Set(),
+        undefined,
+        proven,
+      ).length,
+      0,
+      "a flake re-run that may still act goes first",
+    );
     const plans = planHostedRetries(
       read.value.snapshot,
       now,
@@ -571,7 +600,12 @@ Deno.test("the launcher re-admits a legacy CI block into the runtime's own attri
       new Map(),
       new Set(),
       undefined,
-      { ciRuntime: PROVEN_RUNTIME, ciAllowlist: new Set([RUNTIME]) },
+      {
+        ...proven,
+        ciRerunSettled: new Set([
+          ciGreenHeadKey(read.value.snapshot.work[0].repository, SHA3),
+        ]),
+      },
     );
     assert.equal(plans.length, 1, "the legacy CI block is retryable");
     assert.equal(plans[0].nextStep, "delivery");

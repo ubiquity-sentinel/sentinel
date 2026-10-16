@@ -14,14 +14,18 @@ import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import {
   applyHostedRetries,
+  ciCorrectionPlan,
   planHostedRetries,
   type RetryPlanV1,
 } from "./hosted-autonomy-retries.ts";
 import { hostedIssueKey, sameRepository } from "./hosted-autonomy-policy.ts";
 import {
+  ciCorrectionRuntimeProven,
   ciGreenHeadKey,
   ciGreenRedeliveryEligible,
+  HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS,
 } from "./hosted-autonomy-ci-retries.ts";
+import { readCiRerunSettled } from "./hosted-autonomy-ci-rerun.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
 import { runHostedMismatchDispositionPass } from "./hosted-autonomy-mismatch-pass.ts";
 import { runHostedPreservationDispositionPass } from "./hosted-autonomy-preservation-disposition.ts";
@@ -229,6 +233,12 @@ export async function runHostedRetryPass(
     }
     if (green) ciGreenHeads.add(ciGreenHeadKey(record.repository, head));
   }
+  // Flake first: a CI-parked head is re-admitted for a correction only once
+  // its single re-run (run by the delivery pass) can no longer act. Read only
+  // under a proven CI-correction runtime, the only one the rule activates for.
+  const ciRerunSettled = ciCorrectionRuntimeProven(installedRuntime)
+    ? await readCiRerunSettled({ ...context, snapshot }, retryTips)
+    : new Set<string>();
   const planned = planHostedRetries(
     snapshot,
     deps.clock.now(),
@@ -240,16 +250,32 @@ export async function runHostedRetryPass(
     },
     // The same authenticated record carries the healthy proof the CI
     // re-admission requires; nothing else can activate that rule.
-    { ciRuntime: installedRuntime, ciGreenHeads },
+    { ciRuntime: installedRuntime, ciRerunSettled, ciGreenHeads },
   );
   const plans: RetryPlanV1[] = [];
+  // The per-pass CI correction cap counts only corrections this pass admits
+  // after the pull request checks below. A plan dropped there (closed,
+  // merged or unreadable) holds no slot, so such records ordered first never
+  // starve the rest; one past the cap is not read and waits for a later pass.
+  let ciCorrections = 0;
+  const admit = (plan: RetryPlanV1) => {
+    plans.push(plan);
+    if (ciCorrectionPlan(plan)) ciCorrections++;
+  };
   for (const plan of planned) {
+    if (
+      ciCorrectionPlan(plan) &&
+      ciCorrections >= HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS
+    ) {
+      actions.push(`retry:${plan.id}:skipped:ci_correction_cap`);
+      continue;
+    }
     const record = snapshot.work.find((item) =>
       item.id === plan.id && sameRepository(item.repository, plan.repository)
     );
     const pullRequest = record?.target.pr ?? null;
     if (record === undefined || pullRequest === null) {
-      plans.push(plan);
+      admit(plan);
       continue;
     }
     const scope = await scopeFor(record.repository);
@@ -263,7 +289,7 @@ export async function runHostedRetryPass(
       // that the pull is closed, so it must not be reported as not open.
       actions.push(`retry:${plan.id}:skipped:pr_read_failed`);
     } else if (pull.state === "open" && pull.merged === false) {
-      plans.push(plan);
+      admit(plan);
     } else {
       actions.push(`retry:${plan.id}:skipped:pr_not_open`);
     }

@@ -22,7 +22,10 @@ import {
 import { makeRig, repairSnapshot, run } from "./hosted-autonomy-rig.ts";
 import { releaseRequest, SHA1, SHA2, T0 } from "../state/helpers.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
-import { hostedIssueKey } from "../../ops/hosted-autonomy-policy.ts";
+import {
+  hostedIssueKey,
+  hostedRepositoryKey,
+} from "../../ops/hosted-autonomy-policy.ts";
 import {
   createHostedAutonomyScopes,
   type HostedAutonomyPassContextV1,
@@ -36,8 +39,10 @@ import type {
 import {
   ciRerunRuns,
   HOSTED_AUTONOMY_CI_RERUNS_PER_PASS,
+  readCiRerunSettled,
   runHostedCiRerunPass,
 } from "../../ops/hosted-autonomy-ci-rerun.ts";
+import { ciGreenHeadKey } from "../../ops/hosted-autonomy-ci-retries.ts";
 import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy-github.ts";
 
 const GATEWAY = {
@@ -128,11 +133,11 @@ Deno.test("gateway delivery: a spent-round record outside review/delivery is nev
   // and issue closure) could never be recorded.
   const cases: [string, ReturnType<typeof gatewayRecord>][] = [
     [
-      "blocked-unattributed",
+      "blocked-conflict",
       gatewayRecord("blocked", {
         blocker: {
           ...CI_BLOCKER,
-          message: "CI checks failed without base evidence: validate(failure)",
+          message: `base refresh has conflicts at ${SHA2}`,
         },
       }),
     ],
@@ -188,6 +193,32 @@ Deno.test("gateway delivery: a CI-parked spent-round head that is green is re-ad
   assert.equal(after.releaseRequests[0].source.head, HEAD);
   assert.equal(after.work[0].nextStep, "delivery");
   assert.deepEqual(after.work[0].counters, gatewayRecord("blocked").counters);
+});
+
+Deno.test("gateway delivery: a green head parked on the runtime's unattributed CI block is re-admitted before it is merged", async () => {
+  // The generation-78 unattributed block keeps the free re-run and green
+  // re-admission of the legacy CI block; it is never a correction.
+  const record = gatewayRecord("blocked", {
+    blocker: {
+      ...CI_BLOCKER,
+      message: "CI checks failed without base evidence: validate(failure)",
+    },
+  });
+  const { rig, results, after } = await gatewayDelivery(
+    "ci-green-unattributed",
+    record,
+    2,
+  );
+  assert.ok(
+    results[0].actions.includes(
+      `retry:${record.id}:grant=0:other:CI checks failed without base evidence::green`,
+    ),
+    JSON.stringify(results[0].actions),
+  );
+  assert.equal(rig.merges, 1);
+  assert.equal(after.releaseRequests.length, 1);
+  assert.equal(after.releaseRequests[0].source.head, HEAD);
+  assert.deepEqual(after.work[0].counters, record.counters);
 });
 
 // ---- re-run pass ----------------------------------------------------------
@@ -386,20 +417,6 @@ Deno.test("ci re-run: only the exact flake-candidate shape is re-run", async (t)
       {},
     ],
     [
-      "the runtime's unattributed CI block",
-      blockedSnapshot([gatewayRecord(
-        "blocked",
-        {
-          blocker: {
-            ...CI_BLOCKER,
-            message:
-              "CI checks failed without base evidence: validate(failure)",
-          },
-        },
-      )]),
-      {},
-    ],
-    [
       "a record already in delivery",
       blockedSnapshot([
         gatewayRecord("delivery"),
@@ -485,6 +502,19 @@ Deno.test("ci re-run: only the exact flake-candidate shape is re-run", async (t)
       assert.deepEqual(reruns, []);
     });
   }
+});
+
+Deno.test("ci re-run: the runtime's unattributed CI block gets the same single re-run", async () => {
+  const snapshot = blockedSnapshot([gatewayRecord("blocked", {
+    blocker: {
+      ...CI_BLOCKER,
+      message: "CI checks failed without base evidence: validate(failure)",
+    },
+  })]);
+  const { surface, reruns } = fakeSurface();
+  assert.deepEqual(await rerunPass(snapshot, surface), [SENT]);
+  assert.deepEqual(await rerunPass(snapshot, surface), [], "once per head");
+  assert.deepEqual(reruns, [RUN_ID]);
 });
 
 Deno.test("ci re-run: a timed-out run is re-run, and the pass is bounded", async () => {
@@ -628,6 +658,155 @@ Deno.test("ci re-run: the launcher pass re-runs the flake, re-admits the green h
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });
   }
+});
+
+// ---- flake first: when a correction may be re-admitted ---------------------
+
+/** A CI-parked Gateway head with a review round left (correction-eligible). */
+const correctable = (overrides: Record<string, unknown> = {}) =>
+  gatewayRecord("blocked", {
+    counters: { attempts: 3, retries: 0, reviewRounds: 1 },
+    ...overrides,
+  });
+const GATEWAY_HEAD = ciGreenHeadKey(GATEWAY, HEAD);
+
+async function settledFor(
+  snapshot: RepairStateSnapshotV1,
+  surface: HostedAutonomyGitHubV1,
+  tip: string | null = BASE,
+  closedIssues: Set<string> = new Set(),
+): Promise<{ settled: Set<string>; listings: number }> {
+  let listings = 0;
+  const counted: HostedAutonomyGitHubV1 = {
+    ...surface,
+    ...(surface.listHeadRuns === undefined ? {} : {
+      listHeadRuns: (head: string) => {
+        listings++;
+        return surface.listHeadRuns!(head);
+      },
+    }),
+  };
+  const deps = {
+    state: undefined,
+    githubFor: () => counted,
+    clock: { now: () => T0 },
+  } as unknown as HostedAutonomyDepsV1;
+  const context = {
+    deps,
+    actions: [],
+    revisions: [],
+    snapshot,
+    observedHead: SHA1,
+    initialHead: SHA1,
+    releaseSnapshot: undefined,
+    closedIssues,
+    foreignMerged: new Map(),
+    dedicatedReservations: new Set<string>(),
+    ...createHostedAutonomyScopes(deps),
+  } as unknown as HostedAutonomyPassContextV1;
+  const settled = await readCiRerunSettled(
+    context,
+    new Map([[hostedRepositoryKey(GATEWAY), tip]]),
+  );
+  return { settled, listings };
+}
+
+Deno.test("ci re-run: a correction waits for the head's once-per-head re-run to settle", async (t) => {
+  const snapshot = blockedSnapshot([correctable()]);
+  const settled = async (
+    options: FakeOptions,
+    tip: string | null = BASE,
+    target = snapshot,
+  ) => (await settledFor(target, fakeSurface(options).surface, tip)).settled;
+  await t.step("a re-run the pass may still send is pending", async () => {
+    assert.deepEqual(await settled({}), new Set());
+  });
+  await t.step("an unprovable or unreadable listing is pending", async () => {
+    assert.deepEqual(await settled({ runs: null }), new Set());
+    const throwing: HostedAutonomyGitHubV1 = {
+      ...fakeSurface().surface,
+      listHeadRuns: () => Promise.reject(new Error("offline")),
+    };
+    assert.deepEqual(
+      (await settledFor(snapshot, throwing)).settled,
+      new Set(),
+    );
+  });
+  await t.step("an unreadable base tip is pending", async () => {
+    assert.deepEqual(await settled({}, null), new Set());
+  });
+  for (
+    const [name, options] of [
+      ["already re-run", {
+        runs: [headRun({ runAttempt: 2, status: "in_progress" })],
+      }],
+      ["nothing re-runnable", { runs: [headRun({ conclusion: "cancelled" })] }],
+      ["no run on the head", { runs: [] }],
+      ["no re-run capability", { capabilities: false }],
+      [
+        "more failed runs than one pass may re-run",
+        {
+          runs: Array.from(
+            { length: HOSTED_AUTONOMY_CI_RERUNS_PER_PASS + 1 },
+            (_, index) => headRun({ id: 900 + index }),
+          ),
+        },
+      ],
+    ] as [string, FakeOptions][]
+  ) {
+    await t.step(`${name} is settled`, async () => {
+      assert.deepEqual(await settled(options), new Set([GATEWAY_HEAD]));
+    });
+  }
+  await t.step("a moved base is settled without a listing", async () => {
+    const { settled, listings } = await settledFor(
+      snapshot,
+      fakeSurface().surface,
+      SHA2,
+    );
+    assert.deepEqual(settled, new Set([GATEWAY_HEAD]));
+    assert.equal(listings, 0);
+  });
+  await t.step(
+    "a legacy record the re-run pass never acts on is settled",
+    async () => {
+      const legacy = blockedSnapshot([correctable({
+        target: { ...unrelatedForeignRecord().target },
+      })]);
+      assert.deepEqual(
+        await settled({}, BASE, legacy),
+        new Set([ciGreenHeadKey(GATEWAY, legacy.work[0].target.head!)]),
+      );
+    },
+  );
+  await t.step("only a correction-eligible head is considered", async () => {
+    for (
+      const record of [
+        gatewayRecord("blocked"),
+        correctable({
+          blocker: {
+            ...CI_BLOCKER,
+            message:
+              "CI checks failed without base evidence: validate(failure)",
+          },
+        }),
+      ]
+    ) {
+      const { settled, listings } = await settledFor(
+        blockedSnapshot([record]),
+        fakeSurface({ runs: [] }).surface,
+      );
+      assert.deepEqual(settled, new Set());
+      assert.equal(listings, 0);
+    }
+    const closed = await settledFor(
+      snapshot,
+      fakeSurface({ runs: [] }).surface,
+      BASE,
+      new Set([hostedIssueKey(GATEWAY, correctable().related.issueNumber!)]),
+    );
+    assert.deepEqual(closed.settled, new Set());
+  });
 });
 
 // ---- GitHub surface ---------------------------------------------------------

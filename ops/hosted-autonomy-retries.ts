@@ -209,6 +209,21 @@ export interface RetryPlanV1 {
   detail: string;
 }
 
+/** Detail suffix of a CI re-admission whose head is green again. */
+const CI_GREEN_DETAIL_SUFFIX = ":green";
+
+/**
+ * True for a CI correction re-admission: a delivery-returning plan whose
+ * head is not green again. Only these count against
+ * `HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS`, which the retry pass applies
+ * after it has verified each plan's pull request, so a plan it drops there
+ * (pull request not open or unreadable) never holds a slot.
+ */
+export function ciCorrectionPlan(plan: RetryPlanV1): boolean {
+  return plan.nextStep === "delivery" &&
+    !plan.detail.endsWith(CI_GREEN_DETAIL_SUFFIX);
+}
+
 /**
  * Bounded, closed retry planning for one snapshot. Every returned plan has an
  * unused next-attempt identity, respects memory/review limits and stays inside
@@ -239,9 +254,17 @@ export function planHostedRetries(
   onDenied?: (denial: RetryDenialV1) => void,
   /**
    * The authenticated installed runtime record. The CI re-admission is
-   * planned only when it is an allowlisted generation-77+ CI-correction
+   * planned only when it is an allowlisted generation-78+ CI-correction
    * runtime holding its own healthy proof (`ciCorrectionRuntimeProven`);
    * `ciAllowlist` replaces the pinned allowlist for tests only.
+   *
+   * `ciRerunSettled` holds `ciGreenHeadKey` values for CI-parked heads whose
+   * once-per-head flake re-run can no longer act (`readCiRerunSettled`). A
+   * correction is re-admitted only for such a head, so a flake is re-run
+   * before any correction round is spent; absent means none is settled.
+   * Every correction candidate is planned (`ciCorrectionPlan`): only the
+   * retry pass knows which pull requests are still open, so it applies
+   * `HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS` to the plans it verified.
    *
    * `ciGreenHeads` holds `ciGreenHeadKey` values for heads whose CI the
    * caller read as all green on their own repository surface. A CI-parked
@@ -251,6 +274,7 @@ export function planHostedRetries(
   options: {
     ciRuntime?: HostedRuntimeRecordV1 | null;
     ciAllowlist?: ReadonlySet<string>;
+    ciRerunSettled?: ReadonlySet<string>;
     ciGreenHeads?: ReadonlySet<string>;
   } = {},
 ): RetryPlanV1[] {
@@ -259,6 +283,7 @@ export function planHostedRetries(
   const ciCorrection = ciRuntime !== null &&
     ciRuntime.activeRevision === runtimeSha &&
     ciCorrectionRuntimeProven(ciRuntime, options.ciAllowlist);
+  const ciRerunSettled = options.ciRerunSettled ?? new Set<string>();
   const ciGreenHeads = options.ciGreenHeads ?? new Set<string>();
   const plans: RetryPlanV1[] = [];
   for (const record of snapshot.work) {
@@ -296,17 +321,20 @@ export function planHostedRetries(
     // installed runtime's CI attribution: no charge, no base advance and no
     // counter movement here; the runtime decides correction or deferral.
     if (rule.nextStep === "delivery") {
-      const corrected = ciCorrection && ciRedeliveryEligible(snapshot, record);
+      const head = record.target.head;
       // A head that is green again on its exact reviewed base (a re-run
       // flake) passes any runtime's merge gate, so it needs no correction
-      // route and no review round.
-      const head = record.target.head;
-      const green = !corrected && head !== null &&
-        record.target.base !== null &&
+      // route and no review round, and never counts against the per-pass
+      // correction cap.
+      const green = head !== null && record.target.base !== null &&
         baseTips.get(hostedRepositoryKey(record.repository)) ===
           record.target.base &&
         ciGreenHeads.has(ciGreenHeadKey(record.repository, head)) &&
         ciGreenRedeliveryEligible(snapshot, record);
+      // A correction only once the head's flake re-run can no longer act.
+      const corrected = !green && ciCorrection && head !== null &&
+        ciRerunSettled.has(ciGreenHeadKey(record.repository, head)) &&
+        ciRedeliveryEligible(snapshot, record);
       if (!corrected && !green) continue;
       plans.push({
         id: record.id,
@@ -317,7 +345,7 @@ export function planHostedRetries(
         advanceBase: false,
         observedBase: null,
         detail: `${blocker.kind}:${rule.prefix.trimEnd()}${
-          green ? ":green" : ""
+          green ? CI_GREEN_DETAIL_SUFFIX : ""
         }`,
       });
       continue;

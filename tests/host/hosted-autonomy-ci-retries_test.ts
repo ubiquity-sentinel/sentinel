@@ -16,14 +16,17 @@ import {
   ciRedeliveryEligible,
   HOSTED_AUTONOMY_CI_CORRECTION_MIN_GENERATION,
   HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES,
+  HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS,
 } from "../../ops/hosted-autonomy-ci-retries.ts";
 import {
+  HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX,
   HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS,
   hostedRepositoryKey,
 } from "../../ops/hosted-autonomy-policy.ts";
 import { parseWorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
   CI_CORRECTION_REVIEW_ROUNDS,
+  CI_UNATTRIBUTED_DETAIL,
   ciCorrectable,
   HOSTED_CI_CORRECTIONS,
 } from "../../src/repair/ci-rejection.ts";
@@ -32,6 +35,7 @@ import {
   type HostedRuntimeRecordV1,
 } from "../../src/contracts/hosted-supervisor.ts";
 import {
+  OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION,
   OWNER_DEVELOPMENT_INSTALL_STABILIZATION_PRIOR_REVISION,
   OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_PRIOR_REVISION,
   OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_REVISION,
@@ -54,12 +58,31 @@ import {
   selfTips,
   TARGET,
 } from "./hosted-autonomy-fixtures.ts";
-import { healthyProof, repairSnapshot } from "./hosted-autonomy-rig.ts";
+import {
+  healthyProof,
+  makeRig,
+  repairSnapshot,
+} from "./hosted-autonomy-rig.ts";
+import { releaseAt } from "./hosted-autonomy-preservation-fixtures.ts";
+import {
+  readHostedClosedIssues,
+  runHostedRetryPass,
+} from "../../ops/hosted-autonomy-retry-pass.ts";
+import {
+  createHostedAutonomyScopes,
+  type HostedAutonomyPassContextV1,
+} from "../../ops/hosted-autonomy-scopes.ts";
+import type {
+  HostedAutonomyDepsV1,
+  HostedAutonomyPullV1,
+} from "../../ops/hosted-autonomy-types.ts";
 
 /** An installed runtime that carries the CI correction route. */
 const RUNTIME = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a" as GitSha;
 /** Test allowlist naming RUNTIME as a CI-correction runtime. */
 const ALLOWLIST: ReadonlySet<string> = new Set([RUNTIME]);
+/** The parked head's once-per-head flake re-run can no longer act. */
+const SETTLED: ReadonlySet<string> = new Set([ciGreenHeadKey(SELF_REPO, HEAD)]);
 
 /** The authenticated installed runtime record with its own healthy proof. */
 function installed(
@@ -67,7 +90,7 @@ function installed(
   proof: { revision?: string; generation?: number } | null = {},
 ): HostedRuntimeRecordV1 {
   const revision = overrides.activeRevision ?? RUNTIME;
-  const generation = overrides.generation ?? 77;
+  const generation = overrides.generation ?? 78;
   return {
     version: "v1",
     kind: "hosted_runtime",
@@ -137,7 +160,7 @@ Deno.test("hosted autonomy: a reviewed head parked on its CI gate returns to del
     selfTips(SHA2),
     new Set(),
     undefined,
-    { ciRuntime: installed(), ciAllowlist: ALLOWLIST },
+    { ciRuntime: installed(), ciAllowlist: ALLOWLIST, ciRerunSettled: SETTLED },
   );
   assert.equal(plans.length, 1);
   assert.equal(plans[0].nextStep, "delivery");
@@ -170,7 +193,11 @@ Deno.test("hosted autonomy: only the exact reviewed, unreleased CI-gate shape is
       new Map(),
       new Set(),
       undefined,
-      { ciRuntime: installed(), ciAllowlist: ALLOWLIST },
+      {
+        ciRuntime: installed(),
+        ciAllowlist: ALLOWLIST,
+        ciRerunSettled: SETTLED,
+      },
     );
   assert.equal(plan().length, 1, "control");
   await t.step("spent review rounds keep the terminal block", () => {
@@ -258,7 +285,7 @@ Deno.test("hosted autonomy: only the exact reviewed, unreleased CI-gate shape is
   );
 });
 
-Deno.test("hosted autonomy: the CI re-admission activates only for an allowlisted, healthy generation-77+ runtime", async (t) => {
+Deno.test("hosted autonomy: the CI re-admission activates only for an allowlisted, healthy generation-78+ runtime", async (t) => {
   const snapshot = repairSnapshot([ciBlocked()], [authorizingReceipt()], [], [
     ...CHARGES,
   ]);
@@ -274,7 +301,9 @@ Deno.test("hosted autonomy: the CI re-admission activates only for an allowliste
       new Map(),
       new Set(),
       undefined,
-      ciRuntime === undefined ? undefined : { ciRuntime, ciAllowlist },
+      ciRuntime === undefined
+        ? undefined
+        : { ciRuntime, ciAllowlist, ciRerunSettled: SETTLED },
     ).length;
   assert.equal(plan(installed()), 1, "control");
   await t.step("no runtime proof at all keeps the rule inert", () => {
@@ -284,8 +313,8 @@ Deno.test("hosted autonomy: the CI re-admission activates only for an allowliste
   await t.step("a runtime outside the allowlist is inert", () => {
     assert.equal(plan(installed(), new Set()), 0);
     // The production allowlist is pinned by the integration owner once the
-    // reviewed generation-77 revision exists; it never names 74/75/76. With
-    // no test allowlist the planner reads exactly that pinned set.
+    // reviewed generation-78 revision exists; it never names 74 through 77.
+    // With no test allowlist the planner reads exactly that pinned set.
     assert.equal(
       planHostedRetries(
         snapshot,
@@ -294,7 +323,7 @@ Deno.test("hosted autonomy: the CI re-admission activates only for an allowliste
         new Map(),
         new Set(),
         undefined,
-        { ciRuntime: installed() },
+        { ciRuntime: installed(), ciRerunSettled: SETTLED },
       ).length,
       HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES.has(RUNTIME) ? 1 : 0,
     );
@@ -304,6 +333,7 @@ Deno.test("hosted autonomy: the CI re-admission activates only for an allowliste
         [OWNER_DEVELOPMENT_INSTALL_STABILIZATION_PRIOR_REVISION, 74],
         [OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_PRIOR_REVISION, 75],
         [OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_REVISION, 76],
+        [OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION, 77],
       ] as const
     ) {
       assert.equal(HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES.has(revision), false);
@@ -314,12 +344,12 @@ Deno.test("hosted autonomy: the CI re-admission activates only for an allowliste
       assert.equal(
         plan(legacy, new Set([revision]), revision as GitSha),
         0,
-        "a pre-77 generation never activates the rule",
+        "a pre-78 generation never activates the rule",
       );
     }
   });
   await t.step(
-    "a pre-77 generation of an allowlisted revision is inert",
+    "a pre-78 generation of an allowlisted revision is inert",
     () => {
       assert.equal(
         plan(installed({
@@ -385,13 +415,407 @@ Deno.test("hosted autonomy: the CI re-admission and the runtime correction share
   }
 });
 
-Deno.test("hosted autonomy: no runtime is allowlisted for CI re-admission while hosted CI corrections stay closed", () => {
-  // The launcher pins runtimes cut from its own tree. While a hosted run keeps
-  // the generation-76 terminal CI block (its correction cell could outlive a
-  // rollback to generation 76), a re-admitted head is blocked again by the
-  // merge gate at once and would be re-admitted on every pass.
-  if (!HOSTED_CI_CORRECTIONS) {
-    assert.equal(HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES.size, 0);
+Deno.test("hosted autonomy: the CI correction route is open from generation 78, whose rollback target isolates its cell", () => {
+  // Generation 77 (R77), the rollback target of 78, isolates the correction
+  // cell (matrix-ci-correction-gen77) and bounds an awaiting record's
+  // rollback cost (ci-correction-rollback-gen77), so the hosted route opens
+  // in the runtime of this tree and the launcher re-admits only under a
+  // runtime cut from it.
+  assert.equal(HOSTED_CI_CORRECTIONS, true);
+  assert.equal(HOSTED_AUTONOMY_CI_CORRECTION_MIN_GENERATION, 78);
+});
+
+Deno.test("hosted autonomy: no runtime at or before generation 77 is allowlisted for CI re-admission", () => {
+  for (
+    const revision of [
+      OWNER_DEVELOPMENT_INSTALL_STABILIZATION_PRIOR_REVISION,
+      OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_PRIOR_REVISION,
+      OWNER_DEVELOPMENT_INSTALL_THROUGHPUT_REVISION,
+      OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION,
+    ]
+  ) {
+    assert.equal(
+      HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES.has(revision),
+      false,
+      revision,
+    );
+  }
+  // A failed generation 78 restores R77 at generation 79: the pinned
+  // allowlist excludes it by revision, whatever its generation and proof.
+  for (const generation of [77, 79, 80]) {
+    assert.equal(
+      ciCorrectionRuntimeProven(installed({
+        activeRevision: OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION,
+        generation,
+      })),
+      false,
+      `R77 at generation ${generation}`,
+    );
+  }
+});
+
+Deno.test("hosted autonomy: every allowlisted CI-correction runtime present locally opens the hosted route", async () => {
+  const root = decodeURIComponent(new URL("../../", import.meta.url).pathname);
+  const git = async (args: string[]) => {
+    const output = await new Deno.Command("git", {
+      args: ["-C", root, ...args],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    return output.success ? new TextDecoder().decode(output.stdout) : null;
+  };
+  for (const revision of HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES) {
+    assert.match(revision, /^[0-9a-f]{40}$/);
+    if (await git(["cat-file", "-e", `${revision}^{commit}`]) === null) {
+      continue;
+    }
+    const source = await git([
+      "show",
+      `${revision}:src/repair/ci-rejection.ts`,
+    ]);
+    assert.ok(source !== null, revision);
+    assert.match(
+      source,
+      /^export const HOSTED_CI_CORRECTIONS = true;$/m,
+      `${revision} keeps the hosted CI correction route closed`,
+    );
+  }
+});
+
+// ---- flake first and the per-pass cap -------------------------------------
+
+Deno.test("hosted autonomy: a CI-parked head is re-admitted for correction only after its flake re-run settled", () => {
+  const snapshot = repairSnapshot(
+    [ciBlocked()],
+    [authorizingReceipt()],
+    [],
+    CHARGES,
+  );
+  const plan = (options: Record<string, unknown>) =>
+    planHostedRetries(
+      snapshot,
+      T0 + 9000,
+      RUNTIME,
+      selfTips(BASE),
+      new Set(),
+      undefined,
+      { ciRuntime: installed(), ciAllowlist: ALLOWLIST, ...options },
+    );
+  assert.equal(plan({ ciRerunSettled: SETTLED }).length, 1, "control");
+  assert.equal(plan({}).length, 0, "no settled set: the re-run may act");
+  assert.equal(plan({ ciRerunSettled: new Set() }).length, 0);
+  assert.equal(
+    plan({
+      ciRerunSettled: new Set([ciGreenHeadKey(SELF_REPO, SHA2 as GitSha)]),
+    }).length,
+    0,
+    "another head settled",
+  );
+  assert.equal(
+    plan({
+      ciRerunSettled: new Set([ciGreenHeadKey(FOREIGN_REPO, HEAD)]),
+    }).length,
+    0,
+    "the same head in another repository",
+  );
+  // A head that turned green needs no correction and no settled re-run.
+  const green = plan({
+    ciGreenHeads: new Set([ciGreenHeadKey(SELF_REPO, HEAD)]),
+  });
+  assert.equal(green.length, 1);
+  assert.equal(green[0].detail, "other:CI checks failed::green");
+});
+
+/**
+ * `count` CI-parked heads with a review round left, in snapshot (id) order,
+ * each with its own pull request (70 + index) and authorizing review.
+ */
+function ciFleet(count: number) {
+  const heads = Array.from(
+    { length: count },
+    (_, index) => String(index + 1).repeat(40) as GitSha,
+  );
+  const records = heads.map((head, index) =>
+    ciBlocked({
+      id: `issue-ubiquity-sentinel-${60 + index}`,
+      source: { kind: "issue", id: String(60 + index), revision: SHA1 },
+      related: { incidentId: null, issueNumber: 60 + index },
+      target: {
+        base: BASE,
+        branch: `sentinel/repair/issue-ubiquity-sentinel-${60 + index}`,
+        checkpoint: null,
+        head,
+        pr: 70 + index,
+      },
+    })
+  );
+  const reviews = records.map((record, index) =>
+    authorizingReceipt({
+      id: `review-receipt:${String(index).repeat(64)}`,
+      pullRequest: { number: record.target.pr, head: heads[index], base: BASE },
+    })
+  );
+  return { heads, records, snapshot: repairSnapshot(records, reviews, [], []) };
+}
+
+Deno.test("hosted autonomy: the planner plans every CI correction candidate; the per-pass cap is the retry pass's", () => {
+  assert.equal(HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS, 4);
+  const { heads, records, snapshot } = ciFleet(6);
+  const plans = planHostedRetries(
+    snapshot,
+    T0 + 9000,
+    RUNTIME,
+    selfTips(BASE),
+    new Set(),
+    undefined,
+    {
+      ciRuntime: installed(),
+      ciAllowlist: ALLOWLIST,
+      ciRerunSettled: new Set(
+        heads.map((head) => ciGreenHeadKey(SELF_REPO, head)),
+      ),
+      ciGreenHeads: new Set([ciGreenHeadKey(SELF_REPO, heads[5])]),
+    },
+  );
+  // The planner cannot know which pull requests are still open, so it caps
+  // nothing: a candidate the pass later drops must never hold a slot.
+  assert.deepEqual(
+    plans.map((plan) => plan.detail),
+    [
+      ...Array(5).fill("other:CI checks failed:"),
+      "other:CI checks failed::green",
+    ],
+  );
+  assert.deepEqual(
+    plans.map((plan) => plan.id),
+    records.map((record) => record.id),
+  );
+});
+
+/** The allowlisted generation-78 runtime with its own healthy proof. */
+const PROVEN_RELEASE = releaseAt({
+  revision: RUNTIME,
+  generation: 78,
+  healthy: {
+    revision: RUNTIME,
+    generation: 78,
+    createdAt: T0,
+    observedAt: T0 + 10,
+  },
+});
+
+/**
+ * Pins RUNTIME in the production allowlist, the only one the retry pass
+ * reads, for `body` alone; the pinned set is restored afterwards.
+ */
+async function withPinnedRuntime<T>(body: () => Promise<T>): Promise<T> {
+  const pinned = HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES as Set<string>;
+  assert.equal(pinned.has(RUNTIME), false);
+  pinned.add(RUNTIME);
+  try {
+    return await body();
+  } finally {
+    pinned.delete(RUNTIME);
+  }
+}
+
+/** One real retry pass over the rig's repair state, as the runner drives it. */
+async function retryPass(rig: Awaited<ReturnType<typeof makeRig>>["rig"]) {
+  const deps = {
+    state: rig.state,
+    githubFor: rig.githubFor,
+    clock: { now: () => T0 + 5_000_000 },
+  } as unknown as HostedAutonomyDepsV1;
+  const read = await rig.state.readRepair();
+  assert.ok(read.ok && read.value.status === "found");
+  const context = {
+    deps,
+    actions: [] as string[],
+    revisions: [],
+    snapshot: read.value.snapshot,
+    observedHead: read.value.head,
+    initialHead: read.value.head,
+    releaseSnapshot: PROVEN_RELEASE,
+    closedIssues: new Set<string>(),
+    foreignMerged: new Map(),
+    dedicatedReservations: new Set<string>(),
+    ...createHostedAutonomyScopes(deps),
+  } as unknown as HostedAutonomyPassContextV1;
+  await readHostedClosedIssues(context);
+  const result = await runHostedRetryPass(context, SHA1);
+  const after = await rig.state.readRepair();
+  assert.ok(after.ok && after.value.status === "found");
+  return { result, actions: context.actions, after: after.value.snapshot };
+}
+
+/** An unmerged pull request at the record's head, open or closed. */
+function pullAt(number: number, head: string, open: boolean) {
+  return {
+    number,
+    state: open ? "open" : "closed",
+    merged: false,
+    mergeCommitSha: null,
+    headSha: head,
+    baseRef: "development",
+    author: "ubiquity-sentinel[bot]",
+  } as unknown as HostedAutonomyPullV1;
+}
+
+Deno.test("hosted autonomy: closed or unreadable pull requests never hold one of the pass's CI correction slots", async () => {
+  // Four records whose pull requests a maintainer closed (their issues stay
+  // open, so nothing retires them) and one whose pull request cannot be read
+  // sort ahead of the one open pull request. The base moved, so every
+  // head's flake re-run is settled.
+  const { heads, records, snapshot } = ciFleet(6);
+  const { rig, github } = await makeRig("ci-correction-cap-closed", {
+    repair: snapshot,
+    baseTip: SHA2,
+    issueOpen: true,
+  });
+  const reads: number[] = [];
+  rig.githubFor = () => ({
+    ...github,
+    readPull: (number: number) => {
+      reads.push(number);
+      const index = number - 70;
+      if (index === 4) return Promise.reject(new Error("offline"));
+      return Promise.resolve(pullAt(number, heads[index], index === 5));
+    },
+    hasAllChecksGreen: () => Promise.resolve(false),
+  });
+  try {
+    const { result, actions, after } = await withPinnedRuntime(() =>
+      retryPass(rig)
+    );
+    assert.equal(result?.status, "applied", JSON.stringify(actions));
+    assert.deepEqual(actions, [
+      ...records.slice(0, 4).map((record) =>
+        `retry:${record.id}:skipped:pr_not_open`
+      ),
+      `retry:${records[4].id}:skipped:pr_read_failed`,
+      `retry:${records[5].id}:grant=0:other:CI checks failed:`,
+    ]);
+    assert.deepEqual(reads, [70, 71, 72, 73, 74, 75]);
+    assert.deepEqual(
+      after.work.map((record) => record.nextStep),
+      ["blocked", "blocked", "blocked", "blocked", "blocked", "delivery"],
+    );
+    const admitted = after.work[5];
+    assert.equal(admitted.blocker, null);
+    assert.deepEqual(admitted.counters, records[5].counters);
+    assert.deepEqual(after.reservations, snapshot.reservations);
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
+
+Deno.test("hosted autonomy: one retry pass admits at most HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS verified CI corrections, green heads uncounted", async () => {
+  // Six open correction candidates and one head green again on its unchanged
+  // base. No re-run capability, so every flake re-run is settled.
+  const { heads, records, snapshot } = ciFleet(7);
+  const { rig, github } = await makeRig("ci-correction-cap-open", {
+    repair: snapshot,
+    baseTip: BASE,
+    issueOpen: true,
+  });
+  const reads: number[] = [];
+  rig.githubFor = () => ({
+    ...github,
+    readPull: (number: number) => {
+      reads.push(number);
+      return Promise.resolve(pullAt(number, heads[number - 70], true));
+    },
+    hasAllChecksGreen: (sha: string) => Promise.resolve(sha === heads[6]),
+  });
+  try {
+    const { result, actions, after } = await withPinnedRuntime(() =>
+      retryPass(rig)
+    );
+    assert.equal(result?.status, "applied", JSON.stringify(actions));
+    assert.deepEqual(actions, [
+      `retry:${records[4].id}:skipped:ci_correction_cap`,
+      `retry:${records[5].id}:skipped:ci_correction_cap`,
+      ...records.slice(0, 4).map((record) =>
+        `retry:${record.id}:grant=0:other:CI checks failed:`
+      ),
+      `retry:${records[6].id}:grant=0:other:CI checks failed::green`,
+    ]);
+    // A candidate past the cap costs no pull request read.
+    assert.deepEqual(reads, [70, 71, 72, 73, 76]);
+    assert.deepEqual(
+      after.work.map((record) => record.nextStep),
+      [
+        ...Array(HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS).fill("delivery"),
+        "blocked",
+        "blocked",
+        "delivery",
+      ],
+    );
+    assert.deepEqual(after.reservations, snapshot.reservations);
+    // The next pass admits the two that waited.
+    const next = await withPinnedRuntime(() => retryPass(rig));
+    assert.equal(next.result?.status, "applied");
+    assert.deepEqual(
+      next.after.work.map((record) => record.nextStep),
+      Array(7).fill("delivery"),
+    );
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
+
+Deno.test("hosted autonomy: the runtime's unattributed CI block keeps the free re-run and green re-admission, never a correction", () => {
+  assert.equal(
+    HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX,
+    `${CI_UNATTRIBUTED_DETAIL}: `,
+  );
+  const unattributed = (rounds: number) =>
+    ciBlocked({
+      counters: { attempts: 4, retries: 0, reviewRounds: rounds },
+      blocker: {
+        ...CI_BLOCKER,
+        message: `${CI_UNATTRIBUTED_DETAIL}: lint(failure)`,
+      },
+    });
+  for (const rounds of [1, 3, 5]) {
+    const snapshot = repairSnapshot(
+      [unattributed(rounds)],
+      [authorizingReceipt()],
+      [],
+      CHARGES,
+    );
+    assert.equal(ciGreenRedeliveryEligible(snapshot, snapshot.work[0]), true);
+    assert.equal(ciRedeliveryEligible(snapshot, snapshot.work[0]), false);
+    const plan = (green: boolean) =>
+      planHostedRetries(
+        snapshot,
+        T0 + 9000,
+        RUNTIME,
+        selfTips(BASE),
+        new Set(),
+        undefined,
+        {
+          ciRuntime: installed(),
+          ciAllowlist: ALLOWLIST,
+          ciRerunSettled: SETTLED,
+          ciGreenHeads: green
+            ? new Set([ciGreenHeadKey(SELF_REPO, HEAD)])
+            : new Set(),
+        },
+      );
+    // Not green: the correction rule never takes it, so it never churns.
+    assert.equal(plan(false).length, 0, `rounds ${rounds}`);
+    const plans = plan(true);
+    assert.equal(plans.length, 1, `rounds ${rounds}`);
+    assert.equal(plans[0].nextStep, "delivery");
+    assert.equal(
+      plans[0].detail,
+      "other:CI checks failed without base evidence::green",
+    );
+    const next = applyHostedRetries(snapshot, SHA1, plans, T0 + 9000);
+    assert.equal(next.work[0].blocker, null);
+    assert.deepEqual(next.work[0].counters, snapshot.work[0].counters);
+    assert.deepEqual(next.reservations, snapshot.reservations);
   }
 });
 
@@ -424,7 +848,7 @@ const spent = (rounds = 4) =>
   ciBlocked({ counters: { attempts: 4, retries: 0, reviewRounds: rounds } });
 
 Deno.test("hosted autonomy: a spent-round head whose CI turned green on its current base returns to delivery uncharged", () => {
-  // The flake path: no CI-correction runtime is installed (the route stays
+  // The flake path: no CI-correction runtime is installed (the route is
   // closed under generation 77), every review round is spent, and the exact
   // reviewed head is now green on the unchanged base.
   for (const rounds of [0, 2, 3, 4, 7]) {
@@ -527,13 +951,10 @@ Deno.test("hosted autonomy: the green-head re-admission needs the exact green he
     assert.equal(
       greenPlan(snapshot([ciBlocked({
         counters: spent().counters,
-        blocker: {
-          ...CI_BLOCKER,
-          message: "CI checks failed without base evidence: lint(failure)",
-        },
+        blocker: { ...CI_BLOCKER, message: "model run ended" },
       })])).length,
       0,
-      "the runtime's unattributed block",
+      "another blocker",
     );
   });
 });

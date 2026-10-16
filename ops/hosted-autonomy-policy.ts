@@ -1,4 +1,5 @@
 import { HISTORICAL_NOT_STARTED_DETAIL } from "../src/host/matrix-actions.ts";
+import { CI_UNATTRIBUTED_DETAIL } from "../src/repair/ci-rejection.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { HostedAutonomyRecordV1 } from "./hosted-autonomy-types.ts";
 
@@ -162,6 +163,14 @@ export const HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS = 8 * 24 * 60 * 60 * 1000;
 export const HOSTED_AUTONOMY_CI_FAILED_PREFIX = "CI checks failed: ";
 
 /**
+ * The CI-correction runtime's terminal block for a failed head check that no
+ * base observation attributes (`unattributedDetail`). It deliberately does
+ * not start with `HOSTED_AUTONOMY_CI_FAILED_PREFIX`.
+ */
+export const HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX =
+  `${CI_UNATTRIBUTED_DETAIL}: `;
+
+/**
  * Blocker prefix the preservation disposition writes once a parked candidate
  * is proven unrecoverable (ops/hosted-autonomy-preservation-disposition.ts).
  * The consumed admission stays charged; only a fresh, separately charged
@@ -284,14 +293,22 @@ export const HOSTED_AUTONOMY_RETRYABLE: readonly {
     // installed runtime re-observes the head and its reviewed base and owns
     // the outcome (correction round, red-base wait or terminal block). It is
     // inert unless the authenticated installed runtime is an allowlisted
-    // generation-77+ CI-correction revision holding its own healthy proof
-    // (`ciCorrectionRuntimeProven`), and for any shape but the exact
-    // reviewed, unreleased publication with a review round left
-    // (`ciRedeliveryEligible`) — except for a head whose CI the retry pass
-    // read as all green again on its unchanged reviewed base (a re-run
-    // flake), which re-admits under any runtime and any spent round count
-    // (`ciGreenRedeliveryEligible`).
+    // generation-78+ CI-correction revision holding its own healthy proof
+    // (`ciCorrectionRuntimeProven`), until the head's once-per-head flake
+    // re-run can no longer act, beyond the per-pass correction cap, and for
+    // any shape but the exact reviewed, unreleased publication with a review
+    // round left (`ciRedeliveryEligible`) — except for a head whose CI the
+    // retry pass read as all green again on its unchanged reviewed base (a
+    // re-run flake), which re-admits under any runtime and any spent round
+    // count (`ciGreenRedeliveryEligible`).
     prefix: HOSTED_AUTONOMY_CI_FAILED_PREFIX,
+    nextStep: "delivery",
+  },
+  {
+    // The CI-correction runtime's own unattributed block. Only the green-head
+    // rule re-admits it (a re-run flake now green on its unchanged reviewed
+    // base); it is never a correction, which would only block it again.
+    prefix: HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX,
     nextStep: "delivery",
   },
   {

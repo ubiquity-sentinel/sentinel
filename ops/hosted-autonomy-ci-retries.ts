@@ -9,17 +9,20 @@
  * refresh. Charges, counters and the publication identity are untouched.
  *
  * The correction rule is inert unless the AUTHENTICATED installed runtime is
- * an exact allowlisted CI-correction revision at generation 77 or later that
+ * an exact allowlisted CI-correction revision at generation 78 or later that
  * holds its own healthy proof for that exact pointer. Under any other runtime
- * a re-admitted head would only be re-gated and blocked again (or, under a
- * rolled-back generation 76, refreshed and re-reviewed).
+ * (including R77 restored after a failed generation 78) a re-admitted head
+ * would only be re-gated and blocked again. The flake comes first: the
+ * caller re-admits a head for correction only once its once-per-head re-run
+ * (ops/hosted-autonomy-ci-rerun.ts) can no longer act, and at most
+ * `HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS` heads per pass.
  *
  * The green-head rule (`ciGreenRedeliveryEligible`) needs no such runtime: a
  * head whose CI is green NOW on its unchanged reviewed base passes any
  * runtime's merge gate, so it never reaches a correction route, open or
- * closed. It is how a flaked run that the launcher re-ran
- * (ops/hosted-autonomy-ci-rerun.ts) returns to delivery, review rounds spent
- * or not.
+ * closed. It is how a flaked run that the launcher re-ran returns to
+ * delivery, review rounds spent or not, from the legacy CI block and from the
+ * runtime's own unattributed block alike.
  */
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
@@ -27,25 +30,44 @@ import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { ciCorrectable } from "../src/repair/ci-rejection.ts";
 import {
   HOSTED_AUTONOMY_CI_FAILED_PREFIX,
+  HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX,
   hostedRepositoryKey,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 
-/** First runtime generation whose repair loop carries the CI correction route. */
-export const HOSTED_AUTONOMY_CI_CORRECTION_MIN_GENERATION = 77;
+/**
+ * First runtime generation whose HOSTED runs open the CI correction route.
+ * Generation 77 carries the route but keeps it closed in hosted runs (its
+ * rollback target 76 refused the correction cell); generation 78 opens it.
+ */
+export const HOSTED_AUTONOMY_CI_CORRECTION_MIN_GENERATION = 78;
 
 /**
- * Exact reviewed runtime revisions that carry the CI correction route. It
- * never names 74/75/76, and it stays EMPTY while a hosted run keeps that route
- * closed (`HOSTED_CI_CORRECTIONS`, false in generation 77 because its rollback
- * target 76 refuses the correction cell): under such a runtime a re-admitted
- * head is only blocked again. The first runtime that opens it is pinned here.
+ * Exact reviewed runtime revisions whose hosted runs open the CI correction
+ * route (`HOSTED_CI_CORRECTIONS` true in that revision's own tree, which a
+ * test proves for every listed revision present locally). It never names a
+ * runtime at or before generation 77: R77 keeps the hosted route closed, so a
+ * head re-admitted under it would only be blocked again, and a failed
+ * generation 78 restores R77 at generation 79, which this set excludes by
+ * revision. The launcher commit that pins the generation-78 runtime adds its
+ * exact revision here.
  */
 export const HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES: ReadonlySet<string> =
   new Set<string>([]);
 
 /**
- * True only for an allowlisted CI-correction runtime at generation 77+ whose
+ * Bound on heads one maintenance pass re-admits for a CI correction. Each
+ * such head may be returned to `work` to await its charged correction, which
+ * is the one state a rollback to R77 turns into one extra charged review, so
+ * the cap also bounds that exposure per pass. The retry pass counts only
+ * corrections it admits after verifying the pull request is open, so a
+ * candidate it drops there never holds a slot. Green re-admissions need no
+ * correction and never count.
+ */
+export const HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS = 4;
+
+/**
+ * True only for an allowlisted CI-correction runtime at generation 78+ whose
  * own settled healthy proof binds this exact revision and generation. A
  * missing, failed or foreign proof never activates the rule.
  */
@@ -82,7 +104,8 @@ export function ciRedeliveryEligible(
   snapshot: RepairStateSnapshotV1,
   record: WorkRow,
 ): boolean {
-  return ciCorrectable(record) && ciGateParked(snapshot, record);
+  return ciCorrectable(record) &&
+    ciGateParked(snapshot, record, CORRECTION_PREFIXES);
 }
 
 /**
@@ -90,6 +113,10 @@ export function ciRedeliveryEligible(
  * CI is green again (the caller proves that and the unchanged base). The
  * shape is still the runtime's own predicate, evaluated as if no round were
  * spent: the ceiling only bounds corrections, and a green head needs none.
+ * Besides the legacy block it accepts the runtime's own unattributed block
+ * ("CI checks failed without base evidence: ..."), so that block keeps the
+ * free flake re-run and green re-admission; the correction rule never takes
+ * it, because the runtime would block the same unattributed head again.
  */
 export function ciGreenRedeliveryEligible(
   snapshot: RepairStateSnapshotV1,
@@ -98,8 +125,18 @@ export function ciGreenRedeliveryEligible(
   return ciCorrectable({
     ...record,
     counters: { ...record.counters, reviewRounds: 0 },
-  }) && ciGateParked(snapshot, record);
+  }) && ciGateParked(snapshot, record, GREEN_PREFIXES);
 }
+
+/** The merge-gate blocks a correction re-admission may clear. */
+const CORRECTION_PREFIXES: readonly string[] = [
+  HOSTED_AUTONOMY_CI_FAILED_PREFIX,
+];
+/** The CI blocks a green head (or its single flake re-run) may clear. */
+const GREEN_PREFIXES: readonly string[] = [
+  HOSTED_AUTONOMY_CI_FAILED_PREFIX,
+  HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX,
+];
 
 /** One exact head of one repository, as the green-head set carries it. */
 export function ciGreenHeadKey(
@@ -113,11 +150,12 @@ export function ciGreenHeadKey(
 function ciGateParked(
   snapshot: RepairStateSnapshotV1,
   record: WorkRow,
+  prefixes: readonly string[],
 ): boolean {
   const blocker = record.blocker;
   if (
     blocker === null || blocker.kind !== "other" ||
-    !blocker.message.startsWith(HOSTED_AUTONOMY_CI_FAILED_PREFIX)
+    !prefixes.some((prefix) => blocker.message.startsWith(prefix))
   ) return false;
   if (record.related.issueNumber === null) return false;
   const { head, pr, base } = record.target;

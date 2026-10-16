@@ -3,9 +3,10 @@
  * attribution from live check runs: the snapshot carries no CI evidence (the
  * generation-76 rollback contract), so a reviewed head back at `work` is only
  * ELIGIBLE, and anything but a live candidate-caused failure returns it to the
- * delivery gate uncharged. These cases run the planner with the route open (a
- * runtime whose rollback target consumes the cell); a hosted run of this tree
- * keeps it closed (`HOSTED_CI_CORRECTIONS`, matrix-ci-correction-rollback).
+ * delivery gate uncharged. The route is open in-process and, from generation
+ * 78, in hosted runs (`HOSTED_CI_CORRECTIONS`): the rollback target R77
+ * isolates the cell (matrix-ci-correction-gen77), while generation 76 refused
+ * it (matrix-ci-correction-rollback).
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -103,21 +104,27 @@ Deno.test("matrix planner: a reviewed head whose base turned red is returned to 
   }
 });
 
-Deno.test("matrix planner: a hosted run grants no CI correction cell while its rollback target refuses that cell", async () => {
-  assert.equal(HOSTED_CI_CORRECTIONS, false);
+Deno.test("matrix planner: a hosted run grants the CI correction cell its rollback target isolates", async () => {
+  // Generation 77, the rollback target of 78, isolates this cell as an
+  // authenticated runtime mismatch (matrix-ci-correction-gen77).
+  assert.equal(HOSTED_CI_CORRECTIONS, true);
   const rig = await reviewedRig("success");
   try {
-    const before = await snapshot(rig);
     const report = await planMatrixWave(
       { ...rig.deps, externalImplementations: true },
       rig.planOptions(),
     );
-    assert.equal(report.plan.cells.length, 0, JSON.stringify(report));
-    assert.deepEqual(
-      await snapshot(rig),
-      before,
-      "nothing is charged, written or checked",
-    );
+    assert.equal(report.plan.cells.length, 1, JSON.stringify(report));
+    const request = report.plan.cells[0].request;
+    assert.equal(request.checkoutBase, SHA2);
+    assert.equal(request.base, rig.base);
+    assert.ok(isCiCorrectionFinding(request.reviewFindings![0]));
+    const after = await snapshot(rig);
+    assert.equal(after.work[0].intent?.kind, "implementation");
+    assert.equal(after.reservations.length, 1, "one charged correction");
+    assert.equal(after.reservations[0].purpose, "retry");
+    assert.equal(after.reservations[0].outcome, "reserved");
+    assertGeneration76Shapes([after]);
   } finally {
     await rig.cleanup();
   }

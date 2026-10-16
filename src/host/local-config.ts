@@ -280,6 +280,9 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "ops/hosted-autonomy-retries.ts",
       "ops/hosted-autonomy-retry-pass.ts",
       "ops/hosted-autonomy-policy.ts",
+      // The flake re-run: it re-runs a parked head's failed run once and
+      // decides when that head's correction may be re-admitted.
+      "ops/hosted-autonomy-ci-rerun.ts",
       "src/repair/loop-base-refresh.ts",
       // Bounded base-refresh failure accounting and the terminal block.
       "src/repair/loop-base-refresh-failure.ts",

@@ -412,6 +412,9 @@ Deno.test("the CI correction decision files are protected from model-authored ca
       "ops/hosted-autonomy-retries.ts",
       "ops/hosted-autonomy-retry-pass.ts",
       "ops/hosted-autonomy-policy.ts",
+      // The flake re-run decides whether a parked head's correction waits
+      // for its once-per-head re-run, and re-runs it.
+      "ops/hosted-autonomy-ci-rerun.ts",
     ]
   ) assert.ok(protectedPaths.includes(path), path);
 });

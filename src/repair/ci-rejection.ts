@@ -33,17 +33,23 @@ export const CI_CORRECTION_REVIEW_ROUNDS = 3;
  * Whether a HOSTED run may open a CI correction. A hosted correction runs as a
  * matrix cell, and a cell planned in one run may be consumed only by a later
  * run, which after a failed generation's rollback runs the rollback target's
- * code. Generation 76 (41bb853a1), the rollback target of generation 77,
- * accepts a correction cell only for a head a completed review rejected, and
- * checks that before its runtime-mismatch isolation: it refuses a CI
- * correction of a head reviewed clean as a generic provenance refusal that its
- * historical isolation rethrows, so every later repair run would fail while
- * the charge stays unconsumed. Hosted runs therefore keep the generation-76
- * terminal CI block. This tree's consumer accepts the cell
- * (`matrix-artifact-wave.ts`), so only a runtime whose rollback target is this
- * tree or later may set it. In-process runs never plan a cell.
+ * code. Generation 76 (41bb853a1) refused a CI correction of a head reviewed
+ * clean as a generic provenance refusal that failed every later repair run,
+ * so generation 77 kept this route closed. Generation 77 (R77 ab3613e02), the
+ * rollback target of generation 78, carries this tree's consumer
+ * (`matrix-artifact-wave.ts`): it accepts the planned cell (a head reviewed
+ * clean against the record's exact base, the planner's CI finding first) and
+ * isolates it as an authenticated runtime mismatch, which blocks the record
+ * with its charge retained and never refunded
+ * (tests/host/matrix-ci-correction-gen77_test.ts). Every other state the open
+ * route writes is inert under R77 except a reviewed head returned to `work`
+ * to await its correction: R77's closed route re-publishes that same head and
+ * requests one more review, a bounded charged cost of one review round per
+ * such record, never a model start, a refund or a merge without review
+ * (tests/repair/ci-correction-rollback-gen77_test.ts). In-process runs never
+ * plan a cell.
  */
-export const HOSTED_CI_CORRECTIONS = false;
+export const HOSTED_CI_CORRECTIONS = true;
 
 /**
  * The CI correction route is open for this run: always in process, and in a

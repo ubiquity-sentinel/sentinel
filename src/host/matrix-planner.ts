@@ -286,7 +286,8 @@ export async function planMatrixWave(
   let lastDiagnostic: MatrixPlanDiagnosticV1 | null = null;
   let memoryRefused = 0;
   // A CI correction is granted only where its cell survives a rollback
-  // (`ciCorrectionRouteOpen`); the hosted planner keeps generation 76's set.
+  // (`ciCorrectionRouteOpen`): in process, and in hosted runs from generation
+  // 78, whose rollback target isolates the cell.
   const ciRouteOpen = ciCorrectionRouteOpen(deps);
 
   while (cells.length < limit) {
