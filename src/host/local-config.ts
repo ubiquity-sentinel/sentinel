@@ -102,6 +102,10 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       // base-refresh blocks to work and restores their PR identity
       // (admission) without any charge.
       "ops/hosted-autonomy-base-refresh-retries.ts",
+      // The PR facts that re-admission trusts: the head-ref pull listing and
+      // its parser (forks, other heads and unprovable full pages refused).
+      "ops/hosted-autonomy-github.ts",
+      "ops/hosted-autonomy-github-pull.ts",
       "docs/build-status.md",
       // The committed target setting decides which repositories this
       // deployment may repair. A model worker must never be able to add itself
@@ -286,6 +290,8 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       // Decides provider-throttling settlement and the bounded 429 retry
       // inside one charged admission.
       "src/repair/model-port-retry.ts",
+      // Applies the failover window and the bounded retry to one session.
+      "src/repair/model-port-session.ts",
       // Decides the route's 429 failover model, which the trusted matrix
       // ingesters (runtime and launcher recovery) accept besides the plan's.
       "src/host/model-route.ts",
