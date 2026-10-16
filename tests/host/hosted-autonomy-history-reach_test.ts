@@ -234,6 +234,8 @@ async function walkRig(input: {
   gitCost?: (args: string[]) => number;
   repairCost?: number;
   portsCost?: number;
+  recoverCost?: (runId: number) => number;
+  completed?: (runId: number) => boolean;
   wrapState?: (state: Record<PropertyKey, unknown>) => void;
 }) {
   const root = await Deno.makeTempDir({
@@ -282,13 +284,15 @@ async function walkRig(input: {
   input.wrapState?.(state);
   const plans = input.plans ?? new Map<number, PlanRow>();
   const transport = {
-    confirmCompletedExecution: () => Promise.resolve(true),
+    confirmCompletedExecution: (saved: { runId: number }) =>
+      Promise.resolve(input.completed?.(saved.runId) ?? true),
     recover: (request: {
       requests: readonly { taskId: string }[];
       currentRun?: { runId: number };
     }) => {
       const runId = request.currentRun!.runId;
       calls.recovered.push(runId);
+      now += input.recoverCost?.(runId) ?? 0;
       const plan = plans.get(runId);
       if (plan === undefined) return Promise.resolve([]);
       if (plan.expired) return Promise.reject(new Error(REFUSAL));
@@ -493,6 +497,182 @@ Deno.test("an unlisted plan requested only by in-flight work keeps the transport
     await assert.rejects(rig.walk, /^Error: current matrix wave unavailable$/);
     assert.deepEqual(rig.unrecoverable, []);
     assert.deepEqual(rig.calls.recovered, [FIRST_RUN + 1]);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("a blocker-bound producer is reached before a newer in-flight producer exhausts the budget", async () => {
+  // The live shape: in-flight work binds every ordinary producer, and the
+  // newest producer's pass outlives the whole 60 s budget on every run.
+  const rig = await walkRig({
+    producers: 5,
+    rows: [
+      working("work-in-flight"),
+      blocked("blocked-oldest", FIRST_RUN, 7001),
+    ],
+    plans: new Map([[FIRST_RUN, {
+      id: 7001,
+      digest: ARCHIVE,
+      expired: false,
+    }]]),
+    recoverCost: (runId) => runId === FIRST_RUN + 4 ? 61_000 : 0,
+  });
+  try {
+    const outcome = await captured(rig.walk);
+    assert(outcome.error instanceof Error, String(outcome.error));
+    // Only the parked candidate is requested from its exact producer: the
+    // in-flight request is never offered to that older wave.
+    assert.equal(outcome.error.message, "REACHED 1001 blocked-oldest");
+    assert.deepEqual(rig.calls.recovered, [FIRST_RUN]);
+    assert.equal(rig.calls.ports, 1);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("an unresolved newer in-flight producer does not stop a blocker-bound older producer", async () => {
+  // A blocked record bound to an older producer is not a reservation the
+  // newer producer could ever settle, so its deferral does not withhold it.
+  const rig = await walkRig({
+    producers: 3,
+    rows: [
+      working("work-in-flight"),
+      blocked("blocked-oldest", FIRST_RUN, 7001),
+    ],
+    plans: new Map([[FIRST_RUN, {
+      id: 7001,
+      digest: ARCHIVE,
+      expired: false,
+    }]]),
+    completed: (runId) => runId !== FIRST_RUN + 2,
+  });
+  try {
+    const outcome = await captured(rig.walk);
+    assert(outcome.error instanceof Error, String(outcome.error));
+    assert.equal(outcome.error.message, "REACHED 1001 blocked-oldest");
+    assert.deepEqual(rig.calls.recovered, [FIRST_RUN]);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("in-flight work still waits for an unresolved newer producer after the blocker-bound pass", async () => {
+  // The older producer's plan expired: a typed skip of its parked candidate
+  // only. The newest producer is still in flight, so the in-flight request
+  // is offered to no older wave and nothing is downloaded or written.
+  const rig = await walkRig({
+    producers: 3,
+    rows: [
+      working("work-in-flight"),
+      blocked("blocked-oldest", FIRST_RUN, 7001),
+    ],
+    plans: new Map([[FIRST_RUN, { id: 7001, digest: ARCHIVE, expired: true }]]),
+    completed: (runId) => runId !== FIRST_RUN + 2,
+  });
+  try {
+    const outcome = await captured(rig.walk);
+    assert.equal(outcome.error, null, String(outcome.error));
+    assert.equal(outcome.value, null);
+    assert.deepEqual(rig.unrecoverable, ["expired"]);
+    assert.deepEqual(rig.calls.recovered, []);
+    const rows = outcome.lines.map((line) => JSON.parse(line));
+    assert.deepEqual(
+      rows.filter((row) =>
+        row.kind === "sentinel_current_matrix_producer_unrecoverable"
+      ).map((row) => [row.runId, row.requests]),
+      [[FIRST_RUN, 1]],
+    );
+    assert.deepEqual(
+      rows.filter((row) => row.kind === "sentinel_current_matrix_walk").map((
+        row,
+      ) => row.outcome),
+      ["deferred_producer"],
+    );
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("an unrecoverable blocker-bound producer is reported once when the ordinary walk revisits it", async () => {
+  const rig = await walkRig({
+    producers: 2,
+    rows: [
+      working("work-in-flight"),
+      blocked("blocked-newest", FIRST_RUN + 1, 7002),
+    ],
+  });
+  try {
+    const outcome = await captured(rig.walk);
+    assert.equal(outcome.error, null, String(outcome.error));
+    assert.equal(outcome.value, null);
+    // The ordinary walk classifies the same unlisted plan again and still
+    // withholds the in-flight request from every older producer.
+    assert.deepEqual(rig.unrecoverable, ["unlisted"]);
+    assert.deepEqual(rig.calls.recovered, []);
+    assert.equal(
+      outcome.lines.filter((line) =>
+        JSON.parse(line).kind ===
+          "sentinel_current_matrix_producer_unrecoverable"
+      ).length,
+      1,
+    );
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("a blocker-bound pass still refuses a malformed in-flight binding", async () => {
+  // The blocked scope narrows what is requested, never what is checked: every
+  // record's exact charge binding is refused before any port is built.
+  const inFlight = working("work-in-flight");
+  const rig = await walkRig({
+    producers: 3,
+    rows: [
+      { ...inFlight, charge: { ...inFlight.charge, head: SHA2 } },
+      blocked("blocked-oldest", FIRST_RUN, 7001),
+    ],
+    plans: new Map([[FIRST_RUN, {
+      id: 7001,
+      digest: ARCHIVE,
+      expired: false,
+    }]]),
+  });
+  try {
+    await assert.rejects(
+      rig.walk,
+      (error: unknown) =>
+        error instanceof CurrentMatrixRecoveryIntegrityFailure &&
+        error.message === "current matrix request binding unavailable",
+    );
+    assert.equal(rig.calls.ports, 0);
+    assert.deepEqual(rig.calls.recovered, []);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("an unfound blocker-bound producer leaves the ordinary walk its budget reserve", async () => {
+  // The blocker names a producer this history never holds: the first walk
+  // stops stepping at its slice and the newest in-flight producer still runs.
+  const rig = await walkRig({
+    producers: 120,
+    rows: [
+      working("work-in-flight"),
+      blocked("blocked-unfound", FIRST_RUN - 50, 7001),
+    ],
+    plans: new Map([[FIRST_RUN + 119, {
+      id: 7120,
+      digest: ARCHIVE,
+      expired: false,
+    }]]),
+    gitCost: (args) => args[0] === "merge-base" ? 1000 : 0,
+  });
+  try {
+    const outcome = await captured(rig.walk);
+    assert(outcome.error instanceof Error, String(outcome.error));
+    assert.equal(outcome.error.message, "REACHED 1120 work-in-flight");
+    assert.deepEqual(rig.calls.recovered, [FIRST_RUN + 119]);
   } finally {
     await rig.cleanup();
   }

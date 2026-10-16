@@ -23,6 +23,7 @@ import { blockedCandidateBinding } from "../src/host/matrix-blocked-candidate.ts
 import { restoreBlockedCandidate } from "./hosted-autonomy-blocked-candidate.ts";
 import {
   type HostedProducerRecoveryV1,
+  type HostedProducerScopeV1,
   producerPointerConsistent,
   producerRequests,
   unrecoverablePlan,
@@ -54,6 +55,7 @@ export async function recoverHostedMatrixProducer(
   dedicated: ReadonlySet<string>,
   onDeferred: () => void,
   readProducer?: HostedProducerReaderV1,
+  scope: HostedProducerScopeV1 = "all",
 ): Promise<HostedProducerRecoveryV1> {
   try {
     return await recoverProducerWithinBudget(
@@ -65,6 +67,7 @@ export async function recoverHostedMatrixProducer(
       dedicated,
       onDeferred,
       readProducer,
+      scope,
     );
   } catch (error) {
     // Past the walk's budget every availability failure (a transport
@@ -88,6 +91,7 @@ async function recoverProducerWithinBudget(
   dedicated: ReadonlySet<string>,
   onDeferred: () => void,
   readProducer: HostedProducerReaderV1 | undefined,
+  scope: HostedProducerScopeV1,
 ): Promise<HostedProducerRecoveryV1> {
   const checkDeadline = () => {
     if (deps.clock.now() >= deadlineAt) {
@@ -231,6 +235,7 @@ async function recoverProducerWithinBudget(
     saved.execution,
     dedicated,
     integrityFault,
+    scope,
   );
   if (bound.length === 0) return { result: null, deferred: false };
   // Native reads, cooldown, budget and consumer writes all use this SAME
