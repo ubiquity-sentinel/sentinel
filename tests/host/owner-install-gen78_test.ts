@@ -13,10 +13,9 @@ import {
 import { concurrencyInstallerFixture } from "./owner-install-fixture.ts";
 
 // Fixed literals let the unchanged source fail semantically before new exports exist.
-// R78 is a placeholder until the audited development merge is pinned.
 const P76 = "41bb853a1bedfc0422bf903dfabbe23bf714b44f" as GitSha;
 const P77 = "ab3613e0224ff92266bed21dde6f40e6b0aab54a" as GitSha;
-const R78 = "7878787878787878787878787878787878787878" as GitSha;
+const R78 = "474f87eb639f97cd72b9bc4b9e56101488f841aa" as GitSha;
 
 function healthyPrior(): ReleaseStateSnapshotV1 {
   const proof = healthyProof(P77, 77, 501);

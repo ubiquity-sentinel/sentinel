@@ -49,11 +49,13 @@ export const HOSTED_AUTONOMY_CI_CORRECTION_MIN_GENERATION = 78;
  * runtime at or before generation 77: R77 keeps the hosted route closed, so a
  * head re-admitted under it would only be blocked again, and a failed
  * generation 78 restores R77 at generation 79, which this set excludes by
- * revision. The launcher commit that pins the generation-78 runtime adds its
- * exact revision here.
+ * revision.
  */
 export const HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES: ReadonlySet<string> =
-  new Set<string>([]);
+  new Set<string>([
+    // Generation 78 (R78), pinned by its launcher commit.
+    "474f87eb639f97cd72b9bc4b9e56101488f841aa",
+  ]);
 
 /**
  * Bound on heads one maintenance pass re-admits for a CI correction. Each

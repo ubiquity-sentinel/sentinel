@@ -76,6 +76,12 @@ export const HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES:
       revision: "ab3613e0224ff92266bed21dde6f40e6b0aab54a",
       activatedNotBefore: 1792139532000,
     },
+    // Generation 78 (R78, which keeps the base-edge bound), pinned by its
+    // launcher commit at 1792165758215.
+    {
+      revision: "474f87eb639f97cd72b9bc4b9e56101488f841aa",
+      activatedNotBefore: 1792165758215,
+    },
   ];
 
 /** Every recorded execution creation of one revision in release custody. */

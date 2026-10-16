@@ -305,8 +305,9 @@ export const OWNER_DEVELOPMENT_INSTALL_GEN77_GENERATION = 77;
 /**
  * Generation 77 successor: the development runtime with the hosted
  * CI-correction route open, the conflict-resolution correction for a base
- * refresh that conflicts, and the consumer initial scan that defers an
- * earlier wave's unrecoverable producer instead of failing the run. Only the
+ * refresh that conflicts (hosted route still closed), and the matrix consumer
+ * that defers a just-completed own cell whose job log is not served yet
+ * instead of failing the run. Only the
  * exact generation 77 healthy settlement with no failed settlement permits
  * installation at 78; its first failed candidate restores that retained
  * generation 77 proof once at generation 79.
@@ -316,7 +317,7 @@ export const OWNER_DEVELOPMENT_INSTALL_GEN78_PRIOR_REVISION =
 export const OWNER_DEVELOPMENT_INSTALL_GEN78_PRIOR_GENERATION =
   OWNER_DEVELOPMENT_INSTALL_GEN77_GENERATION;
 export const OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION =
-  "7878787878787878787878787878787878787878" as GitSha;
+  "474f87eb639f97cd72b9bc4b9e56101488f841aa" as GitSha;
 export const OWNER_DEVELOPMENT_INSTALL_GEN78_GENERATION = 78;
 /** Monotonic rollback target the failed generation 45 candidate rolled to. */
 export const OWNER_DEVELOPMENT_INSTALL_ROLLBACK_TARGET_GENERATION =
