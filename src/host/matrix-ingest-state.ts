@@ -15,8 +15,17 @@ import type {
   AttemptFailureClassV1,
   AttemptStageV1,
 } from "../contracts/attempt-memory.ts";
+import type { GitSha } from "../contracts/brands.ts";
+import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import {
+  conflictMarkerBase,
+  resolvedConflictResolution,
+} from "../repair/conflict-resolution.ts";
 import { clearMatrixTimeouts } from "../repair/transitions.ts";
-import { implementationIntentKey } from "../repair/keys.ts";
+import {
+  baseRefreshIntentKey,
+  implementationIntentKey,
+} from "../repair/keys.ts";
 import { sameRepository } from "./matrix-identity.ts";
 
 export function resultMatchesCell(
@@ -39,14 +48,43 @@ export function resultMatchesCell(
 }
 
 /**
+ * The resolved conflict intent a consumed conflict-resolution receipt of this
+ * cell wrote (`handleConflictResolutionReceipt`): the marked refresh intent of
+ * the record's own (PR, H) and the cell's merge base B, whose result is the
+ * receipt's merge head. It carries no request id, so the cell's merge request
+ * (H, B) and the receipt head bind it instead.
+ */
+function resolvedConflictOfCell(
+  record: WorkRecordV1,
+  cell: MatrixCellPlanV1,
+  receiptHead: GitSha | null,
+): boolean {
+  const intent = record.intent;
+  const { checkoutBase, mergeBase } = cell.request;
+  const { head, pr, branch } = record.target;
+  return receiptHead !== null && intent !== null &&
+    mergeBase !== undefined && head !== null && pr !== null &&
+    checkoutBase === head && intent.requestId === null &&
+    resolvedConflictResolution(intent) === receiptHead &&
+    conflictMarkerBase(intent) === mergeBase &&
+    intent.expectedHead === head && intent.pr === pr &&
+    intent.branch === branch &&
+    intent.key === baseRefreshIntentKey(pr, head, mergeBase);
+}
+
+/**
  * Reset only the exact settled admission's timeout streak. Missing artifacts
  * never enter this path. Candidate/implementation intents and charged history
- * remain untouched; an unbound, conflicted or unreadable result is false.
+ * remain untouched; an unbound, conflicted or unreadable result is false. A
+ * consumed conflict-resolution receipt leaves the resolved refresh intent of
+ * its merge instead of an implementation intent; it is bound through the
+ * cell's merge request and `receiptHead`, the head of the consumed receipt.
  */
 export async function resetCellTimeouts(
   deps: RepairCycleDepsV1,
   bounds: RunBoundsV1,
   cell: MatrixCellPlanV1,
+  receiptHead: GitSha | null = null,
 ): Promise<boolean> {
   const context = await loadRepairContext(deps, bounds);
   if (context === null) return false;
@@ -78,7 +116,9 @@ export async function resetCellTimeouts(
       (record.intent.requestId !== cell.reservationId ||
         record.intent.key !== cell.intentKey ||
         (record.intent.kind !== "implementation" &&
-          record.intent.kind !== "candidate_preservation"))) ||
+          record.intent.kind !== "candidate_preservation")) &&
+      (reservation.outcome !== "submitted" ||
+        !resolvedConflictOfCell(record, cell, receiptHead))) ||
     (reservation.outcome === "submitted" &&
       (record.target.head === null ||
         record.target.candidateState === undefined))

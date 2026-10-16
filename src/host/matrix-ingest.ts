@@ -1,4 +1,5 @@
 /** Serialized idempotent matrix artifact ingestion. */
+import type { GitSha } from "../contracts/brands.ts";
 import {
   matrixBundleFileNameV1,
   type MatrixCellResultV1,
@@ -197,6 +198,9 @@ export async function ingestMatrixResults(
       continue;
     }
     let exhausted = false;
+    // The head of the receipt this cell consumes, which binds a resolved
+    // conflict intent for the timeout reset below.
+    let receiptHead: GitSha | null = null;
     const intent = record.intent;
     if (
       intent?.kind === "candidate_preservation" &&
@@ -335,6 +339,7 @@ export async function ingestMatrixResults(
         continue;
       }
       const candidateHead = result.receipt.candidate?.head ?? null;
+      receiptHead = candidateHead;
       if (candidateHead !== null) {
         // The candidate objects must become REAL objects in the trusted
         // per-target mirror before the production consumer runs: digest,
@@ -435,7 +440,7 @@ export async function ingestMatrixResults(
     }
     // The model ran to completion: break any consecutive-timeout streak so a
     // later isolated timeout does not trigger decomposition on stale history.
-    const reset = await resetCellTimeouts(deps, bounds, cell);
+    const reset = await resetCellTimeouts(deps, bounds, cell, receiptHead);
     entries.push({
       cellId: cell.cellId,
       disposition: reset ? "ingested" : "state_error",

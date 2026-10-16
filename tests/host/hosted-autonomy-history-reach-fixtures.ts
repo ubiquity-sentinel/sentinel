@@ -42,16 +42,16 @@ import {
   workRecord,
 } from "../state/helpers.ts";
 
-const RUNTIME = "c".repeat(40) as GitSha;
-const LAUNCHER = "d".repeat(40) as GitSha;
-const GENERATION = 70;
+export const RUNTIME = "c".repeat(40) as GitSha;
+export const LAUNCHER = "d".repeat(40) as GitSha;
+export const GENERATION = 70;
 export const FIRST_RUN = 1001;
 export const REFUSAL = "matrix artifact provenance unavailable or conflicting";
 export const ARCHIVE = `sha256:${"2".repeat(64)}`;
 const RELEASE_REF = "refs/heads/sentinel-state/release";
 export const APPLIED = "a".repeat(40) as GitSha;
 
-function execution(runId: number) {
+export function execution(runId: number) {
   return {
     id: `${runId}:1:repair`,
     runId,
@@ -101,7 +101,7 @@ async function checked(
  * ordinary producer (oldest first, run ids from FIRST_RUN), each with its own
  * settled proof under a consistent runtime pointer.
  */
-async function releaseHistory(root: string, producers: number) {
+export async function releaseHistory(root: string, producers: number) {
   const env = testGitEnv(`${root}/home`);
   const remote = `${root}/remote.git`;
   const work = `${root}/history-work`;

@@ -76,13 +76,27 @@ export function conflictResolutionRouteOpen(
 export const CONFLICT_RESOLUTION_REVIEW_ROUNDS = CI_CORRECTION_REVIEW_ROUNDS;
 
 /**
- * Bound on conflict-resolution cells one hosted wave grants. Every cell still
- * unconsumed when a failed generation rolls back is isolated by the rollback
- * target with its admission retained (blocked for the owner, its charge kept),
- * so this bounds that exposure per wave; a pending resolution past the cap
- * stays pending, uncharged, for a later wave.
+ * Bound on conflict resolutions in flight when a hosted wave grants one. Every
+ * cell still unconsumed when a failed generation rolls back is isolated by the
+ * rollback target with its admission retained (blocked for the owner, its
+ * charge kept), so the planner counts every resolution a rollback could still
+ * isolate (`conflictResolutionsInFlight`: earlier waves' cells not yet
+ * consumed and receipts `preserveConflictMerge` keeps unconsumed, admitted
+ * within `CONFLICT_CELL_EVIDENCE_EXPIRY_MS`) toward the cap before it grants
+ * another, and one rollback strands at most this many; a pending resolution
+ * past the cap stays pending, uncharged, for a later wave.
  */
 export const HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE = 4;
+
+/**
+ * Age of a resolution's admission (its marked implementation intent's
+ * `startedAt`) past which no consumer and no rollback can authenticate or
+ * isolate its cell any more: matrix cell artifacts are uploaded with
+ * `retention-days: 7` (supervisor.yml), plus a day's margin for the cell's
+ * own run. The launcher's evidence expiry uses the same horizon, which a test
+ * pins.
+ */
+export const CONFLICT_CELL_EVIDENCE_EXPIRY_MS = 8 * 24 * 60 * 60 * 1000;
 
 /**
  * How long after its admission a hosted conflict-resolution receipt is kept
@@ -147,6 +161,57 @@ export function conflictResolutionInFlight(
   intent: IncompleteOperationV1 | null | undefined,
 ): GitSha | null {
   return intent?.kind === "implementation" ? conflictMarkerBase(intent) : null;
+}
+
+/**
+ * Ids of the conflict resolutions in flight in this snapshot at `now`, in its
+ * order: records at `work` holding the marked implementation intent of their
+ * own charge while that charge is still `reserved` (its receipt not consumed
+ * yet) and that intent started less than `CONFLICT_CELL_EVIDENCE_EXPIRY_MS`
+ * before `now`. These are exactly the records a rollback could still isolate:
+ * the rollback target's isolation refuses a record that is not at `work`, and
+ * past that age no consumer and no rollback can authenticate the cell. One
+ * already isolated (blocked, marked intent and `reserved` charge retained for
+ * the owner) frees its slot, and so does one admitted that long ago whose
+ * cell evidence was lost (never uploaded: a cancelled or timed-out job, a
+ * lost runner). Leaving the count retires nothing: the record, its charge and
+ * its preservation are unchanged.
+ */
+export function conflictResolutionsInFlightIds(
+  snapshot: Pick<RepairStateSnapshotV1, "work" | "reservations">,
+  now: number,
+): WorkRecordV1["id"][] {
+  return snapshot.work.filter((record) => {
+    const intent = record.intent;
+    return record.nextStep === "work" && intent !== null &&
+      conflictResolutionInFlight(intent) !== null &&
+      now - intent.startedAt < CONFLICT_CELL_EVIDENCE_EXPIRY_MS &&
+      snapshot.reservations.some((row) =>
+        row.id === intent.requestId && row.taskId === record.id &&
+        row.outcome === "reserved"
+      );
+  }).map((record) => record.id);
+}
+
+/** How many conflict resolutions are in flight in this snapshot at `now`. */
+export function conflictResolutionsInFlight(
+  snapshot: Pick<RepairStateSnapshotV1, "work" | "reservations">,
+  now: number,
+): number {
+  return conflictResolutionsInFlightIds(snapshot, now).length;
+}
+
+/**
+ * Whether a hosted planner may grant no further conflict resolution over this
+ * authoritative snapshot at `now`: the resolutions in flight, including every
+ * one this wave granted so far, fill `HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE`.
+ */
+export function conflictResolutionCapReached(
+  snapshot: Pick<RepairStateSnapshotV1, "work" | "reservations">,
+  now: number,
+): boolean {
+  return conflictResolutionsInFlight(snapshot, now) >=
+    HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE;
 }
 
 /** Resolved: the model-resolved merge commit awaiting publication, or null. */

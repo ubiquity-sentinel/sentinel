@@ -28,7 +28,9 @@ import {
 import { attemptEquivalenceRefusalForRecordV1 } from "../repair/attempt-policy.ts";
 import { ciCorrectionRouteOpen } from "../repair/ci-rejection.ts";
 import {
+  conflictResolutionCapReached,
   conflictResolutionRouteOpen,
+  conflictResolutionsInFlightIds,
   HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE,
   pendingConflictResolution,
 } from "../repair/conflict-resolution.ts";
@@ -97,7 +99,17 @@ export interface MatrixPlanDiagnosticV1 {
   notReadyByReason: Record<string, number>;
   /** Sample record IDs for each not-ready reason (max 3 per reason). */
   notReadySamples: Record<string, string[]>;
+  /**
+   * Present when the conflict-resolution cap was full on the last read, so
+   * every pending resolution was held back (`notReadyByReason` counts them as
+   * `conflictResolutionCap`): the cap and the ids of the in-flight
+   * resolutions holding it (`conflictResolutionsInFlightIds`).
+   */
+  conflictResolutionCap?: { cap: number; inFlight: string[] };
 }
+
+/** Not-ready reason of a pending conflict resolution held back by the cap. */
+export const CONFLICT_RESOLUTION_CAP_REASON = "conflictResolutionCap";
 
 /**
  * Decomposition helpers: split a repeatedly-timed-out issue into serial
@@ -298,11 +310,6 @@ export async function planMatrixWave(
   // survives a rollback (`conflictResolutionRouteOpen`): in process, and in
   // hosted runs from generation 79, whose rollback target isolates the cell.
   const conflictRouteOpen = conflictResolutionRouteOpen(deps);
-  // At most HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE of them per wave: a rollback
-  // isolates every one still unconsumed, so this bounds that exposure. A
-  // pending resolution past the cap is not considered (nothing charged or
-  // written) and stays pending for a later wave.
-  let conflictCells = 0;
 
   while (cells.length < limit) {
     const readAt = deps.clock.now();
@@ -319,24 +326,43 @@ export async function planMatrixWave(
     const now = deps.clock.now();
     if (now >= bounds.modelCutoff || now >= bounds.runDeadline) break;
     const ranked = rankEligibleWork(context.snapshot, deps.configs, now);
+    // At most HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE resolutions in flight, on
+    // this fresh read (this wave's grants, earlier cells, kept receipts): a
+    // rollback isolates every one still unconsumed at `work`; one it already
+    // isolated, or admitted past its cell artifact's retention, holds no
+    // slot. A pending one past the cap is not considered (nothing charged or
+    // written) and stays pending.
+    const conflictCapReached = conflictResolutionCapReached(
+      context.snapshot,
+      now,
+    );
     // Capture diagnostic on every iteration; the last one explains a zero-cell result.
     lastDiagnostic = buildPlanDiagnostic(
       context.snapshot,
       ranked,
       (record) => {
+        if (
+          conflictCapReached &&
+          pendingConflictResolution(record.intent) !== null
+        ) return CONFLICT_RESOLUTION_CAP_REASON;
         const config = configForRepository(deps, record.repository);
         return config === null
           ? "config=null"
           : explainMatrixNotReady(record, config);
       },
     );
+    if (conflictCapReached) {
+      lastDiagnostic.conflictResolutionCap = {
+        cap: HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE,
+        inFlight: conflictResolutionsInFlightIds(context.snapshot, now),
+      };
+    }
     const nextId = ranked.ordered.find((id) => {
       if (attemptedIds.has(id)) return false;
       const record = context.snapshot.work.find((work) => work.id === id);
       if (record === undefined) return false;
       if (
-        conflictCells >= HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE &&
-        pendingConflictResolution(record.intent) !== null
+        conflictCapReached && pendingConflictResolution(record.intent) !== null
       ) return false;
       // A decomposed parent is superseded by its children; grant the parts,
       // never the whole issue again.
@@ -459,7 +485,6 @@ export async function planMatrixWave(
       continue;
     }
     const request = outcome.request;
-    if (request.mergeBase !== undefined) conflictCells++;
     const cellId = await matrixCellIdV1(
       options.waveId,
       record.id,

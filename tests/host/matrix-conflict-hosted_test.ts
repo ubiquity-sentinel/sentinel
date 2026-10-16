@@ -16,19 +16,26 @@
  * with the marker, never a second charge.
  */
 import assert from "node:assert/strict";
+import type { GitSha } from "../../src/contracts/brands.ts";
+import { matrixDigestV1 } from "../../src/contracts/matrix.ts";
+import type { MatrixCellPlanV1 } from "../../src/contracts/matrix.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import { resetCellTimeouts } from "../../src/host/matrix-ingest-state.ts";
 import {
   conflictMarkerBase,
   HOSTED_CONFLICT_RESOLUTIONS,
+  resolvedConflictResolution,
 } from "../../src/repair/conflict-resolution.ts";
 import {
   baseRefreshIntentKey,
   candidatePreservationRef,
 } from "../../src/repair/keys.ts";
+import { createRunBounds } from "../../src/repair/loop.ts";
 import { REPO } from "../state/helpers.ts";
 import { assertGen78Parses, gen78Available } from "../state/gen77-contracts.ts";
 import { BRANCH, PR, TASK } from "../repair/conflict-resolution-rig.ts";
 import {
+  chargedCell,
   hostedConflictRig,
   launcherRetries,
   moveBase,
@@ -263,6 +270,127 @@ Deno.test("hosted conflict resolution: the launcher refuses the spent tip and re
     );
     assert.equal((await rig.plan()).plan.cells.length, 0);
     await assertRollbackReadable(rig.hosted.written);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("hosted conflict resolution: a consumed cell is reported ingested and clears its timeout streak like an implementation receipt", async () => {
+  // A session-bound exhaustion of an earlier attempt left a streak behind.
+  const rig = await hostedConflictRig({
+    counters: { attempts: 1, retries: 0, reviewRounds: 1, timeouts: 1 },
+  });
+  try {
+    const { plan, result, merge } = await chargedCell(rig);
+    const admitted = (await rig.hosted.snapshot()).work[0];
+    assert.equal(admitted.counters.timeouts, 1);
+    const report = await rig.ingest(plan, [result]);
+    assert.deepEqual(report.entries, [{
+      cellId: plan.cells[0].cellId,
+      disposition: "ingested",
+      detail: null,
+    }], "never `receipt settled; timeout reset unavailable or conflicted`");
+    assert.equal(report.ingested, 1);
+    const state = await rig.hosted.snapshot();
+    const work = state.work[0];
+    assert.equal(resolvedConflictResolution(work.intent), merge);
+    assert.equal(work.intent?.requestId, null);
+    const { timeouts: _streak, ...counters } = admitted.counters;
+    assert.deepEqual(work.counters, counters, "only the streak is cleared");
+    assert.equal(work.target.head, rig.ctx.head, "H until published");
+    assert.equal(charges(state)[0].outcome, "submitted", "never refunded");
+    await assertRollbackReadable(rig.hosted.written);
+    // A replay of the same artifact is a no-op.
+    const replay = await rig.ingest(plan, [result]);
+    assert.equal(replay.entries[0].disposition, "duplicate");
+    assert.deepEqual(await rig.hosted.snapshot(), state);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+Deno.test("hosted conflict resolution: the timeout reset binds only the resolved intent of its own cell and receipt head", async () => {
+  const rig = await hostedConflictRig();
+  try {
+    const { plan, result, merge } = await chargedCell(rig);
+    const cell = plan.cells[0];
+    assert.equal(
+      (await rig.ingest(plan, [result])).entries[0].disposition,
+      "ingested",
+    );
+    // Restore a streak on the resolved record, so a reset has work to do.
+    const resolved = await rig.hosted.snapshot();
+    const streaked: RepairStateSnapshotV1 = {
+      ...resolved,
+      work: resolved.work.map((row) => ({
+        ...row,
+        counters: { ...row.counters, timeouts: 2 },
+      })),
+    };
+    const record = streaked.work[0];
+    const intent = record.intent!;
+    const { mergeBase: _merge, ...unmerged } = cell.request;
+    const bounds = createRunBounds(rig.deps, {
+      deadline: rig.hosted.clock.now() + 60 * 60_000,
+    });
+    const cases: [
+      string,
+      RepairStateSnapshotV1,
+      MatrixCellPlanV1,
+      GitSha | null,
+    ][] = [
+      ["no receipt head", streaked, cell, null],
+      ["another receipt head", streaked, cell, rig.ctx.head],
+      [
+        "a request without a merge base",
+        streaked,
+        {
+          ...cell,
+          request: unmerged,
+          requestDigest: await matrixDigestV1(unmerged),
+        },
+        merge,
+      ],
+      ...([
+        ["a request id on the intent", { requestId: cell.reservationId }],
+        ["no conflict marker", { failure: undefined }],
+        [
+          "another operation key",
+          { key: baseRefreshIntentKey(PR, rig.ctx.head, rig.ctx.b0) },
+        ],
+        ["another expected head", { expectedHead: rig.ctx.base }],
+        ["another pull request", { pr: PR + 1 }],
+      ] as const).map(([name, change]) =>
+        [
+          name,
+          {
+            ...streaked,
+            work: [{ ...record, intent: { ...intent, ...change } }],
+          },
+          cell,
+          merge,
+        ] as [string, RepairStateSnapshotV1, MatrixCellPlanV1, GitSha | null]
+      ),
+    ];
+    for (const [name, snapshot, bound, head] of cases) {
+      rig.hosted.state.repair = structuredClone(snapshot);
+      const writes = rig.hosted.state.repairWrites;
+      assert.equal(
+        await resetCellTimeouts(rig.deps, bounds, bound, head),
+        false,
+        name,
+      );
+      assert.equal(rig.hosted.state.repairWrites, writes, `${name}: no write`);
+      assert.deepEqual(rig.hosted.state.repair, snapshot, name);
+    }
+    // The exact binding clears the streak and nothing else.
+    rig.hosted.state.repair = structuredClone(streaked);
+    assert.equal(await resetCellTimeouts(rig.deps, bounds, cell, merge), true);
+    const cleared = await rig.hosted.snapshot();
+    assert.deepEqual(cleared.work[0].intent, intent);
+    assert.deepEqual(cleared.work[0].counters, resolved.work[0].counters);
+    assert.deepEqual(cleared.reservations, streaked.reservations);
+    if (available) await assertGen78Parses(cleared);
   } finally {
     await rig.cleanup();
   }

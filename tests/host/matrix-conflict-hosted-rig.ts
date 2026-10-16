@@ -68,7 +68,6 @@ import {
 export const WAVE = "wave-conflict-79";
 export const RUN = { runId: 79, runAttempt: 1, launcherSha: SHA1 };
 export const GENERATION = 79;
-export const ACTUAL = { run: RUN, runtimeSha: SHA1, generation: GENERATION };
 export const PROVIDER = "sentinel-host";
 export const RESOLVED =
   "export const value = 'candidate';\nexport const upstreamValue = 'upstream';\n";
@@ -86,6 +85,8 @@ export interface CellOptionsV1 {
   failed?: boolean;
   /** Extra files the session writes besides the resolution. */
   extra?: Record<string, string>;
+  /** Provider the receipt names (default `PROVIDER`). */
+  provider?: string;
 }
 
 /**
@@ -148,7 +149,7 @@ export class TrustedMergeCell implements ImplementationPort {
       outcome,
       actual: {
         evidenceKind: "request-runtime",
-        provider: PROVIDER,
+        provider: this.options.provider ?? PROVIDER,
         threadId: "thread-1",
         turnId: "turn-1",
         terminalOrigin: "runtime",
@@ -259,7 +260,12 @@ export async function hostedConflictRig(
           }),
         },
         { waveId: plan.waveId, run: plan.run, cell },
-        ACTUAL,
+        // The executing job is exactly the planned one.
+        {
+          run: plan.run,
+          runtimeSha: cell.runtimeSha,
+          generation: cell.generation,
+        },
         hosted.clock.now(),
       );
       if (result.bundle !== null) {

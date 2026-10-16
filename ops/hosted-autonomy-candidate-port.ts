@@ -1,4 +1,4 @@
-/** Maintenance exposes only exact blocked-candidate preservation and its ref read. */
+/** Maintenance exposes only exact candidate and conflict-merge preservation and its ref read. */
 import type {
   Clock,
   GitHubCooldownGateV1,
@@ -7,6 +7,12 @@ import type {
 } from "../src/contracts/ports.ts";
 import { portError, portOk } from "../src/contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../src/contracts/repository-config.ts";
+import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
+import { conflictResolutionInFlight } from "../src/repair/conflict-resolution.ts";
+import {
+  baseRefreshIntentKey,
+  candidatePreservationRef,
+} from "../src/repair/keys.ts";
 import type { HttpTransportV1 } from "../src/github/http.ts";
 import type { ReviewServiceTransportV1 } from "../src/github/review-service.ts";
 import { composeGitHubHost } from "../src/host/github.ts";
@@ -14,6 +20,30 @@ import { createCandidatePreserver } from "../src/host/actions-candidates-preserv
 import { createLocalCandidateLoader } from "../src/host/local-candidate.ts";
 import { githubGitAuthEnv } from "../src/host/local.ts";
 import { restorableCandidate } from "./hosted-autonomy-blocked-candidate.ts";
+
+/**
+ * The exact operation ref an in-flight conflict resolution's merge M is
+ * preserved under before its receipt is consumed (`preserveConflictMerge`):
+ * the refresh binding of the record's own (PR, H) and its marked base B. Any
+ * record without the marked implementation intent at `work` has none. The
+ * preserver itself re-proves the full binding (the task's one charge, the
+ * published descriptor, M's parents) before any remote read.
+ */
+export async function inflightConflictMergeRef(
+  record: WorkRecordV1,
+): Promise<string | null> {
+  const mergeBase = conflictResolutionInFlight(record.intent);
+  const { head, pr } = record.target;
+  if (
+    mergeBase === null || record.nextStep !== "work" ||
+    record.source.kind !== "issue" || head === null || pr === null
+  ) return null;
+  return await candidatePreservationRef(
+    record.repository,
+    record.id,
+    baseRefreshIntentKey(pr, head, mergeBase),
+  );
+}
 
 export function createHostedCandidateRecoveryPort(input: {
   state: StateReadView;
@@ -72,15 +102,25 @@ export function createHostedCandidateRecoveryPort(input: {
       trustedPath: "/usr/bin:/bin",
     }),
   });
+  // A ref opens only for a record of this repository that is bound to it:
+  // a restorable candidate's own preservation intent, or the merge of an
+  // in-flight conflict resolution, which a consumer of its late cell must
+  // preserve before the receipt is consumed (M lives in no other ref, and
+  // this pass's mirror is discarded).
   const readBound = async (ref: string) => {
     const read = await input.state.readRepair();
     if (!read.ok || read.value.status !== "found") return false;
-    return read.value.snapshot.work.some((row) =>
-      restorableCandidate(row) && row.intent?.branch === ref &&
-      row.repository.owner === input.config.repository.owner &&
-      row.repository.name === input.config.repository.name &&
-      row.repository.installationId === input.config.repository.installationId
-    );
+    for (const row of read.value.snapshot.work) {
+      if (
+        row.repository.owner !== input.config.repository.owner ||
+        row.repository.name !== input.config.repository.name ||
+        row.repository.installationId !==
+          input.config.repository.installationId
+      ) continue;
+      if (restorableCandidate(row) && row.intent?.branch === ref) return true;
+      if (await inflightConflictMergeRef(row) === ref) return true;
+    }
+    return false;
   };
   return new Proxy({} as GitHubPort, {
     get: (_, key) => {
