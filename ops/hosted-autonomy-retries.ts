@@ -5,11 +5,7 @@ import {
 import { attemptEquivalenceRefusalForRecordV1 } from "../src/repair/attempt-policy.ts";
 import { type GitSha, isGitSha } from "../src/contracts/brands.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
-import {
-  candidateBranch,
-  implementationIntentKey,
-  reviewOperationKey,
-} from "../src/repair/keys.ts";
+import { candidateBranch, reviewOperationKey } from "../src/repair/keys.ts";
 import {
   HOSTED_AUTONOMY_MAX_RETRIES,
   HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS,
@@ -18,7 +14,6 @@ import {
   hostedRepositoryKey,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
-import { HISTORICAL_C63 } from "./hosted-autonomy-matrix-bindings.ts";
 import { evidenceExpired } from "./hosted-autonomy-evidence-expiry.ts";
 
 /**
@@ -239,19 +234,6 @@ export function planHostedRetries(
   const plans: RetryPlanV1[] = [];
   for (const record of snapshot.work) {
     if (record.nextStep !== "blocked") continue;
-    // These original failed C63 admissions remain charged and closed; the
-    // historical recovery never grants a retry for their retained intent.
-    if (
-      HISTORICAL_C63.rows.some((row) =>
-        row.id === record.id && record.intent?.kind === "implementation" &&
-        record.intent.key === implementationIntentKey(row.reservation) &&
-        record.intent.requestId === row.reservation &&
-        snapshot.reservations.some((charge) =>
-          charge.id === row.reservation && charge.outcome === "ambiguous" &&
-          charge.settledAt !== null
-        )
-      )
-    ) continue;
     // A task whose source issue is closed or gone is not repairable: retrying
     // it can only spend a model session on work that no longer exists. The
     // identity is the pair (repository, issue number): a closed issue in
