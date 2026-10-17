@@ -1,19 +1,22 @@
 /**
  * The one-time legacy exception (owner decision 2026-10-16): ai.ubq.fi
  * records spent their review rounds under the old review-before-CI order and
- * are parked on a red head. Each gets CI fixes (at most three) and then
- * exactly ONE final current-head review on the green head, merging through
- * the delivery lane when that review has no unresolved P0/P1.
+ * are on a red head. Each gets CI fixes (at most three) and then exactly ONE
+ * final current-head review on the green head, merging when that review has
+ * no unresolved P0/P1.
  *
- * The owner named twelve; R79 kept reviewing before CI, so the table is the
- * owner's class by rule at its cut, repair state 18369d9b9
- * (`LEGACY_REVIEW_ROUND_CUT`, 2026-10-17T09:07Z): 28 records blocked with
+ * The class is a rule (`review-round-cap.ts`): records whose rounds were
+ * admitted before the CI-first runtime's activation (the cutoff the launcher
+ * pins and hands over). The fixture rows are the 28 records the round-1
+ * table pinned at repair state 18369d9b9 (2026-10-17T09:07Z): blocked with
  * `CI checks failed: ...`, holding retries 0, no intent, a preserved
  * candidate equal to its published head and a completed review of that head
  * on its exact base with no P0/P1 (P2 only for 137, 638, 668 and 680). The
- * derivation case re-reads that state commit from the local object store
- * (ignored in a checkout without it) and proves the pinned table is exactly
- * what the rule yields there.
+ * derivation cases re-read live state commits from the local object store
+ * (ignored in a checkout without them): at that cut the rule yields exactly
+ * the old table, and at the fresh state it also covers the records in flight
+ * there (645, 646, 657, 663 and 1140, in review on red heads), which no
+ * install-time table could pin.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -21,11 +24,16 @@ import type { HostedRuntimeRecordV1 } from "../../src/contracts/hosted-superviso
 import { HOSTED_RUNTIME_ID } from "../../src/contracts/hosted-supervisor.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
+import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
+import { portOk } from "../../src/contracts/ports.ts";
+import { reviewTaskStatementDigest } from "../../src/contracts/review-receipt.ts";
+import { completedReceipt } from "./loop-review-fixtures.ts";
 import { ciCorrectable } from "../../src/repair/ci-rejection.ts";
 import { CI_FIRST_REVIEW_ROUNDS } from "../../src/repair/ci-first-policy.ts";
 import {
-  LEGACY_REVIEW_ROUND_CUT,
-  LEGACY_REVIEW_ROUND_PINS,
+  legacyFinalRoundOpen,
+  legacyReviewRoundClassDrift,
+  legacyReviewRoundPin,
 } from "../../src/repair/review-round-cap.ts";
 import {
   ciGreenHeadKey,
@@ -52,8 +60,42 @@ const AIUBQ = {
   installationId: 155687488,
 } as const;
 const BLOCKER = "CI checks failed: verify-artifact(skipped), validate(failure)";
-/** No review charge: the round count is the record's own counter. */
-const NO_LEDGER = { reservations: [] } as const;
+/** The legacy cutoff of these cases: every seeded admission precedes it. */
+const CUT = T0;
+
+/** One old review admission (before the cutoff) per record, as live. */
+function oldLedger(record: WorkRecordV1): {
+  reservations: BudgetReservationV1[];
+} {
+  return {
+    reservations: [
+      reservation(`${record.id}-old-review`, {
+        repository: record.repository,
+        taskId: record.id,
+        head: record.target.head,
+        attempt: 1,
+        purpose: "review_request",
+        outcome: "submitted",
+        createdAt: CUT - 60_000,
+        settledAt: CUT - 59_000,
+      }),
+    ],
+  };
+}
+
+/** A review admission charged after the cutoff (the final review). */
+function lateReview(record: WorkRecordV1, attempt: number) {
+  return reservation(`${record.id}-late-review-${attempt}`, {
+    repository: record.repository,
+    taskId: record.id,
+    head: record.target.head,
+    attempt,
+    purpose: "review_request",
+    outcome: "submitted",
+    createdAt: CUT + 60_000,
+    settledAt: CUT + 61_000,
+  });
+}
 
 /** issue, PR, round pin, attempts, head, reviewed base, review severities. */
 const LIVE: readonly [
@@ -390,7 +432,8 @@ function liveSnapshot(): RepairStateSnapshotV1 {
         attempt: 1,
         purpose: "review_request",
         outcome: "submitted",
-        settledAt: T0 + 900,
+        createdAt: CUT - 60_000,
+        settledAt: CUT - 59_000,
       })
     ),
   });
@@ -399,16 +442,23 @@ function liveSnapshot(): RepairStateSnapshotV1 {
 Deno.test("legacy exception: each of the 28 live records may take a CI fix at its round pin", () => {
   for (const row of LIVE) {
     const record = legacyRecord(row);
+    const ledger = oldLedger(record);
+    assert.equal(legacyReviewRoundPin(ledger, record, CUT), row[2]);
     assert.equal(
-      ciCorrectable(record, NO_LEDGER),
+      ciCorrectable(record, ledger, CUT),
       true,
       `issue ${row[0]} at its pin`,
     );
+    // No cutoff (no CI-first runtime): nothing is legacy.
+    assert.equal(ciCorrectable(record, ledger, null), false);
+    // A review admitted after the cutoff spends the one final round.
     const spent = legacyRecord(row, {
       counters: { ...record.counters, reviewRounds: row[2] + 1 },
     });
     assert.equal(
-      ciCorrectable(spent, NO_LEDGER),
+      ciCorrectable(spent, {
+        reservations: [...ledger.reservations, lateReview(spent, row[2] + 1)],
+      }, CUT),
       false,
       `issue ${row[0]} past its pin`,
     );
@@ -416,26 +466,29 @@ Deno.test("legacy exception: each of the 28 live records may take a CI fix at it
       counters: { ...record.counters, attempts: 6, retries: 3 },
     });
     assert.equal(
-      ciCorrectable(exhausted, NO_LEDGER),
+      ciCorrectable(exhausted, ledger, CUT),
       false,
       `issue ${row[0]} fixed 3x`,
     );
   }
-  // The exception is exactly the pinned class: the same shape on another
-  // record, repository or task identity gets nothing.
+  // The same shape whose rounds were all admitted after the cutoff is new
+  // under the CI-first runtime: nothing.
   const [, ...rest] = LIVE[0];
   const other = legacyRecord([1583, ...rest] as typeof LIVE[number]);
-  assert.equal(ciCorrectable(other, NO_LEDGER), false, "1583 is not listed");
-  assert.deepEqual(
-    [...LEGACY_REVIEW_ROUND_PINS].sort((a, b) => a[0] - b[0]),
-    LIVE.map(([issue, , rounds]) => [issue, rounds]),
-    "the fixture rows are the pinned table",
+  assert.equal(
+    ciCorrectable(other, {
+      reservations: [1, 2, 3, 4, 5].map((attempt) =>
+        lateReview(other, attempt)
+      ),
+    }, CUT),
+    false,
+    "1583 is new",
   );
   const foreign = legacyRecord(LIVE[0], {
     repository: { ...AIUBQ, installationId: 7 },
   });
   assert.equal(
-    ciCorrectable(foreign, NO_LEDGER),
+    ciCorrectable(foreign, oldLedger(foreign), CUT),
     false,
     "another installation",
   );
@@ -468,11 +521,17 @@ function plan(runtime: string, generation: number, ciFirst: string[]) {
   const settled = new Set(
     LIVE.map(([, , , , head]) => ciGreenHeadKey(AIUBQ, head)),
   );
+  // The retry pass read every head's CI: all red.
   const options = {
     ciRuntime: installed(runtime, generation),
     ciAllowlist: new Set([runtime]),
     ciFirstAllowlist: new Set(ciFirst),
     ciRerunSettled: settled,
+    ciReadHeads: settled,
+    ciGreenHeads: new Set<string>(),
+    // The launcher's own cutoff: the pinned row of a proven CI-first
+    // runtime, none otherwise.
+    legacyReviewCutoff: ciFirst.includes(runtime) ? CUT : null,
   } as Parameters<typeof planHostedRetries>[6];
   return planHostedRetries(
     snapshot,
@@ -503,8 +562,10 @@ Deno.test("legacy exception: the launcher re-admits the 28 only under an allowli
   }
 });
 
-/** Repair state the table is pinned at (its cut, 2026-10-17T09:07Z). */
-const PINNED_STATE = LEGACY_REVIEW_ROUND_CUT.stateCommit;
+/** The repair state the round-1 table was pinned at (2026-10-17T09:07Z). */
+const CUT_STATE = "18369d9b95da761ec5ca5c59ce7335ced6c429e0";
+/** Fresh live repair state (sequence 39831, 2026-10-17T12:08Z). */
+const FRESH_STATE = "3bbd4b9f500702319051bf537144a42c8fcee4d6";
 const ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname)
   .replace(/\/$/, "");
 const GIT_ENV = {
@@ -514,10 +575,10 @@ const GIT_ENV = {
   GIT_TERMINAL_PROMPT: "0",
 };
 
-async function pinnedStateAvailable(): Promise<boolean> {
+async function stateAvailable(commit: string): Promise<boolean> {
   try {
     const probe = await new Deno.Command("git", {
-      args: ["-C", ROOT, "cat-file", "-e", `${PINNED_STATE}^{commit}`],
+      args: ["-C", ROOT, "cat-file", "-e", `${commit}^{commit}`],
       clearEnv: true,
       env: GIT_ENV,
       stdout: "null",
@@ -529,12 +590,14 @@ async function pinnedStateAvailable(): Promise<boolean> {
   }
 }
 
-/** The pinned state's work and review rows, read-only from the object store. */
-async function readPinnedState(): Promise<{
+/** One live state's rows, read-only from the object store. */
+async function readState(commit: string): Promise<{
+  updatedAt: number;
   work: WorkRecordV1[];
   reviews: RepairStateSnapshotV1["reviews"];
+  reservations: BudgetReservationV1[];
 }> {
-  const dir = await Deno.makeTempDir({ dir: ROOT, prefix: "legacy-pins-" });
+  const dir = await Deno.makeTempDir({ dir: ROOT, prefix: "legacy-state-" });
   try {
     const archive = await new Deno.Command("git", {
       args: [
@@ -542,16 +605,18 @@ async function readPinnedState(): Promise<{
         ROOT,
         "archive",
         "--format=tar",
-        PINNED_STATE,
+        commit,
+        "manifest.json",
         "work",
         "reviews",
+        "reservations",
       ],
       clearEnv: true,
       env: GIT_ENV,
       stdout: "piped",
       stderr: "null",
     }).output();
-    assert.ok(archive.success, "pinned state readable");
+    assert.ok(archive.success, "live state readable");
     await Deno.writeFile(`${dir}/state.tar`, archive.stdout);
     const extracted = await new Deno.Command("tar", {
       args: ["-xf", `${dir}/state.tar`, "-C", dir],
@@ -560,7 +625,7 @@ async function readPinnedState(): Promise<{
       stdout: "null",
       stderr: "null",
     }).output();
-    assert.ok(extracted.success, "pinned state extracted");
+    assert.ok(extracted.success, "live state extracted");
     const rows = async <T>(name: string): Promise<T[]> => {
       const out: T[] = [];
       for await (const entry of Deno.readDir(`${dir}/${name}`)) {
@@ -570,7 +635,15 @@ async function readPinnedState(): Promise<{
       }
       return out;
     };
-    return { work: await rows("work"), reviews: await rows("reviews") };
+    const manifest = JSON.parse(
+      await Deno.readTextFile(`${dir}/manifest.json`),
+    ) as { updatedAt: number };
+    return {
+      updatedAt: manifest.updatedAt,
+      work: await rows("work"),
+      reviews: await rows("reviews"),
+      reservations: await rows("reservations"),
+    };
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
@@ -578,13 +651,16 @@ async function readPinnedState(): Promise<{
 
 Deno.test({
   name:
-    "legacy exception: the pinned table is exactly the owner's class by rule at the pinned live state",
-  ignore: !(await pinnedStateAvailable()),
+    "legacy exception: at the round-1 cut the rule yields exactly the table that was pinned there",
+  ignore: !(await stateAvailable(CUT_STATE)),
   async fn() {
-    const { work, reviews } = await readPinnedState();
-    // The class: parked on the merge gate's CI failure after spending every
-    // ordinary round, nothing in flight, its exact head reviewed on its exact
-    // base with no unresolved P0/P1. In every repository, not only ai.ubq.fi.
+    const { updatedAt, work, reviews, reservations } = await readState(
+      CUT_STATE,
+    );
+    const ledger = { reservations };
+    // The owner's class shape at that state: parked on the merge gate's CI
+    // failure after spending every ordinary round, nothing in flight, its
+    // exact head reviewed on its exact base with no unresolved P0/P1.
     const members = work.filter((record) => {
       const blocker = record.blocker;
       const { head, pr, base } = record.target;
@@ -608,20 +684,22 @@ Deno.test({
           )
         );
     });
-    for (const record of members) {
-      assert.deepEqual(record.repository, AIUBQ, record.id);
-      assert.equal(
-        record.id,
-        `issue-ubiquity-ai.ubq.fi-${record.related.issueNumber}`,
-      );
-    }
+    // Had the CI-first runtime activated at that state, the rule pins each
+    // member at exactly the pin the table carried, its final round open.
     assert.deepEqual(
       members.map((record) => [
         record.related.issueNumber!,
-        record.counters.reviewRounds,
-      ]).sort((a, b) => a[0] - b[0]),
-      [...LEGACY_REVIEW_ROUND_PINS].sort((a, b) => a[0] - b[0]),
+        legacyReviewRoundPin(ledger, record, updatedAt),
+      ]).sort((a, b) => a[0]! - b[0]!),
+      LIVE.map(([issue, , rounds]) => [issue, rounds]),
     );
+    for (const record of members) {
+      assert.equal(
+        legacyFinalRoundOpen(ledger, record, updatedAt),
+        true,
+        record.id,
+      );
+    }
     // The fixture rows are the live rows.
     for (const [issue, pr, rounds, attempts, head, base, severities] of LIVE) {
       const record = members.find((row) => row.related.issueNumber === issue)!;
@@ -651,6 +729,48 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name:
+    "legacy exception: the rule covers the records in flight at the fresh state, which no install-time table could pin",
+  ignore: !(await stateAvailable(FRESH_STATE)),
+  async fn() {
+    const { updatedAt, work, reservations } = await readState(FRESH_STATE);
+    const ledger = { reservations };
+    const record = (issue: number) =>
+      work.find((row) =>
+        row.repository.name === "ai.ubq.fi" &&
+        row.related.issueNumber === issue
+      )!;
+    // In review on red heads under R79's review-before-CI order at the
+    // round-1 recheck (sequence 39670), parked CI-red since: each pinned at
+    // every round it spent, its one final round open for its CI fix.
+    for (
+      const [issue, pin] of [[645, 6], [646, 6], [657, 6], [663, 5], [1140, 3]]
+    ) {
+      assert.equal(
+        legacyReviewRoundPin(ledger, record(issue), updatedAt),
+        pin,
+        `${issue}`,
+      );
+      assert.equal(
+        legacyFinalRoundOpen(ledger, record(issue), updatedAt),
+        true,
+        `${issue}`,
+      );
+      assert.equal(
+        ciCorrectable(record(issue), ledger, updatedAt),
+        true,
+        `${issue} may take its CI fix`,
+      );
+    }
+    // Every record of the owner's class shape there is covered by the rule.
+    assert.deepEqual(
+      legacyReviewRoundClassDrift({ work, reservations }, updatedAt),
+      [],
+    );
+  },
+});
+
 const LEGACY_595 = {
   repository: AIUBQ,
   id: "issue-ubiquity-ai.ubq.fi-595",
@@ -665,6 +785,7 @@ Deno.test("legacy exception: a red legacy head is fixed, refreshed and reviewed 
   // (4) is spent.
   const { rig } = await ciFirstRig("cf-legacy-red", {
     identity: LEGACY_595,
+    legacyReviewCutoff: CUT,
     reviewed: true,
     reviewRounds: 4,
     attempts: 3,
@@ -717,15 +838,35 @@ Deno.test("legacy exception: a red legacy head is fixed, refreshed and reviewed 
   }
 });
 
-Deno.test("legacy exception: an already-green legacy head needs no fix and gets its one review", async () => {
-  // 618/698/879: green after their flake re-run; the base still moved.
+Deno.test("legacy exception: an already-green legacy head spends no round: it is refreshed and merged under its carried review", async () => {
+  // 618/698/879: green after their flake re-run; the base still moved. The
+  // owner's exception is for red CI only: a green head is merged like every
+  // spent record whose latest review authorizes it, through one mechanical
+  // refresh that carries that review once its patch is proven identical and
+  // the refreshed head is green.
+  // Its latest review accepted the live task (the blanket fake issue text).
+  const accepted = completedReceipt(7, SHA3, SHA1, {
+    id: "review-receipt:618-latest",
+    repository: AIUBQ,
+    taskAcceptance: {
+      issueNumber: 618,
+      taskDigest: await reviewTaskStatementDigest({
+        issueNumber: 618,
+        title: "issue 618",
+        body: "",
+      }),
+      verdict: "fulfilled",
+      evidence: ["the exact reviewed change implements the source issue"],
+    },
+  });
   const { rig } = await ciFirstRig("cf-legacy-green", {
     identity: {
       repository: AIUBQ,
       id: "issue-ubiquity-ai.ubq.fi-618",
       issue: 618,
     },
-    reviewed: true,
+    legacyReviewCutoff: CUT,
+    reviews: [accepted],
     reviewRounds: 7,
     attempts: 3,
     nextStep: "delivery",
@@ -733,23 +874,37 @@ Deno.test("legacy exception: an already-green legacy head needs no fix and gets 
     refreshTo: { [SHA3]: PREP3 },
     checks: {},
   });
+  const digest = "c".repeat(64);
+  rig.github.proveCarriedPatch = (request) =>
+    Promise.resolve(portOk({
+      reviewedMergeBase: request.reviewedBase,
+      reviewedPatch: digest,
+      refreshedMergeBase: request.base,
+      refreshedPatch: digest,
+    }));
   try {
-    for (let run = 0; run < 4; run++) {
+    for (let run = 0; run < 6; run++) {
       await rig.run();
-      if (rig.github.reviewRequestIdentities.length > 0) break;
+      if (rig.github.carriedMerges.length > 0) break;
       rig.clock.advance(5 * 60_000 + 1);
     }
     assert.equal(rig.model.requests.length, 0, "no fix for a green head");
+    assert.deepEqual(rig.github.reviewRequestIdentities, [], "no review");
     assert.deepEqual(
-      rig.github.reviewRequestIdentities.map((r) => r.expectedHead),
-      [PREP3],
+      rig.github.carriedMerges.map((merge) => [merge.head, merge.base]),
+      [[PREP3, SHA2]],
     );
-    const work = taskRecord(
-      await rig.snapshot(),
-      "issue-ubiquity-ai.ubq.fi-618",
-    );
-    assert.equal(work.counters.reviewRounds, 8, "pin + 1");
+    const snapshot = await rig.snapshot();
+    const work = taskRecord(snapshot, "issue-ubiquity-ai.ubq.fi-618");
+    assert.equal(work.counters.reviewRounds, 7, "no round spent");
     assert.equal(work.counters.retries, 0);
+    assert.equal(work.nextStep, "delivery");
+    assert.equal(
+      snapshot.reservations.filter((charge) =>
+        charge.taskId === work.id && charge.purpose === "review_request"
+      ).length,
+      7,
+    );
   } finally {
     await rig.ctx.cleanup();
   }

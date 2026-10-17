@@ -10,12 +10,16 @@
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type {
+  CarriedMergeV1,
+  GitHubCheckV1,
   GitHubPullRequestV1,
   GitHubRefV1,
   MergeOutcomeV1,
   PortResultV1,
   ReviewObservationV1,
 } from "../../src/contracts/ports.ts";
+import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
+import type { ReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import type { MergeRequestV1 } from "../../src/contracts/merge-request.ts";
 import type { ReviewTaskStatementV1 } from "../../src/contracts/review-receipt.ts";
@@ -50,6 +54,14 @@ export class QueueGithub extends FakeGithub {
   readonly pulls = new Map<number, PullV1>();
   readonly merged: number[] = [];
   readonly reviewed: { pr: number; head: GitSha; base: GitSha }[] = [];
+  /** Every carried merge the loop requested (PR and identity). */
+  readonly carried: (CarriedMergeV1 & { pr: number })[] = [];
+  /** Check runs per head; an unlisted head reads one green check. */
+  readonly checksByHead = new Map<string, GitHubCheckV1[]>();
+  /** Refreshed heads whose merge-base patch differs from the reviewed one. */
+  readonly changedPatch = new Set<string>();
+  /** Every prepared refresh, keyed by PR, head and observed base. */
+  readonly preparedKeys: string[] = [];
   refreshes = 0;
   private readonly prepared = new Map<string, GitSha>();
   private readonly requested = new Map<
@@ -65,11 +77,37 @@ export class QueueGithub extends FakeGithub {
       let prepared = this.prepared.get(key);
       if (prepared === undefined) {
         this.refreshes++;
+        this.preparedKeys.push(key);
         prepared = sha(0x5000 + this.refreshes);
         this.prepared.set(key, prepared);
       }
       return Promise.resolve(portOk(prepared));
     };
+    // The patch proof git would derive: equal digests unless the refreshed
+    // head is scripted as carrying a different patch.
+    this.proveCarriedPatch = (request) =>
+      Promise.resolve(portOk({
+        reviewedMergeBase: request.reviewedBase,
+        reviewedPatch: "a".repeat(64),
+        refreshedMergeBase: request.base,
+        refreshedPatch: this.changedPatch.has(request.head)
+          ? "b".repeat(64)
+          : "a".repeat(64),
+      }));
+  }
+
+  override readChecks(head: GitSha) {
+    return Promise.resolve(portOk({
+      head,
+      checks: this.checksByHead.get(head) ?? [{
+        name: "validate",
+        status: "completed" as const,
+        conclusion: "success" as const,
+        head,
+        startedAt: T0,
+        completedAt: T0 + 1000,
+      }],
+    }));
   }
 
   private pull(pr: PullV1): GitHubPullRequestV1 {
@@ -209,13 +247,20 @@ export class QueueGithub extends FakeGithub {
 
   override mergePullRequest(
     request: MergeRequestV1,
+    _execution?: unknown,
+    carried?: CarriedMergeV1,
   ): Promise<PortResultV1<MergeOutcomeV1>> {
     this.calls.push("merge");
     const pr = this.pulls.get(request.pullRequestNumber)!;
+    const head = carried?.head ?? request.expectedHead;
+    const base = carried?.base ?? request.expectedBase;
+    if (carried !== undefined) {
+      this.carried.push({ ...carried, pr: request.pullRequestNumber });
+    }
     if (
-      this.heads.get(pr.branch) !== request.expectedHead ||
-      (request.expectedBase !== null &&
-        request.expectedBase !== this.remoteBase)
+      this.heads.get(pr.branch) !== head ||
+      (base !== null && base !== this.remoteBase) ||
+      (carried !== undefined && this.changedPatch.has(carried.head))
     ) {
       return Promise.resolve(portOk({
         outcome: "blocked",
@@ -228,7 +273,7 @@ export class QueueGithub extends FakeGithub {
     this.remoteBase = pr.mergeSha;
     return Promise.resolve(portOk({
       outcome: "merged",
-      head: request.expectedHead,
+      head,
       mergeSha: pr.mergeSha,
     }));
   }
@@ -244,6 +289,8 @@ export async function queueRig(
   options: {
     shape?: (records: WorkRecordV1[]) => WorkRecordV1[];
     tip?: GitSha;
+    reservations?: BudgetReservationV1[];
+    reviews?: ReviewReceiptV1[];
   } = {},
 ) {
   const clock = new FakeClock(T0);
@@ -276,8 +323,18 @@ export async function queueRig(
   }
   if (options.tip !== undefined) github.remoteBase = options.tip;
   const seeded = options.shape?.(records) ?? records;
-  const written = await state.writeRepair(seededState(seeded), null);
+  const written = await state.writeRepair(
+    seededState(seeded, options.reservations, options.reviews),
+    null,
+  );
   assert.ok(written.ok && written.value.status === "applied");
+  // Every snapshot the loop writes from here on, exactly as written.
+  const writes: RepairStateSnapshotV1[] = [];
+  const write = state.writeRepair.bind(state);
+  state.writeRepair = (snapshot, expectedHead) => {
+    writes.push(structuredClone(snapshot));
+    return write(snapshot, expectedHead);
+  };
   const deps = {
     clock,
     state,
@@ -305,5 +362,14 @@ export async function queueRig(
       clock.advance(16 * MINUTE);
     }
   };
-  return { clock, state, deps, github, records: seeded, snapshot, drive };
+  return {
+    clock,
+    state,
+    deps,
+    github,
+    records: seeded,
+    snapshot,
+    drive,
+    writes,
+  };
 }

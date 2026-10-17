@@ -431,6 +431,8 @@ export abstract class GitHubClientHttp {
   abstract mergePull(
     number: number,
     sha: GitSha,
+    /** Plain text appended to the merge commit message (evidence only). */
+    message?: string,
   ): Promise<PortResultV1<MergePutWireV1>>;
 
   abstract assignIssue(

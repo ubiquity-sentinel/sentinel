@@ -21,12 +21,18 @@ import type {
 import { ceilingParkMessage, reviewRoundsLeft } from "./review-round-cap.ts";
 import { markBlocked } from "./transitions.ts";
 
+/** The legacy review cutoff this run's round counts use (null: none). */
+export function legacyCutoff(context: LoopContextV1): number | null {
+  return context.legacyReviewCutoff ?? null;
+}
+
 /** True once this task may request no further review. */
 export function reviewRoundsSpentOut(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): boolean {
-  return reviewRoundsLeft(context.snapshot, record) === 0;
+  return reviewRoundsLeft(context.snapshot, record, legacyCutoff(context)) ===
+    0;
 }
 
 /** Persist one park (one compare-and-swap write); the record is then idle. */

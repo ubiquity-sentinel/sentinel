@@ -24,7 +24,7 @@
  *   under R79 the refreshed head would be reviewed while still red;
  * - nothing ever matches the exhausted park (L4: the runtime's own
  *   `ciCorrectable` counts the CI fixes);
- * - a listed legacy record's one final review round is handed to the
+ * - a legacy record's one final review round is handed to the
  *   runtime by NO re-admission except under a proven CI-first runtime
  *   (`legacyFinalRoundAdmissible`).
  */
@@ -39,6 +39,7 @@ import { ciPublicationShape } from "../src/repair/ci-rejection.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import { ordinaryReviewRoundsSpent } from "../src/repair/review-round-cap.ts";
 import { ciCorrectionRuntimeProven } from "./hosted-autonomy-ci-retries.ts";
+import { legacyReviewCutoffForRuntime } from "../src/host/legacy-review-cutoff-env.ts";
 
 type WorkRow = RepairStateSnapshotV1["work"][number];
 
@@ -81,7 +82,7 @@ export const LEGACY_ROUND_REQUIRES_CI_FIRST = "legacy_round_requires_ci_first";
 
 /**
  * Whether a re-admission may hand the runtime a record whose next review
- * would be a listed legacy record's one final round (every ordinary round
+ * would be a legacy record's one final round (every ordinary round
  * spent, `ordinaryReviewRoundsSpent`; the ceiling's pin + 1 leaves exactly one
  * more, `reviewRoundsLeft`). Owner decision 2026-10-16: that review is
  * exactly ONE, current-head and on the green head, and only a proven CI-first
@@ -136,9 +137,23 @@ export function preReviewCiParked(
 export function preReviewFixEligible(
   snapshot: Pick<RepairStateSnapshotV1, "releaseRequests" | "reservations">,
   record: WorkRow,
+  cutoff?: number | null,
 ): boolean {
   return preReviewCiParked(snapshot, record) && ciFixesLeft(record) &&
-    reviewRoundAvailable(snapshot, record);
+    reviewRoundAvailable(snapshot, record, cutoff);
+}
+
+/**
+ * The legacy review cutoff the launcher's own round counts use: the cutoff
+ * pinned for the installed runtime (`legacyReviewCutoffForRuntime`), only
+ * under a proven CI-first runtime (every legacy re-admission needs one);
+ * otherwise null, and no record is legacy.
+ */
+export function launcherLegacyCutoff(
+  runtime: HostedRuntimeRecordV1 | null | undefined,
+  ciFirst: boolean,
+): number | null {
+  return ciFirst ? legacyReviewCutoffForRuntime(runtime) : null;
 }
 
 /**

@@ -18,6 +18,8 @@ import type {
   ReviewTaskStatementV1,
 } from "../src/contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
+import type { ReleaseRequestV1 } from "../src/contracts/release.ts";
+import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import { reviewAuthorizesMerge } from "../src/repair/review-gate.ts";
 import { advanceToDelivery } from "../src/repair/transitions.ts";
 import {
@@ -51,19 +53,22 @@ import type {
 } from "./hosted-autonomy-scopes.ts";
 
 /**
- * Decision D3 (2026-10-16, launcher only), DISABLED until the owner signs it
- * off: a spent Gateway record whose reviewed base B is a strict ancestor of
- * the current base tip T would merge onto T (GitHub merges the exact reviewed
- * head into the current tip) when the pull is mergeable and T's own CI is
- * complete and green. The merged result T + head is never CI-tested: the
- * head's green checks ran on `refs/pull/N/merge` against B, possibly under an
- * older workflow with fewer jobs (live PR 1011: 2 of today's 4 jobs, 384
- * commits behind), and T's CI covers T alone, so such a merge can turn
- * `development` red for every other PR. While false every record keeps the
- * exact-base rule and a moved base is `base_moved`. Before enabling it the
- * gate must also require the head's green check names to cover every check
- * name on T, refuse a B...T drift touching any file the PR changes or any
- * dependency, lockfile or CI file, and bound how far T is ahead of B.
+ * Decision D3 (2026-10-16, launcher only), DISABLED: the coordinator chose
+ * option (b) under owner decision (2) instead (docs/DECISIONS.md; the
+ * runtime's carried refresh, `src/repair/loop-carried-delivery.ts`), because
+ * D3's merged result is never CI-tested. D3 would merge a spent Gateway
+ * record whose reviewed base B is a strict ancestor of the current base tip T
+ * onto T (GitHub merges the exact reviewed head into the current tip) when
+ * the pull is mergeable and T's own CI is complete and green. The merged
+ * result T + head is never CI-tested: the head's green checks ran on
+ * `refs/pull/N/merge` against B, possibly under an older workflow with fewer
+ * jobs (live PR 1011: 2 of today's 4 jobs, 384 commits behind), and T's CI
+ * covers T alone, so such a merge can turn `development` red for every other
+ * PR. While false every record keeps the exact-base rule and a moved base is
+ * `base_moved`. Before enabling it the gate must also require the head's
+ * green check names to cover every check name on T, refuse a B...T drift
+ * touching any file the PR changes or any dependency, lockfile or CI file,
+ * and bound how far T is ahead of B.
  */
 export const HOSTED_AUTONOMY_SPENT_MOVED_BASE_MERGE = false;
 
@@ -156,6 +161,59 @@ export function identityBoundReviews(
     (a.completedAt ?? 0) - (b.completedAt ?? 0) ||
     a.observedAt - b.observedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
   );
+}
+
+/**
+ * The receipt a release request names when the runtime merged a refreshed
+ * head under a CARRIED review (`loop-carried-delivery.ts`): the exact receipt
+ * and request ids the request records, a completed review of the same
+ * repository and pull request by the fixed App reviewer, of a different head
+ * than the request's merged one. Null for any other request.
+ */
+export function carriedRequestReceipt(
+  reviews: readonly ReviewReceiptV1[],
+  request: ReleaseRequestV1,
+): ReviewReceiptV1 | null {
+  const receiptId = request.source.reviewReceiptId;
+  if (receiptId === null) return null;
+  const receipt = reviews.find((review) =>
+    review.id === receiptId &&
+    review.requestId === request.source.reviewRequestId
+  );
+  return receipt !== undefined &&
+      sameRepository(receipt.repository, request.target.repository) &&
+      receipt.pullRequest.number === request.source.pullRequest &&
+      receipt.pullRequest.head !== request.source.head &&
+      receipt.outcome === "completed" && receipt.resultId !== null &&
+      receipt.completedAt !== null &&
+      receipt.observedReviewer === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR &&
+      receipt.expectedReviewer === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR
+    ? receipt
+    : null;
+}
+
+/**
+ * The delivery pass's action line for a record the runtime merged under a
+ * carried review (in `delivery` beside its production release request): the
+ * reviewed identity and receipt, the merged refreshed identity and the merged
+ * revision. Both patch digests and the head's green checks are in that merge
+ * commit's message. Null for any other record.
+ */
+export function carriedDeliveryAction(
+  snapshot: Pick<RepairStateSnapshotV1, "releaseRequests" | "reviews">,
+  record: HostedAutonomyRecordV1,
+): string | null {
+  if (record.nextStep !== "delivery") return null;
+  for (const request of snapshot.releaseRequests) {
+    if (
+      request.target.environment !== "production" ||
+      !releaseRequestMatchesDelivery(request, record)
+    ) continue;
+    const receipt = carriedRequestReceipt(snapshot.reviews, request);
+    if (receipt === null) continue;
+    return `delivery:${record.id}:carried:pr=${request.source.pullRequest}:reviewed=${receipt.pullRequest.head}@${receipt.pullRequest.base}:receipt=${receipt.id}:merged=${request.source.head}@${request.source.base}:sha=${request.revision}`;
+  }
+  return null;
 }
 
 /** True when a review leaves uncounted findings or an unresolved P0/P1. */

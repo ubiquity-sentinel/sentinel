@@ -41,6 +41,7 @@ import {
   persistWork,
   replaceWorkMutation,
 } from "./loop-state.ts";
+import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { readBase, readIssueForModel } from "./loop-task-context.ts";
 import type {
   LoopContextV1,
@@ -122,6 +123,7 @@ export async function prepareImplementationStart(
       conflictResolutionRouteOpen(deps),
       context.snapshot,
       record,
+      legacyCutoff(context),
     ) !== null
   ) {
     const confirmed = await confirmConflictResolution(deps, context, record);
@@ -139,7 +141,12 @@ export async function prepareImplementationStart(
   const ciRouteOpen = ciCorrectionRouteOpen(deps);
   if (
     conflict === null &&
-    headAwaitsCiCorrection(context.snapshot, record, ciRouteOpen)
+    headAwaitsCiCorrection(
+      context.snapshot,
+      record,
+      ciRouteOpen,
+      legacyCutoff(context),
+    )
   ) {
     const confirmed = await confirmCiCorrection(deps, context, record);
     if (confirmed.kind !== "confirmed") return confirmed;
@@ -150,7 +157,12 @@ export async function prepareImplementationStart(
   const preReviewOpen = preReviewCiFixRouteOpen(deps);
   if (
     conflict === null && ciFinding === null &&
-    headAwaitsPreReviewCiFix(context.snapshot, record, preReviewOpen)
+    headAwaitsPreReviewCiFix(
+      context.snapshot,
+      record,
+      preReviewOpen,
+      legacyCutoff(context),
+    )
   ) {
     const confirmed = await confirmPreReviewCiFix(deps, context, record);
     if (confirmed.kind !== "confirmed") return confirmed;
@@ -259,6 +271,7 @@ export async function prepareImplementationStart(
     record,
     ciRouteOpen,
     preReviewOpen,
+    legacyCutoff(context),
   );
   const findings = conflict !== null
     ? null

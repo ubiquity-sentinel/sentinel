@@ -35,16 +35,22 @@ import { observeReleaseAcceptance } from "./loop-release.ts";
 import { ensureBeforeReplay } from "./loop-replay-before.ts";
 import { candidateValidated } from "./loop-replay-validation.ts";
 import { observeReview } from "./loop-review-observation.ts";
-import { headNeedsCorrection } from "./loop-review-records.ts";
+import {
+  headAwaitsCiCorrection,
+  headNeedsCorrection,
+} from "./loop-review-records.ts";
 import { recoverClosedReviewWait } from "./loop-review-recovery.ts";
 import {
+  legacyCutoff,
   parkAtReviewRoundCeiling,
   reviewRoundsSpentOut,
 } from "./loop-review-round-cap.ts";
+import { deliveryQueueDeferral } from "./loop-delivery-queue.ts";
 import {
-  deliveryQueueDeferral,
-  parkSpentOnMovedBase,
-} from "./loop-delivery-queue.ts";
+  executeCarriedDelivery,
+  spentOnMovedBase,
+} from "./loop-carried-delivery.ts";
+import { legacyFinalRoundOpen } from "./review-round-cap.ts";
 import { persistTransition, persistWork } from "./loop-state.ts";
 import type {
   CarryV1,
@@ -140,6 +146,7 @@ export async function executeWorkStep(
         conflictResolutionRouteOpen(deps),
         context.snapshot,
         record,
+        legacyCutoff(context),
       ) !== null
     ) {
       return executeConflictResolutionStep(
@@ -156,8 +163,17 @@ export async function executeWorkStep(
   // could implement, correct, publish or open a replacement PR for can ever
   // be reviewed, so nothing is charged or pushed and the record parks. An
   // operation already in flight finishes first (above, or in the publication
-  // reconciliation, whose review request parks at the same ceiling).
-  if (record.intent === null && reviewRoundsSpentOut(context, record)) {
+  // reconciliation, whose review request parks at the same ceiling). Two
+  // exceptions: a legacy record whose one final round is still open takes the
+  // CI fix of its reviewed red head (below; the fix arms that round), and a
+  // refreshed head that carries its earlier review's exact patch is merged
+  // under that review once its own CI is green (`loop-carried-delivery.ts`).
+  if (
+    record.intent === null && reviewRoundsSpentOut(context, record) &&
+    !legacyCiFixPending(deps, context, record)
+  ) {
+    const carried = await executeCarriedDelivery(deps, context, record);
+    if (carried !== null) return carried;
     return parkAtReviewRoundCeiling(deps, context, record);
   }
 
@@ -214,6 +230,7 @@ export async function executeWorkStep(
       record,
       ciCorrectionRouteOpen(deps),
       preReviewCiFixRouteOpen(deps),
+      legacyCutoff(context),
     )
   ) {
     return executeImplementationStep(deps, context, record, config);
@@ -342,25 +359,58 @@ export async function executeDeliveryStep(
     record.intent === null && record.source.kind === "issue" &&
     deps.github.prepareBaseRefresh !== undefined
   ) {
-    // A refreshed head needs a review round of its own: at the hard ceiling
-    // the moved base parks the reviewed head instead (nothing refreshed or
-    // pushed), a red one with the merge gate's own CI blocker. Otherwise a
-    // reviewed head whose own change already broke its checks is corrected
-    // before it could be refreshed and re-reviewed onto the moved base, and a
-    // refresh waits its turn in the repository's delivery line.
+    // A reviewed head whose own change already broke its checks is corrected
+    // before it could be refreshed onto the moved base (a legacy record whose
+    // final round is open included: that CI fix is its exception). At the
+    // hard ceiling the reviewed head's CI is read first and only a green head
+    // whose latest review authorizes it refreshes, mechanically, to carry
+    // that review (`spentOnMovedBase`; anything else parks). Every refresh
+    // waits its turn in the repository's delivery line.
     const refresh = await ensureBaseRefreshIntent(
       deps,
       context,
       record,
       async (observedBase) => {
-        if (reviewRoundsSpentOut(context, record)) {
-          return await parkSpentOnMovedBase(deps, context, record);
+        const spent = reviewRoundsSpentOut(context, record);
+        if (
+          !spent ||
+          legacyFinalRoundOpen(context.snapshot, record, legacyCutoff(context))
+        ) {
+          const corrected = await correctFailedHeadBeforeRefresh(
+            deps,
+            context,
+            record,
+          );
+          if (corrected !== null) return corrected;
         }
-        return await correctFailedHeadBeforeRefresh(deps, context, record) ??
-          deliveryQueueDeferral(deps, context, record, observedBase);
+        if (spent) {
+          return await spentOnMovedBase(deps, context, record, observedBase);
+        }
+        return deliveryQueueDeferral(deps, context, record, observedBase);
       },
     );
     if (refresh !== null) return refresh;
   }
   return executeMerge(deps, context, record);
+}
+
+/**
+ * A legacy record whose one final round is still open, on a reviewed red head
+ * awaiting its CI correction: its CI fix is admitted although every ordinary
+ * round is spent (owner decision 2026-10-16: CI fixes, then exactly one final
+ * review on the green head).
+ */
+function legacyCiFixPending(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+): boolean {
+  const cutoff = legacyCutoff(context);
+  return legacyFinalRoundOpen(context.snapshot, record, cutoff) &&
+    headAwaitsCiCorrection(
+      context.snapshot,
+      record,
+      ciCorrectionRouteOpen(deps),
+      cutoff,
+    );
 }

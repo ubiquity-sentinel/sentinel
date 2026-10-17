@@ -89,11 +89,17 @@ export class SystemClock implements Clock {
   }
 }
 
-export { BASE_REFRESH_CONFLICT_DETAIL } from "./ports-github-requests.ts";
+export {
+  BASE_REFRESH_CONFLICT_DETAIL,
+  carriedPatchHolds,
+} from "./ports-github-requests.ts";
 
 export type {
   AlreadySatisfiedClosureRequestV1,
   CandidatePreservationRequestV1,
+  CarriedMergeV1,
+  CarriedPatchProofV1,
+  CarriedPatchRequestV1,
   GitHubBranchProtectionsV1,
   GitHubChecksV1,
   GitHubCheckV1,

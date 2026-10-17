@@ -40,6 +40,7 @@ import {
 import { reconcileRefreshPublication } from "./loop-base-refresh.ts";
 import { MATRIX_IMPLEMENTATION_DEFERRED } from "./loop-bounds.ts";
 import { configFor, touchesProtected } from "./loop-records.ts";
+import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { persistWork, replaceWorkMutation } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -70,6 +71,7 @@ export async function executeConflictResolutionStep(
         conflictResolutionRouteOpen(deps),
         context.snapshot,
         record,
+        legacyCutoff(context),
       ) === null
   ) {
     return {
@@ -109,6 +111,7 @@ export async function confirmConflictResolution(
     conflictResolutionRouteOpen(deps),
     context.snapshot,
     record,
+    legacyCutoff(context),
   );
   const config = configFor(deps, record.repository);
   const { head, branch } = record.target;

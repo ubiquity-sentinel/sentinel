@@ -102,15 +102,17 @@ type WorkRow = RepairStateSnapshotV1["work"][number];
  * same durable ledger (issue task, exact publication, a durably described
  * candidate, no operation in flight, a CI fix left and a review round left by
  * the hard ceiling's own count, `reviewRoundsLeft`: fewer than
- * `CI_CORRECTION_REVIEW_ROUNDS`, or a listed legacy record's one final
- * review), never a copy: a head the runtime cannot correct is blocked again by
+ * `CI_CORRECTION_REVIEW_ROUNDS`, or a legacy record whose one final round is
+ * still open), never a copy: a head the runtime cannot correct is blocked again by
  * its merge gate at once, so re-admitting it would only churn on every pass.
  */
 export function ciRedeliveryEligible(
   snapshot: RepairStateSnapshotV1,
   record: WorkRow,
+  /** The launcher's legacy review cutoff (`launcherLegacyCutoff`). */
+  cutoff?: number | null,
 ): boolean {
-  return ciCorrectable(record, snapshot) &&
+  return ciCorrectable(record, snapshot, cutoff) &&
     ciGateParked(snapshot, record, CORRECTION_PREFIXES);
 }
 

@@ -1,7 +1,7 @@
 /**
  * The pure hard review-round ceiling policy (owner decision 2026-10-16:
  * "44 rounds is insane, 3 round max"): rounds spent from the durable ledger
- * and the counter, the fail-closed one-time legacy table, the fixed park
+ * and the counter, the fail-closed one-time legacy rule, the fixed park
  * messages and their choice, and the protection of the ceiling itself.
  */
 import assert from "node:assert/strict";
@@ -9,15 +9,17 @@ import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
 import { CI_CORRECTION_REVIEW_ROUNDS } from "../../src/repair/ci-rejection.ts";
 import { CONFLICT_RESOLUTION_REVIEW_ROUNDS } from "../../src/repair/conflict-resolution.ts";
+import { reviewRoundAvailable } from "../../src/repair/ci-first-policy.ts";
 import { reviewOperationKey } from "../../src/repair/keys.ts";
 import {
   ceilingParkMessage,
   isDeliverableReviewRoundCeilingPark,
   isReviewRoundCeilingPark,
-  LEGACY_REVIEW_ROUND_PINS,
+  legacyFinalRoundArmed,
+  legacyFinalRoundOpen,
+  legacyReviewRoundClassDrift,
   legacyReviewRoundClassPin,
   legacyReviewRoundPin,
-  legacyReviewRoundTableDrift,
   MAX_REVIEW_ROUNDS,
   ordinaryReviewRoundsSpent,
   REVIEW_ROUND_CEILING_BASE_MOVED,
@@ -214,67 +216,123 @@ Deno.test("round cap policy: ambiguous and in-flight charges are spent, refunds 
   assert.equal(reviewRoundsSpent(ledger(inFlight), task(1)), 3);
 });
 
-Deno.test("round cap policy: the one-time legacy table matches exact identities and fails closed", () => {
-  assert.deepEqual([...LEGACY_REVIEW_ROUND_PINS.entries()], [
-    [137, 5],
-    [575, 3],
-    [583, 4],
-    [595, 4],
-    [597, 5],
-    [602, 6],
-    [605, 3],
-    [610, 3],
-    [615, 3],
-    [617, 3],
-    [618, 7],
-    [629, 3],
-    [633, 3],
-    [634, 4],
-    [638, 5],
-    [650, 3],
-    [668, 4],
-    [672, 3],
-    [673, 7],
-    [678, 6],
-    [679, 6],
-    [680, 4],
-    [693, 3],
-    [694, 3],
-    [698, 9],
-    [754, 3],
-    [879, 3],
-    [1128, 5],
-  ]);
-  for (const [issue, pin] of LEGACY_REVIEW_ROUND_PINS) {
-    const record = legacy(issue, pin);
-    assert.equal(legacyReviewRoundPin(record), pin);
-    assert.equal(reviewRoundCeiling(record), pin + 1);
-    const spent = reviewCharges(record.id, pin, { repository: AI });
-    assert.equal(reviewRoundsLeft(ledger(spent), record), 1, `${issue}`);
-    // R79 spent the allowance before generation 80 shipped: capped.
-    const past = reviewCharges(record.id, pin + 1, { repository: AI });
-    assert.equal(reviewRoundsLeft(ledger(past), legacy(issue, pin + 1)), 0);
+/** The legacy cutoff of these cases: every seeded charge precedes it. */
+const CUT = T0;
+
+/** One counted charge of `purpose` created at `at`. */
+function charge(
+  record: WorkRecordV1,
+  attempt: number,
+  purpose: "review_request" | "retry",
+  at: number,
+  outcome: "submitted" | "confirmed_not_submitted" = "submitted",
+) {
+  return reservation(`${record.id}-${purpose}-${attempt}-${at}`, {
+    repository: record.repository,
+    taskId: record.id,
+    attempt,
+    head: SHA3,
+    purpose,
+    createdAt: at,
+    outcome,
+    settledAt: at + 1,
+    proofRef: outcome === "confirmed_not_submitted"
+      ? `artifact:refund/${record.id}-${attempt}`
+      : null,
+  });
+}
+
+Deno.test("round cap policy: the one-time legacy class is a rule over the cutoff and fails closed", () => {
+  // 645 as live (sequence 39670): six rounds admitted by R79 before CI, all
+  // before the CI-first runtime's activation.
+  const record = legacy(645, 6);
+  const old = reviewCharges(record.id, 6, { repository: AI });
+  // Without a cutoff nothing is legacy.
+  for (const cutoff of [null, undefined, 0, -1, 1.5]) {
+    assert.equal(legacyReviewRoundPin(ledger(old), record, cutoff), null);
+    assert.equal(reviewRoundsLeft(ledger(old), record, cutoff), 0);
+    assert.equal(reviewRoundAvailable(ledger(old), record, cutoff), false);
   }
-  // The ordinary ceiling is spent by the ledger-aware count whatever the
-  // legacy allowance: the final round is extra.
-  assert.equal(ordinaryReviewRoundsSpent(ledger([]), legacy(698, 9)), true);
-  assert.equal(ordinaryReviewRoundsSpent(ledger([]), legacy(698, 2)), false);
-  assert.equal(
-    ordinaryReviewRoundsSpent(
-      ledger(reviewCharges("issue-ubiquity-ai.ubq.fi-698", 3, {
-        repository: AI,
-      })),
-      legacy(698, 2),
-    ),
-    true,
+  // Under the cutoff it is pinned at its six old rounds; the final round is
+  // open (its CI fix is admissible) but not armed (no review yet).
+  assert.equal(legacyReviewRoundPin(ledger(old), record, CUT), 6);
+  assert.equal(legacyFinalRoundOpen(ledger(old), record, CUT), true);
+  assert.equal(legacyFinalRoundArmed(ledger(old), record, CUT), false);
+  assert.equal(reviewRoundsLeft(ledger(old), record, CUT), 0);
+  assert.equal(reviewRoundCeiling(ledger(old), record, CUT), MAX_REVIEW_ROUNDS);
+  assert.equal(reviewRoundAvailable(ledger(old), record, CUT), true);
+  // An old retry (R79's own correction, before the cutoff) arms nothing; a
+  // refunded fix after it neither.
+  const oldFix = charge(record, 2, "retry", CUT - 1);
+  const refunded = charge(
+    record,
+    3,
+    "retry",
+    CUT + 1,
+    "confirmed_not_submitted",
   );
-  // Exactly one round even when the record spent less than its pin.
-  assert.equal(reviewRoundsLeft(ledger([]), legacy(618, 3)), 1);
-  // Any other identity keeps the plain ceiling.
-  const unlisted = legacy(596, 6);
-  assert.equal(legacyReviewRoundPin(unlisted), null);
-  assert.equal(reviewRoundCeiling(unlisted), MAX_REVIEW_ROUNDS);
-  assert.equal(reviewRoundsLeft(ledger([]), unlisted), 0);
+  assert.equal(
+    reviewRoundsLeft(ledger([...old, oldFix, refunded]), record, CUT),
+    0,
+  );
+  // A CI fix charged at or after the cutoff arms exactly one final round.
+  const fix = charge(record, 4, "retry", CUT);
+  assert.equal(legacyFinalRoundArmed(ledger([...old, fix]), record, CUT), true);
+  assert.equal(reviewRoundsLeft(ledger([...old, fix]), record, CUT), 1);
+  assert.equal(reviewRoundCeiling(ledger([...old, fix]), record, CUT), 7);
+  // The final review spends it: nothing more, ever.
+  const final = charge(record, 7, "review_request", CUT + 5);
+  const done = ledger([...old, fix, final]);
+  assert.equal(legacyReviewRoundPin(done, legacy(645, 7), CUT), 6);
+  assert.equal(legacyFinalRoundOpen(done, legacy(645, 7), CUT), false);
+  assert.equal(reviewRoundsLeft(done, legacy(645, 7), CUT), 0);
+  assert.equal(reviewRoundAvailable(done, legacy(645, 7), CUT), false);
+  // The ordinary ceiling is spent whatever the legacy allowance.
+  assert.equal(ordinaryReviewRoundsSpent(ledger(old), record), true);
+});
+
+Deno.test("round cap policy: a record new under the CI-first runtime never gets a fourth round", () => {
+  // Three rounds all admitted after the activation, a red head, even a CI
+  // fix after its third review: never legacy, never a round left.
+  const fresh = legacy(1200, 3);
+  const after = [1, 2, 3].map((attempt) =>
+    charge(fresh, attempt, "review_request", CUT + attempt)
+  );
+  const fix = charge(fresh, 2, "retry", CUT + 10);
+  for (const rows of [after, [...after, fix]]) {
+    assert.equal(legacyReviewRoundPin(ledger(rows), fresh, CUT), null);
+    assert.equal(legacyFinalRoundOpen(ledger(rows), fresh, CUT), false);
+    assert.equal(reviewRoundsLeft(ledger(rows), fresh, CUT), 0);
+    assert.equal(reviewRoundAvailable(ledger(rows), fresh, CUT), false);
+  }
+  // A counter that claims old rounds without any admission before the
+  // cutoff is no evidence of the old order.
+  assert.equal(legacyReviewRoundPin(ledger([]), legacy(1201, 9), CUT), null);
+  assert.equal(
+    legacyReviewRoundPin(ledger(after), legacy(1200, 9), CUT),
+    null,
+  );
+  // Fewer than three old rounds (live 661: two before, one after) is not
+  // the class: the ordinary ceiling of three holds.
+  const mixed = legacy(661, 3);
+  const rows = [
+    ...reviewCharges(mixed.id, 2, { repository: AI }),
+    charge(mixed, 3, "review_request", CUT + 1),
+  ];
+  assert.equal(legacyReviewRoundPin(ledger(rows), mixed, CUT), null);
+  assert.equal(reviewRoundsLeft(ledger(rows), mixed, CUT), 0);
+  // A round the old runtime admitted after the cutoff (between the pin
+  // commit and the install) spends the final round: fails closed.
+  const late = legacy(646, 7);
+  const lateRows = [
+    ...reviewCharges(late.id, 6, { repository: AI }),
+    charge(late, 7, "review_request", CUT + 1),
+    charge(late, 3, "retry", CUT + 2),
+  ];
+  assert.equal(legacyReviewRoundPin(ledger(lateRows), late, CUT), 6);
+  assert.equal(legacyFinalRoundOpen(ledger(lateRows), late, CUT), false);
+  assert.equal(reviewRoundsLeft(ledger(lateRows), late, CUT), 0);
+  // Only exact ai.ubq.fi issue identities are legacy.
   const variants: WorkRecordV1[] = [
     legacy(595, 4, { repository: { ...AI, installationId: 7 } }),
     legacy(595, 4, { repository: { ...AI, name: "ai.ubq.fi-fork" } }),
@@ -287,22 +345,15 @@ Deno.test("round cap policy: the one-time legacy table matches exact identities 
     }),
   ];
   for (const record of variants) {
-    assert.equal(legacyReviewRoundPin(record), null, record.id);
-    assert.equal(reviewRoundsLeft(ledger([]), record), 0, record.id);
+    const rows = reviewCharges(record.id, 4, {
+      repository: record.repository,
+    });
+    assert.equal(legacyReviewRoundPin(ledger(rows), record, CUT), null);
+    assert.equal(reviewRoundAvailable(ledger(rows), record, CUT), false);
   }
 });
 
-Deno.test("round cap policy: the legacy table is the owner's class at its pinned state", () => {
-  // The owner's twelve (decision-time state, sequence 36388), the nine more
-  // that generation 79 parked the same way by sequence 37449 and the seven
-  // after that by the cut (sequence 38912).
-  const owners = [595, 597, 605, 610, 618, 668, 672, 673, 680, 694, 698, 879];
-  const since = [137, 575, 602, 634, 638, 678, 679, 693, 754];
-  const sinceCut = [583, 615, 617, 629, 633, 650, 1128];
-  assert.deepEqual(
-    [...LEGACY_REVIEW_ROUND_PINS.keys()],
-    [...owners, ...since, ...sinceCut].sort((a, b) => a - b),
-  );
+Deno.test("round cap policy: the owner's class shape is CI-red parks with three spent rounds", () => {
   const parked = (
     issue: number,
     rounds: number,
@@ -317,12 +368,10 @@ Deno.test("round cap policy: the legacy table is the owner's class at its pinned
       blocker: { ...blocker, since: T0 },
       ...overrides,
     });
-  // Every pinned record, as the pinned state holds it, is a class member at
-  // exactly its pin.
-  for (const [issue, pin] of LEGACY_REVIEW_ROUND_PINS) {
+  for (const [issue, rounds] of [[595, 4], [618, 7], [1128, 5]]) {
     assert.equal(
-      legacyReviewRoundClassPin(ledger([]), parked(issue, pin)),
-      pin,
+      legacyReviewRoundClassPin(ledger([]), parked(issue, rounds)),
+      rounds,
     );
   }
   // The unattributed CI block is CI red too; the ledger beats a lagging
@@ -345,8 +394,7 @@ Deno.test("round cap policy: the legacy table is the owner's class at its pinned
     ),
     4,
   );
-  // Not the class: rounds left, a non-CI blocker (task acceptance, a hand
-  // merge, missing evidence, the retired quota block), a record not parked,
+  // Not the shape: rounds left, a non-CI blocker, a record not parked,
   // another repository or identity shape.
   const outside: WorkRecordV1[] = [
     parked(9003, 2),
@@ -381,49 +429,41 @@ Deno.test("round cap policy: the legacy table is the owner's class at its pinned
   }
 });
 
-Deno.test("round cap policy: the table drift names every class member the table does not pin at its live count", () => {
+Deno.test("round cap policy: the class drift names every class-shaped record the rule leaves without its final round", () => {
   const blocked = (issue: number, rounds: number, message: string) =>
     legacy(issue, rounds, {
       nextStep: "blocked",
       blocker: { kind: "other", message, since: T0 },
     });
   const red = "CI checks failed: verify-artifact(skipped), validate(failure)";
-  const atPins = [...LEGACY_REVIEW_ROUND_PINS].map(([issue, pin]) =>
-    blocked(issue, pin, red)
+  const covered = blocked(595, 4, red);
+  const coveredRows = reviewCharges(covered.id, 4, { repository: AI });
+  // A round admitted after the cutoff (the old runtime, before the install).
+  const past = blocked(597, 6, red);
+  const pastRows = [
+    ...reviewCharges(past.id, 5, { repository: AI }),
+    charge(past, 6, "review_request", CUT + 1),
+  ];
+  // Every round after the cutoff: a record new under the CI-first runtime.
+  const fresh = blocked(1500, 3, red);
+  const freshRows = [1, 2, 3].map((attempt) =>
+    charge(fresh, attempt, "review_request", CUT + attempt)
   );
-  // At its cut the table is the class: no drift.
-  assert.deepEqual(
-    legacyReviewRoundTableDrift({ work: atPins, reservations: [] }),
-    [],
-  );
-  // Generation 79 parks one more record the same way after the cut, and
-  // spends one more round on a pinned record before the install.
-  const later = blocked(1500, 3, red);
-  const past = blocked(595, 5, red);
   const unrelated = [
-    blocked(1501, 2, red), // rounds left: not the class
+    blocked(1501, 2, red), // rounds left: not the class shape
     blocked(1502, 4, "task acceptance not fulfilled: the candidate"),
     legacy(1503, 4), // not parked
   ];
-  const work = [
-    ...atPins.filter((record) => record.id !== past.id),
-    past,
-    later,
-    ...unrelated,
-  ];
-  assert.deepEqual(legacyReviewRoundTableDrift({ work, reservations: [] }), [
-    { id: past.id, issue: 595, kind: "pin_mismatch", pin: 4, spent: 5 },
-    { id: later.id, issue: 1500, kind: "unpinned", pin: null, spent: 3 },
+  const snapshot = {
+    work: [covered, past, fresh, ...unrelated],
+    reservations: [...coveredRows, ...pastRows, ...freshRows],
+  };
+  assert.deepEqual(legacyReviewRoundClassDrift(snapshot, CUT), [
+    { id: past.id, issue: 597, kind: "pin_mismatch", pin: 5, spent: 6 },
+    { id: fresh.id, issue: 1500, kind: "unpinned", pin: null, spent: 3 },
   ]);
-  // The ledger is the count, as for the ceiling itself.
-  const lagging = blocked(1504, 1, red);
-  assert.deepEqual(
-    legacyReviewRoundTableDrift({
-      work: [lagging],
-      reservations: reviewCharges(lagging.id, 3, { repository: AI }),
-    }),
-    [{ id: lagging.id, issue: 1504, kind: "unpinned", pin: null, spent: 3 }],
-  );
+  // No cutoff (no CI-first runtime installed): nothing is reported here.
+  assert.deepEqual(legacyReviewRoundClassDrift(snapshot, null), []);
 });
 
 Deno.test("round cap policy: the latest completed review of the current head picks the park", () => {
@@ -493,7 +533,7 @@ Deno.test("round cap policy: the latest completed review of the current head pic
   );
 });
 
-Deno.test("round cap policy: only the five fixed blockers are ceiling parks", () => {
+Deno.test("round cap policy: the fixed blockers and every carried-delivery park are ceiling parks", () => {
   const blocked = (kind: string, message: string) =>
     task(3, {
       nextStep: "blocked",
@@ -506,8 +546,20 @@ Deno.test("round cap policy: only the five fixed blockers are ceiling parks", ()
       false,
     );
   }
+  // The carried-delivery parks carry their evidence after the fixed prefix:
+  // ceiling parks all the same (none of them deliverable).
   assert.equal(
     isReviewRoundCeilingPark(blocked("other", `${CAP_PREFIX}anything`)),
+    true,
+  );
+  assert.equal(
+    isDeliverableReviewRoundCeilingPark(
+      blocked("other", `${CAP_PREFIX}anything`),
+    ),
+    false,
+  );
+  assert.equal(
+    isReviewRoundCeilingPark(blocked("other", `x ${CAP_PREFIX}anything`)),
     false,
   );
   assert.equal(isReviewRoundCeilingPark(task(3)), false);

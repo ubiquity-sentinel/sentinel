@@ -135,6 +135,8 @@ export async function makeRig(
     localScope?: boolean;
     /** Run the cycle as a hosted (matrix) run does. */
     externalImplementations?: boolean;
+    /** The legacy review cutoff the launcher would hand the runtime. */
+    legacyReviewCutoff?: number;
   } = {},
 ): Promise<RigV1> {
   const ctx = await makeCtx(prefix);
@@ -193,6 +195,9 @@ export async function makeRig(
       ...(options.externalImplementations === undefined
         ? {}
         : { externalImplementations: options.externalImplementations }),
+      ...(options.legacyReviewCutoff === undefined
+        ? {}
+        : { legacyReviewCutoff: options.legacyReviewCutoff }),
     }, { deadline: clock.now() + deadlineMs, stepLimit: 16 });
   // The actual production entrypoint: the hosted receipt capability is only
   // reachable through this path, exactly as the hosted Actions host wires it.
@@ -208,6 +213,9 @@ export async function makeRig(
       replay,
       model,
       budget,
+      ...(options.legacyReviewCutoff === undefined
+        ? {}
+        : { legacyReviewCutoff: options.legacyReviewCutoff }),
     }, { deadline: clock.now() + deadlineMs, stepLimit: 16 });
   const snapshot = async () => {
     const read = await store.readRepair();

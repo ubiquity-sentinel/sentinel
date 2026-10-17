@@ -135,6 +135,8 @@ export function planBaseRefreshReadmissions(
   onDenied?: (denial: { id: string; reason: string }) => void,
   /** The installed runtime is a proven CI-first runtime (`ciFirstRuntimeProven`). */
   ciFirst = false,
+  /** The launcher's legacy review cutoff (`launcherLegacyCutoff`). */
+  cutoff: number | null = null,
 ): BaseRefreshCandidateV1[] {
   if (!isGitSha(runtimeSha)) return [];
   const legacyRuntime = BASE_REFRESH_LEGACY_RUNTIMES.has(runtimeSha);
@@ -170,11 +172,11 @@ export function planBaseRefreshReadmissions(
     ) continue;
     // The re-admitted refresh publishes a new head that needs a review round
     // of its own; with none left (the hard ceiling) the record stays blocked.
-    if (reviewRoundsLeft(snapshot, record) === 0) {
+    if (reviewRoundsLeft(snapshot, record, cutoff) === 0) {
       onDenied?.({ id: record.id, reason: "review_rounds_spent" });
       continue;
     }
-    // A listed legacy record's one final round is spent only on a green head.
+    // A legacy record's one final round is spent only on a green head.
     if (!legacyFinalRoundAdmissible(snapshot, record, ciFirst)) {
       onDenied?.({ id: record.id, reason: LEGACY_ROUND_REQUIRES_CI_FIRST });
       continue;

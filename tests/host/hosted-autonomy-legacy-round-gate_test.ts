@@ -1,15 +1,16 @@
 /**
- * Generation 80 integration: the launcher hands a listed legacy ai.ubq.fi
- * record its one final review round (owner decision 2026-10-16: "exactly ONE
- * final current-head review on the green head") only under a proven CI-first
- * runtime. The round-cap lane counts that round (pin + 1) in every launcher
- * re-admission; the CI-first lane gates its own legacy rule on the CI-first
- * runtime because R79, the rollback target, reviews a head before its CI.
- * Integrated, no re-admission may lead R79 to that review: the retry table's
- * review, work and conflict re-pend grants, the pre-review CI-first returns,
- * and the base-refresh re-admission all withhold it
- * (`legacy_round_requires_ci_first`) until the installed runtime is a proven
- * CI-first one, and then plan it. A record with an ordinary round left is
+ * Generation 80 integration: the launcher hands a legacy ai.ubq.fi record its
+ * one final review round (owner decision 2026-10-16: "exactly ONE final
+ * current-head review on the green head") only under a proven CI-first
+ * runtime, and only once a CI fix charged after the legacy cutoff armed it
+ * (`review-round-cap.ts`). Every launcher re-admission counts that round
+ * (pin + 1) through `reviewRoundsLeft` under the cutoff; the CI-first gate
+ * withholds it from R79, the rollback target, which reviews a head before
+ * its CI: the retry table's review, work and conflict re-pend grants, the
+ * pre-review CI-first returns and the base-refresh re-admission all withhold
+ * it (`legacy_round_requires_ci_first`) until the installed runtime is a
+ * proven CI-first one, and then plan it. An unarmed legacy record (no CI fix
+ * yet) has no round for any of them; a record with an ordinary round left is
  * unaffected, and a spent never-reviewed head is never returned for review.
  */
 import assert from "node:assert/strict";
@@ -29,7 +30,6 @@ import {
   candidateBranch,
   implementationIntentKey,
 } from "../../src/repair/keys.ts";
-import { LEGACY_REVIEW_ROUND_PINS } from "../../src/repair/review-round-cap.ts";
 import {
   BASE_REFRESH_AUTH_BLOCKERS,
   hostedRepositoryKey,
@@ -39,11 +39,18 @@ import {
 } from "../../ops/hosted-autonomy.ts";
 import { ciGreenHeadKey } from "../../ops/hosted-autonomy-ci-retries.ts";
 import {
+  ciCorrectionPlan,
+  GREEN_SPENT_LEFT_TO_DELIVERY,
+} from "../../ops/hosted-autonomy-retries.ts";
+import {
   LEGACY_ROUND_REQUIRES_CI_FIRST,
   legacyFinalRoundAdmissible,
 } from "../../ops/hosted-autonomy-ci-first.ts";
 import { reservation, SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
-import { blockedRecord } from "./hosted-autonomy-fixtures.ts";
+import {
+  authorizingReceipt,
+  blockedRecord,
+} from "./hosted-autonomy-fixtures.ts";
 import { healthyProof, repairSnapshot } from "./hosted-autonomy-rig.ts";
 
 const AI = {
@@ -57,6 +64,8 @@ const RUNTIME = SHA1;
 const TIP = SHA1;
 const TIPS = new Map([[hostedRepositoryKey(AI), TIP as string]]);
 const RED_PARK = "CI red before review; awaiting a CI fix: validate(failure)";
+/** The legacy cutoff: every seeded review admission (at T0) precedes it. */
+const CUT = T0 + 1;
 
 function installed(generation: number): HostedRuntimeRecordV1 {
   return {
@@ -124,6 +133,34 @@ function reviewCharges(record: WorkRecordV1, rounds: number) {
   );
 }
 
+/** The CI fix charged after the cutoff that arms the legacy final round. */
+function fix(record: WorkRecordV1, attempt = 3) {
+  return reservation(`${record.id}-ci-fix`, {
+    repository: AI,
+    taskId: record.id,
+    attempt,
+    head: SHA3,
+    purpose: "retry",
+    outcome: "submitted",
+    createdAt: CUT + 5,
+    settledAt: CUT + 6,
+  });
+}
+
+/** One review admission charged after the cutoff (the final review). */
+function finalReview(record: WorkRecordV1, attempt: number) {
+  return reservation(`${record.id}-review-final`, {
+    repository: AI,
+    taskId: record.id,
+    attempt,
+    head: SHA3,
+    purpose: "review_request",
+    outcome: "submitted",
+    createdAt: CUT + 20,
+    settledAt: CUT + 21,
+  });
+}
+
 /** Plans for one record under no proven runtime, or a proven CI-first one. */
 function plan(
   record: WorkRecordV1,
@@ -150,8 +187,12 @@ function plan(
         ciAllowlist: new Set([RUNTIME]),
         ciFirstAllowlist: new Set([RUNTIME]),
         ciGreenHeads: new Set([ciGreenHeadKey(AI, SHA3)]),
+        legacyReviewCutoff: CUT,
       }
-      : { ciGreenHeads: new Set([ciGreenHeadKey(AI, SHA3)]) },
+      : {
+        ciGreenHeads: new Set([ciGreenHeadKey(AI, SHA3)]),
+        legacyReviewCutoff: CUT,
+      },
   );
   return { plans, denials: denials.map((denial) => denial.reason) };
 }
@@ -164,7 +205,7 @@ Deno.test("legacy round gate: the review grant of a legacy final round waits for
       since: T0 + 3000,
     },
   });
-  const charges = reviewCharges(record, 4);
+  const charges = [...reviewCharges(record, 4), fix(record)];
   assert.deepEqual(plan(record, charges), {
     plans: [],
     denials: [LEGACY_ROUND_REQUIRES_CI_FIRST],
@@ -174,10 +215,16 @@ Deno.test("legacy round gate: the review grant of a legacy final round waits for
   assert.equal(proven.plans.length, 1);
   assert.equal(proven.plans[0]!.nextStep, "review");
   assert.equal(proven.plans[0]!.reviewRounds, 4);
+  // Unarmed (no CI fix yet), the final round is not a review's to spend.
+  assert.deepEqual(
+    plan(record, reviewCharges(record, 4), { ciFirst: true }).denials,
+    ["review_rounds_spent"],
+  );
   // Past the pin nothing is planned under any runtime.
   const spent = aiRecord(595, 5, { blocker: record.blocker });
   assert.deepEqual(
-    plan(spent, reviewCharges(spent, 5), { ciFirst: true }).denials,
+    plan(spent, [...charges, finalReview(spent, 5)], { ciFirst: true })
+      .denials,
     ["review_rounds_spent"],
   );
 });
@@ -190,7 +237,7 @@ Deno.test("legacy round gate: a work grant leading to the legacy final round wai
       since: T0 + 3000,
     },
   });
-  const charges = reviewCharges(record, 3);
+  const charges = [...reviewCharges(record, 3), fix(record)];
   const tips = new Map([[hostedRepositoryKey(AI), SHA2 as string]]);
   assert.deepEqual(plan(record, charges, { tips }), {
     plans: [],
@@ -231,14 +278,16 @@ Deno.test("legacy round gate: a moved-tip conflict re-pend of a legacy record co
   });
   const charges = [
     ...reviewCharges(record, 5),
+    fix(record, 2),
     reservation(charge, {
       repository: AI,
       taskId: record.id,
       head: SHA2,
-      attempt: 2,
+      attempt: 3,
       purpose: "retry",
       outcome: "ambiguous",
-      settledAt: T0 + 1000,
+      createdAt: CUT + 10,
+      settledAt: CUT + 1000,
     }),
   ];
   assert.deepEqual(plan(record, charges), {
@@ -250,7 +299,7 @@ Deno.test("legacy round gate: a moved-tip conflict re-pend of a legacy record co
   assert.equal(proven.plans[0]!.advanceBase, true);
   // One review past the pin: no resolution under any runtime.
   assert.deepEqual(
-    plan(record, [...charges, ...reviewCharges(record, 6).slice(5)], {
+    plan(record, [...charges, finalReview(record, 6)], {
       ciFirst: true,
     }).denials,
     ["conflict_resolution_rounds_spent"],
@@ -266,8 +315,9 @@ Deno.test("legacy round gate: a green pre-review park returns for review only wi
   const tips = new Map([[hostedRepositoryKey(AI), SHA2 as string]]);
   // A legacy record's CI-fixed head, green, on its unchanged base.
   const legacy = parked(668, 4);
-  assert.deepEqual(plan(legacy, reviewCharges(legacy, 4), { tips }).plans, []);
-  const proven = plan(legacy, reviewCharges(legacy, 4), {
+  const armed = [...reviewCharges(legacy, 4), fix(legacy)];
+  assert.deepEqual(plan(legacy, armed, { tips }).plans, []);
+  const proven = plan(legacy, armed, {
     tips,
     ciFirst: true,
   });
@@ -294,14 +344,20 @@ Deno.test("legacy round gate: a base-refresh re-admission of a legacy final roun
     },
     counters: { attempts: 4, retries: 0, reviewRounds: 3 },
   });
-  const readmit = (ciFirst: boolean) => {
+  const readmit = (ciFirst: boolean, armed = true) => {
     const denials: string[] = [];
     const candidates = planBaseRefreshReadmissions(
-      repairSnapshot([record], [], [], reviewCharges(record, 3)),
+      repairSnapshot(
+        [record],
+        [],
+        [],
+        [...reviewCharges(record, 3), ...(armed ? [fix(record)] : [])],
+      ),
       SHA1,
       new Set(),
       (denial) => denials.push(denial.reason),
       ciFirst,
+      CUT,
     );
     return { candidates: candidates.length, denials };
   };
@@ -310,10 +366,14 @@ Deno.test("legacy round gate: a base-refresh re-admission of a legacy final roun
     denials: [LEGACY_ROUND_REQUIRES_CI_FIRST],
   });
   assert.deepEqual(readmit(true), { candidates: 1, denials: [] });
+  assert.deepEqual(readmit(true, false), {
+    candidates: 0,
+    denials: ["review_rounds_spent"],
+  });
 });
 
 Deno.test("legacy round gate: the predicate passes every ordinary round and withholds exactly the legacy final ones", () => {
-  for (const [issue, pin] of LEGACY_REVIEW_ROUND_PINS) {
+  for (const [issue, pin] of [[595, 4], [618, 7], [645, 6], [1128, 5]]) {
     const record = aiRecord(issue, pin);
     const ledger = { reservations: reviewCharges(record, pin) };
     assert.equal(legacyFinalRoundAdmissible(ledger, record, false), false);
@@ -327,5 +387,75 @@ Deno.test("legacy round gate: the predicate passes every ordinary round and with
       false,
     ),
     true,
+  );
+});
+
+Deno.test("legacy round gate: a spent head is a CI correction only when its CI was read and is not green; green, it is never one", () => {
+  // Recheck (generation 80 round 1): a green legacy head on a moved base was
+  // handed to the runtime as a CI correction. Now a spent head is planned as
+  // a correction only from a CI read that is not green; green on its exact
+  // base it is the delivery pass's; green on a moved base it returns for the
+  // carried refresh only under a CI-first runtime, never as a correction.
+  const record = aiRecord(645, 6, {
+    blocker: {
+      kind: "other",
+      message: "CI checks failed: validate(failure)",
+      since: T0 + 3000,
+    },
+  });
+  const receipt = authorizingReceipt({
+    repository: AI,
+    pullRequest: { number: 1645, head: SHA3, base: SHA2 },
+  });
+  const key = ciGreenHeadKey(AI, SHA3);
+  const run = (
+    options: {
+      green?: boolean;
+      read?: boolean;
+      base?: string;
+      ciFirst?: boolean;
+    },
+  ) => {
+    const denials: RetryDenialV1[] = [];
+    const plans = planHostedRetries(
+      repairSnapshot([record], [receipt], [], reviewCharges(record, 6)),
+      NOW,
+      RUNTIME as GitSha,
+      new Map([[hostedRepositoryKey(AI), options.base ?? TIP]]),
+      new Set(),
+      (denial) => denials.push(denial),
+      {
+        ciRuntime: installed(80),
+        ciAllowlist: new Set([RUNTIME]),
+        ciFirstAllowlist: new Set(options.ciFirst === false ? [] : [RUNTIME]),
+        ciRerunSettled: new Set([key]),
+        ciGreenHeads: new Set(options.green === true ? [key] : []),
+        ciReadHeads: new Set(options.read === true ? [key] : []),
+        legacyReviewCutoff: CUT,
+      },
+    );
+    return { plans, denials: denials.map((denial) => denial.reason) };
+  };
+  // Read red: the legacy CI fix route (a correction slot).
+  const red = run({ read: true });
+  assert.equal(red.plans.length, 1);
+  assert.equal(red.plans[0]!.nextStep, "delivery");
+  assert.equal(ciCorrectionPlan(red.plans[0]!), true);
+  // Not read this pass: nothing, never a guess.
+  assert.deepEqual(run({}).plans, []);
+  // Green on its exact reviewed base: the delivery pass merges it.
+  const exact = run({ green: true, read: true, base: SHA2 });
+  assert.deepEqual(exact.plans, []);
+  assert.deepEqual(exact.denials, [GREEN_SPENT_LEFT_TO_DELIVERY]);
+  // Green on a moved base under a CI-first runtime: the carried refresh,
+  // which never counts against the correction cap.
+  const moved = run({ green: true, read: true });
+  assert.equal(moved.plans.length, 1);
+  assert.equal(moved.plans[0]!.detail.endsWith(":green"), true);
+  assert.equal(ciCorrectionPlan(moved.plans[0]!), false);
+  // Green on a moved base under any other runtime: parked, never a correction.
+  assert.deepEqual(
+    run({ green: true, read: true, ciFirst: false }).plans,
+    [],
   );
 });

@@ -134,6 +134,66 @@ export interface PrepareBaseRefreshRequestV1 {
 }
 
 /**
+ * One carried-review patch proof request (owner decision 2026-10-16 (2),
+ * option (b)): the reviewed identity (`reviewedHead` on `reviewedBase`) whose
+ * completed review authorized the merge, and the mechanically refreshed
+ * identity (`head` on `base`) that would carry that authorization.
+ */
+export interface CarriedPatchRequestV1 {
+  reviewedBase: GitSha;
+  reviewedHead: GitSha;
+  base: GitSha;
+  head: GitSha;
+}
+
+/**
+ * The patch proof, derived from git: each side's unique merge base and the
+ * SHA-256 (lowercase hex) of the exact bytes of its merge-base patch (`git
+ * diff --binary --full-index --no-renames <merge base> <head>`, every
+ * rendering option fixed). Full blob ids on every index line bind both sides
+ * of every changed path, so equal digests mean equal contents, modes, renames
+ * (as delete and add) and binary payloads. It authorizes nothing by itself
+ * (`carriedPatchHolds`).
+ */
+export interface CarriedPatchProofV1 {
+  reviewedMergeBase: GitSha;
+  reviewedPatch: string;
+  refreshedMergeBase: GitSha;
+  refreshedPatch: string;
+}
+
+/**
+ * True exactly when the refreshed head carries the reviewed patch: both
+ * digests are equal and the refreshed head contains the refreshed base (its
+ * merge base is that base), so merging it onto that base yields its own,
+ * CI-tested tree.
+ */
+export function carriedPatchHolds(
+  request: CarriedPatchRequestV1,
+  proof: CarriedPatchProofV1,
+): boolean {
+  return /^[0-9a-f]{64}$/.test(proof.reviewedPatch) &&
+    proof.reviewedPatch === proof.refreshedPatch &&
+    proof.refreshedMergeBase === request.base &&
+    request.head !== request.reviewedHead;
+}
+
+/**
+ * A carried merge: the merge request names the REVIEWED identity and its
+ * receipt (strictly parsed as ever); this names the refreshed head and base
+ * actually merged, which the port re-proves from git before the merge.
+ */
+export interface CarriedMergeV1 {
+  head: GitSha;
+  base: GitSha;
+  /**
+   * Plain evidence text appended to the merge commit message (the proof: both
+   * identities, both patch digests and the head's green checks).
+   */
+  evidence: string;
+}
+
+/**
  * Bounded static detail of a KNOWN deterministic integration conflict (the
  * two exact commits cannot be merged). It is the only base-refresh failure
  * that is a durable blocker; every other failure (identity mismatch, moved

@@ -40,7 +40,7 @@ import { CI_CORRECTION_REVIEW_ROUNDS } from "./ci-rejection.ts";
 import { baseRefreshIntentKey, candidateBranch } from "./keys.ts";
 import { releaseRequestMatchesDelivery } from "./loop-records.ts";
 import { headRejectedByReview } from "./loop-review-records.ts";
-import { reviewRoundsLeft } from "./review-round-cap.ts";
+import { type LegacyCutoff, reviewRoundsLeft } from "./review-round-cap.ts";
 
 /**
  * Whether a HOSTED run may open a conflict resolution. A hosted resolution
@@ -75,7 +75,7 @@ export function conflictResolutionRouteOpen(
  * ceiling, the hard review-round ceiling, which a test pins to
  * `HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS`. The shape counts it exactly as every
  * other review path does (`reviewRoundsLeft` over the durable ledger), so a
- * listed legacy record keeps its one final review for the resolved merge of
+ * legacy record keeps its one final review for the resolved merge of
  * its CI-fixed head (ai.ubq.fi 597 and 668 conflict on refresh).
  */
 export const CONFLICT_RESOLUTION_REVIEW_ROUNDS = CI_CORRECTION_REVIEW_ROUNDS;
@@ -241,6 +241,8 @@ export function resolvedConflictResolution(
 export function conflictResolutionShape(
   record: WorkRecordV1,
   snapshot: RepairStateSnapshotV1,
+  /** The legacy cutoff this run evaluates under (`review-round-cap.ts`). */
+  cutoff?: LegacyCutoff,
 ): boolean {
   const { head, pr, branch, base, candidateState } = record.target;
   if (
@@ -256,7 +258,7 @@ export function conflictResolutionShape(
     record.target.selfMerge !== undefined ||
     record.intent?.selfMerge !== undefined
   ) return false;
-  if (reviewRoundsLeft(snapshot, record) === 0) return false;
+  if (reviewRoundsLeft(snapshot, record, cutoff) === 0) return false;
   if (headRejectedByReview(snapshot, record)) return false;
   return !snapshot.releaseRequests.some((request) =>
     releaseRequestMatchesDelivery(request, record)
@@ -272,6 +274,7 @@ export function conflictResolutionAdmissible(
   routeOpen: boolean,
   snapshot: RepairStateSnapshotV1,
   record: WorkRecordV1,
+  cutoff?: LegacyCutoff,
 ): GitSha | null {
   if (!routeOpen || record.nextStep !== "work") return null;
   const intent = record.intent;
@@ -283,7 +286,7 @@ export function conflictResolutionAdmissible(
     intent.branch !== branch ||
     intent.key !== baseRefreshIntentKey(pr, head, mergeBase)
   ) return null;
-  return conflictResolutionShape(record, snapshot) ? mergeBase : null;
+  return conflictResolutionShape(record, snapshot, cutoff) ? mergeBase : null;
 }
 
 /**

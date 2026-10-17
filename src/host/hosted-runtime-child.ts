@@ -18,6 +18,7 @@ import {
   parentDirectory,
 } from "./hosted-runtime-identity.ts";
 import type { HostedRuntimeIdentityV1 } from "./hosted-runtime-identity.ts";
+import { LEGACY_REVIEW_CUTOFF_ENV } from "./legacy-review-cutoff-env.ts";
 import {
   APP_TOKEN_MINTED_NOT_BEFORE_ENV,
   APP_TOKEN_NOT_AFTER_ENV,
@@ -29,6 +30,12 @@ export function buildChildEnvironment(
   identity: HostedRuntimeIdentityV1,
   dirs: { home: string; tmp: string; denoDir: string },
   now: number,
+  /**
+   * The legacy review class's cutoff the launcher pinned for exactly the
+   * executed revision (`legacyReviewCutoffForExecution`); never read from the
+   * launcher's own environment. Null: the key is not set.
+   */
+  legacyReviewCutoff: number | null = null,
 ): Record<string, string> {
   const path = env.PATH;
   const githubToken = env.GITHUB_TOKEN;
@@ -101,6 +108,9 @@ export function buildChildEnvironment(
   ) {
     const value = env[key];
     if (isNonEmptyText(value)) child[key] = value;
+  }
+  if (legacyReviewCutoff !== null) {
+    child[LEGACY_REVIEW_CUTOFF_ENV] = String(legacyReviewCutoff);
   }
   if (identity.job === "matrix_plan") {
     const output = env.GITHUB_OUTPUT;

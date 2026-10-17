@@ -20,6 +20,7 @@ import {
 } from "./hosted-autonomy-delivery.ts";
 import {
   adoptableSpentMerge,
+  carriedDeliveryAction,
   latestAuthorizingReceipt,
   parkedStep,
   preMergeGate,
@@ -174,6 +175,13 @@ export async function runHostedDeliveryPass(
     const parked = parkedStep(record);
     if (parked && !spentDeliveryAdmissible(record, snapshot)) {
       actions.push(`delivery:${record.id}:spent_not_admissible`);
+      continue;
+    }
+    // A refreshed head the runtime merged under its carried review is
+    // delivered bookkeeping already: its proof is reported, nothing is read.
+    const carried = carriedDeliveryAction(snapshot, record);
+    if (carried !== null) {
+      actions.push(carried);
       continue;
     }
     // The exact receipts bound to this delivery identity decide whether the

@@ -24,6 +24,7 @@ import {
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import {
+  carriedRequestReceipt,
   identityBoundReviews,
   reviewBlocksMerge,
 } from "./hosted-autonomy-spent-delivery.ts";
@@ -141,13 +142,15 @@ export function planFollowUpCandidates(
     const key = `${hostedRepositoryKey(repository)}#${pullRequest}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    // A refreshed head merged under a carried review files the findings of
+    // the review it carried (the request names that exact receipt).
     const receipt = identityBoundReviews(
       snapshot.reviews,
       repository,
       pullRequest,
       request.source.head,
       request.source.base,
-    ).at(-1);
+    ).at(-1) ?? carriedRequestReceipt(snapshot.reviews, request) ?? undefined;
     if (receipt === undefined || reviewBlocksMerge(receipt)) continue;
     const findings = receipt.findings.filter((finding) =>
       !finding.resolved &&

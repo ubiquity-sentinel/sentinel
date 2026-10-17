@@ -5,6 +5,7 @@ import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { ciCorrectionShape } from "./ci-rejection.ts";
 import { isCiFixMarker } from "./ci-first-policy.ts";
+import type { LegacyCutoff } from "./review-round-cap.ts";
 import {
   releaseRequestMatchesDelivery,
   sameRepositoryIdentity,
@@ -111,9 +112,11 @@ export function headAwaitsCiCorrection(
   record: WorkRecordV1,
   /** `ciCorrectionRouteOpen(deps)`: a closed route awaits nothing. */
   ciRouteOpen = true,
+  /** The legacy cutoff this run evaluates under (`review-round-cap.ts`). */
+  cutoff?: LegacyCutoff,
 ): boolean {
   return ciRouteOpen && record.nextStep === "work" &&
-    ciCorrectionShape(record, snapshot) &&
+    ciCorrectionShape(record, snapshot, cutoff) &&
     !headRejectedByReview(snapshot, record) &&
     headAcceptedByReview(snapshot, record) &&
     !snapshot.releaseRequests.some((request) =>
@@ -150,10 +153,12 @@ export function headAwaitsPreReviewCiFix(
   record: WorkRecordV1,
   /** `preReviewCiFixRouteOpen(deps)`: a closed route awaits nothing. */
   routeOpen = false,
+  cutoff?: LegacyCutoff,
 ): boolean {
   const candidateState = record.target.candidateState;
   return routeOpen && record.nextStep === "work" &&
-    isCiFixMarker(record.wait) && ciCorrectionShape(record, snapshot) &&
+    isCiFixMarker(record.wait) &&
+    ciCorrectionShape(record, snapshot, cutoff) &&
     (candidateState === undefined ||
       candidateState.publishedHead === record.target.head) &&
     !headReviewCompleted(snapshot, record) &&
@@ -175,10 +180,12 @@ export function headNeedsCorrection(
   ciRouteOpen = true,
   /** `preReviewCiFixRouteOpen(deps)`: closed, no pre-review fix counts. */
   preReviewRouteOpen = false,
+  /** The legacy cutoff this run evaluates under (`review-round-cap.ts`). */
+  cutoff?: LegacyCutoff,
 ): boolean {
   return headRejectedByReview(snapshot, record) ||
-    headAwaitsCiCorrection(snapshot, record, ciRouteOpen) ||
-    headAwaitsPreReviewCiFix(snapshot, record, preReviewRouteOpen);
+    headAwaitsCiCorrection(snapshot, record, ciRouteOpen, cutoff) ||
+    headAwaitsPreReviewCiFix(snapshot, record, preReviewRouteOpen, cutoff);
 }
 
 /** Bounded batch of the exact unresolved findings a correction must resolve. */

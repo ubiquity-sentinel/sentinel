@@ -111,6 +111,8 @@ export interface RepairEntrypointDepsV1 {
   budget: BudgetControllerV1;
   /** Trusted matrix ownership: no serial implementation fallback or uncertainty settlement. */
   externalImplementations?: boolean;
+  /** The legacy review cutoff the launcher handed this run (null: none). */
+  legacyReviewCutoff?: number | null;
 }
 
 export interface RepairEntrypointOptionsV1 {
@@ -194,6 +196,7 @@ export async function runRepairEntrypoint(
         model: deps.model,
         budget: deps.budget,
         externalImplementations: deps.externalImplementations,
+        legacyReviewCutoff: deps.legacyReviewCutoff ?? null,
       },
       {
         deadline: hardDeadline - OPERATION_MARGIN_MS,

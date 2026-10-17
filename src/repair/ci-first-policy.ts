@@ -10,7 +10,7 @@
  * Pure policy shared by the runtime repair loop and the protected launcher:
  * no I/O, no clock, and nothing imported but types and the pure review-round
  * ceiling (`review-round-cap.ts`, which owns the round count and the one
- * legacy table), so the launcher can ship it before the runtime does.
+ * legacy rule), so the launcher can ship it before the runtime does.
  *
  * Rollback contract (generation 80, rollback target R79 549c7a691): nothing
  * here adds a field, key or enum value. The CI fix count is the existing
@@ -22,7 +22,12 @@
  */
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
-import { MAX_REVIEW_ROUNDS, reviewRoundsLeft } from "./review-round-cap.ts";
+import {
+  type LegacyCutoff,
+  legacyFinalRoundOpen,
+  MAX_REVIEW_ROUNDS,
+  reviewRoundsLeft,
+} from "./review-round-cap.ts";
 
 /**
  * Review rounds a record may spend (owner decision 2026-10-16: 3, hard): the
@@ -111,25 +116,26 @@ export function isCiFixMarker(wait: WorkWaitV1 | null): boolean {
 /**
  * One-time legacy exception (owner decision 2026-10-16): ai.ubq.fi records
  * that spent their review rounds under the old review-before-CI order and are
- * parked on a red head. Each gets its CI fixes and then exactly ONE final
- * current-head review on the green head. The table and the count are the
- * review-round ceiling's own (`LEGACY_REVIEW_ROUND_PINS`,
- * `legacyReviewRoundClassPin` and `reviewRoundsLeft` in `review-round-cap.ts`):
- * the owner's twelve (595, 597, 605, 610, 618, 668, 672, 673, 680, 694, 698,
- * 879) and the sixteen R79 parked the same way afterwards, each pinned at its
- * spent rounds at the table's cut (`LEGACY_REVIEW_ROUND_CUT`, repair state
- * 18369d9b9, 2026-10-17T09:07Z) and regenerated at the install. A listed
- * record's ceiling is its pin + 1, counted over the durable ledger, so the
- * final review spends it and a record that spent past its pin gets nothing.
+ * on a red head. Each gets its CI fixes and then exactly ONE final
+ * current-head review on the green head. The class and the count are the
+ * review-round ceiling's own rule (`legacyReviewRoundPin`,
+ * `legacyFinalRoundOpen`, `legacyFinalRoundArmed` and `reviewRoundsLeft` in
+ * `review-round-cap.ts`): at least three rounds admitted before the CI-first
+ * runtime's activation (`cutoff`, handed to the runtime by the launcher that
+ * pinned it), counted over the durable ledger, so the final review spends the
+ * round and a record that spent past its pin gets nothing.
  *
  * A review round is left for the head a CI fix (or a correction) produces
  * exactly when that count leaves one: fewer than `CI_FIRST_REVIEW_ROUNDS`
- * spent, or a listed legacy record's one final review. CI fix charges are not
- * `review_request` admissions and never count as review rounds.
+ * spent, or a legacy record whose final round is still open (a CI fix arms
+ * it for the fixed head's review). CI fix charges are not `review_request`
+ * admissions and never count as review rounds.
  */
 export function reviewRoundAvailable(
   ledger: { readonly reservations: readonly BudgetReservationV1[] },
   record: Parameters<typeof reviewRoundsLeft>[1],
+  cutoff?: LegacyCutoff,
 ): boolean {
-  return reviewRoundsLeft(ledger, record) > 0;
+  return reviewRoundsLeft(ledger, record, cutoff) > 0 ||
+    legacyFinalRoundOpen(ledger, record, cutoff);
 }

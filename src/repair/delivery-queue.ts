@@ -13,16 +13,19 @@
  * since 2026-10-16T00:00Z needed four or more reviewed heads, every one of
  * them clean, each new head a refresh after a base move.
  *
- * The queue serialises those refreshes. A reviewed delivery record with a
- * review round left whose base moved refreshes only when no other reviewed
- * record of its repository (an issue task with a published pull request and
- * at least one review round spent, not yet merged) is
+ * The queue serialises those refreshes. A reviewed delivery record whose
+ * base moved (with a review round left, or spent with a clean latest review,
+ * which refreshes mechanically and carries that review,
+ * `loop-carried-delivery.ts`) refreshes only when no other reviewed record of
+ * its repository (an issue task with a published pull request and at least
+ * one review round spent, not yet merged) is
  * - in flight on the current tip: published there and waiting for its CI or
- *   in a correction at `work` with a round left for its review, in review, or
- *   reviewed and waiting to merge in `delivery`;
- * - refreshing (a `base_refresh` intent) with a round left; or
- * - ahead of it in line: on a moved base too, with a round left, and a lower
- *   pull request number (then record id).
+ *   in a correction at `work` with a round left for its review, a refreshed
+ *   head at `work` heading for its carried merge, in review, or reviewed and
+ *   waiting to merge in `delivery`;
+ * - refreshing (a `base_refresh` intent); or
+ * - ahead of it in line: on a moved base too, with a round left or a clean
+ *   latest review, and a lower pull request number (then record id).
  * Otherwise the step defers: nothing is written, charged, refreshed, pushed or
  * requested, and the next run asks again. Only the record at the front of the
  * line refreshes, CI runs on its new head before its review, and it merges
@@ -49,7 +52,12 @@ import {
   releaseRequestMatchesDelivery,
   sameRepositoryIdentity,
 } from "./loop-records.ts";
-import { reviewRoundsLeft, reviewRoundsSpent } from "./review-round-cap.ts";
+import { carriedLine } from "./carried-review.ts";
+import {
+  type LegacyCutoff,
+  reviewRoundsLeft,
+  reviewRoundsSpent,
+} from "./review-round-cap.ts";
 
 /** Executions without durable progress after which a record holds nobody. */
 export const DELIVERY_QUEUE_STALL_LIMIT = 12;
@@ -59,7 +67,7 @@ export const DELIVERY_QUEUE_IDLE_MS = 2 * 60 * 60_000;
 
 type QueueSnapshot = Pick<
   RepairStateSnapshotV1,
-  "work" | "reservations" | "releaseRequests"
+  "work" | "reservations" | "releaseRequests" | "reviews"
 >;
 
 /** A reviewed, published, unmerged issue task that competes for the tip. */
@@ -104,6 +112,8 @@ export function deliveryQueueAhead(
   record: WorkRecordV1,
   tip: GitSha,
   now: number,
+  /** The legacy review cutoff of the run (`review-round-cap.ts`). */
+  cutoff?: LegacyCutoff,
 ): WorkRecordV1 | null {
   for (const other of snapshot.work) {
     if (
@@ -111,16 +121,20 @@ export function deliveryQueueAhead(
       !sameRepositoryIdentity(other.repository, record.repository) ||
       !contender(snapshot, other, now)
     ) continue;
-    const left = reviewRoundsLeft(snapshot, other);
+    const left = reviewRoundsLeft(snapshot, other, cutoff);
+    // A spent record whose latest review is clean refreshes and merges under
+    // the carried review instead of parking.
+    const carried = left === 0 && carriedLine(snapshot, other);
     if (other.target.base === tip) {
       // In review or reviewed and waiting to merge on the tip, or published
-      // there at `work` with a round left for the review it is heading to.
-      if (other.nextStep !== "work" || left > 0) return other;
+      // there at `work` with a round left for the review it is heading to (or
+      // a refreshed head heading for its carried merge).
+      if (other.nextStep !== "work" || left > 0 || carried) return other;
       continue;
     }
-    // A record with no round left parks instead of refreshing.
-    if (left === 0) continue;
     if (other.intent?.kind === "base_refresh") return other;
+    // A record with no round left and no clean review parks instead.
+    if (left === 0 && !carried) continue;
     if (lineBefore(other, record)) return other;
   }
   return null;

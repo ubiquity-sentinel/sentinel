@@ -143,6 +143,7 @@ function snapshotOf(work: WorkRecordV1[], releaseRequests: unknown[] = []) {
           }),
       )
     ),
+    reviews: [],
     releaseRequests,
   } as Parameters<typeof deliveryQueueAhead>[0];
 }

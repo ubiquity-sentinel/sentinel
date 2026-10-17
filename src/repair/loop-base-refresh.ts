@@ -26,6 +26,7 @@ import {
   failBaseRefresh,
 } from "./loop-base-refresh-failure.ts";
 import { configFor, retireClosedPublication } from "./loop-records.ts";
+import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -526,7 +527,11 @@ async function prepareRefreshHead(
       // until the resolution is admitted.
       if (
         conflictResolutionRouteOpen(deps) &&
-        conflictResolutionShape(record, context.snapshot)
+        conflictResolutionShape(
+          record,
+          context.snapshot,
+          legacyCutoff(context),
+        )
       ) {
         return persistWork(
           deps,

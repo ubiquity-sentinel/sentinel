@@ -46,13 +46,18 @@
  */
 
 import type { GitSha } from "../contracts/brands.ts";
-import type { PortResultV1 } from "../contracts/ports.ts";
+import type {
+  CarriedPatchProofV1,
+  CarriedPatchRequestV1,
+  PortResultV1,
+} from "../contracts/ports.ts";
 import {
   BASE_REFRESH_CONFLICT_DETAIL,
   portError,
   portOk,
 } from "../contracts/ports.ts";
 import { createDeadline } from "./http.ts";
+import { proveCarriedPatchWithGit } from "./git-carried-patch.ts";
 import {
   parseSelfMergeCommit,
   type SelfMergeClosureV1,
@@ -109,6 +114,16 @@ export interface GitExecutorV1 {
     base: GitSha,
   ): Promise<PortResultV1<GitSha>>;
   /**
+   * Optional carried-review patch proof (`git-carried-patch.ts`): each side's
+   * unique merge base and the SHA-256 of its exact binary merge-base patch,
+   * read only from the trusted local object store (no checkout, index, ref,
+   * hook, network or credential). Missing objects, an ambiguous or absent
+   * merge base and bounds are typed failures, never a proof.
+   */
+  carriedPatchProof?(
+    request: CarriedPatchRequestV1,
+  ): Promise<PortResultV1<CarriedPatchProofV1>>;
+  /**
    * Ordinary non-force push of the exact local candidate to the remote ref,
    * atomically guarded against the expected advertised ref value (null means
    * the ref must currently be absent). A response lost after the side effect
@@ -132,6 +147,8 @@ export interface GitRunResultV1 {
   ok: boolean;
   code: number;
   stdout: string;
+  /** The exact stdout bytes (binary-safe), when the run kept them. */
+  stdoutBytes?: Uint8Array;
   stderr: string;
   /** True when the run was aborted by the finite deadline. */
   timeout?: boolean;
@@ -364,6 +381,15 @@ export class DenoGitExecutor implements GitExecutorV1 {
       return portError("invalid", STATIC_BASE_REFRESH_OUTPUT);
     }
     return portOk(sha as GitSha);
+  }
+
+  carriedPatchProof(
+    request: CarriedPatchRequestV1,
+  ): Promise<PortResultV1<CarriedPatchProofV1>> {
+    return proveCarriedPatchWithGit(
+      (args, maxOutputBytes) => this.runGit(args, null, null, maxOutputBytes),
+      request,
+    );
   }
 
   /** True exactly when the exact commit object exists locally. */
@@ -631,6 +657,7 @@ export class DenoGitExecutor implements GitExecutorV1 {
     args: string[],
     hooksDir: string | null,
     stdin: string | null = null,
+    maxOutputBytes: number = this.maxOutputBytes,
   ): Promise<GitRunResultV1> {
     const path = Deno.env.get("PATH") ?? "/usr/bin:/bin";
     const commandArgs = hooksDir === null
@@ -682,21 +709,15 @@ export class DenoGitExecutor implements GitExecutorV1 {
     const deadline = createDeadline(this.timeoutMs);
     const streams = (async (): Promise<{
       stdout: string;
+      stdoutBytes: Uint8Array;
       stderr: string;
       overflow: boolean;
     }> => {
-      const out = await readStreamBounded(
-        stdout,
-        this.maxOutputBytes,
-        deadline,
-      );
-      const err = await readStreamBounded(
-        stderr,
-        this.maxOutputBytes,
-        deadline,
-      );
+      const out = await readStreamBounded(stdout, maxOutputBytes, deadline);
+      const err = await readStreamBounded(stderr, maxOutputBytes, deadline);
       return {
         stdout: out.text,
+        stdoutBytes: out.bytes,
         stderr: err.text,
         overflow: out.overflow || err.overflow,
       };
@@ -710,7 +731,12 @@ export class DenoGitExecutor implements GitExecutorV1 {
     let outcome:
       | {
         kind: "streams";
-        value: { stdout: string; stderr: string; overflow: boolean };
+        value: {
+          stdout: string;
+          stdoutBytes: Uint8Array;
+          stderr: string;
+          overflow: boolean;
+        };
       }
       | { kind: "timeout" }
       | { kind: "status-error" };
@@ -733,9 +759,12 @@ export class DenoGitExecutor implements GitExecutorV1 {
         return null;
       }
     })();
-    const partial = outcome.kind === "streams"
-      ? outcome.value
-      : { stdout: "", stderr: "", overflow: false };
+    const partial = outcome.kind === "streams" ? outcome.value : {
+      stdout: "",
+      stdoutBytes: new Uint8Array(0),
+      stderr: "",
+      overflow: false,
+    };
     if (outcome.kind === "streams" && !outcome.value.overflow) {
       // Streams closed normally; the child must exit. The deadline still
       // bounds the wait (a run that never exits after closing its streams
@@ -769,6 +798,7 @@ export class DenoGitExecutor implements GitExecutorV1 {
         ok: childStatus.success,
         code: childStatus.code,
         stdout: partial.stdout,
+        stdoutBytes: partial.stdoutBytes,
         stderr: partial.stderr,
       };
     }
@@ -795,7 +825,7 @@ async function readStreamBounded(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   maxBytes: number,
   deadline: ReturnType<typeof createDeadline>,
-): Promise<{ text: string; overflow: boolean }> {
+): Promise<{ text: string; bytes: Uint8Array; overflow: boolean }> {
   const chunks: Uint8Array[] = [];
   let total = 0;
   for (;;) {
@@ -809,18 +839,24 @@ async function readStreamBounded(
     if (step.done) break;
     total += step.value.byteLength;
     if (total > maxBytes) {
-      return { text: "", overflow: true };
+      return { text: "", bytes: new Uint8Array(0), overflow: true };
     }
     chunks.push(step.value);
   }
-  if (chunks.length === 0) return { text: "", overflow: false };
+  if (chunks.length === 0) {
+    return { text: "", bytes: new Uint8Array(0), overflow: false };
+  }
   const merged = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) {
     merged.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return { text: new TextDecoder().decode(merged), overflow: false };
+  return {
+    text: new TextDecoder().decode(merged),
+    bytes: merged,
+    overflow: false,
+  };
 }
 
 /**

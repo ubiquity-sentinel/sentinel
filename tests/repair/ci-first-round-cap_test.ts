@@ -2,16 +2,17 @@
  * Generation 80 integration of the CI-first pipeline with the hard
  * review-round ceiling (owner decisions 2026-10-16: three review rounds,
  * hard; CI first, then review; CI fixes never count as review rounds; the
- * listed legacy ai.ubq.fi records get their CI fixes and then exactly ONE
- * final current-head review on the green head).
+ * legacy ai.ubq.fi records get their CI fixes and then exactly ONE final
+ * current-head review on the green head).
  *
- * - one legacy table and one round count: the CI fix admission and the
- *   ceiling read `LEGACY_REVIEW_ROUND_PINS` through `reviewRoundsLeft` over
- *   the durable ledger, so a lagging counter never buys a fix the ceiling
- *   would then refuse to review;
+ * - one legacy rule and one round count: the CI fix admission and the
+ *   ceiling read the legacy cutoff through `reviewRoundAvailable` and
+ *   `reviewRoundsLeft` over the durable ledger, so a lagging counter never
+ *   buys a fix the ceiling would then refuse to review;
  * - a CI fix is a `retry` charge in `counters.retries`, never a review round;
- * - a listed legacy record whose CI-fixed head conflicts on its refresh keeps
- *   its one final review for the resolved merge (live 597 and 668 conflict);
+ *   charged after the cutoff it arms the legacy record's one final round;
+ * - a legacy record whose CI-fixed head conflicts on its refresh keeps its
+ *   one final review for the resolved merge (live 597 and 668 conflict);
  * - rollback: the pending resolution generation 80 writes for such a record
  *   parses under R79, and R79 neither grants a cell nor starts a model for it
  *   (its own shape refuses three or more rounds, so it runs the ordinary
@@ -40,7 +41,6 @@ import {
   isModelStartAction,
 } from "../../src/repair/loop-eligibility.ts";
 import {
-  LEGACY_REVIEW_ROUND_PINS,
   MAX_REVIEW_ROUNDS,
   reviewRoundsLeft,
 } from "../../src/repair/review-round-cap.ts";
@@ -58,6 +58,8 @@ const AIUBQ = {
 const HEAD = "e667676f3b729c8a9199b1793474c2908e31543a" as GitSha;
 const TIP = "b479053254d6114ecaf202be6ee5d24c144918f7" as GitSha;
 const CI_RED = "CI checks failed: verify-artifact(skipped), validate(failure)";
+/** The legacy cutoff: every seeded review admission (at T0) precedes it. */
+const CUT = T0 + 1;
 
 /** A published ai.ubq.fi issue record (legacy identity when listed). */
 function aiRecord(
@@ -112,7 +114,7 @@ function reviewCharges(record: WorkRecordV1, count: number) {
 }
 
 /** `count` CI fix charges (`retry` admissions) of one task. */
-function ciFixCharges(record: WorkRecordV1, count: number) {
+function ciFixCharges(record: WorkRecordV1, count: number, at = T0) {
   return Array.from(
     { length: count },
     (_, index) =>
@@ -123,36 +125,68 @@ function ciFixCharges(record: WorkRecordV1, count: number) {
         attempt: 4 + index,
         purpose: "retry",
         outcome: "submitted",
-        settledAt: T0 + 100 + index,
+        createdAt: at + index,
+        settledAt: at + 100 + index,
       }),
   );
 }
 
-Deno.test("CI first x round cap: one legacy table and one ledger count decide the legacy CI fix", () => {
+/** One review admission of `record` charged after the cutoff. */
+function lateReview(record: WorkRecordV1, attempt: number) {
+  return reservation(`${record.id}-review-late-${attempt}`, {
+    repository: record.repository,
+    taskId: record.id,
+    head: HEAD,
+    attempt,
+    purpose: "review_request",
+    outcome: "submitted",
+    createdAt: CUT + 50,
+    settledAt: CUT + 60,
+  });
+}
+
+Deno.test("CI first x round cap: one legacy rule and one ledger count decide the legacy CI fix", () => {
   assert.equal(CI_FIRST_REVIEW_ROUNDS, MAX_REVIEW_ROUNDS);
-  assert.equal(LEGACY_REVIEW_ROUND_PINS.size, 28);
-  for (const [issue, pin] of LEGACY_REVIEW_ROUND_PINS) {
+  // The owner's twelve and the in-flight records the table could never pin
+  // (645, 657: in review on red heads at the install) alike.
+  for (
+    const [issue, pin] of [[595, 4], [597, 5], [618, 7], [645, 6], [657, 6]]
+  ) {
     const record = aiRecord(issue, pin);
     const atPin = { reservations: reviewCharges(record, pin) };
-    assert.equal(reviewRoundsLeft(atPin, record), 1, `${issue} at its pin`);
-    assert.equal(reviewRoundAvailable(atPin, record), true);
-    assert.equal(ciCorrectable(record, atPin), true, `${issue} may be fixed`);
+    // Spent until a CI fix arms the final round; that fix is admissible.
+    assert.equal(reviewRoundsLeft(atPin, record, CUT), 0, `${issue} unarmed`);
+    assert.equal(reviewRoundAvailable(atPin, record, CUT), true);
+    assert.equal(ciCorrectable(record, atPin, CUT), true, `${issue} fixable`);
+    const armed = {
+      reservations: [
+        ...reviewCharges(record, pin),
+        ...ciFixCharges(record, 1, CUT),
+      ],
+    };
+    assert.equal(reviewRoundsLeft(armed, record, CUT), 1, `${issue} armed`);
     // A counter lagging the ledger never buys a fix the ceiling would then
-    // refuse to review: one charge past the pin spends the final round.
-    const past = { reservations: reviewCharges(record, pin + 1) };
-    assert.equal(reviewRoundsLeft(past, record), 0, `${issue} past its pin`);
-    assert.equal(ciCorrectable(record, past), false, `${issue} spent`);
-    // A lowered counter still counts the ledger's rounds: one final review.
+    // refuse to review: a review charged after the cutoff spends the round.
+    const past = {
+      reservations: [
+        ...reviewCharges(record, pin),
+        lateReview(record, pin + 1),
+      ],
+    };
+    assert.equal(reviewRoundsLeft(past, record, CUT), 0, `${issue} past pin`);
+    assert.equal(ciCorrectable(record, past, CUT), false, `${issue} spent`);
+    // A lowered counter still counts the ledger's rounds.
     const lowered = aiRecord(issue, 0);
-    assert.equal(reviewRoundsLeft(atPin, lowered), 1);
-    assert.equal(ciCorrectable(lowered, atPin), true);
+    assert.equal(ciCorrectable(lowered, atPin, CUT), true);
+    // No cutoff (no CI-first runtime): nothing is legacy.
+    assert.equal(ciCorrectable(record, atPin, null), false);
   }
-  const unlisted = aiRecord(596, 6);
-  assert.equal(
-    ciCorrectable(unlisted, { reservations: reviewCharges(unlisted, 6) }),
-    false,
-    "596 is not listed",
-  );
+  // A record whose rounds all followed the cutoff is new: no legacy fix.
+  const fresh = aiRecord(1596, 3);
+  const after = {
+    reservations: [1, 2, 3].map((attempt) => lateReview(fresh, attempt)),
+  };
+  assert.equal(ciCorrectable(fresh, after, CUT), false, "new under R80");
 });
 
 Deno.test("CI first x round cap: CI fixes are retry charges and never spend a review round", () => {
@@ -167,9 +201,9 @@ Deno.test("CI first x round cap: CI fixes are retry charges and never spend a re
         ...ciFixCharges(record, fixes),
       ],
     };
-    assert.equal(reviewRoundsLeft(ledger, fixed), 1, `${fixes} fixes`);
+    assert.equal(reviewRoundsLeft(ledger, fixed, CUT), 1, `${fixes} fixes`);
     assert.equal(
-      ciCorrectable(fixed, ledger),
+      ciCorrectable(fixed, ledger, CUT),
       fixes < CI_FIX_ATTEMPTS,
       `${fixes} of ${CI_FIX_ATTEMPTS} fixes spent`,
     );
@@ -202,12 +236,21 @@ function conflicted(issue: number, rounds: number): WorkRecordV1 {
   );
 }
 
+/**
+ * `reviewRounds` old review admissions and one CI fix charged after the
+ * cutoff (it armed the legacy final round); `final` adds that final review.
+ */
 function snapshotOf(
   record: WorkRecordV1,
   reviewRounds: number,
+  final = false,
 ): RepairStateSnapshotV1 {
   return seededSnapshot([record], {
-    reservations: reviewCharges(record, reviewRounds),
+    reservations: [
+      ...reviewCharges(record, reviewRounds),
+      ...ciFixCharges(record, 1, CUT),
+      ...(final ? [lateReview(record, reviewRounds + 1)] : []),
+    ],
   });
 }
 
@@ -217,23 +260,40 @@ Deno.test("CI first x round cap: a legacy CI-fixed head that conflicts on refres
   for (const [issue, pin] of [[597, 5], [668, 4]] as const) {
     const pending = conflicted(issue, pin);
     const snapshot = snapshotOf(pending, pin);
-    assert.equal(conflictResolutionShape(pending, snapshot), true, `${issue}`);
     assert.equal(
-      conflictResolutionAdmissible(true, snapshot, pending),
+      conflictResolutionShape(pending, snapshot, CUT),
+      true,
+      `${issue}`,
+    );
+    assert.equal(
+      conflictResolutionAdmissible(true, snapshot, pending, CUT),
       TIP,
       `${issue} resolution admissible`,
     );
-    const spent = snapshotOf(pending, pin + 1);
-    assert.equal(conflictResolutionShape(pending, spent), false, "final spent");
+    const spent = snapshotOf(pending, pin, true);
+    assert.equal(
+      conflictResolutionShape(pending, spent, CUT),
+      false,
+      "final spent",
+    );
+    // Without a cutoff the record is no legacy record.
+    assert.equal(conflictResolutionShape(pending, snapshot, null), false);
   }
-  // An unlisted record at the ordinary ceiling gets no resolution.
+  // A record new under the CI-first runtime at the ceiling gets none: its
+  // rounds all followed the cutoff, so a CI fix arms nothing.
   const ordinary = conflicted(1583, MAX_REVIEW_ROUNDS);
-  assert.equal(
-    conflictResolutionShape(ordinary, snapshotOf(ordinary, MAX_REVIEW_ROUNDS)),
-    false,
-  );
+  const fresh = seededSnapshot([ordinary], {
+    reservations: [
+      ...[1, 2, 3].map((attempt) => lateReview(ordinary, attempt)),
+      ...ciFixCharges(ordinary, 1, CUT + 100),
+    ],
+  });
+  assert.equal(conflictResolutionShape(ordinary, fresh, CUT), false);
   const below = conflicted(1583, 2);
-  assert.equal(conflictResolutionShape(below, snapshotOf(below, 2)), true);
+  assert.equal(
+    conflictResolutionShape(below, snapshotOf(below, 2), CUT),
+    true,
+  );
 });
 
 Deno.test({
@@ -282,8 +342,13 @@ Deno.test({
         ),
         false,
       );
-      // This tree admits it (one cell, then the final review).
-      assert.equal(isModelStartAction(snapshot, pending, true, true), true);
+      // This tree admits it under the cutoff (one cell, then the final
+      // review), and never without one.
+      assert.equal(
+        isModelStartAction(snapshot, pending, true, true, false, CUT),
+        true,
+      );
+      assert.equal(isModelStartAction(snapshot, pending, true, true), false);
       assert.equal(
         isMatrixImplementationReadyV1(
           pending,
@@ -292,6 +357,8 @@ Deno.test({
           T0 + 8000,
           true,
           true,
+          false,
+          CUT,
         ),
         true,
       );

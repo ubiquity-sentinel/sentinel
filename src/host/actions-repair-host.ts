@@ -24,6 +24,10 @@ import { portError, portOk } from "../contracts/ports.ts";
 import { RollingStartBudget } from "../budget/mod.ts";
 import { HostedRepairCooldownGate } from "./hosted-cooldown.ts";
 import {
+  LEGACY_REVIEW_CUTOFF_ENV,
+  parseLegacyReviewCutoffEnv,
+} from "./legacy-review-cutoff-env.ts";
+import {
   parseHostedEnvironment,
   readHostedIdentityEnv,
   readHostedRuntimeExecution,
@@ -738,6 +742,12 @@ export async function runActionsRepairHost(
       // no model starts while keeping every budget, limit and source behavior.
       modelStartsEnabled,
       externalImplementations: deps.job !== undefined,
+      // The legacy review class's cutoff, handed over by the launcher that
+      // pinned it for exactly this runtime (`review-round-cap.ts`); a missing
+      // or malformed value grants no legacy round (fails closed).
+      legacyReviewCutoff: parseLegacyReviewCutoffEnv(
+        optionalEnv(readEnv, LEGACY_REVIEW_CUTOFF_ENV),
+      ),
       host: {
         execution,
         run: {

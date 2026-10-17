@@ -13,7 +13,7 @@ import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import type * as Eligibility from "../../src/repair/loop-eligibility.ts";
 import type * as ReviewRecords from "../../src/repair/loop-review-records.ts";
-import { SHA1, SHA2, SHA3 } from "../state/helpers.ts";
+import { SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
 import { assertGen79Parses } from "../state/gen77-contracts.ts";
 import {
   gen79Available,
@@ -150,6 +150,8 @@ const SCENARIOS: ScenarioV1[] = [
       nextStep: "delivery",
       baseTip: SHA2,
       checks: RED,
+      // The launcher-pinned cutoff: all four rounds were charged before it.
+      legacyReviewCutoff: T0,
     },
     expect: (record) => {
       assert.equal(record.nextStep, "work");

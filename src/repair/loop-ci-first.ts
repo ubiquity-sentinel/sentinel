@@ -68,6 +68,7 @@ import {
   headAcceptedByReview,
   headAwaitsPreReviewCiFix,
 } from "./loop-review-records.ts";
+import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -172,7 +173,8 @@ function routeCandidateFailure(
   // that clears between a rollback and that admission reaches R79's own
   // non-failing exit into delivery.)
   if (
-    ciCorrectionRouteOpen(deps) && ciCorrectable(record, context.snapshot) &&
+    ciCorrectionRouteOpen(deps) &&
+    ciCorrectable(record, context.snapshot, legacyCutoff(context)) &&
     headAcceptedByReview(context.snapshot, record)
   ) {
     return persistWork(deps, context, advanceToCorrection(record, now));
@@ -186,6 +188,7 @@ function routeCandidateFailure(
       context.snapshot,
       marked,
       preReviewCiFixRouteOpen(deps),
+      legacyCutoff(context),
     )
   ) return persistWork(deps, context, marked);
   return persistWork(

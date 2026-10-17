@@ -12,7 +12,6 @@ import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { candidateBranch, reviewOperationKey } from "../src/repair/keys.ts";
 import {
   HOSTED_AUTONOMY_MAX_RETRIES,
-  HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS,
   HOSTED_AUTONOMY_RETRYABLE,
   hostedIssueKey,
   hostedRepositoryKey,
@@ -20,7 +19,6 @@ import {
 } from "./hosted-autonomy-policy.ts";
 import { evidenceExpired } from "./hosted-autonomy-evidence-expiry.ts";
 import {
-  legacyReviewRoundPin,
   ordinaryReviewRoundsSpent,
   reviewRoundsLeft,
 } from "../src/repair/review-round-cap.ts";
@@ -35,6 +33,7 @@ import {
   ciFirstRuntimeProven,
   HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
   HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
+  launcherLegacyCutoff,
   LEGACY_ROUND_REQUIRES_CI_FIRST,
   legacyFinalRoundAdmissible,
   preReviewCiParked,
@@ -351,20 +350,25 @@ function planCiFirstReadmission(
   ciRerunSettled: ReadonlySet<string>,
   ciFixRuntime: boolean,
   ciFirst: boolean,
+  cutoff: number | null,
 ): RetryPlanV1 | null {
   const blocker = record.blocker;
   const head = record.target.head;
   if (
     blocker === null || head === null ||
     !preReviewCiParked(snapshot, record) ||
-    !reviewRoundAvailable(snapshot, record) ||
+    !reviewRoundAvailable(snapshot, record, cutoff) ||
     !legacyFinalRoundAdmissible(snapshot, record, ciFirst)
   ) return null;
   const key = ciGreenHeadKey(record.repository, head);
+  // A green head returns for its review: only with a review round left (an
+  // open legacy final round is a CI fix's to arm, not a review's).
   const green = baseTips.get(hostedRepositoryKey(record.repository)) ===
-      record.target.base && ciGreenHeads.has(key);
+      record.target.base &&
+    ciGreenHeads.has(key) &&
+    reviewRoundsLeft(snapshot, record, cutoff) > 0;
   const fix = !green && ciFixRuntime && ciRerunSettled.has(key) &&
-    preReviewFixEligible(snapshot, record);
+    preReviewFixEligible(snapshot, record, cutoff);
   if (!green && !fix) return null;
   const prefix = blocker.message.slice(0, blocker.message.indexOf(":") + 1);
   return {
@@ -439,6 +443,20 @@ export function planHostedRetries(
      */
     ciFirstAllowlist?: ReadonlySet<string>;
     ciFirstFixAllowlist?: ReadonlySet<string>;
+    /**
+     * `ciGreenHeadKey` values of the heads whose CI the caller actually read
+     * (green or not). A head whose ordinary review rounds are spent is never
+     * planned as a CI correction unless its CI was read and is not green: a
+     * green spent head merges through the spent-round rule at its exact base
+     * or returns to `delivery` for the carried refresh on a moved base.
+     */
+    ciReadHeads?: ReadonlySet<string>;
+    /**
+     * The legacy review cutoff (`launcherLegacyCutoff`), replaced for tests
+     * only; by default the installed runtime's pinned cutoff, under a proven
+     * CI-first runtime.
+     */
+    legacyReviewCutoff?: number | null;
   } = {},
 ): RetryPlanV1[] {
   if (!isGitSha(runtimeSha)) return [];
@@ -460,6 +478,10 @@ export function planHostedRetries(
     );
   const ciRerunSettled = options.ciRerunSettled ?? new Set<string>();
   const ciGreenHeads = options.ciGreenHeads ?? new Set<string>();
+  const ciReadHeads = options.ciReadHeads ?? ciGreenHeads;
+  const cutoff = options.legacyReviewCutoff !== undefined
+    ? options.legacyReviewCutoff
+    : launcherLegacyCutoff(ciRuntime, ciFirst);
   const plans: RetryPlanV1[] = [];
   for (const record of snapshot.work) {
     if (record.nextStep !== "blocked") continue;
@@ -527,13 +549,10 @@ export function planHostedRetries(
           )
         ) continue;
         // A resolved merge needs a review round of its own, counted as the
-        // runtime's conflict shape counts it (`reviewRoundsLeft`); a listed
-        // legacy record's final round only under a CI-first runtime.
-        if (
-          (record.counters.reviewRounds >= HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS &&
-            legacyReviewRoundPin(record) === null) ||
-          reviewRoundsLeft(snapshot, record) === 0
-        ) {
+        // runtime's conflict shape counts it (`reviewRoundsLeft`); a legacy
+        // record's final round (armed by its CI fix) only under a CI-first
+        // runtime.
+        if (reviewRoundsLeft(snapshot, record, cutoff) === 0) {
           onDenied?.({
             id: record.id,
             repository: record.repository,
@@ -576,6 +595,7 @@ export function planHostedRetries(
         ciRerunSettled,
         ciFixRuntime,
         ciFirst,
+        cutoff,
       );
       if (ciFirstPlan !== null) plans.push(ciFirstPlan);
       continue;
@@ -590,23 +610,28 @@ export function planHostedRetries(
     // counter movement here; the runtime decides correction or deferral.
     if (rule.nextStep === "delivery") {
       const head = record.target.head;
+      const key = head === null
+        ? null
+        : ciGreenHeadKey(record.repository, head);
+      const exactBase = record.target.base !== null &&
+        baseTips.get(hostedRepositoryKey(record.repository)) ===
+          record.target.base;
+      const spent = ordinaryReviewRoundsSpent(snapshot, record);
+      const headGreen = key !== null && ciGreenHeads.has(key) &&
+        ciGreenRedeliveryEligible(snapshot, record);
       // A head that is green again on its exact reviewed base (a re-run
       // flake) passes any runtime's merge gate, so it needs no correction
       // route and no review round, and never counts against the per-pass
       // correction cap.
-      const green = head !== null && record.target.base !== null &&
-        baseTips.get(hostedRepositoryKey(record.repository)) ===
-          record.target.base &&
-        ciGreenHeads.has(ciGreenHeadKey(record.repository, head)) &&
-        ciGreenRedeliveryEligible(snapshot, record);
-      // A green head whose ordinary review rounds are spent (a listed legacy
-      // record included) is the spent-round rule's: the delivery pass, later
-      // in this same maintenance pass, re-reads the tip and merges that exact
+      let green = headGreen && exactBase;
+      // A green head whose ordinary review rounds are spent (a legacy record
+      // included) is the spent-round rule's: the delivery pass, later in
+      // this same maintenance pass, re-reads the tip and merges that exact
       // head at its exact reviewed base or refuses. Handed to the runtime's
       // `delivery` step instead, this write would settle the record for the
       // rest of the pass, and a base that moved before the runtime's step
-      // would make R79 refresh it and review it a fourth time (R80 parks it).
-      if (green && ordinaryReviewRoundsSpent(snapshot, record)) {
+      // would make R79 refresh it and review it a fourth time.
+      if (green && spent) {
         onDenied?.({
           id: record.id,
           repository: record.repository,
@@ -614,13 +639,23 @@ export function planHostedRetries(
         });
         continue;
       }
+      // A spent head green on a MOVED base returns to `delivery` only under a
+      // proven CI-first runtime, whose delivery step refreshes it
+      // mechanically and merges it under its carried review once the
+      // refreshed head is green (no review round, no CI fix, never a
+      // correction slot). Under any other runtime it would be refreshed and
+      // reviewed a fourth time, so it stays parked.
+      if (headGreen && !exactBase && spent && ciFirst) green = true;
       // A correction only once the head's flake re-run can no longer act. A
-      // record correctable only through its one-time legacy final review
+      // record correctable only through its one-time legacy final round
       // (every ordinary round spent) needs the CI-first runtime: under any
-      // other its refreshed head would be reviewed while still red.
-      const corrected = !green && ciCorrection && head !== null &&
-        ciRerunSettled.has(ciGreenHeadKey(record.repository, head)) &&
-        ciRedeliveryEligible(snapshot, record) &&
+      // other its refreshed head would be reviewed while still red. A spent
+      // head is planned as a correction only when its CI was read and is not
+      // green, so a green legacy head is never handed over as a correction.
+      const corrected = !green && !headGreen && ciCorrection &&
+        key !== null && ciRerunSettled.has(key) &&
+        (!spent || ciReadHeads.has(key)) &&
+        ciRedeliveryEligible(snapshot, record, cutoff) &&
         legacyFinalRoundAdmissible(snapshot, record, ciFirst);
       if (!corrected && !green) continue;
       plans.push({
@@ -643,7 +678,10 @@ export function planHostedRetries(
     // reviewed verdict, so the grant is provably futile and is refused: the
     // delivery pass owns the record's receipt instead. A review-returning
     // grant has its own gate below.
-    if (rule.nextStep === "work" && reviewRoundsLeft(snapshot, record) === 0) {
+    if (
+      rule.nextStep === "work" &&
+      reviewRoundsLeft(snapshot, record, cutoff) === 0
+    ) {
       onDenied?.({
         id: record.id,
         repository: record.repository,
@@ -701,7 +739,7 @@ export function planHostedRetries(
     // (`reviewRoundsLeft`, owner decision 2026-10-16) the grant is refused
     // outright: a base advance would only buy a refreshed head that needs one
     // more round, the churn that took ai.ubq.fi 684 / PR 1059 to 50 rounds.
-    // Within the allowance (below three, or a listed legacy record's one
+    // Within the allowance (below three, or a legacy record's one
     // final round) the review is of the record's current head.
     if (rule.nextStep === "review") {
       const head = record.target.head;
@@ -718,7 +756,7 @@ export function planHostedRetries(
         ...record,
         counters: { ...record.counters, reviewRounds: rounds },
       };
-      if (reviewRoundsLeft(snapshot, planned) === 0) {
+      if (reviewRoundsLeft(snapshot, planned, cutoff) === 0) {
         onDenied?.({
           id: record.id,
           repository: record.repository,

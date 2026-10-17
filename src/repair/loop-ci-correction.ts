@@ -38,6 +38,7 @@ import {
   headAcceptedByReview,
   headTaskAcceptanceMissing,
 } from "./loop-review-records.ts";
+import { legacyCutoff } from "./loop-review-round-cap.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -139,15 +140,20 @@ export async function routeFailedDeliveryChecks(
   // refuses it (`ciCorrectionRouteOpen`) keeps the generation-76 block exactly
   // (no base read).
   if (
-    !ciCorrectionRouteOpen(deps) || !ciCorrectable(record, context.snapshot)
+    !ciCorrectionRouteOpen(deps) ||
+    !ciCorrectable(record, context.snapshot, legacyCutoff(context))
   ) {
     // A head the runtime would correct but for its spent CI fixes parks with
     // the exact exhausted detail, which no launcher rule re-admits.
     const exhausted = ciCorrectionRouteOpen(deps) && !ciFixesLeft(record) &&
-      ciCorrectable({
-        ...record,
-        counters: { ...record.counters, retries: 0 },
-      }, context.snapshot);
+      ciCorrectable(
+        {
+          ...record,
+          counters: { ...record.counters, retries: 0 },
+        },
+        context.snapshot,
+        legacyCutoff(context),
+      );
     return persistBlocked(
       deps,
       context,
@@ -213,7 +219,8 @@ export async function correctFailedHeadBeforeRefresh(
   record: WorkRecordV1,
 ): Promise<StepResultV1 | null> {
   if (
-    !ciCorrectionRouteOpen(deps) || !ciCorrectable(record, context.snapshot) ||
+    !ciCorrectionRouteOpen(deps) ||
+    !ciCorrectable(record, context.snapshot, legacyCutoff(context)) ||
     !headAcceptedByReview(context.snapshot, record)
   ) return null;
   const observed = await observeHeadFailure(deps, record);

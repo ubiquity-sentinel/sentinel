@@ -284,7 +284,10 @@ export async function liveRig(
  * Test-only deps: `spentMovedBaseMerge` exercises the moved-base gate (D3),
  * which ships disabled.
  */
-export type SpentDepsV1 = Pick<HostedAutonomyDepsV1, "spentMovedBaseMerge">;
+export type SpentDepsV1 = Pick<
+  HostedAutonomyDepsV1,
+  "spentMovedBaseMerge" | "legacyReviewCutoff"
+>;
 
 /** The deps that enable the moved-base merge (D3) for a test of its gate. */
 export const MOVED_BASE: SpentDepsV1 = { spentMovedBaseMerge: true };

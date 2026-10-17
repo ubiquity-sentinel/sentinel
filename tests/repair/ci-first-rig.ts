@@ -81,6 +81,8 @@ export interface CiFirstRigOptions {
   heads?: GitSha[];
   /** Run the loop as a hosted (matrix) run does. */
   hosted?: boolean;
+  /** The legacy review cutoff the launcher hands the runtime. */
+  legacyReviewCutoff?: number;
   /** Repository, task identity and issue of the record (legacy shapes). */
   identity?: {
     repository: RepositoryIdentityV1;
@@ -101,6 +103,9 @@ export async function ciFirstRig(prefix: string, options: CiFirstRigOptions) {
   const rig = await makeRig(prefix, {
     summaries: false,
     ...(options.hosted === true ? { externalImplementations: true } : {}),
+    ...(options.legacyReviewCutoff === undefined
+      ? {}
+      : { legacyReviewCutoff: options.legacyReviewCutoff }),
     ...(identity === undefined
       ? {}
       : { configOverrides: { repository: identity.repository } }),

@@ -88,6 +88,7 @@ export async function loadSnapshot(
     head: read.value.head,
     bounds,
     executionBaseline: null,
+    legacyReviewCutoff: deps.legacyReviewCutoff ?? null,
   };
   if (
     deps.clock.now() < bounds.runDeadline &&
@@ -152,6 +153,7 @@ export async function seedSnapshot(
     head: written.value.head,
     bounds,
     executionBaseline: null,
+    legacyReviewCutoff: deps.legacyReviewCutoff ?? null,
   };
 }
 

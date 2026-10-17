@@ -31,12 +31,14 @@ import {
 } from "./hosted-autonomy-ci-retries.ts";
 import { readCiRerunSettled } from "./hosted-autonomy-ci-rerun.ts";
 import {
-  legacyReviewRoundTableDrift,
+  legacyReviewRoundClassDrift,
+  legacyReviewRoundClassPin,
   ordinaryReviewRoundsSpent,
 } from "../src/repair/review-round-cap.ts";
 import {
   ciFirstRuntimeProven,
   HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+  launcherLegacyCutoff,
   preReviewCiParked,
 } from "./hosted-autonomy-ci-first.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
@@ -61,6 +63,76 @@ import {
 
 /** Legacy class drift lines reported per pass (the rest are counted). */
 export const LEGACY_DRIFT_REPORTS_PER_PASS = 12;
+
+/** Spent CI-parked heads whose CI one pass reads (CI-first runtime only). */
+export const HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS = 16;
+
+/**
+ * At most `HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS` of `ids`, starting at an
+ * offset that advances every five minutes so none is starved.
+ */
+export function spentCiReadWindow(
+  ids: readonly string[],
+  now: number,
+): Set<string> {
+  if (ids.length <= HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS) {
+    return new Set(ids);
+  }
+  const offset = Number.isSafeInteger(now) && now >= 0
+    ? Math.floor(now / 300_000) % ids.length
+    : 0;
+  return new Set(
+    [...ids.slice(offset), ...ids.slice(0, offset)].slice(
+      0,
+      HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS,
+    ),
+  );
+}
+
+/**
+ * The pass's legacy class report, state-free. The one-time legacy class is a
+ * rule over the installed runtime's pinned cutoff: every record of the
+ * owner's class shape (CI-red parked, three or more rounds) the rule leaves
+ * without its final round is named (at most
+ * `LEGACY_DRIFT_REPORTS_PER_PASS`, then a count), so a record it leaves out
+ * is never silent. A proven CI-first runtime without a pinned cutoff (the
+ * rule is off while the runtime that would grant the round runs) reports
+ * only their count; under any other runtime no final round is granted to
+ * anyone (`legacy_round_requires_ci_first`) and nothing is reported.
+ */
+export function legacyClassDriftActions(
+  snapshot: RepairStateSnapshotV1,
+  cutoff: number | null,
+  ciFirst: boolean,
+): string[] {
+  const actions: string[] = [];
+  if (cutoff === null) {
+    if (!ciFirst) return actions;
+    const shaped = snapshot.work.filter((record) =>
+      legacyReviewRoundClassPin(snapshot, record) !== null
+    ).length;
+    if (shaped > 0) {
+      actions.push(`retry:legacy_class:denied:cutoff_unpinned=${shaped}`);
+    }
+    return actions;
+  }
+  const drift = legacyReviewRoundClassDrift(snapshot, cutoff);
+  for (const item of drift.slice(0, LEGACY_DRIFT_REPORTS_PER_PASS)) {
+    actions.push(
+      `retry:${item.id}:denied:legacy_class_${item.kind}:pin=${
+        item.pin ?? "none"
+      }:spent=${item.spent}`,
+    );
+  }
+  if (drift.length > LEGACY_DRIFT_REPORTS_PER_PASS) {
+    actions.push(
+      `retry:legacy_class:denied:drift_more=${
+        drift.length - LEGACY_DRIFT_REPORTS_PER_PASS
+      }`,
+    );
+  }
+  return actions;
+}
 
 /**
  * Read-only source facts shared by bookkeeping and the later retry grant. A
@@ -249,30 +321,52 @@ export async function runHostedRetryPass(
   // before its review) whose base tip is still the record's base is read for
   // green CI on its OWN repository surface (a re-run flake, or CI that
   // finished late); only a head proven all green there can re-admit. A
-  // merge-gate park whose ordinary rounds are spent is the delivery pass's
-  // spent-round rule's (it reads its own CI), so it is not read here.
+  // merge-gate park whose ordinary rounds are spent is read only under a
+  // proven CI-first runtime (at any base, at most
+  // `HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS` per pass, rotating): green at
+  // its exact base it is the spent-round rule's, green on a moved base it
+  // returns for the carried refresh, and only a read red one may be planned
+  // as a (legacy) CI correction, never a green one.
+  const ciFirst = ciFirstRuntimeProven(installedRuntime);
+  const legacyCutoff = deps.legacyReviewCutoff !== undefined
+    ? deps.legacyReviewCutoff
+    : launcherLegacyCutoff(installedRuntime, ciFirst);
   const ciGreenHeads = new Set<string>();
+  const ciReadHeads = new Set<string>();
+  const spentReads = spentCiReadWindow(
+    snapshot.work.filter((record) =>
+      ciFirst && record.nextStep === "blocked" &&
+      record.target.head !== null &&
+      ciGreenRedeliveryEligible(snapshot, record) &&
+      ordinaryReviewRoundsSpent(snapshot, record)
+    ).map((record) => record.id),
+    deps.clock.now(),
+  );
   for (const record of snapshot.work) {
     const head = record.target.head;
+    const spentRead = spentReads.has(record.id);
     if (
       record.nextStep !== "blocked" || head === null ||
       !((ciGreenRedeliveryEligible(snapshot, record) &&
         !ordinaryReviewRoundsSpent(snapshot, record)) ||
-        preReviewCiParked(snapshot, record)) ||
+        preReviewCiParked(snapshot, record) || spentRead) ||
       closedIssues.has(
         hostedIssueKey(record.repository, record.related.issueNumber!),
       )
     ) continue;
     const scope = await scopeFor(record.repository);
     if (
-      scope.surface === null || retryTips.get(scope.key) !== record.target.base
+      scope.surface === null ||
+      (!spentRead && retryTips.get(scope.key) !== record.target.base)
     ) continue;
-    let green = false;
+    let green: boolean | null = null;
     try {
       green = await scope.surface.hasAllChecksGreen(head);
     } catch {
-      green = false;
+      green = null;
     }
+    if (green === null) continue;
+    ciReadHeads.add(ciGreenHeadKey(record.repository, head));
     if (green) ciGreenHeads.add(ciGreenHeadKey(record.repository, head));
   }
   // Flake first: a CI-parked head is re-admitted for a correction only once
@@ -302,27 +396,15 @@ export async function runHostedRetryPass(
     },
     // The same authenticated record carries the healthy proof the CI
     // re-admission requires; nothing else can activate that rule.
-    { ciRuntime: installedRuntime, ciRerunSettled, ciGreenHeads },
+    {
+      ciRuntime: installedRuntime,
+      ciRerunSettled,
+      ciGreenHeads,
+      ciReadHeads,
+      legacyReviewCutoff: legacyCutoff,
+    },
   );
-  // The one-time legacy table is pinned at its cut while generation 79 keeps
-  // parking records into the owner's class: every class member the table does
-  // not pin at its live count is reported on every pass (state-free), so a
-  // drifted table is never silent (docs/DECISIONS.md: regenerate at the cut).
-  const drift = legacyReviewRoundTableDrift(snapshot);
-  for (const item of drift.slice(0, LEGACY_DRIFT_REPORTS_PER_PASS)) {
-    actions.push(
-      `retry:${item.id}:denied:legacy_class_${item.kind}:pin=${
-        item.pin ?? "none"
-      }:spent=${item.spent}`,
-    );
-  }
-  if (drift.length > LEGACY_DRIFT_REPORTS_PER_PASS) {
-    actions.push(
-      `retry:legacy_class:denied:drift_more=${
-        drift.length - LEGACY_DRIFT_REPORTS_PER_PASS
-      }`,
-    );
-  }
+  actions.push(...legacyClassDriftActions(snapshot, legacyCutoff, ciFirst));
   const plans: RetryPlanV1[] = [];
   // The per-pass CI correction cap counts only corrections this pass admits
   // after the pull request checks below. A plan dropped there (closed,
@@ -391,7 +473,8 @@ export async function runHostedRetryPass(
       (denial) => {
         actions.push(`retry:${denial.id}:denied:${denial.reason}`);
       },
-      ciFirstRuntimeProven(installedRuntime),
+      ciFirst,
+      legacyCutoff,
     ).filter((plan) => !settled(plan.id)),
     scopeFor,
     actions,

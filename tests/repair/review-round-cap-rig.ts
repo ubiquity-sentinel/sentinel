@@ -395,6 +395,8 @@ export interface CapRigOptionsV1 {
   blocker?: WorkRecordV1["blocker"];
   reservations?: BudgetReservationV1[];
   reviews?: ReviewReceiptV1[];
+  /** The legacy review cutoff the runtime runs under (none by default). */
+  legacyReviewCutoff?: number;
   /** Overrides applied to the seeded record after the defaults. */
   record?: Record<string, unknown>;
 }
@@ -459,6 +461,9 @@ export async function capRig(options: CapRigOptionsV1 = {}) {
     replay: new FakeReplay(),
     model,
     budget: new RollingStartBudget({ clock, state, configs }),
+    ...(options.legacyReviewCutoff === undefined
+      ? {}
+      : { legacyReviewCutoff: options.legacyReviewCutoff }),
   };
   const head = options.head === undefined ? SHA3 : options.head;
   const record = workRecord(id, {

@@ -1,10 +1,12 @@
 // port merge.
 
 import type {
+  CarriedMergeV1,
   MergeOutcomeV1,
   MergeRequestV1,
   PortResultV1,
 } from "../contracts/ports.ts";
+import { isGitSha } from "../contracts/brands.ts";
 import type { SelfMergeExecutionV1 } from "../contracts/self-merge.ts";
 import { executeSelfMerge } from "./port-self-merge.ts";
 import { decideCiGate } from "../repair/loop-checks.ts";
@@ -13,7 +15,7 @@ import {
   mergeSemanticRefusal,
   parseMergeRequestV1,
 } from "../contracts/merge-request.ts";
-import { portError, portOk } from "../contracts/ports.ts";
+import { carriedPatchHolds, portError, portOk } from "../contracts/ports.ts";
 import { completedReviewMatchesReceipt } from "./review-normalize.ts";
 import {
   checkReviewTaskStatement,
@@ -36,6 +38,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
   async mergePullRequest(
     request: MergeRequestV1,
     execution?: SelfMergeExecutionV1,
+    carried?: CarriedMergeV1,
   ): Promise<PortResultV1<MergeOutcomeV1>> {
     // 1. Strict parse against the trusted adapter policy: the request can
     // never name another repository or select the trusted reviewer.
@@ -51,6 +54,18 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       return portError("invalid", "merge request is malformed");
     }
     const merge = parsed.value;
+    // A carried merge (owner decision 2026-10-16 (2), option (b)): `merge`
+    // names the REVIEWED head and base its receipt binds (strictly parsed
+    // above); the pull request is merged at the refreshed head on its base,
+    // and only after the patch proof below. Never a self merge.
+    if (
+      carried !== undefined &&
+      (execution !== undefined || !isGitSha(carried.head) ||
+        !isGitSha(carried.base) || carried.head === merge.expectedHead ||
+        typeof carried.evidence !== "string")
+    ) return portError("invalid", "merge request is malformed");
+    const head = carried?.head ?? merge.expectedHead;
+    const base = carried?.base ?? merge.expectedBase;
     const native = () =>
       executeSelfMerge(
         {
@@ -76,7 +91,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       return portError("not_found", "pull request not found");
     }
     if (pull.value.state === "merged") {
-      if (pull.value.head !== merge.expectedHead) {
+      if (pull.value.head !== head) {
         return blocked("head_mismatch", null);
       }
       return portOk({
@@ -88,10 +103,10 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     if (pull.value.state === "closed") {
       return blocked("conflict", pull.value.head);
     }
-    if (pull.value.head !== merge.expectedHead) {
+    if (pull.value.head !== head) {
       return blocked("head_mismatch", pull.value.head);
     }
-    if (pull.value.base !== merge.expectedBase) {
+    if (pull.value.base !== base) {
       return blocked("base_mismatch", pull.value.head);
     }
     // Never merge human-owned/unassigned target work.
@@ -103,6 +118,8 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     const normalizedRes = await this.currentReviewEvidence(
       merge.pullRequestNumber,
       merge,
+      undefined,
+      carried === undefined ? undefined : merge.expectedHead,
     );
     if (!normalizedRes.ok) {
       // The existing error object is returned as-is: rate-limit metadata
@@ -120,7 +137,10 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     // prove each resolved finding's immutable reference against the exact
     // repo/PR/head/fingerprint/author; a caller-supplied resolved:true with an
     // allowlisted author name is never authentication by itself.
-    if (!(await this.resolutionsTrusted(merge.review, pull.value))) {
+    const reviewedPull = carried === undefined
+      ? pull.value
+      : { ...pull.value, head: merge.expectedHead };
+    if (!(await this.resolutionsTrusted(merge.review, reviewedPull))) {
       return blocked("review_required", pull.value.head);
     }
     // 4. Effective protections are the ACTIVE branch rules (branch-rules
@@ -157,10 +177,11 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       }));
       return blocked("protection_required", pull.value.head);
     }
-    // 5. Required checks all passing on the exact head.
-    const checks = await this.client.readChecks(merge.expectedHead);
+    // 5. Required checks all passing on the exact head (a carried merge: the
+    // refreshed head itself, whose CI ran on exactly the merged tree).
+    const checks = await this.client.readChecks(head);
     if (!checks.ok) return blocked("protection_required", pull.value.head);
-    if (checks.value.head !== merge.expectedHead) {
+    if (checks.value.head !== head) {
       return blocked("protection_required", pull.value.head);
     }
     const checkState = requiredChecksState(
@@ -186,13 +207,30 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     }
     // 7. Candidate ancestry: the candidate must contain the exact integrated
     // validated base as ancestor.
-    const ancestor = await this.git.isAncestor(
-      merge.expectedBase,
-      merge.expectedHead,
-    );
+    const ancestor = await this.git.isAncestor(base, head);
     if (!ancestor.ok) return ancestor;
     if (!ancestor.value) {
       return blocked("base_mismatch", pull.value.head);
+    }
+    // 7a. Carried merge: the refreshed head carries the reviewed patch, re-
+    // proven from git at merge time (both merge-base patches byte-identical,
+    // the refreshed base contained). No proof capability, a typed failure or
+    // a differing patch never merges.
+    if (carried !== undefined) {
+      const proveRequest = {
+        reviewedBase: merge.expectedBase,
+        reviewedHead: merge.expectedHead,
+        base,
+        head,
+      };
+      const proof = await this.git.carriedPatchProof?.(proveRequest);
+      if (proof === undefined) {
+        return blocked("review_required", pull.value.head);
+      }
+      if (!proof.ok) return proof;
+      if (!carriedPatchHolds(proveRequest, proof.value)) {
+        return blocked("review_required", pull.value.head);
+      }
     }
     // 7b. Semantic task authorization, immediately before the merge mutation.
     // A receipt copy is never fulfillment evidence: the adapter independently
@@ -239,13 +277,14 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     // precheck; a rejection is reconciled against the re-observed PR.
     const merged = await this.client.mergePull(
       merge.pullRequestNumber,
-      merge.expectedHead,
+      head,
+      carried?.evidence,
     );
     if (!merged.ok) return merged;
     if (merged.value.status === "merged") {
       return portOk({
         outcome: "merged",
-        head: merge.expectedHead,
+        head: head,
         mergeSha: merged.value.mergeSha,
       });
     }
@@ -260,7 +299,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       }
       if (
         check.value !== null && check.value.state === "merged" &&
-        check.value.head === merge.expectedHead
+        check.value.head === head
       ) {
         return portOk({
           outcome: "merged",
@@ -274,7 +313,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     if (!after.ok) return after;
     if (after.value === null) return blocked("protection_required", null);
     if (after.value.state === "merged") {
-      if (after.value.head !== merge.expectedHead) {
+      if (after.value.head !== head) {
         return blocked("head_mismatch", after.value.head);
       }
       return portOk({
@@ -286,14 +325,14 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     if (after.value.state === "closed") {
       return blocked("conflict", after.value.head);
     }
-    if (after.value.head !== merge.expectedHead) {
+    if (after.value.head !== head) {
       return blocked("head_mismatch", after.value.head);
     }
-    if (after.value.base !== merge.expectedBase) {
+    if (after.value.base !== base) {
       return blocked("base_mismatch", after.value.head);
     }
-    const checksAfter = await this.client.readChecks(merge.expectedHead);
-    if (checksAfter.ok && checksAfter.value.head === merge.expectedHead) {
+    const checksAfter = await this.client.readChecks(head);
+    if (checksAfter.ok && checksAfter.value.head === head) {
       const stateAfter = requiredChecksState(
         protections.value.requiredCheckNames,
         checksAfter.value.checks,

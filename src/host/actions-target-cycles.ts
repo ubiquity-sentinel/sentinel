@@ -190,6 +190,12 @@ export interface ActionsTargetCyclesInputV1 {
   stepLimit: number;
   modelStartsEnabled: boolean;
   externalImplementations?: boolean;
+  /**
+   * The one-time legacy review class's cutoff the launcher handed this run
+   * (`SENTINEL_LEGACY_REVIEW_CUTOFF`, `review-round-cap.ts`); absent or null
+   * means no record is legacy.
+   */
+  legacyReviewCutoff?: number | null;
   /** Exact trusted runtime assembly supplied to the matrix executable seam. */
   host?: {
     execution: HostedExecutionIntentV1;
@@ -333,6 +339,7 @@ export async function runActionsTargetCycles(
         model: input.model,
         budget: input.budget,
         externalImplementations: input.externalImplementations,
+        legacyReviewCutoff: input.legacyReviewCutoff ?? null,
       }, {
         deadline: input.deadline,
         stepLimit: input.stepLimit,

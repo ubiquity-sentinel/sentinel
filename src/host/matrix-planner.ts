@@ -384,6 +384,7 @@ export async function planMatrixWave(
           ciRouteOpen,
           conflictRouteOpen,
           preReviewRouteOpen,
+          context.legacyReviewCutoff ?? null,
         );
     });
     if (nextId === undefined) break;
@@ -402,6 +403,7 @@ export async function planMatrixWave(
         ciRouteOpen,
         conflictRouteOpen,
         preReviewRouteOpen,
+        context.legacyReviewCutoff ?? null,
       )
     ) {
       notReady++;

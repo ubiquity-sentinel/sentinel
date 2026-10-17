@@ -20,7 +20,7 @@ import type { GitSha } from "../contracts/brands.ts";
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
-import { MAX_REVIEW_ROUNDS } from "./review-round-cap.ts";
+import { type LegacyCutoff, MAX_REVIEW_ROUNDS } from "./review-round-cap.ts";
 import {
   CI_FIX_EXHAUSTED_PREFIX,
   CI_PRE_REVIEW_PENDING_PREFIX,
@@ -286,15 +286,18 @@ export function isCiCorrectionFinding(
  * (`counters.retries` below `CI_FIX_ATTEMPTS`) and a review round left for
  * the fixed head (`reviewRoundAvailable`: the hard ceiling's own count over
  * the durable ledger, `reviewRoundsLeft`, so a lowered or lagging counter
- * never buys a correction no review could accept, and a listed legacy record
- * keeps its one final review). CI fixes never count as review rounds.
+ * never buys a correction no review could accept, and a legacy record whose
+ * final round is still open gets its CI fixes for that one final review).
+ * CI fixes never count as review rounds.
  */
 export function ciCorrectionShape(
   record: WorkRecordV1,
   ledger: { readonly reservations: readonly BudgetReservationV1[] },
+  /** The legacy cutoff this run evaluates under (`review-round-cap.ts`). */
+  cutoff?: LegacyCutoff,
 ): boolean {
   return ciPublicationShape(record) && ciFixesLeft(record) &&
-    reviewRoundAvailable(ledger, record);
+    reviewRoundAvailable(ledger, record, cutoff);
 }
 
 /**
@@ -344,6 +347,7 @@ export function preReviewUnattributedDetail(
 export function ciCorrectable(
   record: WorkRecordV1,
   ledger: { readonly reservations: readonly BudgetReservationV1[] },
+  cutoff?: LegacyCutoff,
 ): boolean {
-  return record.intent === null && ciCorrectionShape(record, ledger);
+  return record.intent === null && ciCorrectionShape(record, ledger, cutoff);
 }

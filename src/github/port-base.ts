@@ -2,9 +2,11 @@
 
 import type { GitSha } from "../contracts/brands.ts";
 import type { ReviewNormalizationV1 } from "./review-normalize.ts";
+import type { SelfMergeExecutionV1 } from "../contracts/self-merge.ts";
 import type {
   AlreadySatisfiedClosureRequestV1,
   CandidatePreservationRequestV1,
+  CarriedMergeV1,
   Clock,
   GitHubBranchProtectionsV1,
   GitHubChecksV1,
@@ -224,6 +226,8 @@ export abstract class GitHubPortBase {
       expectedHead: GitSha;
       review: { requestId: string; id: string };
     },
+    provedBase?: GitSha,
+    reviewedHead?: GitSha,
   ): Promise<
     | { ok: true; normalized: ReviewNormalizationV1 | null }
     | { ok: false; error: PortErrorV1 }
@@ -262,6 +266,8 @@ export abstract class GitHubPortBase {
 
   abstract mergePullRequest(
     request: MergeRequestV1,
+    execution?: SelfMergeExecutionV1,
+    carried?: CarriedMergeV1,
   ): Promise<PortResultV1<MergeOutcomeV1>>;
 
   abstract closeAlreadySatisfiedTask(

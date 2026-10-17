@@ -46,6 +46,27 @@ export const REVIEW_ROUND_CEILING_BASE_MOVED =
 export const REVIEW_ROUND_CEILING_REVIEWED =
   `${REVIEW_ROUND_CEILING_PREFIX}the reviewed head awaits delivery`;
 
+/**
+ * Parks of the carried-review delivery (`loop-carried-delivery.ts`), each a
+ * fixed prefix followed by its exact evidence. None is ever merged by the
+ * launcher; each is final for the runtime (no further refresh, fix or review).
+ */
+/** The reviewed head's own CI stayed pending past the bound (moved base). */
+export const REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX =
+  `${REVIEW_ROUND_CEILING_PREFIX}the reviewed head's required CI did not finish within 6 hours: `;
+/** The refreshed head's patch is not the reviewed patch. */
+export const REVIEW_ROUND_CEILING_CARRIED_PATCH_CHANGED_PREFIX =
+  `${REVIEW_ROUND_CEILING_PREFIX}the refreshed head does not carry the reviewed patch: `;
+/** The refreshed head's own required CI failed. */
+export const REVIEW_ROUND_CEILING_CARRIED_CI_FAILED_PREFIX =
+  `${REVIEW_ROUND_CEILING_PREFIX}the refreshed head's required CI failed: `;
+/** The refreshed head's own required CI stayed pending past the bound. */
+export const REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX =
+  `${REVIEW_ROUND_CEILING_PREFIX}the refreshed head's required CI did not finish within 6 hours: `;
+/** The patch proof or the carried merge stayed unavailable past the bound. */
+export const REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX =
+  `${REVIEW_ROUND_CEILING_PREFIX}the carried delivery stalled for 6 hours: `;
+
 /** Every park message, in a fixed order. */
 export const REVIEW_ROUND_CEILING_MESSAGES: readonly string[] = [
   REVIEW_ROUND_CEILING_UNREVIEWED,
@@ -56,59 +77,83 @@ export const REVIEW_ROUND_CEILING_MESSAGES: readonly string[] = [
 ];
 
 /**
- * One-time legacy exception (owner decision 2026-10-16): ai.ubq.fi records
- * whose rounds were spent under the old review-before-CI order and whose CI is
- * red each get exactly ONE final current-head review. The table is that class
- * (`legacyReviewRoundClassPin`) evaluated over live repair state
- * `LEGACY_REVIEW_ROUND_CUT` (commit 18369d9b9, manifest sequence 38912,
- * 2026-10-17T09:07Z): the owner's twelve (595, 597, 605, 610, 618, 668, 672,
- * 673, 680, 694, 698, 879, exactly the class at the decision-time state,
- * sequence 36388) and the sixteen that generation 79 parked the same way
- * since (137, 575, 602, 634, 638, 678, 679, 693, 754 by sequence 37449, then
- * 583, 615, 617, 629, 633, 650 and 1128). Generation 79 keeps adding to the
- * class until generation 80 installs, so the table is regenerated from the
- * state generation 80 installs over (the cut) and the launcher reports every
- * class member the table does not pin at its live count, every pass
- * (`legacyReviewRoundTableDrift`). Each pin is the record's spent rounds at
- * the cut; the ceiling is the pin + 1, so a record that spent past its pin
- * gets nothing (fails closed).
+ * One-time legacy exception (owner decision 2026-10-16), by rule: ai.ubq.fi
+ * issue records whose review rounds were spent under the old
+ * review-before-CI order and whose CI is red each get their CI fixes and then
+ * exactly ONE final current-head review on the green head.
+ *
+ * "Spent under the old order" is "admitted before the CI-first runtime was
+ * activated". `cutoff` is an instant no later than that activation: the
+ * launcher pins it beside the runtime revision it installs
+ * (`LEGACY_REVIEW_CUTOFF_RUNTIMES`, the instant of the launcher commit that
+ * pins that install, written before the install can happen) and hands it to
+ * that runtime's runs; with no pinned cutoff (null) nothing is legacy. A
+ * record's pin is the rounds it had spent before the cutoff
+ * (`legacyReviewRoundPin`), and the record is in the class once that pin
+ * reaches `MAX_REVIEW_ROUNDS`:
+ *
+ * - a record new under the CI-first runtime has no admission before its
+ *   activation, so its pin is 0 and it can never get a fourth round;
+ * - a record in flight at the activation (in review or delivery on a red
+ *   head, live 645, 646, 657, 663 and 1140) carries every round it spent, so
+ *   it is covered whatever step it is in, with no table to regenerate;
+ * - a round the old runtime admitted after the cutoff (between the pin
+ *   commit and the install) is not counted, so that record has spent past
+ *   its pin and gets no final round (fails closed; the launcher reports it,
+ *   `legacyReviewRoundClassDrift`).
+ *
+ * The final round is OPEN while the record has spent exactly its pin
+ * (`legacyFinalRoundOpen`): only a CI fix may then be admitted for it (the
+ * CI fix route acts on a red head alone). It is ARMED once a CI fix (a
+ * counted `retry` admission) was charged at or after the cutoff
+ * (`legacyFinalRoundArmed`): only then may a review spend it. So a class
+ * member whose head is green, or whose latest review left an unresolved
+ * P0/P1, gets no further review: its rounds are spent like any other record's.
  */
-export const LEGACY_REVIEW_ROUND_PINS: ReadonlyMap<number, number> = new Map([
-  [137, 5],
-  [575, 3],
-  [583, 4],
-  [595, 4],
-  [597, 5],
-  [602, 6],
-  [605, 3],
-  [610, 3],
-  [615, 3],
-  [617, 3],
-  [618, 7],
-  [629, 3],
-  [633, 3],
-  [634, 4],
-  [638, 5],
-  [650, 3],
-  [668, 4],
-  [672, 3],
-  [673, 7],
-  [678, 6],
-  [679, 6],
-  [680, 4],
-  [693, 3],
-  [694, 3],
-  [698, 9],
-  [754, 3],
-  [879, 3],
-  [1128, 5],
-]);
+export interface LegacyReviewCutoffV1 {
+  /** The exact runtime revision; never a generation number. */
+  revision: string;
+  /**
+   * Epoch milliseconds no later than the revision's first activation: the
+   * instant of the launcher commit that pins its install.
+   */
+  activatedNotBefore: number;
+}
 
-/** The live repair state commit `LEGACY_REVIEW_ROUND_PINS` was derived at. */
-export const LEGACY_REVIEW_ROUND_CUT = {
-  stateCommit: "18369d9b95da761ec5ca5c59ce7335ced6c429e0",
-  sequence: 38912,
-} as const;
+/**
+ * The CI-first runtimes whose runs receive a legacy cutoff, each pinned with
+ * the instant of the launcher commit that pins its install. Empty until the
+ * generation-80 runtime is pinned for installation; that same commit adds
+ * its row.
+ */
+export const LEGACY_REVIEW_CUTOFF_RUNTIMES: readonly LegacyReviewCutoffV1[] =
+  [];
+
+/**
+ * The legacy cutoff of exactly `revision`, or null: its pinned bound must be
+ * a positive safe integer no later than any recorded execution of that
+ * revision (`executions`, creation instants from release custody), otherwise
+ * it is provably not that runtime's activation bound and nothing is legacy.
+ */
+export function legacyReviewCutoffFor(
+  revision: string,
+  executions: readonly number[],
+  pinned: readonly LegacyReviewCutoffV1[] = LEGACY_REVIEW_CUTOFF_RUNTIMES,
+): number | null {
+  const row = pinned.find((entry) => entry.revision === revision);
+  if (row === undefined) return null;
+  const bound = row.activatedNotBefore;
+  return validLegacyCutoff(bound) && executions.every((at) => at >= bound)
+    ? bound
+    : null;
+}
+
+/** A cutoff is a positive safe integer epoch instant, or nothing. */
+export function validLegacyCutoff(cutoff: unknown): cutoff is number {
+  return typeof cutoff === "number" && Number.isSafeInteger(cutoff) &&
+    cutoff > 0;
+}
+
 const LEGACY_REPOSITORY: RepositoryIdentityV1 = {
   owner: "ubiquity",
   name: "ai.ubq.fi",
@@ -120,6 +165,8 @@ type RoundRecord = Pick<
   "id" | "repository" | "source" | "related" | "counters" | "intent" | "target"
 >;
 type Ledger = { readonly reservations: readonly BudgetReservationV1[] };
+/** The legacy cutoff an evaluation runs under; absent or null is none. */
+export type LegacyCutoff = number | null | undefined;
 
 function sameRepository(
   a: RepositoryIdentityV1,
@@ -140,10 +187,70 @@ function legacyIssue(record: RoundRecord): number | null {
   return issue;
 }
 
-/** The legacy pin of exactly this listed record, or null. */
-export function legacyReviewRoundPin(record: RoundRecord): number | null {
-  const issue = legacyIssue(record);
-  return issue === null ? null : LEGACY_REVIEW_ROUND_PINS.get(issue) ?? null;
+/** Counted (never refunded) admissions of `purpose` for exactly this task. */
+function countedCharges(
+  snapshot: Ledger,
+  record: RoundRecord,
+  purpose: BudgetReservationV1["purpose"],
+): BudgetReservationV1[] {
+  return snapshot.reservations.filter((charge) =>
+    charge.purpose === purpose && charge.taskId === record.id &&
+    sameRepository(charge.repository, record.repository) &&
+    charge.outcome !== "confirmed_not_submitted"
+  );
+}
+
+/**
+ * The record's legacy pin under `cutoff`: the rounds it had spent before the
+ * cutoff (its spent rounds less its counted review admissions created at or
+ * after the cutoff), when the record is an ai.ubq.fi issue record with at
+ * least one counted review admission before the cutoff (so it existed under
+ * the old order) and that count reaches `MAX_REVIEW_ROUNDS`; otherwise null.
+ * A record new under the CI-first runtime has no admission before the cutoff
+ * and is never legacy, whatever its counter says.
+ */
+export function legacyReviewRoundPin(
+  snapshot: Ledger,
+  record: RoundRecord,
+  cutoff: LegacyCutoff,
+): number | null {
+  if (!validLegacyCutoff(cutoff) || legacyIssue(record) === null) return null;
+  const charges = countedCharges(snapshot, record, "review_request").filter(
+    (charge) => !nextAdmission(charge, record),
+  );
+  const after = charges.filter((charge) => charge.createdAt >= cutoff).length;
+  if (after === charges.length) return null;
+  const pin = reviewRoundsSpent(snapshot, record) - after;
+  return pin >= MAX_REVIEW_ROUNDS ? pin : null;
+}
+
+/**
+ * The legacy record's one final round is still unspent: no review was
+ * admitted for it at or after the cutoff, so it has spent exactly its pin.
+ * Only a CI fix may be admitted on this alone.
+ */
+export function legacyFinalRoundOpen(
+  snapshot: Ledger,
+  record: RoundRecord,
+  cutoff: LegacyCutoff,
+): boolean {
+  const pin = legacyReviewRoundPin(snapshot, record, cutoff);
+  return pin !== null && reviewRoundsSpent(snapshot, record) === pin;
+}
+
+/**
+ * The open final round may be spent by a review: a CI fix of this record was
+ * admitted (a counted `retry` charge) at or after the cutoff.
+ */
+export function legacyFinalRoundArmed(
+  snapshot: Ledger,
+  record: RoundRecord,
+  cutoff: LegacyCutoff,
+): boolean {
+  return legacyFinalRoundOpen(snapshot, record, cutoff) &&
+    countedCharges(snapshot, record, "retry").some((charge) =>
+      charge.createdAt >= cutoff!
+    );
 }
 
 /** The merge gate's CI-red blockers (`loop-checks.ts`, `ci-rejection.ts`). */
@@ -153,12 +260,11 @@ const CI_RED_PREFIXES = [
 ];
 
 /**
- * The owner's legacy class, for regenerating `LEGACY_REVIEW_ROUND_PINS` from a
- * repair state taken before generation 80 runs: an ai.ubq.fi issue record
- * parked CI-red by the merge gate whose spent rounds already reach
- * `MAX_REVIEW_ROUNDS` (all of them spent under the old review-before-CI
- * order). Returns those spent rounds (its pin), otherwise null. The runtime
- * never consults it: only the table grants the one final round.
+ * The shape of the owner's legacy class as the owner named it (decision-time
+ * state, sequence 36388): an ai.ubq.fi issue record parked CI-red by the merge
+ * gate whose spent rounds reach `MAX_REVIEW_ROUNDS`. Returns those spent
+ * rounds, otherwise null. It grants nothing; the launcher compares it with the
+ * rule (`legacyReviewRoundClassDrift`).
  */
 export function legacyReviewRoundClassPin(
   snapshot: Ledger,
@@ -175,11 +281,11 @@ export function legacyReviewRoundClassPin(
 }
 
 /**
- * One live class member the pinned table disagrees with: no pin at all
- * (`unpinned`, generation 79 parked it after the cut) or a pin other than its
- * live spent rounds (`pin_mismatch`: a round spent past the pin before the
- * install, which loses the one final round, or a final round already spent
- * on a head that turned red again).
+ * One record of the owner's class shape the rule gives no final round: no
+ * pin at all (`unpinned`: fewer than three rounds admitted before the cutoff)
+ * or a pin other than its spent rounds (`pin_mismatch`: a round admitted after
+ * the cutoff, by the old runtime between the pin commit and the install, or a
+ * final round already spent on a head that turned red again).
  */
 export interface LegacyReviewRoundDriftV1 {
   id: string;
@@ -190,30 +296,30 @@ export interface LegacyReviewRoundDriftV1 {
 }
 
 /**
- * Every record of the owner's legacy class over `snapshot`
- * (`legacyReviewRoundClassPin`) that `LEGACY_REVIEW_ROUND_PINS` does not pin
- * at exactly its spent rounds, by issue number. The table is regenerated at
- * the cut; this is what the launcher reports on every pass so a drifted table
- * is never silent. Pure; it grants nothing.
+ * Every record of the owner's class shape (`legacyReviewRoundClassPin`) whose
+ * final round the rule does not keep open under `cutoff`, by issue number.
+ * The launcher reports these on every pass so a record the rule leaves out is
+ * never silent. Pure; it grants nothing. Empty without a cutoff.
  */
-export function legacyReviewRoundTableDrift(
+export function legacyReviewRoundClassDrift(
   snapshot: Ledger & {
     readonly work: readonly (
       & RoundRecord
       & Pick<WorkRecordV1, "nextStep" | "blocker">
     )[];
   },
+  cutoff: LegacyCutoff,
 ): LegacyReviewRoundDriftV1[] {
+  if (!validLegacyCutoff(cutoff)) return [];
   const drift: LegacyReviewRoundDriftV1[] = [];
   for (const record of snapshot.work) {
     const spent = legacyReviewRoundClassPin(snapshot, record);
     if (spent === null) continue;
-    const issue = legacyIssue(record)!;
-    const pin = LEGACY_REVIEW_ROUND_PINS.get(issue) ?? null;
+    const pin = legacyReviewRoundPin(snapshot, record, cutoff);
     if (pin === spent) continue;
     drift.push({
       id: record.id,
-      issue,
+      issue: legacyIssue(record)!,
       kind: pin === null ? "unpinned" : "pin_mismatch",
       pin,
       spent,
@@ -222,10 +328,18 @@ export function legacyReviewRoundTableDrift(
   return drift.sort((a, b) => a.issue - b.issue);
 }
 
-/** The record's ceiling: its legacy pin + 1, otherwise `MAX_REVIEW_ROUNDS`. */
-export function reviewRoundCeiling(record: RoundRecord): number {
-  const pin = legacyReviewRoundPin(record);
-  return pin === null ? MAX_REVIEW_ROUNDS : pin + 1;
+/**
+ * The record's ceiling: its legacy pin + 1 once that final round is armed,
+ * otherwise `MAX_REVIEW_ROUNDS`.
+ */
+export function reviewRoundCeiling(
+  snapshot: Ledger,
+  record: RoundRecord,
+  cutoff?: LegacyCutoff,
+): number {
+  return legacyFinalRoundArmed(snapshot, record, cutoff)
+    ? legacyReviewRoundPin(snapshot, record, cutoff)! + 1
+    : MAX_REVIEW_ROUNDS;
 }
 
 /**
@@ -268,7 +382,7 @@ export function reviewRoundsSpent(
 /**
  * True once the task has spent the ordinary ceiling (`MAX_REVIEW_ROUNDS`) by
  * the same count. The spent-round delivery rule qualifies a record on this: a
- * listed legacy record's one final round is extra, kept for a CI-fixed head.
+ * legacy record's one final round is extra, kept for a CI-fixed head.
  */
 export function ordinaryReviewRoundsSpent(
   snapshot: Ledger,
@@ -278,16 +392,17 @@ export function ordinaryReviewRoundsSpent(
 }
 
 /**
- * Reviews this task may still request: its ceiling minus the rounds spent,
- * never below zero. A listed legacy record gets at most its one round.
+ * Reviews this task may still request: `MAX_REVIEW_ROUNDS` minus the rounds
+ * spent, never below zero, or exactly the one final round of a legacy record
+ * once a CI fix armed it (`legacyFinalRoundArmed`).
  */
 export function reviewRoundsLeft(
   snapshot: Ledger,
   record: RoundRecord,
+  cutoff?: LegacyCutoff,
 ): number {
-  const left = reviewRoundCeiling(record) - reviewRoundsSpent(snapshot, record);
-  if (left <= 0) return 0;
-  return legacyReviewRoundPin(record) === null ? left : 1;
+  if (legacyFinalRoundArmed(snapshot, record, cutoff)) return 1;
+  return Math.max(0, MAX_REVIEW_ROUNDS - reviewRoundsSpent(snapshot, record));
 }
 
 /**
@@ -344,12 +459,16 @@ export function ceilingParkMessage(
   return REVIEW_ROUND_CEILING_REVIEWED;
 }
 
-/** True for a record the ceiling parked (any of the fixed messages). */
+/**
+ * True for a record the ceiling parked: any fixed message, or any message
+ * under the ceiling prefix (the carried-delivery parks carry evidence).
+ */
 export function isReviewRoundCeilingPark(
   record: Pick<WorkRecordV1, "nextStep" | "blocker">,
 ): boolean {
   return record.nextStep === "blocked" && record.blocker?.kind === "other" &&
-    REVIEW_ROUND_CEILING_MESSAGES.includes(record.blocker.message);
+    (REVIEW_ROUND_CEILING_MESSAGES.includes(record.blocker.message) ||
+      record.blocker.message.startsWith(REVIEW_ROUND_CEILING_PREFIX));
 }
 
 /**

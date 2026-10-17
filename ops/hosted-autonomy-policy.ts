@@ -80,7 +80,7 @@ export function hostedDeliveryKey(
  * in `hosted-autonomy-spent-delivery.ts`; no other parked step is delivered.
  * "Spent" is the runtime's own count over the durable ledger
  * (`ordinaryReviewRoundsSpent`): a counter lagging its charges still counts
- * them, a proven refund frees its round, and a listed legacy record's one
+ * them, a proven refund frees its round, and a legacy record's one
  * final round (for a CI-fixed head) is extra. Of the runtime's ceiling parks
  * only REVIEWED and BASE_MOVED are ever delivered; a park with no completed
  * review, an unresolved P0/P1 or no task acceptance never reaches a merge

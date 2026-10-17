@@ -11,6 +11,7 @@
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
+import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
 import { candidateBranch, reviewOperationKey } from "../../src/repair/keys.ts";
 import { REVIEW_BOUND_MS } from "../../src/repair/loop-bounds.ts";
 import { isModelStartAction } from "../../src/repair/loop-eligibility.ts";
@@ -605,33 +606,95 @@ Deno.test("round cap: the historical review-ceiling block is no longer re-armed 
   assert.deepEqual(await rig.snapshot(), before, "nothing is rewritten");
 });
 
-Deno.test("round cap: a listed legacy record gets exactly one more round, others none", async (t) => {
-  const legacy = (issue: number, rounds: number) => {
-    const id = `issue-ubiquity-ai.ubq.fi-${issue}`;
-    return capRig({
-      id,
+Deno.test("round cap: a legacy-class record gets exactly one more round once its CI fix armed it, others none", async (t) => {
+  // Every seeded review charge (T0 - 10 min + attempt) precedes the cutoff.
+  const CUT = T0 - MINUTE;
+  const id = (issue: number) => `issue-ubiquity-ai.ubq.fi-${issue}`;
+  /** The CI fix admitted at or after the cutoff that arms the final round. */
+  const fix = (issue: number) =>
+    reservation(`${id(issue)}-ci-fix`, {
+      repository: AI,
+      taskId: id(issue),
+      attempt: 2,
+      head: SHA3,
+      purpose: "retry",
+      outcome: "submitted",
+      createdAt: CUT + 1,
+      settledAt: CUT + 2,
+    });
+  const legacy = (
+    issue: number,
+    rounds: number,
+    extra: BudgetReservationV1[] = [],
+    reviewCharges_ = reviewCharges(id(issue), rounds, { repository: AI }),
+  ) =>
+    capRig({
+      id: id(issue),
       issueNumber: issue,
       repository: AI,
       reviewRounds: rounds,
-      reservations: reviewCharges(id, rounds, { repository: AI }),
+      reservations: [...reviewCharges_, ...extra],
+      legacyReviewCutoff: CUT,
     });
-  };
-  await t.step("595 pinned at 4: one final request, then parked", async () => {
+  await t.step(
+    "595 at its pin of 4, armed: one final request, then parked",
+    async () => {
+      const rig = await legacy(595, 4, [fix(595)]);
+      rig.github.reviewMode = "no_verdict";
+      await runs(rig, 4);
+      assert.equal(rig.github.requests, 1, "exactly one final review");
+      await assertParked(rig, CAP_UNREVIEWED);
+      assert.equal((await rig.charges()).length, 5);
+    },
+  );
+  await t.step("595 at its pin, never CI-fixed: no request", async () => {
     const rig = await legacy(595, 4);
-    rig.github.reviewMode = "no_verdict";
-    await runs(rig, 4);
-    assert.equal(rig.github.requests, 1, "exactly one final review");
-    await assertParked(rig, CAP_UNREVIEWED);
-    assert.equal((await rig.charges()).length, 5);
-  });
-  await t.step("595 past its pin: no request (fails closed)", async () => {
-    const rig = await legacy(595, 5);
     await runs(rig, 2);
     assert.equal(rig.github.requests, 0);
     await assertParked(rig, CAP_UNREVIEWED);
   });
-  await t.step("unlisted 596 at 6 rounds: no request", async () => {
-    const rig = await legacy(596, 6);
+  await t.step(
+    "595 whose final round was spent after the cutoff: no request",
+    async () => {
+      const charges = reviewCharges(id(595), 5, { repository: AI }).map(
+        (charge) =>
+          charge.attempt === 5
+            ? { ...charge, createdAt: CUT + 3, settledAt: CUT + 4 }
+            : charge,
+      );
+      const rig = await legacy(595, 5, [fix(595)], charges);
+      await runs(rig, 2);
+      assert.equal(rig.github.requests, 0);
+      await assertParked(rig, CAP_UNREVIEWED);
+    },
+  );
+  await t.step(
+    "a record whose rounds all follow the cutoff: no fourth request",
+    async () => {
+      const charges = reviewCharges(id(1600), 3, { repository: AI }).map(
+        (charge) => ({
+          ...charge,
+          createdAt: CUT + charge.attempt,
+          settledAt: CUT + charge.attempt + 1,
+        }),
+      );
+      const rig = await legacy(1600, 3, [fix(1600)], charges);
+      await runs(rig, 2);
+      assert.equal(rig.github.requests, 0);
+      await assertParked(rig, CAP_UNREVIEWED);
+    },
+  );
+  await t.step("no cutoff handed over: nothing is legacy", async () => {
+    const rig = await capRig({
+      id: id(595),
+      issueNumber: 595,
+      repository: AI,
+      reviewRounds: 4,
+      reservations: [
+        ...reviewCharges(id(595), 4, { repository: AI }),
+        fix(595),
+      ],
+    });
     await runs(rig, 2);
     assert.equal(rig.github.requests, 0);
     await assertParked(rig, CAP_UNREVIEWED);

@@ -43,6 +43,7 @@ import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.
 import { REPO, SHA1, SHA2, T0 } from "../state/helpers.ts";
 import { repositoryConfig } from "../budget/helpers.ts";
 import type { MergeRequestV1 } from "../../src/contracts/merge-request.ts";
+import type { CarriedMergeV1 } from "../../src/contracts/ports.ts";
 import type { IncidentSummaryV1 } from "../../src/contracts/incident.ts";
 import type { IncidentEvidenceV1 } from "../../src/contracts/incident.ts";
 import type { ReviewTaskStatementV1 } from "../../src/contracts/review-receipt.ts";
@@ -244,6 +245,10 @@ export class FakeGithub implements GitHubPort {
   readonly candidatePullRequests = new Map<number, GitHubPullRequestV1>();
   /** Present only when an explicit prepare callback was supplied. */
   prepareBaseRefresh?: NonNullable<GitHubPort["prepareBaseRefresh"]>;
+  /** Present only when a test supplies the carried patch proof. */
+  proveCarriedPatch?: NonNullable<GitHubPort["proveCarriedPatch"]>;
+  /** Every carried merge the loop requested, in call order. */
+  readonly carriedMerges: CarriedMergeV1[] = [];
   reviewObservations: ReviewObservationV1 | null = null;
   reviewStatus: "pending" | "completed" | "unavailable" = "pending";
   completedReviewAt: number | null = null;
@@ -705,8 +710,12 @@ export class FakeGithub implements GitHubPort {
 
   mergePullRequest(
     request: MergeRequestV1,
+    _execution?: unknown,
+    carried?: CarriedMergeV1,
   ): Promise<PortResultV1<MergeOutcomeV1>> {
     this.calls.push("merge");
+    if (carried !== undefined) this.carriedMerges.push(carried);
+    const mergedHead = carried?.head ?? request.expectedHead;
     if (this.options.mergeFailNext) {
       this.options.mergeFailNext = false;
       return Promise.resolve(
@@ -716,8 +725,8 @@ export class FakeGithub implements GitHubPort {
     if (this.lifecycleEnabled) {
       const outcome: MergeOutcomeV1 = this.options.mergeOutcome ?? {
         outcome: "merged",
-        head: request.expectedHead,
-        mergeSha: request.expectedHead,
+        head: mergedHead,
+        mergeSha: mergedHead,
       };
       if (outcome.outcome === "merged") {
         // Only the exact requested PR advances, on the exact requested head;

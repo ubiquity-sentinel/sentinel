@@ -95,6 +95,7 @@ export function targetDeps(
     model: input.model,
     budget: input.budget,
     externalImplementations: true,
+    legacyReviewCutoff: input.legacyReviewCutoff ?? null,
   };
 }
 export function configured(

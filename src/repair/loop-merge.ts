@@ -23,10 +23,8 @@ import { configFor, sameRepositoryIdentity } from "./loop-records.ts";
 import { waitRelease } from "./loop-release.ts";
 import { standingReviewAttempt } from "./loop-review-records.ts";
 import { reviewRoundsSpentOut } from "./loop-review-round-cap.ts";
-import {
-  deliveryQueueDeferral,
-  parkSpentOnMovedBase,
-} from "./loop-delivery-queue.ts";
+import { deliveryQueueDeferral } from "./loop-delivery-queue.ts";
+import { spentOnMovedBase } from "./loop-carried-delivery.ts";
 import { persistTransition, persistWork } from "./loop-state.ts";
 import {
   deliveryTaskRefusal,
@@ -529,9 +527,11 @@ export async function reconcileMergeIntent(
   // ambiguous response is reconciled immediately), and its own merge would
   // move the base; only an intent at least one poll old is treated as stale.
   // At the hard review-round ceiling the refreshed head could never be
-  // reviewed: the stale merge intent is cleared and the reviewed head parks
-  // (a red one with the merge gate's own CI blocker). Below it the refresh
-  // waits its turn in the repository's delivery line, the merge intent kept.
+  // reviewed: the reviewed head's CI is read with the stale merge intent
+  // cleared, and only a green head its latest review authorizes refreshes
+  // mechanically to carry that review (anything else parks, a red one with
+  // the merge gate's own CI blocker). Every refresh waits its turn in the
+  // repository's delivery line, the merge intent kept until it is replaced.
   if (
     record.source.kind === "issue" &&
     deps.github.prepareBaseRefresh !== undefined &&
@@ -544,10 +544,11 @@ export async function reconcileMergeIntent(
       record,
       async (observedBase) =>
         reviewRoundsSpentOut(context, record)
-          ? await parkSpentOnMovedBase(
+          ? await spentOnMovedBase(
             deps,
             context,
             clearIntent(record, deps.clock.now()),
+            observedBase,
           )
           : deliveryQueueDeferral(deps, context, record, observedBase),
     );

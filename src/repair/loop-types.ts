@@ -64,6 +64,13 @@ export interface RepairCycleDepsV1 {
   budget: BudgetControllerV1;
   /** Matrix-owned implementations settle only through authenticated artifact ingestion. */
   externalImplementations?: boolean;
+  /**
+   * The one-time legacy review class's cutoff (`review-round-cap.ts`): an
+   * instant no later than this runtime's activation, handed over by the
+   * launcher that pinned it (`LEGACY_REVIEW_CUTOFF_RUNTIMES`). Absent or null
+   * means no record is legacy (no final round is ever granted).
+   */
+  legacyReviewCutoff?: number | null;
 }
 
 /** Read-only trusted identity lookup paired with the concrete fixture resolver. */
@@ -124,6 +131,12 @@ export interface LoopContextV1 {
    * execution instead of once per bookkeeping write.
    */
   executionBaseline: WorkRecordV1 | null;
+  /**
+   * The legacy review cutoff every round count of this run uses
+   * (`RepairCycleDepsV1.legacyReviewCutoff`, copied when the context is
+   * loaded); absent or null means no record is legacy.
+   */
+  legacyReviewCutoff?: number | null;
 }
 
 /** Effective run bounds: caller deadline clamped by the fixed ceiling. */

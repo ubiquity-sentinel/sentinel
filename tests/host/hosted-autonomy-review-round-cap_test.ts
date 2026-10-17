@@ -209,7 +209,9 @@ Deno.test("launcher round cap: charges the counter missed spend the allowance; r
   assert.equal(plan([freed], refunded, selfTips(BASE)).plans.length, 1);
 });
 
-Deno.test("launcher round cap: a listed legacy record gets its one current-head review, an unlisted one none", () => {
+Deno.test("launcher round cap: a legacy-class record gets its one current-head review once a CI fix armed it, a post-cutoff record none", () => {
+  // The rule's cutoff: every review charge below is created at T0, before it.
+  const CUT = T0 + 1;
   const legacy = (issue: number, rounds: number) =>
     parseWorkRecordV1({
       ...reviewBlocked(REVIEW_BLOCKERS[0], rounds),
@@ -225,27 +227,95 @@ Deno.test("launcher round cap: a listed legacy record gets its one current-head 
         pr: 1000 + issue,
       },
     });
-  const run = (record: WorkRecordV1, rounds: number, ciFirst = true) =>
+  // The CI fix admitted at or after the cutoff that arms the final round.
+  const fix = (record: WorkRecordV1) =>
+    reservation(`${record.id}-ci-fix`, {
+      repository: AI,
+      taskId: record.id,
+      attempt: 3,
+      head: SHA3,
+      purpose: "retry",
+      outcome: "submitted",
+      createdAt: CUT + 5,
+      settledAt: CUT + 6,
+    });
+  const run = (
+    record: WorkRecordV1,
+    charges: BudgetReservationV1[],
+    ciFirst = true,
+  ) =>
     plan(
       [record],
-      reviewCharges(record.id, rounds, SHA3, AI),
+      charges,
       new Map([[hostedRepositoryKey(AI), SHA1]]),
-      ciFirst ? CI_FIRST_OPTIONS : {},
+      ciFirst
+        ? { ...CI_FIRST_OPTIONS, legacyReviewCutoff: CUT }
+        : { legacyReviewCutoff: CUT },
     );
+  const armed = legacy(595, 4);
+  const armedCharges = [...reviewCharges(armed.id, 4, SHA3, AI), fix(armed)];
   // The final round is a review of a green head, so it is granted only under
   // a proven CI-first runtime (generation 80 integration with the CI-first
   // lane); R79 would review the head before its CI.
-  assert.deepEqual(run(legacy(595, 4), 4, false).denials, [
+  assert.deepEqual(run(armed, armedCharges, false).denials, [
     "legacy_round_requires_ci_first",
   ]);
-  const listed = run(legacy(595, 4), 4);
-  assert.deepEqual(listed.denials, []);
-  assert.equal(listed.plans.length, 1);
-  assert.equal(listed.plans[0]!.nextStep, "review");
-  assert.equal(listed.plans[0]!.reviewRounds, 4);
-  assert.equal(listed.plans[0]!.advanceBase, false, "the current head");
-  assert.deepEqual(run(legacy(595, 5), 5).plans, [], "the one round is spent");
-  assert.deepEqual(run(legacy(596, 6), 6).plans, [], "596 is not listed");
+  const granted = run(armed, armedCharges);
+  assert.deepEqual(granted.denials, []);
+  assert.equal(granted.plans.length, 1);
+  assert.equal(granted.plans[0]!.nextStep, "review");
+  assert.equal(granted.plans[0]!.reviewRounds, 4);
+  assert.equal(granted.plans[0]!.advanceBase, false, "the current head");
+  // Not armed: no CI fix since the cutoff, so no review spends the round.
+  assert.deepEqual(
+    run(armed, reviewCharges(armed.id, 4, SHA3, AI)).plans,
+    [],
+    "a review alone never spends the final round",
+  );
+  // Spent: a review admitted after the cutoff already used it.
+  const spent = legacy(595, 5);
+  assert.deepEqual(
+    run(spent, [
+      ...reviewCharges(spent.id, 4, SHA3, AI),
+      fix(spent),
+      reservation(`${spent.id}-review-final`, {
+        repository: AI,
+        taskId: spent.id,
+        attempt: 5,
+        head: SHA3,
+        purpose: "review_request",
+        outcome: "submitted",
+        createdAt: CUT + 20,
+        settledAt: CUT + 21,
+      }),
+    ]).plans,
+    [],
+    "the one round is spent",
+  );
+  // Without a pinned cutoff nothing is legacy: no record gets a fourth round.
+  assert.deepEqual(
+    plan(
+      [armed],
+      armedCharges,
+      new Map([[hostedRepositoryKey(AI), SHA1]]),
+      { ...CI_FIRST_OPTIONS, legacyReviewCutoff: null },
+    ).plans,
+    [],
+    "cutoff unpinned",
+  );
+  // A record whose rounds were all charged after the cutoff is never legacy.
+  const fresh = legacy(1600, 3);
+  assert.deepEqual(
+    run(fresh, [
+      ...reviewCharges(fresh.id, 3, SHA3, AI).map((charge) => ({
+        ...charge,
+        createdAt: CUT + 1,
+      })),
+      fix(fresh),
+    ]).plans,
+    [],
+    "a generation-80 record never gets a fourth round",
+  );
 });
 
 Deno.test("launcher round cap: a moved-tip conflict re-pend counts the ledger", () => {

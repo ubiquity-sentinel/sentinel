@@ -201,7 +201,7 @@ export function planConflictReadmissions(
       onDenied?.({ id: record.id, reason: "conflict_unresolvable_shape" });
       continue;
     }
-    // A listed legacy record's one final round (the resolved merge's review)
+    // A legacy record's one final round (the resolved merge's review)
     // is spent only on a green head, under a proven CI-first runtime.
     if (
       !legacyFinalRoundAdmissible(

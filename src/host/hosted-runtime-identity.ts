@@ -70,6 +70,9 @@ export const HOSTED_RUNTIME_CHILD_ENV_KEYS = [
   // Explicit development switch for the durable GitHub cooldown gates; it
   // crosses only when the launcher was given a non-empty value.
   "SENTINEL_COOLDOWN_MODE",
+  // The legacy review class's cutoff (`legacy-review-cutoff-env.ts`): set by
+  // the launcher itself, only for the exact revision it pinned it for.
+  "SENTINEL_LEGACY_REVIEW_CUTOFF",
   "UOS_AI_TOKEN",
   "GITHUB_RUN_ID",
   "GITHUB_RUN_ATTEMPT",

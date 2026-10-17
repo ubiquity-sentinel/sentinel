@@ -13,9 +13,35 @@ import {
 } from "./conflict-resolution.ts";
 import { OPERATION_MARGIN_MS } from "./loop-bounds.ts";
 import { configFor } from "./loop-records.ts";
-import { headNeedsCorrection } from "./loop-review-records.ts";
+import {
+  headAwaitsCiCorrection,
+  headNeedsCorrection,
+} from "./loop-review-records.ts";
+import { legacyCutoff } from "./loop-review-round-cap.ts";
 import type { LoopContextV1, RepairCycleDepsV1 } from "./loop-types.ts";
-import { reviewRoundsLeft } from "./review-round-cap.ts";
+import {
+  type LegacyCutoff,
+  legacyFinalRoundOpen,
+  reviewRoundsLeft,
+} from "./review-round-cap.ts";
+
+/**
+ * A review round is left for the candidate a model start of `record` would
+ * produce: an ordinary round, or the one CI fix an open legacy final round
+ * admits (a reviewed red head awaiting its CI correction; that fix arms the
+ * round for the fixed head's review). A P0/P1 correction or a conflict
+ * resolution never spends a legacy record's final round.
+ */
+export function roundLeftForStart(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRecordV1,
+  ciRouteOpen: boolean,
+  cutoff: LegacyCutoff,
+): boolean {
+  if (reviewRoundsLeft(snapshot, record, cutoff) > 0) return true;
+  return legacyFinalRoundOpen(snapshot, record, cutoff) &&
+    headAwaitsCiCorrection(snapshot, record, ciRouteOpen, cutoff);
+}
 
 /**
  * True only when this record's NEXT work step is an implementation start the
@@ -60,16 +86,24 @@ export function isMatrixImplementationReadyV1(
   conflictRouteOpen = false,
   /** `preReviewCiFixRouteOpen(deps)` of the planning run. */
   preReviewRouteOpen = false,
+  /** The legacy review cutoff of the planning run (`review-round-cap.ts`). */
+  cutoff?: LegacyCutoff,
 ): boolean {
   if (record.source.kind !== "issue") return false;
   if (record.nextStep !== "work") return false;
   // No implementation, correction or resolution cell is charged for a record
   // with no review round left: its candidate could never be reviewed.
-  if (reviewRoundsLeft(snapshot, record) === 0) return false;
+  if (!roundLeftForStart(snapshot, record, ciRouteOpen, cutoff)) return false;
   // A pending refresh-conflict resolution is the one live intent a grant may
   // start from (its admission re-confirms the conflict before any charge).
   if (
-    conflictResolutionAdmissible(conflictRouteOpen, snapshot, record) !== null
+    conflictResolutionAdmissible(
+      conflictRouteOpen,
+      snapshot,
+      record,
+      cutoff,
+    ) !==
+      null
   ) {
     return config.sessionBound !== null;
   }
@@ -84,7 +118,13 @@ export function isMatrixImplementationReadyV1(
   if (record.target.branch === null) return false;
   if (config.sessionBound === null) return false;
   return record.target.head === null ||
-    headNeedsCorrection(snapshot, record, ciRouteOpen, preReviewRouteOpen);
+    headNeedsCorrection(
+      snapshot,
+      record,
+      ciRouteOpen,
+      preReviewRouteOpen,
+      cutoff,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -107,17 +147,25 @@ export function isModelStartAction(
   conflictRouteOpen = false,
   /** `preReviewCiFixRouteOpen(deps)` of the run. */
   preReviewRouteOpen = false,
+  /** The legacy review cutoff of the run (`review-round-cap.ts`). */
+  cutoff?: LegacyCutoff,
 ): boolean {
   return record.nextStep === "work" &&
-    reviewRoundsLeft(snapshot, record) > 0 &&
+    roundLeftForStart(snapshot, record, ciRouteOpen, cutoff) &&
     (record.target.head === null ||
       headNeedsCorrection(
         snapshot,
         record,
         ciRouteOpen,
         preReviewRouteOpen,
+        cutoff,
       ) ||
-      conflictResolutionAdmissible(conflictRouteOpen, snapshot, record) !==
+      conflictResolutionAdmissible(
+          conflictRouteOpen,
+          snapshot,
+          record,
+          cutoff,
+        ) !==
         null);
 }
 
@@ -151,6 +199,7 @@ export function declaredOperationFits(
       ciCorrectionRouteOpen(deps),
       conflictResolutionRouteOpen(deps),
       preReviewCiFixRouteOpen(deps),
+      legacyCutoff(context),
     )
   ) {
     if (now >= bounds.modelCutoff) return false;

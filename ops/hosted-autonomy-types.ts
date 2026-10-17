@@ -352,6 +352,12 @@ export interface HostedAutonomyDepsV1 {
    * Production never sets it and uses HOSTED_AUTONOMY_SPENT_MOVED_BASE_MERGE.
    */
   spentMovedBaseMerge?: boolean;
+  /**
+   * The legacy review cutoff for tests of the legacy class. Production never
+   * sets it and uses the installed CI-first runtime's pinned row
+   * (`launcherLegacyCutoff`).
+   */
+  legacyReviewCutoff?: number | null;
 }
 
 /** One corrected runtime the refresh re-arm trusts, pinned in launcher source. */

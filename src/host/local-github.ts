@@ -386,6 +386,26 @@ export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
     ensureCandidateObjects,
     ensureBaseObjects,
   });
+  // The carried-review patch proof is composed on the SAME executor: the
+  // refreshed candidate's exact durable objects are restored first (its
+  // first parent is the reviewed head, which normally contains the reviewed
+  // base, so one restore brings every commit the proof reads; a commit still
+  // missing makes the proof unavailable, never a pass), then the proof only
+  // reads the local object store.
+  const carriedPatchProof = host.git.carriedPatchProof?.bind(host.git);
+  if (carriedPatchProof !== undefined) {
+    host.port.proveCarriedPatch = async (request) => {
+      if (ensureCandidateObjects !== undefined) {
+        const ensured = await ensureCandidateObjects({
+          base: request.base,
+          head: request.head,
+          repository,
+        });
+        if (!ensured.ok) return ensured;
+      }
+      return await carriedPatchProof(request);
+    };
+  }
   // Candidate preservation is composed on the SAME port + executor identities:
   // the authenticated operation-ref read and the create-only push use this
   // exact port, and the trusted loader imports only the exact task-mapped

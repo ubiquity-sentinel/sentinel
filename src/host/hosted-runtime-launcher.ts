@@ -49,6 +49,7 @@ import {
 } from "./hosted-runtime-status.ts";
 import type { ChildStatusV1 } from "./hosted-runtime-status.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
+import { legacyReviewCutoffForExecution } from "./legacy-review-cutoff-env.ts";
 import { runRepairOwnerWithReviewCustody } from "./review-owner-custody.ts";
 import type { HostedReviewOwnerSettlementV1 } from "../github/review-owner-evidence.ts";
 
@@ -126,11 +127,13 @@ async function launchHostedRuntime(
   if (!isNonNegativeSafeInteger(startedAt)) {
     throw new Error(HOSTED_RUNTIME_STATIC_ENV);
   }
-  const childEnv = buildChildEnvironment(input.env, identity, {
-    home: childHome,
-    tmp: childTmp,
-    denoDir: childDenoDir,
-  }, startedAt);
+  const childEnv = buildChildEnvironment(
+    input.env,
+    identity,
+    { home: childHome, tmp: childTmp, denoDir: childDenoDir },
+    startedAt,
+    legacyReviewCutoffForExecution(execution),
+  );
   // Streaming is attached only here, after the exact execution identity has
   // been verified, and only to the actual child command: the bounded Git
   // identity reads above never see a sink.

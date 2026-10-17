@@ -57,6 +57,7 @@ import {
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import {
   ciFirstRuntimeProven,
+  launcherLegacyCutoff,
   LEGACY_ROUND_REQUIRES_CI_FIRST,
   legacyFinalRoundAdmissible,
 } from "./hosted-autonomy-ci-first.ts";
@@ -202,6 +203,8 @@ interface Runtime {
   activation: number | null;
   /** The installed runtime is a proven CI-first runtime. */
   ciFirst: boolean;
+  /** The launcher's legacy review cutoff (`launcherLegacyCutoff`). */
+  legacyCutoff: number | null;
 }
 
 async function judge(
@@ -224,10 +227,12 @@ async function judge(
   // The re-armed delivery refreshes onto the moved base, and the refreshed
   // head needs a review round of its own: with none left (the hard ceiling,
   // owner decision 2026-10-16) the record stays blocked, before any read.
-  if (reviewRoundsLeft(context.snapshot, record) === 0) {
+  if (
+    reviewRoundsLeft(context.snapshot, record, runtime.legacyCutoff) === 0
+  ) {
     return { kind: "retain", reason: "review_rounds_spent" };
   }
-  // A listed legacy record's one final round is spent only on a green head,
+  // A legacy record's one final round is spent only on a green head,
   // which only a proven CI-first runtime guarantees.
   if (!legacyFinalRoundAdmissible(context.snapshot, record, runtime.ciFirst)) {
     return { kind: "retain", reason: LEGACY_ROUND_REQUIRES_CI_FIRST };
@@ -316,6 +321,9 @@ export async function runHostedRefreshRearmPass(
       pinned.some((row) => row.revision === installed.activeRevision),
     activation: release === null ? null : refreshFixActivation(release, pinned),
     ciFirst: ciFirstRuntimeProven(installed),
+    legacyCutoff: context.deps.legacyReviewCutoff !== undefined
+      ? context.deps.legacyReviewCutoff
+      : launcherLegacyCutoff(installed, ciFirstRuntimeProven(installed)),
   };
   const rearmed = new Map<string, number>();
   for (const record of snapshot.work) {

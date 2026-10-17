@@ -277,6 +277,15 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       // reads the head's CI there first.
       "src/repair/delivery-queue.ts",
       "src/repair/loop-delivery-queue.ts",
+      // The carried review (a spent record's mechanically refreshed head
+      // merged under its earlier review only with a byte-identical patch and
+      // green CI), the git patch proof it rests on, and the legacy class's
+      // cutoff hand-over. A model-authored candidate must never weaken them.
+      "src/repair/carried-review.ts",
+      "src/repair/loop-carried-delivery.ts",
+      "src/github/git-carried-patch.ts",
+      "src/github/port-merge.ts",
+      "src/host/legacy-review-cutoff-env.ts",
       "src/repair/loop-checks.ts",
       // CI attribution decides whether a reviewed head is corrected (a charged
       // round), deferred on a red base or blocked; the launcher rule decides
