@@ -587,6 +587,40 @@ Deno.test(
 );
 
 Deno.test(
+  "retired PR: an already retired record is never planned again, so the slots go to records that still need it",
+  () => {
+    // Live 2026-10-17: ai#120, ai#731 and sentinel #61, #79, #106 were
+    // re-retired on every maintenance pass (same blocker, new updatedAt),
+    // taking all five retirement slots of each pass.
+    const ai120 = prRecord("issue-ubiquity-ai.ubq.fi-120", 120, 375);
+    const sentinel61 = prRecord("issue-ubiquity-sentinel-61", 61, 63);
+    const initial = snapshot([ai120, sentinel61]);
+    const closedIssues = new Set([
+      hostedIssueKey(ai120.repository, 120),
+      hostedIssueKey(sentinel61.repository, 61),
+    ]);
+    const closedUnmerged = new Set([ai120.id, sentinel61.id]);
+    const first = planHostedRetirements(initial, closedIssues, closedUnmerged);
+    assert.equal(first.length, 2);
+    const retired = applyHostedRetirements(initial, SHA1, first, NOW);
+    assert.deepEqual(
+      planHostedRetirements(retired, closedIssues, closedUnmerged),
+      [],
+      "a record already parked with the retirement reason is not re-planned",
+    );
+    // A later closed-unmerged record still gets a plan beside them.
+    const ai731 = prRecord("issue-ubiquity-ai.ubq.fi-731", 731, 800);
+    const later = snapshot([...retired.work, ai731]);
+    const plans = planHostedRetirements(
+      later,
+      new Set([...closedIssues, hostedIssueKey(ai731.repository, 731)]),
+      new Set([...closedUnmerged, ai731.id]),
+    );
+    assert.deepEqual(plans.map((plan) => plan.id), [ai731.id]);
+  },
+);
+
+Deno.test(
   "retired PR WIP: terminal blocks free the cap while an open waiting PR still counts",
   () => {
     const genericBlocked = prRecord(

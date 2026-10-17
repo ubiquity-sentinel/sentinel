@@ -162,6 +162,14 @@ export function planHostedRetirements(
     // Only a definitively closed-unmerged pull proves the task can never
     // deliver; anything else leaves the record alone.
     if (!closedUnmerged.has(record.id)) continue;
+    // Already retired (this exact parking): planning it again would rewrite
+    // the same row every pass and take a retirement slot from a record that
+    // still needs one.
+    if (
+      record.nextStep === "blocked" && record.intent === null &&
+      record.blocker?.kind === "other" &&
+      record.blocker.message === HOSTED_AUTONOMY_RETIRED
+    ) continue;
     // Retirement clears the intent, so it must never take an unsettled
     // implementation intent away from the runtime's own uncertainty handler.
     // `intentClosable` is that same settled-intent rule; it is consulted only
