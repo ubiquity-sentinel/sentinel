@@ -67,6 +67,9 @@ import {
   TransitionState,
 } from "./hosted-autonomy-preservation-fixtures.ts";
 
+const ROOT = decodeURIComponent(new URL("../..", import.meta.url).pathname)
+  .replace(/\/$/, "");
+
 export const HOUR = 60 * 60 * 1000;
 export const NOW = T0 + 6 * HOUR;
 /** The pinned generation-79 conflict-resolution runtime of these fixtures. */
@@ -393,7 +396,11 @@ export async function assertRollbackReads(log: readonly WriteLogV1[]) {
 export async function captureMain(
   deps: HostedAutonomyDepsV1,
 ): Promise<{ exit: number; lines: Record<string, unknown>[] }> {
-  const checkout = await Deno.makeTempDir({ prefix: "sentinel-continue-" });
+  // Inside the repository: the CI test tier reads only `.`, /usr and /bin.
+  const checkout = await Deno.makeTempDir({
+    prefix: "sentinel-continue-",
+    dir: ROOT,
+  });
   const previous = Deno.cwd();
   const original = console.log;
   const lines: Record<string, unknown>[] = [];
