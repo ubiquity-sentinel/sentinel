@@ -64,6 +64,10 @@ import {
   planConflictReadmissions,
   verifyConflictReadmissions,
 } from "./hosted-autonomy-conflict-retries.ts";
+import {
+  acceptanceCorrectionRuntimeProven,
+  planAcceptanceReadmissions,
+} from "./hosted-autonomy-acceptance.ts";
 
 /** Legacy class drift lines reported per pass (the rest are counted). */
 export const LEGACY_DRIFT_REPORTS_PER_PASS = 12;
@@ -425,6 +429,21 @@ export async function runHostedRetryPass(
       legacyReviewCutoff: legacyCutoff,
     },
   );
+  // JAM B6a: an R80-written not-fulfilled acceptance with an ordinary round
+  // left returns to `review` under a proven acceptance-correction runtime,
+  // whose re-observation of the standing review starts its correction; its
+  // pull request is verified open below like every other plan's.
+  planned.push(...planAcceptanceReadmissions(
+    snapshot,
+    closedIssues,
+    acceptanceCorrectionRuntimeProven(
+      installedRuntime,
+      deps.acceptanceCorrectionRuntimes,
+    ),
+    (denial) => {
+      actions.push(`retry:${denial.id}:denied:${denial.reason}`);
+    },
+  ));
   actions.push(...legacyClassDriftActions(snapshot, legacyCutoff, ciFirst));
   const plans: RetryPlanV1[] = [];
   // The per-pass CI correction cap counts only corrections this pass admits

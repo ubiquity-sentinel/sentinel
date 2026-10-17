@@ -387,6 +387,12 @@ export interface HostedAutonomyDepsV1 {
    * (`launcherLegacyCutoff`).
    */
   legacyReviewCutoff?: number | null;
+  /**
+   * Exact acceptance-correction runtime revisions for the B6a re-admission,
+   * for tests. Production never sets it and uses
+   * HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES.
+   */
+  acceptanceCorrectionRuntimes?: ReadonlySet<string>;
 }
 
 /** One corrected runtime the refresh re-arm trusts, pinned in launcher source. */
