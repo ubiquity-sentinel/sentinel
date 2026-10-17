@@ -9,21 +9,29 @@
  * - approval (L1): a bot-pushed head's CI run that GitHub holds for approval
  *   is approved while the record waits at `work` on its published head or is
  *   parked by the pre-review gate, not only in review or delivery;
- * - re-run (L2): a head parked red before review shares the once-per-head
- *   flake re-run (`hosted-autonomy-ci-rerun.ts`);
+ * - re-run (L2): a head parked by the pre-review gate (red, pending, or with
+ *   its CI fixes exhausted on a head no review has completed on) shares the
+ *   once-per-head flake re-run (`hosted-autonomy-ci-rerun.ts`);
  * - green (L3): a pre-review park whose exact head is green again on its
  *   unchanged base returns to `work` under ANY runtime (the runtime's gate
- *   then requests the review; R79 would request it too);
+ *   then requests the review; R79 would request it too), the exhausted park
+ *   included;
+ * - moved base (L3, generation 81): a red or pending pre-review park whose
+ *   base moved returns to `work` under a proven CI-first runtime (R80
+ *   included) with a review round left: the runtime refreshes it
+ *   deterministically and uncharged and gates the refreshed head's CI before
+ *   any review. The unchanged-base condition stays only on the green rule,
+ *   which serves any runtime;
  * - fix (L3): a red pre-review park returns to `work` with the CI fix marker
  *   only under an exact allowlisted runtime whose hosted pre-review fix route
- *   is open (`HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`, empty in generation 80),
- *   once its re-run can no longer act, with a CI fix and a review round left;
+ *   is open (`HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`, generation 81+), once
+ *   its re-run can no longer act, with a CI fix and a review round left;
  * - legacy (E): the existing CI correction re-admission of a record whose
  *   rounds are spent (the one-time legacy final review) runs only under an
  *   exact allowlisted CI-first runtime (`HOSTED_AUTONOMY_CI_FIRST_RUNTIMES`):
  *   under R79 the refreshed head would be reviewed while still red;
- * - nothing ever matches the exhausted park (L4: the runtime's own
- *   `ciCorrectable` counts the CI fixes);
+ * - no fix and no moved-base refresh ever matches the exhausted park (L4:
+ *   the runtime's own `ciCorrectable` counts the CI fixes);
  * - a legacy record's one final review round is handed to the
  *   runtime by NO re-admission except under a proven CI-first runtime
  *   (`legacyFinalRoundAdmissible`).
@@ -34,10 +42,12 @@ import type {
   RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
 import {
+  CI_FIX_EXHAUSTED_PREFIX,
   CI_PRE_REVIEW_PARK_PREFIXES,
   ciFixesLeft,
   reviewRoundAvailable,
 } from "../src/repair/ci-first-policy.ts";
+import { headReviewCompleted } from "../src/repair/loop-review-records.ts";
 import { ciPublicationShape } from "../src/repair/ci-rejection.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import { ordinaryReviewRoundsSpent } from "../src/repair/review-round-cap.ts";
@@ -64,10 +74,22 @@ export const HOSTED_AUTONOMY_CI_FIRST_RUNTIMES: ReadonlySet<string> = new Set<
 ]);
 
 /**
+ * First runtime generation whose HOSTED runs open the pre-review CI fix route
+ * (`HOSTED_PRE_REVIEW_CI_FIXES`): generation 80 kept it closed because its
+ * rollback target R79 refused the cell; generation 81's rollback target R80
+ * isolates it.
+ */
+export const HOSTED_AUTONOMY_CI_FIRST_FIX_MIN_GENERATION = 81;
+
+/**
  * Exact reviewed runtime revisions whose hosted runs open the pre-review CI
- * fix route (`HOSTED_PRE_REVIEW_CI_FIXES` true in that revision's tree).
- * Generation 80 keeps that route closed (its rollback target R79 refuses the
- * cell), so this stays empty until a later generation opens it.
+ * fix route (`HOSTED_PRE_REVIEW_CI_FIXES` true in that revision's own tree,
+ * which a test proves for every listed revision present locally), each named
+ * by the launcher commit that pins its install. Generation 81's pin commit
+ * lists its runtime here, and in `HOSTED_AUTONOMY_CI_FIRST_RUNTIMES` and the
+ * CI-correction allowlist: a fix runtime counts only as a proven CI-first
+ * runtime at generation 81+ (`ciFirstFixRuntimeProven`). R80 never belongs
+ * here (its hosted route is closed), so a rollback re-admits no fix.
  */
 export const HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES: ReadonlySet<string> =
   new Set<string>([]);
@@ -83,6 +105,22 @@ export function ciFirstRuntimeProven(
   return runtime !== null && runtime !== undefined &&
     runtime.generation >= HOSTED_AUTONOMY_CI_FIRST_MIN_GENERATION &&
     ciCorrectionRuntimeProven(runtime, allowlist);
+}
+
+/**
+ * True only for an allowlisted fix runtime (`fixAllowlist`) at generation
+ * 81+ that is also a proven CI-first runtime (`ciFirstAllowlist`), with its
+ * own settled healthy proof binding this exact revision and generation.
+ */
+export function ciFirstFixRuntimeProven(
+  runtime: HostedRuntimeRecordV1 | null | undefined,
+  fixAllowlist: ReadonlySet<string> = HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+  ciFirstAllowlist: ReadonlySet<string> = HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
+): boolean {
+  return runtime !== null && runtime !== undefined &&
+    runtime.generation >= HOSTED_AUTONOMY_CI_FIRST_FIX_MIN_GENERATION &&
+    ciFirstRuntimeProven(runtime, fixAllowlist) &&
+    ciFirstRuntimeProven(runtime, ciFirstAllowlist);
 }
 
 /** Denial reason of a legacy final round withheld from a non-CI-first runtime. */
@@ -126,19 +164,49 @@ function publishedHead(
     );
 }
 
-/** Parked by the runtime's pre-review CI gate (red or pending past bound). */
+/**
+ * Parked by the runtime's pre-review CI gate on its published head, red or
+ * pending past bound (`prefixes`): the parks every pre-review rule takes.
+ */
 export function preReviewCiParked(
   snapshot: Pick<RepairStateSnapshotV1, "releaseRequests">,
   record: WorkRow,
+  prefixes: readonly string[] = CI_PRE_REVIEW_PARK_PREFIXES,
 ): boolean {
   const blocker = record.blocker;
   return record.nextStep === "blocked" && record.intent === null &&
     blocker !== null && blocker.kind === "other" &&
-    CI_PRE_REVIEW_PARK_PREFIXES.some((prefix) =>
-      blocker.message.startsWith(prefix)
-    ) &&
+    prefixes.some((prefix) => blocker.message.startsWith(prefix)) &&
     record.related.issueNumber !== null && ciPublicationShape(record) &&
     publishedHead(snapshot, record);
+}
+
+/**
+ * The pre-review gate's exhausted park (generation 81): three CI fixes
+ * spent, on a published head no completed review binds. Only the
+ * once-per-head re-run and the green rule take it, never a fix or a
+ * moved-base refresh. The merge gate writes the same message for a REVIEWED
+ * head, whose green head belongs to delivery, not to another review: that
+ * park keeps generation 80's terms (nothing re-admits it).
+ */
+export function preReviewCiExhausted(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRow,
+): boolean {
+  return preReviewCiParked(snapshot, record, [CI_FIX_EXHAUSTED_PREFIX]) &&
+    !headReviewCompleted(snapshot, record);
+}
+
+/**
+ * Any park the pre-review gate wrote that the once-per-head re-run and the
+ * green rule take: red, pending, or exhausted on a never-reviewed head.
+ */
+export function preReviewGateParked(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRow,
+): boolean {
+  return preReviewCiParked(snapshot, record) ||
+    preReviewCiExhausted(snapshot, record);
 }
 
 /** A pre-review park a CI fix may still be admitted for. */

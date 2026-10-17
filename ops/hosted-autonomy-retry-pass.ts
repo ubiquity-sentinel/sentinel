@@ -36,10 +36,10 @@ import {
   ordinaryReviewRoundsSpent,
 } from "../src/repair/review-round-cap.ts";
 import {
+  ciFirstFixRuntimeProven,
   ciFirstRuntimeProven,
-  HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
   launcherLegacyCutoff,
-  preReviewCiParked,
+  preReviewGateParked,
 } from "./hosted-autonomy-ci-first.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
 import { runHostedMismatchDispositionPass } from "./hosted-autonomy-mismatch-pass.ts";
@@ -318,9 +318,11 @@ export async function runHostedRetryPass(
   // (repository, issue number).
   const closedIssues = context.closedIssues;
   // A head parked on its merge-gate CI failure (or by the CI-first gate
-  // before its review) whose base tip is still the record's base is read for
-  // green CI on its OWN repository surface (a re-run flake, or CI that
-  // finished late); only a head proven all green there can re-admit. A
+  // before its review, its exhausted park included) whose base tip is still
+  // the record's base is read for green CI on its OWN repository surface (a
+  // re-run flake, or CI that finished late); only a head proven all green
+  // there can re-admit. A pre-review park on a moved base needs no read: under
+  // a proven CI-first runtime it returns for the runtime's refresh. A
   // merge-gate park whose ordinary rounds are spent is read only under a
   // proven CI-first runtime (at any base, at most
   // `HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS` per pass, rotating): green at
@@ -349,7 +351,7 @@ export async function runHostedRetryPass(
       record.nextStep !== "blocked" || head === null ||
       !((ciGreenRedeliveryEligible(snapshot, record) &&
         !ordinaryReviewRoundsSpent(snapshot, record)) ||
-        preReviewCiParked(snapshot, record) || spentRead) ||
+        preReviewGateParked(snapshot, record) || spentRead) ||
       closedIssues.has(
         hostedIssueKey(record.repository, record.related.issueNumber!),
       )
@@ -372,12 +374,10 @@ export async function runHostedRetryPass(
   // Flake first: a CI-parked head is re-admitted for a correction only once
   // its single re-run (run by the delivery pass) can no longer act. Read only
   // under a proven CI-correction runtime, the only one the rule activates for.
-  // A pre-review CI fix is re-admitted only under a fix runtime (none in
-  // generation 80), so only that runtime reads those heads' re-runs.
-  const ciFixRuntime = ciFirstRuntimeProven(
-    installedRuntime,
-    HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
-  );
+  // A pre-review CI fix is re-admitted only under a fix runtime (generation
+  // 81+, pinned by its own launcher commit), so only that runtime reads those
+  // heads' re-runs.
+  const ciFixRuntime = ciFirstFixRuntimeProven(installedRuntime);
   const ciRerunSettled = ciCorrectionRuntimeProven(installedRuntime)
     ? await readCiRerunSettled(
       { ...context, snapshot },

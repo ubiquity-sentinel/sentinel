@@ -30,6 +30,7 @@ import {
   ciRedeliveryEligible,
 } from "./hosted-autonomy-ci-retries.ts";
 import {
+  ciFirstFixRuntimeProven,
   ciFirstRuntimeProven,
   HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
   HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
@@ -38,6 +39,7 @@ import {
   legacyFinalRoundAdmissible,
   preReviewCiParked,
   preReviewFixEligible,
+  preReviewGateParked,
 } from "./hosted-autonomy-ci-first.ts";
 import {
   ciFixMarker,
@@ -312,6 +314,9 @@ export interface RetryPlanV1 {
 /** Detail suffix of a CI re-admission whose head is green again. */
 const CI_GREEN_DETAIL_SUFFIX = ":green";
 
+/** Detail suffix of a pre-review park returned for its moved-base refresh. */
+const CI_BASE_MOVED_DETAIL_SUFFIX = ":base-moved";
+
 /**
  * Denial of the green CI rule for a head whose ordinary review rounds are
  * spent: the delivery pass's spent-round rule merges it (or refuses) itself.
@@ -333,13 +338,27 @@ export function ciCorrectionPlan(plan: RetryPlanV1): boolean {
 
 /**
  * The CI-first re-admission of a head the runtime's pre-review gate parked
- * (`hosted-autonomy-ci-first.ts`): green again on its unchanged base returns
- * it to `work` under any runtime; still red, once its re-run can no longer
- * act, returns it with the CI fix marker only under a fix runtime. Either
- * way the head returns only to be reviewed once green, so a record with no
- * review round left by the ceiling's own count (`reviewRoundAvailable`), or
+ * (`hosted-autonomy-ci-first.ts`), each back at `work` with nothing charged:
+ *
+ * - green: green again on its unchanged base, under any runtime (the
+ *   exhausted park of a never-reviewed head included): the runtime's gate
+ *   then requests the review;
+ * - moved base: a red or pending park (never the exhausted one) whose base
+ *   moved, under a proven CI-first runtime only: the runtime refreshes it
+ *   deterministically and uncharged (its freshness gate reads the tip) and
+ *   gates the refreshed head's CI before any review. Under any other runtime
+ *   (R79 reviews before CI) it stays parked;
+ * - fix: still red, once its re-run can no longer act, with the CI fix marker
+ *   only under a fix runtime (a moved base takes the refresh first, unless
+ *   only a CI fix can open the record's round: a legacy final round).
+ *
+ * The green and moved-base returns lead straight to a review request (or to
+ * the refresh before it), so they need a review round left by the ceiling's
+ * own count (`reviewRoundsLeft`; the runtime's ceiling gate would park the
+ * record before any refresh otherwise, and an open legacy final round is a CI
+ * fix's to arm); a fix needs one available (`reviewRoundAvailable`). A record
  * whose next review is a legacy final round under a runtime not proven
- * CI-first (`legacyFinalRoundAdmissible`), stays parked: R79 would review it
+ * CI-first (`legacyFinalRoundAdmissible`) stays parked: R79 would review it
  * past the cap, or before its CI. Null when no CI-first rule applies.
  */
 function planCiFirstReadmission(
@@ -356,20 +375,21 @@ function planCiFirstReadmission(
   const head = record.target.head;
   if (
     blocker === null || head === null ||
-    !preReviewCiParked(snapshot, record) ||
+    !preReviewGateParked(snapshot, record) ||
     !reviewRoundAvailable(snapshot, record, cutoff) ||
     !legacyFinalRoundAdmissible(snapshot, record, ciFirst)
   ) return null;
   const key = ciGreenHeadKey(record.repository, head);
-  // A green head returns for its review: only with a review round left (an
-  // open legacy final round is a CI fix's to arm, not a review's).
-  const green = baseTips.get(hostedRepositoryKey(record.repository)) ===
-      record.target.base &&
-    ciGreenHeads.has(key) &&
-    reviewRoundsLeft(snapshot, record, cutoff) > 0;
-  const fix = !green && ciFixRuntime && ciRerunSettled.has(key) &&
+  const tip = baseTips.get(hostedRepositoryKey(record.repository)) ?? null;
+  const roundLeft = reviewRoundsLeft(snapshot, record, cutoff) > 0;
+  const green = tip === record.target.base && ciGreenHeads.has(key) &&
+    roundLeft;
+  const moved = !green && ciFirst && tip !== null &&
+    tip !== record.target.base && roundLeft &&
+    preReviewCiParked(snapshot, record);
+  const fix = !green && !moved && ciFixRuntime && ciRerunSettled.has(key) &&
     preReviewFixEligible(snapshot, record, cutoff);
-  if (!green && !fix) return null;
+  if (!green && !moved && !fix) return null;
   const prefix = blocker.message.slice(0, blocker.message.indexOf(":") + 1);
   return {
     id: record.id,
@@ -379,7 +399,9 @@ function planCiFirstReadmission(
     reviewRounds: null,
     advanceBase: false,
     observedBase: null,
-    detail: `${blocker.kind}:${prefix}${green ? CI_GREEN_DETAIL_SUFFIX : ""}`,
+    detail: `${blocker.kind}:${prefix}${
+      green ? CI_GREEN_DETAIL_SUFFIX : moved ? CI_BASE_MOVED_DETAIL_SUFFIX : ""
+    }`,
     ...(fix ? { ciFixMarker: true as const } : {}),
   };
 }
@@ -472,9 +494,10 @@ export function planHostedRetries(
     );
   const ciFixRuntime = ciRuntime !== null &&
     ciRuntime.activeRevision === runtimeSha &&
-    ciFirstRuntimeProven(
+    ciFirstFixRuntimeProven(
       ciRuntime,
       options.ciFirstFixAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+      options.ciFirstAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
     );
   const ciRerunSettled = options.ciRerunSettled ?? new Set<string>();
   const ciGreenHeads = options.ciGreenHeads ?? new Set<string>();

@@ -12,13 +12,16 @@
  * helpers exist for the installed generation-78 runtime (R78), the rollback
  * target of generation 79: `gen78Available` and `loadGen78Modules`, and for
  * the installed generation-79 runtime (R79): `gen79Available` and
- * `loadGen79Modules`, and for the live generation-79 launcher (L79, whose
- * `ops/` tree is extracted too): `l79Available` and `loadL79Modules`.
+ * `loadGen79Modules`, for the installed generation-80 runtime (R80), the
+ * rollback target of generation 81: `gen80Available` and `loadGen80Modules`,
+ * and for the live generation-79 launcher (L79, whose `ops/` tree is
+ * extracted too): `l79Available` and `loadL79Modules`.
  */
 import {
   OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION,
   OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION,
   OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
 } from "../../src/host/owner-install-runtime-pins.ts";
 
 /** Installed generation-77 runtime revision (the rollback target of 78). */
@@ -27,6 +30,8 @@ export const GEN77_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION;
 export const GEN78_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION;
 /** Installed generation-79 runtime revision. */
 export const GEN79_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION;
+/** Installed generation-80 runtime revision (the rollback target of 81). */
+export const GEN80_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION;
 /**
  * The live generation-79 launcher (L79: the R79 pin 4b8be3b9f plus the
  * protected-path refusal recording), the launcher rollback target of every
@@ -74,6 +79,11 @@ export function gen79Available(): Promise<boolean> {
   return revisionAvailable(GEN79_RUNTIME);
 }
 
+/** True when the pinned generation-80 commit is in the local object store. */
+export function gen80Available(): Promise<boolean> {
+  return revisionAvailable(GEN80_RUNTIME);
+}
+
 /** True when the L79 launcher commit is in the local object store. */
 export function l79Available(): Promise<boolean> {
   return revisionAvailable(L79_LAUNCHER);
@@ -108,6 +118,13 @@ export function loadGen79Modules(
   paths: readonly string[],
 ): Promise<LoadedRuntimeV1> {
   return loadRevisionModules(GEN79_RUNTIME, 79, paths);
+}
+
+/** `loadGen77Modules` for the generation-80 `src/` and `tests/` trees. */
+export function loadGen80Modules(
+  paths: readonly string[],
+): Promise<LoadedRuntimeV1> {
+  return loadRevisionModules(GEN80_RUNTIME, 80, paths);
 }
 
 /** `loadGen77Modules` for the L79 launcher's `src/`, `tests/` and `ops/`. */
