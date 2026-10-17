@@ -60,11 +60,14 @@ import {
 } from "../../src/host/local.ts";
 import { runRepairEntrypoint } from "../../src/main.ts";
 import {
+  checkRunWire,
+  checksPageWire,
   FakeAuthProvider,
   FakeReviewService,
   issueWire,
   pullWire,
   refWire,
+  statusesPageWire,
 } from "../github/helpers.ts";
 
 /** Exact fixture identity/counter description passed on stdin. */
@@ -330,6 +333,31 @@ export function makeRefReadingTransport(
           review_decision: "none",
         }),
       );
+    }
+    // CI first (generation 80): a review is requested only once the exact
+    // published head's required CI is green. The deterministic check is
+    // green only for a commit that IS the bare remote's candidate or base
+    // branch head at request time; any other commit has no check at all, so
+    // the gate waits rather than reviewing an unpublished head.
+    const commits = `${path}/commits/`;
+    if (request.method === "GET" && url.pathname.startsWith(commits)) {
+      const [sha, kind, extra] = url.pathname.slice(commits.length).split("/");
+      if (extra === undefined && kind === "statuses") {
+        return reply(200, statusesPageWire([]));
+      }
+      if (extra === undefined && kind === "check-runs") {
+        const published = await input.readRef(
+          `refs/heads/${input.candidateBranch}`,
+        );
+        const base = await input.readRef(`refs/heads/${input.baseBranch}`);
+        const green = sha === published || sha === base;
+        return reply(
+          200,
+          checksPageWire(
+            green ? [checkRunWire({ name: "test-local", head_sha: sha })] : [],
+          ),
+        );
+      }
     }
     const marker = `${path}/git/ref/`;
     if (request.method === "GET" && url.pathname.startsWith(marker)) {
