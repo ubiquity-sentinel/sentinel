@@ -94,6 +94,12 @@ export const HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES:
       revision: "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
       activatedNotBefore: 1792185359753,
     },
+    // Generation 80 (R80, which keeps the hosted route open), pinned by its
+    // launcher commit at 1792256700000.
+    {
+      revision: "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+      activatedNotBefore: 1792256700000,
+    },
   ];
 
 /**

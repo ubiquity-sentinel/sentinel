@@ -51,12 +51,17 @@ export const HOSTED_AUTONOMY_CI_FIRST_MIN_GENERATION = 80;
 
 /**
  * Exact reviewed runtime revisions that carry the CI-first gate (generation
- * 80+). Empty until R80 is installed and pinned: the legacy re-admission is
- * inert under any other runtime.
+ * 80+), each named by the launcher commit that pins its install. A listed
+ * revision counts only once it holds its own healthy proof at its installed
+ * generation (`ciFirstRuntimeProven`): the legacy re-admission is inert under
+ * any other runtime, R79 restored at any generation included.
  */
 export const HOSTED_AUTONOMY_CI_FIRST_RUNTIMES: ReadonlySet<string> = new Set<
   string
->([]);
+>([
+  // Generation 80 (R80), pinned by its launcher commit.
+  "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+]);
 
 /**
  * Exact reviewed runtime revisions whose hosted runs open the pre-review CI

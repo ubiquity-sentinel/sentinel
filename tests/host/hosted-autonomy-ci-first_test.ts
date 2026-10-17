@@ -425,7 +425,10 @@ Deno.test("CI first: generation 80 ships the gate with the hosted pre-review fix
     false,
     "closed in hosted generation-80 runs",
   );
-  // Both allowlists are pinned only once their runtime is installed.
-  assert.equal(HOSTED_AUTONOMY_CI_FIRST_RUNTIMES.size, 0);
+  // The install pin names R80 as the one CI-first runtime; no runtime opens
+  // the hosted pre-review fix route yet.
+  assert.deepEqual([...HOSTED_AUTONOMY_CI_FIRST_RUNTIMES], [
+    "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+  ]);
   assert.equal(HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES.size, 0);
 });

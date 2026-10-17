@@ -40,6 +40,7 @@ import {
   HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES,
 } from "../../ops/hosted-autonomy-ci-retries.ts";
 import { planHostedRetries } from "../../ops/hosted-autonomy-retries.ts";
+import { OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION } from "../../src/host/owner-install-runtime-pins.ts";
 import { hostedRepositoryKey } from "../../ops/hosted-autonomy-policy.ts";
 import {
   reservation,
@@ -547,7 +548,8 @@ function plan(runtime: string, generation: number, ciFirst: string[]) {
 Deno.test("legacy exception: the launcher re-admits the 28 only under an allowlisted CI-first runtime", () => {
   // Under R79 (CI corrections, but no CI-first gate) a re-admitted legacy
   // record would spend its one final review on a still-red refreshed head.
-  const r79 = [...HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES].at(-1)!;
+  const r79 = OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION;
+  assert.ok(HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES.has(r79));
   assert.deepEqual(plan(r79, 79, []), [], "inert under R79");
   assert.deepEqual(plan(R80, 80, []), [], "inert until R80 is pinned");
   const plans = plan(R80, 80, [R80]);
