@@ -16,6 +16,7 @@ import type {
 import {
   API_BASE,
   createHostedAutonomyEffect,
+  createHostedAutonomyRawRead,
   createHostedAutonomyRequest,
   LISTING_PAGE_SIZE,
   MAX_COMPARE_RESPONSE_BYTES,
@@ -29,6 +30,9 @@ import {
   parseHostedAutonomyPull,
   revisionIntegratedIntoBase,
 } from "./hosted-autonomy-github-pull.ts";
+
+/** An exact full commit id (a carried proof names nothing else). */
+const COMMIT_SHA = /^[0-9a-f]{40}$/;
 
 /** GitHub's `created_at` wire format: UTC, whole or fractional seconds. */
 const RUN_CREATED_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
@@ -58,6 +62,7 @@ export function createHostedAutonomyGitHub(
 
   const request = createHostedAutonomyRequest(token);
   const effect = createHostedAutonomyEffect(token);
+  const rawRead = createHostedAutonomyRawRead(token);
   async function readPull(
     number: number,
     baseBranch: string | null,
@@ -538,12 +543,39 @@ export function createHostedAutonomyGitHub(
         (compare as Record<string, unknown>)["status"] === "ahead" &&
         revisionIntegratedIntoBase(compare, base);
     },
+    async comparePatchDigest(base: string, head: string) {
+      // The merge-base diff GitHub renders for `base...head`, hashed as raw
+      // bytes. Both sides of a carried proof are rendered by the same
+      // endpoint, so equal digests mean an equal pull request patch (every
+      // file header, abbreviated blob ids, mode and hunk); a diff GitHub will
+      // not render (too large) or cannot serve is no proof.
+      if (!COMMIT_SHA.test(base) || !COMMIT_SHA.test(head)) return null;
+      const bytes = await rawRead(
+        `/repos/${scope}/compare/${base}...${head}`,
+        "application/vnd.github.diff",
+        MAX_COMPARE_RESPONSE_BYTES,
+      );
+      if (bytes === null) return null;
+      const digest = new Uint8Array(
+        await crypto.subtle.digest(
+          "SHA-256",
+          bytes.buffer.slice(
+            bytes.byteOffset,
+            bytes.byteOffset + bytes.byteLength,
+          ) as ArrayBuffer,
+        ),
+      );
+      return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+    },
     followUpIssues: createHostedFollowUpIssues(request, repository),
-    async merge(number: number, head: string) {
+    async merge(number: number, head: string, message?: string) {
       const response = await request(
         "PUT",
         `/repos/${scope}/pulls/${number}/merge`,
-        { sha: head, merge_method: "merge" },
+        message === undefined
+          ? { sha: head, merge_method: "merge" }
+          : { sha: head, merge_method: "merge", commit_message: message },
       );
       if (response === null || typeof response !== "object") return null;
       const obj = response as Record<string, unknown>;

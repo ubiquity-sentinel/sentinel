@@ -202,6 +202,21 @@ export async function readHostedRuntimeExecution(input: {
   identity: HostedRuntimeIdentityV1;
   controllerSha: GitSha;
 }): Promise<HostedExecutionIntentV1> {
+  return (await readHostedRuntimeCustody(input)).execution;
+}
+
+/**
+ * `readHostedRuntimeExecution` together with the exact release custody it
+ * was verified against (the launcher's legacy cutoff is checked against that
+ * custody, `legacy-review-cutoff-env.ts`).
+ */
+export async function readHostedRuntimeCustody(input: {
+  state: StateReadView;
+  identity: HostedRuntimeIdentityV1;
+  controllerSha: GitSha;
+}): Promise<
+  { execution: HostedExecutionIntentV1; release: ReleaseStateSnapshotV1 }
+> {
   let snapshot: ReleaseStateSnapshotV1 | null = null;
   try {
     const read = await input.state.readRelease();
@@ -231,7 +246,7 @@ export async function readHostedRuntimeExecution(input: {
     failExecution();
   }
   if (runtime.generation !== execution.generation) failExecution();
-  return execution;
+  return { execution, release: snapshot };
 }
 
 export interface HostedRuntimeLauncherInputV1 {

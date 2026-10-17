@@ -63,14 +63,13 @@ export abstract class GitHubClientWrites extends GitHubClientReads {
   async mergePull(
     number: number,
     sha: GitSha,
-    message?: string,
   ): Promise<PortResultV1<MergePutWireV1>> {
     const raw = await this.sendCore(
       "PUT",
       `${this.apiBaseUrl}/repos/${
         repoPath(this.repository)
       }/pulls/${number}/merge`,
-      message === undefined ? { sha } : { sha, commit_message: message },
+      { sha },
     );
     if (raw.status === "error") {
       return portError(raw.error.kind, raw.error.detail, raw.error.rateLimit);

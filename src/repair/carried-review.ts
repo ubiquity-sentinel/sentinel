@@ -71,8 +71,9 @@ export function reviewedIdentity(
 /**
  * The delivery line's view of a spent record (no round left): its latest
  * completed pull request review is clean, so on a moved base it refreshes
- * mechanically and merges under that review (or parks at its next step), and
- * a refreshed head at `work` is heading for that carried merge.
+ * mechanically and the launcher merges it under that review (or it parks at
+ * its next step), and a refreshed head at `work` is heading for that carried
+ * merge.
  */
 export function carriedLine(
   snapshot: Reviews,

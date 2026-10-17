@@ -137,6 +137,14 @@ export async function readCiRerunSettled(
    * rule activates for.
    */
   preReviewFixes = false,
+  /**
+   * The launcher's legacy review cutoff (`launcherLegacyCutoff`), the same one
+   * the planner counts rounds under: a legacy record's open final round is a
+   * review round available to its CI fix, so its re-run is read and settled
+   * here exactly as the planner's correction rule expects (round-2 recheck
+   * P1: read without it, no legacy record ever got its CI fix).
+   */
+  cutoff: number | null = null,
 ): Promise<Set<string>> {
   const { snapshot, scopeFor, closedIssues } = context;
   const now = context.deps.clock.now();
@@ -145,8 +153,8 @@ export async function readCiRerunSettled(
     const head = record.target.head;
     if (
       record.nextStep !== "blocked" || head === null ||
-      !(ciRedeliveryEligible(snapshot, record) ||
-        (preReviewFixes && preReviewFixEligible(snapshot, record))) ||
+      !(ciRedeliveryEligible(snapshot, record, cutoff) ||
+        (preReviewFixes && preReviewFixEligible(snapshot, record, cutoff))) ||
       closedIssues.has(
         hostedIssueKey(record.repository, record.related.issueNumber!),
       )

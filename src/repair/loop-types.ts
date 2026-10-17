@@ -65,10 +65,11 @@ export interface RepairCycleDepsV1 {
   /** Matrix-owned implementations settle only through authenticated artifact ingestion. */
   externalImplementations?: boolean;
   /**
-   * The one-time legacy review class's cutoff (`review-round-cap.ts`): an
-   * instant no later than this runtime's activation, handed over by the
-   * launcher that pinned it (`LEGACY_REVIEW_CUTOFF_RUNTIMES`). Absent or null
-   * means no record is legacy (no final round is ever granted).
+   * The one-time legacy review class's cutoff (`review-round-cap.ts`): the
+   * one instant no later than the first CI-first runtime's activation
+   * (`LEGACY_REVIEW_CUTOFF`), handed over by the launcher to runs of a pinned
+   * CI-first revision. Absent or null means no record is legacy (no final
+   * round is ever granted).
    */
   legacyReviewCutoff?: number | null;
 }

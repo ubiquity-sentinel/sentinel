@@ -198,6 +198,34 @@ Deno.test("carried patch: the runtime's mechanical refresh of a reviewed head ca
   }
 });
 
+Deno.test("carried patch: the proof names the head each refresh was made from and counts the refreshes the patch was carried through", async () => {
+  const repo = await makeRepo();
+  try {
+    const { b0, h0, t } = await reviewedPair(repo);
+    const git = repo.executor();
+    const first = await git.integrateBase(h0, t);
+    assert.ok(first.ok, JSON.stringify(first));
+    const h1 = first.value;
+    const once = await git.carriedPatchProof(request(b0, h0, t, h1));
+    assert.ok(once.ok, JSON.stringify(once));
+    assert.equal(once.value.refreshedFrom, h0, "H1 was refreshed from H0");
+    assert.equal(once.value.refreshes, 1);
+    // The base moves again: the second refresh is made from H1.
+    const t2 = await repo.commit({ "third.txt": "another base change\n" });
+    const second = await git.integrateBase(h1, t2);
+    assert.ok(second.ok, JSON.stringify(second));
+    const h2 = second.value;
+    const twice = await git.carriedPatchProof(request(b0, h0, t2, h2));
+    assert.ok(twice.ok, JSON.stringify(twice));
+    assert.equal(twice.value.refreshedFrom, h1, "H2 was refreshed from H1");
+    assert.equal(twice.value.refreshes, 2);
+    assert.equal(twice.value.refreshedPatch, twice.value.reviewedPatch);
+    assert.equal(carriedPatchHolds(request(b0, h0, t2, h2), twice.value), true);
+  } finally {
+    await repo.cleanup();
+  }
+});
+
 Deno.test("carried patch: a base move that touches a reviewed path changes the patch even when every hunk merges cleanly", async () => {
   const repo = await makeRepo();
   try {

@@ -323,7 +323,11 @@ export async function runHostedRefreshRearmPass(
     ciFirst: ciFirstRuntimeProven(installed),
     legacyCutoff: context.deps.legacyReviewCutoff !== undefined
       ? context.deps.legacyReviewCutoff
-      : launcherLegacyCutoff(installed, ciFirstRuntimeProven(installed)),
+      : launcherLegacyCutoff(
+        installed,
+        ciFirstRuntimeProven(installed),
+        release,
+      ),
   };
   const rearmed = new Map<string, number>();
   for (const record of snapshot.work) {

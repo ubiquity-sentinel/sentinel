@@ -166,8 +166,9 @@ export async function executeWorkStep(
   // reconciliation, whose review request parks at the same ceiling). Two
   // exceptions: a legacy record whose one final round is still open takes the
   // CI fix of its reviewed red head (below; the fix arms that round), and a
-  // refreshed head that carries its earlier review's exact patch is merged
-  // under that review once its own CI is green (`loop-carried-delivery.ts`).
+  // refreshed head that carries its earlier review's exact patch is handed,
+  // once its own CI is green, to the launcher's carried merge under that
+  // review (`loop-carried-delivery.ts`).
   if (
     record.intent === null && reviewRoundsSpentOut(context, record) &&
     !legacyCiFixPending(deps, context, record)

@@ -29,7 +29,10 @@
  *   (`legacyFinalRoundAdmissible`).
  */
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
-import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import type {
+  ReleaseStateSnapshotV1,
+  RepairStateSnapshotV1,
+} from "../src/contracts/state-snapshots.ts";
 import {
   CI_PRE_REVIEW_PARK_PREFIXES,
   ciFixesLeft,
@@ -144,16 +147,18 @@ export function preReviewFixEligible(
 }
 
 /**
- * The legacy review cutoff the launcher's own round counts use: the cutoff
- * pinned for the installed runtime (`legacyReviewCutoffForRuntime`), only
- * under a proven CI-first runtime (every legacy re-admission needs one);
- * otherwise null, and no record is legacy.
+ * The legacy review cutoff the launcher's own round counts use: the one
+ * pinned cutoff (`legacyReviewCutoffForRuntime`, checked against release
+ * custody when the caller has it), only under a proven CI-first runtime
+ * (every legacy re-admission needs one); otherwise null, and no record is
+ * legacy.
  */
 export function launcherLegacyCutoff(
   runtime: HostedRuntimeRecordV1 | null | undefined,
   ciFirst: boolean,
+  release?: ReleaseStateSnapshotV1 | null,
 ): number | null {
-  return ciFirst ? legacyReviewCutoffForRuntime(runtime) : null;
+  return ciFirst ? legacyReviewCutoffForRuntime(runtime, release) : null;
 }
 
 /**

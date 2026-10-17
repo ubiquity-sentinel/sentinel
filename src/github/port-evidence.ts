@@ -35,13 +35,6 @@ export abstract class GitHubPortEvidence extends GitHubPortBase {
       review: { requestId: string; id: string };
     },
     provedBase?: GitSha,
-    /**
-     * Carried merge only: the REVIEWED head the receipt binds. The current
-     * pull request (now at the refreshed head) is observed AS OF that head,
-     * so the review is re-observed exactly as it was completed; the caller
-     * re-proves from git that the refreshed head carries its patch.
-     */
-    reviewedHead?: GitSha,
   ): Promise<
     | { ok: true; normalized: ReviewNormalizationV1 | null }
     | { ok: false; error: PortErrorV1 }
@@ -96,11 +89,8 @@ export abstract class GitHubPortEvidence extends GitHubPortBase {
       service: service.value,
       repository: this.repository,
       expectedOperationKey: operationKey,
-      pullRequest: pull.value === null
-        ? null
-        : reviewedHead !== undefined
-        ? { ...pull.value, head: reviewedHead }
-        : provedBase === undefined || !this.selfMergeEnabled
+      pullRequest: provedBase === undefined || !this.selfMergeEnabled ||
+          pull.value === null
         ? pull.value
         : { ...pull.value, base: provedBase },
       reviews: reviews.value,

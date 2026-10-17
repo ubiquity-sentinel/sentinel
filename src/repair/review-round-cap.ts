@@ -63,9 +63,18 @@ export const REVIEW_ROUND_CEILING_CARRIED_CI_FAILED_PREFIX =
 /** The refreshed head's own required CI stayed pending past the bound. */
 export const REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX =
   `${REVIEW_ROUND_CEILING_PREFIX}the refreshed head's required CI did not finish within 6 hours: `;
-/** The patch proof or the carried merge stayed unavailable past the bound. */
+/**
+ * The patch proof, the pull request's head, the launcher's carried merge or
+ * its delivery record stayed unavailable past the bound.
+ */
 export const REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX =
   `${REVIEW_ROUND_CEILING_PREFIX}the carried delivery stalled for 6 hours: `;
+/**
+ * The base moved again after the most mechanical refreshes one reviewed head
+ * may be carried through (`CARRIED_REFRESH_LIMIT`).
+ */
+export const REVIEW_ROUND_CEILING_CARRIED_REFRESH_LIMIT_PREFIX =
+  `${REVIEW_ROUND_CEILING_PREFIX}the base moved again after the carried refresh limit: `;
 
 /** Every park message, in a fixed order. */
 export const REVIEW_ROUND_CEILING_MESSAGES: readonly string[] = [
@@ -82,13 +91,17 @@ export const REVIEW_ROUND_CEILING_MESSAGES: readonly string[] = [
  * review-before-CI order and whose CI is red each get their CI fixes and then
  * exactly ONE final current-head review on the green head.
  *
- * "Spent under the old order" is "admitted before the CI-first runtime was
- * activated". `cutoff` is an instant no later than that activation: the
- * launcher pins it beside the runtime revision it installs
- * (`LEGACY_REVIEW_CUTOFF_RUNTIMES`, the instant of the launcher commit that
- * pins that install, written before the install can happen) and hands it to
- * that runtime's runs; with no pinned cutoff (null) nothing is legacy. A
- * record's pin is the rounds it had spent before the cutoff
+ * "Spent under the old order" is "admitted before the FIRST CI-first runtime
+ * (generation 80) was activated". `cutoff` is ONE instant no later than that
+ * first activation: the instant of the launcher commit that pins generation
+ * 80's install (`LEGACY_REVIEW_CUTOFF`), written before the install can
+ * happen. It is pinned once and never moves: every later CI-first runtime
+ * joins the pin's revision list and receives the SAME instant, so a record
+ * new under generation 80 is legacy under no later runtime either (round-2
+ * recheck P2: a per-revision instant let generation 81's own pin turn
+ * generation-80 records legacy and give them a fourth round). The launcher
+ * hands it to runs of exactly those revisions; with no cutoff (null) nothing
+ * is legacy. A record's pin is the rounds it had spent before the cutoff
  * (`legacyReviewRoundPin`), and the record is in the class once that pin
  * reaches `MAX_REVIEW_ROUNDS`:
  *
@@ -110,40 +123,60 @@ export const REVIEW_ROUND_CEILING_MESSAGES: readonly string[] = [
  * member whose head is green, or whose latest review left an unresolved
  * P0/P1, gets no further review: its rounds are spent like any other record's.
  */
-export interface LegacyReviewCutoffV1 {
-  /** The exact runtime revision; never a generation number. */
-  revision: string;
+export interface LegacyReviewCutoffPinV1 {
   /**
-   * Epoch milliseconds no later than the revision's first activation: the
-   * instant of the launcher commit that pins its install.
+   * Epoch milliseconds no later than the FIRST CI-first activation: the
+   * instant of the launcher commit that pins generation 80's install. Set
+   * once, by that commit; null until then. Never moved by a later pin.
    */
-  activatedNotBefore: number;
+  readonly activatedNotBefore: number | null;
+  /**
+   * Every CI-first runtime revision (exact, never a generation number) whose
+   * runs receive the cutoff: generation 80's, then each later CI-first
+   * runtime's, appended by the commit that pins its install. Appending a
+   * revision never changes `activatedNotBefore`.
+   */
+  readonly revisions: readonly string[];
 }
 
 /**
- * The CI-first runtimes whose runs receive a legacy cutoff, each pinned with
- * the instant of the launcher commit that pins its install. Empty until the
- * generation-80 runtime is pinned for installation; that same commit adds
- * its row.
+ * The one legacy cutoff. Unpinned until the generation-80 runtime is pinned
+ * for installation: that commit sets the instant (its own) and the first
+ * revision; a later CI-first runtime only appends its revision.
  */
-export const LEGACY_REVIEW_CUTOFF_RUNTIMES: readonly LegacyReviewCutoffV1[] =
-  [];
+export const LEGACY_REVIEW_CUTOFF: LegacyReviewCutoffPinV1 = {
+  activatedNotBefore: null,
+  revisions: [],
+};
+
+/** One recorded execution (release custody or the current run). */
+export interface LegacyCutoffExecutionV1 {
+  readonly revision: string;
+  readonly createdAt: number;
+}
 
 /**
- * The legacy cutoff of exactly `revision`, or null: its pinned bound must be
- * a positive safe integer no later than any recorded execution of that
- * revision (`executions`, creation instants from release custody), otherwise
- * it is provably not that runtime's activation bound and nothing is legacy.
+ * The legacy cutoff a run of exactly `revision` receives, or null. The
+ * revision must be one of the pin's CI-first revisions, and the pinned
+ * instant a positive safe integer no later than EVERY recorded execution of
+ * ANY of those revisions (`executions`: the current run and release custody):
+ * an instant later than one of them is provably not the first CI-first
+ * activation bound (for example a later install commit that moved it to its
+ * own instant), and then no record is legacy under any revision.
  */
 export function legacyReviewCutoffFor(
   revision: string,
-  executions: readonly number[],
-  pinned: readonly LegacyReviewCutoffV1[] = LEGACY_REVIEW_CUTOFF_RUNTIMES,
+  executions: readonly LegacyCutoffExecutionV1[],
+  pin: LegacyReviewCutoffPinV1 = LEGACY_REVIEW_CUTOFF,
 ): number | null {
-  const row = pinned.find((entry) => entry.revision === revision);
-  if (row === undefined) return null;
-  const bound = row.activatedNotBefore;
-  return validLegacyCutoff(bound) && executions.every((at) => at >= bound)
+  const bound = pin.activatedNotBefore;
+  if (!validLegacyCutoff(bound) || !pin.revisions.includes(revision)) {
+    return null;
+  }
+  return executions.every((execution) =>
+      !pin.revisions.includes(execution.revision) ||
+      execution.createdAt >= bound
+    )
     ? bound
     : null;
 }

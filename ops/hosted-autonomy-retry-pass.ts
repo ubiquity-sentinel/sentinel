@@ -330,7 +330,7 @@ export async function runHostedRetryPass(
   const ciFirst = ciFirstRuntimeProven(installedRuntime);
   const legacyCutoff = deps.legacyReviewCutoff !== undefined
     ? deps.legacyReviewCutoff
-    : launcherLegacyCutoff(installedRuntime, ciFirst);
+    : launcherLegacyCutoff(installedRuntime, ciFirst, release);
   const ciGreenHeads = new Set<string>();
   const ciReadHeads = new Set<string>();
   const spentReads = spentCiReadWindow(
@@ -383,6 +383,7 @@ export async function runHostedRetryPass(
       { ...context, snapshot },
       retryTips,
       ciFixRuntime,
+      legacyCutoff,
     )
     : new Set<string>();
   const planned = planHostedRetries(
@@ -495,10 +496,12 @@ export async function runHostedRetryPass(
           actions.push(`retry:${denial.id}:denied:${denial.reason}`);
         },
         deps.conflictResolutionRuntimes,
+        legacyCutoff,
       ).filter((plan) => !settled(plan.id)),
       scopeFor,
       actions,
       HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS - conflictResolutions,
+      legacyCutoff,
     ),
   );
   if (plans.length > 0 || readmissions.length > 0) {

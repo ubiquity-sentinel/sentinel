@@ -156,6 +156,8 @@ export function planConflictReadmissions(
   onDenied?: (denial: { id: string; reason: string }) => void,
   pinned: readonly HostedRefreshRearmRuntimeV1[] =
     HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES,
+  /** The launcher's legacy review cutoff (`launcherLegacyCutoff`). */
+  cutoff: number | null = null,
 ): BaseRefreshCandidateV1[] {
   if (release === null) return [];
   const installed = release.hostedRuntimes.find((row) =>
@@ -196,7 +198,7 @@ export function planConflictReadmissions(
     // request is verified; the exact one is re-checked after verification).
     if (
       head === null || !isGitSha(head) ||
-      !conflictResolutionShape(withPullRequest(record, 1), snapshot)
+      !conflictResolutionShape(withPullRequest(record, 1), snapshot, cutoff)
     ) {
       onDenied?.({ id: record.id, reason: "conflict_unresolvable_shape" });
       continue;
@@ -242,6 +244,8 @@ export async function verifyConflictReadmissions(
   ) => Promise<HostedAutonomyScopeV1>,
   actions: string[],
   limit: number = HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS,
+  /** The launcher's legacy review cutoff (`launcherLegacyCutoff`). */
+  cutoff: number | null = null,
 ): Promise<BaseRefreshReadmissionV1[]> {
   const admitted: BaseRefreshReadmissionV1[] = [];
   for (const candidate of candidates) {
@@ -263,6 +267,7 @@ export async function verifyConflictReadmissions(
       conflictResolutionShape(
         withPullRequest(record, readmission.pullRequest),
         snapshot,
+        cutoff,
       );
     if (!eligible) {
       actions.push(

@@ -18,7 +18,7 @@ import {
   hostedRuntimeSentinelDir,
   isNonNegativeSafeInteger,
   parseHostedEnvironment,
-  readHostedRuntimeExecution,
+  readHostedRuntimeCustody,
   unavailableResult,
 } from "./hosted-runtime-identity.ts";
 import type {
@@ -110,7 +110,7 @@ async function launchHostedRuntime(
   await ensurePrivateDir(childTmp);
   await ensurePrivateDir(childDenoDir);
 
-  const execution = await readHostedRuntimeExecution({
+  const { execution, release } = await readHostedRuntimeCustody({
     state: input.state,
     identity,
     controllerSha: runtimeHead,
@@ -132,7 +132,7 @@ async function launchHostedRuntime(
     identity,
     { home: childHome, tmp: childTmp, denoDir: childDenoDir },
     startedAt,
-    legacyReviewCutoffForExecution(execution),
+    legacyReviewCutoffForExecution(execution, release),
   );
   // Streaming is attached only here, after the exact execution identity has
   // been verified, and only to the actual child command: the bounded Git

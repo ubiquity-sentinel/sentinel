@@ -97,7 +97,6 @@ export {
 export type {
   AlreadySatisfiedClosureRequestV1,
   CandidatePreservationRequestV1,
-  CarriedMergeV1,
   CarriedPatchProofV1,
   CarriedPatchRequestV1,
   GitHubBranchProtectionsV1,

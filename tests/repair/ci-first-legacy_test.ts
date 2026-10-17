@@ -529,8 +529,8 @@ function plan(runtime: string, generation: number, ciFirst: string[]) {
     ciRerunSettled: settled,
     ciReadHeads: settled,
     ciGreenHeads: new Set<string>(),
-    // The launcher's own cutoff: the pinned row of a proven CI-first
-    // runtime, none otherwise.
+    // The launcher's own cutoff: the one pinned cutoff under a proven
+    // CI-first runtime, none otherwise.
     legacyReviewCutoff: ciFirst.includes(runtime) ? CUT : null,
   } as Parameters<typeof planHostedRetries>[6];
   return planHostedRetries(
@@ -838,12 +838,14 @@ Deno.test("legacy exception: a red legacy head is fixed, refreshed and reviewed 
   }
 });
 
-Deno.test("legacy exception: an already-green legacy head spends no round: it is refreshed and merged under its carried review", async () => {
+Deno.test("legacy exception: an already-green legacy head spends no round: it is refreshed to carry its review and handed to the launcher's merge", async () => {
   // 618/698/879: green after their flake re-run; the base still moved. The
   // owner's exception is for red CI only: a green head is merged like every
   // spent record whose latest review authorizes it, through one mechanical
   // refresh that carries that review once its patch is proven identical and
-  // the refreshed head is green.
+  // the refreshed head is green. The runtime never merges it (its port
+  // refuses every merge on live ai.ubq.fi): it waits for the launcher's
+  // delivery pass, which merges the refreshed head at that exact tip.
   // Its latest review accepted the live task (the blanket fake issue text).
   const accepted = completedReceipt(7, SHA3, SHA1, {
     id: "review-receipt:618-latest",
@@ -881,24 +883,32 @@ Deno.test("legacy exception: an already-green legacy head spends no round: it is
       reviewedPatch: digest,
       refreshedMergeBase: request.base,
       refreshedPatch: digest,
+      refreshedFrom: request.head === PREP3 ? SHA3 : null,
+      refreshes: request.head === PREP3 ? 1 : 0,
     }));
   try {
+    let work = taskRecord(await rig.snapshot(), "issue-ubiquity-ai.ubq.fi-618");
     for (let run = 0; run < 6; run++) {
       await rig.run();
-      if (rig.github.carriedMerges.length > 0) break;
+      work = taskRecord(await rig.snapshot(), "issue-ubiquity-ai.ubq.fi-618");
+      if (work.wait?.reason === "backoff") break;
       rig.clock.advance(5 * 60_000 + 1);
     }
     assert.equal(rig.model.requests.length, 0, "no fix for a green head");
     assert.deepEqual(rig.github.reviewRequestIdentities, [], "no review");
-    assert.deepEqual(
-      rig.github.carriedMerges.map((merge) => [merge.head, merge.base]),
-      [[PREP3, SHA2]],
+    assert.equal(
+      rig.github.calls.filter((call) => call === "merge").length,
+      0,
+      "the runtime never merges a carried head",
     );
+    // The refreshed head waits at `work` for the launcher's carried merge.
+    assert.equal(work.nextStep, "work");
+    assert.equal(work.target.head, PREP3);
+    assert.equal(work.target.base, SHA2);
+    assert.equal(work.wait?.reason, "backoff");
     const snapshot = await rig.snapshot();
-    const work = taskRecord(snapshot, "issue-ubiquity-ai.ubq.fi-618");
     assert.equal(work.counters.reviewRounds, 7, "no round spent");
     assert.equal(work.counters.retries, 0);
-    assert.equal(work.nextStep, "delivery");
     assert.equal(
       snapshot.reservations.filter((charge) =>
         charge.taskId === work.id && charge.purpose === "review_request"

@@ -278,9 +278,10 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "src/repair/delivery-queue.ts",
       "src/repair/loop-delivery-queue.ts",
       // The carried review (a spent record's mechanically refreshed head
-      // merged under its earlier review only with a byte-identical patch and
-      // green CI), the git patch proof it rests on, and the legacy class's
-      // cutoff hand-over. A model-authored candidate must never weaken them.
+      // merged by the launcher under its earlier review only with a
+      // byte-identical patch and green CI), the git patch proof it rests on,
+      // and the legacy class's cutoff hand-over. A model-authored candidate
+      // must never weaken them.
       "src/repair/carried-review.ts",
       "src/repair/loop-carried-delivery.ts",
       "src/github/git-carried-patch.ts",
@@ -301,7 +302,12 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "src/repair/loop-ci-first.ts",
       "ops/hosted-autonomy-ci-first.ts",
       // Spent-round delivery and its review follow-ups: merge admissibility
-      // and the latest-review rule, and the App-token issue filing.
+      // and the latest-review rule, and the App-token issue filing. The
+      // delivery pass makes every launcher merge, the carried merge included
+      // (its gate, the merge-once bound and the bookkeeping), and the raw
+      // compare read is the carried patch proof's evidence.
+      "ops/hosted-autonomy-delivery-pass.ts",
+      "ops/hosted-autonomy-github-listing.ts",
       "ops/hosted-autonomy-spent-delivery.ts",
       "ops/hosted-autonomy-github-issues.ts",
       "ops/hosted-autonomy-follow-ups.ts",

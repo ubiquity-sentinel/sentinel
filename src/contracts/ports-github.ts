@@ -5,7 +5,6 @@ import type { PortResultV1, WriteOutcomeV1 } from "./ports.ts";
 import type {
   AlreadySatisfiedClosureRequestV1,
   CandidatePreservationRequestV1,
-  CarriedMergeV1,
   CarriedPatchProofV1,
   CarriedPatchRequestV1,
   GitHubBranchProtectionsV1,
@@ -83,23 +82,18 @@ export interface GitHubPort {
   observeReview(
     request: ReviewObservationRequestV1,
   ): Promise<PortResultV1<ReviewObservationV1>>;
-  /**
-   * `carried` (never with `execution`): the request names the REVIEWED
-   * identity and its receipt; the port merges the refreshed `carried.head` on
-   * `carried.base` only after re-proving from git that it carries exactly the
-   * reviewed patch (`carriedPatchHolds`), besides every ordinary gate.
-   */
   mergePullRequest(
     request: MergeRequestV1,
     execution?: SelfMergeExecutionV1,
-    carried?: CarriedMergeV1,
   ): Promise<PortResultV1<MergeOutcomeV1>>;
   /**
    * Optional trusted carried-review patch proof (owner decision 2026-10-16
    * (2), option (b)), derived from git over the SAME executor and restore
-   * capability the port publishes and merges through. Absent: no refreshed
-   * head ever carries a review. Unknown objects or an ambiguous merge base are
-   * typed failures, never a proof.
+   * capability the port publishes through. Absent: no refreshed head ever
+   * carries a review. Unknown objects or an ambiguous merge base are typed
+   * failures, never a proof. The runtime never merges a carried head: the
+   * launcher's delivery pass does, after its own proof
+   * (`ops/hosted-autonomy-spent-delivery.ts`).
    */
   proveCarriedPatch?(
     request: CarriedPatchRequestV1,

@@ -11,29 +11,33 @@
  * refreshed head H1 carries H0's review only while the pull request's own
  * patch is byte-identical (`proveCarriedPatch`: the merge-base patch of H0
  * against B0 equals that of H1 against T, binary-safe, by SHA-256), re-derived
- * from git on every step and again by the port at the merge itself; H1 merges
- * only once its OWN required CI is green, so every merged tree is CI-tested
- * and the merged patch is exactly the reviewed one.
+ * from git on every step; once H1's OWN required CI is green and the task is
+ * still accepted, the record waits at `work` for the launcher's delivery pass,
+ * which re-derives the proof itself and merges H1 at exactly T
+ * (`ops/hosted-autonomy-spent-delivery.ts`). The runtime never merges a
+ * carried head: its merge port refuses every merge on a branch without
+ * enforced strict checks (live ai.ubq.fi has no rules), so the launcher, which
+ * merges every ai.ubq.fi delivery, makes this one too (round-2 recheck P1).
  *
  * Bounds: one refresh per record per base tip (the refresh intent key binds
  * PR, head and observed tip, and the target advances), serialised per
- * repository by the delivery line (`deliveryQueueAhead`); every wait (CI,
- * proof, refused merge) keeps its `since` and parks after
- * `CARRIED_WAIT_BOUND_MS` with a precise blocker. A refresh conflict keeps
- * the refresh's own terminal `base refresh has conflicts at <T>` block; a
- * differing patch, a red H1 or a stalled wait parks under the ceiling prefix.
- * Nothing is ever charged here.
+ * repository by the delivery line (`deliveryQueueAhead`), and at most
+ * `CARRIED_REFRESH_LIMIT` refreshes per reviewed head, counted from git (the
+ * first-parent distance from H0, so no state field and no reset by a
+ * refresh); every wait (CI, proof, a pull request still reporting the
+ * refreshed-from head, the launcher's merge or its delivery record) keeps its
+ * `since` and parks after `CARRIED_WAIT_BOUND_MS` with a precise blocker. A
+ * refresh conflict keeps the refresh's own terminal `base refresh has
+ * conflicts at <T>` block; a differing patch, a red H1, the refresh limit or a
+ * stalled wait parks under the ceiling prefix. Nothing is ever charged here.
  *
  * Rollback (R79): every write is a shape R79 writes and parses itself (the
  * base-refresh intent, `ci_pending`/`backoff`/`unavailable` waits at `work`, an
- * `other` blocker, a release request beside a record in `delivery`). No merge
- * intent is written for a carried merge: under R79 a refreshed head at `work`
- * is published and reviewed as R79 does with every refreshed head, and a
- * merged pull request without bookkeeping is adopted here only from the same
- * gates the merge itself passes.
+ * `other` blocker, the `delivery` transition beside a release request the
+ * launcher wrote). Under R79 a refreshed head at `work` is published and
+ * reviewed as R79 does with every refreshed head.
  */
 import type { GitSha } from "../contracts/brands.ts";
-import { parseMergeRequestV1 } from "../contracts/merge-request.ts";
 import {
   carriedPatchHolds,
   type CarriedPatchProofV1,
@@ -56,9 +60,9 @@ import {
   RED_BASE_RECHECK_MS,
 } from "./loop-ci-correction.ts";
 import { deliveryQueueDeferral } from "./loop-delivery-queue.ts";
-import { buildReleaseRequest } from "./loop-merge.ts";
+import { releaseRequestMatchesDelivery } from "./loop-records.ts";
 import { parkAtReviewRoundCeiling } from "./loop-review-round-cap.ts";
-import { persistTransition, persistWork } from "./loop-state.ts";
+import { persistWork } from "./loop-state.ts";
 import {
   readDeliveryTaskContext,
   semanticRefusalKind,
@@ -74,14 +78,33 @@ import {
   REVIEW_ROUND_CEILING_CARRIED_CI_FAILED_PREFIX,
   REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX,
   REVIEW_ROUND_CEILING_CARRIED_PATCH_CHANGED_PREFIX,
+  REVIEW_ROUND_CEILING_CARRIED_REFRESH_LIMIT_PREFIX,
   REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX,
   REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX,
 } from "./review-round-cap.ts";
-import { RETIRED_MERGED_MESSAGE } from "./selection.ts";
 import { advanceToDelivery, markBlocked, setWait } from "./transitions.ts";
 
-/** Bound on every carried-delivery wait (CI, proof, refused merge): 6 hours. */
+/**
+ * Bound on every carried-delivery wait (CI, proof, a lagging pull request,
+ * the launcher's merge or its delivery record): 6 hours.
+ */
 export const CARRIED_WAIT_BOUND_MS = 6 * 60 * 60_000;
+
+/**
+ * Mechanical refreshes one reviewed head may be carried through: the base
+ * moving again after this many parks the record instead of refreshing it
+ * once more. Counted from git (`CarriedPatchProofV1.refreshes`), so a
+ * refresh, which clears every wait, never resets it.
+ */
+export const CARRIED_REFRESH_LIMIT = 6;
+
+/** Stalled detail: the record awaits the launcher's carried merge. */
+export const CARRIED_AWAITING_LAUNCHER_MERGE =
+  "the launcher did not merge the green refreshed head";
+
+/** Stalled detail: merged, but the launcher wrote no delivery record. */
+export const CARRIED_AWAITING_LAUNCHER_RECORD =
+  "merged without the launcher's delivery record";
 
 /**
  * Keep `since` across consecutive waits of the same reason, and park with
@@ -232,40 +255,15 @@ function patchChangedDetail(
 }
 
 /**
- * The proof and every check name of the green head, as plain merge commit
- * evidence (no mention, no reference, no control character).
- */
-export function carriedEvidence(
-  receipt: ReviewReceiptV1,
-  request: CarriedPatchRequestV1,
-  proof: CarriedPatchProofV1,
-  checks: readonly GitHubCheckV1[],
-): string {
-  const green = latestChecks([...checks]).map((check) =>
-    `${check.name}=${check.conclusion ?? "none"}@${
-      check.completedAt === null
-        ? "pending"
-        : new Date(check.completedAt).toISOString()
-    }`
-  ).sort().join(", ");
-  return [
-    "Sentinel carried review (owner decision 2026-10-16, option b):",
-    `reviewed head ${request.reviewedHead} on base ${request.reviewedBase}, review receipt ${receipt.id}`,
-    `refreshed head ${request.head} on base ${request.base}`,
-    `merge-base patch sha256 reviewed ${proof.reviewedPatch} (merge base ${proof.reviewedMergeBase})`,
-    `merge-base patch sha256 refreshed ${proof.refreshedPatch} (merge base ${proof.refreshedMergeBase})`,
-    `required CI on ${request.head}: ${green}`,
-  ].join("\n");
-}
-
-/**
  * The work step of a spent record at its ceiling whose current head is a
  * refresh of an earlier reviewed head. Null when the record is no carried
- * candidate (the caller parks it as before). Otherwise, in order: the pull
- * request (merged at this exact head: the same gates, then the bookkeeping),
- * the patch proof, the tip (moved again: one more refresh through the line),
- * the head's own CI, the live task acceptance of the reviewed identity, and
- * the carried merge.
+ * candidate (the caller parks it as before). Otherwise, in order: the patch
+ * proof (git only), the pull request (merged at this exact head: the
+ * launcher's delivery record; still at the head this one was refreshed from:
+ * a bounded wait for GitHub to report the push), the tip (moved again: one
+ * more refresh through the line, at most `CARRIED_REFRESH_LIMIT`), the head's
+ * own CI, the live task acceptance of the reviewed identity, and then a
+ * bounded wait for the launcher's carried merge.
  */
 export async function executeCarriedDelivery(
   deps: RepairCycleDepsV1,
@@ -297,17 +295,6 @@ export async function executeCarriedDelivery(
   if (cooling.kind === "deferred") {
     return { kind: "deferred", detail: cooling.detail };
   }
-  const pull = await deps.github.readPullRequest(pr);
-  if (!pull.ok) {
-    return { kind: "deferred", detail: "carried pull request unavailable" };
-  }
-  if (
-    pull.value === null || pull.value.head !== head ||
-    pull.value.headRef !== record.target.branch ||
-    (pull.value.state !== "open" &&
-      !(pull.value.state === "merged" && pull.value.mergeSha !== null))
-  ) return null;
-  const merged = pull.value.state === "merged" ? pull.value.mergeSha : null;
   const proof = await prove(request);
   if (!proof.ok) {
     return boundedWait(
@@ -331,34 +318,69 @@ export async function executeCarriedDelivery(
       ),
     );
   }
-  if (merged === null) {
-    // The base moved again: one more refresh of this tip, in its turn.
-    const refresh = await ensureBaseRefreshIntent(
+  const pull = await deps.github.readPullRequest(pr);
+  if (!pull.ok) {
+    return { kind: "deferred", detail: "carried pull request unavailable" };
+  }
+  const observed = pull.value;
+  if (observed === null || observed.headRef !== record.target.branch) {
+    return null;
+  }
+  if (observed.state === "merged") {
+    return observed.head === head && observed.mergeSha !== null
+      ? carriedMerged(deps, context, record, receipt)
+      : null;
+  }
+  if (observed.state !== "open") return null;
+  if (observed.head !== head) {
+    // GitHub reports a pull request's new head asynchronously after a push:
+    // the head this one was refreshed from (or the reviewed head) is a lag,
+    // waited out (bounded); any other head is foreign and parks.
+    if (
+      observed.head !== proof.value.refreshedFrom &&
+      observed.head !== receipt.pullRequest.head
+    ) return null;
+    return boundedWait(
       deps,
       context,
       record,
-      (observed) =>
-        Promise.resolve(
-          deliveryQueueDeferral(deps, context, record, observed),
-        ),
+      "unavailable",
+      CHECK_POLL_MS,
+      `${REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX}the pull request still reports ${observed.head}, not ${head}`,
     );
-    if (refresh !== null) return refresh;
   }
+  // The base moved again: one more refresh of this tip, in its turn, unless
+  // the reviewed head was already carried through the most refreshes.
+  const refresh = await ensureBaseRefreshIntent(
+    deps,
+    context,
+    record,
+    (observedBase) =>
+      proof.value.refreshes >= CARRIED_REFRESH_LIMIT
+        ? parkAtReviewRoundCeiling(
+          deps,
+          context,
+          record,
+          `${REVIEW_ROUND_CEILING_CARRIED_REFRESH_LIMIT_PREFIX}${proof.value.refreshes} refreshes; reviewed ${request.reviewedHead} on ${request.reviewedBase}, refreshed ${head} on ${request.base}, tip ${observedBase}`,
+        )
+        : Promise.resolve(
+          deliveryQueueDeferral(deps, context, record, observedBase),
+        ),
+  );
+  if (refresh !== null) return refresh;
   const checks = await deps.github.readChecks(head);
   if (!checks.ok) {
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
   const decision = decideCiGate(checks.value.checks);
   if (decision !== "proceed") {
-    const parked = merged !== null ? null : await gateCarriedChecks(
+    return gateCarriedChecks(
       deps,
       context,
       record,
       checks.value.checks,
       decision,
     );
-    if (parked !== null) return parked;
-    return retireMerged(deps, context, record);
   }
   const task = await readDeliveryTaskContext(deps, record);
   if (task === "unavailable") {
@@ -370,7 +392,6 @@ export async function executeCarriedDelivery(
     refusal !== null ||
     !reviewAuthorizesMerge(receipt, reviewed, reviewer, task)
   ) {
-    if (merged !== null) return retireMerged(deps, context, record);
     const detail = refusal ?? "merge requires a review that authorizes it";
     return persistWork(
       deps,
@@ -383,16 +404,15 @@ export async function executeCarriedDelivery(
       ),
     );
   }
-  if (merged !== null) {
-    return recordCarriedDelivery(deps, context, record, receipt, merged);
-  }
-  return mergeCarried(
+  // Everything the merge needs holds: the launcher's delivery pass merges
+  // this exact head at this exact tip (it re-derives every gate itself).
+  return boundedWait(
     deps,
     context,
     record,
-    receipt,
-    request,
-    carriedEvidence(receipt, request, proof.value, checks.value.checks),
+    "backoff",
+    CHECK_POLL_MS,
+    `${REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX}${CARRIED_AWAITING_LAUNCHER_MERGE}`,
   );
 }
 
@@ -463,130 +483,40 @@ async function gateCarriedChecks(
   );
 }
 
-/** A merged pull request the gates refuse: merged outside the trusted path. */
-function retireMerged(
+/**
+ * The pull request is merged at exactly the refreshed head. The launcher's
+ * delivery pass made that merge and records it (a production release request
+ * naming the carried receipt): once that request is there the record moves
+ * to `delivery` with the runtime's own transition (the launcher does that
+ * itself for the Gateway; a self record is never rewritten by it). Until then
+ * it waits, bounded: the launcher adopts its own lost write from the same
+ * gates, and a merge outside that path is never booked here.
+ */
+function carriedMerged(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
+  receipt: ReviewReceiptV1,
 ): Promise<StepResultV1> {
+  const booked = context.snapshot.releaseRequests.some((request) =>
+    request.target.environment === "production" &&
+    releaseRequestMatchesDelivery(request, record) &&
+    request.source.reviewReceiptId === receipt.id &&
+    request.source.reviewRequestId === receipt.requestId
+  );
+  if (!booked) {
+    return boundedWait(
+      deps,
+      context,
+      record,
+      "unavailable",
+      CHECK_POLL_MS,
+      `${REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX}${CARRIED_AWAITING_LAUNCHER_RECORD}`,
+    );
+  }
   return persistWork(
     deps,
     context,
-    markBlocked(record, "other", RETIRED_MERGED_MESSAGE, deps.clock.now()),
+    advanceToDelivery(record, deps.clock.now()),
   );
-}
-
-/**
- * The carried merge through the port (which re-proves the patch from git and
- * re-checks the review, protections, CI, ancestry and task), with the proof
- * as merge commit evidence. No merge intent is written (see the module). A
- * refused or failed call waits, bounded.
- */
-async function mergeCarried(
-  deps: RepairCycleDepsV1,
-  context: LoopContextV1,
-  record: WorkRecordV1,
-  receipt: ReviewReceiptV1,
-  request: CarriedPatchRequestV1,
-  evidence: string,
-): Promise<StepResultV1> {
-  let merge;
-  try {
-    merge = parseMergeRequestV1({
-      pullRequestNumber: record.target.pr!,
-      expectedHead: request.reviewedHead,
-      expectedBase: request.reviewedBase,
-      review: receipt,
-    }, {
-      repository: record.repository,
-      expectedReviewer: deps.github.reviewerIdentity,
-    });
-  } catch {
-    return persistWork(
-      deps,
-      context,
-      markBlocked(
-        record,
-        "other",
-        `${REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX}the reviewed receipt is no merge authorization`,
-        deps.clock.now(),
-      ),
-    );
-  }
-  if (deps.clock.now() >= context.bounds.runDeadline) {
-    return { kind: "margin", detail: "merge crossed the total run deadline" };
-  }
-  const merged = await deps.github.mergePullRequest(merge, undefined, {
-    head: request.head,
-    base: request.base,
-    evidence,
-  });
-  if (merged.ok && merged.value.outcome === "merged") {
-    const mergeSha = merged.value.mergeSha;
-    if (merged.value.head !== request.head || mergeSha === null) {
-      return persistWork(
-        deps,
-        context,
-        markBlocked(
-          record,
-          "other",
-          "observed merged head identity mismatch",
-          deps.clock.now(),
-        ),
-      );
-    }
-    return recordCarriedDelivery(deps, context, record, receipt, mergeSha);
-  }
-  if (merged.ok && merged.value.outcome === "ambiguous") {
-    // The next step re-reads the pull request and adopts the exact merge.
-    return { kind: "progress" };
-  }
-  const reason = merged.ok
-    ? merged.value.outcome === "blocked" ? merged.value.reason : "refused"
-    : `port ${merged.error.kind}`;
-  return boundedWait(
-    deps,
-    context,
-    record,
-    "backoff",
-    CHECK_POLL_MS,
-    `${REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX}merge ${reason}`,
-  );
-}
-
-/**
- * The bookkeeping of one carried merge (fresh or adopted): the record moves
- * to `delivery` beside one open production release request for the merged
- * revision that names the carried receipt (the merged head and base are the
- * refreshed ones, the receipt binds the reviewed ones).
- */
-async function recordCarriedDelivery(
-  deps: RepairCycleDepsV1,
-  context: LoopContextV1,
-  record: WorkRecordV1,
-  receipt: ReviewReceiptV1,
-  mergeSha: GitSha,
-): Promise<StepResultV1> {
-  const now = deps.clock.now();
-  const request = await buildReleaseRequest(
-    deps,
-    record,
-    { head: record.target.head, mergeSha },
-    receipt,
-  );
-  if (request === null) {
-    return persistWork(
-      deps,
-      context,
-      markBlocked(record, "other", "release request identity invalid", now),
-    );
-  }
-  const delivered = advanceToDelivery(record, now);
-  return persistTransition(deps, context, (draft) => {
-    const index = draft.work.findIndex((work) => work.id === record.id);
-    draft.work[index] = delivered;
-    if (!draft.releaseRequests.some((item) => item.id === request.id)) {
-      draft.releaseRequests.push(request);
-    }
-  });
 }

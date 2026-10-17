@@ -20,7 +20,15 @@ import {
 } from "./hosted-autonomy-delivery.ts";
 import {
   adoptableSpentMerge,
+  carriedAuthorizingReceipt,
   carriedDeliveryAction,
+  carriedMergeAction,
+  carriedMergeAwaited,
+  carriedMergeEvidence,
+  carriedMergeGate,
+  carriedMergeReceipt,
+  carriedPatchRefusal,
+  carriedRequestBindsDelivery,
   latestAuthorizingReceipt,
   parkedStep,
   preMergeGate,
@@ -177,17 +185,27 @@ export async function runHostedDeliveryPass(
       actions.push(`delivery:${record.id}:spent_not_admissible`);
       continue;
     }
-    // A refreshed head the runtime merged under its carried review is
-    // delivered bookkeeping already: its proof is reported, nothing is read.
-    const carried = carriedDeliveryAction(snapshot, record);
-    if (carried !== null) {
-      actions.push(carried);
+    // A refreshed head merged under its carried review is delivered
+    // bookkeeping already: its proof is reported, nothing is read.
+    const carriedDone = carriedDeliveryAction(snapshot, record);
+    if (carriedDone !== null) {
+      actions.push(carriedDone);
       continue;
     }
     // The exact receipts bound to this delivery identity decide whether the
     // candidate is even a delivery candidate. A record without one changes
-    // nothing and is reported exactly as before, without an extra read.
-    if (boundReviewReceipts(snapshot, record).length === 0) continue;
+    // nothing and is reported exactly as before, without an extra read,
+    // unless it is a spent record's mechanically refreshed head that may
+    // carry its earlier review (option (b), `carriedMergeGate`).
+    const carried = boundReviewReceipts(snapshot, record).length === 0;
+    if (carried && carriedMergeReceipt(snapshot, record) === null) continue;
+    // The runtime proves the carried patch from git and the refreshed head's
+    // green CI, then waits (`backoff`) for this merge; a merged pull it waits
+    // on (`unavailable`) is adopted. Anything else is still the runtime's.
+    if (carried && !carriedMergeAwaited(record)) {
+      actions.push(`delivery:${record.id}:carried_awaiting_runtime`);
+      continue;
+    }
     if (parked && !spentReadable.has(record.id)) {
       actions.push(`delivery:${record.id}:spent_deferred`);
       continue;
@@ -199,7 +217,10 @@ export async function runHostedDeliveryPass(
     // acceptance to that exact text. A later P0/P1 on the same head, a legacy
     // quality-only receipt, a wrong-task digest or an unreadable context
     // refuses here, before any external effect.
-    const verdict = latestAuthorizingReceipt(
+    const authorize = carried
+      ? carriedAuthorizingReceipt
+      : latestAuthorizingReceipt;
+    const verdict = authorize(
       snapshot,
       record,
       await readTrustedTask(scope.surface, record),
@@ -256,36 +277,65 @@ export async function runHostedDeliveryPass(
         actions.push(`delivery:${record.id}:merge_deferred`);
         continue;
       }
+      if (carried && record.wait?.reason !== "backoff") {
+        actions.push(`delivery:${record.id}:carried_awaiting_runtime`);
+        continue;
+      }
       // The base must be exactly the reviewed base (except for the moved-base
       // rule of a spent Gateway record), the spent gates must hold, and the
       // required CI must be green on the exact head (and, onto a moved base,
-      // on the tip it lands on).
+      // on the tip it lands on). A carried merge has its own gate: the exact
+      // tip its refreshed head contains, that head's own green CI and the
+      // patch proof (`carriedMergeGate`).
       const baseTip = await deliveryTip(scope);
       if (baseTip === null) {
         actions.push(`delivery:${record.id}:base_unreadable`);
         continue;
       }
-      const gate = await preMergeGate({
-        context,
-        scope,
-        record,
-        receipt,
-        pull,
-        baseTip,
-        tipGreen,
-      });
-      if (gate.refusal === "clock_invalid") {
-        return skipped("clock_invalid", observedHead, actions);
+      let evidence: string | undefined;
+      let proofLine: string | null = null;
+      if (carried) {
+        const gate = await carriedMergeGate({
+          context,
+          scope,
+          record,
+          receipt,
+          pull,
+          baseTip,
+        });
+        if (gate.refusal === "clock_invalid") {
+          return skipped("clock_invalid", observedHead, actions);
+        }
+        if (gate.refusal !== null || gate.proof === null) {
+          actions.push(`delivery:${record.id}:${gate.refusal}`);
+          continue;
+        }
+        evidence = carriedMergeEvidence(gate.proof);
+        proofLine = carriedMergeAction(record, gate.proof);
+        spentMerge = true;
+      } else {
+        const gate = await preMergeGate({
+          context,
+          scope,
+          record,
+          receipt,
+          pull,
+          baseTip,
+          tipGreen,
+        });
+        if (gate.refusal === "clock_invalid") {
+          return skipped("clock_invalid", observedHead, actions);
+        }
+        if (gate.refusal !== null) {
+          actions.push(`delivery:${record.id}:${gate.refusal}`);
+          continue;
+        }
+        spentMerge = gate.spent;
       }
-      if (gate.refusal !== null) {
-        actions.push(`delivery:${record.id}:${gate.refusal}`);
-        continue;
-      }
-      spentMerge = gate.spent;
       // One more trusted source-issue read immediately before the external
       // merge: issue text that drifted while the other gates were read is a
       // different task and never authorizes this merge.
-      const reread = latestAuthorizingReceipt(
+      const reread = authorize(
         snapshot,
         record,
         await readTrustedTask(scope.surface, record),
@@ -306,10 +356,13 @@ export async function runHostedDeliveryPass(
           continue;
         }
       }
+      if (proofLine !== null) actions.push(proofLine);
       let merged: { merged: boolean; sha: string | null } | null;
       mergeCalled = true;
       try {
-        merged = await scope.surface.merge(pullRequest, head);
+        merged = evidence === undefined
+          ? await scope.surface.merge(pullRequest, head)
+          : await scope.surface.merge(pullRequest, head, evidence);
       } catch {
         merged = null;
       }
@@ -329,7 +382,8 @@ export async function runHostedDeliveryPass(
     } else if (parked && pull.merged === true) {
       // Crash window: the merge succeeded but its state write was lost. Only
       // the App's own verified merge with green required CI on the exact head
-      // is adopted; a hand merge is reported and nothing is recorded.
+      // is adopted (a carried one only with its patch proof); a hand merge is
+      // reported and nothing is recorded.
       if (
         !await adoptableSpentMerge(
           scope.surface,
@@ -337,11 +391,18 @@ export async function runHostedDeliveryPass(
           self,
           head,
           verifiedMergedDelivery(record, pull, scope.baseBranch) !== null,
-        )
+        ) ||
+        (carried &&
+          (await carriedPatchRefusal(scope.surface, receipt, head, base))
+              .refusal !== null)
       ) {
         actions.push(`delivery:${record.id}:merged_outside_trusted_path`);
         continue;
       }
+    }
+    if (carried && !self && !gateway) {
+      actions.push(`delivery:${record.id}:carried_unsupported`);
+      continue;
     }
     if (pull.merged !== true || pull.mergeCommitSha === null) continue;
     // A merge performed earlier in THIS pass is an external write and keeps
@@ -426,12 +487,14 @@ export async function runHostedDeliveryPass(
     }
     if (
       gateway &&
-      (!await gatewayRequestBindsDelivery(
-        request,
-        delivered,
-        receipt,
-        revision,
-      ) ||
+      (!await (carried
+        ? carriedRequestBindsDelivery
+        : gatewayRequestBindsDelivery)(
+          request,
+          delivered,
+          receipt,
+          revision,
+        ) ||
         snapshot.releaseRequests.some((existing) =>
           existing.id === request.id ||
           releaseRequestMatchesDelivery(existing, record)

@@ -178,10 +178,22 @@ export interface HostedAutonomyGitHubV1 {
    * no moved-base merge is ever made over it.
    */
   baseAdvanced?(base: string, tip: string): Promise<boolean>;
-  /** Expected-head merge; null on any refusal. */
+  /**
+   * SHA-256 (lowercase hex) of the exact bytes of GitHub's merge-base diff of
+   * `head` against `base` in THIS repository (compare `base...head`, diff
+   * media type), or null when it cannot be read whole within its bound (a
+   * diff GitHub refuses to render is no proof). Optional: a surface without it
+   * proves no carried patch, so it never makes a carried merge.
+   */
+  comparePatchDigest?(base: string, head: string): Promise<string | null>;
+  /**
+   * Expected-head merge; null on any refusal. `message`, when given, is the
+   * merge commit's plain evidence text (the carried merge's proof).
+   */
   merge(
     number: number,
     head: string,
+    message?: string,
   ): Promise<{ merged: boolean; sha: string | null } | null>;
   /** Idempotent issue closure: true when the issue ends closed. */
   closeIssue(number: number): Promise<boolean>;
@@ -354,7 +366,7 @@ export interface HostedAutonomyDepsV1 {
   spentMovedBaseMerge?: boolean;
   /**
    * The legacy review cutoff for tests of the legacy class. Production never
-   * sets it and uses the installed CI-first runtime's pinned row
+   * sets it and uses the one pinned cutoff under a proven CI-first runtime
    * (`launcherLegacyCutoff`).
    */
   legacyReviewCutoff?: number | null;

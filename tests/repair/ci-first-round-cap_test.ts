@@ -382,6 +382,15 @@ Deno.test("CI first x round cap: the CI-first and spent-delivery authority files
       "ops/hosted-autonomy-github-issues.ts",
       "ops/hosted-autonomy-follow-ups.ts",
       "ops/hosted-autonomy-follow-up-pass.ts",
+      // The carried merge (option (b)): the launcher pass that makes it, its
+      // raw compare read, the runtime half and both patch proofs' sources.
+      "ops/hosted-autonomy-delivery-pass.ts",
+      "ops/hosted-autonomy-github-listing.ts",
+      "ops/hosted-autonomy-github.ts",
+      "src/repair/carried-review.ts",
+      "src/repair/loop-carried-delivery.ts",
+      "src/github/git-carried-patch.ts",
+      "src/host/legacy-review-cutoff-env.ts",
     ]
   ) assert.ok(protectedPaths.includes(path), path);
 });

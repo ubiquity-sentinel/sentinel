@@ -160,6 +160,20 @@ export interface CarriedPatchProofV1 {
   reviewedPatch: string;
   refreshedMergeBase: GitSha;
   refreshedPatch: string;
+  /**
+   * The refreshed head's first parent: the head the deterministic refresh
+   * merged the tip into (null for a root commit). A pull request still
+   * reporting it lags the push; any other head is foreign.
+   */
+  refreshedFrom: GitSha | null;
+  /**
+   * Commits on the refreshed head's first-parent chain back to the reviewed
+   * head (`git rev-list --first-parent --count reviewed..refreshed`): the
+   * mechanical refreshes the reviewed patch was carried through. It bounds
+   * them across base moves with no state field (each refresh commit's first
+   * parent is the head it refreshed).
+   */
+  refreshes: number;
 }
 
 /**
@@ -176,21 +190,6 @@ export function carriedPatchHolds(
     proof.reviewedPatch === proof.refreshedPatch &&
     proof.refreshedMergeBase === request.base &&
     request.head !== request.reviewedHead;
-}
-
-/**
- * A carried merge: the merge request names the REVIEWED identity and its
- * receipt (strictly parsed as ever); this names the refreshed head and base
- * actually merged, which the port re-proves from git before the merge.
- */
-export interface CarriedMergeV1 {
-  head: GitSha;
-  base: GitSha;
-  /**
-   * Plain evidence text appended to the merge commit message (the proof: both
-   * identities, both patch digests and the head's green checks).
-   */
-  evidence: string;
 }
 
 /**

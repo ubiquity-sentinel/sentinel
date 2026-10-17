@@ -56,6 +56,63 @@ export function createHostedAutonomyRequest(token: string) {
 }
 
 /**
+ * Bounded raw read of one GitHub resource in a custom media type (for example
+ * the diff of a compare): the exact response bytes, or null for any non-2xx
+ * answer, a body past `maxBytes`, a timeout or a network error. Nothing is
+ * parsed; the caller hashes the bytes.
+ */
+export function createHostedAutonomyRawRead(token: string) {
+  return async function rawRead(
+    path: string,
+    accept: string,
+    maxBytes: number,
+  ): Promise<Uint8Array | null> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${API_BASE}${path}`, {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${token}`,
+          accept,
+          "user-agent": "sentinel-hosted-autonomy",
+        },
+        signal: controller.signal,
+      });
+      if (response.status < 200 || response.status >= 300) {
+        await response.body?.cancel();
+        return null;
+      }
+      const reader = response.body?.getReader();
+      if (reader === undefined) return new Uint8Array(0);
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      for (;;) {
+        const step = await reader.read();
+        if (step.done) break;
+        total += step.value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel();
+          return null;
+        }
+        chunks.push(step.value);
+      }
+      const bytes = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return bytes;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
+/**
  * Bounded effect request whose only evidence is GitHub's own acceptance: true
  * for any 2xx answer, whatever its body. The re-run endpoints answer 201 with
  * an empty body, which the JSON reader above reads as a refusal; the body here

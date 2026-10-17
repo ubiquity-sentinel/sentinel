@@ -19,6 +19,11 @@
  *   line, so equal bytes mean equal old and new contents, equal modes, equal
  *   renames (as a delete and an add) and equal binary payloads.
  *
+ * The proof also names the refreshed head's first parent (the head the
+ * refresh merged the tip into) and counts the first-parent commits from the
+ * reviewed head to the refreshed one (the refreshes the patch was carried
+ * through), so the runtime bounds both without a state field.
+ *
  * Every command only reads the local object store: no checkout, index or ref
  * update, no hook, no network and no credential. A missing object, a bound or
  * an unreadable result is a typed failure, never a proof; the decision itself
@@ -57,6 +62,7 @@ const STATIC_OBJECT = "carried patch input commit is unavailable";
 const STATIC_MERGE_BASE = "carried patch merge base is not unique";
 const STATIC_PATCH = "carried patch could not be read";
 const STATIC_BOUND = "carried patch exceeded its bound";
+const STATIC_LINEAGE = "carried patch lineage could not be read";
 
 /**
  * Fixed rendering of every patch: configuration in the local store can never
@@ -158,9 +164,45 @@ export async function patchDigest(
   );
 }
 
+/** The first parent of `head`, or null for a root commit. */
+async function firstParent(
+  run: CarriedPatchGitRunV1,
+  head: GitSha,
+): Promise<PortResultV1<GitSha | null>> {
+  const result = await run(
+    ["rev-list", "--parents", "--max-count=1", head],
+    SMALL_OUTPUT_BYTES,
+  );
+  if (!result.ok) return portError("unavailable", STATIC_LINEAGE);
+  const ids = result.stdout.trim().split(" ");
+  if (ids[0] !== head || !ids.slice(1).every((id) => isGitSha(id))) {
+    return portError("unavailable", STATIC_LINEAGE);
+  }
+  return portOk(ids.length > 1 ? ids[1] as GitSha : null);
+}
+
+/** First-parent commits reachable from `head` but not from `reviewed`. */
+async function firstParentDistance(
+  run: CarriedPatchGitRunV1,
+  reviewed: GitSha,
+  head: GitSha,
+): Promise<PortResultV1<number>> {
+  const result = await run(
+    ["rev-list", "--first-parent", "--count", `${reviewed}..${head}`],
+    SMALL_OUTPUT_BYTES,
+  );
+  const text = result.stdout.trim();
+  if (!result.ok || !/^(0|[1-9][0-9]{0,8})$/.test(text)) {
+    return portError("unavailable", STATIC_LINEAGE);
+  }
+  return portOk(Number(text));
+}
+
 /**
  * The full proof for one request: all four commits must exist locally, each
- * side's merge base must be unique, and each side's patch is hashed.
+ * side's merge base must be unique, and each side's patch is hashed; then the
+ * refreshed head's first parent and its first-parent distance from the
+ * reviewed head.
  */
 export async function proveCarriedPatchWithGit(
   run: CarriedPatchGitRunV1,
@@ -195,10 +237,16 @@ export async function proveCarriedPatchWithGit(
     head,
   );
   if (!refreshedPatch.ok) return refreshedPatch;
+  const refreshedFrom = await firstParent(run, head);
+  if (!refreshedFrom.ok) return refreshedFrom;
+  const refreshes = await firstParentDistance(run, reviewedHead, head);
+  if (!refreshes.ok) return refreshes;
   return portOk({
     reviewedMergeBase: reviewedMergeBase.value,
     reviewedPatch: reviewedPatch.value,
     refreshedMergeBase: refreshedMergeBase.value,
     refreshedPatch: refreshedPatch.value,
+    refreshedFrom: refreshedFrom.value,
+    refreshes: refreshes.value,
   });
 }
