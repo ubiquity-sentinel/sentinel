@@ -23,6 +23,7 @@ import {
   REQUEST_TIMEOUT_MS,
   RUN_LISTING_PAGE_SIZE,
 } from "./hosted-autonomy-github-listing.ts";
+import { createHostedFollowUpIssues } from "./hosted-autonomy-github-issues.ts";
 import {
   parseHostedAutonomyHeadPulls,
   parseHostedAutonomyPull,
@@ -523,6 +524,21 @@ export function createHostedAutonomyGitHub(
         return Number.isSafeInteger(number) && number > 0 ? number : null;
       },
     },
+    async baseAdvanced(base: string, tip: string) {
+      // The reviewed base is a strict ancestor of the tip: the exact compare
+      // shape of `revisionIntegratedIntoBase`, with the tip strictly ahead.
+      if (base === tip) return false;
+      const compare = await request(
+        "GET",
+        `/repos/${scope}/compare/${base}...${tip}`,
+        undefined,
+        MAX_COMPARE_RESPONSE_BYTES,
+      );
+      return compare !== null && typeof compare === "object" &&
+        (compare as Record<string, unknown>)["status"] === "ahead" &&
+        revisionIntegratedIntoBase(compare, base);
+    },
+    followUpIssues: createHostedFollowUpIssues(request, repository),
     async merge(number: number, head: string) {
       const response = await request(
         "PUT",

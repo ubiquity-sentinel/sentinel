@@ -94,6 +94,13 @@ export function parseHostedAutonomyPull(
     parents: [],
     revisionOnBaseBranch: false,
     baseAncestorOfRevision: false,
+    // GitHub computes `mergeable` lazily: null until it is known. A response
+    // without the field (never a live pull read) leaves it absent.
+    ...(obj["mergeable"] === undefined ? {} : {
+      mergeable: typeof obj["mergeable"] === "boolean"
+        ? obj["mergeable"]
+        : null,
+    }),
   };
 }
 /**

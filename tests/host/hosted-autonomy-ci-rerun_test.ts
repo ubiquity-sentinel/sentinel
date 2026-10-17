@@ -1,9 +1,10 @@
 /**
  * The launcher's flake path for reviewed heads parked on the runtime's
- * merge-gate CI failure: a Gateway record is merged only once it is admitted
- * to `review`/`delivery` (so its release request can always be recorded), and
- * a clean-reviewed head on its green, current base gets its failed CI run
- * re-run at most once per exact head, with no state written.
+ * merge-gate CI failure: a spent-round Gateway record outside
+ * `review`/`delivery` is merged only in the closed spent shape and is
+ * advanced to `delivery` with its request (so its release request can always
+ * be recorded), and a clean-reviewed head on its green, current base gets its
+ * failed CI run re-run at most once per exact head, with no state written.
  */
 import assert from "node:assert/strict";
 import {
@@ -126,38 +127,44 @@ async function gatewayDelivery(
   }
 }
 
-Deno.test("gateway delivery: a spent-round record outside review/delivery is never merged", async (t) => {
+Deno.test("gateway delivery: a spent-round record outside the closed spent shape is never merged", async () => {
   // deliveryEligible admits a `work`/`blocked` record once every review round
-  // is spent, but gatewayRequestBindsDelivery binds only a `review`/`delivery`
-  // record: merged from there, the PR's release request (and so its release
-  // and issue closure) could never be recorded.
-  const cases: [string, ReturnType<typeof gatewayRecord>][] = [
-    [
-      "blocked-conflict",
-      gatewayRecord("blocked", {
-        blocker: {
-          ...CI_BLOCKER,
-          message: `base refresh has conflicts at ${SHA2}`,
-        },
-      }),
-    ],
-    ["work", gatewayRecord("delivery", { nextStep: "work" })],
-  ];
-  for (const [name, record] of cases) {
-    await t.step(name, async () => {
-      const { rig, results, after } = await gatewayDelivery(name, record);
-      assert.equal(rig.merges, 0, "no merge before admission");
-      assert.ok(
-        results[0].actions.includes(
-          `delivery:${record.id}:gateway_not_admitted`,
-        ),
-        JSON.stringify(results[0].actions),
-      );
-      assert.equal(after.releaseRequests.length, 0);
-      assert.deepEqual(after.work[0], record);
-      assert.equal(rig.writes, 0, "nothing is written");
-    });
-  }
+  // is spent, but only the closed spent shape (spentDeliveryAdmissible) is
+  // ever merged from there: a conflict block is not in it.
+  const record = gatewayRecord("blocked", {
+    blocker: {
+      ...CI_BLOCKER,
+      message: `base refresh has conflicts at ${SHA2}`,
+    },
+  });
+  const { rig, results, after } = await gatewayDelivery(
+    "blocked-conflict",
+    record,
+  );
+  assert.equal(rig.merges, 0, "no merge");
+  assert.ok(
+    results[0].actions.includes(`delivery:${record.id}:spent_not_admissible`),
+    JSON.stringify(results[0].actions),
+  );
+  assert.equal(after.releaseRequests.length, 0);
+  assert.deepEqual(after.work[0], record);
+  assert.equal(rig.writes, 0, "nothing is written");
+});
+
+Deno.test("gateway delivery: a spent-round `work` record merges and is advanced before its request is recorded", async () => {
+  // The Gateway release request binds only a `review`/`delivery` record, so
+  // the spent merge writes the record with the runtime's own
+  // `advanceToDelivery` beside the request (owner decision 2026-10-16).
+  const record = gatewayRecord("delivery", { nextStep: "work" });
+  const { rig, after } = await gatewayDelivery("work", record);
+  assert.equal(rig.merges, 1);
+  assert.equal(after.releaseRequests.length, 1);
+  assert.equal(after.releaseRequests[0].source.head, HEAD);
+  assert.equal(after.work[0].nextStep, "delivery");
+  assert.equal(after.work[0].wait, null);
+  assert.equal(after.work[0].blocker, null);
+  assert.deepEqual(after.work[0].counters, record.counters);
+  assert.equal(rig.writes, 1);
 });
 
 Deno.test("gateway delivery: the same admitted record merges and records its release request", async () => {

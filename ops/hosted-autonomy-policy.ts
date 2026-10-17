@@ -69,21 +69,22 @@ export function hostedDeliveryKey(
 }
 
 /**
- * Delivery eligibility. The ordinary path is the runtime's own `review` and
- * `delivery` steps. A record parked in `work` or `blocked` is also eligible
- * once it has spent every review round: the runtime advances to a correction
- * round for ANY unresolved finding (its `advanceToCorrection` predicate is
- * stricter than the documented "no unresolved P0/P1 → delivery" rule and than
- * the trusted acceptance gate), and without a review round left that
- * correction can never become a reviewed verdict. The receipt in hand is then
- * the only honest basis for delivery, and P2/P3 findings stay future work. No
- * other parked step is ever delivered. "Spent" is the runtime's own count
- * over the durable ledger (`ordinaryReviewRoundsSpent`): a counter lagging
- * its charges still counts them, a proven refund frees its round, and a
- * listed legacy record's one final round (for a CI-fixed head) is extra. Of
- * the runtime's ceiling parks only REVIEWED and BASE_MOVED are ever
- * delivered; a park with no completed review, an unresolved P0/P1 or no task
- * acceptance never reaches a merge gate.
+ * Coarse delivery eligibility, used for the CI-run approval and the self tip
+ * read. The ordinary path is the runtime's own `review` and `delivery` steps.
+ * A record parked in `work` or `blocked` is also a candidate once it has
+ * spent every review round (owner decision 2026-10-16: three rounds, hard).
+ * The runtime itself already advances a review with only P2/P3 findings to
+ * `delivery` (only P0/P1 block), so a parked spent record is one whose rounds
+ * ran out on P0/P1 corrections or on its CI. Whether such a record actually
+ * merges is decided by `spentDeliveryAdmissible` and the latest-review rule
+ * in `hosted-autonomy-spent-delivery.ts`; no other parked step is delivered.
+ * "Spent" is the runtime's own count over the durable ledger
+ * (`ordinaryReviewRoundsSpent`): a counter lagging its charges still counts
+ * them, a proven refund frees its round, and a listed legacy record's one
+ * final round (for a CI-fixed head) is extra. Of the runtime's ceiling parks
+ * only REVIEWED and BASE_MOVED are ever delivered; a park with no completed
+ * review, an unresolved P0/P1 or no task acceptance never reaches a merge
+ * gate.
  */
 export function deliveryEligible(
   record: HostedAutonomyRecordV1,
@@ -101,6 +102,27 @@ export function deliveryEligible(
   ) return false;
   return ordinaryReviewRoundsSpent(snapshot, record);
 }
+
+/**
+ * The closed set of blockers a spent-round `blocked` record may be merged
+ * from, as exact (kind, message prefix) pairs: the runtime's merge-gate CI
+ * failure and its unattributed CI block (merged only once the exact head is
+ * green again) and the retired "review rounds exhausted" quota block. Every
+ * other blocker (task acceptance, retired, merged outside the trusted path,
+ * preservation unrecoverable, conflicts, release, attempt budget) is never
+ * merged by the spent rule.
+ */
+export const HOSTED_AUTONOMY_SPENT_DELIVERY_BLOCKERS: readonly {
+  readonly kind: string;
+  readonly prefix: string;
+}[] = [
+  { kind: "other", prefix: "CI checks failed: " },
+  { kind: "other", prefix: "CI checks failed without base evidence: " },
+  {
+    kind: "review_quota",
+    prefix: "review rounds exhausted without an accepted verdict (",
+  },
+];
 
 /** The base branch every reviewed candidate must be integrated into. */
 export const HOSTED_AUTONOMY_BASE_BRANCH = "development";

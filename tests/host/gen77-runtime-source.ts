@@ -12,7 +12,8 @@
  * helpers exist for the installed generation-78 runtime (R78), the rollback
  * target of generation 79: `gen78Available` and `loadGen78Modules`, and for
  * the installed generation-79 runtime (R79): `gen79Available` and
- * `loadGen79Modules`.
+ * `loadGen79Modules`, and for the live generation-79 launcher (L79, whose
+ * `ops/` tree is extracted too): `l79Available` and `loadL79Modules`.
  */
 import {
   OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION,
@@ -26,6 +27,12 @@ export const GEN77_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION;
 export const GEN78_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION;
 /** Installed generation-79 runtime revision. */
 export const GEN79_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION;
+/**
+ * The live generation-79 launcher (L79: the R79 pin 4b8be3b9f plus the
+ * protected-path refusal recording), the launcher rollback target of every
+ * generation-80 launcher change.
+ */
+export const L79_LAUNCHER = "7e38d16a4c87c27857312517e1dcd7016ea2a299";
 
 const ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname)
   .replace(/\/$/, "");
@@ -67,6 +74,11 @@ export function gen79Available(): Promise<boolean> {
   return revisionAvailable(GEN79_RUNTIME);
 }
 
+/** True when the L79 launcher commit is in the local object store. */
+export function l79Available(): Promise<boolean> {
+  return revisionAvailable(L79_LAUNCHER);
+}
+
 interface LoadedRuntimeV1 {
   modules: Record<string, unknown>[];
   dispose(): Promise<void>;
@@ -98,10 +110,18 @@ export function loadGen79Modules(
   return loadRevisionModules(GEN79_RUNTIME, 79, paths);
 }
 
+/** `loadGen77Modules` for the L79 launcher's `src/`, `tests/` and `ops/`. */
+export function loadL79Modules(
+  paths: readonly string[],
+): Promise<LoadedRuntimeV1> {
+  return loadRevisionModules(L79_LAUNCHER, 79, paths, ["ops"]);
+}
+
 async function loadRevisionModules(
   revision: string,
   generation: number,
   paths: readonly string[],
+  extraTrees: readonly string[] = [],
 ): Promise<LoadedRuntimeV1> {
   const label = `generation-${generation}`;
   const dir = await Deno.makeTempDir({
@@ -119,6 +139,7 @@ async function loadRevisionModules(
         revision,
         "src",
         "tests",
+        ...extraTrees,
       ],
       clearEnv: true,
       env: GIT_ENV,

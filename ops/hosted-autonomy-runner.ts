@@ -30,10 +30,12 @@ import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts"
 import {
   continuationLate,
   createPassWrites,
+  HOSTED_AUTONOMY_PASS_DEADLINE_MS,
   type HostedAutonomyContinuationStopV1,
   type HostedAutonomyPhaseV1,
   settledSince,
 } from "./hosted-autonomy-continuation.ts";
+import { runHostedFollowUpPass } from "./hosted-autonomy-follow-up-pass.ts";
 
 export {
   HOSTED_AUTONOMY_PASS_DEADLINE_MS,
@@ -90,6 +92,36 @@ function integrityFault(error: unknown): boolean {
 }
 
 /**
+ * The maintenance chain, then the state-free review follow-up pass. The
+ * follow-ups run once per pass, after the whole chain (every continued phase
+ * included, so a merge written anywhere in this pass is already seen), and
+ * are skipped after a failed chain. They only append actions: status, reason
+ * and heads stay the chain's own. They share the chain's deadline: no
+ * follow-up read or create starts later than HOSTED_AUTONOMY_PASS_DEADLINE_MS
+ * after the pass started, so a long continued pass leaves them to the next
+ * pass instead of running past the job's own limit.
+ */
+export async function runHostedAutonomy(
+  deps: HostedAutonomyDepsV1,
+): Promise<HostedAutonomyResultV1> {
+  const startedAt = deps.clock.now();
+  const result = await runHostedAutonomyChain(deps, startedAt);
+  if (result.status === "failed") return result;
+  let followUps: string[];
+  try {
+    followUps = await runHostedFollowUpPass(
+      deps,
+      startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+    );
+  } catch {
+    followUps = ["followup:unexpected_error"];
+  }
+  return followUps.length === 0
+    ? result
+    : { ...result, actions: [...result.actions, ...followUps] };
+}
+
+/**
  * Maintenance first, then the ordinary phases in their fixed order, each at
  * most once and each returning its own result from its own expected-head CAS
  * and readback. After a write a later phase may follow, the pass re-reads
@@ -98,10 +130,10 @@ function integrityFault(error: unknown): boolean {
  * ends the pass on that phase's result, and a pass that writes nothing is
  * unchanged.
  */
-export async function runHostedAutonomy(
+async function runHostedAutonomyChain(
   deps: HostedAutonomyDepsV1,
+  startedAt: number,
 ): Promise<HostedAutonomyResultV1> {
-  const startedAt = deps.clock.now();
   const actions: string[] = [];
   const revisions: string[] = [];
   const dedicatedReservations = new Set<string>();

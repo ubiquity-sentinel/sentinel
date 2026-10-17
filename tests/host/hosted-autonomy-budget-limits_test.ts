@@ -34,14 +34,15 @@ import {
 Deno.test(
   "hosted autonomy: a parked reviewed head whose review budget is spent is still delivered",
   async () => {
-    // The runtime advances to a correction round for ANY unresolved finding,
-    // so a P2-only verdict parks a record in `work`/`blocked`. Once every
-    // review round is spent that correction can never become a verdict, and
-    // the receipt in hand is the only honest basis for delivery.
+    // Once every review round is spent (three, owner decision 2026-10-16)
+    // no correction can become a reviewed verdict, and the latest receipt in
+    // hand, with only a P2 left, is the honest basis for delivery. The
+    // blocker must be in the closed spent allowlist: the retired
+    // review-rounds quota block is; an attempt-budget block is not.
     const record = blockedRecord({
       blocker: {
         kind: "review_quota",
-        message: "implementation attempt budget exhausted",
+        message: "review rounds exhausted without an accepted verdict (P2)",
         since: T0 + 3000,
       },
       counters: { attempts: 4, retries: 1, reviewRounds: 3 },

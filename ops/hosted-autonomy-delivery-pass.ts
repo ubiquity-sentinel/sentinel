@@ -12,13 +12,21 @@ import type { ReleaseRequestV1 } from "../src/contracts/release.ts";
 import { orderRecords } from "../src/state/state-records.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import {
-  authorizingReceipt,
   baseAndHeadAreMerged,
   boundReviewReceipts,
   buildHostedReleaseRequest,
   readTrustedTask,
   verifiedMergedDelivery,
 } from "./hosted-autonomy-delivery.ts";
+import {
+  adoptableSpentMerge,
+  latestAuthorizingReceipt,
+  parkedStep,
+  preMergeGate,
+  spentDelivered,
+  spentDeliveryAdmissible,
+  spentReadWindow,
+} from "./hosted-autonomy-spent-delivery.ts";
 import type {
   HostedAutonomyPassContextV1,
   HostedAutonomyScopeV1,
@@ -31,7 +39,10 @@ import {
   isHostedSelf,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
-import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
+import type {
+  HostedAutonomyRecordV1,
+  HostedAutonomyResultV1,
+} from "./hosted-autonomy-types.ts";
 import {
   gatewayRequestBindsDelivery,
   isGatewayVpsRepository,
@@ -124,31 +135,69 @@ export async function runHostedDeliveryPass(
     }
   }
 
+  // Spent-round records parked in `work`/`blocked` need live reads before
+  // the spent gates can refuse them; at most a fixed number are read per
+  // pass, starting at an offset that rotates with the pass clock so no record
+  // is starved by the ones ordered before it.
+  // A record an earlier write of this pass settled takes no read slot.
+  const spentReadable = spentReadWindow(
+    snapshot,
+    deps.clock.now(),
+    context.settled,
+  );
+  // The tip's own CI, read at most once per repository per pass (a2).
+  const tipGreen = new Map<string, boolean>();
+  // Set as soon as `surface.merge` is called, whatever it answers (merged,
+  // refused, lost, thrown): that merge may have landed, so the base tip and
+  // the tip CI read above are stale and every later gate would admit a merge
+  // onto a commit whose CI was never checked. No further merge is attempted
+  // in this pass; an already-merged pull is still settled read-only.
+  let mergeCalled = false;
+
   for (const record of snapshot.work) {
     if (!eligible(record)) continue;
     const pullRequest = record.target.pr;
     const head = record.target.head;
     const base = record.target.base;
     if (pullRequest === null || head === null || base === null) continue;
-    const scope = await scopeFor(record.repository);
+    // A record outside the runtime's own review/delivery steps is merged only
+    // under the closed spent shape; nothing else about it is read.
+    const parked = parkedStep(record);
+    if (parked && !spentDeliveryAdmissible(record, snapshot)) {
+      actions.push(`delivery:${record.id}:spent_not_admissible`);
+      continue;
+    }
     // The exact receipts bound to this delivery identity decide whether the
     // candidate is even a delivery candidate. A record without one changes
     // nothing and is reported exactly as before, without an extra read.
     if (boundReviewReceipts(snapshot, record).length === 0) continue;
+    if (parked && !spentReadable.has(record.id)) {
+      actions.push(`delivery:${record.id}:spent_deferred`);
+      continue;
+    }
+    const scope = await scopeFor(record.repository);
     // The trusted live source-issue statement is read over the record's OWN
     // authenticated surface immediately before the merge and the release
-    // request; the shared predicate then binds the receipt's acceptance to
-    // that exact text. A legacy quality-only receipt, a wrong-task digest or
-    // an unreadable context refuses here, before any external effect.
-    const receipt = authorizingReceipt(
+    // request; the shared predicate then binds the LATEST completed review's
+    // acceptance to that exact text. A later P0/P1 on the same head, a legacy
+    // quality-only receipt, a wrong-task digest or an unreadable context
+    // refuses here, before any external effect.
+    const verdict = latestAuthorizingReceipt(
       snapshot,
       record,
       await readTrustedTask(scope.surface, record),
     );
-    if (receipt === null) {
-      actions.push(`delivery:${record.id}:task_acceptance_refused`);
+    if (verdict.kind !== "authorized") {
+      actions.push(
+        `delivery:${record.id}:${
+          verdict.kind === "blocking"
+            ? "latest_review_blocking"
+            : "task_acceptance_refused"
+        }`,
+      );
       continue;
     }
+    const receipt = verdict.receipt;
     const self = isHostedSelf(record.repository);
     const gateway = isGatewayVpsRepository(record.repository);
     if (
@@ -182,58 +231,49 @@ export async function runHostedDeliveryPass(
     }
 
     let revision: string | null = null;
+    // True when this record is merged (or adopted) under the spent rule: a
+    // parked record always, a review/delivery record only onto a moved base.
+    let spentMerge = parked;
     if (pull.state === "open" && pull.merged === false) {
-      // A Gateway release request binds only a record in `review` or
-      // `delivery` (gatewayRequestBindsDelivery). A spent-round record parked
-      // `blocked` is merged only after a grant re-admits it; merged from
-      // `blocked`, its request (and so its release and issue closure) could
-      // never be recorded.
-      if (
-        gateway && record.nextStep !== "review" &&
-        record.nextStep !== "delivery"
-      ) {
-        actions.push(`delivery:${record.id}:gateway_not_admitted`);
+      if (mergeCalled) {
+        actions.push(`delivery:${record.id}:merge_deferred`);
         continue;
       }
-      // The base must be exactly the reviewed base, and the repository's own
-      // deterministic check must already have succeeded on the exact head.
+      // The base must be exactly the reviewed base (except for the moved-base
+      // rule of a spent Gateway record), the spent gates must hold, and the
+      // required CI must be green on the exact head (and, onto a moved base,
+      // on the tip it lands on).
       const baseTip = await deliveryTip(scope);
       if (baseTip === null) {
         actions.push(`delivery:${record.id}:base_unreadable`);
         continue;
       }
-      if (baseTip !== base) {
-        actions.push(`delivery:${record.id}:base_moved`);
+      const gate = await preMergeGate({
+        context,
+        scope,
+        record,
+        receipt,
+        pull,
+        baseTip,
+        tipGreen,
+      });
+      if (gate.refusal === "clock_invalid") {
+        return skipped("clock_invalid", observedHead, actions);
+      }
+      if (gate.refusal !== null) {
+        actions.push(`delivery:${record.id}:${gate.refusal}`);
         continue;
       }
-      // A foreign pull must target the exact branch its repository declares as
-      // the delivered base; a mismatched base ref is never merged.
-      if (!self && pull.baseRef !== scope.baseBranch) {
-        actions.push(`delivery:${record.id}:base_mismatch`);
-        continue;
-      }
-      let green: boolean;
-      try {
-        green = self
-          ? await scope.surface.hasSuccessfulCheck(head)
-          : await scope.surface.hasAllChecksGreen(head);
-      } catch {
-        green = false;
-      }
-      if (!green) {
-        actions.push(`delivery:${record.id}:checks_pending`);
-        continue;
-      }
+      spentMerge = gate.spent;
       // One more trusted source-issue read immediately before the external
       // merge: issue text that drifted while the other gates were read is a
       // different task and never authorizes this merge.
-      if (
-        authorizingReceipt(
-          snapshot,
-          record,
-          await readTrustedTask(scope.surface, record),
-        ) === null
-      ) {
+      const reread = latestAuthorizingReceipt(
+        snapshot,
+        record,
+        await readTrustedTask(scope.surface, record),
+      );
+      if (reread.kind !== "authorized" || reread.receipt.id !== receipt.id) {
         actions.push(`delivery:${record.id}:task_acceptance_refused`);
         continue;
       }
@@ -250,6 +290,7 @@ export async function runHostedDeliveryPass(
         }
       }
       let merged: { merged: boolean; sha: string | null } | null;
+      mergeCalled = true;
       try {
         merged = await scope.surface.merge(pullRequest, head);
       } catch {
@@ -268,6 +309,22 @@ export async function runHostedDeliveryPass(
       const after = await readPull(scope, pullRequest);
       if (after === null) continue;
       pull = after;
+    } else if (parked && pull.merged === true) {
+      // Crash window: the merge succeeded but its state write was lost. Only
+      // the App's own verified merge with green required CI on the exact head
+      // is adopted; a hand merge is reported and nothing is recorded.
+      if (
+        !await adoptableSpentMerge(
+          scope.surface,
+          pull,
+          self,
+          head,
+          verifiedMergedDelivery(record, pull, scope.baseBranch) !== null,
+        )
+      ) {
+        actions.push(`delivery:${record.id}:merged_outside_trusted_path`);
+        continue;
+      }
     }
     if (pull.merged !== true || pull.mergeCommitSha === null) continue;
     // A merge performed earlier in THIS pass is an external write and keeps
@@ -334,9 +391,30 @@ export async function runHostedDeliveryPass(
         continue;
       }
     }
+    // A spent Gateway record moves to `delivery` with the runtime's own
+    // transition (blocker and wait cleared; counters, evidence, intent and
+    // target unchanged); a record merged from review/delivery at its exact
+    // base keeps today's write byte for byte. A self record is never
+    // rewritten here. The binding and duplicate checks run against the
+    // record exactly as it is written.
+    let delivered: HostedAutonomyRecordV1 = record;
+    if (gateway) {
+      const advanced = spentMerge
+        ? spentDelivered(record, now)
+        : { ...record, nextStep: "delivery" as const, updatedAt: now };
+      if (advanced === null) {
+        return skipped("snapshot_invalid", observedHead, actions);
+      }
+      delivered = advanced;
+    }
     if (
       gateway &&
-      (!await gatewayRequestBindsDelivery(request, record, receipt, revision) ||
+      (!await gatewayRequestBindsDelivery(
+        request,
+        delivered,
+        receipt,
+        revision,
+      ) ||
         snapshot.releaseRequests.some((existing) =>
           existing.id === request.id ||
           releaseRequestMatchesDelivery(existing, record)
@@ -354,9 +432,7 @@ export async function runHostedDeliveryPass(
         updatedAt: now,
         work: gateway
           ? snapshot.work.map((item) =>
-            item.id === record.id
-              ? { ...item, nextStep: "delivery", updatedAt: now }
-              : item
+            item.id === record.id ? delivered : item
           )
           : snapshot.work,
         // The store reads records back ordered by id; build the written list

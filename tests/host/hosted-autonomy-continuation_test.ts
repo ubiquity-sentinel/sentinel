@@ -151,8 +151,11 @@ Deno.test("continuation: a refused compare-and-swap in a later phase stops the p
   assert.equal(state.log[1].status, "conflict");
   assertCasChain(state.log, INITIAL);
   assert.equal(result.actions.at(-1), "continuation:delivery:write_conflict");
-  // Nothing after the refusal: no read, no closure, no retirement.
-  assert.equal(state.readsSinceWrite, 0);
+  // Nothing after the refusal: no phase read, no closure, no retirement. The
+  // one read is the state-free review follow-up pass, which runs once after
+  // the whole chain unless it failed and never writes state.
+  assert.equal(state.readsSinceWrite, 1);
+  assert.equal(state.writes, 2);
   assert.deepEqual(github.closed, []);
   assert.equal(
     state.snapshot.work.find((row) => row.id === GONE)?.nextStep,

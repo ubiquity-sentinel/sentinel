@@ -68,6 +68,12 @@ export interface HostedAutonomyPullV1 {
   revisionOnBaseBranch: boolean;
   /** The pull's own base commit is an ancestor of the merge revision. */
   baseAncestorOfRevision: boolean;
+  /**
+   * GitHub's own `mergeable` answer from the same pull read: true or false
+   * once computed, null while GitHub is still computing it. Absent on a
+   * surface that does not report it, which never proves mergeability.
+   */
+  mergeable?: boolean | null;
 }
 
 /**
@@ -165,6 +171,13 @@ export interface HostedAutonomyGitHubV1 {
   readIssueTask?(number: number): Promise<ReviewTaskStatementV1 | null>;
   /** Exact current source opt-out projection; null/absent cannot authorize gateway closure. */
   readIssueOptedOut?(number: number): Promise<boolean | null>;
+  /**
+   * True only when `base` is a strict ancestor of `tip` on THIS repository,
+   * proven by the compare `base...tip` (status `ahead`, base and merge base
+   * both exactly `base`). Optional: a surface without it proves nothing, so
+   * no moved-base merge is ever made over it.
+   */
+  baseAdvanced?(base: string, tip: string): Promise<boolean>;
   /** Expected-head merge; null on any refusal. */
   merge(
     number: number,
@@ -202,6 +215,58 @@ export interface HostedAutonomyGitHubV1 {
    * may read its own Actions history and file defects into its own tracker.
    */
   selfObservation?: HostedSelfObservationV1;
+
+  /**
+   * Optional trusted launcher capability: list and create issues in THIS
+   * repository for review follow-ups. Absent means no follow-up is filed.
+   */
+  followUpIssues?: HostedFollowUpIssuesV1;
+}
+
+/** One issue or pull request of a complete created-since listing. */
+export interface HostedIssueListingItemV1 {
+  number: number;
+  /** The creator's login, exactly as GitHub reports it. */
+  author: string;
+  /** GitHub's `created_at`, epoch milliseconds. */
+  createdAt: number;
+  /** True for a pull request (the issues listing returns both). */
+  pullRequest: boolean;
+  /** The body's first line (LF or CRLF), empty for an empty body. */
+  firstLine: string;
+}
+
+/** The creator and first body line of one existing issue (never a PR). */
+export interface HostedIssueOriginV1 {
+  number: number;
+  author: string;
+  firstLine: string;
+}
+
+/**
+ * Launcher-only issue capability for review follow-ups in ONE repository,
+ * over the sentinel App token. Every answer is bound to the exact repository
+ * identity; anything unproven is null.
+ */
+export interface HostedFollowUpIssuesV1 {
+  /**
+   * Every issue and pull request created at or after `sinceMs`, newest
+   * first, read page by page until an item older than `sinceMs` or a short
+   * last page proves the listing complete within `maxPages`; otherwise null.
+   */
+  listCreatedSince(input: {
+    sinceMs: number;
+    maxPages: number;
+  }): Promise<readonly HostedIssueListingItemV1[] | null>;
+  /** One existing issue's creator and first body line, or null. */
+  readIssueOrigin(number: number): Promise<HostedIssueOriginV1 | null>;
+  /**
+   * Create one issue with exactly this title and body (no labels, no
+   * assignees). The new number only when GitHub's answer is an issue of this
+   * repository created by the sentinel App that echoes the exact text;
+   * otherwise null (the create may still have happened).
+   */
+  create(input: { title: string; body: string }): Promise<number | null>;
 }
 
 export interface HostedSelfRunV1 {
@@ -282,6 +347,11 @@ export interface HostedAutonomyDepsV1 {
    * sets it and uses HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES.
    */
   conflictResolutionRuntimes?: readonly HostedRefreshRearmRuntimeV1[];
+  /**
+   * The moved-base spent merge (decision D3) for tests of its gate.
+   * Production never sets it and uses HOSTED_AUTONOMY_SPENT_MOVED_BASE_MERGE.
+   */
+  spentMovedBaseMerge?: boolean;
 }
 
 /** One corrected runtime the refresh re-arm trusts, pinned in launcher source. */
