@@ -49,6 +49,7 @@ import {
 } from "../src/repair/vps-delivery.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import { runHostedCiRerunPass } from "./hosted-autonomy-ci-rerun.ts";
+import { ciFirstApprovalEligible } from "./hosted-autonomy-ci-first.ts";
 
 export async function runHostedDeliveryPass(
   context: HostedAutonomyPassContextV1,
@@ -65,9 +66,17 @@ export async function runHostedDeliveryPass(
   // GitHub parks for approval, so the deterministic check the merge requires
   // can never complete on its own. The job approves exactly those runs for the
   // exact reviewed head, on the record's OWN repository surface; the check
-  // itself stays credential-free and unchanged.
+  // itself stays credential-free and unchanged. Under CI first a head's CI
+  // must be green BEFORE its review, so a published head waiting at `work`
+  // (or parked by the pre-review gate) is approved too.
   for (const record of snapshot.work) {
-    if (!eligible(record)) continue;
+    if (
+      !eligible(record) &&
+      !(ciFirstApprovalEligible(snapshot, record) &&
+        context.settled?.has(record.id) !== true)
+    ) {
+      continue;
+    }
     const head = record.target.head;
     if (head === null || record.target.pr === null) continue;
     const scope = await scopeFor(record.repository);

@@ -27,12 +27,17 @@ import {
   ciCorrectionFinding,
   ciCorrectionRouteOpen,
   type CiDispositionV1,
+  ciFixExhaustedDetail,
   decideCiDisposition,
   failedChecks,
   unattributedDetail,
 } from "./ci-rejection.ts";
+import { ciFixesLeft } from "./ci-first-policy.ts";
 import { CHECK_POLL_MS } from "./loop-bounds.ts";
-import { headAcceptedByReview } from "./loop-review-records.ts";
+import {
+  headAcceptedByReview,
+  headTaskAcceptanceMissing,
+} from "./loop-review-records.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -42,6 +47,7 @@ import type {
 import {
   advanceToCorrection,
   advanceToDelivery,
+  advanceToReview,
   markBlocked,
   setWait,
 } from "./transitions.ts";
@@ -73,7 +79,7 @@ async function attributeAgainstBase(
  * Live re-derivation over the record's CURRENT head: null when either read is
  * unavailable, `clean` when no check on the head failed.
  */
-async function observeHeadFailure(
+export async function observeHeadFailure(
   deps: RepairCycleDepsV1,
   record: WorkRecordV1,
 ): Promise<CiDispositionV1 | { kind: "clean" } | null> {
@@ -101,7 +107,7 @@ function persistBlocked(
 }
 
 /** Keep `since` across consecutive waits of the same reason. */
-function waitSince(
+export function waitSince(
   record: WorkRecordV1,
   reason: "ci_pending" | "backoff",
   now: number,
@@ -135,7 +141,20 @@ export async function routeFailedDeliveryChecks(
   if (
     !ciCorrectionRouteOpen(deps) || !ciCorrectable(record, context.snapshot)
   ) {
-    return persistBlocked(deps, context, record, legacyDetail, now);
+    // A head the runtime would correct but for its spent CI fixes parks with
+    // the exact exhausted detail, which no launcher rule re-admits.
+    const exhausted = ciCorrectionRouteOpen(deps) && !ciFixesLeft(record) &&
+      ciCorrectable({
+        ...record,
+        counters: { ...record.counters, retries: 0 },
+      }, context.snapshot);
+    return persistBlocked(
+      deps,
+      context,
+      record,
+      exhausted ? ciFixExhaustedDetail(failed) : legacyDetail,
+      now,
+    );
   }
   const disposition = await attributeAgainstBase(deps, record, failed);
   // Transient: mutate nothing; the next turn re-observes both revisions.
@@ -212,6 +231,11 @@ export async function correctFailedHeadBeforeRefresh(
  * yields the correction finding; an unavailable read defers without mutation,
  * and every other observation (green, base pending, red base, unattributed)
  * returns the head to the delivery gate that owns it — nothing is charged.
+ * A head whose clean review carries no task acceptance (the CI-first gate
+ * sent its missing-acceptance re-request here) is owned by review instead:
+ * delivery would refuse it with a state_error on every run, so it returns to
+ * `review`, whose missing-acceptance recovery requests the task-bound review
+ * through the CI-first gate (R79 requests the same review from there).
  */
 export async function confirmCiCorrection(
   deps: RepairCycleDepsV1,
@@ -232,9 +256,18 @@ export async function confirmCiCorrection(
       finding: ciCorrectionFinding(record.target.base, observed.checks),
     };
   }
-  return persistWork(
-    deps,
-    context,
-    advanceToDelivery(record, deps.clock.now()),
-  );
+  const now = deps.clock.now();
+  if (headTaskAcceptanceMissing(context.snapshot, record)) {
+    return persistWork(
+      deps,
+      context,
+      advanceToReview(
+        record,
+        { pr: record.target.pr!, head: record.target.head! },
+        { reason: "review_quota", since: now, until: now },
+        now,
+      ),
+    );
+  }
+  return persistWork(deps, context, advanceToDelivery(record, now));
 }

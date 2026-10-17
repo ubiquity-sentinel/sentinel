@@ -95,6 +95,11 @@ Deno.test("a reviewed head that breaks checks green on its base opens a charged 
     assert.equal(work.target.pr, 7, "correction lands on the same PR");
     assert.equal(work.counters.reviewRounds, 2, "one more review round");
     assert.equal(work.counters.attempts, 2);
+    assert.equal(
+      work.counters.retries,
+      1,
+      "the CI fix is charged in retries, never as a review round",
+    );
     assert.deepEqual(
       rig.github.pushes.map((push) => [push.sha, push.expected]),
       [[SHA4, SHA3]],

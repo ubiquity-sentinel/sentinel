@@ -98,25 +98,28 @@ type WorkRow = RepairStateSnapshotV1["work"][number];
  * operation in flight, a review round left and no release request. The caller
  * checks the installed runtime first (`ciCorrectionRuntimeProven`).
  *
- * The record shape is the runtime's own `ciCorrectable` predicate (issue task,
- * exact publication, a durably described candidate, no operation in flight
- * and fewer than `CI_CORRECTION_REVIEW_ROUNDS` review rounds), never a copy:
- * a head the runtime cannot correct is blocked again by its merge gate at
- * once, so re-admitting it would only churn on every pass.
+ * The record shape is the runtime's own `ciCorrectable` predicate over the
+ * same durable ledger (issue task, exact publication, a durably described
+ * candidate, no operation in flight, a CI fix left and a review round left by
+ * the hard ceiling's own count, `reviewRoundsLeft`: fewer than
+ * `CI_CORRECTION_REVIEW_ROUNDS`, or a listed legacy record's one final
+ * review), never a copy: a head the runtime cannot correct is blocked again by
+ * its merge gate at once, so re-admitting it would only churn on every pass.
  */
 export function ciRedeliveryEligible(
   snapshot: RepairStateSnapshotV1,
   record: WorkRow,
 ): boolean {
-  return ciCorrectable(record) &&
+  return ciCorrectable(record, snapshot) &&
     ciGateParked(snapshot, record, CORRECTION_PREFIXES);
 }
 
 /**
- * `ciRedeliveryEligible` without the review-round ceiling, for a head whose
- * CI is green again (the caller proves that and the unchanged base). The
- * shape is still the runtime's own predicate, evaluated as if no round were
- * spent: the ceiling only bounds corrections, and a green head needs none.
+ * `ciRedeliveryEligible` without the review-round and CI fix ceilings, for a
+ * head whose CI is green again (the caller proves that and the unchanged
+ * base). The shape is still the runtime's own predicate, evaluated as if no
+ * round or fix were spent: the ceilings only bound corrections, and a green
+ * head needs none.
  * Besides the legacy block it accepts the runtime's own unattributed block
  * ("CI checks failed without base evidence: ..."), so that block keeps the
  * free flake re-run and green re-admission; the correction rule never takes
@@ -126,11 +129,16 @@ export function ciGreenRedeliveryEligible(
   snapshot: RepairStateSnapshotV1,
   record: WorkRow,
 ): boolean {
+  // Neither the review-round nor the CI fix ceiling applies: a green head
+  // needs no correction and no fix, so its rounds are counted over no ledger.
   return ciCorrectable({
     ...record,
-    counters: { ...record.counters, reviewRounds: 0 },
-  }) && ciGateParked(snapshot, record, GREEN_PREFIXES);
+    counters: { ...record.counters, reviewRounds: 0, retries: 0 },
+  }, NO_LEDGER) && ciGateParked(snapshot, record, GREEN_PREFIXES);
 }
+
+/** No charge at all: the green rule counts neither rounds nor fixes. */
+const NO_LEDGER = { reservations: [] } as const;
 
 /** The merge-gate blocks a correction re-admission may clear. */
 const CORRECTION_PREFIXES: readonly string[] = [

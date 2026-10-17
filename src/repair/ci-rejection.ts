@@ -20,12 +20,20 @@ import type { GitSha } from "../contracts/brands.ts";
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
-import { MAX_REVIEW_ROUNDS, reviewRoundsLeft } from "./review-round-cap.ts";
+import { MAX_REVIEW_ROUNDS } from "./review-round-cap.ts";
+import {
+  CI_FIX_EXHAUSTED_PREFIX,
+  CI_PRE_REVIEW_PENDING_PREFIX,
+  CI_PRE_REVIEW_RED_PREFIX,
+  ciFixesLeft,
+  reviewRoundAvailable,
+} from "./ci-first-policy.ts";
 
 /**
  * Review rounds after which a candidate CI failure keeps its terminal block:
  * the hard review-round ceiling itself (`MAX_REVIEW_ROUNDS`), since once every
- * round is spent a correction can never become a reviewed verdict. The
+ * round is spent a correction can never become a reviewed verdict (the
+ * one-time legacy final review aside, see `reviewRoundAvailable`). The
  * launcher's CI re-admission reads this same value (through `ciCorrectable`),
  * and a test pins it equal to `HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS`.
  */
@@ -218,6 +226,24 @@ function labels(
   return [...seen].join(", ");
 }
 
+/**
+ * Bounded `name(conclusion)` labels of completed checks and `name(status)`
+ * labels of running ones, over trusted names only; a head with no check runs
+ * at all reads `no checks reported`.
+ */
+export function ciCheckLabels(checks: readonly GitHubCheckV1[]): string {
+  if (checks.length === 0) return "no checks reported";
+  const seen = new Set<string>();
+  for (const check of checks) {
+    const state = check.status === "completed"
+      ? check.conclusion ?? "unknown"
+      : check.status;
+    seen.add(`${trustedCheckName(check.name)}(${state})`);
+    if (seen.size >= MAX_CI_CORRECTION_CHECKS) break;
+  }
+  return [...seen].join(", ");
+}
+
 /** Terminal blocker detail of a failure no base observation attributes. */
 export function unattributedDetail(checks: readonly GitHubCheckV1[]): string {
   return `${CI_UNATTRIBUTED_DETAIL}: ${
@@ -254,31 +280,70 @@ export function isCiCorrectionFinding(
 
 /**
  * The record shape a candidate-caused CI failure may correct: an issue task
- * holding its exact publication with a review round left, on a durably
- * described candidate (a candidate state without its preserved descriptor can
- * never resume a correction, exactly as the launcher excludes it). With the
- * durable ledger at hand the round left is also counted from it
- * (`reviewRoundsLeft`), so a lowered or lagging counter never buys a
- * correction no review could accept.
+ * holding its exact publication, on a durably described candidate (a
+ * candidate state without its preserved descriptor can never resume a
+ * correction, exactly as the launcher excludes it), with a CI fix left
+ * (`counters.retries` below `CI_FIX_ATTEMPTS`) and a review round left for
+ * the fixed head (`reviewRoundAvailable`: the hard ceiling's own count over
+ * the durable ledger, `reviewRoundsLeft`, so a lowered or lagging counter
+ * never buys a correction no review could accept, and a listed legacy record
+ * keeps its one final review). CI fixes never count as review rounds.
  */
 export function ciCorrectionShape(
   record: WorkRecordV1,
-  ledger?: { readonly reservations: readonly BudgetReservationV1[] },
+  ledger: { readonly reservations: readonly BudgetReservationV1[] },
 ): boolean {
+  return ciPublicationShape(record) && ciFixesLeft(record) &&
+    reviewRoundAvailable(ledger, record);
+}
+
+/**
+ * The publication half of `ciCorrectionShape`: an issue task holding its
+ * exact publication on a durably described candidate, whatever its CI fix
+ * and review-round counters say.
+ */
+export function ciPublicationShape(record: WorkRecordV1): boolean {
   const candidateState = record.target.candidateState;
   return record.source.kind === "issue" &&
     record.target.head !== null && record.target.pr !== null &&
     record.target.branch !== null &&
     record.target.head !== record.target.base &&
-    (candidateState === undefined || candidateState.preserved !== null) &&
-    record.counters.reviewRounds < CI_CORRECTION_REVIEW_ROUNDS &&
-    (ledger === undefined || reviewRoundsLeft(ledger, record) > 0);
+    (candidateState === undefined || candidateState.preserved !== null);
+}
+
+/** Terminal detail of a red head whose three CI fixes are spent. */
+export function ciFixExhaustedDetail(
+  checks: readonly GitHubCheckV1[],
+): string {
+  return `${CI_FIX_EXHAUSTED_PREFIX}${ciCheckLabels(checks)}`;
+}
+
+/** Park detail of a red, never-reviewed head no fix may start for yet. */
+export function preReviewRedDetail(checks: readonly GitHubCheckV1[]): string {
+  return `${CI_PRE_REVIEW_RED_PREFIX}${ciCheckLabels(checks)}`;
+}
+
+/** Park detail of a head whose CI did not finish within the bound. */
+export function preReviewPendingDetail(
+  checks: readonly GitHubCheckV1[],
+): string {
+  return `${CI_PRE_REVIEW_PENDING_PREFIX}${ciCheckLabels(checks)}`;
+}
+
+/**
+ * Park detail of a head whose failure no base evidence attributed within the
+ * bound (the same pending park, so the same launcher rules re-admit it).
+ */
+export function preReviewUnattributedDetail(
+  checks: readonly GitHubCheckV1[],
+): string {
+  return `${preReviewPendingDetail(checks)} without base evidence`;
 }
 
 /** The delivery gate may open a correction: the shape and no live operation. */
 export function ciCorrectable(
   record: WorkRecordV1,
-  ledger?: { readonly reservations: readonly BudgetReservationV1[] },
+  ledger: { readonly reservations: readonly BudgetReservationV1[] },
 ): boolean {
   return record.intent === null && ciCorrectionShape(record, ledger);
 }

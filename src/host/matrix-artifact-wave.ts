@@ -262,7 +262,10 @@ export async function recoverMatrixArtifactWaves(context: {
               // A correction continues only from a head that a completed review
               // refused, or from a head reviewed clean against this exact base
               // whose live CI attribution the trusted planner carried as its own
-              // digest-bound CI finding (no CI evidence is ever persisted).
+              // digest-bound CI finding (no CI evidence is ever persisted), or
+              // (CI first, generation 80+) from a head no completed review
+              // binds whose CI fix the planner charged in `counters.retries`
+              // with that finding first against the record's exact base.
               (!snapshot.reviews.some((review) =>
                 sameRepo(review.repository, task.repository) &&
                 review.pullRequest.number === task.target.pr &&
@@ -272,7 +275,7 @@ export async function recoverMatrixArtifactWaves(context: {
               ) &&
                 !(isCiCorrectionFinding(cell.request.reviewFindings![0]) &&
                   cell.request.base === task.target.base &&
-                  snapshot.reviews.some((review) =>
+                  (snapshot.reviews.some((review) =>
                     sameRepo(review.repository, task.repository) &&
                     review.pullRequest.number === task.target.pr &&
                     review.pullRequest.head === cell.request.checkoutBase &&
@@ -281,7 +284,15 @@ export async function recoverMatrixArtifactWaves(context: {
                     !review.unresolvedSeverities.some((severity) =>
                       severity === "P0" || severity === "P1"
                     )
-                  )))))
+                  ) ||
+                    (task.counters.retries >= 1 &&
+                      !snapshot.reviews.some((review) =>
+                        sameRepo(review.repository, task.repository) &&
+                        review.pullRequest.number === task.target.pr &&
+                        review.pullRequest.head ===
+                          cell.request.checkoutBase &&
+                        review.outcome === "completed"
+                      )))))))
       ) refuse();
       const reservation = snapshot.reservations.find((row) =>
         row.id === cell.reservationId

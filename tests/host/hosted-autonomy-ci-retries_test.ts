@@ -415,7 +415,7 @@ Deno.test("hosted autonomy: the CI re-admission and the runtime correction share
     const snapshot = repairSnapshot([record], reviews, [], CHARGES);
     assert.equal(
       ciRedeliveryEligible(snapshot, snapshot.work[0]),
-      ciCorrectable(snapshot.work[0]),
+      ciCorrectable(snapshot.work[0], snapshot),
       `review rounds ${rounds}`,
     );
   }
@@ -898,7 +898,7 @@ Deno.test({
       assert.equal(gen78.ciCorrectable(structuredClone(record)), true);
       assert.equal(gen78.CI_CORRECTION_REVIEW_ROUNDS, 3);
       assert.equal(gen78.HOSTED_CI_CORRECTIONS, true);
-      assert.equal(ciCorrectable(record), true);
+      assert.equal(ciCorrectable(record, after), true);
     } finally {
       await loaded.dispose();
     }

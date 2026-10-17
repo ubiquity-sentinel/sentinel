@@ -4,6 +4,7 @@ import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { ciCorrectionShape } from "./ci-rejection.ts";
+import { isCiFixMarker } from "./ci-first-policy.ts";
 import {
   releaseRequestMatchesDelivery,
   sameRepositoryIdentity,
@@ -72,6 +73,31 @@ export function headAcceptedByReview(
 }
 
 /**
+ * An issue task's head is reviewed clean on its base by a change-only
+ * verdict: some completed review refusing nothing on this exact PR/head/base
+ * carries no task acceptance. The merge gate refuses such a verdict with a
+ * run-level `TASK_ACCEPTANCE_MISSING_DETAIL` state_error whenever it is the
+ * receipt it selects, so a head carrying one is returned to `review`, never
+ * to delivery: there the standing review is re-observed and either delivers
+ * the head (its current verdict is task-bound) or requests the task-bound
+ * review through the CI-first gate (the missing-acceptance recovery).
+ */
+export function headTaskAcceptanceMissing(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRecordV1,
+): boolean {
+  if (record.related.issueNumber === null) return false;
+  return snapshot.reviews.some((review) =>
+    sameRepositoryIdentity(review.repository, record.repository) &&
+    review.pullRequest.number === record.target.pr &&
+    review.pullRequest.head === record.target.head &&
+    review.pullRequest.base === record.target.base &&
+    review.outcome === "completed" && !hasBlockingFindings(review) &&
+    (review.taskAcceptance ?? null) === null
+  );
+}
+
+/**
  * Snapshot-only shape of a reviewed head the delivery gate returned to `work`
  * for a CI correction: an accepted, unreleased head on its reviewed base with
  * a review round left. Nothing persisted names the CI failure (generation 76
@@ -96,18 +122,63 @@ export function headAwaitsCiCorrection(
 }
 
 /**
+ * A completed review of any outcome binds this record's exact PR/head.
+ */
+export function headReviewCompleted(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRecordV1,
+): boolean {
+  return snapshot.reviews.some((review) =>
+    sameRepositoryIdentity(review.repository, record.repository) &&
+    review.pullRequest.number === record.target.pr &&
+    review.pullRequest.head === record.target.head &&
+    review.outcome === "completed"
+  );
+}
+
+/**
+ * Snapshot-only shape of a red, never-reviewed head the CI-first review gate
+ * returned to `work` for its CI fix (`loop-ci-first.ts`): the zero-length
+ * `backoff` marker on an unreleased, published issue head no completed review
+ * binds, with a CI fix and a review round left. Like the reviewed-head
+ * correction, it only makes the record ELIGIBLE: the fix starts only after the
+ * failure is re-derived from live check runs (`confirmPreReviewCiFix`), and
+ * anything else clears the marker uncharged.
+ */
+export function headAwaitsPreReviewCiFix(
+  snapshot: RepairStateSnapshotV1,
+  record: WorkRecordV1,
+  /** `preReviewCiFixRouteOpen(deps)`: a closed route awaits nothing. */
+  routeOpen = false,
+): boolean {
+  const candidateState = record.target.candidateState;
+  return routeOpen && record.nextStep === "work" &&
+    isCiFixMarker(record.wait) && ciCorrectionShape(record, snapshot) &&
+    (candidateState === undefined ||
+      candidateState.publishedHead === record.target.head) &&
+    !headReviewCompleted(snapshot, record) &&
+    !snapshot.releaseRequests.some((request) =>
+      releaseRequestMatchesDelivery(request, record)
+    );
+}
+
+/**
  * The record's current head must be corrected, never re-published or
- * re-reviewed: a completed review rejected it with an unresolved P0/P1, or it
- * is a reviewed head awaiting its live-verified CI correction.
+ * re-reviewed: a completed review rejected it with an unresolved P0/P1, it is
+ * a reviewed head awaiting its live-verified CI correction, or it is a red,
+ * never-reviewed head awaiting its live-verified CI fix.
  */
 export function headNeedsCorrection(
   snapshot: RepairStateSnapshotV1,
   record: WorkRecordV1,
   /** `ciCorrectionRouteOpen(deps)`: closed, only a review rejection counts. */
   ciRouteOpen = true,
+  /** `preReviewCiFixRouteOpen(deps)`: closed, no pre-review fix counts. */
+  preReviewRouteOpen = false,
 ): boolean {
   return headRejectedByReview(snapshot, record) ||
-    headAwaitsCiCorrection(snapshot, record, ciRouteOpen);
+    headAwaitsCiCorrection(snapshot, record, ciRouteOpen) ||
+    headAwaitsPreReviewCiFix(snapshot, record, preReviewRouteOpen);
 }
 
 /** Bounded batch of the exact unresolved findings a correction must resolve. */

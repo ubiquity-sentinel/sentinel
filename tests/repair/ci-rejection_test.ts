@@ -38,6 +38,9 @@ import {
 import { repairConfigs } from "./helpers.ts";
 import { seededSnapshot } from "./loop-rig.ts";
 
+/** No review charge: the round count is the record's own counter. */
+const NO_LEDGER = { reservations: [] } as const;
+
 function check(
   name: string,
   conclusion: GitHubCheckV1["conclusion"],
@@ -233,29 +236,38 @@ Deno.test("ci correction finding: trusted, bounded check names only", () => {
 
 Deno.test("ci correctability matches the launcher: an undescribed candidate is never corrected", () => {
   const record = reviewed({ nextStep: "delivery" });
-  assert.equal(ciCorrectable(record), true, "control");
+  assert.equal(ciCorrectable(record, NO_LEDGER), true, "control");
   assert.equal(
-    ciCorrectable(reviewed({
-      nextStep: "delivery",
-      target: {
-        ...record.target,
-        candidateState: { preserved: null, publishedHead: SHA3 },
-      },
-    })),
+    ciCorrectable(
+      reviewed({
+        nextStep: "delivery",
+        target: {
+          ...record.target,
+          candidateState: { preserved: null, publishedHead: SHA3 },
+        },
+      }),
+      NO_LEDGER,
+    ),
     false,
   );
   assert.equal(
-    ciCorrectable(reviewed({
-      nextStep: "delivery",
-      counters: { attempts: 1, retries: 0, reviewRounds: 3 },
-    })),
+    ciCorrectable(
+      reviewed({
+        nextStep: "delivery",
+        counters: { attempts: 1, retries: 0, reviewRounds: 3 },
+      }),
+      NO_LEDGER,
+    ),
     false,
   );
   assert.equal(
-    ciCorrectable(reviewed({
-      nextStep: "delivery",
-      target: { ...record.target, head: SHA1 },
-    })),
+    ciCorrectable(
+      reviewed({
+        nextStep: "delivery",
+        target: { ...record.target, head: SHA1 },
+      }),
+      NO_LEDGER,
+    ),
     false,
     "a head equal to its base is no candidate",
   );

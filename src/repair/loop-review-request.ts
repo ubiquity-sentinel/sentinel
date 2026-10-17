@@ -15,6 +15,7 @@ import {
   REVIEW_POLL_MS,
   runBoundsProofRef,
 } from "./loop-bounds.ts";
+import { gateReviewOnCi } from "./loop-ci-first.ts";
 import { retireClosedPublication } from "./loop-records.ts";
 import { reviewRoundCeilingGate } from "./loop-review-round-cap.ts";
 import {
@@ -117,6 +118,12 @@ export async function requestReviewFor(
     );
   }
   if (freshness !== null) return freshness;
+  // CI first (owner decision 2026-10-16): the exact fresh head is reviewed
+  // only once its required CI is green. Pending CI waits (bounded), a red
+  // head routes to its CI fix or a precise park, a red base backs off; none
+  // of them reserves a review or counts a round.
+  const gated = await gateReviewOnCi(deps, context, record);
+  if (gated !== null) return gated;
   // The cooling check was awaited wall-clock work and only guards the total
   // deadline: recheck the 90-minute model cutoff (and the deadline) at the
   // current clock immediately before the admission, so a start that crossed

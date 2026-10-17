@@ -27,6 +27,7 @@ import {
 } from "../repair/loop.ts";
 import { attemptEquivalenceRefusalForRecordV1 } from "../repair/attempt-policy.ts";
 import { ciCorrectionRouteOpen } from "../repair/ci-rejection.ts";
+import { preReviewCiFixRouteOpen } from "../repair/ci-first-policy.ts";
 import {
   conflictResolutionCapReached,
   conflictResolutionRouteOpen,
@@ -310,6 +311,10 @@ export async function planMatrixWave(
   // survives a rollback (`conflictResolutionRouteOpen`): in process, and in
   // hosted runs from generation 79, whose rollback target isolates the cell.
   const conflictRouteOpen = conflictResolutionRouteOpen(deps);
+  // A pre-review CI fix is granted only where its cell survives a rollback
+  // (`preReviewCiFixRouteOpen`): closed in hosted generation-80 runs, whose
+  // rollback target refuses the cell.
+  const preReviewRouteOpen = preReviewCiFixRouteOpen(deps);
 
   while (cells.length < limit) {
     const readAt = deps.clock.now();
@@ -378,6 +383,7 @@ export async function planMatrixWave(
           now,
           ciRouteOpen,
           conflictRouteOpen,
+          preReviewRouteOpen,
         );
     });
     if (nextId === undefined) break;
@@ -395,6 +401,7 @@ export async function planMatrixWave(
         now,
         ciRouteOpen,
         conflictRouteOpen,
+        preReviewRouteOpen,
       )
     ) {
       notReady++;

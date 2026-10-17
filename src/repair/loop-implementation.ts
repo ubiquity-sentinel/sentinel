@@ -20,16 +20,19 @@ import {
   runBoundsProofRef,
 } from "./loop-bounds.ts";
 import { ciCorrectionRouteOpen } from "./ci-rejection.ts";
+import { preReviewCiFixRouteOpen } from "./ci-first-policy.ts";
 import {
   conflictMarker,
   conflictResolutionAdmissible,
   conflictResolutionRouteOpen,
 } from "./conflict-resolution.ts";
 import { confirmCiCorrection } from "./loop-ci-correction.ts";
+import { confirmPreReviewCiFix } from "./loop-ci-first.ts";
 import { confirmConflictResolution } from "./loop-conflict-resolution.ts";
 import {
   correctionFindings,
   headAwaitsCiCorrection,
+  headAwaitsPreReviewCiFix,
   headNeedsCorrection,
 } from "./loop-review-records.ts";
 import {
@@ -47,6 +50,8 @@ import type {
 } from "./loop-types.ts";
 import {
   clearIntent,
+  clearWait,
+  countRetry,
   decompositionPartOf,
   decompositionScopeNote,
   markBlocked,
@@ -137,6 +142,17 @@ export async function prepareImplementationStart(
     headAwaitsCiCorrection(context.snapshot, record, ciRouteOpen)
   ) {
     const confirmed = await confirmCiCorrection(deps, context, record);
+    if (confirmed.kind !== "confirmed") return confirmed;
+    ciFinding = confirmed.finding;
+  }
+  // A red, never-reviewed head marked by the CI-first review gate is fixed
+  // only after the same live re-derivation (`confirmPreReviewCiFix`).
+  const preReviewOpen = preReviewCiFixRouteOpen(deps);
+  if (
+    conflict === null && ciFinding === null &&
+    headAwaitsPreReviewCiFix(context.snapshot, record, preReviewOpen)
+  ) {
+    const confirmed = await confirmPreReviewCiFix(deps, context, record);
     if (confirmed.kind !== "confirmed") return confirmed;
     ciFinding = confirmed.finding;
   }
@@ -242,6 +258,7 @@ export async function prepareImplementationStart(
     context.snapshot,
     record,
     ciRouteOpen,
+    preReviewOpen,
   );
   const findings = conflict !== null
     ? null
@@ -358,7 +375,12 @@ export async function prepareImplementationStart(
     };
   }
 
-  const attempted = startAttempt(current, deps.clock.now());
+  // A CI fix (of a reviewed head or a never-reviewed one) is charged in
+  // `counters.retries` as well as `attempts` and never counts a review round;
+  // its fix marker is consumed by the admission.
+  const attempted = ciFinding === null
+    ? startAttempt(current, deps.clock.now())
+    : countRetry(clearWait(current, deps.clock.now()), deps.clock.now());
   const started = implementationIntent(
     durable.reservation.id,
     attempted,

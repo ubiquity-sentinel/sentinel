@@ -12,6 +12,7 @@ import {
   MATRIX_IMPLEMENTATION_DEFERRED,
 } from "./loop-bounds.ts";
 import { ciCorrectionRouteOpen } from "./ci-rejection.ts";
+import { preReviewCiFixRouteOpen } from "./ci-first-policy.ts";
 import {
   conflictResolutionAdmissible,
   conflictResolutionRouteOpen,
@@ -209,6 +210,7 @@ export async function executeWorkStep(
       context.snapshot,
       record,
       ciCorrectionRouteOpen(deps),
+      preReviewCiFixRouteOpen(deps),
     )
   ) {
     return executeImplementationStep(deps, context, record, config);

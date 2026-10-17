@@ -30,6 +30,11 @@ import {
   HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS,
 } from "./hosted-autonomy-ci-retries.ts";
 import { readCiRerunSettled } from "./hosted-autonomy-ci-rerun.ts";
+import {
+  ciFirstRuntimeProven,
+  HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+  preReviewCiParked,
+} from "./hosted-autonomy-ci-first.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
 import { runHostedMismatchDispositionPass } from "./hosted-autonomy-mismatch-pass.ts";
 import { runHostedPreservationDispositionPass } from "./hosted-autonomy-preservation-disposition.ts";
@@ -233,15 +238,17 @@ export async function runHostedRetryPass(
   // records exactly as before, and the identity is always the pair
   // (repository, issue number).
   const closedIssues = context.closedIssues;
-  // A head parked on its merge-gate CI failure whose base tip is still the
-  // reviewed base is read for green CI on its OWN repository surface (a
-  // re-run flake); only a head proven all green there can re-admit.
+  // A head parked on its merge-gate CI failure (or by the CI-first gate
+  // before its review) whose base tip is still the record's base is read for
+  // green CI on its OWN repository surface (a re-run flake, or CI that
+  // finished late); only a head proven all green there can re-admit.
   const ciGreenHeads = new Set<string>();
   for (const record of snapshot.work) {
     const head = record.target.head;
     if (
       record.nextStep !== "blocked" || head === null ||
-      !ciGreenRedeliveryEligible(snapshot, record) ||
+      !(ciGreenRedeliveryEligible(snapshot, record) ||
+        preReviewCiParked(snapshot, record)) ||
       closedIssues.has(
         hostedIssueKey(record.repository, record.related.issueNumber!),
       )
@@ -261,8 +268,18 @@ export async function runHostedRetryPass(
   // Flake first: a CI-parked head is re-admitted for a correction only once
   // its single re-run (run by the delivery pass) can no longer act. Read only
   // under a proven CI-correction runtime, the only one the rule activates for.
+  // A pre-review CI fix is re-admitted only under a fix runtime (none in
+  // generation 80), so only that runtime reads those heads' re-runs.
+  const ciFixRuntime = ciFirstRuntimeProven(
+    installedRuntime,
+    HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+  );
   const ciRerunSettled = ciCorrectionRuntimeProven(installedRuntime)
-    ? await readCiRerunSettled({ ...context, snapshot }, retryTips)
+    ? await readCiRerunSettled(
+      { ...context, snapshot },
+      retryTips,
+      ciFixRuntime,
+    )
     : new Set<string>();
   const planned = planHostedRetries(
     snapshot,

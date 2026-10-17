@@ -127,7 +127,7 @@ Deno.test({
               assert.ok(!checkReads.includes(SHA1), "no base attribution");
               assert.equal(refreshes.length, 0, "no base refresh");
               // A record at two rounds spends its last correctable round here.
-              assert.equal(ciCorrectionShape(work), rounds + 1 < 3);
+              assert.equal(ciCorrectionShape(work, after), rounds + 1 < 3);
             } finally {
               await rig.ctx.cleanup();
             }

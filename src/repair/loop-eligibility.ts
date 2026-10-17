@@ -6,6 +6,7 @@ import type {
   WorkRecordV1,
 } from "../contracts/work-record.ts";
 import { ciCorrectionRouteOpen } from "./ci-rejection.ts";
+import { preReviewCiFixRouteOpen } from "./ci-first-policy.ts";
 import {
   conflictResolutionAdmissible,
   conflictResolutionRouteOpen,
@@ -57,6 +58,8 @@ export function isMatrixImplementationReadyV1(
   ciRouteOpen = true,
   /** `conflictResolutionRouteOpen(deps)` of the planning run. */
   conflictRouteOpen = false,
+  /** `preReviewCiFixRouteOpen(deps)` of the planning run. */
+  preReviewRouteOpen = false,
 ): boolean {
   if (record.source.kind !== "issue") return false;
   if (record.nextStep !== "work") return false;
@@ -81,7 +84,7 @@ export function isMatrixImplementationReadyV1(
   if (record.target.branch === null) return false;
   if (config.sessionBound === null) return false;
   return record.target.head === null ||
-    headNeedsCorrection(snapshot, record, ciRouteOpen);
+    headNeedsCorrection(snapshot, record, ciRouteOpen, preReviewRouteOpen);
 }
 
 // ---------------------------------------------------------------------------
@@ -102,11 +105,18 @@ export function isModelStartAction(
   ciRouteOpen = true,
   /** `conflictResolutionRouteOpen(deps)` of the run. */
   conflictRouteOpen = false,
+  /** `preReviewCiFixRouteOpen(deps)` of the run. */
+  preReviewRouteOpen = false,
 ): boolean {
   return record.nextStep === "work" &&
     reviewRoundsLeft(snapshot, record) > 0 &&
     (record.target.head === null ||
-      headNeedsCorrection(snapshot, record, ciRouteOpen) ||
+      headNeedsCorrection(
+        snapshot,
+        record,
+        ciRouteOpen,
+        preReviewRouteOpen,
+      ) ||
       conflictResolutionAdmissible(conflictRouteOpen, snapshot, record) !==
         null);
 }
@@ -140,6 +150,7 @@ export function declaredOperationFits(
       record,
       ciCorrectionRouteOpen(deps),
       conflictResolutionRouteOpen(deps),
+      preReviewCiFixRouteOpen(deps),
     )
   ) {
     if (now >= bounds.modelCutoff) return false;

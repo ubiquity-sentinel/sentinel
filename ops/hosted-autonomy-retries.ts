@@ -19,7 +19,10 @@ import {
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import { evidenceExpired } from "./hosted-autonomy-evidence-expiry.ts";
-import { reviewRoundsLeft } from "../src/repair/review-round-cap.ts";
+import {
+  ordinaryReviewRoundsSpent,
+  reviewRoundsLeft,
+} from "../src/repair/review-round-cap.ts";
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
 import {
   ciCorrectionRuntimeProven,
@@ -27,6 +30,14 @@ import {
   ciGreenRedeliveryEligible,
   ciRedeliveryEligible,
 } from "./hosted-autonomy-ci-retries.ts";
+import {
+  ciFirstRuntimeProven,
+  HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+  HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
+  preReviewCiParked,
+  preReviewFixEligible,
+} from "./hosted-autonomy-ci-first.ts";
+import { ciFixMarker } from "../src/repair/ci-first-policy.ts";
 
 /**
  * Durable reservations charged to one task, across every purpose and outcome
@@ -285,6 +296,12 @@ export interface RetryPlanV1 {
   /** Exact base observed for an advancing plan. */
   observedBase: string | null;
   detail: string;
+  /**
+   * A work-returning CI-first plan that returns a red, never-reviewed head
+   * with the runtime's CI fix marker (a zero-length `backoff` wait). Only an
+   * allowlisted fix runtime activates it; it charges nothing itself.
+   */
+  ciFixMarker?: true;
 }
 
 /** Detail suffix of a CI re-admission whose head is green again. */
@@ -298,8 +315,49 @@ const CI_GREEN_DETAIL_SUFFIX = ":green";
  * (pull request not open or unreadable) never holds a slot.
  */
 export function ciCorrectionPlan(plan: RetryPlanV1): boolean {
-  return plan.nextStep === "delivery" &&
-    !plan.detail.endsWith(CI_GREEN_DETAIL_SUFFIX);
+  return (plan.nextStep === "delivery" &&
+    !plan.detail.endsWith(CI_GREEN_DETAIL_SUFFIX)) ||
+    plan.ciFixMarker === true;
+}
+
+/**
+ * The CI-first re-admission of a head the runtime's pre-review gate parked
+ * (`hosted-autonomy-ci-first.ts`): green again on its unchanged base returns
+ * it to `work` under any runtime; still red, once its re-run can no longer
+ * act, returns it with the CI fix marker only under a fix runtime. Null when
+ * no CI-first rule applies.
+ */
+function planCiFirstReadmission(
+  snapshot: RepairStateSnapshotV1,
+  record: RepairStateSnapshotV1["work"][number],
+  baseTips: ReadonlyMap<string, string | null>,
+  ciGreenHeads: ReadonlySet<string>,
+  ciRerunSettled: ReadonlySet<string>,
+  ciFixRuntime: boolean,
+): RetryPlanV1 | null {
+  const blocker = record.blocker;
+  const head = record.target.head;
+  if (
+    blocker === null || head === null || !preReviewCiParked(snapshot, record)
+  ) return null;
+  const key = ciGreenHeadKey(record.repository, head);
+  const green = baseTips.get(hostedRepositoryKey(record.repository)) ===
+      record.target.base && ciGreenHeads.has(key);
+  const fix = !green && ciFixRuntime && ciRerunSettled.has(key) &&
+    preReviewFixEligible(snapshot, record);
+  if (!green && !fix) return null;
+  const prefix = blocker.message.slice(0, blocker.message.indexOf(":") + 1);
+  return {
+    id: record.id,
+    repository: record.repository,
+    grant: 0,
+    nextStep: "work",
+    reviewRounds: null,
+    advanceBase: false,
+    observedBase: null,
+    detail: `${blocker.kind}:${prefix}${green ? CI_GREEN_DETAIL_SUFFIX : ""}`,
+    ...(fix ? { ciFixMarker: true as const } : {}),
+  };
 }
 
 /**
@@ -354,6 +412,13 @@ export function planHostedRetries(
     ciAllowlist?: ReadonlySet<string>;
     ciRerunSettled?: ReadonlySet<string>;
     ciGreenHeads?: ReadonlySet<string>;
+    /**
+     * CI-first allowlists (`hosted-autonomy-ci-first.ts`), replaced for tests
+     * only: the legacy final-review re-admission needs a CI-first runtime,
+     * the pre-review fix re-admission a fix runtime.
+     */
+    ciFirstAllowlist?: ReadonlySet<string>;
+    ciFirstFixAllowlist?: ReadonlySet<string>;
   } = {},
 ): RetryPlanV1[] {
   if (!isGitSha(runtimeSha)) return [];
@@ -361,6 +426,18 @@ export function planHostedRetries(
   const ciCorrection = ciRuntime !== null &&
     ciRuntime.activeRevision === runtimeSha &&
     ciCorrectionRuntimeProven(ciRuntime, options.ciAllowlist);
+  const ciFirst = ciRuntime !== null &&
+    ciRuntime.activeRevision === runtimeSha &&
+    ciFirstRuntimeProven(
+      ciRuntime,
+      options.ciFirstAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
+    );
+  const ciFixRuntime = ciRuntime !== null &&
+    ciRuntime.activeRevision === runtimeSha &&
+    ciFirstRuntimeProven(
+      ciRuntime,
+      options.ciFirstFixAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+    );
   const ciRerunSettled = options.ciRerunSettled ?? new Set<string>();
   const ciGreenHeads = options.ciGreenHeads ?? new Set<string>();
   const plans: RetryPlanV1[] = [];
@@ -458,7 +535,18 @@ export function planHostedRetries(
         continue;
       }
     }
-    if (rule === undefined) continue;
+    if (rule === undefined) {
+      const ciFirstPlan = planCiFirstReadmission(
+        snapshot,
+        record,
+        baseTips,
+        ciGreenHeads,
+        ciRerunSettled,
+        ciFixRuntime,
+      );
+      if (ciFirstPlan !== null) plans.push(ciFirstPlan);
+      continue;
+    }
     if (
       rule.minBlockedMs !== undefined &&
       !evidenceExpired(record, snapshot.reservations, now, rule.minBlockedMs)
@@ -478,10 +566,14 @@ export function planHostedRetries(
           record.target.base &&
         ciGreenHeads.has(ciGreenHeadKey(record.repository, head)) &&
         ciGreenRedeliveryEligible(snapshot, record);
-      // A correction only once the head's flake re-run can no longer act.
+      // A correction only once the head's flake re-run can no longer act. A
+      // record correctable only through its one-time legacy final review
+      // (every ordinary round spent) needs the CI-first runtime: under any
+      // other its refreshed head would be reviewed while still red.
       const corrected = !green && ciCorrection && head !== null &&
         ciRerunSettled.has(ciGreenHeadKey(record.repository, head)) &&
-        ciRedeliveryEligible(snapshot, record);
+        ciRedeliveryEligible(snapshot, record) &&
+        (!ordinaryReviewRoundsSpent(snapshot, record) || ciFirst);
       if (!corrected && !green) continue;
       plans.push({
         id: record.id,
@@ -646,7 +738,7 @@ export function applyHostedRetries(
       return {
         ...record,
         nextStep: plan.nextStep,
-        wait: null,
+        wait: plan.ciFixMarker === true ? ciFixMarker(now) : null,
         blocker: null,
         intent: refresh,
         counters: {

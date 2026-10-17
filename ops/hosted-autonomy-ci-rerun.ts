@@ -1,7 +1,8 @@
 /**
  * Launcher-only flake path for a reviewed head parked on the runtime's
  * merge-gate CI failure ("CI checks failed: ...", or the CI-correction
- * runtime's "CI checks failed without base evidence: ..."). When the exact
+ * runtime's "CI checks failed without base evidence: ..."), and for a head
+ * the CI-first gate parked red or pending before its review. When the exact
  * head holds a clean review against a base that is still the base tip and is
  * itself all green, the failed workflow run on that head is re-run ONCE.
  * Nothing is written: GitHub's own `run_attempt` is the durable once-per-head
@@ -31,6 +32,10 @@ import {
   HOSTED_AUTONOMY_TRUSTED_AUTHORS,
   hostedIssueKey,
 } from "./hosted-autonomy-policy.ts";
+import {
+  preReviewCiParked,
+  preReviewFixEligible,
+} from "./hosted-autonomy-ci-first.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import type { HostedAutonomyHeadRunV1 } from "./hosted-autonomy-types.ts";
 
@@ -90,7 +95,8 @@ export function ciRerunRuns(
 
 /**
  * Local gates: the CI-parked, clean-reviewed, unreleased shape with no
- * operation in flight, on a published head whose candidate is durably
+ * operation in flight (or a head the CI-first gate parked red or pending
+ * before its review), on a published head whose candidate is durably
  * preserved, for a source issue not already known closed.
  */
 function rerunShape(
@@ -103,7 +109,8 @@ function rerunShape(
   return record.nextStep === "blocked" && head !== null &&
     candidate !== undefined && candidate.preserved !== null &&
     candidate.publishedHead === head &&
-    ciGreenRedeliveryEligible(snapshot, record) &&
+    (ciGreenRedeliveryEligible(snapshot, record) ||
+      preReviewCiParked(snapshot, record)) &&
     !closedIssues.has(
       hostedIssueKey(record.repository, record.related.issueNumber!),
     );
@@ -124,6 +131,12 @@ function rerunShape(
 export async function readCiRerunSettled(
   context: HostedAutonomyPassContextV1,
   tips: ReadonlyMap<string, string | null>,
+  /**
+   * Also read the pre-review parks a CI fix may be admitted for: only under a
+   * runtime whose hosted pre-review fix route is open, the only one the fix
+   * rule activates for.
+   */
+  preReviewFixes = false,
 ): Promise<Set<string>> {
   const { snapshot, scopeFor, closedIssues } = context;
   const now = context.deps.clock.now();
@@ -132,7 +145,8 @@ export async function readCiRerunSettled(
     const head = record.target.head;
     if (
       record.nextStep !== "blocked" || head === null ||
-      !ciRedeliveryEligible(snapshot, record) ||
+      !(ciRedeliveryEligible(snapshot, record) ||
+        (preReviewFixes && preReviewFixEligible(snapshot, record))) ||
       closedIssues.has(
         hostedIssueKey(record.repository, record.related.issueNumber!),
       )
