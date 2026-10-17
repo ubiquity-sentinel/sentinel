@@ -1,4 +1,5 @@
 import { ingestMatrixResults } from "../src/host/matrix.ts";
+import type { MatrixIngestOptionsV1 } from "../src/host/matrix-ingest.ts";
 import { matrixDigestV1 } from "../src/contracts/matrix.ts";
 import {
   HOSTED_RUNTIME_ID,
@@ -483,17 +484,20 @@ async function recoverProducerWithinBudget(
     const cellResults = wave.results.filter((result) =>
       cells.some((cell) => cell.cellId === result.cellId)
     );
+    // One options object: the output-bound classifier below authenticates
+    // receipts against exactly the route this ingest verified them with.
+    const options: MatrixIngestOptionsV1 = {
+      deadline: deadlineAt,
+      expectedProvider: HISTORICAL_RECOVERY_PROVIDERS,
+      // The producer route's 429 failover, from launcher source only.
+      failoverModel: RECOVERY_ROUTE_FAILOVER_MODEL,
+      bundleImporter: ports.importerFor(config, wave.bundlesDir),
+    };
     const report = await (ports.ingest ?? ingestMatrixResults)(
       cycle,
       { ...wave.plan, cells },
       cellResults,
-      {
-        deadline: deadlineAt,
-        expectedProvider: HISTORICAL_RECOVERY_PROVIDERS,
-        // The producer route's 429 failover, from launcher source only.
-        failoverModel: RECOVERY_ROUTE_FAILOVER_MODEL,
-        bundleImporter: ports.importerFor(config, wave.bundlesDir),
-      },
+      options,
     ).catch((error: unknown) => {
       throw integrityFailure ?? error;
     });
@@ -520,7 +524,7 @@ async function recoverProducerWithinBudget(
     // An authenticated completed terminal past its output bound is refused
     // (`receipt_rejected`) but settled below as the runtime's own
     // interrupted-output failure; every other refusal stays fatal.
-    const overBound = outputBoundCells(report, cells, cellResults);
+    const overBound = outputBoundCells(report, cells, cellResults, options);
     const badEntries = report.entries.filter(
       (entry) =>
         !deferrals.includes(entry.disposition) &&
@@ -542,11 +546,16 @@ async function recoverProducerWithinBudget(
     }
     if (overBound.size > 0) {
       await custody();
+      // Re-proved against the repair state this pass began from: a record or
+      // charge that moved at any point since the pass began (an owner edit,
+      // another writer, or an earlier target of this pass) defers (`false`),
+      // like a consumer `state_error`; one already wrong then stays fatal.
       const bounded = await settleOutputBoundCells(
         cycle,
         cells,
         overBound,
         deadlineAt,
+        before.snapshot,
       ).catch((error: unknown) => {
         throw integrityFailure ?? error;
       });
