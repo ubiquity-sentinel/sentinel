@@ -100,6 +100,7 @@ export type {
   CarriedPatchProofV1,
   CarriedPatchRequestV1,
   GitHubBranchProtectionsV1,
+  GitHubCheckSuitesV1,
   GitHubChecksV1,
   GitHubCheckV1,
   GitHubIssueRelationsV1,

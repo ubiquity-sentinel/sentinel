@@ -244,6 +244,25 @@ export function ciCheckLabels(checks: readonly GitHubCheckV1[]): string {
   return [...seen].join(", ");
 }
 
+/** Label of a base whose check runs could not be read for coverage. */
+export const BASE_CHECKS_UNREADABLE = "base checks unreadable";
+
+/**
+ * Bounded `name(absent)` labels of expected checks the head does not report
+ * yet (`missingExpectedChecks`), over trusted names only; null (the base's
+ * runs could not be read) is `BASE_CHECKS_UNREADABLE`.
+ */
+export function absentCheckLabels(names: readonly string[] | null): string {
+  if (names === null) return BASE_CHECKS_UNREADABLE;
+  if (names.length === 0) return "no checks reported";
+  const seen = new Set<string>();
+  for (const name of names) {
+    seen.add(`${trustedCheckName(name)}(absent)`);
+    if (seen.size >= MAX_CI_CORRECTION_CHECKS) break;
+  }
+  return [...seen].join(", ");
+}
+
 /** Terminal blocker detail of a failure no base observation attributes. */
 export function unattributedDetail(checks: readonly GitHubCheckV1[]): string {
   return `${CI_UNATTRIBUTED_DETAIL}: ${
@@ -331,6 +350,18 @@ export function preReviewPendingDetail(
   checks: readonly GitHubCheckV1[],
 ): string {
   return `${CI_PRE_REVIEW_PENDING_PREFIX}${ciCheckLabels(checks)}`;
+}
+
+/**
+ * Park detail of a head that still lacks an expected check after the bound:
+ * the same pending park (same prefix, same launcher re-admission), naming
+ * the checks GitHub has not created on the head, or a base whose runs could
+ * not be read.
+ */
+export function preReviewAbsentDetail(
+  names: readonly string[] | null,
+): string {
+  return `${CI_PRE_REVIEW_PENDING_PREFIX}${absentCheckLabels(names)}`;
 }
 
 /**

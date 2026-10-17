@@ -22,7 +22,11 @@ import {
   planHostedRetries,
   type RetryPlanV1,
 } from "./hosted-autonomy-retries.ts";
-import { hostedIssueKey, sameRepository } from "./hosted-autonomy-policy.ts";
+import {
+  hostedIssueKey,
+  isHostedSelf,
+  sameRepository,
+} from "./hosted-autonomy-policy.ts";
 import {
   ciCorrectionRuntimeProven,
   ciGreenHeadKey,
@@ -335,6 +339,7 @@ export async function runHostedRetryPass(
     : launcherLegacyCutoff(installedRuntime, ciFirst, release);
   const ciGreenHeads = new Set<string>();
   const ciReadHeads = new Set<string>();
+  const ciUnreadHeads = new Set<string>();
   const spentReads = spentCiReadWindow(
     snapshot.work.filter((record) =>
       ciFirst && record.nextStep === "blocked" &&
@@ -361,15 +366,29 @@ export async function runHostedRetryPass(
       scope.surface === null ||
       (!spentRead && retryTips.get(scope.key) !== record.target.base)
     ) continue;
+    // Tri-state, and for a foreign head against the base it was tested on
+    // (every check that base's suites expect must exist; the self gate is
+    // its one named `test-local` job, whose base also holds a `dispatch` run
+    // per five-minute schedule). Only a successful, non-empty listing is a
+    // read: an unreadable one (rate limited, failing, incomplete, empty) is
+    // no evidence, so the head is neither green nor read red, and it plans
+    // nothing this pass (sentinel issue #154: it took a correction slot).
     let green: boolean | null = null;
     try {
-      green = await scope.surface.hasAllChecksGreen(head);
+      green = await scope.surface.hasAllChecksGreen(
+        head,
+        isHostedSelf(record.repository) ? undefined : record.target.base,
+      );
     } catch {
       green = null;
     }
-    if (green === null) continue;
-    ciReadHeads.add(ciGreenHeadKey(record.repository, head));
-    if (green) ciGreenHeads.add(ciGreenHeadKey(record.repository, head));
+    const key = ciGreenHeadKey(record.repository, head);
+    if (green === null) {
+      ciUnreadHeads.add(key);
+      continue;
+    }
+    ciReadHeads.add(key);
+    if (green) ciGreenHeads.add(key);
   }
   // Flake first: a CI-parked head is re-admitted for a correction only once
   // its single re-run (run by the delivery pass) can no longer act. Read only
@@ -402,6 +421,7 @@ export async function runHostedRetryPass(
       ciRerunSettled,
       ciGreenHeads,
       ciReadHeads,
+      ciUnreadHeads,
       legacyReviewCutoff: legacyCutoff,
     },
   );

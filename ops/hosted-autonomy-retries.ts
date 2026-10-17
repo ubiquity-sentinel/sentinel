@@ -474,6 +474,14 @@ export function planHostedRetries(
      */
     ciReadHeads?: ReadonlySet<string>;
     /**
+     * `ciGreenHeadKey` values of the heads whose CI listing the caller tried
+     * to read and could not (rate limited, failing, incomplete or holding no
+     * check run: `hasAllChecksGreen` null). That is no evidence of a failure,
+     * so no CI correction and no CI fix is planned for such a head this pass
+     * (it takes no slot); the next pass reads it again.
+     */
+    ciUnreadHeads?: ReadonlySet<string>;
+    /**
      * The legacy review cutoff (`launcherLegacyCutoff`), replaced for tests
      * only; by default the installed runtime's pinned cutoff, under a proven
      * CI-first runtime.
@@ -499,7 +507,14 @@ export function planHostedRetries(
       options.ciFirstFixAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
       options.ciFirstAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
     );
-  const ciRerunSettled = options.ciRerunSettled ?? new Set<string>();
+  const ciUnreadHeads = options.ciUnreadHeads ?? new Set<string>();
+  // Every CI correction and CI fix plan needs its head's re-run settled; an
+  // unread head is never settled for this pass (sentinel issue #154).
+  const ciRerunSettled = new Set(
+    [...(options.ciRerunSettled ?? [])].filter((key) =>
+      !ciUnreadHeads.has(key)
+    ),
+  );
   const ciGreenHeads = options.ciGreenHeads ?? new Set<string>();
   const ciReadHeads = options.ciReadHeads ?? ciGreenHeads;
   const cutoff = options.legacyReviewCutoff !== undefined

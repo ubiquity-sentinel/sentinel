@@ -106,9 +106,15 @@ export async function ciFirstRig(prefix: string, options: CiFirstRigOptions) {
     ...(options.legacyReviewCutoff === undefined
       ? {}
       : { legacyReviewCutoff: options.legacyReviewCutoff }),
-    ...(identity === undefined
-      ? {}
-      : { configOverrides: { repository: identity.repository } }),
+    ...(identity === undefined ? {} : {
+      configOverrides: {
+        repository: identity.repository,
+        // The sentinel self scope (installation 0) is no gateway target.
+        ...(identity.repository.installationId === 0
+          ? { adapter: { kind: "github" } }
+          : {}),
+      },
+    }),
     model: { heads: options.heads ?? [SHA4] },
     github: {
       openIssues: [],

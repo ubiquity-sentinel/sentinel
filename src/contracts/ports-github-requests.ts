@@ -94,6 +94,17 @@ export interface GitHubChecksV1 {
   checks: GitHubCheckV1[];
 }
 
+/**
+ * The check runs of one commit reduced to what the required-CI coverage rule
+ * reads of a base (`missingExpectedChecks`): each run's name and the check
+ * suite GitHub reports it in (`check_suite.id`, one per workflow run for
+ * GitHub Actions; null when absent). Never a CI verdict, never persisted.
+ */
+export interface GitHubCheckSuitesV1 {
+  head: GitSha;
+  checks: { name: string; suite: number | null }[];
+}
+
 export interface GitHubBranchProtectionsV1 {
   branch: string;
   protected: boolean;

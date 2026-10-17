@@ -33,8 +33,8 @@ Deno.test(
   async () => {
     const withFetch = async (
       handler: (url: string) => unknown,
-      check: () => Promise<boolean>,
-    ): Promise<boolean> => {
+      check: () => Promise<boolean | null>,
+    ): Promise<boolean | null> => {
       const original = globalThis.fetch;
       globalThis.fetch = ((input: string | URL | Request) =>
         Promise.resolve(
@@ -83,7 +83,8 @@ Deno.test(
       ),
       false,
     );
-    // Count drift between pages is an unproven listing, never green.
+    // Count drift between pages is an unproven listing: unreadable (null),
+    // never green and never read as red.
     assert.equal(
       await withFetch(
         (url) =>
@@ -92,9 +93,9 @@ Deno.test(
             : checkRunPage([checkRun("validate")], 102),
         () => foreign().hasAllChecksGreen(HEAD),
       ),
-      false,
+      null,
     );
-    // A duplicated run id across pages is an unproven listing, never green.
+    // A duplicated run id across pages is an unproven listing: unreadable.
     const duplicate = checkRun("validate");
     assert.equal(
       await withFetch(
@@ -104,7 +105,7 @@ Deno.test(
             : checkRunPage([duplicate], 101),
         () => foreign().hasAllChecksGreen(HEAD),
       ),
-      false,
+      null,
     );
     // A listing that promises more runs than it ever returns is incomplete.
     assert.equal(
@@ -112,7 +113,7 @@ Deno.test(
         (url) => checkRunPage(pageNumber(url) === 1 ? pageOf(0) : [], 150),
         () => foreign().hasAllChecksGreen(HEAD),
       ),
-      false,
+      null,
     );
     // A run without a usable id is malformed: the listing is not evidence.
     assert.equal(
@@ -123,15 +124,15 @@ Deno.test(
           status: "completed",
           conclusion: "success",
         }], 1), () => foreign().hasAllChecksGreen(HEAD)),
-      false,
+      null,
     );
-    // A missing page count cannot prove completeness: never green.
+    // A missing page count cannot prove completeness: unreadable.
     assert.equal(
       await withFetch(
         () => ({ check_runs: [checkRun("validate")] }),
         () => foreign().hasAllChecksGreen(HEAD),
       ),
-      false,
+      null,
     );
   },
 );

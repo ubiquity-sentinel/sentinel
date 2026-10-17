@@ -334,6 +334,9 @@ export const _githubFake: GitHubPort = {
   readChecks() {
     return resolved(portOk({ head: SHA, checks: [] }));
   },
+  readCheckSuites() {
+    return resolved(portOk({ head: SHA, checks: [] }));
+  },
   readProtections() {
     return resolved(portOk({
       branch: "development",

@@ -131,13 +131,18 @@ export interface HostedAutonomyGitHubV1 {
    */
   hasSuccessfulCheck(head: string): Promise<boolean>;
   /**
-   * Foreign gate: true when the exact head carries at least one check-run and
-   * every one of them is completed with conclusion `success`. Zero check-runs
-   * is not green, no run may still be pending or queued on that head, and the
-   * listing must be proven complete across every page: a read that cannot be
-   * completed is never green.
+   * Foreign gate, tri-state (sentinel issue #154). True when the exact head
+   * carries at least one check-run, every one of them is completed with
+   * conclusion `success` and, when `base` names the commit the head is tested
+   * against, the head reports every check name of each `base` check suite it
+   * shares a name with (`missingExpectedChecks`: a `needs:` job GitHub has not
+   * created yet is not green). False for a readable listing that fails any of
+   * that (pending, queued, failed or a missing expected check). Null when it
+   * is unreadable: a head or base listing that cannot be proven complete
+   * across every page or is malformed, or a head with no check-run at all.
+   * Only true is green; null is no evidence either way, never red.
    */
-  hasAllChecksGreen(head: string): Promise<boolean>;
+  hasAllChecksGreen(head: string, base?: string): Promise<boolean | null>;
   /**
    * `baseBranch` is the branch the merge must be integrated into; a merged
    * pull whose integration cannot be verified without it reads as null.

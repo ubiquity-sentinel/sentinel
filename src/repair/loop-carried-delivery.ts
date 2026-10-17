@@ -11,8 +11,11 @@
  * refreshed head H1 carries H0's review only while the pull request's own
  * patch is byte-identical (`proveCarriedPatch`: the merge-base patch of H0
  * against B0 equals that of H1 against T, binary-safe, by SHA-256), re-derived
- * from git on every step; once H1's OWN required CI is green and the task is
- * still accepted, the record holds the exact carried-merge marker at `work`
+ * from git on every step; once H1's OWN required CI is green (every existing
+ * run green and every expected check present: each check name of T's check
+ * suites that share a name with H1, `absentExpectedChecks`, sentinel issue
+ * #154) and the task is still accepted, the record holds the exact
+ * carried-merge marker at `work`
  * (`carriedMergeMarker`) for the launcher's delivery pass, which merges only
  * under that marker, re-derives the exact proof itself and merges H1 at
  * exactly T (`ops/hosted-autonomy-spent-delivery.ts`). The runtime never
@@ -58,6 +61,7 @@ import {
   reviewedIdentity,
 } from "./carried-review.ts";
 import {
+  absentCheckLabels,
   ciCheckLabels,
   failedChecks,
   latestChecks,
@@ -65,7 +69,7 @@ import {
 } from "./ci-rejection.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
-import { decideCiGate } from "./loop-checks.ts";
+import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
 import {
   observeHeadFailure,
   RED_BASE_RECHECK_MS,
@@ -163,7 +167,9 @@ function pendingLabels(checks: readonly GitHubCheckV1[]): string {
  * The delivery step of a spent record whose base moved to `observedBase`
  * (nothing written yet). The reviewed head's own CI is read first: red parks
  * with the merge gate's own `CI checks failed: ...` blocker (the owner's
- * legacy class keeps it), pending waits at `delivery` and parks after
+ * legacy class keeps it), pending (or green while an expected check of its
+ * reviewed base does not exist on it yet, or that base's runs cannot be
+ * read) waits at `delivery` and parks after
  * `CARRIED_WAIT_BOUND_MS`. A green head whose latest completed review
  * authorizes it on its base, on a port that can prove the carried patch,
  * waits its turn in the repository's delivery line and then returns null:
@@ -224,6 +230,26 @@ export async function spentOnMovedBase(
       deps,
       context,
       markBlocked(record, "other", decision.blocked, deps.clock.now()),
+    );
+  }
+  // Every existing run is green: a check its reviewed base's suites expect
+  // and GitHub has not created on it yet is awaited like a running one, and
+  // so is a reviewed base whose runs cannot be read.
+  const absent = await absentExpectedChecks(
+    deps,
+    record,
+    observed.value.checks,
+  );
+  if (absent === null || absent.length > 0) {
+    return boundedWait(
+      deps,
+      context,
+      record,
+      "ci_pending",
+      CHECK_POLL_MS,
+      `${REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX}${
+        absentCheckLabels(absent)
+      }`,
     );
   }
   const reviewer = deps.github.reviewerIdentity;
@@ -330,7 +356,8 @@ function patchChangedDetail(
  * launcher's delivery record; still at the head this one was refreshed from:
  * a bounded wait for GitHub to report the push), the tip (moved again: one
  * more refresh through the line, at most `CARRIED_REFRESH_LIMIT`), the head's
- * own CI, the live task acceptance of the reviewed identity, and then the
+ * own CI (green, with every check T's suites expect present), the live task
+ * acceptance of the reviewed identity, and then the
  * carried-merge marker for the launcher's merge, bounded from that CI's
  * completion.
  */
@@ -449,6 +476,27 @@ export async function executeCarriedDelivery(
       record,
       checks.value.checks,
       decision,
+    );
+  }
+  // Every existing run on H1 is green; a check T's suites expect that GitHub
+  // has not created on H1 yet (a `needs:` job) is awaited like a running one,
+  // so the marker never names a head whose required job never ran; a T whose
+  // runs cannot be read is awaited the same way.
+  const absent = await absentExpectedChecks(
+    deps,
+    record,
+    checks.value.checks,
+  );
+  if (absent === null || absent.length > 0) {
+    return boundedWait(
+      deps,
+      context,
+      record,
+      "ci_pending",
+      CHECK_POLL_MS,
+      `${REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX}${
+        absentCheckLabels(absent)
+      }`,
     );
   }
   const task = await readDeliveryTaskContext(deps, record);

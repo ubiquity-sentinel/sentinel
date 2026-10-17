@@ -256,7 +256,7 @@ export async function runHostedCiRerunPass(
     // head's own failure worth one more attempt.
     let baseGreen: boolean;
     try {
-      baseGreen = await surface.hasAllChecksGreen(tip);
+      baseGreen = await surface.hasAllChecksGreen(tip) === true;
     } catch {
       baseGreen = false;
     }
