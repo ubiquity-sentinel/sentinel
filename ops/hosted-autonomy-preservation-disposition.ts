@@ -250,6 +250,8 @@ export async function runHostedPreservationDispositionPass(
   const disposed = new Map<string, string>();
   for (const record of snapshot.work) {
     if (disposed.size >= PRESERVATION_DISPOSITION_MAX_PER_RUN) break;
+    // A record an earlier write of this pass touched waits for the next pass.
+    if (context.settled?.has(record.id)) continue;
     const verdict = await judge(context, record, now);
     if (verdict === null) continue;
     if (verdict.kind === "retain") {

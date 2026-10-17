@@ -183,6 +183,8 @@ export async function runHostedCiRerunPass(
   const tips = new Map<string, string | null>();
   for (const record of snapshot.work) {
     if (budget <= 0) break;
+    // A record an earlier write of this pass touched waits for the next pass.
+    if (context.settled?.has(record.id)) continue;
     if (!rerunShape(snapshot, record, context.closedIssues)) continue;
     const head = record.target.head!;
     const scope = await scopeFor(record.repository);

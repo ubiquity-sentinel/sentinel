@@ -42,6 +42,11 @@ export async function runHostedMatrixMaintenance(
       ? await deps.closedMatrix()
       : undefined;
     closedBinding = closed?.binding ?? CLOSED_C_WAVE;
+    // The closed-C ingest below returns, and the same pass then continues:
+    // its later phases leave these reservations to their own recoveries too.
+    for (const id of dedicatedMatrixReservations(deps, closedBinding)) {
+      dedicated.add(id);
+    }
     const releaseRead = read.ok && read.value.status === "found"
       ? await deps.state.readRelease()
       : null;

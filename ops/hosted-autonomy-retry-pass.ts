@@ -50,16 +50,25 @@ import {
   verifyConflictReadmissions,
 } from "./hosted-autonomy-conflict-retries.ts";
 
-/** Read-only source facts shared by bookkeeping and the later retry grant. */
+/**
+ * Read-only source facts shared by bookkeeping and the later retry grant. A
+ * pass that continues after a write passes the ids it already read (`seen`):
+ * each record's issue is read once per pass, and the facts already held are
+ * kept.
+ */
 export async function readHostedClosedIssues(
   context: HostedAutonomyPassContextV1,
+  seen?: Set<string>,
 ): Promise<void> {
   const { snapshot, scopeFor, actions } = context;
-  const closedIssues = new Set<string>();
+  const closedIssues = new Set<string>(
+    seen === undefined ? [] : context.closedIssues,
+  );
   for (const record of snapshot.work) {
     if (record.nextStep === "done") continue;
     const issueNumber = record.related.issueNumber;
-    if (issueNumber === null) continue;
+    if (issueNumber === null || seen?.has(record.id)) continue;
+    seen?.add(record.id);
     const scope = await scopeFor(record.repository);
     if (scope.surface === null) {
       actions.push(`record:${record.id}:surface_unreadable`);
@@ -98,7 +107,11 @@ export async function runHostedRetryPass(
   // unavailable surface or ref, a mismatched identity and every other blocker
   // leave the snapshot exactly as it was.
   const revalidated: CandidateRefRevalidationV1[] = [];
+  // A record an earlier write of this pass touched waits for the next pass in
+  // every rule below.
+  const settled = (id: string) => context.settled?.has(id) === true;
   for (const record of snapshot.work) {
+    if (settled(record.id)) continue;
     const candidate = await candidateRefRevalidation(record);
     if (candidate === null) continue;
     const surface = (await scopeFor(record.repository)).surface;
@@ -279,6 +292,7 @@ export async function runHostedRetryPass(
     if (conflictBaseAdvancePlan(plan)) conflictResolutions++;
   };
   for (const plan of planned) {
+    if (settled(plan.id)) continue;
     if (
       ciCorrectionPlan(plan) &&
       ciCorrections >= HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS
@@ -331,7 +345,7 @@ export async function runHostedRetryPass(
       (denial) => {
         actions.push(`retry:${denial.id}:denied:${denial.reason}`);
       },
-    ),
+    ).filter((plan) => !settled(plan.id)),
     scopeFor,
     actions,
   );
@@ -351,7 +365,7 @@ export async function runHostedRetryPass(
           actions.push(`retry:${denial.id}:denied:${denial.reason}`);
         },
         deps.conflictResolutionRuntimes,
-      ),
+      ).filter((plan) => !settled(plan.id)),
       scopeFor,
       actions,
       HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS - conflictResolutions,

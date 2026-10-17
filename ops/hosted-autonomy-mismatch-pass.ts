@@ -61,6 +61,8 @@ export async function runHostedMismatchDispositionPass(
     head: observedHead as GitSha,
     release: releaseSnapshot,
     expectedReleaseHead: releaseHead as GitSha | null,
+    // A record an earlier write of this pass touched waits for the next pass.
+    exclude: context.settled,
     observationsFor: (record) =>
       mismatchObservations.get(hostedRepositoryKey(record.repository)) ?? null,
     producerTerminal,

@@ -103,6 +103,8 @@ export async function collectMismatchDispositionCandidatesV1(input: {
    */
   readonly producerTerminal: (runId: number) => Promise<boolean | null>;
   readonly limit?: number;
+  /** Work ids left to a later run: never planned, never retained. */
+  readonly exclude?: ReadonlySet<string>;
 }): Promise<MismatchDispositionCandidatesV1> {
   const limit = Math.max(
     1,
@@ -114,6 +116,7 @@ export async function collectMismatchDispositionCandidatesV1(input: {
 
   for (const record of input.snapshot.work) {
     if (bindings.length >= limit) break;
+    if (input.exclude?.has(record.id)) continue;
     if (record.nextStep !== "blocked") continue;
     const blocker = record.blocker;
     if (
@@ -384,6 +387,8 @@ export async function runMismatchDispositionPassV1(input: {
   readonly now: number;
   readonly state: Pick<StateReadView, "readRepair"> & RepairStateWriter;
   readonly limit?: number;
+  /** Work ids left to a later run (see the candidate collection). */
+  readonly exclude?: ReadonlySet<string>;
 }): Promise<MismatchDispositionPassResultV1> {
   if (input.release === null || input.release === undefined) {
     return { kind: "none", reason: "release_absent", retained: [] };
@@ -398,6 +403,7 @@ export async function runMismatchDispositionPassV1(input: {
     observationsFor: input.observationsFor,
     producerTerminal: input.producerTerminal,
     limit: input.limit,
+    exclude: input.exclude,
   });
   if (candidates.bindings.length === 0) {
     return {

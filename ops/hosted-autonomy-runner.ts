@@ -1,5 +1,7 @@
 import { runSelfObservationPass } from "./hosted-autonomy-observation.ts";
 import {
+  HistoricalQuarantineIncomplete,
+  maintenanceFailureCategory,
   readReleaseSafely,
   readRepairSafely,
   skipped,
@@ -22,74 +24,253 @@ import type {
 } from "./hosted-autonomy-types.ts";
 import { runHostedDeliveryPass } from "./hosted-autonomy-delivery-pass.ts";
 import { runHostedMatrixMaintenance } from "./hosted-autonomy-maintenance.ts";
+import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
+import { ClosedCWaveRecoveryIntegrityFailure } from "../src/host/modern-matrix-recovery.ts";
+import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import {
+  continuationLate,
+  createPassWrites,
+  type HostedAutonomyContinuationStopV1,
+  type HostedAutonomyPhaseV1,
+  settledSince,
+} from "./hosted-autonomy-continuation.ts";
 
-/** Preserve the maintenance order and each phase's immediate write return. */
+export {
+  HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+  HOSTED_AUTONOMY_PHASE_RESERVE_MS,
+} from "./hosted-autonomy-continuation.ts";
+
+interface PhaseV1 {
+  readonly name: HostedAutonomyPhaseV1;
+  run(
+    context: HostedAutonomyPassContextV1,
+    releaseHead: string,
+  ): Promise<HostedAutonomyResultV1 | null>;
+  /** True for an applied write the remaining phases may follow. */
+  continues(result: HostedAutonomyResultV1): boolean;
+}
+
+const PHASES: readonly PhaseV1[] = [
+  {
+    // Ready delivery bookkeeping precedes unrelated retry grants. Restrict
+    // this early pass to delivery records so blocked candidate-ref and
+    // recovery transitions retain their own reconciliation boundary. Its
+    // Gateway release block or closure intent (`applied`) ends the pass.
+    name: "closure-delivery",
+    run: (context) => runHostedClosurePass(context, true),
+    continues: (result) =>
+      result.reason === "retired_records" || result.reason === "closed_issues",
+  },
+  {
+    // Only the ordinary grant and re-admission write continues. A
+    // candidate-ref revalidation still ends the pass, so no delivery or review
+    // decision is made from a state the runtime has not yet reconciled, and so
+    // do the mismatch and preservation dispositions and the refresh re-arm.
+    name: "retry",
+    run: (context, releaseHead) => runHostedRetryPass(context, releaseHead),
+    continues: (result) => result.reason === "retried",
+  },
+  {
+    name: "delivery",
+    run: (context) => runHostedDeliveryPass(context),
+    continues: () => true,
+  },
+  {
+    name: "closure",
+    run: (context) => runHostedClosurePass(context),
+    continues: () => true,
+  },
+];
+
+/** Integrity faults fail closed, even from a continued phase. */
+function integrityFault(error: unknown): boolean {
+  return error instanceof CurrentMatrixRecoveryIntegrityFailure ||
+    error instanceof ClosedCWaveRecoveryIntegrityFailure ||
+    error instanceof HistoricalQuarantineIncomplete;
+}
+
+/**
+ * Maintenance first, then the ordinary phases in their fixed order, each at
+ * most once and each returning its own result from its own expected-head CAS
+ * and readback. After a write a later phase may follow, the pass re-reads
+ * state, requires exactly the head that write left and runs the remaining
+ * phases there (see hosted-autonomy-continuation.ts); everything else still
+ * ends the pass on that phase's result, and a pass that writes nothing is
+ * unchanged.
+ */
 export async function runHostedAutonomy(
   deps: HostedAutonomyDepsV1,
 ): Promise<HostedAutonomyResultV1> {
+  const startedAt = deps.clock.now();
   const actions: string[] = [];
+  const revisions: string[] = [];
   const dedicatedReservations = new Set<string>();
+  const writes = createPassWrites(actions, revisions);
+  // Offsets from the pass start at which maintenance and each phase ended,
+  // read only once the pass has written (calibration of the start limit).
+  const ended: (number | null)[] = [null, null, null, null, null];
+  const mark = (index: number) => {
+    try {
+      const now = deps.clock.now();
+      ended[index] =
+        Number.isSafeInteger(now) && Number.isSafeInteger(startedAt)
+          ? now - startedAt
+          : null;
+    } catch {
+      ended[index] = null;
+    }
+  };
+  const finish = (
+    stopped: string | null = null,
+    failure: HostedAutonomyResultV1 | null = null,
+  ) => {
+    console.log(JSON.stringify({
+      kind: "sentinel_autonomy_continuation",
+      version: "v1",
+      endedMs: ended,
+      stopped,
+    }));
+    return writes.result(failure);
+  };
+  /** Ends a pass that already wrote, before `phase` or on its own outcome. */
+  const stop = (
+    phase: HostedAutonomyPhaseV1,
+    outcome: HostedAutonomyReasonV1 | HostedAutonomyContinuationStopV1,
+    failure: HostedAutonomyResultV1 | null = null,
+  ) => {
+    actions.push(`continuation:${phase}:${outcome}`);
+    return finish(`${phase}:${outcome}`, failure);
+  };
+  // Only the matrix pre-passes can write before the ordinary phases: the
+  // state they started from marks the records they settled.
+  const before = deps.closedMatrix ? await readRepairSafely(deps.state) : null;
+  let baseline: RepairStateSnapshotV1 | null = null;
   const maintenance = await runHostedMatrixMaintenance(
     deps,
     actions,
     dedicatedReservations,
   );
-  if (maintenance !== null) return maintenance;
-  const revisions: string[] = [];
-  const initial = await readRepairSafely(deps.state);
-  if (initial === null || !initial.ok || initial.value.status !== "found") {
-    return skipped("no_change", null, actions);
-  }
-  const snapshot = initial.value.snapshot;
-  const observedHead = initial.value.head;
-
-  const releaseRead = await readReleaseSafely(deps.state);
-  if (
-    releaseRead === null || !releaseRead.ok ||
-    releaseRead.value.status !== "found"
-  ) {
-    return skipped("release_not_terminal", observedHead, actions);
-  }
-  if (
-    releaseRead.value.snapshot.hostedReleases.some((release) =>
-      release.phase !== "accepted" && release.phase !== "rolled_back"
-    )
-  ) {
-    return skipped("release_not_terminal", observedHead, actions);
+  if (maintenance !== null) {
+    if (maintenance.status !== "applied") return maintenance;
+    writes.absorb(maintenance);
+    mark(0);
+    if (before !== null && before.ok && before.value.status === "found") {
+      baseline = before.value.snapshot;
+    }
   }
 
   const scopes = createHostedAutonomyScopes(deps);
-  const context: HostedAutonomyPassContextV1 = {
-    deps,
-    actions,
-    revisions,
-    snapshot,
-    observedHead,
-    initialHead: initial.value.head,
-    releaseSnapshot: releaseRead.value.snapshot,
-    closedIssues: new Set(),
-    foreignMerged: new Map(),
-    dedicatedReservations,
-    ...scopes,
+  // Records whose source issue this pass has read: once per record per pass.
+  const issuesRead = new Set<string>();
+  const build = async (
+    phase: HostedAutonomyPhaseV1,
+    previous: HostedAutonomyPassContextV1 | null,
+  ): Promise<
+    HostedAutonomyResultV1 | {
+      context: HostedAutonomyPassContextV1;
+      releaseHead: string;
+    }
+  > => {
+    const repair = await readRepairSafely(deps.state);
+    const found = repair !== null && repair.ok &&
+        repair.value.status === "found"
+      ? repair.value
+      : null;
+    if (writes.applied) {
+      if (found === null || baseline === null || writes.appliedHead === null) {
+        return stop(phase, "state_unavailable");
+      }
+      // No phase ever runs on a head this pass's own writes did not leave.
+      if (found.head !== writes.appliedHead) return stop(phase, "head_changed");
+    } else if (found === null) {
+      return skipped("no_change", null, actions);
+    }
+    const releaseRead = await readReleaseSafely(deps.state);
+    if (
+      releaseRead === null || !releaseRead.ok ||
+      releaseRead.value.status !== "found" ||
+      releaseRead.value.snapshot.hostedReleases.some((release) =>
+        release.phase !== "accepted" && release.phase !== "rolled_back"
+      )
+    ) {
+      return writes.applied
+        ? stop(phase, "release_not_terminal")
+        : skipped("release_not_terminal", found.head, actions);
+    }
+    if (!writes.applied) baseline = found.snapshot;
+    const context: HostedAutonomyPassContextV1 = {
+      deps,
+      actions,
+      revisions,
+      snapshot: found.snapshot,
+      observedHead: found.head,
+      initialHead: found.head,
+      releaseSnapshot: releaseRead.value.snapshot,
+      closedIssues: previous?.closedIssues ?? new Set(),
+      // This pass's verified merge evidence still flows to its closure.
+      foreignMerged: previous?.foreignMerged ?? new Map(),
+      dedicatedReservations,
+      settled: writes.applied && baseline !== null
+        ? settledSince(baseline, found.snapshot)
+        : new Set(),
+      ...scopes,
+    };
+    await readHostedClosedIssues(context, issuesRead);
+    return { context, releaseHead: releaseRead.value.head };
   };
-  // Ready delivery bookkeeping precedes unrelated retry grants. Restrict this
-  // early pass to delivery records so blocked candidate-ref and recovery
-  // transitions retain their own reconciliation boundary.
-  await readHostedClosedIssues(context);
-  const reconciled = await runHostedClosurePass(context, true);
-  if (reconciled !== null) return reconciled;
-  const retried = await runHostedRetryPass(context, releaseRead.value.head);
-  if (retried !== null) return retried;
-  const delivered = await runHostedDeliveryPass(context);
-  if (delivered !== null) return delivered;
-  const closed = await runHostedClosurePass(context);
-  if (closed !== null) return closed;
+
+  let context: HostedAutonomyPassContextV1 | null = null;
+  let releaseHead = "";
+  let stale = true;
+  for (const [index, phase] of PHASES.entries()) {
+    const continued = writes.applied;
+    let result: HostedAutonomyResultV1 | null;
+    try {
+      if (continued && continuationLate(startedAt, deps.clock.now())) {
+        return stop(phase.name, "deferred_deadline");
+      }
+      if (stale) {
+        const built = await build(phase.name, context);
+        if ("kind" in built) return built;
+        context = built.context;
+        releaseHead = built.releaseHead;
+        stale = false;
+      }
+      result = await phase.run(context!, releaseHead);
+    } catch (error) {
+      if (!continued || integrityFault(error)) throw error;
+      // The same bounded deferral line the protected main prints; only the
+      // fixed category reaches the log, never error text.
+      console.log(JSON.stringify({
+        kind: "sentinel_autonomy_deferred",
+        reason: "unexpected_error_deferred",
+        category: maintenanceFailureCategory(error),
+      }));
+      return stop(phase.name, "deferred_unexpected_error");
+    }
+    if (result === null) {
+      if (continued) mark(index + 1);
+      continue;
+    }
+    if (result.status !== "applied") {
+      if (!continued) return result;
+      mark(index + 1);
+      return stop(phase.name, result.reason, result);
+    }
+    writes.absorb(result);
+    mark(index + 1);
+    if (!phase.continues(result)) return finish();
+    stale = true;
+  }
+  if (writes.applied) return finish();
+  const observedHead = context!.observedHead;
   const { scopeFor } = scopes;
   // ---- self-observation pass ---------------------------------------------
   // Runs LAST and is fully optional: every read is bounded and state-free, its
   // only write is one deduplicated issue in this deployment's own tracker, and
   // any refusal inside it is reported as an action rather than a failure. The
-  // normal repair loop then works those issues like any other.
+  // normal repair loop then works those issues like any other. A pass that
+  // wrote state never runs it.
   let selfSurface: HostedAutonomyGitHubV1 | null = null;
   try {
     selfSurface = (await scopeFor(HOSTED_AUTONOMY_SELF_SCOPE)).surface;

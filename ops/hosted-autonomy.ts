@@ -71,6 +71,19 @@
  *     branch, and a completed authorizing receipt for the exact
  *     repository/PR/head/base.
  *
+ * One pass continues after a write (`hosted-autonomy-continuation.ts`). Every
+ * phase still writes through its own expected-head compare-and-swap and
+ * readback. After a matrix maintenance write, a delivery-bookkeeping
+ * retirement or closure, an ordinary retry grant or re-admission, or a release
+ * request, the pass re-reads state, requires exactly the head that write left
+ * and runs the remaining phases there in the same order, each at most once; a
+ * record that write touched waits for the next pass. A refused or moved head,
+ * a nonterminal release, a thrown error or the start limit (600 s into the
+ * pass) stops it cleanly with the writes it made, reported in its one result
+ * line. The revalidation above, the dispositions, the refresh re-arm and a
+ * Gateway release block still end the pass, and a pass that writes nothing is
+ * unchanged.
+ *
  * Every surface, base branch, deterministic check, issue identity and delivery
  * decision is resolved PER REPOSITORY: a record is read and written only under
  * its own repository identity, its own repository default branch supplies its

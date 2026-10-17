@@ -298,6 +298,8 @@ export async function runHostedRefreshRearmPass(
   };
   const rearmed = new Map<string, number>();
   for (const record of snapshot.work) {
+    // A record an earlier write of this pass touched waits for the next pass.
+    if (context.settled?.has(record.id)) continue;
     const verdict = await judge(context, record, runtime, now);
     if (verdict === null) continue;
     if (verdict.kind === "retain") {

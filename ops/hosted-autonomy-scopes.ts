@@ -86,7 +86,11 @@ export function createHostedAutonomyScopes(deps: HostedAutonomyDepsV1) {
   return { scopeFor, readTip, readPull };
 }
 
-/** Shared pass facts; only verified retirement advances the snapshot and CAS head. */
+/**
+ * Shared pass facts; only verified retirement advances the snapshot and CAS
+ * head within a phase. The runner rebuilds them on the fresh head before a
+ * phase that follows another phase's write.
+ */
 export interface HostedAutonomyPassContextV1 {
   deps: HostedAutonomyDepsV1;
   actions: string[];
@@ -99,6 +103,12 @@ export interface HostedAutonomyPassContextV1 {
   foreignMerged: Map<string, unknown>;
   /** Reservations the dedicated matrix recoveries own (never disposed here). */
   dedicatedReservations: ReadonlySet<string>;
+  /**
+   * Work ids an earlier write of this same pass touched: a later phase leaves
+   * them to the next pass (hosted-autonomy-continuation.ts). Absent or empty
+   * before the pass's first write.
+   */
+  settled?: ReadonlySet<string>;
   scopeFor: ReturnType<typeof createHostedAutonomyScopes>["scopeFor"];
   readTip: ReturnType<typeof createHostedAutonomyScopes>["readTip"];
   readPull: ReturnType<typeof createHostedAutonomyScopes>["readPull"];

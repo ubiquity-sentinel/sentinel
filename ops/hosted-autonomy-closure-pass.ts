@@ -162,12 +162,14 @@ export async function runHostedClosurePass(
   const { deps, actions, revisions, scopeFor, readPull } = context;
   let { snapshot, observedHead } = context;
   const { closedIssues, foreignMerged } = context;
+  // A record an earlier write of this pass touched waits for the next pass.
+  const settled = (id: string) => context.settled?.has(id) === true;
   // ---- closure pass -------------------------------------------------------
   const released = acceptedReleases(context.releaseSnapshot.hostedReleases);
   if (deliveryOnly) {
     let ready = false;
     for (const record of snapshot.work) {
-      if (record.nextStep !== "delivery") continue;
+      if (record.nextStep !== "delivery" || settled(record.id)) continue;
       const { pr, head, base } = record.target;
       if (
         record.related.issueNumber === null || pr === null || head === null ||
@@ -242,7 +244,7 @@ export async function runHostedClosurePass(
     snapshot,
     closedIssues,
     closedUnmerged,
-  ).slice(0, 5);
+  ).filter((plan) => !settled(plan.id)).slice(0, 5);
   let retirementResult: HostedAutonomyResultV1 | null = null;
   if (retirements.length > 0) {
     const now = deps.clock.now();
@@ -310,6 +312,7 @@ export async function runHostedClosurePass(
   const recovered = new Map<string, HostedAutonomyRecordV1>();
   for (const original of snapshot.work) {
     if (deliveryOnly && original.nextStep !== "delivery") continue;
+    if (settled(original.id)) continue;
     const record = await historicalMergedPublication(snapshot, original) ??
       original;
     if (record !== original) recovered.set(record.id, record);
@@ -437,11 +440,12 @@ export async function runHostedClosurePass(
       repository: record.repository,
     });
   }
-  const closures = closureCandidates.filter((plan) =>
-    !deliveryOnly ||
-    closureSnapshot.work.some((record) =>
-      record.id === plan.id && record.nextStep === "delivery"
-    )
+  const closures = closureCandidates.filter((plan) => !settled(plan.id)).filter(
+    (plan) =>
+      !deliveryOnly ||
+      closureSnapshot.work.some((record) =>
+        record.id === plan.id && record.nextStep === "delivery"
+      ),
   ).slice(0, 5);
   if (closures.length > 0) {
     for (const plan of closures) {

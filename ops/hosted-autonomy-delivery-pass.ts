@@ -44,6 +44,10 @@ export async function runHostedDeliveryPass(
 ): Promise<HostedAutonomyResultV1 | null> {
   const { deps, actions, revisions, scopeFor, readTip, readPull } = context;
   const { snapshot, observedHead } = context;
+  // A record an earlier write of this pass touched waits for the next pass:
+  // it is neither approved nor delivered here (nor re-run, see the module).
+  const eligible = (record: (typeof snapshot.work)[number]) =>
+    deliveryEligible(record) && context.settled?.has(record.id) !== true;
   // ---- check-approval pass ------------------------------------------------
   // A candidate pushed to a pull request by the bot produces a CI run that
   // GitHub parks for approval, so the deterministic check the merge requires
@@ -51,9 +55,7 @@ export async function runHostedDeliveryPass(
   // exact reviewed head, on the record's OWN repository surface; the check
   // itself stays credential-free and unchanged.
   for (const record of snapshot.work) {
-    if (!deliveryEligible(record)) {
-      continue;
-    }
+    if (!eligible(record)) continue;
     const head = record.target.head;
     if (head === null || record.target.pr === null) continue;
     const scope = await scopeFor(record.repository);
@@ -108,7 +110,7 @@ export async function runHostedDeliveryPass(
   // reads the self scope at all.
   if (
     snapshot.work.some((record) =>
-      deliveryEligible(record) && isHostedSelf(record.repository)
+      eligible(record) && isHostedSelf(record.repository)
     )
   ) {
     const selfTip = await deliveryTip(
@@ -122,9 +124,7 @@ export async function runHostedDeliveryPass(
   }
 
   for (const record of snapshot.work) {
-    if (!deliveryEligible(record)) {
-      continue;
-    }
+    if (!eligible(record)) continue;
     const pullRequest = record.target.pr;
     const head = record.target.head;
     const base = record.target.base;
