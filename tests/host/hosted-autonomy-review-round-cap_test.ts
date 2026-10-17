@@ -28,6 +28,10 @@ import {
 } from "../../ops/hosted-autonomy.ts";
 import { reservation, SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
 import {
+  HOSTED_RUNTIME_ID,
+  type HostedRuntimeRecordV1,
+} from "../../src/contracts/hosted-supervisor.ts";
+import {
   BASE,
   blockedRecord,
   HEAD,
@@ -35,7 +39,7 @@ import {
   selfTips,
   TARGET,
 } from "./hosted-autonomy-fixtures.ts";
-import { repairSnapshot } from "./hosted-autonomy-rig.ts";
+import { healthyProof, repairSnapshot } from "./hosted-autonomy-rig.ts";
 import { deliveryEligible } from "../../ops/hosted-autonomy-policy.ts";
 import {
   isDeliverableReviewRoundCeilingPark,
@@ -97,10 +101,30 @@ function reviewBlocked(
   });
 }
 
+/** A proven CI-first runtime at SHA1 (generation 80) for the retry table. */
+const CI_FIRST_OPTIONS = {
+  ciRuntime: {
+    version: "v1",
+    kind: "hosted_runtime",
+    id: HOSTED_RUNTIME_ID,
+    activeRevision: SHA1,
+    generation: 80,
+    lastHealthyProof: healthyProof(SHA1, 80, "round-cap"),
+    lastExecutionProof: null,
+    nextOrdinaryAt: T0,
+    execution: null,
+    createdAt: T0,
+    updatedAt: T0,
+  } as HostedRuntimeRecordV1,
+  ciAllowlist: new Set<string>([SHA1]),
+  ciFirstAllowlist: new Set<string>([SHA1]),
+};
+
 function plan(
   records: WorkRecordV1[],
   reservations: unknown[],
   tips: ReadonlyMap<string, string | null> = selfTips(SHA2),
+  options: Parameters<typeof planHostedRetries>[6] = {},
 ) {
   const denials: RetryDenialV1[] = [];
   const snapshot = repairSnapshot(records, [], [], reservations);
@@ -111,6 +135,7 @@ function plan(
     tips,
     new Set(),
     (denial) => denials.push(denial),
+    options,
   );
   return { snapshot, plans, denials: denials.map((denial) => denial.reason) };
 }
@@ -200,12 +225,19 @@ Deno.test("launcher round cap: a listed legacy record gets its one current-head 
         pr: 1000 + issue,
       },
     });
-  const run = (record: WorkRecordV1, rounds: number) =>
+  const run = (record: WorkRecordV1, rounds: number, ciFirst = true) =>
     plan(
       [record],
       reviewCharges(record.id, rounds, SHA3, AI),
       new Map([[hostedRepositoryKey(AI), SHA1]]),
+      ciFirst ? CI_FIRST_OPTIONS : {},
     );
+  // The final round is a review of a green head, so it is granted only under
+  // a proven CI-first runtime (generation 80 integration with the CI-first
+  // lane); R79 would review the head before its CI.
+  assert.deepEqual(run(legacy(595, 4), 4, false).denials, [
+    "legacy_round_requires_ci_first",
+  ]);
   const listed = run(legacy(595, 4), 4);
   assert.deepEqual(listed.denials, []);
   assert.equal(listed.plans.length, 1);

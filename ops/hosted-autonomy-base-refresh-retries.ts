@@ -54,6 +54,10 @@ import {
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import { taskReservationCount } from "./hosted-autonomy-retries.ts";
+import {
+  LEGACY_ROUND_REQUIRES_CI_FIRST,
+  legacyFinalRoundAdmissible,
+} from "./hosted-autonomy-ci-first.ts";
 import type { HostedAutonomyScopeV1 } from "./hosted-autonomy-scopes.ts";
 import type { HostedAutonomyHeadPullV1 } from "./hosted-autonomy-types.ts";
 
@@ -129,6 +133,8 @@ export function planBaseRefreshReadmissions(
   runtimeSha: GitSha,
   closedIssues: ReadonlySet<string>,
   onDenied?: (denial: { id: string; reason: string }) => void,
+  /** The installed runtime is a proven CI-first runtime (`ciFirstRuntimeProven`). */
+  ciFirst = false,
 ): BaseRefreshCandidateV1[] {
   if (!isGitSha(runtimeSha)) return [];
   const legacyRuntime = BASE_REFRESH_LEGACY_RUNTIMES.has(runtimeSha);
@@ -166,6 +172,11 @@ export function planBaseRefreshReadmissions(
     // of its own; with none left (the hard ceiling) the record stays blocked.
     if (reviewRoundsLeft(snapshot, record) === 0) {
       onDenied?.({ id: record.id, reason: "review_rounds_spent" });
+      continue;
+    }
+    // A listed legacy record's one final round is spent only on a green head.
+    if (!legacyFinalRoundAdmissible(snapshot, record, ciFirst)) {
+      onDenied?.({ id: record.id, reason: LEGACY_ROUND_REQUIRES_CI_FIRST });
       continue;
     }
     const head = record.target.head;

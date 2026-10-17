@@ -62,6 +62,11 @@ import {
 } from "./hosted-autonomy-policy.ts";
 import { refreshFixActivation } from "./hosted-autonomy-refresh-rearm.ts";
 import { taskReservationCount } from "./hosted-autonomy-retries.ts";
+import {
+  ciFirstRuntimeProven,
+  LEGACY_ROUND_REQUIRES_CI_FIRST,
+  legacyFinalRoundAdmissible,
+} from "./hosted-autonomy-ci-first.ts";
 import type { HostedAutonomyScopeV1 } from "./hosted-autonomy-scopes.ts";
 import type { HostedRefreshRearmRuntimeV1 } from "./hosted-autonomy-types.ts";
 
@@ -194,6 +199,18 @@ export function planConflictReadmissions(
       !conflictResolutionShape(withPullRequest(record, 1), snapshot)
     ) {
       onDenied?.({ id: record.id, reason: "conflict_unresolvable_shape" });
+      continue;
+    }
+    // A listed legacy record's one final round (the resolved merge's review)
+    // is spent only on a green head, under a proven CI-first runtime.
+    if (
+      !legacyFinalRoundAdmissible(
+        snapshot,
+        record,
+        ciFirstRuntimeProven(installed),
+      )
+    ) {
+      onDenied?.({ id: record.id, reason: LEGACY_ROUND_REQUIRES_CI_FIRST });
       continue;
     }
     candidates.push({

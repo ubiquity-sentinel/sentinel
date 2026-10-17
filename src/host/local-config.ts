@@ -279,6 +279,19 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "src/repair/ci-rejection.ts",
       "src/repair/loop-ci-correction.ts",
       "ops/hosted-autonomy-ci-retries.ts",
+      // The CI-first gate (owner decision 2026-10-16): a head is reviewed
+      // only once its CI is green, a CI fix is charged and bounded, and the
+      // launcher decides when a pre-review park or a legacy final round is
+      // re-admitted. A model-authored candidate must never weaken them.
+      "src/repair/ci-first-policy.ts",
+      "src/repair/loop-ci-first.ts",
+      "ops/hosted-autonomy-ci-first.ts",
+      // Spent-round delivery and its review follow-ups: merge admissibility
+      // and the latest-review rule, and the App-token issue filing.
+      "ops/hosted-autonomy-spent-delivery.ts",
+      "ops/hosted-autonomy-github-issues.ts",
+      "ops/hosted-autonomy-follow-ups.ts",
+      "ops/hosted-autonomy-follow-up-pass.ts",
       // The conflict resolution decides when a base-refresh conflict is
       // charged, exactly what the trusted host commits for it (the merge
       // committer and resolver) and when the launcher re-admits a conflict

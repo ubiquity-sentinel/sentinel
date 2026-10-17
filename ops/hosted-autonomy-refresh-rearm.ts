@@ -55,6 +55,11 @@ import {
   hostedIssueKey,
 } from "./hosted-autonomy-policy.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
+import {
+  ciFirstRuntimeProven,
+  LEGACY_ROUND_REQUIRES_CI_FIRST,
+  legacyFinalRoundAdmissible,
+} from "./hosted-autonomy-ci-first.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import type {
   HostedAutonomyResultV1,
@@ -195,6 +200,8 @@ interface Runtime {
   fixed: boolean;
   /** refreshFixActivation of the installed custody. */
   activation: number | null;
+  /** The installed runtime is a proven CI-first runtime. */
+  ciFirst: boolean;
 }
 
 async function judge(
@@ -219,6 +226,11 @@ async function judge(
   // owner decision 2026-10-16) the record stays blocked, before any read.
   if (reviewRoundsLeft(context.snapshot, record) === 0) {
     return { kind: "retain", reason: "review_rounds_spent" };
+  }
+  // A listed legacy record's one final round is spent only on a green head,
+  // which only a proven CI-first runtime guarantees.
+  if (!legacyFinalRoundAdmissible(context.snapshot, record, runtime.ciFirst)) {
+    return { kind: "retain", reason: LEGACY_ROUND_REQUIRES_CI_FIRST };
   }
   const head = record.target.head;
   const branch = record.target.branch;
@@ -303,6 +315,7 @@ export async function runHostedRefreshRearmPass(
     fixed: installed !== undefined &&
       pinned.some((row) => row.revision === installed.activeRevision),
     activation: release === null ? null : refreshFixActivation(release, pinned),
+    ciFirst: ciFirstRuntimeProven(installed),
   };
   const rearmed = new Map<string, number>();
   for (const record of snapshot.work) {

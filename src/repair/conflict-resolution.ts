@@ -73,8 +73,10 @@ export function conflictResolutionRouteOpen(
  * Review rounds after which a refresh conflict keeps its terminal block: a
  * resolved merge needs a review round of its own. Equal to the CI-correction
  * ceiling, the hard review-round ceiling, which a test pins to
- * `HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS`; the shape also requires a round left
- * by the durable ledger (`reviewRoundsLeft`).
+ * `HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS`. The shape counts it exactly as every
+ * other review path does (`reviewRoundsLeft` over the durable ledger), so a
+ * listed legacy record keeps its one final review for the resolved merge of
+ * its CI-fixed head (ai.ubq.fi 597 and 668 conflict on refresh).
  */
 export const CONFLICT_RESOLUTION_REVIEW_ROUNDS = CI_CORRECTION_REVIEW_ROUNDS;
 
@@ -254,10 +256,7 @@ export function conflictResolutionShape(
     record.target.selfMerge !== undefined ||
     record.intent?.selfMerge !== undefined
   ) return false;
-  if (
-    record.counters.reviewRounds >= CONFLICT_RESOLUTION_REVIEW_ROUNDS ||
-    reviewRoundsLeft(snapshot, record) === 0
-  ) return false;
+  if (reviewRoundsLeft(snapshot, record) === 0) return false;
   if (headRejectedByReview(snapshot, record)) return false;
   return !snapshot.releaseRequests.some((request) =>
     releaseRequestMatchesDelivery(request, record)

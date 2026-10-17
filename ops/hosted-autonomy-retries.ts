@@ -20,7 +20,7 @@ import {
 } from "./hosted-autonomy-policy.ts";
 import { evidenceExpired } from "./hosted-autonomy-evidence-expiry.ts";
 import {
-  ordinaryReviewRoundsSpent,
+  legacyReviewRoundPin,
   reviewRoundsLeft,
 } from "../src/repair/review-round-cap.ts";
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
@@ -34,10 +34,15 @@ import {
   ciFirstRuntimeProven,
   HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
   HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
+  LEGACY_ROUND_REQUIRES_CI_FIRST,
+  legacyFinalRoundAdmissible,
   preReviewCiParked,
   preReviewFixEligible,
 } from "./hosted-autonomy-ci-first.ts";
-import { ciFixMarker } from "../src/repair/ci-first-policy.ts";
+import {
+  ciFixMarker,
+  reviewRoundAvailable,
+} from "../src/repair/ci-first-policy.ts";
 
 /**
  * Durable reservations charged to one task, across every purpose and outcome
@@ -324,8 +329,12 @@ export function ciCorrectionPlan(plan: RetryPlanV1): boolean {
  * The CI-first re-admission of a head the runtime's pre-review gate parked
  * (`hosted-autonomy-ci-first.ts`): green again on its unchanged base returns
  * it to `work` under any runtime; still red, once its re-run can no longer
- * act, returns it with the CI fix marker only under a fix runtime. Null when
- * no CI-first rule applies.
+ * act, returns it with the CI fix marker only under a fix runtime. Either
+ * way the head returns only to be reviewed once green, so a record with no
+ * review round left by the ceiling's own count (`reviewRoundAvailable`), or
+ * whose next review is a legacy final round under a runtime not proven
+ * CI-first (`legacyFinalRoundAdmissible`), stays parked: R79 would review it
+ * past the cap, or before its CI. Null when no CI-first rule applies.
  */
 function planCiFirstReadmission(
   snapshot: RepairStateSnapshotV1,
@@ -334,11 +343,15 @@ function planCiFirstReadmission(
   ciGreenHeads: ReadonlySet<string>,
   ciRerunSettled: ReadonlySet<string>,
   ciFixRuntime: boolean,
+  ciFirst: boolean,
 ): RetryPlanV1 | null {
   const blocker = record.blocker;
   const head = record.target.head;
   if (
-    blocker === null || head === null || !preReviewCiParked(snapshot, record)
+    blocker === null || head === null ||
+    !preReviewCiParked(snapshot, record) ||
+    !reviewRoundAvailable(snapshot, record) ||
+    !legacyFinalRoundAdmissible(snapshot, record, ciFirst)
   ) return null;
   const key = ciGreenHeadKey(record.repository, head);
   const green = baseTips.get(hostedRepositoryKey(record.repository)) ===
@@ -506,14 +519,26 @@ export function planHostedRetries(
             rule.minBlockedMs,
           )
         ) continue;
+        // A resolved merge needs a review round of its own, counted as the
+        // runtime's conflict shape counts it (`reviewRoundsLeft`); a listed
+        // legacy record's final round only under a CI-first runtime.
         if (
-          record.counters.reviewRounds >= HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS ||
+          (record.counters.reviewRounds >= HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS &&
+            legacyReviewRoundPin(record) === null) ||
           reviewRoundsLeft(snapshot, record) === 0
         ) {
           onDenied?.({
             id: record.id,
             repository: record.repository,
             reason: "conflict_resolution_rounds_spent",
+          });
+          continue;
+        }
+        if (!legacyFinalRoundAdmissible(snapshot, record, ciFirst)) {
+          onDenied?.({
+            id: record.id,
+            repository: record.repository,
+            reason: LEGACY_ROUND_REQUIRES_CI_FIRST,
           });
           continue;
         }
@@ -543,6 +568,7 @@ export function planHostedRetries(
         ciGreenHeads,
         ciRerunSettled,
         ciFixRuntime,
+        ciFirst,
       );
       if (ciFirstPlan !== null) plans.push(ciFirstPlan);
       continue;
@@ -573,7 +599,7 @@ export function planHostedRetries(
       const corrected = !green && ciCorrection && head !== null &&
         ciRerunSettled.has(ciGreenHeadKey(record.repository, head)) &&
         ciRedeliveryEligible(snapshot, record) &&
-        (!ordinaryReviewRoundsSpent(snapshot, record) || ciFirst);
+        legacyFinalRoundAdmissible(snapshot, record, ciFirst);
       if (!corrected && !green) continue;
       plans.push({
         id: record.id,
@@ -600,6 +626,19 @@ export function planHostedRetries(
         id: record.id,
         repository: record.repository,
         reason: "review_rounds_spent",
+      });
+      continue;
+    }
+    // A legacy record's one final round is spent only on a green head, so a
+    // work grant that leads to it waits for a proven CI-first runtime.
+    if (
+      rule.nextStep === "work" &&
+      !legacyFinalRoundAdmissible(snapshot, record, ciFirst)
+    ) {
+      onDenied?.({
+        id: record.id,
+        repository: record.repository,
+        reason: LEGACY_ROUND_REQUIRES_CI_FIRST,
       });
       continue;
     }
@@ -662,6 +701,15 @@ export function planHostedRetries(
           id: record.id,
           repository: record.repository,
           reason: "review_rounds_spent",
+        });
+        continue;
+      }
+      // Under R79 the legacy final review would judge the head before CI.
+      if (!legacyFinalRoundAdmissible(snapshot, planned, ciFirst)) {
+        onDenied?.({
+          id: record.id,
+          repository: record.repository,
+          reason: LEGACY_ROUND_REQUIRES_CI_FIRST,
         });
         continue;
       }
