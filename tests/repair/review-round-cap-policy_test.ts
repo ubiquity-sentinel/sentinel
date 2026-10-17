@@ -17,6 +17,7 @@ import {
   LEGACY_REVIEW_ROUND_PINS,
   legacyReviewRoundClassPin,
   legacyReviewRoundPin,
+  legacyReviewRoundTableDrift,
   MAX_REVIEW_ROUNDS,
   ordinaryReviewRoundsSpent,
   REVIEW_ROUND_CEILING_BASE_MOVED,
@@ -217,14 +218,20 @@ Deno.test("round cap policy: the one-time legacy table matches exact identities 
   assert.deepEqual([...LEGACY_REVIEW_ROUND_PINS.entries()], [
     [137, 5],
     [575, 3],
+    [583, 4],
     [595, 4],
     [597, 5],
     [602, 6],
     [605, 3],
     [610, 3],
+    [615, 3],
+    [617, 3],
     [618, 7],
+    [629, 3],
+    [633, 3],
     [634, 4],
     [638, 5],
+    [650, 3],
     [668, 4],
     [672, 3],
     [673, 7],
@@ -236,6 +243,7 @@ Deno.test("round cap policy: the one-time legacy table matches exact identities 
     [698, 9],
     [754, 3],
     [879, 3],
+    [1128, 5],
   ]);
   for (const [issue, pin] of LEGACY_REVIEW_ROUND_PINS) {
     const record = legacy(issue, pin);
@@ -285,13 +293,15 @@ Deno.test("round cap policy: the one-time legacy table matches exact identities 
 });
 
 Deno.test("round cap policy: the legacy table is the owner's class at its pinned state", () => {
-  // The owner's twelve (decision-time state, sequence 36388) and the nine
-  // more that generation 79 parked the same way by sequence 37449.
+  // The owner's twelve (decision-time state, sequence 36388), the nine more
+  // that generation 79 parked the same way by sequence 37449 and the seven
+  // after that by the cut (sequence 38912).
   const owners = [595, 597, 605, 610, 618, 668, 672, 673, 680, 694, 698, 879];
   const since = [137, 575, 602, 634, 638, 678, 679, 693, 754];
+  const sinceCut = [583, 615, 617, 629, 633, 650, 1128];
   assert.deepEqual(
     [...LEGACY_REVIEW_ROUND_PINS.keys()],
-    [...owners, ...since].sort((a, b) => a - b),
+    [...owners, ...since, ...sinceCut].sort((a, b) => a - b),
   );
   const parked = (
     issue: number,
@@ -369,6 +379,51 @@ Deno.test("round cap policy: the legacy table is the owner's class at its pinned
       `${record.id} ${record.blocker?.message}`,
     );
   }
+});
+
+Deno.test("round cap policy: the table drift names every class member the table does not pin at its live count", () => {
+  const blocked = (issue: number, rounds: number, message: string) =>
+    legacy(issue, rounds, {
+      nextStep: "blocked",
+      blocker: { kind: "other", message, since: T0 },
+    });
+  const red = "CI checks failed: verify-artifact(skipped), validate(failure)";
+  const atPins = [...LEGACY_REVIEW_ROUND_PINS].map(([issue, pin]) =>
+    blocked(issue, pin, red)
+  );
+  // At its cut the table is the class: no drift.
+  assert.deepEqual(
+    legacyReviewRoundTableDrift({ work: atPins, reservations: [] }),
+    [],
+  );
+  // Generation 79 parks one more record the same way after the cut, and
+  // spends one more round on a pinned record before the install.
+  const later = blocked(1500, 3, red);
+  const past = blocked(595, 5, red);
+  const unrelated = [
+    blocked(1501, 2, red), // rounds left: not the class
+    blocked(1502, 4, "task acceptance not fulfilled: the candidate"),
+    legacy(1503, 4), // not parked
+  ];
+  const work = [
+    ...atPins.filter((record) => record.id !== past.id),
+    past,
+    later,
+    ...unrelated,
+  ];
+  assert.deepEqual(legacyReviewRoundTableDrift({ work, reservations: [] }), [
+    { id: past.id, issue: 595, kind: "pin_mismatch", pin: 4, spent: 5 },
+    { id: later.id, issue: 1500, kind: "unpinned", pin: null, spent: 3 },
+  ]);
+  // The ledger is the count, as for the ceiling itself.
+  const lagging = blocked(1504, 1, red);
+  assert.deepEqual(
+    legacyReviewRoundTableDrift({
+      work: [lagging],
+      reservations: reviewCharges(lagging.id, 3, { repository: AI }),
+    }),
+    [{ id: lagging.id, issue: 1504, kind: "unpinned", pin: null, spent: 3 }],
+  );
 });
 
 Deno.test("round cap policy: the latest completed review of the current head picks the park", () => {
@@ -494,6 +549,9 @@ Deno.test("round cap policy: a model-authored candidate can never weaken the cei
     const path of [
       "src/repair/review-round-cap.ts",
       "src/repair/loop-review-round-cap.ts",
+      "src/repair/delivery-queue.ts",
+      "src/repair/loop-delivery-queue.ts",
+      "src/repair/loop-base-refresh.ts",
       "src/repair/loop-review-request.ts",
       "src/repair/loop-review-result.ts",
       "src/repair/loop-work.ts",
@@ -501,6 +559,7 @@ Deno.test("round cap policy: a model-authored candidate can never weaken the cei
       "src/repair/loop-eligibility.ts",
       "src/repair/loop-state.ts",
       "ops/hosted-autonomy-retries.ts",
+      "ops/hosted-autonomy-retry-pass.ts",
       "ops/hosted-autonomy-policy.ts",
       "ops/hosted-autonomy-refresh-rearm.ts",
       "ops/hosted-autonomy-base-refresh-retries.ts",

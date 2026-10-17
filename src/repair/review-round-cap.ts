@@ -59,27 +59,37 @@ export const REVIEW_ROUND_CEILING_MESSAGES: readonly string[] = [
  * One-time legacy exception (owner decision 2026-10-16): ai.ubq.fi records
  * whose rounds were spent under the old review-before-CI order and whose CI is
  * red each get exactly ONE final current-head review. The table is that class
- * (`legacyReviewRoundClassPin`) evaluated over live repair state commit
- * 8c2ce497f (manifest sequence 37449, 2026-10-17T01:27Z): the owner's twelve
- * (595, 597, 605, 610, 618, 668, 672, 673, 680, 694, 698, 879, exactly the
- * class at the decision-time state, sequence 36388) and nine that generation
- * 79 parked the same way since (137, 575, 602, 634, 638, 678, 679, 693, 754).
- * It is regenerated from the install-time state with the same predicate and
- * shared with the CI-first legacy rule. Each pin is the record's spent rounds
- * there; the ceiling is the pin + 1, so a record that spent past its pin gets
- * nothing (fails closed).
+ * (`legacyReviewRoundClassPin`) evaluated over live repair state
+ * `LEGACY_REVIEW_ROUND_CUT` (commit 18369d9b9, manifest sequence 38912,
+ * 2026-10-17T09:07Z): the owner's twelve (595, 597, 605, 610, 618, 668, 672,
+ * 673, 680, 694, 698, 879, exactly the class at the decision-time state,
+ * sequence 36388) and the sixteen that generation 79 parked the same way
+ * since (137, 575, 602, 634, 638, 678, 679, 693, 754 by sequence 37449, then
+ * 583, 615, 617, 629, 633, 650 and 1128). Generation 79 keeps adding to the
+ * class until generation 80 installs, so the table is regenerated from the
+ * state generation 80 installs over (the cut) and the launcher reports every
+ * class member the table does not pin at its live count, every pass
+ * (`legacyReviewRoundTableDrift`). Each pin is the record's spent rounds at
+ * the cut; the ceiling is the pin + 1, so a record that spent past its pin
+ * gets nothing (fails closed).
  */
 export const LEGACY_REVIEW_ROUND_PINS: ReadonlyMap<number, number> = new Map([
   [137, 5],
   [575, 3],
+  [583, 4],
   [595, 4],
   [597, 5],
   [602, 6],
   [605, 3],
   [610, 3],
+  [615, 3],
+  [617, 3],
   [618, 7],
+  [629, 3],
+  [633, 3],
   [634, 4],
   [638, 5],
+  [650, 3],
   [668, 4],
   [672, 3],
   [673, 7],
@@ -91,7 +101,14 @@ export const LEGACY_REVIEW_ROUND_PINS: ReadonlyMap<number, number> = new Map([
   [698, 9],
   [754, 3],
   [879, 3],
+  [1128, 5],
 ]);
+
+/** The live repair state commit `LEGACY_REVIEW_ROUND_PINS` was derived at. */
+export const LEGACY_REVIEW_ROUND_CUT = {
+  stateCommit: "18369d9b95da761ec5ca5c59ce7335ced6c429e0",
+  sequence: 38912,
+} as const;
 const LEGACY_REPOSITORY: RepositoryIdentityV1 = {
   owner: "ubiquity",
   name: "ai.ubq.fi",
@@ -155,6 +172,54 @@ export function legacyReviewRoundClassPin(
   ) return null;
   const spent = reviewRoundsSpent(snapshot, record);
   return spent >= MAX_REVIEW_ROUNDS ? spent : null;
+}
+
+/**
+ * One live class member the pinned table disagrees with: no pin at all
+ * (`unpinned`, generation 79 parked it after the cut) or a pin other than its
+ * live spent rounds (`pin_mismatch`: a round spent past the pin before the
+ * install, which loses the one final round, or a final round already spent
+ * on a head that turned red again).
+ */
+export interface LegacyReviewRoundDriftV1 {
+  id: string;
+  issue: number;
+  kind: "unpinned" | "pin_mismatch";
+  pin: number | null;
+  spent: number;
+}
+
+/**
+ * Every record of the owner's legacy class over `snapshot`
+ * (`legacyReviewRoundClassPin`) that `LEGACY_REVIEW_ROUND_PINS` does not pin
+ * at exactly its spent rounds, by issue number. The table is regenerated at
+ * the cut; this is what the launcher reports on every pass so a drifted table
+ * is never silent. Pure; it grants nothing.
+ */
+export function legacyReviewRoundTableDrift(
+  snapshot: Ledger & {
+    readonly work: readonly (
+      & RoundRecord
+      & Pick<WorkRecordV1, "nextStep" | "blocker">
+    )[];
+  },
+): LegacyReviewRoundDriftV1[] {
+  const drift: LegacyReviewRoundDriftV1[] = [];
+  for (const record of snapshot.work) {
+    const spent = legacyReviewRoundClassPin(snapshot, record);
+    if (spent === null) continue;
+    const issue = legacyIssue(record)!;
+    const pin = LEGACY_REVIEW_ROUND_PINS.get(issue) ?? null;
+    if (pin === spent) continue;
+    drift.push({
+      id: record.id,
+      issue,
+      kind: pin === null ? "unpinned" : "pin_mismatch",
+      pin,
+      spent,
+    });
+  }
+  return drift.sort((a, b) => a.issue - b.issue);
 }
 
 /** The record's ceiling: its legacy pin + 1, otherwise `MAX_REVIEW_ROUNDS`. */

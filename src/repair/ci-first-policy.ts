@@ -51,6 +51,12 @@ export const PRE_REVIEW_CI_BOUND_MS = 6 * 60 * 60_000;
  * route closed in hosted runs: a red, never-reviewed head parks there with
  * `CI_PRE_REVIEW_RED_PREFIX` until a generation whose rollback target carries
  * generation 80's consumer opens it. In-process runs never plan a cell.
+ * Every refreshed head is a head no review has completed on, so a REVIEWED
+ * record whose refreshed head is red parks there too (live, most refreshes
+ * failed on lint drift). Generation 81 (R80 as its rollback target, this flag
+ * true, its runtime in `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`) is therefore a
+ * ship condition of generation 80: its fix rule re-admits those parks through
+ * the CI fix marker (tests/repair/ci-first-refresh-red_test.ts).
  */
 export const HOSTED_PRE_REVIEW_CI_FIXES = false;
 
@@ -110,12 +116,11 @@ export function isCiFixMarker(wait: WorkWaitV1 | null): boolean {
  * review-round ceiling's own (`LEGACY_REVIEW_ROUND_PINS`,
  * `legacyReviewRoundClassPin` and `reviewRoundsLeft` in `review-round-cap.ts`):
  * the owner's twelve (595, 597, 605, 610, 618, 668, 672, 673, 680, 694, 698,
- * 879) and the nine R79 parked the same way afterwards (137, 575, 602, 634,
- * 638, 678, 679, 693, 754), each pinned at its spent rounds at repair state
- * 8c2ce497f (2026-10-17T01:27Z; the same 21 at the same rounds at d0981b69d,
- * manifest sequence 37820, 05:39Z). A listed record's ceiling is its pin + 1,
- * counted over the durable ledger, so the final review spends it and a record
- * that spent past its pin gets nothing.
+ * 879) and the sixteen R79 parked the same way afterwards, each pinned at its
+ * spent rounds at the table's cut (`LEGACY_REVIEW_ROUND_CUT`, repair state
+ * 18369d9b9, 2026-10-17T09:07Z) and regenerated at the install. A listed
+ * record's ceiling is its pin + 1, counted over the durable ledger, so the
+ * final review spends it and a record that spent past its pin gets nothing.
  *
  * A review round is left for the head a CI fix (or a correction) produces
  * exactly when that count leaves one: fewer than `CI_FIRST_REVIEW_ROUNDS`

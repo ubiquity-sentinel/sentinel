@@ -130,7 +130,7 @@ function ciFixCharges(record: WorkRecordV1, count: number) {
 
 Deno.test("CI first x round cap: one legacy table and one ledger count decide the legacy CI fix", () => {
   assert.equal(CI_FIRST_REVIEW_ROUNDS, MAX_REVIEW_ROUNDS);
-  assert.equal(LEGACY_REVIEW_ROUND_PINS.size, 21);
+  assert.equal(LEGACY_REVIEW_ROUND_PINS.size, 28);
   for (const [issue, pin] of LEGACY_REVIEW_ROUND_PINS) {
     const record = aiRecord(issue, pin);
     const atPin = { reservations: reviewCharges(record, pin) };
@@ -156,9 +156,9 @@ Deno.test("CI first x round cap: one legacy table and one ledger count decide th
 });
 
 Deno.test("CI first x round cap: CI fixes are retry charges and never spend a review round", () => {
-  const record = aiRecord(583, 2);
+  const record = aiRecord(1583, 2);
   for (let fixes = 0; fixes <= CI_FIX_ATTEMPTS; fixes++) {
-    const fixed = aiRecord(583, 2, {
+    const fixed = aiRecord(1583, 2, {
       counters: { attempts: 3 + fixes, retries: fixes, reviewRounds: 2 },
     });
     const ledger = {
@@ -227,12 +227,12 @@ Deno.test("CI first x round cap: a legacy CI-fixed head that conflicts on refres
     assert.equal(conflictResolutionShape(pending, spent), false, "final spent");
   }
   // An unlisted record at the ordinary ceiling gets no resolution.
-  const ordinary = conflicted(583, MAX_REVIEW_ROUNDS);
+  const ordinary = conflicted(1583, MAX_REVIEW_ROUNDS);
   assert.equal(
     conflictResolutionShape(ordinary, snapshotOf(ordinary, MAX_REVIEW_ROUNDS)),
     false,
   );
-  const below = conflicted(583, 2);
+  const below = conflicted(1583, 2);
   assert.equal(conflictResolutionShape(below, snapshotOf(below, 2)), true);
 });
 

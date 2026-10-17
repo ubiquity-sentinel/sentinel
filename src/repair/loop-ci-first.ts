@@ -177,6 +177,9 @@ function routeCandidateFailure(
   ) {
     return persistWork(deps, context, advanceToCorrection(record, now));
   }
+  // Any other red head has no completed review: a new candidate, and also a
+  // REVIEWED record's refreshed head. Where the pre-review fix route is closed
+  // (hosted generation 80) both park until generation 81 opens it.
   const marked = atWork(record, ciFixMarker(now), now);
   if (
     headAwaitsPreReviewCiFix(

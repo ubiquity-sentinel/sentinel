@@ -21,6 +21,7 @@ import {
 import { evidenceExpired } from "./hosted-autonomy-evidence-expiry.ts";
 import {
   legacyReviewRoundPin,
+  ordinaryReviewRoundsSpent,
   reviewRoundsLeft,
 } from "../src/repair/review-round-cap.ts";
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
@@ -313,6 +314,12 @@ export interface RetryPlanV1 {
 const CI_GREEN_DETAIL_SUFFIX = ":green";
 
 /**
+ * Denial of the green CI rule for a head whose ordinary review rounds are
+ * spent: the delivery pass's spent-round rule merges it (or refuses) itself.
+ */
+export const GREEN_SPENT_LEFT_TO_DELIVERY = "green_spent_left_to_delivery";
+
+/**
  * True for a CI correction re-admission: a delivery-returning plan whose
  * head is not green again. Only these count against
  * `HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS`, which the retry pass applies
@@ -592,6 +599,21 @@ export function planHostedRetries(
           record.target.base &&
         ciGreenHeads.has(ciGreenHeadKey(record.repository, head)) &&
         ciGreenRedeliveryEligible(snapshot, record);
+      // A green head whose ordinary review rounds are spent (a listed legacy
+      // record included) is the spent-round rule's: the delivery pass, later
+      // in this same maintenance pass, re-reads the tip and merges that exact
+      // head at its exact reviewed base or refuses. Handed to the runtime's
+      // `delivery` step instead, this write would settle the record for the
+      // rest of the pass, and a base that moved before the runtime's step
+      // would make R79 refresh it and review it a fourth time (R80 parks it).
+      if (green && ordinaryReviewRoundsSpent(snapshot, record)) {
+        onDenied?.({
+          id: record.id,
+          repository: record.repository,
+          reason: GREEN_SPENT_LEFT_TO_DELIVERY,
+        });
+        continue;
+      }
       // A correction only once the head's flake re-run can no longer act. A
       // record correctable only through its one-time legacy final review
       // (every ordinary round spent) needs the CI-first runtime: under any

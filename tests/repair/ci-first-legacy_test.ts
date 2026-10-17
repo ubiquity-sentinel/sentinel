@@ -6,13 +6,14 @@
  * the delivery lane when that review has no unresolved P0/P1.
  *
  * The owner named twelve; R79 kept reviewing before CI, so the table is the
- * owner's class by rule at repair state 8c2ce497f (2026-10-17T01:27Z): 21
- * records blocked with `CI checks failed: ...`, holding retries 0, no intent,
- * a preserved candidate equal to its published head and a completed review
- * of that head on its exact base with no P0/P1 (P2 only for 137, 638, 668
- * and 680). The derivation case re-reads that state commit from the local
- * object store (ignored in a checkout without it) and proves the pinned
- * table is exactly what the rule yields there.
+ * owner's class by rule at its cut, repair state 18369d9b9
+ * (`LEGACY_REVIEW_ROUND_CUT`, 2026-10-17T09:07Z): 28 records blocked with
+ * `CI checks failed: ...`, holding retries 0, no intent, a preserved
+ * candidate equal to its published head and a completed review of that head
+ * on its exact base with no P0/P1 (P2 only for 137, 638, 668 and 680). The
+ * derivation case re-reads that state commit from the local object store
+ * (ignored in a checkout without it) and proves the pinned table is exactly
+ * what the rule yields there.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -22,7 +23,10 @@ import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { ciCorrectable } from "../../src/repair/ci-rejection.ts";
 import { CI_FIRST_REVIEW_ROUNDS } from "../../src/repair/ci-first-policy.ts";
-import { LEGACY_REVIEW_ROUND_PINS } from "../../src/repair/review-round-cap.ts";
+import {
+  LEGACY_REVIEW_ROUND_CUT,
+  LEGACY_REVIEW_ROUND_PINS,
+} from "../../src/repair/review-round-cap.ts";
 import {
   ciGreenHeadKey,
   HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES,
@@ -80,6 +84,15 @@ const LIVE: readonly [
     [],
   ],
   [
+    583,
+    1103,
+    4,
+    6,
+    "60265837e538b78c2a20737a2c595e295aa03078",
+    "973bb2f45230993da7896784f0ec4bf908bf3de9",
+    [],
+  ],
+  [
     595,
     1087,
     4,
@@ -125,12 +138,48 @@ const LIVE: readonly [
     [],
   ],
   [
+    615,
+    1111,
+    3,
+    6,
+    "618d7d7c002f5515db9d3b855611a5ed27f82848",
+    "ded498ffbcd9f39d57f3da6e05425cf2f8059f50",
+    [],
+  ],
+  [
+    617,
+    1108,
+    3,
+    6,
+    "2cd8b0ba150afda971ac0b79d58ed3e90c78279a",
+    "ded498ffbcd9f39d57f3da6e05425cf2f8059f50",
+    [],
+  ],
+  [
     618,
     1071,
     7,
     3,
     "31f7ea943216526840a0328573d3c227ff498472",
     "8a99ecbeaf8fd5f845fd6be034e284dd370f332c",
+    [],
+  ],
+  [
+    629,
+    998,
+    3,
+    6,
+    "10cf428245f4eae73b62b3c15369aa2176d1aa5b",
+    "ded498ffbcd9f39d57f3da6e05425cf2f8059f50",
+    [],
+  ],
+  [
+    633,
+    1002,
+    3,
+    6,
+    "66630816cf97ea6131143cd0ca9e9103a9d7c38a",
+    "ded498ffbcd9f39d57f3da6e05425cf2f8059f50",
     [],
   ],
   [
@@ -150,6 +199,15 @@ const LIVE: readonly [
     "7f0c1b6ef25d525c3de5668636cf4cfe13409349",
     "9fc845d4b8185bfb4c19fa07296ea9ed8c0305da",
     ["P2"],
+  ],
+  [
+    650,
+    1078,
+    3,
+    8,
+    "9b24f02e0dbeccf96b2ec201297500503e7eec25",
+    "9cdc76dc600246d96a0841ba7fca5039cbf34196",
+    [],
   ],
   [
     668,
@@ -250,6 +308,15 @@ const LIVE: readonly [
     "8a99ecbeaf8fd5f845fd6be034e284dd370f332c",
     [],
   ],
+  [
+    1128,
+    1142,
+    5,
+    3,
+    "e3d3ad98b66ccfc9cfc4aa0072bd7e9438599b19",
+    "9cdc76dc600246d96a0841ba7fca5039cbf34196",
+    [],
+  ],
 ];
 
 /** Development tip at 23:50Z: every reviewed base is behind it. */
@@ -329,7 +396,7 @@ function liveSnapshot(): RepairStateSnapshotV1 {
   });
 }
 
-Deno.test("legacy exception: each of the 21 live records may take a CI fix at its round pin", () => {
+Deno.test("legacy exception: each of the 28 live records may take a CI fix at its round pin", () => {
   for (const row of LIVE) {
     const record = legacyRecord(row);
     assert.equal(
@@ -357,8 +424,8 @@ Deno.test("legacy exception: each of the 21 live records may take a CI fix at it
   // The exception is exactly the pinned class: the same shape on another
   // record, repository or task identity gets nothing.
   const [, ...rest] = LIVE[0];
-  const other = legacyRecord([583, ...rest] as typeof LIVE[number]);
-  assert.equal(ciCorrectable(other, NO_LEDGER), false, "583 is not listed");
+  const other = legacyRecord([1583, ...rest] as typeof LIVE[number]);
+  assert.equal(ciCorrectable(other, NO_LEDGER), false, "1583 is not listed");
   assert.deepEqual(
     [...LEGACY_REVIEW_ROUND_PINS].sort((a, b) => a[0] - b[0]),
     LIVE.map(([issue, , rounds]) => [issue, rounds]),
@@ -418,7 +485,7 @@ function plan(runtime: string, generation: number, ciFirst: string[]) {
   );
 }
 
-Deno.test("legacy exception: the launcher re-admits the 21 only under an allowlisted CI-first runtime", () => {
+Deno.test("legacy exception: the launcher re-admits the 28 only under an allowlisted CI-first runtime", () => {
   // Under R79 (CI corrections, but no CI-first gate) a re-admitted legacy
   // record would spend its one final review on a still-red refreshed head.
   const r79 = [...HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES].at(-1)!;
@@ -436,8 +503,8 @@ Deno.test("legacy exception: the launcher re-admits the 21 only under an allowli
   }
 });
 
-/** Repair state the table is pinned at (2026-10-17T01:27Z). */
-const PINNED_STATE = "8c2ce497f567ef61e29f3c063c09e1d9f806860e";
+/** Repair state the table is pinned at (its cut, 2026-10-17T09:07Z). */
+const PINNED_STATE = LEGACY_REVIEW_ROUND_CUT.stateCommit;
 const ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname)
   .replace(/\/$/, "");
 const GIT_ENV = {

@@ -179,19 +179,21 @@ Deno.test("gateway delivery: the same admitted record merges and records its rel
   assert.equal(after.work[0].nextStep, "delivery");
 });
 
-Deno.test("gateway delivery: a CI-parked spent-round head that is green is re-admitted before it is merged", async () => {
-  // The hazard's own shape (PRs 1087/1089 after a successful re-run): the
-  // first pass re-admits through the existing grant without merging; the
-  // next pass merges at the exact head and records the release request.
+Deno.test("gateway delivery: a CI-parked spent-round head that is green merges in the same pass through the spent-round rule", async () => {
+  // The hazard's own shape (PRs 1087/1089 after a successful re-run). The
+  // retry pass leaves a spent head to the spent-round rule (generation 80
+  // integration review): handed to the runtime's delivery step it would be
+  // settled for the pass and, on a moved base, refreshed and reviewed a
+  // fourth time by R79. The delivery pass merges it at the exact head and
+  // records the release request in the same pass.
   const { rig, results, after } = await gatewayDelivery(
     "ci-green",
     gatewayRecord("blocked"),
-    2,
   );
   assert.equal(results[0].status, "applied", JSON.stringify(results[0]));
   assert.ok(
-    results[0].actions.includes(
-      `retry:${after.work[0].id}:grant=0:other:CI checks failed::green`,
+    !results[0].actions.some((action) =>
+      action.startsWith(`retry:${after.work[0].id}:grant`)
     ),
     JSON.stringify(results[0].actions),
   );
@@ -202,9 +204,10 @@ Deno.test("gateway delivery: a CI-parked spent-round head that is green is re-ad
   assert.deepEqual(after.work[0].counters, gatewayRecord("blocked").counters);
 });
 
-Deno.test("gateway delivery: a green head parked on the runtime's unattributed CI block is re-admitted before it is merged", async () => {
-  // The generation-78 unattributed block keeps the free re-run and green
-  // re-admission of the legacy CI block; it is never a correction.
+Deno.test("gateway delivery: a green spent head parked on the runtime's unattributed CI block merges in the same pass", async () => {
+  // The generation-78 unattributed block keeps the free re-run; a spent head
+  // that is green again is the spent-round rule's, as for the legacy CI
+  // block, and it is never a correction.
   const record = gatewayRecord("blocked", {
     blocker: {
       ...CI_BLOCKER,
@@ -214,11 +217,10 @@ Deno.test("gateway delivery: a green head parked on the runtime's unattributed C
   const { rig, results, after } = await gatewayDelivery(
     "ci-green-unattributed",
     record,
-    2,
   );
   assert.ok(
-    results[0].actions.includes(
-      `retry:${record.id}:grant=0:other:CI checks failed without base evidence::green`,
+    !results[0].actions.some((action) =>
+      action.startsWith(`retry:${record.id}:grant`)
     ),
     JSON.stringify(results[0].actions),
   );
@@ -658,11 +660,11 @@ Deno.test("ci re-run: run selection is once per exact head", () => {
   }
 });
 
-Deno.test("ci re-run: the launcher pass re-runs the flake, re-admits the green head and then delivers it", async () => {
+Deno.test("ci re-run: the launcher pass re-runs the flake, then delivers the green spent head", async () => {
   // The expected live sequence for PRs 1087/1089: pass 1 re-runs the failed
-  // run (no state write, no merge), pass 2 re-admits the now-green head to
-  // `delivery` through the existing grant, pass 3 merges at the exact head and
-  // records the Gateway release request.
+  // run (no state write, no merge), pass 2 merges the now-green spent head at
+  // the exact head through the spent-round rule and records the release
+  // request (the retry pass leaves a spent head to that rule).
   let headGreen = false;
   const { rig, github } = await makeRig("ci-rerun-sequence", {
     repair: repairSnapshot([gatewayRecord("blocked") as never], [
@@ -704,16 +706,13 @@ Deno.test("ci re-run: the launcher pass re-runs the flake, re-admits the green h
     headGreen = true;
     const second = await run(rig);
     assert.equal(second.status, "applied", JSON.stringify(second));
-    assert.equal(rig.merges, 0);
-    const readmitted = (await read()).work[0];
-    assert.equal(readmitted.nextStep, "delivery");
-    assert.equal(readmitted.blocker, null);
-    assert.equal(readmitted.intent, null);
-    assert.deepEqual(readmitted.counters, gatewayRecord("blocked").counters);
-
-    await run(rig);
     assert.equal(rig.merges, 1);
     const delivered = await read();
+    const record = delivered.work[0];
+    assert.equal(record.nextStep, "delivery");
+    assert.equal(record.blocker, null);
+    assert.equal(record.intent, null);
+    assert.deepEqual(record.counters, gatewayRecord("blocked").counters);
     assert.equal(delivered.releaseRequests.length, 1);
     assert.equal(delivered.releaseRequests[0].source.head, HEAD);
     assert.deepEqual(fake.reruns, [RUN_ID], "never re-run twice");

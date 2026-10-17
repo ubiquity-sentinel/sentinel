@@ -272,6 +272,11 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       // or bypass it.
       "src/repair/review-round-cap.ts",
       "src/repair/loop-review-round-cap.ts",
+      // The delivery line decides when a reviewed head on a moved base may
+      // spend a round on a refreshed head; the ceiling's moved-base park
+      // reads the head's CI there first.
+      "src/repair/delivery-queue.ts",
+      "src/repair/loop-delivery-queue.ts",
       "src/repair/loop-checks.ts",
       // CI attribution decides whether a reviewed head is corrected (a charged
       // round), deferred on a red base or blocked; the launcher rule decides

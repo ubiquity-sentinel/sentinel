@@ -41,8 +41,11 @@ import {
   parkAtReviewRoundCeiling,
   reviewRoundsSpentOut,
 } from "./loop-review-round-cap.ts";
+import {
+  deliveryQueueDeferral,
+  parkSpentOnMovedBase,
+} from "./loop-delivery-queue.ts";
 import { persistTransition, persistWork } from "./loop-state.ts";
-import { REVIEW_ROUND_CEILING_BASE_MOVED } from "./review-round-cap.ts";
 import type {
   CarryV1,
   LoopContextV1,
@@ -341,22 +344,21 @@ export async function executeDeliveryStep(
   ) {
     // A refreshed head needs a review round of its own: at the hard ceiling
     // the moved base parks the reviewed head instead (nothing refreshed or
-    // pushed). Otherwise a reviewed head whose own change already broke its
-    // checks is corrected before it could be refreshed and re-reviewed onto
-    // the moved base.
+    // pushed), a red one with the merge gate's own CI blocker. Otherwise a
+    // reviewed head whose own change already broke its checks is corrected
+    // before it could be refreshed and re-reviewed onto the moved base, and a
+    // refresh waits its turn in the repository's delivery line.
     const refresh = await ensureBaseRefreshIntent(
       deps,
       context,
       record,
-      () =>
-        reviewRoundsSpentOut(context, record)
-          ? parkAtReviewRoundCeiling(
-            deps,
-            context,
-            record,
-            REVIEW_ROUND_CEILING_BASE_MOVED,
-          )
-          : correctFailedHeadBeforeRefresh(deps, context, record),
+      async (observedBase) => {
+        if (reviewRoundsSpentOut(context, record)) {
+          return await parkSpentOnMovedBase(deps, context, record);
+        }
+        return await correctFailedHeadBeforeRefresh(deps, context, record) ??
+          deliveryQueueDeferral(deps, context, record, observedBase);
+      },
     );
     if (refresh !== null) return refresh;
   }

@@ -84,7 +84,7 @@ export async function ensureBaseRefreshIntent(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
-  beforeRefresh?: () => Promise<StepResultV1 | null>,
+  beforeRefresh?: (observedBase: GitSha) => Promise<StepResultV1 | null>,
 ): Promise<StepResultV1 | null> {
   const config = configFor(deps, record.repository);
   if (config === null) return null;
@@ -130,7 +130,9 @@ export async function ensureBaseRefreshIntent(
   if (observedBase === record.target.base) return null;
   // The caller may settle the reviewed head first (a CI-rejected candidate is
   // corrected instead of refreshed); null keeps the ordinary refresh.
-  const settled = beforeRefresh === undefined ? null : await beforeRefresh();
+  const settled = beforeRefresh === undefined
+    ? null
+    : await beforeRefresh(observedBase);
   if (settled !== null) return settled;
   const intent: IncompleteOperationV1 = {
     kind: "base_refresh",

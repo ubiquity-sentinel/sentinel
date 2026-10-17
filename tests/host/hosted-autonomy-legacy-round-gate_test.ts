@@ -200,7 +200,7 @@ Deno.test("legacy round gate: a work grant leading to the legacy final round wai
   assert.equal(proven.plans.length, 1, JSON.stringify(proven.denials));
   assert.equal(proven.plans[0]!.nextStep, "work");
   // An ordinary record below the ceiling is planned under any runtime.
-  const ordinary = aiRecord(583, 2, { blocker: record.blocker });
+  const ordinary = aiRecord(1583, 2, { blocker: record.blocker });
   assert.equal(
     plan(ordinary, reviewCharges(ordinary, 2), { tips }).plans.length,
     1,
@@ -274,13 +274,13 @@ Deno.test("legacy round gate: a green pre-review park returns for review only wi
   assert.equal(proven.plans.length, 1);
   assert.equal(proven.plans[0]!.nextStep, "work");
   // An ordinary never-reviewed head with every round spent never returns.
-  const spent = parked(583, 3);
+  const spent = parked(1583, 3);
   assert.deepEqual(
     plan(spent, reviewCharges(spent, 3), { tips, ciFirst: true }).plans,
     [],
   );
   // One with a round left returns under any runtime, as before.
-  const open = parked(583, 1);
+  const open = parked(1583, 1);
   assert.equal(plan(open, reviewCharges(open, 1), { tips }).plans.length, 1);
 });
 
@@ -319,7 +319,7 @@ Deno.test("legacy round gate: the predicate passes every ordinary round and with
     assert.equal(legacyFinalRoundAdmissible(ledger, record, false), false);
     assert.equal(legacyFinalRoundAdmissible(ledger, record, true), true);
   }
-  const ordinary = aiRecord(583, 2);
+  const ordinary = aiRecord(1583, 2);
   assert.equal(
     legacyFinalRoundAdmissible(
       { reservations: reviewCharges(ordinary, 2) },

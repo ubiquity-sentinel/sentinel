@@ -1,0 +1,375 @@
+{
+  "description": "Live ai.ubq.fi repair state at origin/sentinel-state/repair 18369d9b9 (2026-10-17T09:07:36Z, sequence 38912): records 583 (PR 1103) and 629 (PR 998), parked 'CI checks failed: ...' by generation 79 after spending their review rounds, with their current-head receipts and every review_request charge of each task.",
+  "sequence": 38912,
+  "updatedAt": 1792228056060,
+  "records": [
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "CI checks failed: verify-artifact(skipped), validate(failure)",
+        "since": 1792217608140
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "1f90f0a0b122bdcd424eb8fa6016a509bd3f6ed5"
+      },
+      "counters": {
+        "attempts": 6,
+        "retries": 0,
+        "reviewRounds": 4
+      },
+      "createdAt": 1790942544130,
+      "dependencies": [],
+      "evidence": [
+        {
+          "kind": "review_receipt",
+          "ref": "artifact:review-receipt/review-receipt:2660a54e3b2801186e15e719baf8cb4996d999cfc43eb2143fd303baf5f23dc6"
+        },
+        {
+          "kind": "review_receipt",
+          "ref": "artifact:review-receipt/review-receipt:f744d2753991d3f4012886ccbd39cbc07e2559c22c0e39784c6aac862afc1123"
+        },
+        {
+          "kind": "review_receipt",
+          "ref": "artifact:review-receipt/review-receipt:7c314232e5cfded180b5a6dd7958a35c117dcbe3132af90068a50b4299e518c7"
+        },
+        {
+          "kind": "review_receipt",
+          "ref": "artifact:review-receipt/review-receipt:be34c25e8a0dbc5c1ba6ea103c3f27dd0b86af570a2163a37b2a7d2a48bb97ae"
+        }
+      ],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1790938246000,
+      "id": "issue-ubiquity-ai.ubq.fi-583",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 583
+      },
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "source": {
+        "id": "583",
+        "kind": "issue",
+        "revision": "1d7e64e6b30cef212bca16ca7191f13685382ded"
+      },
+      "sourceSnapshotDigest": null,
+      "target": {
+        "base": "973bb2f45230993da7896784f0ec4bf908bf3de9",
+        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-583",
+        "candidateState": {
+          "preserved": {
+            "base": "973bb2f45230993da7896784f0ec4bf908bf3de9",
+            "head": "60265837e538b78c2a20737a2c595e295aa03078",
+            "operationKey": "base_refresh:1103:b83e6388af527ed397f14f0a28e42b3310e290ff:973bb2f45230993da7896784f0ec4bf908bf3de9",
+            "ref": "refs/heads/sentinel-candidates/f73784fad5e4e2dbd182526bdf765ffb25796d13f1caa1cacf3fe86da89aaed6"
+          },
+          "publishedHead": "60265837e538b78c2a20737a2c595e295aa03078"
+        },
+        "checkpoint": null,
+        "head": "60265837e538b78c2a20737a2c595e295aa03078",
+        "pr": 1103
+      },
+      "updatedAt": 1792217609038,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "CI checks failed: verify-artifact(skipped), validate(failure)",
+        "since": 1792221250462
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "1f90f0a0b122bdcd424eb8fa6016a509bd3f6ed5"
+      },
+      "counters": {
+        "attempts": 6,
+        "retries": 0,
+        "reviewRounds": 3
+      },
+      "createdAt": 1790946190133,
+      "dependencies": [],
+      "evidence": [
+        {
+          "kind": "review_receipt",
+          "ref": "artifact:review-receipt/review-receipt:861aece09d7e2f9b3fe21d10e8c06cc5d89474293508fcf2325e764f0ee88c4f"
+        },
+        {
+          "kind": "review_receipt",
+          "ref": "artifact:review-receipt/review-receipt:4ab6491093e24d43011d6667853418b5154d129ccc6adacb2835ded30ef36ce8"
+        },
+        {
+          "kind": "review_receipt",
+          "ref": "artifact:review-receipt/review-receipt:83d7ed76e5970bad7ab00e1c99dd319655d9464b90d1851624c8894f1d255b69"
+        }
+      ],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1790944614000,
+      "id": "issue-ubiquity-ai.ubq.fi-629",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 629
+      },
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "source": {
+        "id": "629",
+        "kind": "issue",
+        "revision": "1d7e64e6b30cef212bca16ca7191f13685382ded"
+      },
+      "sourceSnapshotDigest": null,
+      "target": {
+        "base": "ded498ffbcd9f39d57f3da6e05425cf2f8059f50",
+        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-629",
+        "candidateState": {
+          "preserved": {
+            "base": "ded498ffbcd9f39d57f3da6e05425cf2f8059f50",
+            "head": "10cf428245f4eae73b62b3c15369aa2176d1aa5b",
+            "operationKey": "base_refresh:998:c08450714856c996b19265efcf88b1276302bf75:ded498ffbcd9f39d57f3da6e05425cf2f8059f50",
+            "ref": "refs/heads/sentinel-candidates/639fc185d8e581cd170943c80dd6239dd567fdea93e5da0919e4bdda7ce1779e"
+          },
+          "publishedHead": "10cf428245f4eae73b62b3c15369aa2176d1aa5b"
+        },
+        "checkpoint": null,
+        "head": "10cf428245f4eae73b62b3c15369aa2176d1aa5b",
+        "pr": 998
+      },
+      "updatedAt": 1792221251282,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    }
+  ],
+  "reviews": [
+    {
+      "completedAt": 1792216246931,
+      "expectedReviewer": "ubiquity-sentinel[bot]",
+      "findings": [],
+      "findingsUncounted": 0,
+      "id": "review-receipt:be34c25e8a0dbc5c1ba6ea103c3f27dd0b86af570a2163a37b2a7d2a48bb97ae",
+      "kind": "review_receipt",
+      "observedAt": 1792216444861,
+      "observedReviewer": "ubiquity-sentinel[bot]",
+      "outcome": "completed",
+      "pullRequest": {
+        "base": "973bb2f45230993da7896784f0ec4bf908bf3de9",
+        "head": "60265837e538b78c2a20737a2c595e295aa03078",
+        "number": 1103
+      },
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "requestId": "review-review:1103:60265837e538b78c2a20737a2c595e295aa03078:attempt-4",
+      "resultId": "msg_0d6382568feebb4b016ad30cb5b9c881938d6a3a3f1e2c8eeb",
+      "submittedAt": 1792216084878,
+      "summary": "The probe summaries now use the same Cerebras projection as dispatch, and the added test verifies recorded roles match the actual wire roles.",
+      "taskAcceptance": {
+        "evidence": [
+          "The shared projectCerebrasRequest function is exported and used when deriving roles for turn, raw, and classifier probe records.",
+          "The added transport-backed test confirms both dispatched and recorded native roles are [\"system\", \"user\"]."
+        ],
+        "issueNumber": 583,
+        "taskDigest": "d6f291975ee9af9e27cd45d9da4edd113c6b03836045f6a6c2dae9e40b5f0ca0",
+        "verdict": "fulfilled"
+      },
+      "unresolvedSeverities": [],
+      "version": "v1"
+    },
+    {
+      "completedAt": 1792219777258,
+      "expectedReviewer": "ubiquity-sentinel[bot]",
+      "findings": [],
+      "findingsUncounted": 0,
+      "id": "review-receipt:83d7ed76e5970bad7ab00e1c99dd319655d9464b90d1851624c8894f1d255b69",
+      "kind": "review_receipt",
+      "observedAt": 1792220200429,
+      "observedReviewer": "ubiquity-sentinel[bot]",
+      "outcome": "completed",
+      "pullRequest": {
+        "base": "ded498ffbcd9f39d57f3da6e05425cf2f8059f50",
+        "head": "10cf428245f4eae73b62b3c15369aa2176d1aa5b",
+        "number": 998
+      },
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "requestId": "review-review:998:10cf428245f4eae73b62b3c15369aa2176d1aa5b:attempt-3",
+      "resultId": "msg_004f39fb364b66fc016ad31a8034608196a5129f9d144b3468",
+      "submittedAt": 1792219701247,
+      "summary": "The change defers revision commits until after filtering and capping, preserving dropped updates for later polls, and adds the required regression coverage.",
+      "taskAcceptance": {
+        "evidence": [
+          "src/codex/supervisor-follow.ts:107-113 commits revisions only for entries that survive filtering and FOLLOW_MAX_ENTRIES capping.",
+          "tests/codex-supervisor-followups.test.ts:50-87 covers a FOLLOW_MAX_ENTRIES+2 sampling gap and verifies the completed entry's final text, status, and exit code are delivered later."
+        ],
+        "issueNumber": 629,
+        "taskDigest": "848130e834277564acdd0628b00cfc80312c6730d4ce6f0dbedc216931844644",
+        "verdict": "fulfilled"
+      },
+      "unresolvedSeverities": [],
+      "version": "v1"
+    }
+  ],
+  "reservations": [
+    {
+      "attempt": 3,
+      "createdAt": 1792213821414,
+      "head": "b83e6388af527ed397f14f0a28e42b3310e290ff",
+      "id": "8d342d7bbd458654c6dd01649fbc10387996ddd0398d822bebb74219948632bc",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "review_request",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1792213831689,
+      "taskId": "issue-ubiquity-ai.ubq.fi-583",
+      "version": "v1"
+    },
+    {
+      "attempt": 2,
+      "createdAt": 1792197618922,
+      "head": "f5f1cb522220196de83f435a94e982dac6532d22",
+      "id": "c2ac01deb4788148e07355ba0d1f358320f76e31db18a77eda618b2818b91b76",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "review_request",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1792197632905,
+      "taskId": "issue-ubiquity-ai.ubq.fi-583",
+      "version": "v1"
+    },
+    {
+      "attempt": 4,
+      "createdAt": 1792216075930,
+      "head": "60265837e538b78c2a20737a2c595e295aa03078",
+      "id": "6bfc6473307f1400868fbb25c6241a97c8aa04f90467e6f2a17a011a9494c81c",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "review_request",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1792216089086,
+      "taskId": "issue-ubiquity-ai.ubq.fi-583",
+      "version": "v1"
+    },
+    {
+      "attempt": 1,
+      "createdAt": 1792193855834,
+      "head": "e28862aa081068f73a7860a045982a1211287bf9",
+      "id": "2033bf139416f79a8bdbe7a5d4482bad8dfb211d5b69849e93c610bd3c8eb3e1",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "review_request",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1792193868548,
+      "taskId": "issue-ubiquity-ai.ubq.fi-583",
+      "version": "v1"
+    },
+    {
+      "attempt": 1,
+      "createdAt": 1791783741252,
+      "head": "fb13748a26f29b86f43d6202c89bbf253f111c06",
+      "id": "8f8f817f6979d145346da4b38da440ed5e796eeb83998ab605fa6408dea4f94c",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "review_request",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1791783816351,
+      "taskId": "issue-ubiquity-ai.ubq.fi-629",
+      "version": "v1"
+    },
+    {
+      "attempt": 3,
+      "createdAt": 1792219694553,
+      "head": "10cf428245f4eae73b62b3c15369aa2176d1aa5b",
+      "id": "6564ac973fcde22749e0f70fbd266d6b21b2ea84468511f1815eb12320e8e3e4",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "review_request",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1792219703535,
+      "taskId": "issue-ubiquity-ai.ubq.fi-629",
+      "version": "v1"
+    },
+    {
+      "attempt": 2,
+      "createdAt": 1792214090204,
+      "head": "0b1c0a997d2103d39c55a7585bc6594c6d1d9c30",
+      "id": "590d8d85d5f08a7b24391268fc6e19b9481723a0c69877c7ed1b074aeeeeb3a4",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "review_request",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1792214100529,
+      "taskId": "issue-ubiquity-ai.ubq.fi-629",
+      "version": "v1"
+    }
+  ]
+}

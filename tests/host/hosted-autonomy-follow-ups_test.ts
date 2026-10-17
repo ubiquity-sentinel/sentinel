@@ -547,15 +547,13 @@ Deno.test("follow-ups F9: the runner files in the same run as a merge and never 
     const { surface } = liveSurface(options(issues));
     const rig = await liveRig("f9", liveSnapshot([record], [receipt]), surface);
     try {
-      // At its reviewed base the green CI-parked head is first re-admitted
-      // (its own write); the next run merges it.
-      const readmit = await runAt(rig);
+      // At its reviewed base the green CI-parked spent head merges in the
+      // first run (the retry pass leaves it to the spent-round rule).
+      const result = await runAt(rig);
       assert.ok(
-        readmit.actions.some((a) => a.startsWith(`retry:${record.id}:`)),
-        JSON.stringify(readmit.actions),
+        !result.actions.some((a) => a.startsWith(`retry:${record.id}:`)),
+        JSON.stringify(result.actions),
       );
-      assert.deepEqual(followUps(readmit.actions), []);
-      const result = await runAt(rig, NOW + 300_000);
       assert.equal(result.status, "applied", JSON.stringify(result.actions));
       assert.equal(result.reason, "applied");
       const [request] = (await readSnapshot(rig)).releaseRequests;

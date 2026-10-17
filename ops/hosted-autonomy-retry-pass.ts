@@ -31,6 +31,10 @@ import {
 } from "./hosted-autonomy-ci-retries.ts";
 import { readCiRerunSettled } from "./hosted-autonomy-ci-rerun.ts";
 import {
+  legacyReviewRoundTableDrift,
+  ordinaryReviewRoundsSpent,
+} from "../src/repair/review-round-cap.ts";
+import {
   ciFirstRuntimeProven,
   HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
   preReviewCiParked,
@@ -54,6 +58,9 @@ import {
   planConflictReadmissions,
   verifyConflictReadmissions,
 } from "./hosted-autonomy-conflict-retries.ts";
+
+/** Legacy class drift lines reported per pass (the rest are counted). */
+export const LEGACY_DRIFT_REPORTS_PER_PASS = 12;
 
 /**
  * Read-only source facts shared by bookkeeping and the later retry grant. A
@@ -241,13 +248,16 @@ export async function runHostedRetryPass(
   // A head parked on its merge-gate CI failure (or by the CI-first gate
   // before its review) whose base tip is still the record's base is read for
   // green CI on its OWN repository surface (a re-run flake, or CI that
-  // finished late); only a head proven all green there can re-admit.
+  // finished late); only a head proven all green there can re-admit. A
+  // merge-gate park whose ordinary rounds are spent is the delivery pass's
+  // spent-round rule's (it reads its own CI), so it is not read here.
   const ciGreenHeads = new Set<string>();
   for (const record of snapshot.work) {
     const head = record.target.head;
     if (
       record.nextStep !== "blocked" || head === null ||
-      !(ciGreenRedeliveryEligible(snapshot, record) ||
+      !((ciGreenRedeliveryEligible(snapshot, record) &&
+        !ordinaryReviewRoundsSpent(snapshot, record)) ||
         preReviewCiParked(snapshot, record)) ||
       closedIssues.has(
         hostedIssueKey(record.repository, record.related.issueNumber!),
@@ -294,6 +304,25 @@ export async function runHostedRetryPass(
     // re-admission requires; nothing else can activate that rule.
     { ciRuntime: installedRuntime, ciRerunSettled, ciGreenHeads },
   );
+  // The one-time legacy table is pinned at its cut while generation 79 keeps
+  // parking records into the owner's class: every class member the table does
+  // not pin at its live count is reported on every pass (state-free), so a
+  // drifted table is never silent (docs/DECISIONS.md: regenerate at the cut).
+  const drift = legacyReviewRoundTableDrift(snapshot);
+  for (const item of drift.slice(0, LEGACY_DRIFT_REPORTS_PER_PASS)) {
+    actions.push(
+      `retry:${item.id}:denied:legacy_class_${item.kind}:pin=${
+        item.pin ?? "none"
+      }:spent=${item.spent}`,
+    );
+  }
+  if (drift.length > LEGACY_DRIFT_REPORTS_PER_PASS) {
+    actions.push(
+      `retry:legacy_class:denied:drift_more=${
+        drift.length - LEGACY_DRIFT_REPORTS_PER_PASS
+      }`,
+    );
+  }
   const plans: RetryPlanV1[] = [];
   // The per-pass CI correction cap counts only corrections this pass admits
   // after the pull request checks below. A plan dropped there (closed,

@@ -134,6 +134,7 @@ export function liveSnapshot(
   work: readonly WorkRecordV1[],
   reviews: readonly ReviewReceiptV1[],
   releaseRequests: readonly ReleaseRequestV1[] = [],
+  reservations: readonly unknown[] = [],
 ): RepairStateSnapshotV1 {
   return parseRepairStateSnapshotV1({
     version: "v1",
@@ -144,7 +145,7 @@ export function liveSnapshot(
     incidents: [],
     evidence: [],
     work,
-    reservations: [],
+    reservations,
     reviews,
     replays: [],
     releaseRequests,

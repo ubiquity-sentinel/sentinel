@@ -22,12 +22,12 @@ import { gateDeliveryOnChecks } from "./loop-checks.ts";
 import { configFor, sameRepositoryIdentity } from "./loop-records.ts";
 import { waitRelease } from "./loop-release.ts";
 import { standingReviewAttempt } from "./loop-review-records.ts";
+import { reviewRoundsSpentOut } from "./loop-review-round-cap.ts";
 import {
-  parkAtReviewRoundCeiling,
-  reviewRoundsSpentOut,
-} from "./loop-review-round-cap.ts";
+  deliveryQueueDeferral,
+  parkSpentOnMovedBase,
+} from "./loop-delivery-queue.ts";
 import { persistTransition, persistWork } from "./loop-state.ts";
-import { REVIEW_ROUND_CEILING_BASE_MOVED } from "./review-round-cap.ts";
 import {
   deliveryTaskRefusal,
   mergeIntentReceipt,
@@ -529,7 +529,9 @@ export async function reconcileMergeIntent(
   // ambiguous response is reconciled immediately), and its own merge would
   // move the base; only an intent at least one poll old is treated as stale.
   // At the hard review-round ceiling the refreshed head could never be
-  // reviewed: the stale merge intent is cleared and the reviewed head parks.
+  // reviewed: the stale merge intent is cleared and the reviewed head parks
+  // (a red one with the merge gate's own CI blocker). Below it the refresh
+  // waits its turn in the repository's delivery line, the merge intent kept.
   if (
     record.source.kind === "issue" &&
     deps.github.prepareBaseRefresh !== undefined &&
@@ -540,15 +542,14 @@ export async function reconcileMergeIntent(
       deps,
       context,
       record,
-      async () =>
+      async (observedBase) =>
         reviewRoundsSpentOut(context, record)
-          ? await parkAtReviewRoundCeiling(
+          ? await parkSpentOnMovedBase(
             deps,
             context,
             clearIntent(record, deps.clock.now()),
-            REVIEW_ROUND_CEILING_BASE_MOVED,
           )
-          : null,
+          : deliveryQueueDeferral(deps, context, record, observedBase),
     );
     if (refresh !== null) return refresh;
   }

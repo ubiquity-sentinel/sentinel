@@ -9,6 +9,7 @@ import {
   applyHostedRetries,
   planHostedRetries,
 } from "../../ops/hosted-autonomy.ts";
+import { GREEN_SPENT_LEFT_TO_DELIVERY } from "../../ops/hosted-autonomy-retries.ts";
 import {
   ciCorrectionRuntimeProven,
   ciGreenHeadKey,
@@ -918,7 +919,7 @@ Deno.test("hosted autonomy: the runtime's unattributed CI block keeps the free r
         message: `${CI_UNATTRIBUTED_DETAIL}: lint(failure)`,
       },
     });
-  for (const rounds of [1, 3, 5]) {
+  for (const rounds of [1, 2]) {
     const snapshot = repairSnapshot(
       [unattributed(rounds)],
       [authorizingReceipt()],
@@ -985,14 +986,15 @@ function greenPlan(
   );
 }
 
-const spent = (rounds = 4) =>
+/** A CI-parked reviewed head (below the review-round ceiling by default). */
+const spent = (rounds = 2) =>
   ciBlocked({ counters: { attempts: 4, retries: 0, reviewRounds: rounds } });
 
-Deno.test("hosted autonomy: a spent-round head whose CI turned green on its current base returns to delivery uncharged", () => {
+Deno.test("hosted autonomy: a head whose CI turned green on its current base returns to delivery uncharged below the ceiling", () => {
   // The flake path: no CI-correction runtime is installed (the route is
-  // closed under generation 77), every review round is spent, and the exact
-  // reviewed head is now green on the unchanged base.
-  for (const rounds of [0, 2, 3, 4, 7]) {
+  // closed under generation 77) and the exact reviewed head is now green on
+  // the unchanged base.
+  for (const rounds of [0, 2]) {
     const snapshot = repairSnapshot(
       [spent(rounds)],
       [authorizingReceipt()],
@@ -1021,6 +1023,54 @@ Deno.test("hosted autonomy: a spent-round head whose CI turned green on its curr
     assert.deepEqual(next.reviews, snapshot.reviews);
     assert.deepEqual(parseWorkRecordV1(structuredClone(record)), record);
   }
+});
+
+Deno.test("hosted autonomy: a green head whose ordinary rounds are spent is left to the spent-round rule", () => {
+  // Integration review (generation 80): the retry pass runs before the
+  // delivery pass, which skips a record an earlier write of the pass
+  // settled. Re-admitted to the runtime's delivery step, a spent head would
+  // be refreshed and reviewed a fourth time by R79 once the base moved; the
+  // delivery pass's spent-round rule merges it at its exact base instead.
+  for (const rounds of [3, 4, 7]) {
+    const snapshot = repairSnapshot(
+      [spent(rounds)],
+      [authorizingReceipt()],
+      [],
+      CHARGES,
+    );
+    assert.equal(ciGreenRedeliveryEligible(snapshot, snapshot.work[0]), true);
+    const denials: string[] = [];
+    const plans = planHostedRetries(
+      snapshot,
+      T0 + 9000,
+      RUNTIME,
+      selfTips(BASE),
+      new Set(),
+      (denial) => denials.push(denial.reason),
+      { ciGreenHeads: new Set([ciGreenHeadKey(SELF_REPO, HEAD)]) },
+    );
+    assert.deepEqual(plans, [], `review rounds ${rounds}`);
+    assert.deepEqual(denials, [GREEN_SPENT_LEFT_TO_DELIVERY]);
+  }
+  // The ledger counts too: a lagging counter does not hand it back.
+  const rounds = [2, 3].map((attempt) =>
+    reservation(`ci-review-${attempt}`, {
+      repository: SELF_REPO,
+      taskId: TARGET,
+      head: HEAD,
+      attempt,
+      purpose: "review_request",
+      outcome: "submitted",
+      settledAt: T0 + 2500 + attempt,
+    })
+  );
+  const lagging = repairSnapshot(
+    [spent(1)],
+    [authorizingReceipt()],
+    [],
+    [...CHARGES, ...rounds],
+  );
+  assert.deepEqual(greenPlan(lagging), []);
 });
 
 Deno.test("hosted autonomy: the green-head re-admission needs the exact green head on the unchanged reviewed base", async (t) => {
