@@ -383,8 +383,10 @@ Deno.test("CI first x round cap: the CI-first and spent-delivery authority files
       "ops/hosted-autonomy-follow-ups.ts",
       "ops/hosted-autonomy-follow-up-pass.ts",
       // The carried merge (option (b)): the launcher pass that makes it, its
-      // raw compare read, the runtime half and both patch proofs' sources.
+      // exact Git tree proof and raw compare read, the runtime half and both
+      // patch proofs' sources.
       "ops/hosted-autonomy-delivery-pass.ts",
+      "ops/hosted-autonomy-github-trees.ts",
       "ops/hosted-autonomy-github-listing.ts",
       "ops/hosted-autonomy-github.ts",
       "src/repair/carried-review.ts",

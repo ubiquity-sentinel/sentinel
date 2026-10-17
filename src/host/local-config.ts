@@ -304,9 +304,11 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       // Spent-round delivery and its review follow-ups: merge admissibility
       // and the latest-review rule, and the App-token issue filing. The
       // delivery pass makes every launcher merge, the carried merge included
-      // (its gate, the merge-once bound and the bookkeeping), and the raw
-      // compare read is the carried patch proof's evidence.
+      // (its gate, the merge-once bound and the bookkeeping), the Git tree
+      // read is the carried patch proof and the raw compare read its
+      // evidence.
       "ops/hosted-autonomy-delivery-pass.ts",
+      "ops/hosted-autonomy-github-trees.ts",
       "ops/hosted-autonomy-github-listing.ts",
       "ops/hosted-autonomy-spent-delivery.ts",
       "ops/hosted-autonomy-github-issues.ts",

@@ -33,6 +33,11 @@ import {
   CARRIED_WAIT_BOUND_MS,
 } from "../../src/repair/loop-carried-delivery.ts";
 import {
+  CARRIED_MERGE_MARKER_MS,
+  isCarriedMergeMarker,
+} from "../../src/repair/carried-review.ts";
+import { treeChangesDigest } from "../../ops/hosted-autonomy-github-trees.ts";
+import {
   MAX_REVIEW_ROUNDS,
   REVIEW_ROUND_CEILING_BASE_MOVED,
   REVIEW_ROUND_CEILING_CARRIED_CI_FAILED_PREFIX,
@@ -60,6 +65,15 @@ const GEN79 = await gen79Available();
 
 /** The first prepared refresh of the rig (`QueueGithub.prepareBaseRefresh`). */
 const H1 = sha(0x5001);
+
+/** The digest of the rig's one-path change set (`launcherSurface`). */
+const CHANGES = await treeChangesDigest([{
+  path: "src/app.ts",
+  oldMode: "100644",
+  oldSha: "1".repeat(40),
+  newMode: "100644",
+  newSha: "2".repeat(40),
+}]);
 
 /** Three submitted review charges of one task on its reviewed head. */
 function spentCharges(record: WorkRecordV1): BudgetReservationV1[] {
@@ -227,17 +241,25 @@ Deno.test("carried delivery: under the live unprotected policy the launcher merg
     assert.match(
       message,
       new RegExp(
-        `merge-base diff sha256 ${SHA1}...${record.target.head} a{64}`,
+        `exact change set sha256 ${CHANGES} \\(1 paths by path, mode and full blob id\\): ${SHA1}\\.\\.${record.target.head} equals ${merge.onto}\\.\\.${merge.head}`,
       ),
     );
     assert.match(
       message,
-      new RegExp(`merge-base diff sha256 ${merge.onto}...${merge.head} a{64}`),
+      new RegExp(
+        `merge-base diff sha256 ${SHA1}...${record.target.head} a{64} \\(evidence only\\)`,
+      ),
+    );
+    assert.match(
+      message,
+      new RegExp(
+        `merge-base diff sha256 ${merge.onto}...${merge.head} a{64} \\(evidence only\\)`,
+      ),
     );
     assert.match(message, /workflow runs 7001/);
     assert.ok(
       rig.launcherActions.includes(
-        `delivery:${record.id}:carried_merge:pr=${merge.pr}:reviewed=${record.target.head}@${SHA1}:receipt=review-receipt:${record.id}:latest:refreshed=${merge.head}@${merge.onto}:patch=${
+        `delivery:${record.id}:carried_merge:pr=${merge.pr}:reviewed=${record.target.head}@${SHA1}:receipt=review-receipt:${record.id}:latest:refreshed=${merge.head}@${merge.onto}:changes=${CHANGES}/1:patch=${
           "a".repeat(64)
         }/${"a".repeat(64)}:ci=7001`,
       ),
@@ -260,14 +282,21 @@ Deno.test("carried delivery: under the live unprotected policy the launcher merg
 
 Deno.test("carried delivery: the runtime proves and waits; the launcher merges only once the runtime's wait names its merge", async () => {
   const rig = await spentRig(1);
-  // Runtime first: it refreshes, reads H1's green CI and waits (backoff).
+  // Runtime first: it refreshes, reads H1's green CI and holds the exact
+  // carried-merge marker (round-2 recheck P3: no other backoff is the
+  // runtime's proof).
   await runOnce(rig);
   await runOnce(rig);
   let [record] = (await rig.snapshot()).work;
   assert.equal(record.nextStep, "work");
   assert.equal(record.target.head, H1);
   assert.equal(record.target.base, SHA2);
-  assert.equal(record.wait?.reason, "backoff");
+  assert.deepEqual(record.wait, {
+    reason: "backoff",
+    since: rig.clock.now(),
+    until: rig.clock.now() + CARRIED_MERGE_MARKER_MS,
+  });
+  assert.ok(isCarriedMergeMarker(record.wait));
   assert.deepEqual(rig.github.calls.filter((call) => call === "merge"), []);
   // The launcher merges H1 at exactly SHA2 and books it.
   const actions = await rig.launcher();
@@ -454,16 +483,22 @@ Deno.test("carried delivery: with no launcher merge the runtime waits for it bou
   await runOnce(rig);
   let [record] = (await rig.snapshot()).work;
   assert.equal(record.target.head, H1);
-  assert.equal(record.wait?.reason, "backoff");
-  const since = record.wait!.since;
-  for (let hour = 0; hour <= 7 && record.nextStep !== "blocked"; hour++) {
-    rig.clock.advance(HOUR);
+  assert.ok(isCarriedMergeMarker(record.wait));
+  // The marker restarts on every poll (its shape is exact), so the bound
+  // counts from H1's own CI completion: 1 s after the refresh in this rig.
+  const green = rig.github.refreshedAt.get(H1)! + 1000;
+  for (let polls = 0; polls < 200 && record.nextStep !== "blocked"; polls++) {
+    rig.clock.advance(5 * 60_000);
     await runOnce(rig);
     [record] = (await rig.snapshot()).work;
     if (record.nextStep !== "blocked") {
-      assert.equal(record.wait?.since, since, "the wait keeps its start");
+      assert.ok(isCarriedMergeMarker(record.wait), JSON.stringify(record.wait));
+      assert.equal(record.wait!.since, rig.clock.now());
+      assert.ok(rig.clock.now() - green < CARRIED_WAIT_BOUND_MS);
     }
   }
+  assert.ok(rig.clock.now() - green >= CARRIED_WAIT_BOUND_MS);
+  assert.ok(rig.clock.now() - green < CARRIED_WAIT_BOUND_MS + 5 * 60_000);
   assert.equal(record.nextStep, "blocked");
   assert.equal(
     record.blocker!.message,
@@ -593,7 +628,7 @@ Deno.test("carried delivery: a record behind a carried record the launcher canno
   const surface = rig.github.launcherSurface.bind(rig.github);
   rig.github.launcherSurface = () => ({
     ...surface(),
-    comparePatchDigest: () => Promise.resolve(null),
+    mergeBaseTreeChanges: () => Promise.resolve(null),
   });
   let runs = 0;
   while (runs < 40 && !rig.github.merged.includes(102)) {

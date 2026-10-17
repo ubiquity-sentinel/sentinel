@@ -75,6 +75,14 @@ export const REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX =
  */
 export const REVIEW_ROUND_CEILING_CARRIED_REFRESH_LIMIT_PREFIX =
   `${REVIEW_ROUND_CEILING_PREFIX}the base moved again after the carried refresh limit: `;
+/**
+ * The launcher's carried merge landed on another tip than the refreshed
+ * head's own base (the tip moved between its uncached re-read and the merge),
+ * so the merged tree is not the one the head's CI tested: written by the
+ * launcher's delivery pass instead of the delivery record, never delivered.
+ */
+export const REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX =
+  `${REVIEW_ROUND_CEILING_PREFIX}the carried merge landed off its tip: `;
 
 /** Every park message, in a fixed order. */
 export const REVIEW_ROUND_CEILING_MESSAGES: readonly string[] = [

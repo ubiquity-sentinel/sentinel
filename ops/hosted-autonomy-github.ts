@@ -25,6 +25,7 @@ import {
   RUN_LISTING_PAGE_SIZE,
 } from "./hosted-autonomy-github-listing.ts";
 import { createHostedFollowUpIssues } from "./hosted-autonomy-github-issues.ts";
+import { createMergeBaseTreeChanges } from "./hosted-autonomy-github-trees.ts";
 import {
   parseHostedAutonomyHeadPulls,
   parseHostedAutonomyPull,
@@ -543,12 +544,12 @@ export function createHostedAutonomyGitHub(
         (compare as Record<string, unknown>)["status"] === "ahead" &&
         revisionIntegratedIntoBase(compare, base);
     },
+    mergeBaseTreeChanges: createMergeBaseTreeChanges(request, scope),
     async comparePatchDigest(base: string, head: string) {
       // The merge-base diff GitHub renders for `base...head`, hashed as raw
-      // bytes. Both sides of a carried proof are rendered by the same
-      // endpoint, so equal digests mean an equal pull request patch (every
-      // file header, abbreviated blob ids, mode and hunk); a diff GitHub will
-      // not render (too large) or cannot serve is no proof.
+      // bytes: the carried merge's evidence line only. Its abbreviated blob
+      // ids, rename detection and "Binary files ... differ" rendering prove
+      // no exact patch; `mergeBaseTreeChanges` is the proof.
       if (!COMMIT_SHA.test(base) || !COMMIT_SHA.test(head)) return null;
       const bytes = await rawRead(
         `/repos/${scope}/compare/${base}...${head}`,

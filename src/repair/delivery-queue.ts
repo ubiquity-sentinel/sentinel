@@ -95,8 +95,26 @@ function contender(
   return reviewRoundsSpent(snapshot, other) > 0;
 }
 
+/**
+ * True while `record` holds its repository's delivery line (pure, no tip):
+ * a reviewed, published, unmerged issue task with no release request that
+ * is neither stalled (`DELIVERY_QUEUE_STALL_LIMIT`) nor idle
+ * (`DELIVERY_QUEUE_IDLE_MS`). The launcher reads a carried head the runtime
+ * awaits on every pass only while it holds the line.
+ */
+export function holdsDeliveryLine(
+  snapshot: QueueSnapshot,
+  record: WorkRecordV1,
+  now: number,
+): boolean {
+  return contender(snapshot, record, now);
+}
+
 /** Line order of two records on moved bases: pull request, then id. */
-function lineBefore(a: WorkRecordV1, b: WorkRecordV1): boolean {
+export function lineBefore(
+  a: Pick<WorkRecordV1, "id" | "target">,
+  b: Pick<WorkRecordV1, "id" | "target">,
+): boolean {
   const left = a.target.pr ?? Number.MAX_SAFE_INTEGER;
   const right = b.target.pr ?? Number.MAX_SAFE_INTEGER;
   return left !== right ? left < right : a.id < b.id;

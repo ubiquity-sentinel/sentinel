@@ -7,6 +7,7 @@ import type { ingestMatrixResults } from "../src/host/matrix.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { MismatchDispositionObservationsV1 } from "./runtime-mismatch-recovery-disposition.ts";
 import type { HostedPlanArtifactV1 } from "./hosted-autonomy-producer-requests.ts";
+import type { HostedTreeChangesV1 } from "./hosted-autonomy-github-trees.ts";
 import type {
   RepairStateWriter,
   StateReadView,
@@ -181,11 +182,22 @@ export interface HostedAutonomyGitHubV1 {
   /**
    * SHA-256 (lowercase hex) of the exact bytes of GitHub's merge-base diff of
    * `head` against `base` in THIS repository (compare `base...head`, diff
-   * media type), or null when it cannot be read whole within its bound (a
-   * diff GitHub refuses to render is no proof). Optional: a surface without it
-   * proves no carried patch, so it never makes a carried merge.
+   * media type), or null when it cannot be read whole within its bound. The
+   * carried merge's evidence only: a rendered diff abbreviates blob ids and
+   * folds binary changes, so it proves no exact patch.
    */
   comparePatchDigest?(base: string, head: string): Promise<string | null>;
+  /**
+   * The exact merge-base patch of `head` against `base` in THIS repository:
+   * every changed path as (path, old mode, old blob id, new mode, new blob
+   * id) between the merge base's and the head's recursive trees, or null when
+   * any read fails or GitHub truncates a tree. Optional: a surface without it
+   * proves no carried patch, so it never makes a carried merge.
+   */
+  mergeBaseTreeChanges?(
+    base: string,
+    head: string,
+  ): Promise<HostedTreeChangesV1 | null>;
   /**
    * Expected-head merge; null on any refusal. `message`, when given, is the
    * merge commit's plain evidence text (the carried merge's proof).

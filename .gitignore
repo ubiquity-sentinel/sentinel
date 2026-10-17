@@ -27,8 +27,3 @@
 
 # Matrix Actions suite disposable plan/output fixtures
 /sentinel-matrix-actions-*/
-
-# Owner macOS boundary check (issue #100) disposable roots and test fixtures
-/.macos-boundary-check-*/
-/sentinel-local-profile-*/
-/sentinel-macos-check-*/

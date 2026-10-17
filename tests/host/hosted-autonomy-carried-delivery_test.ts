@@ -5,24 +5,22 @@
  * no branch rules, so only the launcher's delivery pass merges there; it
  * therefore makes the carried merge too:
  *
- * - a spent record's refreshed head H1 (at `work`, which the runtime proved
- *   and now waits on) merges at exactly its tip T under the LATEST completed
- *   review of the earlier head H0 on B0, only after the pass re-derives the
- *   proof from GitHub's own merge-base diffs (B0...H0 and T...H1 equal), sees
- *   H1's own required CI green and T a strict ancestor of H1, and every
- *   ordinary spent gate holds; the proof is the merge commit's message and the
- *   pass's `carried_merge` action line; the record then moves to `delivery`
- *   beside a production request naming H0's receipt;
+ * - a spent record's refreshed head H1 (at `work`, where the runtime holds
+ *   its exact carried-merge marker) merges at exactly its tip T under the
+ *   LATEST completed review of the earlier head H0 on B0, only after the pass
+ *   re-derives the exact proof from GitHub's Git trees (equal change sets of
+ *   merge-base(B0, H0) -> H0 and T -> H1), sees H1's own required CI green
+ *   and T a strict ancestor of H1, and every ordinary spent gate holds; the
+ *   proof is the merge commit's message and the pass's `carried_merge` action
+ *   line; the record then moves to `delivery` beside a production request
+ *   naming H0's receipt;
  * - anything short of that merges nothing;
  * - a record merged that way is reported with the reviewed identity, its
  *   receipt and the merged refreshed identity on later passes.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
-import {
-  parseWorkRecordV1,
-  type WorkRecordV1,
-} from "../../src/contracts/work-record.ts";
+import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import type { ReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
 import {
   carriedDeliveryAction,
@@ -30,7 +28,7 @@ import {
   carriedRequestBindsDelivery,
   carriedRequestReceipt,
 } from "../../ops/hosted-autonomy-spent-delivery.ts";
-import type { HostedAutonomyHeadRunV1 } from "../../ops/hosted-autonomy-types.ts";
+import { treeChangesDigest } from "../../ops/hosted-autonomy-github-trees.ts";
 import { releaseRequest, SHA2, T0 } from "../state/helpers.ts";
 import {
   authorizingReceipt,
@@ -43,19 +41,24 @@ import {
 import { repairSnapshot } from "./hosted-autonomy-rig.ts";
 import {
   APP,
-  deliveryOnly,
   liveReceipts,
-  liveRecord,
-  liveRig,
   liveSnapshot,
-  liveSurface,
   type LiveSurfaceOptionsV1,
-  liveTask,
-  mergedPull,
   mergeSha,
-  openPull,
-  readSnapshot,
 } from "./hosted-autonomy-spent-fixtures.ts";
+import {
+  B0,
+  type CarriedDigestsV1,
+  carriedPass,
+  type CarriedTreesV1,
+  DIGEST,
+  H0,
+  LIVE_618,
+  MOVED_TIP,
+  REFRESHED,
+  refreshed618,
+  REVIEWED_CHANGES,
+} from "./hosted-autonomy-carried-fixtures.ts";
 
 /** The refreshed head H1 on the moved tip T that was merged. */
 const H1 = "5001500150015001500150015001500150015001" as GitSha;
@@ -140,130 +143,7 @@ Deno.test("carried delivery (launcher): only a completed receipt of the App revi
 });
 
 // ---- the carried merge itself, on the live 618 shape ----------------------
-
-/** The live 618 record's reviewed head H0 and base B0 (PR 1071). */
-const LIVE_618 = liveRecord(618);
-const H0 = LIVE_618.target.head!;
-const B0 = LIVE_618.target.base;
-/** The mechanical refresh of H0 onto the moved tip T. */
-const REFRESHED = "6181618161816181618161816181618161816181" as GitSha;
-const MOVED_TIP = "7181718171817181718171817181718171817181" as GitSha;
-const DIGEST = "d".repeat(64);
-
-/**
- * 618 after the runtime's carried refresh: its refreshed head H1 published
- * on T at `work`, the runtime waiting (`backoff`) for this merge, its seven
- * rounds spent and its latest completed review the clean one of H0 on B0.
- */
-function refreshed618(overrides: Record<string, unknown> = {}): WorkRecordV1 {
-  const preserved = LIVE_618.target.candidateState!.preserved!;
-  return parseWorkRecordV1({
-    ...structuredClone(LIVE_618),
-    nextStep: "work",
-    blocker: null,
-    wait: {
-      reason: "backoff",
-      since: Date.parse("2026-10-16T23:20:00Z"),
-      until: Date.parse("2026-10-16T23:25:00Z"),
-    },
-    target: {
-      ...LIVE_618.target,
-      head: REFRESHED,
-      base: MOVED_TIP,
-      candidateState: {
-        preserved: {
-          ...preserved,
-          head: REFRESHED,
-          base: MOVED_TIP,
-          operationKey: `base_refresh:1071:${H0}:${MOVED_TIP}`,
-        },
-        publishedHead: REFRESHED,
-      },
-    },
-    ...overrides,
-  });
-}
-
-interface CarriedCallsV1 {
-  merges: { number: number; head: string; message: string | undefined }[];
-  compares: string[];
-}
-
-/** The surface options of a carried 618 the launcher may merge. */
-function carriedOptions(
-  record: WorkRecordV1,
-  receipts: readonly ReviewReceiptV1[],
-  calls: CarriedCallsV1,
-  overrides: Partial<LiveSurfaceOptionsV1> = {},
-  digests: { reviewed?: string | null; refreshed?: string | null } = {},
-): LiveSurfaceOptionsV1 {
-  const pr = record.target.pr!;
-  const issue = record.related.issueNumber!;
-  return {
-    tip: MOVED_TIP,
-    green: { [REFRESHED]: true },
-    pulls: { [pr]: openPull(record) },
-    afterMerge: { [pr]: mergedPull(record, MOVED_TIP) },
-    tasks: { [issue]: liveTask(issue, receipts) },
-    advanced: (base, tip) => base === MOVED_TIP && tip === REFRESHED,
-    extra: {
-      comparePatchDigest: (base: string, head: string) => {
-        calls.compares.push(`${base}...${head}`);
-        if (base === B0 && head === H0) {
-          return Promise.resolve(
-            digests.reviewed === undefined ? DIGEST : digests.reviewed,
-          );
-        }
-        if (base === MOVED_TIP && head === REFRESHED) {
-          return Promise.resolve(
-            digests.refreshed === undefined ? DIGEST : digests.refreshed,
-          );
-        }
-        return Promise.resolve(null);
-      },
-      listHeadRuns: (head: string) =>
-        Promise.resolve([{
-          id: 4242,
-          headSha: head,
-          status: "completed",
-          conclusion: "success",
-          runAttempt: 1,
-          createdAt: T0,
-        } as HostedAutonomyHeadRunV1]),
-    },
-    ...overrides,
-  };
-}
-
-/** One delivery pass over a carried 618 and the surface built for it. */
-async function carriedPass(
-  name: string,
-  record: WorkRecordV1 = refreshed618(),
-  overrides: Partial<LiveSurfaceOptionsV1> = {},
-  digests: { reviewed?: string | null; refreshed?: string | null } = {},
-  receipts: readonly ReviewReceiptV1[] = liveReceipts(LIVE_618),
-) {
-  const calls: CarriedCallsV1 = { merges: [], compares: [] };
-  const { surface } = liveSurface(
-    carriedOptions(record, receipts, calls, overrides, digests),
-  );
-  const merge = surface.merge.bind(surface);
-  surface.merge = (number: number, head: string, message?: string) => {
-    calls.merges.push({ number, head, message });
-    return merge(number, head, message);
-  };
-  const rig = await liveRig(
-    `carried-${name}`,
-    liveSnapshot([record], [...receipts]),
-    surface,
-  );
-  try {
-    const { result, actions } = await deliveryOnly(rig);
-    return { result, actions, calls, after: await readSnapshot(rig) };
-  } finally {
-    await Deno.remove(rig.tmp, { recursive: true });
-  }
-}
+// (`hosted-autonomy-carried-fixtures.ts`)
 
 Deno.test("carried merge (launcher): the refreshed head merges at exactly its tip under the carried receipt, the proof in the commit message and action line, the record booked", async () => {
   const record = refreshed618();
@@ -274,10 +154,16 @@ Deno.test("carried merge (launcher): the refreshed head merges at exactly its ti
   );
   const { result, actions, calls, after } = await carriedPass("merge", record);
   assert.equal(result?.status, "applied", JSON.stringify(actions));
+  // The exact proof reads the trees; the rendered diffs are evidence only.
+  assert.deepEqual(calls.trees, [
+    `${B0}...${H0}`,
+    `${MOVED_TIP}...${REFRESHED}`,
+  ]);
   assert.deepEqual(calls.compares, [
     `${B0}...${H0}`,
     `${MOVED_TIP}...${REFRESHED}`,
   ]);
+  const changes = await treeChangesDigest(REVIEWED_CHANGES);
   assert.equal(calls.merges.length, 1);
   assert.equal(calls.merges[0].number, 1071);
   assert.equal(calls.merges[0].head, REFRESHED);
@@ -286,15 +172,16 @@ Deno.test("carried merge (launcher): the refreshed head merges at exactly its ti
     const line of [
       `reviewed head ${H0} on base ${B0}, review receipt ${receipt.id}`,
       `refreshed head ${REFRESHED} on base ${MOVED_TIP} (a strict ancestor of the head)`,
-      `merge-base diff sha256 ${B0}...${H0} ${DIGEST}`,
-      `merge-base diff sha256 ${MOVED_TIP}...${REFRESHED} ${DIGEST}`,
+      `exact change set sha256 ${changes} (2 paths by path, mode and full blob id): ${B0}..${H0} equals ${MOVED_TIP}..${REFRESHED}`,
+      `merge-base diff sha256 ${B0}...${H0} ${DIGEST} (evidence only)`,
+      `merge-base diff sha256 ${MOVED_TIP}...${REFRESHED} ${DIGEST} (evidence only)`,
       `required CI on ${REFRESHED}: every check run completed successfully; workflow runs 4242`,
     ]
   ) assert.ok(message.includes(line), `${line}\n${message}`);
   assert.doesNotMatch(message, /@|#\d/);
   const merged = mergeSha(1071);
   assert.deepEqual(actions, [
-    `delivery:${record.id}:carried_merge:pr=1071:reviewed=${H0}@${B0}:receipt=${receipt.id}:refreshed=${REFRESHED}@${MOVED_TIP}:patch=${DIGEST}/${DIGEST}:ci=4242`,
+    `delivery:${record.id}:carried_merge:pr=1071:reviewed=${H0}@${B0}:receipt=${receipt.id}:refreshed=${REFRESHED}@${MOVED_TIP}:changes=${changes}/2:patch=${DIGEST}/${DIGEST}:ci=4242`,
     `merge:${record.id}:pr=1071:sha=${merged}`,
     `request:${record.id}:${after.releaseRequests[0].id}`,
   ]);
@@ -328,7 +215,7 @@ Deno.test("carried merge (launcher): nothing short of the full proof merges", as
     string,
     WorkRecordV1,
     Partial<LiveSurfaceOptionsV1>,
-    { reviewed?: string | null; refreshed?: string | null },
+    CarriedTreesV1,
     string,
   ][] = [
     ["tip moved", refreshed618(), { tip: SHA2 }, {}, "carried_base_moved"],
@@ -350,11 +237,11 @@ Deno.test("carried merge (launcher): nothing short of the full proof merges", as
       "patch changed",
       refreshed618(),
       {},
-      { refreshed: "e".repeat(64) },
+      { refreshed: [REVIEWED_CHANGES[0]] },
       "carried_patch_changed",
     ],
     [
-      "diff unavailable",
+      "trees unavailable",
       refreshed618(),
       {},
       { refreshed: null },
@@ -395,13 +282,15 @@ Deno.test("carried merge (launcher): nothing short of the full proof merges", as
       "carried_awaiting_runtime",
     ],
   ];
-  for (const [name, record, overrides, digests, refusal] of cases) {
+  for (const [name, record, overrides, trees, refusal] of cases) {
     await t.step(name, async () => {
       const { result, actions, calls, after } = await carriedPass(
         name.replaceAll(" ", "-"),
         record,
         overrides,
-        digests,
+        {} as CarriedDigestsV1,
+        liveReceipts(LIVE_618),
+        trees,
       );
       assert.equal(result, null, JSON.stringify(actions));
       assert.deepEqual(calls.merges, [], name);

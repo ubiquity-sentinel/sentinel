@@ -99,6 +99,8 @@ export class QueueGithub extends FakeGithub {
   readonly preparedKeys: string[] = [];
   /** Each prepared head: the head it was made from and the tip it holds. */
   readonly refreshedFrom = new Map<string, { from: GitSha; onto: GitSha }>();
+  /** When each prepared head was made (its default CI completes 1 s later). */
+  readonly refreshedAt = new Map<string, number>();
   refreshes = 0;
   /** The runtime port answers as on live ai.ubq.fi (no branch rules). */
   livePolicy = false;
@@ -124,6 +126,7 @@ export class QueueGithub extends FakeGithub {
           from: request.expectedHead,
           onto: request.expectedBase,
         });
+        this.refreshedAt.set(prepared, this.clock.now());
       }
       return Promise.resolve(portOk(prepared));
     };
@@ -156,16 +159,25 @@ export class QueueGithub extends FakeGithub {
     return count;
   }
 
-  /** Every check on `head` completed successfully (and there is one). */
-  private green(head: string): boolean {
-    const checks = this.checksByHead.get(head) ?? [{
+  /**
+   * The checks of `head`: the scripted ones, else one green `validate` run
+   * that finished 1 s after the head was made (a refresh) or after T0.
+   */
+  private checksOf(head: string): GitHubCheckV1[] {
+    const madeAt = this.refreshedAt.get(head) ?? T0;
+    return this.checksByHead.get(head) ?? [{
       name: "validate",
       status: "completed" as const,
       conclusion: "success" as const,
       head: head as GitSha,
-      startedAt: T0,
-      completedAt: T0 + 1000,
+      startedAt: madeAt,
+      completedAt: madeAt + 1000,
     }];
+  }
+
+  /** Every check on `head` completed successfully (and there is one). */
+  private green(head: string): boolean {
+    const checks = this.checksOf(head);
     return checks.length > 0 &&
       checks.every((check) =>
         check.status === "completed" && check.conclusion === "success"
@@ -222,6 +234,20 @@ export class QueueGithub extends FakeGithub {
         Promise.resolve(
           this.changedPatch.has(head) ? "b".repeat(64) : "a".repeat(64),
         ),
+      // The exact change set git trees give: one reviewed path, its new blob
+      // different for a refreshed head scripted as carrying another patch,
+      // against the merge base the refresh holds (else the asked base).
+      mergeBaseTreeChanges: (base, head) =>
+        Promise.resolve({
+          mergeBase: this.refreshedFrom.get(head)?.onto ?? base,
+          changes: [{
+            path: "src/app.ts",
+            oldMode: "100644",
+            oldSha: "1".repeat(40),
+            newMode: "100644",
+            newSha: (this.changedPatch.has(head) ? "3" : "2").repeat(40),
+          }],
+        }),
       merge: (number, head, message) => {
         const pr = this.pulls.get(number);
         if (
@@ -256,17 +282,7 @@ export class QueueGithub extends FakeGithub {
   }
 
   override readChecks(head: GitSha) {
-    return Promise.resolve(portOk({
-      head,
-      checks: this.checksByHead.get(head) ?? [{
-        name: "validate",
-        status: "completed" as const,
-        conclusion: "success" as const,
-        head,
-        startedAt: T0,
-        completedAt: T0 + 1000,
-      }],
-    }));
+    return Promise.resolve(portOk({ head, checks: this.checksOf(head) }));
   }
 
   private pull(pr: PullV1): GitHubPullRequestV1 {

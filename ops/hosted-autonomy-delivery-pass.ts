@@ -28,6 +28,7 @@ import {
   carriedMergeGate,
   carriedMergeReceipt,
   carriedPatchRefusal,
+  carriedRecordAwaited,
   carriedRequestBindsDelivery,
   latestAuthorizingReceipt,
   parkedStep,
@@ -57,6 +58,8 @@ import {
   isGatewayVpsRepository,
 } from "../src/repair/vps-delivery.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
+import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "../src/repair/review-round-cap.ts";
+import { markBlocked } from "../src/repair/transitions.ts";
 import { runHostedCiRerunPass } from "./hosted-autonomy-ci-rerun.ts";
 import { ciFirstApprovalEligible } from "./hosted-autonomy-ci-first.ts";
 
@@ -200,9 +203,10 @@ export async function runHostedDeliveryPass(
     const carried = boundReviewReceipts(snapshot, record).length === 0;
     if (carried && carriedMergeReceipt(snapshot, record) === null) continue;
     // The runtime proves the carried patch from git and the refreshed head's
-    // green CI, then waits (`backoff`) for this merge; a merged pull it waits
-    // on (`unavailable`) is adopted. Anything else is still the runtime's.
-    if (carried && !carriedMergeAwaited(record)) {
+    // green CI, then holds the exact carried-merge marker for this merge; a
+    // merged pull it waits on (`unavailable`) is adopted. Anything else is
+    // still the runtime's.
+    if (carried && !carriedRecordAwaited(record)) {
       actions.push(`delivery:${record.id}:carried_awaiting_runtime`);
       continue;
     }
@@ -277,7 +281,7 @@ export async function runHostedDeliveryPass(
         actions.push(`delivery:${record.id}:merge_deferred`);
         continue;
       }
-      if (carried && record.wait?.reason !== "backoff") {
+      if (carried && !carriedMergeAwaited(record)) {
         actions.push(`delivery:${record.id}:carried_awaiting_runtime`);
         continue;
       }
@@ -356,6 +360,27 @@ export async function runHostedDeliveryPass(
           continue;
         }
       }
+      // The tip is re-read UNCACHED as the last read before the merge (round-2
+      // recheck P3): the gates above read it once, before up to a dozen
+      // reads, and GitHub's merge API guards only the head, so a tip that
+      // moved meanwhile would merge a tree no CI ran on. A carried merge needs
+      // exactly its refreshed head's base; any other merge the tip its gates
+      // admitted. A moved tip refreshes this pass's view and merges nothing.
+      const tipNow = await readTip(scope);
+      if (tipNow !== (carried ? base : baseTip)) {
+        deliveryTips.set(scope.key, tipNow);
+        tipGreen.delete(scope.key);
+        actions.push(
+          `delivery:${record.id}:${
+            tipNow === null
+              ? "base_unreadable"
+              : carried
+              ? "carried_base_moved"
+              : "base_moved"
+          }`,
+        );
+        continue;
+      }
       if (proofLine !== null) actions.push(proofLine);
       let merged: { merged: boolean; sha: string | null } | null;
       mergeCalled = true;
@@ -410,6 +435,53 @@ export async function runHostedDeliveryPass(
     const mergedThisPass = revision !== null;
     if (revision === null) revision = pull.mergeCommitSha;
     if (revision !== pull.mergeCommitSha) continue;
+    // A carried merge is booked only when it landed exactly on the refreshed
+    // head's own base, so the merged tree is the one its CI tested. A merge
+    // that landed off that tip (the tip moved between the re-read and the
+    // merge) is reported and, on the Gateway, parked precisely instead.
+    if (
+      carried &&
+      (pull.parents.length !== 2 || pull.parents[0] !== base ||
+        pull.parents[1] !== head)
+    ) {
+      actions.push(
+        `delivery:${record.id}:carried_merged_off_tip:sha=${revision}`,
+      );
+      // A self record is never rewritten here: its runtime parks it once its
+      // bounded wait for the delivery record ends.
+      if (!gateway) continue;
+      const now = deps.clock.now();
+      if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
+        return skipped("clock_invalid", observedHead, actions);
+      }
+      let parkedRecord: HostedAutonomyRecordV1;
+      try {
+        parkedRecord = markBlocked(
+          record,
+          "other",
+          `${REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX}merge ${revision} has parents ${
+            pull.parents.join(",") || "none"
+          }, not ${base},${head}`,
+          now,
+        );
+      } catch {
+        return skipped("snapshot_invalid", observedHead, actions);
+      }
+      return await writeDeliveryState(
+        context,
+        {
+          ...snapshot,
+          stateHead: observedHead,
+          sequence: snapshot.sequence + 1,
+          updatedAt: now,
+          work: snapshot.work.map((item) =>
+            item.id === record.id ? parkedRecord : item
+          ),
+        },
+        `park:${record.id}:carried_merged_off_tip`,
+        null,
+      );
+    }
     if (
       !baseAndHeadAreMerged(pull, base, head) || !pull.revisionOnBaseBranch
     ) {
@@ -503,9 +575,9 @@ export async function runHostedDeliveryPass(
       actions.push(`delivery:${record.id}:already_recorded`);
       continue;
     }
-    let next: RepairStateSnapshotV1;
-    try {
-      next = parseRepairStateSnapshotV1({
+    return await writeDeliveryState(
+      context,
+      {
         ...snapshot,
         stateHead: observedHead,
         sequence: snapshot.sequence + 1,
@@ -523,48 +595,68 @@ export async function runHostedDeliveryPass(
             value: row,
           })),
         ),
-      });
-    } catch {
-      return skipped("snapshot_invalid", observedHead, actions);
-    }
-    let write: PortResultV1<StateWriteResultV1> | null;
-    try {
-      write = await deps.state.writeRepair(next, observedHead as GitSha);
-    } catch {
-      return failed("write_unavailable", observedHead, actions);
-    }
-    if (write === null || !write.ok) {
-      return failed("write_unavailable", observedHead, actions);
-    }
-    if (write.value.status === "conflict") {
-      return skipped("write_conflict", observedHead, actions);
-    }
-    if (write.value.status === "ambiguous") {
-      return failed("write_ambiguous", observedHead, actions);
-    }
-    const readback = await readRepairSafely(deps.state);
-    if (
-      readback === null || !readback.ok ||
-      readback.value.status !== "found" ||
-      readback.value.head !== write.value.head ||
-      canonicalStringify(readback.value.snapshot) !== canonicalStringify(next)
-    ) {
-      return failed("readback_unverified", observedHead, actions);
-    }
-    actions.push(`request:${record.id}:${request.id}`);
-    revisions.push(revision);
-    return {
-      kind: "hosted_autonomy",
-      status: "applied",
-      reason: actions.some((action) => action.startsWith("retry:"))
-        ? "retried"
-        : "applied",
-      beforeHead: observedHead,
-      appliedHead: write.value.head,
-      actions,
-      revisions,
-    };
+      },
+      `request:${record.id}:${request.id}`,
+      revision,
+    );
   }
 
   return null;
+}
+
+/**
+ * The delivery pass's one state write (a booked delivery, or the precise park
+ * of a carried merge that landed off its tip): parsed, written against the
+ * observed head and read back byte for byte; `done` is reported once it is.
+ */
+async function writeDeliveryState(
+  context: HostedAutonomyPassContextV1,
+  draft: unknown,
+  done: string,
+  revision: string | null,
+): Promise<HostedAutonomyResultV1> {
+  const { deps, actions, revisions, observedHead } = context;
+  let next: RepairStateSnapshotV1;
+  try {
+    next = parseRepairStateSnapshotV1(draft);
+  } catch {
+    return skipped("snapshot_invalid", observedHead, actions);
+  }
+  let write: PortResultV1<StateWriteResultV1> | null;
+  try {
+    write = await deps.state.writeRepair(next, observedHead as GitSha);
+  } catch {
+    return failed("write_unavailable", observedHead, actions);
+  }
+  if (write === null || !write.ok) {
+    return failed("write_unavailable", observedHead, actions);
+  }
+  if (write.value.status === "conflict") {
+    return skipped("write_conflict", observedHead, actions);
+  }
+  if (write.value.status === "ambiguous") {
+    return failed("write_ambiguous", observedHead, actions);
+  }
+  const readback = await readRepairSafely(deps.state);
+  if (
+    readback === null || !readback.ok ||
+    readback.value.status !== "found" ||
+    readback.value.head !== write.value.head ||
+    canonicalStringify(readback.value.snapshot) !== canonicalStringify(next)
+  ) {
+    return failed("readback_unverified", observedHead, actions);
+  }
+  actions.push(done);
+  if (revision !== null) revisions.push(revision);
+  return {
+    kind: "hosted_autonomy",
+    status: "applied",
+    reason: actions.some((action) => action.startsWith("retry:"))
+      ? "retried"
+      : "applied",
+    beforeHead: observedHead,
+    appliedHead: write.value.head,
+    actions,
+    revisions,
+  };
 }

@@ -23,9 +23,11 @@ import {
   type ReleaseRequestV1,
 } from "../src/contracts/release.ts";
 import {
+  isCarriedMergeMarker,
   latestPullReview,
   reviewedIdentity,
 } from "../src/repair/carried-review.ts";
+import { holdsDeliveryLine, lineBefore } from "../src/repair/delivery-queue.ts";
 import { releaseRequestId } from "../src/repair/keys.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import { reviewAuthorizesMerge } from "../src/repair/review-gate.ts";
@@ -47,9 +49,14 @@ import {
   HOSTED_AUTONOMY_SPENT_DELIVERY_BLOCKERS,
   HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
   hostedIssueKey,
+  hostedRepositoryKey,
   isHostedSelf,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
+import {
+  sameTreeChanges,
+  treeChangesDigest,
+} from "./hosted-autonomy-github-trees.ts";
 import type {
   HostedAutonomyGitHubV1,
   HostedAutonomyPullV1,
@@ -477,30 +484,58 @@ export async function preMergeGate(input: {
  * advances every five minutes so no record is starved by the ones ordered
  * before it. A record an earlier write of this pass settled (`settled`, see
  * hosted-autonomy-continuation.ts) is left to the next pass and takes no slot.
+ *
+ * A carried head the runtime proved and awaits (`carriedRecordAwaited`) is
+ * read on EVERY pass while it holds its repository's delivery line (round-2
+ * recheck P2: in the rotating window a proven green head waited up to two
+ * hours at live sizes, holding the line, and every tip move in that time
+ * discarded its green CI and spent one of its refreshes). Bounded: at most
+ * the line's front such record per self or Gateway repository, on top of the
+ * window and taking none of its slots.
  */
 export function spentReadWindow(
   snapshot: RepairStateSnapshotV1,
   now: number,
   settled?: ReadonlySet<string>,
 ): Set<string> {
-  const ids = snapshot.work.filter((record) =>
+  const readable = snapshot.work.filter((record) =>
     settled?.has(record.id) !== true &&
     deliveryEligible(record, snapshot) && parkedStep(record) &&
     spentDeliveryAdmissible(record, snapshot) &&
     (boundReviewReceipts(snapshot, record).length > 0 ||
-      (carriedMergeAwaited(record) &&
+      (carriedRecordAwaited(record) &&
         carriedMergeReceipt(snapshot, record) !== null))
-  ).map((record) => record.id);
-  if (ids.length <= HOSTED_AUTONOMY_SPENT_READS_PER_PASS) return new Set(ids);
+  );
+  const front = new Map<string, HostedAutonomyRecordV1>();
+  for (const record of readable) {
+    if (
+      boundReviewReceipts(snapshot, record).length > 0 ||
+      !carriedRecordAwaited(record) ||
+      (!isHostedSelf(record.repository) &&
+        !isGatewayVpsRepository(record.repository)) ||
+      !holdsDeliveryLine(snapshot, record, now)
+    ) continue;
+    const key = hostedRepositoryKey(record.repository);
+    const held = front.get(key);
+    if (held === undefined || lineBefore(record, held)) front.set(key, record);
+  }
+  const exempt = new Set([...front.values()].map((record) => record.id));
+  const ids = readable.map((record) => record.id).filter((id) =>
+    !exempt.has(id)
+  );
+  if (ids.length <= HOSTED_AUTONOMY_SPENT_READS_PER_PASS) {
+    return new Set([...exempt, ...ids]);
+  }
   const offset = Number.isSafeInteger(now) && now >= 0
     ? Math.floor(now / 300_000) % ids.length
     : 0;
-  return new Set(
-    [...ids.slice(offset), ...ids.slice(0, offset)].slice(
+  return new Set([
+    ...exempt,
+    ...[...ids.slice(offset), ...ids.slice(0, offset)].slice(
       0,
       HOSTED_AUTONOMY_SPENT_READS_PER_PASS,
     ),
-  );
+  ]);
 }
 
 // ---- carried merge (owner decision 2026-10-16 (2), option (b)) -----------
@@ -511,10 +546,13 @@ export function spentReadWindow(
 // merge it: its merge port requires enforced strict checks, and live
 // ai.ubq.fi has no branch rules, so only this pass merges ai.ubq.fi (round-2
 // recheck P1). Here H1 merges at exactly T under H0's completed review only
-// when the pull request's patch is byte-identical, re-derived from GitHub's
-// own merge-base diffs (B0...H0 and T...H1), T is a strict ancestor of H1 (the
-// merge result is H1's own tree, which its green CI tested) and every
-// ordinary spent gate holds.
+// while the runtime holds its exact carried-merge marker, when the pull
+// request's patch is exactly the reviewed one (equal change sets of
+// merge-base(B0, H0) -> H0 and T -> H1 by path, mode and full blob id, read
+// from GitHub's Git trees), T is a strict ancestor of H1 and still the tip
+// immediately before the merge (the merge result is H1's own tree, which its
+// green CI tested; a merge commit whose parents are not exactly [T, H1] is
+// never booked) and every ordinary spent gate holds.
 
 /**
  * The carried merge candidate shape (pure; it authorizes nothing): a spent
@@ -550,13 +588,25 @@ export function carriedMergeReceipt(
 }
 
 /**
- * The runtime has proved a carried head and waits for this pass: `backoff`
- * for the merge, `unavailable` for the bookkeeping of a merged pull request
- * (which this pass adopts). Any other state is still the runtime's.
+ * The runtime has proved a carried head and waits for this pass's merge: the
+ * exact carried-merge marker at `work` (`isCarriedMergeMarker`), which only
+ * the runtime's carried step writes, after its git proof, the head's green CI
+ * and the task re-read (round-2 recheck P3: any `backoff` at `work` used to
+ * count, the CI-first red-base hold of a model-written CI fix included). No
+ * other state is ever merged.
  */
 export function carriedMergeAwaited(record: HostedAutonomyRecordV1): boolean {
-  return record.wait?.reason === "backoff" ||
-    record.wait?.reason === "unavailable";
+  return record.nextStep === "work" && isCarriedMergeMarker(record.wait);
+}
+
+/**
+ * The runtime waits on this pass: for its merge (`carriedMergeAwaited`), or,
+ * once the pull request merged, for the bookkeeping (`unavailable`), which
+ * this pass adopts only from its own verified merge and the exact proof.
+ */
+export function carriedRecordAwaited(record: HostedAutonomyRecordV1): boolean {
+  return carriedMergeAwaited(record) ||
+    (record.nextStep === "work" && record.wait?.reason === "unavailable");
 }
 
 /**
@@ -620,8 +670,14 @@ export interface CarriedMergeProofV1 {
   head: string;
   base: string;
   receipt: string;
-  reviewedPatch: string;
-  refreshedPatch: string;
+  /** The merge base GitHub names for the reviewed side (`B0...H0`). */
+  reviewedMergeBase: string;
+  /** SHA-256 of the exact change set both sides share, and its size. */
+  changes: string;
+  paths: number;
+  /** Rendered merge-base diff digests, evidence only (null: unrendered). */
+  reviewedPatch: string | null;
+  refreshedPatch: string | null;
   /** Completed successful workflow runs on the head (null: not listed). */
   runs: readonly number[] | null;
 }
@@ -631,6 +687,11 @@ function plainId(id: string): string {
   return /^[A-Za-z0-9._:-]{1,256}$/.test(id) ? id : "unprintable";
 }
 
+/** A rendered diff digest as evidence text. */
+function rendered(digest: string | null): string {
+  return digest ?? "unrendered";
+}
+
 /** The pass's action line for one carried merge it is about to make. */
 export function carriedMergeAction(
   record: HostedAutonomyRecordV1,
@@ -638,7 +699,9 @@ export function carriedMergeAction(
 ): string {
   return `delivery:${record.id}:carried_merge:pr=${record.target.pr}:reviewed=${proof.reviewedHead}@${proof.reviewedBase}:receipt=${
     plainId(proof.receipt)
-  }:refreshed=${proof.head}@${proof.base}:patch=${proof.reviewedPatch}/${proof.refreshedPatch}:ci=${
+  }:refreshed=${proof.head}@${proof.base}:changes=${proof.changes}/${proof.paths}:patch=${
+    rendered(proof.reviewedPatch)
+  }/${rendered(proof.refreshedPatch)}:ci=${
     proof.runs === null ? "unlisted" : proof.runs.join(",") || "none"
   }`;
 }
@@ -651,17 +714,40 @@ export function carriedMergeEvidence(proof: CarriedMergeProofV1): string {
       plainId(proof.receipt)
     }`,
     `refreshed head ${proof.head} on base ${proof.base} (a strict ancestor of the head)`,
-    `merge-base diff sha256 ${proof.reviewedBase}...${proof.reviewedHead} ${proof.reviewedPatch}`,
-    `merge-base diff sha256 ${proof.base}...${proof.head} ${proof.refreshedPatch}`,
+    `exact change set sha256 ${proof.changes} (${proof.paths} paths by path, mode and full blob id): ${proof.reviewedMergeBase}..${proof.reviewedHead} equals ${proof.base}..${proof.head}`,
+    `merge-base diff sha256 ${proof.reviewedBase}...${proof.reviewedHead} ${
+      rendered(proof.reviewedPatch)
+    } (evidence only)`,
+    `merge-base diff sha256 ${proof.base}...${proof.head} ${
+      rendered(proof.refreshedPatch)
+    } (evidence only)`,
     `required CI on ${proof.head}: every check run completed successfully; workflow runs ${
       proof.runs === null ? "unlisted" : proof.runs.join(", ") || "none"
     }`,
   ].join("\n");
 }
 
+/** One rendered diff digest for the evidence line; null when unrendered. */
+async function renderedDigest(
+  surface: HostedAutonomyGitHubV1,
+  base: string,
+  head: string,
+): Promise<string | null> {
+  try {
+    const digest = await surface.comparePatchDigest?.(base, head) ?? null;
+    return digest !== null && /^[0-9a-f]{64}$/.test(digest) ? digest : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * The patch proof from GitHub's own merge-base diffs: equal digests of
- * `B0...H0` and `T...H1` (both rendered by the same endpoint), or the refusal.
+ * The exact patch proof (round-2 recheck P3): the full sets of (path, old
+ * mode, old blob id, new mode, new blob id) of merge-base(B0, H0) -> H0 and
+ * T -> H1 are equal, read from GitHub's Git trees (`mergeBaseTreeChanges`),
+ * and T is the refreshed side's own merge base. GitHub's rendered diffs are
+ * read only for the evidence line. A tree GitHub truncates, or any failed
+ * read, is no proof.
  */
 export async function carriedPatchRefusal(
   surface: HostedAutonomyGitHubV1,
@@ -669,42 +755,65 @@ export async function carriedPatchRefusal(
   head: string,
   base: string,
 ): Promise<
-  | { refusal: "carried_proof_unavailable" | "carried_patch_changed" }
-  | { refusal: null; reviewedPatch: string; refreshedPatch: string }
+  | {
+    refusal:
+      | "carried_proof_unavailable"
+      | "carried_patch_changed"
+      | "carried_not_on_tip";
+  }
+  | {
+    refusal: null;
+    reviewedMergeBase: string;
+    changes: string;
+    paths: number;
+    reviewedPatch: string | null;
+    refreshedPatch: string | null;
+  }
 > {
-  if (surface.comparePatchDigest === undefined) {
+  if (surface.mergeBaseTreeChanges === undefined) {
     return { refusal: "carried_proof_unavailable" };
   }
-  let reviewedPatch: string | null = null;
-  let refreshedPatch: string | null = null;
+  const reviewedBase = receipt.pullRequest.base;
+  const reviewedHead = receipt.pullRequest.head;
+  let reviewed = null;
+  let refreshed = null;
   try {
-    reviewedPatch = await surface.comparePatchDigest(
-      receipt.pullRequest.base,
-      receipt.pullRequest.head,
-    );
-    refreshedPatch = await surface.comparePatchDigest(base, head);
+    reviewed = await surface.mergeBaseTreeChanges(reviewedBase, reviewedHead);
+    refreshed = reviewed === null
+      ? null
+      : await surface.mergeBaseTreeChanges(base, head);
   } catch {
     return { refusal: "carried_proof_unavailable" };
   }
-  if (
-    reviewedPatch === null || refreshedPatch === null ||
-    !/^[0-9a-f]{64}$/.test(reviewedPatch)
-  ) return { refusal: "carried_proof_unavailable" };
-  return reviewedPatch === refreshedPatch
-    ? { refusal: null, reviewedPatch, refreshedPatch }
-    : { refusal: "carried_patch_changed" };
+  if (reviewed === null || refreshed === null) {
+    return { refusal: "carried_proof_unavailable" };
+  }
+  if (refreshed.mergeBase !== base) return { refusal: "carried_not_on_tip" };
+  if (!sameTreeChanges(reviewed.changes, refreshed.changes)) {
+    return { refusal: "carried_patch_changed" };
+  }
+  return {
+    refusal: null,
+    reviewedMergeBase: reviewed.mergeBase,
+    changes: await treeChangesDigest(reviewed.changes),
+    paths: reviewed.changes.length,
+    reviewedPatch: await renderedDigest(surface, reviewedBase, reviewedHead),
+    refreshedPatch: await renderedDigest(surface, base, head),
+  };
 }
 
 /**
  * Every gate between the pull read and the carried merge except the final
- * task re-read and opt-out, in order: the tip is exactly the refreshed head's
- * base T; the spent gates (the source issue open, a Gateway request that will
- * bind the carried receipt); the foreign base ref; green required CI on the
- * refreshed head itself; T a strict ancestor of that head (so the merge
- * result is the head's own CI-tested tree); and the patch proof. Returns the
- * proof (with the head's green workflow runs, read for evidence only) or the
- * refusal. A carried merge is made only for the self scope and the Gateway,
- * whose bookkeeping this pass writes.
+ * task re-read, the opt-out and the uncached tip re-read the pass makes
+ * immediately before the merge, in order: the pass's tip is exactly the
+ * refreshed head's base T; the spent gates (the source issue open, a Gateway
+ * request that will bind the carried receipt); the foreign base ref; green
+ * required CI on the refreshed head itself; T a strict ancestor of that head
+ * (so the merge result is the head's own CI-tested tree); and the exact patch
+ * proof. Returns the proof (with the head's green workflow runs and the
+ * rendered diff digests, read for evidence only) or the refusal. A carried
+ * merge is made only for the self scope and the Gateway, whose bookkeeping
+ * this pass writes.
  */
 export async function carriedMergeGate(input: {
   context: HostedAutonomyPassContextV1;
@@ -762,6 +871,9 @@ export async function carriedMergeGate(input: {
       head,
       base,
       receipt: receipt.id,
+      reviewedMergeBase: patch.reviewedMergeBase,
+      changes: patch.changes,
+      paths: patch.paths,
       reviewedPatch: patch.reviewedPatch,
       refreshedPatch: patch.refreshedPatch,
       runs,

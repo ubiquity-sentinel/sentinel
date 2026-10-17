@@ -12,10 +12,11 @@
  * patch is byte-identical (`proveCarriedPatch`: the merge-base patch of H0
  * against B0 equals that of H1 against T, binary-safe, by SHA-256), re-derived
  * from git on every step; once H1's OWN required CI is green and the task is
- * still accepted, the record waits at `work` for the launcher's delivery pass,
- * which re-derives the proof itself and merges H1 at exactly T
- * (`ops/hosted-autonomy-spent-delivery.ts`). The runtime never merges a
- * carried head: its merge port refuses every merge on a branch without
+ * still accepted, the record holds the exact carried-merge marker at `work`
+ * (`carriedMergeMarker`) for the launcher's delivery pass, which merges only
+ * under that marker, re-derives the exact proof itself and merges H1 at
+ * exactly T (`ops/hosted-autonomy-spent-delivery.ts`). The runtime never
+ * merges a carried head: its merge port refuses every merge on a branch without
  * enforced strict checks (live ai.ubq.fi has no rules), so the launcher, which
  * merges every ai.ubq.fi delivery, makes this one too (round-2 recheck P1).
  *
@@ -25,8 +26,12 @@
  * `CARRIED_REFRESH_LIMIT` refreshes per reviewed head, counted from git (the
  * first-parent distance from H0, so no state field and no reset by a
  * refresh); every wait (CI, proof, a pull request still reporting the
- * refreshed-from head, the launcher's merge or its delivery record) keeps its
- * `since` and parks after `CARRIED_WAIT_BOUND_MS` with a precise blocker. A
+ * refreshed-from head or the launcher's delivery record) keeps its `since`
+ * and parks after `CARRIED_WAIT_BOUND_MS` with a precise blocker, and the
+ * carried-merge marker, which restarts on every poll, parks that long after
+ * H1's own CI completed. A legacy record whose final round is open and whose
+ * red head on a moved base is not the candidate's own failure parks with the
+ * non-correctable unattributed CI blocker (`holdUncorrectableLegacyHead`). A
  * refresh conflict keeps the refresh's own terminal `base refresh has
  * conflicts at <T>` block; a differing patch, a red H1, the refresh limit or a
  * stalled wait parks under the ceiling prefix. Nothing is ever charged here.
@@ -47,11 +52,17 @@ import {
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
 import {
+  carriedMergeMarker,
   cleanReview,
   latestPullReview,
   reviewedIdentity,
 } from "./carried-review.ts";
-import { ciCheckLabels, failedChecks, latestChecks } from "./ci-rejection.ts";
+import {
+  ciCheckLabels,
+  failedChecks,
+  latestChecks,
+  unattributedDetail,
+} from "./ci-rejection.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { decideCiGate } from "./loop-checks.ts";
@@ -61,7 +72,10 @@ import {
 } from "./loop-ci-correction.ts";
 import { deliveryQueueDeferral } from "./loop-delivery-queue.ts";
 import { releaseRequestMatchesDelivery } from "./loop-records.ts";
-import { parkAtReviewRoundCeiling } from "./loop-review-round-cap.ts";
+import {
+  legacyCutoff,
+  parkAtReviewRoundCeiling,
+} from "./loop-review-round-cap.ts";
 import { persistWork } from "./loop-state.ts";
 import {
   readDeliveryTaskContext,
@@ -74,6 +88,7 @@ import type {
 } from "./loop-types.ts";
 import { reviewAuthorizesMerge, taskAcceptanceRefusal } from "./review-gate.ts";
 import {
+  legacyFinalRoundOpen,
   REVIEW_ROUND_CEILING_BASE_MOVED,
   REVIEW_ROUND_CEILING_CARRIED_CI_FAILED_PREFIX,
   REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX,
@@ -196,6 +211,15 @@ export async function spentOnMovedBase(
     // blocker (no base read, nothing charged): the caller already offered an
     // open legacy final round its CI fix (`correctFailedHeadBeforeRefresh`),
     // and a spent head is never refreshed or re-armed on a red base.
+    if (legacyFinalRoundOpen(context.snapshot, record, legacyCutoff(context))) {
+      const held = await holdUncorrectableLegacyHead(
+        deps,
+        context,
+        record,
+        observed.value.checks,
+      );
+      if (held !== null) return held;
+    }
     return persistWork(
       deps,
       context,
@@ -231,6 +255,50 @@ export async function spentOnMovedBase(
   return deliveryQueueDeferral(deps, context, record, observedBase);
 }
 
+/**
+ * A legacy record whose final round is open, at the ceiling on a moved base,
+ * on a red head its own change did not break (round-2 recheck P3: the red
+ * reviewed base, a base check still running, or no usable base evidence).
+ * The generic `CI checks failed: ...` blocker is the launcher's correction
+ * rule's: it re-admitted the record as a CI correction on every pass, and
+ * `correctFailedHeadBeforeRefresh` declined the fix every time (no candidate
+ * attribution), so each pass took a correction slot and nothing moved. A base
+ * check still running is awaited instead (bounded, uncharged, at `delivery`),
+ * and every other such failure parks with the runtime's non-correctable
+ * `CI checks failed without base evidence: ...` blocker, which only the
+ * launcher's green rule re-admits (the class keeps it: `CI_RED_PREFIXES`).
+ * Null for a failure the candidate caused (or one no longer observed): the
+ * caller keeps the generic blocker the correction rule owns.
+ */
+async function holdUncorrectableLegacyHead(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  checks: readonly GitHubCheckV1[],
+): Promise<StepResultV1 | null> {
+  const observed = await observeHeadFailure(deps, record);
+  if (observed === null) {
+    return { kind: "deferred", detail: "CI check observation unavailable" };
+  }
+  if (observed.kind === "clean" || observed.kind === "candidate") return null;
+  const detail = unattributedDetail(failedChecks(checks));
+  if (observed.kind === "base_pending") {
+    return boundedWait(
+      deps,
+      context,
+      record,
+      "ci_pending",
+      CHECK_POLL_MS,
+      detail,
+    );
+  }
+  return persistWork(
+    deps,
+    context,
+    markBlocked(record, "other", detail, deps.clock.now()),
+  );
+}
+
 /** The proof request of `record` (refreshed) against `receipt` (reviewed). */
 function proofRequest(
   record: WorkRecordV1,
@@ -262,8 +330,9 @@ function patchChangedDetail(
  * launcher's delivery record; still at the head this one was refreshed from:
  * a bounded wait for GitHub to report the push), the tip (moved again: one
  * more refresh through the line, at most `CARRIED_REFRESH_LIMIT`), the head's
- * own CI, the live task acceptance of the reviewed identity, and then a
- * bounded wait for the launcher's carried merge.
+ * own CI, the live task acceptance of the reviewed identity, and then the
+ * carried-merge marker for the launcher's merge, bounded from that CI's
+ * completion.
  */
 export async function executeCarriedDelivery(
   deps: RepairCycleDepsV1,
@@ -405,15 +474,43 @@ export async function executeCarriedDelivery(
     );
   }
   // Everything the merge needs holds: the launcher's delivery pass merges
-  // this exact head at this exact tip (it re-derives every gate itself).
-  return boundedWait(
+  // this exact head at this exact tip (it re-derives every gate itself), and
+  // only while the record carries the exact carried-merge marker. The marker
+  // restarts its `since` on every poll (that keeps its shape exact), so the
+  // bound counts from the refreshed head's own CI completion instead.
+  const now = deps.clock.now();
+  const green = ciCompletedAt(checks.value.checks);
+  if (green === null || now - green >= CARRIED_WAIT_BOUND_MS) {
+    return persistWork(
+      deps,
+      context,
+      markBlocked(
+        record,
+        "other",
+        `${REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX}${CARRIED_AWAITING_LAUNCHER_MERGE}`,
+        now,
+      ),
+    );
+  }
+  return persistWork(
     deps,
     context,
-    record,
-    "backoff",
-    CHECK_POLL_MS,
-    `${REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX}${CARRIED_AWAITING_LAUNCHER_MERGE}`,
+    setWait(record, carriedMergeMarker(now), now),
   );
+}
+
+/**
+ * When the head's required CI finished: the latest completion (or, for a
+ * check GitHub reported without one, its start) over the latest run of every
+ * check; null when no check carries either instant.
+ */
+function ciCompletedAt(checks: readonly GitHubCheckV1[]): number | null {
+  let at: number | null = null;
+  for (const check of latestChecks([...checks])) {
+    const instant = check.completedAt ?? check.startedAt;
+    if (instant !== null && (at === null || instant > at)) at = instant;
+  }
+  return at;
 }
 
 /**

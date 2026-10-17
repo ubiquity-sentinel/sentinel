@@ -6,10 +6,42 @@
  */
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
-import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
 import { sameRepositoryIdentity } from "./loop-records.ts";
 
 type Reviews = Pick<RepairStateSnapshotV1, "reviews">;
+
+/**
+ * Length of the carried-merge marker's wait (4 minutes). No other wait any
+ * runtime writes (generation 79 or 80) is a `backoff` this long: the CI fix
+ * marker is zero-length, the merge port's refusal backoff (at `delivery`) is
+ * `CHECK_POLL_MS` (5 minutes) and every red-base backoff ends at least
+ * `RED_BASE_RECHECK_MS` (30 minutes) after its start.
+ */
+export const CARRIED_MERGE_MARKER_MS = 4 * 60_000;
+
+/**
+ * The runtime's carried-merge marker: the only state in which the launcher's
+ * delivery pass may merge a carried head (round-2 recheck P3: any `backoff`
+ * at `work`, the CI-first red-base hold of a model-written CI fix included,
+ * used to read as "proved and awaiting"). The runtime writes it only once it has
+ * proved the carried patch from git, seen the refreshed head's own CI green
+ * on an unmoved tip and the live task accepted, so its `since` restarts on
+ * every poll and its length is exact (`CARRIED_MERGE_MARKER_MS`).
+ */
+export function carriedMergeMarker(now: number): WorkWaitV1 {
+  return {
+    reason: "backoff",
+    since: now,
+    until: now + CARRIED_MERGE_MARKER_MS,
+  };
+}
+
+/** True exactly for the carried-merge marker wait. */
+export function isCarriedMergeMarker(wait: WorkWaitV1 | null): boolean {
+  return wait !== null && wait.reason === "backoff" && wait.until !== null &&
+    wait.until - wait.since === CARRIED_MERGE_MARKER_MS;
+}
 
 function laterReview(a: ReviewReceiptV1, b: ReviewReceiptV1): boolean {
   const at = (review: ReviewReceiptV1) => review.completedAt ?? -1;
