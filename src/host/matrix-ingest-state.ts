@@ -27,6 +27,7 @@ import {
   implementationIntentKey,
 } from "../repair/keys.ts";
 import { sameRepository } from "./matrix-identity.ts";
+import { ATTEMPT_DETAIL_NO_CHANGE } from "../repair/attempt-policy.ts";
 
 export function resultMatchesCell(
   plan: MatrixPlanV1,
@@ -173,6 +174,10 @@ export function settlementClassification(
   detail: string,
 ): { stage: AttemptStageV1; failureClass: AttemptFailureClassV1 } {
   if (status === "failed") {
+    // The model ran to completion and changed nothing: a model outcome.
+    if (detail === ATTEMPT_DETAIL_NO_CHANGE) {
+      return { stage: "model", failureClass: "semantic_no_progress" };
+    }
     if (detail.startsWith("model run failed (")) {
       return { stage: "model", failureClass: "transient_infrastructure" };
     }

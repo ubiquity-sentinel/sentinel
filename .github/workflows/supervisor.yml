@@ -122,13 +122,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          # The non-secret model-route selector only (never a key and never a
+          # failover override): a changed route re-arms the records the
+          # repeat-failure bound parked for the owner.
+          SENTINEL_MODEL_BASE_URL: ${{ vars.SENTINEL_MODEL_BASE_URL }}
+          SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}
+          SENTINEL_MODEL_FALLBACK: ${{ vars.SENTINEL_MODEL_FALLBACK }}
         run: >-
           deno run --no-lock
           --allow-read
           --allow-write
           --allow-run
           --allow-net="api.github.com,*.blob.core.windows.net"
-          --allow-env=HOME,PATH,NODE_V8_COVERAGE,GITHUB_TOKEN,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_COOLDOWN_MODE
+          --allow-env=HOME,PATH,NODE_V8_COVERAGE,GITHUB_TOKEN,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_COOLDOWN_MODE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_MODEL_FALLBACK
           ops/hosted-autonomy.ts
 
   prepare:

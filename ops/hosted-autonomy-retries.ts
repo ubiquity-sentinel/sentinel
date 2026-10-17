@@ -45,6 +45,12 @@ import {
   ciFixMarker,
   reviewRoundAvailable,
 } from "../src/repair/ci-first-policy.ts";
+import {
+  type RepeatFailureContextV1,
+  type RepeatFailureParkPlanV1,
+  repeatFailureVerdict,
+  repeatFailureWithheld,
+} from "./hosted-autonomy-repeat-failure.ts";
 
 /**
  * Durable reservations charged to one task, across every purpose and outcome
@@ -487,6 +493,14 @@ export function planHostedRetries(
      * CI-first runtime.
      */
     legacyReviewCutoff?: number | null;
+    /**
+     * Launcher facts of the repeat-failure bound
+     * (`hosted-autonomy-repeat-failure.ts`). Absent, nothing can be verified:
+     * a due record is withheld without a park and a parked one never re-arms.
+     */
+    repeatFailure?: RepeatFailureContextV1;
+    /** Receives each park the bound decided; the caller writes it. */
+    onRepeatFailurePark?: (park: RepeatFailureParkPlanV1) => void;
   } = {},
 ): RetryPlanV1[] {
   if (!isGitSha(runtimeSha)) return [];
@@ -537,15 +551,32 @@ export function planHostedRetries(
     }
     const blocker = record.blocker;
     if (blocker === null) continue;
+    // A repeat-failure park is named every pass; an edited issue or a changed
+    // model route re-arms it once as an ordinary work grant.
+    const repeat = repeatFailureVerdict(
+      snapshot,
+      record,
+      options.repeatFailure,
+    );
+    if (repeatFailureWithheld(repeat, record, false, onDenied)) continue;
+    const rearm = repeat.kind === "rearm" ? repeat.trigger : null;
+    const rule: (typeof HOSTED_AUTONOMY_RETRYABLE)[number] | undefined =
+      rearm !== null
+        ? { prefix: `repeat_failure_rearmed:${rearm}`, nextStep: "work" }
+        : HOSTED_AUTONOMY_RETRYABLE.find((item) =>
+          blocker.message.startsWith(item.prefix)
+        );
     if (
       taskReservationCount(snapshot, record.id) >= HOSTED_AUTONOMY_MAX_RETRIES
     ) {
+      // The cap is an owner state: a record this table would re-grant is named.
+      if (rule !== undefined) {
+        const { id, repository } = record;
+        onDenied?.({ id, repository, reason: "retry_budget_exhausted" });
+      }
       continue;
     }
     if (!Number.isSafeInteger(now)) continue;
-    const rule = HOSTED_AUTONOMY_RETRYABLE.find((item) =>
-      blocker.message.startsWith(item.prefix)
-    );
     // A conflict resolution that was charged and did not publish keeps the
     // conflict marker on its retained intent: one charge per (task, base tip).
     const marked = conflictMarkerBase(record.intent);
@@ -744,14 +775,27 @@ export function planHostedRetries(
     if (base === null) continue;
     const baseTip = baseTips.get(hostedRepositoryKey(record.repository)) ??
       null;
+    // The repeat-failure bound: the same failure signature repeated across
+    // bases parks the record for the owner instead of buying another charge.
+    if (
+      rule.nextStep === "work" &&
+      repeatFailureWithheld(
+        repeat,
+        record,
+        true,
+        onDenied,
+        options.onRepeatFailurePark,
+      )
+    ) continue;
     // Durable attempt memory gate: refuse a work-returning grant whose
     // attempt would be equivalent to failures already recorded at this base
     // and runtime revision. A base advance is genuinely changed evidence, so
-    // that path is exempt; a review-returning grant has its own identity
-    // space and is untouched. Refusals are reported, never silent.
+    // that path is exempt, and so is a repeat-failure re-arm (an edited issue
+    // or a changed model route); a review-returning grant has its own
+    // identity space and is untouched. Refusals are reported, never silent.
     if (rule.nextStep === "work") {
       const advancing = baseTip !== null && baseTip !== base;
-      if (!advancing) {
+      if (!advancing && rearm === null) {
         const equivalence = attemptEquivalenceRefusalForRecordV1({
           record,
           snapshot,

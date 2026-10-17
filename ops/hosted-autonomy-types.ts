@@ -393,6 +393,12 @@ export interface HostedAutonomyDepsV1 {
    * HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES.
    */
   acceptanceCorrectionRuntimes?: ReadonlySet<string>;
+  /**
+   * `repeatFailureRouteIdentity` of the non-secret model-route selector this
+   * maintenance job was handed; a change re-arms a repeat-failure park.
+   * Absent means the unset selector (`REPEAT_FAILURE_DEFAULT_ROUTE`).
+   */
+  modelRoute?: string;
 }
 
 /** One corrected runtime the refresh re-arm trusts, pinned in launcher source. */

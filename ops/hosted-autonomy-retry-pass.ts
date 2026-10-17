@@ -60,6 +60,13 @@ import {
   verifyBaseRefreshReadmissions,
 } from "./hosted-autonomy-base-refresh-retries.ts";
 import {
+  applyRepeatFailureParks,
+  REPEAT_FAILURE_DEFAULT_ROUTE,
+  repeatFailureLabel,
+  repeatFailureNeedsIssue,
+  type RepeatFailureParkPlanV1,
+} from "./hosted-autonomy-repeat-failure.ts";
+import {
   HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS,
   planConflictReadmissions,
   verifyConflictReadmissions,
@@ -409,6 +416,28 @@ export async function runHostedRetryPass(
       legacyCutoff,
     )
     : new Set<string>();
+  // The repeat-failure bound reads each due or parked record's live source
+  // task digest (an edited issue re-arms a park) over its OWN repository
+  // surface; an unreadable digest withholds the grant without parking.
+  const issueDigests = new Map<string, string | null>();
+  for (const record of snapshot.work) {
+    if (
+      !repeatFailureNeedsIssue(snapshot, record) ||
+      closedIssues.has(
+        hostedIssueKey(record.repository, record.related.issueNumber!),
+      )
+    ) continue;
+    const surface = (await scopeFor(record.repository)).surface;
+    let digest: string | null = null;
+    try {
+      digest = (await surface?.readIssueTask?.(record.related.issueNumber!))
+        ?.digest ?? null;
+    } catch {
+      digest = null;
+    }
+    issueDigests.set(record.id, digest);
+  }
+  const parks: RepeatFailureParkPlanV1[] = [];
   const planned = planHostedRetries(
     snapshot,
     deps.clock.now(),
@@ -427,6 +456,13 @@ export async function runHostedRetryPass(
       ciReadHeads,
       ciUnreadHeads,
       legacyReviewCutoff: legacyCutoff,
+      repeatFailure: {
+        route: deps.modelRoute ?? REPEAT_FAILURE_DEFAULT_ROUTE,
+        issueDigests,
+      },
+      onRepeatFailurePark: (park) => {
+        if (!settled(park.id)) parks.push(park);
+      },
     },
   );
   // JAM B6a: an R80-written not-fulfilled acceptance with an ordinary round
@@ -543,7 +579,7 @@ export async function runHostedRetryPass(
       legacyCutoff,
     ),
   );
-  if (plans.length > 0 || readmissions.length > 0) {
+  if (plans.length > 0 || readmissions.length > 0 || parks.length > 0) {
     const now = deps.clock.now();
     if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
       return skipped("clock_invalid", observedHead, actions);
@@ -551,7 +587,11 @@ export async function runHostedRetryPass(
     let next: RepairStateSnapshotV1;
     try {
       next = applyBaseRefreshReadmissions(
-        applyHostedRetries(snapshot, observedHead as GitSha, plans, now),
+        applyRepeatFailureParks(
+          applyHostedRetries(snapshot, observedHead as GitSha, plans, now),
+          parks,
+          now,
+        ),
         readmissions,
         now,
       );
@@ -589,6 +629,13 @@ export async function runHostedRetryPass(
     }
     for (const readmission of readmissions) {
       actions.push(`retry:${readmission.id}:readmit:${readmission.detail}`);
+    }
+    for (const park of parks) {
+      actions.push(
+        `retry:${park.id}:parked:repeat_failure:${
+          repeatFailureLabel(park.park)
+        }`,
+      );
     }
     return {
       kind: "hosted_autonomy",

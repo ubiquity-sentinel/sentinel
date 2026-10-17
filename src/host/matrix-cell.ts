@@ -16,7 +16,10 @@ import type {
 } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import { OPERATION_MARGIN_MS, type RunBoundsV1 } from "../repair/loop.ts";
-import { ATTEMPT_DETAIL_PROVIDER_THROTTLED } from "../repair/attempt-policy.ts";
+import {
+  ATTEMPT_DETAIL_PROVIDER_THROTTLED,
+  implementationPortFailureDetail,
+} from "../repair/attempt-policy.ts";
 import { isProviderThrottledReceiptV1 } from "../repair/model-port-retry.ts";
 import type { MatrixBundleExporterV1 } from "./matrix-git.ts";
 import { sameRepository } from "./matrix-identity.ts";
@@ -257,7 +260,16 @@ export async function runMatrixCell(
       untrustedCiEvidence: ciEvidence,
     });
   if (!receipt.ok) {
-    return refuse("failed", `model run failed (${receipt.error.kind})`);
+    // A completed session that left its checkout unchanged is its own model
+    // outcome (`ATTEMPT_DETAIL_NO_CHANGE`); every other port error keeps the
+    // exact `model run failed (<kind>)` transient detail.
+    return refuse(
+      "failed",
+      implementationPortFailureDetail(
+        receipt.error,
+        `model run failed (${receipt.error.kind})`,
+      ),
+    );
   }
   // The gateway throttled the whole turn (HTTP 429 even after the port's
   // failover and bounded backoff) and nothing was produced: transient
