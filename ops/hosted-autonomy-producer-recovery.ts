@@ -33,6 +33,10 @@ import {
   producerRequests,
   unrecoverablePlan,
 } from "./hosted-autonomy-producer-requests.ts";
+import {
+  outputBoundCells,
+  settleOutputBoundCells,
+} from "./hosted-autonomy-output-bound.ts";
 
 export class CurrentMatrixRecoveryIntegrityFailure extends Error {
   constructor(
@@ -450,6 +454,8 @@ async function recoverProducerWithinBudget(
   // a protected entry verdict), reported, never a silent skip.
   let refused = 0;
   let protectedPaths = 0;
+  // Output-bound overruns settled as interrupted-output failures.
+  let outputBound = 0;
   const selected = new Set<string>();
   const selectedTasks = new Set<string>();
   for (const config of ports.configs) {
@@ -468,17 +474,19 @@ async function recoverProducerWithinBudget(
     await custody();
     await ports.prepareTarget(config);
     checkDeadline();
+    const cycle = {
+      ...ports.cycleFor(config),
+      state,
+      controllerSha: saved.execution.revision,
+      externalImplementations: true,
+    };
+    const cellResults = wave.results.filter((result) =>
+      cells.some((cell) => cell.cellId === result.cellId)
+    );
     const report = await (ports.ingest ?? ingestMatrixResults)(
-      {
-        ...ports.cycleFor(config),
-        state,
-        controllerSha: saved.execution.revision,
-        externalImplementations: true,
-      },
+      cycle,
       { ...wave.plan, cells },
-      wave.results.filter((result) =>
-        cells.some((cell) => cell.cellId === result.cellId)
-      ),
+      cellResults,
       {
         deadline: deadlineAt,
         expectedProvider: HISTORICAL_RECOVERY_PROVIDERS,
@@ -509,10 +517,15 @@ async function recoverProducerWithinBudget(
       "binding_mismatch",
       "absent",
     ];
+    // An authenticated completed terminal past its output bound is refused
+    // (`receipt_rejected`) but settled below as the runtime's own
+    // interrupted-output failure; every other refusal stays fatal.
+    const overBound = outputBoundCells(report, cells, cellResults);
     const badEntries = report.entries.filter(
       (entry) =>
         !deferrals.includes(entry.disposition) &&
-        !benignDispositions.includes(entry.disposition),
+        !benignDispositions.includes(entry.disposition) &&
+        !overBound.has(entry.cellId),
     );
     if (
       badEntries.length > 0 ||
@@ -526,6 +539,28 @@ async function recoverProducerWithinBudget(
       writes.attempted = true;
       onDeferred();
       return { result: null, deferred: true };
+    }
+    if (overBound.size > 0) {
+      await custody();
+      const bounded = await settleOutputBoundCells(
+        cycle,
+        cells,
+        overBound,
+        deadlineAt,
+      ).catch((error: unknown) => {
+        throw integrityFailure ?? error;
+      });
+      if (integrityFailure !== null) throw integrityFailure;
+      if (bounded === null) {
+        throw integrityFault("current matrix ingestion incomplete");
+      }
+      if (!bounded) {
+        writes.attempted = true;
+        onDeferred();
+        return { result: null, deferred: true };
+      }
+      outputBound += overBound.size;
+      checkDeadline();
     }
     // A cell this consumer just consumed leaves its exact candidate in
     // flight: maintenance never runs the work step, and a native-carrier
@@ -659,6 +694,9 @@ async function recoverProducerWithinBudget(
           : []),
         ...(protectedPaths > 0
           ? [`current-matrix:preservation-protected:${protectedPaths}`]
+          : []),
+        ...(outputBound > 0
+          ? [`current-matrix:output-bound:${outputBound}`]
           : []),
       ],
       revisions: [],
