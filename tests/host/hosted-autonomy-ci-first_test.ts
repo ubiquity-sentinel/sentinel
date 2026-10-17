@@ -53,7 +53,7 @@ import type {
   HostedAutonomyHeadRunV1,
 } from "../../ops/hosted-autonomy-types.ts";
 import { SHA1, SHA2, T0 } from "../state/helpers.ts";
-import { assertGen79Parses } from "../state/gen77-contracts.ts";
+import { assertGen79Parses, gen79Available } from "../state/gen77-contracts.ts";
 import {
   BASE,
   deliveryRecord,
@@ -69,6 +69,9 @@ import {
   repairSnapshot,
   run,
 } from "./hosted-autonomy-rig.ts";
+
+/** The generation-79 source is absent from shallow CI checkouts. */
+const GEN79 = await gen79Available();
 
 const RED_PARK = "CI red before review; awaiting a CI fix: validate(failure)";
 const PENDING_PARK =
@@ -173,7 +176,7 @@ Deno.test("CI first L3: a pre-review park green again returns to work under any 
     assert.equal(work.wait, null, "no fix marker for a green head");
     assert.deepEqual(work.counters, snapshot.work[0].counters);
     assert.deepEqual(work.target, snapshot.work[0].target);
-    await assertGen79Parses(next);
+    if (GEN79) await assertGen79Parses(next);
     // A moved base keeps it parked: the runtime's freshness gate owns it.
     assert.deepEqual(plan(snapshot, { green: true, tip: SHA1 }), []);
   }
@@ -196,7 +199,7 @@ Deno.test("CI first L3: a red pre-review park returns with the fix marker only u
     until: T0 + 9000,
   });
   assert.deepEqual(work.counters, snapshot.work[0].counters, "nothing charged");
-  await assertGen79Parses(next);
+  if (GEN79) await assertGen79Parses(next);
   // No fix is re-admitted once three are spent or no review round is left.
   for (
     const counters of [
