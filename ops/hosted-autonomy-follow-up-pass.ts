@@ -6,13 +6,13 @@
  * touches no release; its only external write is the bounded issue create
  * over the target repository's own sentinel App surface.
  *
- * Idempotency needs no state. Before any create the repository's complete
- * created-since listing is read, and an App-authored issue whose first line
- * is the candidate's marker (at any depth) means it is already filed. An
- * unproven listing creates nothing, an unproven create counts against the
- * pass bound and the next pass's listing settles it (passes are serialised by
- * the supervisor's concurrency group), and a request older than the window is
- * never looked at again, so nothing is ever filed twice.
+ * Idempotency needs no state. Before any create the repository's created-since
+ * listing is read, and an App-authored issue whose first line names the same
+ * repository and PR (at any receipt or depth) means it is already filed. A
+ * listing proves its prefix down to its oldest item; only candidates older
+ * than that horizon are unproven. An unproven create counts against the pass
+ * bound and the next listing settles it (passes are serialised by the
+ * supervisor's concurrency group).
  */
 import { readRepairSafely } from "./hosted-autonomy-state.ts";
 import { createHostedAutonomyScopes } from "./hosted-autonomy-scopes.ts";
@@ -22,6 +22,7 @@ import {
   HOSTED_AUTONOMY_TRUSTED_AUTHORS,
 } from "./hosted-autonomy-policy.ts";
 import {
+  FOLLOW_UP_LISTING_PAGE_SIZE,
   FOLLOW_UP_LISTING_SKEW_MS,
   FOLLOW_UP_MAX_CANDIDATES_PER_PASS,
   FOLLOW_UP_MAX_CREATES_PER_PASS,
@@ -107,8 +108,9 @@ export async function runHostedFollowUpPass(
     const port = scope.surface?.followUpIssues;
     // A surface without the capability files nothing and reports nothing.
     if (scope.surface === null || port === undefined) continue;
-    // 1. Already filed? One complete listing per repository and pass, back
-    //    to the oldest candidate of that repository.
+    // 1. Already filed? One listing per repository and pass. A five-page
+    //    prefix proves only down to its oldest item; older candidates remain
+    //    explicitly unproven instead of stopping newer candidates.
     let listing = listings.get(scope.key);
     if (listing === undefined) {
       if (!inBudget()) {
@@ -134,6 +136,16 @@ export async function runHostedFollowUpPass(
       listings.set(scope.key, listing ?? null);
     }
     if (listing === null || listing === undefined) {
+      actions.push(`${tag}:listing_unproven`);
+      continue;
+    }
+    const oldestListed = listing.length >=
+        FOLLOW_UP_MAX_LISTING_PAGES * FOLLOW_UP_LISTING_PAGE_SIZE
+      ? listing.at(-1)?.createdAt ?? null
+      : null;
+    if (
+      oldestListed !== null && candidate.request.createdAt < oldestListed
+    ) {
       actions.push(`${tag}:listing_unproven`);
       continue;
     }
@@ -165,7 +177,7 @@ export async function runHostedFollowUpPass(
       actions.push(`${tag}:merge_unverified`);
       continue;
     }
-    // 3. Depth: a follow-up of a follow-up is depth 2, never deeper.
+    // 3. Depth: depth 3 is filed with the Sentinel opt-out label.
     let depth = 1;
     if (candidate.sourceIssue !== null) {
       if (!inBudget()) {
@@ -208,7 +220,11 @@ export async function runHostedFollowUpPass(
     creates++;
     let number: number | null = null;
     try {
-      number = await port.create({ title: issue.title, body: issue.body });
+      number = await port.create({
+        title: issue.title,
+        body: issue.body,
+        ...(depth === 3 ? { labels: ["sentinel:skip"] } : {}),
+      });
     } catch {
       number = null;
     }
