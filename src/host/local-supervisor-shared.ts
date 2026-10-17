@@ -97,6 +97,75 @@ export const MAX_TRACKED_SYMLINKS = 64;
  */
 export const SANDBOX_EXEC_PATH = "/usr/bin/sandbox-exec";
 
+/**
+ * The owner-installed native Codex executable, relative to the child's HOME.
+ * Pinned to the exact spelling the local repair host launches
+ * (`joinPath(home, ".codex", "bin", "codex")` in `src/host/local.ts`); a drift
+ * test keeps the two identical. Only this one file may leave the child's
+ * Seatbelt boundary, and only after the owner opted in (`CODEX_OPT_IN_*`), so
+ * Codex can apply its own narrower tool sandbox instead of failing nested
+ * (`sandbox_apply: Operation not permitted`, issue #100).
+ */
+export const CODEX_EXECUTABLE_SEGMENTS = [".codex", "bin", "codex"] as const;
+
+/** The exact file name an exempted Codex executable must carry. */
+export const CODEX_EXECUTABLE_NAME = "codex";
+
+/**
+ * Platform directories whose executables are never exempted: a link from the
+ * Codex spelling into one of them would let a general-purpose system program
+ * (a shell, an interpreter) run outside the child boundary.
+ */
+export const SYSTEM_EXECUTABLE_PREFIXES = [
+  "/bin/",
+  "/sbin/",
+  "/usr/bin/",
+  "/usr/sbin/",
+  "/usr/lib/",
+  "/usr/libexec/",
+  "/System/",
+  "/Library/Apple/",
+] as const;
+
+/** Bounded symlink hops followed while resolving the Codex executable. */
+export const CODEX_EXEMPTION_MAX_LINK_HOPS = 16;
+
+/**
+ * The owner's explicit opt-in to the Codex exemption, relative to the
+ * supervisor's HOME: `~/.config/sentinel-local/codex-exemption-opt-in`. It
+ * sits outside the private state root (`~/.local/state/sentinel-local`), so
+ * neither the confined child nor any installed runtime (all beneath that
+ * root's `runtimes/`) can create it: the child may write nothing outside the
+ * state root. Without it the child keeps today's exact profile.
+ *
+ * Opting in lets merged repair-host code reach an unconfined Codex; only a
+ * supervisor-owned broker removes that. Any code running in the confined
+ * repair host (every module of the `repair:run` graph that is not a protected
+ * path, not only the files that launch Codex) can start the exempted
+ * executable with arguments, environment, config and per-command sandbox of
+ * its own choosing, for example `codex sandbox` with `danger-full-access`,
+ * and so write the pointer, receipts and runtimes the outer profile protects.
+ */
+export const CODEX_OPT_IN_SEGMENTS = [
+  ".config",
+  "sentinel-local",
+  "codex-exemption-opt-in",
+] as const;
+
+/** The exact acknowledgment the opt-in file holds (surrounding space aside). */
+export const CODEX_OPT_IN_ACK =
+  "I accept that merged repair-host code can reach an unconfined Codex (sentinel issue 100)";
+
+/** The opt-in file is read only when it is at most this large. */
+export const CODEX_OPT_IN_MAX_BYTES = 4096;
+
+/** One bounded platform validation of the exemption profile per launch. */
+export const SANDBOX_VALIDATION_PROGRAM = "/usr/bin/true";
+
+export const SANDBOX_VALIDATION_TIMEOUT_MS = 10_000;
+
+export const SANDBOX_VALIDATION_MAX_OUTPUT_BYTES = 64 * 1024;
+
 /** Dedicated child cache and temp directories beneath the private state. */
 export const CHILD_DENO_DIR = "deno/host";
 

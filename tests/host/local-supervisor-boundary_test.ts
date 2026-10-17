@@ -8,6 +8,13 @@
  * boundary must deny and the exact private writes a real bounded local run
  * performs. The parent asserts structured probe results, surviving protected
  * bytes and the normal parent-side supervisor log.
+ *
+ * Issue #100: a third case gives the child a HOME that holds the owner's
+ * opt-in and whose `.codex/bin/codex` resolves (through the standalone
+ * installer's links) to a real Mach-O copy of `/bin/sh`. That exempted program
+ * must be able to apply its own inner Seatbelt sandbox, and the inner rule
+ * must hold, while a non-exempted copy still fails nested (`sandbox_apply`)
+ * and the host's own writes stay denied.
  */
 
 import assert from "node:assert/strict";
@@ -15,6 +22,11 @@ import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { LocalSupervisorChildInputV1 } from "../../src/host/local-supervisor.ts";
 import { defaultRunChild } from "../../src/host/local-supervisor.ts";
+import {
+  CODEX_OPT_IN_ACK,
+  CODEX_OPT_IN_SEGMENTS,
+  joinPath,
+} from "../../src/host/local-supervisor-shared.ts";
 
 const REVISION = "0123456789abcdef0123456789abcdef01234567" as GitSha;
 const PROTECTED_TEXT = "protected supervisor authority\n";
@@ -334,6 +346,10 @@ Deno.test({
         logText.includes("stdout:") && logText.includes('"probes"'),
         "the parent-side child log captures the real child stdout",
       );
+      assert.ok(
+        logText.startsWith("codex-exemption: absent:not_opted_in\n"),
+        "without the owner's opt-in the child keeps today's exact profile",
+      );
     } finally {
       await Deno.remove(root, { recursive: true }).catch(() => {});
     }
@@ -403,6 +419,205 @@ Deno.test({
         probe.code,
         0,
         "the owned descendant must be gone after the bounded return",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
+/**
+ * The issue #100 child program. `$HOME/.codex/bin/codex` and the sibling are
+ * copies of `/bin/sh`; each runs a nested `/usr/bin/sandbox-exec` with an inner
+ * profile that denies one directory, exactly as Codex confines its tools.
+ */
+const NESTING_SOURCE = String.raw`
+const root = import.meta.dirname;
+const stateRoot = root + "/state";
+const outside = root + "/outside";
+const innerDenied = outside + "/inner-denied";
+const codex = Deno.env.get("HOME") + "/.codex/bin/codex";
+const sibling = root + "/sibling/codex";
+const inner = '(version 1)\n(allow default)\n(deny file-write* (subpath "' +
+  innerDenied + '"))';
+const nested = 'exec /usr/bin/sandbox-exec -p "$1" /bin/sh -c ' +
+  "'printf %s ok > \"$1\"' inner \"$2\"";
+async function launch(launcher, target) {
+  const out = await new Deno.Command(launcher, {
+    args: ["-c", nested, "outer", inner, target],
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  return { code: out.code, stderr: new TextDecoder().decode(out.stderr) };
+}
+async function exists(path) {
+  try {
+    await Deno.lstat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function readOrNull(path) {
+  try {
+    return await Deno.readTextFile(path);
+  } catch {
+    return null;
+  }
+}
+const results = {};
+const applied = await launch(codex, outside + "/exempt.txt");
+results.exempt_nested_apply = applied.code === 0 &&
+  (await readOrNull(outside + "/exempt.txt")) === "ok";
+results.exempt_stderr = applied.stderr;
+await launch(codex, innerDenied + "/denied.txt");
+results.inner_rule_holds = !(await exists(innerDenied + "/denied.txt"));
+const confined = await launch(sibling, outside + "/sibling.txt");
+results.sibling_fails_nested = confined.code !== 0 &&
+  confined.stderr.includes("sandbox_apply") &&
+  !(await exists(outside + "/sibling.txt"));
+results.sibling_stderr = confined.stderr;
+try {
+  await Deno.writeTextFile(outside + "/host.txt", "hacked\n");
+  results.host_write_denied = false;
+} catch {
+  results.host_write_denied = true;
+}
+try {
+  await Deno.writeTextFile(stateRoot + "/active-runtime.json", "hacked\n");
+  results.host_pointer_denied = false;
+} catch {
+  results.host_pointer_denied = true;
+}
+await Deno.writeTextFile(
+  stateRoot + "/tmp/host/nesting-results.json",
+  JSON.stringify(results) + "\n",
+);
+`;
+
+/** `ln -s`: Deno.symlink needs unscoped grants the test harness lacks. */
+async function symlink(target: string, path: string): Promise<void> {
+  const linked = await new Deno.Command("ln", {
+    args: ["-s", target, path],
+    stdin: "null",
+    stdout: "null",
+    stderr: "null",
+  }).output();
+  if (!linked.success) throw new Error(`ln -s ${target} ${path} failed`);
+}
+
+Deno.test({
+  name:
+    "local supervisor boundary: only the exempted Codex applies its own nested sandbox (issue #100)",
+  ignore: Deno.build.os !== "darwin",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const root = await Deno.realPath(
+      await Deno.makeTempDir({
+        prefix: ".local-supervisor-nesting-",
+        dir: Deno.cwd(),
+      }),
+    );
+    const stateRoot = `${root}/state`;
+    const runtimeDir = `${root}/runtime`;
+    const homeDir = `${root}/home`;
+    const standalone = `${homeDir}/.codex/packages/standalone`;
+    const release = `${standalone}/releases/0.0.0-test`;
+    try {
+      for (
+        const dir of [
+          stateRoot,
+          runtimeDir,
+          `${root}/outside/inner-denied`,
+          `${root}/sibling`,
+          `${release}/bin`,
+          `${homeDir}/.codex/bin`,
+        ]
+      ) {
+        await Deno.mkdir(dir, { recursive: true, mode: 0o700 });
+      }
+      await Deno.copyFile("/bin/sh", `${release}/bin/codex`);
+      await Deno.chmod(`${release}/bin/codex`, 0o755);
+      await Deno.copyFile("/bin/sh", `${root}/sibling/codex`);
+      await Deno.chmod(`${root}/sibling/codex`, 0o755);
+      await symlink(release, `${standalone}/current`);
+      await symlink(
+        `${standalone}/current/bin/codex`,
+        `${homeDir}/.codex/bin/codex`,
+      );
+      await Deno.mkdir(`${homeDir}/.config/sentinel-local`, {
+        recursive: true,
+        mode: 0o700,
+      });
+      await Deno.writeTextFile(
+        joinPath(homeDir, ...CODEX_OPT_IN_SEGMENTS),
+        `${CODEX_OPT_IN_ACK}\n`,
+      );
+      await Deno.chmod(joinPath(homeDir, ...CODEX_OPT_IN_SEGMENTS), 0o644);
+      await Deno.writeTextFile(
+        `${stateRoot}/active-runtime.json`,
+        POINTER_TEXT,
+      );
+      await Deno.writeTextFile(`${root}/nesting.ts`, NESTING_SOURCE);
+      await Deno.writeTextFile(
+        `${runtimeDir}/deno.json`,
+        JSON.stringify({
+          tasks: {
+            "repair:run":
+              `${Deno.execPath()} run -A --no-config --no-lock ${root}/nesting.ts`,
+          },
+        }),
+      );
+      const result = await defaultRunChild({
+        stateRoot,
+        runtimeDir,
+        revision: REVISION,
+        taskName: "repair:run",
+        env: {
+          HOME: homeDir,
+          PATH: Deno.env.get("PATH") ?? "",
+          GITHUB_TOKEN: "",
+          UOS_AI_TOKEN: "",
+        },
+        denoExecutable: Deno.execPath(),
+        deadlineMs: DEADLINE_MS,
+        logPath: `${stateRoot}/supervisor-logs/unused.log`,
+      });
+      const logDir = `${stateRoot}/supervisor-logs`;
+      const logs: string[] = [];
+      for await (const entry of Deno.readDir(logDir)) logs.push(entry.name);
+      assert.equal(logs.length, 1, "exactly one parent-side child log");
+      const logText = await Deno.readTextFile(`${logDir}/${logs[0]}`);
+      assert.ok(
+        logText.startsWith("codex-exemption: applied\n"),
+        `the exemption must apply: ${logText.slice(0, 2000)}`,
+      );
+      assert.equal(result.settled, true, "the sandboxed child must settle");
+      assert.equal(result.exitCode, 0, logText.slice(0, 2000));
+      const results = JSON.parse(
+        await Deno.readTextFile(`${stateRoot}/tmp/host/nesting-results.json`),
+      ) as Record<string, unknown>;
+      for (
+        const name of [
+          "exempt_nested_apply",
+          "inner_rule_holds",
+          "sibling_fails_nested",
+          "host_write_denied",
+          "host_pointer_denied",
+        ]
+      ) {
+        assert.equal(
+          results[name],
+          true,
+          `${name} failed: ${JSON.stringify(results)}`,
+        );
+      }
+      assert.equal(
+        await Deno.readTextFile(`${stateRoot}/active-runtime.json`),
+        POINTER_TEXT,
+        "the active runtime pointer must keep its original bytes",
       );
     } finally {
       await Deno.remove(root, { recursive: true }).catch(() => {});

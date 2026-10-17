@@ -34,7 +34,10 @@
  *
  * The supervisor is installed outside mutable runtime checkouts: model changes
  * cannot replace it, and no model or repair process writes its receipts or
- * pointer.
+ * pointer. That last guarantee is the child's Seatbelt write boundary; an
+ * owner who opts into the issue #100 Codex exemption (`CODEX_OPT_IN_SEGMENTS`)
+ * gives it up for any repair-host code that starts the exempted Codex, until
+ * a supervisor-owned broker replaces the exemption.
  */
 
 import type { GitSha } from "../contracts/brands.ts";
