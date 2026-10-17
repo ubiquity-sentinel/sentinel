@@ -68,9 +68,11 @@ export const HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES: ReadonlySet<string> =
  * the cap also bounds that exposure per pass. The retry pass counts only
  * corrections it admits after verifying the pull request is open, so a
  * candidate it drops there never holds a slot. Green re-admissions need no
- * correction and never count.
+ * correction and never count. Raised from 4 to 12 on 2026-10-17 to work the
+ * CI-red backlog (about 30 records) while the owner's Codex quota allows; the
+ * runtime has no per-wave cap on corrections, so this is the binding bound.
  */
-export const HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS = 4;
+export const HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS = 12;
 
 /**
  * True only for an allowlisted CI-correction runtime at generation 78+ whose
