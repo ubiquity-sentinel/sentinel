@@ -123,13 +123,14 @@ Deno.test(
 );
 
 Deno.test(
-  "review no-verdict: the retired round allowance does not authorize or block the task",
+  "review no-verdict: the hard three-round ceiling parks the task without a fourth review",
   async () => {
     const { rig, work } = await rigAtReviewWait("review-no-verdict-blocked");
     try {
       const reason =
         "structured review unavailable: the review reported insufficient evidence";
-      // Three no-verdict attempts remain charged after the ceiling is retired.
+      // Three no-verdict attempts are charged; no round is left after them
+      // (owner decision 2026-10-16: three rounds, hard).
       rig.clock.advance(15 * 60_000 + 1);
       for (let round = 0; round < 2; round += 1) {
         rig.github.reviewStatus = "unavailable";
@@ -151,33 +152,26 @@ Deno.test(
       assert.equal(continued.status, "idle", JSON.stringify(continued));
       state = await rig.snapshot();
       const record = state.work[0]!;
-      assert.equal(record.nextStep, "review");
-      assert.equal(record.blocker, null);
-      assert.equal(record.wait?.reason, "review_pending");
-      assert.equal(record.counters.reviewRounds, 4);
+      assert.equal(record.nextStep, "blocked");
+      assert.equal(record.blocker?.kind, "other");
+      assert.equal(
+        record.blocker?.message,
+        "review round ceiling reached: the current head has no completed review",
+      );
+      assert.equal(record.wait, null);
+      assert.equal(record.counters.reviewRounds, 3);
       assert.equal(record.target.head, work.target.head);
+      assert.equal(record.target.pr, work.target.pr, "the PR is kept");
       assert.equal(
         rig.github.reviewRequestIdentities.length,
-        requestsBefore + 1,
+        requestsBefore,
+        "no fourth review is requested",
       );
-      assert.equal(
-        rig.github.reviewRequestIdentities.at(-1)!.operationKey,
-        reviewOperationKey(7, work.target.head!, 4),
+      assert.deepEqual(
+        state.reservations,
+        chargesBefore,
+        "every charge is kept exactly; nothing is refunded or added",
       );
-      assert.equal(state.reservations.length, chargesBefore.length + 1);
-      for (const charge of chargesBefore) {
-        assert.deepEqual(
-          state.reservations.find((item) => item.id === charge.id),
-          charge,
-        );
-      }
-      const added = state.reservations.filter((charge) =>
-        !chargesBefore.some((prior) => prior.id === charge.id)
-      );
-      assert.equal(added[0]!.purpose, "review_request");
-      assert.equal(added[0]!.attempt, 4);
-      assert.equal(added[0]!.outcome, "submitted");
-      assert.equal(added[0]!.head, work.target.head);
       assert.equal(rig.model.requests.length, implementationsBefore);
       assert.equal(rig.github.calls.includes("merge"), false);
       assert.equal(

@@ -311,9 +311,11 @@ Deno.test(
     github.listed = [sourceIssue];
     github.latest.set(1, sourceIssue);
     const rig = makeMemoryRig(github);
+    // Below the hard review-round ceiling: with no round left the work step
+    // parks the record instead of starting an implementation.
     const queued = workRecord("issue-1", {
       source: { kind: "issue", id: "1", revision: SHA3 },
-      counters: { attempts: 2, retries: 2, reviewRounds: 3 },
+      counters: { attempts: 2, retries: 2, reviewRounds: 2 },
       firstSeenAt: T0 - 10_000,
       createdAt: T0 - 9_000,
       // The deterministic branch identity is already recorded: the first work
@@ -343,7 +345,7 @@ Deno.test(
     assert.deepEqual(state.work[0].counters, {
       attempts: 2,
       retries: 2,
-      reviewRounds: 3,
+      reviewRounds: 2,
     });
     assert.equal(state.work[0].id, queued.id);
     assert.equal(state.work[0].createdAt, T0 - 9_000);

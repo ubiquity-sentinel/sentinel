@@ -27,7 +27,8 @@
  * prepares, preserves and publishes the refreshed head and requests a fresh
  * review. Nothing is charged, refunded, pushed, merged or reviewed here, and
  * one refresh refusal re-arms at most once a day (no model start is ever
- * involved).
+ * involved). A record with no review round left is never re-armed: the
+ * refreshed head could not be reviewed under the hard review-round ceiling.
  */
 import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
@@ -44,6 +45,7 @@ import {
 } from "../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import { BASE_REFRESH_PRESERVE_DETAIL } from "../src/repair/loop-base-refresh.ts";
+import { reviewRoundsLeft } from "../src/repair/review-round-cap.ts";
 import {
   candidateBranch,
   candidatePreservationRef,
@@ -212,6 +214,12 @@ async function judge(
     record.source.kind !== "issue" || issue === null ||
     context.closedIssues.has(hostedIssueKey(record.repository, issue))
   ) return null;
+  // The re-armed delivery refreshes onto the moved base, and the refreshed
+  // head needs a review round of its own: with none left (the hard ceiling,
+  // owner decision 2026-10-16) the record stays blocked, before any read.
+  if (reviewRoundsLeft(context.snapshot, record) === 0) {
+    return { kind: "retain", reason: "review_rounds_spent" };
+  }
   const head = record.target.head;
   const branch = record.target.branch;
   const state = record.target.candidateState;

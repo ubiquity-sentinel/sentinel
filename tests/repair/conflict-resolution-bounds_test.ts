@@ -216,7 +216,7 @@ Deno.test(
 );
 
 Deno.test(
-  "conflict resolution: a spent review allowance keeps the exact terminal conflict block",
+  "conflict resolution: a spent review allowance parks at the ceiling before any refresh or resolution",
   async () => {
     const run = await scenario({}, {
       counters: {
@@ -226,15 +226,21 @@ Deno.test(
       },
     });
     try {
+      // The hard review-round ceiling (owner decision 2026-10-16) parks the
+      // record before its refresh is even attempted: a refreshed or resolved
+      // head would need a review round that is no longer there.
       assert.equal(run.work.nextStep, "blocked");
+      assert.equal(run.work.blocker?.kind, "other");
       assert.equal(
         run.work.blocker?.message,
-        `base refresh has conflicts at ${run.ctx.base}`,
+        "review round ceiling reached: the current head has no completed review",
       );
-      assert.equal(run.work.target.pr, null);
+      assert.equal(run.work.target.pr, PR, "the PR identity is kept");
+      assert.equal(run.work.target.head, run.ctx.head);
       assert.equal(run.work.intent, null);
       assert.deepEqual(run.state.reservations, []);
       assert.equal(run.model.requests.length, 0);
+      assert.deepEqual(run.github.pushes, []);
     } finally {
       await run.ctx.cleanup();
     }

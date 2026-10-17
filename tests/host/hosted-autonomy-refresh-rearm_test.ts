@@ -303,6 +303,63 @@ Deno.test("refresh re-arm: a closed issue's refused refresh is never re-armed wh
   assert(!result.actions.some((action) => action.startsWith("refresh:")));
 });
 
+Deno.test("refresh re-arm: a record with no review round left stays blocked without a remote read (hard ceiling)", async () => {
+  // Re-armed, the runtime would refresh onto the moved base and the refreshed
+  // head would need a fourth review round (owner decision 2026-10-16).
+  const record = await refusedRefresh();
+  const charges = [1, 2, 3].map((attempt) =>
+    reservation(`${"e".repeat(62)}0${attempt}`, {
+      repository: REPO,
+      taskId: ID,
+      attempt,
+      head: HEAD,
+      purpose: "review_request",
+      outcome: "submitted",
+      settledAt: T0 - 1,
+      createdAt: T0 - 1000,
+    })
+  );
+  for (
+    const [capped, rows] of [
+      [{ ...record, counters: { ...record.counters, reviewRounds: 3 } }, []],
+      [record, charges],
+    ] as const
+  ) {
+    const state = new TransitionState(
+      snapshotOf([capped], [CHARGE, ...rows]),
+      FIXED(),
+    );
+    const before = canonicalStringify(state.snapshot);
+    let listings = 0;
+    const result = await runHostedAutonomy({
+      state: state as unknown as StateReadView & RepairStateWriter,
+      githubFor: () => {
+        const github = surface();
+        const listing = github.mismatchDisposition!;
+        return {
+          ...github,
+          mismatchDisposition: {
+            ...listing,
+            listPullsByHead: (branch: string) => {
+              listings++;
+              return listing.listPullsByHead(branch);
+            },
+          },
+        };
+      },
+      clock: { now: () => T0 + 2 * DAY },
+      refreshRearmRuntimes: [pin(R77)],
+    });
+    assert.equal(state.writes, 0, JSON.stringify(result));
+    assert.equal(canonicalStringify(state.snapshot), before);
+    assert(
+      result.actions.includes(`refresh:${ID}:retained:review_rounds_spent`),
+      JSON.stringify(result),
+    );
+    assert.equal(listings, 0, "no pull request is listed for it");
+  }
+});
+
 Deno.test("refresh re-arm: transient refresh failures and other blockers are not this pass's", async () => {
   for (
     const message of [

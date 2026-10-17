@@ -114,7 +114,8 @@ function waitSince(
 /**
  * The pre-merge gate's failed-check disposition for a reviewed head. A record
  * that can never be corrected (not an issue task, no exact publication, every
- * review round spent, an undescribed candidate or an operation in flight)
+ * review round spent by its counter or its durable ledger, an undescribed
+ * candidate or an operation in flight)
  * keeps the exact legacy terminal block without a base read: a red or pending
  * base must never hold it at delivery, where each base move would refresh it
  * into another charged review round. The launcher never re-admits that block
@@ -131,7 +132,9 @@ export async function routeFailedDeliveryChecks(
   // A run whose correction cell could outlive a rollback to a runtime that
   // refuses it (`ciCorrectionRouteOpen`) keeps the generation-76 block exactly
   // (no base read).
-  if (!ciCorrectionRouteOpen(deps) || !ciCorrectable(record)) {
+  if (
+    !ciCorrectionRouteOpen(deps) || !ciCorrectable(record, context.snapshot)
+  ) {
     return persistBlocked(deps, context, record, legacyDetail, now);
   }
   const disposition = await attributeAgainstBase(deps, record, failed);
@@ -191,7 +194,7 @@ export async function correctFailedHeadBeforeRefresh(
   record: WorkRecordV1,
 ): Promise<StepResultV1 | null> {
   if (
-    !ciCorrectionRouteOpen(deps) || !ciCorrectable(record) ||
+    !ciCorrectionRouteOpen(deps) || !ciCorrectable(record, context.snapshot) ||
     !headAcceptedByReview(context.snapshot, record)
   ) return null;
   const observed = await observeHeadFailure(deps, record);

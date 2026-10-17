@@ -37,6 +37,7 @@ import {
 } from "../src/contracts/state-snapshots.ts";
 import { parseWorkRecordV1 } from "../src/contracts/work-record.ts";
 import { candidateBranch } from "../src/repair/keys.ts";
+import { reviewRoundsLeft } from "../src/repair/review-round-cap.ts";
 import {
   BASE_REFRESH_BASE_READ_DETAIL,
   BASE_REFRESH_PR_OBSERVATION_DETAIL,
@@ -161,6 +162,12 @@ export function planBaseRefreshReadmissions(
     if (
       taskReservationCount(snapshot, record.id) >= HOSTED_AUTONOMY_MAX_RETRIES
     ) continue;
+    // The re-admitted refresh publishes a new head that needs a review round
+    // of its own; with none left (the hard ceiling) the record stays blocked.
+    if (reviewRoundsLeft(snapshot, record) === 0) {
+      onDenied?.({ id: record.id, reason: "review_rounds_spent" });
+      continue;
+    }
     const head = record.target.head;
     const candidateState = record.target.candidateState;
     const branch = candidateBranch(record.id);

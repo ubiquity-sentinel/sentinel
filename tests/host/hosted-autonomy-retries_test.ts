@@ -118,27 +118,25 @@ Deno.test(
         counters: { attempts: 1, retries: 0, reviewRounds: 14 },
       }),
     ]);
-    // Every review identity inside the runtime's own round allowance is spent
-    // at this head, and the preserved counter is history: without a newer base
-    // this pass fails closed instead of zeroing a charged counter or re-using
-    // an identity the runtime would refuse as a duplicate.
+    // Every review round the hard ceiling allows is spent (owner decision
+    // 2026-10-16: three rounds, hard): this pass fails closed, with or without
+    // a newer base, instead of zeroing a charged counter, re-using an identity
+    // or buying a refreshed head that needs a fifteenth round.
     assert.equal(
       planHostedRetries(reviewRounds, T0 + 5000, ATTEMPT_RUNTIME).length,
       0,
     );
+    const denied: string[] = [];
     const plans = planHostedRetries(
       reviewRounds,
       T0 + 5000,
       ATTEMPT_RUNTIME,
       selfTips(SHA1),
+      new Set(),
+      (denial) => denied.push(denial.reason),
     );
-    assert.equal(plans.length, 1);
-    assert.equal(plans[0].nextStep, "review");
-    assert.equal(plans[0].advanceBase, true);
-    assert.equal(plans[0].reviewRounds, 14);
-    const next = applyHostedRetries(reviewRounds, SHA1, plans, T0 + 5000);
-    assert.equal(next.work[0].nextStep, "review");
-    assert.equal(next.work[0].counters.reviewRounds, 14);
+    assert.deepEqual(plans, []);
+    assert.deepEqual(denied, ["review_rounds_spent"]);
 
     const budget = repairSnapshot([
       blockedRecord({

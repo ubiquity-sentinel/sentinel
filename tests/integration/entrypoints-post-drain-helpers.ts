@@ -479,8 +479,15 @@ export async function postDrainTaskScenario(
       assert.equal(state.work[0].nextStep, "review");
     }
     if (mode === "missing-acceptance-capped") {
+      // No review round is left (the hard ceiling, owner decision
+      // 2026-10-16): the drained receipt parks the record with the ceiling's
+      // fixed message instead of waiting for a review it can never get.
       assert.equal(state.reviews[0].taskAcceptance, null);
-      assert.equal(state.work[0].nextStep, "review");
+      assert.equal(state.work[0].nextStep, "blocked");
+      assert.equal(
+        state.work[0].blocker?.message,
+        "review round ceiling reached: the completed review carries no task acceptance",
+      );
       assert.equal(state.work[0].counters.reviewRounds, attempt);
     }
     assert.deepEqual(state.reservations, charges);

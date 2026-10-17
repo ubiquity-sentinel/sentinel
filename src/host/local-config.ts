@@ -267,6 +267,11 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "src/repair/loop-review-observation.ts",
       "src/repair/loop-review-result.ts",
       "src/repair/loop-review-recovery.ts",
+      // The hard review-round ceiling (owner decision 2026-10-16) and the
+      // runtime parks it decides. A model-authored candidate must never raise
+      // or bypass it.
+      "src/repair/review-round-cap.ts",
+      "src/repair/loop-review-round-cap.ts",
       "src/repair/loop-checks.ts",
       // CI attribution decides whether a reviewed head is corrected (a charged
       // round), deferred on a red base or blocked; the launcher rule decides
@@ -288,6 +293,10 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       "ops/hosted-autonomy-retries.ts",
       "ops/hosted-autonomy-retry-pass.ts",
       "ops/hosted-autonomy-policy.ts",
+      // The refresh re-arm returns a refused refresh to delivery, where the
+      // refreshed head would need a review round; it withholds that at the
+      // ceiling.
+      "ops/hosted-autonomy-refresh-rearm.ts",
       // The flake re-run: it re-runs a parked head's failed run once and
       // decides when that head's correction may be re-admitted.
       "ops/hosted-autonomy-ci-rerun.ts",

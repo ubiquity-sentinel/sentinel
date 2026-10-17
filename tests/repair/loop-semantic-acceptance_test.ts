@@ -84,18 +84,19 @@ Deno.test(
       const rig = await semanticRig(
         `semantic-${label.replace(/[^a-z]+/gi, "")}`,
         head,
-        acceptance === null ? 3 : 1,
+        acceptance === null ? 2 : 1,
       );
       try {
         const completedAt = rig.clock.now() + 1000;
         const currentKey = reviewOperationKey(
           7,
           head,
-          acceptance === null ? 3 : 1,
+          acceptance === null ? 2 : 1,
         );
-        const nextKey = reviewOperationKey(7, head, 4);
+        const nextKey = reviewOperationKey(7, head, 3);
         if (acceptance === null) {
-          // The retired round ceiling no longer suppresses this unused retry.
+          // Below the hard three-round ceiling the unused retry is requested
+          // (at the ceiling the record parks instead).
           rig.github.releasedHead = head;
           rig.github.unboundReviewKeys.add(nextKey);
         }
@@ -116,7 +117,7 @@ Deno.test(
         if (acceptance === null) {
           assert.equal(work.nextStep, "review", label);
           assert.equal(work.blocker, null, label);
-          assert.equal(work.counters.reviewRounds, 4, label);
+          assert.equal(work.counters.reviewRounds, 3, label);
           assert.equal(rig.github.reviewRequestIdentities.length, 1, label);
           assert.equal(
             rig.github.reviewRequestIdentities[0]!.operationKey,
@@ -124,7 +125,7 @@ Deno.test(
           );
           assert.equal(state.reservations.length, 1, label);
           assert.equal(state.reservations[0]!.purpose, "review_request");
-          assert.equal(state.reservations[0]!.attempt, 4);
+          assert.equal(state.reservations[0]!.attempt, 3);
           assert.equal(state.reservations[0]!.outcome, "submitted");
           assert.equal(state.reservations[0]!.head, head);
           const receiptId = await reviewReceiptId(currentKey, head);

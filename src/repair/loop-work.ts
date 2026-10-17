@@ -36,7 +36,12 @@ import { candidateValidated } from "./loop-replay-validation.ts";
 import { observeReview } from "./loop-review-observation.ts";
 import { headNeedsCorrection } from "./loop-review-records.ts";
 import { recoverClosedReviewWait } from "./loop-review-recovery.ts";
+import {
+  parkAtReviewRoundCeiling,
+  reviewRoundsSpentOut,
+} from "./loop-review-round-cap.ts";
 import { persistTransition, persistWork } from "./loop-state.ts";
+import { REVIEW_ROUND_CEILING_BASE_MOVED } from "./review-round-cap.ts";
 import type {
   CarryV1,
   LoopContextV1,
@@ -141,6 +146,15 @@ export async function executeWorkStep(
       );
     }
     return executeBaseRefreshIntent(deps, context, record);
+  }
+
+  // Hard review-round ceiling: with no round left no candidate this step
+  // could implement, correct, publish or open a replacement PR for can ever
+  // be reviewed, so nothing is charged or pushed and the record parks. An
+  // operation already in flight finishes first (above, or in the publication
+  // reconciliation, whose review request parks at the same ceiling).
+  if (record.intent === null && reviewRoundsSpentOut(context, record)) {
+    return parkAtReviewRoundCeiling(deps, context, record);
   }
 
   // Deterministic branch identity before any model work.
@@ -323,13 +337,24 @@ export async function executeDeliveryStep(
     record.intent === null && record.source.kind === "issue" &&
     deps.github.prepareBaseRefresh !== undefined
   ) {
-    // A reviewed head whose own change already broke its checks is corrected
-    // before it could be refreshed and re-reviewed onto the moved base.
+    // A refreshed head needs a review round of its own: at the hard ceiling
+    // the moved base parks the reviewed head instead (nothing refreshed or
+    // pushed). Otherwise a reviewed head whose own change already broke its
+    // checks is corrected before it could be refreshed and re-reviewed onto
+    // the moved base.
     const refresh = await ensureBaseRefreshIntent(
       deps,
       context,
       record,
-      () => correctFailedHeadBeforeRefresh(deps, context, record),
+      () =>
+        reviewRoundsSpentOut(context, record)
+          ? parkAtReviewRoundCeiling(
+            deps,
+            context,
+            record,
+            REVIEW_ROUND_CEILING_BASE_MOVED,
+          )
+          : correctFailedHeadBeforeRefresh(deps, context, record),
     );
     if (refresh !== null) return refresh;
   }

@@ -1,5 +1,12 @@
 import { HISTORICAL_NOT_STARTED_DETAIL } from "../src/host/matrix-actions.ts";
 import { CI_UNATTRIBUTED_DETAIL } from "../src/repair/ci-rejection.ts";
+import {
+  isDeliverableReviewRoundCeilingPark,
+  isReviewRoundCeilingPark,
+  MAX_REVIEW_ROUNDS,
+  ordinaryReviewRoundsSpent,
+} from "../src/repair/review-round-cap.ts";
+import type { BudgetReservationV1 } from "../src/contracts/budget-reservation.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { HostedAutonomyRecordV1 } from "./hosted-autonomy-types.ts";
 
@@ -70,16 +77,29 @@ export function hostedDeliveryKey(
  * the trusted acceptance gate), and without a review round left that
  * correction can never become a reviewed verdict. The receipt in hand is then
  * the only honest basis for delivery, and P2/P3 findings stay future work. No
- * other parked step is ever delivered.
+ * other parked step is ever delivered. "Spent" is the runtime's own count
+ * over the durable ledger (`ordinaryReviewRoundsSpent`): a counter lagging
+ * its charges still counts them, a proven refund frees its round, and a
+ * listed legacy record's one final round (for a CI-fixed head) is extra. Of
+ * the runtime's ceiling parks only REVIEWED and BASE_MOVED are ever
+ * delivered; a park with no completed review, an unresolved P0/P1 or no task
+ * acceptance never reaches a merge gate.
  */
-export function deliveryEligible(record: HostedAutonomyRecordV1): boolean {
+export function deliveryEligible(
+  record: HostedAutonomyRecordV1,
+  snapshot: { readonly reservations: readonly BudgetReservationV1[] },
+): boolean {
   if (record.nextStep === "review" || record.nextStep === "delivery") {
     return true;
   }
   if (record.nextStep !== "work" && record.nextStep !== "blocked") {
     return false;
   }
-  return record.counters.reviewRounds >= HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS;
+  if (
+    isReviewRoundCeilingPark(record) &&
+    !isDeliverableReviewRoundCeilingPark(record)
+  ) return false;
+  return ordinaryReviewRoundsSpent(snapshot, record);
 }
 
 /** The base branch every reviewed candidate must be integrated into. */
@@ -108,12 +128,15 @@ export const HOSTED_AUTONOMY_MAX_RETRIES = 200;
 export const HOSTED_AUTONOMY_MAX_IMPLEMENTATION_ATTEMPTS = 4;
 
 /**
- * The runtime's own review-round ceiling. A record that has spent every review
- * round can never turn another correction into a reviewed verdict, so the only
- * remaining delivery path is the receipt it already holds. The runtime's CI
- * correction ceiling (`CI_CORRECTION_REVIEW_ROUNDS`) is pinned equal by test.
+ * The runtime's own hard review-round ceiling (`MAX_REVIEW_ROUNDS`, owner
+ * decision 2026-10-16). A record that has spent every review round can never
+ * turn another correction into a reviewed verdict, so the only remaining
+ * delivery path is the receipt it already holds. The runtime's CI correction
+ * ceiling (`CI_CORRECTION_REVIEW_ROUNDS`) is pinned equal by test. A record's
+ * own allowance (the durable ledger and the one-time legacy round) comes from
+ * `reviewRoundsLeft`.
  */
-export const HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS = 3;
+export const HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS = MAX_REVIEW_ROUNDS;
 
 /**
  * Static blocker message for a record whose source issue no longer exists. It

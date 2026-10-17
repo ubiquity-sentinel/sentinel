@@ -40,6 +40,7 @@ import { CI_CORRECTION_REVIEW_ROUNDS } from "./ci-rejection.ts";
 import { baseRefreshIntentKey, candidateBranch } from "./keys.ts";
 import { releaseRequestMatchesDelivery } from "./loop-records.ts";
 import { headRejectedByReview } from "./loop-review-records.ts";
+import { reviewRoundsLeft } from "./review-round-cap.ts";
 
 /**
  * Whether a HOSTED run may open a conflict resolution. A hosted resolution
@@ -71,7 +72,9 @@ export function conflictResolutionRouteOpen(
 /**
  * Review rounds after which a refresh conflict keeps its terminal block: a
  * resolved merge needs a review round of its own. Equal to the CI-correction
- * ceiling, which a test pins to `HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS`.
+ * ceiling, the hard review-round ceiling, which a test pins to
+ * `HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS`; the shape also requires a round left
+ * by the durable ledger (`reviewRoundsLeft`).
  */
 export const CONFLICT_RESOLUTION_REVIEW_ROUNDS = CI_CORRECTION_REVIEW_ROUNDS;
 
@@ -251,9 +254,10 @@ export function conflictResolutionShape(
     record.target.selfMerge !== undefined ||
     record.intent?.selfMerge !== undefined
   ) return false;
-  if (record.counters.reviewRounds >= CONFLICT_RESOLUTION_REVIEW_ROUNDS) {
-    return false;
-  }
+  if (
+    record.counters.reviewRounds >= CONFLICT_RESOLUTION_REVIEW_ROUNDS ||
+    reviewRoundsLeft(snapshot, record) === 0
+  ) return false;
   if (headRejectedByReview(snapshot, record)) return false;
   return !snapshot.releaseRequests.some((request) =>
     releaseRequestMatchesDelivery(request, record)

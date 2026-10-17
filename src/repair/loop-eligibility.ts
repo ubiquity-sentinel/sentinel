@@ -14,6 +14,7 @@ import { OPERATION_MARGIN_MS } from "./loop-bounds.ts";
 import { configFor } from "./loop-records.ts";
 import { headNeedsCorrection } from "./loop-review-records.ts";
 import type { LoopContextV1, RepairCycleDepsV1 } from "./loop-types.ts";
+import { reviewRoundsLeft } from "./review-round-cap.ts";
 
 /**
  * True only when this record's NEXT work step is an implementation start the
@@ -59,6 +60,9 @@ export function isMatrixImplementationReadyV1(
 ): boolean {
   if (record.source.kind !== "issue") return false;
   if (record.nextStep !== "work") return false;
+  // No implementation, correction or resolution cell is charged for a record
+  // with no review round left: its candidate could never be reviewed.
+  if (reviewRoundsLeft(snapshot, record) === 0) return false;
   // A pending refresh-conflict resolution is the one live intent a grant may
   // start from (its admission re-confirms the conflict before any charge).
   if (
@@ -88,7 +92,8 @@ export function isMatrixImplementationReadyV1(
  * A record whose immediate next action starts NEW model work (implementation
  * or a correction session). Review/publish phases keep their deterministic
  * parts but their review request is gated at the request site (they have no
- * declared session duration of their own).
+ * declared session duration of their own). A record with no review round
+ * left starts none: its work step only parks it, deterministically.
  */
 export function isModelStartAction(
   snapshot: RepairStateSnapshotV1,
@@ -99,6 +104,7 @@ export function isModelStartAction(
   conflictRouteOpen = false,
 ): boolean {
   return record.nextStep === "work" &&
+    reviewRoundsLeft(snapshot, record) > 0 &&
     (record.target.head === null ||
       headNeedsCorrection(snapshot, record, ciRouteOpen) ||
       conflictResolutionAdmissible(conflictRouteOpen, snapshot, record) !==

@@ -768,9 +768,11 @@ Deno.test(
       // The replanned intent then waits bounded after this failure.
       return Promise.resolve(portError("unavailable", "prepared unavailable"));
     };
+    // Below the hard review-round ceiling, so the refreshed head may still
+    // be reviewed (at the ceiling a moved base parks the reviewed head).
     await rig.seed([
       deliveryRecord(OLD_HEAD, {
-        counters: { attempts: 3, retries: 2, reviewRounds: 4 },
+        counters: { attempts: 3, retries: 2, reviewRounds: 2 },
       }),
     ], { reviews: [receipt] });
     const seeded = (await rig.snapshot()).work[0];

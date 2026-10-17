@@ -19,6 +19,7 @@ import {
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
 import { evidenceExpired } from "./hosted-autonomy-evidence-expiry.ts";
+import { reviewRoundsLeft } from "../src/repair/review-round-cap.ts";
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
 import {
   ciCorrectionRuntimeProven,
@@ -429,7 +430,8 @@ export function planHostedRetries(
           )
         ) continue;
         if (
-          record.counters.reviewRounds >= HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS
+          record.counters.reviewRounds >= HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS ||
+          reviewRoundsLeft(snapshot, record) === 0
         ) {
           onDenied?.({
             id: record.id,
@@ -496,14 +498,17 @@ export function planHostedRetries(
       continue;
     }
     // A work-returning grant only exists to buy another implementation run.
-    // Once every review round is spent, that run cannot become a reviewed
-    // verdict, so the grant is provably futile and is never planned: the
+    // Once every review round is spent (counted from the durable ledger as
+    // well as the counter, `reviewRoundsLeft`), that run cannot become a
+    // reviewed verdict, so the grant is provably futile and is refused: the
     // delivery pass owns the record's receipt instead. A review-returning
-    // grant is untouched by this gate.
-    if (
-      rule.nextStep === "work" &&
-      record.counters.reviewRounds >= HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS
-    ) {
+    // grant has its own gate below.
+    if (rule.nextStep === "work" && reviewRoundsLeft(snapshot, record) === 0) {
+      onDenied?.({
+        id: record.id,
+        repository: record.repository,
+        reason: "review_rounds_spent",
+      });
       continue;
     }
     const base = record.target.base;
@@ -538,12 +543,13 @@ export function planHostedRetries(
     }
     // A review-returning grant has its OWN identity space: the runtime admits
     // a review with attempt = reviewRounds + 1 at the record's current head, so
-    // the grant must persist the floor its durable charges prove. While the
-    // runtime's round allowance remains, that floor is an identity nothing has
-    // charged; once the allowance is spent at this head, only the runtime's own
-    // base refresh (a new head, therefore a new identity) can continue the
-    // task, and without a newer base this pass fails closed rather than
-    // re-using a charged identity or zeroing a charged counter.
+    // the grant must persist the floor its durable charges prove, an identity
+    // nothing has charged. Once the task's hard round allowance is spent
+    // (`reviewRoundsLeft`, owner decision 2026-10-16) the grant is refused
+    // outright: a base advance would only buy a refreshed head that needs one
+    // more round, the churn that took ai.ubq.fi 684 / PR 1059 to 50 rounds.
+    // Within the allowance (below three, or a listed legacy record's one
+    // final round) the review is of the record's current head.
     if (rule.nextStep === "review") {
       const head = record.target.head;
       const pr = record.target.pr;
@@ -554,17 +560,16 @@ export function planHostedRetries(
       if (head === null || pr === null || branch === null) continue;
       const settled = settledReviewAttempts(snapshot, record);
       const rounds = plannedReviewRounds(record, settled);
-      if (rounds >= HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS) {
-        if (baseTip === null || baseTip === base) continue;
-        plans.push({
+      // The raised floor never counts fewer rounds than the record's own.
+      const planned = {
+        ...record,
+        counters: { ...record.counters, reviewRounds: rounds },
+      };
+      if (reviewRoundsLeft(snapshot, planned) === 0) {
+        onDenied?.({
           id: record.id,
           repository: record.repository,
-          grant: 0,
-          nextStep: "review",
-          reviewRounds: rounds,
-          advanceBase: true,
-          observedBase: baseTip,
-          detail: `${blocker.kind}:${rule.prefix}:base-advance`,
+          reason: "review_rounds_spent",
         });
         continue;
       }

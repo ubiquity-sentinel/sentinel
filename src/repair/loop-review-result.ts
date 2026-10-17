@@ -24,6 +24,7 @@ import {
   reviewWaitSince,
 } from "./loop-review-records.ts";
 import { requestReviewFor } from "./loop-review-request.ts";
+import { reviewRoundsSpentOut } from "./loop-review-round-cap.ts";
 import {
   persistTransition,
   persistWork,
@@ -53,6 +54,10 @@ import {
   setIntent,
   setWait,
 } from "./transitions.ts";
+import {
+  REVIEW_ROUND_CEILING_REJECTED,
+  REVIEW_ROUND_CEILING_UNACCEPTED,
+} from "./review-round-cap.ts";
 
 /** Missing acceptance permits another review, never delivery or receipt rewriting. */
 export async function recoverMissingTaskReview(
@@ -325,6 +330,18 @@ export async function applyObservedReview(
     const refusal = taskAcceptanceRefusal(receipt, record, task);
     if (refusal !== null) {
       if (refusal === TASK_ACCEPTANCE_MISSING_DETAIL) {
+        // At the hard review-round ceiling a missing acceptance is final: the
+        // generation-79 recovery answers its own detail with another review,
+        // so the record parks with the ceiling message and the receipt.
+        if (reviewRoundsSpentOut(context, record)) {
+          return parkWithReceipt(
+            deps,
+            context,
+            record,
+            receipt,
+            REVIEW_ROUND_CEILING_UNACCEPTED,
+          );
+        }
         const recovered = await recoverMissingTaskReview(
           deps,
           context,
@@ -343,6 +360,18 @@ export async function applyObservedReview(
       );
     }
   }
+  // A blocking verdict in the last affordable round can never be corrected
+  // into a reviewed head (the correction would need another round): the
+  // record parks with the rejecting receipt instead of a model start.
+  if (unresolved && reviewRoundsSpentOut(context, record)) {
+    return parkWithReceipt(
+      deps,
+      context,
+      record,
+      receipt,
+      REVIEW_ROUND_CEILING_REJECTED,
+    );
+  }
   const withEvidence: WorkRecordV1 = {
     ...record,
     evidence: mergeEvidence(record.evidence, [{
@@ -356,6 +385,34 @@ export async function applyObservedReview(
     draft.work[index] = unresolved
       ? advanceToCorrection(clearIntent(withEvidence, now), now)
       : advanceToDelivery(clearIntent(withEvidence, now), now);
+    if (!draft.reviews.some((review) => review.id === receipt.id)) {
+      draft.reviews.push(receipt);
+    }
+  });
+}
+
+/**
+ * Park at the review-round ceiling keeping the observed receipt and its
+ * evidence ref exactly as a correction or delivery would: one write, nothing
+ * charged, settled or refunded.
+ */
+function parkWithReceipt(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  receipt: ReviewReceiptV1,
+  message: string,
+): Promise<StepResultV1> {
+  const now = deps.clock.now();
+  const parked = markBlocked(clearIntent(record, now), "other", message, now);
+  return persistTransition(deps, context, (draft) => {
+    replaceWorkMutation({
+      ...parked,
+      evidence: mergeEvidence(parked.evidence, [{
+        kind: "review_receipt",
+        ref: reviewEvidenceRef(receipt.id),
+      }]),
+    })(draft);
     if (!draft.reviews.some((review) => review.id === receipt.id)) {
       draft.reviews.push(receipt);
     }

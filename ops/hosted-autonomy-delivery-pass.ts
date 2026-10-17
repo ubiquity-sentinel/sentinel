@@ -47,7 +47,8 @@ export async function runHostedDeliveryPass(
   // A record an earlier write of this pass touched waits for the next pass:
   // it is neither approved nor delivered here (nor re-run, see the module).
   const eligible = (record: (typeof snapshot.work)[number]) =>
-    deliveryEligible(record) && context.settled?.has(record.id) !== true;
+    deliveryEligible(record, snapshot) &&
+    context.settled?.has(record.id) !== true;
   // ---- check-approval pass ------------------------------------------------
   // A candidate pushed to a pull request by the bot produces a CI run that
   // GitHub parks for approval, so the deterministic check the merge requires

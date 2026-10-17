@@ -18,16 +18,18 @@
  */
 import type { GitSha } from "../contracts/brands.ts";
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
+import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { MAX_REVIEW_ROUNDS, reviewRoundsLeft } from "./review-round-cap.ts";
 
 /**
- * Review rounds after which a candidate CI failure keeps its terminal block.
- * Mirrors the hosted review-round ceiling: once every round is spent a
- * correction can never become a reviewed verdict. The launcher's CI
- * re-admission reads this same value (through `ciCorrectable`), and a test
- * pins it equal to `HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS`.
+ * Review rounds after which a candidate CI failure keeps its terminal block:
+ * the hard review-round ceiling itself (`MAX_REVIEW_ROUNDS`), since once every
+ * round is spent a correction can never become a reviewed verdict. The
+ * launcher's CI re-admission reads this same value (through `ciCorrectable`),
+ * and a test pins it equal to `HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS`.
  */
-export const CI_CORRECTION_REVIEW_ROUNDS = 3;
+export const CI_CORRECTION_REVIEW_ROUNDS = MAX_REVIEW_ROUNDS;
 
 /**
  * Whether a HOSTED run may open a CI correction. A hosted correction runs as a
@@ -254,19 +256,29 @@ export function isCiCorrectionFinding(
  * The record shape a candidate-caused CI failure may correct: an issue task
  * holding its exact publication with a review round left, on a durably
  * described candidate (a candidate state without its preserved descriptor can
- * never resume a correction, exactly as the launcher excludes it).
+ * never resume a correction, exactly as the launcher excludes it). With the
+ * durable ledger at hand the round left is also counted from it
+ * (`reviewRoundsLeft`), so a lowered or lagging counter never buys a
+ * correction no review could accept.
  */
-export function ciCorrectionShape(record: WorkRecordV1): boolean {
+export function ciCorrectionShape(
+  record: WorkRecordV1,
+  ledger?: { readonly reservations: readonly BudgetReservationV1[] },
+): boolean {
   const candidateState = record.target.candidateState;
   return record.source.kind === "issue" &&
     record.target.head !== null && record.target.pr !== null &&
     record.target.branch !== null &&
     record.target.head !== record.target.base &&
     (candidateState === undefined || candidateState.preserved !== null) &&
-    record.counters.reviewRounds < CI_CORRECTION_REVIEW_ROUNDS;
+    record.counters.reviewRounds < CI_CORRECTION_REVIEW_ROUNDS &&
+    (ledger === undefined || reviewRoundsLeft(ledger, record) > 0);
 }
 
 /** The delivery gate may open a correction: the shape and no live operation. */
-export function ciCorrectable(record: WorkRecordV1): boolean {
-  return record.intent === null && ciCorrectionShape(record);
+export function ciCorrectable(
+  record: WorkRecordV1,
+  ledger?: { readonly reservations: readonly BudgetReservationV1[] },
+): boolean {
+  return record.intent === null && ciCorrectionShape(record, ledger);
 }

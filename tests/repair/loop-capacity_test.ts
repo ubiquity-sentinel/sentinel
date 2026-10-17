@@ -43,7 +43,7 @@ import {
 import { legacyLossIntent } from "./loop-legacy-fixtures.ts";
 
 Deno.test(
-  "uncapped migration: trusted context rearms only authentic retired cap blocks with one CAS",
+  "uncapped migration: trusted context rearms only authentic retired implementation-cap blocks with one CAS",
   async () => {
     const clock = new FakeClock(T0 + 2000);
     const state = new MemoryState();
@@ -159,11 +159,14 @@ Deno.test(
       beforeWrites + 1,
       "one trusted migration CAS",
     );
+    // Only the retired implementation ceiling is re-armed. The historical
+    // review-round ceiling block stays parked under the hard three-round
+    // ceiling (owner decision 2026-10-16), whatever its message.
     for (const [index, record] of work.entries()) {
-      const expected = index < 2
+      const expected = index === 0
         ? {
           ...record,
-          nextStep: index === 0 ? "work" : "review",
+          nextStep: "work",
           blocker: null,
           updatedAt: clock.now(),
         }
@@ -215,7 +218,7 @@ Deno.test(
 );
 
 Deno.test(
-  "uncapped progress: fifth implementation and fifth exact-head review retain every merge gate",
+  "hard round ceiling: two P1 corrections run, a P1 in round three parks with every gate retained",
   async () => {
     const heads = [
       SHA3,
@@ -273,7 +276,7 @@ Deno.test(
     };
     {
       assert.equal((await rig.entry()).status, "idle");
-      for (let index = 0; index < 4; index++) {
+      for (let index = 0; index < 2; index++) {
         rig.clock.advance(15 * 60_000 + 1);
         const message = `required correction ${index + 1}`;
         rig.github.completeReview([{
@@ -315,88 +318,76 @@ Deno.test(
         );
         assert.equal(state.releaseRequests.length, 0);
       }
-      const waiting = await rig.snapshot();
-      assert.deepEqual(waiting.work[0]!.counters, {
-        attempts: 5,
+      // Round three rejects its head too. No round is left for a corrected
+      // candidate (owner decision 2026-10-16: three rounds, hard), so the
+      // record parks with the rejecting receipt kept: no third correction,
+      // no fourth review, no merge.
+      rig.clock.advance(15 * 60_000 + 1);
+      rig.github.completeReview([{
+        id: "finding-capped-3",
+        severity: "P1",
+        path: "src/app.ts",
+        message: "required correction 3",
+        fingerprint: "3".repeat(64),
+        resolved: false,
+        resolutionEvidence: null,
+      }], rig.clock.now());
+      assert.equal((await rig.entry()).status, "idle");
+      const parked = await rig.snapshot();
+      const work = parked.work[0]!;
+      assert.equal(work.nextStep, "blocked");
+      assert.equal(work.blocker?.kind, "other");
+      assert.equal(
+        work.blocker?.message,
+        "review round ceiling reached: unresolved P0/P1 findings remain",
+      );
+      assert.equal(work.target.head, heads[2]);
+      assert.equal(work.target.pr, 7, "the pull request is kept");
+      assert.deepEqual(work.counters, {
+        attempts: 3,
         retries: 0,
-        reviewRounds: 5,
+        reviewRounds: 3,
       });
-      assert.deepEqual(rig.github.pushes.map((push) => push.sha), heads);
-      assert.equal(rig.github.preservationRequests.length, 5);
+      assert.deepEqual(
+        rig.github.pushes.map((push) => push.sha),
+        heads.slice(0, 3),
+      );
+      assert.equal(rig.github.preservationRequests.length, 3);
       assert.deepEqual(
         rig.github.reviewRequestIdentities.map((request) =>
           request.expectedHead
         ),
-        heads,
-      );
-      assert.equal(
-        new Set(
-          rig.github.reviewRequestIdentities.map((request) =>
-            request.operationKey
-          ),
-        ).size,
-        5,
+        heads.slice(0, 3),
       );
       assert.equal(
         rig.github.calls.filter((call) => call === "createPr").length,
         1,
       );
-      const submitted = waiting.reservations.filter((charge) =>
+      const submitted = parked.reservations.filter((charge) =>
         charge.outcome === "submitted"
       );
-      assert.equal(submitted.length, 10);
+      assert.equal(submitted.length, 6, "every charge stays submitted");
       assert.equal(
         submitted.filter((charge) => charge.purpose === "review_request")
           .length,
-        5,
-      );
-      assert.equal(
-        submitted.filter((charge) => charge.purpose !== "review_request")
-          .length,
-        5,
+        3,
       );
       assert.deepEqual(
-        waiting.reviews.filter((review) =>
+        parked.reviews.filter((review) =>
           review.outcome === "completed" &&
           review.unresolvedSeverities.includes("P1")
         ).map((review) => review.pullRequest.head),
-        heads.slice(0, 4),
+        heads.slice(0, 3),
       );
-
-      // A fifth pending verdict remains unavailable merge authority; observing
-      // it neither starts a sixth implementation nor charges another review.
-      rig.clock.advance(15 * 60_000 + 1);
-      rig.github.reviewStatus = "pending";
-      assert.equal((await rig.entry()).status, "idle");
+      assert.equal(rig.model.requests.length, 3, "no third correction");
       assert.equal(rig.github.calls.includes("merge"), false);
-      assert.equal((await rig.snapshot()).reservations.length, 10);
-      assert.equal(rig.model.requests.length, 5);
+      assert.equal(parked.releaseRequests.length, 0);
 
+      // Parked is final for the runtime: a later run changes nothing.
       rig.clock.advance(15 * 60_000 + 1);
-      // Observation may be delayed beyond the poll, but the producer's actual
-      // completion still occurred within the bounded fifth session.
-      rig.github.completeReview(
-        [],
-        waiting.work[0]!.wait!.since + 19 * 60_000,
-      );
-      const accepted = await rig.entry();
-      assert.equal(accepted.status, "idle", JSON.stringify(accepted));
-      const delivered = await rig.snapshot();
-      assert.equal(
-        rig.github.calls.filter((call) => call === "merge").length,
-        1,
-      );
-      assert.equal(delivered.releaseRequests.length, 1);
-      assert.equal(delivered.releaseRequests[0]!.revision, heads[4]);
-      assert.ok(
-        delivered.reviews.some((review) =>
-          review.outcome === "completed" &&
-          review.pullRequest.head === heads[4] &&
-          review.unresolvedSeverities.length === 0
-        ),
-      );
-      assert.equal(rig.model.requests.length, 5);
-      assert.equal(delivered.reservations.length, 10);
+      assert.equal((await rig.entry()).status, "idle");
+      assert.deepEqual(await rig.snapshot(), parked);
+      assert.equal(rig.model.requests.length, 3);
     }
   },
 );

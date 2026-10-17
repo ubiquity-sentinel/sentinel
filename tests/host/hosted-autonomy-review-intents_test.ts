@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { candidateBranch, reviewOperationKey } from "../../src/repair/keys.ts";
 import {
   applyHostedRetries,
-  HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS,
   hostedIssueKey,
   planHostedRetries,
 } from "../../ops/hosted-autonomy.ts";
@@ -57,7 +56,7 @@ Deno.test(
 );
 
 Deno.test(
-  "hosted autonomy: a settled three-round review record advances the base instead of re-using a charged identity",
+  "hosted autonomy: a settled three-round review record is refused at the hard ceiling, never advanced onto a newer base",
   () => {
     // The live shape: review admissions 1-3 are durably settled at the current
     // candidate head and the review-round counter was reset to 0, so re-entry
@@ -101,43 +100,26 @@ Deno.test(
       planHostedRetries(snapshot, now, ATTEMPT_RUNTIME, selfTips(BASE)).length,
       0,
     );
+    // A newer base no longer buys a refreshed head a fourth round either:
+    // the hard review-round ceiling (owner decision 2026-10-16) counts the
+    // three settled charges, whatever the reset counter says.
     const newerBase = SHA1;
+    const denied: string[] = [];
     const plans = planHostedRetries(
       snapshot,
       now,
       ATTEMPT_RUNTIME,
       selfTips(newerBase),
+      new Set(),
+      (denial) => denied.push(denial.reason),
     );
-    assert.equal(plans.length, 1);
-    assert.equal(plans[0].nextStep, "review");
-    assert.equal(plans[0].advanceBase, true);
-    assert.equal(plans[0].observedBase, newerBase);
-    // The floor is the highest settled review attempt at the current head,
-    // never 0: a charged counter is history and is only ever raised.
-    assert.equal(plans[0].reviewRounds, HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS);
-    assert.equal(plans[0].grant, 0);
+    assert.deepEqual(plans, []);
+    assert.deepEqual(denied, ["review_rounds_spent"]);
+    // Charged history is untouched: nothing is applied for the record.
     const next = applyHostedRetries(snapshot, SHA1, plans, now);
-    const applied = next.work[0];
-    assert.equal(applied.nextStep, "review");
-    assert.equal(applied.blocker, null);
-    assert.equal(applied.counters.reviewRounds, 3);
-    assert.equal(applied.counters.attempts, 1);
-    assert.equal(applied.counters.retries, 0);
-    // The runtime's own base-refresh intent is persisted against the newer base
-    // and the exact publication identity: the refresh supplies the new head and
-    // with it the unused review identity.
-    assert.ok(
-      applied.intent !== null && applied.intent.kind === "base_refresh",
-    );
-    assert.equal(applied.intent?.key, `base_refresh:51:${HEAD}:${newerBase}`);
-    assert.equal(applied.intent?.pr, 51);
-    assert.equal(applied.intent?.expectedHead, HEAD);
-    assert.equal(applied.intent?.observedBase, newerBase);
-    // Charged history is untouched: every reservation, receipt and the target
-    // identity stay exactly as they were.
     assert.deepEqual(next.reservations, snapshot.reservations);
     assert.deepEqual(next.reviews, snapshot.reviews);
-    assert.deepEqual(applied.target, record.target);
+    assert.deepEqual(next.work[0], record);
     assert.equal(next.reservations.length, 3);
   },
 );

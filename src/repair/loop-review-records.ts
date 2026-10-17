@@ -87,7 +87,7 @@ export function headAwaitsCiCorrection(
   ciRouteOpen = true,
 ): boolean {
   return ciRouteOpen && record.nextStep === "work" &&
-    ciCorrectionShape(record) &&
+    ciCorrectionShape(record, snapshot) &&
     !headRejectedByReview(snapshot, record) &&
     headAcceptedByReview(snapshot, record) &&
     !snapshot.releaseRequests.some((request) =>

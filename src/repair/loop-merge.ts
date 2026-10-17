@@ -22,7 +22,12 @@ import { gateDeliveryOnChecks } from "./loop-checks.ts";
 import { configFor, sameRepositoryIdentity } from "./loop-records.ts";
 import { waitRelease } from "./loop-release.ts";
 import { standingReviewAttempt } from "./loop-review-records.ts";
+import {
+  parkAtReviewRoundCeiling,
+  reviewRoundsSpentOut,
+} from "./loop-review-round-cap.ts";
 import { persistTransition, persistWork } from "./loop-state.ts";
+import { REVIEW_ROUND_CEILING_BASE_MOVED } from "./review-round-cap.ts";
 import {
   deliveryTaskRefusal,
   mergeIntentReceipt,
@@ -523,13 +528,28 @@ export async function reconcileMergeIntent(
   // A merge sent within the last poll window may still be landing (an
   // ambiguous response is reconciled immediately), and its own merge would
   // move the base; only an intent at least one poll old is treated as stale.
+  // At the hard review-round ceiling the refreshed head could never be
+  // reviewed: the stale merge intent is cleared and the reviewed head parks.
   if (
     record.source.kind === "issue" &&
     deps.github.prepareBaseRefresh !== undefined &&
     record.intent !== null &&
     deps.clock.now() - record.intent.startedAt >= CHECK_POLL_MS
   ) {
-    const refresh = await ensureBaseRefreshIntent(deps, context, record);
+    const refresh = await ensureBaseRefreshIntent(
+      deps,
+      context,
+      record,
+      async () =>
+        reviewRoundsSpentOut(context, record)
+          ? await parkAtReviewRoundCeiling(
+            deps,
+            context,
+            clearIntent(record, deps.clock.now()),
+            REVIEW_ROUND_CEILING_BASE_MOVED,
+          )
+          : null,
+    );
     if (refresh !== null) return refresh;
   }
   return executeMerge(deps, context, record);

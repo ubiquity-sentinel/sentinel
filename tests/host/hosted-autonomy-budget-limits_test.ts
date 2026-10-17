@@ -341,7 +341,8 @@ Deno.test(
 
     // Review rounds are spent and the only review admission at this head is
     // still `reserved`: the in-flight identity and its charge stay protected,
-    // and only the runtime's own base refresh may continue the record.
+    // and under the hard review-round ceiling (owner decision 2026-10-16) no
+    // base advance may buy a refreshed head another round either.
     const reviewRecord = blockedRecord({
       blocker: {
         kind: "review_quota",
@@ -368,25 +369,22 @@ Deno.test(
       planHostedRetries(reviewSnapshot, T0 + 5000, ATTEMPT_RUNTIME).length,
       0,
     );
+    const denied: string[] = [];
     const reviewPlans = planHostedRetries(
       reviewSnapshot,
       T0 + 5000,
       ATTEMPT_RUNTIME,
       selfTips(SHA1),
+      new Set(),
+      (denial) => denied.push(denial.reason),
     );
-    assert.equal(reviewPlans.length, 1);
-    assert.equal(reviewPlans[0].nextStep, "review");
-    assert.equal(reviewPlans[0].advanceBase, true);
-    assert.equal(reviewPlans[0].reviewRounds, 3);
-    assert.equal(reviewPlans[0].grant, 0);
-    const reviewNext = applyHostedRetries(
-      reviewSnapshot,
-      SHA1,
-      reviewPlans,
-      T0 + 5000,
-    ).work[0];
-    assert.equal(reviewNext.counters.reviewRounds, 3);
-    assert.equal(reviewNext.counters.attempts, 1);
-    assert.equal(reviewNext.counters.retries, 0);
+    assert.deepEqual(reviewPlans, []);
+    assert.deepEqual(denied, ["review_rounds_spent"]);
+    assert.deepEqual(
+      applyHostedRetries(reviewSnapshot, SHA1, reviewPlans, T0 + 5000)
+        .reservations,
+      reviewSnapshot.reservations,
+      "the reserved review charge stays exactly as it was",
+    );
   },
 );

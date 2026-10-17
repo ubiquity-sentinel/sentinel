@@ -55,28 +55,25 @@ export function executionAdvanced(
 // same step never races its own earlier checkpoint.
 // ---------------------------------------------------------------------------
 
-/** Rearm only authentic historical emissions of the retired spending ceilings. */
+/**
+ * Rearm only authentic historical emissions of the retired implementation
+ * ceiling. The historical review-round ceiling block ("review rounds exhausted
+ * without an accepted verdict (...)") is no longer re-armed into review: the
+ * hard three-round ceiling (owner decision 2026-10-16) keeps it blocked.
+ */
 export function retiredCapNextStep(
   deps: RepairCycleDepsV1,
   record: WorkRecordV1,
-): "work" | "review" | null {
+): "work" | null {
   if (
     record.nextStep !== "blocked" || record.blocker?.kind !== "review_quota" ||
     record.intent !== null || record.wait !== null ||
     configFor(deps, record.repository) === null
   ) return null;
-  const message = record.blocker.message;
   if (
     record.counters.attempts >= 4 &&
-    message === "implementation attempt budget exhausted"
+    record.blocker.message === "implementation attempt budget exhausted"
   ) return "work";
-  const prefix = "review rounds exhausted without an accepted verdict (";
-  if (
-    record.counters.reviewRounds >= 3 && record.target.head !== null &&
-    record.target.pr !== null && message.startsWith(prefix) &&
-    message.endsWith(")") &&
-    message.length > prefix.length + 1
-  ) return "review";
   return null;
 }
 

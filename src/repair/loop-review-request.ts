@@ -16,6 +16,7 @@ import {
   runBoundsProofRef,
 } from "./loop-bounds.ts";
 import { retireClosedPublication } from "./loop-records.ts";
+import { reviewRoundCeilingGate } from "./loop-review-round-cap.ts";
 import {
   loadSnapshot,
   persistTransition,
@@ -48,6 +49,12 @@ export async function requestReviewFor(
   record: WorkRecordV1,
   prNumber: number,
 ): Promise<StepResultV1> {
+  // The hard review-round ceiling comes first (owner decision 2026-10-16):
+  // with no round left nothing is read, reserved or refreshed, and the record
+  // parks. Every request path (publication, PR creation, no verdict, expiry,
+  // missing acceptance, drain, launcher grants) passes through here.
+  const capped = reviewRoundCeilingGate(deps, context, record);
+  if (capped !== null) return await capped;
   const now = deps.clock.now();
   // A review request is NEW model work (it consumes the shared model-start
   // budget and starts a reviewer session): at/after the 90-minute cutoff OR
@@ -443,11 +450,11 @@ export async function requestReviewFor(
  * One bounded recovery step for an attempt that produced no accepted verdict.
  *
  * A no-verdict attempt is not a pass and not a rejection: the exact head stays
- * recorded, the bounded static reason stays observable, and — while the plan's
- * review-round allowance remains — one fresh attempt is requested for the same
- * head as a new, separately charged operation. At the allowance the item is
- * blocked with that exact reason instead of polling a terminal disposition
- * forever.
+ * recorded, the bounded static reason stays observable, and — while the
+ * task's review-round allowance remains — one fresh attempt is requested for
+ * the same head as a new, separately charged operation. Once the allowance is
+ * spent the request's ceiling gate parks the record instead of polling a
+ * terminal disposition or charging another round.
  */
 export async function recoverFromNoVerdictReview(
   deps: RepairCycleDepsV1,
@@ -457,11 +464,9 @@ export async function recoverFromNoVerdictReview(
   _value: ReviewObservationV1,
 ): Promise<StepResultV1> {
   const now = deps.clock.now();
-  // No fixed review-round ceiling: a no-verdict attempt is not a pass and not
-  // a rejection, so another fresh bounded round is requested while the work
-  // keeps making progress. Each round is its own durable, uniquely admitted
-  // review request; provider limits, waits, run deadlines, failure blocks and
-  // every current-head semantic/CI gate still bound the work, and a record is
-  // never merged because a round count ran out.
+  // Each round is its own durable, uniquely admitted review request, bounded
+  // by the hard ceiling in requestReviewFor (owner decision 2026-10-16: three
+  // rounds; ai.ubq.fi 684 / PR 1059 re-requested 35 no-verdict rounds here).
+  // A record is never merged because a round count ran out.
   return await requestReviewFor(deps, context, clearWait(record, now), pr);
 }

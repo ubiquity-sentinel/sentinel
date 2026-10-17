@@ -597,23 +597,32 @@ Deno.test("missing task review recovery: current attempt never falls back to an 
   }
 });
 
-Deno.test("missing task review recovery: three prior rounds allow a fourth task-bound review without accepting the legacy verdict", async () => {
+Deno.test("missing task review recovery: three prior rounds park at the hard ceiling without a fourth review or accepting the legacy verdict", async () => {
+  // The live 263 shape: no round is left (owner decision 2026-10-16), so the
+  // missing-acceptance block becomes the ceiling park instead of a review.
   const rig = await missingTaskMemoryRig({}, 3);
   const original = canonicalStringify(rig.legacy);
   await rig.run(1);
   const state = await rig.snapshot();
-  assert.equal(state.work[0]!.counters.reviewRounds, 4);
-  assert.equal(rig.github.reviewRequestIdentities.length, 1);
+  const work = state.work[0]!;
+  assert.equal(work.nextStep, "blocked");
+  assert.equal(work.blocker?.kind, "other");
   assert.equal(
-    rig.github.reviewRequestIdentities[0]!.operationKey,
-    rig.nextKey,
+    work.blocker?.message,
+    "review round ceiling reached: the completed review carries no task acceptance",
   );
-  assert.equal(state.reservations.length, 4);
-  assert.deepEqual(state.reservations.slice(0, 3), rig.charges);
+  assert.equal(work.counters.reviewRounds, 3);
+  assert.equal(rig.github.reviewRequestIdentities.length, 0);
+  assert.deepEqual(state.reservations, rig.charges);
   assert.equal(
     canonicalStringify(state.reviews.find((row) => row.id === rig.legacy.id)),
     original,
   );
   assert.equal(rig.github.calls.includes("merge"), false);
   assert.equal(rig.model.requests.length, 0);
+  // The park is final: the recovery no longer matches it.
+  const parked = await rig.snapshot();
+  await rig.run(1);
+  assert.deepEqual(await rig.snapshot(), parked);
+  assert.equal(rig.github.reviewRequestIdentities.length, 0);
 });
