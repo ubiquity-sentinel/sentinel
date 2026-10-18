@@ -22,6 +22,7 @@ import {
   type WorkRecordV1,
 } from "../../src/contracts/work-record.ts";
 import type { ReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
+import { hostedRepositoryKey } from "../../ops/hosted-autonomy-policy.ts";
 import { carriedMergeMarker } from "../../src/repair/carried-review.ts";
 import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "../../src/repair/review-round-cap.ts";
 import {
@@ -61,6 +62,7 @@ import {
 } from "./hosted-autonomy-spent-fixtures.ts";
 
 const SLOT = 300_000;
+const WINDOW_TIPS = new Map([[hostedRepositoryKey(LIVE_618.repository), B0]]);
 const GEN79 = await gen79Available();
 
 /** A parked spent CI-red record (the live 618 shape) for another issue. */
@@ -106,7 +108,7 @@ Deno.test("carried merge safety: an awaited carried head that holds the delivery
   const slot0 = Math.floor(NOW / SLOT) * SLOT;
   for (let k = 0; k < 13; k++) {
     const at = slot0 + k * SLOT + 1_000;
-    const window = spentReadWindow(snapshot, at);
+    const window = spentReadWindow(snapshot, at, WINDOW_TIPS);
     assert.ok(window.has(carried.id), `slot ${k}`);
     // The window itself still reads eight peers: the exemption takes no slot.
     assert.equal(window.size, HOSTED_AUTONOMY_SPENT_READS_PER_PASS + 1);
@@ -140,7 +142,11 @@ Deno.test("carried merge safety: the exemption is bounded to the line's front re
   const slot0 = Math.floor(NOW / SLOT) * SLOT;
   let secondSeen = 0;
   for (let k = 0; k < 13; k++) {
-    const window = spentReadWindow(snapshot, slot0 + k * SLOT + 1_000);
+    const window = spentReadWindow(
+      snapshot,
+      slot0 + k * SLOT + 1_000,
+      WINDOW_TIPS,
+    );
     assert.ok(window.has(front.id), `front, slot ${k}`);
     assert.ok(window.size <= HOSTED_AUTONOMY_SPENT_READS_PER_PASS + 1);
     if (window.has(second.id)) secondSeen++;
@@ -153,7 +159,11 @@ Deno.test("carried merge safety: the exemption is bounded to the line's front re
   const { snapshot: stalledSnapshot } = crowded(stalled);
   let seen = 0;
   for (let k = 0; k < 13; k++) {
-    const window = spentReadWindow(stalledSnapshot, slot0 + k * SLOT + 1_000);
+    const window = spentReadWindow(
+      stalledSnapshot,
+      slot0 + k * SLOT + 1_000,
+      WINDOW_TIPS,
+    );
     assert.equal(window.size, HOSTED_AUTONOMY_SPENT_READS_PER_PASS);
     if (window.has(stalled.id)) seen++;
   }
@@ -423,6 +433,12 @@ Deno.test("carried merge safety: an App merge already landed off its tip is not 
     { pulls: { 1071: mergedPull(record, offTip) } },
   );
   assert.deepEqual(calls.merges, []);
+  assert.deepEqual(
+    calls.compares,
+    [],
+    "parents refuse before compares and diffs",
+  );
+  assert.deepEqual(calls.trees, [], "parents refuse before recursive trees");
   assert.equal(result?.status, "applied", JSON.stringify(actions));
   assert.deepEqual(actions, [
     `delivery:${record.id}:carried_merged_off_tip:sha=${mergeSha(1071)}`,
@@ -460,6 +476,191 @@ Deno.test("carried merge safety: every launcher merge re-reads the tip uncached 
     assert.deepEqual(calls.merges, []);
     assert.deepEqual(actions, [`delivery:${record.id}:base_moved`]);
     assert.deepEqual((await readSnapshot(rig)).work, [record]);
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
+
+Deno.test("delivery safety: an ordinary merge made this pass must have exactly the re-read tip and head as parents", async (t) => {
+  for (const nextStep of ["work", "delivery"] as const) {
+    await t.step(nextStep, async () => {
+      const record = liveRecord(618, { nextStep, blocker: null, wait: null });
+      const receipts = liveReceipts(record);
+      const offTip = SHA2;
+      const { surface, calls } = liveSurface({
+        tip: record.target.base,
+        green: { [record.target.head!]: true },
+        pulls: { 1071: openPull(record) },
+        afterMerge: { 1071: mergedPull(record, offTip) },
+        tasks: { 618: liveTask(618, receipts) },
+      });
+      const rig = await liveRig(
+        `ordinary-off-tip-${nextStep}`,
+        liveSnapshot([record], receipts),
+        surface,
+      );
+      try {
+        const { result, actions } = await deliveryOnly(rig);
+        assert.equal(result, null, JSON.stringify(actions));
+        assert.deepEqual(calls.merges, [1071]);
+        assert.ok(
+          actions.includes(
+            `delivery:${record.id}:merged_off_tip:sha=${mergeSha(1071)}`,
+          ),
+        );
+        const after = await readSnapshot(rig);
+        assert.deepEqual(after.work, [record]);
+        assert.deepEqual(after.releaseRequests, []);
+      } finally {
+        await Deno.remove(rig.tmp, { recursive: true });
+      }
+    });
+  }
+});
+
+Deno.test("carried merge safety: unavailable before a merge rotates instead of taking an awaited exemption", () => {
+  const carried = refreshed618({
+    wait: { reason: "unavailable", since: NOW - 60_000, until: NOW + 60_000 },
+  });
+  const { snapshot } = crowded(carried);
+  let seen = 0;
+  for (let k = 0; k < 13; k++) {
+    const window = spentReadWindow(snapshot, NOW + k * SLOT, WINDOW_TIPS);
+    assert.equal(window.size, HOSTED_AUTONOMY_SPENT_READS_PER_PASS);
+    if (window.has(carried.id)) seen++;
+  }
+  assert.ok(
+    seen > 0 && seen < 13,
+    "lost-write recovery still rotates, never exempt",
+  );
+});
+
+Deno.test("spent delivery window: with D3 off stale-base parks spend no task or pull reads", async () => {
+  const exact = liveRecord(618);
+  const receipts = liveReceipts(exact);
+  const peers = Array.from(
+    { length: 12 },
+    (_, index) => parkedPeer(500 + index),
+  );
+  const records = peers.map(({ record }) =>
+    parseWorkRecordV1({
+      ...record,
+      target: {
+        ...record.target,
+        base: MOVED_TIP,
+        candidateState: {
+          ...record.target.candidateState,
+          preserved: {
+            ...record.target.candidateState!.preserved!,
+            base: MOVED_TIP,
+          },
+        },
+      },
+    })
+  );
+  const reviews = peers.map(({ receipt }) => ({
+    ...receipt,
+    pullRequest: { ...receipt.pullRequest, base: MOVED_TIP },
+  }));
+  const tasks: number[] = [];
+  const pulls: number[] = [];
+  let tipReads = 0;
+  const { surface } = liveSurface({
+    tip: exact.target.base,
+    pulls: { 1071: openPull(exact) },
+    tasks: { 618: liveTask(618, receipts) },
+  });
+  const readTask = surface.readIssueTask!;
+  surface.readIssueTask = (issue) => {
+    tasks.push(issue);
+    return readTask(issue);
+  };
+  const readPull = surface.readPull;
+  surface.readPull = (pr, branch) => {
+    pulls.push(pr);
+    return readPull(pr, branch);
+  };
+  const readTip = surface.readBaseTip;
+  surface.readBaseTip = (branch) => {
+    tipReads++;
+    return readTip(branch);
+  };
+  const rig = await liveRig(
+    "stale-window",
+    liveSnapshot([...records, exact], [...reviews, ...receipts]),
+    surface,
+  );
+  try {
+    const { actions } = await deliveryOnly(rig);
+    assert.deepEqual(tasks, [618]);
+    assert.deepEqual(pulls, [1071]);
+    assert.equal(tipReads, 1);
+    assert.ok(actions.includes(`delivery:${exact.id}:checks_pending`));
+  } finally {
+    await Deno.remove(rig.tmp, { recursive: true });
+  }
+});
+
+Deno.test("carried merge safety: an unavailable wait adopts only a verified merged pull", async (t) => {
+  const record = refreshed618({
+    wait: { reason: "unavailable", since: NOW - 60_000, until: NOW + 60_000 },
+  });
+  for (const merged of [false, true]) {
+    await t.step(
+      merged ? "lost-write adoption" : "pre-merge wait",
+      async () => {
+        const { result, actions, calls, after } = await carriedPass(
+          `unavailable-${merged}`,
+          record,
+          {
+            pulls: {
+              1071: merged ? mergedPull(record, MOVED_TIP) : openPull(record),
+            },
+          },
+        );
+        assert.deepEqual(calls.merges, []);
+        if (merged) {
+          assert.equal(result?.status, "applied", JSON.stringify(actions));
+          assert.equal(after.releaseRequests.length, 1);
+          assert.equal(after.work[0].nextStep, "delivery");
+        } else {
+          assert.equal(result, null);
+          assert.ok(
+            actions.includes(`delivery:${record.id}:carried_awaiting_runtime`),
+          );
+          assert.deepEqual(calls.compares, []);
+          assert.deepEqual(calls.trees, []);
+          assert.deepEqual(after.work, [record]);
+        }
+      },
+    );
+  }
+});
+
+Deno.test("delivery safety: adoption of an earlier ordinary merge retains the proven-descendant rule", async () => {
+  const record = liveRecord(618, {
+    nextStep: "delivery",
+    blocker: null,
+    wait: null,
+  });
+  const receipts = liveReceipts(record);
+  const { surface, calls } = liveSurface({
+    tip: mergeSha(1071),
+    pulls: { 1071: mergedPull(record, SHA2) },
+    tasks: { 618: liveTask(618, receipts) },
+  });
+  const rig = await liveRig(
+    "ordinary-descendant-adoption",
+    liveSnapshot([record], receipts),
+    surface,
+  );
+  try {
+    const { result, actions } = await deliveryOnly(rig);
+    assert.equal(result?.status, "applied", JSON.stringify(actions));
+    assert.deepEqual(calls.merges, [], "this pass made no merge");
+    const after = await readSnapshot(rig);
+    assert.equal(after.releaseRequests.length, 1);
+    assert.equal(after.releaseRequests[0].revision, mergeSha(1071));
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });
   }

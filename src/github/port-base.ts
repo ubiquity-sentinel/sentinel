@@ -139,6 +139,10 @@ export abstract class GitHubPortBase {
     return this.client.readPullRequest(number);
   }
 
+  readCommitParents(sha: GitSha): Promise<PortResultV1<GitSha[]>> {
+    return this.client.readCommitParents(sha);
+  }
+
   readChecks(head: GitSha): Promise<PortResultV1<GitHubChecksV1>> {
     return this.client.readChecks(head);
   }

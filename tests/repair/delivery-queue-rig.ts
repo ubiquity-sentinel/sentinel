@@ -14,6 +14,7 @@
  * over the same state and this fake repository, as live.
  */
 import assert from "node:assert/strict";
+import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type {
   GitHubCheckV1,
@@ -331,6 +332,16 @@ export class QueueGithub extends FakeGithub {
     return Promise.resolve(portOk(pr === undefined ? null : this.pull(pr)));
   }
 
+  readCommitParents(sha: GitSha): Promise<PortResultV1<GitSha[]>> {
+    const pr = [...this.pulls.values()].find((row) => row.mergeSha === sha);
+    return Promise.resolve(portOk(
+      pr === undefined ? [] : [
+        pr.mergedOnto!,
+        this.heads.get(pr.branch)!,
+      ],
+    ));
+  }
+
   override findPullRequestByHeadRef(
     headRef: string,
   ): Promise<PortResultV1<GitHubPullRequestV1 | null>> {
@@ -465,6 +476,7 @@ export async function queueRig(
   count: number,
   options: {
     shape?: (records: WorkRecordV1[]) => WorkRecordV1[];
+    repository?: RepositoryIdentityV1;
     tip?: GitSha;
     reservations?: BudgetReservationV1[];
     reviews?: ReviewReceiptV1[];
@@ -474,10 +486,11 @@ export async function queueRig(
     livePolicy?: boolean;
   } = {},
 ) {
+  const repository = options.repository ?? REPO;
   const clock = new FakeClock(T0);
   const state = new MemoryState();
   const configs = repairConfigs({
-    repository: REPO,
+    repository,
     adapter: { kind: "github" },
     sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
     liveStartLimits: { perHour: 1_000, perSevenDays: 10_000 },
@@ -493,7 +506,7 @@ export async function queueRig(
     github.heads.set(branch, head);
     github.pulls.set(pr, { number: pr, branch, issue: index, mergeSha: null });
     records.push(workRecord(id, {
-      repository: REPO,
+      repository,
       source: { kind: "issue", id: String(index), revision: SHA1 },
       related: { incidentId: null, issueNumber: index },
       target: { base: SHA1, branch, checkpoint: null, head, pr },

@@ -149,10 +149,11 @@ export interface CarriedPatchRequestV1 {
 /**
  * The patch proof, derived from git: each side's unique merge base and the
  * SHA-256 (lowercase hex) of the exact bytes of its merge-base patch (`git
- * diff --binary --full-index --no-renames <merge base> <head>`, every
- * rendering option fixed). Full blob ids on every index line bind both sides
- * of every changed path, so equal digests mean equal contents, modes, renames
- * (as delete and add) and binary payloads. It authorizes nothing by itself
+ * diff --raw --no-abbrev -z --patch --binary --full-index --no-renames
+ * <merge base> <head>`, every rendering option fixed). Raw records bind full
+ * old/new blob ids and modes even for mode-only paths with no patch index
+ * line, so equal digests bind contents, modes, renames (as delete and add)
+ * and binary payloads. It authorizes nothing by itself
  * (`carriedPatchHolds`).
  */
 export interface CarriedPatchProofV1 {

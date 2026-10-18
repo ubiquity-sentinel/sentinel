@@ -15,9 +15,10 @@
  *   rendering choice fixed (`--binary --full-index --no-renames`, no external
  *   diff or textconv, no color, fixed prefixes, algorithm, submodule format
  *   and quoting), read as raw bytes (binary-safe) and hashed with SHA-256.
- *   `--full-index` puts both full blob ids of every changed path on its index
- *   line, so equal bytes mean equal old and new contents, equal modes, equal
- *   renames (as a delete and an add) and equal binary payloads.
+ *   The same diff also includes `--raw --no-abbrev -z`: unlike patch index
+ *   lines, these NUL-delimited records bind both full blob ids and modes even
+ *   for a mode-only path. Equal bytes bind old/new contents, modes, renames
+ *   (as delete and add) and binary payloads.
  *
  * The proof also names the refreshed head's first parent (the head the
  * refresh merged the tip into) and counts the first-parent commits from the
@@ -90,6 +91,10 @@ const PATCH_ARGS = [
   "--no-textconv",
   "--no-color",
   "--binary",
+  "--raw",
+  "--no-abbrev",
+  "-z",
+  "--patch",
   "--full-index",
   "--no-renames",
   "--ignore-submodules=none",
@@ -133,7 +138,7 @@ async function uniqueMergeBase(
   return portOk(bases[0] as GitSha);
 }
 
-/** SHA-256 (lowercase hex) of the exact merge-base patch bytes. */
+/** SHA-256 of the NUL-delimited raw records together with the patch bytes. */
 export async function patchDigest(
   run: CarriedPatchGitRunV1,
   from: GitSha,

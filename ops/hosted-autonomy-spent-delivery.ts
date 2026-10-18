@@ -491,19 +491,24 @@ export async function preMergeGate(input: {
  * hours at live sizes, holding the line, and every tip move in that time
  * discarded its green CI and spent one of its refreshes). Bounded: at most
  * the line's front such record per self or Gateway repository, on top of the
- * window and taking none of its slots.
+ * window and taking none of its slots. An `unavailable` wait alone proves
+ * neither green CI nor a merge: it rotates for lost-write recovery, without
+ * an exemption. With D3 off only ordinary parks on the read tip take slots;
+ * carried candidates can still be reconciled after their base moves.
  */
 export function spentReadWindow(
   snapshot: RepairStateSnapshotV1,
   now: number,
+  baseTips: ReadonlyMap<string, string | null>,
   settled?: ReadonlySet<string>,
+  spentMovedBaseMerge = HOSTED_AUTONOMY_SPENT_MOVED_BASE_MERGE,
 ): Set<string> {
   const readable = snapshot.work.filter((record) =>
     settled?.has(record.id) !== true &&
     deliveryEligible(record, snapshot) && parkedStep(record) &&
     spentDeliveryAdmissible(record, snapshot) &&
     (boundReviewReceipts(snapshot, record).length > 0 ||
-      (carriedRecordAwaited(record) &&
+      ((carriedMergeAwaited(record) || record.wait?.reason === "unavailable") &&
         carriedMergeReceipt(snapshot, record) !== null))
   );
   const front = new Map<string, HostedAutonomyRecordV1>();
@@ -520,9 +525,13 @@ export function spentReadWindow(
     if (held === undefined || lineBefore(record, held)) front.set(key, record);
   }
   const exempt = new Set([...front.values()].map((record) => record.id));
-  const ids = readable.map((record) => record.id).filter((id) =>
-    !exempt.has(id)
-  );
+  const ids = readable.filter((record) =>
+    !exempt.has(record.id) &&
+    (boundReviewReceipts(snapshot, record).length === 0 ||
+      spentMovedBaseMerge ||
+      baseTips.get(hostedRepositoryKey(record.repository)) ===
+        record.target.base)
+  ).map((record) => record.id);
   if (ids.length <= HOSTED_AUTONOMY_SPENT_READS_PER_PASS) {
     return new Set([...exempt, ...ids]);
   }
@@ -604,9 +613,13 @@ export function carriedMergeAwaited(record: HostedAutonomyRecordV1): boolean {
  * once the pull request merged, for the bookkeeping (`unavailable`), which
  * this pass adopts only from its own verified merge and the exact proof.
  */
-export function carriedRecordAwaited(record: HostedAutonomyRecordV1): boolean {
+export function carriedRecordAwaited(
+  record: HostedAutonomyRecordV1,
+  pull?: Pick<HostedAutonomyPullV1, "merged">,
+): boolean {
   return carriedMergeAwaited(record) ||
-    (record.nextStep === "work" && record.wait?.reason === "unavailable");
+    (record.nextStep === "work" && record.wait?.reason === "unavailable" &&
+      pull?.merged === true);
 }
 
 /**

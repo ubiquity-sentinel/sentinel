@@ -92,6 +92,7 @@ import {
   REVIEW_ROUND_CEILING_BASE_MOVED,
   REVIEW_ROUND_CEILING_CARRIED_CI_FAILED_PREFIX,
   REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX,
+  REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX,
   REVIEW_ROUND_CEILING_CARRIED_PATCH_CHANGED_PREFIX,
   REVIEW_ROUND_CEILING_CARRIED_REFRESH_LIMIT_PREFIX,
   REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX,
@@ -364,6 +365,48 @@ export async function executeCarriedDelivery(
   if (cooling.kind === "deferred") {
     return { kind: "deferred", detail: cooling.detail };
   }
+  const pull = await deps.github.readPullRequest(pr);
+  if (!pull.ok) {
+    return { kind: "deferred", detail: "carried pull request unavailable" };
+  }
+  const observed = pull.value;
+  if (observed === null || observed.headRef !== record.target.branch) {
+    return null;
+  }
+  if (observed.state === "merged") {
+    if (observed.head !== head || observed.mergeSha === null) return null;
+    // GitHub has no base CAS. Reconcile the actual parents before proving the
+    // patch or waiting for bookkeeping: an off-tip self merge cannot be booked
+    // by the launcher and must stop holding the delivery line now.
+    const parents = await deps.github.readCommitParents?.(observed.mergeSha);
+    if (parents?.ok !== true) {
+      return boundedWait(
+        deps,
+        context,
+        record,
+        "unavailable",
+        CHECK_POLL_MS,
+        `${REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX}merge parents unavailable`,
+      );
+    }
+    if (
+      parents.value.length !== 2 || parents.value[0] !== record.target.base ||
+      parents.value[1] !== head
+    ) {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(
+          record,
+          "other",
+          `${REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX}merge ${observed.mergeSha} has parents ${
+            parents.value.join(",") || "none"
+          }, not ${record.target.base},${head}`,
+          deps.clock.now(),
+        ),
+      );
+    }
+  }
   const proof = await prove(request);
   if (!proof.ok) {
     return boundedWait(
@@ -387,18 +430,8 @@ export async function executeCarriedDelivery(
       ),
     );
   }
-  const pull = await deps.github.readPullRequest(pr);
-  if (!pull.ok) {
-    return { kind: "deferred", detail: "carried pull request unavailable" };
-  }
-  const observed = pull.value;
-  if (observed === null || observed.headRef !== record.target.branch) {
-    return null;
-  }
   if (observed.state === "merged") {
-    return observed.head === head && observed.mergeSha !== null
-      ? carriedMerged(deps, context, record, receipt)
-      : null;
+    return carriedMerged(deps, context, record, receipt);
   }
   if (observed.state !== "open") return null;
   if (observed.head !== head) {
@@ -416,6 +449,22 @@ export async function executeCarriedDelivery(
       "unavailable",
       CHECK_POLL_MS,
       `${REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX}the pull request still reports ${observed.head}, not ${head}`,
+    );
+  }
+  // Read H1's own CI before refreshing again: a candidate-caused red must
+  // park, not become another head and spend another CI run on a moved base.
+  const checks = await deps.github.readChecks(head);
+  if (!checks.ok) {
+    return { kind: "deferred", detail: "CI check observation unavailable" };
+  }
+  const decision = decideCiGate(checks.value.checks);
+  if (decision !== "proceed" && decision !== "wait") {
+    return gateCarriedChecks(
+      deps,
+      context,
+      record,
+      checks.value.checks,
+      decision,
     );
   }
   // The base moved again: one more refresh of this tip, in its turn, unless
@@ -437,12 +486,7 @@ export async function executeCarriedDelivery(
         ),
   );
   if (refresh !== null) return refresh;
-  const checks = await deps.github.readChecks(head);
-  if (!checks.ok) {
-    return { kind: "deferred", detail: "CI check observation unavailable" };
-  }
-  const decision = decideCiGate(checks.value.checks);
-  if (decision !== "proceed") {
+  if (decision === "wait") {
     return gateCarriedChecks(
       deps,
       context,

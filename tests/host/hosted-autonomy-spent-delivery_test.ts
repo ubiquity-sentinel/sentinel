@@ -38,6 +38,7 @@ import {
   runAt,
   TIP,
 } from "./hosted-autonomy-spent-fixtures.ts";
+import { hostedRepositoryKey } from "../../ops/hosted-autonomy-policy.ts";
 import { spentReadWindow } from "../../ops/hosted-autonomy-spent-delivery.ts";
 
 /** The three live records whose exact head is green after the re-runs. */
@@ -726,7 +727,7 @@ Deno.test("spent delivery: at most eight spent records are read per pass, rotati
       `cap-${now}`,
       records,
       reviews,
-      { tip: TIP, green: {} },
+      { tip: records[0].target.base, green: {} },
       async (rig, calls) => {
         const { actions } = await deliveryOnly(rig, now);
         const deferred = actions.filter((action) =>
@@ -750,10 +751,14 @@ Deno.test("spent delivery: a record an earlier write of the pass settled takes n
   // delivery pass skips it, so it must not displace an unsettled record.
   const { records, reviews } = tenSpentRecords();
   const snapshot = liveSnapshot(records, reviews);
-  const window = spentReadWindow(snapshot, NOW);
+  const tips = new Map([[
+    hostedRepositoryKey(records[0].repository),
+    records[0].target.base,
+  ]]);
+  const window = spentReadWindow(snapshot, NOW, tips);
   assert.equal(window.size, 8);
   const settled = new Set([...window].slice(0, 2));
-  const continued = spentReadWindow(snapshot, NOW, settled);
+  const continued = spentReadWindow(snapshot, NOW, tips, settled);
   assert.equal(continued.size, 8);
   for (const id of settled) assert.equal(continued.has(id), false, id);
   assert.deepEqual(

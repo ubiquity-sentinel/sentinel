@@ -820,3 +820,33 @@ Deno.test("readEffectiveProtections: rules pagination cycle is unavailable", asy
   assert.equal(result.error.kind, "unavailable");
   assert.ok(result.error.detail.includes("cycle"));
 });
+
+Deno.test("readCommitParents: exact commit identity and full ordered parents fail closed", async (t) => {
+  const path = `/repos/ubiquity/sentinel/git/commits/${SHA3}`;
+  for (
+    const [name, body, valid] of [
+      [
+        "ordered merge",
+        { sha: SHA3, parents: [{ sha: SHA1 }, { sha: SHA2 }] },
+        true,
+      ],
+      ["wrong commit", { sha: SHA2, parents: [{ sha: SHA1 }] }, false],
+      [
+        "short parent",
+        { sha: SHA3, parents: [{ sha: SHA1.slice(0, 9) }] },
+        false,
+      ],
+      ["missing parents", { sha: SHA3 }, false],
+      ["not found", null, false],
+    ] as const
+  ) {
+    await t.step(name, async () => {
+      const { port } = makePort({
+        script: [httpRespond("GET", path, body === null ? 404 : 200, body)],
+      });
+      const result = await port.readCommitParents(SHA3);
+      assert.equal(result.ok, valid, JSON.stringify(result));
+      if (result.ok) assert.deepEqual(result.value, [SHA1, SHA2]);
+    });
+  }
+});

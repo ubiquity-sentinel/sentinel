@@ -8,7 +8,12 @@ import type {
   GitHubReviewDecisionV1,
   PortResultV1,
 } from "../contracts/ports.ts";
-import { expectArray, expectRecord } from "../contracts/validation.ts";
+import {
+  expectArray,
+  expectGitSha,
+  expectRecord,
+  fail,
+} from "../contracts/validation.ts";
 import {
   parseBranchRuleWire,
   parseCheckRunWire,
@@ -70,6 +75,28 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
     const parsed = parseWire(response.value, (v) => parsePullWire(v, "$"));
     if (!parsed.ok) return parsed;
     return portOk(parsed.value);
+  }
+
+  /** Ordered parents of this exact commit (including ordinary API merges). */
+  async readCommitParents(sha: GitSha): Promise<PortResultV1<GitSha[]>> {
+    const response = await this.request(
+      "GET",
+      `/repos/${repoPath(this.repository)}/git/commits/${sha}`,
+    );
+    if (!response.ok) return response;
+    return parseWire(response.value, (value) => {
+      const commit = expectRecord(value, "$");
+      if (expectGitSha(commit.sha, "$.sha") !== sha) {
+        fail("$.sha", "invalid_value", "commit identity does not match");
+      }
+      return expectArray(
+        commit.parents,
+        "$.parents",
+        64,
+        (item, path) =>
+          expectGitSha(expectRecord(item, path).sha, `${path}.sha`),
+      );
+    });
   }
 
   /** Read approval from GitHub's authoritative GraphQL field. */

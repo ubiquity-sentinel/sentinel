@@ -43,6 +43,8 @@ export interface GitHubPort {
   readPullRequest(
     number: number,
   ): Promise<PortResultV1<GitHubPullRequestV1 | null>>;
+  /** Read the exact commit's ordered parents; unavailable is never proof. */
+  readCommitParents?(sha: GitSha): Promise<PortResultV1<GitSha[]>>;
   readChecks(head: GitSha): Promise<PortResultV1<GitHubChecksV1>>;
   readProtections(
     baseBranch: string,

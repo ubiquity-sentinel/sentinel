@@ -17,6 +17,8 @@
  * generation-79 rollback runtime.
  */
 import assert from "node:assert/strict";
+import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
+import { HOSTED_AUTONOMY_SELF_SCOPE } from "../../ops/hosted-autonomy-policy.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
 import type { GitHubCheckV1 } from "../../src/contracts/ports.ts";
@@ -42,6 +44,7 @@ import {
   REVIEW_ROUND_CEILING_BASE_MOVED,
   REVIEW_ROUND_CEILING_CARRIED_CI_FAILED_PREFIX,
   REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX,
+  REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX,
   REVIEW_ROUND_CEILING_CARRIED_PATCH_CHANGED_PREFIX,
   REVIEW_ROUND_CEILING_CARRIED_REFRESH_LIMIT_PREFIX,
   REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX,
@@ -81,7 +84,7 @@ function spentCharges(record: WorkRecordV1): BudgetReservationV1[] {
     { length: MAX_REVIEW_ROUNDS },
     (_, index) =>
       reservation(`${record.id}-review-${index + 1}`, {
-        repository: REPO,
+        repository: record.repository,
         taskId: record.id,
         attempt: index + 1,
         head: record.target.head,
@@ -98,7 +101,7 @@ async function cleanReview(record: WorkRecordV1): Promise<ReviewReceiptV1> {
   const issueNumber = record.related.issueNumber!;
   return completedReceipt(record.target.pr!, record.target.head!, SHA1, {
     id: `review-receipt:${record.id}:latest`,
-    repository: REPO,
+    repository: record.repository,
     resultId: `result-${record.id}`,
     // The fixed sentinel App reviewer, the only one the launcher trusts.
     expectedReviewer: APP,
@@ -120,8 +123,11 @@ async function cleanReview(record: WorkRecordV1): Promise<ReviewReceiptV1> {
  * `count` spent, cleanly reviewed records on SHA1 with the tip at SHA2, under
  * the live ai.ubq.fi policy (the runtime's merge port refuses every merge).
  */
-async function spentRig(count: number) {
-  const base = await queueRig(count);
+async function spentRig(
+  count: number,
+  repository: RepositoryIdentityV1 = REPO,
+) {
+  const base = await queueRig(count, { repository });
   const spent = base.records.map((record) =>
     workRecord(record.id, {
       ...record,
@@ -131,6 +137,7 @@ async function spentRig(count: number) {
   );
   const reviews = await Promise.all(spent.map(cleanReview));
   return queueRig(count, {
+    repository,
     tip: SHA2,
     shape: () => spent,
     reservations: spent.flatMap(spentCharges),
@@ -661,5 +668,96 @@ Deno.test("carried delivery: a record behind a carried record the launcher canno
     ),
     carried.blocker!.message,
   );
+  await assertRollbackParses(rig);
+});
+
+Deno.test("carried delivery: a red refreshed head parks before another base refresh", async () => {
+  const rig = await spentRig(1);
+  const charges = (await rig.snapshot()).reservations.length;
+  await runOnce(rig);
+  assert.equal(rig.github.refreshes, 1);
+  rig.github.checksByHead.set(H1, failing(H1));
+  rig.github.remoteBase = sha(0x9911);
+  rig.clock.advance(5 * 60_000);
+  await runOnce(rig);
+  const [record] = (await rig.snapshot()).work;
+  assert.equal(record.nextStep, "blocked");
+  assert.equal(
+    record.blocker?.message,
+    `${REVIEW_ROUND_CEILING_CARRIED_CI_FAILED_PREFIX}validate(failure)`,
+  );
+  assert.equal(rig.github.refreshes, 1, "red H1 must not become H2");
+  await assertNothingSpent(rig, charges);
+});
+
+Deno.test("carried delivery: a self merge off its tip parks immediately and releases the line", async () => {
+  const rig = await spentRig(2, HOSTED_AUTONOMY_SELF_SCOPE);
+  const charges = (await rig.snapshot()).reservations.length;
+  await runOnce(rig);
+  rig.clock.advance(5 * 60_000);
+  await runOnce(rig);
+  const offTip = sha(0x9912);
+  const surfaceOf = rig.github.launcherSurface.bind(rig.github);
+  rig.github.launcherSurface = () => {
+    const surface = surfaceOf();
+    const merge = surface.merge.bind(surface);
+    surface.merge = (...args) => {
+      rig.github.remoteBase = offTip;
+      return merge(...args);
+    };
+    return surface;
+  };
+  await rig.launcher();
+  assert.equal(rig.github.launcherMerges.length, 1);
+  assert.deepEqual((await rig.snapshot()).releaseRequests, []);
+  const merged = (await rig.snapshot()).work.find((row) =>
+    row.id === "issue-1"
+  )!;
+  assert.equal(
+    merged.nextStep,
+    "work",
+    "the launcher never rewrites a self record",
+  );
+  rig.clock.advance(5 * 60_000);
+  await runOnce(rig);
+  const record = (await rig.snapshot()).work.find((row) =>
+    row.id === "issue-1"
+  )!;
+  assert.equal(record.nextStep, "blocked");
+  assert.ok(
+    record.blocker?.message.startsWith(
+      REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX,
+    ),
+  );
+  assert.ok(record.blocker?.message.includes(offTip));
+  assert.equal(record.wait, null);
+  await runOnce(rig);
+  assert.equal(rig.github.refreshes, 2, "the next record can take its turn");
+  await assertNothingSpent(rig, charges);
+  await assertRollbackParses(rig);
+});
+
+Deno.test("carried delivery lifecycle: an exact-tip self merge is booked by the launcher and reconciled by the runtime", async () => {
+  const rig = await spentRig(1, HOSTED_AUTONOMY_SELF_SCOPE);
+  const charges = (await rig.snapshot()).reservations.length;
+  await runOnce(rig);
+  rig.clock.advance(5 * 60_000);
+  await runOnce(rig);
+  await rig.launcher();
+  const booked = await rig.snapshot();
+  assert.equal(booked.releaseRequests.length, 1);
+  assert.equal(
+    booked.work[0].nextStep,
+    "work",
+    "only the runtime rewrites self state",
+  );
+  rig.clock.advance(5 * 60_000);
+  await runOnce(rig);
+  const delivered = await rig.snapshot();
+  assert.equal(delivered.work[0].nextStep, "delivery");
+  assert.deepEqual(delivered.releaseRequests, booked.releaseRequests);
+  assert.equal(rig.github.refreshes, 1);
+  assert.equal(rig.github.launcherMerges.length, 1);
+  await assertNothingSpent(rig, charges);
   await assertRollbackParses(rig);
 });

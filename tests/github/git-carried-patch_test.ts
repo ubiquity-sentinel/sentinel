@@ -149,7 +149,7 @@ Deno.test("carried patch: the runtime's mechanical refresh of a reviewed head ca
     assert.match(proof.value.reviewedPatch, /^[0-9a-f]{64}$/);
     assert.equal(proof.value.refreshedPatch, proof.value.reviewedPatch);
     assert.equal(carriedPatchHolds(request(b0, h0, t, h1), proof.value), true);
-    // The digest is SHA-256 of the exact `git diff B0...H0` bytes.
+    // The digest binds the raw full blob/mode records AND exact patch bytes.
     const raw = await new Deno.Command("git", {
       args: [
         "diff",
@@ -157,6 +157,10 @@ Deno.test("carried patch: the runtime's mechanical refresh of a reviewed head ca
         "--no-textconv",
         "--no-color",
         "--binary",
+        "--raw",
+        "--no-abbrev",
+        "-z",
+        "--patch",
         "--full-index",
         "--no-renames",
         "--ignore-submodules=none",
@@ -320,6 +324,28 @@ Deno.test("carried patch: a criss-cross history or a missing commit is a typed f
       request(root, p1, root, "not-a-sha" as GitSha),
     );
     assert.equal(!invalid.ok && invalid.error.kind, "invalid");
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+Deno.test("carried patch: a mode-only path binds its old and new content", async () => {
+  const repo = await makeRepo();
+  try {
+    const b0 = await repo.commit({ "run.sh": "echo reviewed\n" });
+    assert.ok((await repo.git(["checkout", "-q", "-b", "candidate"])).ok);
+    await Deno.chmod(`${repo.dir}/run.sh`, 0o755);
+    const h0 = await repo.commit({});
+    assert.ok((await repo.git(["checkout", "-q", "development"])).ok);
+    const t = await repo.commit({ "run.sh": "echo changed-on-base\n" });
+    const git = repo.executor();
+    const refreshed = await git.integrateBase(h0, t);
+    assert.ok(refreshed.ok, JSON.stringify(refreshed));
+    const input = request(b0, h0, t, refreshed.value);
+    const proof = await git.carriedPatchProof(input);
+    assert.ok(proof.ok, JSON.stringify(proof));
+    assert.notEqual(proof.value.reviewedPatch, proof.value.refreshedPatch);
+    assert.equal(carriedPatchHolds(input, proof.value), false);
   } finally {
     await repo.cleanup();
   }
