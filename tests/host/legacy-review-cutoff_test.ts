@@ -18,6 +18,7 @@ import {
   type HostedRuntimeRecordV1,
 } from "../../src/contracts/hosted-supervisor.ts";
 import { buildChildEnvironment } from "../../src/host/hosted-runtime-child.ts";
+import { HOSTED_RUNTIME_ROLLOUT } from "../../src/host/hosted-runtime-rollout.ts";
 import {
   OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
   OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
@@ -99,8 +100,11 @@ Deno.test("legacy cutoff: the generation 80 install pin sets one instant for eve
   assert.deepEqual(LEGACY_REVIEW_CUTOFF, {
     activatedNotBefore: pinned,
     revisions: [
-      OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
-      OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+      ...new Set([
+        OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
+        OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+        ...HOSTED_RUNTIME_ROLLOUT.legacyReview,
+      ]),
     ],
   });
   // Every R80 activation bound of the launcher is that same instant.

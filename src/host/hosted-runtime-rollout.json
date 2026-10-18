@@ -5,5 +5,7 @@
   "refreshRearm": [],
   "conflictResolution": [],
   "ciFirst": [],
-  "ciFirstFix": []
+  "ciFirstFix": [],
+  "acceptanceCorrection": [],
+  "legacyReview": []
 }

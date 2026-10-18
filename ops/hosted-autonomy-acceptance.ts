@@ -32,6 +32,7 @@
  */
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import { HOSTED_RUNTIME_ROLLOUT } from "../src/host/hosted-runtime-rollout.ts";
 import { TASK_ACCEPTANCE_OWNER_GATE_DETAIL } from "../src/repair/acceptance-correction.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import { TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL } from "../src/repair/review-gate.ts";
@@ -54,6 +55,7 @@ export const HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_MIN_GENERATION = 81;
 export const HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES: ReadonlySet<
   string
 > = new Set<string>([
+  ...HOSTED_RUNTIME_ROLLOUT.acceptanceCorrection,
   "da98f5f49c45b57cfa97a45fe647c36b1021f302",
 ]);
 

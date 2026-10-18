@@ -315,6 +315,8 @@ export async function principalSourceFixture() {
       conflictResolution: [],
       ciFirst: [],
       ciFirstFix: [],
+      acceptanceCorrection: [],
+      legacyReview: [],
     }),
   );
   await git(launcher, ["add", "."]);
