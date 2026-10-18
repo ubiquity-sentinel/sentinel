@@ -21,18 +21,46 @@ authenticated account `0x4007` and carry `sentinel:skip` during manual
 ownership. Only the primary changes this ledger, accepts source, commits,
 integrates or publishes.
 
-### Migration continuation, 2026-10-18 15:46 UTC
+### Migration continuation, 2026-10-18 16:31 UTC
 
 Corrected inactive source `674f8cc324946f9577e96a73b2722ca3db16ca7c`, tree
-`76c50bf8faacb3166b622b061baa45b8f6fb338b`, is published by normal fast-forward
-to development. Native CI `39139730301` started at 15:16:25 UTC and remains
-pending; its expected duration is 40–60 minutes. Eight focused tests/eight
-steps, scoped statics and the exact committed-source cold bootstrap passed.
-Independent local closure is `ci-correction-audit/local-evidence-closure.json`,
-SHA-256 `95bee4eae8752e52cdc88678545f5de0ba4c82be452a173c0f8c2b704cb2ce13`.
-Publication/readback is under `source-publication-674f/`; L81 and disabled
-release are unchanged. Recovery is now integrated locally as recorded below;
-native acceptance remains pending.
+`76c50bf8faacb3166b622b061baa45b8f6fb338b`, is published and its native CI
+`39139730301:1` / job `117711486200` passed at 16:01:20 UTC: 3,429 tests, 1,693
+steps and zero failures. Root accepted exact checkout/tree/workflow/Actions-App
+identity and the unique terminal harness marker; native evidence is under
+`ci-674f-acceptance/`, terminal receipt SHA-256
+`bed19d2f0f4280cefa7c23dc823edb64c6aefb0edd0761172b2b498eb385e5a3`. Combined
+local foundation `9b9d74c99eb5bafcf8fe9941fdedd1f940fdef8a` passed four selected
+real consumer/cold cases and 21-path scoped statics; root acceptance is under
+`combined-foundation-final/`. It is now published by normal fast-forward; exact
+native source CI `39145206809:1` / job `117727532518` started at 16:29:09 UTC
+and is pending under the 60-minute bound. Publication receipts are under
+`source-publication-9b9/`. L81 and disabled release remain unchanged; no runtime
+installation occurred.
+
+After fresh owner, issue-assignment, baseline and empty-namespace checks, root
+created only AI canary PR `1235`, node `PR_kwDOQoe6nc8AAAABJLIr1A`, author
+`0x4007`, base `queue-canary` at `1e540da15d3822e72c14bb565635a9fa1c841011`,
+head `queue-canary-fixtures/no-rule` at
+`a3d8aae49661c6de398ba57962cf75669b3a617c`. Native full-tree comparison proved
+only `docs/queue-canary/no-rule.md` added. Receipts are under
+`canary-execution-preparation-v2/root-first-fixture-receipts/`. The same PR
+remains open and exact-head native CI `39143451638:2` now passes all seven jobs
+and four required contexts. Initial validate failed with HTTP 403 rate limit
+exceeded on the unchanged baseline spec verifier; after bounded backoff, a fresh
+public-source/ancestry/checksum probe and terminal original run, root reran only
+validate and its dependent artifact job. Both passed without recurrence.
+Acceptance SHA-256 is
+`75d0aff2a7c759ea7f39b2b4d18141fe3b2942b5c7f9c7d968dcce92d68fccf7` under
+`canary-execution-preparation-v2/first-fixture-ci-retry/acceptance/`. Further
+fixture/rule/grant effects remain held because UOS suite `106074009012` has no
+affirmative handler-completion receipt. The native-admin handler has an
+intentional silent 304 path; open state alone is not counted as execution proof.
+Read-only diagnosis and observability work is settled. Existing GitHub auth
+cannot read App hook deliveries; no compatible authenticated browser or Azure
+log reader is available. The owner has been asked only for the delivery ID,
+timestamp and response status from the existing UOS App Recent deliveries page,
+not for renewed canary approval.
 
 The prepared canary base `queue-canary` conflicts with its original fixture head
 prefix `queue-canary/`. The initial base-only proposal is rejected: fixed AI
