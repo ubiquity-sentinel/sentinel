@@ -1,0 +1,188 @@
+{
+  "summary": "After ai.ubq.fi development is green again, finish manual PRs #1162 and #1156 (red only from the broken base) and #1159 (conflict): update or resolve, prove CI green, adversarially check the #1159 resolution, merge, file their P2/P3 follow-ups",
+  "agentCount": 6,
+  "logs": [],
+  "result": {
+    "finish": "{\"summary\":\"Development tip b24353e5 is green: run 39083334471, with validate, mac-containment, darwin-native and verify-artifact all passing at 00:58Z. #1162 and #1156 were updated onto it with update-branch. Each new head's tree is identical to the clean 3-way merge of its reviewed head and b24353e5, so nothing was changed beyond the base merge. #1159 got a manual merge commit and a normal push (no force). The conflicts were in 3 files. All 4 checks are green on all three new heads, and GitHub reports mergeable_state=clean for each. Nothing was merged, closed, deleted or commented on. One risk remains: #1156 and #1159 now conflict with each other in docs/DECISIONS.md, the overlap that #1159's PR body already predicted. Whichever merges second will need development merged into it again, and then a re-check.\",\"development\":{\"tip\":\"b24353e5caffc8ec2f935bfcbbe3b7f441dd1aa7\",\"run\":39083334471,\"jobs\":{\"validate\":117544704448,\"mac-containment\":117544704263,\"darwin-native\":117544704464,\"verify-artifact\":117548603245},\"result\":\"all success\"},\"results\":[{\"pr\":1162,\"issue\":1146,\"reviewed_head\":\"9ecc552eee82a2e3e0fbcf5219e1361290b9a110\",\"previous_head\":\"3879ca9ef8d70db8d763b3fc00778cbf5ab38b1c\",\"new_head\":\"71658ec50e2bbc888e80b00003864f8c3931aafc\",\"new_head_parents\":[\"3879ca9ef8d70db8d763b3fc00778cbf5ab38b1c\",\"b24353e5caffc8ec2f935bfcbbe3b7f441dd1aa7\"],\"ci\":{\"run\":39084737466,\"validate\":\"success (117548826704)\",\"mac-containment\":\"success (117548826572)\",\"darwin-native\":\"success (117548826896)\",\"verify-artifact\":\"success (117552851006)\"},\"mergeable_state\":\"clean\",\"no_extra_edits_proof\":\"git merge-tree --write-tree 9ecc552e b24353e5 gives tree 485c361f332125bd788a6c736dbb5e3b97bd728f, the same as the new head's tree, and git diff between them is empty. All 15 non-merge commits in 9ecc552e..71658ec5 are ancestors of development. The earlier claude-code-accounts.test.ts failure did not come back.\"},{\"pr\":1156,\"issue\":1132,\"reviewed_head\":\"fc45c6eb26b65b55860a46a7dd91f410d59a3cb5\",\"previous_head\":\"7f5db1747ef1325f21cba616e79a9e9246fe57ae\",\"new_head\":\"f1d29c21e84a50a75ea4a2165e3731183a66cb4c\",\"new_head_parents\":[\"7f5db1747ef1325f21cba616e79a9e9246fe57ae\",\"b24353e5caffc8ec2f935bfcbbe3b7f441dd1aa7\"],\"ci\":{\"run\":39084739399,\"validate\":\"success (117548831898)\",\"mac-containment\":\"success (117548831781)\",\"darwin-native\":\"success (117548832007)\",\"verify-artifact\":\"success (117552919528)\"},\"mergeable_state\":\"clean\",\"no_extra_edits_proof\":\"git merge-tree --write-tree fc45c6eb b24353e5 gives tree 08369184e85f489fce81c920584e380744a84a18, the same as the new head's tree, and git diff between them is empty. All 18 non-merge commits in fc45c6eb..f1d29c21 are ancestors of development.\"},{\"pr\":1159,\"issue\":1141,\"branch\":\"claude/issue-1141\",\"reviewed_head\":\"2892d609364f58e606fa7acc7cec6f2d6eb59e0f\",\"new_head\":\"77d3f7c56a86094ecc28c7086e17b2b1efdcb60b\",\"new_head_parents\":[\"2892d609364f58e606fa7acc7cec6f2d6eb59e0f\",\"b24353e5caffc8ec2f935bfcbbe3b7f441dd1aa7\"],\"push\":\"normal fast-forward 2892d609..77d3f7c5, no force\",\"ci\":{\"run\":39085028881,\"validate\":\"success (117549664198): verify OK, test:main 251 files 0 failures, deploy-guards/vps/sentinel/quality/benchmark 0 failures\",\"mac-containment\":\"success (117549665141)\",\"darwin-native\":\"success (117549664584): tests/gpg-dsh.test.ts 25 pass 0 fail on macOS\",\"verify-artifact\":\"success (117553718599)\"},\"mergeable_state\":\"clean\",\"conflicted_files\":{\"ops/gpg-dsh.sh\":\"Kept #1139's rebuild lock, staging seed and atomic swap, and kept this branch's per-user seed path ($TMPDIR/dsh-gnupg-<uid>/seed), one-process digest, config-file check and legacy-seed removal. Glue changes: read_manifest uses with_inputs digest_inputs; rebuild_seed uses with_inputs copy_inputs; copy_inputs writes into $stage; read_recorded adds '&& ! seed_has_config', so a planted *.conf still forces a rebuild under the lock. One addition that neither side has: the legacy cleanup also removes <uid>.lock, <uid>.new.* and <uid>.old.* under the old $TMPDIR/dsh-gnupg parent (only real directories owned by this user) before it runs rmdir on that parent. Without it, leftover key copies from a killed #1139-era rebuild would stay there forever.\",\"tests/gpg-dsh.test.ts\":\"Kept both sides' tests. #1139's siblings() helper now reads fixture.base and skips 'seed'. The one-digest-process test now expects 2 processes for a build (one pass before the lock, one under it) and 3 after a reuse, since #1139 hashes the inputs again under the lock. Added one test for the leftover lock and copies in the old layout. That test fails if the glue is removed (checked locally).\",\"docs/DECISIONS.md\":\"Kept #1139's 'is to be installed from' and installed-copy wording, with this branch's seed path. The two reversal-risk sentences are combined. The #1141 paragraph now also mentions the removal of the legacy lock and leftover copies, and says a rebuild makes a second hashing pass under the lock.\"},\"non_conflicted_files\":\"Identical to git merge-tree output, so auto-merged exactly as git did (section 4 of resolution.diff is empty)\",\"local_checks\":\"Pinned Bun 1.4.0: bun run check (tsc) clean; scripts/format.sh --check on the touched files and on '.' clean; scripts/lint.sh tests/gpg-dsh.test.ts clean; size:check OK (682 files); tests/gpg-dsh.test.ts 25 pass 0 fail; the #1141 docs-check script 13/13 pass. Real GnuPG 2.4.4 probe under dash and bash, with sha256sum and with shasum: signing works, the legacy seed with a lock and a .new copy is removed, the seed is reused when nothing changes, a planted gpg-agent.conf is discarded, and 8 signings started together after an input change all exit 0, with no siblings left in the parent.\",\"resolution_diff\":\"/tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/finish-1159/resolution.diff\"}],\"cross_pr_note\":\"git merge-tree shows #1156 (f1d29c21) and #1159 (77d3f7c5) conflict in docs/DECISIONS.md (the terminal-truthfulness G3 entry). Whichever merges second needs development merged in again, plus CI. #1162 conflicts with neither.\",\"artifacts\":{\"clone\":\"/tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/finish-1159/repo\",\"logs\":\"/tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/finish-1159/logs\",\"proof_1162_1156\":\"/tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/finish-1159/logs/proof-1162-1156.txt\",\"real_gpg_probe\":\"/tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/finish-1159/logs/probe-real-gpg.log\"}}",
+    "check": {
+      "verdict": "PASS",
+      "findings": [
+        {
+          "severity": "P3",
+          "file": "ops/gpg-dsh.sh",
+          "summary": "The resolution adds code that neither parent has. The legacy cleanup now also removes <uid>.lock, <uid>.new.* and <uid>.old.* under the old $TMPDIR/dsh-gnupg parent (lines 136-149). It does this without holding a lock. It also calls rmdir on the parent even when there is no legacy seed, which reviewed head 2892d609 only did together with removing the seed. The change is disclosed, tested, and consistent with what #1141 intends, so it is integration glue and not a lost behaviour.",
+          "failure_scenario": "Only possible while upgrading. Suppose a #1139-era installed helper is part-way through a rebuild under $TMPDIR/dsh-gnupg/<uid>.lock when the first call of the newly installed helper runs. The new call deletes that lock and the staging copy, so the old call's mv fails and that one signing exits 2. Every later call works. Reviewed head 2892d609 already had the same window for removing <uid> itself, so the size of the exposure is unchanged."
+        },
+        {
+          "severity": "P3",
+          "file": "docs/DECISIONS.md",
+          "summary": "PR #1159 at 77d3f7c5 and PR #1156 at f1d29c21 conflict in docs/DECISIONS.md; git merge-tree confirms it. The finish report already flags this.",
+          "failure_scenario": "After one of the two PRs merges, the other becomes unmergeable. It then needs development merged in again, its conflict resolved and re-reviewed, and CI run again before it can merge."
+        }
+      ],
+      "evidence": "Head and base. PR #1159 is open and points at head 77d3f7c56a86094ecc28c7086e17b2b1efdcb60b. Its parents are 2892d609 (the reviewed head) and b24353e5 (the development tip, unchanged). mergeable_state is clean. 2892d609 is an ancestor of the head, so the update was a normal push with no force. Development has no branch protection and no rulesets.\n\nCI on the exact head. All four check runs on head SHA 77d3f7c5 completed with success: validate 117549664198, mac-containment 117549665141, darwin-native 117549664584 and verify-artifact 117553718599, all from run 39085028881. I downloaded the validate job log myself. It checked out refs/pull/1159/merge = 3d3119d6, whose parents are b24353e5 and 77d3f7c5. I fetched 3d3119d6, and its tree 075ac599 is the same as the head's tree. The log has no '(fail)' lines, and tests/gpg-dsh.test.ts passed 25 of 25.\n\nNon-conflicted files. I recomputed `git merge-tree --write-tree 2892d609 b24353e5` independently: tree 3a06bd37, with conflicts only in docs/DECISIONS.md, ops/gpg-dsh.sh and tests/gpg-dsh.test.ts. Compared with the head, git diff outside those three files is empty.\n\nops/gpg-dsh.sh, compared against both sides:\n- Everything from #1139 is kept unchanged: lock/lock_token/stage/old with release_lock and cleanup, die calling cleanup, read_manifest() run twice, take_lock with the stale-lock and wait limits and the trap, has_leftovers, discard_leftovers, read_recorded(), and rebuild_seed's stage, set-aside and swap. The steady state still takes no lock and re-checks under it.\n- Everything from #1141 is kept: base=dsh-gnupg-$uid and seed=$base/seed, sha256 \"$@\", owned_dir, with_inputs, the single-process digest_inputs, copy_inputs, seed_has_config, the legacy-seed kill and removal, and the PR's header comment.\n- The glue is correct. copy_inputs writes to $stage. read_manifest uses with_inputs digest_inputs. read_recorded adds `! seed_has_config`, so a planted config gives an empty recorded value, which takes the lock path, and the rebuild under the lock kills the agent. #1139's lock, .new and .old files now sit inside the 0700 per-user parent.\n- The only addition beyond either side is the legacy sibling cleanup (P3 above).\n\ntests/gpg-dsh.test.ts. Every test from both sides is still there; I compared the test names. On the development side only path adaptations changed: the run() signature, fixture.base, and siblings() reading the base directory and skipping 'seed'. The digest-count test went from 1 to 2 for a build and from 2 to 3 after a reuse. That is correct, because #1139 hashes again under the lock, and a per-file regression would give 8 and still fail it. One test was added for the legacy lock and leftover copies.\n\ndocs/DECISIONS.md. Kept #1139's 'is to be installed from' text and its install-copy paragraph, using the PR's seed path. The two reversal-risk sentences are combined. The #1141 paragraph is extended accurately. The doc assertions from both sides pass.\n\nLocal runs:\n- `bun test tests/gpg-dsh.test.ts` on the head: 25 pass, 0 fail.\n- My own probe of the resolved helper under dash and bash, run 5 times under dash and all passing every time:\n  - 16 concurrent calls with a legacy seed, a lock, and .new and .old copies present all exit 0, the legacy parent is removed, and only 'seed' remains.\n  - gpg arguments containing spaces are passed through intact.\n  - A planted gpg-agent.conf, or a symlinked common.conf, under 12 concurrent calls: no call ran gpg with a config present, and there was exactly one rebuild.\n  - An input change with 12 concurrent calls: the deleted key was never visible, and there was exactly one rebuild.\n  - A stale seed.lock with a leftover seed.new is broken and cleaned up.\n  - A symlinked legacy seed is left alone.\n- `sha256sum --` and `shasum -a 256 --` both handle names that start with a dash.\n\nScratch files are in /tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/finish-1159-review/ (repo, v, probe, validate.log). I changed nothing on GitHub."
+    },
+    "merged": "{\"summary\":\"#1162 and #1156 are merged. #1159 is not merged: it now conflicts with development in docs/DECISIONS.md and needs a manual resolution and a new review first. Development moved twice during this step. First came #1163 (9f98f131), which touches docs/DECISIONS.md and 4 other files. That overlaps #1156's files but none of #1162's. #1162 was checked again (open, head unchanged, clean, 4/4 checks green, tree still identical to the clean merge of reviewed head 9ecc552e with b24353e5) and merged as is. After that, #1156 had its branch updated again. Its new head 57bbd2f1 has parents f1d29c21 and 6c3afe42, and its tree f8bda792 is exactly the clean merge-tree result, so there were no extra edits. It went 4/4 green in run 39086957745. Development then moved again with #1175 (c930c525), which only bumps the lib/codex submodule and touches none of #1156's files. #1156 was checked again (open, head 57bbd2f1, clean, 4/4 green, clean merge-tree with c930c525) and merged. That merge produced the predicted DECISIONS.md conflict with #1159: two hunks at lines 1157-1185 and 1197-1217, where both PRs rewrote the G3 bullet and its post-deployment follow-up differently. GitHub reports #1159 as mergeable=false, mergeable_state=dirty, so update-branch cannot run. Resolving it by hand would produce a new head that the PASS review on 77d3f7c5 does not cover, so I neither pushed to nor merged #1159. Nothing was closed, deleted, force-pushed or commented on.\",\"merges\":[{\"pr\":1162,\"issue\":1146,\"merged_head\":\"71658ec50e2bbc888e80b00003864f8c3931aafc\",\"merge_sha\":\"6c3afe42cc2399c9496da7eec47328b6ae3cbaf1\",\"base_at_merge\":\"9f98f1315e5fbbd0d6e80a2dd90a7d9af7d3d535\",\"base_overlap\":\"none (development changed docs/DECISIONS.md, docs/research/responses-content-allowlist-2026-10-17.md, src/input-normalization.ts and 2 test files; #1162 touches none of them)\",\"checks_at_merge\":{\"validate\":\"success 117548826704\",\"mac-containment\":\"success 117548826572\",\"darwin-native\":\"success 117548826896\",\"verify-artifact\":\"success 117552851006\"},\"issue_state\":\"closed (completed) 2026-10-18T01:33:33Z\"},{\"pr\":1156,\"issue\":1132,\"previous_head\":\"f1d29c21e84a50a75ea4a2165e3731183a66cb4c\",\"merged_head\":\"57bbd2f1e7ea262676b2035aea23f816ee9b12b7\",\"merged_head_parents\":[\"f1d29c21e84a50a75ea4a2165e3731183a66cb4c\",\"6c3afe42cc2399c9496da7eec47328b6ae3cbaf1\"],\"update\":\"update-branch with expected_head_sha=f1d29c21, needed because development changed docs/DECISIONS.md (via #1163) and scripts/test-runner.ts (via #1162)\",\"no_extra_edits_proof\":\"git merge-tree --write-tree f1d29c21 6c3afe42 = f8bda79275ee1df0106c20ec934100be71879bee = tree of 57bbd2f1\",\"ci_run\":39086957745,\"checks_at_merge\":{\"validate\":\"success 117555421688\",\"mac-containment\":\"success 117555421477\",\"darwin-native\":\"success 117555421699\",\"verify-artifact\":\"success 117559143427\"},\"base_at_merge\":\"c930c525860feada6784dab0a6619dc8d4d6de6e\",\"base_overlap\":\"none (c930c525 / #1175 changes only lib/codex; merge-tree with c930c525 is clean)\",\"merge_sha\":\"0d7268741f5c61abe6ad493aa00ee93ffb21a60e\",\"issue_state\":\"closed (completed) 2026-10-18T01:56:23Z\"}],\"not_merged\":[{\"pr\":1159,\"issue\":1141,\"head\":\"77d3f7c56a86094ecc28c7086e17b2b1efdcb60b\",\"state\":\"open, mergeable=false, mergeable_state=dirty\",\"reason\":\"After #1156 merged, development (0d726874) conflicts with #1159 in docs/DECISIONS.md, in two hunks: (1) the G3 'fail closed on a degenerate completion' bullet. #1141 adds the no-refusal clause justification; #1132 renames it 'partially dependent in motivation only', names the toolCallCount > 0 term and lists the stream-relay, DeepSeek, LithosAI and Cerebras routes. (2) The 'Post-deployment follow-up (#608)' paragraph and its first bullet. #1141 has three clauses including no-refusal; #1132 has reasoning-only/empty-output wording and the changelog-revision instruction. ops/deploy.ts and tests/vps-deploy-guards.test.ts auto-merge. Update-branch cannot run, and a manual resolution would be new content that the PASS review of 77d3f7c5 does not cover.\",\"next_step\":\"Merge development (0d7268741f5c61abe6ad493aa00ee93ffb21a60e) into claude/issue-1141. Resolve the two docs/DECISIONS.md hunks so the text keeps #1141's no-refusal clause and #1132's route and predicate-term detail, and keep both PRs' docs assertions passing. Push normally (no force), run an adversarial review on the new resolution, wait for 4/4 green, then merge with sha=<new head>.\",\"issue_state\":\"open\"}],\"development\":{\"tip\":\"0d7268741f5c61abe6ad493aa00ee93ffb21a60e\",\"ci\":\"Push run 39088273884 for 0d726874 was in_progress at 01:57Z. The push runs for 9f98f131, 6c3afe42 and c930c525 were all cancelled because a newer push replaced each of them, so no development push run has completed since b24353e5 (run 39083334471, success). Each merged PR head was green on its own pull_request run.\"},\"artifacts\":{\"clone\":\"/tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/finish-1159/repo\",\"wait_script\":\"/tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/merge-final/wait-checks.sh\",\"conflict_preview\":\"git -C /tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/finish-1159/repo show 3d89df0f44748bd26416831a9382b1cffcf64a60:docs/DECISIONS.md (conflict markers at lines 1157-1185 and 1197-1217)\"}}",
+    "filed": [
+      "{\"pr\":1162,\"issue\":1146,\"merge_sha\":\"6c3afe42cc2399c9496da7eec47328b6ae3cbaf1\",\"development_tip_checked\":\"0d7268741f5c61abe6ad493aa00ee93ffb21a60e (no ops/ file changed since the merge)\",\"filed\":[{\"repo\":\"ubiquity/ai.ubq.fi\",\"number\":1178,\"url\":\"https://github.com/ubiquity/ai.ubq.fi/issues/1178\",\"title\":\"Follow-up from #1162 (issue #1146): make release preparation work under the Deno bridge, catch Bun globals in the bridge graph, and stop the Deno lock following a final link\",\"findings\":[{\"severity\":\"P2\",\"where\":\"ops/vps-release-store.ts:52 (also :28-37, :122, :131-137, :148-162; ops/release-artifact.ts:105, :124; ops/vps-release-driver.ts:144, :188)\",\"verified\":\"Still applies. Under real Deno 2.9.7 on development 0d726874, the store's default preparation is prepareReleasePayload, and calling it throws ReferenceError: Bun is not defined. Sentinel development 87e28fd4 src/host/vps-release.ts:291 builds the driver without preparePayload. bindPreparedVpsPayload also ends in prepareReleasePayload, so the PR's statement that the existing preparePayload capability avoids this is wrong.\"},{\"severity\":\"P3\",\"where\":\"ops/tests/vps-bridge-host.test.ts:18-19, :45-50\",\"verified\":\"Still applies. Walking the bridge graph reaches 18 files with 4 Bun.* references: io.ts:59 (only runs on Bun), build-native-kv.ts:74 and :116 (reached only through a type-only import), and release-artifact.ts:105, which is the P2 and does throw under Deno. The guard does not catch any of them.\"},{\"severity\":\"P3\",\"where\":\"ops/deploy-lock.ts:12 (checks at :14-25; the lstat before the open is at ops/vps-release-journal.ts:69-75)\",\"verified\":\"Still applies, but the impact is smaller than reviewed. On Deno 2.9.7, a link to an existing file is followed and the file is opened for writing, but not truncated, before the refusal. A dangling link fails with ENOENT and creates no file, so the review's 'empty 0600 file' case did not reproduce. Filed as optional hardening.\"}]},{\"repo\":\"ubiquity/sentinel\",\"number\":162,\"url\":\"https://github.com/ubiquity/sentinel/issues/162\",\"title\":\"Accept the ai.ubq.fi #1162 interface change in the VPS release bridge\",\"reason\":\"#1162 changes what the Sentinel bridge host needs. Neither #150 nor #161 covers it. The bridge host now needs --allow-sys=uid for the Deno deploy lock (without it the lock throws NotCapable, checked), --allow-run for the Deno.Command runner, read and write on .data, and a Deno that has FsFile.tryLockSync. Release preparation is still Bun-only, and the bridge passes no preparePayload. The older need for --allow-env=NODE_V8_COVERAGE in node:child_process was checked under Deno 2.9.7. The issue notes that #1162 meets #150's 'Deno-loadable lock' acceptance option, and that the move of the ingress helpers needs no Sentinel change: there are no imports, and tree hashing covers the whole release root.\"}],\"updated\":[\"ai.ubq.fi#1178 body edited after filing to link sentinel#162. No comments were posted on sentinel #150 or #161.\"],\"dropped\":[{\"severity\":\"P3\",\"summary\":\"The #1162 PR description does not use the house-style closing lines\",\"reason\":\"It concerns the PR description, not code on development. The PR is merged, so there is nothing to change in the repository, and the commit trailers are correct.\"}],\"dedupe\":\"I listed all 1169 ai.ubq.fi issues and PRs and all 161 sentinel issues and PRs through the repos/{owner}/{repo}/issues endpoint (paging manually, since the proxy blocks gh --paginate) and filtered them locally. No existing issue covered these findings. Sentinel #150 and #161 match only in passing.\",\"artifacts\":{\"issue_bodies\":[\"/tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/followup-1162/issue-ai-v2.md\",\"/tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/followup-1162/issue-sentinel.md\"],\"probes\":\"/tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/followup-1162/scripts/\",\"worktree\":\"/tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/followup-1162/wt\"}}",
+      "{\"pr\":1156,\"issue\":1132,\"merge_sha\":\"0d7268741f5c61abe6ad493aa00ee93ffb21a60e\",\"merge_url\":\"https://github.com/ubiquity/ai.ubq.fi/commit/0d7268741f5c61abe6ad493aa00ee93ffb21a60e\",\"development_tip_at_check\":\"0d7268741f5c61abe6ad493aa00ee93ffb21a60e\",\"filed\":[\"https://github.com/ubiquity/ai.ubq.fi/issues/1176\"],\"findings_filed\":[{\"severity\":\"P2\",\"where\":\"docs/log-retention-and-quota-runway-2026-08-25.md:178; scripts/test-network.ts:150-152; README.md:24\",\"summary\":\"#1132 auto-closed as completed. Two owner-only items are now tracked nowhere: recording the #139 hard-cap decline (#139 has only bot comments, DECISIONS.md has no entry, close reason is still 'completed') and the macOS non-loopback live e2e decision.\",\"verified\":\"still applies\"},{\"severity\":\"P3\",\"where\":\"scripts/test-runner.ts:308 (helper :174-182; test tests/live-network-policy.test.ts:93-129)\",\"summary\":\"No test checks that main() wraps runFile in withLiveRelayParent. The only test calls the helper directly.\",\"verified\":\"still applies\"},{\"severity\":\"P3\",\"where\":\"README.md:24 (mechanism scripts/test-network.ts:170-175, :233-237)\",\"summary\":\"The README says the relay 'serves only the run's own namespace'. A same-user host process can setns into the forwarder's namespaces and use it. No repo doc names this limit or the ptrace one.\",\"verified\":\"still applies\"},{\"severity\":\"P3\",\"where\":\"docs/handoff/gateway-terminal-truthfulness-handoff-2026-09-21.md:36, :47-48 (target docs/DECISIONS.md:1172)\",\"summary\":\"The handoff still points to the 'measurement-artifact correction'. That heading is now 'CORRECTION: the narration symptom counts are unverified - 2026-09-21'.\",\"verified\":\"still applies\"}],\"dropped\":[{\"severity\":\"P3\",\"summary\":\"PR #1156 body footer does not follow the two-line house style\",\"reason\":\"It concerns the description of a PR that is already merged. Nothing on development is affected, so a follow-up has no value.\"}],\"dedupe\":\"Listed 655 ai.ubq.fi issues and PRs updated since 2026-10-01 through the repo issues endpoint, plus the first page of open issues, and filtered them locally. No duplicate found. #602 and #605 cover other content in the same handoff file and are cross-referenced in finding 4. #1141 does not overlap.\",\"sentinel\":\"No sentinel issue filed. #1156 changed serve.ts, src/config.ts, src/auth/*, scripts/test-runner.ts, scripts/test-network.ts, README and docs, and none of ops/. A grep of ubiquity/sentinel origin/development (87e28fd4) finds no use of parseServeRuntimeOptions, isAdminAuthDisabledForRequest, --disable-admin-auth, DENO_TIMELINE, test-runner/test-network, relayParent or UOS_TEST_PROFILE. Sentinel #150 and #161 cover the ops/ VPS release bridge, which #1156 did not change.\",\"scratch\":\"/tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/followup-1156/body.md\"}",
+      "{\"skipped\": \"PR #1159 (issue #1141) is not merged. I checked over REST and it is still open, merged=false, mergeable=false, mergeable_state=dirty, head 77d3f7c56a86094ecc28c7086e17b2b1efdcb60b. After #1156 merged (0d7268741f5c61abe6ad493aa00ee93ffb21a60e), it conflicts with development in two hunks of docs/DECISIONS.md: the G3 degenerate-completion bullet and the 'Post-deployment follow-up (#608)' paragraph. It needs a manual merge of development, a new adversarial review and 4/4 green before it can merge. Because it is not merged, I filed no follow-up issue and no sentinel issue, and dropped nothing.\"}"
+    ]
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Finish"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Check"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Merge"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 4,
+      "title": "Follow-ups"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "finish",
+      "phaseIndex": 1,
+      "phaseTitle": "Finish",
+      "agentId": "a9e72b87f79859e81",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1792284655661,
+      "queuedAt": 1792284655658,
+      "attempt": 1,
+      "lastToolName": "Bash",
+      "lastToolSummary": "cd /tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871…",
+      "promptPreview": "Repository ubiquity/ai.ubq.fi (development is the default branch). GitHub via the gh CLI (preconfigured) or the GitHub MCP tools (load with ToolSearch). Never close a pull request, never delete a branch, never force-push, never rewrite history, never post \"@codex review\", never add branch protection or rulesets. Every GitHub comment or issue body you author ends with \"\\n\\n---\\n_Generated by [Claud…",
+      "promptFramed": true,
+      "lastProgressAt": 1792286774239,
+      "tokens": 221079,
+      "toolCalls": 99,
+      "durationMs": 2118577,
+      "resultPreview": "{\"summary\":\"Development tip b24353e5 is green: run 39083334471, with validate, mac-containment, darwin-native and verify-artifact all passing at 00:58Z. #1162 and #1156 were updated onto it with update-branch. Each new head's tree is identical to the clean 3-way merge of its reviewed head and b24353e5, so nothing was changed beyond the base merge. #1159 got a manual merge commit and a normal push …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "check-1159",
+      "phaseIndex": 2,
+      "phaseTitle": "Check",
+      "agentId": "a1fd2cb94f496055f",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1792286774273,
+      "queuedAt": 1792286774241,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "PASS",
+      "promptPreview": "Repository ubiquity/ai.ubq.fi (development is the default branch). GitHub via the gh CLI (preconfigured) or the GitHub MCP tools (load with ToolSearch). Never close a pull request, never delete a branch, never force-push, never rewrite history, never post \"@codex review\", never add branch protection or rulesets. Every GitHub comment or issue body you author ends with \"\\n\\n---\\n_Generated by [Claud…",
+      "promptFramed": true,
+      "lastProgressAt": 1792287143130,
+      "tokens": 138437,
+      "toolCalls": 35,
+      "durationMs": 368856,
+      "resultPreview": "{\"verdict\":\"PASS\",\"findings\":[{\"severity\":\"P3\",\"file\":\"ops/gpg-dsh.sh\",\"summary\":\"The resolution adds code that neither parent has. The legacy cleanup now also removes <uid>.lock, <uid>.new.* and <uid>.old.* under the old $TMPDIR/dsh-gnupg parent (lines 136-149). It does this without holding a lock. It also calls rmdir on the parent even when there is no legacy seed, which reviewed head 2892d609 o…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "merge",
+      "phaseIndex": 3,
+      "phaseTitle": "Merge",
+      "agentId": "a72dbef7c1709c268",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1792287143134,
+      "queuedAt": 1792287143132,
+      "attempt": 1,
+      "lastToolName": "Bash",
+      "lastToolSummary": "cd /tmp && date -u +%T; timeout -k 10 300 gh run list -R ub…",
+      "promptPreview": "Repository ubiquity/ai.ubq.fi (development is the default branch). GitHub via the gh CLI (preconfigured) or the GitHub MCP tools (load with ToolSearch). Never close a pull request, never delete a branch, never force-push, never rewrite history, never post \"@codex review\", never add branch protection or rulesets. Every GitHub comment or issue body you author ends with \"\\n\\n---\\n_Generated by [Claud…",
+      "promptFramed": true,
+      "lastProgressAt": 1792288684548,
+      "tokens": 86759,
+      "toolCalls": 30,
+      "durationMs": 1541413,
+      "resultPreview": "{\"summary\":\"#1162 and #1156 are merged. #1159 is not merged: it now conflicts with development in docs/DECISIONS.md and needs a manual resolution and a new review first. Development moved twice during this step. First came #1163 (9f98f131), which touches docs/DECISIONS.md and 4 other files. That overlaps #1156's files but none of #1162's. #1162 was checked again (open, head unchanged, clean, 4/4 c…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "followup:1162",
+      "phaseIndex": 4,
+      "phaseTitle": "Follow-ups",
+      "agentId": "ac7c5013ce0bfa22c",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1792288684601,
+      "queuedAt": 1792288684596,
+      "attempt": 1,
+      "lastToolName": "Bash",
+      "lastToolSummary": "timeout -k 10 300 bash -c 'D=/tmp/claude-0/-home-user/c1099…",
+      "promptPreview": "Repository ubiquity/ai.ubq.fi (development is the default branch). GitHub via the gh CLI (preconfigured) or the GitHub MCP tools (load with ToolSearch). Never close a pull request, never delete a branch, never force-push, never rewrite history, never post \"@codex review\", never add branch protection or rulesets. Every GitHub comment or issue body you author ends with \"\\n\\n---\\n_Generated by [Claud…",
+      "promptFramed": true,
+      "lastProgressAt": 1792289381048,
+      "tokens": 164606,
+      "toolCalls": 62,
+      "durationMs": 696446,
+      "resultPreview": "{\"pr\":1162,\"issue\":1146,\"merge_sha\":\"6c3afe42cc2399c9496da7eec47328b6ae3cbaf1\",\"development_tip_checked\":\"0d7268741f5c61abe6ad493aa00ee93ffb21a60e (no ops/ file changed since the merge)\",\"filed\":[{\"repo\":\"ubiquity/ai.ubq.fi\",\"number\":1178,\"url\":\"https://github.com/ubiquity/ai.ubq.fi/issues/1178\",\"title\":\"Follow-up from #1162 (issue #1146): make release preparation work under the Deno bridge, catch…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "followup:1156",
+      "phaseIndex": 4,
+      "phaseTitle": "Follow-ups",
+      "agentId": "a84a9cf2ce73ca15a",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1792288684602,
+      "queuedAt": 1792288684596,
+      "attempt": 1,
+      "lastToolName": "Bash",
+      "lastToolSummary": "timeout -k 10 300 bash -c 'gh api repos/ubiquity/ai.ubq.fi/…",
+      "promptPreview": "Repository ubiquity/ai.ubq.fi (development is the default branch). GitHub via the gh CLI (preconfigured) or the GitHub MCP tools (load with ToolSearch). Never close a pull request, never delete a branch, never force-push, never rewrite history, never post \"@codex review\", never add branch protection or rulesets. Every GitHub comment or issue body you author ends with \"\\n\\n---\\n_Generated by [Claud…",
+      "promptFramed": true,
+      "lastProgressAt": 1792288979512,
+      "tokens": 115063,
+      "toolCalls": 33,
+      "durationMs": 294908,
+      "resultPreview": "{\"pr\":1156,\"issue\":1132,\"merge_sha\":\"0d7268741f5c61abe6ad493aa00ee93ffb21a60e\",\"merge_url\":\"https://github.com/ubiquity/ai.ubq.fi/commit/0d7268741f5c61abe6ad493aa00ee93ffb21a60e\",\"development_tip_at_check\":\"0d7268741f5c61abe6ad493aa00ee93ffb21a60e\",\"filed\":[\"https://github.com/ubiquity/ai.ubq.fi/issues/1176\"],\"findings_filed\":[{\"severity\":\"P2\",\"where\":\"docs/log-retention-and-quota-runway-2026-08-2…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "followup:1159",
+      "phaseIndex": 4,
+      "phaseTitle": "Follow-ups",
+      "agentId": "aacb85bc4985f8428",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1792288979515,
+      "queuedAt": 1792288684596,
+      "attempt": 1,
+      "lastToolName": "Bash",
+      "lastToolSummary": "timeout -k 10 300 gh api repos/ubiquity/ai.ubq.fi/pulls/115…",
+      "promptPreview": "Repository ubiquity/ai.ubq.fi (development is the default branch). GitHub via the gh CLI (preconfigured) or the GitHub MCP tools (load with ToolSearch). Never close a pull request, never delete a branch, never force-push, never rewrite history, never post \"@codex review\", never add branch protection or rulesets. Every GitHub comment or issue body you author ends with \"\\n\\n---\\n_Generated by [Claud…",
+      "promptFramed": true,
+      "lastProgressAt": 1792288990508,
+      "tokens": 55278,
+      "toolCalls": 2,
+      "durationMs": 10993,
+      "resultPreview": "{\"skipped\": \"PR #1159 (issue #1141) is not merged. I checked over REST and it is still open, merged=false, mergeable=false, mergeable_state=dirty, head 77d3f7c56a86094ecc28c7086e17b2b1efdcb60b. After #1156 merged (0d7268741f5c61abe6ad493aa00ee93ffb21a60e), it conflicts with development in two hunks of docs/DECISIONS.md: the G3 degenerate-completion bullet and the 'Post-deployment follow-up (#608)'…"
+    }
+  ],
+  "totalTokens": 781222,
+  "totalToolCalls": 261
+}

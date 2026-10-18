@@ -1,0 +1,1868 @@
+From 6e98c69a2f1fedca22f5c11b608e16e5185f22c8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 01:20:44 +0000
+Subject: [PATCH] fix(repair): hold a merged Gateway delivery in one stable
+ release-deferred state while the release path is disabled (JAM B12)
+
+A merged ai.ubq.fi delivery whose source issue closed through its closing
+keyword waits at `delivery` beside its open production release request.
+The release path is disabled (the VPS release contract is an open owner
+decision, #10, #13, #152), so the release ref holds no VPS release record
+and `observeGatewayVpsDelivery` can only answer `wait`. R80's
+`waitRelease` re-armed a five-minute `unavailable` wait for each such
+record on every runtime cycle: live 670 rewrote it 138 times, and 348 of
+632 repair-state commits between 2026-10-17T16:34Z and 20:36Z were these
+re-arms of 25 records, each spending a delivery-bucket step. The launcher's
+closure-delivery pass also ran the full closure gate (task, opt-out, pull
+and two release reads) for each record and printed one
+`delivery:<id>:release_unavailable` line per record per pass.
+
+Runtime (src/): when the open request has no VPS release record on a
+release ref that reads back cleanly (`gatewayReleaseDeferred`), the
+delivery step writes one open-ended `unavailable` wait at `delivery`
+(`deferRelease`). Selection skips it, so after that one write the record
+takes no step and no write. Once per run, and only when such a record
+exists, `resumeDeferredRelease` reads the release ref once. It releases
+the wait of a record whose request the release ref now records, whose
+request is no longer open, or that holds an intent. The ordinary step then
+observes the outcome on the same run. Each record is looked at once per
+run. A cancelled or failed request is never deferred.
+
+The record is not marked done. The VPS controller begins open requests
+without reading the work record, but only the record consumes the outcome:
+acceptance reconciles the closure, and a failed or rolled-back release
+blocks it. Both the runtime's `observeReleaseAcceptance` and the
+launcher's `gatewayClosureGate` bind only a record at `delivery`, and a
+done record never moves again.
+
+Launcher (ops/): such a delivery is counted in one line per pass,
+`release-deferred:count=<n>:release_path=disabled` (`queued` once VPS
+release records exist but none for these requests). Nothing is read for it
+in the closure-delivery, retirement or foreign-closure loops; its request
+was recorded only after the merge, so it is never closed unmerged. The
+check reads the snapshots and never the wait, so it applies to R80's waits
+as well as the new shape. The full gate runs again once the release ref
+records the request.
+
+R80 compatibility: no generation-80 path writes an open-ended
+`unavailable` wait. R80 parses the new shape, its selection skips it, and
+its cycles write nothing over it. The live launcher 3f041b46d never reads
+the wait: it reports `release_unavailable` over the new shape and writes
+nothing. An accepted release still closes the deferred record out to
+`done` through any launcher's closure gate. No state field, blocker or
+runtime stdout line is added.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H8mMNvEXtHRiTVR1wJeFLQ
+---
+ docs/DECISIONS.md                             |   4 +
+ ops/hosted-autonomy-closure-pass.ts           |  49 ++
+ src/repair/loop-cycle.ts                      |  18 +
+ src/repair/loop-release.ts                    | 104 +++-
+ src/repair/vps-delivery.ts                    |  36 +-
+ .../repair/release-deferred-live.json         | 513 ++++++++++++++++++
+ .../hosted-autonomy-release-deferred_test.ts  | 307 +++++++++++
+ .../hosted-autonomy-spent-merge-bound_test.ts |  12 +-
+ tests/repair/release-deferred-fixtures.ts     | 182 +++++++
+ tests/repair/release-deferred_test.ts         | 383 +++++++++++++
+ 10 files changed, 1601 insertions(+), 7 deletions(-)
+ create mode 100644 tests/fixtures/repair/release-deferred-live.json
+ create mode 100644 tests/host/hosted-autonomy-release-deferred_test.ts
+ create mode 100644 tests/repair/release-deferred-fixtures.ts
+ create mode 100644 tests/repair/release-deferred_test.ts
+
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index b6ce6b0b1b..2d78e90cd8 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -170,6 +170,10 @@ A CI fix is charged in the existing `counters.retries` (`countRetry`, also count
+ 
+ Owner context 2026-10-17: Sentinel's intended runtime is GitHub Actions on Linux; the retained macOS local-supervisor mode is not used. Issue #100 (the native Codex cannot apply its own Seatbelt profile inside the macOS local supervisor's child sandbox) concerns that retained local mode only and has no Actions impact, so it is closed as not planned for now. Generation 80 ships no macOS change: the opt-in Codex exemption of the local supervisor's child profile and the `check:macos-boundary` owner check (12af5da8a) are reverted, and the local supervisor, its child profile and their tests are byte-identical to the live launcher 413f9eff6. If the local mode is used again, #100 is reopened, and a supervisor-owned broker, not an exemption that lets repair-host code reach an unconfined Codex, is the route.
+ 
++## Release-deferred Gateway delivery (JAM B12)
++
++A merged ai.ubq.fi delivery whose source issue closed through its closing keyword waits at `delivery` beside its open production release request, and the Sentinel release path stays disabled (the VPS release contract is an open owner decision, Sentinel #10, #13, #152), so the release ref holds no VPS release record and `observeGatewayVpsDelivery` can only answer `wait`. R80 re-armed a five-minute `unavailable` wait for every such record on every runtime cycle (live 670 rewrote it 138 times; 348 of 632 repair-state commits between 2026-10-17T16:34Z and 20:36Z were these re-arms of 25 records, each spending a delivery-bucket step), and the launcher's closure-delivery pass ran the full closure gate (source task, opt-out, pull and two release reads) for each and printed one `delivery:<id>:release_unavailable` line per record per pass. The record is not marked done: `src/release/vps-controller.ts` begins open requests from the repair state without consulting the record, but only the record consumes the outcome, through the runtime's `observeReleaseAcceptance` (accepted: the closure intent and its reconciliation of the already-closed issue; failed or rolled back: `release <phase>` block) and the launcher's `gatewayClosureGate` (closure intent, `reconcile:<id>:already_closed`, or `blockGatewayDelivery`), both of which bind only a record at `delivery` (`gatewayRequestBindsDelivery`), while a done record never moves again; merged-but-not-deployed work is never reported as delivered (stabilization plan). Next runtime generation (rollback target R80): when the open request has no VPS release record on a positively read release ref (`gatewayReleaseDeferred`), the delivery step writes once an open-ended `unavailable` wait at `delivery` (`deferRelease`; no generation-80 path writes an open-ended `unavailable` wait, so the shape adds no state field), which selection skips, so the record costs no step and no write afterwards. Once per run, and only when such a record exists, the runtime reads the release ref once (`resumeDeferredRelease`); a deferred record whose request the release ref now records, whose request is no longer open, or that holds an intent has its wait released and is observed on the same run; nothing else is written, and each record is looked at once per run. A cancelled or failed request is never deferred. The launcher counts such a delivery (Gateway, `delivery`, no intent, one open matching request without a VPS release record in the pass's release snapshot) in one line per pass, `release-deferred:count=<n>:release_path=disabled` (`queued` once the release ref holds VPS release records but not these requests' records), and spends no read on it in the closure-delivery, retirement and foreign-closure loops (its request was recorded only after its merge, so it is never closed unmerged); the decision reads the snapshots, never the wait, so it holds for R80's re-armed waits and the new shape alike, and the full gate runs again on the first pass after the release ref records the request. Rollback: R80 parses the deferred shape and skips it (`isWaiting`), so it writes nothing over it; the live launcher 3f041b46d, which never reads the wait, reports `release_unavailable` over it and writes nothing, and an accepted, failed or rolled-back release is still consumed by any launcher's closure gate (an accepted release closes the deferred record out to `done`). Live, fresh state 31e7cc24a (sequence 42434, 2026-10-17T23:51Z): 26 records (577, 579, 589, 592, 594, 595, 598, 599, 600, 609, 616, 618, 641, 649, 651, 659, 661, 664, 670, 674, 682, 683, 684, 686, 688, 880) are deferred on the new runtime's first ordinary pass (no hosted step limit) and are then not rewritten; 618's request is a carried delivery that does not bind until the carried release acceptance follow-up ships.
++
+ ## Durable memory and self-healing
+ 
+ Sentinel records machine-readable attempt memory and a deterministic lesson digest in the existing Git repair state; trusted writers own every write and model workers never write state. Bounded records carry the attempt fingerprint, the stage reached, a closed failure class, counts and the runtime revision. Unchanged replays of a recorded failure are refused with a precise reason, and the implementer prompt carries verified prior attempts, cross-task repository lessons and regression facts.
+diff --git a/ops/hosted-autonomy-closure-pass.ts b/ops/hosted-autonomy-closure-pass.ts
+index f5570ae578..8bf92494d3 100644
+--- a/ops/hosted-autonomy-closure-pass.ts
++++ b/ops/hosted-autonomy-closure-pass.ts
+@@ -35,6 +35,7 @@ import type {
+ } from "./hosted-autonomy-types.ts";
+ import {
+   gatewayClosureIntentBindsRequest,
++  gatewayReleaseDeferred,
+   gatewayRequestBindsDelivery,
+   isGatewayVpsRepository,
+   observeGatewayVpsDelivery,
+@@ -143,6 +144,32 @@ function blockGatewayDelivery(
+   );
+ }
+ 
++/**
++ * Merged; release deferred while the release path is disabled (JAM B12): a
++ * Gateway delivery with no intent whose one open production request the
++ * release ref does not record. `gatewayClosureGate` could only answer `wait`
++ * for it (`observeGatewayVpsDelivery` finds no VPS release record), so no
++ * source, pull or release read is spent on it. The decision reads only the
++ * repair and release snapshots this pass already holds and never the
++ * record's wait, so it holds for every runtime generation's record shape, and
++ * the full gate runs again on the first pass after the release ref records
++ * the request (accepted, failed or rolled back alike).
++ */
++function gatewayReleaseDeferredIn(
++  context: HostedAutonomyPassContextV1,
++  record: HostedAutonomyRecordV1,
++): boolean {
++  if (
++    !isGatewayVpsRepository(record.repository) ||
++    record.nextStep !== "delivery" || record.intent !== null
++  ) return false;
++  const requests = context.snapshot.releaseRequests.filter((request) =>
++    releaseRequestMatchesDelivery(request, record)
++  );
++  return requests.length === 1 &&
++    gatewayReleaseDeferred(context.releaseSnapshot, requests[0]);
++}
++
+ function gatewayIntentClosable(
+   context: HostedAutonomyPassContextV1,
+   record: HostedAutonomyRecordV1,
+@@ -168,6 +195,7 @@ export async function runHostedClosurePass(
+   const released = acceptedReleases(context.releaseSnapshot.hostedReleases);
+   if (deliveryOnly) {
+     let ready = false;
++    let releaseDeferred = 0;
+     for (const record of snapshot.work) {
+       if (record.nextStep !== "delivery" || settled(record.id)) continue;
+       const { pr, head, base } = record.target;
+@@ -176,6 +204,10 @@ export async function runHostedClosurePass(
+         base === null
+       ) continue;
+       if (!gatewayIntentClosable(context, record)) continue;
++      if (gatewayReleaseDeferredIn(context, record)) {
++        releaseDeferred++;
++        continue;
++      }
+       const scope = await scopeFor(record.repository);
+       if (
+         authorizingReceipt(
+@@ -212,6 +244,18 @@ export async function runHostedClosurePass(
+       revisions.push(evidence.revision);
+       ready = true;
+     }
++    // One counted, owner-visible line per pass instead of one
++    // `release_unavailable` line per merged record: `disabled` while the
++    // release ref holds no VPS release record at all, `queued` once the
++    // enabled release controller has records but not yet these requests.
++    if (releaseDeferred > 0) {
++      const path = (context.releaseSnapshot.vpsReleases ?? []).length === 0
++        ? "disabled"
++        : "queued";
++      actions.push(
++        `release-deferred:count=${releaseDeferred}:release_path=${path}`,
++      );
++    }
+     // An open pull still needs the ordinary delivery pass before retirement;
+     // only already-proven delivery bookkeeping may preempt unrelated retries.
+     if (!ready) return null;
+@@ -233,6 +277,9 @@ export async function runHostedClosurePass(
+     }
+     const pullRequest = record.target.pr;
+     if (pullRequest === null) continue;
++    // Its release request was recorded only once its pull request merged, so
++    // a deferred release is never closed unmerged: nothing to read.
++    if (gatewayReleaseDeferredIn(context, record)) continue;
+     const scope = await scopeFor(record.repository);
+     const pull = await readPull(scope, pullRequest);
+     if (pull === null) continue;
+@@ -332,6 +379,8 @@ export async function runHostedClosurePass(
+     ) {
+       continue;
+     }
++    // Counted once by the delivery-only pass; nothing is read for it here.
++    if (gatewayReleaseDeferredIn(context, record)) continue;
+     const key = hostedDeliveryKey(record.repository, pullRequest, head, base);
+     if (foreignMerged.has(key)) continue;
+     const scope = await scopeFor(record.repository);
+diff --git a/src/repair/loop-cycle.ts b/src/repair/loop-cycle.ts
+index ab5e582701..2b9f3bbfce 100644
+--- a/src/repair/loop-cycle.ts
++++ b/src/repair/loop-cycle.ts
+@@ -7,6 +7,10 @@ import { pollIntake } from "./loop-intake.ts";
+ import { bridgeLegacyLoss } from "./loop-legacy-loss.ts";
+ import { createPostDrainContinuation } from "./loop-post-drain.ts";
+ import { reconcileOrphanPublication } from "./loop-publication.ts";
++import {
++  type ReleaseResumeRunV1,
++  resumeDeferredRelease,
++} from "./loop-release.ts";
+ import {
+   recoverBlockedAlreadySatisfied,
+   recoverBlockedMissingTaskReview,
+@@ -67,6 +71,8 @@ export async function runRepairCycle(
+   const missingTaskReviewAttempted = new Set<string>();
+   // One run-local re-observation per historical already-satisfied block.
+   const alreadySatisfiedAttempted = new Set<string>();
++  // One release read per run, and one look per deferred release record.
++  const releaseResume: ReleaseResumeRunV1 = { attempted: new Set() };
+   // Intake is polled exactly once per run. A deferred (cooldown or bound)
+   // iteration must never re-poll the sources: subsequent loop iterations reuse
+   // the run-local deferral tracking instead of repeating intake reads.
+@@ -250,6 +256,18 @@ export async function runRepairCycle(
+       continue;
+     }
+ 
++    // A release deferred while the release path is disabled resumes once the
++    // release ref records its request; otherwise it costs nothing (JAM B12).
++    const resumed = await resumeDeferredRelease(deps, context, releaseResume);
++    if (resumed?.kind === "state_error") {
++      return { status: "state_error", detail: resumed.detail };
++    }
++    if (resumed?.kind === "progress") {
++      didWork = true;
++      tracking.steps++;
++      continue;
++    }
++
+     const rank = rankEligibleWork(
+       context.snapshot,
+       deps.configs,
+diff --git a/src/repair/loop-release.ts b/src/repair/loop-release.ts
+index e8deb0d84f..6857b53543 100644
+--- a/src/repair/loop-release.ts
++++ b/src/repair/loop-release.ts
+@@ -9,15 +9,22 @@ import {
+   type LocalReleaseReceiptV1,
+   parseLocalReleaseReceiptV1,
+ } from "../contracts/local-release.ts";
+-import type { PortResultV1 } from "../contracts/ports.ts";
++import type { PortResultV1, StateReadView } from "../contracts/ports.ts";
+ import type { ReleaseRequestV1 } from "../contracts/release.ts";
++import {
++  parseReleaseStateSnapshotV1,
++  type ReleaseStateSnapshotV1,
++} from "../contracts/state-snapshots.ts";
+ import type { WorkRecordV1 } from "../contracts/work-record.ts";
+ import { closureIntentKey } from "./keys.ts";
+ import { RELEASE_POLL_MS } from "./loop-bounds.ts";
+ import { retryClosure } from "./loop-closure.ts";
+ import { gateDeliveryOnChecks } from "./loop-checks.ts";
++import { releaseRequestMatchesDelivery } from "./loop-records.ts";
+ import {
++  gatewayReleaseDeferred,
+   isGatewayVpsRepository,
++  isReleaseDeferredWait,
+   observeGatewayVpsDelivery,
+ } from "./vps-delivery.ts";
+ import { persistWork } from "./loop-state.ts";
+@@ -72,6 +79,92 @@ export function waitRelease(
+   );
+ }
+ 
++/**
++ * Merged; release deferred while the release path is disabled (JAM B12). The
++ * record stays at `delivery` beside its open request: it is never marked
++ * done, because only this record consumes the release outcome (acceptance
++ * reconciles the closure, a failed or rolled-back release blocks it) and a
++ * done record never moves again. Written once; selection then skips it.
++ */
++export function deferRelease(
++  deps: RepairCycleDepsV1,
++  context: LoopContextV1,
++  record: WorkRecordV1,
++  now: number,
++): Promise<StepResultV1> {
++  return persistWork(
++    deps,
++    context,
++    setWait(record, { reason: "unavailable", since: now, until: null }, now),
++  );
++}
++
++/** One positively read and reparsed release snapshot; anything else is null. */
++export async function readReleaseSnapshot(
++  state: Pick<StateReadView, "readRelease">,
++): Promise<ReleaseStateSnapshotV1 | null> {
++  try {
++    const read = await state.readRelease();
++    if (!read.ok || read.value.status !== "found") return null;
++    return parseReleaseStateSnapshotV1(read.value.snapshot);
++  } catch {
++    return null;
++  }
++}
++
++/** Run-local state of the deferred-release resume pass. */
++export interface ReleaseResumeRunV1 {
++  /** The release snapshot read once per run (undefined until needed). */
++  release?: ReleaseStateSnapshotV1 | null;
++  /** Deferred records already looked at in this run. */
++  attempted: Set<string>;
++}
++
++/**
++ * The resume pass for deferred releases: once per run, and only when a
++ * deferred record exists, the release ref is read ONCE; a deferred record
++ * whose request the release ref now records (or that is no longer an open,
++ * intent-free deferral) has its wait released, so the ordinary delivery step
++ * observes the release outcome on this same run. A still-deferred record is
++ * not touched, an unreadable release ref changes nothing, and each record is
++ * looked at once per run, so the pass never loops or rewrites.
++ */
++export async function resumeDeferredRelease(
++  deps: RepairCycleDepsV1,
++  context: LoopContextV1,
++  run: ReleaseResumeRunV1,
++): Promise<StepResultV1 | null> {
++  for (const record of context.snapshot.work) {
++    if (!isReleaseDeferredWait(record) || run.attempted.has(record.id)) {
++      continue;
++    }
++    if (run.release === undefined) {
++      run.release = await readReleaseSnapshot(deps.state);
++    }
++    if (run.release === null) return null;
++    run.attempted.add(record.id);
++    const request = context.snapshot.releaseRequests.find((item) =>
++      releaseRequestMatchesDelivery(item, record)
++    );
++    if (
++      record.intent === null && request !== undefined &&
++      gatewayReleaseDeferred(run.release, request)
++    ) continue;
++    const now = deps.clock.now();
++    const since = record.wait!.since;
++    return persistWork(
++      deps,
++      context,
++      setWait(
++        record,
++        { reason: "unavailable", since, until: Math.max(now, since) },
++        now,
++      ),
++    );
++  }
++  return null;
++}
++
+ /**
+  * Local acceptance only ever reads the private local activation receipt. An
+  * absent capability is unavailable (never a Deno fallback), a missing/error
+@@ -281,6 +374,15 @@ export async function observeReleaseAcceptance(
+   }
+   const now = deps.clock.now();
+   if (isGatewayVpsRepository(record.repository)) {
++    // Merged, release deferred while the release path is disabled: no release
++    // record can be observed for this request, so the record waits in its one
++    // stable shape instead of re-arming a poll every cycle (JAM B12).
++    if (record.intent === null && request.status === "open") {
++      const release = await readReleaseSnapshot(deps.state);
++      if (release !== null && gatewayReleaseDeferred(release, request)) {
++        return deferRelease(deps, context, record, now);
++      }
++    }
+     const observed = await observeGatewayVpsDelivery(
+       deps.state,
+       record,
+diff --git a/src/repair/vps-delivery.ts b/src/repair/vps-delivery.ts
+index dd5bc708ab..b1fb5d9293 100644
+--- a/src/repair/vps-delivery.ts
++++ b/src/repair/vps-delivery.ts
+@@ -7,7 +7,10 @@ import {
+ } from "../contracts/release.ts";
+ import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
+ import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+-import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
++import {
++  parseReleaseStateSnapshotV1,
++  type ReleaseStateSnapshotV1,
++} from "../contracts/state-snapshots.ts";
+ import {
+   parseVpsReleaseRecordV1,
+   vpsRecordBindsRequest,
+@@ -82,6 +85,37 @@ export function gatewayClosureIntentBindsRequest(
+     intent.branch === null && intent.resultId === null;
+ }
+ 
++/**
++ * Release deferred (JAM B12): the merged delivery's production request is
++ * open and the positively read release ref holds no VPS release record for
++ * it. Only the release-role controller (`src/release/vps-controller.ts`)
++ * writes that record, when it begins the request, so until then
++ * `observeGatewayVpsDelivery` can only ever answer `wait` for the request:
++ * while the release path is disabled nothing writes it at all. A cancelled
++ * or failed request is never deferred: it carries its own terminal reason.
++ */
++export function gatewayReleaseDeferred(
++  release: Pick<ReleaseStateSnapshotV1, "vpsReleases">,
++  request: ReleaseRequestV1,
++): boolean {
++  return request.status === "open" &&
++    !(release.vpsReleases ?? []).some((item) => item.request.id === request.id);
++}
++
++/**
++ * The one stable runtime shape of a deferred release: a Gateway record at
++ * `delivery` holding an open-ended `unavailable` wait. Selection skips it
++ * (`isWaiting`), so it costs no step and no write; the runtime's once-per-run
++ * resume pass (`resumeDeferredRelease`) releases it as soon as the release
++ * ref records its request. No generation-80 path writes an open-ended
++ * `unavailable` wait, and R80 parses and skips it.
++ */
++export function isReleaseDeferredWait(record: WorkRecordV1): boolean {
++  return isGatewayVpsRepository(record.repository) &&
++    record.nextStep === "delivery" &&
++    record.wait?.reason === "unavailable" && record.wait.until === null;
++}
++
+ export type GatewayVpsAcceptanceV1 =
+   | { kind: "wait" }
+   | { kind: "blocked"; reason: string }
+diff --git a/tests/fixtures/repair/release-deferred-live.json b/tests/fixtures/repair/release-deferred-live.json
+new file mode 100644
+index 0000000000..eec91a9f27
+--- /dev/null
++++ b/tests/fixtures/repair/release-deferred-live.json
+@@ -0,0 +1,513 @@
++{
++  "description": "Live ai.ubq.fi delivery records of JAM B12 at repair sequence 42434 (origin/sentinel-state/repair 31e7cc24a, 2026-10-17T23:51Z, R80 installed): 670 (PR 1093, request bound to its own reviewed head, counters.stalled 138), 618 (PR 1071, a carried delivery whose request names the receipt of an earlier head, so it never binds) and 595 (PR 1087, merged at 23:51Z). Each pull request is merged and each source issue closed by its closing keyword; each record holds a five-minute 'unavailable' release wait it re-arms on every runtime cycle beside its open production release request and the exact review receipt that request names. The release ref (origin/sentinel-state/release 71779fde2) has no vpsReleases collection: the Sentinel release path is disabled. The source issue statements of 670 and 618 (595's is left out: its body names a model) and the merged pull request facts (merge commit and its parents) were read from GitHub on 2026-10-18 after 00:00Z (each pull request merged by the sentinel App into development, each issue closed completed by its closing keyword).",
++  "sequence": 42434,
++  "updatedAt": 1792281085076,
++  "records": [
++    {
++      "version": "v1",
++      "kind": "work",
++      "repository": {
++        "owner": "ubiquity",
++        "name": "ai.ubq.fi",
++        "installationId": 155687488
++      },
++      "id": "issue-ubiquity-ai.ubq.fi-670",
++      "source": {
++        "kind": "issue",
++        "id": "670",
++        "revision": "dfcb82280f8c3236811cd3384f9bb1ac9a618ee9"
++      },
++      "related": {
++        "incidentId": null,
++        "issueNumber": 670
++      },
++      "fingerprint": null,
++      "failingRevision": null,
++      "sourceSnapshotDigest": null,
++      "classification": {
++        "severity": "P2",
++        "priority": null
++      },
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "dependencies": [],
++      "controller": {
++        "sha": "1f90f0a0b122bdcd424eb8fa6016a509bd3f6ed5"
++      },
++      "target": {
++        "base": "8a99ecbeaf8fd5f845fd6be034e284dd370f332c",
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-670",
++        "checkpoint": null,
++        "head": "4af3aad574d81aa873bc900975eb3021bd6f3992",
++        "pr": 1093,
++        "candidateState": {
++          "preserved": {
++            "operationKey": "base_refresh:1093:27c975e05b0378175b0e8c926134647ff2910363:8a99ecbeaf8fd5f845fd6be034e284dd370f332c",
++            "base": "8a99ecbeaf8fd5f845fd6be034e284dd370f332c",
++            "head": "4af3aad574d81aa873bc900975eb3021bd6f3992",
++            "ref": "refs/heads/sentinel-candidates/f10dbe4e76e4d3e1bdacea7d66e9f93a9d3a190108be02f1f4e69d0d1da0ba9c"
++          },
++          "publishedHead": "4af3aad574d81aa873bc900975eb3021bd6f3992"
++        }
++      },
++      "nextStep": "delivery",
++      "wait": {
++        "reason": "unavailable",
++        "since": 1792280970752,
++        "until": 1792281270752
++      },
++      "blocker": null,
++      "counters": {
++        "attempts": 3,
++        "retries": 0,
++        "reviewRounds": 5,
++        "stalled": 138
++      },
++      "evidence": [
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:d7fefeda49067ea22387f4b2dc97136c8b728d2f60cc79749b0a712a6f480a94"
++        },
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:1f730d53e59cc6e182ada8d09bff74b57ab46bf62beb352061b7e60c702e3829"
++        },
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:49a14d63ca2da5951724db18e4490077378acfd79f524ad3389ad79a57b7fd13"
++        },
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:5a05f56acd7d732d41d62cfc6feee35d4dc244b12e7f8f7146fd3d062ede4ffc"
++        }
++      ],
++      "intent": null,
++      "firstSeenAt": 1790950718000,
++      "createdAt": 1790951200910,
++      "updatedAt": 1792280971586
++    },
++    {
++      "version": "v1",
++      "kind": "work",
++      "repository": {
++        "owner": "ubiquity",
++        "name": "ai.ubq.fi",
++        "installationId": 155687488
++      },
++      "id": "issue-ubiquity-ai.ubq.fi-618",
++      "source": {
++        "kind": "issue",
++        "id": "618",
++        "revision": "1d7e64e6b30cef212bca16ca7191f13685382ded"
++      },
++      "related": {
++        "incidentId": null,
++        "issueNumber": 618
++      },
++      "fingerprint": null,
++      "failingRevision": null,
++      "sourceSnapshotDigest": null,
++      "classification": {
++        "severity": "P2",
++        "priority": null
++      },
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "dependencies": [],
++      "controller": {
++        "sha": "1f90f0a0b122bdcd424eb8fa6016a509bd3f6ed5"
++      },
++      "target": {
++        "base": "3650359812f06951f2322b89d79ca13c68184150",
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-618",
++        "checkpoint": null,
++        "head": "4c802120951925ba309305c23f7ecf6fe07e9a4e",
++        "pr": 1071,
++        "candidateState": {
++          "preserved": {
++            "operationKey": "base_refresh:1071:31f7ea943216526840a0328573d3c227ff498472:3650359812f06951f2322b89d79ca13c68184150",
++            "base": "3650359812f06951f2322b89d79ca13c68184150",
++            "head": "4c802120951925ba309305c23f7ecf6fe07e9a4e",
++            "ref": "refs/heads/sentinel-candidates/ccd73f9a089f425b0f3463eb4d5cb848d85ae9b5ce5a2a176532f1c1230250b3"
++          },
++          "publishedHead": "4c802120951925ba309305c23f7ecf6fe07e9a4e"
++        }
++      },
++      "nextStep": "delivery",
++      "wait": {
++        "reason": "unavailable",
++        "since": 1792280894331,
++        "until": 1792281194331
++      },
++      "blocker": null,
++      "counters": {
++        "attempts": 3,
++        "retries": 0,
++        "reviewRounds": 7,
++        "stalled": 29
++      },
++      "evidence": [
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:5857463973643072195bc755ff27e8f9d584ec067411518a310ad503f9d77a20"
++        },
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:856a87c29743d28e38d6bcb8501ab2adbed38898f8c79107d5c3ab163bd56d75"
++        },
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:5ebf971677bcb5aca7318ea447e100e9c595f759b1a88853f32003c95ed8e54d"
++        },
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:fe1d2eaebdf021cfc54f8d611c4a6c07aa91aba4a3c505ce3220c1af81fe5a1d"
++        },
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:7c20ff67a9486bf472bd8529577439de5f82464a3ff969aee77f2d7dcc9a88d8"
++        },
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:dffe801bd084aa0a6ef0f7504caed92604394dd9f3ac08ad2e1b79d583a3f673"
++        }
++      ],
++      "intent": null,
++      "firstSeenAt": 1790942756000,
++      "createdAt": 1790946190133,
++      "updatedAt": 1792280894331
++    },
++    {
++      "version": "v1",
++      "kind": "work",
++      "repository": {
++        "owner": "ubiquity",
++        "name": "ai.ubq.fi",
++        "installationId": 155687488
++      },
++      "id": "issue-ubiquity-ai.ubq.fi-595",
++      "source": {
++        "kind": "issue",
++        "id": "595",
++        "revision": "1d7e64e6b30cef212bca16ca7191f13685382ded"
++      },
++      "related": {
++        "incidentId": null,
++        "issueNumber": 595
++      },
++      "fingerprint": null,
++      "failingRevision": null,
++      "sourceSnapshotDigest": null,
++      "classification": {
++        "severity": "P2",
++        "priority": null
++      },
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "dependencies": [],
++      "controller": {
++        "sha": "1f90f0a0b122bdcd424eb8fa6016a509bd3f6ed5"
++      },
++      "target": {
++        "base": "e25d09cd0912521123922c13f6ee445665af0f6c",
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-595",
++        "checkpoint": null,
++        "head": "28a9b68ad63b300f3be229fac92bea946962517a",
++        "pr": 1087,
++        "candidateState": {
++          "preserved": {
++            "operationKey": "base_refresh:1087:0e3554ff10c453735a55c12effba4040e9c81915:e25d09cd0912521123922c13f6ee445665af0f6c",
++            "base": "e25d09cd0912521123922c13f6ee445665af0f6c",
++            "head": "28a9b68ad63b300f3be229fac92bea946962517a",
++            "ref": "refs/heads/sentinel-candidates/0f912a2352f72dd84ba635eaf79e8f1375559d2aeba4e8a4b332949c38a0f2a3"
++          },
++          "publishedHead": "28a9b68ad63b300f3be229fac92bea946962517a"
++        }
++      },
++      "nextStep": "delivery",
++      "wait": {
++        "reason": "unavailable",
++        "since": 1792281082650,
++        "until": 1792281382650
++      },
++      "blocker": null,
++      "counters": {
++        "attempts": 4,
++        "retries": 1,
++        "reviewRounds": 5,
++        "stalled": 23
++      },
++      "evidence": [
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:4851451f3d53e35ceafd7813e2d227021f13b01af53a94da18fd49013cb6858f"
++        },
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:2b930abc06bd496e406340852c4f2a12ec50bbb234faac28910955993c37905a"
++        }
++      ],
++      "intent": null,
++      "firstSeenAt": 1790938281000,
++      "createdAt": 1790942544130,
++      "updatedAt": 1792281083471
++    }
++  ],
++  "releaseRequests": [
++    {
++      "version": "v1",
++      "kind": "release_request",
++      "id": "release:b059b3b610581e94d80907444ba1b7a2a65047552bb2e4fc0960add536e94e3a",
++      "target": {
++        "repository": {
++          "owner": "ubiquity",
++          "name": "ai.ubq.fi",
++          "installationId": 155687488
++        },
++        "environment": "production"
++      },
++      "revision": "8e91be781bdb97d901e4fbc8aefa084c1cc2206b",
++      "source": {
++        "pullRequest": 1093,
++        "reviewRequestId": "review-review:1093:4af3aad574d81aa873bc900975eb3021bd6f3992:attempt-5",
++        "reviewReceiptId": "review-receipt:5a05f56acd7d732d41d62cfc6feee35d4dc244b12e7f8f7146fd3d062ede4ffc",
++        "head": "4af3aad574d81aa873bc900975eb3021bd6f3992",
++        "base": "8a99ecbeaf8fd5f845fd6be034e284dd370f332c"
++      },
++      "status": "open",
++      "failureReason": null,
++      "createdAt": 1792156756889
++    },
++    {
++      "version": "v1",
++      "kind": "release_request",
++      "id": "release:fea67a6fc323019cd0b09d005f26e607418210318ba21d116ab99177db9a06e4",
++      "target": {
++        "repository": {
++          "owner": "ubiquity",
++          "name": "ai.ubq.fi",
++          "installationId": 155687488
++        },
++        "environment": "production"
++      },
++      "revision": "e25d09cd0912521123922c13f6ee445665af0f6c",
++      "source": {
++        "pullRequest": 1071,
++        "reviewRequestId": "review-review:1071:31f7ea943216526840a0328573d3c227ff498472:attempt-7",
++        "reviewReceiptId": "review-receipt:dffe801bd084aa0a6ef0f7504caed92604394dd9f3ac08ad2e1b79d583a3f673",
++        "head": "4c802120951925ba309305c23f7ecf6fe07e9a4e",
++        "base": "3650359812f06951f2322b89d79ca13c68184150"
++      },
++      "status": "open",
++      "failureReason": null,
++      "createdAt": 1792265534811
++    },
++    {
++      "version": "v1",
++      "kind": "release_request",
++      "id": "release:ebf1f2535186ccad345369a111ad609ae880f8d23a2664f380345c938590ac19",
++      "target": {
++        "repository": {
++          "owner": "ubiquity",
++          "name": "ai.ubq.fi",
++          "installationId": 155687488
++        },
++        "environment": "production"
++      },
++      "revision": "c40ba146240c071216c33de08a746712b0f1506c",
++      "source": {
++        "pullRequest": 1087,
++        "reviewRequestId": "review-review:1087:28a9b68ad63b300f3be229fac92bea946962517a:attempt-5",
++        "reviewReceiptId": "review-receipt:2b930abc06bd496e406340852c4f2a12ec50bbb234faac28910955993c37905a",
++        "head": "28a9b68ad63b300f3be229fac92bea946962517a",
++        "base": "e25d09cd0912521123922c13f6ee445665af0f6c"
++      },
++      "status": "open",
++      "failureReason": null,
++      "createdAt": 1792269582562
++    }
++  ],
++  "reviews": [
++    {
++      "version": "v1",
++      "kind": "review_receipt",
++      "id": "review-receipt:5a05f56acd7d732d41d62cfc6feee35d4dc244b12e7f8f7146fd3d062ede4ffc",
++      "requestId": "review-review:1093:4af3aad574d81aa873bc900975eb3021bd6f3992:attempt-5",
++      "expectedReviewer": "ubiquity-sentinel[bot]",
++      "observedReviewer": "ubiquity-sentinel[bot]",
++      "repository": {
++        "owner": "ubiquity",
++        "name": "ai.ubq.fi",
++        "installationId": 155687488
++      },
++      "pullRequest": {
++        "number": 1093,
++        "head": "4af3aad574d81aa873bc900975eb3021bd6f3992",
++        "base": "8a99ecbeaf8fd5f845fd6be034e284dd370f332c"
++      },
++      "outcome": "completed",
++      "resultId": "msg_004807545cad6d18016ad21db7ba908197a69b88ff5b60ee95",
++      "summary": "The change correctly keeps Remove-missing visible when saved selections are absent from an empty catalog and adds focused coverage.",
++      "findings": [],
++      "findingsUncounted": 0,
++      "unresolvedSeverities": [],
++      "submittedAt": 1792155044183,
++      "completedAt": 1792155064742,
++      "observedAt": 1792155359011,
++      "taskAcceptance": {
++        "issueNumber": 670,
++        "taskDigest": "c46c322a6c218c5d66f13b903bebb4b71d956c2dc02654d832f1c1fc92d8e920",
++        "verdict": "fulfilled",
++        "evidence": [
++          "static/admin.js now hides the control only when modelsMissingIds() is empty, so an empty catalog with saved ids leaves the control visible and enabled.",
++          "tests/admin-models-catalog.test.ts adds focused assertions for the empty-catalog missing-id behavior."
++        ]
++      }
++    },
++    {
++      "version": "v1",
++      "kind": "review_receipt",
++      "id": "review-receipt:dffe801bd084aa0a6ef0f7504caed92604394dd9f3ac08ad2e1b79d583a3f673",
++      "requestId": "review-review:1071:31f7ea943216526840a0328573d3c227ff498472:attempt-7",
++      "expectedReviewer": "ubiquity-sentinel[bot]",
++      "observedReviewer": "ubiquity-sentinel[bot]",
++      "repository": {
++        "owner": "ubiquity",
++        "name": "ai.ubq.fi",
++        "installationId": 155687488
++      },
++      "pullRequest": {
++        "number": 1071,
++        "head": "31f7ea943216526840a0328573d3c227ff498472",
++        "base": "8a99ecbeaf8fd5f845fd6be034e284dd370f332c"
++      },
++      "outcome": "completed",
++      "resultId": "msg_09c3798a0dec23f3016ad21dd1e3d08193b8ff44260f11f7e3",
++      "summary": "The Lithos relay now preserves classified refusal health events, with regression coverage for Chat and Responses 401/429 refusals.",
++      "findings": [],
++      "findingsUncounted": 0,
++      "unresolvedSeverities": [],
++      "submittedAt": 1792155018802,
++      "completedAt": 1792155090950,
++      "observedAt": 1792155345281,
++      "taskAcceptance": {
++        "issueNumber": 618,
++        "taskDigest": "15ba40d2120bcb6294d529e5da04c42e7429612aba6020be9fcd7e77565d350a",
++        "verdict": "fulfilled",
++        "evidence": [
++          "The adapter skips its generic upstream_error observation for 401, 402, 403, and 429, while recordLithosResponseHealth classifies those statuses as auth_invalid or quota_exhausted.",
++          "The added test drives both stream relays with 429 and 401 refusals and asserts exhausted/invalid state and classified last_event values."
++        ]
++      }
++    },
++    {
++      "version": "v1",
++      "kind": "review_receipt",
++      "id": "review-receipt:2b930abc06bd496e406340852c4f2a12ec50bbb234faac28910955993c37905a",
++      "requestId": "review-review:1087:28a9b68ad63b300f3be229fac92bea946962517a:attempt-5",
++      "expectedReviewer": "ubiquity-sentinel[bot]",
++      "observedReviewer": "ubiquity-sentinel[bot]",
++      "repository": {
++        "owner": "ubiquity",
++        "name": "ai.ubq.fi",
++        "installationId": 155687488
++      },
++      "pullRequest": {
++        "number": 1087,
++        "head": "28a9b68ad63b300f3be229fac92bea946962517a",
++        "base": "e25d09cd0912521123922c13f6ee445665af0f6c"
++      },
++      "outcome": "completed",
++      "resultId": "msg_0bb65c8729205616016ad3d8a791c08195a3ae0e4d72e4ac49",
++      "summary": "The change correctly renders routing activation separately from provider health and preserves empty-selection no-filter behavior.",
++      "findings": [],
++      "findingsUncounted": 0,
++      "unresolvedSeverities": [],
++      "submittedAt": 1792268396075,
++      "completedAt": 1792268456959,
++      "observedAt": 1792269121465,
++      "taskAcceptance": {
++        "issueNumber": 595,
++        "taskDigest": "09fb97d53fd329391f88f5e0999d856a6bf9a15ca160ba85a9ec9246c276c5f1",
++        "verdict": "fulfilled",
++        "evidence": [
++          "static/admin-supervisor.js:150-157 reads data.selection.provider_ids and honors filter_active only for a non-empty selection.",
++          "static/admin-supervisor.js:163-189 derives routing status, handles codex subscription IDs, and appends a distinct activation badge alongside the health badge."
++        ]
++      }
++    }
++  ],
++  "tasks": [
++    {
++      "issueNumber": 670,
++      "title": "The only control that can clear missing ids is hidden when the catalog is empty",
++      "body": "## Confirmed defect\n\n`modelsDropMissingBtn.hidden = modelsCatalog.length === 0;` (static/admin.js:8421) hides the Remove-missing control exactly when discovery returned an empty catalog, so every saved id is missing, no checkboxes exist, bulk actions are disabled and Save cannot be enabled by a selection change. The operator cannot clear the filter through the replacement UI.\n\n## Where\n\n- Repository: `ubiquity/ai.ubq.fi`\n- Validated against: `1d7e64e6b30cef212bca16ca7191f13685382ded`\n- Location: `src/../static/admin.js:8421`\n- Source PR: #322 (closed, merged=true), original head `c17a5d9057d942b79c038d9f8f19e0d7fb871952`, merge `610f203132d4b01b4f4bb3741eb8db7546ad7d16`\n\n## Original review finding\n\nP2 `The only control that can clear missing ids is hidden when the catalog is empty` - reported against `static/admin.js:8300` by native review turn `01a0fca1-2006-7ef0-8031-339118d6cf0d` (thread `01a0fca1-1122-7fe1-b341-cfee336916f5`) for PR #322.\n\n## Trigger / reproduction\n\nStatic source read at `1d7e64e6b30cef212bca16ca7191f13685382ded` shows the cited code path unchanged; the exact expression is named above. No runtime, browser, or production operation was performed to confirm this.\n\n## Acceptance\n\nThe Remove-missing control must remain available when discovery returned an empty catalog and every saved id is missing, so the operator can clear the filter. Add a focused test or minimal relay for an empty catalog with saved ids.\n\n## Evidence and duplicate check\n\n- Reviewer head `98ccd167cca1db4309e2d7f4d961b7109b119502`; validated against `1d7e64e6b30cef212bca16ca7191f13685382ded` (source-only static read).\n- For merged PRs the current upstream default-branch head was compared with the reviewer head; every file cited here is either absent from that comparison's changed-file list (byte-identical) or was re-read at the current head.\n- Duplicate check (2026-10-02): all open and closed issues in `ubiquity/ai.ubq.fi` were paginated in full (120 issues); no existing issue covers this trigger.\n",
++      "state": "closed"
++    },
++    {
++      "issueNumber": 618,
++      "title": "In-band Lithos refusals overwrite their classified health event with upstream_error, so /health/providers reports degraded",
++      "body": "## Original finding (same defect, two cited sites)\n- Native Codex review of PR #515, finding 3: [P2] Preserve provider-health classification for deferred refusals (original cite lithos-handlers.ts:577-579). Native Codex review of PR #514, finding 3: [P2] Preserve refusal-specific provider health (original cite lithos-streams.ts:126-127).\n- PR #515 original head 96c52bed9af1cdaff7db427111ffc1010912e097; PR #514 original head f9c9f4542f9acf97f7b2216628a1d08709905704. Provenance as in CAND-AI-RELAY-01.\n\n## Current state (verified at current upstream default)\nCurrent development @ 1d7e64e6b30cef212bca16ca7191f13685382ded; all four files byte-identical to frozen checkout HEAD 98ccd167 (blob equality checked).\n- refuseStream records the classified refusal and then the generic provider error, in both relays: stream-relay.ts:189-190 (Chat) and 459-460 (Responses) call recordResponseHealth(detail.status) and then recordProviderError(detail.status).\n- The Lithos adapter maps classified statuses deliberately (lithos-streams.ts:86-108: 401/403 -> auth_invalid, 402/429 -> quota_exhausted), but recordProviderError unconditionally records upstream_error (lithos-streams.ts:127).\n- The dispatcher already classified the same refusal before handing the streamed Response to the relay (lithos-handlers.ts:193-207 respondLithosChatUpstreamHttpFailure records the classified health and failure kind; the deferred and immediate streamed paths pass that Response into the relay at lines 596-613 and 833-845).\n- Health writes are serialized per provider+identity in arrival order (health.ts:184-205) and the newest observation decides the state (health.ts:284-303: upstream_error -> degraded, quota_exhausted -> exhausted, auth_invalid -> invalid), so the generic observation wins.\n\n## Trigger\n1. A streamed or deferred Lithos request ends in an HTTP 429/402/401/403 refusal that is relayed in-band.\n2. The refusal path records quota_exhausted or auth_invalid.\n3. The relay's refuseStream then records upstream_error for the same refusal.\n4. /health/providers shows degraded instead of exhausted/invalid, so admin and routing diagnostics lose the refusal-specific signal.\n\n## Acceptance\n- Do not let a generic provider-error observation overwrite an already classified refusal on the in-band relay path (for example skip recordProviderError when the refusal carried a classified status, or route classified refusals through a dedicated seam).\n- Regression test: streamed 429 and 401 refusals leave /health/providers at exhausted and invalid respectively, with the last observation still classified.\n\n## Duplicate search (fresh, 2026-10-02)\n- Corpus scan (596 issues): provider-health terms return 42 hits; the newest are #576/#585/#596/#597 and none describes a classified refusal being overwritten by the relay's generic callback. #601 (local quota refusal masked as an OpenRouter upstream failure) is a different provider and path.\n- Fresh GitHub search q=repo:ubiquity/ai.ubq.fi+rate_limit_failover_model / failover+window / refuseStream -> only the reviewed PRs.\n- No existing or audit-filed issue matches (all open and closed issues in this repository were paginated in full).\n\n## Labels\nTime: <2 Hours; Priority: 2 (Medium) - existing labels only (fully paginated label list, 44 labels).\n\nValidation: static source/control-flow inspection at the current revision above; no runtime inference or repository test was executed.\n",
++      "state": "closed"
++    }
++  ],
++  "pulls": [
++    {
++      "number": 1093,
++      "state": "closed",
++      "merged": true,
++      "mergeCommitSha": "8e91be781bdb97d901e4fbc8aefa084c1cc2206b",
++      "headSha": "4af3aad574d81aa873bc900975eb3021bd6f3992",
++      "baseRef": "development",
++      "baseSha": "8a99ecbeaf8fd5f845fd6be034e284dd370f332c",
++      "author": "ubiquity-sentinel[bot]",
++      "parents": [
++        "8a99ecbeaf8fd5f845fd6be034e284dd370f332c",
++        "4af3aad574d81aa873bc900975eb3021bd6f3992"
++      ],
++      "revisionOnBaseBranch": true,
++      "baseAncestorOfRevision": false
++    },
++    {
++      "number": 1071,
++      "state": "closed",
++      "merged": true,
++      "mergeCommitSha": "e25d09cd0912521123922c13f6ee445665af0f6c",
++      "headSha": "4c802120951925ba309305c23f7ecf6fe07e9a4e",
++      "baseRef": "development",
++      "baseSha": "3650359812f06951f2322b89d79ca13c68184150",
++      "author": "ubiquity-sentinel[bot]",
++      "parents": [
++        "3650359812f06951f2322b89d79ca13c68184150",
++        "4c802120951925ba309305c23f7ecf6fe07e9a4e"
++      ],
++      "revisionOnBaseBranch": true,
++      "baseAncestorOfRevision": false
++    },
++    {
++      "number": 1087,
++      "state": "closed",
++      "merged": true,
++      "mergeCommitSha": "c40ba146240c071216c33de08a746712b0f1506c",
++      "headSha": "28a9b68ad63b300f3be229fac92bea946962517a",
++      "baseRef": "development",
++      "baseSha": "e25d09cd0912521123922c13f6ee445665af0f6c",
++      "author": "ubiquity-sentinel[bot]",
++      "parents": [
++        "e25d09cd0912521123922c13f6ee445665af0f6c",
++        "28a9b68ad63b300f3be229fac92bea946962517a"
++      ],
++      "revisionOnBaseBranch": true,
++      "baseAncestorOfRevision": false
++    }
++  ]
++}
+diff --git a/tests/host/hosted-autonomy-release-deferred_test.ts b/tests/host/hosted-autonomy-release-deferred_test.ts
+new file mode 100644
+index 0000000000..61916ea1d4
+--- /dev/null
++++ b/tests/host/hosted-autonomy-release-deferred_test.ts
+@@ -0,0 +1,307 @@
++/**
++ * JAM B12, launcher half: the closure-delivery pass ran the full Gateway
++ * closure gate (source task, opt-out, pull and two release reads) for every
++ * merged ai.ubq.fi delivery on every pass and printed one
++ * `delivery:<id>:release_unavailable` line each (25 per live pass), although
++ * with no VPS release record for the request the gate can only ever answer
++ * `wait`. Such a delivery is now counted in ONE summary line, nothing is read
++ * or written for it, and the full gate runs again for a request the release
++ * ref records. Live record, request and receipt shapes.
++ */
++import assert from "node:assert/strict";
++import { makeRig } from "./hosted-autonomy-rig.ts";
++import {
++  deferredLiveRecords,
++  LIVE_LAUNCHER,
++  LIVE_PULLS,
++  LIVE_RECORDS,
++  LIVE_REQUESTS,
++  LIVE_REVIEWS,
++  LIVE_TASKS,
++  LIVE_UPDATED_AT,
++  loadRevisionModules,
++  revisionAvailable,
++} from "../repair/release-deferred-fixtures.ts";
++import { persistVpsDelivery } from "../repair/vps-delivery-fixtures.ts";
++import { createReleaseStateStore } from "../../src/state/mod.ts";
++import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import { reviewTaskStatementDigest } from "../../src/contracts/review-receipt.ts";
++import { runHostedAutonomy } from "../../ops/hosted-autonomy.ts";
++import type { HostedAutonomyGitHubV1 } from "../../ops/hosted-autonomy.ts";
++import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
++
++const NOW = LIVE_UPDATED_AT + 600_000;
++
++/** The R80 shape (live, five-minute waits) and the new deferred shape. */
++const SHAPES: readonly (readonly [string, readonly WorkRecordV1[]])[] = [
++  ["R80 re-armed wait", LIVE_RECORDS],
++  ["deferred wait", deferredLiveRecords(LIVE_UPDATED_AT)],
++];
++
++function liveRepair(work: readonly WorkRecordV1[] = LIVE_RECORDS) {
++  return parseRepairStateSnapshotV1({
++    version: "v1",
++    kind: "repair_state_snapshot",
++    stateHead: null,
++    sequence: 1,
++    updatedAt: LIVE_UPDATED_AT,
++    incidents: [],
++    evidence: [],
++    work,
++    reservations: [],
++    reviews: LIVE_REVIEWS,
++    replays: [],
++    releaseRequests: LIVE_REQUESTS,
++    githubCooldowns: [],
++    attemptMemory: [],
++    lessons: [],
++  });
++}
++
++/**
++ * The live GitHub facts (merged pull, closed issue with its exact reviewed
++ * statement), counting every read the closure gate spends on them.
++ */
++function countingSurface(github: HostedAutonomyGitHubV1) {
++  const reads: string[] = [];
++  const surface: HostedAutonomyGitHubV1 = {
++    ...github,
++    readPull: (number) => {
++      reads.push(`pull:${number}`);
++      return Promise.resolve(
++        LIVE_PULLS.find((pull) => pull.number === number) ?? null,
++      );
++    },
++    readIssueTask: async (number) => {
++      reads.push(`task:${number}`);
++      const task = LIVE_TASKS.find((item) => item.issueNumber === number);
++      return task === undefined
++        ? null
++        : { ...task, digest: await reviewTaskStatementDigest(task) };
++    },
++    readIssueOptedOut: (number) => {
++      reads.push(`optout:${number}`);
++      return Promise.resolve(false);
++    },
++  };
++  return { surface, reads };
++}
++
++async function sequence(
++  state: Awaited<ReturnType<typeof makeRig>>["rig"]["state"],
++) {
++  const read = await state.readRepair();
++  assert.ok(read.ok && read.value.status === "found");
++  return read.value.snapshot.sequence;
++}
++
++Deno.test("B12 launcher: merged Gateway deliveries without a release record are counted once and cost no gate read", async () => {
++  for (const [shape, work] of SHAPES) {
++    await deferredPasses(shape, work);
++  }
++});
++
++async function deferredPasses(shape: string, work: readonly WorkRecordV1[]) {
++  const { rig, github } = await makeRig("b12-launcher-deferred", {
++    repair: liveRepair(work),
++    issueOpen: false,
++    defaultBranch: "development",
++  });
++  try {
++    const { surface, reads } = countingSurface(github);
++    const before = await sequence(rig.state);
++    for (let pass = 0; pass < 3; pass++) {
++      const result = await runHostedAutonomy({
++        state: rig.state,
++        githubFor: () => surface,
++        clock: { now: () => NOW + pass * 300_000 },
++      });
++      assert.deepEqual(
++        result.actions.filter((action) => action.startsWith("release-")),
++        ["release-deferred:count=3:release_path=disabled"],
++        `${shape}: ${JSON.stringify(result.actions)}`,
++      );
++      for (const record of LIVE_RECORDS) {
++        assert.equal(
++          result.actions.some((action) =>
++            action === `delivery:${record.id}:release_unavailable`
++          ),
++          false,
++          record.id,
++        );
++      }
++    }
++    // The closure gate's own reads (pull, opt-out) never ran for them.
++    assert.deepEqual(
++      reads.filter((read) => !read.startsWith("task:")),
++      [],
++    );
++    assert.equal(await sequence(rig.state), before, shape);
++    assert.deepEqual(rig.closed, []);
++    assert.equal(rig.merges, 0);
++  } finally {
++    await Deno.remove(rig.tmp, { recursive: true });
++  }
++}
++
++Deno.test("B12 launcher: a request the release ref records gets the full closure gate again", async () => {
++  const { rig, github, request, now } = await recordedRig("monitoring");
++  try {
++    const { surface, reads } = countingSurface(github);
++    const result = await runHostedAutonomy({
++      state: rig.state,
++      githubFor: () => surface,
++      clock: { now: () => now + 300_000 },
++    });
++    assert.deepEqual(
++      result.actions.filter((action) => action.startsWith("release-")),
++      ["release-deferred:count=2:release_path=queued"],
++      JSON.stringify(result.actions),
++    );
++    const resumed = recordFor(request);
++    assert.ok(
++      result.actions.includes(`delivery:${resumed.id}:release_unavailable`),
++      JSON.stringify(result.actions),
++    );
++    assert.ok(reads.includes(`pull:${resumed.target.pr}`));
++    for (const record of LIVE_RECORDS) {
++      if (record.id === resumed.id) continue;
++      assert.equal(reads.includes(`pull:${record.target.pr}`), false);
++    }
++    assert.deepEqual(rig.closed, []);
++  } finally {
++    await Deno.remove(rig.tmp, { recursive: true });
++  }
++});
++
++Deno.test("B12 launcher: an accepted release closes out a record the runtime left deferred, so the obligation survives any runtime", async () => {
++  const { rig, github, request, now } = await recordedRig(
++    "accepted",
++    deferredLiveRecords(LIVE_UPDATED_AT),
++  );
++  try {
++    const { surface } = countingSurface(github);
++    const resumed = recordFor(request);
++    const pass = (offset: number) =>
++      runHostedAutonomy({
++        state: rig.state,
++        githubFor: () => surface,
++        clock: { now: () => now + offset },
++      });
++    const first = await pass(300_000);
++    assert.ok(
++      first.actions.includes(`intent:${resumed.id}:issue_closure`),
++      JSON.stringify(first.actions),
++    );
++    const second = await pass(600_000);
++    assert.ok(
++      second.actions.includes(`reconcile:${resumed.id}:already_closed`),
++      JSON.stringify(second.actions),
++    );
++    const read = await rig.state.readRepair();
++    assert.ok(read.ok && read.value.status === "found");
++    const after = read.value.snapshot;
++    for (const record of after.work) {
++      if (record.id === resumed.id) {
++        assert.equal(record.nextStep, "done");
++        assert.equal(record.wait, null);
++      } else {
++        assert.equal(record.nextStep, "delivery", record.id);
++        assert.equal(record.wait?.until, null, record.id);
++      }
++    }
++    assert.equal(after.releaseRequests.length, LIVE_REQUESTS.length);
++    // The platform already closed the issue: no duplicate close, no merge.
++    assert.deepEqual(rig.closed, []);
++    assert.equal(rig.merges, 0);
++  } finally {
++    await Deno.remove(rig.tmp, { recursive: true });
++  }
++});
++
++/** The record a live request belongs to. */
++function recordFor(request: (typeof LIVE_REQUESTS)[number]): WorkRecordV1 {
++  return LIVE_RECORDS.find((record) =>
++    record.target.pr === request.source.pullRequest
++  )!;
++}
++
++/**
++ * The release path enabled: the real VPS controller begins the oldest open
++ * request (670's) and drives it to `phase` on the rig's release ref.
++ */
++async function recordedRig(
++  phase: "monitoring" | "accepted",
++  work: readonly WorkRecordV1[] = LIVE_RECORDS,
++) {
++  const { rig, github } = await makeRig(`b12-launcher-${phase}`, {
++    repair: liveRepair(work),
++    issueOpen: false,
++    defaultBranch: "development",
++  });
++  const release = createReleaseStateStore({
++    remoteUrl: `${rig.tmp}/remote.git`,
++    scratchDir: `${rig.tmp}/vps-release`,
++  });
++  let now = NOW;
++  const request =
++    [...LIVE_REQUESTS].sort((a, b) => a.createdAt - b.createdAt)[0];
++  await persistVpsDelivery(
++    rig.state,
++    release,
++    {
++      now: () => now,
++      advance: (ms) => {
++        now += ms;
++      },
++    },
++    request,
++    phase,
++  );
++  return { rig, github, request, now };
++}
++
++Deno.test({
++  name:
++    "B12 launcher rollback: the live launcher reads the deferred shape as before and writes nothing",
++  ignore: !await revisionAvailable(LIVE_LAUNCHER),
++  fn: async () => {
++    const loaded = await loadRevisionModules(
++      LIVE_LAUNCHER,
++      ["ops/hosted-autonomy-runner.ts"],
++      true,
++    );
++    const [runner] = loaded.modules as [
++      typeof import("../../ops/hosted-autonomy-runner.ts"),
++    ];
++    const { rig, github } = await makeRig("b12-launcher-rollback", {
++      repair: liveRepair(deferredLiveRecords(LIVE_UPDATED_AT)),
++      issueOpen: false,
++      defaultBranch: "development",
++    });
++    try {
++      const { surface } = countingSurface(github);
++      const before = await sequence(rig.state);
++      for (const pass of [0, 1]) {
++        const rolled = await runner.runHostedAutonomy({
++          state: rig.state,
++          githubFor: () => surface,
++          clock: { now: () => NOW + pass * 300_000 },
++        });
++        // Its own per-record report, exactly as on R80's re-armed waits (670
++        // is the record whose live source statement the fixture carries).
++        assert.ok(
++          rolled.actions.includes(
++            "delivery:issue-ubiquity-ai.ubq.fi-670:release_unavailable",
++          ),
++          JSON.stringify(rolled.actions),
++        );
++      }
++      assert.equal(await sequence(rig.state), before);
++      assert.deepEqual(rig.closed, []);
++    } finally {
++      await loaded.dispose();
++      await Deno.remove(rig.tmp, { recursive: true });
++    }
++  },
++});
+diff --git a/tests/host/hosted-autonomy-spent-merge-bound_test.ts b/tests/host/hosted-autonomy-spent-merge-bound_test.ts
+index 865b18ccfd..53b11df283 100644
+--- a/tests/host/hosted-autonomy-spent-merge-bound_test.ts
++++ b/tests/host/hosted-autonomy-spent-merge-bound_test.ts
+@@ -69,8 +69,10 @@ Deno.test("spent delivery S8: one merge per pass, then the ordinary already-reco
+     // second moved-base merge waits for it.
+     const two = await runAt(rig, NOW, MOVED_BASE);
+     assert.deepEqual(calls.merges, [1071], JSON.stringify(two.actions));
++    // Merged beside its open request while the release path is disabled:
++    // counted once as a deferred release, with no gate read (JAM B12).
+     assert.ok(
+-      two.actions.includes(`delivery:${first.id}:release_unavailable`),
++      two.actions.includes("release-deferred:count=1:release_path=disabled"),
+       JSON.stringify(two.actions),
+     );
+     assert.ok(
+@@ -94,11 +96,11 @@ Deno.test("spent delivery S8: one merge per pass, then the ordinary already-reco
+         four.actions.includes(`delivery:${record.id}:already_recorded`),
+         JSON.stringify(four.actions),
+       );
+-      assert.ok(
+-        four.actions.includes(`delivery:${record.id}:release_unavailable`),
+-        JSON.stringify(four.actions),
+-      );
+     }
++    assert.ok(
++      four.actions.includes("release-deferred:count=2:release_path=disabled"),
++      JSON.stringify(four.actions),
++    );
+     const after = await readSnapshot(rig);
+     assert.equal(after.releaseRequests.length, 2);
+     assert.ok(after.work.every((record) => record.nextStep === "delivery"));
+diff --git a/tests/repair/release-deferred-fixtures.ts b/tests/repair/release-deferred-fixtures.ts
+new file mode 100644
+index 0000000000..ebdd67059a
+--- /dev/null
++++ b/tests/repair/release-deferred-fixtures.ts
+@@ -0,0 +1,182 @@
++/**
++ * JAM B12 fixtures: the live ai.ubq.fi delivery records whose pull request
++ * merged and whose source issue closed while their production release request
++ * stays open, because the Sentinel release path is disabled and the release
++ * ref holds no VPS release record. The record, request and receipt shapes are
++ * the exact live ones (`tests/fixtures/repair/release-deferred-live.json`);
++ * the release snapshot is a found one without any `vpsReleases`, as live.
++ *
++ * R80 (the runtime rollback target) and the live launcher L-3f041b46d (the
++ * launcher rollback target, with its `ops/` tree) are loaded read-only from
++ * the local object store for the rollback cases; a shallow checkout without
++ * them reports `revisionAvailable(...) === false` and those cases are
++ * ignored.
++ */
++import { OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION } from "../../src/host/owner-install-runtime-pins.ts";
++import { parseReleaseRequestV1 } from "../../src/contracts/release.ts";
++import type { ReleaseRequestV1 } from "../../src/contracts/release.ts";
++import { parseReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
++import type { ReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
++import { parseReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import type { ReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import { parseWorkRecordV1 } from "../../src/contracts/work-record.ts";
++import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
++
++const raw = JSON.parse(
++  await Deno.readTextFile(
++    new URL("../fixtures/repair/release-deferred-live.json", import.meta.url),
++  ),
++);
++
++/** The live records (670 bound, 618 carried, 595 newest), request, receipt. */
++export const LIVE_RECORDS: readonly WorkRecordV1[] = raw.records.map(
++  (record: unknown) => parseWorkRecordV1(record),
++);
++export const LIVE_REQUESTS: readonly ReleaseRequestV1[] = raw.releaseRequests
++  .map((request: unknown) => parseReleaseRequestV1(request));
++export const LIVE_REVIEWS: readonly ReviewReceiptV1[] = raw.reviews.map(
++  (receipt: unknown) => parseReviewReceiptV1(receipt),
++);
++/** Repair sequence and instant the fixture was taken at. */
++export const LIVE_SEQUENCE: number = raw.sequence;
++export const LIVE_UPDATED_AT: number = raw.updatedAt;
++/** The live Gateway installation scope the records carry. */
++export const LIVE_REPO = LIVE_RECORDS[0].repository;
++/** The live source-issue statements (their digests are the receipts'). */
++export const LIVE_TASKS: readonly {
++  issueNumber: number;
++  title: string;
++  body: string;
++}[] = raw.tasks.map((
++  task: { issueNumber: number; title: string; body: string },
++) => ({
++  issueNumber: task.issueNumber,
++  title: task.title,
++  body: task.body,
++}));
++/** The live merged pull request facts (merge commit, parents, author). */
++export const LIVE_PULLS: readonly {
++  number: number;
++  state: string;
++  merged: boolean;
++  mergeCommitSha: string;
++  headSha: string;
++  baseRef: string;
++  baseSha: string;
++  author: string;
++  parents: string[];
++  revisionOnBaseBranch: boolean;
++  baseAncestorOfRevision: boolean;
++}[] = raw.pulls;
++
++/** A found release snapshot with no VPS release record, as the live ref. */
++export function releaseWithoutVps(updatedAt: number): ReleaseStateSnapshotV1 {
++  return parseReleaseStateSnapshotV1({
++    version: "v1",
++    kind: "release_state_snapshot",
++    stateHead: null,
++    sequence: 1,
++    updatedAt,
++    releases: [],
++    hostedRuntimes: [],
++    hostedReleases: [],
++    githubCooldowns: [],
++  });
++}
++
++const ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname)
++  .replace(/\/$/, "");
++const GIT_ENV = {
++  PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
++  GIT_CONFIG_GLOBAL: "/dev/null",
++  GIT_CONFIG_SYSTEM: "/dev/null",
++  GIT_TERMINAL_PROMPT: "0",
++};
++
++/** The installed generation-80 runtime, the next generation's rollback. */
++export const R80: string = OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION;
++/** The live launcher this lane is built on, the launcher rollback target. */
++export const LIVE_LAUNCHER = "3f041b46d95269b29054ca5c27bce6aa179f9683";
++
++/** True when `revision` is in the local object store. */
++export async function revisionAvailable(revision: string): Promise<boolean> {
++  try {
++    const probe = await new Deno.Command("git", {
++      args: ["-C", ROOT, "cat-file", "-e", `${revision}^{commit}`],
++      clearEnv: true,
++      env: GIT_ENV,
++      stdout: "null",
++      stderr: "null",
++    }).output();
++    return probe.success;
++  } catch {
++    return false;
++  }
++}
++
++/**
++ * Import `paths` (repository-relative) from `revision`'s `src/` and `tests/`
++ * trees (and `ops/` with `withOps`), extracted under the repository root; the
++ * tree stays until `dispose`, so the modules' own lazy imports still resolve.
++ */
++export async function loadRevisionModules(
++  revision: string,
++  paths: readonly string[],
++  withOps = false,
++): Promise<{
++  modules: Record<string, unknown>[];
++  dispose(): Promise<void>;
++}> {
++  const dir = await Deno.makeTempDir({
++    dir: ROOT,
++    prefix: "sentinel-release-deferred-rollback-",
++  });
++  const dispose = () => Deno.remove(dir, { recursive: true }).catch(() => {});
++  try {
++    const archive = await new Deno.Command("git", {
++      args: [
++        "-C",
++        ROOT,
++        "archive",
++        "--format=tar",
++        revision,
++        "src",
++        "tests",
++        ...(withOps ? ["ops"] : []),
++      ],
++      clearEnv: true,
++      env: GIT_ENV,
++      stdout: "piped",
++      stderr: "null",
++    }).output();
++    if (!archive.success) throw new Error("rollback source unavailable");
++    await Deno.writeFile(`${dir}/tree.tar`, archive.stdout);
++    const extracted = await new Deno.Command("tar", {
++      args: ["-xf", `${dir}/tree.tar`, "-C", dir],
++      clearEnv: true,
++      env: { PATH: GIT_ENV.PATH },
++      stdout: "null",
++      stderr: "null",
++    }).output();
++    if (!extracted.success) throw new Error("rollback source unreadable");
++    const modules: Record<string, unknown>[] = [];
++    for (const path of paths) {
++      modules.push(await import(new URL(`file://${dir}/${path}`).href));
++    }
++    return { modules, dispose };
++  } catch (error) {
++    await dispose();
++    throw error;
++  }
++}
++
++/** The live records as the new runtime leaves them: deferred at `at`. */
++export function deferredLiveRecords(at: number): WorkRecordV1[] {
++  return LIVE_RECORDS.map((record) =>
++    parseWorkRecordV1({
++      ...record,
++      wait: { reason: "unavailable", since: at, until: null },
++      updatedAt: at,
++    })
++  );
++}
+diff --git a/tests/repair/release-deferred_test.ts b/tests/repair/release-deferred_test.ts
+new file mode 100644
+index 0000000000..d685d2d53d
+--- /dev/null
++++ b/tests/repair/release-deferred_test.ts
+@@ -0,0 +1,383 @@
++/**
++ * JAM B12 (non-progress cycle): a merged ai.ubq.fi delivery whose production
++ * release request is open while the release path is disabled. R80 re-armed a
++ * five-minute `unavailable` release wait on every cycle (live 670 rewrote it
++ * 138 times; 348 of 632 state commits in 3.8 hours were these re-arms). The
++ * record now waits in one stable shape (an open-ended `unavailable` wait at
++ * `delivery`, written once) until the release ref records its request, and
++ * resumes by itself from there; it is never marked done, so the release
++ * outcome is still consumed.
++ */
++import assert from "node:assert/strict";
++import { makeRig, seededSnapshot } from "./loop-rig.ts";
++import {
++  gatewayLoopDelivery,
++  persistVpsDelivery,
++} from "./vps-delivery-fixtures.ts";
++import {
++  LIVE_RECORDS,
++  LIVE_REPO,
++  LIVE_REQUESTS,
++  LIVE_REVIEWS,
++  LIVE_UPDATED_AT,
++  loadRevisionModules,
++  R80,
++  releaseWithoutVps,
++  revisionAvailable,
++} from "./release-deferred-fixtures.ts";
++import { reservation, T0 } from "../state/helpers.ts";
++import { closureIntentKey } from "../../src/repair/keys.ts";
++import { portError } from "../../src/contracts/ports.ts";
++import { canonicalStringify } from "../../src/contracts/canonical.ts";
++import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
++
++const POLL = 300_001;
++
++/** The state store orders every collection by id. */
++function byId<T extends { id: string }>(rows: readonly T[]): T[] {
++  return [...rows].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
++}
++
++/** The one stable deferred shape; everything else of the record is kept. */
++function assertDeferred(
++  after: WorkRecordV1,
++  before: WorkRecordV1,
++  at: number,
++): void {
++  assert.equal(after.nextStep, "delivery", after.id);
++  assert.equal(after.intent, null, after.id);
++  assert.equal(after.blocker, null, after.id);
++  assert.deepEqual(
++    after.wait,
++    { reason: "unavailable", since: at, until: null },
++    after.id,
++  );
++  assert.deepEqual(after.target, before.target, after.id);
++  assert.deepEqual(after.related, before.related, after.id);
++  assert.deepEqual(after.evidence, before.evidence, after.id);
++  assert.equal(after.counters.attempts, before.counters.attempts, after.id);
++  assert.equal(after.counters.retries, before.counters.retries, after.id);
++  assert.equal(
++    after.counters.reviewRounds,
++    before.counters.reviewRounds,
++    after.id,
++  );
++}
++
++async function liveRig(prefix: string) {
++  const rig = await makeRig(prefix, {
++    summaries: false,
++    configOverrides: { repository: LIVE_REPO },
++  });
++  // Past every live five-minute wait, as the next runtime cycle sees them.
++  rig.clock.advance(LIVE_UPDATED_AT + 600_000 - T0);
++  const release = await rig.releaseStore.writeRelease(
++    releaseWithoutVps(LIVE_UPDATED_AT),
++    null,
++  );
++  assert.ok(release.ok && release.value.status === "applied");
++  const seed = await rig.store.writeRepair(
++    seededSnapshot([...LIVE_RECORDS], {
++      updatedAt: LIVE_UPDATED_AT,
++      releaseRequests: [...LIVE_REQUESTS],
++      reviews: [...LIVE_REVIEWS],
++    }),
++    null,
++  );
++  assert.ok(seed.ok && seed.value.status === "applied");
++  return rig;
++}
++
++Deno.test("B12 live shapes: a merged Gateway delivery without a release record is deferred once and never rewritten", async () => {
++  const rig = await liveRig("b12-live-deferred");
++  try {
++    const at = rig.clock.now();
++    await rig.entry();
++    const deferred = await rig.snapshot();
++    for (const before of LIVE_RECORDS) {
++      const after = deferred.work.find((record) => record.id === before.id)!;
++      assertDeferred(after, before, at);
++    }
++    assert.deepEqual(byId(deferred.releaseRequests), byId(LIVE_REQUESTS));
++    assert.deepEqual(byId(deferred.reviews), byId(LIVE_REVIEWS));
++    // One hour of five-minute cycles: no state write, no re-armed wait.
++    for (let cycle = 0; cycle < 12; cycle++) {
++      rig.clock.advance(POLL);
++      await rig.entry();
++    }
++    const later = await rig.snapshot();
++    assert.equal(later.sequence, deferred.sequence);
++    assert.equal(canonicalStringify(later), canonicalStringify(deferred));
++    assert.equal(
++      rig.github.calls.some((call) =>
++        call.startsWith("closeIssue") || call.startsWith("merge")
++      ),
++      false,
++    );
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});
++
++Deno.test("B12: a deferred release resumes by itself once the release ref records its request, and its outcome is consumed", async () => {
++  for (const phase of ["accepted", "rolled_back"] as const) {
++    const rig = await makeRig(`b12-resume-${phase}`, { summaries: false });
++    try {
++      const { record, request, review } = await gatewayLoopDelivery();
++      const charge = reservation(`b12-charge-${phase}`, {
++        repository: record.repository,
++        taskId: record.id,
++        head: record.target.head!,
++        outcome: "submitted",
++        settledAt: T0 + 1000,
++      });
++      const release = await rig.releaseStore.writeRelease(
++        releaseWithoutVps(T0),
++        null,
++      );
++      assert.ok(release.ok && release.value.status === "applied");
++      const seed = await rig.store.writeRepair(
++        seededSnapshot([record], {
++          releaseRequests: [request],
++          reviews: [review],
++          reservations: [charge],
++        }),
++        null,
++      );
++      assert.ok(seed.ok && seed.value.status === "applied");
++      const at = rig.clock.now();
++      await rig.entry();
++      const deferred = await rig.snapshot();
++      assertDeferred(deferred.work[0], record, at);
++      for (let cycle = 0; cycle < 3; cycle++) {
++        rig.clock.advance(POLL);
++        await rig.entry();
++      }
++      assert.equal((await rig.snapshot()).sequence, deferred.sequence);
++      // The release path is enabled: the real VPS controller records and
++      // settles the exact open request on the release ref.
++      await persistVpsDelivery(
++        rig.store,
++        rig.releaseStore,
++        rig.clock,
++        request,
++        phase,
++      );
++      let after: RepairStateSnapshotV1 = deferred;
++      for (let cycle = 0; cycle < 3; cycle++) {
++        rig.clock.advance(POLL);
++        await rig.entry();
++        after = await rig.snapshot();
++        if (after.work[0].nextStep !== "delivery") break;
++      }
++      if (phase === "accepted") {
++        assert.equal(after.work[0].nextStep, "done");
++        assert.equal(
++          rig.github.calls.filter((call) => call.startsWith("closeIssue"))
++            .length,
++          1,
++        );
++      } else {
++        assert.equal(after.work[0].nextStep, "blocked");
++        assert.equal(after.work[0].blocker?.message, "release rolled_back");
++        assert.equal(
++          rig.github.calls.some((call) => call.startsWith("closeIssue")),
++          false,
++        );
++      }
++      assert.deepEqual(after.releaseRequests, [request]);
++      assert.deepEqual(after.reservations, [charge]);
++      assert.equal(
++        rig.github.calls.some((call) => call.startsWith("merge")),
++        false,
++      );
++    } finally {
++      await rig.ctx.cleanup();
++    }
++  }
++});
++
++Deno.test("B12: a cancelled request is never deferred; it still parks with its recorded reason", async () => {
++  const rig = await makeRig("b12-cancelled", { summaries: false });
++  try {
++    const { record, request, review } = await gatewayLoopDelivery();
++    const cancelled = {
++      ...request,
++      status: "cancelled" as const,
++      failureReason: "trusted cancellation",
++    };
++    const release = await rig.releaseStore.writeRelease(
++      releaseWithoutVps(T0),
++      null,
++    );
++    assert.ok(release.ok && release.value.status === "applied");
++    const seed = await rig.store.writeRepair(
++      seededSnapshot([record], {
++        releaseRequests: [cancelled],
++        reviews: [review],
++      }),
++      null,
++    );
++    assert.ok(seed.ok && seed.value.status === "applied");
++    await rig.entry();
++    const after = (await rig.snapshot()).work[0];
++    assert.equal(after.nextStep, "blocked");
++    assert.equal(after.blocker?.message, "trusted cancellation");
++    assert.equal(after.wait, null);
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});
++
++/** A rig seeded with the synthetic Gateway delivery `shape` returns. */
++async function deferredRig(
++  prefix: string,
++  shape: (record: WorkRecordV1, requestId: string) => WorkRecordV1,
++) {
++  const rig = await makeRig(prefix, { summaries: false });
++  const { record, request, review } = await gatewayLoopDelivery();
++  const release = await rig.releaseStore.writeRelease(
++    releaseWithoutVps(T0),
++    null,
++  );
++  assert.ok(release.ok && release.value.status === "applied");
++  const seed = await rig.store.writeRepair(
++    seededSnapshot([shape(record, request.id)], {
++      releaseRequests: [request],
++      reviews: [review],
++    }),
++    null,
++  );
++  assert.ok(seed.ok && seed.value.status === "applied");
++  return rig;
++}
++
++const DEFERRED = { reason: "unavailable" as const, since: T0, until: null };
++
++Deno.test("B12: an unreadable release ref resumes nothing and writes nothing", async () => {
++  const rig = await deferredRig("b12-unreadable", (record) => ({
++    ...record,
++    wait: DEFERRED,
++  }));
++  try {
++    const readRelease = rig.store.readRelease.bind(rig.store);
++    const before = await rig.snapshot();
++    for (const offline of [true, false]) {
++      rig.store.readRelease = offline
++        ? () => Promise.resolve(portError("unavailable", "offline read"))
++        : readRelease;
++      rig.clock.advance(POLL);
++      await rig.entry();
++      assert.equal(
++        canonicalStringify(await rig.snapshot()),
++        canonicalStringify(before),
++        offline ? "unreadable" : "still no release record",
++      );
++    }
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});
++
++Deno.test("B12: a deferred record that holds an intent is handed back to its own step", async () => {
++  const rig = await deferredRig("b12-intent", (record, requestId) => ({
++    ...record,
++    wait: DEFERRED,
++    intent: {
++      kind: "issue_closure",
++      key: closureIntentKey(record.related.issueNumber!),
++      startedAt: T0,
++      branch: null,
++      expectedHead: record.target.head,
++      observedBase: record.target.base,
++      pr: record.target.pr,
++      requestId,
++      resultId: null,
++    },
++  }));
++  try {
++    const before = (await rig.snapshot()).work[0];
++    rig.clock.advance(POLL);
++    await rig.entry();
++    const after = (await rig.snapshot()).work[0];
++    // No longer open-ended: the closure step re-armed its own bounded wait,
++    // and with no accepted release it closes nothing.
++    assert.equal(after.nextStep, "delivery");
++    assert.notEqual(after.wait?.until ?? null, null);
++    assert.deepEqual(after.intent, before.intent);
++    assert.equal(
++      rig.github.calls.some((call) => call.startsWith("closeIssue")),
++      false,
++    );
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});
++
++Deno.test({
++  name:
++    "B12 rollback: R80 parses the deferred shape, never selects it and writes nothing over it",
++  ignore: !await revisionAvailable(R80),
++  fn: async () => {
++    const rig = await liveRig("b12-r80-source");
++    const r80 = await loadRevisionModules(R80, [
++      "tests/repair/loop-rig.ts",
++      "src/repair/selection.ts",
++      "src/contracts/state-snapshots.ts",
++    ]);
++    try {
++      await rig.entry();
++      const written = await rig.snapshot();
++      const [rigModule, selection, snapshots] = r80.modules as [
++        typeof import("./loop-rig.ts"),
++        typeof import("../../src/repair/selection.ts"),
++        typeof import("../../src/contracts/state-snapshots.ts"),
++      ];
++      const parsed = snapshots.parseRepairStateSnapshotV1(
++        structuredClone(written),
++      );
++      const ranked = selection.rankEligibleWork(
++        parsed,
++        [],
++        rig.clock.now() + 24 * 60 * 60_000,
++      );
++      for (const record of LIVE_RECORDS) {
++        assert.equal(ranked.skipped[record.id], "waiting", record.id);
++      }
++      const old = await rigModule.makeRig("b12-r80-rollback", {
++        summaries: false,
++        configOverrides: { repository: LIVE_REPO },
++      });
++      try {
++        old.clock.advance(rig.clock.now() - T0);
++        const release = await old.releaseStore.writeRelease(
++          releaseWithoutVps(LIVE_UPDATED_AT),
++          null,
++        );
++        assert.ok(release.ok && release.value.status === "applied");
++        const seed = await old.store.writeRepair(
++          { ...structuredClone(written), stateHead: null, sequence: 1 },
++          null,
++        );
++        assert.ok(seed.ok && seed.value.status === "applied");
++        const seeded = await old.snapshot();
++        for (let cycle = 0; cycle < 6; cycle++) {
++          old.clock.advance(POLL);
++          await old.entry();
++        }
++        const after = await old.snapshot();
++        assert.equal(after.sequence, seeded.sequence);
++        assert.equal(
++          canonicalStringify(after.work),
++          canonicalStringify(written.work),
++        );
++      } finally {
++        await old.ctx.cleanup();
++      }
++    } finally {
++      await r80.dispose();
++      await rig.ctx.cleanup();
++    }
++  },
++});
+-- 
+2.43.0
+

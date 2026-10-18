@@ -1,0 +1,2579 @@
+From 83dad837152a846baee7fc70b3b8f070c44e36c1 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 17 Oct 2026 20:28:32 +0000
+Subject: [PATCH] fix(repair): open the hosted pre-review CI fix route; refresh
+ pre-review parks on a moved base (#153)
+
+Generation 81 has R80 e48e7e110 as its rollback target. Generation 80 kept
+the hosted pre-review CI fix route closed because R79 refused that cell, so
+every red head no completed review binds parked `CI red before review;
+awaiting a CI fix: ...` with no way out. That includes the refreshed head of
+every reviewed record whose base moved (645, 646, 649, 1128, 583, 615, 617,
+629 and 633 at the integration review). A park also almost always outlived
+its base, and the exhausted park got no flake re-run.
+
+Runtime (src/, takes effect when R81 is installed):
+- HOSTED_PRE_REVIEW_CI_FIXES is true. In a hosted run the gate now gives a
+  red, never-reviewed head the CI fix marker instead of parking it. The head
+  may be a new candidate or a reviewed record's refreshed head. The matrix
+  planner then admits the fix as a cell, charged in counters.retries. It is
+  never a review round, at most 3 per record, and then the exhausted park.
+  No new state shape, cell kind or stdout line is added.
+- Only comments change in loop-ci-first.ts and matrix-planner.ts.
+
+Launcher (ops/, may ship before the runtime and is correct under R80):
+- Moved base: under a proven CI-first runtime (R80 included), a red or
+  pending pre-review park whose base moved returns to `work` uncharged with
+  no marker (`retry:<id>:grant=0:...:base-moved`). The runtime's freshness
+  gate refreshes it deterministically, and its CI gate runs before any
+  review. It needs a review round left by the ceiling's own count, because
+  the runtime's ceiling gate would otherwise park it before the refresh. An
+  open legacy final round is a CI fix's to arm. The unchanged-base condition
+  now applies only to the any-runtime green rule.
+- Exhausted park: the pre-review gate's exhausted park of a head no completed
+  review binds gets the once-per-head re-run and the green rule. It never
+  gets a fix or a moved-base refresh. The merge gate's exhausted park of a
+  reviewed head belongs to delivery, so it keeps generation 80's terms.
+- Fix rule: it re-admits an R80-written red park on its unchanged base
+  through the CI fix marker, only under a fix runtime.
+  HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES stays empty here; generation 81's
+  pin commit lists R81 there and in the CI-first and CI-correction
+  allowlists. ciFirstFixRuntimeProven counts a listed revision only at
+  generation 81+, as a proven CI-first runtime with its own healthy proof. A
+  test proves HOSTED_PRE_REVIEW_CI_FIXES true in every listed revision's tree.
+- The misleading "the runtime's freshness gate owns it" test comment is
+  fixed. The runtime skips blocked records.
+
+Rollback to R80 (tests guarded on R80's source being present, since CI
+checkouts are shallow):
+- R80's consumer isolates every pre-review fix cell generation 81 plans as an
+  authenticated runtime mismatch with the charge kept reserved. This covers a
+  never-reviewed head, a reviewed record's refreshed head, and both legacy
+  shapes. The two shapes no planner grants keep the generic refusal, so R80
+  refuses nothing it already isolated.
+- R80's parsers accept the planned plan and every snapshot written by the
+  hosted gate, the planner and the retry pass.
+- R80's own loop parks the CI fix marker precisely and uncharged.
+- R80's own loop runs the launcher's moved-base return as one deterministic
+  refresh with nothing charged. The red refreshed head parks; the green one
+  gets exactly one review.
+
+Live (read-only):
+- At repair sequence 41064 (2026-10-17T20:18Z, R80 installed at generation
+  80), two ai.ubq.fi records sit in the CI-red pre-review park.
+- 1148 (PR 1149, never reviewed) is on 3650359812 while development is
+  e25d09cd09. L80 never re-admits it; this launcher returns it under R80 at
+  once for its uncharged refresh.
+- 575 (legacy, final round armed by R80's correction, one round left) is on
+  the tip. It waits for a base move (refresh), a green head (green rule), or
+  a pinned R81 once its re-run settles (CI fix marker).
+- At sequence 40627 (R79 installed) no record sat in these parks, and the
+  launcher's plans were identical to L80's.
+
+Tests: hosted-autonomy-ci-first, hosted-autonomy-legacy-round-gate,
+hosted-autonomy-pre-review-pass (new, real retry pass under the exact R80),
+matrix-pre-review-fix (new), matrix-ci-first-gen79 (R80 consumer cases),
+ci-first-refresh-red, ci-first-gate, ci-first-rollback-gen79,
+ci-first-rollback-gen80 (new). gen80 source and parser helpers added to
+tests/host/gen77-runtime-source.ts and tests/state/gen77-contracts.ts.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H8mMNvEXtHRiTVR1wJeFLQ
+---
+ docs/DECISIONS.md                             |  10 +-
+ ops/hosted-autonomy-ci-first.ts               |  96 ++++-
+ ops/hosted-autonomy-ci-rerun.ts               |  12 +-
+ ops/hosted-autonomy-retries.ts                |  57 ++-
+ ops/hosted-autonomy-retry-pass.ts             |  24 +-
+ src/host/matrix-planner.ts                    |   3 +-
+ src/repair/ci-first-policy.ts                 |  65 ++--
+ src/repair/loop-ci-first.ts                   |   6 +-
+ tests/host/gen77-runtime-source.ts            |  21 +-
+ tests/host/hosted-autonomy-ci-first_test.ts   | 303 +++++++++++++--
+ .../hosted-autonomy-legacy-round-gate_test.ts |  58 ++-
+ .../hosted-autonomy-pre-review-pass_test.ts   | 206 +++++++++++
+ tests/host/matrix-ci-first-gen79_test.ts      | 122 +++++--
+ tests/host/matrix-pre-review-fix_test.ts      | 136 +++++++
+ tests/repair/ci-first-gate_test.ts            |  37 +-
+ tests/repair/ci-first-refresh-red_test.ts     | 213 ++++++++---
+ tests/repair/ci-first-rollback-gen79_test.ts  |  11 +-
+ tests/repair/ci-first-rollback-gen80_test.ts  | 344 ++++++++++++++++++
+ tests/state/gen77-contracts.ts                |  30 +-
+ 19 files changed, 1528 insertions(+), 226 deletions(-)
+ create mode 100644 tests/host/hosted-autonomy-pre-review-pass_test.ts
+ create mode 100644 tests/host/matrix-pre-review-fix_test.ts
+ create mode 100644 tests/repair/ci-first-rollback-gen80_test.ts
+
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index 0ac04fbbcb..d4249247e0 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -164,7 +164,15 @@ Generation 80 is R80 e48e7e110, the live launcher 413f9eff6 plus the reviewed ge
+ 
+ Owner decision 2026-10-16: CI first, then review, then merge. `requestReviewFor` gates every review request on the exact fresh head's required CI (`src/repair/loop-ci-first.ts`), after its freshness gate and before any reservation: green proceeds; running or absent checks wait at `work` in a `ci_pending` wait that keeps its `since` and parks after 6 hours (`CI did not finish before review within 6 hours: ...`); a red base backs off 30 minutes uncharged; a failure no base evidence attributes (a cancelled, absent or inconclusive base check, or a head check that never concluded) proves nothing about the candidate, so it waits like running CI, uncharged and bounded, and parks as `CI did not finish before review within 6 hours: ... without base evidence`, which the launcher's re-run and green rules re-admit, never a terminal block; a candidate-caused failure takes the existing CI correction for a head reviewed clean on its base, the CI fix marker (a zero-length `backoff` at `work`) for a never-reviewed head where the pre-review route is open, and otherwise parks (`CI red before review; awaiting a CI fix: ...`). A head already reviewed clean on its base by a change-only verdict (the missing task acceptance re-request, the only reviewed head that asks for another review) waits for its CI at `review` and is never parked: at `work` it would read as awaiting a CI correction whose non-failing exit delivers it to a merge gate that refuses the missing acceptance on every run, and a CI correction whose failure is gone returns such a head to `review` instead of delivery. A candidate-caused failure on such a head still takes the charged CI correction at `work`; R79 consumes that state as the same correction while the failure persists, and only a failure that clears between a rollback and the correction's admission would reach R79's own non-failing exit into its refusing merge gate, which needs a change-only verdict (none completed live since 2026-10-02). No non-green path reserves a review or counts a round, so every corrected head, refreshed head and conflict resolution passes CI before its next review.
+ 
+-A CI fix is charged in the existing `counters.retries` (`countRetry`, also counting `attempts`) and never counts a review round: at most 3 per record, never lowered, a refunded never-submitted admission included; then the record parks with `CI fix attempts exhausted (3 of 3): ...`, which no rule re-admits. A fix also needs a review round for the fixed head, counted by the hard ceiling's own rule over the durable ledger (`reviewRoundsLeft`; CI fix charges are not `review_request` admissions and never count): fewer than 3 spent, or the one-time legacy final review of the owner's legacy class, whose ceiling is its pin + 1: every ai.ubq.fi issue record whose rounds reached three under the old review-before-CI order, by the cutoff rule above (the twelve the owner named, 595, 597, 605, 610, 618, 668, 672, 673, 680, 694, 698 and 879, the sixteen R79 parked the same way afterwards, 137, 575, 583, 602, 615, 617, 629, 633, 634, 638, 650, 678, 679, 693, 754 and 1128, and the records in flight at the install). Its open final round admits the CI fix; the fix arms it for the review. One rule under one cutoff serves every check (`legacyReviewRoundPin`, `legacyFinalRoundOpen`, `legacyFinalRoundArmed` in `src/repair/review-round-cap.ts`), and every launcher read that counts rounds takes the same cutoff: the correction planner, the flake re-run's settled read that every correction plan requires (`readCiRerunSettled`; round-2 recheck P1: read without the cutoff it settled no legacy record, so 645, 646, 657, 663 and 1140 would never have got their CI fix or final review, silently, since a record pinned at its spent count reports no drift; `tests/host/hosted-autonomy-legacy-settled_test.ts` runs the real retry pass on the 645 shape) and the conflict re-admission. So the CI fix admission, the review-round ceiling and the launcher's legacy re-admission can never disagree on who gets the final review. The hosted pre-review fix route stays closed in generation 80 (`HOSTED_PRE_REVIEW_CI_FIXES`): R79, its rollback target, refuses that cell generically; generation 80's consumer accepts it so a later generation can open it. Every refreshed head is a head no review has completed on, so this park is not limited to new candidates: a reviewed record whose base moved and whose refreshed head is red (live, most refreshes onto 2756425c16, 973bb2f and ded498f failed validate on prettier and eslint drift: 645, 646, 649, 1128, 583, 615, 617, 629, 633) parks `CI red before review; awaiting a CI fix: ...` in a hosted generation-80 run with no route out, where R79 reviewed it and then corrected it (`tests/repair/ci-first-refresh-red_test.ts`). The coordinator accepts this for generation 80 (its round-2 choice): such a park waits for generation 81, a follow-up, not a ship condition of generation 80, scheduled once R80 is healthy: R80 as its rollback target, `HOSTED_PRE_REVIEW_CI_FIXES` true and its runtime pinned in `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`, whose fix rule re-admits exactly these parks through the CI fix marker (the same test pins that route). The launcher approves held CI runs for published heads at `work` and for pre-review parks, re-runs a red pre-review park once, returns a green one to `work` under any runtime, and re-admits a red one with the fix marker only under an allowlisted fix runtime (none yet); the legacy final-review re-admission runs only under an allowlisted CI-first runtime (`HOSTED_AUTONOMY_CI_FIRST_RUNTIMES`, which names R80 from its install pin and counts it only once R80 holds its own healthy proof). The legacy final round is the same single round everywhere: a CI-fixed legacy head whose refresh conflicts keeps it for the resolved merge (`conflictResolutionShape` counts `reviewRoundsLeft` alone; live 597 and 668 conflict), and no launcher re-admission hands it to a runtime not proven CI-first (`legacyFinalRoundAdmissible`, denial `legacy_round_requires_ci_first`): the retry table's work, review and conflict re-pend grants, the pre-review CI-first returns (which also need a review round left), the CI correction's legacy rule, and the base-refresh, conflict and refresh re-arm re-admissions. R79 reviews before CI, so under it that round would be spent on a red head; under R79 a pending resolution generation 80 wrote for such a record is refused by R79's own shape (three or more rounds), so R79 runs the ordinary refresh, which blocks on the same conflict uncharged.
++A CI fix is charged in the existing `counters.retries` (`countRetry`, also counting `attempts`) and never counts a review round: at most 3 per record, never lowered, a refunded never-submitted admission included; then the record parks with `CI fix attempts exhausted (3 of 3): ...`, which no fix or refresh re-admits (from generation 81 the once-per-head re-run and the green rule take the pre-review gate's park of a never-reviewed head, see below). A fix also needs a review round for the fixed head, counted by the hard ceiling's own rule over the durable ledger (`reviewRoundsLeft`; CI fix charges are not `review_request` admissions and never count): fewer than 3 spent, or the one-time legacy final review of the owner's legacy class, whose ceiling is its pin + 1: every ai.ubq.fi issue record whose rounds reached three under the old review-before-CI order, by the cutoff rule above (the twelve the owner named, 595, 597, 605, 610, 618, 668, 672, 673, 680, 694, 698 and 879, the sixteen R79 parked the same way afterwards, 137, 575, 583, 602, 615, 617, 629, 633, 634, 638, 650, 678, 679, 693, 754 and 1128, and the records in flight at the install). Its open final round admits the CI fix; the fix arms it for the review. One rule under one cutoff serves every check (`legacyReviewRoundPin`, `legacyFinalRoundOpen`, `legacyFinalRoundArmed` in `src/repair/review-round-cap.ts`), and every launcher read that counts rounds takes the same cutoff: the correction planner, the flake re-run's settled read that every correction plan requires (`readCiRerunSettled`; round-2 recheck P1: read without the cutoff it settled no legacy record, so 645, 646, 657, 663 and 1140 would never have got their CI fix or final review, silently, since a record pinned at its spent count reports no drift; `tests/host/hosted-autonomy-legacy-settled_test.ts` runs the real retry pass on the 645 shape) and the conflict re-admission. So the CI fix admission, the review-round ceiling and the launcher's legacy re-admission can never disagree on who gets the final review. The hosted pre-review fix route stays closed in generation 80 (`HOSTED_PRE_REVIEW_CI_FIXES`): R79, its rollback target, refuses that cell generically; generation 80's consumer accepts it so a later generation can open it. Every refreshed head is a head no review has completed on, so this park is not limited to new candidates: a reviewed record whose base moved and whose refreshed head is red (live, most refreshes onto 2756425c16, 973bb2f and ded498f failed validate on prettier and eslint drift: 645, 646, 649, 1128, 583, 615, 617, 629, 633) parks `CI red before review; awaiting a CI fix: ...` in a hosted generation-80 run with no route out, where R79 reviewed it and then corrected it (`tests/repair/ci-first-refresh-red_test.ts`). The coordinator accepts this for generation 80 (its round-2 choice): such a park waits for generation 81, a follow-up, not a ship condition of generation 80, scheduled once R80 is healthy: R80 as its rollback target, `HOSTED_PRE_REVIEW_CI_FIXES` true and its runtime pinned in `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`, whose fix rule re-admits exactly these parks through the CI fix marker (the same test pins that route). The launcher approves held CI runs for published heads at `work` and for pre-review parks, re-runs a red pre-review park once, returns a green one to `work` under any runtime, and re-admits a red one with the fix marker only under an allowlisted fix runtime (none yet); the legacy final-review re-admission runs only under an allowlisted CI-first runtime (`HOSTED_AUTONOMY_CI_FIRST_RUNTIMES`, which names R80 from its install pin and counts it only once R80 holds its own healthy proof). The legacy final round is the same single round everywhere: a CI-fixed legacy head whose refresh conflicts keeps it for the resolved merge (`conflictResolutionShape` counts `reviewRoundsLeft` alone; live 597 and 668 conflict), and no launcher re-admission hands it to a runtime not proven CI-first (`legacyFinalRoundAdmissible`, denial `legacy_round_requires_ci_first`): the retry table's work, review and conflict re-pend grants, the pre-review CI-first returns (which also need a review round left), the CI correction's legacy rule, and the base-refresh, conflict and refresh re-arm re-admissions. R79 reviews before CI, so under it that round would be spent on a red head; under R79 a pending resolution generation 80 wrote for such a record is refused by R79's own shape (three or more rounds), so R79 runs the ordinary refresh, which blocks on the same conflict uncharged.
++
++## Generation 81 pre-review CI fixes (2026-10-17, issue #153)
++
++Generation 81 has R80 e48e7e110 as its rollback target and opens the hosted pre-review CI fix route that generation 80 kept closed (`HOSTED_PRE_REVIEW_CI_FIXES` true, runtime): R80's consumer isolates every pre-review fix cell generation 81 plans, a never-reviewed candidate's and a reviewed record's refreshed head's alike, as an authenticated runtime mismatch with the charge kept reserved (`tests/host/matrix-ci-first-gen79_test.ts`, run against R80's own source), and R80's own loop parks the CI fix marker precisely and uncharged (`tests/repair/ci-first-rollback-gen80_test.ts`). So a red head no completed review binds, including every red refreshed head of a reviewed record (645, 646, 649, 1128, 583, 615, 617, 629, 633 at the integration review; 13 of 18 candidate heads at the cifix review), takes the CI fix marker at the runtime's gate instead of parking: a CI fix charged in `counters.retries`, never a review round, at most 3 per record, then the exhausted park. No new state shape, cell kind or stdout line: every hosted write parses under R80.
++
++Launcher (ops/, may ship before the runtime, correct under R80): under a proven CI-first runtime (R80 included) a red or pending pre-review park whose base moved returns to `work` with nothing charged and no marker (`retry:<id>:grant=0:...:base-moved`): the runtime's freshness gate refreshes it deterministically and its CI gate runs before any review. It needs a review round left by the ceiling's own count, since the runtime's ceiling gate would otherwise park it before the refresh; an open legacy final round is a CI fix's to arm, so a legacy record whose round is still unarmed waits for the fix rule. The unchanged-base condition stays only on the green rule, which serves any runtime. The pre-review gate's exhausted park of a head no completed review binds now gets the once-per-head re-run and the green rule (a flake green again on its unchanged base returns for its review); it never gets a fix or a moved-base refresh. The merge gate writes the same message for a reviewed head, whose green head belongs to delivery rather than to another review, so that park keeps generation 80's terms. The fix rule re-admits a red park R80 wrote on its unchanged base through the CI fix marker only under a fix runtime: `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES` stays empty here and generation 81's own pin commit lists R81 there and in the CI-first and CI-correction allowlists; `ciFirstFixRuntimeProven` counts a listed revision only at generation 81+, as a proven CI-first runtime with its own healthy proof, and a test proves `HOSTED_PRE_REVIEW_CI_FIXES` true in every listed revision's tree. Under R80 a moved-base return of a candidate-caused red head parks again on the refreshed head, at most once per base move per record, until R81 is installed.
++
++Live at repair sequence 41064 (2026-10-17T20:18Z, R80 installed at generation 80): two ai.ubq.fi records sit in the CI-red pre-review park and none in the pending or exhausted park. 1148 (PR 1149, never reviewed) parked on 3650359812 while development moved to e25d09cd09: L80 never re-admits it, while this launcher returns it under R80 at once for its uncharged refresh. 575 (legacy, its final round armed by R80's CI correction, one round left) parked on the tip: it waits for its base to move (refresh), for a green head (the green rule), or for a pinned R81 to take its fix once its re-run settles. At sequence 40627 (R79 installed) no record sat in these parks. The 36 ai.ubq.fi merge-gate CI parks there (all legacy, none on the tip) reach the pre-review gate only through R80's CI correction, which arms the final round; this launcher returns every such red park on a moved base for its refresh under R80, where L80 returned none.
+ 
+ ## Retained macOS local mode and issue #100 (2026-10-17)
+ 
+diff --git a/ops/hosted-autonomy-ci-first.ts b/ops/hosted-autonomy-ci-first.ts
+index fbd9faec40..36958b3789 100644
+--- a/ops/hosted-autonomy-ci-first.ts
++++ b/ops/hosted-autonomy-ci-first.ts
+@@ -9,21 +9,29 @@
+  * - approval (L1): a bot-pushed head's CI run that GitHub holds for approval
+  *   is approved while the record waits at `work` on its published head or is
+  *   parked by the pre-review gate, not only in review or delivery;
+- * - re-run (L2): a head parked red before review shares the once-per-head
+- *   flake re-run (`hosted-autonomy-ci-rerun.ts`);
++ * - re-run (L2): a head parked by the pre-review gate (red, pending, or with
++ *   its CI fixes exhausted on a head no review has completed on) shares the
++ *   once-per-head flake re-run (`hosted-autonomy-ci-rerun.ts`);
+  * - green (L3): a pre-review park whose exact head is green again on its
+  *   unchanged base returns to `work` under ANY runtime (the runtime's gate
+- *   then requests the review; R79 would request it too);
++ *   then requests the review; R79 would request it too), the exhausted park
++ *   included;
++ * - moved base (L3, generation 81): a red or pending pre-review park whose
++ *   base moved returns to `work` under a proven CI-first runtime (R80
++ *   included) with a review round left: the runtime refreshes it
++ *   deterministically and uncharged and gates the refreshed head's CI before
++ *   any review. The unchanged-base condition stays only on the green rule,
++ *   which serves any runtime;
+  * - fix (L3): a red pre-review park returns to `work` with the CI fix marker
+  *   only under an exact allowlisted runtime whose hosted pre-review fix route
+- *   is open (`HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`, empty in generation 80),
+- *   once its re-run can no longer act, with a CI fix and a review round left;
++ *   is open (`HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`, generation 81+), once
++ *   its re-run can no longer act, with a CI fix and a review round left;
+  * - legacy (E): the existing CI correction re-admission of a record whose
+  *   rounds are spent (the one-time legacy final review) runs only under an
+  *   exact allowlisted CI-first runtime (`HOSTED_AUTONOMY_CI_FIRST_RUNTIMES`):
+  *   under R79 the refreshed head would be reviewed while still red;
+- * - nothing ever matches the exhausted park (L4: the runtime's own
+- *   `ciCorrectable` counts the CI fixes);
++ * - no fix and no moved-base refresh ever matches the exhausted park (L4:
++ *   the runtime's own `ciCorrectable` counts the CI fixes);
+  * - a legacy record's one final review round is handed to the
+  *   runtime by NO re-admission except under a proven CI-first runtime
+  *   (`legacyFinalRoundAdmissible`).
+@@ -34,10 +42,12 @@ import type {
+   RepairStateSnapshotV1,
+ } from "../src/contracts/state-snapshots.ts";
+ import {
++  CI_FIX_EXHAUSTED_PREFIX,
+   CI_PRE_REVIEW_PARK_PREFIXES,
+   ciFixesLeft,
+   reviewRoundAvailable,
+ } from "../src/repair/ci-first-policy.ts";
++import { headReviewCompleted } from "../src/repair/loop-review-records.ts";
+ import { ciPublicationShape } from "../src/repair/ci-rejection.ts";
+ import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
+ import { ordinaryReviewRoundsSpent } from "../src/repair/review-round-cap.ts";
+@@ -63,11 +73,23 @@ export const HOSTED_AUTONOMY_CI_FIRST_RUNTIMES: ReadonlySet<string> = new Set<
+   "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+ ]);
+ 
++/**
++ * First runtime generation whose HOSTED runs open the pre-review CI fix route
++ * (`HOSTED_PRE_REVIEW_CI_FIXES`): generation 80 kept it closed because its
++ * rollback target R79 refused the cell; generation 81's rollback target R80
++ * isolates it.
++ */
++export const HOSTED_AUTONOMY_CI_FIRST_FIX_MIN_GENERATION = 81;
++
+ /**
+  * Exact reviewed runtime revisions whose hosted runs open the pre-review CI
+- * fix route (`HOSTED_PRE_REVIEW_CI_FIXES` true in that revision's tree).
+- * Generation 80 keeps that route closed (its rollback target R79 refuses the
+- * cell), so this stays empty until a later generation opens it.
++ * fix route (`HOSTED_PRE_REVIEW_CI_FIXES` true in that revision's own tree,
++ * which a test proves for every listed revision present locally), each named
++ * by the launcher commit that pins its install. Generation 81's pin commit
++ * lists its runtime here, and in `HOSTED_AUTONOMY_CI_FIRST_RUNTIMES` and the
++ * CI-correction allowlist: a fix runtime counts only as a proven CI-first
++ * runtime at generation 81+ (`ciFirstFixRuntimeProven`). R80 never belongs
++ * here (its hosted route is closed), so a rollback re-admits no fix.
+  */
+ export const HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES: ReadonlySet<string> =
+   new Set<string>([]);
+@@ -85,6 +107,22 @@ export function ciFirstRuntimeProven(
+     ciCorrectionRuntimeProven(runtime, allowlist);
+ }
+ 
++/**
++ * True only for an allowlisted fix runtime (`fixAllowlist`) at generation
++ * 81+ that is also a proven CI-first runtime (`ciFirstAllowlist`), with its
++ * own settled healthy proof binding this exact revision and generation.
++ */
++export function ciFirstFixRuntimeProven(
++  runtime: HostedRuntimeRecordV1 | null | undefined,
++  fixAllowlist: ReadonlySet<string> = HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
++  ciFirstAllowlist: ReadonlySet<string> = HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
++): boolean {
++  return runtime !== null && runtime !== undefined &&
++    runtime.generation >= HOSTED_AUTONOMY_CI_FIRST_FIX_MIN_GENERATION &&
++    ciFirstRuntimeProven(runtime, fixAllowlist) &&
++    ciFirstRuntimeProven(runtime, ciFirstAllowlist);
++}
++
+ /** Denial reason of a legacy final round withheld from a non-CI-first runtime. */
+ export const LEGACY_ROUND_REQUIRES_CI_FIRST = "legacy_round_requires_ci_first";
+ 
+@@ -126,21 +164,51 @@ function publishedHead(
+     );
+ }
+ 
+-/** Parked by the runtime's pre-review CI gate (red or pending past bound). */
++/**
++ * Parked by the runtime's pre-review CI gate on its published head, red or
++ * pending past bound (`prefixes`): the parks every pre-review rule takes.
++ */
+ export function preReviewCiParked(
+   snapshot: Pick<RepairStateSnapshotV1, "releaseRequests">,
+   record: WorkRow,
++  prefixes: readonly string[] = CI_PRE_REVIEW_PARK_PREFIXES,
+ ): boolean {
+   const blocker = record.blocker;
+   return record.nextStep === "blocked" && record.intent === null &&
+     blocker !== null && blocker.kind === "other" &&
+-    CI_PRE_REVIEW_PARK_PREFIXES.some((prefix) =>
+-      blocker.message.startsWith(prefix)
+-    ) &&
++    prefixes.some((prefix) => blocker.message.startsWith(prefix)) &&
+     record.related.issueNumber !== null && ciPublicationShape(record) &&
+     publishedHead(snapshot, record);
+ }
+ 
++/**
++ * The pre-review gate's exhausted park (generation 81): three CI fixes
++ * spent, on a published head no completed review binds. Only the
++ * once-per-head re-run and the green rule take it, never a fix or a
++ * moved-base refresh. The merge gate writes the same message for a REVIEWED
++ * head, whose green head belongs to delivery, not to another review: that
++ * park keeps generation 80's terms (nothing re-admits it).
++ */
++export function preReviewCiExhausted(
++  snapshot: RepairStateSnapshotV1,
++  record: WorkRow,
++): boolean {
++  return preReviewCiParked(snapshot, record, [CI_FIX_EXHAUSTED_PREFIX]) &&
++    !headReviewCompleted(snapshot, record);
++}
++
++/**
++ * Any park the pre-review gate wrote that the once-per-head re-run and the
++ * green rule take: red, pending, or exhausted on a never-reviewed head.
++ */
++export function preReviewGateParked(
++  snapshot: RepairStateSnapshotV1,
++  record: WorkRow,
++): boolean {
++  return preReviewCiParked(snapshot, record) ||
++    preReviewCiExhausted(snapshot, record);
++}
++
+ /** A pre-review park a CI fix may still be admitted for. */
+ export function preReviewFixEligible(
+   snapshot: Pick<RepairStateSnapshotV1, "releaseRequests" | "reservations">,
+diff --git a/ops/hosted-autonomy-ci-rerun.ts b/ops/hosted-autonomy-ci-rerun.ts
+index 8a82608fa5..21a6a31770 100644
+--- a/ops/hosted-autonomy-ci-rerun.ts
++++ b/ops/hosted-autonomy-ci-rerun.ts
+@@ -2,7 +2,9 @@
+  * Launcher-only flake path for a reviewed head parked on the runtime's
+  * merge-gate CI failure ("CI checks failed: ...", or the CI-correction
+  * runtime's "CI checks failed without base evidence: ..."), and for a head
+- * the CI-first gate parked red or pending before its review. When the exact
++ * the CI-first gate parked before its review (red, pending, or with its CI
++ * fixes exhausted on a head no review has completed on: a flake there returns
++ * through the green rule, never through a fourth fix). When the exact
+  * head holds a clean review against a base that is still the base tip and is
+  * itself all green, the failed workflow run on that head is re-run ONCE.
+  * Nothing is written: GitHub's own `run_attempt` is the durable once-per-head
+@@ -33,8 +35,8 @@ import {
+   hostedIssueKey,
+ } from "./hosted-autonomy-policy.ts";
+ import {
+-  preReviewCiParked,
+   preReviewFixEligible,
++  preReviewGateParked,
+ } from "./hosted-autonomy-ci-first.ts";
+ import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
+ import type { HostedAutonomyHeadRunV1 } from "./hosted-autonomy-types.ts";
+@@ -95,8 +97,8 @@ export function ciRerunRuns(
+ 
+ /**
+  * Local gates: the CI-parked, clean-reviewed, unreleased shape with no
+- * operation in flight (or a head the CI-first gate parked red or pending
+- * before its review), on a published head whose candidate is durably
++ * operation in flight (or a head the CI-first gate parked before its review,
++ * its exhausted park included), on a published head whose candidate is durably
+  * preserved, for a source issue not already known closed.
+  */
+ function rerunShape(
+@@ -110,7 +112,7 @@ function rerunShape(
+     candidate !== undefined && candidate.preserved !== null &&
+     candidate.publishedHead === head &&
+     (ciGreenRedeliveryEligible(snapshot, record) ||
+-      preReviewCiParked(snapshot, record)) &&
++      preReviewGateParked(snapshot, record)) &&
+     !closedIssues.has(
+       hostedIssueKey(record.repository, record.related.issueNumber!),
+     );
+diff --git a/ops/hosted-autonomy-retries.ts b/ops/hosted-autonomy-retries.ts
+index 035502b065..1c918fd805 100644
+--- a/ops/hosted-autonomy-retries.ts
++++ b/ops/hosted-autonomy-retries.ts
+@@ -30,6 +30,7 @@ import {
+   ciRedeliveryEligible,
+ } from "./hosted-autonomy-ci-retries.ts";
+ import {
++  ciFirstFixRuntimeProven,
+   ciFirstRuntimeProven,
+   HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+   HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
+@@ -38,6 +39,7 @@ import {
+   legacyFinalRoundAdmissible,
+   preReviewCiParked,
+   preReviewFixEligible,
++  preReviewGateParked,
+ } from "./hosted-autonomy-ci-first.ts";
+ import {
+   ciFixMarker,
+@@ -312,6 +314,9 @@ export interface RetryPlanV1 {
+ /** Detail suffix of a CI re-admission whose head is green again. */
+ const CI_GREEN_DETAIL_SUFFIX = ":green";
+ 
++/** Detail suffix of a pre-review park returned for its moved-base refresh. */
++const CI_BASE_MOVED_DETAIL_SUFFIX = ":base-moved";
++
+ /**
+  * Denial of the green CI rule for a head whose ordinary review rounds are
+  * spent: the delivery pass's spent-round rule merges it (or refuses) itself.
+@@ -333,13 +338,27 @@ export function ciCorrectionPlan(plan: RetryPlanV1): boolean {
+ 
+ /**
+  * The CI-first re-admission of a head the runtime's pre-review gate parked
+- * (`hosted-autonomy-ci-first.ts`): green again on its unchanged base returns
+- * it to `work` under any runtime; still red, once its re-run can no longer
+- * act, returns it with the CI fix marker only under a fix runtime. Either
+- * way the head returns only to be reviewed once green, so a record with no
+- * review round left by the ceiling's own count (`reviewRoundAvailable`), or
++ * (`hosted-autonomy-ci-first.ts`), each back at `work` with nothing charged:
++ *
++ * - green: green again on its unchanged base, under any runtime (the
++ *   exhausted park of a never-reviewed head included): the runtime's gate
++ *   then requests the review;
++ * - moved base: a red or pending park (never the exhausted one) whose base
++ *   moved, under a proven CI-first runtime only: the runtime refreshes it
++ *   deterministically and uncharged (its freshness gate reads the tip) and
++ *   gates the refreshed head's CI before any review. Under any other runtime
++ *   (R79 reviews before CI) it stays parked;
++ * - fix: still red, once its re-run can no longer act, with the CI fix marker
++ *   only under a fix runtime (a moved base takes the refresh first, unless
++ *   only a CI fix can open the record's round: a legacy final round).
++ *
++ * The green and moved-base returns lead straight to a review request (or to
++ * the refresh before it), so they need a review round left by the ceiling's
++ * own count (`reviewRoundsLeft`; the runtime's ceiling gate would park the
++ * record before any refresh otherwise, and an open legacy final round is a CI
++ * fix's to arm); a fix needs one available (`reviewRoundAvailable`). A record
+  * whose next review is a legacy final round under a runtime not proven
+- * CI-first (`legacyFinalRoundAdmissible`), stays parked: R79 would review it
++ * CI-first (`legacyFinalRoundAdmissible`) stays parked: R79 would review it
+  * past the cap, or before its CI. Null when no CI-first rule applies.
+  */
+ function planCiFirstReadmission(
+@@ -356,20 +375,21 @@ function planCiFirstReadmission(
+   const head = record.target.head;
+   if (
+     blocker === null || head === null ||
+-    !preReviewCiParked(snapshot, record) ||
++    !preReviewGateParked(snapshot, record) ||
+     !reviewRoundAvailable(snapshot, record, cutoff) ||
+     !legacyFinalRoundAdmissible(snapshot, record, ciFirst)
+   ) return null;
+   const key = ciGreenHeadKey(record.repository, head);
+-  // A green head returns for its review: only with a review round left (an
+-  // open legacy final round is a CI fix's to arm, not a review's).
+-  const green = baseTips.get(hostedRepositoryKey(record.repository)) ===
+-      record.target.base &&
+-    ciGreenHeads.has(key) &&
+-    reviewRoundsLeft(snapshot, record, cutoff) > 0;
+-  const fix = !green && ciFixRuntime && ciRerunSettled.has(key) &&
++  const tip = baseTips.get(hostedRepositoryKey(record.repository)) ?? null;
++  const roundLeft = reviewRoundsLeft(snapshot, record, cutoff) > 0;
++  const green = tip === record.target.base && ciGreenHeads.has(key) &&
++    roundLeft;
++  const moved = !green && ciFirst && tip !== null &&
++    tip !== record.target.base && roundLeft &&
++    preReviewCiParked(snapshot, record);
++  const fix = !green && !moved && ciFixRuntime && ciRerunSettled.has(key) &&
+     preReviewFixEligible(snapshot, record, cutoff);
+-  if (!green && !fix) return null;
++  if (!green && !moved && !fix) return null;
+   const prefix = blocker.message.slice(0, blocker.message.indexOf(":") + 1);
+   return {
+     id: record.id,
+@@ -379,7 +399,9 @@ function planCiFirstReadmission(
+     reviewRounds: null,
+     advanceBase: false,
+     observedBase: null,
+-    detail: `${blocker.kind}:${prefix}${green ? CI_GREEN_DETAIL_SUFFIX : ""}`,
++    detail: `${blocker.kind}:${prefix}${
++      green ? CI_GREEN_DETAIL_SUFFIX : moved ? CI_BASE_MOVED_DETAIL_SUFFIX : ""
++    }`,
+     ...(fix ? { ciFixMarker: true as const } : {}),
+   };
+ }
+@@ -472,9 +494,10 @@ export function planHostedRetries(
+     );
+   const ciFixRuntime = ciRuntime !== null &&
+     ciRuntime.activeRevision === runtimeSha &&
+-    ciFirstRuntimeProven(
++    ciFirstFixRuntimeProven(
+       ciRuntime,
+       options.ciFirstFixAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
++      options.ciFirstAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
+     );
+   const ciRerunSettled = options.ciRerunSettled ?? new Set<string>();
+   const ciGreenHeads = options.ciGreenHeads ?? new Set<string>();
+diff --git a/ops/hosted-autonomy-retry-pass.ts b/ops/hosted-autonomy-retry-pass.ts
+index d43bc273ed..e7ca01fbca 100644
+--- a/ops/hosted-autonomy-retry-pass.ts
++++ b/ops/hosted-autonomy-retry-pass.ts
+@@ -36,10 +36,10 @@ import {
+   ordinaryReviewRoundsSpent,
+ } from "../src/repair/review-round-cap.ts";
+ import {
++  ciFirstFixRuntimeProven,
+   ciFirstRuntimeProven,
+-  HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+   launcherLegacyCutoff,
+-  preReviewCiParked,
++  preReviewGateParked,
+ } from "./hosted-autonomy-ci-first.ts";
+ import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
+ import { runHostedMismatchDispositionPass } from "./hosted-autonomy-mismatch-pass.ts";
+@@ -318,9 +318,11 @@ export async function runHostedRetryPass(
+   // (repository, issue number).
+   const closedIssues = context.closedIssues;
+   // A head parked on its merge-gate CI failure (or by the CI-first gate
+-  // before its review) whose base tip is still the record's base is read for
+-  // green CI on its OWN repository surface (a re-run flake, or CI that
+-  // finished late); only a head proven all green there can re-admit. A
++  // before its review, its exhausted park included) whose base tip is still
++  // the record's base is read for green CI on its OWN repository surface (a
++  // re-run flake, or CI that finished late); only a head proven all green
++  // there can re-admit. A pre-review park on a moved base needs no read: under
++  // a proven CI-first runtime it returns for the runtime's refresh. A
+   // merge-gate park whose ordinary rounds are spent is read only under a
+   // proven CI-first runtime (at any base, at most
+   // `HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS` per pass, rotating): green at
+@@ -349,7 +351,7 @@ export async function runHostedRetryPass(
+       record.nextStep !== "blocked" || head === null ||
+       !((ciGreenRedeliveryEligible(snapshot, record) &&
+         !ordinaryReviewRoundsSpent(snapshot, record)) ||
+-        preReviewCiParked(snapshot, record) || spentRead) ||
++        preReviewGateParked(snapshot, record) || spentRead) ||
+       closedIssues.has(
+         hostedIssueKey(record.repository, record.related.issueNumber!),
+       )
+@@ -372,12 +374,10 @@ export async function runHostedRetryPass(
+   // Flake first: a CI-parked head is re-admitted for a correction only once
+   // its single re-run (run by the delivery pass) can no longer act. Read only
+   // under a proven CI-correction runtime, the only one the rule activates for.
+-  // A pre-review CI fix is re-admitted only under a fix runtime (none in
+-  // generation 80), so only that runtime reads those heads' re-runs.
+-  const ciFixRuntime = ciFirstRuntimeProven(
+-    installedRuntime,
+-    HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+-  );
++  // A pre-review CI fix is re-admitted only under a fix runtime (generation
++  // 81+, pinned by its own launcher commit), so only that runtime reads those
++  // heads' re-runs.
++  const ciFixRuntime = ciFirstFixRuntimeProven(installedRuntime);
+   const ciRerunSettled = ciCorrectionRuntimeProven(installedRuntime)
+     ? await readCiRerunSettled(
+       { ...context, snapshot },
+diff --git a/src/host/matrix-planner.ts b/src/host/matrix-planner.ts
+index fff7ae0980..42faa76eaa 100644
+--- a/src/host/matrix-planner.ts
++++ b/src/host/matrix-planner.ts
+@@ -313,7 +313,8 @@ export async function planMatrixWave(
+   const conflictRouteOpen = conflictResolutionRouteOpen(deps);
+   // A pre-review CI fix is granted only where its cell survives a rollback
+   // (`preReviewCiFixRouteOpen`): closed in hosted generation-80 runs, whose
+-  // rollback target refuses the cell.
++  // rollback target refused the cell, and open from generation 81, whose
++  // rollback target R80 isolates it.
+   const preReviewRouteOpen = preReviewCiFixRouteOpen(deps);
+ 
+   while (cells.length < limit) {
+diff --git a/src/repair/ci-first-policy.ts b/src/repair/ci-first-policy.ts
+index d27654babf..d457aed7e0 100644
+--- a/src/repair/ci-first-policy.ts
++++ b/src/repair/ci-first-policy.ts
+@@ -12,13 +12,14 @@
+  * ceiling (`review-round-cap.ts`, which owns the round count and the one
+  * legacy rule), so the launcher can ship it before the runtime does.
+  *
+- * Rollback contract (generation 80, rollback target R79 549c7a691): nothing
+- * here adds a field, key or enum value. The CI fix count is the existing
+- * `counters.retries` (every R79 row carries it, no R79 runtime path writes or
+- * reads it beyond change detection, and `countRetry` keeps the parser's
+- * `retries <= attempts` rule). The parks are blockers of the existing `other`
+- * kind whose messages match no R79 or L79 re-admission prefix, and the fix
+- * marker is an existing `backoff` wait whose `since` equals its `until`.
++ * Rollback contract (generation 80, rollback target R79 549c7a691; kept by
++ * generation 81, rollback target R80 e48e7e110): nothing here adds a field,
++ * key or enum value. The CI fix count is the existing `counters.retries`
++ * (every R79 row carries it, no R79 runtime path writes or reads it beyond
++ * change detection, and `countRetry` keeps the parser's `retries <= attempts`
++ * rule). The parks are blockers of the existing `other` kind whose messages
++ * match no R79 or L79 re-admission prefix, and the fix marker is an existing
++ * `backoff` wait whose `since` equals its `until`.
+  */
+ import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
+ import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
+@@ -47,27 +48,30 @@ export const PRE_REVIEW_CI_BOUND_MS = 6 * 60 * 60_000;
+ 
+ /**
+  * Whether a HOSTED run may open the pre-review CI fix route (a fix of a red
+- * head no review has completed on). A hosted fix runs as a matrix cell, and a
+- * cell planned in one run may be consumed by a later run, which after a
+- * failed generation runs the rollback target's code. R79 (549c7a691), the
+- * rollback target of generation 80, refuses a CI fix cell for a never-reviewed
+- * head as a generic provenance refusal that would fail every later repair run
+- * (tests/host/matrix-ci-first-gen79_test.ts), so generation 80 keeps this
+- * route closed in hosted runs: a red, never-reviewed head parks there with
+- * `CI_PRE_REVIEW_RED_PREFIX` until a generation whose rollback target carries
+- * generation 80's consumer opens it. In-process runs never plan a cell.
+- * Every refreshed head is a head no review has completed on, so a REVIEWED
+- * record whose refreshed head is red parks there too (live, most refreshes
+- * failed on lint drift). Generation 81 (R80 as its rollback target, this flag
+- * true, its runtime in `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`) is therefore a
+- * ship condition of generation 80: its fix rule re-admits those parks through
+- * the CI fix marker (tests/repair/ci-first-refresh-red_test.ts).
++ * head no review has completed on: a new candidate, and also a REVIEWED
++ * record's refreshed head, since every refreshed head is one no review has
++ * completed on). A hosted fix runs as a matrix cell, and a cell planned in
++ * one run may be consumed by a later run, which after a failed generation
++ * runs the rollback target's code. R79 (549c7a691), the rollback target of
++ * generation 80, refused that cell as a generic provenance refusal that would
++ * fail every later repair run (tests/host/matrix-ci-first-gen79_test.ts), so
++ * generation 80 kept the route closed and parked such a head with
++ * `CI_PRE_REVIEW_RED_PREFIX` (live, most refreshes failed on lint drift).
++ * Generation 81's rollback target is R80 (e48e7e110), whose consumer isolates
++ * every pre-review fix cell generation 81 plans as an authenticated runtime
++ * mismatch with the charge kept reserved (same test), and whose own loop
++ * parks the CI fix marker precisely, uncharged
++ * (tests/repair/ci-first-rollback-gen80_test.ts): generation 81 opens it. A
++ * fix is charged in `counters.retries`, never a review round, at most
++ * `CI_FIX_ATTEMPTS` per record. The launcher's fix rule re-admits a park R80
++ * wrote once this runtime is pinned in `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`.
+  */
+-export const HOSTED_PRE_REVIEW_CI_FIXES = false;
++export const HOSTED_PRE_REVIEW_CI_FIXES = true;
+ 
+ /**
+  * The pre-review CI fix route is open for this run: always in process, and in
+- * a hosted (matrix) run only once `HOSTED_PRE_REVIEW_CI_FIXES` is set.
++ * a hosted (matrix) run once `HOSTED_PRE_REVIEW_CI_FIXES` is set (generation
++ * 81).
+  */
+ export function preReviewCiFixRouteOpen(
+   deps: { externalImplementations?: boolean },
+@@ -75,7 +79,12 @@ export function preReviewCiFixRouteOpen(
+   return deps.externalImplementations !== true || HOSTED_PRE_REVIEW_CI_FIXES;
+ }
+ 
+-/** Terminal park of a red head whose CI fixes are spent; nothing matches it. */
++/**
++ * Park of a red head whose CI fixes are spent (by the pre-review gate, or by
++ * the merge gate for a reviewed head). No fix and no refresh ever re-admits
++ * it; the launcher's once-per-head re-run and green rule take the pre-review
++ * gate's park of a head no review has completed on (generation 81).
++ */
+ export const CI_FIX_EXHAUSTED_PREFIX =
+   `CI fix attempts exhausted (${CI_FIX_ATTEMPTS} of ${CI_FIX_ATTEMPTS}): `;
+ 
+@@ -87,7 +96,11 @@ export const CI_PRE_REVIEW_RED_PREFIX =
+ export const CI_PRE_REVIEW_PENDING_PREFIX =
+   "CI did not finish before review within 6 hours: ";
+ 
+-/** The two pre-review parks the launcher may re-admit (never the exhausted). */
++/**
++ * The two pre-review parks the launcher may re-admit by a CI fix or a
++ * moved-base refresh (never the exhausted one, which only its re-run and
++ * green rules take).
++ */
+ export const CI_PRE_REVIEW_PARK_PREFIXES: readonly string[] = [
+   CI_PRE_REVIEW_RED_PREFIX,
+   CI_PRE_REVIEW_PENDING_PREFIX,
+diff --git a/src/repair/loop-ci-first.ts b/src/repair/loop-ci-first.ts
+index e0a41aee16..536f0ae6fd 100644
+--- a/src/repair/loop-ci-first.ts
++++ b/src/repair/loop-ci-first.ts
+@@ -180,8 +180,10 @@ function routeCandidateFailure(
+     return persistWork(deps, context, advanceToCorrection(record, now));
+   }
+   // Any other red head has no completed review: a new candidate, and also a
+-  // REVIEWED record's refreshed head. Where the pre-review fix route is closed
+-  // (hosted generation 80) both park until generation 81 opens it.
++  // REVIEWED record's refreshed head. Both take the CI fix marker where the
++  // pre-review fix route is open (in process, and hosted from generation 81)
++  // and park where it is closed (hosted generation 80, or no fix or round
++  // left by the ceiling's own count).
+   const marked = atWork(record, ciFixMarker(now), now);
+   if (
+     headAwaitsPreReviewCiFix(
+diff --git a/tests/host/gen77-runtime-source.ts b/tests/host/gen77-runtime-source.ts
+index fd73f811fb..534c4b1cb6 100644
+--- a/tests/host/gen77-runtime-source.ts
++++ b/tests/host/gen77-runtime-source.ts
+@@ -12,13 +12,16 @@
+  * helpers exist for the installed generation-78 runtime (R78), the rollback
+  * target of generation 79: `gen78Available` and `loadGen78Modules`, and for
+  * the installed generation-79 runtime (R79): `gen79Available` and
+- * `loadGen79Modules`, and for the live generation-79 launcher (L79, whose
+- * `ops/` tree is extracted too): `l79Available` and `loadL79Modules`.
++ * `loadGen79Modules`, for the installed generation-80 runtime (R80), the
++ * rollback target of generation 81: `gen80Available` and `loadGen80Modules`,
++ * and for the live generation-79 launcher (L79, whose `ops/` tree is
++ * extracted too): `l79Available` and `loadL79Modules`.
+  */
+ import {
+   OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION,
+   OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION,
+   OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION,
++  OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
+ } from "../../src/host/owner-install-runtime-pins.ts";
+ 
+ /** Installed generation-77 runtime revision (the rollback target of 78). */
+@@ -27,6 +30,8 @@ export const GEN77_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION;
+ export const GEN78_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION;
+ /** Installed generation-79 runtime revision. */
+ export const GEN79_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION;
++/** Installed generation-80 runtime revision (the rollback target of 81). */
++export const GEN80_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION;
+ /**
+  * The live generation-79 launcher (L79: the R79 pin 4b8be3b9f plus the
+  * protected-path refusal recording), the launcher rollback target of every
+@@ -74,6 +79,11 @@ export function gen79Available(): Promise<boolean> {
+   return revisionAvailable(GEN79_RUNTIME);
+ }
+ 
++/** True when the pinned generation-80 commit is in the local object store. */
++export function gen80Available(): Promise<boolean> {
++  return revisionAvailable(GEN80_RUNTIME);
++}
++
+ /** True when the L79 launcher commit is in the local object store. */
+ export function l79Available(): Promise<boolean> {
+   return revisionAvailable(L79_LAUNCHER);
+@@ -110,6 +120,13 @@ export function loadGen79Modules(
+   return loadRevisionModules(GEN79_RUNTIME, 79, paths);
+ }
+ 
++/** `loadGen77Modules` for the generation-80 `src/` and `tests/` trees. */
++export function loadGen80Modules(
++  paths: readonly string[],
++): Promise<LoadedRuntimeV1> {
++  return loadRevisionModules(GEN80_RUNTIME, 80, paths);
++}
++
+ /** `loadGen77Modules` for the L79 launcher's `src/`, `tests/` and `ops/`. */
+ export function loadL79Modules(
+   paths: readonly string[],
+diff --git a/tests/host/hosted-autonomy-ci-first_test.ts b/tests/host/hosted-autonomy-ci-first_test.ts
+index ae276fd74c..fd6b669065 100644
+--- a/tests/host/hosted-autonomy-ci-first_test.ts
++++ b/tests/host/hosted-autonomy-ci-first_test.ts
+@@ -4,12 +4,16 @@
+  * - L1: CI runs GitHub holds for approval on a bot-pushed head are approved
+  *   while the record waits for its pre-review CI at `work` (or is parked by
+  *   the pre-review gate), not only once it is in review or delivery;
+- * - L2: a head parked red before review gets its failed run re-run once;
+- * - L3: a pre-review park whose head is green again returns to `work` under
+- *   any runtime; a red one returns with the CI fix marker only under an
+- *   allowlisted fix runtime (none in generation 80); nothing matches the
+- *   exhausted park;
+- * - L4: the launcher never re-admits a record whose three CI fixes are spent.
++ * - L2: a head parked red before review (the exhausted park included) gets
++ *   its failed run re-run once;
++ * - L3: a pre-review park whose head is green again on its unchanged base
++ *   returns to `work` under any runtime (the exhausted park included); under
++ *   a proven CI-first runtime a red or pending park whose base moved returns
++ *   to `work` for the runtime's deterministic, uncharged refresh (its CI is
++ *   then gated before any review); a red one returns with the CI fix marker
++ *   only under an allowlisted fix runtime (generation 81+, none pinned yet);
++ * - L4: the launcher never re-admits a fix for a record whose three CI fixes
++ *   are spent, and never refreshes its red head on a moved base.
+  */
+ import assert from "node:assert/strict";
+ import type { GitSha } from "../../src/contracts/brands.ts";
+@@ -29,6 +33,8 @@ import {
+   preReviewCiFixRouteOpen,
+ } from "../../src/repair/ci-first-policy.ts";
+ import {
++  ciFirstFixRuntimeProven,
++  HOSTED_AUTONOMY_CI_FIRST_FIX_MIN_GENERATION,
+   HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+   HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
+ } from "../../ops/hosted-autonomy-ci-first.ts";
+@@ -36,7 +42,10 @@ import {
+   applyHostedRetries,
+   planHostedRetries,
+ } from "../../ops/hosted-autonomy-retries.ts";
+-import { ciGreenHeadKey } from "../../ops/hosted-autonomy-ci-retries.ts";
++import {
++  ciGreenHeadKey,
++  HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES,
++} from "../../ops/hosted-autonomy-ci-retries.ts";
+ import {
+   HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS,
+   HOSTED_AUTONOMY_RETRYABLE,
+@@ -53,8 +62,14 @@ import type {
+   HostedAutonomyHeadRunV1,
+ } from "../../ops/hosted-autonomy-types.ts";
+ import { SHA1, SHA2, T0 } from "../state/helpers.ts";
+-import { assertGen79Parses, gen79Available } from "../state/gen77-contracts.ts";
+ import {
++  assertGen79Parses,
++  assertGen80Parses,
++  gen79Available,
++  gen80Available,
++} from "../state/gen77-contracts.ts";
++import {
++  authorizingReceipt,
+   BASE,
+   deliveryRecord,
+   foreignPullFacts,
+@@ -70,8 +85,11 @@ import {
+   run,
+ } from "./hosted-autonomy-rig.ts";
+ 
+-/** The generation-79 source is absent from shallow CI checkouts. */
++/** The generation-79 and 80 sources are absent from shallow CI checkouts. */
+ const GEN79 = await gen79Available();
++const GEN80 = await gen80Available();
++/** R80, the pinned CI-first runtime and generation 81's rollback target. */
++const R80 = "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481";
+ 
+ const RED_PARK = "CI red before review; awaiting a CI fix: validate(failure)";
+ const PENDING_PARK =
+@@ -127,20 +145,38 @@ function installed(
+ const TIPS = new Map([[hostedRepositoryKey(SELF_REPO), BASE as string]]);
+ const HEAD_KEY = ciGreenHeadKey(SELF_REPO, HEAD);
+ 
++/**
++ * Plans under one installed runtime: by default a generation-81 runtime that
++ * is neither CI-first nor a fix runtime; `ciFirst` lists it as a CI-first
++ * runtime, `fixRuntime` as a CI-first fix runtime (which is CI-first too),
++ * and `r80` plans under the exact pinned R80 with the production allowlists.
++ */
+ function plan(
+   snapshot: RepairStateSnapshotV1,
+   options: {
+     green?: boolean;
+     settled?: boolean;
++    ciFirst?: boolean;
+     fixRuntime?: boolean;
++    r80?: boolean;
+     tip?: string;
+   } = {},
+ ) {
+-  const runtime = options.fixRuntime === true ? FIX_RUNTIME : SHA2;
++  const runtime = options.r80 === true
++    ? R80
++    : options.fixRuntime === true
++    ? FIX_RUNTIME
++    : SHA2;
++  const ciFirst = options.ciFirst === true || options.fixRuntime === true;
+   const cast = {
+-    ciRuntime: installed(runtime, 81),
+-    ciAllowlist: new Set([runtime]),
+-    ciFirstFixAllowlist: new Set(options.fixRuntime === true ? [runtime] : []),
++    ciRuntime: installed(runtime, options.r80 === true ? 80 : 81),
++    ...(options.r80 === true ? {} : {
++      ciAllowlist: new Set([runtime]),
++      ciFirstAllowlist: new Set(ciFirst ? [runtime] : []),
++      ciFirstFixAllowlist: new Set(
++        options.fixRuntime === true ? [runtime] : [],
++      ),
++    }),
+     ciGreenHeads: new Set(options.green === true ? [HEAD_KEY] : []),
+     ciRerunSettled: new Set(options.settled === true ? [HEAD_KEY] : []),
+   } as Parameters<typeof planHostedRetries>[6];
+@@ -177,15 +213,94 @@ Deno.test("CI first L3: a pre-review park green again returns to work under any
+     assert.deepEqual(work.counters, snapshot.work[0].counters);
+     assert.deepEqual(work.target, snapshot.work[0].target);
+     if (GEN79) await assertGen79Parses(next);
+-    // A moved base keeps it parked: the runtime's freshness gate owns it.
++    if (GEN80) await assertGen80Parses(next);
++    // The green rule needs the unchanged base: on a moved base the green
++    // read is of a stale head, and the runtime skips a blocked record, so
++    // under a runtime not proven CI-first the park stays parked (the moved
++    // base rule below needs a CI-first runtime).
+     assert.deepEqual(plan(snapshot, { green: true, tip: SHA1 }), []);
+   }
+ });
+ 
++Deno.test("CI first L3: under a proven CI-first runtime a pre-review park on a moved base returns to work for its uncharged refresh", async () => {
++  for (const message of [RED_PARK, PENDING_PARK]) {
++    const snapshot = repairSnapshot([
++      preReview({
++        blocker: { kind: "other", message, since: T0 + 3000 },
++      }),
++    ], []);
++    // The exact pinned R80 (production allowlists), a CI-first runtime that
++    // is not a fix runtime, and a generation-81 fix runtime all return it,
++    // green or red, settled or not: the refreshed head is a new head whose
++    // CI the runtime gates before any review.
++    for (
++      const options of [
++        { r80: true },
++        { ciFirst: true },
++        { fixRuntime: true, settled: true },
++        { ciFirst: true, green: true },
++      ]
++    ) {
++      const plans = plan(snapshot, { ...options, tip: SHA1 });
++      assert.equal(plans.length, 1, `${message} ${JSON.stringify(options)}`);
++      assert.equal(plans[0].nextStep, "work");
++      assert.equal(plans[0].advanceBase, false, "the runtime reads the tip");
++      assert.equal(plans[0].reviewRounds, null);
++      assert.equal(plans[0].grant, 0);
++      assert.equal(plans[0].ciFixMarker, undefined, "no fix marker");
++      assert.match(plans[0].detail, /:base-moved$/);
++      const next = applyHostedRetries(snapshot, SHA1, plans, T0 + 9000);
++      const work = next.work[0];
++      assert.equal(work.nextStep, "work");
++      assert.equal(work.blocker, null);
++      assert.equal(work.wait, null);
++      assert.equal(work.intent, null, "the runtime's freshness gate refreshes");
++      assert.deepEqual(work.counters, snapshot.work[0].counters, "uncharged");
++      assert.deepEqual(work.target, snapshot.work[0].target);
++      if (GEN80) await assertGen80Parses(next);
++    }
++    // Not under a runtime that is not proven CI-first, and not without a
++    // review round left (the runtime's ceiling gate would park it before
++    // any refresh).
++    assert.deepEqual(plan(snapshot, { tip: SHA1 }), []);
++    assert.deepEqual(plan(snapshot, { tip: SHA1, green: true }), []);
++    const spent = repairSnapshot([
++      preReview({
++        blocker: { kind: "other", message, since: T0 + 3000 },
++        counters: { attempts: 1, retries: 0, reviewRounds: 3 },
++      }),
++    ], []);
++    assert.deepEqual(plan(spent, { r80: true, tip: SHA1 }), []);
++    // An unknown tip is not a moved base.
++    assert.deepEqual(
++      planHostedRetries(
++        snapshot,
++        T0 + 9000,
++        R80 as GitSha,
++        new Map(),
++        new Set(),
++        undefined,
++        { ciRuntime: installed(R80, 80) },
++      ),
++      [],
++    );
++  }
++});
++
+ Deno.test("CI first L3: a red pre-review park returns with the fix marker only under a fix runtime", async () => {
+   const snapshot = repairSnapshot([preReview()], []);
+   assert.deepEqual(plan(snapshot), [], "nothing before the re-run settles");
+-  assert.deepEqual(plan(snapshot, { settled: true }), [], "gen80: closed");
++  assert.deepEqual(plan(snapshot, { settled: true }), [], "not a fix runtime");
++  assert.deepEqual(
++    plan(snapshot, { settled: true, r80: true }),
++    [],
++    "R80 keeps the hosted pre-review fix route closed",
++  );
++  assert.deepEqual(
++    plan(snapshot, { settled: true, ciFirst: true }),
++    [],
++    "CI-first alone opens no fix",
++  );
+   const plans = plan(snapshot, { settled: true, fixRuntime: true });
+   assert.equal(plans.length, 1);
+   assert.equal(plans[0].nextStep, "work");
+@@ -200,6 +315,7 @@ Deno.test("CI first L3: a red pre-review park returns with the fix marker only u
+   });
+   assert.deepEqual(work.counters, snapshot.work[0].counters, "nothing charged");
+   if (GEN79) await assertGen79Parses(next);
++  if (GEN80) await assertGen80Parses(next);
+   // No fix is re-admitted once three are spent or no review round is left.
+   for (
+     const counters of [
+@@ -216,23 +332,67 @@ Deno.test("CI first L3: a red pre-review park returns with the fix marker only u
+   }
+ });
+ 
+-Deno.test("CI first L3/L4: nothing ever re-admits the exhausted park", () => {
++Deno.test("CI first L3/L4: the pre-review exhausted park gets the green rule, never a fix or a moved-base refresh", async () => {
+   const exhausted = repairSnapshot([
+     preReview({
+       blocker: { kind: "other", message: EXHAUSTED_PARK, since: T0 + 3000 },
+       counters: { attempts: 4, retries: 3, reviewRounds: 0 },
+     }),
+   ], []);
++  // Red: no fix and no refresh, at any base, under any runtime.
+   for (
+     const options of [
+       {},
+-      { green: true },
+       { settled: true, fixRuntime: true },
+-      { green: true, settled: true, fixRuntime: true },
++      { r80: true },
++      { tip: SHA1, r80: true },
++      { tip: SHA1, settled: true, fixRuntime: true },
++      { tip: SHA1, green: true, fixRuntime: true },
+     ]
+   ) {
+     assert.deepEqual(plan(exhausted, options), [], JSON.stringify(options));
+   }
++  // Green again on its unchanged base (a flake), it returns to `work` under
++  // any runtime with nothing charged: the runtime's gate then requests the
++  // review, and a red head parks exhausted again (no fourth fix).
++  for (const options of [{ green: true }, { green: true, r80: true }]) {
++    const plans = plan(exhausted, options);
++    assert.equal(plans.length, 1, JSON.stringify(options));
++    assert.equal(plans[0].nextStep, "work");
++    assert.equal(plans[0].ciFixMarker, undefined);
++    assert.match(plans[0].detail, /^other:CI fix attempts exhausted.*:green$/);
++    const next = applyHostedRetries(exhausted, SHA1, plans, T0 + 9000);
++    assert.equal(next.work[0].wait, null);
++    assert.deepEqual(next.work[0].counters, exhausted.work[0].counters);
++    if (GEN80) await assertGen80Parses(next);
++  }
++  // ...and only with a review round left.
++  const spent = repairSnapshot([
++    preReview({
++      blocker: { kind: "other", message: EXHAUSTED_PARK, since: T0 + 3000 },
++      counters: { attempts: 4, retries: 3, reviewRounds: 3 },
++    }),
++  ], []);
++  assert.deepEqual(plan(spent, { green: true, r80: true }), []);
++  // The merge gate writes the same message for a REVIEWED head (a completed
++  // review binds it): green, it belongs to delivery, not to another review,
++  // so that park keeps generation 80's terms and nothing re-admits it.
++  const mergeGate = repairSnapshot([
++    preReview({
++      blocker: { kind: "other", message: EXHAUSTED_PARK, since: T0 + 3000 },
++      counters: { attempts: 4, retries: 3, reviewRounds: 1 },
++    }),
++  ], [authorizingReceipt()]);
++  for (
++    const options of [
++      { green: true },
++      { green: true, r80: true },
++      { green: true, settled: true, fixRuntime: true },
++      { tip: SHA1, r80: true },
++    ]
++  ) {
++    assert.deepEqual(plan(mergeGate, options), [], JSON.stringify(options));
++  }
+   for (const message of [EXHAUSTED_PARK, RED_PARK, PENDING_PARK]) {
+     assert.equal(
+       HOSTED_AUTONOMY_RETRYABLE.some((rule) => message.startsWith(rule.prefix)),
+@@ -402,7 +562,8 @@ Deno.test("CI first L2: a head parked red before review is re-run once on its gr
+   assert.deepEqual(await pass(snapshot), [`rerun:${TARGET}:run=9001:sent`]);
+   assert.deepEqual(reruns, [9001]);
+   assert.deepEqual(await pass(snapshot), [], "once per head");
+-  // The exhausted park is never re-run.
++  // The exhausted park gets the same one re-run (a flake that turns green
++  // returns through the green rule; it is never fixed a fourth time).
+   runs = [headRun({ id: 9002 })];
+   const exhausted = repairSnapshot([
+     preReview({
+@@ -410,25 +571,109 @@ Deno.test("CI first L2: a head parked red before review is re-run once on its gr
+       counters: { attempts: 4, retries: 3, reviewRounds: 0 },
+     }),
+   ], []);
+-  assert.deepEqual(await pass(exhausted), []);
++  assert.deepEqual(await pass(exhausted), [`rerun:${TARGET}:run=9002:sent`]);
++  assert.deepEqual(reruns, [9001, 9002]);
++  assert.deepEqual(await pass(exhausted), [], "once per head");
++  // The merge gate's exhausted park of a reviewed head is not re-run.
++  runs = [headRun({ id: 9003 })];
++  const mergeGate = repairSnapshot([
++    preReview({
++      blocker: { kind: "other", message: EXHAUSTED_PARK, since: T0 + 3000 },
++      counters: { attempts: 4, retries: 3, reviewRounds: 1 },
++    }),
++  ], [authorizingReceipt()]);
++  assert.deepEqual(await pass(mergeGate), []);
++  assert.deepEqual(reruns, [9001, 9002]);
+ });
+ 
+-Deno.test("CI first: generation 80 ships the gate with the hosted pre-review fix route closed", () => {
++Deno.test("CI first: generation 81 opens the hosted pre-review fix route; its fix allowlist waits for the pin", () => {
+   assert.equal(CI_FIX_ATTEMPTS, 3);
+   assert.equal(CI_FIRST_REVIEW_ROUNDS, 3, "owner decision: 3 rounds, hard");
+   assert.equal(CI_CORRECTION_REVIEW_ROUNDS, CI_FIRST_REVIEW_ROUNDS);
+   assert.equal(HOSTED_AUTONOMY_MAX_REVIEW_ROUNDS, CI_FIRST_REVIEW_ROUNDS);
+-  assert.equal(HOSTED_PRE_REVIEW_CI_FIXES, false, "R79 refuses the cell");
++  assert.equal(HOSTED_PRE_REVIEW_CI_FIXES, true, "R80 isolates the cell");
+   assert.equal(preReviewCiFixRouteOpen({}), true, "open in process");
+   assert.equal(
+     preReviewCiFixRouteOpen({ externalImplementations: true }),
+-    false,
+-    "closed in hosted generation-80 runs",
++    true,
++    "open in hosted generation-81 runs",
+   );
+-  // The install pin names R80 as the one CI-first runtime; no runtime opens
+-  // the hosted pre-review fix route yet.
+-  assert.deepEqual([...HOSTED_AUTONOMY_CI_FIRST_RUNTIMES], [
+-    "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+-  ]);
++  // The install pin names R80 as the one CI-first runtime; generation 81's
++  // own pin commit lists R81 in the fix allowlist (and as a CI-first and a
++  // CI-correction runtime): until then no runtime opens the hosted fix rule.
++  assert.deepEqual([...HOSTED_AUTONOMY_CI_FIRST_RUNTIMES], [R80]);
+   assert.equal(HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES.size, 0);
++  assert.equal(HOSTED_AUTONOMY_CI_FIRST_FIX_MIN_GENERATION, 81);
++  for (const revision of HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES) {
++    assert.ok(HOSTED_AUTONOMY_CI_FIRST_RUNTIMES.has(revision), revision);
++    assert.ok(HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES.has(revision), revision);
++  }
++  // A fix runtime is proven only at generation 81+, listed as CI-first too,
++  // with its own healthy proof: R80 (route closed) never is.
++  const fix = new Set([FIX_RUNTIME]);
++  assert.equal(
++    ciFirstFixRuntimeProven(installed(FIX_RUNTIME, 81), fix, fix),
++    true,
++  );
++  assert.equal(
++    ciFirstFixRuntimeProven(installed(FIX_RUNTIME, 80), fix, fix),
++    false,
++    "below generation 81",
++  );
++  assert.equal(
++    ciFirstFixRuntimeProven(installed(FIX_RUNTIME, 81), fix, new Set()),
++    false,
++    "not a CI-first runtime",
++  );
++  assert.equal(
++    ciFirstFixRuntimeProven(installed(R80, 80), new Set([R80])),
++    false,
++    "R80 keeps the route closed",
++  );
++  assert.equal(ciFirstFixRuntimeProven(installed(R80, 80)), false);
++  assert.equal(ciFirstFixRuntimeProven(null), false);
++  // Generation 80's re-admission of exactly R80's hosted parks is the fix
++  // rule's job once R81 is pinned, so R80 is not itself a fix runtime.
++  assert.equal(HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES.has(R80), false);
++});
++
++Deno.test("CI first: every allowlisted CI-first fix runtime opens the hosted pre-review fix route in its own tree", async () => {
++  const root = decodeURIComponent(new URL("../../", import.meta.url).pathname);
++  const git = async (args: string[]) => {
++    const output = await new Deno.Command("git", {
++      args: ["-C", root, ...args],
++      stdout: "piped",
++      stderr: "null",
++    }).output();
++    return output.success ? new TextDecoder().decode(output.stdout) : null;
++  };
++  // The tree that pins a fix runtime is that runtime's own launcher: its
++  // route must be open here too.
++  if (HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES.size > 0) {
++    assert.equal(HOSTED_PRE_REVIEW_CI_FIXES, true);
++  }
++  for (const revision of HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES) {
++    assert.match(revision, /^[0-9a-f]{40}$/);
++    if (await git(["cat-file", "-e", `${revision}^{commit}`]) === null) {
++      continue;
++    }
++    const source = await git([
++      "show",
++      `${revision}:src/repair/ci-first-policy.ts`,
++    ]);
++    assert.ok(source !== null, revision);
++    assert.match(
++      source,
++      /^export const HOSTED_PRE_REVIEW_CI_FIXES = true;$/m,
++      `${revision} keeps the hosted pre-review fix route closed`,
++    );
++  }
++  // R80 keeps it closed: listing it would re-admit fixes it cannot run.
++  if (await git(["cat-file", "-e", `${R80}^{commit}`]) !== null) {
++    const source = await git(["show", `${R80}:src/repair/ci-first-policy.ts`]);
++    assert.match(
++      source ?? "",
++      /^export const HOSTED_PRE_REVIEW_CI_FIXES = false;$/m,
++    );
++  }
+ });
+diff --git a/tests/host/hosted-autonomy-legacy-round-gate_test.ts b/tests/host/hosted-autonomy-legacy-round-gate_test.ts
+index 4871748fa5..4a7a9616da 100644
+--- a/tests/host/hosted-autonomy-legacy-round-gate_test.ts
++++ b/tests/host/hosted-autonomy-legacy-round-gate_test.ts
+@@ -161,11 +161,18 @@ function finalReview(record: WorkRecordV1, attempt: number) {
+   });
+ }
+ 
+-/** Plans for one record under no proven runtime, or a proven CI-first one. */
++/**
++ * Plans for one record under no proven runtime, a proven CI-first one, or a
++ * proven generation-81 CI-first fix runtime (whose re-runs are settled).
++ */
+ function plan(
+   record: WorkRecordV1,
+   charges: BudgetReservationV1[],
+-  options: { ciFirst?: boolean; tips?: ReadonlyMap<string, string> } = {},
++  options: {
++    ciFirst?: boolean;
++    fix?: boolean;
++    tips?: ReadonlyMap<string, string>;
++  } = {},
+ ) {
+   const denials: RetryDenialV1[] = [];
+   const snapshot: RepairStateSnapshotV1 = repairSnapshot(
+@@ -174,6 +181,7 @@ function plan(
+     [],
+     charges,
+   );
++  const key = ciGreenHeadKey(AI, SHA3);
+   const plans = planHostedRetries(
+     snapshot,
+     NOW,
+@@ -181,16 +189,18 @@ function plan(
+     options.tips ?? TIPS,
+     new Set(),
+     (denial) => denials.push(denial),
+-    options.ciFirst === true
++    options.ciFirst === true || options.fix === true
+       ? {
+-        ciRuntime: installed(80),
++        ciRuntime: installed(options.fix === true ? 81 : 80),
+         ciAllowlist: new Set([RUNTIME]),
+         ciFirstAllowlist: new Set([RUNTIME]),
+-        ciGreenHeads: new Set([ciGreenHeadKey(AI, SHA3)]),
++        ciFirstFixAllowlist: new Set(options.fix === true ? [RUNTIME] : []),
++        ciGreenHeads: new Set([key]),
++        ciRerunSettled: new Set(options.fix === true ? [key] : []),
+         legacyReviewCutoff: CUT,
+       }
+       : {
+-        ciGreenHeads: new Set([ciGreenHeadKey(AI, SHA3)]),
++        ciGreenHeads: new Set([key]),
+         legacyReviewCutoff: CUT,
+       },
+   );
+@@ -334,6 +344,42 @@ Deno.test("legacy round gate: a green pre-review park returns for review only wi
+   assert.equal(plan(open, reviewCharges(open, 1), { tips }).plans.length, 1);
+ });
+ 
++Deno.test("legacy round gate: a pre-review park on a moved base returns for its refresh only under a CI-first runtime with a review round left", () => {
++  const parked = (issue: number, rounds: number, retries: number) =>
++    aiRecord(issue, rounds, {
++      blocker: { kind: "other", message: RED_PARK, since: T0 + 3000 },
++      counters: { attempts: 3, retries, reviewRounds: rounds },
++    });
++  // The records sit on SHA2; development moved to SHA1 (`TIPS`).
++  // A legacy record whose final round its CI fix armed: refreshed for that
++  // one review only under a proven CI-first runtime.
++  const legacy = parked(668, 4, 1);
++  const armed = [...reviewCharges(legacy, 4), fix(legacy)];
++  assert.deepEqual(plan(legacy, armed).plans, []);
++  const refreshed = plan(legacy, armed, { ciFirst: true }).plans;
++  assert.equal(refreshed.length, 1);
++  assert.equal(refreshed[0]!.nextStep, "work");
++  assert.equal(refreshed[0]!.ciFixMarker, undefined);
++  assert.match(refreshed[0]!.detail, /:base-moved$/);
++  // A legacy record whose final round is still open (no fix charged since
++  // the cutoff) has no review round to refresh for: the runtime's ceiling
++  // gate would park it before any refresh. Its fix arms the round, so only a
++  // fix runtime returns it, with the CI fix marker.
++  const open = parked(673, 4, 0);
++  const unarmed = reviewCharges(open, 4);
++  assert.deepEqual(plan(open, unarmed, { ciFirst: true }).plans, []);
++  const fixed = plan(open, unarmed, { fix: true }).plans;
++  assert.equal(fixed.length, 1);
++  assert.equal(fixed[0]!.ciFixMarker, true);
++  // An ordinary record with a round left: CI-first only, as above.
++  const ordinary = parked(1583, 1, 0);
++  assert.deepEqual(plan(ordinary, reviewCharges(ordinary, 1)).plans, []);
++  assert.equal(
++    plan(ordinary, reviewCharges(ordinary, 1), { ciFirst: true }).plans.length,
++    1,
++  );
++});
++
+ Deno.test("legacy round gate: a base-refresh re-admission of a legacy final round waits for a CI-first runtime", () => {
+   const record = aiRecord(610, 3, {
+     target: { ...aiRecord(610, 3).target, pr: null },
+diff --git a/tests/host/hosted-autonomy-pre-review-pass_test.ts b/tests/host/hosted-autonomy-pre-review-pass_test.ts
+new file mode 100644
+index 0000000000..0376513711
+--- /dev/null
++++ b/tests/host/hosted-autonomy-pre-review-pass_test.ts
+@@ -0,0 +1,206 @@
++/**
++ * The REAL retry pass over the runtime's pre-review CI parks (issue #153),
++ * under the exact pinned R80 with the launcher's production allowlists: the
++ * launcher half that ships before generation 81's runtime.
++ *
++ * - A red pre-review park whose base moved returns to `work` uncharged: R80
++ *   (a proven CI-first runtime) refreshes it deterministically and gates the
++ *   refreshed head's CI before any review (ci-first-rollback-gen80_test.ts
++ *   runs R80's own loop over exactly this write). Under R80 alone a park on
++ *   its unchanged base is not touched: R80's hosted fix route is closed.
++ * - The exhausted park (three CI fixes spent) is read for green CI on its
++ *   unchanged base like the other pre-review parks: green again it returns
++ *   to `work` for its review; red, or on a moved base, it stays parked.
++ * Every write parses under R80, generation 81's rollback target.
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import {
++  parseWorkRecordV1,
++  type WorkRecordV1,
++} from "../../src/contracts/work-record.ts";
++import {
++  readHostedClosedIssues,
++  runHostedRetryPass,
++} from "../../ops/hosted-autonomy-retry-pass.ts";
++import {
++  createHostedAutonomyScopes,
++  type HostedAutonomyPassContextV1,
++} from "../../ops/hosted-autonomy-scopes.ts";
++import type {
++  HostedAutonomyDepsV1,
++  HostedAutonomyPullV1,
++} from "../../ops/hosted-autonomy-types.ts";
++import { HOSTED_AUTONOMY_CI_FIRST_RUNTIMES } from "../../ops/hosted-autonomy-ci-first.ts";
++import { SHA1, SHA2, T0 } from "../state/helpers.ts";
++import { assertGen80Parses, gen80Available } from "../state/gen77-contracts.ts";
++import { blockedRecord } from "./hosted-autonomy-fixtures.ts";
++import { makeRig, repairSnapshot } from "./hosted-autonomy-rig.ts";
++import { releaseAt } from "./hosted-autonomy-preservation-fixtures.ts";
++
++const GEN80 = await gen80Available();
++const AI = {
++  owner: "ubiquity",
++  name: "ai.ubq.fi",
++  installationId: 155687488,
++} as const;
++/** R80 exactly as the generation-80 install pin names it. */
++const R80 = "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481" as GitSha;
++const PASS_NOW = T0 + 5_000_000;
++/** Development's tip; SHA1 is the base it moved from. */
++const TIP = SHA2;
++const RED_PARK = "CI red before review; awaiting a CI fix: validate(failure)";
++const EXHAUSTED_PARK = "CI fix attempts exhausted (3 of 3): validate(failure)";
++
++/** One published ai.ubq.fi head parked by the runtime's pre-review gate. */
++function parked(
++  issue: number,
++  base: GitSha,
++  message: string,
++  retries: number,
++): WorkRecordV1 {
++  const id = `issue-ubiquity-ai.ubq.fi-${issue}`;
++  const head = String(issue).padStart(4, "0").repeat(10) as GitSha;
++  return parseWorkRecordV1({
++    ...blockedRecord(),
++    repository: AI,
++    id,
++    source: { kind: "issue", id: String(issue), revision: SHA1 },
++    related: { incidentId: null, issueNumber: issue },
++    blocker: { kind: "other", message, since: T0 + 5000 },
++    target: {
++      base,
++      branch: `sentinel/repair/${id}`,
++      checkpoint: null,
++      head,
++      pr: 3000 + issue,
++      candidateState: {
++        preserved: {
++          operationKey: `impl:${"d".repeat(64)}`,
++          base,
++          head,
++          ref: `refs/heads/sentinel-candidates/${"c".repeat(64)}`,
++        },
++        publishedHead: head,
++      },
++    },
++    counters: { attempts: 1 + retries, retries, reviewRounds: 1 },
++  });
++}
++
++/** R80 at generation 80 with its own healthy proof. */
++const RELEASE = releaseAt({
++  revision: R80,
++  generation: 80,
++  healthy: {
++    revision: R80,
++    generation: 80,
++    createdAt: T0 + 100,
++    observedAt: T0 + 110,
++  },
++});
++
++Deno.test("pre-review parks (retry pass, R80 installed): a moved base returns for its uncharged refresh, a green exhausted head for its review", async () => {
++  assert.ok(HOSTED_AUTONOMY_CI_FIRST_RUNTIMES.has(R80), "R80 is CI-first");
++  const moved = parked(2001, SHA1, RED_PARK, 0);
++  const unchanged = parked(2002, TIP, RED_PARK, 1);
++  const greenExhausted = parked(2003, TIP, EXHAUSTED_PARK, 3);
++  const redExhausted = parked(2004, TIP, EXHAUSTED_PARK, 3);
++  const movedExhausted = parked(2005, SHA1, EXHAUSTED_PARK, 3);
++  const records = [
++    moved,
++    unchanged,
++    greenExhausted,
++    redExhausted,
++    movedExhausted,
++  ];
++  const snapshot = repairSnapshot(records, [], [], []);
++  const { rig, github } = await makeRig("pre-review-pass", {
++    repair: snapshot,
++    baseTip: TIP,
++    issueOpen: true,
++  });
++  const read: string[] = [];
++  rig.githubFor = () => ({
++    ...github,
++    readPull: (number: number) =>
++      Promise.resolve({
++        number,
++        state: "open",
++        merged: false,
++        mergeCommitSha: null,
++        headSha: records.find((record) => record.target.pr === number)!
++          .target.head,
++        baseRef: "development",
++        author: "ubiquity-sentinel[bot]",
++      } as unknown as HostedAutonomyPullV1),
++    hasAllChecksGreen: (sha: string) => {
++      read.push(sha);
++      return Promise.resolve(sha === greenExhausted.target.head);
++    },
++    listHeadRuns: () => Promise.resolve([]),
++    rerunFailedJobs: () => Promise.reject(new Error("never re-run here")),
++  });
++  try {
++    const deps = {
++      state: rig.state,
++      githubFor: rig.githubFor,
++      clock: { now: () => PASS_NOW },
++    } as unknown as HostedAutonomyDepsV1;
++    const before = await rig.state.readRepair();
++    assert.ok(before.ok && before.value.status === "found");
++    const context = {
++      deps,
++      actions: [] as string[],
++      revisions: [],
++      snapshot: before.value.snapshot,
++      observedHead: before.value.head,
++      initialHead: before.value.head,
++      releaseSnapshot: RELEASE,
++      closedIssues: new Set<string>(),
++      foreignMerged: new Map(),
++      dedicatedReservations: new Set<string>(),
++      ...createHostedAutonomyScopes(deps),
++    } as unknown as HostedAutonomyPassContextV1;
++    await readHostedClosedIssues(context);
++    const result = await runHostedRetryPass(context, SHA1);
++    assert.equal(result?.status, "applied", JSON.stringify(context.actions));
++    const actions = context.actions.filter((line) => line.startsWith("retry:"));
++    assert.deepEqual(
++      actions.sort(),
++      [
++        `retry:${moved.id}:grant=0:other:CI red before review; awaiting a CI fix::base-moved`,
++        `retry:${greenExhausted.id}:grant=0:other:CI fix attempts exhausted (3 of 3)::green`,
++      ].sort(),
++      JSON.stringify(context.actions),
++    );
++    // Only heads on the unchanged base are read for green CI.
++    assert.deepEqual(
++      [...new Set(read)].sort(),
++      [unchanged, greenExhausted, redExhausted].map((record) =>
++        record.target.head!
++      ).sort(),
++    );
++    const after = await rig.state.readRepair();
++    assert.ok(after.ok && after.value.status === "found");
++    const byId = new Map(
++      after.value.snapshot.work.map((record) => [record.id, record]),
++    );
++    for (const record of [moved, greenExhausted]) {
++      const returned = byId.get(record.id)!;
++      assert.equal(returned.nextStep, "work", record.id);
++      assert.equal(returned.blocker, null);
++      assert.equal(returned.wait, null, "no fix marker");
++      assert.equal(returned.intent, null);
++      assert.deepEqual(returned.target, record.target);
++      assert.deepEqual(returned.counters, record.counters, "uncharged");
++    }
++    for (const record of [unchanged, redExhausted, movedExhausted]) {
++      assert.deepEqual(byId.get(record.id), record, record.id);
++    }
++    assert.deepEqual(after.value.snapshot.reservations, []);
++    if (GEN80) await assertGen80Parses(after.value.snapshot);
++  } finally {
++    await Deno.remove(rig.tmp, { recursive: true });
++  }
++});
+diff --git a/tests/host/matrix-ci-first-gen79_test.ts b/tests/host/matrix-ci-first-gen79_test.ts
+index d88898cf69..3e767a2a91 100644
+--- a/tests/host/matrix-ci-first-gen79_test.ts
++++ b/tests/host/matrix-ci-first-gen79_test.ts
+@@ -10,12 +10,17 @@
+  *   mismatch (the charge stays reserved, never refunded);
+  * - the pre-review fix cell (no completed review of the head) stays closed in
+  *   hosted generation-80 runs because R79 refuses it generically, which would
+- *   fail every later repair run. This tree's consumer accepts it (CI finding
+- *   first, the record's exact base, no completed review of the head, a
+- *   charged CI fix in `counters.retries`), so generation 80 is a safe
+- *   rollback target for the generation that opens it.
++ *   fail every later repair run. Generation 80's consumer accepts it (CI
++ *   finding first, the record's exact base, no completed review of the head,
++ *   a charged CI fix in `counters.retries`), so generation 80 is a safe
++ *   rollback target for the generation that opens it;
++ * - generation 81 opens it in hosted runs (`HOSTED_PRE_REVIEW_CI_FIXES`):
++ *   R80 (e48e7e110), its rollback target, isolates every pre-review fix cell
++ *   generation 81 plans, a never-reviewed candidate's and a reviewed record's
++ *   refreshed head's (reviews of earlier heads only) alike, with the charge
++ *   kept reserved, and refuses nothing it already isolated.
+  *
+- * The R79 cases are ignored in a checkout without R79.
++ * The R79 and R80 cases are ignored in a checkout without that revision.
+  */
+ import assert from "node:assert/strict";
+ import type { GitSha } from "../../src/contracts/brands.ts";
+@@ -26,7 +31,12 @@ import { ciCorrectionFinding } from "../../src/repair/ci-rejection.ts";
+ import * as ThisFixtures from "./matrix-artifact-fixtures.ts";
+ import * as ThisHelpers from "../state/helpers.ts";
+ import { T0 } from "../state/helpers.ts";
+-import { gen79Available, loadGen79Modules } from "./gen77-runtime-source.ts";
++import {
++  gen79Available,
++  gen80Available,
++  loadGen79Modules,
++  loadGen80Modules,
++} from "./gen77-runtime-source.ts";
+ 
+ type Fixtures = typeof ThisFixtures;
+ type Helpers = typeof ThisHelpers;
+@@ -44,6 +54,7 @@ interface ConsumerV1 {
+ }
+ 
+ const available = await gen79Available();
++const available80 = await gen80Available();
+ 
+ function thisTree(): ConsumerV1 {
+   return {
+@@ -56,8 +67,18 @@ function thisTree(): ConsumerV1 {
+   };
+ }
+ 
+-async function r79(): Promise<ConsumerV1> {
+-  const loaded = await loadGen79Modules([
++function r79(): Promise<ConsumerV1> {
++  return consumerOf(loadGen79Modules);
++}
++
++function r80(): Promise<ConsumerV1> {
++  return consumerOf(loadGen80Modules);
++}
++
++async function consumerOf(
++  load: typeof loadGen79Modules,
++): Promise<ConsumerV1> {
++  const loaded = await load([
+     "src/host/matrix-artifacts.ts",
+     "src/host/matrix-artifact-port.ts",
+     "src/contracts/matrix.ts",
+@@ -119,27 +140,35 @@ async function bindFix(
+   );
+ }
+ 
+-/** A completed review of SHA2 on PR 12 against `base` with `severities`. */
+-function review(c: ConsumerV1, base: GitSha, severities: string[]) {
+-  return c.helpers.reviewReceipt(`review-${severities.join("")}${base}`, {
+-    pullRequest: { number: 12, head: c.helpers.SHA2, base },
+-    outcome: "completed",
+-    observedReviewer: "chatgpt-codex-connector[bot]",
+-    resultId: `result-${severities.join("")}`,
+-    findings: severities.map((severity, index) => ({
+-      id: `finding-${index}`,
+-      severity,
+-      path: `src/x${index}.ts`,
+-      message: `finding ${index}`,
+-      fingerprint: "e".repeat(64),
+-      resolved: false,
+-      resolutionEvidence: null,
+-    })),
+-    unresolvedSeverities: severities,
+-    submittedAt: T0 - 2_000,
+-    completedAt: T0 - 1_000,
+-    observedAt: T0 - 500,
+-  });
++/** A completed review on PR 12 against `base` with `severities`. */
++function review(
++  c: ConsumerV1,
++  base: GitSha,
++  severities: string[],
++  head: GitSha = c.helpers.SHA2,
++) {
++  return c.helpers.reviewReceipt(
++    `review-${severities.join("")}${base}${head}`,
++    {
++      pullRequest: { number: 12, head, base },
++      outcome: "completed",
++      observedReviewer: "chatgpt-codex-connector[bot]",
++      resultId: `result-${severities.join("")}`,
++      findings: severities.map((severity, index) => ({
++        id: `finding-${index}`,
++        severity,
++        path: `src/x${index}.ts`,
++        message: `finding ${index}`,
++        fingerprint: "e".repeat(64),
++        resolved: false,
++        resolutionEvidence: null,
++      })),
++      unresolvedSeverities: severities,
++      submittedAt: T0 - 2_000,
++      completedAt: T0 - 1_000,
++      observedAt: T0 - 500,
++    },
++  );
+ }
+ 
+ /** A later consumer run (another runtime) over the producer's wave. */
+@@ -181,6 +210,15 @@ const PRE_REVIEW: CaseV1 = {
+   reviewRounds: 0,
+   retries: 1,
+ };
++/** The head reviewed clean before the base moved (the refresh's parent). */
++const EARLIER_HEAD = "9".repeat(40) as GitSha;
++const REFRESHED: CaseV1 = {
++  name:
++    "pre-review fix of a reviewed record's refreshed head: an earlier head reviewed clean, none of this one",
++  reviews: (c) => [review(c, c.helpers.SHA1, [], EARLIER_HEAD)],
++  reviewRounds: 1,
++  retries: 1,
++};
+ const LEGACY_CLEAN: CaseV1 = {
+   name: "legacy fix: clean review on the exact base at round 4 (595)",
+   reviews: (c) => [review(c, c.helpers.SHA1, [])],
+@@ -272,9 +310,33 @@ Deno.test({
+   },
+ });
+ 
+-Deno.test("generation 80 consumer isolates the pre-review CI fix cell a later generation plans", async (t) => {
++Deno.test({
++  name:
++    "rollback to generation 80: R80 isolates every pre-review CI fix cell generation 81 plans",
++  ignore: !available80,
++  async fn(t) {
++    const c = await r80();
++    try {
++      await verdicts(c, t, [
++        // Why the hosted pre-review route opens in generation 81.
++        [PRE_REVIEW, "mismatch"],
++        [REFRESHED, "mismatch"],
++        [LEGACY_CLEAN, "mismatch"],
++        [LEGACY_P2, "mismatch"],
++        // Shapes no planner grants keep the generic refusal.
++        [UNCHARGED, "generic"],
++        [OTHER_BASE, "generic"],
++      ]);
++    } finally {
++      await c.dispose();
++    }
++  },
++});
++
++Deno.test("this tree's consumer isolates the pre-review CI fix cell it plans in hosted runs", async (t) => {
+   await verdicts(thisTree(), t, [
+     [PRE_REVIEW, "mismatch"],
++    [REFRESHED, "mismatch"],
+     [LEGACY_CLEAN, "mismatch"],
+     [LEGACY_P2, "mismatch"],
+     // Shapes no planner grants keep the generic refusal.
+diff --git a/tests/host/matrix-pre-review-fix_test.ts b/tests/host/matrix-pre-review-fix_test.ts
+new file mode 100644
+index 0000000000..8bc6344452
+--- /dev/null
++++ b/tests/host/matrix-pre-review-fix_test.ts
+@@ -0,0 +1,136 @@
++/**
++ * Generation 81 opens the hosted pre-review CI fix route
++ * (`HOSTED_PRE_REVIEW_CI_FIXES`): the trusted matrix planner grants a red
++ * head no review has completed on (a never-reviewed candidate, or a reviewed
++ * record's refreshed head) its CI fix as a matrix cell, after re-deriving the
++ * failure from live check runs. The fix is charged in `counters.retries` (a
++ * `retry` admission, never a review round) and the cell continues the exact
++ * published head on the record's exact base with the live CI finding first:
++ * the shape R80, generation 81's rollback target, isolates as an
++ * authenticated runtime mismatch (matrix-ci-first-gen79_test.ts). The plan
++ * and every snapshot also parse under R80's own parsers.
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import { type GitHubCheckV1, portOk } from "../../src/contracts/ports.ts";
++import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import { planMatrixWave } from "../../src/host/matrix.ts";
++import { isCiCorrectionFinding } from "../../src/repair/ci-rejection.ts";
++import {
++  ciFixMarker,
++  HOSTED_PRE_REVIEW_CI_FIXES,
++} from "../../src/repair/ci-first-policy.ts";
++import { SHA2, T0, workRecord } from "../state/helpers.ts";
++import {
++  assertGen80Parses,
++  gen80Available,
++  loadGen80Parsers,
++} from "../state/gen77-contracts.ts";
++import { completedReceipt } from "../repair/loop-review-fixtures.ts";
++import { makeRig, seedSnapshot, snapshot } from "./matrix-runtime-fixtures.ts";
++
++const GEN80 = await gen80Available();
++/** The head a review completed on before the base moved. */
++const EARLIER_HEAD = "9".repeat(40) as GitSha;
++
++function check(
++  name: string,
++  head: GitSha,
++  conclusion: GitHubCheckV1["conclusion"],
++): GitHubCheckV1 {
++  return {
++    name,
++    status: "completed",
++    conclusion,
++    head,
++    startedAt: T0,
++    completedAt: T0 + 1,
++  };
++}
++
++/** A red head SHA2 on PR 7 with the CI fix marker, reviewed or not before. */
++async function markedRig(refreshed: boolean) {
++  const rig = await makeRig([401], 1);
++  const record = workRecord("issue-401", {
++    source: { kind: "issue", id: "401", revision: rig.base },
++    related: { incidentId: null, issueNumber: 401 },
++    target: {
++      base: rig.base,
++      branch: "sentinel/repair/issue-401",
++      checkpoint: null,
++      head: SHA2,
++      pr: 7,
++    },
++    nextStep: "work",
++    wait: ciFixMarker(T0 - 60_000),
++    counters: { attempts: 1, retries: 0, reviewRounds: refreshed ? 1 : 0 },
++    firstSeenAt: T0 - 120_000,
++  });
++  const seeded = parseRepairStateSnapshotV1({
++    ...seedSnapshot([record]),
++    reviews: refreshed ? [completedReceipt(7, EARLIER_HEAD, rig.base)] : [],
++  });
++  const written = await rig.store.writeRepair(seeded, null);
++  assert.ok(written.ok && written.value.status === "applied");
++  const checks: Record<string, GitHubCheckV1[]> = {
++    [SHA2]: [check("validate", SHA2, "failure")],
++    [rig.base]: [check("validate", rig.base, "success")],
++  };
++  rig.github.readChecks = (head: GitSha) =>
++    Promise.resolve(portOk({ head, checks: checks[head] ?? [] }));
++  return rig;
++}
++
++for (const refreshed of [false, true]) {
++  const label = refreshed
++    ? "a reviewed record's red refreshed head"
++    : "a never-reviewed red head";
++  Deno.test(`matrix planner: a hosted generation-81 run grants ${label} its charged CI fix cell`, async () => {
++    assert.equal(HOSTED_PRE_REVIEW_CI_FIXES, true);
++    const rig = await markedRig(refreshed);
++    try {
++      const report = await planMatrixWave(
++        { ...rig.deps, externalImplementations: true },
++        rig.planOptions(),
++      );
++      assert.equal(report.plan.cells.length, 1, JSON.stringify(report));
++      const cell = report.plan.cells[0];
++      const request = cell.request;
++      // Exactly the shape R80's consumer isolates: the published head on the
++      // record's exact base, the live CI finding first, no completed review
++      // of that head, and a CI fix charged in `counters.retries`.
++      assert.equal(request.checkoutBase, SHA2, "the fix continues SHA2");
++      assert.equal(request.base, rig.base, "on the record's exact base");
++      assert.equal(cell.expectedBase, rig.base);
++      assert.ok(isCiCorrectionFinding(request.reviewFindings![0]));
++      assert.match(request.reviewFindings![0].message, /validate \(failure\)/);
++      const after = await snapshot(rig);
++      const work = after.work[0];
++      assert.equal(work.intent?.kind, "implementation");
++      assert.equal(work.counters.retries, 1, "one charged CI fix");
++      assert.equal(work.counters.attempts, 2);
++      assert.equal(
++        work.counters.reviewRounds,
++        refreshed ? 1 : 0,
++        "a CI fix is never a review round",
++      );
++      assert.equal(after.reservations.length, 1);
++      assert.equal(after.reservations[0].purpose, "retry");
++      assert.equal(after.reservations[0].outcome, "reserved");
++      assert.equal(
++        after.reviews.some((review) =>
++          review.pullRequest.head === request.checkoutBase &&
++          review.outcome === "completed"
++        ),
++        false,
++      );
++      if (GEN80) {
++        await assertGen80Parses(after);
++        const parsers = await loadGen80Parsers();
++        parsers.parseMatrixPlanV1(JSON.parse(JSON.stringify(report.plan)));
++      }
++    } finally {
++      await rig.cleanup();
++    }
++  });
++}
+diff --git a/tests/repair/ci-first-gate_test.ts b/tests/repair/ci-first-gate_test.ts
+index 3864964469..830d99540e 100644
+--- a/tests/repair/ci-first-gate_test.ts
++++ b/tests/repair/ci-first-gate_test.ts
+@@ -3,12 +3,14 @@
+  * review, then merge"): a review is requested only for a head whose required
+  * CI is green. Every row of the gate runs the real repair loop over real Git
+  * state with fake GitHub/model ports: pending CI waits (bounded), a red head
+- * routes to a CI fix (or parks precisely where no fix may run), a red base
++ * routes to a CI fix (in process and, from generation 81, in hosted runs; it
++ * parks precisely where no fix may run), a red base
+  * backs off uncharged, and no non-green path reserves a review or moves the
+  * review-round counter.
+  */
+ import assert from "node:assert/strict";
+ import type { GitSha } from "../../src/contracts/brands.ts";
++import { isCiFixMarker } from "../../src/repair/ci-first-policy.ts";
+ import { preReviewCiParked } from "../../ops/hosted-autonomy-ci-first.ts";
+ import { ciGreenHeadKey } from "../../ops/hosted-autonomy-ci-retries.ts";
+ import { hostedRepositoryKey } from "../../ops/hosted-autonomy-policy.ts";
+@@ -61,30 +63,31 @@ Deno.test("CI first: a green head is reviewed exactly as before", async () => {
+   }
+ });
+ 
+-Deno.test("CI first: a hosted red head is never reviewed and parks awaiting a CI fix", async () => {
++Deno.test("CI first: a hosted red head is never reviewed and is marked for its CI fix (generation 81)", async () => {
+   const { rig, charges } = await ciFirstRig("cf-red-hosted", {
+     hosted: true,
+     checks: RED,
+   });
+   try {
+     const outcome = await rig.run();
+-    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
++    // The marked fix is matrix work: this hosted run defers it.
++    assert.equal(outcome.status, "margin", JSON.stringify(outcome));
+     const after = await rig.snapshot();
+     const work = taskRecord(after);
+     assert.equal(rig.github.calls.includes("requestReview"), false);
+     assert.equal(reviewCharges(after).length, 0, "no review admission");
+     assert.deepEqual(after.reservations, charges, "nothing charged");
+     assert.equal(work.counters.reviewRounds, 0, "no round counted");
+-    assert.equal(work.counters.retries, 0, "no fix charged");
+-    assert.equal(work.nextStep, "blocked");
+-    assert.equal(work.blocker?.kind, "other");
+-    assert.equal(
+-      work.blocker?.message,
+-      "CI red before review; awaiting a CI fix: validate(failure)",
+-    );
++    assert.equal(work.counters.retries, 0, "charged only at its admission");
++    // The hosted pre-review route is open (R80, the rollback target,
++    // isolates the cell): back at `work` with the CI fix marker, which the
++    // matrix planner admits as a charged CI fix cell.
++    assert.equal(work.nextStep, "work");
++    assert.equal(work.blocker, null);
++    assert.ok(isCiFixMarker(work.wait), JSON.stringify(work.wait));
+     assert.equal(work.target.pr, 7, "the publication identity is kept");
+     assert.equal(work.target.head, SHA3);
+-    assert.equal(rig.model.requests.length, 0);
++    assert.equal(rig.model.requests.length, 0, "a hosted fix runs as a cell");
+   } finally {
+     await rig.ctx.cleanup();
+   }
+@@ -440,7 +443,8 @@ for (const hosted of [false, true]) {
+ 
+ Deno.test("CI first: an expired review attempt is re-requested only through the gate", async () => {
+   // The review step's own recovery (an attempt that outlived its bound) is
+-  // one of the gate's callers: the red head parks instead of a new round.
++  // one of the gate's callers: the red head is marked for its CI fix instead
++  // of a new round.
+   const { rig, charges } = await ciFirstRig("cf-review-recovery", {
+     hosted: true,
+     reviewRounds: 1,
+@@ -453,11 +457,10 @@ Deno.test("CI first: an expired review attempt is re-requested only through the
+     const after = await rig.snapshot();
+     const work = taskRecord(after);
+     assert.equal(rig.github.calls.includes("requestReview"), false);
+-    assert.equal(work.nextStep, "blocked");
+-    assert.equal(
+-      work.blocker?.message,
+-      "CI red before review; awaiting a CI fix: validate(failure)",
+-    );
++    assert.equal(work.nextStep, "work");
++    assert.equal(work.blocker, null);
++    assert.ok(isCiFixMarker(work.wait), JSON.stringify(work.wait));
++    assert.equal(work.counters.reviewRounds, 1, "no round counted");
+     assert.deepEqual(
+       reviewCharges(after),
+       reviewCharges({
+diff --git a/tests/repair/ci-first-refresh-red_test.ts b/tests/repair/ci-first-refresh-red_test.ts
+index 6ee8e200b5..e95aa8b1f7 100644
+--- a/tests/repair/ci-first-refresh-red_test.ts
++++ b/tests/repair/ci-first-refresh-red_test.ts
+@@ -1,16 +1,21 @@
+ /**
+  * A REVIEWED record whose refreshed head turns red (generation 80 integration
+- * review): every refreshed head is a head no review has completed on, so in a
+- * hosted generation-80 run, where the pre-review CI fix route stays closed
+- * (`HOSTED_PRE_REVIEW_CI_FIXES`, because R79, the rollback target, refuses
+- * that cell), it parks `CI red before review; awaiting a CI fix: ...` with no
+- * generation-80 route out, exactly like a never-reviewed candidate. Live,
+- * most refreshes onto 2756425c16, 973bb2f and ded498f failed validate
+- * (prettier and eslint drift: 645, 646, 649, 1128, 583, 615, 617, 629, 633).
+- * Generation 81 (R80 as its rollback target, the route open and its runtime
+- * in `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`) re-admits exactly this park
+- * through the CI fix marker; that is a ship condition recorded in
+- * docs/DECISIONS.md, pinned here.
++ * review, issue #153): every refreshed head is a head no review has completed
++ * on. Live, most refreshes onto 2756425c16, 973bb2f and ded498f failed
++ * validate (prettier and eslint drift: 645, 646, 649, 1128, 583, 615, 617,
++ * 629, 633).
++ *
++ * In a hosted generation-80 run (R80), where the pre-review CI fix route is
++ * closed because R79 refused that cell, it parked `CI red before review;
++ * awaiting a CI fix: ...` with no route out. Generation 81 has R80 as its
++ * rollback target, and R80 isolates the cell (matrix-ci-first-gen79_test.ts),
++ * so it opens the route (`HOSTED_PRE_REVIEW_CI_FIXES`): the runtime's gate
++ * returns the red refreshed head to `work` with the CI fix marker, a charged
++ * CI fix that is never a review round. A park R80 already wrote returns
++ * through the launcher: on a moved base under any proven CI-first runtime
++ * (R80 included) for the runtime's uncharged refresh, and on its unchanged
++ * base through the fix rule once R81 is pinned in
++ * `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`.
+  */
+ import assert from "node:assert/strict";
+ import type { GitSha } from "../../src/contracts/brands.ts";
+@@ -18,16 +23,15 @@ import {
+   HOSTED_RUNTIME_ID,
+   type HostedRuntimeRecordV1,
+ } from "../../src/contracts/hosted-supervisor.ts";
++import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
+ import {
+   CI_PRE_REVIEW_RED_PREFIX,
+   HOSTED_PRE_REVIEW_CI_FIXES,
+   isCiFixMarker,
+ } from "../../src/repair/ci-first-policy.ts";
++import { markBlocked } from "../../src/repair/transitions.ts";
+ import { ciGreenHeadKey } from "../../ops/hosted-autonomy-ci-retries.ts";
+-import {
+-  HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+-  HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
+-} from "../../ops/hosted-autonomy-ci-first.ts";
+ import { hostedRepositoryKey } from "../../ops/hosted-autonomy-policy.ts";
+ import {
+   applyHostedRetries,
+@@ -35,10 +39,22 @@ import {
+ } from "../../ops/hosted-autonomy-retries.ts";
+ import { healthyProof } from "../host/hosted-autonomy-rig.ts";
+ import { SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
+-import { check, ciFirstRig, SHA4, taskRecord } from "./ci-first-rig.ts";
++import { assertGen80Parses, gen80Available } from "../state/gen77-contracts.ts";
++import {
++  check,
++  ciFirstRig,
++  type CiFirstRigOptions,
++  SHA4,
++  taskRecord,
++} from "./ci-first-rig.ts";
+ 
+-const R80 = "8080808080808080808080808080808080808080" as GitSha;
++/** The generation-80 source is absent from shallow CI checkouts. */
++const GEN80 = await gen80Available();
++/** R80 exactly as pinned, under the launcher's production allowlists. */
++const R80 = "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481" as GitSha;
++/** A stand-in for generation 81's own runtime, allowlisted by the test. */
+ const R81 = "8181818181818181818181818181818181818181" as GitSha;
++const SHA5 = "5555555555555555555555555555555555555555" as GitSha;
+ 
+ function installed(revision: GitSha, generation: number) {
+   return {
+@@ -56,78 +72,155 @@ function installed(revision: GitSha, generation: number) {
+   } as HostedRuntimeRecordV1;
+ }
+ 
+-Deno.test("CI first, hosted: a reviewed record's red refreshed head parks before review; only a generation-81 fix runtime re-admits it", async () => {
+-  assert.equal(HOSTED_PRE_REVIEW_CI_FIXES, false, "generation 80 ships closed");
+-  assert.equal(HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES.size, 0);
+-  const { rig } = await ciFirstRig("cf-refresh-red", {
+-    hosted: true,
+-    reviewed: true,
+-    reviewRounds: 1,
+-    nextStep: "delivery",
+-    baseTip: SHA2,
+-    refreshTo: { [SHA3]: SHA4 },
+-    checks: {
+-      [SHA3]: [check("validate", SHA3, "success")],
+-      [SHA1]: [check("validate", SHA1, "success")],
+-      [SHA2]: [check("validate", SHA2, "success")],
+-      [SHA4]: [
+-        check("validate", SHA4, "failure"),
+-        check("verify-artifact", SHA4, "skipped"),
+-      ],
+-    },
+-  });
++/** The reviewed record of the integration review, refreshed onto SHA2. */
++const REFRESHED_RED: CiFirstRigOptions = {
++  hosted: true,
++  reviewed: true,
++  reviewRounds: 1,
++  nextStep: "delivery",
++  baseTip: SHA2,
++  refreshTo: { [SHA3]: SHA4 },
++  checks: {
++    [SHA3]: [check("validate", SHA3, "success")],
++    [SHA1]: [check("validate", SHA1, "success")],
++    [SHA2]: [check("validate", SHA2, "success")],
++    [SHA4]: [
++      check("validate", SHA4, "failure"),
++      check("verify-artifact", SHA4, "skipped"),
++    ],
++  },
++};
++
++Deno.test("CI first, hosted generation 81: a reviewed record's red refreshed head takes a charged CI fix, never a park", async () => {
++  assert.equal(HOSTED_PRE_REVIEW_CI_FIXES, true, "generation 81 opens it");
++  const { rig, writes, charges } = await ciFirstRig(
++    "cf-refresh-red",
++    structuredClone(REFRESHED_RED),
++  );
+   try {
+     for (let run = 0; run < 6; run++) {
+       await rig.run();
+-      if (taskRecord(await rig.snapshot()).nextStep === "blocked") break;
++      if (isCiFixMarker(taskRecord(await rig.snapshot()).wait)) break;
+       rig.clock.advance(10 * 60_000);
+     }
+     const after = await rig.snapshot();
+     const work = taskRecord(after);
+     assert.equal(work.target.head, SHA4, "the refreshed head is published");
+     assert.equal(work.target.base, SHA2);
+-    assert.equal(work.nextStep, "blocked");
+-    assert.equal(
+-      work.blocker?.message,
+-      `${CI_PRE_REVIEW_RED_PREFIX}validate(failure)`,
+-    );
++    assert.equal(work.nextStep, "work", "back at work for its CI fix");
++    assert.equal(work.blocker, null, "no park");
++    assert.ok(isCiFixMarker(work.wait), "the CI fix marker");
+     assert.equal(work.counters.reviewRounds, 1, "no round spent on it");
+-    assert.equal(work.counters.retries, 0, "no CI fix charged");
+-    assert.equal(rig.model.requests.length, 0, "no CI fix ran");
++    assert.equal(work.counters.retries, 0, "charged only at its admission");
++    assert.deepEqual(after.reservations, charges, "nothing charged yet");
++    assert.equal(rig.model.requests.length, 0, "a hosted fix is a cell");
+     assert.equal(rig.github.reviewRequestIdentities.length, 0);
++    if (GEN80) {
++      for (const written of writes) await assertGen80Parses(written);
++    }
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});
++
++/** The charged counters (a re-admission resets only the stall count). */
++function charged(record: WorkRecordV1) {
++  const { attempts, retries, reviewRounds } = record.counters;
++  return { attempts, retries, reviewRounds };
++}
+ 
+-    const tips = new Map([[hostedRepositoryKey(work.repository), SHA2]]);
++/** The park R80 writes for the same refreshed head (rollback-proven below). */
++function r80Park(
++  snapshot: RepairStateSnapshotV1,
++  now: number,
++): RepairStateSnapshotV1 {
++  return {
++    ...snapshot,
++    work: snapshot.work.map((record) =>
++      markBlocked(
++        record,
++        "other",
++        `${CI_PRE_REVIEW_RED_PREFIX}validate(failure)`,
++        now,
++      )
++    ),
++  };
++}
++
++Deno.test("CI first, hosted: an R80 park of a red refreshed head returns for a refresh on a moved base and for its fix under a pinned fix runtime", async () => {
++  const { rig } = await ciFirstRig(
++    "cf-refresh-red-park",
++    structuredClone(REFRESHED_RED),
++  );
++  try {
++    for (let run = 0; run < 6; run++) {
++      await rig.run();
++      if (isCiFixMarker(taskRecord(await rig.snapshot()).wait)) break;
++      rig.clock.advance(10 * 60_000);
++    }
++    const parked = r80Park(await rig.snapshot(), rig.clock.now());
++    const work = taskRecord(parked);
++    assert.equal(work.nextStep, "blocked");
++    assert.equal(work.target.head, SHA4);
+     const settled = new Set([ciGreenHeadKey(work.repository, SHA4)]);
+-    const plan = (runtime: GitSha, generation: number, fix: GitSha[]) =>
++    const plan = (
++      runtime: GitSha,
++      generation: number,
++      tip: GitSha,
++      fix: boolean,
++    ) =>
+       planHostedRetries(
+-        after,
+-        T0 + 9000,
++        parked,
++        rig.clock.now(),
+         runtime,
+-        tips,
++        new Map([[hostedRepositoryKey(work.repository), tip as string]]),
+         new Set(),
+         undefined,
+         {
+           ciRuntime: installed(runtime, generation),
+-          ciAllowlist: new Set([runtime]),
+-          ciFirstAllowlist: new Set([runtime]),
+-          ciFirstFixAllowlist: new Set(fix),
+           ciRerunSettled: settled,
+           ciGreenHeads: new Set(),
++          ...(runtime === R80 ? {} : {
++            ciAllowlist: new Set([runtime]),
++            ciFirstAllowlist: new Set([runtime]),
++            ciFirstFixAllowlist: new Set(fix ? [runtime] : []),
++          }),
+         },
+       );
+-    // Generation 80, even pinned as a CI-first runtime: no route out.
+-    assert.deepEqual(plan(R80, 80, []), []);
+-    assert.equal(HOSTED_AUTONOMY_CI_FIRST_RUNTIMES.has(R80), false);
+-    // Generation 81 with the fix route: back to `work` with the fix marker.
+-    const plans = plan(R81, 81, [R81]);
++    // R80 on the unchanged base: its route stays closed, so the park waits
++    // for the fix runtime's pin (R80's own runtime would park it again).
++    assert.deepEqual(plan(R80, 80, SHA2, false), []);
++    // A moved base under R80 (a proven CI-first runtime): back to `work`
++    // uncharged; the runtime refreshes it and gates the new head's CI first.
++    for (
++      const [runtime, generation, fix] of [[R80, 80, false], [
++        R81,
++        81,
++        true,
++      ]] as const
++    ) {
++      const moved = plan(runtime, generation, SHA5, fix);
++      assert.equal(moved.length, 1, runtime);
++      assert.equal(moved[0].nextStep, "work");
++      assert.equal(moved[0].ciFixMarker, undefined);
++      const next = applyHostedRetries(parked, SHA1, moved, rig.clock.now());
++      const returned = taskRecord(next);
++      assert.equal(returned.blocker, null);
++      assert.equal(returned.wait, null);
++      assert.deepEqual(charged(returned), charged(work), "nothing charged");
++      if (GEN80) await assertGen80Parses(next);
++    }
++    // Generation 81 pinned as a fix runtime: back with the CI fix marker.
++    const plans = plan(R81, 81, SHA2, true);
+     assert.equal(plans.length, 1);
+     assert.equal(plans[0].nextStep, "work");
+     assert.equal(plans[0].ciFixMarker, true);
+-    const next = applyHostedRetries(after, SHA1, plans, T0 + 9000);
++    const next = applyHostedRetries(parked, SHA1, plans, rig.clock.now());
+     const readmitted = taskRecord(next);
+     assert.equal(readmitted.blocker, null);
+     assert.ok(isCiFixMarker(readmitted.wait));
+-    assert.deepEqual(readmitted.counters, work.counters, "nothing charged");
++    assert.deepEqual(charged(readmitted), charged(work), "nothing charged");
++    if (GEN80) await assertGen80Parses(next);
+   } finally {
+     await rig.ctx.cleanup();
+   }
+diff --git a/tests/repair/ci-first-rollback-gen79_test.ts b/tests/repair/ci-first-rollback-gen79_test.ts
+index eb91f40622..ab53da92e5 100644
+--- a/tests/repair/ci-first-rollback-gen79_test.ts
++++ b/tests/repair/ci-first-rollback-gen79_test.ts
+@@ -7,6 +7,11 @@
+  * review exactly as it always did (one charged round, never a model start, a
+  * refund or a merge without review). The R79 cases are ignored in a checkout
+  * without R79.
++ *
++ * Generation 81 has R80 as its rollback target
++ * (ci-first-rollback-gen80_test.ts) and writes the CI fix marker for a hosted
++ * red head instead of the park; R79 still parses that marker and plans no
++ * model start for it.
+  */
+ import assert from "node:assert/strict";
+ import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+@@ -77,8 +82,10 @@ const SCENARIOS: ScenarioV1[] = [
+     name: "hosted red head",
+     options: { hosted: true, checks: RED },
+     expect: (record) => {
+-      assert.equal(record.nextStep, "blocked");
+-      assert.match(record.blocker?.message ?? "", /^CI red before review/);
++      // Generation 81 opens the hosted pre-review fix route: the marker.
++      assert.equal(record.nextStep, "work");
++      assert.equal(record.wait?.reason, "backoff");
++      assert.equal(record.wait?.since, record.wait?.until);
+     },
+   },
+   {
+diff --git a/tests/repair/ci-first-rollback-gen80_test.ts b/tests/repair/ci-first-rollback-gen80_test.ts
+new file mode 100644
+index 0000000000..1e1414dc3a
+--- /dev/null
++++ b/tests/repair/ci-first-rollback-gen80_test.ts
+@@ -0,0 +1,344 @@
++/**
++ * Rollback contract of generation 81's CI-first gate against generation 80.
++ * Generation 81 opens the hosted pre-review CI fix route and has R80
++ * (e48e7e110) as its rollback target, so:
++ *
++ * - every state the gate writes in a hosted run parses under R80's own
++ *   parser, and the one new hosted write (the CI fix marker on a red head no
++ *   review has completed on, a never-reviewed candidate or a reviewed
++ *   record's refreshed head) plans no model start under R80, whose hosted
++ *   route is closed;
++ * - R80's own repair loop consumes that marker as it would its own state: it
++ *   gates the head's CI again and parks it `CI red before review; awaiting a
++ *   CI fix: ...`, uncharged, with no review requested;
++ * - R80's own loop consumes the launcher's moved-base return (the record back
++ *   at `work` with its blocker and wait cleared, which the launcher writes
++ *   under R80 as soon as it ships): a deterministic refresh with nothing
++ *   charged, then the refreshed head's CI before any review.
++ *
++ * The cell itself is isolated by R80's consumer
++ * (tests/host/matrix-ci-first-gen79_test.ts). The R80 cases are ignored in a
++ * checkout without R80 (CI checkouts are shallow).
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
++import type * as Eligibility from "../../src/repair/loop-eligibility.ts";
++import type * as ReviewRecords from "../../src/repair/loop-review-records.ts";
++import type * as Policy from "../../src/repair/ci-first-policy.ts";
++import type * as Rig from "./ci-first-rig.ts";
++import { isCiFixMarker } from "../../src/repair/ci-first-policy.ts";
++import { SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
++import { assertGen80Parses } from "../state/gen77-contracts.ts";
++import {
++  gen80Available,
++  loadGen80Modules,
++} from "../host/gen77-runtime-source.ts";
++import { repairConfigs } from "./helpers.ts";
++import { completedReceipt } from "./loop-review-fixtures.ts";
++import {
++  check,
++  ciFirstRig,
++  type CiFirstRigOptions,
++  HOUR,
++  SHA4,
++  taskRecord,
++} from "./ci-first-rig.ts";
++
++const available = await gen80Available();
++
++const RED = {
++  [SHA3]: [check("validate", SHA3, "failure")],
++  [SHA1]: [check("validate", SHA1, "success")],
++};
++const RED_PARK = "CI red before review; awaiting a CI fix: validate(failure)";
++/** A head of PR 7 reviewed clean on SHA1 before SHA3 replaced it. */
++const EARLIER_HEAD = "9".repeat(40) as GitSha;
++
++interface ScenarioV1 {
++  name: string;
++  options: CiFirstRigOptions;
++  /** Clock advance and re-run after the first run (pending timeout). */
++  later?: number;
++  /** The record carries generation 81's new hosted write, the fix marker. */
++  marker?: true;
++  /** Runs (at most six, ten minutes apart) until this holds; default one. */
++  until?: (record: WorkRecordV1) => boolean;
++  expect(record: WorkRecordV1): void;
++}
++
++const SCENARIOS: ScenarioV1[] = [
++  {
++    name: "hosted red head",
++    options: { hosted: true, checks: RED },
++    marker: true,
++    expect: (record) => {
++      assert.equal(record.nextStep, "work");
++      assert.ok(isCiFixMarker(record.wait));
++      assert.equal(record.counters.retries, 0, "charged only at admission");
++    },
++  },
++  {
++    name: "hosted red refreshed head of a reviewed record",
++    options: {
++      hosted: true,
++      reviewed: true,
++      reviewRounds: 1,
++      nextStep: "delivery",
++      baseTip: SHA2,
++      refreshTo: { [SHA3]: SHA4 },
++      checks: {
++        [SHA4]: [check("validate", SHA4, "failure")],
++        [SHA2]: [check("validate", SHA2, "success")],
++      },
++    },
++    marker: true,
++    until: (record) => isCiFixMarker(record.wait),
++    expect: (record) => {
++      assert.equal(record.target.head, SHA4);
++      assert.equal(record.nextStep, "work");
++      assert.ok(isCiFixMarker(record.wait));
++      assert.equal(record.counters.reviewRounds, 1);
++    },
++  },
++  {
++    name: "hosted pending CI past six hours",
++    options: {
++      hosted: true,
++      checks: { [SHA3]: [check("validate", SHA3, null, "in_progress")] },
++    },
++    later: 6 * HOUR,
++    expect: (record) => {
++      assert.equal(record.nextStep, "blocked");
++      assert.match(
++        record.blocker?.message ?? "",
++        /^CI did not finish before review within 6 hours: /,
++      );
++    },
++  },
++  {
++    name: "hosted exhausted CI fixes",
++    options: { hosted: true, retries: 3, attempts: 4, checks: RED },
++    expect: (record) => {
++      assert.equal(record.nextStep, "blocked");
++      assert.match(record.blocker?.message ?? "", /^CI fix attempts exhausted/);
++    },
++  },
++];
++
++async function loadR80() {
++  const loaded = await loadGen80Modules([
++    "src/repair/loop-eligibility.ts",
++    "src/repair/loop-review-records.ts",
++    "src/repair/ci-first-policy.ts",
++    "tests/repair/ci-first-rig.ts",
++  ]);
++  const [eligibility, records, policy, rig] = loaded.modules as unknown as [
++    typeof Eligibility,
++    typeof ReviewRecords,
++    typeof Policy,
++    typeof Rig,
++  ];
++  return { eligibility, records, policy, rig, dispose: loaded.dispose };
++}
++
++/** R80, in a hosted run, plans no model start for `record`. */
++function assertR80HostedInert(
++  r80: Awaited<ReturnType<typeof loadR80>>,
++  snapshot: RepairStateSnapshotV1,
++  record: WorkRecordV1,
++  now: number,
++) {
++  const route = r80.policy.preReviewCiFixRouteOpen({
++    externalImplementations: true,
++  });
++  assert.equal(route, false, "R80 keeps the hosted route closed");
++  const config = repairConfigs({
++    repository: record.repository,
++    sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
++  })[0];
++  assert.equal(
++    r80.records.headNeedsCorrection(snapshot, record, true, route),
++    false,
++  );
++  assert.equal(
++    r80.eligibility.isModelStartAction(snapshot, record, true, true, route),
++    false,
++  );
++  assert.equal(
++    r80.eligibility.isMatrixImplementationReadyV1(
++      record,
++      snapshot,
++      config,
++      now,
++      true,
++      true,
++      route,
++    ),
++    false,
++  );
++}
++
++Deno.test({
++  name:
++    "rollback to generation 80: every hosted CI-first state parses under R80 and R80 plans no model start for the CI fix marker",
++  ignore: !available,
++  async fn(t) {
++    const r80 = await loadR80();
++    try {
++      for (const scenario of SCENARIOS) {
++        await t.step(scenario.name, async () => {
++          const { rig, writes } = await ciFirstRig(
++            `cf-r80-${scenario.name.replaceAll(" ", "-")}`,
++            structuredClone(scenario.options),
++          );
++          try {
++            const until = scenario.until ?? (() => true);
++            for (let run = 0; run < 6; run++) {
++              await rig.run();
++              if (until(taskRecord(await rig.snapshot()))) break;
++              rig.clock.advance(10 * 60_000);
++            }
++            if (scenario.later !== undefined) {
++              rig.clock.advance(scenario.later);
++              await rig.run();
++            }
++            const after = await rig.snapshot();
++            const record = taskRecord(after);
++            scenario.expect(record);
++            assert.equal(rig.github.calls.includes("requestReview"), false);
++            assert.ok(writes.length > 0);
++            for (const written of writes) await assertGen80Parses(written);
++            if (scenario.marker === true) {
++              assertR80HostedInert(r80, after, record, rig.clock.now());
++            }
++          } finally {
++            await rig.ctx.cleanup();
++          }
++        });
++      }
++    } finally {
++      await r80.dispose();
++    }
++  },
++});
++
++Deno.test({
++  name:
++    "rollback to generation 80: R80's own loop parks generation 81's CI fix marker precisely, uncharged",
++  ignore: !available,
++  async fn(t) {
++    const r80 = await loadR80();
++    try {
++      const cases: [string, Partial<Rig.CiFirstRigOptions>][] = [
++        ["never-reviewed head", {}],
++        // A reviewed record's refreshed head: an earlier head was reviewed
++        // clean, none of SHA3.
++        ["reviewed record's refreshed head", {
++          reviewRounds: 1,
++          reviews: [completedReceipt(7, EARLIER_HEAD, SHA1)] as never,
++        }],
++      ];
++      for (const [name, extra] of cases) {
++        await t.step(name, async () => {
++          const { rig, charges } = await r80.rig.ciFirstRig(
++            `cf-r80-marker-${name.replaceAll(" ", "-")}`,
++            {
++              hosted: true,
++              checks: structuredClone(RED),
++              wait: { reason: "backoff", since: T0, until: T0 },
++              ...extra,
++            },
++          );
++          try {
++            await rig.run();
++            const after = await rig.snapshot();
++            const record = r80.rig.taskRecord(after);
++            assert.equal(record.nextStep, "blocked");
++            assert.equal(record.blocker?.message, RED_PARK);
++            assert.equal(record.target.head, SHA3);
++            assert.equal(record.counters.retries, 0, "no fix charged");
++            assert.deepEqual(after.reservations, charges, "nothing charged");
++            assert.equal(rig.model.requests.length, 0);
++            assert.equal(rig.github.calls.includes("requestReview"), false);
++          } finally {
++            await rig.ctx.cleanup();
++          }
++        });
++      }
++    } finally {
++      await r80.dispose();
++    }
++  },
++});
++
++Deno.test({
++  name:
++    "rollback to generation 80: R80's own loop refreshes the launcher's moved-base return uncharged and gates its CI before review",
++  ignore: !available,
++  async fn(t) {
++    const r80 = await loadR80();
++    try {
++      for (const green of [false, true]) {
++        await t.step(green ? "green refreshed head" : "red", async () => {
++          // The launcher's write: the parked record back at `work` with its
++          // blocker and wait cleared and its target unchanged, on SHA1 while
++          // development moved to SHA2. Its head SHA3 is a refreshed head no
++          // review completed on (an earlier head was reviewed clean).
++          const { rig, charges, refreshes } = await r80.rig.ciFirstRig(
++            `cf-r80-moved-${green}`,
++            {
++              hosted: true,
++              reviews: [completedReceipt(7, EARLIER_HEAD, SHA1)] as never,
++              reviewRounds: 1,
++              baseTip: SHA2,
++              refreshTo: { [SHA3]: SHA4 },
++              checks: {
++                [SHA3]: [check("validate", SHA3, "failure")],
++                [SHA1]: [check("validate", SHA1, "success")],
++                [SHA2]: [check("validate", SHA2, "success")],
++                [SHA4]: [
++                  check("validate", SHA4, green ? "success" : "failure"),
++                ],
++              },
++            },
++          );
++          try {
++            for (let run = 0; run < 6; run++) {
++              await rig.run();
++              const step = r80.rig.taskRecord(await rig.snapshot()).nextStep;
++              if (step === "blocked" || step === "review") break;
++              rig.clock.advance(10 * 60_000);
++            }
++            const after = await rig.snapshot();
++            const record = r80.rig.taskRecord(after);
++            assert.equal(refreshes.length, 1, "one deterministic refresh");
++            assert.equal(record.target.head, SHA4);
++            assert.equal(record.target.base, SHA2);
++            assert.equal(rig.model.requests.length, 0, "no model start");
++            const reviews = rig.github.reviewRequestIdentities;
++            if (green) {
++              assert.equal(record.nextStep, "review");
++              assert.deepEqual(
++                reviews.map((request) => request.expectedHead),
++                [SHA4],
++                "one review, of the green refreshed head",
++              );
++            } else {
++              assert.equal(record.nextStep, "blocked");
++              assert.equal(record.blocker?.message, RED_PARK);
++              assert.equal(reviews.length, 0, "a red head is never reviewed");
++              assert.deepEqual(after.reservations, charges, "nothing charged");
++              assert.equal(record.counters.reviewRounds, 1);
++            }
++          } finally {
++            await rig.ctx.cleanup();
++          }
++        });
++      }
++    } finally {
++      await r80.dispose();
++    }
++  },
++});
+diff --git a/tests/state/gen77-contracts.ts b/tests/state/gen77-contracts.ts
+index 0b8bae6c6e..f033180d05 100644
+--- a/tests/state/gen77-contracts.ts
++++ b/tests/state/gen77-contracts.ts
+@@ -14,7 +14,9 @@
+  * 474f87eb6), the rollback target of generation 79 (`gen78Available`,
+  * `loadGen78Modules`, `loadGen78Parsers`, `assertGen78Parses`), and against
+  * the installed generation-79 runtime (R79, 549c7a691) itself
+- * (`gen79Available`, `loadGen79Parsers`, `assertGen79Parses`).
++ * (`gen79Available`, `loadGen79Parsers`, `assertGen79Parses`), and against
++ * the installed generation-80 runtime (R80, e48e7e110), the rollback target of
++ * generation 81 (`gen80Available`, `loadGen80Parsers`, `assertGen80Parses`).
+  *
+  * A shallow clone that does not hold the pinned commit cannot run the proof:
+  * `gen77Available` (or `gen78Available`) reports that and callers mark the
+@@ -32,6 +34,8 @@ export const GEN77_RUNTIME = "ab3613e0224ff92266bed21dde6f40e6b0aab54a";
+ export const GEN78_RUNTIME = "474f87eb639f97cd72b9bc4b9e56101488f841aa";
+ /** Installed generation-79 runtime revision. */
+ export const GEN79_RUNTIME = "549c7a69186b3d2070aa4e69c92ee846d183ce8f";
++/** Installed generation-80 runtime revision (the rollback target of 81). */
++export const GEN80_RUNTIME = "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481";
+ 
+ const ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname)
+   .replace(/\/$/, "");
+@@ -73,6 +77,11 @@ export function gen79Available(): Promise<boolean> {
+   return revisionAvailable(GEN79_RUNTIME);
+ }
+ 
++/** True when the pinned generation-80 commit is in the local object store. */
++export function gen80Available(): Promise<boolean> {
++  return revisionAvailable(GEN80_RUNTIME);
++}
++
+ interface LoadedModulesV1 {
+   modules: Record<string, unknown>[];
+   dispose(): Promise<void>;
+@@ -140,7 +149,7 @@ export interface Gen77ParsersV1 {
+   parseRepairStateSnapshotV1(input: unknown): RepairStateSnapshotV1;
+   parseMatrixPlanV1(input: unknown): MatrixPlanV1;
+ }
+-/** The generation-78 and generation-79 parsers have the same shape. */
++/** The generation-78, 79 and 80 parsers have the same shape. */
+ export type Gen78ParsersV1 = Gen77ParsersV1;
+ 
+ const cached = new Map<string, Promise<Gen77ParsersV1>>();
+@@ -191,6 +200,11 @@ export function loadGen79Parsers(): Promise<Gen78ParsersV1> {
+   return loadRevisionParsers(GEN79_RUNTIME, 79);
+ }
+ 
++/** The generation-80 snapshot and matrix-plan parsers. */
++export function loadGen80Parsers(): Promise<Gen78ParsersV1> {
++  return loadRevisionParsers(GEN80_RUNTIME, 80);
++}
++
+ /**
+  * Full rollback proof for one written snapshot: the literal shape guard, then
+  * the pinned generation-77 parser (which also re-validates every reservation,
+@@ -227,3 +241,15 @@ export async function assertGen79Parses(
+   const parsers = await loadGen79Parsers();
+   parsers.parseRepairStateSnapshotV1(JSON.parse(JSON.stringify(snapshot)));
+ }
++
++/**
++ * Full rollback proof for one snapshot generation 81 wrote: the literal shape
++ * guard, then the pinned generation-80 parser (R80, its rollback target).
++ */
++export async function assertGen80Parses(
++  snapshot: RepairStateSnapshotV1,
++): Promise<void> {
++  assertGen76Shape(snapshot);
++  const parsers = await loadGen80Parsers();
++  parsers.parseRepairStateSnapshotV1(JSON.parse(JSON.stringify(snapshot)));
++}
+-- 
+2.43.0
+

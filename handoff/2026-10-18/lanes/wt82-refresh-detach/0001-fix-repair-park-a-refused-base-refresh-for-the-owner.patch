@@ -1,0 +1,2584 @@
+From 4c81f3f711a50e51fb4a03af28b49170c772f90a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 00:33:36 +0000
+Subject: [PATCH] fix(repair): park a refused base refresh for the owner and
+ keep its PR bound (JAM B11)
+
+Sentinel issue 157 was absorbing. R79 (549c7a691) implemented,
+preserved and published 784e233ec at d5cc84402 as PR 160; the candidate
+edits ops/hosted-autonomy-follow-ups.ts,
+ops/hosted-autonomy-follow-up-pass.ts and
+ops/hosted-autonomy-github-issues.ts, which R80 (e48e7e110, installed
+minutes later) added to the owner-protected paths. When
+development moved to 614a4fa02, R80 regenerated the deterministic refresh
+merge 18cceb957 and the trusted publication validator refused it: "a
+protected entry does not match the trusted base tree" (reproduced
+byte-identically offline; R79's validator accepts both heads, R80's
+refuses both). The refusal is correct policy. The defects were around it:
+R80 counted that deterministic `invalid` verdict as a transient failure,
+re-ran the same refresh twice more over 70 minutes, dropped the reason,
+and blocked through markTerminalBlocked, which cleared target.pr and left
+PR 160 bound to no record. The re-arm pass then reported
+`refresh:issue-ubiquity-sentinel-157:retained:activation` on every pass:
+a refusal at or after the corrected validator's activation is never
+re-armed, so nothing could move it and nothing named it for the owner.
+
+Runtime (src/, takes effect with the next runtime generation):
+- The first deterministic preservation verdict of an unmarked refresh
+  (`invalid` with one of DETERMINISTIC_PUBLICATION_DETAILS) parks the
+  record at once: "base refresh refused by trusted validation; owner
+  action required (land the change by hand or close the issue): <reason>",
+  the reason being "candidate touches a protected path" for a
+  protected-entry verdict and the closed validator detail otherwise. A
+  malformed request and a marked conflict-resolution refresh keep the
+  bounded failure accounting.
+- The park and the bounded-failure block keep the still-open pull request
+  as target.pr (markBlocked, not markTerminalBlocked). Identity
+  contradictions and closed publications still clear it.
+
+Launcher (ops/, correct under R80):
+- The refresh re-arm pass parks an R80-written refusal at or after the
+  activation (or with no provable activation) in one CAS write: the same
+  prefix with the original message after it, and the PR binding restored
+  from the same native publication facts a re-arm verifies. An
+  unverified publication parks without a binding and is bound by one
+  later write once it verifies; a number is never guessed.
+- Every park, launcher- or runtime-written, is named on every later pass
+  (`refresh:<id>:owner_required:pr=<n|unverified>`), a bound park with
+  no read or write. No retry, re-admission, CI or delivery rule matches
+  the prefix.
+  Nothing is charged, refunded, pushed, reviewed or merged; no pull
+  request is closed and no branch deleted.
+
+Live replay of the full repair state (290 records) through the real
+maintenance pass: the live launcher reports `retained:activation` on
+every pass; this launcher writes only issue 157 on its first pass
+(`owner_parked:pr=160`) and names it on every pass after. Every new
+shape parses under R80's own parser, and R80's own selection skips it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H8mMNvEXtHRiTVR1wJeFLQ
+---
+ docs/DECISIONS.md                             |    2 +
+ ops/hosted-autonomy-refresh-rearm.ts          |  234 +++-
+ src/repair/loop-base-refresh-failure.ts       |  112 +-
+ src/repair/loop-base-refresh.ts               |   21 +
+ .../host/refresh-refusal-157-live.json        | 1069 +++++++++++++++++
+ .../host/hosted-autonomy-refresh-park_test.ts |  341 ++++++
+ .../hosted-autonomy-refresh-rearm_test.ts     |   80 +-
+ tests/repair/base-refresh-auth_test.ts        |    8 +-
+ tests/repair/base-refresh-refusal_test.ts     |  234 ++++
+ tests/repair/base-refresh_test.ts             |    2 +
+ tests/repair/refresh-refusal-r80.ts           |   93 ++
+ 11 files changed, 2093 insertions(+), 103 deletions(-)
+ create mode 100644 tests/fixtures/host/refresh-refusal-157-live.json
+ create mode 100644 tests/host/hosted-autonomy-refresh-park_test.ts
+ create mode 100644 tests/repair/base-refresh-refusal_test.ts
+ create mode 100644 tests/repair/refresh-refusal-r80.ts
+
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index b6ce6b0b1b..9611ba98f7 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -116,6 +116,8 @@ The same exact-ref restore covers candidates the generation-63 matrix custody pa
+ 
+ Each re-entry of a refused candidate buys a fresh charged model run, and a refusal can recur at every new base, so the retry pass's 200-reservation budget is no bound for it: the base advance, a 24-hour wait from the refusal and a cap of 6 reservations per task (every purpose and outcome, the retry budget's unit) limit a candidate the validator keeps refusing to a few runs (2026-10-16). The refresh re-arm never trusts a generation number, because a rollback advances it too (a failed 77 restores 41bb853a1 at generation 78, which would otherwise re-arm, refuse and re-block PR 1012 daily). Its activation instant comes only from the launcher's pinned bounds and release custody that never moves forward: each allowlist entry's `activatedNotBefore` (the instant of the launcher commit that pins it, which precedes the owner install that commit performs), every hosted-release proof of an allowlisted runtime, and each pointer settlement of a generation earlier than the installed one; the earliest wins. The installed generation's own settlements change on every run and never count. A pinned bound later than any recorded execution of its own revision is provably wrong and never counts. When nothing qualifies, nothing is re-armed. The pinned bound is required because an owner install, the installed runtime's bootstrap and that bootstrap's settlement all happen in one supervisor run after that run's maintenance, so no maintenance ever observes the earlier generation's settlement under the new pointer (2026-10-16).
+ 
++A refreshed candidate the trusted publication validator refuses is parked for the owner, never retried, re-armed or detached (JAM B11, sentinel issue 157 / PR 160, 2026-10-17). Root cause: R79 (549c7a691) implemented and preserved 784e233ec for issue 157 at d5cc84402; it edits `ops/hosted-autonomy-follow-ups.ts`, `ops/hosted-autonomy-follow-up-pass.ts` and `ops/hosted-autonomy-github-issues.ts`, and R79 published it as PR 160; those three files are among the owner-protected paths R80 (e48e7e110, installed at 18:16Z) added. When `development` moved to 614a4fa02, R80 regenerated the deterministic refresh merge 18cceb957 and the validator refused it: "a protected entry does not match the trusted base tree" (reproduced byte-identically offline; R79's validator accepts both heads, R80's refuses both). That refusal is correct policy, but R80 counted the deterministic `invalid` verdict as a transient failure, re-ran the same doomed refresh twice (70 minutes), dropped the reason, blocked through `markTerminalBlocked`, which cleared `target.pr` and left PR 160 bound to no record, and the re-arm pass then reported `refresh:...:retained:activation` on every pass, because a refusal at or after the corrected validator's activation is never re-armed. The runtime now parks the first deterministic preservation verdict of an unmarked refresh (`invalid` with one of `DETERMINISTIC_PUBLICATION_DETAILS`) at once as "base refresh refused by trusted validation; owner action required (land the change by hand or close the issue): <reason>", the reason being "candidate touches a protected path" for a protected-entry verdict and the closed validator detail otherwise; a malformed request and a marked conflict-resolution refresh keep the bounded failure accounting. The park and the bounded failure block both keep the still-open pull request as `target.pr` (`markBlocked`, not `markTerminalBlocked`); the identity-contradiction and closed-publication blocks still clear it. The launcher's re-arm pass parks an R80-written refusal at or after the activation (or with no provable activation) in one CAS write: the same prefix with the original message after it, and the PR binding restored from the same native publication facts a re-arm verifies; an unverified publication is parked without a binding and bound by one later write once it verifies, never guessed. Every park is named on every later pass (`refresh:<id>:owner_required:pr=<n|unverified>`), a bound one without a read or a write, an unbound one after a read-only re-verification. No retry, re-admission, CI or delivery rule matches the prefix, so nothing charges, refunds, pushes, reviews, merges, closes a pull request or deletes a branch for it; the owner lands the change by hand (or edits the protected policy) or closes the issue, after which closure leaves it as every other closed-issue block. A fresh implementation was not chosen: the issue's own fix lives in protected launcher files, so any model candidate would be refused again. Every shape parses under R80's own parser and R80's selection skips it.
++
+ A parked runtime-mismatch candidate whose exact head the trusted preserver refuses with a deterministic publication verdict, for the record's own deterministic preservation ref, is recorded instead of silently skipped, and only while that ref reads back absent: an exact candidate already at its ref keeps custody. A protected-entry verdict (the candidate edits an owner-protected path, as ai.ubq.fi 587, 608, 764, 785 and 905 do) takes the runtime's own terminal "candidate touches a protected path" block, which no retry rule or disposition class re-admits, so the owner handles it. Any other deterministic verdict takes the runtime's "candidate preservation validation refused" block, which the REFUSED class above owns. Either way the intent is cleared, the target, head and descriptor are kept, the consumed charge is never refunded, and the walk reports `current-matrix:preservation-protected:N` or `current-matrix:preservation-refused:N` (2026-10-16).
+ 
+ ## Generation 77 installation (2026-10-16)
+diff --git a/ops/hosted-autonomy-refresh-rearm.ts b/ops/hosted-autonomy-refresh-rearm.ts
+index 5c7b3134f2..27e87bef72 100644
+--- a/ops/hosted-autonomy-refresh-rearm.ts
++++ b/ops/hosted-autonomy-refresh-rearm.ts
+@@ -29,6 +29,19 @@
+  * one refresh refusal re-arms at most once a day (no model start is ever
+  * involved). A record with no review round left is never re-armed: the
+  * refreshed head could not be reviewed under the hard review-round ceiling.
++ *
++ * A refusal at or after that activation (or with no provable activation) is
++ * the corrected validator's own verdict on immutable content, which no re-arm
++ * can change (sentinel issue 157: a candidate R79 produced edits paths R80
++ * protects). It is parked ONCE as the runtime's explicit owner-gated block
++ * (`BASE_REFRESH_REFUSED_PREFIX`, the original message kept after it), in the
++ * same CAS write that restores the pull-request binding the terminal block
++ * detached, when the same native publication facts verify it; an unverified
++ * publication is parked without a binding and bound by one later write once
++ * it verifies, never fabricated. Every owner-gated park (launcher- or
++ * runtime-written) is then named on every pass
++ * (`refresh:<id>:owner_required:pr=<n|unverified>`) and never rewritten. No
++ * pull request is closed, no branch deleted, nothing pushed or charged.
+  */
+ import type { GitSha } from "../src/contracts/brands.ts";
+ import { canonicalStringify } from "../src/contracts/canonical.ts";
+@@ -44,7 +57,11 @@ import {
+   type RepairStateSnapshotV1,
+ } from "../src/contracts/state-snapshots.ts";
+ import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
+-import { BASE_REFRESH_PRESERVE_DETAIL } from "../src/repair/loop-base-refresh.ts";
++import {
++  BASE_REFRESH_PRESERVE_DETAIL,
++  baseRefreshRefusedMessage,
++  isBaseRefreshRefusedPark,
++} from "../src/repair/loop-base-refresh.ts";
+ import { reviewRoundsLeft } from "../src/repair/review-round-cap.ts";
+ import {
+   candidateBranch,
+@@ -199,6 +216,9 @@ const HEADS = "refs/heads/";
+ 
+ type Verdict =
+   | { kind: "rearm"; pr: number }
++  | { kind: "park"; pr: number | null }
++  | { kind: "bind"; pr: number }
++  | { kind: "owner"; pr: number | null }
+   | { kind: "retain"; reason: string }
+   | null;
+ 
+@@ -213,65 +233,41 @@ interface Runtime {
+   legacyCutoff: number | null;
+ }
+ 
+-async function judge(
+-  context: HostedAutonomyPassContextV1,
+-  record: WorkRecordV1,
+-  runtime: Runtime,
+-  now: number,
+-): Promise<Verdict> {
+-  const blocker = record.blocker;
+-  if (
+-    record.nextStep !== "blocked" || record.wait !== null ||
+-    record.intent !== null || blocker?.kind !== "other" ||
+-    !REFUSED_REFRESH.test(blocker.message)
+-  ) return null;
+-  const issue = record.related.issueNumber;
+-  if (
+-    record.source.kind !== "issue" || issue === null ||
+-    context.closedIssues.has(hostedIssueKey(record.repository, issue))
+-  ) return null;
+-  // The re-armed delivery refreshes onto the moved base, and the refreshed
+-  // head needs a review round of its own: with none left (the hard ceiling,
+-  // owner decision 2026-10-16) the record stays blocked, before any read.
+-  if (
+-    reviewRoundsLeft(context.snapshot, record, runtime.legacyCutoff) === 0
+-  ) {
+-    return { kind: "retain", reason: "review_rounds_spent" };
+-  }
+-  // A legacy record's one final round is spent only on a green head,
+-  // which only a proven CI-first runtime guarantees.
+-  if (!legacyFinalRoundAdmissible(context.snapshot, record, runtime.ciFirst)) {
+-    return { kind: "retain", reason: LEGACY_ROUND_REQUIRES_CI_FIRST };
+-  }
++/** The exact preserved, published candidate shape a re-arm or binding needs. */
++async function publishedShape(record: WorkRecordV1): Promise<boolean> {
+   const head = record.target.head;
+-  const branch = record.target.branch;
+   const state = record.target.candidateState;
+   const preserved = state?.preserved ?? null;
+-  if (
+-    record.target.pr !== null || head === null ||
+-    branch !== candidateBranch(record.id) || preserved === null ||
+-    preserved.head !== head || preserved.base !== record.target.base ||
+-    state?.publishedHead !== head || !preserved.ref.startsWith(HEADS) ||
+-    preserved.ref !== await candidatePreservationRef(
++  return head !== null && record.target.branch === candidateBranch(record.id) &&
++    preserved !== null && preserved.head === head &&
++    preserved.base === record.target.base && state?.publishedHead === head &&
++    preserved.ref.startsWith(HEADS) &&
++    preserved.ref === await candidatePreservationRef(
+         record.repository,
+         record.id,
+         preserved.operationKey,
+-      )
+-  ) return { kind: "retain", reason: "shape" };
+-  if (!runtime.fixed) return { kind: "retain", reason: "runtime" };
+-  // A refusal at or after the corrected runtime's activation may be its own.
+-  if (runtime.activation === null || blocker.since >= runtime.activation) {
+-    return { kind: "retain", reason: "activation" };
+-  }
+-  if (now - blocker.since < REFRESH_REARM_PACING_MS) {
+-    return { kind: "retain", reason: "pacing" };
+-  }
++      );
++}
++
++/**
++ * The record's exact open publication, verified from its OWN repository
++ * surface: the managed branch and the preservation ref both at the exact
++ * head, exactly one open pull request from that branch by a trusted author
++ * against the configured base, at that head. The pull-request number, or the
++ * closed reason it does not verify (never a guessed number).
++ */
++async function verifiedPull(
++  context: HostedAutonomyPassContextV1,
++  record: WorkRecordV1,
++): Promise<number | string> {
++  if (!await publishedShape(record)) return "shape";
++  const head = record.target.head!;
++  const branch = record.target.branch!;
++  const preserved = record.target.candidateState!.preserved!;
+   const scope = await context.scopeFor(record.repository);
+   const surface = scope.surface;
+   const listing = surface?.mismatchDisposition;
+-  if (!surface || !listing || scope.baseBranch === null) {
+-    return { kind: "retain", reason: "surface" };
+-  }
++  if (!surface || !listing || scope.baseBranch === null) return "surface";
+   const tip = async (ref: string) => {
+     try {
+       return await surface.readBaseTip(ref);
+@@ -279,9 +275,9 @@ async function judge(
+       return null;
+     }
+   };
+-  if (await tip(branch) !== head) return { kind: "retain", reason: "branch" };
++  if (await tip(branch) !== head) return "branch";
+   if (await tip(preserved.ref.slice(HEADS.length)) !== head) {
+-    return { kind: "retain", reason: "preservation_ref" };
++    return "preservation_ref";
+   }
+   let pulls: Awaited<ReturnType<typeof listing.listPullsByHead>> = null;
+   try {
+@@ -291,9 +287,7 @@ async function judge(
+   }
+   const open =
+     pulls?.filter((row) => row.state === "open" && row.head === branch) ?? [];
+-  if (pulls === null || open.length !== 1) {
+-    return { kind: "retain", reason: "pull_listing" };
+-  }
++  if (pulls === null || open.length !== 1) return "pull_listing";
+   const pull = await context.readPull(scope, open[0]!.number);
+   if (
+     pull === null || pull.number !== open[0]!.number ||
+@@ -301,8 +295,106 @@ async function judge(
+     pull.headSha !== head || pull.baseRef !== scope.baseBranch ||
+     pull.author === null ||
+     !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author)
+-  ) return { kind: "retain", reason: "pull" };
+-  return { kind: "rearm", pr: pull.number };
++  ) return "pull";
++  return pull.number;
++}
++
++async function judge(
++  context: HostedAutonomyPassContextV1,
++  record: WorkRecordV1,
++  runtime: Runtime,
++  now: number,
++): Promise<Verdict> {
++  const blocker = record.blocker;
++  if (
++    record.nextStep !== "blocked" || record.wait !== null ||
++    record.intent !== null || blocker?.kind !== "other"
++  ) return null;
++  const parked = isBaseRefreshRefusedPark(blocker.message);
++  if (!parked && !REFUSED_REFRESH.test(blocker.message)) return null;
++  const issue = record.related.issueNumber;
++  if (
++    record.source.kind !== "issue" || issue === null ||
++    context.closedIssues.has(hostedIssueKey(record.repository, issue))
++  ) return null;
++  // An owner-gated park is named on every pass. Its binding is restored by
++  // one write once the publication verifies, and is never re-read after.
++  if (parked) {
++    if (record.target.pr !== null) {
++      return { kind: "owner", pr: record.target.pr };
++    }
++    const pr = await verifiedPull(context, record);
++    return typeof pr === "number"
++      ? { kind: "bind", pr }
++      : { kind: "owner", pr: null };
++  }
++  // The corrected validator's own refusal (at or after its activation, or
++  // with no provable activation) is a verdict no re-arm can change: it is
++  // parked for the owner, whatever its review rounds, with the binding the
++  // terminal block detached restored when it verifies.
++  if (
++    runtime.fixed &&
++    (runtime.activation === null || blocker.since >= runtime.activation)
++  ) {
++    if (record.target.pr !== null) {
++      return { kind: "park", pr: record.target.pr };
++    }
++    const pr = await verifiedPull(context, record);
++    return { kind: "park", pr: typeof pr === "number" ? pr : null };
++  }
++  // The re-armed delivery refreshes onto the moved base, and the refreshed
++  // head needs a review round of its own: with none left (the hard ceiling,
++  // owner decision 2026-10-16) the record stays blocked, before any read.
++  if (
++    reviewRoundsLeft(context.snapshot, record, runtime.legacyCutoff) === 0
++  ) {
++    return { kind: "retain", reason: "review_rounds_spent" };
++  }
++  // A legacy record's one final round is spent only on a green head,
++  // which only a proven CI-first runtime guarantees.
++  if (!legacyFinalRoundAdmissible(context.snapshot, record, runtime.ciFirst)) {
++    return { kind: "retain", reason: LEGACY_ROUND_REQUIRES_CI_FIRST };
++  }
++  if (record.target.pr !== null || !await publishedShape(record)) {
++    return { kind: "retain", reason: "shape" };
++  }
++  if (!runtime.fixed) return { kind: "retain", reason: "runtime" };
++  if (now - blocker.since < REFRESH_REARM_PACING_MS) {
++    return { kind: "retain", reason: "pacing" };
++  }
++  const pr = await verifiedPull(context, record);
++  return typeof pr === "number"
++    ? { kind: "rearm", pr }
++    : { kind: "retain", reason: pr };
++}
++
++/**
++ * The one owner-gated write of a record. A park keeps the record blocked with
++ * no intent or wait, replaces only the blocker (the runtime's owner-gated
++ * prefix, the original message after it) and restores a verified binding; a
++ * binding sets only the verified `target.pr` of an existing park. Candidate,
++ * counters, evidence and every charge are untouched.
++ */
++function ownerWrite(
++  record: WorkRecordV1,
++  own: { kind: "park" | "bind"; pr: number | null },
++  now: number,
++): WorkRecordV1 {
++  const pr = own.pr ?? record.target.pr;
++  return {
++    ...record,
++    ...(own.kind === "park"
++      ? {
++        blocker: {
++          kind: "other" as const,
++          message: baseRefreshRefusedMessage(record.blocker!.message),
++          since: now,
++        },
++      }
++      : {}),
++    target: { ...record.target, pr },
++    updatedAt: now,
++  };
+ }
+ 
+ export async function runHostedRefreshRearmPass(
+@@ -336,6 +428,11 @@ export async function runHostedRefreshRearmPass(
+       ),
+   };
+   const rearmed = new Map<string, number>();
++  /** Owner-gated parks and late bindings this pass writes, by record id. */
++  const owned = new Map<
++    string,
++    Exclude<Verdict, null> & { kind: "park" | "bind" }
++  >();
+   for (const record of snapshot.work) {
+     // A record an earlier write of this pass touched waits for the next pass.
+     if (context.settled?.has(record.id)) continue;
+@@ -345,9 +442,19 @@ export async function runHostedRefreshRearmPass(
+       actions.push(`refresh:${record.id}:retained:${verdict.reason}`);
+       continue;
+     }
++    if (verdict.kind === "owner") {
++      actions.push(
++        `refresh:${record.id}:owner_required:pr=${verdict.pr ?? "unverified"}`,
++      );
++      continue;
++    }
++    if (verdict.kind === "park" || verdict.kind === "bind") {
++      owned.set(record.id, verdict);
++      continue;
++    }
+     rearmed.set(record.id, verdict.pr);
+   }
+-  if (rearmed.size === 0) return null;
++  if (rearmed.size === 0 && owned.size === 0) return null;
+   if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
+     return skipped("clock_invalid", observedHead, actions);
+   }
+@@ -359,6 +466,8 @@ export async function runHostedRefreshRearmPass(
+       sequence: snapshot.sequence + 1,
+       updatedAt: now,
+       work: snapshot.work.map((record) => {
++        const own = owned.get(record.id);
++        if (own !== undefined) return ownerWrite(record, own, now);
+         const pr = rearmed.get(record.id);
+         return pr === undefined ? record : {
+           ...record,
+@@ -398,6 +507,13 @@ export async function runHostedRefreshRearmPass(
+     return failed("readback_unverified", observedHead, actions);
+   }
+   for (const [id, pr] of rearmed) actions.push(`refresh:${id}:rearmed:${pr}`);
++  for (const [id, own] of owned) {
++    actions.push(
++      own.kind === "park"
++        ? `refresh:${id}:owner_parked:pr=${own.pr ?? "unverified"}`
++        : `refresh:${id}:owner_bound:pr=${own.pr}`,
++    );
++  }
+   return {
+     kind: "hosted_autonomy",
+     status: "applied",
+diff --git a/src/repair/loop-base-refresh-failure.ts b/src/repair/loop-base-refresh-failure.ts
+index 9fc54345dc..c38f1970f7 100644
+--- a/src/repair/loop-base-refresh-failure.ts
++++ b/src/repair/loop-base-refresh-failure.ts
+@@ -2,16 +2,26 @@
+  * Repair loop internals: bounded base-refresh failure accounting.
+  *
+  * Every failed execution of one exact base-refresh intent is recorded on that
+- * same intent with a closed kind and detail, and the record blocks terminally
+- * after MAX_BASE_REFRESH_FAILURES consecutive failures. The one exception is a
++ * same intent with a closed kind and detail, and the record blocks after
++ * MAX_BASE_REFRESH_FAILURES consecutive failures. The one exception is a
+  * genuine authentication failure of THIS job's GitHub credential, which is a
+- * per-job condition and persists nothing.
++ * per-job condition and persists nothing. The trusted validator's
++ * deterministic verdict on the prepared candidate is no failure to count: it
++ * parks the record at once for the owner (`refuseBaseRefresh`). Neither block
++ * detaches the record's still-open pull request.
+  */
+ import type {
+   IncompleteOperationV1,
+   WorkRecordV1,
+ } from "../contracts/work-record.ts";
+-import { conflictMarkerBase } from "./conflict-resolution.ts";
++import {
++  DETERMINISTIC_PUBLICATION_DETAILS,
++  PUBLICATION_PROTECTED_DETAIL,
++} from "../github/snapshot-policy.ts";
++import {
++  CONFLICT_PROTECTED_DETAIL,
++  conflictMarkerBase,
++} from "./conflict-resolution.ts";
+ import { CHECK_POLL_MS } from "./loop-bounds.ts";
+ import { persistWork } from "./loop-state.ts";
+ import type {
+@@ -19,12 +29,7 @@ import type {
+   RepairCycleDepsV1,
+   StepResultV1,
+ } from "./loop-types.ts";
+-import {
+-  clearIntent,
+-  markTerminalBlocked,
+-  setIntent,
+-  setWait,
+-} from "./transitions.ts";
++import { clearIntent, markBlocked, setIntent, setWait } from "./transitions.ts";
+ 
+ /**
+  * Consecutive failed executions of one exact base-refresh intent that are
+@@ -57,6 +62,79 @@ export const BASE_REFRESH_PUSH_DETAIL = "prepared candidate was not published";
+ export const BASE_REFRESH_FOREIGN_HEAD_DETAIL =
+   "candidate ref carries an unrelated head";
+ 
++/**
++ * The owner-gated park of a refresh whose prepared candidate the trusted
++ * publication validator refused. The refusal is a verdict on immutable
++ * content (the deterministic merge of the exact candidate and base), so no
++ * retry, re-arm or fresh model run can change it; the owner lands the change
++ * by hand or closes the issue. The prefix is matched by no retry rule, by no
++ * re-admission and by no delivery rule; the launcher names every record that
++ * carries it on every pass (`refresh:<id>:owner_required:pr=<n>`). The text
++ * after it is a closed reason: CONFLICT_PROTECTED_DETAIL for a protected-path
++ * verdict, any other closed validator detail as is, or (written by the
++ * launcher for a generation-80 block) the original blocker message.
++ */
++export const BASE_REFRESH_REFUSED_PREFIX =
++  "base refresh refused by trusted validation; owner action required (land the change by hand or close the issue): ";
++
++/** The owner-gated park message for one closed refusal reason. */
++export function baseRefreshRefusedMessage(reason: string): string {
++  return `${BASE_REFRESH_REFUSED_PREFIX}${reason}`;
++}
++
++/** True for any owner-gated refresh park (runtime- or launcher-written). */
++export function isBaseRefreshRefusedPark(message: string): boolean {
++  return message.startsWith(BASE_REFRESH_REFUSED_PREFIX) &&
++    message.length > BASE_REFRESH_REFUSED_PREFIX.length;
++}
++
++/**
++ * The closed refusal reason of a preservation answer when it is the trusted
++ * validator's deterministic verdict on the candidate (`invalid` with one of
++ * DETERMINISTIC_PUBLICATION_DETAILS); null for every other answer, including
++ * a malformed request, which keeps the bounded failure accounting.
++ */
++export function baseRefreshRefusalReason(
++  kind: string,
++  portDetail: string | undefined,
++): string | null {
++  if (
++    kind !== "invalid" || portDetail === undefined ||
++    !DETERMINISTIC_PUBLICATION_DETAILS.includes(portDetail)
++  ) return null;
++  return portDetail === PUBLICATION_PROTECTED_DETAIL
++    ? CONFLICT_PROTECTED_DETAIL
++    : portDetail;
++}
++
++/**
++ * Park the record once for the owner on the trusted validator's verdict: the
++ * refresh intent (and its never-pushed prepared result) is cleared and the
++ * record blocks with the owner-gated message. Unlike `markTerminalBlocked`,
++ * the still-open pull request stays bound as `target.pr`, and the candidate
++ * head/base, its preserved descriptor and published head, the branch, the
++ * counters, the evidence and every charge are untouched: nothing is pushed,
++ * charged, refunded or reviewed, and no later run rewrites the park.
++ */
++export function refuseBaseRefresh(
++  deps: RepairCycleDepsV1,
++  context: LoopContextV1,
++  record: WorkRecordV1,
++  reason: string,
++): Promise<StepResultV1> {
++  const at = deps.clock.now();
++  return persistWork(
++    deps,
++    context,
++    markBlocked(
++      clearIntent(record, at),
++      "other",
++      baseRefreshRefusedMessage(reason),
++      at,
++    ),
++  );
++}
++
+ /**
+  * Closed suffix of a counted `auth_failed` that is NOT a credential failure
+  * (a 403 permission refusal). It keeps that terminal block distinct from the
+@@ -116,7 +194,8 @@ function isCredentialFailure(failure: BaseRefreshFailureV1): boolean {
+  * only while the consecutive failure count is under MAX_BASE_REFRESH_FAILURES;
+  * at the bound the intent is cleared and the record blocks with the classified
+  * message, so a livelocked refresh becomes a visible blocker instead of an
+- * endless `unavailable` wait. Target, counters, evidence and reviews are
++ * endless `unavailable` wait. Target (including the still-open pull request,
++ * which generation 80 detached here), counters, evidence and reviews are
+  * preserved.
+  *
+  * A genuine authentication failure of this job's credential (see
+@@ -160,13 +239,10 @@ export function failBaseRefresh(
+     return persistWork(
+       deps,
+       context,
+-      clearIntent(
+-        markTerminalBlocked(
+-          record,
+-          "other",
+-          `base refresh failed ${failures} consecutive times: ${failure.kind} ${detail}`,
+-          at,
+-        ),
++      markBlocked(
++        clearIntent(record, at),
++        "other",
++        `base refresh failed ${failures} consecutive times: ${failure.kind} ${detail}`,
+         at,
+       ),
+     );
+diff --git a/src/repair/loop-base-refresh.ts b/src/repair/loop-base-refresh.ts
+index 264733b7f6..1c023d8a8d 100644
+--- a/src/repair/loop-base-refresh.ts
++++ b/src/repair/loop-base-refresh.ts
+@@ -7,6 +7,7 @@ import type {
+   WorkRecordV1,
+ } from "../contracts/work-record.ts";
+ import {
++  conflictMarkerBase,
+   conflictResolutionRouteOpen,
+   conflictResolutionShape,
+   pendingConflictRecord,
+@@ -23,7 +24,9 @@ import {
+   BASE_REFRESH_PUSH_DETAIL,
+   BASE_REFRESH_REF_READ_DETAIL,
+   BASE_REFRESH_UNPREPARED_DETAIL,
++  baseRefreshRefusalReason,
+   failBaseRefresh,
++  refuseBaseRefresh,
+ } from "./loop-base-refresh-failure.ts";
+ import { configFor, retireClosedPublication } from "./loop-records.ts";
+ import { legacyCutoff } from "./loop-review-round-cap.ts";
+@@ -53,8 +56,11 @@ export {
+   BASE_REFRESH_PRESERVE_DETAIL,
+   BASE_REFRESH_PUSH_DETAIL,
+   BASE_REFRESH_REF_READ_DETAIL,
++  BASE_REFRESH_REFUSED_PREFIX,
+   BASE_REFRESH_UNPREPARED_DETAIL,
++  baseRefreshRefusedMessage,
+   failBaseRefresh,
++  isBaseRefreshRefusedPark,
+   MAX_BASE_REFRESH_FAILURES,
+ } from "./loop-base-refresh-failure.ts";
+ 
+@@ -293,6 +299,21 @@ export async function executeBaseRefreshIntent(
+       publishedHead: candidateState.publishedHead,
+     });
+     if (!preserved.ok) {
++      // The trusted validator's verdict on the deterministic merge of the
++      // exact candidate and base is final for this intent: re-running it can
++      // only repeat the verdict (sentinel issue 157: a candidate R79 produced
++      // edits paths R80 protects). It parks once for the owner, with the
++      // closed reason and the open PR kept. A marked conflict-resolution
++      // refresh keeps its marker accounting below.
++      const reason = conflictMarkerBase(intent) === null
++        ? baseRefreshRefusalReason(
++          preserved.error.kind,
++          preserved.error.detail,
++        )
++        : null;
++      if (reason !== null) {
++        return refuseBaseRefresh(deps, context, durable, reason);
++      }
+       return failBaseRefresh(deps, context, durable, durableIntent, {
+         kind: preserved.error.kind,
+         detail: BASE_REFRESH_PRESERVE_DETAIL,
+diff --git a/tests/fixtures/host/refresh-refusal-157-live.json b/tests/fixtures/host/refresh-refusal-157-live.json
+new file mode 100644
+index 0000000000..8a7697faae
+--- /dev/null
++++ b/tests/fixtures/host/refresh-refusal-157-live.json
+@@ -0,0 +1,1069 @@
++{
++  "work": [
++    {
++      "blocker": {
++        "kind": "other",
++        "message": "base refresh failed 3 consecutive times: invalid candidate could not be preserved",
++        "since": 1792266249092
++      },
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f"
++      },
++      "counters": {
++        "attempts": 1,
++        "retries": 0,
++        "reviewRounds": 0
++      },
++      "createdAt": 1792257173450,
++      "dependencies": [],
++      "evidence": [],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1792256529000,
++      "id": "issue-ubiquity-sentinel-157",
++      "intent": null,
++      "kind": "work",
++      "nextStep": "blocked",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 157
++      },
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "157",
++        "kind": "issue",
++        "revision": "d5cc84402c5971df4031c03b5e71e55c55a3a11c"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
++        "branch": "sentinel/repair/issue-ubiquity-sentinel-157",
++        "candidateState": {
++          "preserved": {
++            "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
++            "head": "784e233ec22eae4d29c8eb951c1f42bafc06121f",
++            "operationKey": "impl:f0c249b0d19f6a6ddae8476c6ed83530e259fb26973dc28bbc0129201a5bb352",
++            "ref": "refs/heads/sentinel-candidates/20112f1756c43d9444e2026331ffaf8473ffebeca6006f31af00888b86f4db93"
++          },
++          "publishedHead": "784e233ec22eae4d29c8eb951c1f42bafc06121f"
++        },
++        "checkpoint": null,
++        "head": "784e233ec22eae4d29c8eb951c1f42bafc06121f",
++        "pr": null
++      },
++      "updatedAt": 1792266249092,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": null
++    }
++  ],
++  "refreshing": {
++    "blocker": null,
++    "classification": {
++      "priority": null,
++      "severity": "P2"
++    },
++    "controller": {
++      "sha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f"
++    },
++    "counters": {
++      "attempts": 1,
++      "retries": 0,
++      "reviewRounds": 0
++    },
++    "createdAt": 1792257173450,
++    "dependencies": [],
++    "evidence": [],
++    "failingRevision": null,
++    "fingerprint": null,
++    "firstSeenAt": 1792256529000,
++    "id": "issue-ubiquity-sentinel-157",
++    "intent": {
++      "branch": "sentinel/repair/issue-ubiquity-sentinel-157",
++      "expectedHead": "784e233ec22eae4d29c8eb951c1f42bafc06121f",
++      "key": "base_refresh:160:784e233ec22eae4d29c8eb951c1f42bafc06121f:614a4fa02f1dc9f27516c5acd85d598f678a0cfa",
++      "kind": "base_refresh",
++      "observedBase": "614a4fa02f1dc9f27516c5acd85d598f678a0cfa",
++      "pr": 160,
++      "requestId": null,
++      "resultId": "18cceb9579ef4975ecec03f0dda1bfb92392263b",
++      "startedAt": 1792262142968
++    },
++    "kind": "work",
++    "nextStep": "work",
++    "related": {
++      "incidentId": null,
++      "issueNumber": 157
++    },
++    "repository": {
++      "installationId": 0,
++      "name": "sentinel",
++      "owner": "ubiquity"
++    },
++    "source": {
++      "id": "157",
++      "kind": "issue",
++      "revision": "d5cc84402c5971df4031c03b5e71e55c55a3a11c"
++    },
++    "sourceSnapshotDigest": null,
++    "target": {
++      "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
++      "branch": "sentinel/repair/issue-ubiquity-sentinel-157",
++      "candidateState": {
++        "preserved": {
++          "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
++          "head": "784e233ec22eae4d29c8eb951c1f42bafc06121f",
++          "operationKey": "impl:f0c249b0d19f6a6ddae8476c6ed83530e259fb26973dc28bbc0129201a5bb352",
++          "ref": "refs/heads/sentinel-candidates/20112f1756c43d9444e2026331ffaf8473ffebeca6006f31af00888b86f4db93"
++        },
++        "publishedHead": "784e233ec22eae4d29c8eb951c1f42bafc06121f"
++      },
++      "checkpoint": null,
++      "head": "784e233ec22eae4d29c8eb951c1f42bafc06121f",
++      "pr": 160
++    },
++    "updatedAt": 1792262148939,
++    "urgency": {
++      "activeProduction": false,
++      "reproducible5xx": false,
++      "severeSecurityOrDataLoss": false
++    },
++    "version": "v1",
++    "wait": {
++      "reason": "unavailable",
++      "since": 1792260344200,
++      "until": 1792260644200
++    }
++  },
++  "reservations": [
++    {
++      "attempt": 1,
++      "createdAt": 1792257286947,
++      "head": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
++      "id": "f0c249b0d19f6a6ddae8476c6ed83530e259fb26973dc28bbc0129201a5bb352",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792259370427,
++      "taskId": "issue-ubiquity-sentinel-157",
++      "version": "v1"
++    }
++  ],
++  "pullRequest": {
++    "number": 160,
++    "head": "784e233ec22eae4d29c8eb951c1f42bafc06121f",
++    "headRef": "sentinel/repair/issue-ubiquity-sentinel-157",
++    "baseRef": "development",
++    "author": "ubiquity-sentinel[bot]",
++    "state": "open"
++  },
++  "observedBase": "614a4fa02f1dc9f27516c5acd85d598f678a0cfa",
++  "preparedHead": "18cceb9579ef4975ecec03f0dda1bfb92392263b",
++  "release": {
++    "version": "v1",
++    "kind": "release_state_snapshot",
++    "stateHead": "71779fde2f584e28ec97a1068e16664909d1fcbd",
++    "sequence": 1713,
++    "updatedAt": 1792281490071,
++    "releases": [],
++    "hostedRuntimes": [
++      {
++        "activeRevision": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++        "createdAt": 1789358128122,
++        "execution": {
++          "createdAt": 1792281490071,
++          "generation": 80,
++          "id": "39080597401:1:repair",
++          "launcherSha": "706969a9f6af9b9f818937ee7b003b6d60f38d5c",
++          "purpose": "ordinary",
++          "releaseId": null,
++          "revision": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "runAttempt": 1,
++          "runId": 39080597401
++        },
++        "generation": 80,
++        "id": "ubiquity/sentinel:0:production",
++        "kind": "hosted_runtime",
++        "lastExecutionProof": {
++          "baseSha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++          "execution": {
++            "createdAt": 1792277775472,
++            "generation": 80,
++            "id": "39076299304:1:repair",
++            "launcherSha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++            "purpose": "ordinary",
++            "releaseId": null,
++            "revision": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++            "runAttempt": 1,
++            "runId": 39076299304
++          },
++          "finishedAt": 1792281096000,
++          "jobId": 117526584422,
++          "logDigest": "ef0859f94a751b4ad48b7e54c537d72dea70b83d42f7fa66eae44bbbc536cb3b",
++          "observedAt": 1792281109645,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1792277884000,
++          "startupReady": true,
++          "terminalAt": 1792281092145,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "lastHealthyProof": {
++          "baseSha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++          "execution": {
++            "createdAt": 1792277775472,
++            "generation": 80,
++            "id": "39076299304:1:repair",
++            "launcherSha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++            "purpose": "ordinary",
++            "releaseId": null,
++            "revision": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++            "runAttempt": 1,
++            "runId": 39076299304
++          },
++          "finishedAt": 1792281096000,
++          "jobId": 117526584422,
++          "logDigest": "ef0859f94a751b4ad48b7e54c537d72dea70b83d42f7fa66eae44bbbc536cb3b",
++          "observedAt": 1792281109645,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1792277884000,
++          "startupReady": true,
++          "terminalAt": 1792281092145,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "nextOrdinaryAt": 1792281490071,
++        "updatedAt": 1792281490071,
++        "version": "v1"
++      }
++    ],
++    "hostedReleases": [
++      {
++        "candidateProof": {
++          "baseSha": "7e052c591ee8d7bc8dc5beaadbf143aeda7cde3c",
++          "execution": {
++            "createdAt": 1789481874318,
++            "generation": 4,
++            "id": "34980411924:1:repair",
++            "launcherSha": "c65a3d29ed03f32b0328d4ff1e92caa2931ee030",
++            "purpose": "candidate",
++            "releaseId": "release:44ca04f3e81cbdfe357ce3ba5a780cbee7072e144d4a9da0fd3235a227b9a5d3",
++            "revision": "7e052c591ee8d7bc8dc5beaadbf143aeda7cde3c",
++            "runAttempt": 1,
++            "runId": 34980411924
++          },
++          "finishedAt": 1789482006000,
++          "jobId": 104419877885,
++          "logDigest": "321d1039c1733590fa27dbe03967ce22fd8404085229ee6bb0aeade890dc0e44",
++          "observedAt": 1789482022599,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1789481883000,
++          "startupReady": true,
++          "terminalAt": 1789482002364,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "createdAt": 1789481691856,
++        "id": "release:44ca04f3e81cbdfe357ce3ba5a780cbee7072e144d4a9da0fd3235a227b9a5d3",
++        "kind": "hosted_release",
++        "phase": "accepted",
++        "pointerIntent": null,
++        "priorProof": {
++          "baseSha": "7e052c591ee8d7bc8dc5beaadbf143aeda7cde3c",
++          "execution": {
++            "createdAt": 1789481694768,
++            "generation": 3,
++            "id": "34980121968:1:repair",
++            "launcherSha": "c65a3d29ed03f32b0328d4ff1e92caa2931ee030",
++            "purpose": "prior",
++            "releaseId": "release:44ca04f3e81cbdfe357ce3ba5a780cbee7072e144d4a9da0fd3235a227b9a5d3",
++            "revision": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
++            "runAttempt": 1,
++            "runId": 34980121968
++          },
++          "finishedAt": 1789481787000,
++          "jobId": 104418740659,
++          "logDigest": "eceff146455819e1f82d54ac4466d49058c33122be977e97dfcf8994b7a5ce27",
++          "observedAt": 1789481800003,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1789481703000,
++          "startupReady": true,
++          "terminalAt": 1789481785207,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "priorRevision": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
++        "request": {
++          "createdAt": 1789481644789,
++          "failureReason": null,
++          "id": "release:44ca04f3e81cbdfe357ce3ba5a780cbee7072e144d4a9da0fd3235a227b9a5d3",
++          "kind": "release_request",
++          "revision": "7e052c591ee8d7bc8dc5beaadbf143aeda7cde3c",
++          "source": {
++            "base": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
++            "head": "969edbdfd80d8c8723364038dbf3176bb1a027ce",
++            "pullRequest": 54,
++            "reviewReceiptId": "review-review:54:969edbdfd80d8c8723364038dbf3176bb1a027ce:attempt-2",
++            "reviewRequestId": "review-review:54:969edbdfd80d8c8723364038dbf3176bb1a027ce:attempt-2"
++          },
++          "status": "open",
++          "target": {
++            "environment": "production",
++            "repository": {
++              "installationId": 0,
++              "name": "sentinel",
++              "owner": "ubiquity"
++            }
++          },
++          "version": "v1"
++        },
++        "rollbackProof": null,
++        "updatedAt": 1789482029523,
++        "version": "v1"
++      },
++      {
++        "candidateProof": {
++          "baseSha": "78fabed30fa13cb6c2beb4f358bef5c4161c8833",
++          "execution": {
++            "createdAt": 1791211486616,
++            "generation": 62,
++            "id": "37326981273:1:repair",
++            "launcherSha": "1d0ea02ebc4c1357233e4b7105f6e0b2cd131133",
++            "purpose": "candidate",
++            "releaseId": "release:600779ace38ec2c1899cc5a9d3a2b0b4be6e3ecd43ab283df7d79ca5bf3d9518",
++            "revision": "2bca04186b3e462c63ba3d9ce996f4a5d3fd03b6",
++            "runAttempt": 1,
++            "runId": 37326981273
++          },
++          "finishedAt": 1791213364000,
++          "jobId": 111820854091,
++          "logDigest": "d9381215083a43e1a85ba62d6ff5266e010ded2179a22e95f79e3d2af46b734a",
++          "observedAt": 1791213386599,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1791211496000,
++          "startupReady": true,
++          "terminalAt": 1791213360159,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "createdAt": 1791153413434,
++        "id": "release:600779ace38ec2c1899cc5a9d3a2b0b4be6e3ecd43ab283df7d79ca5bf3d9518",
++        "kind": "hosted_release",
++        "phase": "accepted",
++        "pointerIntent": null,
++        "priorProof": {
++          "baseSha": "78fabed30fa13cb6c2beb4f358bef5c4161c8833",
++          "execution": {
++            "createdAt": 1791208366468,
++            "generation": 61,
++            "id": "37319457942:1:repair",
++            "launcherSha": "1d0ea02ebc4c1357233e4b7105f6e0b2cd131133",
++            "purpose": "prior",
++            "releaseId": "release:600779ace38ec2c1899cc5a9d3a2b0b4be6e3ecd43ab283df7d79ca5bf3d9518",
++            "revision": "ac98dc80ff9c3eca5f36aca91493168e9ff74596",
++            "runAttempt": 1,
++            "runId": 37319457942
++          },
++          "finishedAt": 1791210874000,
++          "jobId": 111797115776,
++          "logDigest": "569cdb2e7f5dabe49db8b940ade699a90d7c41f16e78d7bc39546dcc04d5a022",
++          "observedAt": 1791210888356,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1791208376000,
++          "startupReady": true,
++          "terminalAt": 1791210870241,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "priorRevision": "ac98dc80ff9c3eca5f36aca91493168e9ff74596",
++        "request": {
++          "createdAt": 1791147197116,
++          "failureReason": null,
++          "id": "release:600779ace38ec2c1899cc5a9d3a2b0b4be6e3ecd43ab283df7d79ca5bf3d9518",
++          "kind": "release_request",
++          "revision": "2bca04186b3e462c63ba3d9ce996f4a5d3fd03b6",
++          "source": {
++            "base": "ac98dc80ff9c3eca5f36aca91493168e9ff74596",
++            "head": "f68a4240bb3dc0435ceb92d4caa886f4d1b05cfe",
++            "pullRequest": 111,
++            "reviewReceiptId": "review-receipt:13c1b8759feb6ce4b06834bc86b62b528a406bc3682159f95f94e17705f8911e",
++            "reviewRequestId": "review-review:111:f68a4240bb3dc0435ceb92d4caa886f4d1b05cfe"
++          },
++          "status": "open",
++          "target": {
++            "environment": "production",
++            "repository": {
++              "installationId": 0,
++              "name": "sentinel",
++              "owner": "ubiquity"
++            }
++          },
++          "version": "v1"
++        },
++        "rollbackProof": null,
++        "updatedAt": 1791213387594,
++        "version": "v1"
++      },
++      {
++        "candidateProof": {
++          "baseSha": "78fabed30fa13cb6c2beb4f358bef5c4161c8833",
++          "execution": {
++            "createdAt": 1791216535040,
++            "generation": 63,
++            "id": "37338351799:1:repair",
++            "launcherSha": "1d0ea02ebc4c1357233e4b7105f6e0b2cd131133",
++            "purpose": "candidate",
++            "releaseId": "release:1ace1c10fc89d802a2810408de2c6715877e275ff6073c19bfa6791fcb1c4c9c",
++            "revision": "e4cef46332cf124a8c283d798a963cf5f66e45c2",
++            "runAttempt": 1,
++            "runId": 37338351799
++          },
++          "finishedAt": 1791218284000,
++          "jobId": 111859480339,
++          "logDigest": "d228cebdec36e9f40516266e06379f779caf511e091912365c005c4dc35ed71a",
++          "observedAt": 1791218296849,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1791216547000,
++          "startupReady": true,
++          "terminalAt": 1791218279379,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "createdAt": 1791214146300,
++        "id": "release:1ace1c10fc89d802a2810408de2c6715877e275ff6073c19bfa6791fcb1c4c9c",
++        "kind": "hosted_release",
++        "phase": "accepted",
++        "pointerIntent": null,
++        "priorProof": {
++          "baseSha": "78fabed30fa13cb6c2beb4f358bef5c4161c8833",
++          "execution": {
++            "createdAt": 1791214149188,
++            "generation": 62,
++            "id": "37332751924:1:repair",
++            "launcherSha": "1d0ea02ebc4c1357233e4b7105f6e0b2cd131133",
++            "purpose": "prior",
++            "releaseId": "release:1ace1c10fc89d802a2810408de2c6715877e275ff6073c19bfa6791fcb1c4c9c",
++            "revision": "2bca04186b3e462c63ba3d9ce996f4a5d3fd03b6",
++            "runAttempt": 1,
++            "runId": 37332751924
++          },
++          "finishedAt": 1791215907000,
++          "jobId": 111841308967,
++          "logDigest": "443c2a185aff4cad977d75c0588f10dbbde82694f661c222c1763947cd40ff86",
++          "observedAt": 1791215920344,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1791214166000,
++          "startupReady": true,
++          "terminalAt": 1791215902693,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "priorRevision": "2bca04186b3e462c63ba3d9ce996f4a5d3fd03b6",
++        "request": {
++          "createdAt": 1791153377388,
++          "failureReason": null,
++          "id": "release:1ace1c10fc89d802a2810408de2c6715877e275ff6073c19bfa6791fcb1c4c9c",
++          "kind": "release_request",
++          "revision": "e4cef46332cf124a8c283d798a963cf5f66e45c2",
++          "source": {
++            "base": "2bca04186b3e462c63ba3d9ce996f4a5d3fd03b6",
++            "head": "c179162df53091a772c3da38cbac1b3841d0f359",
++            "pullRequest": 108,
++            "reviewReceiptId": "review-receipt:b7a1c87dee47b074f172c92967880aff151290993592dfe949466d6f4a7fff7a",
++            "reviewRequestId": "review-review:108:c179162df53091a772c3da38cbac1b3841d0f359:attempt-3"
++          },
++          "status": "open",
++          "target": {
++            "environment": "production",
++            "repository": {
++              "installationId": 0,
++              "name": "sentinel",
++              "owner": "ubiquity"
++            }
++          },
++          "version": "v1"
++        },
++        "rollbackProof": null,
++        "updatedAt": 1791218297994,
++        "version": "v1"
++      },
++      {
++        "candidateProof": {
++          "baseSha": "f47f1d2af1e1721f2dae0e885dad6a8383d7b170",
++          "execution": {
++            "createdAt": 1789678292675,
++            "generation": 18,
++            "id": "35273273110:1:repair",
++            "launcherSha": "c08d74d6621e8012d5ec1be3423ea660bada298b",
++            "purpose": "candidate",
++            "releaseId": "release:56fae4b9358db4e74c19a91054aef926b07202c05738dd688562ad8614e2e9b7",
++            "revision": "1ed66cd191271cc206aaf436d0f93d245aaee936",
++            "runAttempt": 1,
++            "runId": 35273273110
++          },
++          "finishedAt": 1789678370000,
++          "jobId": 105377764667,
++          "logDigest": "ea9930ebc5c5a8e1814865dc25d59bd596243e2c607c3fb8aec6ecbd487b2f39",
++          "observedAt": 1789678389358,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1789678300000,
++          "startupReady": true,
++          "terminalAt": 1789678368630,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "createdAt": 1789677933689,
++        "id": "release:56fae4b9358db4e74c19a91054aef926b07202c05738dd688562ad8614e2e9b7",
++        "kind": "hosted_release",
++        "phase": "accepted",
++        "pointerIntent": null,
++        "priorProof": {
++          "baseSha": "8023c41d7c42238adec4fe45d59fa1963a335899",
++          "execution": {
++            "createdAt": 1789677935728,
++            "generation": 17,
++            "id": "35272524410:1:repair",
++            "launcherSha": "c08d74d6621e8012d5ec1be3423ea660bada298b",
++            "purpose": "prior",
++            "releaseId": "release:56fae4b9358db4e74c19a91054aef926b07202c05738dd688562ad8614e2e9b7",
++            "revision": "fc25d716981870ce6b7038c2eda94ed2430cca58",
++            "runAttempt": 1,
++            "runId": 35272524410
++          },
++          "finishedAt": 1789678069000,
++          "jobId": 105375822103,
++          "logDigest": "5fde61712de9e722a8391cc74fc95609276425145c50774f5c20e8bf72154af2",
++          "observedAt": 1789678088966,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1789677942000,
++          "startupReady": true,
++          "terminalAt": 1789678065706,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "priorRevision": "fc25d716981870ce6b7038c2eda94ed2430cca58",
++        "request": {
++          "createdAt": 1789677909885,
++          "failureReason": null,
++          "id": "release:56fae4b9358db4e74c19a91054aef926b07202c05738dd688562ad8614e2e9b7",
++          "kind": "release_request",
++          "revision": "1ed66cd191271cc206aaf436d0f93d245aaee936",
++          "source": {
++            "base": "fc25d716981870ce6b7038c2eda94ed2430cca58",
++            "head": "2bce9809d992be6d013f9dcf45892ea15e40c3d4",
++            "pullRequest": 51,
++            "reviewReceiptId": "review-receipt:7826d27e94648e79d03f7f3900e721345c63c06edac2982de0b79b3144240e12",
++            "reviewRequestId": "review-review:51:2bce9809d992be6d013f9dcf45892ea15e40c3d4:attempt-14"
++          },
++          "status": "open",
++          "target": {
++            "environment": "production",
++            "repository": {
++              "installationId": 0,
++              "name": "sentinel",
++              "owner": "ubiquity"
++            }
++          },
++          "version": "v1"
++        },
++        "rollbackProof": null,
++        "updatedAt": 1789678399867,
++        "version": "v1"
++      },
++      {
++        "candidateProof": {
++          "baseSha": "0fcdb5505417798e3ec7626333d4621fff67c26d",
++          "execution": {
++            "createdAt": 1791011763175,
++            "generation": 56,
++            "id": "37105593639:1:repair",
++            "launcherSha": "6d945731b421cd478a624cfc3114a227e0f41bec",
++            "purpose": "candidate",
++            "releaseId": "release:1581e7102d6ef116df262980809066faac3d8236eb3cbb4e8317b99da49cc04a",
++            "revision": "0fcdb5505417798e3ec7626333d4621fff67c26d",
++            "runAttempt": 1,
++            "runId": 37105593639
++          },
++          "finishedAt": 1791013303000,
++          "jobId": 111153903523,
++          "logDigest": "436d2e0cef966d89a87d64cb7050d170dee9a0160bcf8305ae4ea993db9c8964",
++          "observedAt": 1791013312669,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1791011772000,
++          "startupReady": true,
++          "terminalAt": 1791013298856,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "createdAt": 1791010235558,
++        "id": "release:1581e7102d6ef116df262980809066faac3d8236eb3cbb4e8317b99da49cc04a",
++        "kind": "hosted_release",
++        "phase": "accepted",
++        "pointerIntent": null,
++        "priorProof": {
++          "baseSha": "0fcdb5505417798e3ec7626333d4621fff67c26d",
++          "execution": {
++            "createdAt": 1791010237844,
++            "generation": 55,
++            "id": "37103561796:1:repair",
++            "launcherSha": "6d945731b421cd478a624cfc3114a227e0f41bec",
++            "purpose": "prior",
++            "releaseId": "release:1581e7102d6ef116df262980809066faac3d8236eb3cbb4e8317b99da49cc04a",
++            "revision": "275fee6dba74800b47e555f3f316b60be566ccb4",
++            "runAttempt": 1,
++            "runId": 37103561796
++          },
++          "finishedAt": 1791011695000,
++          "jobId": 111149935704,
++          "logDigest": "c17737403f994fd46ab150fdb334db244052eb36fa24dfd45bc3b715f6484f7e",
++          "observedAt": 1791011708955,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1791010245000,
++          "startupReady": true,
++          "terminalAt": 1791011692398,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "priorRevision": "275fee6dba74800b47e555f3f316b60be566ccb4",
++        "request": {
++          "createdAt": 1791010211372,
++          "failureReason": null,
++          "id": "release:1581e7102d6ef116df262980809066faac3d8236eb3cbb4e8317b99da49cc04a",
++          "kind": "release_request",
++          "revision": "0fcdb5505417798e3ec7626333d4621fff67c26d",
++          "source": {
++            "base": "275fee6dba74800b47e555f3f316b60be566ccb4",
++            "head": "fef3a50aff68c22bbc2ef7cd88005c0a15343d9f",
++            "pullRequest": 107,
++            "reviewReceiptId": "review-receipt:cccbc4a2937db93c1557eef820cc3d379c1e4409071c666d8efffa9de0f1bddb",
++            "reviewRequestId": "review-review:107:fef3a50aff68c22bbc2ef7cd88005c0a15343d9f:attempt-4"
++          },
++          "status": "open",
++          "target": {
++            "environment": "production",
++            "repository": {
++              "installationId": 0,
++              "name": "sentinel",
++              "owner": "ubiquity"
++            }
++          },
++          "version": "v1"
++        },
++        "rollbackProof": null,
++        "updatedAt": 1791013313099,
++        "version": "v1"
++      },
++      {
++        "candidateProof": {
++          "baseSha": "38c70a5bf3e58ff3fb1c7cfeb7a91e98105c3d1a",
++          "execution": {
++            "createdAt": 1789703089486,
++            "generation": 24,
++            "id": "35304290387:1:repair",
++            "launcherSha": "4a38a913932cae938b3f2837edcb454018d5bb00",
++            "purpose": "candidate",
++            "releaseId": "release:c9405599111ee3176eaeb57cdfae043693ced4089dc3d68e28fd338649ec928e",
++            "revision": "38c70a5bf3e58ff3fb1c7cfeb7a91e98105c3d1a",
++            "runAttempt": 1,
++            "runId": 35304290387
++          },
++          "finishedAt": 1789703158000,
++          "jobId": 105473389709,
++          "logDigest": "a532077471f2dc9bed29d0214dc4b125c614ca18efd0d883295e55418727766b",
++          "observedAt": 1789703176336,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1789703095000,
++          "startupReady": true,
++          "terminalAt": 1789703155858,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "createdAt": 1789702875384,
++        "id": "release:c9405599111ee3176eaeb57cdfae043693ced4089dc3d68e28fd338649ec928e",
++        "kind": "hosted_release",
++        "phase": "accepted",
++        "pointerIntent": null,
++        "priorProof": {
++          "baseSha": "38c70a5bf3e58ff3fb1c7cfeb7a91e98105c3d1a",
++          "execution": {
++            "createdAt": 1789702877635,
++            "generation": 23,
++            "id": "35304095632:1:repair",
++            "launcherSha": "4a38a913932cae938b3f2837edcb454018d5bb00",
++            "purpose": "prior",
++            "releaseId": "release:c9405599111ee3176eaeb57cdfae043693ced4089dc3d68e28fd338649ec928e",
++            "revision": "cf8e6610b206f80b976785d12eef9d8fa1706311",
++            "runAttempt": 1,
++            "runId": 35304095632
++          },
++          "finishedAt": 1789702943000,
++          "jobId": 105472748244,
++          "logDigest": "3559b6a9dbdf4416a89935aa10b9afca2ea432d3024b5a7acb577bee46bab472",
++          "observedAt": 1789702955341,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1789702883000,
++          "startupReady": true,
++          "terminalAt": 1789702940457,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "priorRevision": "cf8e6610b206f80b976785d12eef9d8fa1706311",
++        "request": {
++          "createdAt": 1789702852155,
++          "failureReason": null,
++          "id": "release:c9405599111ee3176eaeb57cdfae043693ced4089dc3d68e28fd338649ec928e",
++          "kind": "release_request",
++          "revision": "38c70a5bf3e58ff3fb1c7cfeb7a91e98105c3d1a",
++          "source": {
++            "base": "cf8e6610b206f80b976785d12eef9d8fa1706311",
++            "head": "ee2307bbc5e066aeb80736ea91b19e91469005c5",
++            "pullRequest": 78,
++            "reviewReceiptId": "review-receipt:ffa3b09596fdd78d7ef06cfab636b8438a56affc5f0bf377f65c7a381cb15b71",
++            "reviewRequestId": "review-review:78:ee2307bbc5e066aeb80736ea91b19e91469005c5:attempt-3"
++          },
++          "status": "open",
++          "target": {
++            "environment": "production",
++            "repository": {
++              "installationId": 0,
++              "name": "sentinel",
++              "owner": "ubiquity"
++            }
++          },
++          "version": "v1"
++        },
++        "rollbackProof": null,
++        "updatedAt": 1789703186984,
++        "version": "v1"
++      },
++      {
++        "candidateProof": {
++          "baseSha": "989af8a52179702a5fd063337d09b2b376e739f1",
++          "execution": {
++            "createdAt": 1789365905968,
++            "generation": 2,
++            "id": "34811959137:1:repair",
++            "launcherSha": "2a24c4d9cb16ffcd7fec0ea75364be9fa0adf9d7",
++            "purpose": "candidate",
++            "releaseId": "release:c8958a08eaa25953233643862a0bbd0717400468d43a7db31546523df55cd453",
++            "revision": "989af8a52179702a5fd063337d09b2b376e739f1",
++            "runAttempt": 1,
++            "runId": 34811959137
++          },
++          "finishedAt": 1789366024000,
++          "jobId": 103874980013,
++          "logDigest": "9bfe931f80a40eb188df317dc26417ed91c73222739af0b03acd2e9c481f6844",
++          "observedAt": 1789366074602,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1789365912000,
++          "startupReady": true,
++          "terminalAt": 1789366021898,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "createdAt": 1789365747959,
++        "id": "release:c8958a08eaa25953233643862a0bbd0717400468d43a7db31546523df55cd453",
++        "kind": "hosted_release",
++        "phase": "accepted",
++        "pointerIntent": null,
++        "priorProof": {
++          "baseSha": "989af8a52179702a5fd063337d09b2b376e739f1",
++          "execution": {
++            "createdAt": 1789365750293,
++            "generation": 1,
++            "id": "34811564193:1:repair",
++            "launcherSha": "2a24c4d9cb16ffcd7fec0ea75364be9fa0adf9d7",
++            "purpose": "prior",
++            "releaseId": "release:c8958a08eaa25953233643862a0bbd0717400468d43a7db31546523df55cd453",
++            "revision": "cfe3d22694385e6273977a5a9502e8a1c5ecf2d0",
++            "runAttempt": 1,
++            "runId": 34811564193
++          },
++          "finishedAt": 1789365824000,
++          "jobId": 103874509333,
++          "logDigest": "ec05b537875118b72ec7025d01193210e9e06165f87fd45a8da3fb433bb7a18f",
++          "observedAt": 1789365841241,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1789365757000,
++          "startupReady": true,
++          "terminalAt": 1789365822390,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "priorRevision": "cfe3d22694385e6273977a5a9502e8a1c5ecf2d0",
++        "request": {
++          "createdAt": 1789365588220,
++          "failureReason": null,
++          "id": "release:c8958a08eaa25953233643862a0bbd0717400468d43a7db31546523df55cd453",
++          "kind": "release_request",
++          "revision": "989af8a52179702a5fd063337d09b2b376e739f1",
++          "source": {
++            "base": "2a24c4d9cb16ffcd7fec0ea75364be9fa0adf9d7",
++            "head": "f9df73e53a4c322391c2628b7e372389fa33d4bb",
++            "pullRequest": 30,
++            "reviewReceiptId": "review-receipt:06710412c652919f0c9bdaf5d5106b80f8c6041b2381c366c5ee746510aac250",
++            "reviewRequestId": "review-review:30:f9df73e53a4c322391c2628b7e372389fa33d4bb"
++          },
++          "status": "open",
++          "target": {
++            "environment": "production",
++            "repository": {
++              "installationId": 0,
++              "name": "sentinel",
++              "owner": "ubiquity"
++            }
++          },
++          "version": "v1"
++        },
++        "rollbackProof": null,
++        "updatedAt": 1789366079418,
++        "version": "v1"
++      },
++      {
++        "candidateProof": {
++          "baseSha": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
++          "execution": {
++            "createdAt": 1789401365213,
++            "generation": 3,
++            "id": "34865360653:1:repair",
++            "launcherSha": "2a24c4d9cb16ffcd7fec0ea75364be9fa0adf9d7",
++            "purpose": "candidate",
++            "releaseId": "release:f09b150553eb12ddabd47ef143b90b4195cba3250aeb546de45a14696c8407aa",
++            "revision": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
++            "runAttempt": 1,
++            "runId": 34865360653
++          },
++          "finishedAt": 1789401495000,
++          "jobId": 104047880098,
++          "logDigest": "aab10ea1bce7de42cc86a0fbb8b53f594bf643a07f235b0c5b9f5a2796e6b94f",
++          "observedAt": 1789401510823,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1789401375000,
++          "startupReady": true,
++          "terminalAt": 1789401491757,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "createdAt": 1789400959788,
++        "id": "release:f09b150553eb12ddabd47ef143b90b4195cba3250aeb546de45a14696c8407aa",
++        "kind": "hosted_release",
++        "phase": "accepted",
++        "pointerIntent": null,
++        "priorProof": {
++          "baseSha": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
++          "execution": {
++            "createdAt": 1789400962036,
++            "generation": 2,
++            "id": "34864638664:1:repair",
++            "launcherSha": "2a24c4d9cb16ffcd7fec0ea75364be9fa0adf9d7",
++            "purpose": "prior",
++            "releaseId": "release:f09b150553eb12ddabd47ef143b90b4195cba3250aeb546de45a14696c8407aa",
++            "revision": "989af8a52179702a5fd063337d09b2b376e739f1",
++            "runAttempt": 1,
++            "runId": 34864638664
++          },
++          "finishedAt": 1789401208000,
++          "jobId": 104045417818,
++          "logDigest": "857b59c5e2bc58bd7973301eca40b93c21d12b4b82305970fa4c7affc4f654b8",
++          "observedAt": 1789401223797,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1789400968000,
++          "startupReady": true,
++          "terminalAt": 1789401205694,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "priorRevision": "989af8a52179702a5fd063337d09b2b376e739f1",
++        "request": {
++          "createdAt": 1789400877658,
++          "failureReason": null,
++          "id": "release:f09b150553eb12ddabd47ef143b90b4195cba3250aeb546de45a14696c8407aa",
++          "kind": "release_request",
++          "revision": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
++          "source": {
++            "base": "a3353a801ccda59a5e324ec7fcdde89df7b22a7c",
++            "head": "9cd504a0b6f959342d1a7565db7f1523cca04f25",
++            "pullRequest": 52,
++            "reviewReceiptId": "review-review:52:9cd504a0b6f959342d1a7565db7f1523cca04f25:round-2",
++            "reviewRequestId": "review-review:52:9cd504a0b6f959342d1a7565db7f1523cca04f25:round-2"
++          },
++          "status": "open",
++          "target": {
++            "environment": "production",
++            "repository": {
++              "installationId": 0,
++              "name": "sentinel",
++              "owner": "ubiquity"
++            }
++          },
++          "version": "v1"
++        },
++        "rollbackProof": null,
++        "updatedAt": 1789401518171,
++        "version": "v1"
++      },
++      {
++        "candidateProof": {
++          "baseSha": "20aae115b44ed740c37e2452de4d5530b66430ec",
++          "execution": {
++            "createdAt": 1789489921250,
++            "generation": 5,
++            "id": "34995564960:1:repair",
++            "launcherSha": "848f26fe4c43af4a3f496520f48187f59f3671a7",
++            "purpose": "candidate",
++            "releaseId": "release:a67bd055498a804e03d6d5f3d31f349a38f8cdc550e126ddf0eecca48c547172",
++            "revision": "20aae115b44ed740c37e2452de4d5530b66430ec",
++            "runAttempt": 1,
++            "runId": 34995564960
++          },
++          "finishedAt": 1789490026000,
++          "jobId": 104470918832,
++          "logDigest": "328dfc9173dd8fa2b7981236c95a81177f22192fbdd2d196275e0afb01bebb3d",
++          "observedAt": 1789490037534,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1789489928000,
++          "startupReady": true,
++          "terminalAt": 1789490023445,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "createdAt": 1789489743448,
++        "id": "release:a67bd055498a804e03d6d5f3d31f349a38f8cdc550e126ddf0eecca48c547172",
++        "kind": "hosted_release",
++        "phase": "accepted",
++        "pointerIntent": null,
++        "priorProof": {
++          "baseSha": "20aae115b44ed740c37e2452de4d5530b66430ec",
++          "execution": {
++            "createdAt": 1789489745728,
++            "generation": 4,
++            "id": "34994258988:1:repair",
++            "launcherSha": "848f26fe4c43af4a3f496520f48187f59f3671a7",
++            "purpose": "prior",
++            "releaseId": "release:a67bd055498a804e03d6d5f3d31f349a38f8cdc550e126ddf0eecca48c547172",
++            "revision": "7e052c591ee8d7bc8dc5beaadbf143aeda7cde3c",
++            "runAttempt": 1,
++            "runId": 34994258988
++          },
++          "finishedAt": 1789489827000,
++          "jobId": 104469866647,
++          "logDigest": "8d8037593a0868b278aec0fda0b36f28a269c3a79adf32c9918ac2e036b9a83c",
++          "observedAt": 1789489847574,
++          "outcome": "healthy",
++          "ref": "refs/heads/sentinel-supervisor",
++          "repository": "ubiquity/sentinel",
++          "settled": true,
++          "startedAt": 1789489752000,
++          "startupReady": true,
++          "terminalAt": 1789489825655,
++          "workflowId": 357012162,
++          "workflowPath": ".github/workflows/supervisor.yml"
++        },
++        "priorRevision": "7e052c591ee8d7bc8dc5beaadbf143aeda7cde3c",
++        "request": {
++          "createdAt": 1789488907428,
++          "failureReason": null,
++          "id": "release:a67bd055498a804e03d6d5f3d31f349a38f8cdc550e126ddf0eecca48c547172",
++          "kind": "release_request",
++          "revision": "20aae115b44ed740c37e2452de4d5530b66430ec",
++          "source": {
++            "base": "10a863c0c813bb384c1ff67bbe67ee380f9b18c9",
++            "head": "c89f4b14715d5a9e795c00a61ae88b804c0b38b1",
++            "pullRequest": 62,
++            "reviewReceiptId": "review-receipt:648c5a716e77d8288b354e849f6e5c86edde3c4844771e6d6b5f29ff1e113616",
++            "reviewRequestId": "review-review:62:c89f4b14715d5a9e795c00a61ae88b804c0b38b1"
++          },
++          "status": "open",
++          "target": {
++            "environment": "production",
++            "repository": {
++              "installationId": 0,
++              "name": "sentinel",
++              "owner": "ubiquity"
++            }
++          },
++          "version": "v1"
++        },
++        "rollbackProof": null,
++        "updatedAt": 1789490042640,
++        "version": "v1"
++      }
++    ],
++    "githubCooldowns": []
++  }
++}
+diff --git a/tests/host/hosted-autonomy-refresh-park_test.ts b/tests/host/hosted-autonomy-refresh-park_test.ts
+new file mode 100644
+index 0000000000..3f76d7389c
+--- /dev/null
++++ b/tests/host/hosted-autonomy-refresh-park_test.ts
+@@ -0,0 +1,341 @@
++/**
++ * JAM B11 through the real hosted maintenance pass, replayed from the REAL
++ * record and release custody (sentinel issue 157 / PR 160, live state
++ * 2026-10-17T23:3xZ, R80 installed at generation 80).
++ *
++ * R80 refused the refreshed candidate on a protected-path verdict, blocked the
++ * record with "base refresh failed 3 consecutive times: invalid candidate
++ * could not be preserved" and detached PR 160 (markTerminalBlocked). The
++ * refresh re-arm pass then kept it as `refresh:...:retained:activation` on
++ * every pass: a refusal at or after the corrected validator's activation is
++ * that validator's own and can never be re-armed, so nothing could ever move
++ * it and nothing told the owner. Now that pass parks it ONCE as an explicit
++ * owner-gated block that restores the verified PR binding, and names it on
++ * every later pass without a read or a write. Nothing is charged, refunded,
++ * pushed, merged, reviewed, closed or deleted.
++ */
++import assert from "node:assert/strict";
++import { canonicalStringify } from "../../src/contracts/canonical.ts";
++import type {
++  RepairStateWriter,
++  StateReadView,
++} from "../../src/contracts/ports.ts";
++import {
++  parseReleaseStateSnapshotV1,
++  type ReleaseStateSnapshotV1,
++} from "../../src/contracts/state-snapshots.ts";
++import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
++import {
++  type HostedAutonomyGitHubV1,
++  type HostedAutonomyPullV1,
++  type HostedAutonomyResultV1,
++  runHostedAutonomy,
++} from "../../ops/hosted-autonomy.ts";
++import { planHostedRetries } from "../../ops/hosted-autonomy-retries.ts";
++import { hostedRepositoryKey } from "../../ops/hosted-autonomy-policy.ts";
++import {
++  snapshotOf,
++  TransitionState,
++} from "./hosted-autonomy-preservation-fixtures.ts";
++import {
++  R80_RUNTIME,
++  r80Available,
++  withR80,
++} from "../repair/refresh-refusal-r80.ts";
++
++const LIVE = JSON.parse(
++  await Deno.readTextFile(
++    new URL("../fixtures/host/refresh-refusal-157-live.json", import.meta.url),
++  ),
++) as {
++  work: WorkRecordV1[];
++  reservations: unknown[];
++  release: unknown;
++  pullRequest: { number: number; head: string; headRef: string };
++  observedBase: string;
++};
++
++const ID = "issue-ubiquity-sentinel-157";
++const R80_MESSAGE =
++  "base refresh failed 3 consecutive times: invalid candidate could not be preserved";
++const PARK =
++  "base refresh refused by trusted validation; owner action required (land the change by hand or close the issue): ";
++const HEAD = LIVE.pullRequest.head;
++const BRANCH = LIVE.pullRequest.headRef;
++/** The live development tip of the 23:38Z pass (the base moved on). */
++const TIP = "3f041b46d95269b29054ca5c27bce6aa179f9683";
++/** The live pass instant (2026-10-17T23:40:00Z). */
++const NOW = Date.parse("2026-10-17T23:40:00Z");
++
++interface Facts {
++  issueOpen?: boolean;
++  pulls?: { number: number; state: string; head: string | null }[] | null;
++  pull?: Partial<HostedAutonomyPullV1> | null;
++}
++
++interface Calls {
++  listings: number;
++  pullReads: number;
++  merges: number;
++  closes: number;
++}
++
++function surface(facts: Facts, calls: Calls): HostedAutonomyGitHubV1 {
++  const pull: HostedAutonomyPullV1 = {
++    number: LIVE.pullRequest.number,
++    state: "open",
++    merged: false,
++    mergeCommitSha: null,
++    headSha: HEAD,
++    baseRef: "development",
++    baseSha: LIVE.work[0]!.target.base,
++    author: "ubiquity-sentinel[bot]",
++    parents: [],
++    revisionOnBaseBranch: false,
++    baseAncestorOfRevision: false,
++    ...(facts.pull ?? {}),
++  };
++  return {
++    readDefaultBranch: () => Promise.resolve("development"),
++    readBaseTip: (branch: string) =>
++      Promise.resolve(
++        branch === "development"
++          ? TIP
++          : branch === BRANCH || branch.startsWith("sentinel-candidates/")
++          ? HEAD
++          : null,
++      ),
++    hasSuccessfulCheck: () => Promise.resolve(false),
++    hasAllChecksGreen: () => Promise.resolve(false),
++    readPull: () => {
++      calls.pullReads++;
++      return Promise.resolve(facts.pull === null ? null : pull);
++    },
++    readIssueOpen: () => Promise.resolve(facts.issueOpen ?? true),
++    merge: () => {
++      calls.merges++;
++      return Promise.resolve(null);
++    },
++    closeIssue: () => {
++      calls.closes++;
++      return Promise.resolve(false);
++    },
++    listParkedRuns: () => Promise.resolve([]),
++    approveRun: () => Promise.resolve(false),
++    mismatchDisposition: {
++      readRefAbsent: () => Promise.resolve(null),
++      listPullsByHead: () => {
++        calls.listings++;
++        return Promise.resolve(
++          facts.pulls === undefined
++            ? [{ number: LIVE.pullRequest.number, state: "open", head: BRANCH }]
++            : facts.pulls,
++        );
++      },
++      readRunTerminal: () => Promise.resolve(null),
++    },
++  };
++}
++
++function liveRelease(): ReleaseStateSnapshotV1 {
++  return parseReleaseStateSnapshotV1(structuredClone(LIVE.release));
++}
++
++function liveState(record: WorkRecordV1 = LIVE.work[0]!): TransitionState {
++  const state = new TransitionState(
++    snapshotOf([structuredClone(record)], structuredClone(LIVE.reservations)),
++    liveRelease(),
++  );
++  state.snapshot = { ...state.snapshot, updatedAt: NOW - 60_000 };
++  return state;
++}
++
++async function pass(
++  state: TransitionState,
++  facts: Facts = {},
++  now = NOW,
++): Promise<{ result: HostedAutonomyResultV1; calls: Calls }> {
++  const calls: Calls = { listings: 0, pullReads: 0, merges: 0, closes: 0 };
++  // The production allowlist and the live release custody: R80 installed.
++  const result = await runHostedAutonomy({
++    state: state as unknown as StateReadView & RepairStateWriter,
++    githubFor: () => surface(facts, calls),
++    clock: { now: () => now },
++  });
++  return { result, calls };
++}
++
++function refreshActions(result: HostedAutonomyResultV1): string[] {
++  return result.actions.filter((action) => action.startsWith("refresh:"));
++}
++
++Deno.test("refresh park (live 157): R80's own refusal parks once for the owner with PR 160 restored, then is named on every pass", async () => {
++  const live = LIVE.work[0]!;
++  assert.equal(live.blocker?.message, R80_MESSAGE);
++  assert.equal(live.target.pr, null, "R80 detached PR 160");
++  const state = liveState();
++  const reservations = canonicalStringify(state.snapshot.reservations);
++
++  // Pass 1: one CAS write parks it and restores the verified PR binding.
++  const first = await pass(state);
++  assert.equal(first.result.status, "applied", JSON.stringify(first.result));
++  assert.deepEqual(refreshActions(first.result), [
++    `refresh:${ID}:owner_parked:pr=160`,
++  ]);
++  assert.equal(state.writes, 1);
++  assert.deepEqual(state.snapshot.work[0], {
++    ...live,
++    blocker: { kind: "other", message: `${PARK}${R80_MESSAGE}`, since: NOW },
++    target: { ...live.target, pr: 160 },
++    updatedAt: NOW,
++  });
++  assert.equal(
++    canonicalStringify(state.snapshot.reservations),
++    reservations,
++    "every charge is byte-identical: nothing charged or refunded",
++  );
++  assert.equal(first.calls.merges, 0, "never merged");
++  assert.equal(first.calls.closes, 0, "never closed");
++
++  // Every later pass names it without any read or write.
++  for (const later of [NOW + 60 * 60_000, NOW + 30 * 24 * 60 * 60_000]) {
++    const parked = canonicalStringify(state.snapshot);
++    const next = await pass(state, {}, later);
++    assert.equal(state.writes, 1, JSON.stringify(next.result));
++    assert.equal(canonicalStringify(state.snapshot), parked);
++    assert.deepEqual(refreshActions(next.result), [
++      `refresh:${ID}:owner_required:pr=160`,
++    ]);
++    assert.ok(
++      !next.result.actions.some((action) =>
++        action.startsWith(`retry:${ID}:grant`) ||
++        action.startsWith(`merge:${ID}`) ||
++        action.startsWith(`delivery:${ID}:carried_merge`)
++      ),
++      JSON.stringify(next.result.actions),
++    );
++    assert.equal(next.calls.listings, 0, "no listing for a bound park");
++    assert.equal(next.calls.merges, 0);
++  }
++
++  // No retry rule plans the park, at the moved base tip or at its own base.
++  for (const tip of [TIP, live.target.base]) {
++    const denied: string[] = [];
++    const plans = planHostedRetries(
++      state.snapshot,
++      NOW + 60 * 60_000,
++      R80_RUNTIME as never,
++      new Map([[hostedRepositoryKey(live.repository), tip]]),
++      new Set(),
++      (denial) => denied.push(denial.reason),
++    );
++    assert.deepEqual(plans.filter((plan) => plan.id === ID), []);
++  }
++});
++
++Deno.test("refresh park: an unverified pull request parks without a binding, then binds it once it verifies", async () => {
++  const state = liveState();
++  const first = await pass(state, { pulls: null });
++  assert.equal(first.result.status, "applied", JSON.stringify(first.result));
++  assert.deepEqual(refreshActions(first.result), [
++    `refresh:${ID}:owner_parked:pr=unverified`,
++  ]);
++  const parked = state.snapshot.work[0]!;
++  assert.equal(parked.blocker?.message, `${PARK}${R80_MESSAGE}`);
++  assert.equal(parked.target.pr, null, "a binding is never fabricated");
++
++  // Still unverifiable: named, no write.
++  const second = await pass(state, { pull: { headSha: TIP } }, NOW + 60_000);
++  assert.equal(state.writes, 1, JSON.stringify(second.result));
++  assert.deepEqual(refreshActions(second.result), [
++    `refresh:${ID}:owner_required:pr=unverified`,
++  ]);
++
++  // Verified: one write binds the PR; the message is never rewritten.
++  const third = await pass(state, {}, NOW + 120_000);
++  assert.equal(third.result.status, "applied", JSON.stringify(third.result));
++  assert.deepEqual(refreshActions(third.result), [
++    `refresh:${ID}:owner_bound:pr=160`,
++  ]);
++  assert.equal(state.writes, 2);
++  assert.deepEqual(state.snapshot.work[0], {
++    ...parked,
++    target: { ...parked.target, pr: 160 },
++    updatedAt: NOW + 120_000,
++  });
++
++  const fourth = await pass(state, {}, NOW + 180_000);
++  assert.equal(state.writes, 2);
++  assert.deepEqual(refreshActions(fourth.result), [
++    `refresh:${ID}:owner_required:pr=160`,
++  ]);
++});
++
++Deno.test("refresh park: a runtime-written park that kept its PR is named on every pass with no read or write", async () => {
++  const live = LIVE.work[0]!;
++  const record: WorkRecordV1 = {
++    ...live,
++    blocker: {
++      kind: "other",
++      message: `${PARK}candidate touches a protected path`,
++      since: live.blocker!.since,
++    },
++    target: { ...live.target, pr: 160 },
++  };
++  const state = liveState(record);
++  const before = canonicalStringify(state.snapshot);
++  const { result, calls } = await pass(state);
++  assert.equal(state.writes, 0, JSON.stringify(result));
++  assert.equal(canonicalStringify(state.snapshot), before);
++  assert.deepEqual(refreshActions(result), [
++    `refresh:${ID}:owner_required:pr=160`,
++  ]);
++  assert.equal(calls.listings, 0);
++});
++
++Deno.test("refresh park: a closed issue's refusal is neither parked nor named", async () => {
++  for (
++    const record of [
++      LIVE.work[0]!,
++      {
++        ...LIVE.work[0]!,
++        blocker: {
++          kind: "other" as const,
++          message: `${PARK}${R80_MESSAGE}`,
++          since: NOW,
++        },
++      },
++    ]
++  ) {
++    const state = liveState(record);
++    const before = canonicalStringify(state.snapshot);
++    const { result } = await pass(state, { issueOpen: false });
++    assert.equal(state.writes, 0, JSON.stringify(result));
++    assert.equal(canonicalStringify(state.snapshot), before);
++    assert.deepEqual(refreshActions(result), []);
++  }
++});
++
++Deno.test({
++  name:
++    "rollback: R80 parses the launcher's park and binding writes and its own selection skips them",
++  ignore: !(await r80Available()),
++  fn: async () => {
++    const written: unknown[] = [];
++    const state = liveState();
++    const original = state.writeRepair.bind(state);
++    state.writeRepair = (next, expected) => {
++      written.push(structuredClone(next));
++      return original(next, expected);
++    };
++    await pass(state, { pulls: null });
++    await pass(state, {}, NOW + 60_000);
++    assert.equal(written.length, 2);
++    await withR80((r80) => {
++      for (const snapshot of written) {
++        r80.parse(snapshot);
++        assert.equal(r80.skipReason(snapshot, ID, NOW), "blocked");
++      }
++    });
++  },
++});
+diff --git a/tests/host/hosted-autonomy-refresh-rearm_test.ts b/tests/host/hosted-autonomy-refresh-rearm_test.ts
+index bcb0f88235..5087fcc712 100644
+--- a/tests/host/hosted-autonomy-refresh-rearm_test.ts
++++ b/tests/host/hosted-autonomy-refresh-rearm_test.ts
+@@ -61,6 +61,9 @@ const DAY = 24 * 60 * 60 * 1000;
+ const BRANCH = candidateBranch(ID as never);
+ const REFUSAL =
+   "base refresh failed 3 consecutive times: invalid candidate could not be preserved";
++/** The runtime's owner-gated refresh park (`BASE_REFRESH_REFUSED_PREFIX`). */
++const OWNER_PARK =
++  "base refresh refused by trusted validation; owner action required (land the change by hand or close the issue): ";
+ /** The generation-76 runtime, without the base-edge validator fix. */
+ const R76 = "41bb853a1bedfc0422bf903dfabbe23bf714b44f";
+ /** A stand-in corrected runtime revision. */
+@@ -401,6 +404,46 @@ async function expectStateRetained(
+   );
+ }
+ 
++/**
++ * The corrected validator's own refusal (JAM B11): one CAS write parks it for
++ * the owner with the verified PR restored, and the next pass only names it.
++ */
++async function expectParked(
++  record: WorkRecordV1,
++  release: ReleaseStateSnapshotV1,
++  runtimes: readonly HostedRefreshRearmRuntimeV1[] | null = [pin(R77)],
++  now = T0 + 2 * DAY,
++): Promise<void> {
++  const state = new TransitionState(snapshotOf([record], [CHARGE]), release);
++  const charges = canonicalStringify(state.snapshot.reservations);
++  const result = await runAt(state, {}, now, runtimes);
++  assert.equal(result.status, "applied", JSON.stringify(result));
++  assert(
++    result.actions.includes(`refresh:${ID}:owner_parked:pr=1012`),
++    JSON.stringify(result),
++  );
++  assert.equal(state.writes, 1);
++  assert.deepEqual(state.snapshot.work[0], {
++    ...record,
++    blocker: {
++      kind: "other",
++      message: `${OWNER_PARK}${record.blocker!.message}`,
++      since: now,
++    },
++    target: { ...record.target, pr: 1012 },
++    updatedAt: now,
++  });
++  assert.equal(canonicalStringify(state.snapshot.reservations), charges);
++  const parked = canonicalStringify(state.snapshot);
++  const later = await runAt(state, {}, now + DAY, runtimes);
++  assert.equal(state.writes, 1, JSON.stringify(later));
++  assert.equal(canonicalStringify(state.snapshot), parked);
++  assert(
++    later.actions.includes(`refresh:${ID}:owner_required:pr=1012`),
++    JSON.stringify(later),
++  );
++}
++
+ Deno.test("refresh re-arm: a rollback that advanced the generation to 78 on generation-76 code keeps the record blocked", async () => {
+   const record = await refusedRefresh();
+   // A failed 77 restores 41bb853a1 once at generation 78: the generation
+@@ -438,7 +481,7 @@ Deno.test("refresh re-arm: the shipped allowlist names only generations 77 throu
+   await expectRetained(record, FIXED(), "runtime", []);
+ });
+ 
+-Deno.test("refresh re-arm: a refusal written after the corrected runtime's activation is its own and stays blocked", async () => {
++Deno.test("refresh re-arm: a refusal written after the corrected runtime's activation is its own and parks for the owner", async () => {
+   const record = await refusedRefresh();
+   const after = releaseAt({
+     revision: R77,
+@@ -450,7 +493,7 @@ Deno.test("refresh re-arm: a refusal written after the corrected runtime's activ
+       observedAt: T0 - 60 * 60 * 1000,
+     },
+   });
+-  await expectRetained(record, after, "activation");
++  await expectParked(record, after);
+   // A refusal exactly at the activation instant is not before it.
+   const at = releaseAt({
+     revision: R77,
+@@ -462,7 +505,7 @@ Deno.test("refresh re-arm: a refusal written after the corrected runtime's activ
+       observedAt: T0,
+     },
+   });
+-  await expectRetained(record, at, "activation");
++  await expectParked(record, at);
+ });
+ 
+ /**
+@@ -541,37 +584,29 @@ Deno.test("refresh re-arm: a healthy owner install whose bootstrap settled in th
+   }
+ });
+ 
+-Deno.test("refresh re-arm: after a healthy owner install, a refusal at or after the pinned bound is the corrected runtime's own", async () => {
++Deno.test("refresh re-arm: after a healthy owner install, a refusal at or after the pinned bound is the corrected runtime's own and parks for the owner", async () => {
+   const installedAt = PINNED + DAY;
+   const release = ownerInstalledAndBootstrapped(installedAt);
+   for (const since of [PINNED, installedAt + 60 * 60 * 1000]) {
+     const record = await refusedRefresh();
+-    const state = new TransitionState(
+-      snapshotOf([{ ...record, blocker: { ...record.blocker!, since } }], [
+-        CHARGE,
+-      ]),
++    await expectParked(
++      { ...record, blocker: { ...record.blocker!, since } },
+       release,
+-    );
+-    const before = canonicalStringify(state.snapshot);
+-    const result = await runAt(state, {}, installedAt + 30 * DAY);
+-    assert.equal(state.writes, 0, JSON.stringify(result));
+-    assert.equal(canonicalStringify(state.snapshot), before);
+-    assert(
+-      result.actions.includes(`refresh:${ID}:retained:activation`),
+-      JSON.stringify(result),
++      [pin(R77)],
++      installedAt + 30 * DAY,
+     );
+   }
+ });
+ 
+-Deno.test("refresh re-arm: a pinned bound later than the runtime's own recorded execution never counts", async () => {
++Deno.test("refresh re-arm: a pinned bound later than the runtime's own recorded execution never counts, so no re-arm is ever proven and the refusal parks for the owner", async () => {
+   // R77 already executed before this pin: the pin is not its activation
+-  // bound, and with only its own proofs nothing else qualifies.
++  // bound, and with only its own proofs nothing else qualifies. With no
++  // provable activation the refusal is never re-armed; it is named for the
++  // owner instead of being retained forever.
+   const record = await refusedRefresh();
+   const release = ownerInstalledAndBootstrapped(T0 + DAY);
+-  await expectRetained(record, release, "activation", [
+-    pin(R77, T0 + DAY + 10 * 60_000),
+-  ]);
+-  await expectRetained(
++  await expectParked(record, release, [pin(R77, T0 + DAY + 10 * 60_000)]);
++  await expectParked(
+     record,
+     releaseAt({
+       revision: R77,
+@@ -583,7 +618,6 @@ Deno.test("refresh re-arm: a pinned bound later than the runtime's own recorded
+         observedAt: T0 + 2 * 60 * 60 * 1000,
+       },
+     }),
+-    "activation",
+   );
+ });
+ 
+diff --git a/tests/repair/base-refresh-auth_test.ts b/tests/repair/base-refresh-auth_test.ts
+index 24fe917d03..4497b81eb6 100644
+--- a/tests/repair/base-refresh-auth_test.ts
++++ b/tests/repair/base-refresh-auth_test.ts
+@@ -231,7 +231,8 @@ Deno.test(
+       `base refresh failed 3 consecutive times: auth_failed ${detail}`,
+     );
+     assert.equal(blocked.intent, null);
+-    assert.equal(blocked.target.pr, null);
++    // The terminal block keeps the still-open PR bound (JAM B11).
++    assert.equal(blocked.target.pr, 7);
+     // The launcher's credential-expiry rule re-admits only the exact legacy
+     // expiry messages; a permission refusal stays a visible terminal block.
+     const denials: string[] = [];
+@@ -244,13 +245,14 @@ Deno.test(
+     assert.deepEqual(candidates, []);
+     assert.deepEqual(denials, []);
+     // The same record under the exact legacy (generation <= 76) expiry
+-    // message is the class the launcher does re-admit, so the refusal above
+-    // is decided by the message alone.
++    // message, in the legacy detached shape, is the class the launcher does
++    // re-admit, so the refusal above is decided by the message alone.
+     const legacy = {
+       ...last,
+       sequence: last.sequence + 1,
+       work: [{
+         ...blocked,
++        target: { ...blocked.target, pr: null },
+         blocker: {
+           kind: "other" as const,
+           message:
+diff --git a/tests/repair/base-refresh-refusal_test.ts b/tests/repair/base-refresh-refusal_test.ts
+new file mode 100644
+index 0000000000..57de327e99
+--- /dev/null
++++ b/tests/repair/base-refresh-refusal_test.ts
+@@ -0,0 +1,234 @@
++/**
++ * JAM B11 (sentinel issue 157, PR 160), replayed from the REAL record shapes
++ * through the real repair loop with fake ports.
++ *
++ * R79 (549c7a691) implemented and preserved the candidate 784e233ec for issue
++ * 157 at base d5cc84402. It edits ops/hosted-autonomy-follow-ups.ts,
++ * ops/hosted-autonomy-follow-up-pass.ts and ops/hosted-autonomy-github-issues.ts,
++ * which R80 (e48e7e110) added to the owner-protected paths. When the base moved
++ * to 614a4fa02, R80 regenerated the deterministic refresh merge 18cceb957 and
++ * the trusted publication validator refused it — "a protected entry does not
++ * match the trusted base tree", a deterministic `invalid` verdict on an
++ * immutable merge. R80 counted that verdict as a transient failure, re-ran the
++ * same doomed refresh twice more (70 minutes), dropped the reason and blocked
++ * with markTerminalBlocked, which detached the still-open PR 160.
++ *
++ * Here the same verdict parks the record once, at the first refusal, as an
++ * explicit owner-gated block that names the closed reason and keeps PR 160 as
++ * `target.pr`. Nothing is pushed, charged, refunded or reviewed, and every
++ * written snapshot parses under R80, whose own selection skips the park.
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import { portError, portOk } from "../../src/contracts/ports.ts";
++import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
++import {
++  DETERMINISTIC_PUBLICATION_DETAILS,
++  PUBLICATION_BINARY_DETAIL,
++  PUBLICATION_PROTECTED_DETAIL,
++} from "../../src/github/snapshot-policy.ts";
++import {
++  BASE_REFRESH_REFUSED_PREFIX,
++  isBaseRefreshRefusedPark,
++} from "../../src/repair/loop-base-refresh.ts";
++import { exactOpenPr } from "./loop-candidate-fixtures.ts";
++import { makeRig, type RigV1, seededSnapshot } from "./loop-rig.ts";
++import { r80Available, withR80 } from "./refresh-refusal-r80.ts";
++
++const LIVE = JSON.parse(
++  await Deno.readTextFile(
++    new URL("../fixtures/host/refresh-refusal-157-live.json", import.meta.url),
++  ),
++) as {
++  refreshing: WorkRecordV1;
++  reservations: unknown[];
++  observedBase: GitSha;
++  preparedHead: GitSha;
++};
++
++/** The owner-gated park the runtime writes for a refused refresh. */
++const PARK =
++  "base refresh refused by trusted validation; owner action required (land the change by hand or close the issue): ";
++const R80_GENERATION = 80;
++
++/** The live instant of R80's first refusal (2026-10-17T18:35:57Z). */
++const FIRST_REFUSAL_AT = 1792262157846;
++
++interface Live {
++  rig: RigV1;
++  record: WorkRecordV1;
++  written: RepairStateSnapshotV1[];
++  prepares: number;
++}
++
++async function liveRig(detail: string, name: string): Promise<Live> {
++  const record = structuredClone(LIVE.refreshing);
++  const branch = record.target.branch!;
++  const head = record.target.head!;
++  const live: Live = {
++    rig: undefined as never,
++    record,
++    written: [],
++    prepares: 0,
++  };
++  live.rig = await makeRig(name, {
++    summaries: false,
++    localScope: true,
++    github: {
++      baseSha: LIVE.observedBase,
++      candidateLifecycle: {
++        refs: { [`refs/heads/${branch}`]: head },
++        pullRequests: [exactOpenPr(160, head, branch, record.target.base)],
++        prepareBaseRefresh: (request) => {
++          live.prepares++;
++          // The exact persisted prepared merge regenerates byte-identically.
++          assert.equal(request.pullRequestNumber, 160);
++          assert.equal(request.expectedHead, head);
++          assert.equal(request.expectedBase, LIVE.observedBase);
++          assert.equal(request.preparedHead, LIVE.preparedHead);
++          return Promise.resolve(portOk(LIVE.preparedHead));
++        },
++        preserveCandidate: (request) => {
++          assert.equal(request.candidate.head, LIVE.preparedHead);
++          assert.equal(request.candidate.base, LIVE.observedBase);
++          assert.equal(request.publishedHead, head);
++          return Promise.resolve(portError("invalid", detail));
++        },
++      },
++    },
++  });
++  const original = live.rig.store.writeRepair.bind(live.rig.store);
++  live.rig.store.writeRepair = (next, expected) => {
++    live.written.push(structuredClone(next));
++    return original(next, expected);
++  };
++  const seeded = await original(
++    seededSnapshot([record], {
++      reservations: structuredClone(LIVE.reservations) as never,
++    }),
++    null,
++  );
++  assert.ok(seeded.ok && seeded.value.status === "applied");
++  // The live pass: just past the record's own re-armed wait.
++  live.rig.clock.advance(FIRST_REFUSAL_AT - live.rig.clock.now());
++  return live;
++}
++
++Deno.test("refresh refusal (live 157): the trusted validator's protected-path verdict parks the record once for the owner and keeps PR 160", async () => {
++  const live = await liveRig(PUBLICATION_PROTECTED_DETAIL, "refusal-157");
++  const { rig, record } = live;
++  try {
++    const outcome = await rig.run();
++    assert.notEqual(outcome.status, "state_error", JSON.stringify(outcome));
++    let state = await rig.snapshot();
++    let work = state.work[0]!;
++    assert.equal(work.nextStep, "blocked", JSON.stringify(work));
++    assert.deepEqual(work.blocker, {
++      kind: "other",
++      message: `${PARK}candidate touches a protected path`,
++      since: FIRST_REFUSAL_AT,
++    });
++    assert.equal(work.target.pr, 160, "the open PR stays bound to its record");
++    assert.equal(work.intent, null, "the refused refresh is closed at once");
++    assert.equal(work.wait, null, "no wait is re-armed for a verdict");
++    assert.deepEqual(work.target, { ...record.target }, "target untouched");
++    assert.deepEqual(work.counters, record.counters);
++    assert.deepEqual(state.reservations, LIVE.reservations, "nothing charged");
++    assert.deepEqual(rig.github.pushes, [], "nothing is pushed");
++    assert.equal(rig.model.requests.length, 0, "no model start");
++    assert.equal(rig.github.preservationRequests.length, 1);
++
++    // A later run never rewrites the park and never retries the refresh.
++    rig.clock.advance(60 * 60_000);
++    const sequence = state.sequence;
++    await rig.run();
++    state = await rig.snapshot();
++    work = state.work[0]!;
++    assert.equal(state.sequence, sequence, "no further write");
++    assert.equal(rig.github.preservationRequests.length, 1);
++    assert.equal(live.prepares, 1);
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});
++
++Deno.test("refresh refusal: the park text is the exported owner-gated prefix, distinct from every refresh failure class", () => {
++  assert.equal(BASE_REFRESH_REFUSED_PREFIX, PARK);
++  assert.ok(
++    isBaseRefreshRefusedPark(`${PARK}candidate touches a protected path`),
++  );
++  assert.ok(!isBaseRefreshRefusedPark(PARK), "a reason is required");
++  for (
++    const message of [
++      "base refresh failed 3 consecutive times: invalid candidate could not be preserved",
++      "base refresh has conflicts",
++      "candidate touches a protected path",
++    ]
++  ) {
++    assert.ok(!isBaseRefreshRefusedPark(message), message);
++  }
++  assert.ok(!/^base refresh failed [1-9][0-9]* consecutive times: /.test(PARK));
++  assert.ok(!/^base refresh has conflicts( at [0-9a-f]{40})?$/.test(PARK));
++});
++
++Deno.test("refresh refusal: every other deterministic verdict parks with its own closed detail", async () => {
++  const live = await liveRig(PUBLICATION_BINARY_DETAIL, "refusal-binary");
++  try {
++    await live.rig.run();
++    const work = (await live.rig.snapshot()).work[0]!;
++    assert.equal(work.blocker?.message, `${PARK}${PUBLICATION_BINARY_DETAIL}`);
++    assert.equal(work.target.pr, 160);
++    assert.ok(
++      DETERMINISTIC_PUBLICATION_DETAILS.includes(PUBLICATION_BINARY_DETAIL),
++    );
++  } finally {
++    await live.rig.ctx.cleanup();
++  }
++});
++
++Deno.test("refresh refusal: an invalid answer outside the closed verdict set stays a bounded failure", async () => {
++  // A malformed request (STATIC_PRESERVE_INPUT) is not a verdict on the
++  // candidate: the bounded failure record keeps counting it.
++  const live = await liveRig(
++    "candidate preservation request is invalid",
++    "refusal-input",
++  );
++  try {
++    await live.rig.run();
++    const work = (await live.rig.snapshot()).work[0]!;
++    assert.equal(work.nextStep, "work");
++    assert.equal(work.intent?.kind, "base_refresh");
++    assert.equal(work.intent?.failure?.kind, "invalid");
++    assert.equal(work.intent?.failure?.attempts, 1);
++    assert.equal(work.target.pr, 160);
++  } finally {
++    await live.rig.ctx.cleanup();
++  }
++});
++
++Deno.test({
++  name:
++    "rollback: R80 parses every snapshot the refusal park writes and its own selection skips the park",
++  ignore: !(await r80Available()),
++  fn: async () => {
++    const live = await liveRig(PUBLICATION_PROTECTED_DETAIL, "refusal-r80");
++    try {
++      await live.rig.run();
++      assert.ok(live.written.length >= 1);
++      const last = live.written.at(-1)!;
++      assert.equal(last.work[0]!.target.pr, 160);
++      assert.ok(last.work[0]!.blocker?.message.startsWith(PARK));
++      await withR80((r80) => {
++        for (const snapshot of live.written) r80.parse(snapshot);
++        assert.equal(
++          r80.skipReason(last, live.record.id, FIRST_REFUSAL_AT),
++          "blocked",
++          `R80 (generation ${R80_GENERATION}) never acts on the park`,
++        );
++      });
++    } finally {
++      await live.rig.ctx.cleanup();
++    }
++  },
++});
+diff --git a/tests/repair/base-refresh_test.ts b/tests/repair/base-refresh_test.ts
+index 36801ea37b..ae2b994afd 100644
+--- a/tests/repair/base-refresh_test.ts
++++ b/tests/repair/base-refresh_test.ts
+@@ -1145,6 +1145,8 @@ Deno.test(
+     assert.equal(work.wait, null, "no wait is re-armed");
+     assert.equal(work.target.head, OLD_HEAD, "the candidate is retained");
+     assert.equal(work.target.base, SHA1);
++    // The terminal block never detaches the still-open PR (JAM B11).
++    assert.equal(work.target.pr, 7, "the open PR stays bound to its record");
+     assert.equal(rig.model.requests.length, 0, "no model start");
+   },
+ );
+diff --git a/tests/repair/refresh-refusal-r80.ts b/tests/repair/refresh-refusal-r80.ts
+new file mode 100644
+index 0000000000..08fa0c0b38
+--- /dev/null
++++ b/tests/repair/refresh-refusal-r80.ts
+@@ -0,0 +1,93 @@
++/**
++ * The installed generation-80 runtime (R80, e48e7e110), the rollback target of
++ * the next runtime generation, for the refresh-refusal rollback proofs: R80's
++ * own strict repair-state parser and its own work selection, imported from
++ * the exact `src` tree of the pinned commit, extracted read-only from the local
++ * object store (`git archive`) into a disposable directory under the
++ * repository root. A shallow checkout without the pinned commit reports
++ * `r80Available() === false` and callers mark the case ignored instead of
++ * passing it silently.
++ */
++import { OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION } from "../../src/host/owner-install-runtime-pins.ts";
++
++export const R80_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION;
++
++const ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname)
++  .replace(/\/$/, "");
++
++const GIT_ENV = {
++  PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
++  GIT_CONFIG_GLOBAL: "/dev/null",
++  GIT_CONFIG_SYSTEM: "/dev/null",
++  GIT_TERMINAL_PROMPT: "0",
++};
++
++/** True when the pinned R80 commit is in the local object store. */
++export async function r80Available(): Promise<boolean> {
++  try {
++    const probe = await new Deno.Command("git", {
++      args: ["-C", ROOT, "cat-file", "-e", `${R80_RUNTIME}^{commit}`],
++      clearEnv: true,
++      env: GIT_ENV,
++      stdout: "null",
++      stderr: "null",
++    }).output();
++    return probe.success;
++  } catch {
++    return false;
++  }
++}
++
++/** R80's own strict parser and work selection. */
++export interface R80RuntimeV1 {
++  /** R80's `parseRepairStateSnapshotV1` over a JSON round trip. */
++  parse(snapshot: unknown): unknown;
++  /** R80's `rankEligibleWork` skip reason for one record id (no configs). */
++  skipReason(snapshot: unknown, id: string, now: number): string | undefined;
++}
++
++/** Run `use` with R80's own modules; the extracted tree is always removed. */
++export async function withR80<T>(
++  use: (runtime: R80RuntimeV1) => T | Promise<T>,
++): Promise<T> {
++  const dir = await Deno.makeTempDir({
++    dir: ROOT,
++    prefix: "sentinel-r80-refresh-refusal-",
++  });
++  try {
++    const archive = await new Deno.Command("git", {
++      args: ["-C", ROOT, "archive", "--format=tar", R80_RUNTIME, "src"],
++      clearEnv: true,
++      env: GIT_ENV,
++      stdout: "piped",
++      stderr: "null",
++    }).output();
++    if (!archive.success) throw new Error("R80 source unavailable");
++    await Deno.writeFile(`${dir}/src.tar`, archive.stdout);
++    const extracted = await new Deno.Command("tar", {
++      args: ["-xf", `${dir}/src.tar`, "-C", dir],
++      clearEnv: true,
++      env: { PATH: GIT_ENV.PATH },
++      stdout: "null",
++      stderr: "null",
++    }).output();
++    if (!extracted.success) throw new Error("R80 source unreadable");
++    const snapshots = await import(
++      new URL(`file://${dir}/src/contracts/state-snapshots.ts`).href
++    );
++    const selection = await import(
++      new URL(`file://${dir}/src/repair/selection.ts`).href
++    );
++    const parse = (snapshot: unknown) =>
++      snapshots.parseRepairStateSnapshotV1(
++        JSON.parse(JSON.stringify(snapshot)),
++      );
++    return await use({
++      parse,
++      skipReason: (snapshot, id, now) =>
++        selection.rankEligibleWork(parse(snapshot), [], now).skipped[id],
++    });
++  } finally {
++    await Deno.remove(dir, { recursive: true }).catch(() => {});
++  }
++}
+-- 
+2.43.0
+

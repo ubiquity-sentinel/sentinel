@@ -1,0 +1,268 @@
+diff --git a/tests/model/scratch/base_moved_flip_probe_test.ts b/tests/model/scratch/base_moved_flip_probe_test.ts
+new file mode 100644
+index 0000000000..6be343f06f
+--- /dev/null
++++ b/tests/model/scratch/base_moved_flip_probe_test.ts
+@@ -0,0 +1,109 @@
++// Read-only probe: can a CLEAN, task-accepted, green, spent record reach the
++// BASE_MOVED ceiling park through the real runtime, and does it then stay
++// there under the real launcher delivery pass and the real runtime?
++import assert from "node:assert/strict";
++import type { BudgetReservationV1 } from "../../../src/contracts/budget-reservation.ts";
++import type { ReviewReceiptV1 } from "../../../src/contracts/review-receipt.ts";
++import type { WorkRecordV1 } from "../../../src/contracts/work-record.ts";
++import { reviewTaskStatementDigest } from "../../../src/contracts/review-task-acceptance.ts";
++import { portOk } from "../../../src/contracts/ports.ts";
++import { runRepairCycle } from "../../../src/repair/loop.ts";
++import {
++  MAX_REVIEW_ROUNDS,
++  REVIEW_ROUND_CEILING_BASE_MOVED,
++} from "../../../src/repair/review-round-cap.ts";
++import { REPO, reservation, T0, workRecord } from "../../state/helpers.ts";
++import { APP, queueRig } from "../../repair/delivery-queue-rig.ts";
++import { completedReceipt } from "../../repair/loop-review-fixtures.ts";
++import { SHA1, SHA2 } from "../../state/helpers.ts";
++
++function spentCharges(record: WorkRecordV1): BudgetReservationV1[] {
++  return Array.from({ length: MAX_REVIEW_ROUNDS }, (_, index) =>
++    reservation(`${record.id}-review-${index + 1}`, {
++      repository: REPO,
++      taskId: record.id,
++      attempt: index + 1,
++      head: record.target.head,
++      purpose: "review_request",
++      outcome: "submitted",
++      createdAt: T0 - 30 * 60_000 + index,
++      settledAt: T0 - 30 * 60_000 + index + 1,
++    }));
++}
++
++async function cleanReview(record: WorkRecordV1): Promise<ReviewReceiptV1> {
++  const issueNumber = record.related.issueNumber!;
++  return completedReceipt(record.target.pr!, record.target.head!, SHA1, {
++    id: `review-receipt:${record.id}:latest`,
++    repository: REPO,
++    resultId: `result-${record.id}`,
++    expectedReviewer: APP,
++    observedReviewer: APP,
++    taskAcceptance: {
++      issueNumber,
++      taskDigest: await reviewTaskStatementDigest({
++        issueNumber,
++        title: `issue ${issueNumber}`,
++        body: "",
++      }),
++      verdict: "fulfilled",
++      evidence: ["the exact reviewed change implements the source issue"],
++    },
++  });
++}
++
++Deno.test("probe: issue edited then reverted strands a clean spent record at BASE_MOVED", async () => {
++  const base = await queueRig(1);
++  const [seed] = base.records;
++  const spent = workRecord(seed.id, {
++    ...seed,
++    nextStep: "delivery",
++    counters: { attempts: 1, retries: 0, reviewRounds: MAX_REVIEW_ROUNDS },
++  });
++  const rig = await queueRig(1, {
++    tip: SHA2,
++    shape: () => [spent],
++    reservations: spentCharges(spent),
++    reviews: [await cleanReview(spent)],
++    reviewer: APP,
++    livePolicy: true,
++  });
++  // The owner edits the issue body after the clean third review.
++  let edited = true;
++  const github = rig.github as unknown as {
++    readIssue: (n: number) => Promise<unknown>;
++  };
++  const original = github.readIssue.bind(rig.github);
++  github.readIssue = async (n: number) => {
++    const read = await original(n) as {
++      ok: boolean;
++      value: Record<string, unknown> | null;
++    };
++    if (!edited || !read.ok || read.value === null) return read;
++    return portOk({ ...read.value, body: "edited after review" });
++  };
++  const run = () =>
++    runRepairCycle(rig.deps, {
++      deadline: rig.clock.now() + 60 * 60_000,
++      stepLimit: 16,
++    });
++  await run();
++  let [record] = (await rig.snapshot()).work;
++  console.log("after edited run:", record.nextStep, record.blocker?.message);
++  assert.equal(record.nextStep, "blocked");
++  assert.equal(record.blocker!.message, REVIEW_ROUND_CEILING_BASE_MOVED);
++  // The owner reverts the edit: the clean review binds the live task again.
++  edited = false;
++  const lines: string[] = [];
++  for (let pass = 0; pass < 8; pass++) {
++    lines.push(...await rig.launcher());
++    await run();
++    rig.clock.advance(5 * 60_000);
++  }
++  [record] = (await rig.snapshot()).work;
++  console.log("after 8 launcher+runtime passes:", record.nextStep, record.blocker?.message);
++  console.log("launcher lines:", [...new Set(lines)].join(" | "));
++  console.log("merges:", JSON.stringify(rig.github.merged), "refreshes:", rig.github.refreshes);
++  assert.equal(record.nextStep, "blocked");
++  assert.equal(record.blocker!.message, REVIEW_ROUND_CEILING_BASE_MOVED);
++});
+diff --git a/tests/model/scratch/decomp_part_probe_test.ts b/tests/model/scratch/decomp_part_probe_test.ts
+new file mode 100644
+index 0000000000..972f8b7695
+--- /dev/null
++++ b/tests/model/scratch/decomp_part_probe_test.ts
+@@ -0,0 +1,147 @@
++import type { WorkRecordV1 } from "../../../src/contracts/work-record.ts";
++import { parseWorkRecordV1 } from "../../../src/contracts/work-record.ts";
++import { MATRIX_DECOMPOSE_AFTER_TIMEOUTS } from "../../../src/contracts/matrix-identity.ts";
++import { CONFLICT_PROTECTED_DETAIL } from "../../../src/repair/conflict-resolution.ts";
++import { rankEligibleWork } from "../../../src/repair/selection.ts";
++import { createDecompositionChildren } from "../../../src/repair/transitions.ts";
++import { isDecompositionEligible } from "../../../src/host/matrix-planner.ts";
++import { repositoryConfig } from "../../budget/helpers.ts";
++import { FAVORABLE, runLauncherPass } from "../launcher.ts";
++import {
++  concretize,
++  DEFAULT_SHAPE,
++  GATEWAY,
++  HOUR,
++  NOW,
++  repairSnapshot,
++} from "../world.ts";
++import { runCensus, visibleOwnerPark } from "../census.ts";
++
++async function setup(first: (r: WorkRecordV1) => WorkRecordV1) {
++  const parentPart = await concretize({
++    ...DEFAULT_SHAPE,
++    issue: 900,
++    nextStep: "work",
++    blocker: null,
++    wait: null,
++    candidate: "fresh",
++    intent: "none",
++  });
++  const parent = parseWorkRecordV1({
++    ...parentPart.record,
++    counters: {
++      ...parentPart.record.counters,
++      timeouts: MATRIX_DECOMPOSE_AFTER_TIMEOUTS,
++    },
++  });
++  const children = createDecompositionChildren(parent, NOW - 2 * HOUR);
++  const p1 = parseWorkRecordV1(first(children[0]!));
++  const snapshot = repairSnapshot([
++    { ...parentPart, record: parent },
++    ...[p1, ...children.slice(1)].map((record) => ({
++      record,
++      reservations: [],
++      reviews: [],
++      releaseRequests: [],
++      task: parentPart.task,
++    })),
++  ]);
++  return { parentPart, parent, children, p1, snapshot };
++}
++
++Deno.test("decomposition probe", async () => {
++  const configs = [repositoryConfig(GATEWAY as never, {
++    perHour: null,
++    perSevenDays: null,
++  } as never)];
++  // A: as the checker: part 1 protected.
++  const a = await setup((c) => ({
++    ...c,
++    nextStep: "blocked",
++    blocker: {
++      kind: "other",
++      message: CONFLICT_PROTECTED_DETAIL,
++      since: NOW - HOUR,
++    },
++    updatedAt: NOW - HOUR,
++  }));
++  const rankedA = rankEligibleWork(a.snapshot, configs, NOW);
++  console.log("A ids", a.parent.id, a.children.map((c) => c.id));
++  console.log("A ordered", rankedA.ordered, "skipped", rankedA.skipped);
++  const passA = await runLauncherPass(
++    a.snapshot,
++    FAVORABLE,
++    new Map([[a.parentPart.task.issueNumber, a.parentPart.task]]),
++    NOW,
++  );
++  console.log("A all actions", passA.actions);
++  console.log(
++    "A part1 lines",
++    passA.actions.filter((x) => x.includes(a.p1.id)),
++  );
++  console.log(
++    "A eligible parent",
++    isDecompositionEligible(a.parent, a.snapshot),
++  );
++  // B: part 1 done (owner merged its PR / retired).
++  const b = await setup((c) => ({
++    ...c,
++    nextStep: "done",
++    updatedAt: NOW - HOUR,
++  }));
++  const rankedB = rankEligibleWork(b.snapshot, configs, NOW);
++  console.log("B ordered", rankedB.ordered, "skipped", rankedB.skipped);
++  // C: issue closed: the launcher retires every record.
++  const passC = await runLauncherPass(
++    a.snapshot,
++    { ...FAVORABLE, issueOpen: false },
++    new Map([[a.parentPart.task.issueNumber, a.parentPart.task]]),
++    NOW,
++  );
++  console.log("C actions", passC.actions);
++  console.log(
++    "C after",
++    passC.after.work.map((w) => [w.id, w.nextStep, w.blocker?.message]),
++  );
++  // D: part 1 in a class the retry table re-admits (non-absorbing).
++  const d = await setup((c) => ({
++    ...c,
++    nextStep: "blocked",
++    blocker: {
++      kind: "other",
++      message: "model run did not complete with a trusted candidate",
++      since: NOW - HOUR,
++    },
++    updatedAt: NOW - HOUR,
++  }));
++  for (const off of [0, 25 * HOUR]) {
++    const passD = await runLauncherPass(
++      d.snapshot,
++      FAVORABLE,
++      new Map([[d.parentPart.task.issueNumber, d.parentPart.task]]),
++      NOW + off,
++    );
++    const watched = [d.parent.id, ...d.children.slice(1).map((c) => c.id)];
++    const rankedD = rankEligibleWork(d.snapshot, configs, NOW + off);
++    console.log(
++      "D off",
++      off / HOUR,
++      "actions",
++      passD.actions,
++      "part1 after",
++      passD.after.work.find((w) => w.id === d.p1.id)?.nextStep,
++      "checker-verdict-fires",
++      Object.values(rankedD.skipped).includes("dependency") &&
++        !isDecompositionEligible(d.parent, d.snapshot) &&
++        passD.actions.filter((x) => watched.some((id) => x.includes(`:${id}:`)))
++            .length === 0,
++    );
++  }
++  const census = await runCensus();
++  console.log(
++    "visible owner parks",
++    census.filter(visibleOwnerPark).map((v) =>
++      `${v.classId}@${v.variant}/${v.headCi}`
++    ),
++  );
++});

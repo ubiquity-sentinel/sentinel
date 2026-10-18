@@ -1,0 +1,794 @@
+{
+ "dimensions": [
+  {
+   "name": "nextStep",
+   "values": [
+    "work",
+    "review",
+    "delivery",
+    "blocked",
+    "done"
+   ],
+   "source": "src/contracts/work-record-types.ts NextStepV1; transitions in src/repair/transitions.ts (advanceToReview/advanceToDelivery/advanceToCorrection/markBlocked/markTerminalBlocked/markDone)"
+  },
+  {
+   "name": "wait (reason x until shape)",
+   "values": [
+    "none",
+    "budget_cap(retired cap; ignored under uncapped policy)",
+    "review_pending(bounded)",
+    "review_pending(until=null: loop-merge.ts:234 receipt no longer parses as merge request)",
+    "review_quota(transient; drained once per run by releaseReviewQuotaWait)",
+    "ci_pending(bounded 6h in pre-review + carried; UNBOUNDED in gateDeliveryOnChecks loop-checks.ts:102 and base_pending in routeFailedDeliveryChecks)",
+    "backoff(merge refused / red base RED_BASE_RECHECK; unbounded)",
+    "backoff CI-fix marker (since==until, ci-first-policy.ts ciFixMarker)",
+    "backoff carried-merge marker (exactly 4 min, carried-review.ts)",
+    "unavailable(release wait RELEASE_POLL_MS 5 min, base-refresh failure retry, merge reconcile read; unbounded except base refresh <3)",
+    "manual(until=null when config.sessionBound===null, loop-implementation.ts:95; nothing ever clears it)",
+    "active vs expired (isWaiting: until===null => waiting forever)"
+   ],
+   "source": "src/contracts/work-record-types.ts WorkWaitReasonV1; src/repair/selection.ts isWaiting/isRetiredBudgetWait; writers grep setWait in src/repair"
+  },
+  {
+   "name": "blocker.kind",
+   "values": [
+    "null",
+    "stale_source",
+    "missing_evidence",
+    "evidence_expired",
+    "dependency",
+    "review_quota",
+    "unavailable",
+    "other"
+   ],
+   "source": "src/contracts/work-record-types.ts BlockerKindV1"
+  },
+  {
+   "name": "blocker message class (closed abstraction)",
+   "values": [
+    "RETIRED 'source issue is closed; the repair no longer exists' (terminal)",
+    "RETIRED_MERGED 'pull request was merged outside the trusted review path' (terminal)",
+    "retry->work: 'model run ended without a trusted receipt' | 'model run failed (' | 'implementation start is past the model cutoff...' | 'model run did not complete with a trusted candidate[: interrupted output bound exceeded]' | HISTORICAL_NOT_STARTED_DETAIL | 'implementation attempt budget exhausted' | 'model admission refused: duplicate' | PRESERVATION_UNRECOVERABLE_PREFIX",
+    "retry->work after 8d evidence expiry: 'implementation outcome uncertain' | 'authenticated historical matrix manifest rejected:'",
+    "retry->review: 'review rounds exhausted without an accepted verdict (' | 'review produced no verdict within the bounded review wait' | 'review admission already settled without an intent'",
+    "retry->delivery: 'CI checks failed: ' (correction or green) | 'CI checks failed without base evidence: ' (green only)",
+    "CI-first: 'CI red before review; awaiting a CI fix: ' (fix runtime only; allowlist EMPTY in gen 80) | 'CI did not finish before review within 6 hours: ' | 'CI fix attempts exhausted (3 of 3): ' (nothing matches)",
+    "review ceiling parks: UNREVIEWED | REJECTED | UNACCEPTED | BASE_MOVED | REVIEWED (only REVIEWED/BASE_MOVED deliverable, exact base only)",
+    "carried parks (final): REVIEWED_CI_PENDING | CARRIED_PATCH_CHANGED | CARRIED_CI_FAILED | CARRIED_CI_PENDING | CARRIED_STALLED | CARRIED_REFRESH_LIMIT | CARRIED_OFF_TIP",
+    "base refresh: 'base refresh has conflicts[ at <base>]' (conflict runtime only) | 'base refresh failed N consecutive times: auth_failed <credential detail>' (re-admit) | '... auth_failed ... (permission refused)' (terminal) | '... invalid candidate could not be preserved' (re-arm by allowlisted fixed runtime, 24h pacing) | '... unavailable|conflict|other ...' (NO rule)",
+    "'candidate touches a protected path' (owner-terminal)",
+    "task acceptance: 'task acceptance not fulfilled...' (no rule) | 'task already satisfied at base...' (recoverBlockedAlreadySatisfied) | missing acceptance (recoverBlockedMissingTaskReview) | REVIEW_TASK_SHAPE_DETAIL malformed issue | 'source issue is not open: no task-bound review can be requested' (stale_source, no rule)",
+    "preservation: MATRIX_PRESERVATION_UNCERTAINTY_DETAIL | 'candidate preservation validation refused' | 'candidate branch ref identity mismatch' | 'published candidate ref is missing'",
+    "matrix/historical: 'authenticated historical matrix runtime mismatch; ...' | HISTORICAL_RETRY_DISPOSITION_MESSAGE | 'historical PR N merged against an unreviewed base; release authorization cancelled' | LEGACY_LOSS_DETAIL",
+    "release/merge: 'release failed|rolled_back' | request failureReason/'release request cancelled|failed' | 'release request identity invalid' | 'observed merged head identity mismatch' | 'pull request closed before merge'",
+    "admission: 'review admission refused: disabled|invalid' | 'model admission refused: <status>'",
+    "config: 'repository not configured'",
+    "incident/replay evidence classes (missing_evidence/evidence_expired; incident tasks only)"
+   ],
+   "source": "ops/hosted-autonomy-policy.ts HOSTED_AUTONOMY_RETRYABLE/RETIRED/SPENT_DELIVERY_BLOCKERS; src/repair/review-round-cap.ts; src/repair/ci-first-policy.ts; src/repair/loop-base-refresh-failure.ts; src/repair/attempt-policy.ts ATTEMPT_DETAIL_*; src/repair/selection.ts; src/repair/conflict-resolution.ts; src/host/matrix-uncertainty-maintenance.ts; src/contracts/review-task-acceptance.ts"
+  },
+  {
+   "name": "intent.kind and sub-state",
+   "values": [
+    "none",
+    "pull_request",
+    "push",
+    "review_request",
+    "merge(+selfMerge)",
+    "issue_closure",
+    "already_satisfied_closure",
+    "implementation(fresh | stale >6h STALE_IMPLEMENTATION_INTENT_TTL_MS | resultId set)",
+    "replay",
+    "base_refresh(unprepared | prepared resultId | failure.attempts 0..2 | conflict marker pending | conflict marker resolved)",
+    "candidate_preservation"
+   ],
+   "source": "src/contracts/work-record-types.ts IncompleteOpKindV1; src/repair/loop-eligibility.ts isStaleImplementationIntent; src/repair/conflict-resolution.ts conflictMarker*"
+  },
+  {
+   "name": "intent settlement (reservation named by intent.requestId)",
+   "values": [
+    "no requestId",
+    "reserved (in flight; never cleared/planned)",
+    "submitted",
+    "ambiguous (never refunded)",
+    "confirmed_not_submitted (refund)",
+    "bound vs mismatched (intentClosable: head/pr/branch/base/key)"
+   ],
+   "source": "ops/hosted-autonomy-retries.ts intentClosable/conflictMarkerVerdict; src/contracts/budget-reservation.ts"
+  },
+  {
+   "name": "reservation ledger per task (ranking: monotone, never refunded except proven confirmed_not_submitted)",
+   "values": [
+    "count 0..199",
+    "count >=200 (HOSTED_AUTONOMY_MAX_RETRIES: retry/base-refresh readmission silently skipped)",
+    "count >=6 (PRESERVATION_REFUSED_MAX_RESERVATIONS: refused candidate retained:reservation_cap)",
+    "purposes implementation|retry|review_request",
+    "next-admission reserved review charge (excluded from rounds spent)"
+   ],
+   "source": "ops/hosted-autonomy-retries.ts taskReservationCount/usedAttempts/implementationAttemptFloor; ops/hosted-autonomy-policy.ts; live max 72 (ai.ubq.fi 684)"
+  },
+  {
+   "name": "PR state",
+   "values": [
+    "none (target.pr null)",
+    "open & head==target.head & trusted author",
+    "open & head!=target.head",
+    "open & foreign author",
+    "closed unmerged",
+    "merged by trusted App (verified 2-parent)",
+    "merged outside trusted path",
+    "unreadable/null",
+    "multiple/ambiguous on branch"
+   ],
+   "source": "ops/hosted-autonomy-github-pull.ts; ops/hosted-autonomy-delivery-pass.ts; src/repair/loop-merge.ts reconcileMergeIntent; src/repair/loop-review-recovery.ts recoverClosedReviewWait"
+  },
+  {
+   "name": "publication / candidate shape",
+   "values": [
+    "head null (fresh)",
+    "head set unpublished",
+    "published (candidateState.preserved==head && publishedHead==head)",
+    "candidateState absent (legacy)",
+    "candidateState.preserved null (deferred forever in work step / not matrix-ready)",
+    "branch null | deterministic candidateBranch",
+    "selfMerge proof present"
+   ],
+   "source": "src/contracts/work-record-types.ts CandidateStateV1; src/repair/loop-work.ts; ops/hosted-autonomy-ci-first.ts publishedHead"
+  },
+  {
+   "name": "CI on candidate head",
+   "values": [
+    "no checks (decideCiGate 'wait')",
+    "pending",
+    "green",
+    "red candidate-attributed",
+    "red base-attributed (base_red)",
+    "red with base pending",
+    "red unattributed",
+    "parked run awaiting approval",
+    "flake re-run: attempt1 available | re-run sent (attempt>1) | >30d not re-runnable | unknown age",
+    "unreadable"
+   ],
+   "source": "src/repair/loop-checks.ts decideCiGate; src/repair/ci-rejection.ts decideCiDisposition/attributeFailedChecks; ops/hosted-autonomy-ci-rerun.ts ciRerunRuns/ciRerunExpired"
+  },
+  {
+   "name": "CI on base tip",
+   "values": [
+    "green",
+    "red",
+    "pending",
+    "unreadable"
+   ],
+   "source": "ops/hosted-autonomy-ci-rerun.ts; ops/hosted-autonomy-spent-delivery.ts preMergeGate tipGreen; src/repair/loop-ci-correction.ts"
+  },
+  {
+   "name": "review rounds",
+   "values": [
+    "reviewRoundsSpent = max(unrefunded review_request charges excl. next admission, counter - refunds): 0,1,2,>=3",
+    "reviewRoundsLeft 0..3 (MAX_REVIEW_ROUNDS=3)",
+    "legacy pin null | >=3 (ai.ubq.fi issue records with review charge before cutoff)",
+    "legacy final round open | armed (retry charge >= cutoff) | spent",
+    "legacy cutoff null | 1792256700000 (R80 only, proven CI-first)"
+   ],
+   "source": "src/repair/review-round-cap.ts; src/host/legacy-review-cutoff-env.ts; ops/hosted-autonomy-ci-first.ts launcherLegacyCutoff"
+  },
+  {
+   "name": "latest current-head review verdict",
+   "values": [
+    "none",
+    "pending/in flight",
+    "completed clean (no P0/P1, findingsUncounted 0)",
+    "completed P2/P3 only (merges; follow-up issue)",
+    "completed P0/P1 (correction if round left else REJECTED park)",
+    "findingsUncounted>0 (blocking)",
+    "taskAcceptance fulfilled | not_fulfilled | already_satisfied_at_base | uncertain | missing(legacy) | digest/statement mismatch",
+    "reviewer identity trusted App vs other"
+   ],
+   "source": "src/repair/review-gate.ts; src/repair/loop-review-result.ts applyObservedReview; src/repair/loop-review-records.ts"
+  },
+  {
+   "name": "CI fixes used",
+   "values": [
+    "counters.retries 0,1,2,3 (CI_FIX_ATTEMPTS=3; never lowered)",
+    "ciFixMarker present/absent"
+   ],
+   "source": "src/repair/ci-first-policy.ts ciFixesLeft"
+  },
+  {
+   "name": "progress counters",
+   "values": [
+    "counters.attempts monotone (implementationAttemptFloor)",
+    "counters.stalled 0..inf (>=3 demoted within bucket; >=12 drops out of delivery line)",
+    "counters.timeouts 0 | >=1 (decompose)",
+    "updatedAt age >=2h (idle: drops out of delivery line)"
+   ],
+   "source": "src/repair/transitions.ts noteExecution; src/repair/selection.ts NO_PROGRESS_BUDGET; src/repair/delivery-queue.ts"
+  },
+  {
+   "name": "conflict attempts",
+   "values": [
+    "no marker",
+    "marker pending at tip T (one charge per task,tip)",
+    "charge settled & tip still T (deny conflict_resolution_spent)",
+    "tip moved -> rebase re-pend (only for retryable classes)",
+    "route open/closed (allowlisted gen>=79 runtime)",
+    "in-flight cap reached (4 per wave / 4 per pass)"
+   ],
+   "source": "src/repair/conflict-resolution.ts; ops/hosted-autonomy-retries.ts conflictMarkerVerdict; ops/hosted-autonomy-conflict-retries.ts"
+  },
+  {
+   "name": "base movement",
+   "values": [
+    "tip == target.base",
+    "tip moved (refresh needed)",
+    "tip unreadable",
+    "carried refreshes 0..6 (CARRIED_REFRESH_LIMIT from git proof)",
+    "delivery line: front | behind a non-stalled contender with lower PR number"
+   ],
+   "source": "src/repair/loop-base-refresh.ts; src/repair/delivery-queue.ts; src/repair/loop-carried-delivery.ts"
+  },
+  {
+   "name": "release state",
+   "values": [
+    "no release request",
+    "request open | cancelled | failed",
+    "self hosted release none|pending|accepted|failed|rolled_back",
+    "Gateway VPS release record none (release ref has NO vpsReleases dir live) | pending | accepted | failed | rolled_back",
+    "GLOBAL: any hostedRelease not accepted/rolled_back => whole launcher pass skipped (release_not_terminal)"
+   ],
+   "source": "src/repair/loop-release.ts; src/repair/vps-delivery.ts observeGatewayVpsDelivery; ops/hosted-autonomy-runner.ts build()"
+  },
+  {
+   "name": "source issue",
+   "values": [
+    "open",
+    "closed",
+    "missing (deleted/transferred)",
+    "malformed (over-bound statement)",
+    "unreadable",
+    "Gateway opted-out | not",
+    "has sub-issues/open native blockers (intake skip)",
+    "reopened after retirement (intake skips existing record of any state)"
+   ],
+   "source": "src/repair/loop-task-context.ts readIssueTaskContext/readReviewTaskStatement/readDeliveryTaskContext; src/repair/loop-intake.ts:318; ops/hosted-autonomy-retry-pass.ts readHostedClosedIssues"
+  },
+  {
+   "name": "record scope",
+   "values": [
+    "source issue | incident | review_backlog",
+    "repository self(ubiquity/sentinel inst 0) | gateway(ubiquity/ai.ubq.fi) | other foreign",
+    "configured | unconfigured (skipped 'unconfigured' forever / blocked 'repository not configured')",
+    "config.sessionBound null | set"
+   ],
+   "source": "src/repair/selection.ts rankEligibleWork; ops/hosted-autonomy-policy.ts isHostedSelf; src/repair/vps-delivery.ts isGatewayVpsRepository"
+  },
+  {
+   "name": "dependencies / decomposition",
+   "values": [
+    "no dependencies",
+    "all deps done",
+    "some dep not done (skipped 'dependency' forever if dep blocked/retired)",
+    "whole issue | decomposed parent (skipped by planner forever) | child part k of N (2..4) chained on part k-1"
+   ],
+   "source": "src/repair/selection.ts dependenciesDone; src/repair/transitions.ts createDecompositionChildren; src/host/matrix-planner.ts:374"
+  },
+  {
+   "name": "output-bound overrun",
+   "values": [
+    "none",
+    "completed receipt with outputChars>maxOutputChars (settled ambiguous + ATTEMPT_DETAIL_INTERRUPTED_BOUND block)",
+    "torn pair: charge settled ambiguous, record still on implementation intent (finished only if torn before pass start; torn mid-pass defers)",
+    "binding mismatch (integrity fault, throws)"
+   ],
+   "source": "ops/hosted-autonomy-output-bound.ts; ops/hosted-autonomy-producer-recovery.ts"
+  },
+  {
+   "name": "preservation / matrix custody uncertainty",
+   "values": [
+    "none",
+    "parked MATRIX_PRESERVATION_UNCERTAINTY (intent candidate_preservation)",
+    "preservation ref exists at head (restorable)",
+    "proven absent after 8d retention (dispose -> retryable)",
+    "validation refused (24h pacing, base must move, <6 charges)",
+    "candidate ref identity mismatch (revalidated if live ref == saved head)",
+    "runtime mismatch (disposition, <=36/run)",
+    "dedicated reservation owned by matrix recovery (left alone)",
+    "cell artifact missing / not_started / failed / completed"
+   ],
+   "source": "ops/hosted-autonomy-preservation-disposition.ts; ops/hosted-autonomy-existing-candidate.ts; ops/hosted-autonomy-candidate-refs.ts; ops/runtime-mismatch-recovery-disposition.ts; src/host/matrix-uncertainty-maintenance.ts"
+  },
+  {
+   "name": "installed runtime capabilities (launcher view)",
+   "values": [
+    "CI-correction runtime proven (gen>=78 allowlist)",
+    "conflict-resolution runtime proven (gen>=79 allowlist)",
+    "CI-first runtime proven (gen>=80, R80 e48e7e110)",
+    "pre-review CI fix runtime (HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES = EMPTY; HOSTED_PRE_REVIEW_CI_FIXES=false)",
+    "refresh-rearm fixed runtime + activation bound",
+    "base-refresh legacy runtime (no credential deferral)",
+    "HOSTED_AUTONOMY_SPENT_MOVED_BASE_MERGE=false"
+   ],
+   "source": "ops/hosted-autonomy-ci-retries.ts; ops/hosted-autonomy-conflict-retries.ts; ops/hosted-autonomy-ci-first.ts:59-72; src/repair/ci-first-policy.ts:66; ops/hosted-autonomy-refresh-rearm.ts; ops/hosted-autonomy-spent-delivery.ts:89"
+  },
+  {
+   "name": "attempt memory",
+   "values": [
+    "no equivalent failure",
+    "equivalent attempt refused at (base, runtime) within decay window (~6h)",
+    "base advanced (exempt)"
+   ],
+   "source": "src/repair/attempt-policy.ts attemptEquivalenceRefusalForRecordV1"
+  },
+  {
+   "name": "GitHub cooldown / transport",
+   "values": [
+    "ok",
+    "cooling (deferred, no write)",
+    "rate_limited 429 (model-port retry <=4, 20s..120s)",
+    "credential expired (base refresh defers uncounted)",
+    "permission refused 403"
+   ],
+   "source": "src/repair/loop-bounds.ts checkGithubCooldown; src/repair/model-port-retry.ts; src/repair/loop-base-refresh-failure.ts"
+  },
+  {
+   "name": "launcher pass context",
+   "values": [
+    "maintenance pre-pass: null | applied (continue) | skipped/failed (ENDS pass) | integrity throw (hard failure, job red)",
+    "record settled earlier in this pass (skipped by every later phase)",
+    "pass deadline 840s / continuation late",
+    "merge already called this pass (global)"
+   ],
+   "source": "ops/hosted-autonomy-runner.ts; ops/hosted-autonomy-maintenance.ts; ops/hosted-autonomy-continuation.ts; ops/hosted-autonomy-delivery-pass.ts:280,386"
+  }
+ ],
+ "decisionFunctions": [
+  {
+   "name": "rankEligibleWork / isEligible / isWaiting / dependenciesDone",
+   "file": "src/repair/selection.ts",
+   "pure": true,
+   "reads": "snapshot.work nextStep, wait(until), dependencies (must be done), config presence, urgency, severity, priority, firstSeenAt, counters.stalled",
+   "writes": "none (ordered ids + skipped reasons terminal|blocked|waiting|dependency|unconfigured)",
+   "cap": "ordering only: buckets 0 delivery/elapsed review, 1 incidents, 2 P0/P1, 3 5xx, 4 backlog, 5 issues; stalled>=3 demoted inside its bucket only"
+  },
+  {
+   "name": "rankReviewDrain + releaseReviewQuotaWait",
+   "file": "src/repair/selection.ts, src/repair/loop-cycle.ts:346",
+   "pure": false,
+   "reads": "review_quota waits, priority, firstSeenAt",
+   "writes": "wait.until=now (release)",
+   "cap": "each record at most once per run"
+  },
+  {
+   "name": "runRepairCycle",
+   "file": "src/repair/loop-cycle.ts",
+   "pure": false,
+   "reads": "repair snapshot, intake, run bounds",
+   "writes": "one record per step via persistWork/persistTransition",
+   "cap": "hosted stepLimit=+Infinity (actions-target-cycles.ts:44), DEFAULT_STEP_LIMIT 32 for bootstrap/local; run ceiling 120 min, model cutoff 90 min; once-per-run: legacy loss, orphan publication, review drain, missing-task review, already-satisfied recovery; run-local deferral set"
+  },
+  {
+   "name": "executeStep / executeWorkStep / executeDeliveryStep",
+   "file": "src/repair/loop-work.ts",
+   "pure": false,
+   "reads": "nextStep, intent kind, candidateState, reviewRoundsLeft, branch, evidence, head, headNeedsCorrection, release requests",
+   "writes": "dispatches to the step functions below; candidateState.preserved===null => run-local deferral forever (no write)",
+   "cap": "none"
+  },
+  {
+   "name": "pollIntake",
+   "file": "src/repair/loop-intake.ts",
+   "pure": false,
+   "reads": "open issues, existing work by (repo, issue) of ANY state, base tip, native relations",
+   "writes": "new issue work records only; existing records never touched (line 318)",
+   "cap": "once per run"
+  },
+  {
+   "name": "isMatrixImplementationReadyV1 / roundLeftForStart / declaredOperationFits",
+   "file": "src/repair/loop-eligibility.ts",
+   "pure": true,
+   "reads": "source kind, nextStep work, intent (stale TTL 6h), candidateState, branch, sessionBound, head, headNeedsCorrection, reviewRoundsLeft/legacy",
+   "writes": "none",
+   "cap": "none"
+  },
+  {
+   "name": "planMatrixWave (+ persistDecompositionChildren, isDecompositionEligible)",
+   "file": "src/host/matrix-planner.ts",
+   "pure": false,
+   "reads": "rankEligibleWork order, readiness, conflict in-flight, decomposition children, attempt memory",
+   "writes": "reservation + implementation intent per cell; decomposition children",
+   "cap": "per wave <= min(maxCells,256) cells, first-N in rank order; conflict resolutions <=4 in flight (HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE); attempt-memory refusals skipped; decomposed parents skipped forever; stops at model cutoff/session bound fit"
+  },
+  {
+   "name": "prepareImplementationStart",
+   "file": "src/repair/loop-implementation.ts",
+   "pure": false,
+   "reads": "model cutoff, sessionBound, cooldown, issue (open only), conflict marker, attempts",
+   "writes": "reservation (implementation|retry), implementation intent; sessionBound null => wait manual until=null (line 95)",
+   "cap": "none"
+  },
+  {
+   "name": "handleModelReceipt / settleFailedImplementation / handleImplementationUncertainty / sessionBoundExhausted",
+   "file": "src/repair/loop-implementation-result.ts",
+   "pure": false,
+   "reads": "receipt outcome, candidate, protected paths, attempt memory",
+   "writes": "settle charge (submitted|ambiguous), noteCandidate/candidate_preservation intent, or markBlocked with ATTEMPT_DETAIL_* / protected path / uncertain",
+   "cap": "none"
+  },
+  {
+   "name": "executeCandidatePreservation",
+   "file": "src/repair/loop-preservation.ts",
+   "pure": false,
+   "reads": "candidate_preservation intent, preservation ref, published head",
+   "writes": "candidateState.preserved or proven-absent transition or blocker",
+   "cap": "none"
+  },
+  {
+   "name": "executePublishStep / reconcilePublishIntent / reconcileOrphanPublication",
+   "file": "src/repair/loop-publication.ts, loop-publication-state.ts",
+   "pure": false,
+   "reads": "candidate, branch, existing PR, reviewRoundsSpentOut",
+   "writes": "push/pull_request intents, target.pr; closed-unmerged own PR => retireClosedPublication (pr=null, back to work, republish, uncharged)",
+   "cap": "orphan discovery once per record per run"
+  },
+  {
+   "name": "gateReviewOnCi / confirmPreReviewCiFix",
+   "file": "src/repair/loop-ci-first.ts",
+   "pure": false,
+   "reads": "head checks, CI fixes left, review round available, route open",
+   "writes": "ci_pending wait (6h bound), CI_PRE_REVIEW_RED/PENDING park, CI_FIX_EXHAUSTED park, CI fix marker",
+   "cap": "CI_FIX_ATTEMPTS 3; PRE_REVIEW_CI_BOUND_MS 6h"
+  },
+  {
+   "name": "requestReviewFor / reviewRoundCeilingGate / recoverFromNoVerdictReview",
+   "file": "src/repair/loop-review-request.ts, loop-review-round-cap.ts",
+   "pure": false,
+   "reads": "reviewRoundsLeft, freshness (base), task statement (open-only), budget admission",
+   "writes": "review_request reservation+intent, review_quota wait, stale_source/REVIEW_TASK_SHAPE block, 'review admission already settled without an intent' terminal block, ceiling park",
+   "cap": "MAX_REVIEW_ROUNDS 3 (legacy +1)"
+  },
+  {
+   "name": "observeReview / applyObservedReview / recoverMissingTaskReview",
+   "file": "src/repair/loop-review-observation.ts, loop-review-result.ts",
+   "pure": false,
+   "reads": "review journal/result, head identity, P0/P1, findingsUncounted, task acceptance vs live statement",
+   "writes": "receipt; advanceToDelivery | advanceToCorrection | already_satisfied_closure intent | markBlocked(task acceptance refusal, line 359) | REJECTED/UNACCEPTED park | review_quota wait when task context unavailable (line 287, unbounded)",
+   "cap": "none"
+  },
+  {
+   "name": "recoverClosedReviewWait / recoverBlockedMissingTaskReview / recoverBlockedAlreadySatisfied",
+   "file": "src/repair/loop-review-recovery.ts",
+   "pure": false,
+   "reads": "PR closed state, exact legacy blockers",
+   "writes": "settle review charge ambiguous + back to work; re-observe blocked records",
+   "cap": "once per record per run"
+  },
+  {
+   "name": "review round cap policy: reviewRoundsSpent / reviewRoundsLeft / ordinaryReviewRoundsSpent / legacyReviewRoundPin / legacyFinalRoundOpen/Armed / ceilingParkMessage / isDeliverableReviewRoundCeilingPark",
+   "file": "src/repair/review-round-cap.ts",
+   "pure": true,
+   "reads": "reservations (review_request, retry), counters.reviewRounds, reviews, cutoff",
+   "writes": "none",
+   "cap": "MAX_REVIEW_ROUNDS 3"
+  },
+  {
+   "name": "headNeedsCorrection / headAwaitsCiCorrection / headAwaitsPreReviewCiFix / headTaskAcceptanceMissing",
+   "file": "src/repair/loop-review-records.ts",
+   "pure": true,
+   "reads": "reviews, findings, route flags, cutoff",
+   "writes": "none",
+   "cap": "none"
+  },
+  {
+   "name": "decideCiGate / gateDeliveryOnChecks",
+   "file": "src/repair/loop-checks.ts",
+   "pure": false,
+   "reads": "head checks (all, deduped latest per name)",
+   "writes": "ci_pending wait (no bound, line 102), 'CI checks failed: ...' block, or attribute route",
+   "cap": "none"
+  },
+  {
+   "name": "routeFailedDeliveryChecks / correctFailedHeadBeforeRefresh / confirmCiCorrection / observeHeadFailure",
+   "file": "src/repair/loop-ci-correction.ts",
+   "pure": false,
+   "reads": "failed checks, base checks attribution, ciCorrectable, ciFixesLeft",
+   "writes": "advanceToCorrection | ci_pending | backoff (base_red, unbounded) | unattributed block | CI_FIX_EXHAUSTED | legacy block",
+   "cap": "CI fixes 3; review rounds"
+  },
+  {
+   "name": "ciCorrectable / decideCiDisposition / ciCorrectionShape / ciPublicationShape",
+   "file": "src/repair/ci-rejection.ts",
+   "pure": true,
+   "reads": "intent, publication shape, rounds, retries",
+   "writes": "none",
+   "cap": "MAX_CI_CORRECTION_CHECKS 8"
+  },
+  {
+   "name": "ensureBaseRefreshIntent / executeBaseRefreshIntent / reconcileRefreshPublication / failBaseRefresh",
+   "file": "src/repair/loop-base-refresh.ts, loop-base-refresh-failure.ts",
+   "pure": false,
+   "reads": "tip, intent.failure.attempts, credential class, conflict marker",
+   "writes": "base_refresh intent; unavailable wait; after 3 failures markTerminalBlocked (clears target.pr, line 164) with 'base refresh failed N consecutive times: <kind> <detail>'; conflicts block",
+   "cap": "MAX_BASE_REFRESH_FAILURES 3"
+  },
+  {
+   "name": "conflictResolutionAdmissible / conflictResolutionCapReached / executeConflictResolutionStep / handleConflictResolutionReceipt",
+   "file": "src/repair/conflict-resolution.ts, loop-conflict-resolution.ts",
+   "pure": false,
+   "reads": "conflict marker, route open, rounds left, in-flight count",
+   "writes": "resolution charge, merged candidate, CONFLICT_PROTECTED block",
+   "cap": "one charge per (task, base tip); 4 in flight per wave"
+  },
+  {
+   "name": "deliveryQueueAhead / holdsDeliveryLine / deliveryQueueDeferral",
+   "file": "src/repair/delivery-queue.ts, loop-delivery-queue.ts",
+   "pure": true,
+   "reads": "same-repo contenders (rounds spent>0, not stalled>=12, updated <2h, no release request), PR number order",
+   "writes": "none (deferral)",
+   "cap": "one refresh at a time per repository"
+  },
+  {
+   "name": "spentOnMovedBase / executeCarriedDelivery",
+   "file": "src/repair/loop-carried-delivery.ts",
+   "pure": false,
+   "reads": "reviewed head CI, latest review authorization, carried patch proof, refresh count",
+   "writes": "ci_pending (6h bound) | carried-merge marker | BASE_MOVED park | carried parks | 'CI checks failed' block",
+   "cap": "CARRIED_WAIT_BOUND_MS 6h; CARRIED_REFRESH_LIMIT 6"
+  },
+  {
+   "name": "executeMerge / handleMergeOutcome / reconcileMergeIntent",
+   "file": "src/repair/loop-merge.ts",
+   "pure": false,
+   "reads": "merge request parse, CI gate, task refusal, PR state, base movement, intent age",
+   "writes": "merge intent; release request; refused/conflict/review_required/checks_pending => backoff CHECK_POLL_MS forever (lines 367,377); unreadable PR => unavailable forever; closed => 'pull request closed before merge'; stale intent + moved base => base_refresh",
+   "cap": "none"
+  },
+  {
+   "name": "observeReleaseAcceptance / waitRelease / blockRelease / acceptRelease / observeGatewayVpsDelivery",
+   "file": "src/repair/loop-release.ts, src/repair/vps-delivery.ts",
+   "pure": false,
+   "reads": "release request status, hosted release phase, vpsReleases record",
+   "writes": "unavailable wait 5 min (unbounded), release failed/rolled_back block, closure intent",
+   "cap": "none"
+  },
+  {
+   "name": "retryClosure / retryAlreadySatisfiedClosure",
+   "file": "src/repair/loop-closure.ts",
+   "pure": false,
+   "reads": "issue_closure intent, CI gate, disposition",
+   "writes": "close issue, markDone",
+   "cap": "none"
+  },
+  {
+   "name": "noteExecution / executionAdvanced",
+   "file": "src/repair/transitions.ts, loop-state.ts",
+   "pure": true,
+   "reads": "execution baseline vs result",
+   "writes": "counters.stalled",
+   "cap": "none"
+  },
+  {
+   "name": "attemptEquivalenceRefusalForRecordV1",
+   "file": "src/repair/attempt-policy.ts",
+   "pure": true,
+   "reads": "attempt memory at (base, runtime), now",
+   "writes": "none",
+   "cap": "decay window"
+  },
+  {
+   "name": "authorizingReceipt / reviewAuthorizesMerge / classifyReviewTerminalDisposition / taskAcceptanceRefusal",
+   "file": "src/repair/review-gate.ts",
+   "pure": true,
+   "reads": "receipt identity, P0/P1, task acceptance vs statement",
+   "writes": "none",
+   "cap": "none"
+  },
+  {
+   "name": "bridgeLegacyLoss",
+   "file": "src/repair/loop-legacy-loss.ts",
+   "pure": false,
+   "reads": "legacy lost candidate proofs",
+   "writes": "missing_evidence block",
+   "cap": "once per phase per run"
+  },
+  {
+   "name": "runHostedAutonomy / runHostedAutonomyChain (pass orchestrator)",
+   "file": "ops/hosted-autonomy-runner.ts",
+   "pure": false,
+   "reads": "repair + release snapshots",
+   "writes": "via phases",
+   "cap": "order: matrix maintenance -> closure-delivery -> retry -> delivery -> closure -> follow-ups; each phase at most once per pass; retry continues only on 'retried', delivery/closure always continue; pass deadline 840s; any non-terminal hosted release skips whole pass; self-observation only on passes that wrote nothing"
+  },
+  {
+   "name": "runHostedMatrixMaintenance (+ ingestClosedCWave, restoreExistingCandidateRefs, recoverHostedCurrentMatrix, recoverHostedHistoricalC63, runHistoricalMatrixQuarantine, uncertainMatrix)",
+   "file": "ops/hosted-autonomy-maintenance.ts, ops/hosted-autonomy-current-recovery.ts, ops/hosted-autonomy-producer-recovery.ts, ops/hosted-autonomy-historical-recovery.ts, ops/hosted-autonomy-existing-candidate.ts",
+   "pure": false,
+   "reads": "matrix artifacts, producer runs, custody",
+   "writes": "ingest/settle cells, restore candidates, quarantine",
+   "cap": "a non-applied result (e.g. closed-C ingest no_change, line 77) ENDS the pass (runner.ts:186); integrity faults throw => job fails"
+  },
+  {
+   "name": "outputBoundOverrun / outputBoundCells / settleOutputBoundCells",
+   "file": "ops/hosted-autonomy-output-bound.ts",
+   "pure": false,
+   "reads": "receipt_rejected cells, charge binding vs pass-start snapshot",
+   "writes": "charge ambiguous + block ATTEMPT_DETAIL_INTERRUPTED_BOUND (two writes; torn pair finished next pass)",
+   "cap": "per producer pass"
+  },
+  {
+   "name": "readHostedClosedIssues",
+   "file": "ops/hosted-autonomy-retry-pass.ts",
+   "pure": false,
+   "reads": "readIssueOpen per non-done record",
+   "writes": "context.closedIssues",
+   "cap": "once per record per pass"
+  },
+  {
+   "name": "planHostedRetirements / applyHostedRetirements",
+   "file": "ops/hosted-autonomy-closures.ts",
+   "pure": true,
+   "reads": "closed issues, closed-unmerged PRs, intent settlement, already-retired shape",
+   "writes": "blocked RETIRED, intent null",
+   "cap": "slice(0,5) per pass in snapshot (id) order (closure-pass.ts:247)"
+  },
+  {
+   "name": "planHostedClosures / applyHostedClosures / runHostedClosurePass",
+   "file": "ops/hosted-autonomy-closures.ts, ops/hosted-autonomy-closure-pass.ts",
+   "pure": false,
+   "reads": "accepted hosted releases (self), verified foreign merge, gateway VPS acceptance, authorizing receipt vs live issue, foreign head checks green",
+   "writes": "close issue + done; gateway issue_closure intent; gateway release block",
+   "cap": "slice(0,5) closure candidates per pass in id order (closure-pass.ts:449); refused candidates keep their slot"
+  },
+  {
+   "name": "candidateRefRevalidation / applyCandidateRefRevalidations",
+   "file": "ops/hosted-autonomy-candidate-refs.ts",
+   "pure": false,
+   "reads": "'candidate branch ref identity mismatch' records, live branch tip",
+   "writes": "back to work; ENDS pass",
+   "cap": "all qualifying"
+  },
+  {
+   "name": "runHostedMismatchDispositionPass",
+   "file": "ops/hosted-autonomy-mismatch-pass.ts, ops/runtime-mismatch-recovery-disposition.ts",
+   "pure": false,
+   "reads": "runtime mismatch blocks, refs, pulls, producer terminal",
+   "writes": "charge ambiguous + retryable blocker; ENDS pass",
+   "cap": "MISMATCH_DISPOSITION_MAX_PER_RUN 36"
+  },
+  {
+   "name": "runHostedPreservationDispositionPass / disposePreservation",
+   "file": "ops/hosted-autonomy-preservation-disposition.ts",
+   "pure": false,
+   "reads": "parked/refused preservation, refs/commits absent, 8d retention, pacing 24h, <6 charges, base moved",
+   "writes": "PRESERVATION_UNRECOVERABLE blocker; ENDS pass; reports retained:<reason>",
+   "cap": "12 per run, id order"
+  },
+  {
+   "name": "runHostedRefreshRearmPass / refreshFixActivation",
+   "file": "ops/hosted-autonomy-refresh-rearm.ts",
+   "pure": false,
+   "reads": "'base refresh failed N consecutive times: invalid candidate could not be preserved', fixed runtime allowlist + activation, PR/branch/ref, rounds left",
+   "writes": "back to delivery with restored pr; ENDS pass",
+   "cap": "24h pacing per refusal"
+  },
+  {
+   "name": "planHostedRetries / applyHostedRetries (+ intentClosable, settledReviewAttempts, plannedReviewRounds, conflictMarkerVerdict, planCiFirstReadmission)",
+   "file": "ops/hosted-autonomy-retries.ts",
+   "pure": true,
+   "reads": "blocked records, blocker prefix table, closed issues, reservations, base tips, CI green/read/rerun-settled sets, runtime proofs, cutoff, attempt memory",
+   "writes": "nextStep work|review|delivery, blocker/wait cleared (or CI fix marker), base_refresh intent on advance, reviewRounds floor",
+   "cap": "<=200 reservations per task (silent skip, line 503); applied by retry pass with CI corrections <=12/pass and conflict re-pends+readmissions <=4/pass, counted after PR-open verification, in id order"
+  },
+  {
+   "name": "runHostedRetryPass",
+   "file": "ops/hosted-autonomy-retry-pass.ts",
+   "pure": false,
+   "reads": "all of the above + PR reads, spent CI reads",
+   "writes": "one CAS write of grants + readmissions",
+   "cap": "spentCiReadWindow 16/pass rotating every 5 min; legacy drift reports 12/pass"
+  },
+  {
+   "name": "planBaseRefreshReadmissions / decideBaseRefreshReadmission / verifyBaseRefreshReadmissions / applyBaseRefreshReadmissions",
+   "file": "ops/hosted-autonomy-base-refresh-retries.ts",
+   "pure": true,
+   "reads": "auth_failed credential terminal blockers, PR listing, branch tip",
+   "writes": "back to work with restored pr",
+   "cap": "200 reservations/task (silent); shares retry write"
+  },
+  {
+   "name": "planConflictReadmissions / verifyConflictReadmissions / conflictResolutionRuntimeProven",
+   "file": "ops/hosted-autonomy-conflict-retries.ts",
+   "pure": false,
+   "reads": "'base refresh has conflicts' blocks, runtime allowlist, PR",
+   "writes": "pending conflict resolution intent",
+   "cap": "HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS 4 minus moved-tip re-pends"
+  },
+  {
+   "name": "evidenceExpired / evidenceAnchor",
+   "file": "ops/hosted-autonomy-evidence-expiry.ts",
+   "pure": true,
+   "reads": "charge createdAt / blocker since, unproduced record, ambiguous settlement",
+   "writes": "none",
+   "cap": "HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS 8 days"
+  },
+  {
+   "name": "ciCorrectionRuntimeProven / ciRedeliveryEligible / ciGreenRedeliveryEligible",
+   "file": "ops/hosted-autonomy-ci-retries.ts",
+   "pure": true,
+   "reads": "runtime record, CI parks, correctable shape",
+   "writes": "none",
+   "cap": "HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS 12"
+  },
+  {
+   "name": "ciFirstRuntimeProven / preReviewCiParked / preReviewFixEligible / legacyFinalRoundAdmissible / launcherLegacyCutoff / ciFirstApprovalEligible",
+   "file": "ops/hosted-autonomy-ci-first.ts",
+   "pure": true,
+   "reads": "runtime allowlists (fix allowlist empty), blockers, rounds",
+   "writes": "none",
+   "cap": "none"
+  },
+  {
+   "name": "readCiRerunSettled / runHostedCiRerunPass / ciRerunRuns / ciRerunExpired",
+   "file": "ops/hosted-autonomy-ci-rerun.ts",
+   "pure": false,
+   "reads": "head runs, run_attempt, base green, issue open, PR",
+   "writes": "GitHub re-run only (no state)",
+   "cap": "HOSTED_AUTONOMY_CI_RERUNS_PER_PASS 3 in snapshot id order; a refused re-run keeps attempt 1 and is retried (and spends budget) every pass; 30-day age settles"
+  },
+  {
+   "name": "runHostedDeliveryPass",
+   "file": "ops/hosted-autonomy-delivery-pass.ts",
+   "pure": false,
+   "reads": "deliveryEligible records, approvals, latest authorizing receipt vs live issue, PR, tip, CI, carried proof",
+   "writes": "approve parked runs (<=3/record), external merge, ONE state write (release request / Gateway delivered / off-tip park) then return",
+   "cap": "exactly one external merge per pass GLOBALLY across repositories (mergeCalled lines 280/386; set even when refused); records iterated in id order; spent records read <=8/pass rotating (+ delivery-line front carried heads)"
+  },
+  {
+   "name": "deliveryEligible / spentDeliveryAdmissible / preMergeGate / carriedMergeGate / latestAuthorizingReceipt / spentReadWindow / adoptableSpentMerge",
+   "file": "ops/hosted-autonomy-policy.ts, ops/hosted-autonomy-spent-delivery.ts",
+   "pure": true,
+   "reads": "nextStep, rounds spent, ceiling park message, allowlisted blockers, preserved/published head, reviews",
+   "writes": "none",
+   "cap": "HOSTED_AUTONOMY_SPENT_READS_PER_PASS 8; moved-base merge disabled"
+  },
+  {
+   "name": "planFollowUpCandidates / runHostedFollowUpPass",
+   "file": "ops/hosted-autonomy-follow-ups.ts, ops/hosted-autonomy-follow-up-pass.ts",
+   "pure": false,
+   "reads": "release requests in [max(epoch, now-72h), now], latest review P2/P3, listing, merge verification",
+   "writes": "one GitHub issue per merged PR (no state)",
+   "cap": "8 looked, 4 merge checks, 2 creates per pass, 60s budget, oldest first; skipped after a failed chain"
+  },
+  {
+   "name": "runSelfObservationPass",
+   "file": "ops/hosted-autonomy-observation.ts, ops/self-defects.ts",
+   "pure": false,
+   "reads": "own failed runs (6h window)",
+   "writes": "<=2 self-defect issues",
+   "cap": "only on passes with no state write"
+  }
+ ],
+ "environmentEvents": [
+  "CI on candidate head: missing (no checks), pending forever, green, red caused by candidate, red caused by base (base red), red while base pending, unattributed red, run parked for approval, re-run accepted/refused, run older than 30 days (not re-runnable)",
+  "CI on base tip: green / red / pending / unreadable",
+  "Review outcome: clean, P2/P3 only, P0/P1, findingsUncounted>0, no verdict within the bounded wait, review transport unavailable (review_quota), task acceptance fulfilled / not_fulfilled / already_satisfied_at_base / uncertain / missing",
+  "Base branch moves (once, repeatedly, by the queue's own merges, beyond carried refresh limit 6); tip unreadable",
+  "Base refresh merge conflict; refresh port unavailable/invalid/permission 403/credential expiry 401",
+  "PR closed unmerged externally (issue open or closed); PR merged externally (hand merge); PR head force-pushed by a human; PR unreadable/404",
+  "GitHub merge API refused (review_required, conflict, checks_pending), ambiguous merge response, merge landed off tip",
+  "Issue closed (manually or auto-closed by 'Resolves #N' on merge), issue reopened, issue deleted/transferred, issue body edited (digest drift / over-bound malformed), Gateway opt-out label, sub-issues/open native blockers",
+  "Quota/rate limit: GitHub 429 cooldown, model provider 429 (model-port retry <=4), budget admission deferred/conflict/ambiguous/unavailable/disabled/invalid/duplicate",
+  "Ambiguous model outcome: receipt lost, host timeout (counters.timeouts -> decomposition), interrupted, output-bound overrun (completed past maxOutputChars), failed (unavailable/bundle), artifact missing past 7-day retention, not_started cell",
+  "Runner failure: matrix cell killed, maintenance job integrity fault, repair job missing, state write conflict/ambiguous/readback mismatch, state ref unavailable",
+  "Runtime generation change: install/rollback (R79<->R80), allowlist membership, legacy cutoff pin, fix runtime not yet shipped (gen 81)",
+  "Release controller: hosted release pending/accepted/failed/rolled_back; Gateway VPS release record never written (release ref has no vpsReleases; live)",
+  "Repository configuration removed / sessionBound null; protected path touched by candidate; candidate ref deleted or moved; preservation ref present/absent"
+ ],
+ "terminalByDesign": [
+  "done (nextStep 'done'): markDone after merge+release acceptance+issue closure (runtime retryClosure/acceptRelease) or launcher applyHostedClosures; all transitions reject it. Owner sees the issue closed and the PR merged.",
+  "Retired (blocker 'source issue is closed; the repair no longer exists', intent/wait null): launcher planHostedRetirements when the issue is closed AND (no PR from a live step, or the PR is closed unmerged). Owner sees issue closed. Not revived if the issue is later reopened (intake skips existing records, loop-intake.ts:318) - a latent J1.",
+  "Merged outside trusted path (RETIRED_MERGED_MESSAGE 'pull request was merged outside the trusted review path'): owner/human merged the PR; owner sees it because they merged it. The issue may stay open; nothing closes it.",
+  "Owner-gated parks the code itself calls owner-terminal (no rule re-admits them): 'candidate touches a protected path' (CONFLICT_PROTECTED_DETAIL; live 17 with open issues, owner drafts manual PRs), 'CI fix attempts exhausted (3 of 3)', review ceiling parks UNREVIEWED/REJECTED/UNACCEPTED (and BASE_MOVED while HOSTED_AUTONOMY_SPENT_MOVED_BASE_MERGE=false), carried parks (CI failed/pending 6h/patch changed/stalled/refresh limit/off tip), 'task acceptance not fulfilled ...', 'base refresh failed N ...: auth_failed ... (permission refused)', 'review admission refused: disabled|invalid', 'release failed|rolled_back', 'release request cancelled/failed', 'observed merged head identity mismatch', 'release request identity invalid', 'repository not configured'.",
+  "How the owner sees owner-gated parks: ONLY (a) the blocker message on the record in the sentinel-state/repair ref (work/<sha>.json), (b) per-pass action lines in the protected supervisor maintenance log for the subset the launcher evaluates (retry:<id>:denied:<reason>, delivery:<id>:spent_not_admissible|latest_review_blocking|task_acceptance_refused|base_moved|merge_refused, preservation:<id>:retained:<reason>, close:<id>:...:refused, retry:legacy_class drift), and (c) the PR/issue left open on GitHub. There is no issue/PR comment, label, notification, status command (ops/sentinel-cli.ts status lists only workflow runs and bot merges) or self-observation issue for any park; parks never matched by any launcher rule (e.g. protected path, task acceptance not fulfilled, CI red before review under R80, CI fix exhausted, base refresh 'unavailable ...' failures, >=200-charge tasks) emit no per-pass line at all."
+ ],
+ "notes": "MAP at launcher 3f041b46d (worktree /tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/wt81-verify); runtime src/ in the same tree is R80-equivalent for the policy modules (review-round-cap.ts pins R80 e48e7e110). State read read-only from origin/sentinel-state/repair (extracted to /tmp/claude-0/-home-user/c10997af-52cc-5780-962c-3522871e2f8f/scratchpad/state); issue/PR states read read-only with gh api (nothing posted).\n\nARCHITECTURE: two movers per record. (1) Runtime: hosted repair job runs runRepairCycle (serial, externalImplementations=true, stepLimit=+Infinity, 120 min, model cutoff 90 min) for deterministic steps, and planMatrixWave grants implementation cells (<=256/wave, first-N in rankEligibleWork order). (2) Launcher: protected supervisor maintenance every 5 min runs runHostedAutonomy: matrix maintenance -> closure-delivery -> retry (candidate-ref revalidation | mismatch disposition | preservation disposition | refresh re-arm each END the pass if they write; else retry grants + base-refresh/conflict readmissions) -> delivery -> closure -> follow-ups. Many pure planners are directly testable: planHostedRetries/applyHostedRetries, planHostedRetirements/applyHostedRetirements, planHostedClosures, planBaseRefreshReadmissions/decideBaseRefreshReadmission, spentDeliveryAdmissible/deliveryEligible, ciRedeliveryEligible/ciGreenRedeliveryEligible, preReviewCiParked, conflictMarkerVerdict, evidenceExpired, rankEligibleWork, isMatrixImplementationReadyV1, review-round-cap.ts, ci-first-policy.ts, delivery-queue.ts, review-gate.ts, decideCiGate, attempt-policy.ts. The async passes take a HostedAutonomyPassContextV1/HostedAutonomyDepsV1 with fake surfaces (existing tests under tests/host and tests/repair).\n\nRANKING FUNCTIONS AVAILABLE: reservations per task (monotone, never refunded except confirmed_not_submitted; bound 200 for retries), review rounds spent (<=3, legacy +1), counters.retries CI fixes (<=3), base-refresh failure attempts (<3), carried refresh count (<=6), one conflict charge per (task, tip), 6h bounds on pre-review CI and carried waits, 8-day evidence expiry, 24h pacing for re-arm/refused preservation, 30-day CI re-run age.\n\nKNOWN POSITIVES (for regression of the checker): (a) re-retire every pass: planHostedRetirements before 01f482529 (parent 614a4fa02) re-planned already-retired records; with slice(0,5) five retired rows took every slot -> J2+J3. (b) base_moved delivery loop: src/repair/loop-merge.ts reconcileMergeIntent before 180769ef4 (and d3f2f7158) re-armed a stale merge intent on a moved base forever (ai.ubq.fi 629/649/651 stalled 149-364). (c) output-bound overrun: before 63143fb92 (base 2bc1ee776) a completed receipt past maxOutputChars made the producer pass throw CurrentMatrixRecoveryIntegrityFailure every pass (global jam); 63143fb92/614a4fa02 settle it and finish a torn charge/record pair.\n\nCANDIDATE JAMS AT 3f041b46d (hypotheses for the checker; file:line):\nJ1-1 Pre-review CI red park is absorbing under R80: HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES empty (ops/hosted-autonomy-ci-first.ts:72) and HOSTED_PRE_REVIEW_CI_FIXES=false (src/repair/ci-first-policy.ts:66); only a green re-run re-admits; planCiFirstReadmission returns null silently. LIVE: 3 records, issue open + PR open ('CI red before review; awaiting a CI fix: validate(failure)'). Code says gen 81 is the ship condition.\nJ1-2 'task acceptance not fulfilled ...' with rounds left is markBlocked (loop-review-result.ts:359), no retry rule, no per-pass line. LIVE: 6 records issue open + PR open.\nJ1-3 'base refresh failed N consecutive times: unavailable|conflict|other ...' after 3 transient failures is markTerminalBlocked (clears target.pr; loop-base-refresh-failure.ts:164); only auth_failed credential and 'invalid ... could not be preserved' (fixed runtime) have rules. A 15-minute GitHub outage parks forever. LIVE: 1 open issue with 'invalid' (needs allowlisted runtime), 2 'unavailable' (issues closed).\nJ1-4 Silent 200-reservation cap: planHostedRetries `continue` without onDenied (ops/hosted-autonomy-retries.ts:503) and base-refresh readmission (base-refresh-retries.ts:171).\nJ1-5 Decomposition: parent skipped by planner forever once children exist (matrix-planner.ts:374) and never finalized; part k depends on part k-1 'done' (selection.ts:216); a part blocked (e.g. task acceptance not fulfilled for a partial change, review judges whole issue) leaves later parts 'dependency'-skipped forever. Latent (no live parts).\nJ1-6 Reopened issue: retired/stale_source record never revived (intake skips existing, loop-intake.ts:318; RETIRED matches no retry prefix). Latent (all 114 retired issues currently closed).\nJ1-7 Indefinite waits: wait manual until=null when sessionBound null (loop-implementation.ts:95), review_pending until=null when receipt no longer parses as a merge request (loop-merge.ts:234); isWaiting => skipped forever; nothing clears them.\nJ1-8 candidateState.preserved===null with no intent: run-local 'deferred' every run, never written (loop-work.ts ~132), not matrix-ready.\nJ1-9 BASE_MOVED ceiling park: deliverable only at exact base and moved-base merge disabled, so absorbing; delivery pass logs base_moved/latest_review_blocking every pass.\nJ1-10 PR head changed by a human: delivery pass `pull.headSha !== head` silent continue.\nJ2-1 Gateway (ai.ubq.fi) release wait: observeGatewayVpsDelivery waits for a vpsReleases record that is never written (release ref has only hostedReleases/hostedRuntimes); waitRelease re-arms 'unavailable' every 5 min forever. LIVE: 25 delivery records, stalled 5..149, PR merged + issue closed (outside the strict open-issue/open-PR definition but a perpetual non-progress cycle never reaching done).\nJ2-2 Merge refused at unmoved base (review_required/conflict/checks_pending/other) -> backoff CHECK_POLL_MS forever with merge intent kept (loop-merge.ts:367,377); unreadable/null PR -> unavailable forever.\nJ2-3 Delivery ci_pending unbounded (loop-checks.ts:102), base_red backoff and base_pending unbounded (loop-ci-correction.ts), release waits unbounded (loop-release.ts:58 et seq.), review_quota re-armed forever when task context is missing/malformed (loop-review-result.ts:287) or budget conflict/ambiguous/unavailable.\nJ2-4 PR closed unmerged with issue open is NOT terminal in code: retireClosedPublication returns to work and republishes uncharged (loop-publication.ts:440, loop-review-observation.ts:153); a republish/close loop before any review charge has no decreasing measure. Contradicts the task's terminal-by-design list.\nJ3-1 Delivery pass: one external merge per pass GLOBALLY (not per repository), mergeCalled set before the call even when refused (delivery-pass.ts:280/386), id order: a perpetually refused first record starves every later merge (compounds J2-2).\nJ3-2 Closures slice(0,5) in id order (closure-pass.ts:449): a candidate refused every pass (foreign head checks not all green, issue read null, receipt re-check) keeps its slot; same structure as the fixed retirement bug. Retirements slice(0,5) (line 247) now safe only because already-retired rows are excluded.\nJ3-3 CI re-run budget 3/pass in id order; a refused re-run stays at attempt 1 and spends budget every pass; later heads wait until the 30-day age settlement.\nJ3-4 Retry phase sub-passes (revalidation, mismatch, preservation, re-arm) END the pass when they write; maintenance non-applied results (e.g. closed-C ingest no_change while closedCWaveNeedsRecovery stays true, maintenance.ts:77) end the pass before every phase (runner.ts:186): a sub-pass that writes or no-ops every pass starves retry/delivery/closure globally. Any non-terminal hosted release also skips the whole pass.\nJ3-5 Self-observation runs only on passes that wrote nothing; follow-ups only after a non-failed chain with a 72h window (lost P2/P3 follow-ups if maintenance fails >72h).\n\nLIVE STATE SNAPSHOT (origin/sentinel-state/repair at 4566b12e): 290 records: 97 retired, 17 merged-outside, 26 done, 105 other blocked (open issues: 17 'CI checks failed' legacy class, 17 protected path, 6 task acceptance not fulfilled, 3 interrupted output bound (retryable), 3 CI red before review, 1 model run failed, 1 base refresh invalid), 25 Gateway delivery release-waits, ~19 live open-issue records in work/review/delivery. Reservations 1352 (submitted 838, ambiguous 480, reserved 34), max 72 per task."
+}

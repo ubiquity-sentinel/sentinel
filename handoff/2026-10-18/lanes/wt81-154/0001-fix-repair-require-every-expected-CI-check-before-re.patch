@@ -1,0 +1,4606 @@
+From df1ba0860f04a8eaad152be85d34c85b453e50ac Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 17 Oct 2026 20:22:13 +0000
+Subject: [PATCH] fix(repair): require every expected CI check before review,
+ carry or merge; tri-state launcher CI read
+
+Sentinel issue #154. GitHub creates a `needs:` job's check run only once its
+dependencies finish (ai.ubq.fi `verify-artifact` needs `validate`,
+`mac-containment` and `darwin-native`), so a head whose existing runs were
+all green read green before its required job existed: live, the carried head
+f0008beb62 of PR 1064 showed three of three runs green from 08:41:53Z to
+08:41:58Z. A CI-first poll in that window requested a review, a carried poll
+wrote the carried-merge marker, and a launcher read merged.
+
+One pure rule (`missingExpectedChecks`, src/repair/ci-coverage.ts): a head
+must report every check name of each check suite of the base it is tested
+against that shares a check name with it. Unshared base suites (sentinel
+`development` holds a `dispatch` run per five-minute schedule) and commit
+statuses are never expected.
+
+Runtime (generation 81):
+- The base is read through a new lenient port read, `readCheckSuites` (name
+  and `check_suite.id` of each check run; exact head and item bound kept, no
+  label bound, no commit statuses), never through the strict CI read, whose
+  64-character label bound refuses every live sentinel `development` tip
+  (78-character `matrix_cell (<cellId>)` runs of supervisor.yml: 7 of 22 on
+  9a1b1d924, 33 of 75 on 3f041b46d). The strict `readChecks` stays R80's.
+- The sentinel self scope reads no base, like the launcher: its gate is the
+  one named `test-local` job.
+- CI-first review gate: a green head is reviewed only once it covers the
+  record's base; otherwise the existing bounded `ci_pending` wait and park
+  (`CI did not finish before review within 6 hours: verify-artifact(absent)`),
+  uncharged.
+- Ceiling moved-base read: the spent reviewed head is refreshed only once it
+  covers its reviewed base (waits at `delivery`, REVIEWED_CI_PENDING park).
+- Carried step: the carried-merge marker is written only once H1 covers T
+  (CARRIED_CI_PENDING park).
+- A base listing that cannot be read waits and parks the same way at all
+  three steps (`base checks unreadable`), never a deferral without a write.
+
+Launcher (ops/, may ship before the runtime; imports only the pure rule):
+- `hasAllChecksGreen(head, base?)` is tri-state: true green, false read and
+  not green, null unreadable (incomplete, failing, malformed or empty
+  listing of the head or the base).
+- `preMergeGate` passes the reviewed base and `carriedMergeGate` passes T, so
+  a marker written in the gap by R80 merges nothing (`checks_pending`).
+- The retry pass reads foreign CI-parked heads against their record base,
+  adds a head to `ciReadHeads` only after a successful non-empty listing, and
+  plans no CI correction or CI fix for an unreadable one (`ciUnreadHeads`).
+
+Tests drive the CI-first gate, the ceiling's moved-base read and the carried
+step through the real GitHub port over the live 9a1b1d924 and 3f041b46d
+listings (tests/fixtures/repair), for the self scope and a foreign one.
+
+Rollback: every write is an R80 shape (`ci_pending` waits, parks under the
+existing prefixes); the tests parse every write under R80 e48e7e110 and run
+R80's own `preReviewCiParked` over the new parks, guarded on the R80 source
+being present (gen80 helpers added beside the gen79 ones).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H8mMNvEXtHRiTVR1wJeFLQ
+---
+ docs/DECISIONS.md                             |   10 +
+ ops/hosted-autonomy-ci-rerun.ts               |    2 +-
+ ops/hosted-autonomy-github.ts                 |   58 +-
+ ops/hosted-autonomy-retries.ts                |   17 +-
+ ops/hosted-autonomy-retry-pass.ts             |   30 +-
+ ops/hosted-autonomy-spent-delivery.ts         |   22 +-
+ ops/hosted-autonomy-types.ts                  |   17 +-
+ src/contracts/ports-github-requests.ts        |   11 +
+ src/contracts/ports-github.ts                 |   10 +
+ src/contracts/ports.ts                        |    1 +
+ src/github/client-http.ts                     |    5 +
+ src/github/client-reads.ts                    |   36 +-
+ src/github/port-base.ts                       |    5 +
+ src/github/wire.ts                            |   22 +
+ src/repair/ci-coverage.ts                     |   54 +
+ src/repair/ci-rejection.ts                    |   31 +
+ src/repair/loop-carried-delivery.ts           |   58 +-
+ src/repair/loop-checks.ts                     |   37 +
+ src/repair/loop-ci-first.ts                   |   32 +-
+ tests/contracts/port-fixtures.ts              |    3 +
+ .../sentinel-development-check-runs-live.json | 1465 +++++++++++++++++
+ tests/github/helpers.ts                       |    4 +-
+ tests/host/gen77-runtime-source.ts            |   28 +-
+ .../hosted-autonomy-check-coverage_test.ts    |  418 +++++
+ .../hosted-autonomy-check-pagination_test.ts  |   21 +-
+ .../hosted-autonomy-foreign-routing_test.ts   |   22 +-
+ tests/repair/carried-coverage_test.ts         |  441 +++++
+ tests/repair/ci-coverage-fixtures.ts          |  266 +++
+ tests/repair/ci-coverage_test.ts              |  228 +++
+ tests/repair/ci-first-coverage_test.ts        |  315 ++++
+ tests/repair/ci-first-rig.ts                  |   12 +-
+ tests/repair/delivery-queue-rig.ts            |   19 +-
+ tests/repair/helpers.ts                       |   24 +
+ tests/state/gen77-contracts.ts                |   43 +-
+ 34 files changed, 3696 insertions(+), 71 deletions(-)
+ create mode 100644 src/repair/ci-coverage.ts
+ create mode 100644 tests/fixtures/repair/sentinel-development-check-runs-live.json
+ create mode 100644 tests/host/hosted-autonomy-check-coverage_test.ts
+ create mode 100644 tests/repair/carried-coverage_test.ts
+ create mode 100644 tests/repair/ci-coverage-fixtures.ts
+ create mode 100644 tests/repair/ci-coverage_test.ts
+ create mode 100644 tests/repair/ci-first-coverage_test.ts
+
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index 0ac04fbbcb..fcf7ca7e72 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -170,6 +170,16 @@ A CI fix is charged in the existing `counters.retries` (`countRetry`, also count
+ 
+ Owner context 2026-10-17: Sentinel's intended runtime is GitHub Actions on Linux; the retained macOS local-supervisor mode is not used. Issue #100 (the native Codex cannot apply its own Seatbelt profile inside the macOS local supervisor's child sandbox) concerns that retained local mode only and has no Actions impact, so it is closed as not planned for now. Generation 80 ships no macOS change: the opt-in Codex exemption of the local supervisor's child profile and the `check:macos-boundary` owner check (12af5da8a) are reverted, and the local supervisor, its child profile and their tests are byte-identical to the live launcher 413f9eff6. If the local mode is used again, #100 is reopened, and a supervisor-owned broker, not an exemption that lets repair-host code reach an unconfined Codex, is the route.
+ 
++## Required CI coverage (issue #154, generation 81)
++
++Required CI is green only when every expected check exists. `decideCiGate` judges the check runs that exist, and GitHub creates a check run only when its job starts: ai.ubq.fi's `verify-artifact` (`needs: [validate, mac-containment, darwin-native]`) has none until those finish. Live, the carried head f0008beb62 of PR 1064 (a refresh onto 9cdc76dc) showed three of three runs green from 08:41:53Z to 08:41:58Z, so a CI-first poll would have requested a review, a carried poll written the carried-merge marker, and a launcher read in the same window merged a head whose required job never ran. The expected checks are those of the base the head is tested against, but only the base check suites that share a check name with the head (`missingExpectedChecks`, `src/repair/ci-coverage.ts`): sentinel `development` carries a `dispatch` run from every five-minute schedule in its own suite, which no pull request head ever runs (live 9a1b1d924: `dispatch` and `test-local`), so the base's raw name set would hold every self head forever. A commit status (no suite) is never expected. The runtime port reads a base for this rule through its own lenient read, `readCheckSuites` (name and `check_suite.id` of each check run, never persisted; the exact-head binding and the item bound stay, a malformed suite is a parse failure, commit statuses are not read), not through the strict CI read: that read bounds a check name at 64 characters, and live sentinel `development` (fast-forwarded with `sentinel-supervisor`, so its tip also carries the supervisor.yml runs) holds 78-character `matrix_cell (<cellId>)` runs: 7 of 22 runs on L80 9a1b1d924, 33 of 75 on the tip 3f041b46d. Read strictly, every self base was unreadable and every self head was deferred forever at the review gate, the ceiling's refresh and the carried step. The strict CI read (`readChecks`) is unchanged from R80 and reads no suite. The sentinel self scope reads no base at all, as the launcher's retry pass and its self merge gate do: its gate is the one named `test-local` job (ci.yml, no `needs:`), and its tip gains a `dispatch` run every five minutes.
++
++Runtime (generation 81): the CI-first review gate requires coverage of the record's base before it requests a review, and waits like running CI (`ci_pending`, `since` kept, uncharged) until the bound parks `CI did not finish before review within 6 hours: verify-artifact(absent)`; the ceiling's moved-base read requires the reviewed head to cover its reviewed base before its one refresh (waits at `delivery`, parks under `REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX`); the carried step requires H1 to cover T before it writes the carried-merge marker (parks under `REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX`). A base listing that cannot be read is awaited like running CI at each of the three steps (the same `ci_pending` wait, `since` kept, and the same park with `base checks unreadable` in place of the absent names), never a deferral without a write: such a deferral sets no wait, bound or park, so no launcher rule could re-admit the record, and a self record stalled at the tip also held the repository's delivery line (`deliveryQueueAhead`) until it counted as stuck. An unreadable head listing still defers, as in R80; so does the red path's strict base read for failure attribution (`loop-ci-first.ts`, R80's own, out of this change). The runtime's own merge gate (`gateDeliveryOnChecks`, also its release and closure gates) and the self merge port keep their rule: their heads passed the CI-first gate before review, the self CI is the single `test-local` job, and the runtime's port refuses every ai.ubq.fi merge, which the launcher makes.
++
++Launcher (`ops/`, may ship before the runtime; it imports only the pure rule): `hasAllChecksGreen(head, base?)` is tri-state: true for a complete, non-empty, all-success listing that covers `base` when one is named; false for a readable listing that does not; null when the head's or the base's listing cannot be read and proven complete, is malformed, or the head has no check run. Every launcher merge passes the base the head was tested against (`preMergeGate` the reviewed base, `carriedMergeGate` T), so a marker written in the gap by R80, which reads no base, merges nothing (`checks_pending`). The retry pass reads foreign CI-parked heads against their record base (a self head keeps the head-only read; the self merge gate is its one named `test-local` job), records a head in `ciReadHeads` only after a successful non-empty listing, and plans no CI correction and no CI fix for a head whose listing was unreadable (`ciUnreadHeads`; the issue's case: a rate-limited listing of green legacy 618 read as red and, its re-run settled, took one of the four correction slots). Reads of a tip's own CI (the re-run's base read, the disabled moved-base rule), the closure gate and the lost-write adoption keep the head-only rule.
++
++Accepted residuals: a whole workflow with no check run on the head yet is not inferred (no shared name); a self workflow that gains a `needs:` job is not covered by this rule in either the runtime or the launcher; a base read inside the base's own gap expects that gap's names only (both five-second windows would have to overlap); a pull request that renames or removes a job of its own workflow would wait and park (`.github/workflows/` is a protected path). Rollback: every write is a shape R80 writes itself (`ci_pending` at `work`, `review` or `delivery`, and parks under the existing prefixes); the tests parse every write under R80 e48e7e110 and run R80's own `preReviewCiParked` over the park, which R80's launcher re-admits like its own pending park. Under R80 a waiting head is reviewed or carried as R80 always did. L80's boolean read is the launcher rollback.
++
+ ## Durable memory and self-healing
+ 
+ Sentinel records machine-readable attempt memory and a deterministic lesson digest in the existing Git repair state; trusted writers own every write and model workers never write state. Bounded records carry the attempt fingerprint, the stage reached, a closed failure class, counts and the runtime revision. Unchanged replays of a recorded failure are refused with a precise reason, and the implementer prompt carries verified prior attempts, cross-task repository lessons and regression facts.
+diff --git a/ops/hosted-autonomy-ci-rerun.ts b/ops/hosted-autonomy-ci-rerun.ts
+index 8a82608fa5..4529ffa716 100644
+--- a/ops/hosted-autonomy-ci-rerun.ts
++++ b/ops/hosted-autonomy-ci-rerun.ts
+@@ -254,7 +254,7 @@ export async function runHostedCiRerunPass(
+     // head's own failure worth one more attempt.
+     let baseGreen: boolean;
+     try {
+-      baseGreen = await surface.hasAllChecksGreen(tip);
++      baseGreen = await surface.hasAllChecksGreen(tip) === true;
+     } catch {
+       baseGreen = false;
+     }
+diff --git a/ops/hosted-autonomy-github.ts b/ops/hosted-autonomy-github.ts
+index 30040d6ab1..ba2e8f8fde 100644
+--- a/ops/hosted-autonomy-github.ts
++++ b/ops/hosted-autonomy-github.ts
+@@ -3,6 +3,10 @@ import {
+   reviewTaskStatementDigest,
+ } from "../src/contracts/review-receipt.ts";
+ import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
++import {
++  type CoverageCheckV1,
++  missingExpectedChecks,
++} from "../src/repair/ci-coverage.ts";
+ import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
+ import { HOSTED_AUTONOMY_REQUIRED_CHECK } from "./hosted-autonomy-policy.ts";
+ import { createHostedMismatchDispositionObservations } from "./hosted-autonomy-mismatch-github.ts";
+@@ -49,6 +53,34 @@ function runCreatedAt(value: unknown): number | null {
+   return Number.isSafeInteger(parsed) ? parsed : null;
+ }
+ 
++/**
++ * The base runs of a complete check-run listing with their check suites, for
++ * the coverage rule (`missingExpectedChecks`): a run without a suite expects
++ * nothing; a suite that is present but not a positive safe integer id makes
++ * the listing malformed (null).
++ */
++function suitedChecks(
++  runs: readonly Record<string, unknown>[],
++): CoverageCheckV1[] | null {
++  const checks: CoverageCheckV1[] = [];
++  for (const run of runs) {
++    const name = String(run["name"]);
++    const suite = run["check_suite"];
++    if (suite === undefined || suite === null) {
++      checks.push({ name });
++      continue;
++    }
++    const id = typeof suite === "object"
++      ? (suite as Record<string, unknown>)["id"]
++      : undefined;
++    if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 1) {
++      return null;
++    }
++    checks.push({ name, suite: id });
++  }
++  return checks;
++}
++
+ /**
+  * Live GitHub surface this helper needs, over one repository token. The
+  * factory takes the target repository identity and builds EVERY REST path for
+@@ -210,22 +242,34 @@ export function createHostedAutonomyGitHub(
+         run["conclusion"] === "success"
+       );
+     },
+-    async hasAllChecksGreen(head: string) {
++    async hasAllChecksGreen(head: string, base?: string) {
+       const runs = await readCompleteCheckRuns(head);
+-      if (runs === null) return false;
++      // An unreadable, incomplete, drifted or malformed listing is no
++      // evidence either way: unreadable (null), never green and never red.
++      if (runs === null) return null;
+       // Only the runs reported on the exact head count, and the listing was
+       // already proven complete and bound to this head. Zero runs is not
+       // green: a foreign repository's own completed CI is the only
+       // deterministic signal it can supply, so a head with no CI at all is
+-      // never delivered. Every run on that head must be completed and
+-      // successful, which also excludes anything pending, queued or failed —
+-      // including a failure that only the last page carries.
+-      if (runs.length === 0) return false;
+-      return runs.every((run) =>
++      // never delivered, and it is not red either (no CI ran).
++      if (runs.length === 0) return null;
++      // Every run on that head must be completed and successful, which also
++      // excludes anything pending, queued or failed — including a failure
++      // that only the last page carries.
++      const green = runs.every((run) =>
+         run["head_sha"] === head &&
+         run["status"] === "completed" &&
+         run["conclusion"] === "success"
+       );
++      if (!green || base === undefined) return green;
++      // The runs that exist are green; a job GitHub creates late (`needs:`)
++      // must exist too, by the base's own check suites (issue #154).
++      const baseRuns = await readCompleteCheckRuns(base);
++      if (baseRuns === null) return null;
++      const expected = suitedChecks(baseRuns);
++      if (expected === null) return null;
++      const reported = runs.map((run) => ({ name: String(run["name"]) }));
++      return missingExpectedChecks(reported, expected).length === 0;
+     },
+     readPull,
+     async listPullsByHeadRef(branch: string) {
+diff --git a/ops/hosted-autonomy-retries.ts b/ops/hosted-autonomy-retries.ts
+index 035502b065..315db6fa23 100644
+--- a/ops/hosted-autonomy-retries.ts
++++ b/ops/hosted-autonomy-retries.ts
+@@ -451,6 +451,14 @@ export function planHostedRetries(
+      * or returns to `delivery` for the carried refresh on a moved base.
+      */
+     ciReadHeads?: ReadonlySet<string>;
++    /**
++     * `ciGreenHeadKey` values of the heads whose CI listing the caller tried
++     * to read and could not (rate limited, failing, incomplete or holding no
++     * check run: `hasAllChecksGreen` null). That is no evidence of a failure,
++     * so no CI correction and no CI fix is planned for such a head this pass
++     * (it takes no slot); the next pass reads it again.
++     */
++    ciUnreadHeads?: ReadonlySet<string>;
+     /**
+      * The legacy review cutoff (`launcherLegacyCutoff`), replaced for tests
+      * only; by default the installed runtime's pinned cutoff, under a proven
+@@ -476,7 +484,14 @@ export function planHostedRetries(
+       ciRuntime,
+       options.ciFirstFixAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+     );
+-  const ciRerunSettled = options.ciRerunSettled ?? new Set<string>();
++  const ciUnreadHeads = options.ciUnreadHeads ?? new Set<string>();
++  // Every CI correction and CI fix plan needs its head's re-run settled; an
++  // unread head is never settled for this pass (sentinel issue #154).
++  const ciRerunSettled = new Set(
++    [...(options.ciRerunSettled ?? [])].filter((key) =>
++      !ciUnreadHeads.has(key)
++    ),
++  );
+   const ciGreenHeads = options.ciGreenHeads ?? new Set<string>();
+   const ciReadHeads = options.ciReadHeads ?? ciGreenHeads;
+   const cutoff = options.legacyReviewCutoff !== undefined
+diff --git a/ops/hosted-autonomy-retry-pass.ts b/ops/hosted-autonomy-retry-pass.ts
+index d43bc273ed..28b011407c 100644
+--- a/ops/hosted-autonomy-retry-pass.ts
++++ b/ops/hosted-autonomy-retry-pass.ts
+@@ -22,7 +22,11 @@ import {
+   planHostedRetries,
+   type RetryPlanV1,
+ } from "./hosted-autonomy-retries.ts";
+-import { hostedIssueKey, sameRepository } from "./hosted-autonomy-policy.ts";
++import {
++  hostedIssueKey,
++  isHostedSelf,
++  sameRepository,
++} from "./hosted-autonomy-policy.ts";
+ import {
+   ciCorrectionRuntimeProven,
+   ciGreenHeadKey,
+@@ -333,6 +337,7 @@ export async function runHostedRetryPass(
+     : launcherLegacyCutoff(installedRuntime, ciFirst, release);
+   const ciGreenHeads = new Set<string>();
+   const ciReadHeads = new Set<string>();
++  const ciUnreadHeads = new Set<string>();
+   const spentReads = spentCiReadWindow(
+     snapshot.work.filter((record) =>
+       ciFirst && record.nextStep === "blocked" &&
+@@ -359,15 +364,29 @@ export async function runHostedRetryPass(
+       scope.surface === null ||
+       (!spentRead && retryTips.get(scope.key) !== record.target.base)
+     ) continue;
++    // Tri-state, and for a foreign head against the base it was tested on
++    // (every check that base's suites expect must exist; the self gate is
++    // its one named `test-local` job, whose base also holds a `dispatch` run
++    // per five-minute schedule). Only a successful, non-empty listing is a
++    // read: an unreadable one (rate limited, failing, incomplete, empty) is
++    // no evidence, so the head is neither green nor read red, and it plans
++    // nothing this pass (sentinel issue #154: it took a correction slot).
+     let green: boolean | null = null;
+     try {
+-      green = await scope.surface.hasAllChecksGreen(head);
++      green = await scope.surface.hasAllChecksGreen(
++        head,
++        isHostedSelf(record.repository) ? undefined : record.target.base,
++      );
+     } catch {
+       green = null;
+     }
+-    if (green === null) continue;
+-    ciReadHeads.add(ciGreenHeadKey(record.repository, head));
+-    if (green) ciGreenHeads.add(ciGreenHeadKey(record.repository, head));
++    const key = ciGreenHeadKey(record.repository, head);
++    if (green === null) {
++      ciUnreadHeads.add(key);
++      continue;
++    }
++    ciReadHeads.add(key);
++    if (green) ciGreenHeads.add(key);
+   }
+   // Flake first: a CI-parked head is re-admitted for a correction only once
+   // its single re-run (run by the delivery pass) can no longer act. Read only
+@@ -402,6 +421,7 @@ export async function runHostedRetryPass(
+       ciRerunSettled,
+       ciGreenHeads,
+       ciReadHeads,
++      ciUnreadHeads,
+       legacyReviewCutoff: legacyCutoff,
+     },
+   );
+diff --git a/ops/hosted-autonomy-spent-delivery.ts b/ops/hosted-autonomy-spent-delivery.ts
+index 759df246cc..42e80632a4 100644
+--- a/ops/hosted-autonomy-spent-delivery.ts
++++ b/ops/hosted-autonomy-spent-delivery.ts
+@@ -282,16 +282,22 @@ export function latestAuthorizingReceipt(
+     : { kind: "refused" };
+ }
+ 
+-/** Required CI on the exact head: self `test-local`, foreign every check. */
++/**
++ * Required CI on the exact head: self `test-local`, foreign every check and,
++ * when `base` names the commit the head is tested against, every check the
++ * base's suites expect (a `needs:` job GitHub creates late, issue #154). An
++ * unreadable read is not green.
++ */
+ export async function headIsGreen(
+   surface: HostedAutonomyGitHubV1,
+   self: boolean,
+   head: string,
++  base?: string,
+ ): Promise<boolean> {
+   try {
+     return self
+       ? await surface.hasSuccessfulCheck(head)
+-      : await surface.hasAllChecksGreen(head);
++      : await surface.hasAllChecksGreen(head, base) === true;
+   } catch {
+     return false;
+   }
+@@ -458,8 +464,9 @@ export async function preMergeGate(input: {
+   if (!self && pull.baseRef !== scope.baseBranch) {
+     return { refusal: "base_mismatch", spent: false };
+   }
+-  // Red or pending required CI on the exact head never merges.
+-  if (!await headIsGreen(surface, self, head)) {
++  // Red, pending or incomplete required CI on the exact head never merges:
++  // every check the reviewed base's suites expect must exist on it.
++  if (!await headIsGreen(surface, self, head, base)) {
+     return { refusal: "checks_pending", spent: false };
+   }
+   if (moved) {
+@@ -808,7 +815,8 @@ export async function carriedPatchRefusal(
+  * immediately before the merge, in order: the pass's tip is exactly the
+  * refreshed head's base T; the spent gates (the source issue open, a Gateway
+  * request that will bind the carried receipt); the foreign base ref; green
+- * required CI on the refreshed head itself; T a strict ancestor of that head
++ * required CI on the refreshed head itself, with every check T's suites
++ * expect present; T a strict ancestor of that head
+  * (so the merge result is the head's own CI-tested tree); and the exact patch
+  * proof. Returns the proof (with the head's green workflow runs and the
+  * rendered diff digests, read for evidence only) or the refusal. A carried
+@@ -839,7 +847,9 @@ export async function carriedMergeGate(input: {
+   if (!self && pull.baseRef !== scope.baseBranch) {
+     return { refusal: "base_mismatch", proof: null };
+   }
+-  if (!await headIsGreen(surface, self, head)) {
++  // H1 was tested against T: every check T's suites expect must exist on
++  // it, so a `needs:` job not created yet never merges unrun.
++  if (!await headIsGreen(surface, self, head, base)) {
+     return { refusal: "checks_pending", proof: null };
+   }
+   let contained = false;
+diff --git a/ops/hosted-autonomy-types.ts b/ops/hosted-autonomy-types.ts
+index 8be4b98be1..6941785718 100644
+--- a/ops/hosted-autonomy-types.ts
++++ b/ops/hosted-autonomy-types.ts
+@@ -131,13 +131,18 @@ export interface HostedAutonomyGitHubV1 {
+    */
+   hasSuccessfulCheck(head: string): Promise<boolean>;
+   /**
+-   * Foreign gate: true when the exact head carries at least one check-run and
+-   * every one of them is completed with conclusion `success`. Zero check-runs
+-   * is not green, no run may still be pending or queued on that head, and the
+-   * listing must be proven complete across every page: a read that cannot be
+-   * completed is never green.
++   * Foreign gate, tri-state (sentinel issue #154). True when the exact head
++   * carries at least one check-run, every one of them is completed with
++   * conclusion `success` and, when `base` names the commit the head is tested
++   * against, the head reports every check name of each `base` check suite it
++   * shares a name with (`missingExpectedChecks`: a `needs:` job GitHub has not
++   * created yet is not green). False for a readable listing that fails any of
++   * that (pending, queued, failed or a missing expected check). Null when it
++   * is unreadable: a head or base listing that cannot be proven complete
++   * across every page or is malformed, or a head with no check-run at all.
++   * Only true is green; null is no evidence either way, never red.
+    */
+-  hasAllChecksGreen(head: string): Promise<boolean>;
++  hasAllChecksGreen(head: string, base?: string): Promise<boolean | null>;
+   /**
+    * `baseBranch` is the branch the merge must be integrated into; a merged
+    * pull whose integration cannot be verified without it reads as null.
+diff --git a/src/contracts/ports-github-requests.ts b/src/contracts/ports-github-requests.ts
+index 7b0c1080b2..ee5a6e7e5e 100644
+--- a/src/contracts/ports-github-requests.ts
++++ b/src/contracts/ports-github-requests.ts
+@@ -94,6 +94,17 @@ export interface GitHubChecksV1 {
+   checks: GitHubCheckV1[];
+ }
+ 
++/**
++ * The check runs of one commit reduced to what the required-CI coverage rule
++ * reads of a base (`missingExpectedChecks`): each run's name and the check
++ * suite GitHub reports it in (`check_suite.id`, one per workflow run for
++ * GitHub Actions; null when absent). Never a CI verdict, never persisted.
++ */
++export interface GitHubCheckSuitesV1 {
++  head: GitSha;
++  checks: { name: string; suite: number | null }[];
++}
++
+ export interface GitHubBranchProtectionsV1 {
+   branch: string;
+   protected: boolean;
+diff --git a/src/contracts/ports-github.ts b/src/contracts/ports-github.ts
+index 71f6e48a6f..7a67352b93 100644
+--- a/src/contracts/ports-github.ts
++++ b/src/contracts/ports-github.ts
+@@ -8,6 +8,7 @@ import type {
+   CarriedPatchProofV1,
+   CarriedPatchRequestV1,
+   GitHubBranchProtectionsV1,
++  GitHubCheckSuitesV1,
+   GitHubChecksV1,
+   GitHubIssueV1,
+   GitHubPullRequestV1,
+@@ -44,6 +45,15 @@ export interface GitHubPort {
+     number: number,
+   ): Promise<PortResultV1<GitHubPullRequestV1 | null>>;
+   readChecks(head: GitSha): Promise<PortResultV1<GitHubChecksV1>>;
++  /**
++   * The check runs of `head` reduced to name and check suite, for the
++   * required-CI coverage rule's read of a base only (`absentExpectedChecks`).
++   * Lenient where `readChecks` is strict: it judges no conclusion, so a run's
++   * name has no label bound (sentinel `development` carries 78-character
++   * `matrix_cell (<cellId>)` runs) and commit statuses, which are never
++   * expected, are not read; the item bound and the exact-head binding stay.
++   */
++  readCheckSuites(head: GitSha): Promise<PortResultV1<GitHubCheckSuitesV1>>;
+   readProtections(
+     baseBranch: string,
+   ): Promise<PortResultV1<GitHubBranchProtectionsV1>>;
+diff --git a/src/contracts/ports.ts b/src/contracts/ports.ts
+index cb465e2fdf..0b9d0f440f 100644
+--- a/src/contracts/ports.ts
++++ b/src/contracts/ports.ts
+@@ -100,6 +100,7 @@ export type {
+   CarriedPatchProofV1,
+   CarriedPatchRequestV1,
+   GitHubBranchProtectionsV1,
++  GitHubCheckSuitesV1,
+   GitHubChecksV1,
+   GitHubCheckV1,
+   GitHubIssueRelationsV1,
+diff --git a/src/github/client-http.ts b/src/github/client-http.ts
+index 4d50af5baa..c03585df81 100644
+--- a/src/github/client-http.ts
++++ b/src/github/client-http.ts
+@@ -2,6 +2,7 @@
+ 
+ import type {
+   GitHubBranchProtectionsV1,
++  GitHubCheckSuitesV1,
+   GitHubChecksV1,
+   GitHubIssueRelationsV1,
+   GitHubIssueV1,
+@@ -395,6 +396,10 @@ export abstract class GitHubClientHttp {
+ 
+   abstract readChecks(sha: GitSha): Promise<PortResultV1<GitHubChecksV1>>;
+ 
++  abstract readCheckSuites(
++    sha: GitSha,
++  ): Promise<PortResultV1<GitHubCheckSuitesV1>>;
++
+   abstract readProtections(
+     branch: string,
+   ): Promise<PortResultV1<GitHubBranchProtectionsV1>>;
+diff --git a/src/github/client-reads.ts b/src/github/client-reads.ts
+index 4c59592db9..2d22e60b6a 100644
+--- a/src/github/client-reads.ts
++++ b/src/github/client-reads.ts
+@@ -2,6 +2,7 @@
+ 
+ import type {
+   GitHubBranchProtectionsV1,
++  GitHubCheckSuitesV1,
+   GitHubChecksV1,
+   GitHubPullRequestV1,
+   GitHubRefV1,
+@@ -12,6 +13,7 @@ import { expectArray, expectRecord } from "../contracts/validation.ts";
+ import {
+   parseBranchRuleWire,
+   parseCheckRunWire,
++  parseCheckSuiteMemberWire,
+   parseCommitStatusWire,
+   parseProtectionWire,
+   parsePullReviewDecisionWire,
+@@ -103,8 +105,9 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
+     );
+   }
+ 
+-  async readChecks(sha: GitSha): Promise<PortResultV1<GitHubChecksV1>> {
+-    const collected = await this.collectPages(
++  /** Every check-run page of exactly one commit, raw, item bound applied. */
++  private collectCheckRuns(sha: GitSha): Promise<PortResultV1<unknown[]>> {
++    return this.collectPages(
+       `/repos/${repoPath(this.repository)}/commits/${sha}/check-runs`,
+       { per_page: String(this.perPage) },
+       (body) => {
+@@ -117,6 +120,10 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
+         ) as unknown[];
+       },
+     );
++  }
++
++  async readChecks(sha: GitSha): Promise<PortResultV1<GitHubChecksV1>> {
++    const collected = await this.collectCheckRuns(sha);
+     if (!collected.ok) return collected;
+     const checks = [];
+     for (const item of collected.value) {
+@@ -160,6 +167,31 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
+     return portOk({ head: sha, checks });
+   }
+ 
++  /**
++   * The coverage rule's base read (`GitHubPort.readCheckSuites`): the same
++   * complete, item-bounded check-run listing as `readChecks`, every run bound
++   * to `sha`, reduced to name and suite with no label bound on the name.
++   */
++  async readCheckSuites(
++    sha: GitSha,
++  ): Promise<PortResultV1<GitHubCheckSuitesV1>> {
++    const collected = await this.collectCheckRuns(sha);
++    if (!collected.ok) return collected;
++    const checks: GitHubCheckSuitesV1["checks"] = [];
++    for (const item of collected.value) {
++      const parsed = parseWith(item, (v) => parseCheckSuiteMemberWire(v, "$"));
++      if (!parsed.ok) return parsed;
++      if (parsed.value.head !== sha) {
++        return portError(
++          "unavailable",
++          "checks collection does not match the requested head",
++        );
++      }
++      checks.push({ name: parsed.value.name, suite: parsed.value.suite });
++    }
++    return portOk({ head: sha, checks });
++  }
++
+   async readProtections(
+     branch: string,
+   ): Promise<PortResultV1<GitHubBranchProtectionsV1>> {
+diff --git a/src/github/port-base.ts b/src/github/port-base.ts
+index 50acd1f64d..2e2b366604 100644
+--- a/src/github/port-base.ts
++++ b/src/github/port-base.ts
+@@ -7,6 +7,7 @@ import type {
+   CandidatePreservationRequestV1,
+   Clock,
+   GitHubBranchProtectionsV1,
++  GitHubCheckSuitesV1,
+   GitHubChecksV1,
+   GitHubCooldownGateV1,
+   GitHubRefV1,
+@@ -143,6 +144,10 @@ export abstract class GitHubPortBase {
+     return this.client.readChecks(head);
+   }
+ 
++  readCheckSuites(head: GitSha): Promise<PortResultV1<GitHubCheckSuitesV1>> {
++    return this.client.readCheckSuites(head);
++  }
++
+   readProtections(
+     baseBranch: string,
+   ): Promise<PortResultV1<GitHubBranchProtectionsV1>> {
+diff --git a/src/github/wire.ts b/src/github/wire.ts
+index f35796de17..c7928697b8 100644
+--- a/src/github/wire.ts
++++ b/src/github/wire.ts
+@@ -330,6 +330,28 @@ export function parseCheckRunWire(input: unknown, path: string): GitHubCheckV1 {
+   return { name, status, conclusion, head, startedAt, completedAt };
+ }
+ 
++/**
++ * One check run as the coverage rule reads a base (`readCheckSuites`): its
++ * name (no label bound: no conclusion is judged), its exact head and its
++ * check suite (null when absent; present, it must be exact). The strict CI
++ * read (`parseCheckRunWire`) reads no suite.
++ */
++export function parseCheckSuiteMemberWire(
++  input: unknown,
++  path: string,
++): { name: string; head: GitSha; suite: number | null } {
++  const obj = expectRecord(input, path);
++  const name = expectNonEmptyString(obj.name, `${path}.name`, MaxText.message);
++  const head = expectWireSha(obj.head_sha, `${path}.head_sha`);
++  const suite = obj.check_suite === undefined || obj.check_suite === null
++    ? null
++    : expectPositiveInt(
++      expectRecord(obj.check_suite, `${path}.check_suite`).id,
++      `${path}.check_suite.id`,
++    );
++  return { name, head, suite };
++}
++
+ /** Normalize one commit-status context into the shared exact-head check type. */
+ export function parseCommitStatusWire(
+   input: unknown,
+diff --git a/src/repair/ci-coverage.ts b/src/repair/ci-coverage.ts
+new file mode 100644
+index 0000000000..5f6018a1a1
+--- /dev/null
++++ b/src/repair/ci-coverage.ts
+@@ -0,0 +1,54 @@
++/**
++ * Required CI coverage (sentinel issue #154): which checks a head is expected
++ * to report before its CI may read green.
++ *
++ * The CI gates judge the check runs that exist, and GitHub creates a check run
++ * only when its job starts: a job with `needs:` (ai.ubq.fi's
++ * `verify-artifact`, which needs `validate`, `mac-containment` and
++ * `darwin-native`) has none until its dependencies finish, so a head read in
++ * that window showed three of three runs green while the required fourth did
++ * not exist yet (live: H1 f0008beb62 on PR 1064, five seconds). The base the
++ * head is tested against ran the same workflow, so its check names are the
++ * expected ones; but a base also carries checks no pull request head ever
++ * runs (sentinel `development` holds a `dispatch` run from every five-minute
++ * schedule, each in its own suite), so only the base's check suites that share
++ * a check name with the head count: every name of such a suite must be on the
++ * head. A base check without a suite (a commit status) is never expected.
++ *
++ * Pure and shared: the runtime's CI-first review gate and carried delivery
++ * steps (`GitHubCheckV1`) and the launcher's foreign green read (raw check
++ * runs) apply this one rule.
++ */
++
++/** One observed check: its name and, for a check run, its suite id. */
++export interface CoverageCheckV1 {
++  readonly name: string;
++  readonly suite?: number | null;
++}
++
++/**
++ * The expected check names `head` does not report, sorted: every name of each
++ * suite of `base` that shares at least one check name with `head`, minus the
++ * names `head` reports (in any state; the caller judges their conclusions).
++ * Empty when the head reports every expected check, or when no base suite
++ * shares a name with it.
++ */
++export function missingExpectedChecks(
++  head: readonly CoverageCheckV1[],
++  base: readonly CoverageCheckV1[],
++): string[] {
++  const reported = new Set(head.map((check) => check.name));
++  const suites = new Map<number, Set<string>>();
++  for (const check of base) {
++    if (check.suite === undefined || check.suite === null) continue;
++    const names = suites.get(check.suite) ?? new Set<string>();
++    names.add(check.name);
++    suites.set(check.suite, names);
++  }
++  const missing = new Set<string>();
++  for (const names of suites.values()) {
++    if (![...names].some((name) => reported.has(name))) continue;
++    for (const name of names) if (!reported.has(name)) missing.add(name);
++  }
++  return [...missing].sort();
++}
+diff --git a/src/repair/ci-rejection.ts b/src/repair/ci-rejection.ts
+index 5231c20552..6cbb66cfb1 100644
+--- a/src/repair/ci-rejection.ts
++++ b/src/repair/ci-rejection.ts
+@@ -244,6 +244,25 @@ export function ciCheckLabels(checks: readonly GitHubCheckV1[]): string {
+   return [...seen].join(", ");
+ }
+ 
++/** Label of a base whose check runs could not be read for coverage. */
++export const BASE_CHECKS_UNREADABLE = "base checks unreadable";
++
++/**
++ * Bounded `name(absent)` labels of expected checks the head does not report
++ * yet (`missingExpectedChecks`), over trusted names only; null (the base's
++ * runs could not be read) is `BASE_CHECKS_UNREADABLE`.
++ */
++export function absentCheckLabels(names: readonly string[] | null): string {
++  if (names === null) return BASE_CHECKS_UNREADABLE;
++  if (names.length === 0) return "no checks reported";
++  const seen = new Set<string>();
++  for (const name of names) {
++    seen.add(`${trustedCheckName(name)}(absent)`);
++    if (seen.size >= MAX_CI_CORRECTION_CHECKS) break;
++  }
++  return [...seen].join(", ");
++}
++
+ /** Terminal blocker detail of a failure no base observation attributes. */
+ export function unattributedDetail(checks: readonly GitHubCheckV1[]): string {
+   return `${CI_UNATTRIBUTED_DETAIL}: ${
+@@ -333,6 +352,18 @@ export function preReviewPendingDetail(
+   return `${CI_PRE_REVIEW_PENDING_PREFIX}${ciCheckLabels(checks)}`;
+ }
+ 
++/**
++ * Park detail of a head that still lacks an expected check after the bound:
++ * the same pending park (same prefix, same launcher re-admission), naming
++ * the checks GitHub has not created on the head, or a base whose runs could
++ * not be read.
++ */
++export function preReviewAbsentDetail(
++  names: readonly string[] | null,
++): string {
++  return `${CI_PRE_REVIEW_PENDING_PREFIX}${absentCheckLabels(names)}`;
++}
++
+ /**
+  * Park detail of a head whose failure no base evidence attributed within the
+  * bound (the same pending park, so the same launcher rules re-admit it).
+diff --git a/src/repair/loop-carried-delivery.ts b/src/repair/loop-carried-delivery.ts
+index 3e3b7581a3..6dfbc753a9 100644
+--- a/src/repair/loop-carried-delivery.ts
++++ b/src/repair/loop-carried-delivery.ts
+@@ -11,8 +11,11 @@
+  * refreshed head H1 carries H0's review only while the pull request's own
+  * patch is byte-identical (`proveCarriedPatch`: the merge-base patch of H0
+  * against B0 equals that of H1 against T, binary-safe, by SHA-256), re-derived
+- * from git on every step; once H1's OWN required CI is green and the task is
+- * still accepted, the record holds the exact carried-merge marker at `work`
++ * from git on every step; once H1's OWN required CI is green (every existing
++ * run green and every expected check present: each check name of T's check
++ * suites that share a name with H1, `absentExpectedChecks`, sentinel issue
++ * #154) and the task is still accepted, the record holds the exact
++ * carried-merge marker at `work`
+  * (`carriedMergeMarker`) for the launcher's delivery pass, which merges only
+  * under that marker, re-derives the exact proof itself and merges H1 at
+  * exactly T (`ops/hosted-autonomy-spent-delivery.ts`). The runtime never
+@@ -58,6 +61,7 @@ import {
+   reviewedIdentity,
+ } from "./carried-review.ts";
+ import {
++  absentCheckLabels,
+   ciCheckLabels,
+   failedChecks,
+   latestChecks,
+@@ -65,7 +69,7 @@ import {
+ } from "./ci-rejection.ts";
+ import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
+ import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
+-import { decideCiGate } from "./loop-checks.ts";
++import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
+ import {
+   observeHeadFailure,
+   RED_BASE_RECHECK_MS,
+@@ -163,7 +167,9 @@ function pendingLabels(checks: readonly GitHubCheckV1[]): string {
+  * The delivery step of a spent record whose base moved to `observedBase`
+  * (nothing written yet). The reviewed head's own CI is read first: red parks
+  * with the merge gate's own `CI checks failed: ...` blocker (the owner's
+- * legacy class keeps it), pending waits at `delivery` and parks after
++ * legacy class keeps it), pending (or green while an expected check of its
++ * reviewed base does not exist on it yet, or that base's runs cannot be
++ * read) waits at `delivery` and parks after
+  * `CARRIED_WAIT_BOUND_MS`. A green head whose latest completed review
+  * authorizes it on its base, on a port that can prove the carried patch,
+  * waits its turn in the repository's delivery line and then returns null:
+@@ -226,6 +232,26 @@ export async function spentOnMovedBase(
+       markBlocked(record, "other", decision.blocked, deps.clock.now()),
+     );
+   }
++  // Every existing run is green: a check its reviewed base's suites expect
++  // and GitHub has not created on it yet is awaited like a running one, and
++  // so is a reviewed base whose runs cannot be read.
++  const absent = await absentExpectedChecks(
++    deps,
++    record,
++    observed.value.checks,
++  );
++  if (absent === null || absent.length > 0) {
++    return boundedWait(
++      deps,
++      context,
++      record,
++      "ci_pending",
++      CHECK_POLL_MS,
++      `${REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX}${
++        absentCheckLabels(absent)
++      }`,
++    );
++  }
+   const reviewer = deps.github.reviewerIdentity;
+   const receipt = latestPullReview(context.snapshot, record, reviewer);
+   if (
+@@ -330,7 +356,8 @@ function patchChangedDetail(
+  * launcher's delivery record; still at the head this one was refreshed from:
+  * a bounded wait for GitHub to report the push), the tip (moved again: one
+  * more refresh through the line, at most `CARRIED_REFRESH_LIMIT`), the head's
+- * own CI, the live task acceptance of the reviewed identity, and then the
++ * own CI (green, with every check T's suites expect present), the live task
++ * acceptance of the reviewed identity, and then the
+  * carried-merge marker for the launcher's merge, bounded from that CI's
+  * completion.
+  */
+@@ -451,6 +478,27 @@ export async function executeCarriedDelivery(
+       decision,
+     );
+   }
++  // Every existing run on H1 is green; a check T's suites expect that GitHub
++  // has not created on H1 yet (a `needs:` job) is awaited like a running one,
++  // so the marker never names a head whose required job never ran; a T whose
++  // runs cannot be read is awaited the same way.
++  const absent = await absentExpectedChecks(
++    deps,
++    record,
++    checks.value.checks,
++  );
++  if (absent === null || absent.length > 0) {
++    return boundedWait(
++      deps,
++      context,
++      record,
++      "ci_pending",
++      CHECK_POLL_MS,
++      `${REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX}${
++        absentCheckLabels(absent)
++      }`,
++    );
++  }
+   const task = await readDeliveryTaskContext(deps, record);
+   if (task === "unavailable") {
+     return { kind: "deferred", detail: "merge task context is unavailable" };
+diff --git a/src/repair/loop-checks.ts b/src/repair/loop-checks.ts
+index 35052653ff..1c77cceb1e 100644
+--- a/src/repair/loop-checks.ts
++++ b/src/repair/loop-checks.ts
+@@ -1,9 +1,11 @@
+ /** Repair loop internals: checks. */
+ import type { GitHubCheckV1 } from "../contracts/ports.ts";
+ import type { WorkRecordV1 } from "../contracts/work-record.ts";
++import { missingExpectedChecks } from "./ci-coverage.ts";
+ import { failedChecks, latestChecks } from "./ci-rejection.ts";
+ import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
+ import { routeFailedDeliveryChecks } from "./loop-ci-correction.ts";
++import { isSelfScopeZero } from "./loop-legacy-loss.ts";
+ import { persistWork } from "./loop-state.ts";
+ import type {
+   LoopContextV1,
+@@ -18,6 +20,11 @@ import { markBlocked, setWait } from "./transitions.ts";
+  * is still running or when no checks are recorded (no evidence CI ran).
+  * Returns a block detail when any check failed (including skipped/neutral,
+  * matching requiredChecksState semantics). Exported for focused testing.
++ *
++ * It judges only the checks that exist: GitHub creates a `needs:` job's
++ * check run only once its dependencies finish. The CI-first review gate and
++ * the carried delivery steps therefore also require coverage of the base the
++ * head is tested against (`absentExpectedChecks`) before a "proceed" counts.
+  */
+ export function decideCiGate(
+   checks: GitHubCheckV1[],
+@@ -42,6 +49,36 @@ export function decideCiGate(
+   return "proceed";
+ }
+ 
++/**
++ * The expected checks `head` (the record's head's own check runs, green by
++ * `decideCiGate`) does not report yet, against the base it is tested on (the
++ * record's base): the names of each check suite of that base that shares a
++ * name with the head
++ * (`missingExpectedChecks`; sentinel issue #154). Empty when every expected
++ * check exists; null when the base's runs cannot be read, which proves
++ * nothing either way: every caller then waits like running CI (a bounded
++ * `ci_pending` wait that parks under its own pending prefix), never a silent
++ * deferral no launcher rule re-admits.
++ *
++ * The base read is the port's lenient `readCheckSuites` (name and suite
++ * only), not the strict `readChecks`: a base may carry runs no pull request
++ * head runs whose names exceed the strict label bound. The sentinel self
++ * scope reads no base at all, like the launcher: its gate is the one named
++ * `test-local` job (ci.yml, no `needs:`), and its `development` tip also
++ * carries a `dispatch` run per five-minute schedule and the supervisor.yml
++ * runs of `sentinel-supervisor`, which is fast-forwarded with it.
++ */
++export async function absentExpectedChecks(
++  deps: RepairCycleDepsV1,
++  record: WorkRecordV1,
++  head: readonly GitHubCheckV1[],
++): Promise<string[] | null> {
++  if (isSelfScopeZero(record.repository)) return [];
++  const observed = await deps.github.readCheckSuites(record.target.base);
++  if (!observed.ok) return null;
++  return missingExpectedChecks(head, observed.value.checks);
++}
++
+ /**
+  * Delivery-phase CI gate. Returns null when checks are green (or absent) and
+  * the merge may proceed; otherwise returns the step result (deferred wait for
+diff --git a/src/repair/loop-ci-first.ts b/src/repair/loop-ci-first.ts
+index e0a41aee16..01b8d50da0 100644
+--- a/src/repair/loop-ci-first.ts
++++ b/src/repair/loop-ci-first.ts
+@@ -9,10 +9,15 @@
+  * missing-review recovery, expired observation and post-drain), so no review
+  * is ever requested for a head whose required CI is not green:
+  *
+- * - green: the review proceeds exactly as before;
+- * - running or absent checks, a failed check still running on the base, or a
+- *   failure no base evidence attributes (the base check was cancelled, absent
+- *   or inconclusive, or the head's own check never concluded): a bounded
++ * - green, with every expected check present: the review proceeds exactly
++ *   as before. Expected are the check names of each base check suite that
++ *   shares a name with the head (`absentExpectedChecks`, sentinel issue
++ *   #154): GitHub creates a `needs:` job's check run only once its
++ *   dependencies finish, so green existing runs alone are not green CI;
++ * - running, absent or not yet created checks (or a base whose runs cannot
++ *   be read to tell), a failed check still running on the base, or a failure
++ *   no base evidence attributes (the base check was cancelled, absent or
++ *   inconclusive, or the head's own check never concluded): a bounded
+  *   `ci_pending` wait (`since` kept across polls) and, for a never-reviewed
+  *   head, a precise park after `PRE_REVIEW_CI_BOUND_MS` that the launcher's
+  *   re-run and green rules re-admit; meanwhile a moved base refreshes the
+@@ -47,6 +52,7 @@ import {
+   decideCiDisposition,
+   failedChecks,
+   latestChecks,
++  preReviewAbsentDetail,
+   preReviewPendingDetail,
+   preReviewRedDetail,
+   preReviewUnattributedDetail,
+@@ -58,7 +64,7 @@ import {
+   preReviewCiFixRouteOpen,
+ } from "./ci-first-policy.ts";
+ import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
+-import { decideCiGate } from "./loop-checks.ts";
++import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
+ import {
+   observeHeadFailure,
+   RED_BASE_RECHECK_MS,
+@@ -229,7 +235,21 @@ export async function gateReviewOnCi(
+   if (!observed.ok) return UNAVAILABLE;
+   const checks = observed.value.checks;
+   const decision = decideCiGate(checks);
+-  if (decision === "proceed") return null;
++  if (decision === "proceed") {
++    // Every existing run is green; the jobs GitHub has not created yet are
++    // awaited like running ones (bounded, uncharged, the same park prefix),
++    // and so is a base whose runs cannot be read (no evidence either way).
++    const absent = await absentExpectedChecks(deps, record, checks);
++    if (absent !== null && absent.length === 0) return null;
++    return awaitChecks(
++      deps,
++      context,
++      record,
++      [],
++      now,
++      () => preReviewAbsentDetail(absent),
++    );
++  }
+   if (decision === "wait") {
+     return awaitChecks(
+       deps,
+diff --git a/tests/contracts/port-fixtures.ts b/tests/contracts/port-fixtures.ts
+index 77244ce68f..79357f26dd 100644
+--- a/tests/contracts/port-fixtures.ts
++++ b/tests/contracts/port-fixtures.ts
+@@ -334,6 +334,9 @@ export const _githubFake: GitHubPort = {
+   readChecks() {
+     return resolved(portOk({ head: SHA, checks: [] }));
+   },
++  readCheckSuites() {
++    return resolved(portOk({ head: SHA, checks: [] }));
++  },
+   readProtections() {
+     return resolved(portOk({
+       branch: "development",
+diff --git a/tests/fixtures/repair/sentinel-development-check-runs-live.json b/tests/fixtures/repair/sentinel-development-check-runs-live.json
+new file mode 100644
+index 0000000000..4e6d125450
+--- /dev/null
++++ b/tests/fixtures/repair/sentinel-development-check-runs-live.json
+@@ -0,0 +1,1465 @@
++{
++  "description": "Live ubiquity/sentinel development tips as GitHub's check-runs endpoint reported them at 2026-10-17T23:17:27Z (one page each, total_count equal to the runs listed, no commit status on either; fields trimmed to those the readers use). 9a1b1d924 is L80 (tip until 3f041b46d), 3f041b46d the current tip. Each workflow run is its own check suite: ci.yml's push run (test-local), one suite per five-minute dispatch schedule, and the supervisor.yml runs of sentinel-supervisor (fast-forwarded with development), whose matrix_cell (<64-hex cellId>) runs are 78 characters long, past the strict check read's 64-character label bound. No pull request head runs dispatch or supervisor.yml.",
++  "observedAt": "2026-10-17T23:17:27Z",
++  "listings": {
++    "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3": [
++      {
++        "id": 117477709671,
++        "name": "finalize",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T19:01:27Z",
++        "completed_at": "2026-10-17T19:01:39Z",
++        "check_suite": {
++          "id": 105847929417
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117470864211,
++        "name": "repair",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:29:59Z",
++        "completed_at": "2026-10-17T18:42:18Z",
++        "check_suite": {
++          "id": 105847929417
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117470863873,
++        "name": "matrix_cell (1b3f9f5bed02f8d0c431a80e3b3db52ee31110b8b7123233084a32519bfa4879)",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:29:58Z",
++        "completed_at": "2026-10-17T18:38:08Z",
++        "check_suite": {
++          "id": 105847929417
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117470863849,
++        "name": "matrix_cell (c41d1673f975981954d4e19c26ecc24a79b45ee91a3c241480086faa57eae614)",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:29:58Z",
++        "completed_at": "2026-10-17T18:32:32Z",
++        "check_suite": {
++          "id": 105847929417
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117470863836,
++        "name": "matrix_cell (0f78f5683b638a4a2ae0e9fc3789a16a1dc2f2a769a68c9fda705b750b034c50)",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:29:59Z",
++        "completed_at": "2026-10-17T18:45:00Z",
++        "check_suite": {
++          "id": 105847929417
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117470863829,
++        "name": "matrix_cell (d827911ebde346788b531b68632387933d6bab59944c6d4591442a7f02f5438c)",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:29:59Z",
++        "completed_at": "2026-10-17T18:48:34Z",
++        "check_suite": {
++          "id": 105847929417
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117470863817,
++        "name": "matrix_cell (6ed052ff34cc42ebcdccdeec515db78701bf76fb6403be6ad3ad585c8e6ed26f)",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:29:58Z",
++        "completed_at": "2026-10-17T18:31:35Z",
++        "check_suite": {
++          "id": 105847929417
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117470863791,
++        "name": "matrix_cell (8ee22cd331268ffccfcac407f5cd3f180a2e797f96956f5102c94d94fa2ef70d)",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:29:58Z",
++        "completed_at": "2026-10-17T19:01:24Z",
++        "check_suite": {
++          "id": 105847929417
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117470863775,
++        "name": "matrix_cell (f68aa93f0dc8a34f02c5b3b4e5d2e3ac7afbac88ad322811ff216c54d951cded)",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:29:58Z",
++        "completed_at": "2026-10-17T18:43:19Z",
++        "check_suite": {
++          "id": 105847929417
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117470350606,
++        "name": "matrix_plan",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:27:31Z",
++        "completed_at": "2026-10-17T18:29:55Z",
++        "check_suite": {
++          "id": 105847929417
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117470275734,
++        "name": "prepare",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:27:09Z",
++        "completed_at": "2026-10-17T18:27:27Z",
++        "check_suite": {
++          "id": 105847929417
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117468861616,
++        "name": "maintenance",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:20:36Z",
++        "completed_at": "2026-10-17T18:27:05Z",
++        "check_suite": {
++          "id": 105847929417
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117468805941,
++        "name": "finalize",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:20:21Z",
++        "completed_at": "2026-10-17T18:20:32Z",
++        "check_suite": {
++          "id": 105843971712
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117468668642,
++        "name": "dispatch",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:19:40Z",
++        "completed_at": "2026-10-17T18:19:51Z",
++        "check_suite": {
++          "id": 105847896346
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117468115711,
++        "name": "matrix_plan",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "skipped",
++        "started_at": "2026-10-17T18:17:02Z",
++        "completed_at": "2026-10-17T18:17:02Z",
++        "check_suite": {
++          "id": 105843971712
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117468115404,
++        "name": "matrix_cell (${{ matrix.cellId }})",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "skipped",
++        "started_at": "2026-10-17T18:17:02Z",
++        "completed_at": "2026-10-17T18:17:02Z",
++        "check_suite": {
++          "id": 105843971712
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117468114741,
++        "name": "repair",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:17:05Z",
++        "completed_at": "2026-10-17T18:20:17Z",
++        "check_suite": {
++          "id": 105843971712
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117468028398,
++        "name": "prepare",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:16:42Z",
++        "completed_at": "2026-10-17T18:17:01Z",
++        "check_suite": {
++          "id": 105843971712
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117466711346,
++        "name": "maintenance",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T18:10:34Z",
++        "completed_at": "2026-10-17T18:16:38Z",
++        "check_suite": {
++          "id": 105843971712
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117464366483,
++        "name": "dispatch",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T17:59:32Z",
++        "completed_at": "2026-10-17T17:59:44Z",
++        "check_suite": {
++          "id": 105843936205
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117463196851,
++        "name": "dispatch",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T17:53:45Z",
++        "completed_at": "2026-10-17T17:53:55Z",
++        "check_suite": {
++          "id": 105842873620
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117463126851,
++        "name": "test-local",
++        "head_sha": "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T17:53:24Z",
++        "completed_at": "2026-10-17T18:29:20Z",
++        "check_suite": {
++          "id": 105842813055
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      }
++    ],
++    "3f041b46d95269b29054ca5c27bce6aa179f9683": [
++      {
++        "id": 117528305256,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T23:06:53Z",
++        "completed_at": "2026-10-17T23:07:03Z",
++        "check_suite": {
++          "id": 105900693524
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117526584422,
++        "name": "repair",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "in_progress",
++        "conclusion": null,
++        "started_at": "2026-10-17T22:58:04Z",
++        "completed_at": null,
++        "check_suite": {
++          "id": 105896955342
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117526583895,
++        "name": "matrix_cell (6a9a15f89659f6a182c2b23970e19f0c3e59d386d19d9e463813eb261885a58f)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:58:03Z",
++        "completed_at": "2026-10-17T22:59:27Z",
++        "check_suite": {
++          "id": 105896955342
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117526366498,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:56:49Z",
++        "completed_at": "2026-10-17T22:56:58Z",
++        "check_suite": {
++          "id": 105898969729
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117526277816,
++        "name": "matrix_plan",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:56:24Z",
++        "completed_at": "2026-10-17T22:58:00Z",
++        "check_suite": {
++          "id": 105896955342
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117526217617,
++        "name": "prepare",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:56:04Z",
++        "completed_at": "2026-10-17T22:56:21Z",
++        "check_suite": {
++          "id": 105896955342
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117525224410,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:50:49Z",
++        "completed_at": "2026-10-17T22:50:58Z",
++        "check_suite": {
++          "id": 105897974895
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117524299661,
++        "name": "maintenance",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:46:06Z",
++        "completed_at": "2026-10-17T22:56:01Z",
++        "check_suite": {
++          "id": 105896955342
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117524237878,
++        "name": "finalize",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:45:46Z",
++        "completed_at": "2026-10-17T22:46:02Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117524025263,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:44:38Z",
++        "completed_at": "2026-10-17T22:44:47Z",
++        "check_suite": {
++          "id": 105896931440
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117522881225,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:38:40Z",
++        "completed_at": "2026-10-17T22:38:52Z",
++        "check_suite": {
++          "id": 105895927442
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117521423979,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:31:18Z",
++        "completed_at": "2026-10-17T22:31:27Z",
++        "check_suite": {
++          "id": 105894656333
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117520245332,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:25:34Z",
++        "completed_at": "2026-10-17T22:25:43Z",
++        "check_suite": {
++          "id": 105893637207
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117518580468,
++        "name": "repair",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:17:19Z",
++        "completed_at": "2026-10-17T22:45:42Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117518580289,
++        "name": "matrix_cell (9f7769e1ff9ca9fac7e7f7762c1ff1f2ec13bf046a721b7a8f93d44157dbe9af)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:17:19Z",
++        "completed_at": "2026-10-17T22:22:36Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117518580231,
++        "name": "matrix_cell (2627ec1abace4bd1afc05f61de8a756db50e646a59ea8af6ae911fa21a3c8929)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:17:20Z",
++        "completed_at": "2026-10-17T22:34:03Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117518580191,
++        "name": "matrix_cell (a81d9e027b7187054981fb8e98d0fcc56eba74f3f98df7f81a1b836768eaa0e6)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:17:20Z",
++        "completed_at": "2026-10-17T22:20:12Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117518580177,
++        "name": "matrix_cell (8e7e8e2fd70c95f20406b3a3c67d837785e4503dbf8805873593475bdc0494e2)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:17:19Z",
++        "completed_at": "2026-10-17T22:32:31Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117518580168,
++        "name": "matrix_cell (ab8abca525343f0bf1239ec70b60ceec66f365da992ef1abfcd52557a6e3c546)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:17:19Z",
++        "completed_at": "2026-10-17T22:20:41Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117518580166,
++        "name": "matrix_cell (d769cc04b40fa269e7f841a081e04febd119cc9a9d7d05157664d1fbbf888877)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:17:19Z",
++        "completed_at": "2026-10-17T22:30:26Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117518580157,
++        "name": "matrix_cell (8b5db87b21cf4ee0f8998caad61eea94fb364863f10ae053b71c5a7dafe55e99)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:17:19Z",
++        "completed_at": "2026-10-17T22:24:13Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117518580151,
++        "name": "matrix_cell (9433a2407f084a35e11f5559dd53ff44c842d099e7774c1a3162a3cb17530283)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:17:19Z",
++        "completed_at": "2026-10-17T22:22:10Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117518580134,
++        "name": "matrix_cell (8e618499b9425d0d9476577d72af125bc2e434fcca326903973a92279b0e2d4d)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:17:19Z",
++        "completed_at": "2026-10-17T22:18:46Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117518580133,
++        "name": "matrix_cell (4478caa5491351ca5f848197c576e330ff552f71a31058757f73362f8543ede9)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:17:20Z",
++        "completed_at": "2026-10-17T22:25:13Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117518580076,
++        "name": "matrix_cell (d8f1a2f6e24387b3acefe280a37c06db6fe9aac51d57136af7fe3e358807bf19)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:17:19Z",
++        "completed_at": "2026-10-17T22:26:31Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117518287613,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:15:52Z",
++        "completed_at": "2026-10-17T22:16:02Z",
++        "check_suite": {
++          "id": 105891917402
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117517974195,
++        "name": "matrix_plan",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:14:24Z",
++        "completed_at": "2026-10-17T22:17:16Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117517901417,
++        "name": "prepare",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:14:02Z",
++        "completed_at": "2026-10-17T22:14:20Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117515914275,
++        "name": "maintenance",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:04:15Z",
++        "completed_at": "2026-10-17T22:13:58Z",
++        "check_suite": {
++          "id": 105889279120
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117515850097,
++        "name": "finalize",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:03:56Z",
++        "completed_at": "2026-10-17T22:04:11Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117515277853,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T22:01:05Z",
++        "completed_at": "2026-10-17T22:01:16Z",
++        "check_suite": {
++          "id": 105889243109
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117514054051,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:55:00Z",
++        "completed_at": "2026-10-17T21:55:11Z",
++        "check_suite": {
++          "id": 105888154128
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117512882890,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:49:06Z",
++        "completed_at": "2026-10-17T21:49:18Z",
++        "check_suite": {
++          "id": 105887119131
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117511562745,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:42:27Z",
++        "completed_at": "2026-10-17T21:42:39Z",
++        "check_suite": {
++          "id": 105885951604
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117510323796,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:36:23Z",
++        "completed_at": "2026-10-17T21:36:32Z",
++        "check_suite": {
++          "id": 105884854283
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247810,
++        "name": "repair",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:12Z",
++        "completed_at": "2026-10-17T22:03:52Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247504,
++        "name": "matrix_cell (ca63edf782d0fefdde16e255af6d1e9758ac3ad042c18279cb657485706a22c8)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:12Z",
++        "completed_at": "2026-10-17T21:35:09Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247467,
++        "name": "matrix_cell (de44a54d913d74e16e4066d5635f2b5c7175be31741ed07401f73b2330b88cf5)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:12Z",
++        "completed_at": "2026-10-17T21:40:50Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247455,
++        "name": "matrix_cell (b4585a0c6cfb8b5feec3b9d22727a870110aa9b7fae6775934b5e52fb104e7e1)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:13Z",
++        "completed_at": "2026-10-17T21:36:19Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247454,
++        "name": "matrix_cell (88d5ecf16bde2cbe98db687d637f069841d85b646ffb1cd89e2a6aecef2bba14)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:12Z",
++        "completed_at": "2026-10-17T21:38:30Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247437,
++        "name": "matrix_cell (43c7fcc68b843df3ca31ac8fb4407a6ffa5616c1ed120e647fced3df3b0f9de4)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:12Z",
++        "completed_at": "2026-10-17T21:36:13Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247432,
++        "name": "matrix_cell (4838136aa759df77838c1663c8c73da8a17c8209e86a725f1027f15d447f1c27)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:12Z",
++        "completed_at": "2026-10-17T21:36:02Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247422,
++        "name": "matrix_cell (636c1c0fbe35d74ceb5d3ca2d386178d2e7496ff8963d484903ad6667740d2c7)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:13Z",
++        "completed_at": "2026-10-17T21:35:27Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247421,
++        "name": "matrix_cell (cf9b3d9a97befc5d8e862ae172f3a1dd5255288df301591aff1539ff3d5acb41)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:12Z",
++        "completed_at": "2026-10-17T21:39:45Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247399,
++        "name": "matrix_cell (0daaea10e893632ad14275b494838d8e8085d64a118941a8e7aeadbc5fd52613)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:12Z",
++        "completed_at": "2026-10-17T21:38:54Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247394,
++        "name": "matrix_cell (f7053c4f7fa6d290738a26879129decd65b5869fa68a79d2bfbd161dd7b022d2)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:12Z",
++        "completed_at": "2026-10-17T21:37:42Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247393,
++        "name": "matrix_cell (83df001d2dd8b5336b3b68569cdfe56e1e227ea3396e5d46de22ab84b0d2cc75)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:12Z",
++        "completed_at": "2026-10-17T21:32:47Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247372,
++        "name": "matrix_cell (ffa63f24dfa4e16667a300e259b8d79a7c017ad87c3db72df7c497d7608356ec)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:13Z",
++        "completed_at": "2026-10-17T21:34:35Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117509247362,
++        "name": "matrix_cell (3cff8260c0066deff94d255a444055014d78876c68b844ce08fcf34d8cf182c8)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:31:12Z",
++        "completed_at": "2026-10-17T21:38:31Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117508615918,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:28:14Z",
++        "completed_at": "2026-10-17T21:28:22Z",
++        "check_suite": {
++          "id": 105883370090
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117508467924,
++        "name": "matrix_plan",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:27:33Z",
++        "completed_at": "2026-10-17T21:31:09Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117508379027,
++        "name": "prepare",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:27:08Z",
++        "completed_at": "2026-10-17T21:27:30Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117506640830,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:18:51Z",
++        "completed_at": "2026-10-17T21:18:59Z",
++        "check_suite": {
++          "id": 105881636351
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117506368988,
++        "name": "maintenance",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:17:34Z",
++        "completed_at": "2026-10-17T21:27:04Z",
++        "check_suite": {
++          "id": 105879525229
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117506318244,
++        "name": "finalize",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:17:18Z",
++        "completed_at": "2026-10-17T21:17:29Z",
++        "check_suite": {
++          "id": 105872300418
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117504209525,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T21:07:11Z",
++        "completed_at": "2026-10-17T21:07:22Z",
++        "check_suite": {
++          "id": 105879490130
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117502046871,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:56:48Z",
++        "completed_at": "2026-10-17T20:57:01Z",
++        "check_suite": {
++          "id": 105877533112
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117500831661,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:50:47Z",
++        "completed_at": "2026-10-17T20:50:56Z",
++        "check_suite": {
++          "id": 105876453288
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117499732296,
++        "name": "repair",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:45:29Z",
++        "completed_at": "2026-10-17T21:09:00Z",
++        "check_suite": {
++          "id": 105872300418
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117499731906,
++        "name": "matrix_cell (2f9cf9d291dc376a2d1e1ef92f5a5f386c966df5b695d80d529579b8743d15cd)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:45:29Z",
++        "completed_at": "2026-10-17T20:52:27Z",
++        "check_suite": {
++          "id": 105872300418
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117499731896,
++        "name": "matrix_cell (51c13b3dc05ac6ad32d228a93851d440978041c5b5ff7fdbf6e3e7dc79a539ed)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:45:29Z",
++        "completed_at": "2026-10-17T21:00:30Z",
++        "check_suite": {
++          "id": 105872300418
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117499731885,
++        "name": "matrix_cell (c51c12125376c57b29b8b24400271c0b1b80b345ebc162f065acddae0f42415b)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:45:28Z",
++        "completed_at": "2026-10-17T20:53:10Z",
++        "check_suite": {
++          "id": 105872300418
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117499731853,
++        "name": "matrix_cell (5865a05301610a2b65dfc857526a872feb803fb42139a055387a5f4ea3e0dd34)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:45:29Z",
++        "completed_at": "2026-10-17T21:17:15Z",
++        "check_suite": {
++          "id": 105872300418
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117499731840,
++        "name": "matrix_cell (262dfebf2d4865c1889df825e69be33a711e7117062c039e3dc8211199f615b3)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:45:28Z",
++        "completed_at": "2026-10-17T20:54:14Z",
++        "check_suite": {
++          "id": 105872300418
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117499731832,
++        "name": "matrix_cell (7f10b8cb5e238a008e18712544854bf82ba18f8531baf270c918376c636a28ae)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:45:28Z",
++        "completed_at": "2026-10-17T20:46:53Z",
++        "check_suite": {
++          "id": 105872300418
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117499731817,
++        "name": "matrix_cell (d09535cf4358419d442aa4dfa3fd1d65ad2adcb173ab2d7ff0a6f50f4ee64c68)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:45:29Z",
++        "completed_at": "2026-10-17T21:03:00Z",
++        "check_suite": {
++          "id": 105872300418
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117499731801,
++        "name": "matrix_cell (e0a5d1bf714be09ede792a84a16edef4d663c0750ae62f22aaeea3616b48f573)",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:45:29Z",
++        "completed_at": "2026-10-17T20:50:51Z",
++        "check_suite": {
++          "id": 105872300418
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117499572935,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:44:42Z",
++        "completed_at": "2026-10-17T20:44:53Z",
++        "check_suite": {
++          "id": 105875338483
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117499163840,
++        "name": "matrix_plan",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:42:44Z",
++        "completed_at": "2026-10-17T20:45:25Z",
++        "check_suite": {
++          "id": 105872300418
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117499093852,
++        "name": "prepare",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:42:23Z",
++        "completed_at": "2026-10-17T20:42:40Z",
++        "check_suite": {
++          "id": 105872300418
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117498249563,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:38:18Z",
++        "completed_at": "2026-10-17T20:38:30Z",
++        "check_suite": {
++          "id": 105874112295
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117497331033,
++        "name": "maintenance",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:33:49Z",
++        "completed_at": "2026-10-17T20:42:20Z",
++        "check_suite": {
++          "id": 105872300418
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117496217814,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:28:31Z",
++        "completed_at": "2026-10-17T20:28:43Z",
++        "check_suite": {
++          "id": 105872265388
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117493829908,
++        "name": "dispatch",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:17:03Z",
++        "completed_at": "2026-10-17T20:17:13Z",
++        "check_suite": {
++          "id": 105870138936
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      },
++      {
++        "id": 117492665472,
++        "name": "test-local",
++        "head_sha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "status": "completed",
++        "conclusion": "success",
++        "started_at": "2026-10-17T20:11:33Z",
++        "completed_at": "2026-10-17T20:47:56Z",
++        "check_suite": {
++          "id": 105869113666
++        },
++        "app": {
++          "slug": "github-actions"
++        }
++      }
++    ]
++  }
++}
+diff --git a/tests/github/helpers.ts b/tests/github/helpers.ts
+index c9b2ee576a..cc08eeb678 100644
+--- a/tests/github/helpers.ts
++++ b/tests/github/helpers.ts
+@@ -823,6 +823,8 @@ export function errorWire(message: string): Record<string, unknown> {
+ 
+ export interface MakePortOptions {
+   script?: ScriptEntry[];
++  /** The port's one repository (default `REPO`). */
++  repository?: RepositoryIdentityV1;
+   /** Custom transport override (defaults to the scripted transport). */
+   http?: HttpTransportV1;
+   auth?: GitHubAuthProviderV1;
+@@ -851,7 +853,7 @@ export function makePort(
+ } {
+   const transport = new ScriptedHttpTransport(options.script ?? []);
+   const portOptions: GitHubPortOptionsV1 = {
+-    repository: REPO,
++    repository: options.repository ?? REPO,
+     apiBaseUrl: options.apiBaseUrl ?? "https://api.github.com",
+     http: options.http ?? transport.fetch.bind(transport) as HttpTransportV1,
+     auth: options.auth ?? new FakeAuthProvider(),
+diff --git a/tests/host/gen77-runtime-source.ts b/tests/host/gen77-runtime-source.ts
+index fd73f811fb..466cea5a95 100644
+--- a/tests/host/gen77-runtime-source.ts
++++ b/tests/host/gen77-runtime-source.ts
+@@ -12,21 +12,27 @@
+  * helpers exist for the installed generation-78 runtime (R78), the rollback
+  * target of generation 79: `gen78Available` and `loadGen78Modules`, and for
+  * the installed generation-79 runtime (R79): `gen79Available` and
+- * `loadGen79Modules`, and for the live generation-79 launcher (L79, whose
+- * `ops/` tree is extracted too): `l79Available` and `loadL79Modules`.
++ * `loadGen79Modules`, for the live generation-79 launcher (L79, whose `ops/`
++ * tree is extracted too): `l79Available` and `loadL79Modules`, and for the
++ * installed generation-80 runtime (R80), the rollback target of generation
++ * 81: `gen80Available` and `loadGen80Modules` (its `ops/` tree is extracted
++ * too, since R80 is also the launcher L80 runs on).
+  */
+ import {
+   OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION,
+   OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION,
+   OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION,
++  OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
+ } from "../../src/host/owner-install-runtime-pins.ts";
+ 
+ /** Installed generation-77 runtime revision (the rollback target of 78). */
+ export const GEN77_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN77_REVISION;
+ /** Installed generation-78 runtime revision (the rollback target of 79). */
+ export const GEN78_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN78_REVISION;
+-/** Installed generation-79 runtime revision. */
++/** Installed generation-79 runtime revision (the rollback target of 80). */
+ export const GEN79_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION;
++/** Installed generation-80 runtime revision (the rollback target of 81). */
++export const GEN80_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION;
+ /**
+  * The live generation-79 launcher (L79: the R79 pin 4b8be3b9f plus the
+  * protected-path refusal recording), the launcher rollback target of every
+@@ -74,6 +80,11 @@ export function gen79Available(): Promise<boolean> {
+   return revisionAvailable(GEN79_RUNTIME);
+ }
+ 
++/** True when the pinned generation-80 commit is in the local object store. */
++export function gen80Available(): Promise<boolean> {
++  return revisionAvailable(GEN80_RUNTIME);
++}
++
+ /** True when the L79 launcher commit is in the local object store. */
+ export function l79Available(): Promise<boolean> {
+   return revisionAvailable(L79_LAUNCHER);
+@@ -110,6 +121,17 @@ export function loadGen79Modules(
+   return loadRevisionModules(GEN79_RUNTIME, 79, paths);
+ }
+ 
++/**
++ * `loadGen77Modules` for the generation-80 `src/`, `tests/` and `ops/` trees
++ * (R80 is the runtime and, with its install pin, the launcher of generation
++ * 80).
++ */
++export function loadGen80Modules(
++  paths: readonly string[],
++): Promise<LoadedRuntimeV1> {
++  return loadRevisionModules(GEN80_RUNTIME, 80, paths, ["ops"]);
++}
++
+ /** `loadGen77Modules` for the L79 launcher's `src/`, `tests/` and `ops/`. */
+ export function loadL79Modules(
+   paths: readonly string[],
+diff --git a/tests/host/hosted-autonomy-check-coverage_test.ts b/tests/host/hosted-autonomy-check-coverage_test.ts
+new file mode 100644
+index 0000000000..0c94a73a77
+--- /dev/null
++++ b/tests/host/hosted-autonomy-check-coverage_test.ts
+@@ -0,0 +1,418 @@
++/**
++ * The launcher's foreign green read (`hasAllChecksGreen`) is tri-state and
++ * requires every expected check (sentinel issue #154):
++ *
++ * - green (true) only for a complete, non-empty listing of the exact head
++ *   whose every run completed with `success` and, when the caller names the
++ *   base the head is tested against, which reports every check name of each
++ *   base check suite it shares a name with;
++ * - not green (false) for a readable listing that fails that;
++ * - unreadable (null) for a listing (the head's or the base's) that cannot be
++ *   read and proven complete, or that holds no check run at all.
++ *
++ * The REAL surface runs over a stubbed `fetch`, on the live verify-artifact
++ * gap of ai.ubq.fi PR 1064. The REAL retry pass then records a head as read
++ * (`ciReadHeads`) only after a successful non-empty listing, and an
++ * unreadable listing plans nothing: it no longer takes a CI correction slot
++ * (the issue's case: a rate-limited listing for green legacy 618 read as red
++ * and, its re-run settled, was planned as one).
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import {
++  parseWorkRecordV1,
++  type WorkRecordV1,
++} from "../../src/contracts/work-record.ts";
++import { createHostedAutonomyGitHub } from "../../ops/hosted-autonomy-github.ts";
++import { HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES } from "../../ops/hosted-autonomy-ci-retries.ts";
++import { HOSTED_AUTONOMY_CI_FIRST_RUNTIMES } from "../../ops/hosted-autonomy-ci-first.ts";
++import {
++  readHostedClosedIssues,
++  runHostedRetryPass,
++} from "../../ops/hosted-autonomy-retry-pass.ts";
++import {
++  createHostedAutonomyScopes,
++  type HostedAutonomyPassContextV1,
++} from "../../ops/hosted-autonomy-scopes.ts";
++import type {
++  HostedAutonomyDepsV1,
++  HostedAutonomyHeadRunV1,
++  HostedAutonomyPullV1,
++} from "../../ops/hosted-autonomy-types.ts";
++import { reservation, SHA1, SHA2, SHA3, T0 } from "../state/helpers.ts";
++import {
++  authorizingReceipt,
++  blockedRecord,
++} from "./hosted-autonomy-fixtures.ts";
++import { makeRig, repairSnapshot } from "./hosted-autonomy-rig.ts";
++import { releaseAt } from "./hosted-autonomy-preservation-fixtures.ts";
++import { LIVE_GAP, liveGapWire } from "../repair/ci-coverage-fixtures.ts";
++
++const AI = {
++  owner: "ubiquity",
++  name: "ai.ubq.fi",
++  installationId: 155687488,
++} as const;
++
++/** A route answer: a JSON page, or a bare HTTP status (a 503 or a 403). */
++type Answer = Record<string, unknown> | number;
++
++/**
++ * Runs `body` with `fetch` answering each check-run listing of the commit
++ * named in its URL from `routes` (any other request is a 404).
++ */
++async function withListings<T>(
++  routes: Record<string, Answer>,
++  body: () => Promise<T>,
++  requested: string[] = [],
++): Promise<T> {
++  const original = globalThis.fetch;
++  globalThis.fetch = ((input: string | URL | Request) => {
++    const url = String(input instanceof Request ? input.url : input);
++    requested.push(url);
++    const match = /\/commits\/([0-9a-f]{40})\/check-runs\?/.exec(url);
++    const answer = match === null ? 404 : routes[match[1]] ?? 404;
++    return Promise.resolve(
++      typeof answer === "number"
++        ? new Response("{}", { status: answer })
++        : new Response(JSON.stringify(answer), { status: 200 }),
++    );
++  }) as typeof fetch;
++  try {
++    return await body();
++  } finally {
++    globalThis.fetch = original;
++  }
++}
++
++function page(runs: Record<string, unknown>[]): Record<string, unknown> {
++  return { total_count: runs.length, check_runs: runs };
++}
++
++const surface = () => createHostedAutonomyGitHub("fixture-token", AI);
++
++Deno.test("launcher green read: the live verify-artifact gap is not green against T; the complete head is", async () => {
++  const requested: string[] = [];
++  const gap = await withListings(
++    {
++      [LIVE_GAP.head]: page(liveGapWire("gap")),
++      [LIVE_GAP.tip]: page(liveGapWire("tip")),
++    },
++    () => surface().hasAllChecksGreen(LIVE_GAP.head, LIVE_GAP.tip),
++    requested,
++  );
++  assert.equal(gap, false, "three of four expected checks is not green");
++  assert.ok(
++    requested.some((url) => url.includes(`/commits/${LIVE_GAP.tip}/`)),
++    "the base listing was read",
++  );
++  const complete = await withListings({
++    [LIVE_GAP.head]: page(liveGapWire("complete")),
++    [LIVE_GAP.tip]: page(liveGapWire("tip")),
++  }, () => surface().hasAllChecksGreen(LIVE_GAP.head, LIVE_GAP.tip));
++  assert.equal(complete, true);
++  // A read that names no base (a tip's own CI) judges the existing runs.
++  const tipOnly = await withListings({
++    [LIVE_GAP.head]: page(liveGapWire("gap")),
++  }, () => surface().hasAllChecksGreen(LIVE_GAP.head));
++  assert.equal(tipOnly, true);
++});
++
++Deno.test("launcher green read: a listing that cannot be read, or holds no run, is unreadable (null), never red", async () => {
++  const head = LIVE_GAP.head;
++  const tip = LIVE_GAP.tip;
++  // Rate limited or failing head listing.
++  for (const status of [403, 500, 503]) {
++    assert.equal(
++      await withListings(
++        { [head]: status, [tip]: page(liveGapWire("tip")) },
++        () => surface().hasAllChecksGreen(head, tip),
++      ),
++      null,
++      `head listing ${status}`,
++    );
++  }
++  // No check run at all: no evidence either way.
++  assert.equal(
++    await withListings(
++      { [head]: page([]), [tip]: page(liveGapWire("tip")) },
++      () => surface().hasAllChecksGreen(head, tip),
++    ),
++    null,
++  );
++  // A green head whose base cannot be read cannot prove coverage.
++  assert.equal(
++    await withListings(
++      { [head]: page(liveGapWire("complete")), [tip]: 503 },
++      () => surface().hasAllChecksGreen(head, tip),
++    ),
++    null,
++  );
++  // A base run without a usable check suite id is a malformed listing.
++  const malformed = liveGapWire("tip").map((run, index) =>
++    index === 0 ? { ...run, check_suite: { id: "x" } } : run
++  );
++  assert.equal(
++    await withListings(
++      { [head]: page(liveGapWire("complete")), [tip]: page(malformed) },
++      () => surface().hasAllChecksGreen(head, tip),
++    ),
++    null,
++  );
++  // A readable red head is not green (false), with no base read needed.
++  const red = liveGapWire("complete").map((run, index) =>
++    index === 0 ? { ...run, conclusion: "failure" } : run
++  );
++  const requested: string[] = [];
++  assert.equal(
++    await withListings(
++      { [head]: page(red), [tip]: 503 },
++      () => surface().hasAllChecksGreen(head, tip),
++      requested,
++    ),
++    false,
++  );
++  assert.equal(
++    requested.some((url) => url.includes(`/commits/${tip}/`)),
++    false,
++  );
++});
++
++Deno.test("launcher green read: a base workflow the head never runs is not required", async () => {
++  const head = SHA3;
++  const base = SHA2;
++  const run = (
++    id: number,
++    name: string,
++    sha: string,
++    suite: number,
++  ): Record<string, unknown> => ({
++    id,
++    name,
++    head_sha: sha,
++    status: "completed",
++    conclusion: "success",
++    check_suite: { id: suite },
++  });
++  assert.equal(
++    await withListings({
++      [head]: page([run(1, "validate", head, 90)]),
++      [base]: page([
++        run(2, "validate", base, 10),
++        run(3, "dispatch", base, 20),
++        run(4, "dispatch", base, 21),
++      ]),
++    }, () => surface().hasAllChecksGreen(head, base)),
++    true,
++  );
++});
++
++/** The generation-80 runtime, pinned in both launcher allowlists here. */
++const R80 = "8080808080808080808080808080808080808080" as GitSha;
++const CUT = T0 + 1;
++const PASS_NOW = T0 + 5_000_000;
++const HEAD = SHA3;
++const BASE = SHA2;
++const CI_RED = "CI checks failed: verify-artifact(skipped), validate(failure)";
++
++/**
++ * A CI-parked ai.ubq.fi record on its exact base: the green legacy 618 shape
++ * (`rounds` 6: every ordinary round spent under R79's review-before-CI
++ * order), or an ordinary one (`rounds` 1).
++ */
++function parked(issue: number, rounds: number): WorkRecordV1 {
++  const id = `issue-ubiquity-ai.ubq.fi-${issue}`;
++  return parseWorkRecordV1({
++    ...blockedRecord(),
++    repository: AI,
++    id,
++    source: { kind: "issue", id: String(issue), revision: SHA1 },
++    related: { incidentId: null, issueNumber: issue },
++    blocker: { kind: "other", message: CI_RED, since: T0 + 5000 },
++    target: {
++      base: BASE,
++      branch: `sentinel/repair/${id}`,
++      checkpoint: null,
++      head: HEAD,
++      pr: 1000 + issue,
++      candidateState: {
++        preserved: {
++          operationKey: `impl:${"d".repeat(64)}`,
++          base: BASE,
++          head: HEAD,
++          ref: `refs/heads/sentinel-candidates/${"c".repeat(64)}`,
++        },
++        publishedHead: HEAD,
++      },
++    },
++    counters: { attempts: rounds + 1, retries: 0, reviewRounds: rounds },
++  });
++}
++
++function charges(record: WorkRecordV1) {
++  return Array.from(
++    { length: record.counters.reviewRounds },
++    (_, index) =>
++      reservation(`${record.id}-review-${index + 1}`, {
++        repository: AI,
++        taskId: record.id,
++        attempt: index + 1,
++        head: HEAD,
++        purpose: "review_request",
++        outcome: "submitted",
++        settledAt: T0 + 10 + index,
++      }),
++  );
++}
++
++const RELEASE = releaseAt({
++  revision: R80,
++  generation: 80,
++  healthy: {
++    revision: R80,
++    generation: 80,
++    createdAt: T0 + 100,
++    observedAt: T0 + 110,
++  },
++});
++
++async function withR80Pinned<T>(body: () => Promise<T>): Promise<T> {
++  const correction = HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES as Set<string>;
++  const ciFirst = HOSTED_AUTONOMY_CI_FIRST_RUNTIMES as Set<string>;
++  assert.equal(correction.has(R80) || ciFirst.has(R80), false);
++  correction.add(R80);
++  ciFirst.add(R80);
++  try {
++    return await body();
++  } finally {
++    correction.delete(R80);
++    ciFirst.delete(R80);
++  }
++}
++
++/** One REAL retry pass over `record` with `listing` as its head's runs. */
++async function retryPass(
++  prefix: string,
++  record: WorkRecordV1,
++  listing: Answer,
++): Promise<{ actions: string[]; after: WorkRecordV1 }> {
++  const snapshot = repairSnapshot(
++    [record],
++    [authorizingReceipt({
++      repository: AI,
++      pullRequest: { number: record.target.pr, head: HEAD, base: BASE },
++    })],
++    [],
++    charges(record),
++  );
++  const { rig, github } = await makeRig(prefix, {
++    repair: snapshot,
++    baseTip: BASE,
++    issueOpen: true,
++  });
++  const real = surface();
++  rig.githubFor = () => ({
++    ...github,
++    readPull: (number: number) =>
++      Promise.resolve({
++        number,
++        state: "open",
++        merged: false,
++        mergeCommitSha: null,
++        headSha: HEAD,
++        baseRef: "development",
++        author: "ubiquity-sentinel[bot]",
++      } as unknown as HostedAutonomyPullV1),
++    // The REAL read, over the stubbed listing.
++    hasAllChecksGreen: (head: string, base?: string) =>
++      real.hasAllChecksGreen(head, base),
++    // The re-run is settled: attempt 2 already failed.
++    listHeadRuns: (head: string) =>
++      Promise.resolve([{
++        id: 618,
++        headSha: head,
++        status: "completed",
++        conclusion: "failure",
++        runAttempt: 2,
++        createdAt: PASS_NOW - 60_000,
++      } as HostedAutonomyHeadRunV1]),
++    rerunFailedJobs: () => Promise.reject(new Error("never re-run here")),
++  });
++  try {
++    const deps = {
++      state: rig.state,
++      githubFor: rig.githubFor,
++      clock: { now: () => PASS_NOW },
++      legacyReviewCutoff: CUT,
++    } as unknown as HostedAutonomyDepsV1;
++    const read = await rig.state.readRepair();
++    assert.ok(read.ok && read.value.status === "found");
++    const context = {
++      deps,
++      actions: [] as string[],
++      revisions: [],
++      snapshot: read.value.snapshot,
++      observedHead: read.value.head,
++      initialHead: read.value.head,
++      releaseSnapshot: RELEASE,
++      closedIssues: new Set<string>(),
++      foreignMerged: new Map(),
++      dedicatedReservations: new Set<string>(),
++      ...createHostedAutonomyScopes(deps),
++    } as unknown as HostedAutonomyPassContextV1;
++    await readHostedClosedIssues(context);
++    await withListings(
++      { [HEAD]: listing, [BASE]: page([]) },
++      () => withR80Pinned(() => runHostedRetryPass(context, SHA1)),
++    );
++    const after = await rig.state.readRepair();
++    assert.ok(after.ok && after.value.status === "found");
++    return { actions: context.actions, after: after.value.snapshot.work[0] };
++  } finally {
++    await Deno.remove(rig.tmp, { recursive: true });
++  }
++}
++
++const RED_LISTING = page([{
++  id: 6181,
++  name: "validate",
++  head_sha: HEAD,
++  status: "completed",
++  conclusion: "failure",
++  check_suite: { id: 7 },
++}]);
++
++for (
++  const [label, issue, rounds] of [
++    ["green legacy 618 (every ordinary round spent)", 618, 6],
++    ["an ordinary CI-parked head", 1201, 1],
++  ] as const
++) {
++  Deno.test(`retry pass: an unreadable check-run listing plans nothing for ${label}`, async () => {
++    const record = parked(issue, rounds);
++    const planned = `retry:${record.id}:grant=0:other:CI checks failed:`;
++    // Control: a readable red listing plans the CI correction.
++    const red = await retryPass(`cover-red-${issue}`, record, RED_LISTING);
++    assert.ok(red.actions.includes(planned), JSON.stringify(red.actions));
++    assert.equal(red.after.nextStep, "delivery");
++    // Rate limited, failing or empty: nothing is planned, nothing written.
++    const listings: Answer[] = [403, 503, page([])];
++    for (const [index, listing] of listings.entries()) {
++      const unread = await retryPass(
++        `cover-unread-${issue}-${index}`,
++        record,
++        listing,
++      );
++      assert.equal(
++        unread.actions.some((action) =>
++          action.startsWith(`retry:${record.id}:grant`)
++        ),
++        false,
++        `${JSON.stringify(listing)}: ${JSON.stringify(unread.actions)}`,
++      );
++      assert.equal(unread.after.nextStep, "blocked", "left parked");
++      assert.deepEqual(unread.after.blocker, record.blocker);
++      assert.deepEqual(unread.after.counters, record.counters);
++    }
++  });
++}
+diff --git a/tests/host/hosted-autonomy-check-pagination_test.ts b/tests/host/hosted-autonomy-check-pagination_test.ts
+index abd5d069ba..bcb4795236 100644
+--- a/tests/host/hosted-autonomy-check-pagination_test.ts
++++ b/tests/host/hosted-autonomy-check-pagination_test.ts
+@@ -33,8 +33,8 @@ Deno.test(
+   async () => {
+     const withFetch = async (
+       handler: (url: string) => unknown,
+-      check: () => Promise<boolean>,
+-    ): Promise<boolean> => {
++      check: () => Promise<boolean | null>,
++    ): Promise<boolean | null> => {
+       const original = globalThis.fetch;
+       globalThis.fetch = ((input: string | URL | Request) =>
+         Promise.resolve(
+@@ -83,7 +83,8 @@ Deno.test(
+       ),
+       false,
+     );
+-    // Count drift between pages is an unproven listing, never green.
++    // Count drift between pages is an unproven listing: unreadable (null),
++    // never green and never read as red.
+     assert.equal(
+       await withFetch(
+         (url) =>
+@@ -92,9 +93,9 @@ Deno.test(
+             : checkRunPage([checkRun("validate")], 102),
+         () => foreign().hasAllChecksGreen(HEAD),
+       ),
+-      false,
++      null,
+     );
+-    // A duplicated run id across pages is an unproven listing, never green.
++    // A duplicated run id across pages is an unproven listing: unreadable.
+     const duplicate = checkRun("validate");
+     assert.equal(
+       await withFetch(
+@@ -104,7 +105,7 @@ Deno.test(
+             : checkRunPage([duplicate], 101),
+         () => foreign().hasAllChecksGreen(HEAD),
+       ),
+-      false,
++      null,
+     );
+     // A listing that promises more runs than it ever returns is incomplete.
+     assert.equal(
+@@ -112,7 +113,7 @@ Deno.test(
+         (url) => checkRunPage(pageNumber(url) === 1 ? pageOf(0) : [], 150),
+         () => foreign().hasAllChecksGreen(HEAD),
+       ),
+-      false,
++      null,
+     );
+     // A run without a usable id is malformed: the listing is not evidence.
+     assert.equal(
+@@ -123,15 +124,15 @@ Deno.test(
+           status: "completed",
+           conclusion: "success",
+         }], 1), () => foreign().hasAllChecksGreen(HEAD)),
+-      false,
++      null,
+     );
+-    // A missing page count cannot prove completeness: never green.
++    // A missing page count cannot prove completeness: unreadable.
+     assert.equal(
+       await withFetch(
+         () => ({ check_runs: [checkRun("validate")] }),
+         () => foreign().hasAllChecksGreen(HEAD),
+       ),
+-      false,
++      null,
+     );
+   },
+ );
+diff --git a/tests/host/hosted-autonomy-foreign-routing_test.ts b/tests/host/hosted-autonomy-foreign-routing_test.ts
+index 7fa0e3f26c..a0d3e10ceb 100644
+--- a/tests/host/hosted-autonomy-foreign-routing_test.ts
++++ b/tests/host/hosted-autonomy-foreign-routing_test.ts
+@@ -173,10 +173,14 @@ Deno.test(
+             },
+         ));
+       }
+-      const payload = url.includes("/check-runs")
++      // Each listing is bound to the commit it was asked for: the merge gate
++      // reads the head's runs and the reviewed base's (whose suites name the
++      // checks the head must report too).
++      const listed = /\/commits\/([0-9a-f]{40})\/check-runs/.exec(url)?.[1];
++      const payload = listed !== undefined
+         ? checkRunPage([
+-          checkRun("validate"),
+-          checkRun("verify-artifact"),
++          checkRun("validate", { head_sha: listed }),
++          checkRun("verify-artifact", { head_sha: listed }),
+         ], 2)
+         : url.includes("/commits/")
+         ? { parents: [{ sha: BASE }, { sha: HEAD }] }
+@@ -248,7 +252,7 @@ Deno.test(
+ Deno.test(
+   "hosted autonomy: a foreign head is green only when every check-run on it succeeded",
+   async () => {
+-    const gate = async (checkRuns: unknown[]): Promise<boolean> => {
++    const gate = async (checkRuns: unknown[]): Promise<boolean | null> => {
+       const original = globalThis.fetch;
+       globalThis.fetch = (() =>
+         Promise.resolve(
+@@ -262,8 +266,9 @@ Deno.test(
+       }
+     };
+     // Zero check-runs is not green: a foreign repository has no other
+-    // deterministic signal, so an unverified head is never delivered.
+-    assert.equal(await gate([]), false);
++    // deterministic signal, so an unverified head is never delivered. It is
++    // no evidence of a failure either: unreadable (null), never red.
++    assert.equal(await gate([]), null);
+     assert.equal(
+       await gate([checkRun("validate", {
+         status: "in_progress",
+@@ -284,8 +289,9 @@ Deno.test(
+       ]),
+       false,
+     );
+-    // A run reported on a different head is not a run on this one.
+-    assert.equal(await gate([checkRun("validate", { head_sha: SHA1 })]), false);
++    // A run reported on a different head is not a run on this one: the
++    // listing is not bound to the head, so it is unreadable (null).
++    assert.equal(await gate([checkRun("validate", { head_sha: SHA1 })]), null);
+     // The foreign repository's own names are the gate: both green delivers.
+     assert.equal(
+       await gate([checkRun("validate"), checkRun("verify-artifact")]),
+diff --git a/tests/repair/carried-coverage_test.ts b/tests/repair/carried-coverage_test.ts
+new file mode 100644
+index 0000000000..3984936240
+--- /dev/null
++++ b/tests/repair/carried-coverage_test.ts
+@@ -0,0 +1,441 @@
++/**
++ * Carried delivery requires every expected check (sentinel issue #154), over
++ * the live verify-artifact gap shape (ai.ubq.fi PR 1064: H1 f0008beb62, a
++ * refresh onto T 9cdc76dc, read green with `verify-artifact` not created yet).
++ *
++ * - The runtime's carried step holds no carried-merge marker for a refreshed
++ *   head H1 that lacks a check name of T's suites: it waits (`ci_pending`,
++ *   bounded, uncharged) and writes the marker once GitHub created the job.
++ * - The launcher's carried merge passes T to its green read, so a marker
++ *   written in the gap (R80 reads no base) merges nothing (`checks_pending`).
++ * - The ceiling's moved-base read refreshes a spent reviewed head H0 only once
++ *   it reports every check name of its reviewed base B0's suites.
++ * - A base whose runs cannot be read is awaited the same way and parks after
++ *   the bound naming it, never a silent deferral; bases are read leniently
++ *   (live sentinel `development` carries 78-character `matrix_cell` runs) and
++ *   the sentinel self scope reads none, like the launcher.
++ *
++ * Driven through the REAL repair loop and the REAL launcher delivery pass
++ * (`delivery-queue-rig.ts`); every write parses under the rollback target R80
++ * (skipped in a checkout without it).
++ */
++import assert from "node:assert/strict";
++import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
++import {
++  type ReviewReceiptV1,
++  reviewTaskStatementDigest,
++} from "../../src/contracts/review-receipt.ts";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import { portError } from "../../src/contracts/ports.ts";
++import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
++import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
++import { runRepairCycle } from "../../src/repair/loop.ts";
++import { CARRIED_WAIT_BOUND_MS } from "../../src/repair/loop-carried-delivery.ts";
++import { isCarriedMergeMarker } from "../../src/repair/carried-review.ts";
++import {
++  MAX_REVIEW_ROUNDS,
++  REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX,
++  REVIEW_ROUND_CEILING_PREFIX,
++  REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX,
++} from "../../src/repair/review-round-cap.ts";
++import {
++  REPO,
++  reservation,
++  SHA1,
++  SHA2,
++  T0,
++  workRecord,
++} from "../state/helpers.ts";
++import { assertGen80Parses, gen80Available } from "../state/gen77-contracts.ts";
++import { APP, queueRig } from "./delivery-queue-rig.ts";
++import { completedReceipt } from "./loop-review-fixtures.ts";
++import { sha } from "./review-round-cap-rig.ts";
++import {
++  LIVE_L80,
++  LIVE_TIP,
++  liveGapChecks,
++  routeLiveDevelopment,
++  suiteCheck,
++} from "./ci-coverage-fixtures.ts";
++
++const HOUR = 60 * 60_000;
++const GEN80 = await gen80Available();
++
++/** The first prepared refresh of the rig (`QueueGithub.prepareBaseRefresh`). */
++const H1 = sha(0x5001);
++
++function spentCharges(record: WorkRecordV1): BudgetReservationV1[] {
++  return Array.from(
++    { length: MAX_REVIEW_ROUNDS },
++    (_, index) =>
++      reservation(`${record.id}-review-${index + 1}`, {
++        repository: record.repository,
++        taskId: record.id,
++        attempt: index + 1,
++        head: record.target.head,
++        purpose: "review_request",
++        outcome: "submitted",
++        createdAt: T0 - 30 * 60_000 + index,
++        settledAt: T0 - 30 * 60_000 + index + 1,
++      }),
++  );
++}
++
++async function cleanReview(record: WorkRecordV1): Promise<ReviewReceiptV1> {
++  const issueNumber = record.related.issueNumber!;
++  return completedReceipt(record.target.pr!, record.target.head!, SHA1, {
++    id: `review-receipt:${record.id}:latest`,
++    repository: record.repository,
++    resultId: `result-${record.id}`,
++    expectedReviewer: APP,
++    observedReviewer: APP,
++    taskAcceptance: {
++      issueNumber,
++      taskDigest: await reviewTaskStatementDigest({
++        issueNumber,
++        title: `issue ${issueNumber}`,
++        body: "",
++      }),
++      verdict: "fulfilled",
++      evidence: ["the exact reviewed change implements the source issue"],
++    },
++  });
++}
++
++/** One spent, cleanly reviewed record on B0 = SHA1 with the tip at T = SHA2. */
++async function spentRig(repository: RepositoryIdentityV1 = REPO) {
++  const base = await queueRig(1, { repository });
++  const spent = base.records.map((record) =>
++    workRecord(record.id, {
++      ...record,
++      nextStep: "delivery",
++      counters: { attempts: 1, retries: 0, reviewRounds: MAX_REVIEW_ROUNDS },
++    })
++  );
++  const reviews = await Promise.all(spent.map(cleanReview));
++  return queueRig(1, {
++    tip: SHA2,
++    shape: () => spent,
++    reservations: spent.flatMap(spentCharges),
++    reviews,
++    reviewer: APP,
++    livePolicy: true,
++    repository,
++  });
++}
++
++type Rig = Awaited<ReturnType<typeof spentRig>>;
++
++async function runOnce(rig: Rig) {
++  await runRepairCycle(rig.deps, {
++    deadline: rig.clock.now() + 60 * 60_000,
++    stepLimit: 16,
++  });
++}
++
++async function assertNothingSpent(rig: Rig, before: number) {
++  const snapshot = await rig.snapshot();
++  assert.equal(snapshot.reservations.length, before, "nothing charged");
++  for (const record of snapshot.work) {
++    assert.equal(record.counters.reviewRounds, MAX_REVIEW_ROUNDS);
++    assert.equal(record.counters.retries, 0);
++  }
++  assert.deepEqual(rig.github.reviewed, [], "no review requested");
++}
++
++async function assertRollbackParses(rig: Rig) {
++  if (!GEN80) return;
++  assert.ok(rig.writes.length > 0);
++  for (const written of rig.writes) await assertGen80Parses(written);
++}
++
++Deno.test("carried coverage: a refreshed head in the live verify-artifact gap holds no merge marker; it merges once GitHub creates verify-artifact", async () => {
++  const rig = await spentRig();
++  const charges = (await rig.snapshot()).reservations.length;
++  rig.github.checksByHead.set(SHA2, liveGapChecks("tip", SHA2, T0));
++  rig.github.checksByHead.set(H1, liveGapChecks("gap", H1, T0));
++  await runOnce(rig);
++  await runOnce(rig);
++  let [record] = (await rig.snapshot()).work;
++  assert.equal(record.target.head, H1, "refreshed once onto T");
++  assert.equal(record.target.base, SHA2);
++  assert.equal(record.nextStep, "work");
++  assert.equal(record.wait?.reason, "ci_pending");
++  assert.equal(isCarriedMergeMarker(record.wait), false, "no merge marker");
++  const since = record.wait!.since;
++  await rig.launcher();
++  assert.equal(rig.github.launcherMerges.length, 0, "nothing merged in gap");
++  // GitHub creates verify-artifact: the marker, then the launcher's merge.
++  rig.github.checksByHead.set(H1, liveGapChecks("complete", H1, T0));
++  rig.clock.advance(5 * 60_000);
++  await runOnce(rig);
++  [record] = (await rig.snapshot()).work;
++  assert.ok(isCarriedMergeMarker(record.wait), JSON.stringify(record.wait));
++  assert.ok(record.wait!.since > since);
++  await rig.launcher();
++  assert.equal(rig.github.launcherMerges.length, 1);
++  assert.equal(rig.github.launcherMerges[0].head, H1);
++  assert.equal(rig.github.launcherMerges[0].onto, SHA2);
++  assert.equal(rig.github.refreshes, 1);
++  await assertNothingSpent(rig, charges);
++  await assertRollbackParses(rig);
++});
++
++Deno.test("carried coverage: a refreshed head that never gets its expected check parks after the bound, naming it", async () => {
++  const rig = await spentRig();
++  const charges = (await rig.snapshot()).reservations.length;
++  rig.github.checksByHead.set(SHA2, liveGapChecks("tip", SHA2, T0));
++  rig.github.checksByHead.set(H1, liveGapChecks("gap", H1, T0));
++  await runOnce(rig);
++  await runOnce(rig);
++  let [record] = (await rig.snapshot()).work;
++  assert.equal(record.wait?.reason, "ci_pending");
++  for (let elapsed = 0; elapsed <= CARRIED_WAIT_BOUND_MS; elapsed += HOUR) {
++    rig.clock.advance(HOUR);
++    await rig.launcher();
++    await runOnce(rig);
++    [record] = (await rig.snapshot()).work;
++    if (record.nextStep === "blocked") break;
++  }
++  assert.equal(record.nextStep, "blocked");
++  assert.equal(
++    record.blocker!.message,
++    `${REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX}verify-artifact(absent)`,
++  );
++  assert.ok(record.blocker!.message.startsWith(REVIEW_ROUND_CEILING_PREFIX));
++  assert.equal(rig.github.launcherMerges.length, 0);
++  await assertNothingSpent(rig, charges);
++  await assertRollbackParses(rig);
++});
++
++Deno.test("carried coverage: the launcher refuses a carried-merge marker written in the gap (R80 reads no base)", async () => {
++  const rig = await spentRig();
++  // R80's carried step judges H1's existing runs alone, so in the gap it
++  // holds the marker; an empty listing for T gives this runtime the same
++  // view (no suite to require a name from).
++  rig.github.checksByHead.set(SHA2, []);
++  rig.github.checksByHead.set(H1, liveGapChecks("gap", H1, T0));
++  await runOnce(rig);
++  await runOnce(rig);
++  let [record] = (await rig.snapshot()).work;
++  assert.equal(record.target.head, H1);
++  assert.ok(isCarriedMergeMarker(record.wait), JSON.stringify(record.wait));
++  // GitHub reports T's own four runs, as it did throughout.
++  rig.github.checksByHead.set(SHA2, liveGapChecks("tip", SHA2, T0));
++  const actions = await rig.launcher();
++  assert.equal(
++    rig.github.launcherMerges.length,
++    0,
++    JSON.stringify(actions),
++  );
++  assert.ok(
++    actions.includes(`delivery:${record.id}:checks_pending`),
++    JSON.stringify(actions),
++  );
++  // Once verify-artifact exists the same marker merges H1 at exactly T.
++  rig.github.checksByHead.set(H1, liveGapChecks("complete", H1, T0));
++  rig.clock.advance(60_000);
++  await runOnce(rig);
++  [record] = (await rig.snapshot()).work;
++  assert.ok(isCarriedMergeMarker(record.wait));
++  await rig.launcher();
++  assert.equal(rig.github.launcherMerges.length, 1);
++  assert.equal(rig.github.launcherMerges[0].head, H1);
++  assert.equal(rig.github.launcherMerges[0].onto, SHA2);
++  await assertRollbackParses(rig);
++});
++
++Deno.test("carried coverage: a spent reviewed head on a moved base is refreshed only once it reports every check of its reviewed base", async () => {
++  const rig = await spentRig();
++  const charges = (await rig.snapshot()).reservations.length;
++  const h0 = rig.records[0].target.head!;
++  rig.github.checksByHead.set(SHA1, liveGapChecks("tip", SHA1, T0));
++  rig.github.checksByHead.set(h0, liveGapChecks("gap", h0, T0));
++  await runOnce(rig);
++  let [record] = (await rig.snapshot()).work;
++  assert.equal(rig.github.refreshes, 0, "never refreshed in the gap");
++  assert.equal(record.target.head, h0);
++  assert.equal(record.nextStep, "delivery");
++  assert.equal(record.wait?.reason, "ci_pending");
++  rig.github.checksByHead.set(h0, liveGapChecks("complete", h0, T0));
++  rig.clock.advance(5 * 60_000);
++  await runOnce(rig);
++  [record] = (await rig.snapshot()).work;
++  assert.equal(rig.github.refreshes, 1, "refreshed once complete");
++  assert.equal(record.target.head, H1);
++  await assertNothingSpent(rig, charges);
++  await assertRollbackParses(rig);
++});
++
++Deno.test("carried coverage: a spent reviewed head whose expected check never appears parks under the ceiling after the bound", async () => {
++  const rig = await spentRig();
++  const h0 = rig.records[0].target.head!;
++  rig.github.checksByHead.set(SHA1, liveGapChecks("tip", SHA1, T0));
++  rig.github.checksByHead.set(h0, liveGapChecks("gap", h0, T0));
++  let [record] = (await rig.snapshot()).work;
++  for (let run = 0; run <= 7 && record.nextStep !== "blocked"; run++) {
++    await runOnce(rig);
++    [record] = (await rig.snapshot()).work;
++    rig.clock.advance(HOUR);
++  }
++  assert.equal(record.nextStep, "blocked");
++  assert.equal(
++    record.blocker!.message,
++    `${REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX}verify-artifact(absent)`,
++  );
++  assert.equal(rig.github.refreshes, 0);
++  await assertRollbackParses(rig);
++});
++
++/** The sentinel self scope (the no-App owner identity). */
++const SELF: RepositoryIdentityV1 = {
++  owner: "ubiquity",
++  name: "sentinel",
++  installationId: 0,
++};
++
++/**
++ * One spent, cleanly reviewed `test-local` head H0 on B0 = SHA1 with the tip
++ * at T = SHA2, both bases read through the REAL port over the live sentinel
++ * `development` listings (B0 L80 9a1b1d924, T the tip 3f041b46d), which the
++ * strict check read refuses (78-character `matrix_cell` runs). Before this
++ * fix the coverage read made of them deferred H0 forever, with no write: no
++ * refresh, no wait, no park. Returns each base's reads made by the runtime.
++ */
++async function liveBasesCase(repository: RepositoryIdentityV1) {
++  const rig = await spentRig(repository);
++  const charges = (await rig.snapshot()).reservations.length;
++  const h0 = rig.records[0].target.head!;
++  const transports = routeLiveDevelopment(rig.github, repository, {
++    [SHA1]: LIVE_L80,
++    [SHA2]: LIVE_TIP,
++  });
++  rig.github.checksByHead.set(h0, [suiteCheck("test-local", h0, 9001, T0)]);
++  rig.github.checksByHead.set(H1, [suiteCheck("test-local", H1, 9002, T0)]);
++  for (const base of [SHA1, SHA2]) {
++    const strict = await rig.github.readChecks(base);
++    assert.equal(strict.ok, false, "the strict read refuses the listing");
++  }
++  const probed = new Map(
++    [...transports].map(([base, transport]) => [
++      base,
++      transport.requests.length,
++    ]),
++  );
++  await runOnce(rig);
++  let [record] = (await rig.snapshot()).work;
++  assert.equal(record.repository.name, repository.name);
++  assert.equal(rig.github.refreshes, 1, "the spent head is refreshed onto T");
++  assert.equal(record.target.head, H1);
++  assert.equal(record.target.base, SHA2);
++  await runOnce(rig);
++  [record] = (await rig.snapshot()).work;
++  assert.equal(record.blocker, null, JSON.stringify(record.blocker));
++  assert.ok(isCarriedMergeMarker(record.wait), JSON.stringify(record.wait));
++  await assertNothingSpent(rig, charges);
++  await assertRollbackParses(rig);
++  return new Map(
++    [...transports].map(([base, transport]) => [
++      base,
++      transport.requests.slice(probed.get(base)!),
++    ]),
++  );
++}
++
++Deno.test("carried coverage: a green self head on the live sentinel development tips (78-character matrix_cell runs) is refreshed and carried; the self scope reads no base", async () => {
++  const reads = await liveBasesCase(SELF);
++  assert.deepEqual(reads.get(SHA1), [], "B0 is never read");
++  assert.deepEqual(reads.get(SHA2), [], "T is never read");
++});
++
++Deno.test("carried coverage: a green foreign head on bases carrying the live sentinel listings is refreshed and carried through the real port's coverage read", async () => {
++  const reads = await liveBasesCase(REPO);
++  for (const base of [SHA1, SHA2]) {
++    assert.ok(reads.get(base)!.length > 0, `${base} read through the port`);
++    for (const request of reads.get(base)!) {
++      assert.match(request.url, /\/check-runs\?/, "no commit-status read");
++    }
++  }
++});
++
++/** Every check read of `base` fails, as a rate-limited listing does. */
++function unreadableBase(rig: Rig, base: GitSha) {
++  const refused = () =>
++    Promise.resolve(portError("unavailable", "check runs unavailable"));
++  const readChecks = rig.github.readChecks.bind(rig.github);
++  const readCheckSuites = rig.github.readCheckSuites.bind(rig.github);
++  rig.github.readChecks = (sha: GitSha) =>
++    sha === base ? refused() : readChecks(sha);
++  rig.github.readCheckSuites = (sha: GitSha) =>
++    sha === base ? refused() : readCheckSuites(sha);
++}
++
++/** Poll hourly (launcher pass, then runtime cycle) until parked or bounded. */
++async function pollUntilParked(rig: Rig, launcher: boolean) {
++  let [record] = (await rig.snapshot()).work;
++  for (
++    let elapsed = 0;
++    elapsed <= CARRIED_WAIT_BOUND_MS && record.nextStep !== "blocked";
++    elapsed += HOUR
++  ) {
++    rig.clock.advance(HOUR);
++    if (launcher) await rig.launcher();
++    await runOnce(rig);
++    [record] = (await rig.snapshot()).work;
++  }
++  return record;
++}
++
++Deno.test("carried coverage: a spent reviewed head whose reviewed base cannot be read waits at delivery and parks after the bound naming it", async () => {
++  const rig = await spentRig();
++  const charges = (await rig.snapshot()).reservations.length;
++  const h0 = rig.records[0].target.head!;
++  rig.github.checksByHead.set(SHA1, liveGapChecks("tip", SHA1, T0));
++  rig.github.checksByHead.set(h0, liveGapChecks("complete", h0, T0));
++  unreadableBase(rig, SHA1);
++  await runOnce(rig);
++  let [record] = (await rig.snapshot()).work;
++  assert.equal(rig.github.refreshes, 0);
++  assert.equal(record.nextStep, "delivery");
++  assert.equal(
++    record.wait?.reason,
++    "ci_pending",
++    "a bounded wait, not silence",
++  );
++  record = await pollUntilParked(rig, false);
++  assert.equal(record.nextStep, "blocked");
++  assert.equal(
++    record.blocker!.message,
++    `${REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX}base checks unreadable`,
++  );
++  assert.equal(rig.github.refreshes, 0);
++  await assertNothingSpent(rig, charges);
++  await assertRollbackParses(rig);
++});
++
++Deno.test("carried coverage: a refreshed head whose T cannot be read holds no merge marker and parks after the bound naming it", async () => {
++  const rig = await spentRig();
++  const charges = (await rig.snapshot()).reservations.length;
++  rig.github.checksByHead.set(SHA2, liveGapChecks("tip", SHA2, T0));
++  rig.github.checksByHead.set(H1, liveGapChecks("complete", H1, T0));
++  unreadableBase(rig, SHA2);
++  await runOnce(rig);
++  await runOnce(rig);
++  let [record] = (await rig.snapshot()).work;
++  assert.equal(record.target.head, H1, "refreshed once onto T");
++  assert.equal(
++    record.wait?.reason,
++    "ci_pending",
++    "a bounded wait, not silence",
++  );
++  assert.equal(isCarriedMergeMarker(record.wait), false, "no merge marker");
++  record = await pollUntilParked(rig, true);
++  assert.equal(record.nextStep, "blocked");
++  assert.equal(
++    record.blocker!.message,
++    `${REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX}base checks unreadable`,
++  );
++  assert.equal(rig.github.launcherMerges.length, 0);
++  await assertNothingSpent(rig, charges);
++  await assertRollbackParses(rig);
++});
+diff --git a/tests/repair/ci-coverage-fixtures.ts b/tests/repair/ci-coverage-fixtures.ts
+new file mode 100644
+index 0000000000..31d01c73e9
+--- /dev/null
++++ b/tests/repair/ci-coverage-fixtures.ts
+@@ -0,0 +1,266 @@
++/**
++ * The live verify-artifact gap (sentinel issue #154), as GitHub reported it.
++ *
++ * ai.ubq.fi PR 1064 (issue 661): the carried head H1 f0008beb62 is the
++ * runtime's deterministic base refresh of the reviewed head 3cadb582 onto the
++ * tip T 9cdc76dc. Gateway CI (`.github/workflows/deno-deploy.yml`, on push to
++ * `development` and on `pull_request`) runs `validate`, `mac-containment` and
++ * `darwin-native`, and `verify-artifact` with `needs:` on all three, so GitHub
++ * creates no `verify-artifact` check run until they finish: on H1 `validate`
++ * completed at 08:41:53Z and `verify-artifact` started at 08:41:58Z. A read in
++ * those five seconds saw three of three runs, all green, while the required
++ * fourth job did not exist yet. T's own push run reports all four in one
++ * check suite.
++ *
++ * The fake port's view (`SuitedCheckV1`: the strict CI read's check plus the
++ * suite its coverage read reports) and the raw check-runs wire (the real
++ * port's and the launcher's view) are derived from the same rows.
++ */
++import type { GitSha } from "../../src/contracts/brands.ts";
++import type { GitHubPort } from "../../src/contracts/ports.ts";
++import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
++import { checksPageWire, httpRespond, makePort } from "../github/helpers.ts";
++import type { SuitedCheckV1 } from "./helpers.ts";
++
++export const LIVE_GAP = {
++  repository: "ubiquity/ai.ubq.fi",
++  pr: 1064,
++  issue: 661,
++  reviewedHead: "3cadb582dfe4655ca51ba214dd9e79b70c0eb6d0" as GitSha,
++  head: "f0008beb621a3cb8ebcbfa2779df3a34b50a2162" as GitSha,
++  tip: "9cdc76dc600246d96a0841ba7fca5039cbf34196" as GitSha,
++  headSuite: 105739629025,
++  tipSuite: 105737343683,
++} as const;
++
++interface LiveRunV1 {
++  id: number;
++  name: string;
++  startedAt: string;
++  completedAt: string;
++}
++
++/** H1's four runs; `verify-artifact` is the one created late. */
++const HEAD_RUNS: readonly LiveRunV1[] = [
++  {
++    id: 117351207797,
++    name: "validate",
++    startedAt: "2026-10-17T08:21:21Z",
++    completedAt: "2026-10-17T08:41:53Z",
++  },
++  {
++    id: 117351207884,
++    name: "mac-containment",
++    startedAt: "2026-10-17T08:21:23Z",
++    completedAt: "2026-10-17T08:21:35Z",
++  },
++  {
++    id: 117351207693,
++    name: "darwin-native",
++    startedAt: "2026-10-17T08:21:26Z",
++    completedAt: "2026-10-17T08:24:19Z",
++  },
++  {
++    id: 117354933841,
++    name: "verify-artifact",
++    startedAt: "2026-10-17T08:41:58Z",
++    completedAt: "2026-10-17T08:42:21Z",
++  },
++];
++
++/** T's four runs, one push suite. */
++const TIP_RUNS: readonly LiveRunV1[] = [
++  {
++    id: 117348609704,
++    name: "validate",
++    startedAt: "2026-10-17T08:07:19Z",
++    completedAt: "2026-10-17T08:27:13Z",
++  },
++  {
++    id: 117348609609,
++    name: "mac-containment",
++    startedAt: "2026-10-17T08:07:23Z",
++    completedAt: "2026-10-17T08:07:34Z",
++  },
++  {
++    id: 117348609853,
++    name: "darwin-native",
++    startedAt: "2026-10-17T08:07:27Z",
++    completedAt: "2026-10-17T08:10:01Z",
++  },
++  {
++    id: 117352279378,
++    name: "verify-artifact",
++    startedAt: "2026-10-17T08:27:19Z",
++    completedAt: "2026-10-17T08:27:43Z",
++  },
++];
++
++/**
++ * Which listing: `gap` is H1 between 08:41:53Z and 08:41:58Z (no
++ * `verify-artifact`), `complete` is H1 afterwards, `tip` is T.
++ */
++export type LiveGapListingV1 = "gap" | "complete" | "tip";
++
++function rowsOf(listing: LiveGapListingV1): readonly LiveRunV1[] {
++  if (listing === "tip") return TIP_RUNS;
++  return listing === "gap"
++    ? HEAD_RUNS.filter((run) => run.name !== "verify-artifact")
++    : HEAD_RUNS;
++}
++
++function suiteOf(listing: LiveGapListingV1): number {
++  return listing === "tip" ? LIVE_GAP.tipSuite : LIVE_GAP.headSuite;
++}
++
++/**
++ * The runs as the runtime port reads them, bound to `head` (a rig commit or
++ * the live one). `at` re-bases the instants so the listing's first start is
++ * `at`, keeping the live offsets (the carried bound counts from them).
++ */
++export function liveGapChecks(
++  listing: LiveGapListingV1,
++  head: GitSha,
++  at?: number,
++): SuitedCheckV1[] {
++  const rows = rowsOf(listing);
++  const first = Math.min(...rows.map((run) => Date.parse(run.startedAt)));
++  const shift = at === undefined ? 0 : at - first;
++  return rows.map((run) => ({
++    name: run.name,
++    status: "completed",
++    conclusion: "success",
++    head,
++    startedAt: Date.parse(run.startedAt) + shift,
++    completedAt: Date.parse(run.completedAt) + shift,
++    suite: suiteOf(listing),
++  }));
++}
++
++/** The same runs as the GitHub check-runs endpoint reports them. */
++export function liveGapWire(
++  listing: LiveGapListingV1,
++  head: string = listing === "tip" ? LIVE_GAP.tip : LIVE_GAP.head,
++): Record<string, unknown>[] {
++  return rowsOf(listing).map((run) => ({
++    id: run.id,
++    name: run.name,
++    head_sha: head,
++    status: "completed",
++    conclusion: "success",
++    started_at: run.startedAt,
++    completed_at: run.completedAt,
++    check_suite: { id: suiteOf(listing) },
++    app: { slug: "github-actions" },
++  }));
++}
++
++/**
++ * A fake check run in suite `suite` (a scheduled or dispatched
++ * workflow on the base included).
++ */
++export function suiteCheck(
++  name: string,
++  head: GitSha,
++  suite: number,
++  at: number,
++): SuitedCheckV1 {
++  return {
++    name,
++    status: "completed",
++    conclusion: "success",
++    head,
++    startedAt: at,
++    completedAt: at + 60_000,
++    suite,
++  };
++}
++
++/**
++ * The live sentinel `development` tips' check runs
++ * (`tests/fixtures/repair/sentinel-development-check-runs-live.json`): L80
++ * 9a1b1d924 (22 runs, 7 of them past the strict 64-character label bound) and
++ * the current tip 3f041b46d (75 runs, 33 past it). ci.yml's push run
++ * (`test-local`), one suite per five-minute `dispatch` schedule, and the
++ * supervisor.yml runs of `sentinel-supervisor`, which is fast-forwarded with
++ * `development`; no pull request head runs dispatch or supervisor.yml.
++ */
++const LIVE_DEVELOPMENT = JSON.parse(
++  await Deno.readTextFile(
++    new URL(
++      "../fixtures/repair/sentinel-development-check-runs-live.json",
++      import.meta.url,
++    ),
++  ),
++) as { listings: Record<string, Record<string, unknown>[]> };
++
++export const LIVE_L80 = "9a1b1d924dc386ea46a9f7828115883c6e6f7cb3" as GitSha;
++export const LIVE_TIP = "3f041b46d95269b29054ca5c27bce6aa179f9683" as GitSha;
++
++/** The live listing of `commit` as the endpoint reports it, bound to `head`. */
++export function liveDevelopmentWire(
++  commit: GitSha,
++  head: string = commit,
++): Record<string, unknown>[] {
++  const runs = LIVE_DEVELOPMENT.listings[commit];
++  if (runs === undefined) throw new Error(`no live listing for ${commit}`);
++  return runs.map((run) => ({ ...run, head_sha: head }));
++}
++
++/**
++ * The REAL GitHub port (`GitHubPortImpl` over scripted HTTP) of `repository`
++ * answering every check read of `head` with the live listing of `commit`
++ * bound to it, and no commit statuses.
++ */
++export function liveDevelopmentPort(
++  repository: RepositoryIdentityV1,
++  head: GitSha,
++  commit: GitSha,
++) {
++  const path = `/repos/${repository.owner}/${repository.name}/commits/${head}`;
++  return makePort({
++    repository,
++    script: [
++      {
++        ...httpRespond(
++          "GET",
++          `${path}/check-runs?per_page=100&page=1`,
++          200,
++          checksPageWire(liveDevelopmentWire(commit, head)),
++        ),
++        repeat: true,
++      },
++      {
++        ...httpRespond("GET", `${path}/statuses?per_page=100&page=1`, 200, []),
++        repeat: true,
++      },
++    ],
++  });
++}
++
++/**
++ * Route `github`'s check reads (the strict `readChecks` and the coverage
++ * `readCheckSuites` alike) of each head in `routes` through its own REAL port
++ * over the live listing it names; every other head keeps the fake's answer.
++ * Returns each routed head's scripted transport (its recorded requests).
++ */
++export function routeLiveDevelopment(
++  github: GitHubPort,
++  repository: RepositoryIdentityV1,
++  routes: Readonly<Record<string, GitSha>>,
++) {
++  const live = new Map(
++    Object.entries(routes).map((
++      [head, commit],
++    ) => [head, liveDevelopmentPort(repository, head as GitSha, commit)]),
++  );
++  const readChecks = github.readChecks.bind(github);
++  const readCheckSuites = github.readCheckSuites.bind(github);
++  github.readChecks = (sha) =>
++    live.get(sha)?.port.readChecks(sha) ?? readChecks(sha);
++  github.readCheckSuites = (sha) =>
++    live.get(sha)?.port.readCheckSuites(sha) ?? readCheckSuites(sha);
++  return new Map(
++    [...live].map(([head, { transport }]) => [head, transport]),
++  );
++}
+diff --git a/tests/repair/ci-coverage_test.ts b/tests/repair/ci-coverage_test.ts
+new file mode 100644
+index 0000000000..c38426f2d2
+--- /dev/null
++++ b/tests/repair/ci-coverage_test.ts
+@@ -0,0 +1,228 @@
++/**
++ * Required CI coverage (sentinel issue #154): a head's checks read green only
++ * once the head reports every check name of each base check suite it shares
++ * a name with. The rule itself, the absent-check labels a wait or park names,
++ * the check suite id the runtime port now reads from the wire, and the port's
++ * lenient coverage read of a base (`readCheckSuites`) over the live sentinel
++ * `development` listings the strict read refuses.
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import type { GitHubCheckV1 } from "../../src/contracts/ports.ts";
++import { missingExpectedChecks } from "../../src/repair/ci-coverage.ts";
++import {
++  absentCheckLabels,
++  MAX_CI_CORRECTION_CHECKS,
++  preReviewAbsentDetail,
++} from "../../src/repair/ci-rejection.ts";
++import { CI_PRE_REVIEW_PENDING_PREFIX } from "../../src/repair/ci-first-policy.ts";
++import {
++  checkRunWire,
++  checksPageWire,
++  commitStatusWire,
++  httpRespond,
++  makePort,
++  SHA1,
++  statusesPageWire,
++} from "../github/helpers.ts";
++import { SHA2, SHA3, T0 } from "../state/helpers.ts";
++import {
++  LIVE_GAP,
++  LIVE_L80,
++  LIVE_TIP,
++  liveDevelopmentPort,
++  liveDevelopmentWire,
++  liveGapChecks,
++  suiteCheck,
++} from "./ci-coverage-fixtures.ts";
++
++const HEAD = SHA3 as GitSha;
++const BASE = SHA2 as GitSha;
++
++Deno.test("CI coverage: a head with 3 of 4 expected check names misses the fourth", () => {
++  const base = ["a", "b", "c", "d"].map((name) =>
++    suiteCheck(name, BASE, 20, T0)
++  );
++  const head = ["a", "b", "c"].map((name) => suiteCheck(name, HEAD, 10, T0));
++  assert.deepEqual(missingExpectedChecks(head, base), ["d"]);
++  assert.deepEqual(
++    missingExpectedChecks([...head, suiteCheck("d", HEAD, 10, T0)], base),
++    [],
++  );
++});
++
++Deno.test("CI coverage: the live verify-artifact gap misses verify-artifact until GitHub creates it", () => {
++  const tip = liveGapChecks("tip", LIVE_GAP.tip);
++  assert.deepEqual(
++    missingExpectedChecks(liveGapChecks("gap", LIVE_GAP.head), tip),
++    ["verify-artifact"],
++  );
++  assert.deepEqual(
++    missingExpectedChecks(liveGapChecks("complete", LIVE_GAP.head), tip),
++    [],
++  );
++});
++
++Deno.test("CI coverage: a base workflow the head never runs is not expected (scheduled dispatch on sentinel development)", () => {
++  // Live sentinel development 9a1b1d924: `test-local` from ci.yml's push run
++  // and one `dispatch` run per five-minute schedule, each in its own suite.
++  // A pull request head runs ci.yml only; requiring `dispatch` would hold
++  // every self head forever.
++  const base = [
++    suiteCheck("test-local", BASE, 1, T0),
++    suiteCheck("dispatch", BASE, 2, T0),
++    suiteCheck("dispatch", BASE, 3, T0 + 300_000),
++  ];
++  const head = [suiteCheck("test-local", HEAD, 9, T0)];
++  assert.deepEqual(missingExpectedChecks(head, base), []);
++});
++
++Deno.test("CI coverage: base checks without a suite (commit statuses) are never expected", () => {
++  const status: GitHubCheckV1 = {
++    name: "deploy/preview",
++    status: "completed",
++    conclusion: "success",
++    head: BASE,
++    startedAt: T0,
++    completedAt: T0 + 1,
++  };
++  assert.deepEqual(
++    missingExpectedChecks([suiteCheck("validate", HEAD, 9, T0)], [
++      status,
++      suiteCheck("validate", BASE, 1, T0),
++    ]),
++    [],
++  );
++  // No suite anywhere (the fakes most rigs use): nothing is expected.
++  assert.deepEqual(missingExpectedChecks([], [status]), []);
++});
++
++Deno.test("CI coverage: absent checks are labelled, sanitised and bounded like every other CI label", () => {
++  assert.equal(
++    absentCheckLabels(["verify-artifact"]),
++    "verify-artifact(absent)",
++  );
++  assert.equal(
++    preReviewAbsentDetail(["verify-artifact"]),
++    `${CI_PRE_REVIEW_PENDING_PREFIX}verify-artifact(absent)`,
++  );
++  const many = Array.from({ length: 12 }, (_, index) => `job-${index}`);
++  assert.equal(
++    absentCheckLabels(many).split(", ").length,
++    MAX_CI_CORRECTION_CHECKS,
++  );
++  assert.equal(absentCheckLabels([]), "no checks reported");
++  assert.equal(absentCheckLabels(null), "base checks unreadable");
++  assert.doesNotMatch(absentCheckLabels(["@codex review"]), /@/);
++});
++
++Deno.test("readChecks: the strict CI read stays R80's: it reads no check suite, and a malformed suite is not its concern", async () => {
++  const { port } = makePort({
++    script: [
++      httpRespond(
++        "GET",
++        `/repos/ubiquity/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`,
++        200,
++        checksPageWire([
++          checkRunWire({ name: "validate", check_suite: { id: 105739629025 } }),
++          checkRunWire({ name: "legacy", check_suite: { id: "7" } }),
++        ]),
++      ),
++      httpRespond(
++        "GET",
++        `/repos/ubiquity/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`,
++        200,
++        statusesPageWire([commitStatusWire({ context: "deploy" })]),
++      ),
++    ],
++  });
++  const result = await port.readChecks(SHA1);
++  assert.ok(result.ok, JSON.stringify(result));
++  if (!result.ok) return;
++  assert.deepEqual(result.value.checks.map((check) => check.name), [
++    "validate",
++    "legacy",
++    "deploy",
++  ]);
++  for (const check of result.value.checks) {
++    assert.equal("suite" in check, false);
++  }
++});
++
++/** The sentinel self scope (the no-App owner identity). */
++const SELF = { owner: "ubiquity", name: "sentinel", installationId: 0 };
++
++for (
++  const [live, runs, long] of [[LIVE_L80, 22, 7], [LIVE_TIP, 75, 33]] as const
++) {
++  Deno.test(`readCheckSuites: the live sentinel development ${live.slice(0, 9)} listing (${long} runs past the label bound) reads as names and suites; the strict read refuses it`, async () => {
++    const { port, transport } = liveDevelopmentPort(SELF, live, live);
++    const strict = await port.readChecks(live);
++    assert.equal(strict.ok, false);
++    assert.match(
++      strict.ok ? "" : strict.error.detail,
++      /exceeds contract bounds/,
++    );
++    const before = transport.requests.length;
++    const read = await port.readCheckSuites(live);
++    assert.ok(read.ok, JSON.stringify(read));
++    if (!read.ok) return;
++    assert.equal(read.value.head, live);
++    assert.equal(read.value.checks.length, runs);
++    assert.equal(
++      read.value.checks.filter((check) => check.name.length > 64).length,
++      long,
++    );
++    const wire = liveDevelopmentWire(live);
++    assert.deepEqual(
++      read.value.checks,
++      wire.map((run) => ({
++        name: run.name,
++        suite: (run.check_suite as { id: number }).id,
++      })),
++    );
++    // One check-run page; commit statuses (never expected) are not read.
++    const requests = transport.requests.slice(before);
++    assert.equal(requests.length, 1);
++    assert.match(requests[0].url, /\/check-runs\?per_page=100&page=1$/);
++    // A self pull request head runs ci.yml alone: `test-local` covers it.
++    assert.deepEqual(
++      missingExpectedChecks(
++        [suiteCheck("test-local", HEAD, 9001, T0)],
++        read.value.checks,
++      ),
++      [],
++    );
++  });
++}
++
++Deno.test("readCheckSuites: exact head, exact suite, bounded items; a run without a suite expects nothing", async () => {
++  const path =
++    `/repos/ubiquity/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`;
++  const read = (runs: unknown[], maxItems?: number) =>
++    makePort({
++      script: [httpRespond("GET", path, 200, checksPageWire(runs))],
++      ...(maxItems === undefined ? {} : { maxItems }),
++    }).port.readCheckSuites(SHA1);
++  const long = `matrix_cell (${"a".repeat(64)})`;
++  const ok = await read([
++    checkRunWire({ name: long, check_suite: { id: 7 } }),
++    checkRunWire({ name: "legacy" }),
++    checkRunWire({ name: "nulled", check_suite: null, status: "odd" }),
++  ]);
++  assert.ok(ok.ok, JSON.stringify(ok));
++  if (!ok.ok) return;
++  assert.deepEqual(ok.value.checks, [
++    { name: long, suite: 7 },
++    { name: "legacy", suite: null },
++    { name: "nulled", suite: null },
++  ]);
++  const drifted = await read([checkRunWire({ head_sha: SHA2 })]);
++  assert.equal(drifted.ok, false, "a run of another commit is not this base's");
++  const malformed = await read([checkRunWire({ check_suite: { id: "7" } })]);
++  assert.equal(malformed.ok, false, "a malformed suite is not evidence");
++  const unnamed = await read([checkRunWire({ name: "" })]);
++  assert.equal(unnamed.ok, false);
++  const bounded = await read([checkRunWire(), checkRunWire()], 1);
++  assert.equal(bounded.ok, false, "the item bound stays");
++});
+diff --git a/tests/repair/ci-first-coverage_test.ts b/tests/repair/ci-first-coverage_test.ts
+new file mode 100644
+index 0000000000..dca6fc4b3d
+--- /dev/null
++++ b/tests/repair/ci-first-coverage_test.ts
+@@ -0,0 +1,315 @@
++/**
++ * The CI-first review gate requires every expected check (sentinel issue
++ * #154). `decideCiGate` judges only the check runs that exist, and GitHub
++ * creates a `needs:` job's check run only once its dependencies finish, so a
++ * head whose three early jobs are green read green before the required fourth
++ * job existed and its review was requested. The gate now also reads the base
++ * the head is tested against (the record's base, the reviewed base) and waits,
++ * uncharged and bounded like running CI, until the head reports every check
++ * name of each base check suite it shares a name with; the park names the
++ * absent check under the existing pending prefix, which the launcher's re-run
++ * and green rules re-admit. A base whose runs cannot be read is awaited the
++ * same way (never a silent deferral); the base is read leniently (name and
++ * suite, no label bound: live sentinel `development` carries 78-character
++ * `matrix_cell` runs), and the sentinel self scope reads none, like the
++ * launcher. Every write parses under the rollback target R80 (e48e7e110),
++ * whose own launcher reads the park as its pending park; those cases are
++ * skipped in a checkout without R80.
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import { portError } from "../../src/contracts/ports.ts";
++import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
++import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import { preReviewCiParked } from "../../ops/hosted-autonomy-ci-first.ts";
++import { REPO, SHA1, SHA3, T0 } from "../state/helpers.ts";
++import { assertGen80Parses, gen80Available } from "../state/gen77-contracts.ts";
++import { loadGen80Modules } from "../host/gen77-runtime-source.ts";
++import {
++  ciFirstRig,
++  HOUR,
++  reviewCharges,
++  TASK,
++  taskRecord,
++} from "./ci-first-rig.ts";
++import {
++  LIVE_L80,
++  LIVE_TIP,
++  routeLiveDevelopment,
++  suiteCheck,
++} from "./ci-coverage-fixtures.ts";
++
++const GEN80 = await gen80Available();
++
++/** Gateway CI's four jobs; `verify-artifact` needs the other three. */
++const JOBS = [
++  "validate",
++  "mac-containment",
++  "darwin-native",
++  "verify-artifact",
++];
++const HEAD_SUITE = 105739629025;
++const BASE_SUITE = 105737343683;
++
++/** The head after its first three jobs finished, the base with all four. */
++function threeOfFour() {
++  return {
++    [SHA3]: JOBS.slice(0, 3).map((name) =>
++      suiteCheck(name, SHA3, HEAD_SUITE, T0)
++    ),
++    [SHA1]: JOBS.map((name) => suiteCheck(name, SHA1, BASE_SUITE, T0)),
++  };
++}
++
++async function assertRollbackParses(writes: RepairStateSnapshotV1[]) {
++  if (!GEN80) return;
++  assert.ok(writes.length > 0);
++  for (const written of writes) await assertGen80Parses(written);
++}
++
++/** R80's own launcher reads `work`'s park as its pre-review pending park. */
++async function assertR80ReadsPark(
++  after: RepairStateSnapshotV1,
++  work: ReturnType<typeof taskRecord>,
++) {
++  if (!GEN80) return;
++  const loaded = await loadGen80Modules(["ops/hosted-autonomy-ci-first.ts"]);
++  try {
++    const [r80] = loaded.modules as [
++      { preReviewCiParked: typeof preReviewCiParked },
++    ];
++    assert.equal(
++      r80.preReviewCiParked(after, work),
++      true,
++      "R80's launcher reads the park as its own pending park",
++    );
++  } finally {
++    await loaded.dispose();
++  }
++}
++
++Deno.test("CI first: a head with 3 of 4 expected check names waits uncharged, is never reviewed, and parks after six hours naming the absent check", async () => {
++  const { rig, charges, writes } = await ciFirstRig("cf-cover-wait", {
++    hosted: true,
++    checks: threeOfFour(),
++  });
++  try {
++    await rig.run();
++    let work = taskRecord(await rig.snapshot());
++    assert.equal(rig.github.calls.includes("requestReview"), false);
++    assert.equal(work.nextStep, "work");
++    assert.equal(work.blocker, null);
++    assert.equal(work.wait?.reason, "ci_pending");
++    const since = work.wait!.since;
++    rig.clock.advance(5 * 60_000 + 1);
++    await rig.run();
++    work = taskRecord(await rig.snapshot());
++    assert.equal(work.wait?.since, since, "the wait keeps its start");
++    rig.clock.advance(6 * HOUR);
++    await rig.run();
++    const after = await rig.snapshot();
++    work = taskRecord(after);
++    assert.equal(work.nextStep, "blocked");
++    assert.equal(
++      work.blocker?.message,
++      "CI did not finish before review within 6 hours: verify-artifact(absent)",
++    );
++    assert.equal(work.counters.reviewRounds, 0);
++    assert.equal(work.counters.retries, 0);
++    assert.equal(rig.github.calls.includes("requestReview"), false);
++    assert.deepEqual(after.reservations, charges, "nothing charged");
++    assert.equal(rig.model.requests.length, 0);
++    // The launcher reads it as the pre-review pending park it re-admits.
++    assert.equal(preReviewCiParked(after, work), true);
++    await assertRollbackParses(writes);
++    await assertR80ReadsPark(after, work);
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});
++
++Deno.test("CI first: the head is reviewed once GitHub creates its fourth check", async () => {
++  const { rig, setChecks, writes } = await ciFirstRig("cf-cover-later", {
++    checks: threeOfFour(),
++  });
++  try {
++    await rig.run();
++    assert.equal(rig.github.calls.includes("requestReview"), false);
++    setChecks(
++      SHA3,
++      JOBS.map((name) => suiteCheck(name, SHA3, HEAD_SUITE, T0)),
++    );
++    rig.clock.advance(5 * 60_000 + 1);
++    await rig.run();
++    const after = await rig.snapshot();
++    const work = taskRecord(after);
++    assert.equal(work.nextStep, "review");
++    assert.equal(work.counters.reviewRounds, 1);
++    assert.equal(reviewCharges(after).length, 1);
++    assert.equal(
++      rig.github.calls.filter((call) => call === "requestReview").length,
++      1,
++    );
++    await assertRollbackParses(writes);
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});
++
++Deno.test("CI first: a head is not held for base suites it shares no name with (the scheduled dispatch runs on sentinel development)", async () => {
++  // Live sentinel development 9a1b1d924: ci.yml's push run (`test-local`)
++  // and the five-minute `dispatch` schedule, each its own suite. A pull
++  // request head runs ci.yml alone.
++  const { rig } = await ciFirstRig("cf-cover-self", {
++    checks: {
++      [SHA3]: [suiteCheck("test-local", SHA3, 900, T0)],
++      [SHA1]: [
++        suiteCheck("test-local", SHA1, 100, T0),
++        suiteCheck("dispatch", SHA1, 200, T0),
++        suiteCheck("dispatch", SHA1, 201, T0 + 300_000),
++      ],
++    },
++  });
++  try {
++    await rig.run();
++    const work = taskRecord(await rig.snapshot());
++    assert.equal(work.nextStep, "review");
++    assert.equal(work.counters.reviewRounds, 1);
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});
++
++/** The sentinel self scope (the no-App owner identity). */
++const SELF: RepositoryIdentityV1 = {
++  owner: "ubiquity",
++  name: "sentinel",
++  installationId: 0,
++};
++
++/**
++ * One green `test-local` head (a pull request head runs ci.yml alone) on a
++ * base whose check reads go through the REAL port over the live sentinel
++ * `development` listing of `live`. The strict check read refuses that
++ * listing (78-character `matrix_cell` runs, label bound 64): before this fix
++ * the coverage read made of it deferred the head forever, with no write.
++ */
++async function liveBaseCase(
++  prefix: string,
++  repository: RepositoryIdentityV1,
++  live: GitSha,
++) {
++  const self = repository === SELF;
++  const id = self ? "issue-152" : TASK;
++  const { rig, charges, writes } = await ciFirstRig(prefix, {
++    hosted: true,
++    ...(self ? { identity: { repository, id, issue: 152 } } : {}),
++    checks: { [SHA3]: [suiteCheck("test-local", SHA3, 105900000001, T0)] },
++  });
++  try {
++    const transport = routeLiveDevelopment(rig.github, repository, {
++      [SHA1]: live,
++    }).get(SHA1)!;
++    const strict = await rig.github.readChecks(SHA1);
++    assert.equal(strict.ok, false);
++    assert.match(
++      strict.ok ? "" : strict.error.detail,
++      /exceeds contract bounds/,
++    );
++    const probed = transport.requests.length;
++    await rig.run();
++    const after = await rig.snapshot();
++    const work = taskRecord(after, id);
++    assert.equal(work.repository.name, repository.name);
++    assert.equal(work.blocker, null, JSON.stringify(work.blocker));
++    assert.equal(work.nextStep, "review", JSON.stringify(work.wait));
++    assert.equal(work.counters.reviewRounds, 1);
++    assert.equal(
++      rig.github.calls.filter((call) => call === "requestReview").length,
++      1,
++    );
++    assert.equal(reviewCharges(after, id).length, 1);
++    assert.equal(
++      after.reservations.length,
++      charges.length + 1,
++      "the review charge only",
++    );
++    await assertRollbackParses(writes);
++    return transport.requests.slice(probed);
++  } finally {
++    await rig.ctx.cleanup();
++  }
++}
++
++const LIVE_BASES = [
++  { label: "L80 9a1b1d924", live: LIVE_L80 },
++  { label: "tip 3f041b46d", live: LIVE_TIP },
++];
++
++for (const { label, live } of LIVE_BASES) {
++  const tag = live.slice(0, 9);
++  Deno.test(`CI first: a green self head on the live sentinel development ${label} (78-character matrix_cell runs) is reviewed; the self scope reads no base`, async () => {
++    const reads = await liveBaseCase(`cf-cover-self-${tag}`, SELF, live);
++    assert.deepEqual(reads, [], "the self gate reads no base");
++  });
++
++  Deno.test(`CI first: a green foreign head on a base carrying the live sentinel ${label} listing is reviewed through the real port's coverage read`, async () => {
++    const reads = await liveBaseCase(`cf-cover-foreign-${tag}`, REPO, live);
++    assert.ok(reads.length > 0, "the base was read through the real port");
++    for (const request of reads) {
++      assert.match(request.url, /\/check-runs\?/, "no commit-status read");
++    }
++  });
++}
++
++Deno.test("CI first: an unreadable base listing holds a complete green head in a bounded wait and parks naming it: no review, nothing charged", async () => {
++  const { rig, charges, writes } = await ciFirstRig("cf-cover-unread", {
++    hosted: true,
++    checks: {
++      [SHA3]: JOBS.map((name) => suiteCheck(name, SHA3, HEAD_SUITE, T0)),
++    },
++  });
++  // Every check read of the base fails, as a rate-limited listing does.
++  const refused = () =>
++    Promise.resolve(portError("unavailable", "check runs unavailable"));
++  const readChecks = rig.github.readChecks.bind(rig.github);
++  const readCheckSuites = rig.github.readCheckSuites.bind(rig.github);
++  rig.github.readChecks = (head: GitSha) =>
++    head === SHA1 ? refused() : readChecks(head);
++  rig.github.readCheckSuites = (head: GitSha) =>
++    head === SHA1 ? refused() : readCheckSuites(head);
++  try {
++    await rig.run();
++    let work = taskRecord(await rig.snapshot());
++    assert.equal(rig.github.calls.includes("requestReview"), false);
++    assert.equal(work.nextStep, "work");
++    assert.equal(work.blocker, null);
++    assert.equal(
++      work.wait?.reason,
++      "ci_pending",
++      "a bounded wait, not silence",
++    );
++    const since = work.wait!.since;
++    rig.clock.advance(5 * 60_000 + 1);
++    await rig.run();
++    work = taskRecord(await rig.snapshot());
++    assert.equal(work.wait?.since, since, "the wait keeps its start");
++    rig.clock.advance(6 * HOUR);
++    await rig.run();
++    const after = await rig.snapshot();
++    work = taskRecord(after);
++    assert.equal(work.nextStep, "blocked");
++    assert.equal(
++      work.blocker?.message,
++      "CI did not finish before review within 6 hours: base checks unreadable",
++    );
++    assert.equal(work.counters.reviewRounds, 0);
++    assert.equal(rig.github.calls.includes("requestReview"), false);
++    assert.deepEqual(after.reservations, charges, "nothing charged");
++    assert.equal(preReviewCiParked(after, work), true);
++    await assertRollbackParses(writes);
++    await assertR80ReadsPark(after, work);
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});
+diff --git a/tests/repair/ci-first-rig.ts b/tests/repair/ci-first-rig.ts
+index 594b12afa4..662de2da65 100644
+--- a/tests/repair/ci-first-rig.ts
++++ b/tests/repair/ci-first-rig.ts
+@@ -106,9 +106,15 @@ export async function ciFirstRig(prefix: string, options: CiFirstRigOptions) {
+     ...(options.legacyReviewCutoff === undefined
+       ? {}
+       : { legacyReviewCutoff: options.legacyReviewCutoff }),
+-    ...(identity === undefined
+-      ? {}
+-      : { configOverrides: { repository: identity.repository } }),
++    ...(identity === undefined ? {} : {
++      configOverrides: {
++        repository: identity.repository,
++        // The sentinel self scope (installation 0) is no gateway target.
++        ...(identity.repository.installationId === 0
++          ? { adapter: { kind: "github" } }
++          : {}),
++      },
++    }),
+     model: { heads: options.heads ?? [SHA4] },
+     github: {
+       openIssues: [],
+diff --git a/tests/repair/delivery-queue-rig.ts b/tests/repair/delivery-queue-rig.ts
+index f89a220a54..a196cee497 100644
+--- a/tests/repair/delivery-queue-rig.ts
++++ b/tests/repair/delivery-queue-rig.ts
+@@ -29,9 +29,11 @@ import { portOk } from "../../src/contracts/ports.ts";
+ import type { MergeRequestV1 } from "../../src/contracts/merge-request.ts";
+ import type { ReviewTaskStatementV1 } from "../../src/contracts/review-receipt.ts";
+ import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
+ import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
+ import { RollingStartBudget } from "../../src/budget/mod.ts";
+ import { reviewTaskStatementDigest } from "../../src/contracts/review-receipt.ts";
++import { missingExpectedChecks } from "../../src/repair/ci-coverage.ts";
+ import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
+ import { runRepairCycle } from "../../src/repair/loop.ts";
+ import { runHostedDeliveryPass } from "../../ops/hosted-autonomy-delivery-pass.ts";
+@@ -213,7 +215,15 @@ export class QueueGithub extends FakeGithub {
+       readDefaultBranch: () => Promise.resolve("development"),
+       readBaseTip: () => Promise.resolve(this.remoteBase),
+       hasSuccessfulCheck: (head) => Promise.resolve(this.green(head)),
+-      hasAllChecksGreen: (head) => Promise.resolve(this.green(head)),
++      // With the base the head is tested against, every check name of each
++      // base suite the head shares a name with must exist on the head too.
++      hasAllChecksGreen: (head, base) =>
++        Promise.resolve(
++          this.green(head) &&
++            (base === undefined ||
++              missingExpectedChecks(this.checksOf(head), this.checksOf(base))
++                  .length === 0),
++        ),
+       readPull: (number) => {
+         const pr = this.pulls.get(number);
+         return Promise.resolve(pr === undefined ? null : pullOf(pr));
+@@ -472,12 +482,15 @@ export async function queueRig(
+     reviewer?: string;
+     /** The runtime port refuses every merge, as on live ai.ubq.fi. */
+     livePolicy?: boolean;
++    /** The one repository (default ai.ubq.fi). */
++    repository?: RepositoryIdentityV1;
+   } = {},
+ ) {
++  const repository = options.repository ?? REPO;
+   const clock = new FakeClock(T0);
+   const state = new MemoryState();
+   const configs = repairConfigs({
+-    repository: REPO,
++    repository,
+     adapter: { kind: "github" },
+     sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
+     liveStartLimits: { perHour: 1_000, perSevenDays: 10_000 },
+@@ -493,7 +506,7 @@ export async function queueRig(
+     github.heads.set(branch, head);
+     github.pulls.set(pr, { number: pr, branch, issue: index, mergeSha: null });
+     records.push(workRecord(id, {
+-      repository: REPO,
++      repository,
+       source: { kind: "issue", id: String(index), revision: SHA1 },
+       related: { incidentId: null, issueNumber: index },
+       target: { base: SHA1, branch, checkpoint: null, head, pr },
+diff --git a/tests/repair/helpers.ts b/tests/repair/helpers.ts
+index 0f96412d97..1c2d544c4a 100644
+--- a/tests/repair/helpers.ts
++++ b/tests/repair/helpers.ts
+@@ -221,6 +221,12 @@ export interface FakeGithubOptionsV1 {
+   checks?: GitHubCheckV1[];
+ }
+ 
++/**
++ * A fake check run with the check suite GitHub reports it in: the strict CI
++ * read carries no suite; the coverage read (`readCheckSuites`) reports it.
++ */
++export type SuitedCheckV1 = GitHubCheckV1 & { suite?: number };
++
+ /** Recording fake GitHubPort; product logic never lives here. */
+ export class FakeGithub implements GitHubPort {
+   /** Explicit trusted publisher identity; the loop must use this value. */
+@@ -421,6 +427,24 @@ export class FakeGithub implements GitHubPort {
+     return Promise.resolve(portOk({ head: _head, checks: [green] }));
+   }
+ 
++  /**
++   * The coverage read of a base: this fake's own check read (including any
++   * test override of `readChecks`) reduced to name and suite, as the real
++   * port's lenient `readCheckSuites` reports them; an unreadable listing stays
++   * unreadable.
++   */
++  async readCheckSuites(head: GitSha) {
++    const read = await this.readChecks(head);
++    if (!read.ok) return read;
++    return portOk({
++      head,
++      checks: read.value.checks.map((check) => ({
++        name: check.name,
++        suite: (check as SuitedCheckV1).suite ?? null,
++      })),
++    });
++  }
++
+   readProtections(_baseBranch: string) {
+     return Promise.resolve(portOk({
+       branch: _baseBranch,
+diff --git a/tests/state/gen77-contracts.ts b/tests/state/gen77-contracts.ts
+index 0b8bae6c6e..2e8fc9991e 100644
+--- a/tests/state/gen77-contracts.ts
++++ b/tests/state/gen77-contracts.ts
+@@ -13,8 +13,11 @@
+  * The same proof runs against the installed generation-78 runtime (R78,
+  * 474f87eb6), the rollback target of generation 79 (`gen78Available`,
+  * `loadGen78Modules`, `loadGen78Parsers`, `assertGen78Parses`), and against
+- * the installed generation-79 runtime (R79, 549c7a691) itself
+- * (`gen79Available`, `loadGen79Parsers`, `assertGen79Parses`).
++ * the installed generation-79 runtime (R79, 549c7a691), the rollback target
++ * of generation 80 (`gen79Available`, `loadGen79Parsers`,
++ * `assertGen79Parses`), and against the installed generation-80 runtime
++ * (R80, e48e7e110), the rollback target of generation 81 (`gen80Available`,
++ * `loadGen80Modules`, `loadGen80Parsers`, `assertGen80Parses`).
+  *
+  * A shallow clone that does not hold the pinned commit cannot run the proof:
+  * `gen77Available` (or `gen78Available`) reports that and callers mark the
+@@ -30,8 +33,10 @@ import { assertGen76Shape } from "./gen76-contracts.ts";
+ export const GEN77_RUNTIME = "ab3613e0224ff92266bed21dde6f40e6b0aab54a";
+ /** Installed generation-78 runtime revision (the rollback target of 79). */
+ export const GEN78_RUNTIME = "474f87eb639f97cd72b9bc4b9e56101488f841aa";
+-/** Installed generation-79 runtime revision. */
++/** Installed generation-79 runtime revision (the rollback target of 80). */
+ export const GEN79_RUNTIME = "549c7a69186b3d2070aa4e69c92ee846d183ce8f";
++/** Installed generation-80 runtime revision (the rollback target of 81). */
++export const GEN80_RUNTIME = "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481";
+ 
+ const ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname)
+   .replace(/\/$/, "");
+@@ -73,6 +78,11 @@ export function gen79Available(): Promise<boolean> {
+   return revisionAvailable(GEN79_RUNTIME);
+ }
+ 
++/** True when the pinned generation-80 commit is in the local object store. */
++export function gen80Available(): Promise<boolean> {
++  return revisionAvailable(GEN80_RUNTIME);
++}
++
+ interface LoadedModulesV1 {
+   modules: Record<string, unknown>[];
+   dispose(): Promise<void>;
+@@ -136,11 +146,18 @@ export function loadGen78Modules(
+   return loadRevisionModules(GEN78_RUNTIME, 78, paths);
+ }
+ 
++/** `loadGen77Modules` for the generation-80 `src/` tree. */
++export function loadGen80Modules(
++  paths: readonly string[],
++): Promise<LoadedModulesV1> {
++  return loadRevisionModules(GEN80_RUNTIME, 80, paths);
++}
++
+ export interface Gen77ParsersV1 {
+   parseRepairStateSnapshotV1(input: unknown): RepairStateSnapshotV1;
+   parseMatrixPlanV1(input: unknown): MatrixPlanV1;
+ }
+-/** The generation-78 and generation-79 parsers have the same shape. */
++/** The generation-78, 79 and 80 parsers have the same shape. */
+ export type Gen78ParsersV1 = Gen77ParsersV1;
+ 
+ const cached = new Map<string, Promise<Gen77ParsersV1>>();
+@@ -191,6 +208,11 @@ export function loadGen79Parsers(): Promise<Gen78ParsersV1> {
+   return loadRevisionParsers(GEN79_RUNTIME, 79);
+ }
+ 
++/** The generation-80 snapshot and matrix-plan parsers. */
++export function loadGen80Parsers(): Promise<Gen78ParsersV1> {
++  return loadRevisionParsers(GEN80_RUNTIME, 80);
++}
++
+ /**
+  * Full rollback proof for one written snapshot: the literal shape guard, then
+  * the pinned generation-77 parser (which also re-validates every reservation,
+@@ -227,3 +249,16 @@ export async function assertGen79Parses(
+   const parsers = await loadGen79Parsers();
+   parsers.parseRepairStateSnapshotV1(JSON.parse(JSON.stringify(snapshot)));
+ }
++
++/**
++ * The same proof for one snapshot generation 81 wrote, under its rollback
++ * target, the installed generation-80 runtime: the literal shape guard, then
++ * the pinned generation-80 parser.
++ */
++export async function assertGen80Parses(
++  snapshot: RepairStateSnapshotV1,
++): Promise<void> {
++  assertGen76Shape(snapshot);
++  const parsers = await loadGen80Parsers();
++  parsers.parseRepairStateSnapshotV1(JSON.parse(JSON.stringify(snapshot)));
++}
+-- 
+2.43.0
+

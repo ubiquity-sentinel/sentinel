@@ -1,0 +1,350 @@
+<title>Sentinel Decision Matrix</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a signalling diagram. Records run left to right on the main line; parks are sidings below it; red signals are jams. */
+:root {
+  --bg: #f3f4f1;
+  --panel: #ffffff;
+  --ink: #1d2320;
+  --muted: #5d6762;
+  --rule: #cfd5d0;
+  --track: #2f3a35;
+  --accent: #1f6f5c;
+  --ok: #2c7a3f;
+  --warn: #a5650b;
+  --jam: #b42318;
+  --jam-bg: #fdecea;
+  --owner: #5b4fb0;
+  --owner-bg: #efedfb;
+  --term: #6b7570;
+  --term-bg: #eceeec;
+  --node-bg: #ffffff;
+  --display: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121614; --panel: #1a201d; --ink: #e4e9e6; --muted: #9aa59f; --rule: #2f3833;
+    --track: #b9c4be; --accent: #5cc3a4; --ok: #6cc47f; --warn: #e0a64a; --jam: #f2776b; --jam-bg: #3a1d1a;
+    --owner: #a99ef2; --owner-bg: #25213d; --term: #8d9792; --term-bg: #222826; --node-bg: #1a201d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121614; --panel: #1a201d; --ink: #e4e9e6; --muted: #9aa59f; --rule: #2f3833;
+  --track: #b9c4be; --accent: #5cc3a4; --ok: #6cc47f; --warn: #e0a64a; --jam: #f2776b; --jam-bg: #3a1d1a;
+  --owner: #a99ef2; --owner-bg: #25213d; --term: #8d9792; --term-bg: #222826; --node-bg: #1a201d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5;
+}
+.wrap {
+  max-width: 1240px; margin: 0 auto;
+  padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 36px;
+}
+header { display: grid; gap: 10px; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--display); font-weight: 700; font-size: clamp(34px, 6vw, 54px); line-height: 1; margin: 0; text-wrap: balance; letter-spacing: .01em; }
+h2 { font-family: var(--display); font-weight: 600; font-size: 28px; line-height: 1.1; margin: 0; text-wrap: balance; }
+.lede { max-width: 68ch; color: var(--muted); margin: 0; }
+.stats { display: flex; flex-wrap: wrap; gap: 10px 26px; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.stats b { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; }
+section { display: grid; gap: 14px; min-width: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; border: 2px solid; display: inline-block; }
+.sw.main { border-color: var(--track); background: var(--node-bg); }
+.sw.jam { border-color: var(--jam); background: var(--jam-bg); }
+.sw.owner { border-color: var(--owner); background: var(--owner-bg); }
+.sw.term { border-color: var(--term); background: var(--term-bg); }
+.sw.loop { border: 0; border-top: 2px dashed var(--accent); border-radius: 0; height: 0; width: 22px; }
+.diagram { overflow-x: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; }
+.diagram svg { display: block; min-width: 1180px; width: 100%; height: auto; }
+svg text { font-family: var(--body); }
+.n rect { fill: var(--node-bg); stroke: var(--track); stroke-width: 2; }
+.n.jam rect { fill: var(--jam-bg); stroke: var(--jam); stroke-width: 2.5; }
+.n.owner rect { fill: var(--owner-bg); stroke: var(--owner); }
+.n.term rect { fill: var(--term-bg); stroke: var(--term); stroke-dasharray: 5 4; }
+.n .t { fill: var(--ink); font-weight: 600; font-size: 14px; }
+.n .f { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+.n .c { fill: var(--ink); font-family: var(--mono); font-size: 12px; font-weight: 500; }
+.n.jam .t, .n.jam .c { fill: var(--jam); }
+.n.owner .t { fill: var(--owner); }
+.badge { fill: var(--panel); stroke: currentColor; }
+.e { stroke: var(--track); stroke-width: 2; fill: none; }
+.e.loop { stroke: var(--accent); stroke-dasharray: 6 5; }
+.e.side { stroke: var(--muted); stroke-width: 1.5; }
+.e.jamedge { stroke: var(--jam); stroke-width: 1.5; }
+.lbl { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+.lbl.loop { fill: var(--accent); }
+.lbl.jam { fill: var(--jam); }
+.arrow { fill: var(--track); }
+.arrow.loop { fill: var(--accent); }
+.arrow.side { fill: var(--muted); }
+.arrow.jam { fill: var(--jam); }
+.lane { fill: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; }
+.laneline { stroke: var(--rule); stroke-width: 1; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 14px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+tr:last-child td { border-bottom: 0; }
+td.n2 { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; width: 56px; }
+.pill { display: inline-block; font-family: var(--mono); font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
+.pill.jam { color: var(--jam); background: var(--jam-bg); border-color: var(--jam); }
+.pill.moving { color: var(--ok); border-color: var(--ok); }
+.pill.owner { color: var(--owner); background: var(--owner-bg); border-color: var(--owner); }
+.pill.term { color: var(--term); background: var(--term-bg); border-color: var(--term); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--rule); border-left: 4px solid var(--jam); border-radius: 4px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.card h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.card p { margin: 0; color: var(--muted); font-size: 13.5px; }
+.card .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-family: var(--mono); font-size: 12px; }
+.code { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.status { font-family: var(--mono); font-size: 11px; padding: 2px 8px; border-radius: 3px; background: var(--term-bg); color: var(--ink); }
+.status.done { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.status.prog { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+ol.passes, ul.caps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
+ol.passes li::marker { font-family: var(--mono); color: var(--muted); }
+ul.caps { list-style: none; padding: 0; }
+ul.caps li { display: flex; justify-content: space-between; gap: 16px; border-bottom: 1px dotted var(--rule); padding-bottom: 5px; }
+ul.caps li span:last-child { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.note { font-size: 13px; color: var(--muted); max-width: 80ch; margin: 0; }
+footer { font-size: 12.5px; color: var(--muted); font-family: var(--mono); }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">ubiquity/sentinel · launcher 3f041b46d · runtime gen 80 (R80 e48e7e110)</div>
+    <h1>Sentinel Decision Matrix</h1>
+    <p class="lede">How a repair record moves from an open issue to a merged pull request, which pass moves it at each step, and where records get stuck. Counts are the live fleet from the repair state snapshot at 20:36 UTC on 2026-10-17 (sequence 41190).</p>
+    <div class="stats">
+      <span>records <b>290</b></span>
+      <span>done <b>26</b></span>
+      <span>not done <b>264</b></span>
+      <span>in a jam <b>47</b></span>
+      <span>owner-gated <b>17</b></span>
+      <span>terminal, inert <b>171</b></span>
+      <span>moving <b>32</b></span>
+    </div>
+  </header>
+
+  <section aria-labelledby="map-h">
+    <h2 id="map-h">The line and its sidings</h2>
+    <div class="legend">
+      <span><i class="sw main"></i>step on the main line</span>
+      <span><i class="sw jam"></i>jam: nothing moves it, or it loops without progress</span>
+      <span><i class="sw owner"></i>owner-gated park</span>
+      <span><i class="sw term"></i>terminal by design</span>
+      <span><i class="sw loop"></i>correction loop back to work</span>
+    </div>
+    <div class="diagram">
+      <svg viewBox="0 0 1200 640" role="img" aria-labelledby="svg-t svg-d">
+        <title id="svg-t">Sentinel record state machine</title>
+        <desc id="svg-d">Main line: intake, implement, publish, CI gate, review, delivery line, merge, done. Below it, sidings for retries, CI fixes, parks and jams, with live record counts.</desc>
+        <defs>
+          <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0,0 L10,5 L0,10 z"/></marker>
+          <marker id="al" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow loop" d="M0,0 L10,5 L0,10 z"/></marker>
+          <marker id="as" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="arrow side" d="M0,0 L10,5 L0,10 z"/></marker>
+          <marker id="aj" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="arrow jam" d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+
+        <!-- lane labels -->
+        <text class="lane" x="12" y="28">CORRECTIONS</text>
+        <line class="laneline" x1="12" y1="232" x2="1188" y2="232"/>
+        <text class="lane" x="12" y="250">LOOPS AND RE-ADMISSION</text>
+        <line class="laneline" x1="12" y1="410" x2="1188" y2="410"/>
+        <text class="lane" x="12" y="428">PARKS</text>
+
+        <!-- correction loops above the line -->
+        <path class="e loop" d="M690,108 C690,52 250,52 250,108" marker-end="url(#al)"/>
+        <text class="lbl loop" x="470" y="48" text-anchor="middle">P0/P1 with a round left → correction commit on the same PR (rounds ≤ 3)</text>
+        <path class="e loop" d="M540,108 C540,76 260,76 260,108" marker-end="url(#al)"/>
+        <text class="lbl loop" x="400" y="72" text-anchor="middle">CI red → fix commit on the same PR (≤ 3)</text>
+
+        <!-- main line edges -->
+        <path class="e" d="M135,140 H165" marker-end="url(#a)"/>
+        <path class="e" d="M285,140 H315" marker-end="url(#a)"/>
+        <path class="e" d="M435,140 H465" marker-end="url(#a)"/>
+        <text class="lbl" x="450" y="170" text-anchor="middle">green</text>
+        <path class="e" d="M585,140 H615" marker-end="url(#a)"/>
+        <path class="e" d="M735,140 H765" marker-end="url(#a)"/>
+        <text class="lbl" x="750" y="170" text-anchor="middle">clean</text>
+        <path class="e" d="M885,140 H915" marker-end="url(#a)"/>
+        <path class="e" d="M1035,140 H1065" marker-end="url(#a)"/>
+
+        <!-- main line nodes -->
+        <g class="n"><rect x="20" y="108" width="115" height="64" rx="5"/><text class="t" x="32" y="132">Intake</text><text class="f" x="32" y="150">pollIntake</text><text class="f" x="32" y="164">new issue → record</text></g>
+        <g class="n"><rect x="170" y="108" width="115" height="64" rx="5"/><text class="t" x="182" y="132">Implement</text><text class="f" x="182" y="150">planMatrixWave</text><text class="f" x="182" y="164">≤ 256 cells / wave</text></g>
+        <g class="n"><rect x="320" y="108" width="115" height="64" rx="5"/><text class="t" x="332" y="132">Publish</text><text class="f" x="332" y="150">first: open the PR</text><text class="f" x="332" y="164">after: push to same PR</text></g>
+        <g class="n"><rect x="470" y="108" width="115" height="64" rx="5"/><text class="t" x="482" y="132">CI gate</text><text class="f" x="482" y="150">gateReviewOnCi</text><text class="f" x="482" y="164">CI first, 6 h bound</text></g>
+        <g class="n"><rect x="620" y="108" width="115" height="64" rx="5"/><text class="t" x="632" y="132">Review</text><text class="f" x="632" y="150">requestReviewFor</text><text class="f" x="632" y="164">≤ 3 rounds</text></g>
+        <g class="n"><rect x="770" y="108" width="115" height="64" rx="5"/><text class="t" x="782" y="132">Delivery line</text><text class="f" x="782" y="150">deliveryQueueAhead</text><text class="c" x="782" y="164">3 waiting</text></g>
+        <g class="n"><rect x="920" y="108" width="115" height="64" rx="5"/><text class="t" x="932" y="132">Merge</text><text class="f" x="932" y="150">runHostedDelivery</text><text class="c" x="932" y="164">1 / pass, global</text></g>
+        <g class="n term"><rect x="1070" y="108" width="115" height="64" rx="5"/><text class="t" x="1082" y="132">Done</text><text class="f" x="1082" y="150">applyHostedClosures</text><text class="c" x="1082" y="164">26</text></g>
+
+        <!-- side edges down to row 2 -->
+        <path class="e side" d="M227,172 V262" marker-end="url(#as)"/>
+        <path class="e side" d="M527,172 V262" marker-end="url(#as)"/>
+        <path class="e jamedge" d="M677,172 V262" marker-end="url(#aj)"/>
+        <path class="e side" d="M827,172 V262" marker-end="url(#as)"/>
+        <path class="e jamedge" d="M977,172 V262" marker-end="url(#aj)"/>
+        <path class="e side" d="M1127,172 V262" marker-end="url(#as)"/>
+
+        <!-- row 2 -->
+        <g class="n jam"><rect x="160" y="262" width="135" height="80" rx="5"/><text class="t" x="172" y="285">Repeat-failure retry</text><text class="f" x="172" y="303">planHostedRetries</text><text class="f" x="172" y="317">same failure, base moves</text><text class="c" x="172" y="333">4 · B10</text></g>
+        <path class="e jamedge" d="M190,262 C190,230 200,200 205,174" marker-end="url(#aj)"/>
+        <text class="lbl jam" x="130" y="222">re-granted every 1–2 passes</text>
+
+        <g class="n"><rect x="460" y="262" width="135" height="80" rx="5"/><text class="t" x="472" y="285">CI fix in flight</text><text class="f" x="472" y="303">loop-ci-correction</text><text class="f" x="472" y="317">≤ 12 admitted / pass</text><text class="c" x="472" y="333">12 · B2   17 queued · B1</text></g>
+
+        <g class="n jam"><rect x="610" y="262" width="135" height="80" rx="5"/><text class="t" x="622" y="285">Stuck review request</text><text class="f" x="622" y="303">observeReview</text><text class="f" x="622" y="317">ambiguous, no journal</text><text class="c" x="622" y="333">3 · B5 (15–92 h)</text></g>
+
+        <g class="n"><rect x="760" y="262" width="135" height="80" rx="5"/><text class="t" x="772" y="285">Base refresh</text><text class="f" x="772" y="303">executeCarriedDelivery</text><text class="f" x="772" y="317">≤ 6 carried refreshes</text><text class="c" x="772" y="333">base moved on merge</text></g>
+        <path class="e loop" d="M760,300 C700,300 640,210 560,176" marker-end="url(#al)"/>
+        <text class="lbl loop" x="690" y="246">re-run CI</text>
+
+        <g class="n jam"><rect x="910" y="262" width="135" height="80" rx="5"/><text class="t" x="922" y="285">Release wait</text><text class="f" x="922" y="303">waitRelease</text><text class="f" x="922" y="317">release path disabled</text><text class="c" x="922" y="333">25 · B12</text></g>
+
+        <g class="n term"><rect x="1060" y="262" width="125" height="80" rx="5"/><text class="t" x="1072" y="285">Retired</text><text class="f" x="1072" y="303">planHostedRetirements</text><text class="f" x="1072" y="317">issue closed</text><text class="c" x="1072" y="333">97 · B14</text></g>
+
+        <!-- jam marker on delivery line: J3 -->
+        <g class="n jam"><rect x="770" y="186" width="115" height="34" rx="5"/><text class="t" x="782" y="208" style="font-size:12.5px">Red heads hold line · J3</text></g>
+
+        <!-- row 3 parks -->
+        <path class="e side" d="M227,342 V440" marker-end="url(#as)"/>
+        <path class="e jamedge" d="M527,342 V440" marker-end="url(#aj)"/>
+        <path class="e jamedge" d="M677,342 V440" marker-end="url(#aj)"/>
+        <path class="e jamedge" d="M827,342 V440" marker-end="url(#aj)"/>
+
+        <g class="n owner"><rect x="150" y="440" width="155" height="92" rx="5"/><text class="t" x="162" y="463">Protected path park</text><text class="f" x="162" y="481">CONFLICT_PROTECTED</text><text class="f" x="162" y="495">owner drafts a manual PR</text><text class="c" x="162" y="511">11 with PR · B8</text><text class="c" x="162" y="525">6 without · B9</text></g>
+
+        <g class="n jam"><rect x="450" y="440" width="155" height="92" rx="5"/><text class="t" x="462" y="463">Red before review</text><text class="f" x="462" y="481">CI_PRE_REVIEW_RED</text><text class="f" x="462" y="495">no fix route under R80;</text><text class="f" x="462" y="509">re-admit only at same base</text><text class="c" x="462" y="525">5 · B4</text></g>
+
+        <g class="n jam"><rect x="610" y="440" width="135" height="92" rx="5"/><text class="t" x="622" y="463">Acceptance park</text><text class="f" x="622" y="481">task acceptance</text><text class="f" x="622" y="495">not fulfilled</text><text class="c" x="622" y="511">3 rounds left · B6a</text><text class="c" x="622" y="525">3 rounds spent · B6b</text></g>
+
+        <g class="n jam"><rect x="760" y="440" width="135" height="92" rx="5"/><text class="t" x="772" y="463">Refresh failed ×3</text><text class="f" x="772" y="481">markTerminalBlocked</text><text class="f" x="772" y="495">PR detached,</text><text class="f" x="772" y="509">retained forever</text><text class="c" x="772" y="525">1 · B11 (PR #160)</text></g>
+
+        <g class="n term"><rect x="910" y="440" width="135" height="92" rx="5"/><text class="t" x="922" y="463">Merged by a person</text><text class="f" x="922" y="481">RETIRED_MERGED</text><text class="f" x="922" y="495">outside trusted path</text><text class="c" x="922" y="525">17 · B15</text></g>
+
+        <g class="n term"><rect x="1060" y="440" width="125" height="92" rx="5"/><text class="t" x="1072" y="463">Closed issue,</text><text class="t" x="1072" y="480">blocked</text><text class="f" x="1072" y="497">inert, by design</text><text class="c" x="1072" y="525">57 · B13</text></g>
+
+        <!-- footer of diagram: the launcher pass -->
+        <text class="lane" x="12" y="580">LAUNCHER PASS, EVERY ~30 MIN:</text>
+        <text class="lbl" x="12" y="600">matrix maintenance → closure-delivery → retry (revalidation | mismatch | preservation | refresh re-arm: each ends the pass if it writes) → delivery (1 merge) → closure (≤ 5) → follow-ups (≤ 2 issues)</text>
+        <text class="lbl" x="12" y="620">RUNTIME: runRepairCycle steps every record serially; planMatrixWave grants implementation cells first-N in rank order.</text>
+      </svg>
+    </div>
+    <p class="note">Corrections and CI fixes never open a new pull request. When a record already has a PR, the publish step pushes the new commit to that PR's branch and goes straight back to review. A new PR opens only on first publish, or when the old PR was closed without merging. The one place a PR gets detached is the refresh-failure jam (Sentinel PR #160), and its fix keeps the PR attached. Every arrow is a real decision function in the Sentinel source; labels name the function that takes the step. Red boxes are the jams the live classification found: either no runtime step and no launcher planner ever changes them, or they change every pass without getting closer to a merge.</p>
+  </section>
+
+  <section aria-labelledby="jams-h">
+    <h2 id="jams-h">Jams and their fixes</h2>
+    <div class="cards">
+      <article class="card">
+        <h3>Red before review, no way back</h3>
+        <div class="meta"><span class="pill jam">B4 · 5 records</span><span class="status done">fix built · gen 81 #153</span></div>
+        <p>A PR whose CI fails before its first review is parked. Under gen 80 the fix route is off, and re-admission only happens at the exact base it was parked on. The base moves on every merge, so nothing re-admits it.</p>
+      </article>
+      <article class="card">
+        <h3>Review request stuck for days</h3>
+        <div class="meta"><span class="pill jam">B5 · 3 records</span><span class="status prog">fix in progress</span></div>
+        <p>PRs #999, #1053 and #1011. An ambiguous review request with no bound journal is deferred on every run. That branch skips the expiry check every other branch has.</p>
+      </article>
+      <article class="card">
+        <h3>Task acceptance not fulfilled</h3>
+        <div class="meta"><span class="pill jam">B6 · 6 records</span><span class="status prog">fix in progress</span></div>
+        <p>When the review says the PR doesn't do what the issue asks, the record is blocked, even with review rounds left. The fix sends it back as a correction while rounds remain, and parks it visibly once they're spent.</p>
+      </article>
+      <article class="card">
+        <h3>Retrying the same failure</h3>
+        <div class="meta"><span class="pill jam">B10 · 4 records</span><span class="status">queued</span></div>
+        <p>Issue 300 fails the model run the same way every attempt. Attempt memory never refuses because the base keeps moving, so it charges a reservation every 1–2 passes until a silent cap of 200.</p>
+      </article>
+      <article class="card">
+        <h3>Detached PR after refresh failures</h3>
+        <div class="meta"><span class="pill jam">B11 · 1 record</span><span class="status">queued</span></div>
+        <p>Sentinel issue 157. Three refresh failures cleared the record's PR, so PR #160 belongs to nothing, and the re-arm pass keeps it "retained" on every pass.</p>
+      </article>
+      <article class="card">
+        <h3>Waiting on a disabled release</h3>
+        <div class="meta"><span class="pill jam">B12 · 25 records</span><span class="status">queued</span></div>
+        <p>Merged PRs with closed issues wait for a Gateway release record that never comes, because the release path is off. Each pass rewrites all 25. The work itself is done.</p>
+      </article>
+      <article class="card">
+        <h3>Red heads hold the merge line</h3>
+        <div class="meta"><span class="pill jam">J3 · throughput</span><span class="status">queued</span></div>
+        <p>The ai.ubq.fi line is ordered by PR number. Lower-numbered PRs still waiting on a CI fix sit ahead of green, reviewed ones like 698 and 879, which adds hours to every merge.</p>
+      </article>
+      <article class="card">
+        <h3>CI fixes made blind</h3>
+        <div class="meta"><span class="pill jam">29 red PRs</span><span class="status prog">gen 81 lane, paused</span></div>
+        <p>A CI fix round tells the model only the failing check's name, with no log. The CI-evidence lane adds the failing job, step, annotations and a bounded log excerpt.</p>
+      </article>
+    </div>
+  </section>
+
+  <section aria-labelledby="fleet-h">
+    <h2 id="fleet-h">Where every open record sits</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Bucket</th><th>Records</th><th>State</th><th>What moves it next</th><th>Verdict</th></tr></thead>
+        <tbody>
+          <tr><td class="code">B1</td><td class="n2">17</td><td>Legacy PR, red CI, waiting for a CI-fix slot</td><td>Launcher retry pass, 12 CI fixes per pass</td><td><span class="pill moving">moving</span></td></tr>
+          <tr><td class="code">B2</td><td class="n2">12</td><td>CI fix in flight</td><td>Matrix cell, publish, then CI gate</td><td><span class="pill moving">moving</span></td></tr>
+          <tr><td class="code">B3</td><td class="n2">2</td><td>Reviewed, green, on a moved base</td><td>Carried refresh, then merge in line order</td><td><span class="pill moving">moving</span></td></tr>
+          <tr><td class="code">B3b</td><td class="n2">1</td><td>Merge in flight</td><td>Delivery pass (merged at 20:39 UTC)</td><td><span class="pill moving">moving</span></td></tr>
+          <tr><td class="code">B4</td><td class="n2">5</td><td>Red CI before review</td><td>Nothing under gen 80</td><td><span class="pill jam">jam</span></td></tr>
+          <tr><td class="code">B5</td><td class="n2">3</td><td>Review request stuck, no expiry</td><td>Nothing</td><td><span class="pill jam">jam</span></td></tr>
+          <tr><td class="code">B6a</td><td class="n2">3</td><td>Acceptance not fulfilled, rounds left</td><td>Nothing</td><td><span class="pill jam">jam</span></td></tr>
+          <tr><td class="code">B6b</td><td class="n2">3</td><td>Acceptance not fulfilled, rounds spent</td><td>Nothing; logged each pass as spent_not_admissible</td><td><span class="pill jam">jam</span></td></tr>
+          <tr><td class="code">B8</td><td class="n2">11</td><td>Protected path, manual PR open</td><td>Owner merges the manual PR</td><td><span class="pill owner">owner-gated</span></td></tr>
+          <tr><td class="code">B9</td><td class="n2">6</td><td>Protected path, no manual PR yet</td><td>Owner drafts a PR</td><td><span class="pill owner">owner-gated</span></td></tr>
+          <tr><td class="code">B10</td><td class="n2">4</td><td>Same implementation failure every attempt</td><td>Re-granted until 200 reservations</td><td><span class="pill jam">jam</span></td></tr>
+          <tr><td class="code">B11</td><td class="n2">1</td><td>Refresh failed 3 times, PR detached</td><td>Nothing; retained every pass</td><td><span class="pill jam">jam</span></td></tr>
+          <tr><td class="code">B12</td><td class="n2">25</td><td>Merged, waiting on a disabled release</td><td>5-minute wait set again forever</td><td><span class="pill jam">jam</span></td></tr>
+          <tr><td class="code">B13</td><td class="n2">57</td><td>Blocked, issue closed</td><td>Nothing, by design</td><td><span class="pill term">terminal</span></td></tr>
+          <tr><td class="code">B14</td><td class="n2">97</td><td>Retired, issue closed</td><td>Nothing, by design</td><td><span class="pill term">terminal</span></td></tr>
+          <tr><td class="code">B15</td><td class="n2">17</td><td>Merged by a person</td><td>Nothing, by design</td><td><span class="pill term">terminal</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Since this snapshot, four manual protected-path PRs (#1153, #1155, #1157, #1158) and one Sentinel PR (#1087) have merged on ai.ubq.fi, so some B8 and B3b counts are already lower.</p>
+  </section>
+
+  <section aria-labelledby="caps-h">
+    <h2 id="caps-h">Limits that shape throughput</h2>
+    <div class="cols">
+      <ul class="caps">
+        <li><span>Review rounds per PR</span><span>3 (legacy +1)</span></li>
+        <li><span>CI fixes per PR</span><span>3</span></li>
+        <li><span>CI fixes admitted per pass</span><span>12</span></li>
+        <li><span>Conflict resolutions per pass / wave</span><span>4 / 4</span></li>
+        <li><span>Base refresh failures before terminal</span><span>3</span></li>
+        <li><span>Carried refreshes per PR</span><span>6</span></li>
+        <li><span>Pre-review CI and carried waits</span><span>6 h</span></li>
+      </ul>
+      <ul class="caps">
+        <li><span>External merges per pass, all repositories</span><span>1</span></li>
+        <li><span>Retirements / closures per pass</span><span>5 / 5</span></li>
+        <li><span>Spent-PR reads per pass</span><span>8</span></li>
+        <li><span>CI re-runs per pass</span><span>3</span></li>
+        <li><span>Follow-up issues filed per pass</span><span>2</span></li>
+        <li><span>Retry reservations per task</span><span>200, then silent skip</span></li>
+        <li><span>Matrix cells per wave</span><span>256</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>Source: decision-matrix map and live fleet classification of origin/sentinel-state/repair at 25721d33c, launcher 3f041b46d. Read-only; nothing was written to live state.</footer>
+</div>

@@ -1,0 +1,1324 @@
+From 0a1a59d99026d1e094ca7a257d162bfb581ff3e6 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 17 Oct 2026 22:44:22 +0000
+Subject: [PATCH] fix(repair): expire a saved review request that binds no
+ journal
+
+JAM B5. ai.ubq.fi 630 (PR 999), 604 (PR 1053) and 647 (PR 1011) sat at
+`review` for 15-92 hours, each with an ambiguous review_request intent
+for round reviewRounds + 1 whose attempt key no review journal on the
+pull request binds. observeReview takes its saved-request branch for
+them and returned `review intent has no exact bound journal` on every
+run: unlike the transport-failure, pending and non-terminal unavailable
+branches, it never asked reviewAttemptExpired, so the attempt could not
+expire and nothing ever moved.
+
+That branch now expires after the same bound (REVIEW_BOUND_MS) and is
+recovered by the same recoverExpiredReviewAttempt as every other
+attempt: the saved round is counted once (the existing expired-attempt
+rule: a bound review_request intent the counter never counted is
+counted and cleared), its ambiguous charge stays in the ledger
+unchanged, and the next round goes through the ceiling, freshness and
+CI-first gates of requestReviewFor. Inside the bound nothing is written.
+
+The bound is anchored at the attempt in flight. requestReviewFor sets
+the intent on the freshly loaded record, which keeps the previous
+round's wait, so 604 and 647 carry round N-1's review_pending since
+beside round N's intent. reviewAttemptExpired now never starts the
+bound before a review_request intent's own start (the later of the
+wait's since and the intent's startedAt), in every branch: an attempt
+never inherits an earlier round's deadline, and nothing expires earlier
+than before. Without this the new branch, and the existing
+transport-failure branch, could recover an ambiguous attempt seconds
+after it was submitted and charge another round.
+
+Replayed from the live records and every charge of each task
+(tests/fixtures/repair/review-saved-request-live.json, state 3503d6ba7)
+through the real cycle at the next pass: 604 requests its third and
+last round, 630 (red head) goes to the CI-first gate with no review,
+and 647 (four rounds spent, legacy pin 4, green, unarmed) parks with
+the existing UNREVIEWED ceiling message. No refund, no new state shape,
+blocker, wait or output line: everything written is what R80 writes.
+
+The post-drain entrypoint scenario used this jam as its "unrelated
+non-matrix deferral" with an intent 45 minutes old; its stuck record now
+starts inside the bound (2 minutes old, beside the previous round's
+older wait), so it is still that deferral and also guards the anchor.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H8mMNvEXtHRiTVR1wJeFLQ
+---
+ src/repair/loop-review-observation.ts         |  34 +-
+ .../repair/review-saved-request-live.json     | 584 ++++++++++++++++++
+ .../entrypoints-post-drain-helpers.ts         |  15 +-
+ .../review-saved-request-expiry_test.ts       | 566 +++++++++++++++++
+ 4 files changed, 1187 insertions(+), 12 deletions(-)
+ create mode 100644 tests/fixtures/repair/review-saved-request-live.json
+ create mode 100644 tests/repair/review-saved-request-expiry_test.ts
+
+diff --git a/src/repair/loop-review-observation.ts b/src/repair/loop-review-observation.ts
+index 0cb8baaaf6..e7b3d7f6d3 100644
+--- a/src/repair/loop-review-observation.ts
++++ b/src/repair/loop-review-observation.ts
+@@ -58,14 +58,27 @@ function isReviewAttemptWait(record: WorkRecordV1): boolean {
+  */
+ function reviewAttemptExpired(record: WorkRecordV1, now: number): boolean {
+   const wait = record.wait;
+-  const since = wait !== null && isReviewAttemptWait(record)
+-    // The drain pass releases an expired review_quota wait before this step
+-    // runs, so a live wait keeps its preserved start and the bound intent is
+-    // the only surviving anchor for an already-released attempt.
++  // The drain pass releases an expired review_quota wait before this step
++  // runs, so a live wait keeps its preserved start and the bound intent is
++  // the only surviving anchor for an already-released attempt.
++  const waitSince = wait !== null && isReviewAttemptWait(record)
+     ? wait.since
+-    : record.intent !== null && record.intent.kind === "review_request"
+-    ? record.intent.startedAt
+     : null;
++  const intentStart =
++    record.intent !== null && record.intent.kind === "review_request"
++      ? record.intent.startedAt
++      : null;
++  // A bound intent IS the attempt in flight, and the wait beside it may be an
++  // EARLIER round's: requestReviewFor sets the intent on the freshly loaded
++  // record, which keeps that round's wait (live 604 and 647 carry the
++  // previous round's review_pending since). The bound therefore never starts
++  // before the intent's own start, so a later attempt never inherits an
++  // earlier round's deadline; it can only start later, never earlier.
++  const since = waitSince === null
++    ? intentStart
++    : intentStart === null
++    ? waitSince
++    : Math.max(waitSince, intentStart);
+   if (since === null) return false;
+   return now >= since + REVIEW_BOUND_MS;
+ }
+@@ -195,6 +208,15 @@ export async function observeReview(
+       isUnboundReviewObservation(value) || value.observedHead !== head ||
+       value.observedBase !== record.target.base
+     ) {
++      // No exact journal binds the saved submission. It expires after the
++      // same bound and is recovered exactly like every other attempt (live
++      // ai.ubq.fi 630, 604 and 647 deferred here for 15-92 hours): the round
++      // is counted once, its ambiguous charge stays, and the next round goes
++      // through the ceiling, freshness and CI-first gates. Inside the bound
++      // nothing is written.
++      if (reviewAttemptExpired(record, now)) {
++        return recoverExpiredReviewAttempt(deps, context, record, now);
++      }
+       return {
+         kind: "deferred",
+         detail: "review intent has no exact bound journal",
+diff --git a/tests/fixtures/repair/review-saved-request-live.json b/tests/fixtures/repair/review-saved-request-live.json
+new file mode 100644
+index 0000000000..8a02fe5b69
+--- /dev/null
++++ b/tests/fixtures/repair/review-saved-request-live.json
+@@ -0,0 +1,584 @@
++{
++  "description": "Live ai.ubq.fi repair state at origin/sentinel-state/repair 3503d6ba7 (sequence 41474, updatedAt 2026-10-17T21:40:45Z): records 630 (PR 999), 604 (PR 1053) and 647 (PR 1011), each at review with an ambiguous review_request intent whose attempt key has no bound review journal (generation 80 deferred 'review intent has no exact bound journal' on every run for 15-92 hours), with every reservation of each task. 604 and 647 keep the previous round's review_pending wait (its since is that round's journal requestedAt), which predates the intent's own start.",
++  "sequence": 41474,
++  "updatedAt": 1792273245789,
++  "records": [
++    {
++      "blocker": null,
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "1f90f0a0b122bdcd424eb8fa6016a509bd3f6ed5"
++      },
++      "counters": {
++        "attempts": 5,
++        "retries": 0,
++        "reviewRounds": 1,
++        "stalled": 1
++      },
++      "createdAt": 1790946190133,
++      "dependencies": [],
++      "evidence": [],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1790944615000,
++      "id": "issue-ubiquity-ai.ubq.fi-630",
++      "intent": {
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-630",
++        "expectedHead": "028a1a092476c3078ff3bb38346336901f3f6ee8",
++        "key": "review:999:028a1a092476c3078ff3bb38346336901f3f6ee8:attempt-2",
++        "kind": "review_request",
++        "observedBase": "3876fe65703f558b0656c6384c359b48508bb777",
++        "pr": 999,
++        "requestId": "44ca93c199f6372ad5445e9223106578d24458a868eaefac73ffd1d8cc01f7ac",
++        "resultId": null,
++        "startedAt": 1792214129922
++      },
++      "kind": "work",
++      "nextStep": "review",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 630
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "630",
++        "kind": "issue",
++        "revision": "1d7e64e6b30cef212bca16ca7191f13685382ded"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "3876fe65703f558b0656c6384c359b48508bb777",
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-630",
++        "candidateState": {
++          "preserved": {
++            "base": "3876fe65703f558b0656c6384c359b48508bb777",
++            "head": "028a1a092476c3078ff3bb38346336901f3f6ee8",
++            "operationKey": "base_refresh:999:cf9e828a72468ee44611c82882cf578bcd5cab50:3876fe65703f558b0656c6384c359b48508bb777",
++            "ref": "refs/heads/sentinel-candidates/1d1a158d8cec207b274e56a415a2967f990e1b8aa485ee5970c91095562afd26"
++          },
++          "publishedHead": "028a1a092476c3078ff3bb38346336901f3f6ee8"
++        },
++        "checkpoint": null,
++        "head": "028a1a092476c3078ff3bb38346336901f3f6ee8",
++        "pr": 999
++      },
++      "updatedAt": 1792214145194,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": null
++    },
++    {
++      "blocker": null,
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "1f90f0a0b122bdcd424eb8fa6016a509bd3f6ed5"
++      },
++      "counters": {
++        "attempts": 2,
++        "retries": 0,
++        "reviewRounds": 1,
++        "stalled": 1
++      },
++      "createdAt": 1790942544130,
++      "dependencies": [],
++      "evidence": [],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1790938666000,
++      "id": "issue-ubiquity-ai.ubq.fi-604",
++      "intent": {
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-604",
++        "expectedHead": "878adf0557349ad2f038b619365101dceaf59982",
++        "key": "review:1053:878adf0557349ad2f038b619365101dceaf59982:attempt-2",
++        "kind": "review_request",
++        "observedBase": "f3133596eadb8595cd823464177a7b3877f26b65",
++        "pr": 1053,
++        "requestId": "fce4d0efbb2697825998f41f6b4f2cba51a25fef618dbf5c27b83642b61f92dd",
++        "resultId": null,
++        "startedAt": 1792109233539
++      },
++      "kind": "work",
++      "nextStep": "review",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 604
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "604",
++        "kind": "issue",
++        "revision": "1d7e64e6b30cef212bca16ca7191f13685382ded"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "f3133596eadb8595cd823464177a7b3877f26b65",
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-604",
++        "candidateState": {
++          "preserved": {
++            "base": "f3133596eadb8595cd823464177a7b3877f26b65",
++            "head": "878adf0557349ad2f038b619365101dceaf59982",
++            "operationKey": "base_refresh:1053:64d21944ece3ce6076df0cb4f3f573cb589e1be7:f3133596eadb8595cd823464177a7b3877f26b65",
++            "ref": "refs/heads/sentinel-candidates/28b09da89ca4e860d08e25878dc530b35dcefc1f6d09c9585460b814f812a7c5"
++          },
++          "publishedHead": "878adf0557349ad2f038b619365101dceaf59982"
++        },
++        "checkpoint": null,
++        "head": "878adf0557349ad2f038b619365101dceaf59982",
++        "pr": 1053
++      },
++      "updatedAt": 1792109233539,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": {
++        "reason": "review_pending",
++        "since": 1792108309380,
++        "until": 1792109209380
++      }
++    },
++    {
++      "blocker": null,
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "1f90f0a0b122bdcd424eb8fa6016a509bd3f6ed5"
++      },
++      "counters": {
++        "attempts": 4,
++        "retries": 0,
++        "reviewRounds": 3,
++        "stalled": 1
++      },
++      "createdAt": 1790951200910,
++      "dependencies": [],
++      "evidence": [],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1790950592000,
++      "id": "issue-ubiquity-ai.ubq.fi-647",
++      "intent": {
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-647",
++        "expectedHead": "d632c22438b960dc1b795df1c51bcbc14a645d7f",
++        "key": "review:1011:d632c22438b960dc1b795df1c51bcbc14a645d7f:attempt-4",
++        "kind": "review_request",
++        "observedBase": "f392eb27a71539a4c162f9c96b624039dcf46612",
++        "pr": 1011,
++        "requestId": "993203f38e82befc972ee76f5513dc275596be4dfe8b9ee0914c5c53860410f1",
++        "resultId": null,
++        "startedAt": 1791936764136
++      },
++      "kind": "work",
++      "nextStep": "review",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 647
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "647",
++        "kind": "issue",
++        "revision": "dfcb82280f8c3236811cd3384f9bb1ac9a618ee9"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "f392eb27a71539a4c162f9c96b624039dcf46612",
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-647",
++        "candidateState": {
++          "preserved": {
++            "base": "f392eb27a71539a4c162f9c96b624039dcf46612",
++            "head": "d632c22438b960dc1b795df1c51bcbc14a645d7f",
++            "operationKey": "base_refresh:1011:a6177ac4c40b6948d3c67aae42dda7bc039f4fc8:f392eb27a71539a4c162f9c96b624039dcf46612",
++            "ref": "refs/heads/sentinel-candidates/f3a80a8004991dffac112448558efa6a0ada879beec2800420175fb4dca82be7"
++          },
++          "publishedHead": "d632c22438b960dc1b795df1c51bcbc14a645d7f"
++        },
++        "checkpoint": null,
++        "head": "d632c22438b960dc1b795df1c51bcbc14a645d7f",
++        "pr": 1011
++      },
++      "updatedAt": 1791936764136,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": {
++        "reason": "review_pending",
++        "since": 1791935796265,
++        "until": 1791936696265
++      }
++    }
++  ],
++  "reservations": [
++    {
++      "attempt": 1,
++      "createdAt": 1791067611029,
++      "head": "b31e31b0137bb8bc5c598c68fc0b64dcf3c233b3",
++      "id": "6d2d0f1b6f462bb134774a46c1642529cc350477f3f8146cba135070399e21a2",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791083981389,
++      "taskId": "issue-ubiquity-ai.ubq.fi-630",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1791262172173,
++      "head": "6f2292de77e23a24d9063eff721f84822aa9c11b",
++      "id": "03e41d165588262dc6718444e9c9d18e5e7dcdb9c344ce7d3cfddbc17075ac03",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791735066399,
++      "taskId": "issue-ubiquity-ai.ubq.fi-630",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1791738572479,
++      "head": "0ee5d86788d2bc42947ba60436e2f71426128d4b",
++      "id": "f0dedd3a1570149003628edcd10f356169ea28e95715c544c700e4d9e4bf5dfc",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791750950572,
++      "taskId": "issue-ubiquity-ai.ubq.fi-630",
++      "version": "v1"
++    },
++    {
++      "attempt": 4,
++      "createdAt": 1791755040926,
++      "head": "0ee5d86788d2bc42947ba60436e2f71426128d4b",
++      "id": "10754132c02c7da8f84be539a9e76f130fa6441b908521934a1ab42b9f844945",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791757327664,
++      "taskId": "issue-ubiquity-ai.ubq.fi-630",
++      "version": "v1"
++    },
++    {
++      "attempt": 5,
++      "createdAt": 1792213204180,
++      "head": "0dbee0047f76a18b1b1a51ca198a25e01e92603f",
++      "id": "e01f850c30d653f5ba2cdc3401b296454a8811985cf7c446235660fc971b984b",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792213482764,
++      "taskId": "issue-ubiquity-ai.ubq.fi-630",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1791785157627,
++      "head": "cf9e828a72468ee44611c82882cf578bcd5cab50",
++      "id": "bd4bcf6480f536161ad570a60abd673fa495e66a27597ef68b499a9e9fec212b",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791785212842,
++      "taskId": "issue-ubiquity-ai.ubq.fi-630",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1792214131151,
++      "head": "028a1a092476c3078ff3bb38346336901f3f6ee8",
++      "id": "44ca93c199f6372ad5445e9223106578d24458a868eaefac73ffd1d8cc01f7ac",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792214140657,
++      "taskId": "issue-ubiquity-ai.ubq.fi-630",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1791060015747,
++      "head": "4439e8546bb74653f8eeab29bae223c3038be972",
++      "id": "e6fbfe6481c4eb5860d0ec93e7cf66246ce0c8f1b7ad3c98b2a5976b53b2d944",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791208223728,
++      "taskId": "issue-ubiquity-ai.ubq.fi-604",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1792104300336,
++      "head": "1d1b71a14f52282f9d422da8999edd2b9dd62c24",
++      "id": "1a1bd9eba7a9d975b900163f106eb7ed13879e93334d8c2245a0b739bc0d6b53",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792105961149,
++      "taskId": "issue-ubiquity-ai.ubq.fi-604",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1792108294368,
++      "head": "878adf0557349ad2f038b619365101dceaf59982",
++      "id": "1baf1cd44ed710f940a3d2f787048ba330d5bedd5cc4d2d267c8f28646e72640",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792108329204,
++      "taskId": "issue-ubiquity-ai.ubq.fi-604",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1792109253444,
++      "head": "878adf0557349ad2f038b619365101dceaf59982",
++      "id": "fce4d0efbb2697825998f41f6b4f2cba51a25fef618dbf5c27b83642b61f92dd",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792109266156,
++      "taskId": "issue-ubiquity-ai.ubq.fi-604",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1791072646600,
++      "head": "b31e31b0137bb8bc5c598c68fc0b64dcf3c233b3",
++      "id": "537ab0051c0d8b1b20002cc45e40b198a96cde83bff3ad1dbe8fa918be06197f",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791084256006,
++      "taskId": "issue-ubiquity-ai.ubq.fi-647",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1791263106234,
++      "head": "dc9db6d9bf9ac328601449ed7ef06456376f0f2b",
++      "id": "6e7e5f235b1047138cbef1b1e473f401b2922c02154e2a993471c1d1b6a08806",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791735066399,
++      "taskId": "issue-ubiquity-ai.ubq.fi-647",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1791739489565,
++      "head": "0ee5d86788d2bc42947ba60436e2f71426128d4b",
++      "id": "48534862a9614f738bf38a3d85fe01b4db1b101cf83898dbb7193111ccaa385a",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791750950572,
++      "taskId": "issue-ubiquity-ai.ubq.fi-647",
++      "version": "v1"
++    },
++    {
++      "attempt": 4,
++      "createdAt": 1791755649379,
++      "head": "0ee5d86788d2bc42947ba60436e2f71426128d4b",
++      "id": "06b72662f74dea9fc06cc680c68a4af9bc154cad59c5bf06bed84aba83f4cff1",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791757448049,
++      "taskId": "issue-ubiquity-ai.ubq.fi-647",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1791925138134,
++      "head": "a6177ac4c40b6948d3c67aae42dda7bc039f4fc8",
++      "id": "996e7a281410a8eec6a6b85594239287c6ee783e879de9121d92630034308ddf",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791925215562,
++      "taskId": "issue-ubiquity-ai.ubq.fi-647",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1791926171731,
++      "head": "a6177ac4c40b6948d3c67aae42dda7bc039f4fc8",
++      "id": "cdec645e0c551a49a9418b4453389e43834755517dd54f6fa70664ad7cc1bb5d",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791926249296,
++      "taskId": "issue-ubiquity-ai.ubq.fi-647",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1791935765974,
++      "head": "d632c22438b960dc1b795df1c51bcbc14a645d7f",
++      "id": "f162a0e556b11a46a93323dc6dd62da316ad8e0ffdc31c589cc321d9cb6de61d",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791935831969,
++      "taskId": "issue-ubiquity-ai.ubq.fi-647",
++      "version": "v1"
++    },
++    {
++      "attempt": 4,
++      "createdAt": 1791936801720,
++      "head": "d632c22438b960dc1b795df1c51bcbc14a645d7f",
++      "id": "993203f38e82befc972ee76f5513dc275596be4dfe8b9ee0914c5c53860410f1",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791936837977,
++      "taskId": "issue-ubiquity-ai.ubq.fi-647",
++      "version": "v1"
++    }
++  ]
++}
+diff --git a/tests/integration/entrypoints-post-drain-helpers.ts b/tests/integration/entrypoints-post-drain-helpers.ts
+index 9d400a797b..794e167098 100644
+--- a/tests/integration/entrypoints-post-drain-helpers.ts
++++ b/tests/integration/entrypoints-post-drain-helpers.ts
+@@ -184,8 +184,11 @@ export async function postDrainTaskScenario(
+       },
+     });
+     // Live shape (ai.ubq.fi 647/604): an ambiguous review submission whose
+-    // attempt never bound a journal is deferred by every cycle, so the cycle
+-    // ends in "margin" with a deferral that is neither matrix nor horizon.
++    // attempt never bound a journal, beside the previous round's wait. It is
++    // deferred until its own start is a full review bound old (then it is
++    // recovered, `review-saved-request-expiry_test.ts`), so this cycle, inside
++    // that bound, ends in "margin" with a deferral that is neither matrix nor
++    // horizon.
+     const stuckBranch = "sentinel/repair/issue-4";
+     const stuckKey = `review:8:${SHA2}:attempt-2`;
+     const stuckCharge = reservation("stuck-review-attempt-2", {
+@@ -194,8 +197,8 @@ export async function postDrainTaskScenario(
+       head: SHA2,
+       purpose: "review_request",
+       outcome: "ambiguous",
+-      createdAt: T0 - 46 * 60_000,
+-      settledAt: T0 - 45 * 60_000,
++      createdAt: T0 - 2 * 60_000 + 1_000,
++      settledAt: T0 - 2 * 60_000 + 2_000,
+       proofRef: null,
+     });
+     const stuckWork = workRecord("issue-4", {
+@@ -217,7 +220,7 @@ export async function postDrainTaskScenario(
+       intent: {
+         kind: "review_request",
+         key: stuckKey,
+-        startedAt: T0 - 45 * 60_000,
++        startedAt: T0 - 2 * 60_000,
+         branch: stuckBranch,
+         expectedHead: SHA2,
+         observedBase: SHA1,
+@@ -227,7 +230,7 @@ export async function postDrainTaskScenario(
+       },
+       counters: { attempts: 1, retries: 0, reviewRounds: 1 },
+       createdAt: T0 - 60 * 60_000,
+-      updatedAt: T0 - 45 * 60_000,
++      updatedAt: T0 - 2 * 60_000,
+     });
+     if (mode === "unbound-intent") {
+       rig.github.candidatePullRequests.set(8, {
+diff --git a/tests/repair/review-saved-request-expiry_test.ts b/tests/repair/review-saved-request-expiry_test.ts
+new file mode 100644
+index 0000000000..2e0cce9b1c
+--- /dev/null
++++ b/tests/repair/review-saved-request-expiry_test.ts
+@@ -0,0 +1,566 @@
++/**
++ * JAM B5: a saved review request whose attempt key binds no review journal.
++ *
++ * Live shapes (`tests/fixtures/repair/review-saved-request-live.json`,
++ * origin/sentinel-state/repair 3503d6ba7): ai.ubq.fi 630 (PR 999), 604
++ * (PR 1053) and 647 (PR 1011) sat at `review` for 15-92 hours, each with an
++ * ambiguous `review_request` intent for round `reviewRounds + 1` whose key no
++ * journal on the pull request binds. Generation 80 took the saved-request
++ * branch of `observeReview` and returned `review intent has no exact bound
++ * journal` on every run, so the attempt never expired. These cases replay the
++ * exact records and every charge of each task through the REAL repair cycle at
++ * the snapshot's own instant (the next pass): the expired ambiguous round is
++ * counted once and cleared, its charge kept, and each record moves.
++ *
++ * 604 and 647 also carry the PREVIOUS round's `review_pending` wait (its
++ * `since` is that round's journal `requestedAt`), which predates the saved
++ * intent's own start: the bound is never measured from that earlier round.
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import {
++  type BudgetReservationV1,
++  parseBudgetReservationV1,
++} from "../../src/contracts/budget-reservation.ts";
++import type {
++  GitHubCheckV1,
++  PortResultV1,
++  ReviewObservationV1,
++} from "../../src/contracts/ports.ts";
++import { portError, portOk } from "../../src/contracts/ports.ts";
++import {
++  parseWorkRecordV1,
++  type WorkRecordV1,
++} from "../../src/contracts/work-record.ts";
++import { RollingStartBudget } from "../../src/budget/mod.ts";
++import { preReviewCiFixRouteOpen } from "../../src/repair/ci-first-policy.ts";
++import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
++import { reviewOperationKey } from "../../src/repair/keys.ts";
++import { REVIEW_BOUND_MS } from "../../src/repair/loop-bounds.ts";
++import { runRepairCycle } from "../../src/repair/loop.ts";
++import { LEGACY_REVIEW_CUTOFF } from "../../src/repair/review-round-cap.ts";
++import { SHA1 } from "../state/helpers.ts";
++import {
++  FakeClock,
++  FakeGithub,
++  FakeIncidents,
++  FakeModel,
++  FakeReplay,
++  MemoryState,
++  repairConfigs,
++} from "./helpers.ts";
++import { exactOpenPr, positiveLifecycle } from "./loop-candidate-fixtures.ts";
++import { CAP_UNREVIEWED, seededState } from "./review-round-cap-rig.ts";
++
++const LIVE = JSON.parse(
++  await Deno.readTextFile(
++    new URL(
++      "../fixtures/repair/review-saved-request-live.json",
++      import.meta.url,
++    ),
++  ),
++);
++
++/** The next pass after the live snapshot. */
++const NEXT_PASS: number = LIVE.updatedAt;
++const MINUTE = 60_000;
++const LIVE_REPO = {
++  owner: "ubiquity",
++  name: "ai.ubq.fi",
++  installationId: 155687488,
++} as const;
++/** The pre-review CI park prefix, pinned literally (R80 matches the text). */
++const CI_RED_PARK = "CI red before review; awaiting a CI fix: ";
++
++interface LiveShapeV1 {
++  record: WorkRecordV1;
++  reservations: BudgetReservationV1[];
++}
++
++function liveShape(issue: number): LiveShapeV1 {
++  const raw = (LIVE.records as { related: { issueNumber: number } }[])
++    .find((row) => row.related.issueNumber === issue);
++  assert.ok(raw !== undefined, `live record ${issue}`);
++  const record = parseWorkRecordV1(structuredClone(raw));
++  const reservations = (LIVE.reservations as unknown[])
++    .map((row) => parseBudgetReservationV1(structuredClone(row)))
++    .filter((row) => row.taskId === record.id);
++  return { record, reservations };
++}
++
++function savedIntent(record: WorkRecordV1) {
++  const intent = record.intent;
++  assert.ok(intent !== null && intent.kind === "review_request");
++  return intent;
++}
++
++function check(
++  name: string,
++  conclusion: GitHubCheckV1["conclusion"],
++  head: GitSha,
++  startedAt: string,
++  completedAt: string,
++): GitHubCheckV1 {
++  return {
++    name,
++    status: "completed",
++    conclusion,
++    head,
++    startedAt: Date.parse(startedAt),
++    completedAt: Date.parse(completedAt),
++  };
++}
++
++/** The live check runs of each head; the base ran the same jobs green. */
++function liveChecks(issue: number, head: GitSha): GitHubCheckV1[] {
++  switch (issue) {
++    case 630: // PR 999: validate failed on the head.
++      return [
++        check(
++          "verify-artifact",
++          "skipped",
++          head,
++          "2026-10-17T05:36:33Z",
++          "2026-10-17T05:36:33Z",
++        ),
++        check(
++          "darwin-native",
++          "success",
++          head,
++          "2026-10-17T05:15:37Z",
++          "2026-10-17T05:19:07Z",
++        ),
++        check(
++          "mac-containment",
++          "success",
++          head,
++          "2026-10-17T05:15:37Z",
++          "2026-10-17T05:15:48Z",
++        ),
++        check(
++          "validate",
++          "failure",
++          head,
++          "2026-10-17T05:15:32Z",
++          "2026-10-17T05:36:33Z",
++        ),
++      ];
++    case 604: // PR 1053: green.
++      return [
++        check(
++          "verify-artifact",
++          "success",
++          head,
++          "2026-10-16T00:12:19Z",
++          "2026-10-16T00:12:41Z",
++        ),
++        check(
++          "darwin-native",
++          "success",
++          head,
++          "2026-10-15T23:52:09Z",
++          "2026-10-15T23:54:49Z",
++        ),
++        check(
++          "validate",
++          "success",
++          head,
++          "2026-10-15T23:52:06Z",
++          "2026-10-16T00:12:14Z",
++        ),
++        check(
++          "mac-containment",
++          "success",
++          head,
++          "2026-10-15T23:52:09Z",
++          "2026-10-15T23:52:18Z",
++        ),
++      ];
++    default: // PR 1011: green.
++      return [
++        check(
++          "verify-artifact",
++          "success",
++          head,
++          "2026-10-13T23:55:30Z",
++          "2026-10-13T23:55:38Z",
++        ),
++        check(
++          "validate",
++          "success",
++          head,
++          "2026-10-13T23:50:51Z",
++          "2026-10-13T23:55:27Z",
++        ),
++      ];
++  }
++}
++
++/** The previous round's terminal no-verdict journal still on the PR. */
++function noVerdictJournal(
++  head: GitSha,
++  base: GitSha,
++  completedAt: number,
++): ReviewObservationV1 {
++  return {
++    status: "unavailable",
++    requestId: "review-previous-round",
++    reviewer: null,
++    resultId: "result-previous-round",
++    completedAt,
++    observedHead: head,
++    observedBase: base,
++    findings: [],
++    summary:
++      "structured review unavailable: the task acceptance is not bound to the supplied task statement",
++    receivedAt: completedAt + 1,
++    taskAcceptance: null,
++  };
++}
++
++/**
++ * The live pull request, branch, base and checks. The saved attempt key binds
++ * no journal at all (the transport's exact unbound receipt); the previous
++ * round's no-verdict journal stays bound under its own key.
++ */
++class LiveGithub extends FakeGithub {
++  failSavedObservation = false;
++
++  constructor(
++    private readonly shape: LiveShapeV1,
++    requestedAt: number,
++    previousRoundKey: string | null,
++  ) {
++    const { record } = shape;
++    const head = record.target.head!;
++    const base = record.target.base!;
++    const branch = record.target.branch!;
++    super({
++      baseSha: base,
++      reviewRequestedAt: requestedAt,
++      candidateLifecycle: {
++        ...positiveLifecycle(),
++        refs: { [`refs/heads/${branch}`]: head },
++        pullRequests: [exactOpenPr(record.target.pr!, head, branch, base)],
++      },
++    });
++    this.unboundReviewKeys.add(savedIntent(record).key);
++    if (previousRoundKey !== null) {
++      this.reviewObservationsByKey.set(
++        previousRoundKey,
++        noVerdictJournal(head, base, savedIntent(record).startedAt - 1),
++      );
++    }
++  }
++
++  override observeReview(
++    request: unknown,
++  ): Promise<PortResultV1<ReviewObservationV1>> {
++    const key = (request as { operationKey: string }).operationKey;
++    if (
++      this.failSavedObservation && key === savedIntent(this.shape.record).key
++    ) {
++      this.calls.push("observeReview");
++      this.observedReviewKeys.push(key);
++      return Promise.resolve(portError("unavailable", "review unavailable"));
++    }
++    return super.observeReview(request);
++  }
++
++  override readChecks(sha: GitSha) {
++    const issue = this.shape.record.related.issueNumber!;
++    const head = this.shape.record.target.head!;
++    const checks = liveChecks(issue, head).map((row) =>
++      sha === head ? row : { ...row, conclusion: "success" as const, head: sha }
++    );
++    return Promise.resolve(portOk({ head: sha, checks }));
++  }
++}
++
++function previousRoundKey(record: WorkRecordV1): string | null {
++  const pr = record.target.pr!;
++  const head = record.target.head!;
++  switch (record.related.issueNumber) {
++    case 604: // Round one under the first-attempt key, on the same head.
++      return reviewOperationKey(pr, head);
++    case 647: // Round three on the same head.
++      return reviewOperationKey(pr, head, 3);
++    default: // 630: no journal on PR 999 at all.
++      return null;
++  }
++}
++
++/** The exact live record and ledger through the real hosted repair cycle. */
++async function liveRig(issue: number, at: number = NEXT_PASS) {
++  const shape = liveShape(issue);
++  const clock = new FakeClock(at);
++  const state = new MemoryState();
++  const configs = repairConfigs({
++    repository: LIVE_REPO,
++    adapter: { kind: "github" },
++    sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
++    liveStartLimits: { perHour: 1_000, perSevenDays: 10_000 },
++  });
++  const github = new LiveGithub(shape, at, previousRoundKey(shape.record));
++  const deps = {
++    clock,
++    state,
++    configs,
++    controllerSha: SHA1,
++    github,
++    githubCooldown: new DurableGitHubCooldownGate({ state, clock }),
++    incidents: new FakeIncidents({ summaries: [], evidence: null }),
++    replay: new FakeReplay(),
++    model: new FakeModel({
++      head: shape.record.target.head!,
++      changedPaths: ["src/app.ts"],
++    }),
++    budget: new RollingStartBudget({ clock, state, configs }),
++    // Hosted runs: implementations are matrix-owned, and the launcher hands
++    // the runtime the one pinned legacy cutoff.
++    externalImplementations: true,
++    legacyReviewCutoff: LEGACY_REVIEW_CUTOFF.activatedNotBefore!,
++  };
++  // The fake store starts its own sequence at 1; the snapshot is as of `at`.
++  const written = await state.writeRepair({
++    ...seededState([shape.record], shape.reservations),
++    updatedAt: at,
++  }, null);
++  assert.ok(written.ok && written.value.status === "applied");
++  const snapshot = async () => {
++    const read = await state.readRepair();
++    if (!read.ok || read.value.status !== "found") throw new Error("state");
++    return read.value.snapshot;
++  };
++  return {
++    shape,
++    clock,
++    github,
++    run: () =>
++      runRepairCycle(deps, {
++        deadline: clock.now() + 60 * MINUTE,
++        stepLimit: 16,
++      }),
++    snapshot,
++    work: async () => (await snapshot()).work[0]!,
++  };
++}
++
++type LiveRigV1 = Awaited<ReturnType<typeof liveRig>>;
++
++/**
++ * What every recovered record keeps: the saved identity alone was read, the
++ * ambiguous round is counted once with its intent cleared, every live charge
++ * stays byte-for-byte (the ambiguous admission stays charged, nothing is
++ * refunded) and nothing merges or closes.
++ */
++async function assertRecovered(rig: LiveRigV1, rounds: number) {
++  const { record, reservations } = rig.shape;
++  assert.equal(
++    rig.github.observedReviewKeys[0],
++    savedIntent(record).key,
++    "the saved attempt identity is observed first",
++  );
++  const state = await rig.snapshot();
++  const work = state.work[0]!;
++  assert.equal(work.intent, null, "the expired ambiguous intent is cleared");
++  assert.equal(work.counters.reviewRounds, rounds);
++  for (const charge of reservations) {
++    assert.deepEqual(
++      state.reservations.find((row) => row.id === charge.id),
++      charge,
++      `charge ${charge.purpose}/${charge.attempt} is kept exactly`,
++    );
++  }
++  assert.equal(
++    state.reservations.some((row) =>
++      row.taskId === record.id && row.outcome === "confirmed_not_submitted"
++    ),
++    false,
++    "no admission is refunded",
++  );
++  assert.equal(work.target.head, record.target.head);
++  assert.equal(work.target.pr, record.target.pr);
++  assert.deepEqual(work.target.candidateState, record.target.candidateState);
++  assert.equal(rig.github.calls.includes("merge"), false);
++  assert.equal(
++    rig.github.calls.some((call) => call.startsWith("closeIssue:")),
++    false,
++  );
++  return { state, work };
++}
++
++function reviewCharges(
++  state: { reservations: BudgetReservationV1[] },
++  taskId: string,
++) {
++  return state.reservations.filter((row) =>
++    row.taskId === taskId && row.purpose === "review_request"
++  );
++}
++
++Deno.test("JAM B5 live replay: every saved request with no bound journal moves on the next pass", async (t) => {
++  await t.step(
++    "604 / PR 1053: green head, one round left -> round three is requested",
++    async () => {
++      const rig = await liveRig(604);
++      const { record } = rig.shape;
++      const outcome = await rig.run();
++      assert.notEqual(outcome.status, "state_error", JSON.stringify(outcome));
++      const { state, work } = await assertRecovered(rig, 3);
++      assert.equal(work.nextStep, "review");
++      assert.equal(work.wait?.reason, "review_pending");
++      assert.equal(work.wait?.since, NEXT_PASS);
++      assert.equal(work.blocker, null);
++      assert.deepEqual(
++        rig.github.reviewRequestIdentities.map((row) => row.operationKey),
++        [reviewOperationKey(1053, record.target.head!, 3)],
++        "exactly one fresh, uniquely admitted round",
++      );
++      const fresh = reviewCharges(state, record.id).filter((row) =>
++        row.attempt === 3
++      );
++      assert.equal(fresh.length, 1);
++      assert.equal(fresh[0]!.outcome, "submitted");
++      assert.equal(reviewCharges(state, record.id).length, 3);
++      // The next pass changes nothing: the fresh round is simply awaited.
++      await rig.run();
++      assert.deepEqual(await rig.work(), work, "no per-pass rewrite");
++      assert.equal(rig.github.reviewRequestIdentities.length, 1);
++    },
++  );
++
++  await t.step(
++    "630 / PR 999: red head, one round left -> the CI-first gate owns it",
++    async () => {
++      const rig = await liveRig(630);
++      const { record } = rig.shape;
++      const outcome = await rig.run();
++      assert.notEqual(outcome.status, "state_error", JSON.stringify(outcome));
++      const { state, work } = await assertRecovered(rig, 2);
++      assert.equal(
++        rig.github.reviewRequestIdentities.length,
++        0,
++        "a red head is never reviewed",
++      );
++      assert.equal(
++        reviewCharges(state, record.id).length,
++        2,
++        "no review admission is added",
++      );
++      // The red, never-reviewed head is the CI-first gate's: where the hosted
++      // pre-review fix route is closed (generation 80) it parks precisely,
++      // where it is open it returns to `work` with the CI fix marker.
++      if (preReviewCiFixRouteOpen({ externalImplementations: true })) {
++        assert.equal(work.nextStep, "work");
++        assert.deepEqual(work.wait, {
++          reason: "backoff",
++          since: NEXT_PASS,
++          until: NEXT_PASS,
++        });
++        assert.equal(work.blocker, null);
++      } else {
++        assert.equal(work.nextStep, "blocked");
++        assert.equal(work.blocker?.kind, "other");
++        const message = work.blocker?.message ?? "";
++        assert.ok(message.startsWith(CI_RED_PARK), message);
++        assert.ok(message.includes("validate(failure)"), message);
++        assert.equal(work.wait, null);
++      }
++      await rig.run();
++      const next = await rig.work();
++      assert.equal(next.intent, null);
++      assert.equal(next.counters.reviewRounds, 2);
++      assert.equal(rig.github.reviewRequestIdentities.length, 0);
++    },
++  );
++
++  await t.step(
++    "647 / PR 1011: rounds spent (legacy pin 4, green, unarmed) -> UNREVIEWED park",
++    async () => {
++      const rig = await liveRig(647);
++      const { record } = rig.shape;
++      const outcome = await rig.run();
++      assert.notEqual(outcome.status, "state_error", JSON.stringify(outcome));
++      const { state, work } = await assertRecovered(rig, 4);
++      assert.equal(work.nextStep, "blocked");
++      assert.equal(work.blocker?.kind, "other");
++      assert.equal(work.blocker?.message, CAP_UNREVIEWED);
++      assert.equal(work.wait, null);
++      assert.equal(
++        rig.github.reviewRequestIdentities.length,
++        0,
++        "no fifth round",
++      );
++      assert.equal(
++        reviewCharges(state, record.id).length,
++        4,
++        "the ambiguous round-4 admission stays the last charge",
++      );
++      await rig.run();
++      assert.deepEqual(await rig.work(), work, "the park is final");
++      assert.equal(rig.github.reviewRequestIdentities.length, 0);
++    },
++  );
++});
++
++Deno.test("JAM B5 bound: a saved request expires only once its own start is a full bound old", async () => {
++  // The 604 shape: its wait is round one's (since = round one's journal
++  // requestedAt), 15 minutes OLDER than the saved attempt-2 intent.
++  const { record } = liveShape(604);
++  const intent = savedIntent(record);
++  assert.ok(record.wait !== null && record.wait.since < intent.startedAt);
++  const atBound = intent.startedAt + REVIEW_BOUND_MS;
++  assert.ok(atBound - 1 > record.wait.since + REVIEW_BOUND_MS);
++
++  const early = await liveRig(604, atBound - 1);
++  const before = await early.work();
++  const deferred = await early.run();
++  assert.notEqual(deferred.status, "state_error", JSON.stringify(deferred));
++  assert.deepEqual(
++    await early.work(),
++    before,
++    "before the bound nothing is written",
++  );
++  assert.equal(early.github.reviewRequestIdentities.length, 0);
++  assert.equal(
++    reviewCharges(await early.snapshot(), record.id).length,
++    2,
++  );
++
++  const due = await liveRig(604, atBound);
++  await due.run();
++  await assertRecovered(due, 3);
++  assert.equal(due.github.reviewRequestIdentities.length, 1);
++  assert.equal(
++    due.github.reviewRequestIdentities[0]!.operationKey,
++    reviewOperationKey(1053, record.target.head!, 3),
++  );
++});
++
++Deno.test("JAM B5 bound: an unavailable saved-request read uses the same anchor", async () => {
++  const { record } = liveShape(604);
++  const atBound = savedIntent(record).startedAt + REVIEW_BOUND_MS;
++
++  // Past the earlier round's bound, inside the saved attempt's own: the
++  // transient read only re-arms the quota wait (its start kept).
++  const early = await liveRig(604, atBound - 1);
++  early.github.failSavedObservation = true;
++  await early.run();
++  const waiting = await early.work();
++  assert.equal(early.github.reviewRequestIdentities.length, 0);
++  assert.deepEqual(waiting.intent, record.intent, "the intent is kept");
++  assert.equal(waiting.counters.reviewRounds, 1);
++  assert.equal(waiting.wait?.reason, "review_quota");
++  assert.equal(waiting.wait?.since, record.wait!.since);
++  assert.equal(
++    reviewCharges(await early.snapshot(), record.id).length,
++    2,
++  );
++
++  const due = await liveRig(604, atBound);
++  due.github.failSavedObservation = true;
++  await due.run();
++  await assertRecovered(due, 3);
++  assert.equal(due.github.reviewRequestIdentities.length, 1);
++});
+-- 
+2.43.0
+

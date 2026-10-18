@@ -1,0 +1,3483 @@
+From 0cf90614c2e6165f35853c261fdebdccd9b3926a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 17 Oct 2026 17:18:21 +0000
+Subject: [PATCH] fix(release): adopt the #1027 VpsJournalMetrics interface in
+ the VPS bridge, gated by the pinned driver
+
+ubiquity/ai.ubq.fi#1027 (e50c298b) changed the bridge-facing interface of
+ops/vps-release-metrics.ts. A driver re-pinned past it made
+new VpsJournalMetrics(...) throw in checkedOptions, so every VPS release
+was refused (sentinel#150).
+
+The bridge now reads the interface from the owner-pinned, hash-verified
+metrics module itself:
+- window shape (ai.ubq.fi 21e4a2a9, the pin today): composed exactly as
+  before, and the controller keeps its per-slot gap rule.
+- joined shape (#1027): the bridge passes all five options. Retention and
+  cipher come from the owner's telemetry capability. The context is read
+  from committed release state: it binds the unique monitoring operation
+  and re-reads a saved checkpoint at its own revision. Storage is the
+  pinned tree's createVpsJoinFileStorage, and the deadline is the run
+  deadline. Journal reads go through the bounded (args, limits, cwd)
+  runner. The controller gets metricsWork: one beginTick per monitoring
+  run before sampling, exact 30 s slots, and a wait (not a restart) on a
+  slot that is still collecting. Acceptance also waits while a baseline
+  slot is collecting.
+- any other shape, or a joined driver without owner telemetry, is
+  unavailable.
+
+Before evaluating any module, the loader refuses a driver, metrics or
+join-storage graph that names a bun: module. At e50c298b the driver and
+the join storage both reach ops/deploy-lock.ts (bun:ffi). Such a pin is
+still refused, now with the reason "trusted VPS driver needs a host that
+can load Bun-only modules", until the driver offers a Deno-loadable lock.
+
+tests/host/vps-release-driver-interface_test.ts pins the interface. It
+runs the exact upstream bytes through the real loader; they are vendored
+as .txt fixtures and checked against their Git blob ids. The controller
+test drives the real #1027 metrics to acceptance through the composed
+host.
+
+No state field, bridge stdout code or result shape changes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H8mMNvEXtHRiTVR1wJeFLQ
+---
+ docs/DECISIONS.md                             |   2 +
+ src/host/vps-release.ts                       | 298 ++++++++++---
+ src/release/vps-controller.ts                 | 139 ++++--
+ src/release/vps-metrics.ts                    | 193 +++++++++
+ src/release/vps-port.ts                       |  52 +++
+ .../21e4a2a9/ops/vps-release-contract.ts.txt  | 351 +++++++++++++++
+ .../21e4a2a9/ops/vps-release-metrics.ts.txt   | 182 ++++++++
+ .../ai.ubq.fi/e50c298b/ops/deploy-lock.ts.txt |  36 ++
+ .../e50c298b/ops/vps-journal-reader.ts.txt    | 160 +++++++
+ .../e50c298b/ops/vps-metrics-join.ts.txt      | 211 +++++++++
+ .../e50c298b/ops/vps-metrics-storage.ts.txt   |  88 ++++
+ .../e50c298b/ops/vps-metrics-types.ts.txt     |  98 +++++
+ .../e50c298b/ops/vps-release-metrics.ts.txt   | 335 ++++++++++++++
+ .../host/vps-release-driver-interface_test.ts | 407 ++++++++++++++++++
+ tests/release/vps-controller_test.ts          | 235 +++++++++-
+ tests/release/vps-driver-fixture.ts           | 341 +++++++++++++++
+ 16 files changed, 3019 insertions(+), 109 deletions(-)
+ create mode 100644 src/release/vps-metrics.ts
+ create mode 100644 tests/fixtures/vps/ai.ubq.fi/21e4a2a9/ops/vps-release-contract.ts.txt
+ create mode 100644 tests/fixtures/vps/ai.ubq.fi/21e4a2a9/ops/vps-release-metrics.ts.txt
+ create mode 100644 tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/deploy-lock.ts.txt
+ create mode 100644 tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-journal-reader.ts.txt
+ create mode 100644 tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-metrics-join.ts.txt
+ create mode 100644 tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-metrics-storage.ts.txt
+ create mode 100644 tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-metrics-types.ts.txt
+ create mode 100644 tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-release-metrics.ts.txt
+ create mode 100644 tests/host/vps-release-driver-interface_test.ts
+ create mode 100644 tests/release/vps-driver-fixture.ts
+
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index 15804e5e66..b9cc687405 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -42,6 +42,8 @@ One paired owner will implement the private query/progress/checkpoint contract a
+ 
+ Local tests may inject explicit policies. The proposed live telemetry-artifact bounds of 48 hours and 64 MiB per operation are unapproved and uninstalled; they do not change journald retention or request timeouts. Activation requires the owner's numeric policy approval and existing scoped key/source proof under the activation checklist. Complete source and local checks before requesting that numeric policy approval.
+ 
++Bridge adoption (sentinel#150, generation 81). ubiquity/ai.ubq.fi#1027 (merged at e50c298b) shipped that contract as a new bridge-facing `VpsJournalMetrics` interface. The bridge selects the interface from the owner-pinned, hash-verified `ops/vps-release-metrics.ts` itself (`vpsMetricsInterface`, `src/release/vps-metrics.ts`): the window shape (5-argument constructor, `sample` only, generic `run(program, args, cwd)`) of the currently pinned driver ai.ubq.fi 21e4a2a9 composes exactly as before and the controller keeps its old per-slot rules; the joined shape (6-argument constructor, `beginTick`/`progress`, exported `runVpsJournalCommand`) is composed with its five options (owner `telemetry.retention` and `telemetry.cipher`, a `context` read from committed release state that binds the unique monitoring operation and re-reads a saved checkpoint at its own state revision, the pinned tree's `createVpsJoinFileStorage`, and the run deadline), the bounded `(args, limits, cwd)` journal runner, and a controller that begins one tick per monitoring run before sampling, samples only exact 30 s slots, waits on a collecting slot instead of treating it as a gap, and holds acceptance while a baseline slot is collecting. Any other shape, or a joined driver without owner telemetry custody, is unavailable. So the change activates exactly with a driver re-pin and needs no coordinated Sentinel release. The loader refuses, before evaluating any module, a driver, metrics or join-storage graph that names a `bun:` module (`assertDenoLoadableVpsGraph`). At e50c298b, and at ai.ubq.fi `development` as of 2026-10-17, `ops/vps-release-driver.ts` and `ops/vps-metrics-storage.ts` both reach `ops/deploy-lock.ts` (`bun:ffi`), and the driver's `runVpsCommand` uses `Bun.spawn`. The Deno bridge therefore cannot run any driver past e50c298b until the driver offers a Deno-loadable deploy lock and command runner. Such a pin is refused with `trusted VPS driver needs a host that can load Bun-only modules`, as before but now named. `tests/host/vps-release-driver-interface_test.ts` runs the exact upstream metrics bytes of both revisions (vendored under `tests/fixtures/vps/ai.ubq.fi/`, each checked against its Git blob id) through the real loader and controller, so an interface mismatch fails CI. No state field, stdout code or bridge result shape changes; `sentinel-release` stays disabled.
++
+ ## Concurrent issue processing
+ 
+ Use isolated concurrent issue workers across configured targets, one trusted state/integration coordinator and exclusive serialized merge/promotion ownership. Artificial hourly/weekly model-start, unfinished-PR, concurrent-review, review-drain and ordinary hourly-delay caps are lifted. GitHub/provider capacity and configured session/deadline safeguards still apply.
+diff --git a/src/host/vps-release.ts b/src/host/vps-release.ts
+index 8446fb380c..e96cd5a48d 100644
+--- a/src/host/vps-release.ts
++++ b/src/host/vps-release.ts
+@@ -13,13 +13,18 @@ import {
+ } from "../contracts/shared.ts";
+ import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+ import { parseVpsReleaseRecordV1 } from "../contracts/vps-release.ts";
+-import type { StabilityPolicyV1 } from "../contracts/repository-policy.ts";
++import {
++  parseRetentionPolicy,
++  type RetentionPolicyV1,
++  type StabilityPolicyV1,
++} from "../contracts/repository-policy.ts";
+ import { validateStabilityPolicy } from "../release/config.ts";
+ import {
+   canonicalVps,
+   isHealthyVps,
+   parseVpsIdentity,
+   parseVpsReceipt,
++  sameVps,
+   sha256,
+   type VpsBinding,
+   vpsDigest,
+@@ -30,49 +35,29 @@ import {
+   type VpsSettlement,
+ } from "../contracts/vps-release-wire.ts";
+ import {
++  assertDenoLoadableVpsGraph,
+   composeVpsReleasePort,
+   loadPinnedVpsDriver,
+   type NativeVpsDriverV1,
++  VpsBunOnlyGraphError,
+ } from "../release/vps-port.ts";
++import {
++  type VpsBoundedJournalCommand,
++  type VpsCommand,
++  type VpsJoinCipher,
++  type VpsJoinedMetricsModule,
++  vpsJoinStorageModule,
++  type VpsJournalCoverageReader,
++  type VpsJournalRequest,
++  vpsMetricsInterface,
++  type VpsMetricsScope,
++  type VpsMetricsWork,
++} from "../release/vps-metrics.ts";
+ import type { VpsReleaseEntrypointDepsV1 } from "../release-main.ts";
+ 
+-type VpsCommand = (
+-  program: string,
+-  args: string[],
+-  cwd: string,
+-) => Promise<string>;
+-type VpsCoverage = {
+-  complete: true;
+-  unit: "ai-ubq-fi.service";
+-  windowStart: number;
+-  windowEnd: number;
+-  bootId: string;
+-  firstCursor: string;
+-  lastCursor: string;
+-  digest: string;
++type VpsSampler = {
++  sample(input: VpsJournalRequest): Promise<VpsMetricsSample>;
+ };
+-type JournalReader = {
+-  read(start: number, end: number): Promise<string>;
+-  coverage(start: number, end: number): Promise<VpsCoverage | null>;
+-};
+-interface MetricsModule {
+-  createVpsJournalReader(
+-    run: VpsCommand,
+-    root: string,
+-    coverage: JournalReader["coverage"],
+-  ): JournalReader;
+-  VpsJournalMetrics: new (
+-    reader: JournalReader,
+-    now: () => number,
+-    lagMs: number,
+-    timeoutKinds: readonly string[],
+-    upstreamWideKinds: readonly string[],
+-  ) => {
+-    sample(
+-      input: { identity: VpsIdentity; windowStart: number; windowEnd: number },
+-    ): Promise<VpsMetricsSample>;
+-  };
+-}
+ 
+ /** These capabilities belong to the release launcher, never repair/model workers. */
+ export interface TrustedVpsReleaseHostOptionsV1 {
+@@ -95,11 +80,22 @@ export interface TrustedVpsReleaseHostOptionsV1 {
+   /** Authenticated current source/review/task/CI/merge observer supplied by the owner. */
+   verifySource(binding: VpsBinding): Promise<boolean>;
+   /** Independent completeness readback; journal text alone cannot prove coverage. */
+-  journalCoverage: JournalReader["coverage"];
++  journalCoverage: VpsJournalCoverageReader;
++  /**
++   * Owner-approved evidence retention and sealing key for a driver with the
++   * joined VpsJournalMetrics interface (ubiquity/ai.ubq.fi#1027). The pinned
++   * driver tree supplies the join storage; absent custody leaves such a driver
++   * unavailable. A driver with the window interface never reads it.
++   */
++  telemetry?: { retention: RetentionPolicyV1; cipher: VpsJoinCipher };
+   /** Existing authenticated direct Mac-to-VPS proof, privately read by the release owner. */
+   readInferenceProof(identity: VpsIdentity): Promise<VpsInferenceProof | null>;
+   /** Only external system/network boundaries are replaceable in local tests. */
+-  platform?: { run: VpsCommand; fetch: typeof fetch };
++  platform?: {
++    run: VpsCommand;
++    fetch: typeof fetch;
++    journal?: VpsBoundedJournalCommand;
++  };
+   wait(ms: number): Promise<void>;
+   deadline: number;
+ }
+@@ -215,6 +211,164 @@ export async function verifyCommittedSettlement(
+     fresh.value.ref === current.value.ref;
+ }
+ 
++type VpsScopeBinding = {
++  installationId: number;
++  environment: "production" | "isolated";
++  controllerSha: string;
++  driverSha256: string;
++};
++/**
++ * The unique committed monitoring operation of this host's pinned driver that
++ * owns the sampled identity; joins bind to it, never to caller-supplied time.
++ * A saved checkpoint is re-read at its own committed release-state revision.
++ */
++async function readVpsMetricsScope(
++  state: StateReadView,
++  input: VpsJournalRequest,
++  bound: VpsScopeBinding,
++  saved?: { stateHead: string; stateSequence: number },
++): Promise<VpsMetricsScope> {
++  const current = await state.readRelease();
++  if (!current.ok || current.value.status !== "found") {
++    throw new Error("VPS metrics scope is unavailable");
++  }
++  let read = current.value;
++  if (saved !== undefined && saved.stateHead !== read.head) {
++    const historic = await state.readReleaseAt?.({
++      commit: asGitSha(saved.stateHead),
++      expectedHead: read.head,
++    });
++    if (
++      !historic?.ok || historic.value.status !== "found" ||
++      historic.value.head !== saved.stateHead
++    ) throw new Error("VPS metrics scope history is unavailable");
++    read = historic.value;
++  }
++  const snapshot = parseReleaseStateSnapshotV1(read.snapshot);
++  if (saved !== undefined && snapshot.sequence !== saved.stateSequence) {
++    throw new Error("VPS metrics scope history is unavailable");
++  }
++  const records = (snapshot.vpsReleases ?? []).filter((record) =>
++    record.phase === "monitoring" &&
++    record.request.target.repository.owner === "ubiquity" &&
++    record.request.target.repository.name === "ai.ubq.fi" &&
++    record.request.target.repository.installationId === bound.installationId &&
++    record.request.target.environment === bound.environment &&
++    record.driver.controllerSha === bound.controllerSha &&
++    record.driver.driverSha256 === bound.driverSha256 &&
++    (sameVps(input.identity, record.driver.candidate) ||
++      sameVps(input.identity, record.driver.prior.identity))
++  );
++  const startedAt = records.length === 1
++    ? records[0].monitoring.startedAt
++    : null;
++  if (startedAt === null) throw new Error("VPS metrics scope is ambiguous");
++  const [record] = records;
++  // The controller's own baseline slots: the policy window before creation.
++  const baselineEnd = Math.floor(record.driver.createdAt / 30_000) * 30_000;
++  return {
++    operationId: record.driver.operationId,
++    requestDigest: record.requestDigest,
++    controllerSha: bound.controllerSha,
++    driverSha256: bound.driverSha256,
++    candidate: record.driver.candidate,
++    prior: record.driver.prior.identity,
++    monitoringStartedAt: startedAt,
++    baselineStart: baselineEnd - record.policy.baselineWindowMs,
++    baselineEnd,
++    stateHead: read.head,
++    stateSequence: snapshot.sequence,
++  };
++}
++
++/**
++ * ubiquity/ai.ubq.fi#1027 composition: the five metrics options, the bounded
++ * journal runner and the pinned tree's join storage, imported only once its
++ * graph is proven Deno-loadable. The controller drives `beginTick`.
++ */
++async function composeJoinedVpsMetrics(
++  options: TrustedVpsReleaseHostOptionsV1,
++  module: VpsJoinedMetricsModule,
++  stateRead: StateReadView,
++  bound: VpsScopeBinding,
++): Promise<
++  PortResultV1<{ metrics: VpsSampler; metricsWork: VpsMetricsWork }>
++> {
++  const cipher = options.telemetry?.cipher;
++  let retention: RetentionPolicyV1 | null = null;
++  try {
++    retention = parseRetentionPolicy(
++      options.telemetry?.retention,
++      "$.telemetry.retention",
++    );
++  } catch {
++    // Unapproved or absent retention keeps the joined driver unavailable.
++  }
++  if (
++    retention === null || typeof cipher?.seal !== "function" ||
++    typeof cipher.open !== "function"
++  ) {
++    return portError(
++      "unavailable",
++      "trusted VPS telemetry capabilities are unavailable",
++    );
++  }
++  // The #1027 join storage shares the driver's deploy lock (bun:ffi there).
++  await assertDenoLoadableVpsGraph(options.pinnedDriver.releaseRoot, [
++    "ops/vps-metrics-storage.ts",
++  ]);
++  const storageModule = vpsJoinStorageModule(
++    await import(
++      new URL(
++        `file://${options.pinnedDriver.releaseRoot}/ops/vps-metrics-storage.ts`,
++      ).href
++    ),
++  );
++  if (storageModule === null) {
++    return portError(
++      "unavailable",
++      "trusted VPS metrics capability is unavailable",
++    );
++  }
++  const now = () => options.clock.now();
++  const context = (
++    input: VpsJournalRequest,
++    saved?: { stateHead: string; stateSequence: number },
++  ) => readVpsMetricsScope(stateRead, input, bound, saved);
++  const storage = storageModule.createVpsJoinFileStorage(
++    options.targetRoot,
++    retention,
++    cipher,
++    (scope) =>
++      context({
++        identity: scope.candidate,
++        windowStart: scope.monitoringStartedAt,
++        windowEnd: scope.monitoringStartedAt + 30_000,
++      }),
++    now,
++  );
++  const reader = module.createVpsJournalReader(
++    options.platform?.journal ?? module.runVpsJournalCommand,
++    options.targetRoot,
++    options.journalCoverage,
++  );
++  const metrics = new module.VpsJournalMetrics(
++    reader,
++    now,
++    options.logsLagMs,
++    options.timeoutKinds,
++    options.upstreamWideKinds,
++    { retention, context, storage, cipher, deadline: options.deadline },
++  );
++  return portOk({
++    metrics,
++    metricsWork: {
++      beginTick: (observedAt) => metrics.beginTick(observedAt),
++      progress: (input) => metrics.progress(input),
++    },
++  });
++}
++
+ /** Missing launcher/writer/policy inputs remain unavailable; no transport is invented. */
+ export async function composeTrustedVpsReleaseHost(
+   options: TrustedVpsReleaseHostOptionsV1,
+@@ -264,15 +418,14 @@ export async function composeTrustedVpsReleaseHost(
+       );
+     }
+     // The full immutable tree was verified by the loader before either module is evaluated.
+-    const metricsModule = await import(
+-      new URL(
+-        `file://${options.pinnedDriver.releaseRoot}/ops/vps-release-metrics.ts`,
+-      ).href
+-    ) as MetricsModule;
+-    if (
+-      typeof metricsModule.createVpsJournalReader !== "function" ||
+-      typeof metricsModule.VpsJournalMetrics !== "function"
+-    ) {
++    const metricsInterface = vpsMetricsInterface(
++      await import(
++        new URL(
++          `file://${options.pinnedDriver.releaseRoot}/ops/vps-release-metrics.ts`,
++        ).href
++      ),
++    );
++    if (metricsInterface === null) {
+       return portError(
+         "unavailable",
+         "trusted VPS metrics capability is unavailable",
+@@ -305,18 +458,36 @@ export async function composeTrustedVpsReleaseHost(
+           options.clock.now(),
+         ),
+     });
+-    const reader = metricsModule.createVpsJournalReader(
+-      run,
+-      options.targetRoot,
+-      options.journalCoverage,
+-    );
+-    const metrics = new metricsModule.VpsJournalMetrics(
+-      reader,
+-      () => options.clock.now(),
+-      options.logsLagMs,
+-      options.timeoutKinds,
+-      options.upstreamWideKinds,
+-    );
++    let metrics: VpsSampler, metricsWork: VpsMetricsWork | undefined;
++    if (metricsInterface.kind === "window") {
++      // The driver pinned today (ai.ubq.fi 21e4a2a9): composed exactly as before.
++      const reader = metricsInterface.module.createVpsJournalReader(
++        run,
++        options.targetRoot,
++        options.journalCoverage,
++      );
++      metrics = new metricsInterface.module.VpsJournalMetrics(
++        reader,
++        () => options.clock.now(),
++        options.logsLagMs,
++        options.timeoutKinds,
++        options.upstreamWideKinds,
++      );
++    } else {
++      const joined = await composeJoinedVpsMetrics(
++        options,
++        metricsInterface.module,
++        stateRead,
++        {
++          installationId: repository.installationId,
++          environment: options.environment,
++          controllerSha: options.controllerSha,
++          driverSha256,
++        },
++      );
++      if (!joined.ok) return joined;
++      ({ metrics, metricsWork } = joined.value);
++    }
+     return portOk({
+       stateRead,
+       stateWrite,
+@@ -334,11 +505,14 @@ export async function composeTrustedVpsReleaseHost(
+       }),
+       wait: options.wait,
+       deadline: options.deadline,
++      ...(metricsWork === undefined ? {} : { metricsWork }),
+     });
+-  } catch {
++  } catch (error) {
+     return portError(
+       "unavailable",
+-      "trusted VPS release capabilities are unavailable",
++      error instanceof VpsBunOnlyGraphError
++        ? "trusted VPS driver needs a host that can load Bun-only modules"
++        : "trusted VPS release capabilities are unavailable",
+     );
+   }
+ }
+diff --git a/src/release/vps-controller.ts b/src/release/vps-controller.ts
+index a9605a22b4..7e4feb16d9 100644
+--- a/src/release/vps-controller.ts
++++ b/src/release/vps-controller.ts
+@@ -29,6 +29,11 @@ import {
+ import type { StabilityPolicyV1 } from "../contracts/repository-policy.ts";
+ import { validateStabilityPolicy } from "./config.ts";
+ import { evaluateVpsAcceptance } from "./vps-acceptance.ts";
++import type {
++  VpsJournalRequest,
++  VpsMetricsProgress,
++  VpsMetricsWork,
++} from "./vps-metrics.ts";
+ 
+ export interface VpsControllerOptionsV1 {
+   stateRead: StateReadView;
+@@ -41,6 +46,12 @@ export interface VpsControllerOptionsV1 {
+   logsLagMs: number;
+   port: VpsReleasePortV1;
+   clock: Clock;
++  /**
++   * Present only for a pinned driver with the joined VpsJournalMetrics
++   * interface (ubiquity/ai.ubq.fi#1027): each monitoring run begins one bounded
++   * tick, and a window still collecting its terminals is waited for, not a gap.
++   */
++  metricsWork?: VpsMetricsWork;
+ }
+ export type VpsCycleV1 = {
+   status: "idle" | "waiting" | "advanced" | "blocked" | "conflict";
+@@ -88,9 +99,54 @@ export class VpsReleaseController {
+       options.repository.installationId < 1 ||
+       !["production", "isolated"].includes(options.environment) ||
+       !validateStabilityPolicy(options.policy).ok ||
+-      !Number.isSafeInteger(options.logsLagMs) || options.logsLagMs < 0
++      !Number.isSafeInteger(options.logsLagMs) || options.logsLagMs < 0 ||
++      (options.metricsWork !== undefined &&
++        (typeof options.metricsWork.beginTick !== "function" ||
++          typeof options.metricsWork.progress !== "function"))
+     ) throw new TypeError("VPS controller configuration is invalid");
+   }
++  /** Joined collection state of a window sampled in this tick; null without it. */
++  private async progress(
++    input: VpsJournalRequest,
++  ): Promise<VpsMetricsProgress["state"] | null> {
++    if (this.options.metricsWork === undefined) return null;
++    try {
++      return (await this.options.metricsWork.progress(input)).state;
++    } catch {
++      return "unavailable";
++    }
++  }
++  /** Fills baseline slots in order; true when a joined slot is still collecting. */
++  private async sampleBaseline(
++    record: VpsReleaseRecordV1,
++    baseline: VpsReleaseRecordV1["monitoring"]["baseline"],
++  ): Promise<boolean> {
++    const baselineEnd = Math.floor(record.driver.createdAt / 30_000) * 30_000,
++      baselineStart = baselineEnd - record.policy.baselineWindowMs;
++    let baselineThisRun = 0;
++    while (
++      baseline.length < record.policy.baselineWindowMs / 30_000 &&
++      baselineThisRun < 64
++    ) {
++      const start = baselineStart + baseline.length * 30_000;
++      const input = {
++        identity: record.driver.prior.identity,
++        windowStart: start,
++        windowEnd: start + 30_000,
++      };
++      const sample = await this.options.port.sampleMetrics(input);
++      const progress = await this.progress(input);
++      if (progress === "collecting") return true;
++      if (
++        !sample.ok || sample.value.coverage !== "complete" ||
++        !sameVps(sample.value.identity, record.driver.prior.identity) ||
++        (progress !== null && progress !== "complete")
++      ) break;
++      baseline.push(sample.value);
++      baselineThisRun++;
++    }
++    return false;
++  }
+   private result(
+     status: VpsCycleV1["status"],
+     record: VpsReleaseRecordV1 | null,
+@@ -421,8 +477,8 @@ export class VpsReleaseController {
+         (now - monitor.startedAt - 30_000 - this.options.logsLagMs) / 30_000,
+       ),
+     );
+-    if (due - samples.length > 1) {
+-      return this.write(
++    const restart = () =>
++      this.write(
+         context,
+         this.patch(record, {
+           monitoring: {
+@@ -436,54 +492,47 @@ export class VpsReleaseController {
+           inference: null,
+         }),
+       );
++    const work = this.options.metricsWork;
++    // Without the joined tick a skipped slot is a gap. A joined window may stay
++    // collecting across ticks; the health observation above still restarts on
++    // a real gap.
++    if (work === undefined && due - samples.length > 1) return restart();
++    if (work !== undefined) {
++      try {
++        work.beginTick(now);
++      } catch {
++        return this.result("blocked", record, "metrics_tick_unavailable");
++      }
+     }
+-    if (due > samples.length) {
++    let baselineCollecting = false;
++    for (
++      let sampled = 0;
++      due > samples.length && sampled < (work === undefined ? 1 : 60);
++      sampled++
++    ) {
+       const windowStart = monitor.startedAt + samples.length * 30_000;
+-      const sample = await this.options.port.sampleMetrics({
++      const input = {
+         identity: record.driver.candidate,
+         windowStart,
+         windowEnd: windowStart + 30_000,
+-      });
++      };
++      const sample = await this.options.port.sampleMetrics(input);
++      const progress = await this.progress(input);
++      if (
++        progress === "collecting" && sample.ok &&
++        sample.value.coverage === "incomplete" &&
++        sameVps(sample.value.identity, record.driver.candidate)
++      ) break;
+       if (
+         !sample.ok || sample.value.coverage !== "complete" ||
+-        !sameVps(sample.value.identity, record.driver.candidate)
+-      ) {
+-        return this.write(
+-          context,
+-          this.patch(record, {
+-            monitoring: {
+-              startedAt: now,
+-              lastObservedAt: now,
+-              continuous: false,
+-              baseline,
+-              samples: [],
+-            },
+-            acceptance: null,
+-            inference: null,
+-          }),
+-        );
+-      }
++        !sameVps(sample.value.identity, record.driver.candidate) ||
++        (progress !== null && progress !== "complete")
++      ) return restart();
+       samples.push(sample.value);
+-      const baselineEnd = Math.floor(record.driver.createdAt / 30_000) * 30_000,
+-        baselineStart = baselineEnd - record.policy.baselineWindowMs;
+-      let baselineThisRun = 0;
+-      while (
+-        baseline.length < record.policy.baselineWindowMs / 30_000 &&
+-        baselineThisRun < 64
+-      ) {
+-        const start = baselineStart + baseline.length * 30_000;
+-        const sample = await this.options.port.sampleMetrics({
+-          identity: record.driver.prior.identity,
+-          windowStart: start,
+-          windowEnd: start + 30_000,
+-        });
+-        if (
+-          !sample.ok || sample.value.coverage !== "complete" ||
+-          !sameVps(sample.value.identity, record.driver.prior.identity)
+-        ) break;
+-        baseline.push(sample.value);
+-        baselineThisRun++;
+-      }
++      if (work === undefined) await this.sampleBaseline(record, baseline);
++    }
++    if (work !== undefined) {
++      baselineCollecting = await this.sampleBaseline(record, baseline);
+     }
+     const next = this.patch(record, {
+       monitoring: {
+@@ -494,7 +543,9 @@ export class VpsReleaseController {
+         samples,
+       },
+     });
+-    if (samples.length < 60) return this.write(context, next);
++    if (samples.length < 60 || baselineCollecting) {
++      return this.write(context, next);
++    }
+     const acceptance = evaluateVpsAcceptance(record.policy, baseline, samples);
+     if (acceptance.objectiveFailure) {
+       return this.write(
+diff --git a/src/release/vps-metrics.ts b/src/release/vps-metrics.ts
+new file mode 100644
+index 0000000000..660bf21977
+--- /dev/null
++++ b/src/release/vps-metrics.ts
+@@ -0,0 +1,193 @@
++/**
++ * Bridge-facing VpsJournalMetrics interfaces of the owner-pinned ai.ubq.fi
++ * driver (`ops/vps-release-metrics.ts`). The pinned, hash-verified module
++ * selects its interface; the VPS sample wire ABI is the same for both.
++ */
++import type {
++  VpsIdentity,
++  VpsMetricsSample,
++} from "../contracts/vps-release-wire.ts";
++import type { RetentionPolicyV1 } from "../contracts/repository-policy.ts";
++
++export type VpsJournalRequest = {
++  identity: VpsIdentity;
++  windowStart: number;
++  windowEnd: number;
++};
++export type VpsQueryLimits = {
++  deadline: number;
++  maxBytes: number;
++  maxEntries: number;
++};
++export type VpsJournalCoverage = {
++  complete: true;
++  unit: "ai-ubq-fi.service";
++  windowStart: number;
++  windowEnd: number;
++  bootId: string;
++  firstCursor: string;
++  lastCursor: string;
++  digest: string;
++};
++/** Independent completeness readback; the joined interface also bounds it. */
++export type VpsJournalCoverageReader = (
++  start: number,
++  end: number,
++  limits?: VpsQueryLimits,
++) => Promise<VpsJournalCoverage | null>;
++/** Generic native command runner (driver's runVpsCommand). */
++export type VpsCommand = (
++  program: string,
++  args: string[],
++  cwd: string,
++) => Promise<string>;
++/** #1027 journal runner: fixed journalctl argv with a deadline and size bounds. */
++export type VpsBoundedJournalCommand = (
++  args: readonly string[],
++  limits: VpsQueryLimits,
++  cwd: string,
++) => Promise<string>;
++/** One committed monitoring operation; joins bind to it, never to caller time. */
++export type VpsMetricsScope = {
++  operationId: string;
++  requestDigest: string;
++  controllerSha: string;
++  driverSha256: string;
++  candidate: VpsIdentity;
++  prior: VpsIdentity;
++  monitoringStartedAt: number;
++  baselineStart: number;
++  baselineEnd: number;
++  stateHead: string;
++  stateSequence: number;
++};
++export type VpsJoinCipher = {
++  seal(plaintext: Uint8Array, associatedData: Uint8Array): Promise<Uint8Array>;
++  open(ciphertext: Uint8Array, associatedData: Uint8Array): Promise<Uint8Array>;
++};
++export type VpsJoinStorage = {
++  load(scope: VpsMetricsScope): Promise<Uint8Array | null>;
++  save(
++    scope: VpsMetricsScope,
++    expectedSequence: number | null,
++    ciphertext: Uint8Array,
++  ): Promise<boolean>;
++};
++export type VpsMetricsProgress = {
++  state: "collecting" | "complete" | "unavailable";
++  reason: string | null;
++};
++/** The joined interface's per-tick budget and collection progress. */
++export type VpsMetricsWork = {
++  beginTick(observedAt: number): void;
++  progress(input: VpsJournalRequest): Promise<VpsMetricsProgress>;
++};
++export type VpsMetricsOptions = {
++  retention: RetentionPolicyV1;
++  context(
++    input: VpsJournalRequest,
++    saved?: { stateHead: string; stateSequence: number },
++  ): Promise<VpsMetricsScope>;
++  storage: VpsJoinStorage;
++  cipher: VpsJoinCipher;
++  deadline: number;
++};
++type Sampler = {
++  sample(input: VpsJournalRequest): Promise<VpsMetricsSample>;
++};
++type JournalReader<Limits extends unknown[]> = {
++  read(start: number, end: number, ...limits: Limits): Promise<string>;
++  coverage(
++    start: number,
++    end: number,
++    ...limits: Limits
++  ): Promise<VpsJournalCoverage | null>;
++};
++
++/** ai.ubq.fi through 21e4a2a9: one widened read per window, generic runner. */
++export interface VpsWindowMetricsModule {
++  createVpsJournalReader(
++    run: VpsCommand,
++    root: string,
++    coverage: VpsJournalCoverageReader,
++  ): JournalReader<[]>;
++  VpsJournalMetrics: new (
++    reader: JournalReader<[]>,
++    now: () => number,
++    lagMs: number,
++    timeoutKinds: readonly string[],
++    upstreamWideKinds: readonly string[],
++  ) => Sampler;
++}
++/**
++ * ubiquity/ai.ubq.fi#1027 (e50c298b): exact 30 s windows inside the monitoring
++ * and baseline scope, bounded journal slices per begun tick and a sealed join
++ * checkpoint per operation.
++ */
++export interface VpsJoinedMetricsModule {
++  createVpsJournalReader(
++    run: VpsBoundedJournalCommand,
++    root: string,
++    coverage: VpsJournalCoverageReader,
++  ): JournalReader<[VpsQueryLimits]>;
++  runVpsJournalCommand: VpsBoundedJournalCommand;
++  VpsJournalMetrics: new (
++    reader: JournalReader<[VpsQueryLimits]>,
++    now: () => number,
++    lagMs: number,
++    timeoutKinds: readonly string[],
++    upstreamWideKinds: readonly string[],
++    options: VpsMetricsOptions,
++  ) => Sampler & VpsMetricsWork;
++}
++/** The #1027 join storage adapter (`ops/vps-metrics-storage.ts`). */
++export interface VpsJoinStorageModule {
++  createVpsJoinFileStorage(
++    root: string,
++    policy: RetentionPolicyV1,
++    cipher: VpsJoinCipher,
++    current: (scope: VpsMetricsScope) => Promise<VpsMetricsScope>,
++    now?: () => number,
++  ): VpsJoinStorage;
++}
++
++export type VpsMetricsInterfaceV1 =
++  | { kind: "window"; module: VpsWindowMetricsModule }
++  | { kind: "joined"; module: VpsJoinedMetricsModule };
++const method = (target: unknown, name: string, length?: number): boolean => {
++  const value = (target as Record<string, unknown> | null)?.[name];
++  return typeof value === "function" &&
++    (length === undefined || value.length === length);
++};
++/** Exactly one known shape, or null: an interface mismatch is never guessed. */
++export function vpsMetricsInterface(
++  module: unknown,
++): VpsMetricsInterfaceV1 | null {
++  const exports = module as Record<string, unknown> | null;
++  const metrics = exports?.VpsJournalMetrics;
++  if (
++    typeof metrics !== "function" ||
++    !method(exports, "createVpsJournalReader", 3) ||
++    !method(metrics.prototype, "sample", 1)
++  ) return null;
++  const ticks = method(metrics.prototype, "beginTick", 1) &&
++    method(metrics.prototype, "progress", 1);
++  if (
++    metrics.length === 5 && !("beginTick" in metrics.prototype) &&
++    !("progress" in metrics.prototype) &&
++    !("runVpsJournalCommand" in exports!)
++  ) return { kind: "window", module: module as VpsWindowMetricsModule };
++  if (
++    metrics.length === 6 && ticks &&
++    method(exports, "runVpsJournalCommand", 3)
++  ) return { kind: "joined", module: module as VpsJoinedMetricsModule };
++  return null;
++}
++/** The pinned storage adapter, or null when its signature changed. */
++export function vpsJoinStorageModule(
++  module: unknown,
++): VpsJoinStorageModule | null {
++  return method(module, "createVpsJoinFileStorage", 4)
++    ? module as VpsJoinStorageModule
++    : null;
++}
+diff --git a/src/release/vps-port.ts b/src/release/vps-port.ts
+index 165d961607..f4bb0c072d 100644
+--- a/src/release/vps-port.ts
++++ b/src/release/vps-port.ts
+@@ -85,6 +85,53 @@ export function composeVpsReleasePort(
+ export interface PinnedVpsDriverModuleV1 {
+   createVpsDeploymentDriver(deps: unknown): NativeVpsDriverV1;
+ }
++/** A pinned module graph that names a `bun:` module, which no Deno host can load. */
++export class VpsBunOnlyGraphError extends TypeError {
++  constructor(readonly module: string) {
++    super("Pinned VPS driver module graph needs a Bun host");
++  }
++}
++const MODULE_SPECIFIER = /(?:\bfrom|\bimport)\s*\(?\s*["']([^"'\n]+)["']/g;
++/**
++ * Walks the relative import graph of verified driver modules and refuses any
++ * file that names a `bun:` module, before a single one of them is evaluated.
++ * Over-approximate on purpose: a `bun:` literal anywhere in a reachable file
++ * refuses. A missing target is left to the import itself, which fails closed
++ * for a runtime import and never loads an erased type-only one.
++ */
++export async function assertDenoLoadableVpsGraph(
++  releaseRoot: string,
++  entries: readonly string[],
++): Promise<void> {
++  const seen = new Set<string>(), pending = [...entries];
++  while (pending.length > 0) {
++    const path = pending.pop()!;
++    if (seen.has(path)) continue;
++    if (seen.add(path).size > 4096) {
++      throw new TypeError("Pinned VPS driver module graph is too large");
++    }
++    let text: string;
++    try {
++      text = await Deno.readTextFile(`${releaseRoot}/${path}`);
++    } catch (error) {
++      if (error instanceof Deno.errors.NotFound) continue;
++      throw error;
++    }
++    if (/["']bun:/.test(text)) throw new VpsBunOnlyGraphError(path);
++    for (const [, specifier] of text.matchAll(MODULE_SPECIFIER)) {
++      if (!specifier.startsWith("./") && !specifier.startsWith("../")) continue;
++      const parts = path.split("/").slice(0, -1);
++      for (const part of specifier.split("/")) {
++        if (part === "..") {
++          if (parts.pop() === undefined) {
++            throw new TypeError("Pinned VPS driver import escapes its tree");
++          }
++        } else if (part !== "." && part !== "") parts.push(part);
++      }
++      pending.push(parts.join("/"));
++    }
++  }
++}
+ /** Every byte in the immutable driver release is verified BEFORE evaluating its module. */
+ export async function loadPinnedVpsDriver(
+   input: { releaseRoot: string; identity: VpsIdentity; moduleSha256: string },
+@@ -145,6 +192,11 @@ export async function loadPinnedVpsDriver(
+   if (
+     await digest(await Deno.readFile(modulePath)) !== sha256(input.moduleSha256)
+   ) throw new TypeError("Pinned VPS driver module identity changed");
++  // The bridge evaluates both modules; a Bun-only graph is refused unevaluated.
++  await assertDenoLoadableVpsGraph(input.releaseRoot, [
++    "ops/vps-release-driver.ts",
++    "ops/vps-release-metrics.ts",
++  ]);
+   const module = await import(
+     new URL(`file://${modulePath}`).href
+   ) as PinnedVpsDriverModuleV1;
+diff --git a/tests/fixtures/vps/ai.ubq.fi/21e4a2a9/ops/vps-release-contract.ts.txt b/tests/fixtures/vps/ai.ubq.fi/21e4a2a9/ops/vps-release-contract.ts.txt
+new file mode 100644
+index 0000000000..1bf9fc987f
+--- /dev/null
++++ b/tests/fixtures/vps/ai.ubq.fi/21e4a2a9/ops/vps-release-contract.ts.txt
+@@ -0,0 +1,351 @@
++/** Credential-free producer ABI. Changes require reciprocal standalone Sentinel fixtures. */
++export const VPS_RELEASE_ABI = "uos-vps-deployment-v1";
++export const VPS_RECEIPT_MAX_BYTES = 64 * 1024;
++export const VPS_PHASES = ["prepared", "selected", "candidate_ready", "ingress_applied", "rollback_pending", "rolled_back", "accepted", "failed"] as const;
++export type VpsPhase = (typeof VPS_PHASES)[number];
++export type VpsIdentity = {
++  runtime: "vps";
++  gitSha: string;
++  deploymentId: string;
++  sourceArchiveSha256: string;
++  immutableTreeSha256: string;
++};
++export type VpsSelector = {
++  target: string;
++  identity: VpsIdentity;
++  listenerPort: number;
++  launcherProfileSha256: string;
++  unitSha256: string;
++};
++export type VpsBinding = {
++  requestId: string;
++  requestDigest: string;
++  repository: string;
++  installationId: number;
++  environment: "production" | "isolated";
++  revision: string;
++  source: { pullRequest: number; head: string; base: string; reviewRequestId: string; reviewReceiptId: string | null };
++};
++export type VpsHealthProof = {
++  identity: VpsIdentity;
++  surface: "loopback" | "public";
++  observedAt: number;
++  httpStatus: number;
++  bodyMatches: boolean;
++  headersMatch: boolean;
++  originMatches: boolean;
++};
++export type VpsMetricsSample = {
++  identity: VpsIdentity;
++  windowStart: number;
++  windowEnd: number;
++  sampledAt: number;
++  requestCount: number | null;
++  fiveXxCount: number | null;
++  timeoutCount: number | null;
++  streamFailureCount: number | null;
++  upstreamWideFault: boolean | null;
++  coverage: "complete" | "incomplete";
++  coverageDigest: string | null;
++};
++export type VpsReceipt = {
++  schema: 1;
++  kind: "vps_driver_receipt";
++  abi: typeof VPS_RELEASE_ABI;
++  operationId: string;
++  binding: VpsBinding;
++  controllerSha: string;
++  driverSha256: string;
++  candidate: VpsIdentity;
++  prior: VpsSelector;
++  phase: VpsPhase;
++  sequence: number;
++  createdAt: number;
++  updatedAt: number;
++  intent: { action: "promote" | "rollback"; persistedAt: number } | null;
++  loopback: VpsHealthProof | null;
++  public: VpsHealthProof | null;
++  restoration: { loopback: VpsHealthProof; public: VpsHealthProof } | null;
++  settlement: { stateRevision: string; disposition: "accepted" | "rolled_back" | "failed"; digest: string } | null;
++  error: string | null;
++};
++export type VpsOperation = { operationId: string; requestDigest: string };
++export type VpsMutation = VpsOperation & { expectedSequence: number; expectedDigest: string };
++export type VpsPrepare = {
++  binding: VpsBinding;
++  controllerSha: string;
++  expectedDriverSha256: string;
++  expectedPrior: VpsSelector;
++  priorHealth: { loopback: VpsHealthProof; public: VpsHealthProof };
++};
++export type VpsSettlement = VpsMutation & { stateRevision: string; disposition: "accepted" | "rolled_back" | "failed"; digest: string };
++
++const SHA = /^[0-9a-f]{40}$/;
++const DIGEST = /^[0-9a-f]{64}$/;
++export const invalidVps = (): never => {
++  throw new TypeError("VPS release contract is invalid");
++};
++export function exactObject(value: unknown, keys: readonly string[]): Record<string, unknown> {
++  if (value === null || typeof value !== "object" || Array.isArray(value)) return invalidVps();
++  const object = value as Record<string, unknown>;
++  const actual = Object.keys(object);
++  if (actual.length !== keys.length || actual.some((key) => !keys.includes(key))) return invalidVps();
++  return object;
++}
++export function boundedText(value: unknown, max = 512): string {
++  if (typeof value !== "string" || value.length === 0 || value.length > max || /\p{Cc}/u.test(value)) return invalidVps();
++  return value;
++}
++export function gitSha(value: unknown): string {
++  const result = boundedText(value, 40);
++  if (!SHA.test(result)) return invalidVps();
++  return result;
++}
++export function sha256(value: unknown): string {
++  const result = boundedText(value, 64);
++  if (!DIGEST.test(result)) return invalidVps();
++  return result;
++}
++export function count(value: unknown, min = 0): number {
++  if (!Number.isSafeInteger(value) || (value as number) < min) return invalidVps();
++  return value as number;
++}
++function boolean(value: unknown): boolean {
++  if (typeof value !== "boolean") return invalidVps();
++  return value;
++}
++export function parseVpsIdentity(value: unknown): VpsIdentity {
++  const object = exactObject(value, ["runtime", "gitSha", "deploymentId", "sourceArchiveSha256", "immutableTreeSha256"]);
++  const revision = gitSha(object.gitSha);
++  if (object.runtime !== "vps" || object.deploymentId !== `vps-${revision}`) return invalidVps();
++  return {
++    runtime: "vps",
++    gitSha: revision,
++    deploymentId: `vps-${revision}`,
++    sourceArchiveSha256: sha256(object.sourceArchiveSha256),
++    immutableTreeSha256: sha256(object.immutableTreeSha256),
++  };
++}
++export function parseVpsSelector(value: unknown): VpsSelector {
++  const object = exactObject(value, ["target", "identity", "listenerPort", "launcherProfileSha256", "unitSha256"]);
++  const identity = parseVpsIdentity(object.identity);
++  const port = count(object.listenerPort, 1);
++  if (object.target !== `releases/${identity.gitSha}` || port > 65535) return invalidVps();
++  return {
++    target: `releases/${identity.gitSha}`,
++    identity,
++    listenerPort: port,
++    launcherProfileSha256: sha256(object.launcherProfileSha256),
++    unitSha256: sha256(object.unitSha256),
++  };
++}
++export function parseVpsBinding(value: unknown): VpsBinding {
++  const object = exactObject(value, ["requestId", "requestDigest", "repository", "installationId", "environment", "revision", "source"]);
++  const source = exactObject(object.source, ["pullRequest", "head", "base", "reviewRequestId", "reviewReceiptId"]);
++  if (object.repository !== "ubiquity/ai.ubq.fi" || !["production", "isolated"].includes(String(object.environment))) return invalidVps();
++  return {
++    requestId: boundedText(object.requestId),
++    requestDigest: sha256(object.requestDigest),
++    repository: "ubiquity/ai.ubq.fi",
++    installationId: count(object.installationId, 1),
++    environment: object.environment as VpsBinding["environment"],
++    revision: gitSha(object.revision),
++    source: {
++      pullRequest: count(source.pullRequest, 1),
++      head: gitSha(source.head),
++      base: gitSha(source.base),
++      reviewRequestId: boundedText(source.reviewRequestId),
++      reviewReceiptId: source.reviewReceiptId === null ? null : boundedText(source.reviewReceiptId),
++    },
++  };
++}
++export function parseVpsHealth(value: unknown): VpsHealthProof {
++  const object = exactObject(value, ["identity", "surface", "observedAt", "httpStatus", "bodyMatches", "headersMatch", "originMatches"]);
++  if (object.surface !== "loopback" && object.surface !== "public") return invalidVps();
++  const status = count(object.httpStatus, 100);
++  if (status > 599) return invalidVps();
++  return {
++    identity: parseVpsIdentity(object.identity),
++    surface: object.surface,
++    observedAt: count(object.observedAt),
++    httpStatus: status,
++    bodyMatches: boolean(object.bodyMatches),
++    headersMatch: boolean(object.headersMatch),
++    originMatches: boolean(object.originMatches),
++  };
++}
++export function isHealthyVps(proof: VpsHealthProof): boolean {
++  return proof.httpStatus === 200 && proof.bodyMatches && proof.headersMatch && proof.originMatches;
++}
++export function sameVps(left: VpsIdentity, right: VpsIdentity): boolean {
++  return canonicalVps(left) === canonicalVps(right);
++}
++export function parseVpsSample(value: unknown): VpsMetricsSample {
++  const object = exactObject(value, [
++    "identity",
++    "windowStart",
++    "windowEnd",
++    "sampledAt",
++    "requestCount",
++    "fiveXxCount",
++    "timeoutCount",
++    "streamFailureCount",
++    "upstreamWideFault",
++    "coverage",
++    "coverageDigest",
++  ]);
++  const start = count(object.windowStart),
++    end = count(object.windowEnd),
++    sampledAt = count(object.sampledAt);
++  if (start >= end || end > sampledAt || (object.coverage !== "complete" && object.coverage !== "incomplete")) return invalidVps();
++  const requests = object.requestCount === null ? null : count(object.requestCount);
++  const failures = [object.fiveXxCount, object.timeoutCount, object.streamFailureCount].map((item) => (item === null ? null : count(item)));
++  if (failures.some((item) => item !== null && (requests === null || item > requests))) return invalidVps();
++  if (requests === null && object.upstreamWideFault !== null) return invalidVps();
++  const coverageDigest = object.coverageDigest === null ? null : sha256(object.coverageDigest);
++  if (object.coverage === "complete" && (requests === null || failures.includes(null) || coverageDigest === null || object.upstreamWideFault === null))
++    return invalidVps();
++  return {
++    identity: parseVpsIdentity(object.identity),
++    windowStart: start,
++    windowEnd: end,
++    sampledAt,
++    requestCount: requests,
++    fiveXxCount: failures[0],
++    timeoutCount: failures[1],
++    streamFailureCount: failures[2],
++    upstreamWideFault: object.upstreamWideFault === null ? null : boolean(object.upstreamWideFault),
++    coverage: object.coverage,
++    coverageDigest,
++  };
++}
++function parseReceiptIntent(value: unknown, createdAt: number, updatedAt: number): VpsReceipt["intent"] {
++  if (value === null) return null;
++  const item = exactObject(value, ["action", "persistedAt"]);
++  if (item.action !== "promote" && item.action !== "rollback") return invalidVps();
++  const persistedAt = count(item.persistedAt);
++  if (persistedAt < createdAt || persistedAt > updatedAt) return invalidVps();
++  return { action: item.action, persistedAt };
++}
++function parseReceiptRestoration(value: unknown, prior: VpsIdentity, createdAt: number): VpsReceipt["restoration"] {
++  if (value === null) return null;
++  const item = exactObject(value, ["loopback", "public"]);
++  const restoration = { loopback: parseVpsHealth(item.loopback), public: parseVpsHealth(item.public) };
++  for (const surface of ["loopback", "public"] as const) {
++    const proof = restoration[surface];
++    if (proof.surface !== surface || !sameVps(proof.identity, prior) || !isHealthyVps(proof) || proof.observedAt < createdAt) return invalidVps();
++  }
++  return restoration;
++}
++function parseReceiptHealth(value: unknown, surface: "loopback" | "public", identity: VpsIdentity): VpsHealthProof | null {
++  if (value === null) return null;
++  const proof = parseVpsHealth(value);
++  if (proof.surface !== surface || !sameVps(proof.identity, identity)) return invalidVps();
++  return proof;
++}
++function isFailedBeforePromotion(receipt: Pick<VpsReceipt, "phase" | "sequence" | "settlement" | "error" | "loopback" | "public" | "restoration">): boolean {
++  return (
++    receipt.phase === "failed" &&
++    receipt.sequence === 2 &&
++    receipt.settlement?.disposition === "failed" &&
++    receipt.error === "acceptance_insufficient" &&
++    receipt.loopback === null &&
++    receipt.public === null &&
++    receipt.restoration === null
++  );
++}
++export function parseVpsReceipt(value: unknown): VpsReceipt {
++  const object = exactObject(value, [
++    "schema",
++    "kind",
++    "abi",
++    "operationId",
++    "binding",
++    "controllerSha",
++    "driverSha256",
++    "candidate",
++    "prior",
++    "phase",
++    "sequence",
++    "createdAt",
++    "updatedAt",
++    "intent",
++    "loopback",
++    "public",
++    "restoration",
++    "settlement",
++    "error",
++  ]);
++  if (object.schema !== 1 || object.kind !== "vps_driver_receipt" || object.abi !== VPS_RELEASE_ABI || !VPS_PHASES.includes(object.phase as VpsPhase))
++    return invalidVps();
++  const candidate = parseVpsIdentity(object.candidate),
++    prior = parseVpsSelector(object.prior),
++    binding = parseVpsBinding(object.binding);
++  if (candidate.gitSha !== binding.revision || sameVps(candidate, prior.identity)) return invalidVps();
++  const createdAt = count(object.createdAt),
++    updatedAt = count(object.updatedAt);
++  if (updatedAt < createdAt) return invalidVps();
++  const intent = parseReceiptIntent(object.intent, createdAt, updatedAt);
++  const loopback = parseReceiptHealth(object.loopback, "loopback", candidate);
++  const publicHealth = parseReceiptHealth(object.public, "public", candidate);
++  const restoration = parseReceiptRestoration(object.restoration, prior.identity, createdAt);
++  let settlement: VpsReceipt["settlement"] = null;
++  if (object.settlement !== null) {
++    const item = exactObject(object.settlement, ["stateRevision", "disposition", "digest"]);
++    if (!["accepted", "rolled_back", "failed"].includes(String(item.disposition))) return invalidVps();
++    settlement = {
++      stateRevision: gitSha(item.stateRevision),
++      disposition: item.disposition as NonNullable<VpsReceipt["settlement"]>["disposition"],
++      digest: sha256(item.digest),
++    };
++  }
++  const phase = object.phase as VpsPhase,
++    sequence = count(object.sequence, 1),
++    error = object.error === null ? null : boundedText(object.error, 128);
++  const failedBeforePromotion = isFailedBeforePromotion({ phase, sequence, settlement, error, loopback, public: publicHealth, restoration });
++  if (phase !== "prepared" && intent === null && !failedBeforePromotion) return invalidVps();
++  if (phase === "accepted" && (!loopback || !publicHealth || !isHealthyVps(loopback) || !isHealthyVps(publicHealth) || settlement?.disposition !== "accepted"))
++    return invalidVps();
++  if (phase === "rolled_back" && restoration === null) return invalidVps();
++  if (phase === "failed" && error === null) return invalidVps();
++  return {
++    schema: 1,
++    kind: "vps_driver_receipt",
++    abi: VPS_RELEASE_ABI,
++    operationId: sha256(object.operationId),
++    binding,
++    controllerSha: gitSha(object.controllerSha),
++    driverSha256: sha256(object.driverSha256),
++    candidate,
++    prior,
++    phase,
++    sequence,
++    createdAt,
++    updatedAt,
++    intent,
++    loopback,
++    public: publicHealth,
++    restoration,
++    settlement,
++    error,
++  };
++}
++export function canonicalVps(value: unknown): string {
++  if (Array.isArray(value)) return `[${value.map(canonicalVps).join(",")}]`;
++  if (value !== null && typeof value === "object") {
++    const object = value as Record<string, unknown>;
++    return `{${Object.keys(object)
++      .sort((left, right) => left.localeCompare(right))
++      .map((key) => `${JSON.stringify(key)}:${canonicalVps(object[key])}`)
++      .join(",")}}`;
++  }
++  if (value === undefined) return invalidVps();
++  return JSON.stringify(value);
++}
++export async function vpsDigest(value: unknown): Promise<string> {
++  const bytes = new TextEncoder().encode(canonicalVps(value));
++  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
++}
++export function vpsOperationId(binding: VpsBinding): Promise<string> {
++  return vpsDigest({ domain: VPS_RELEASE_ABI, binding: parseVpsBinding(binding) });
++}
+diff --git a/tests/fixtures/vps/ai.ubq.fi/21e4a2a9/ops/vps-release-metrics.ts.txt b/tests/fixtures/vps/ai.ubq.fi/21e4a2a9/ops/vps-release-metrics.ts.txt
+new file mode 100644
+index 0000000000..b1e981e911
+--- /dev/null
++++ b/tests/fixtures/vps/ai.ubq.fi/21e4a2a9/ops/vps-release-metrics.ts.txt
+@@ -0,0 +1,182 @@
++import { parseVpsIdentity, parseVpsSample, sha256, vpsDigest, type VpsIdentity, type VpsMetricsSample } from "./vps-release-contract.ts";
++import type { VpsCommand } from "./vps-release-store.ts";
++import type { TerminalAdmissionStage } from "../src/handler/terminal-log.ts";
++
++export type VpsJournalRequest = { identity: VpsIdentity; windowStart: number; windowEnd: number };
++export type VpsJournalCoverage = {
++  complete: true;
++  unit: "ai-ubq-fi.service";
++  windowStart: number;
++  windowEnd: number;
++  bootId: string;
++  firstCursor: string;
++  lastCursor: string;
++  digest: string;
++};
++export type VpsJournalReader = { read(start: number, end: number): Promise<string>; coverage(start: number, end: number): Promise<VpsJournalCoverage | null> };
++/** @public Standalone Sentinel's pinned VPS bridge composes its actual unit-scoped journal reader here. */
++export function createVpsJournalReader(run: VpsCommand, root: string, coverage: VpsJournalReader["coverage"]): VpsJournalReader {
++  return {
++    coverage,
++    read: (start, end) =>
++      run("journalctl", ["--unit=ai-ubq-fi.service", `--since=@${start / 1000}`, `--until=@${end / 1000}`, "--output=json", "--no-pager"], root),
++  };
++}
++const MAX_JOURNAL_BYTES = 1024 * 1024;
++const MAX_ENTRIES = 8192;
++type Event = {
++  id: string;
++  at: number;
++  accepted: boolean;
++  status: number;
++  stream: boolean;
++  failure: string | null;
++  admissionStage: TerminalAdmissionStage | null;
++};
++const incomplete = (): never => {
++  throw new Error("VPS journal coverage is incomplete");
++};
++function parseCoverage(value: unknown, start: number, end: number): VpsJournalCoverage {
++  if (value === null || typeof value !== "object") return incomplete();
++  const proof = value as Record<string, unknown>;
++  if (proof.complete !== true || proof.unit !== "ai-ubq-fi.service" || proof.windowStart !== start || proof.windowEnd !== end) return incomplete();
++  for (const key of ["bootId", "firstCursor", "lastCursor"] as const) if (typeof proof[key] !== "string" || proof[key].length === 0) return incomplete();
++  sha256(proof.digest);
++  return proof as VpsJournalCoverage;
++}
++function parseEvent(message: string, at: number, identity: VpsIdentity): Event | null {
++  const match = /^\[ai\.ubq\.fi\] request_(accepted|terminal) (\{.*\})$/.exec(message);
++  if (!match) return null;
++  const value = JSON.parse(match[2]) as Record<string, unknown>;
++  if (typeof value.request_id !== "string" || value.request_id.length > 512 || typeof value.git_sha !== "string" || typeof value.deno_revision !== "string")
++    return incomplete();
++  if (value.git_sha !== identity.gitSha || value.deno_revision !== identity.deploymentId) return null;
++  const accepted = match[1] === "accepted",
++    status = accepted ? 0 : Number(value.status);
++  if (!accepted) validateTerminal(value, status);
++  return {
++    id: value.request_id,
++    at,
++    accepted,
++    status,
++    stream: value.stream === true,
++    failure: typeof value.failure_kind === "string" ? value.failure_kind : null,
++    admissionStage: accepted ? "accepted" : parseAdmissionStage(value.admission_stage),
++  };
++}
++function parseAdmissionStage(value: unknown): TerminalAdmissionStage | null {
++  if (value === undefined || value === null) return null;
++  if (value === "pre_admission" || value === "accepted") return value;
++  return incomplete();
++}
++function validateTerminal(value: Record<string, unknown>, status: number): void {
++  if (!Number.isInteger(status) || status < 100 || status > 599) return incomplete();
++  if (value.stream !== null && typeof value.stream !== "boolean") return incomplete();
++  if (value.failure_kind !== null && typeof value.failure_kind !== "string") return incomplete();
++}
++function journalEvents(raw: string, proof: VpsJournalCoverage, identity: VpsIdentity, start: number, end: number): Event[] {
++  if (new TextEncoder().encode(raw).byteLength > MAX_JOURNAL_BYTES) return incomplete();
++  const lines = raw.split("\n").filter((line) => line.length > 0);
++  if (lines.length > MAX_ENTRIES) return incomplete();
++  const events: Event[] = [];
++  for (const line of lines) {
++    const row = JSON.parse(line) as Record<string, unknown>;
++    if (
++      row._SYSTEMD_UNIT !== proof.unit ||
++      row._BOOT_ID !== proof.bootId ||
++      typeof row.__CURSOR !== "string" ||
++      typeof row.__REALTIME_TIMESTAMP !== "string" ||
++      typeof row.MESSAGE !== "string"
++    )
++      return incomplete();
++    if (/^(?:Suppressed \d+ messages from .+|Missed \d+ kernel messages)$/.test(row.MESSAGE)) return incomplete();
++    const at = Number(row.__REALTIME_TIMESTAMP) / 1000;
++    if (!Number.isFinite(at) || at < start || at >= end) return incomplete();
++    const event = parseEvent(row.MESSAGE, at, identity);
++    if (event) events.push(event);
++  }
++  return events;
++}
++function cohortResults(events: readonly Event[], start: number, end: number): Event[] {
++  const accepted = new Map<string, Event>(),
++    terminals = new Map<string, Event>();
++  for (const event of events) {
++    const target = event.accepted ? accepted : terminals,
++      existing = target.get(event.id);
++    if (existing && (existing.status !== event.status || existing.failure !== event.failure || existing.admissionStage !== event.admissionStage))
++      return incomplete();
++    target.set(event.id, event);
++  }
++  for (const terminal of terminals.values()) if (terminal.admissionStage === "pre_admission" && accepted.has(terminal.id)) return incomplete();
++  const cohort = [...accepted.values()].filter((event) => event.at >= start && event.at < end);
++  const results = cohort.map((event) => {
++    const terminal = terminals.get(event.id);
++    if (!terminal) {
++      return incomplete();
++    }
++    return terminal;
++  });
++  if ([...terminals.values()].some((event) => event.at >= start && event.at < end && !accepted.has(event.id) && event.admissionStage !== "pre_admission"))
++    return incomplete();
++  return results;
++}
++export class VpsJournalMetrics {
++  constructor(
++    private readonly _reader: VpsJournalReader,
++    private readonly _now: () => number,
++    private readonly _lagMs: number,
++    private readonly _timeoutKinds: readonly string[],
++    private readonly _upstreamWideKinds: readonly string[]
++  ) {
++    if (!Number.isSafeInteger(_lagMs) || _lagMs < 0 || _timeoutKinds.length > 32 || _upstreamWideKinds.length > 32)
++      throw new TypeError("VPS telemetry configuration is invalid");
++  }
++  async sample(input: VpsJournalRequest): Promise<VpsMetricsSample> {
++    const identity = parseVpsIdentity(input.identity),
++      sampledAt = this._now();
++    if (
++      !Number.isSafeInteger(input.windowStart) ||
++      input.windowStart < 0 ||
++      !Number.isSafeInteger(input.windowEnd) ||
++      input.windowEnd <= input.windowStart ||
++      input.windowEnd > sampledAt
++    )
++      throw new TypeError("VPS telemetry window is invalid");
++    const missing = (): VpsMetricsSample =>
++      parseVpsSample({
++        ...input,
++        identity,
++        sampledAt,
++        requestCount: null,
++        fiveXxCount: null,
++        timeoutCount: null,
++        streamFailureCount: null,
++        upstreamWideFault: null,
++        coverage: "incomplete",
++        coverageDigest: null,
++      });
++    const interval = input.windowEnd - input.windowStart,
++      start = Math.max(0, input.windowStart - interval),
++      end = input.windowEnd + interval;
++    if (end + this._lagMs > sampledAt) return missing();
++    try {
++      const proof = parseCoverage(await this._reader.coverage(start, end), start, end);
++      const events = journalEvents(await this._reader.read(start, end), proof, identity, start, end);
++      const results = cohortResults(events, input.windowStart, input.windowEnd);
++      return parseVpsSample({
++        ...input,
++        identity,
++        sampledAt,
++        requestCount: results.length,
++        fiveXxCount: results.filter((event) => event.status >= 500).length,
++        timeoutCount: results.filter((event) => event.failure !== null && this._timeoutKinds.includes(event.failure)).length,
++        streamFailureCount: results.filter((event) => event.stream && event.failure !== null).length,
++        upstreamWideFault: results.some((event) => event.failure !== null && this._upstreamWideKinds.includes(event.failure)),
++        coverage: "complete",
++        coverageDigest: await vpsDigest({ source: proof.digest, identity, windowStart: input.windowStart, windowEnd: input.windowEnd }),
++      });
++    } catch {
++      return missing();
++    }
++  }
++}
+diff --git a/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/deploy-lock.ts.txt b/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/deploy-lock.ts.txt
+new file mode 100644
+index 0000000000..046524bf46
+--- /dev/null
++++ b/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/deploy-lock.ts.txt
+@@ -0,0 +1,36 @@
++import { constants, closeSync, fstatSync, openSync } from "node:fs";
++import { dlopen, FFIType } from "bun:ffi";
++
++/** POSIX flock interoperates with existing Deno FsFile.lock on the same inode. */
++export const acquireDeployLock = async (path = ".data/deploy.lock"): Promise<() => void> => {
++  if (process.platform !== "linux" && process.platform !== "darwin") throw new Error("Deployment requires POSIX file locking");
++  const library = dlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", {
++    flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
++  });
++  let descriptor: number | undefined;
++  try {
++    descriptor = openSync(path, constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
++    const info = fstatSync(descriptor);
++    if (!info.isFile() || (info.mode & 0o777) !== 0o600 || info.uid !== process.getuid?.())
++      throw new Error("Deployment lock is not a private owned regular file");
++    // Never block Bun's JS thread while another process owns this lock.
++    const deadline = Date.now() + 240_000;
++    while (library.symbols.flock(descriptor, 2 | 4) !== 0) {
++      if (Date.now() >= deadline) throw new Error("Timed out waiting for the deployment lock");
++      await Bun.sleep(100);
++    }
++    let released = false;
++    const owned = descriptor;
++    return () => {
++      if (released) return;
++      released = true;
++      library.symbols.flock(owned, 8);
++      closeSync(owned);
++      library.close();
++    };
++  } catch (error) {
++    if (descriptor !== undefined) closeSync(descriptor);
++    library.close();
++    throw error;
++  }
++};
+diff --git a/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-journal-reader.ts.txt b/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-journal-reader.ts.txt
+new file mode 100644
+index 0000000000..0792c5a881
+--- /dev/null
++++ b/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-journal-reader.ts.txt
+@@ -0,0 +1,160 @@
++import { spawn } from "node:child_process";
++import {
++  VpsQueryBudgetError,
++  VPS_METRICS_MAX_BYTES,
++  VPS_METRICS_MAX_ENTRIES,
++  VPS_METRICS_SLICE_MS,
++  type VpsBoundedJournalCommand,
++  type VpsJournalReader,
++  type VpsQueryLimits,
++} from "./vps-metrics-types.ts";
++export function createVpsJournalReader(run: VpsBoundedJournalCommand, root: string, coverage: VpsJournalReader["coverage"]): VpsJournalReader {
++  return {
++    coverage,
++    read: (start, end, limits) => {
++      if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end - start > VPS_METRICS_SLICE_MS)
++        throw new Error("VPS journal range is invalid");
++      return run(["--unit=ai-ubq-fi.service", `--since=@${start / 1000}`, `--until=@${end / 1000}`, "--output=json", "--no-pager"], limits, root);
++    },
++  };
++}
++export type VpsJournalProcess = { stdout: ReadableStream<Uint8Array>; status: Promise<{ success: boolean }>; kill(signal: "SIGTERM" | "SIGKILL"): void };
++const validLimits = (limits: VpsQueryLimits, now: number) =>
++  Number.isSafeInteger(limits.deadline) &&
++  limits.deadline > now &&
++  Number.isSafeInteger(limits.maxBytes) &&
++  limits.maxBytes > 0 &&
++  limits.maxBytes <= VPS_METRICS_MAX_BYTES &&
++  Number.isSafeInteger(limits.maxEntries) &&
++  limits.maxEntries > 0 &&
++  limits.maxEntries <= VPS_METRICS_MAX_ENTRIES;
++async function boundedBody(reader: ReadableStreamDefaultReader<Uint8Array>, limits: VpsQueryLimits, interrupted: () => Error | null): Promise<string> {
++  let bytes = 0,
++    lines = 0,
++    text = "";
++  const decoder = new TextDecoder("utf-8", { fatal: true });
++  for (;;) {
++    const chunk = await reader.read();
++    const interruption = interrupted();
++    if (interruption) throw interruption;
++    if (chunk.done) break;
++    bytes += chunk.value.byteLength;
++    lines += chunk.value.reduce((total, byte) => total + Number(byte === 10), 0);
++    if (bytes > limits.maxBytes || lines > limits.maxEntries) throw new Error("VPS journal output exceeds bounds");
++    text += decoder.decode(chunk.value, { stream: true });
++  }
++  text += decoder.decode();
++  if (text && !text.endsWith("\n")) lines++;
++  if (lines > limits.maxEntries) throw new Error("VPS journal output exceeds bounds");
++  return text;
++}
++/** A complete bounded result or refusal; every owned child settles before return. */
++export async function readVpsJournalProcess(child: VpsJournalProcess, limits: VpsQueryLimits, now = Date.now): Promise<string> {
++  let timer: ReturnType<typeof setTimeout> | undefined, killTimer: ReturnType<typeof setTimeout> | undefined;
++  const stopped = { value: false, budget: false };
++  const stop = (budget = false) => {
++    stopped.value = true;
++    stopped.budget ||= budget;
++    try {
++      child.kill("SIGTERM");
++    } catch {
++      /* already settled */
++    }
++    killTimer ??= setTimeout(() => {
++      try {
++        child.kill("SIGKILL");
++      } catch {
++        /* already settled */
++      }
++    }, 1000);
++  };
++  const reader = child.stdout.getReader();
++  try {
++    if (limits.deadline <= now()) throw new VpsQueryBudgetError();
++    if (!validLimits(limits, now())) throw new Error("VPS journal limits are invalid");
++    timer = setTimeout(
++      () => {
++        stop(true);
++      },
++      Math.max(1, limits.deadline - now())
++    );
++    const text = await boundedBody(reader, limits, () => (stopped.budget ? new VpsQueryBudgetError() : null));
++    const status = await child.status;
++    if (stopped.budget) throw new VpsQueryBudgetError();
++    if (!status.success || stopped.value) throw new Error("VPS journal command unavailable");
++    return text;
++  } catch (error) {
++    stop();
++    throw error;
++  } finally {
++    await reader.cancel().catch(() => {});
++    reader.releaseLock();
++    await child.status;
++    clearTimeout(timer);
++    clearTimeout(killTimer);
++  }
++}
++/** Trusted native boundary: only journalctl with the fixed unit and bounded range. */
++export const runVpsJournalCommand: VpsBoundedJournalCommand = (args, limits, cwd) => {
++  if (
++    args.length !== 5 ||
++    args[0] !== "--unit=ai-ubq-fi.service" ||
++    !/^--since=@\d+(?:\.\d+)?$/.test(args[1]) ||
++    !/^--until=@\d+(?:\.\d+)?$/.test(args[2]) ||
++    args[3] !== "--output=json" ||
++    args[4] !== "--no-pager"
++  )
++    throw new Error("VPS journal command refused");
++  // node:child_process keeps this port loadable and runnable under Bun and the Deno bridge alike.
++  const child = spawn("/usr/bin/journalctl", [...args], { cwd, env: { PATH: "/usr/bin:/bin" }, stdio: ["ignore", "pipe", "ignore"] });
++  const status = new Promise<{ success: boolean }>((resolve) => {
++    child.once("error", () => {
++      resolve({ success: false });
++    });
++    child.once("close", (code, signal) => {
++      resolve({ success: code === 0 && signal === null });
++    });
++  });
++  const pipe = child.stdout;
++  // A failed spawn ends the body; the settled status then refuses it as unavailable.
++  const stdout = new ReadableStream<Uint8Array>({
++    start(controller) {
++      const end = () => {
++        try {
++          controller.close();
++        } catch {
++          /* already settled */
++        }
++      };
++      pipe.on("data", (chunk: Buffer) => {
++        controller.enqueue(new Uint8Array(chunk));
++        if ((controller.desiredSize ?? 0) <= 0) pipe.pause();
++      });
++      pipe.once("end", end);
++      pipe.once("error", (error) => {
++        try {
++          controller.error(error);
++        } catch {
++          /* already settled */
++        }
++      });
++      child.once("error", end);
++    },
++    pull() {
++      pipe.resume();
++    },
++    cancel() {
++      pipe.destroy();
++    },
++  });
++  return readVpsJournalProcess(
++    {
++      stdout,
++      status,
++      kill: (signal) => {
++        child.kill(signal);
++      },
++    },
++    limits
++  );
++};
+diff --git a/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-metrics-join.ts.txt b/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-metrics-join.ts.txt
+new file mode 100644
+index 0000000000..b9014f40d4
+--- /dev/null
++++ b/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-metrics-join.ts.txt
+@@ -0,0 +1,211 @@
++import { canonicalVps, exactObject, parseVpsIdentity, sha256, vpsDigest } from "./vps-release-contract.ts";
++import {
++  VPS_METRICS_MAX_ENTRIES,
++  type VpsJoinCheckpoint,
++  type VpsJoinCohort,
++  type VpsMetricsOptions,
++  type VpsMetricsRetention,
++  type VpsMetricsScope,
++} from "./vps-metrics-types.ts";
++
++const refusal = (): never => {
++  throw new Error("VPS telemetry checkpoint unavailable");
++};
++const count = (value: unknown): number => {
++  if (!Number.isSafeInteger(value) || Number(value) < 0) {
++    return refusal();
++  }
++  return Number(value);
++};
++export function checkedRetention(value: unknown): VpsMetricsRetention {
++  const object = exactObject(value, ["evidenceMaxAgeMs", "evidenceMaxBytes"]);
++  if (count(object.evidenceMaxAgeMs) === 0 || count(object.evidenceMaxBytes) === 0) return refusal();
++  return { evidenceMaxAgeMs: count(object.evidenceMaxAgeMs), evidenceMaxBytes: count(object.evidenceMaxBytes) };
++}
++export function checkedScope(scope: VpsMetricsScope): VpsMetricsScope {
++  for (const key of ["operationId", "requestDigest", "driverSha256"] as const) sha256(scope[key]);
++  if (!/^[0-9a-f]{40}$/.test(scope.controllerSha) || !/^[0-9a-f]{40}$/.test(scope.stateHead)) return refusal();
++  parseVpsIdentity(scope.candidate);
++  parseVpsIdentity(scope.prior);
++  for (const key of ["monitoringStartedAt", "baselineStart", "baselineEnd", "stateSequence"] as const) count(scope[key]);
++  if (scope.baselineStart >= scope.baselineEnd) return refusal();
++  return scope;
++}
++export async function joinBinding(scope: VpsMetricsScope, retention: VpsMetricsRetention): Promise<string> {
++  checkedScope(scope);
++  checkedRetention(retention);
++  return vpsDigest({
++    schema: 1,
++    operationId: scope.operationId,
++    requestDigest: scope.requestDigest,
++    controllerSha: scope.controllerSha,
++    driverSha256: scope.driverSha256,
++    candidate: scope.candidate,
++    prior: scope.prior,
++    retention,
++  });
++}
++function checkedEvent(value: unknown, start: number, end: number, bootId: unknown): void {
++  const event = exactObject(value, ["id", "at", "accepted", "status", "stream", "failure", "admissionStage", "cursor", "bootId", "digest"]);
++  if (
++    typeof event.id !== "string" ||
++    !event.id ||
++    event.id.length > 512 ||
++    typeof event.at !== "number" ||
++    !Number.isFinite(event.at) ||
++    event.at < start ||
++    event.at >= end ||
++    typeof event.accepted !== "boolean" ||
++    typeof event.stream !== "boolean" ||
++    (event.failure !== null && typeof event.failure !== "string") ||
++    ![null, "accepted", "pre_admission"].includes(event.admissionStage as string | null) ||
++    typeof event.cursor !== "string" ||
++    !event.cursor ||
++    event.bootId !== bootId
++  )
++    return refusal();
++  if (event.accepted ? event.status !== 0 : !Number.isInteger(event.status) || Number(event.status) < 100 || Number(event.status) > 599) return refusal();
++  sha256(event.digest);
++}
++function parseCohort(value: unknown): VpsJoinCohort {
++  const item = exactObject(value, ["identity", "windowStart", "windowEnd", "scanEnd", "scanStart", "events", "coverage", "bootId", "complete"]);
++  const identity = parseVpsIdentity(item.identity);
++  for (const key of ["windowStart", "windowEnd", "scanStart", "scanEnd"] as const) count(item[key]);
++  if (
++    Number(item.windowStart) >= Number(item.windowEnd) ||
++    Number(item.scanStart) > Number(item.windowStart) ||
++    Number(item.scanEnd) < Number(item.windowStart) ||
++    typeof item.complete !== "boolean" ||
++    (item.bootId !== null && (typeof item.bootId !== "string" || !item.bootId)) ||
++    !Array.isArray(item.events) ||
++    !Array.isArray(item.coverage)
++  )
++    return refusal();
++  if (item.events.length > VPS_METRICS_MAX_ENTRIES * 2 || item.coverage.length > VPS_METRICS_MAX_ENTRIES) return refusal();
++  for (const raw of item.events) checkedEvent(raw, Number(item.scanStart), Number(item.scanEnd), item.bootId);
++  let chainStart = Number(item.scanStart);
++  for (const raw of item.coverage) {
++    const proof = exactObject(raw, ["complete", "unit", "windowStart", "windowEnd", "bootId", "firstCursor", "lastCursor", "digest"]);
++    if (
++      proof.complete !== true ||
++      proof.unit !== "ai-ubq-fi.service" ||
++      proof.bootId !== item.bootId ||
++      typeof proof.firstCursor !== "string" ||
++      !proof.firstCursor ||
++      typeof proof.lastCursor !== "string" ||
++      !proof.lastCursor ||
++      count(proof.windowStart) !== chainStart ||
++      count(proof.windowEnd) <= chainStart ||
++      count(proof.windowEnd) - chainStart > 30_000
++    )
++      return refusal();
++    sha256(proof.digest);
++    chainStart = Number(proof.windowEnd);
++  }
++  if (chainStart !== item.scanEnd) return refusal();
++  return { ...item, identity } as VpsJoinCohort;
++}
++export function parseJoinCheckpoint(value: unknown, binding: string, now: number, policy: VpsMetricsRetention): VpsJoinCheckpoint {
++  const item = exactObject(value, [
++    "schema",
++    "binding",
++    "sequence",
++    "createdAt",
++    "updatedAt",
++    "expiresAt",
++    "monitoringStartedAt",
++    "stateHead",
++    "stateSequence",
++    "cohorts",
++  ]);
++  if (
++    item.schema !== 1 ||
++    item.binding !== binding ||
++    count(item.sequence) < 1 ||
++    count(item.updatedAt) < count(item.createdAt) ||
++    count(item.updatedAt) > now ||
++    count(item.expiresAt) !== count(item.createdAt) + policy.evidenceMaxAgeMs ||
++    now >= count(item.expiresAt) ||
++    !Array.isArray(item.cohorts) ||
++    item.cohorts.length > VPS_METRICS_MAX_ENTRIES
++  )
++    return refusal();
++  count(item.monitoringStartedAt);
++  if (typeof item.stateHead !== "string" || !/^[0-9a-f]{40}$/.test(item.stateHead)) return refusal();
++  count(item.stateSequence);
++  const cohorts = item.cohorts.map(parseCohort);
++  if (new Set(cohorts.map((c) => `${c.identity.gitSha}:${c.windowStart}:${c.windowEnd}`)).size !== cohorts.length) return refusal();
++  const unresolved = cohorts.reduce((total, cohort) => {
++    const done = new Set(cohort.events.filter((e) => !e.accepted).map((e) => e.id));
++    return total + cohort.events.filter((e) => e.accepted && !done.has(e.id)).length;
++  }, 0);
++  if (unresolved > VPS_METRICS_MAX_ENTRIES) return refusal();
++  return { ...item, cohorts } as VpsJoinCheckpoint;
++}
++export class VpsJoinCheckpoints {
++  constructor(
++    private readonly _options: VpsMetricsOptions,
++    private readonly _now: () => number
++  ) {}
++  async load(scope: VpsMetricsScope): Promise<{ checkpoint: VpsJoinCheckpoint; expected: number | null }> {
++    const binding = await joinBinding(scope, this._options.retention),
++      bytes = await this._options.storage.load(scope),
++      now = this._now();
++    if (bytes === null)
++      return {
++        expected: null,
++        checkpoint: {
++          schema: 1,
++          binding,
++          sequence: 0,
++          createdAt: now,
++          updatedAt: now,
++          expiresAt: now + this._options.retention.evidenceMaxAgeMs,
++          monitoringStartedAt: scope.monitoringStartedAt,
++          stateHead: scope.stateHead,
++          stateSequence: scope.stateSequence,
++          cohorts: [],
++        },
++      };
++    if (bytes.byteLength > this._options.retention.evidenceMaxBytes) return refusal();
++    const plain = await this._options.cipher.open(bytes, new TextEncoder().encode(binding));
++    try {
++      if (plain.byteLength > this._options.retention.evidenceMaxBytes) return refusal();
++      const checkpoint = parseJoinCheckpoint(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plain)), binding, now, this._options.retention);
++      const historical = await this._options.context(
++        { identity: scope.candidate, windowStart: checkpoint.monitoringStartedAt, windowEnd: checkpoint.monitoringStartedAt + 30_000 },
++        { stateHead: checkpoint.stateHead, stateSequence: checkpoint.stateSequence }
++      );
++      if (
++        (await joinBinding(historical, this._options.retention)) !== binding ||
++        historical.monitoringStartedAt !== checkpoint.monitoringStartedAt ||
++        historical.stateHead !== checkpoint.stateHead ||
++        historical.stateSequence !== checkpoint.stateSequence
++      )
++        return refusal();
++      if (checkpoint.monitoringStartedAt !== scope.monitoringStartedAt) {
++        checkpoint.monitoringStartedAt = scope.monitoringStartedAt;
++        checkpoint.cohorts = [];
++      }
++      return { checkpoint, expected: checkpoint.sequence };
++    } finally {
++      plain.fill(0);
++    }
++  }
++  async save(scope: VpsMetricsScope, checkpoint: VpsJoinCheckpoint, expected: number | null): Promise<void> {
++    const next = parseJoinCheckpoint(
++      { ...checkpoint, sequence: (expected ?? 0) + 1, updatedAt: this._now(), stateHead: scope.stateHead, stateSequence: scope.stateSequence },
++      checkpoint.binding,
++      this._now(),
++      this._options.retention
++    );
++    const plain = new TextEncoder().encode(canonicalVps(next));
++    try {
++      if (plain.byteLength > this._options.retention.evidenceMaxBytes) return refusal();
++      const cipher = await this._options.cipher.seal(plain, new TextEncoder().encode(next.binding));
++      if (cipher.byteLength > this._options.retention.evidenceMaxBytes || !(await this._options.storage.save(scope, expected, cipher))) return refusal();
++    } finally {
++      plain.fill(0);
++    }
++  }
++}
+diff --git a/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-metrics-storage.ts.txt b/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-metrics-storage.ts.txt
+new file mode 100644
+index 0000000000..55ed61ff77
+--- /dev/null
++++ b/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-metrics-storage.ts.txt
+@@ -0,0 +1,88 @@
++import { lstat, mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
++import { missing } from "./io.ts";
++import { canonicalVps, sha256 } from "./vps-release-contract.ts";
++import { withVpsDeployLock } from "./vps-release-journal.ts";
++import { checkedRetention, joinBinding, parseJoinCheckpoint } from "./vps-metrics-join.ts";
++import type { VpsJoinCipher, VpsJoinStorage, VpsMetricsRetention, VpsMetricsScope } from "./vps-metrics-types.ts";
++
++const refusal = (): never => {
++  throw new Error("VPS telemetry checkpoint unavailable");
++};
++const decodeCheckpoint = (plain: Uint8Array, binding: string, now: number, policy: VpsMetricsRetention) =>
++  parseJoinCheckpoint(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plain)), binding, now, policy);
++
++/**
++ * @public Trusted filesystem adapter. Cipher and fresh scope come only from the authenticated host.
++ * It shares the Bun deploy lock, so it lives outside the journal-metrics import graph.
++ */
++export function createVpsJoinFileStorage(
++  root: string,
++  policy: VpsMetricsRetention,
++  cipher: VpsJoinCipher,
++  current: (scope: VpsMetricsScope) => Promise<VpsMetricsScope>,
++  now = Date.now
++): VpsJoinStorage {
++  checkedRetention(policy);
++  const directory = `${root}/.data/sentinel-vps-metrics`;
++  const path = (scope: VpsMetricsScope) => `${directory}/${sha256(scope.operationId)}.sealed`;
++  const assertDirectory = async () => {
++    await mkdir(directory, { recursive: true, mode: 0o700 });
++    const stat = await lstat(directory);
++    if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o700 || (await realpath(directory)) !== directory) return refusal();
++  };
++  const read = async (scope: VpsMetricsScope): Promise<Uint8Array | null> => {
++    await assertDirectory();
++    try {
++      const stat = await lstat(path(scope));
++      if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600 || stat.size > policy.evidenceMaxBytes) {
++        return refusal();
++      }
++      return new Uint8Array(await readFile(path(scope)));
++    } catch (error) {
++      if (missing(error)) return null;
++      throw error;
++    }
++  };
++  return {
++    load: (scope) => withVpsDeployLock(root, () => read(scope)),
++    save: async (scope, expected, bytes) => {
++      if (canonicalVps(await current(scope)) !== canonicalVps(scope) || bytes.byteLength > policy.evidenceMaxBytes) return false;
++      return withVpsDeployLock(root, async () => {
++        if (canonicalVps(await current(scope)) !== canonicalVps(scope)) return false;
++        const binding = await joinBinding(scope, policy);
++        const incoming = await cipher.open(bytes, new TextEncoder().encode(binding));
++        try {
++          const next = decodeCheckpoint(incoming, binding, now(), policy);
++          if (next.sequence !== (expected ?? 0) + 1 || next.stateHead !== scope.stateHead || next.stateSequence !== scope.stateSequence) return false;
++        } finally {
++          incoming.fill(0);
++        }
++        const old = await read(scope);
++        if (old === null ? expected !== null : expected === null) return false;
++        if (old !== null) {
++          const plain = await cipher.open(old, new TextEncoder().encode(binding));
++          try {
++            if (decodeCheckpoint(plain, binding, now(), policy).sequence !== expected) return false;
++          } finally {
++            plain.fill(0);
++          }
++        }
++        const temporary = `${path(scope)}-${crypto.randomUUID()}`;
++        try {
++          const file = await open(temporary, "wx", 0o600);
++          try {
++            await file.writeFile(bytes);
++            await file.sync();
++          } finally {
++            await file.close();
++          }
++          if (canonicalVps(await current(scope)) !== canonicalVps(scope)) return false;
++          await rename(temporary, path(scope));
++          return true;
++        } finally {
++          await rm(temporary, { force: true });
++        }
++      });
++    },
++  };
++}
+diff --git a/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-metrics-types.ts.txt b/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-metrics-types.ts.txt
+new file mode 100644
+index 0000000000..10dec017ca
+--- /dev/null
++++ b/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-metrics-types.ts.txt
+@@ -0,0 +1,98 @@
++import type { VpsIdentity } from "./vps-release-contract.ts";
++
++export const VPS_METRICS_SLICE_MS = 30_000;
++export const VPS_METRICS_MAX_BYTES = 1024 * 1024;
++export const VPS_METRICS_MAX_ENTRIES = 8192;
++export const VPS_METRICS_TICK_MS = 20_000;
++export const VPS_METRICS_TICK_SLICES = 64;
++/** Local query-budget exhaustion, never journal corruption or a sample success. */
++export class VpsQueryBudgetError extends Error {
++  constructor() {
++    super("VPS journal query budget exhausted");
++    this.name = "VpsQueryBudgetError";
++  }
++}
++export type VpsJournalRequest = { identity: VpsIdentity; windowStart: number; windowEnd: number };
++export type VpsQueryLimits = { deadline: number; maxBytes: number; maxEntries: number };
++export type VpsJournalCoverage = {
++  complete: true;
++  unit: "ai-ubq-fi.service";
++  windowStart: number;
++  windowEnd: number;
++  bootId: string;
++  firstCursor: string;
++  lastCursor: string;
++  digest: string;
++};
++export type VpsJournalReader = {
++  read(start: number, end: number, limits: VpsQueryLimits): Promise<string>;
++  coverage(start: number, end: number, limits: VpsQueryLimits): Promise<VpsJournalCoverage | null>;
++};
++export type VpsBoundedJournalCommand = (args: readonly string[], limits: VpsQueryLimits, cwd: string) => Promise<string>;
++export type VpsMetricsScope = {
++  operationId: string;
++  requestDigest: string;
++  controllerSha: string;
++  driverSha256: string;
++  candidate: VpsIdentity;
++  prior: VpsIdentity;
++  monitoringStartedAt: number;
++  baselineStart: number;
++  baselineEnd: number;
++  stateHead: string;
++  stateSequence: number;
++};
++export type VpsMetricsRetention = { evidenceMaxAgeMs: number; evidenceMaxBytes: number };
++export type VpsJoinStorage = {
++  load(scope: VpsMetricsScope): Promise<Uint8Array | null>;
++  save(scope: VpsMetricsScope, expectedSequence: number | null, ciphertext: Uint8Array): Promise<boolean>;
++};
++export type VpsJoinCipher = {
++  seal(plaintext: Uint8Array, associatedData: Uint8Array): Promise<Uint8Array>;
++  open(ciphertext: Uint8Array, associatedData: Uint8Array): Promise<Uint8Array>;
++};
++export type VpsMetricsProgress = { state: "collecting" | "complete" | "unavailable"; reason: string | null };
++/** @public The standalone controller drives bounded ticks and reads collection progress through this port. */
++export type VpsMetricsWork = { beginTick(observedAt: number): void; progress(input: VpsJournalRequest): Promise<VpsMetricsProgress> };
++export type VpsMetricsOptions = {
++  retention: VpsMetricsRetention;
++  context(input: VpsJournalRequest, saved?: { stateHead: string; stateSequence: number }): Promise<VpsMetricsScope>;
++  storage: VpsJoinStorage;
++  cipher: VpsJoinCipher;
++  deadline: number;
++};
++export type VpsMetricEvent = {
++  id: string;
++  at: number;
++  accepted: boolean;
++  status: number;
++  stream: boolean;
++  failure: string | null;
++  admissionStage: "accepted" | "pre_admission" | null;
++  cursor: string;
++  bootId: string;
++  digest: string;
++};
++export type VpsJoinCohort = {
++  identity: VpsIdentity;
++  windowStart: number;
++  windowEnd: number;
++  scanEnd: number;
++  scanStart: number;
++  events: VpsMetricEvent[];
++  coverage: VpsJournalCoverage[];
++  bootId: string | null;
++  complete: boolean;
++};
++export type VpsJoinCheckpoint = {
++  schema: 1;
++  binding: string;
++  sequence: number;
++  createdAt: number;
++  updatedAt: number;
++  expiresAt: number;
++  monitoringStartedAt: number;
++  stateHead: string;
++  stateSequence: number;
++  cohorts: VpsJoinCohort[];
++};
+diff --git a/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-release-metrics.ts.txt b/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-release-metrics.ts.txt
+new file mode 100644
+index 0000000000..6e8d65cbb6
+--- /dev/null
++++ b/tests/fixtures/vps/ai.ubq.fi/e50c298b/ops/vps-release-metrics.ts.txt
+@@ -0,0 +1,335 @@
++import {
++  canonicalVps,
++  exactObject,
++  parseVpsIdentity,
++  parseVpsSample,
++  sameVps,
++  sha256,
++  vpsDigest,
++  type VpsIdentity,
++  type VpsMetricsSample,
++} from "./vps-release-contract.ts";
++import { VpsJoinCheckpoints, checkedRetention, checkedScope } from "./vps-metrics-join.ts";
++import {
++  VpsQueryBudgetError,
++  VPS_METRICS_MAX_BYTES,
++  VPS_METRICS_MAX_ENTRIES,
++  VPS_METRICS_SLICE_MS,
++  VPS_METRICS_TICK_MS,
++  VPS_METRICS_TICK_SLICES,
++  type VpsJournalCoverage,
++  type VpsJournalReader,
++  type VpsJournalRequest,
++  type VpsJoinCohort,
++  type VpsMetricEvent,
++  type VpsMetricsOptions,
++  type VpsMetricsProgress,
++  type VpsQueryLimits,
++} from "./vps-metrics-types.ts";
++/** @public Standalone Sentinel's pinned VPS bridge composes its actual unit-scoped journal reader here. */
++export { createVpsJournalReader, runVpsJournalCommand } from "./vps-journal-reader.ts";
++/** @public The bridge's independent coverage proof and telemetry capabilities use these shapes. */
++export type { VpsJournalCoverage, VpsJournalReader, VpsJournalRequest, VpsMetricsOptions } from "./vps-metrics-types.ts";
++const incomplete = (): never => {
++  throw new Error("VPS journal coverage is incomplete");
++};
++function parseCoverage(value: unknown, start: number, end: number): VpsJournalCoverage {
++  if (value === null || typeof value !== "object") return incomplete();
++  const proof = value as Record<string, unknown>;
++  if (proof.complete !== true || proof.unit !== "ai-ubq-fi.service" || proof.windowStart !== start || proof.windowEnd !== end) return incomplete();
++  for (const key of ["bootId", "firstCursor", "lastCursor"] as const) if (typeof proof[key] !== "string" || !proof[key]) return incomplete();
++  sha256(proof.digest);
++  return proof as VpsJournalCoverage;
++}
++function checkedRow(line: string, proof: VpsJournalCoverage): { message: string; at: number; cursor: string } {
++  const row = JSON.parse(line) as Record<string, unknown>;
++  if (
++    row._SYSTEMD_UNIT !== proof.unit ||
++    row._BOOT_ID !== proof.bootId ||
++    typeof row.__CURSOR !== "string" ||
++    !row.__CURSOR ||
++    typeof row.__REALTIME_TIMESTAMP !== "string" ||
++    typeof row.MESSAGE !== "string"
++  )
++    return incomplete();
++  if (/^(?:Suppressed \d+ messages from .+|Missed \d+ kernel messages)$/.test(row.MESSAGE)) return incomplete();
++  const at = Number(row.__REALTIME_TIMESTAMP) / 1000;
++  if (!Number.isFinite(at) || at < proof.windowStart || at >= proof.windowEnd) return incomplete();
++  return { message: row.MESSAGE, at, cursor: row.__CURSOR };
++}
++function checkedTerminal(value: Record<string, unknown>, status: number): void {
++  if (
++    !Number.isInteger(status) ||
++    status < 100 ||
++    status > 599 ||
++    (value.stream !== null && typeof value.stream !== "boolean") ||
++    (value.failure_kind !== null && typeof value.failure_kind !== "string")
++  )
++    return incomplete();
++}
++async function projectedEvent(row: { message: string; at: number; cursor: string }, bootId: string, identity: VpsIdentity): Promise<VpsMetricEvent | null> {
++  const match = /^\[ai\.ubq\.fi\] request_(accepted|terminal) (\{.*\})$/.exec(row.message);
++  if (!match) return null;
++  const value = JSON.parse(match[2]) as Record<string, unknown>;
++  if (
++    typeof value.request_id !== "string" ||
++    !value.request_id ||
++    value.request_id.length > 512 ||
++    typeof value.git_sha !== "string" ||
++    typeof value.deno_revision !== "string"
++  )
++    return incomplete();
++  if (value.git_sha !== identity.gitSha || value.deno_revision !== identity.deploymentId) return null;
++  const accepted = match[1] === "accepted",
++    status = accepted ? 0 : Number(value.status);
++  const stage = accepted ? "accepted" : (value.admission_stage ?? null);
++  if (![null, "accepted", "pre_admission"].includes(stage as string | null)) return incomplete();
++  if (!accepted) checkedTerminal(value, status);
++  const projection = {
++    id: value.request_id,
++    at: row.at,
++    accepted,
++    status,
++    stream: value.stream === true,
++    failure: typeof value.failure_kind === "string" ? value.failure_kind : null,
++    admissionStage: stage as VpsMetricEvent["admissionStage"],
++    cursor: row.cursor,
++    bootId,
++  };
++  return { ...projection, digest: await vpsDigest(projection) };
++}
++async function journalEvents(raw: string, proof: VpsJournalCoverage, identity: VpsIdentity): Promise<VpsMetricEvent[]> {
++  if (new TextEncoder().encode(raw).byteLength > VPS_METRICS_MAX_BYTES) return incomplete();
++  const lines = raw.split("\n").filter((line) => line.length > 0);
++  if (lines.length > VPS_METRICS_MAX_ENTRIES) return incomplete();
++  const events: VpsMetricEvent[] = [];
++  for (const line of lines) {
++    const event = await projectedEvent(checkedRow(line, proof), proof.bootId, identity);
++    if (event) events.push(event);
++  }
++  return events;
++}
++function checkedOptions(value: unknown): VpsMetricsOptions {
++  const object = exactObject(value, ["retention", "context", "storage", "cipher", "deadline"]);
++  if (typeof object.context !== "function" || !Number.isSafeInteger(object.deadline)) throw new TypeError("VPS telemetry capabilities are invalid");
++  for (const [name, methods] of [
++    ["storage", ["load", "save"]],
++    ["cipher", ["seal", "open"]],
++  ] as const) {
++    const capability = object[name];
++    if (capability === null || typeof capability !== "object") throw new TypeError("VPS telemetry capability absent");
++    for (const method of methods)
++      if (typeof (capability as Record<string, unknown>)[method] !== "function") throw new TypeError("VPS telemetry capability absent");
++  }
++  checkedRetention(object.retention);
++  return object as VpsMetricsOptions;
++}
++function joined(cohort: VpsJoinCohort): { results: VpsMetricEvent[]; pending: boolean; orphan: boolean } {
++  const accepted = new Map<string, VpsMetricEvent>(),
++    terminals = new Map<string, VpsMetricEvent>();
++  for (const event of cohort.events) {
++    const target = event.accepted ? accepted : terminals,
++      previous = target.get(event.id);
++    if (
++      previous &&
++      (previous.status !== event.status ||
++        previous.failure !== event.failure ||
++        previous.admissionStage !== event.admissionStage ||
++        previous.at !== event.at ||
++        previous.stream !== event.stream)
++    )
++      return incomplete();
++    target.set(event.id, event);
++  }
++  for (const terminal of terminals.values()) if (terminal.admissionStage === "pre_admission" && accepted.has(terminal.id)) return incomplete();
++  const members = [...accepted.values()].filter((event) => event.at >= cohort.windowStart && event.at < cohort.windowEnd);
++  const results = members.flatMap((event) => {
++    const terminal = terminals.get(event.id);
++    return terminal ? [terminal] : [];
++  });
++  // Only a terminal at or after windowStart can hide a lost admission of this window. Earlier terminals found by a
++  // backward slice belong to earlier requests; counting them would chase in-flight traffic back to the retention floor.
++  const orphan = [...terminals.values()].some((event) => event.at >= cohort.windowStart && !accepted.has(event.id) && event.admissionStage !== "pre_admission");
++  return { results, pending: results.length !== members.length, orphan };
++}
++const sampleKey = (input: VpsJournalRequest) => `${canonicalVps(input.identity)}:${input.windowStart}:${input.windowEnd}`;
++export class VpsJournalMetrics {
++  private _deadline = 0;
++  private _slices = 0;
++  private readonly _states = new Map<string, VpsMetricsProgress>();
++  private readonly _checkpoints: VpsJoinCheckpoints;
++  private readonly _options: VpsMetricsOptions;
++  constructor(
++    private readonly _reader: VpsJournalReader,
++    private readonly _now: () => number,
++    private readonly _lagMs: number,
++    private readonly _timeoutKinds: readonly string[],
++    private readonly _upstreamWideKinds: readonly string[],
++    options: unknown
++  ) {
++    if (!Number.isSafeInteger(this._lagMs) || this._lagMs < 0 || this._timeoutKinds.length > 32 || this._upstreamWideKinds.length > 32)
++      throw new TypeError("VPS telemetry capabilities are invalid");
++    this._options = checkedOptions(options);
++    this._checkpoints = new VpsJoinCheckpoints(this._options, this._now);
++  }
++  beginTick(observedAt: number): void {
++    if (!Number.isSafeInteger(observedAt) || observedAt > this._now()) throw new TypeError("VPS telemetry tick is invalid");
++    this._deadline = Math.min(this._options.deadline, observedAt + VPS_METRICS_TICK_MS);
++    this._slices = VPS_METRICS_TICK_SLICES;
++    this._states.clear();
++  }
++  progress(input: VpsJournalRequest): Promise<VpsMetricsProgress> {
++    return Promise.resolve(this._states.get(sampleKey(input)) ?? { state: "unavailable", reason: "sample_missing" });
++  }
++  private _limits(): VpsQueryLimits {
++    return { deadline: this._deadline, maxBytes: VPS_METRICS_MAX_BYTES, maxEntries: VPS_METRICS_MAX_ENTRIES };
++  }
++  private async _read(cohort: VpsJoinCohort, start: number, end: number, backward: boolean): Promise<void> {
++    this._slices--;
++    const limits = this._limits();
++    const proof = parseCoverage(await this._reader.coverage(start, end, limits), start, end);
++    if (this._now() >= this._deadline) throw new VpsQueryBudgetError();
++    if (cohort.bootId !== null && cohort.bootId !== proof.bootId) return incomplete();
++    const events = await journalEvents(await this._reader.read(start, end, limits), proof, cohort.identity);
++    if (this._now() >= this._deadline) throw new VpsQueryBudgetError();
++    const cursors = new Map(cohort.events.map((event) => [event.cursor, event]));
++    for (const event of events) {
++      const previous = cursors.get(event.cursor);
++      if (previous && canonicalVps(previous) !== canonicalVps(event)) return incomplete();
++      if (!previous) {
++        cohort.events.push(event);
++        cursors.set(event.cursor, event);
++      }
++    }
++    if (cohort.events.length > VPS_METRICS_MAX_ENTRIES * 2) return incomplete();
++    cohort.bootId = proof.bootId;
++    if (backward) {
++      cohort.scanStart = start;
++      cohort.coverage.unshift(proof);
++    } else {
++      cohort.scanEnd = end;
++      cohort.coverage.push(proof);
++    }
++    joined(cohort);
++  }
++  private async _advance(cohort: VpsJoinCohort, floor: number, availableEnd: number, orphan: boolean): Promise<boolean> {
++    if (cohort.scanEnd >= cohort.windowEnd && orphan) {
++      if (cohort.scanStart <= floor) return incomplete();
++      await this._read(cohort, Math.max(floor, cohort.scanStart - VPS_METRICS_SLICE_MS), cohort.scanStart, true);
++      return true;
++    }
++    if (cohort.scanEnd >= availableEnd) return false;
++    await this._read(cohort, cohort.scanEnd, Math.min(availableEnd, cohort.scanEnd + VPS_METRICS_SLICE_MS), false);
++    return true;
++  }
++  private async _scan(cohort: VpsJoinCohort, floor: number, availableEnd: number) {
++    let result = joined(cohort);
++    while (!cohort.complete && this._slices > 0 && this._now() < this._deadline) {
++      if (cohort.scanEnd >= cohort.windowEnd && !result.orphan && !result.pending) {
++        cohort.complete = true;
++        break;
++      }
++      try {
++        if (!(await this._advance(cohort, floor, availableEnd, result.orphan))) break;
++      } catch (error) {
++        if (error instanceof VpsQueryBudgetError) break;
++        throw error;
++      }
++      result = joined(cohort);
++    }
++    if (cohort.scanEnd >= cohort.windowEnd && !result.orphan && !result.pending) cohort.complete = true;
++
++    return result;
++  }
++  private async _scope(input: VpsJournalRequest, identity: VpsIdentity, sampledAt: number) {
++    const scope = checkedScope(await this._options.context(input));
++    const candidate = sameVps(identity, scope.candidate),
++      prior = sameVps(identity, scope.prior);
++    if (
++      (!candidate && !prior) ||
++      (candidate && (input.windowStart < scope.monitoringStartedAt || input.windowEnd > scope.monitoringStartedAt + 60 * VPS_METRICS_SLICE_MS)) ||
++      (prior && (input.windowStart < scope.baselineStart || input.windowEnd > scope.baselineEnd))
++    )
++      return incomplete();
++    const floor = Math.max(0, sampledAt - this._options.retention.evidenceMaxAgeMs);
++    if (input.windowStart < floor) return incomplete();
++
++    return { scope, floor };
++  }
++  async sample(input: VpsJournalRequest): Promise<VpsMetricsSample> {
++    const identity = parseVpsIdentity(input.identity),
++      sampledAt = this._now(),
++      key = sampleKey(input);
++    if (
++      !Number.isSafeInteger(input.windowStart) ||
++      input.windowStart < 0 ||
++      !Number.isSafeInteger(input.windowEnd) ||
++      input.windowEnd - input.windowStart !== VPS_METRICS_SLICE_MS ||
++      input.windowEnd > sampledAt
++    )
++      throw new TypeError("VPS telemetry window is invalid");
++    const missing = (): VpsMetricsSample =>
++      parseVpsSample({
++        ...input,
++        identity,
++        sampledAt,
++        requestCount: null,
++        fiveXxCount: null,
++        timeoutCount: null,
++        streamFailureCount: null,
++        upstreamWideFault: null,
++        coverage: "incomplete",
++        coverageDigest: null,
++      });
++    this._states.set(key, { state: "unavailable", reason: "coverage_missing" });
++    try {
++      const { scope, floor } = await this._scope(input, identity, sampledAt);
++      const loaded = await this._checkpoints.load(scope),
++        checkpoint = loaded.checkpoint;
++      let cohort = checkpoint.cohorts.find(
++        (item) => sameVps(item.identity, identity) && item.windowStart === input.windowStart && item.windowEnd === input.windowEnd
++      );
++      if (!cohort) {
++        cohort = {
++          identity,
++          windowStart: input.windowStart,
++          windowEnd: input.windowEnd,
++          scanStart: input.windowStart,
++          scanEnd: input.windowStart,
++          events: [],
++          coverage: [],
++          bootId: null,
++          complete: false,
++        };
++        checkpoint.cohorts.push(cohort);
++      }
++      const availableEnd = sampledAt - this._lagMs;
++      const result = await this._scan(cohort, floor, availableEnd);
++      if (canonicalVps(await this._options.context(input)) !== canonicalVps(scope)) return incomplete();
++      await this._checkpoints.save(scope, checkpoint, loaded.expected);
++      this._states.set(key, { state: cohort.complete ? "complete" : "collecting", reason: cohort.complete ? null : "terminal_or_slice_pending" });
++      if (!cohort.complete) return missing();
++      return parseVpsSample({
++        ...input,
++        identity,
++        sampledAt,
++        requestCount: result.results.length,
++        fiveXxCount: result.results.filter((event) => event.status >= 500).length,
++        timeoutCount: result.results.filter((event) => event.failure !== null && this._timeoutKinds.includes(event.failure)).length,
++        streamFailureCount: result.results.filter((event) => event.stream && event.failure !== null).length,
++        upstreamWideFault: result.results.some((event) => event.failure !== null && this._upstreamWideKinds.includes(event.failure)),
++        coverage: "complete",
++        coverageDigest: await vpsDigest({
++          binding: checkpoint.binding,
++          identity,
++          windowStart: input.windowStart,
++          windowEnd: input.windowEnd,
++          coverage: cohort.coverage,
++          events: cohort.events,
++        }),
++      });
++    } catch {
++      return missing();
++    }
++  }
++}
+diff --git a/tests/host/vps-release-driver-interface_test.ts b/tests/host/vps-release-driver-interface_test.ts
+new file mode 100644
+index 0000000000..2aed7cff8f
+--- /dev/null
++++ b/tests/host/vps-release-driver-interface_test.ts
+@@ -0,0 +1,407 @@
++/**
++ * Pins the bridge to the owner-pinned driver's bridge-facing VpsJournalMetrics
++ * interface (ubiquity/sentinel#150). Each composition runs the exact upstream
++ * metrics bytes of ai.ubq.fi 21e4a2a9 (pinned today) or e50c298b
++ * (ubiquity/ai.ubq.fi#1027) through the real loader, so a mismatch with the
++ * driver fails here instead of refusing every VPS release at release time.
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import { portOk, type StateReadView } from "../../src/contracts/ports.ts";
++import { parseVpsReleaseRecordV1 } from "../../src/contracts/vps-release.ts";
++import {
++  composeTrustedVpsReleaseHost,
++  type TrustedVpsReleaseHostOptionsV1,
++} from "../../src/host/vps-release.ts";
++import type { VpsQueryLimits } from "../../src/release/vps-metrics.ts";
++import {
++  FAKE_DRIVER,
++  installVpsDriverHook,
++  JOINED_DRIVER_SHA,
++  joinedDriverFiles,
++  journalCoverage,
++  journalRange,
++  journalRows,
++  testCipher,
++  UPSTREAM_BLOBS,
++  upstreamSource,
++  WINDOW_DRIVER_SHA,
++  windowDriverFiles,
++  writeVpsDriverTree,
++} from "../release/vps-driver-fixture.ts";
++
++const fixture = parseVpsReleaseRecordV1(
++  JSON.parse(
++    await Deno.readTextFile(
++      new URL("../fixtures/vps/release-requested-v1.json", import.meta.url),
++    ),
++  ),
++);
++const TARGET = "/home/codex/repos/ubiquity/ai.ubq.fi";
++const STARTED = Math.ceil(fixture.createdAt / 30_000) * 30_000 + 60_000;
++const candidate = fixture.driver.candidate;
++const STATE_HEAD = "1".repeat(40) as GitSha;
++
++/** One committed monitoring operation for the pinned driver. */
++function monitoringState(driverSha256: string): StateReadView {
++  const record = parseVpsReleaseRecordV1({
++    ...fixture,
++    phase: "monitoring",
++    intent: { action: "promote", persistedAt: fixture.createdAt },
++    driver: { ...fixture.driver, driverSha256 },
++    monitoring: {
++      ...fixture.monitoring,
++      startedAt: STARTED,
++      lastObservedAt: STARTED,
++    },
++  });
++  const snapshot = {
++    version: "v1" as const,
++    kind: "release_state_snapshot" as const,
++    stateHead: null,
++    sequence: 3,
++    updatedAt: STARTED,
++    releases: [],
++    hostedRuntimes: [],
++    hostedReleases: [],
++    githubCooldowns: [],
++    vpsReleases: [record],
++  };
++  return {
++    readRepair: () =>
++      Promise.resolve(
++        portOk({ status: "absent", currentHead: null, ref: null }),
++      ),
++    readRelease: () =>
++      Promise.resolve(portOk({
++        status: "found" as const,
++        snapshot,
++        head: STATE_HEAD,
++        ref: "refs/heads/sentinel-state/release",
++      })),
++  };
++}
++
++function hostOptions(
++  tree: Awaited<ReturnType<typeof writeVpsDriverTree>>,
++  now: () => number,
++): TrustedVpsReleaseHostOptionsV1 {
++  return {
++    clock: { now },
++    stateRead: monitoringState(tree.moduleSha256),
++    stateWrite: {
++      writeRelease: () => {
++        throw new Error("sampling must not write release state");
++      },
++    },
++    repository: fixture.request.target.repository,
++    environment: "production",
++    controllerSha: fixture.driver.controllerSha as GitSha,
++    targetRoot: TARGET,
++    pinnedDriver: {
++      releaseRoot: tree.releaseRoot,
++      identity: tree.identity,
++      moduleSha256: tree.moduleSha256,
++    },
++    policy: fixture.policy,
++    logsLagMs: 0,
++    timeoutKinds: [],
++    upstreamWideKinds: [],
++    verifySource: () => Promise.resolve(false),
++    journalCoverage: () => Promise.reject(new Error("no coverage expected")),
++    readInferenceProof: () => Promise.resolve(null),
++    wait: () => Promise.resolve(),
++    deadline: STARTED + 3_600_000,
++  };
++}
++const requests = [0, 1, 2].map((index) => ({
++  id: `candidate-${index}`,
++  identity: candidate,
++  acceptedAt: STARTED + 1_000 + index,
++  terminalAt: STARTED + 2_000 + index,
++  status: index === 2 ? 503 : 200,
++}));
++const window = {
++  identity: candidate,
++  windowStart: STARTED,
++  windowEnd: STARTED + 30_000,
++};
++
++Deno.test("VPS driver interface: vendored upstream sources are the exact pinned Git blobs", async () => {
++  for (const [revision, blobs] of Object.entries(UPSTREAM_BLOBS)) {
++    for (const file of Object.keys(blobs)) {
++      await upstreamSource(
++        revision as keyof typeof UPSTREAM_BLOBS,
++        file as keyof (typeof UPSTREAM_BLOBS)[typeof JOINED_DRIVER_SHA],
++      );
++    }
++  }
++  const storage = await upstreamSource(
++    JOINED_DRIVER_SHA,
++    "vps-metrics-storage.ts",
++  );
++  assert.match(
++    storage,
++    /export function createVpsJoinFileStorage\(\s*root: string,\s*policy: VpsMetricsRetention,\s*cipher: VpsJoinCipher,\s*current: \(scope: VpsMetricsScope\) => Promise<VpsMetricsScope>,\s*now = Date\.now\s*\): VpsJoinStorage/,
++  );
++  assert.match(
++    await upstreamSource(JOINED_DRIVER_SHA, "deploy-lock.ts"),
++    /from "bun:ffi"/,
++  );
++});
++
++Deno.test("VPS driver interface: the pinned 21e4a2a9 window interface composes unchanged", async () => {
++  const tree = await writeVpsDriverTree(
++    WINDOW_DRIVER_SHA,
++    await windowDriverFiles(),
++  );
++  const hook = installVpsDriverHook({ create: () => ({}) });
++  try {
++    const runs: [string, string[], string][] = [];
++    const coverage: unknown[][] = [];
++    const now = STARTED + 90_000;
++    const options = hostOptions(tree, () => now);
++    const composed = await composeTrustedVpsReleaseHost({
++      ...options,
++      journalCoverage: (...args: unknown[]) => {
++        coverage.push(args);
++        return Promise.resolve(
++          journalCoverage(args[0] as number, args[1] as number),
++        );
++      },
++      platform: {
++        fetch,
++        run: (program, args, cwd) => {
++          runs.push([program, args, cwd]);
++          const [start, end] = journalRange(args);
++          return Promise.resolve(journalRows(requests, start, end));
++        },
++      },
++    });
++    assert.ok(composed.ok, "the currently pinned driver keeps composing");
++    assert.equal(
++      composed.value.metricsWork,
++      undefined,
++      "no joined tick contract",
++    );
++    const sample = await composed.value.port.sampleMetrics(window);
++    assert.ok(sample.ok && sample.value.coverage === "complete");
++    assert.equal(sample.value.requestCount, 3);
++    assert.equal(sample.value.fiveXxCount, 1);
++    assert.deepEqual(runs.map(([program, , cwd]) => [program, cwd]), [[
++      "journalctl",
++      TARGET,
++    ]]);
++    assert.deepEqual(journalRange(runs[0][1]), [
++      STARTED - 30_000,
++      STARTED + 60_000,
++    ]);
++    assert.deepEqual(coverage, [[STARTED - 30_000, STARTED + 60_000]]);
++    assert.deepEqual(hook.evaluated, ["driver"]);
++  } finally {
++    await tree.cleanup();
++  }
++});
++
++Deno.test("VPS driver interface: the #1027 joined interface gets all five options, a tick budget, exact windows and the bounded runner", async () => {
++  const tree = await writeVpsDriverTree(
++    JOINED_DRIVER_SHA,
++    await joinedDriverFiles(),
++  );
++  const hook = installVpsDriverHook({ create: () => ({}) });
++  try {
++    const runs: [readonly string[], VpsQueryLimits, string][] = [];
++    const coverage: unknown[][] = [];
++    const now = STARTED + 90_000;
++    const options = hostOptions(tree, () => now);
++    const retention = {
++      evidenceMaxAgeMs: 172_800_000,
++      evidenceMaxBytes: 16_777_216,
++    };
++    const compose = () =>
++      composeTrustedVpsReleaseHost({
++        ...options,
++        telemetry: { retention, cipher },
++        journalCoverage: (...args: unknown[]) => {
++          coverage.push(args);
++          return Promise.resolve(
++            journalCoverage(args[0] as number, args[1] as number),
++          );
++        },
++        platform: {
++          fetch,
++          run: () => Promise.reject(new Error("no generic command expected")),
++          journal: (args, limits, cwd) => {
++            runs.push([args, limits, cwd]);
++            const [start, end] = journalRange(args);
++            return Promise.resolve(journalRows(requests, start, end));
++          },
++        },
++      });
++    const cipher = await testCipher();
++    const untimed = await compose();
++    assert.ok(untimed.ok, "the joined driver composes");
++    const missingTick = await untimed.value.port.sampleMetrics(window);
++    assert.ok(missingTick.ok && missingTick.value.coverage === "incomplete");
++    assert.equal(runs.length, 0, "no journal work outside a begun tick");
++
++    const composed = await compose();
++    assert.ok(composed.ok);
++    const work = composed.value.metricsWork;
++    assert.ok(work, "the controller receives the tick contract");
++    work.beginTick(now);
++    const sample = await composed.value.port.sampleMetrics(window);
++    assert.ok(sample.ok && sample.value.coverage === "complete");
++    assert.equal(sample.value.requestCount, 3);
++    assert.equal(sample.value.fiveXxCount, 1);
++    assert.deepEqual(await work.progress(window), {
++      state: "complete",
++      reason: null,
++    });
++    assert.deepEqual(
++      runs.map(([args, limits, cwd]) => [
++        journalRange(args),
++        limits,
++        cwd,
++      ]),
++      [[
++        [STARTED, STARTED + 30_000],
++        { deadline: now + 20_000, maxBytes: 1_048_576, maxEntries: 8192 },
++        TARGET,
++      ]],
++    );
++    assert.deepEqual(coverage, [[STARTED, STARTED + 30_000, runs[0][1]]]);
++    assert.deepEqual(hook.storageRoots, [TARGET, TARGET]);
++    const sealed = hook.sealed.get(fixture.driver.operationId);
++    assert.equal(
++      sealed?.sequence,
++      2,
++      "one sealed checkpoint per operation, advanced by compare-and-swap",
++    );
++    assert.ok(
++      !new TextDecoder().decode(sealed.bytes).includes("candidate-0"),
++      "the join checkpoint is sealed",
++    );
++
++    const wide = await composed.value.port.sampleMetrics({
++      ...window,
++      windowEnd: STARTED + 60_000,
++    });
++    assert.equal(wide.ok, false, "only exact 30 s windows are sampled");
++    const outside = await composed.value.port.sampleMetrics({
++      ...window,
++      windowStart: STARTED - 30_000,
++      windowEnd: STARTED,
++    });
++    assert.ok(
++      outside.ok && outside.value.coverage === "incomplete",
++      "a candidate window before the monitoring scope is refused",
++    );
++  } finally {
++    await tree.cleanup();
++  }
++});
++
++Deno.test("VPS driver interface: a Bun-only driver or join storage graph is refused before evaluation", async (t) => {
++  const deployLock = await upstreamSource(JOINED_DRIVER_SHA, "deploy-lock.ts");
++  const journalStandIn =
++    `export { acquireDeployLock } from "./deploy-lock.ts";\nexport function withVpsDeployLock(root, work) { return work(); }\n`;
++  const cases: [
++    string,
++    string[],
++    (files: Record<string, string>) => Promise<void>,
++  ][] = [
++    ["e50c298b driver shares the bun:ffi deploy lock", [], (files) => {
++      files["ops/vps-release-driver.ts"] =
++        `import { withVpsDeployLock } from "./vps-release-journal.ts";\nexport const lock = withVpsDeployLock;\n${FAKE_DRIVER}`;
++      return Promise.resolve();
++    }],
++    ["e50c298b join file storage", ["driver"], async (files) => {
++      files["ops/vps-metrics-storage.ts"] = await upstreamSource(
++        JOINED_DRIVER_SHA,
++        "vps-metrics-storage.ts",
++      );
++      files["ops/io.ts"] = "export const missing = () => false;\n";
++    }],
++  ];
++  for (const [name, evaluated, edit] of cases) {
++    await t.step(name, async () => {
++      const files = {
++        ...await joinedDriverFiles(),
++        "ops/vps-release-journal.ts": journalStandIn,
++        "ops/deploy-lock.ts": deployLock,
++      };
++      await edit(files);
++      const tree = await writeVpsDriverTree(JOINED_DRIVER_SHA, files);
++      const hook = installVpsDriverHook({ create: () => ({}) });
++      try {
++        const result = await composeTrustedVpsReleaseHost({
++          ...hostOptions(tree, () => STARTED + 90_000),
++          telemetry: {
++            retention: { evidenceMaxAgeMs: 1_000, evidenceMaxBytes: 1_000 },
++            cipher: await testCipher(),
++          },
++        });
++        assert.equal(result.ok, false);
++        if (!result.ok) {
++          assert.equal(result.error.kind, "unavailable");
++          assert.equal(
++            result.error.detail,
++            "trusted VPS driver needs a host that can load Bun-only modules",
++          );
++        }
++        assert.equal(hook.storageRoots.length, 0, "no storage was created");
++        assert.deepEqual(hook.evaluated, evaluated, "nothing Bun-only ran");
++      } finally {
++        await tree.cleanup();
++      }
++    });
++  }
++});
++
++Deno.test("VPS driver interface: a mismatched interface or absent telemetry custody is unavailable", async (t) => {
++  const mismatched =
++    `export class VpsJournalMetrics { constructor(a, b, c, d, e, f) {} sample() {} }\nexport function createVpsJournalReader(run, root, coverage) { return { coverage }; }\nexport const runVpsJournalCommand = (args, limits, cwd) => Promise.resolve("");\n`;
++  for (
++    const [name, files, telemetry, message] of [
++      [
++        "joined constructor without the tick contract",
++        { "ops/vps-release-metrics.ts": mismatched },
++        true,
++        "trusted VPS metrics capability is unavailable",
++      ],
++      [
++        "joined driver without owner retention and cipher",
++        {},
++        false,
++        "trusted VPS telemetry capabilities are unavailable",
++      ],
++    ] as const
++  ) {
++    await t.step(name, async () => {
++      const tree = await writeVpsDriverTree(JOINED_DRIVER_SHA, {
++        ...await joinedDriverFiles(),
++        ...files,
++      });
++      installVpsDriverHook({ create: () => ({}) });
++      try {
++        const options = hostOptions(tree, () => STARTED + 90_000);
++        const result = await composeTrustedVpsReleaseHost(
++          telemetry
++            ? {
++              ...options,
++              telemetry: {
++                retention: { evidenceMaxAgeMs: 1_000, evidenceMaxBytes: 1_000 },
++                cipher: await testCipher(),
++              },
++            }
++            : options,
++        );
++        assert.equal(result.ok, false);
++        if (!result.ok) assert.equal(result.error.detail, message);
++      } finally {
++        await tree.cleanup();
++      }
++    });
++  }
++});
+diff --git a/tests/release/vps-controller_test.ts b/tests/release/vps-controller_test.ts
+index c65e6fb368..f22c2072cf 100644
+--- a/tests/release/vps-controller_test.ts
++++ b/tests/release/vps-controller_test.ts
+@@ -10,6 +10,7 @@ import {
+   vpsDigest,
+   type VpsHealthProof,
+   type VpsIdentity,
++  type VpsMetricsSample,
+   type VpsMutation,
+   type VpsOperation,
+   type VpsPrepare,
+@@ -17,12 +18,29 @@ import {
+   type VpsSettlement,
+ } from "../../src/contracts/vps-release-wire.ts";
+ import { VpsReleaseController } from "../../src/release/vps-controller.ts";
+-import { verifyCommittedSettlement } from "../../src/host/vps-release.ts";
++import type {
++  VpsMetricsProgress,
++  VpsMetricsWork,
++} from "../../src/release/vps-metrics.ts";
++import {
++  composeTrustedVpsReleaseHost,
++  verifyCommittedSettlement,
++} from "../../src/host/vps-release.ts";
+ import {
+   composeVpsReleasePort,
+   type NativeVpsDriverV1,
+ } from "../../src/release/vps-port.ts";
+ import { makeGitCtx, publishRepairRequest, storeAt } from "./helpers.ts";
++import {
++  installVpsDriverHook,
++  JOINED_DRIVER_SHA,
++  joinedDriverFiles,
++  journalCoverage,
++  journalRange,
++  journalRows,
++  testCipher,
++  writeVpsDriverTree,
++} from "./vps-driver-fixture.ts";
+ 
+ const fixture = parseVpsReleaseRecordV1(
+   JSON.parse(
+@@ -50,6 +68,7 @@ class FakeNativeVpsDriver implements NativeVpsDriverV1 {
+       ...this.receipt,
+       binding: input.binding,
+       controllerSha: input.controllerSha,
++      driverSha256: input.expectedDriverSha256,
+     });
+     return Promise.resolve(this.receipt);
+   }
+@@ -144,7 +163,16 @@ class FakeNativeVpsDriver implements NativeVpsDriverV1 {
+   }
+ }
+ 
+-async function scenario(failures = 0) {
++async function scenario(
++  failures = 0,
++  joined: {
++    metricsWork: VpsMetricsWork;
++    sample?: (
++      input: { identity: VpsIdentity; windowStart: number; windowEnd: number },
++      now: number,
++    ) => Promise<VpsMetricsSample>;
++  } | null = null,
++) {
+   const context = await makeGitCtx("vps-controller");
+   const state = storeAt(context, "vps-controller", "release");
+   await publishRepairRequest(context, fixture.request);
+@@ -154,7 +182,7 @@ async function scenario(failures = 0) {
+     driver,
+     metrics: {
+       sample: (input) =>
+-        Promise.resolve({
++        joined?.sample?.(input, now) ?? Promise.resolve({
+           ...input,
+           sampledAt: now,
+           requestCount: 100,
+@@ -189,6 +217,7 @@ async function scenario(failures = 0) {
+     logsLagMs: 0,
+     port,
+     clock: { now: () => now },
++    ...(joined ? { metricsWork: joined.metricsWork } : {}),
+   };
+   const controller = new VpsReleaseController(options);
+   const record = async (): Promise<VpsReleaseRecordV1> => {
+@@ -337,3 +366,203 @@ Deno.test("VPS controller: unobserved gap resets coverage and CAS refusal preven
+     await refused.context.cleanup();
+   }
+ });
++
++Deno.test("VPS controller: joined metrics begin each tick before sampling and hold a collecting window without restarting", async () => {
++  const events: string[] = [];
++  let startedAt = 0;
++  const collecting = (input: { windowStart: number }, now: number) =>
++    startedAt > 0 && input.windowStart === startedAt + 60_000 &&
++    now < startedAt + 180_000;
++  const rig = await scenario(0, {
++    metricsWork: {
++      beginTick: (at) => events.push(`tick:${at}`),
++      progress: (input): Promise<VpsMetricsProgress> =>
++        Promise.resolve(
++          events.at(-1) === `collecting:${input.windowStart}`
++            ? { state: "collecting", reason: "terminal_or_slice_pending" }
++            : { state: "complete", reason: null },
++        ),
++    },
++    sample: (input, now) => {
++      const pending = collecting(input, now);
++      events.push(`${pending ? "collecting" : "sample"}:${input.windowStart}`);
++      return Promise.resolve({
++        ...input,
++        sampledAt: now,
++        requestCount: pending ? null : 100,
++        fiveXxCount: pending ? null : 0,
++        timeoutCount: pending ? null : 0,
++        streamFailureCount: pending ? null : 0,
++        upstreamWideFault: pending ? null : false,
++        coverage: pending ? "incomplete" : "complete",
++        coverageDigest: pending ? null : "e".repeat(64),
++      });
++    },
++  });
++  try {
++    await rig.controller.run();
++    await rig.controller.run();
++    await rig.controller.run();
++    const monitoring = await rig.record();
++    assert.equal(monitoring.phase, "monitoring");
++    startedAt = monitoring.monitoring.startedAt!;
++    const held: number[] = [];
++    for (let slot = 0; slot < 80; slot++) {
++      rig.advance(30_000);
++      events.push(`run:${rig.options.clock.now()}`);
++      await rig.controller.run();
++      const record = await rig.record();
++      if (record.phase === "accepted") break;
++      assert.equal(record.monitoring.startedAt, startedAt, "never restarted");
++      assert.equal(record.monitoring.continuous, true);
++      held.push(record.monitoring.samples.length);
++    }
++    const accepted = await rig.record();
++    assert.equal(accepted.phase, "accepted");
++    assert.equal(accepted.monitoring.startedAt, startedAt);
++    assert.equal(accepted.monitoring.samples.length, 60);
++    assert.deepEqual(held.slice(0, 7), [0, 1, 2, 2, 2, 5, 6]);
++    const runs = events.flatMap((event, index) =>
++      event.startsWith("run:") ? [index] : []
++    );
++    assert.ok(runs.length >= 60);
++    for (const [position, index] of runs.entries()) {
++      const tick = events.slice(index + 1, runs[position + 1]);
++      if (tick.length === 0) continue;
++      assert.equal(
++        tick[0],
++        `tick:${events[index].slice(4)}`,
++        "each monitoring run begins its tick at its observation time before sampling",
++      );
++      assert.equal(tick.filter((event) => event.startsWith("tick:")).length, 1);
++    }
++  } finally {
++    await rig.context.cleanup();
++  }
++});
++
++Deno.test("VPS controller: the real #1027 VpsJournalMetrics drive acceptance through the composed bridge host", async () => {
++  const policy = {
++    ...fixture.policy,
++    minRequests: 2,
++    baselineWindowMs: 300_000,
++    baselineMinSamples: 10,
++  };
++  const rig = await scenario();
++  const tree = await writeVpsDriverTree(
++    JOINED_DRIVER_SHA,
++    await joinedDriverFiles(),
++  );
++  const hook = installVpsDriverHook({ create: () => rig.driver });
++  try {
++    const candidate = fixture.driver.candidate;
++    const prior = fixture.driver.prior.identity;
++    // Monitoring starts at the fixture's creation time (the clock holds for
++    // the first three runs); the request accepted in candidate window 2 only
++    // terminates in window 5, as buffered inference may.
++    const startedAt = fixture.createdAt;
++    const journal: [number, number, number][] = [];
++    const composed = await composeTrustedVpsReleaseHost({
++      clock: rig.options.clock,
++      stateRead: rig.state,
++      stateWrite: rig.state,
++      repository: fixture.request.target.repository,
++      environment: "production",
++      controllerSha: fixture.driver.controllerSha as GitSha,
++      targetRoot: "/home/codex/repos/ubiquity/ai.ubq.fi",
++      pinnedDriver: {
++        releaseRoot: tree.releaseRoot,
++        identity: tree.identity,
++        moduleSha256: tree.moduleSha256,
++      },
++      policy,
++      logsLagMs: 0,
++      timeoutKinds: [],
++      upstreamWideKinds: [],
++      verifySource: () => Promise.resolve(true),
++      journalCoverage: (start, end) =>
++        Promise.resolve(journalCoverage(start, end)),
++      readInferenceProof: (identity) =>
++        Promise.resolve({
++          revision: identity.gitSha,
++          observedAt: rig.options.clock.now(),
++          origin: "mac-direct-vps",
++          authenticated: true,
++          succeeded: true,
++          proofDigest: "f".repeat(64),
++        }),
++      wait: () => Promise.resolve(),
++      deadline: fixture.createdAt + 86_400_000,
++      telemetry: {
++        retention: {
++          evidenceMaxAgeMs: 172_800_000,
++          evidenceMaxBytes: 16_777_216,
++        },
++        cipher: await testCipher(),
++      },
++      platform: {
++        fetch,
++        run: () => Promise.reject(new Error("no generic command expected")),
++        journal: (args, limits) => {
++          const [start, end] = journalRange(args);
++          journal.push([start, limits.deadline, rig.options.clock.now()]);
++          const requests = [{
++            id: "buffered-inference",
++            identity: candidate,
++            acceptedAt: startedAt + 65_000,
++            terminalAt: startedAt + 151_000,
++          }];
++          for (
++            let at = Math.floor(start / 10_000) * 10_000 - 10_000;
++            at < end;
++            at += 10_000
++          ) {
++            for (const identity of [candidate, prior]) {
++              requests.push({
++                id: `${identity.gitSha.slice(0, 7)}-${at}`,
++                identity,
++                acceptedAt: at + 1_000,
++                terminalAt: at + 2_000,
++              });
++            }
++          }
++          return Promise.resolve(journalRows(requests, start, end));
++        },
++      },
++    });
++    assert.ok(composed.ok, "the joined driver composes");
++    assert.ok(composed.value.metricsWork);
++    const controller = new VpsReleaseController(composed.value);
++    await controller.run();
++    await controller.run();
++    await controller.run();
++    assert.equal((await rig.record()).monitoring.startedAt, startedAt);
++    const held: number[] = [];
++    for (let slot = 0; slot < 80; slot++) {
++      rig.advance(30_000);
++      await controller.run();
++      const record = await rig.record();
++      if (record.phase === "accepted") break;
++      assert.equal(record.monitoring.startedAt, startedAt, "never restarted");
++      held.push(record.monitoring.samples.length);
++    }
++    const accepted = await rig.record();
++    assert.equal(accepted.phase, "accepted");
++    assert.equal(accepted.monitoring.samples.length, 60);
++    assert.equal(accepted.monitoring.baseline.length, 10);
++    assert.equal(accepted.acceptance?.passed, true);
++    assert.equal(accepted.monitoring.samples[2].requestCount, 4);
++    assert.deepEqual(held.slice(0, 6), [0, 1, 2, 2, 2, 5]);
++    assert.ok(journal.length > 0);
++    for (const [, deadline, now] of journal) {
++      assert.equal(deadline, now + 20_000, "each tick begins at its own time");
++    }
++    assert.equal(
++      hook.sealed.get(fixture.driver.operationId)?.sequence !== undefined,
++      true,
++    );
++  } finally {
++    await tree.cleanup();
++    await rig.context.cleanup();
++  }
++});
+diff --git a/tests/release/vps-driver-fixture.ts b/tests/release/vps-driver-fixture.ts
+new file mode 100644
+index 0000000000..0c6286b6f5
+--- /dev/null
++++ b/tests/release/vps-driver-fixture.ts
+@@ -0,0 +1,341 @@
++/**
++ * Owner-pinned ai.ubq.fi driver trees for the VPS bridge tests. The metrics
++ * interface files are the exact upstream bytes (each checked against its Git
++ * blob id); only the native driver, the join storage and the journal are
++ * fakes, so a composition the real driver interface would reject fails here.
++ */
++import assert from "node:assert/strict";
++import type { VpsIdentity } from "../../src/contracts/vps-release-wire.ts";
++
++/** ai.ubq.fi 21e4a2a9: the driver revision the bridge verifies today. */
++export const WINDOW_DRIVER_SHA = "21e4a2a94b3de80a67cb95159ff3249723efca8f";
++/** ai.ubq.fi e50c298b: the merge of ubiquity/ai.ubq.fi#1027. */
++export const JOINED_DRIVER_SHA = "e50c298ba7c4da720b432c782b7b1989c6f58e22";
++/** `git rev-parse <revision>:ops/<file>` in ubiquity/ai.ubq.fi. */
++export const UPSTREAM_BLOBS = {
++  [WINDOW_DRIVER_SHA]: {
++    "vps-release-contract.ts": "1bf9fc987fc69747ea1d53b279be45de8ff63c6d",
++    "vps-release-metrics.ts": "b1e981e9111beef7fb50586257ed387927c497b2",
++  },
++  [JOINED_DRIVER_SHA]: {
++    // Byte-identical at both revisions; vendored once.
++    "vps-release-contract.ts": "1bf9fc987fc69747ea1d53b279be45de8ff63c6d",
++    "vps-release-metrics.ts": "6e8d65cbb636003387d26e006b9810fd42786665",
++    "vps-metrics-types.ts": "10dec017cab2fbf1e27f51527bab6110a992fe8b",
++    "vps-metrics-join.ts": "b9014f40d4bc02ad0cb09a44347cbbd41cb672ff",
++    "vps-journal-reader.ts": "0792c5a881136ee2a507a44e9e07646c52d77ec2",
++    "vps-metrics-storage.ts": "55ed61ff77dd43455af8ce36fd45e9fdc5614fb7",
++    "deploy-lock.ts": "046524bf4640d051c0bb9c13694b2e3bfd2e07da",
++  },
++} as const;
++type Revision = keyof typeof UPSTREAM_BLOBS;
++
++async function gitBlobId(bytes: Uint8Array): Promise<string> {
++  const header = new TextEncoder().encode(`blob ${bytes.byteLength}\0`);
++  const all = new Uint8Array(header.byteLength + bytes.byteLength);
++  all.set(header);
++  all.set(bytes, header.byteLength);
++  return hex(await crypto.subtle.digest("SHA-1", all));
++}
++function hex(buffer: ArrayBuffer): string {
++  return [...new Uint8Array(buffer)].map((byte) =>
++    byte.toString(16).padStart(2, "0")
++  ).join("");
++}
++async function sha256(bytes: Uint8Array): Promise<string> {
++  return hex(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes)));
++}
++
++/** Exact upstream bytes, refused unless they are the recorded Git blob. */
++export async function upstreamSource(
++  revision: Revision,
++  file: keyof (typeof UPSTREAM_BLOBS)[typeof JOINED_DRIVER_SHA],
++): Promise<string> {
++  const blobs: Record<string, string> = UPSTREAM_BLOBS[revision];
++  const expected = blobs[file];
++  assert.ok(expected, `no pinned upstream blob for ${revision}:${file}`);
++  const directory = file === "vps-release-contract.ts"
++    ? WINDOW_DRIVER_SHA
++    : revision;
++  const bytes = await Deno.readFile(
++    new URL(
++      `../fixtures/vps/ai.ubq.fi/${directory.slice(0, 8)}/ops/${file}.txt`,
++      import.meta.url,
++    ),
++  );
++  assert.equal(await gitBlobId(bytes), expected, `${revision}:ops/${file}`);
++  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
++}
++
++/** Test-owned native effects; the fixture driver module only forwards here. */
++export type VpsDriverFixtureHook = {
++  create(deps: Record<string, unknown>): unknown;
++  run(program: string, args: string[], cwd: string): Promise<string>;
++  evaluated: string[];
++  storageRoots: string[];
++  sealed: Map<string, { sequence: number; bytes: Uint8Array }>;
++};
++const HOOK = Symbol.for("sentinel.test.vps-driver-fixture");
++export function installVpsDriverHook(
++  hook: Partial<VpsDriverFixtureHook> = {},
++): VpsDriverFixtureHook {
++  const installed: VpsDriverFixtureHook = {
++    create: () => {
++      throw new Error("no fake native driver installed");
++    },
++    run: () => Promise.reject(new Error("no native command authorized")),
++    evaluated: [],
++    storageRoots: [],
++    sealed: new Map(),
++    ...hook,
++  };
++  (globalThis as Record<symbol, unknown>)[HOOK] = installed;
++  return installed;
++}
++
++const hookRead = `const hook = globalThis[Symbol.for("${HOOK.description}")];`;
++/** Fake driver module: no native effect, only the test hook. */
++export const FAKE_DRIVER = `${hookRead}
++hook.evaluated.push("driver");
++export function createVpsDeploymentDriver(deps) { return hook.create(deps); }
++export function runVpsCommand(program, args, cwd) { return hook.run(program, args, cwd); }
++`;
++/**
++ * A driver revision whose join storage lock loads under Deno: the upstream
++ * createVpsJoinFileStorage signature and CAS, kept in memory.
++ */
++export const DENO_STORAGE =
++  `import { canonicalVps } from "./vps-release-contract.ts";
++${hookRead}
++hook.evaluated.push("storage");
++export function createVpsJoinFileStorage(root, policy, cipher, current, now = Date.now) {
++  hook.storageRoots.push(root);
++  return {
++    load: (scope) => Promise.resolve(hook.sealed.get(scope.operationId)?.bytes ?? null),
++    save: async (scope, expected, bytes) => {
++      if (canonicalVps(await current(scope)) !== canonicalVps(scope) || bytes.byteLength > policy.evidenceMaxBytes) return false;
++      if ((hook.sealed.get(scope.operationId)?.sequence ?? null) !== expected) return false;
++      hook.sealed.set(scope.operationId, { sequence: (expected ?? 0) + 1, bytes });
++      return true;
++    },
++  };
++}
++`;
++
++export async function windowDriverFiles(): Promise<Record<string, string>> {
++  return {
++    "ops/vps-release-driver.ts": FAKE_DRIVER,
++    "ops/vps-release-contract.ts": await upstreamSource(
++      WINDOW_DRIVER_SHA,
++      "vps-release-contract.ts",
++    ),
++    "ops/vps-release-metrics.ts": await upstreamSource(
++      WINDOW_DRIVER_SHA,
++      "vps-release-metrics.ts",
++    ),
++  };
++}
++/** The real #1027 metrics graph with a Deno-loadable storage stand-in. */
++export async function joinedDriverFiles(): Promise<Record<string, string>> {
++  const files: Record<string, string> = {
++    "ops/vps-release-driver.ts": FAKE_DRIVER,
++    "ops/vps-metrics-storage.ts": DENO_STORAGE,
++  };
++  for (
++    const file of [
++      "vps-release-contract.ts",
++      "vps-release-metrics.ts",
++      "vps-metrics-types.ts",
++      "vps-metrics-join.ts",
++      "vps-journal-reader.ts",
++    ] as const
++  ) files[`ops/${file}`] = await upstreamSource(JOINED_DRIVER_SHA, file);
++  return files;
++}
++
++export interface VpsDriverTreeV1 {
++  releaseRoot: string;
++  identity: VpsIdentity;
++  moduleSha256: string;
++  cleanup(): Promise<void>;
++}
++/** Writes an immutable release tree inside the repository and pins its digest. */
++export async function writeVpsDriverTree(
++  gitSha: string,
++  files: Record<string, string>,
++): Promise<VpsDriverTreeV1> {
++  const repository = decodeURIComponent(
++    new URL("../../", import.meta.url)
++      .pathname,
++  ).replace(/\/$/, "");
++  const tmp = await Deno.realPath(
++    await Deno.makeTempDir({
++      dir: repository,
++      prefix: "sentinel-release-test-vps-driver-",
++    }),
++  );
++  const releaseRoot = `${tmp}/releases/${gitSha}`;
++  for (const [path, text] of Object.entries(files)) {
++    const full = `${releaseRoot}/${path}`;
++    await Deno.mkdir(full.slice(0, full.lastIndexOf("/")), { recursive: true });
++    await Deno.writeTextFile(full, text);
++  }
++  const entries: string[] = [];
++  const walk = async (relative: string): Promise<void> => {
++    const names: string[] = [];
++    for await (
++      const entry of Deno.readDir(`${releaseRoot}/${relative}`)
++    ) names.push(entry.name);
++    names.sort((left, right) => left.localeCompare(right));
++    for (const name of names) {
++      const path = relative ? `${relative}/${name}` : name;
++      const stat = await Deno.lstat(`${releaseRoot}/${path}`);
++      const mode = (stat.mode ?? 0) & 0o777;
++      if (stat.isDirectory) {
++        entries.push(JSON.stringify([path, "directory", mode]));
++        await walk(path);
++      } else {
++        entries.push(JSON.stringify([
++          path,
++          "file",
++          mode,
++          await sha256(await Deno.readFile(`${releaseRoot}/${path}`)),
++        ]));
++      }
++    }
++  };
++  await walk("");
++  return {
++    releaseRoot,
++    identity: {
++      runtime: "vps",
++      gitSha,
++      deploymentId: `vps-${gitSha}`,
++      sourceArchiveSha256: "b".repeat(64),
++      immutableTreeSha256: await sha256(
++        new TextEncoder().encode(entries.join("\n")),
++      ),
++    },
++    moduleSha256: await sha256(
++      await Deno.readFile(`${releaseRoot}/ops/vps-release-driver.ts`),
++    ),
++    cleanup: () => Deno.remove(tmp, { recursive: true }).catch(() => {}),
++  };
++}
++
++/** Real AES-GCM sealing bound to the driver's associated data. */
++export async function testCipher(): Promise<{
++  seal(plain: Uint8Array, data: Uint8Array): Promise<Uint8Array>;
++  open(sealed: Uint8Array, data: Uint8Array): Promise<Uint8Array>;
++}> {
++  const key = await crypto.subtle.generateKey(
++    { name: "AES-GCM", length: 256 },
++    false,
++    ["encrypt", "decrypt"],
++  );
++  return {
++    seal: async (plain, data) => {
++      const iv = crypto.getRandomValues(new Uint8Array(12));
++      const body = new Uint8Array(
++        await crypto.subtle.encrypt(
++          { name: "AES-GCM", iv, additionalData: new Uint8Array(data) },
++          key,
++          new Uint8Array(plain),
++        ),
++      );
++      const out = new Uint8Array(12 + body.byteLength);
++      out.set(iv);
++      out.set(body, 12);
++      return out;
++    },
++    open: async (sealed, data) =>
++      new Uint8Array(
++        await crypto.subtle.decrypt(
++          {
++            name: "AES-GCM",
++            iv: sealed.slice(0, 12),
++            additionalData: new Uint8Array(data),
++          },
++          key,
++          sealed.slice(12),
++        ),
++      ),
++  };
++}
++
++export type FakeJournalRequest = {
++  id: string;
++  identity: VpsIdentity;
++  acceptedAt: number;
++  terminalAt: number;
++  status?: number;
++};
++/** journalctl --output=json rows for the fixed unit and one boot. */
++export function journalRows(
++  requests: readonly FakeJournalRequest[],
++  start: number,
++  end: number,
++): string {
++  const rows: { at: number; line: string }[] = [];
++  for (const request of requests) {
++    const base = {
++      request_id: request.id,
++      git_sha: request.identity.gitSha,
++      deno_revision: request.identity.deploymentId,
++    };
++    for (
++      const [kind, at, body] of [
++        ["accepted", request.acceptedAt, base],
++        ["terminal", request.terminalAt, {
++          ...base,
++          status: request.status ?? 200,
++          stream: false,
++          failure_kind: null,
++          admission_stage: "accepted",
++        }],
++      ] as const
++    ) {
++      if (at < start || at >= end) continue;
++      rows.push({
++        at,
++        line: JSON.stringify({
++          _SYSTEMD_UNIT: "ai-ubq-fi.service",
++          _BOOT_ID: "boot-fixture",
++          __CURSOR: `cursor-${request.id}-${kind}`,
++          __REALTIME_TIMESTAMP: String(at * 1000),
++          MESSAGE: `[ai.ubq.fi] request_${kind} ${JSON.stringify(body)}`,
++        }),
++      });
++    }
++  }
++  return rows.sort((left, right) => left.at - right.at).map((row) =>
++    `${row.line}\n`
++  ).join("");
++}
++/** Independent completeness proof the owner's coverage readback returns. */
++export function journalCoverage(start: number, end: number) {
++  return {
++    complete: true as const,
++    unit: "ai-ubq-fi.service" as const,
++    windowStart: start,
++    windowEnd: end,
++    bootId: "boot-fixture",
++    firstCursor: `first-${start}`,
++    lastCursor: `last-${end}`,
++    digest: "c".repeat(64),
++  };
++}
++/** Parses the fixed bounded journalctl argv the #1027 reader builds. */
++export function journalRange(args: readonly string[]): [number, number] {
++  assert.equal(args.length, 5);
++  assert.equal(args[0], "--unit=ai-ubq-fi.service");
++  assert.equal(args[3], "--output=json");
++  assert.equal(args[4], "--no-pager");
++  const since = /^--since=@(\d+(?:\.\d+)?)$/.exec(args[1]);
++  const until = /^--until=@(\d+(?:\.\d+)?)$/.exec(args[2]);
++  assert.ok(since && until, `unexpected journal range ${args.join(" ")}`);
++  return [
++    Math.round(Number(since[1]) * 1000),
++    Math.round(Number(until[1]) * 1000),
++  ];
++}
+-- 
+2.43.0
+

@@ -1,0 +1,4447 @@
+From 90d0ade000bae0a5026d79317dc4ec68f1edcd0d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 17 Oct 2026 22:41:40 +0000
+Subject: [PATCH] fix(repair): correct a not-fulfilled task acceptance like a
+ P0/P1; owner-gate it once rounds are spent (JAM B6)
+
+JAM B6 ("task acceptance not fulfilled: the candidate does not satisfy the
+source issue") was absorbing. With a review round left, applyObservedReview
+blocked the record terminally instead of returning it to work, and it
+dropped the refusing receipt, so the reviewer's statement of what the issue
+still requires was not kept anywhere in state. With every round spent the
+record could neither merge nor be corrected, and the launcher's delivery
+pass reported `delivery:<id>:spent_not_admissible` for it on every pass.
+
+Runtime (src/, takes effect when the next runtime is installed):
+- A completed review whose only refusal is a `not_fulfilled` acceptance,
+  bound to the record's own issue and to its trusted live text, is a P1 (an
+  unaccepted candidate never merges; only P0/P1 block). The receipt keeps
+  every reviewer finding and the reviewer's acceptance verbatim. The verdict
+  is normalized into one leading unresolved P1 finding
+  (`task-acceptance-not-fulfilled`): the reviewer's acceptance evidence,
+  bounded to the 2,000-character correction-finding bound
+  (src/repair/acceptance-correction.ts).
+- The record then continues exactly as a P0/P1 verdict does. While a round
+  is left it returns to `work` for the ordinary charged correction, whose
+  first finding is that statement (B6a). With none left, or when the receipt
+  cannot hold one more finding, it parks once with its receipt as `task
+  acceptance not fulfilled and no correction can follow: owner decision
+  required` (B6b). No runtime path or launcher rule re-admits that park. The
+  3-round ceiling, charging, refunds and every merge gate are unchanged.
+- rejectedReceipt also rejects a head whose latest completed review carries
+  that P1. The missing-acceptance recovery re-reviews the same head. If the
+  head's earlier change-only receipt is listed first, it made the head read
+  as awaiting a CI correction. That correction's green exit returned the
+  head to review, and re-observation corrected it again, without end. The
+  run hit its step limit with no correction. Every other verdict keeps the
+  first-listed rule, and the legacy-loss bridge is unchanged.
+
+Launcher (ops/, correct under R80):
+- Retry pass (B6a): R80 blocked some records with exactly that refusal while
+  an ordinary round is left. Such a record returns to `review` with only its
+  blocker cleared, on its open issue and verified-open pull request. The
+  runtime re-observes the standing completed review (no new review, nothing
+  charged) and corrects it. This runs only under an allowlisted
+  acceptance-correction runtime at generation 81+ with its own healthy proof
+  (HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES). The list is empty here;
+  generation 81's pin commit lists R81, and a test checks every listed tree.
+  Under any other runtime the pass names each such record as
+  `retry:<id>:denied:acceptance_correction_requires_runtime`, because R80
+  would block the same verdict again on every pass.
+- Delivery pass (B6b): the delivery pass skips two shapes on an issue it did
+  not read closed, without a read: the owner-gated park, and the R80
+  refusal once its ordinary rounds are spent. It names them once per pass in
+  the result line as `owner_gate:task_acceptance_not_fulfilled:n=<count>:<ids>`
+  (12 named, the rest counted). This replaces the per-pass
+  `spent_not_admissible`. Nothing is written for them and no GitHub write
+  is added. The two sets are split by the ordinary round count, and the
+  runtime never writes the R80 refusal again, so no record cycles between
+  them.
+
+R80 rollback (tests run against R80's own source, ignored when shallow):
+- The receipt and every snapshot parse under R80. R80's own loop and planner
+  predicates start the same correction with the same first finding. R80's
+  plan parser accepts the planned cell, and its consumer's rule (a completed
+  review with unresolved findings binds the checked-out head) accepts it.
+- The owner-gated park is idle under R80.
+- R80 lists the change-only receipt first and blocks the head again, never
+  with a state error.
+- The launcher's re-admission is blocked again by R80, uncharged.
+- Control: the same verdict stored without the P1 reaches R80's merge gate
+  and returns a run-level state error on every run. That is why the receipt
+  carries the P1.
+
+Live (read-only, repair sequence 41474, 2026-10-17T21:40Z, R80 installed):
+- B6a: ai.ubq.fi 576 (PR 1069, 2 rounds), 653 (PR 1014, 1) and 660 (PR
+  1063, 2). They are named as awaiting the runtime from this launcher's
+  first pass. They are re-admitted on the first pass after R81 is pinned
+  and proven, and corrected on the runtime's next review observation and
+  matrix plan.
+- B6b: 611 (PR 1107), 1127 (PR 1145) and 118 (PR 1113, 22 rounds) are owner
+  gated from this launcher's first pass.
+- 112 and 596 carry the same spent refusal, but the owner merged their pull
+  requests by hand and closed both issues, so they are not named.
+
+Shared with other generation-81 lanes: ops/hosted-autonomy-retry-pass.ts
+(#153, #154), ops/hosted-autonomy-types.ts (#154), docs/DECISIONS.md (all).
+
+Tests: acceptance-correction (RED: blocked, then step limit; GREEN),
+hosted-autonomy-acceptance (RED against the base passes: three
+spent_not_admissible lines, no denial, no re-admission; GREEN),
+acceptance-rollback-r80, matrix-acceptance-correction, updated
+loop-semantic-acceptance and hosted-autonomy-spent-delivery S5.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H8mMNvEXtHRiTVR1wJeFLQ
+---
+ docs/DECISIONS.md                             |   10 +
+ ops/hosted-autonomy-acceptance.ts             |  207 ++
+ ops/hosted-autonomy-delivery-pass.ts          |   11 +
+ ops/hosted-autonomy-retry-pass.ts             |   19 +
+ ops/hosted-autonomy-types.ts                  |    6 +
+ src/repair/acceptance-correction.ts           |  142 ++
+ src/repair/loop-review-records.ts             |   19 +-
+ src/repair/loop-review-result.ts              |   29 +-
+ tests/fixtures/host/acceptance-b6-live.json   | 2153 +++++++++++++++++
+ tests/host/hosted-autonomy-acceptance_test.ts |  415 ++++
+ .../hosted-autonomy-spent-delivery_test.ts    |    9 +-
+ .../host/matrix-acceptance-correction_test.ts |  181 ++
+ tests/repair/acceptance-correction_test.ts    |  346 +++
+ tests/repair/acceptance-fixtures.ts           |   79 +
+ tests/repair/acceptance-r80-source.ts         |   74 +
+ tests/repair/acceptance-rollback-r80_test.ts  |  374 +++
+ tests/repair/loop-semantic-acceptance_test.ts |   32 +-
+ 17 files changed, 4098 insertions(+), 8 deletions(-)
+ create mode 100644 ops/hosted-autonomy-acceptance.ts
+ create mode 100644 src/repair/acceptance-correction.ts
+ create mode 100644 tests/fixtures/host/acceptance-b6-live.json
+ create mode 100644 tests/host/hosted-autonomy-acceptance_test.ts
+ create mode 100644 tests/host/matrix-acceptance-correction_test.ts
+ create mode 100644 tests/repair/acceptance-correction_test.ts
+ create mode 100644 tests/repair/acceptance-fixtures.ts
+ create mode 100644 tests/repair/acceptance-r80-source.ts
+ create mode 100644 tests/repair/acceptance-rollback-r80_test.ts
+
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index b6ce6b0b1b..0269000456 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -166,6 +166,16 @@ Owner decision 2026-10-16: CI first, then review, then merge. `requestReviewFor`
+ 
+ A CI fix is charged in the existing `counters.retries` (`countRetry`, also counting `attempts`) and never counts a review round: at most 3 per record, never lowered, a refunded never-submitted admission included; then the record parks with `CI fix attempts exhausted (3 of 3): ...`, which no rule re-admits. A fix also needs a review round for the fixed head, counted by the hard ceiling's own rule over the durable ledger (`reviewRoundsLeft`; CI fix charges are not `review_request` admissions and never count): fewer than 3 spent, or the one-time legacy final review of the owner's legacy class, whose ceiling is its pin + 1: every ai.ubq.fi issue record whose rounds reached three under the old review-before-CI order, by the cutoff rule above (the twelve the owner named, 595, 597, 605, 610, 618, 668, 672, 673, 680, 694, 698 and 879, the sixteen R79 parked the same way afterwards, 137, 575, 583, 602, 615, 617, 629, 633, 634, 638, 650, 678, 679, 693, 754 and 1128, and the records in flight at the install). Its open final round admits the CI fix; the fix arms it for the review. One rule under one cutoff serves every check (`legacyReviewRoundPin`, `legacyFinalRoundOpen`, `legacyFinalRoundArmed` in `src/repair/review-round-cap.ts`), and every launcher read that counts rounds takes the same cutoff: the correction planner, the flake re-run's settled read that every correction plan requires (`readCiRerunSettled`; round-2 recheck P1: read without the cutoff it settled no legacy record, so 645, 646, 657, 663 and 1140 would never have got their CI fix or final review, silently, since a record pinned at its spent count reports no drift; `tests/host/hosted-autonomy-legacy-settled_test.ts` runs the real retry pass on the 645 shape) and the conflict re-admission. So the CI fix admission, the review-round ceiling and the launcher's legacy re-admission can never disagree on who gets the final review. The hosted pre-review fix route stays closed in generation 80 (`HOSTED_PRE_REVIEW_CI_FIXES`): R79, its rollback target, refuses that cell generically; generation 80's consumer accepts it so a later generation can open it. Every refreshed head is a head no review has completed on, so this park is not limited to new candidates: a reviewed record whose base moved and whose refreshed head is red (live, most refreshes onto 2756425c16, 973bb2f and ded498f failed validate on prettier and eslint drift: 645, 646, 649, 1128, 583, 615, 617, 629, 633) parks `CI red before review; awaiting a CI fix: ...` in a hosted generation-80 run with no route out, where R79 reviewed it and then corrected it (`tests/repair/ci-first-refresh-red_test.ts`). The coordinator accepts this for generation 80 (its round-2 choice): such a park waits for generation 81, a follow-up, not a ship condition of generation 80, scheduled once R80 is healthy: R80 as its rollback target, `HOSTED_PRE_REVIEW_CI_FIXES` true and its runtime pinned in `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`, whose fix rule re-admits exactly these parks through the CI fix marker (the same test pins that route). The launcher approves held CI runs for published heads at `work` and for pre-review parks, re-runs a red pre-review park once, returns a green one to `work` under any runtime, and re-admits a red one with the fix marker only under an allowlisted fix runtime (none yet); the legacy final-review re-admission runs only under an allowlisted CI-first runtime (`HOSTED_AUTONOMY_CI_FIRST_RUNTIMES`, which names R80 from its install pin and counts it only once R80 holds its own healthy proof). The legacy final round is the same single round everywhere: a CI-fixed legacy head whose refresh conflicts keeps it for the resolved merge (`conflictResolutionShape` counts `reviewRoundsLeft` alone; live 597 and 668 conflict), and no launcher re-admission hands it to a runtime not proven CI-first (`legacyFinalRoundAdmissible`, denial `legacy_round_requires_ci_first`): the retry table's work, review and conflict re-pend grants, the pre-review CI-first returns (which also need a review round left), the CI correction's legacy rule, and the base-refresh, conflict and refresh re-arm re-admissions. R79 reviews before CI, so under it that round would be spent on a red head; under R79 a pending resolution generation 80 wrote for such a record is refused by R79's own shape (three or more rounds), so R79 runs the ordinary refresh, which blocks on the same conflict uncharged.
+ 
++## Generation 81 task acceptance corrections (2026-10-17, JAM B6)
++
++Owner rules: an unaccepted candidate never merges and only P0/P1 block a merge, so a completed review whose only refusal is a `not_fulfilled` task acceptance, bound to the record's own source issue and to its trusted live text, is a P1. The runtime (`src/repair/acceptance-correction.ts`, `applyObservedReview`) keeps the receipt with every reviewer finding verbatim and the reviewer's acceptance verbatim, and normalizes the verdict into one leading unresolved P1 finding (id `task-acceptance-not-fulfilled`, the reviewer's acceptance evidence, at most 2,000 characters). The record then continues exactly as a P0/P1 verdict does: while a review round is left (`reviewRoundsLeft`) it returns to `work` for the ordinary charged correction, whose first finding is that statement (B6a); with none left, or when the receipt already holds the most findings a receipt may, it parks once with the receipt as `task acceptance not fulfilled and no correction can follow: owner decision required` (B6b), which no runtime path and no launcher rule re-admits. The three-round ceiling, charging, refunds and every merge gate are unchanged. A head whose latest completed review carries that acceptance P1 is rejected even when an earlier receipt of the same head is listed first (`rejectedReceipt`; every other verdict keeps the first-listed rule): the missing-acceptance recovery re-reviews the same head, and its earlier change-only receipt must not turn the rejected head into one awaiting a CI correction that bounces between `work` and `review` without end.
++
++Rollback to R80 (e48e7e110): the receipt is a strict R80 receipt, and R80's own loop and planner predicates read the P1 as the P1 it is and start the same correction with the same first finding (`tests/repair/acceptance-rollback-r80_test.ts`, run against R80's own source); R80's plan parser accepts the planned cell (`tests/host/matrix-acceptance-correction_test.ts`), and R80's matrix consumer accepts it by the same rule as any P0/P1 correction (a completed review with unresolved findings binds the checked-out head). Storing the verdict without the P1 would not be safe: R80 would read a clean-findings head at `work` as awaiting a CI correction whose green exit reaches its merge gate, which refuses the acceptance with a run-level state error on every run (the rollback test's control). The owner-gated park is idle under R80, and a head whose change-only receipt R80 lists first is returned to review and blocked again by R80, never a state error.
++
++Launcher (`ops/hosted-autonomy-acceptance.ts`): a record R80 blocked with exactly `task acceptance not fulfilled: the candidate does not satisfy the source issue` while an ordinary round is left returns to `review` with only its blocker cleared (`retry:<id>:grant=0:other:task acceptance not fulfilled:review`), on its open issue and verified-open pull request, so the runtime re-observes the standing completed review (no new review, nothing charged) and corrects it. It runs only under an allowlisted acceptance-correction runtime at generation 81+ with its own healthy proof (`HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES`, empty until generation 81's pin commit lists R81; a test checks every listed revision's tree): R80 would block the same verdict again on every pass. Under any other runtime the retry pass names each such record (`retry:<id>:denied:acceptance_correction_requires_runtime`). The owner-gated park and the R80 refusal once its ordinary rounds are spent, on a source issue the pass did not read closed, are skipped by the delivery pass without a read and named once per pass in its result line (`owner_gate:task_acceptance_not_fulfilled:n=<count>:<ids>`), replacing `delivery:<id>:spent_not_admissible` on every pass; nothing is written for them and no GitHub write is added. The two sets are split by the ordinary round count and the runtime writes the R80 refusal never again, so no record cycles between them.
++
++Live at repair sequence 41474 (2026-10-17T21:40Z, R80 installed): ai.ubq.fi 576 (PR 1069, 2 rounds), 653 (PR 1014, 1 round) and 660 (PR 1063, 2 rounds) are B6a, re-admitted on the first pass after R81 is pinned and proven, and corrected on the runtime's next review observation and matrix plan; 611 (PR 1107), 1127 (PR 1145) and 118 (PR 1113, 22 rounds) are B6b, owner-gated from the first pass of this launcher. 112 (PR 1085) and 596 (PR 1088) carry the same spent refusal, but the owner merged both pull requests by hand and closed both issues on 2026-10-16, so they are not named and keep their existing `spent_not_admissible` line. R80 kept none of their refusing receipts, so the B6b records carry no stored acceptance statement; the owner reads it on each pull request's submitted Sentinel review (`Task acceptance (issue #<n>): not_fulfilled` and its evidence).
++
+ ## Retained macOS local mode and issue #100 (2026-10-17)
+ 
+ Owner context 2026-10-17: Sentinel's intended runtime is GitHub Actions on Linux; the retained macOS local-supervisor mode is not used. Issue #100 (the native Codex cannot apply its own Seatbelt profile inside the macOS local supervisor's child sandbox) concerns that retained local mode only and has no Actions impact, so it is closed as not planned for now. Generation 80 ships no macOS change: the opt-in Codex exemption of the local supervisor's child profile and the `check:macos-boundary` owner check (12af5da8a) are reverted, and the local supervisor, its child profile and their tests are byte-identical to the live launcher 413f9eff6. If the local mode is used again, #100 is reopened, and a supervisor-owned broker, not an exemption that lets repair-host code reach an unconfined Codex, is the route.
+diff --git a/ops/hosted-autonomy-acceptance.ts b/ops/hosted-autonomy-acceptance.ts
+new file mode 100644
+index 0000000000..79516c44b2
+--- /dev/null
++++ b/ops/hosted-autonomy-acceptance.ts
+@@ -0,0 +1,207 @@
++/**
++ * Launcher half of JAM B6, "task acceptance not fulfilled: the candidate does
++ * not satisfy the source issue" (the runtime half is
++ * `src/repair/acceptance-correction.ts`). Every rule is a pure predicate over
++ * the authenticated state; nothing here charges, refunds, merges or reads a
++ * review.
++ *
++ * - B6a re-admission (retry pass): a record the rollback-target runtime R80
++ *   blocked with EXACTLY that refusal while an ordinary review round is left
++ *   (`!ordinaryReviewRoundsSpent`) returns to `review` with only its blocker
++ *   cleared (counters, charges, intent, PR, head and candidate unchanged), on
++ *   its still-open issue and still-open pull request, and only under a proven
++ *   acceptance-correction runtime (`acceptanceCorrectionRuntimeProven`). The
++ *   runtime then re-observes the standing completed review of that exact head
++ *   (no new review, nothing charged) and turns the verdict into the correction
++ *   a P0/P1 gets. Under any other runtime the record is named in a
++ *   `retry:<id>:denied:acceptance_correction_requires_runtime` line instead:
++ *   R80 would re-observe the same verdict and block it again on every pass.
++ * - B6b owner gate (delivery pass): the runtime's owner-gated park
++ *   (`TASK_ACCEPTANCE_OWNER_GATE_DETAIL`) and the R80-written refusal once its
++ *   ordinary rounds are spent, on a source issue not read closed, can neither
++ *   merge nor correct. The delivery pass skips them without a read (replacing
++ *   the per-pass `delivery:<id>:spent_not_admissible` line) and the run
++ *   summary names them once per pass:
++ *   `owner_gate:task_acceptance_not_fulfilled:n=<count>:<ids>`. No retry rule
++ *   matches either shape.
++ *
++ * The two sets are disjoint by the ordinary round count, and the runtime's
++ * review step never writes the refusal it re-admits again (it corrects, or
++ * parks on the owner-gated message), so a record can never cycle between
++ * them.
++ */
++import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
++import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
++import { TASK_ACCEPTANCE_OWNER_GATE_DETAIL } from "../src/repair/acceptance-correction.ts";
++import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
++import { TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL } from "../src/repair/review-gate.ts";
++import { ordinaryReviewRoundsSpent } from "../src/repair/review-round-cap.ts";
++import { ciCorrectionRuntimeProven } from "./hosted-autonomy-ci-retries.ts";
++import {
++  HOSTED_AUTONOMY_MAX_RETRIES,
++  hostedIssueKey,
++} from "./hosted-autonomy-policy.ts";
++import {
++  type RetryDenialV1,
++  type RetryPlanV1,
++  taskReservationCount,
++} from "./hosted-autonomy-retries.ts";
++
++type WorkRow = RepairStateSnapshotV1["work"][number];
++
++/** First runtime generation that corrects a not-fulfilled acceptance. */
++export const HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_MIN_GENERATION = 81;
++
++/**
++ * Exact reviewed runtime revisions that correct a not-fulfilled acceptance
++ * (`src/repair/acceptance-correction.ts` in that revision's tree), each named
++ * by the launcher commit that pins its install. Empty until generation 81's
++ * pin commit lists R81: under R80 the re-admission would only be blocked
++ * again.
++ */
++export const HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES: ReadonlySet<
++  string
++> = new Set<string>([]);
++
++/** Denial of the B6a re-admission under a runtime that cannot correct it. */
++export const ACCEPTANCE_CORRECTION_REQUIRES_RUNTIME =
++  "acceptance_correction_requires_runtime";
++
++/** Detail of an applied B6a re-admission (`retry:<id>:grant=0:<detail>`). */
++export const ACCEPTANCE_READMISSION_DETAIL =
++  "other:task acceptance not fulfilled:review";
++
++/** Owner-gated records named per summary line (the rest are counted). */
++export const ACCEPTANCE_OWNER_GATE_REPORTS_PER_PASS = 12;
++
++/**
++ * True only for an allowlisted acceptance-correction runtime at generation
++ * 81+ whose own settled healthy proof binds this exact revision and
++ * generation (the CI-correction proof rule over this allowlist).
++ */
++export function acceptanceCorrectionRuntimeProven(
++  runtime: HostedRuntimeRecordV1 | null | undefined,
++  allowlist: ReadonlySet<string> =
++    HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES,
++): boolean {
++  return runtime !== null && runtime !== undefined &&
++    Number.isSafeInteger(runtime.generation) &&
++    runtime.generation >=
++      HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_MIN_GENERATION &&
++    ciCorrectionRuntimeProven(runtime, allowlist);
++}
++
++/** An issue task blocked with no operation in flight on `message`, exactly. */
++function blockedOn(record: WorkRow, message: string): boolean {
++  const issue = record.related.issueNumber;
++  return record.nextStep === "blocked" && record.intent === null &&
++    record.blocker !== null && record.blocker.kind === "other" &&
++    record.blocker.message === message && record.source.kind === "issue" &&
++    issue !== null && record.source.id === String(issue);
++}
++
++/**
++ * B6b: a not-fulfilled acceptance no correction can follow, on a source issue
++ * not known closed. The runtime's owner-gated park, or the R80-written
++ * refusal once its ordinary review rounds are spent. A record whose issue the
++ * owner already closed (live 112 and 596: their pull requests merged by hand)
++ * awaits no decision and keeps its existing handling.
++ */
++export function acceptanceOwnerGated(
++  record: WorkRow,
++  snapshot: Pick<RepairStateSnapshotV1, "reservations">,
++  /** `hostedIssueKey` values of the source issues this pass read closed. */
++  closedIssues: ReadonlySet<string> = new Set(),
++): boolean {
++  return (blockedOn(record, TASK_ACCEPTANCE_OWNER_GATE_DETAIL) ||
++    (blockedOn(record, TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL) &&
++      ordinaryReviewRoundsSpent(snapshot, record))) &&
++    !closedIssues.has(
++      hostedIssueKey(record.repository, record.related.issueNumber!),
++    );
++}
++
++/** The record's exact published, described and unreleased head. */
++function exactPublication(
++  snapshot: Pick<RepairStateSnapshotV1, "releaseRequests">,
++  record: WorkRow,
++): boolean {
++  const { head, pr, branch, base, candidateState } = record.target;
++  return head !== null && pr !== null && branch !== null && head !== base &&
++    (candidateState === undefined ||
++      (candidateState.preserved !== null &&
++        candidateState.preserved.head === head &&
++        candidateState.publishedHead === head)) &&
++    !snapshot.releaseRequests.some((request) =>
++      releaseRequestMatchesDelivery(request, record)
++    );
++}
++
++/**
++ * B6a: the closed re-admission plans (`nextStep: "review"`, counters kept)
++ * for the R80-written refusal with an ordinary review round left. Applied by
++ * `applyHostedRetries` after the retry pass verified each pull request open.
++ */
++export function planAcceptanceReadmissions(
++  snapshot: RepairStateSnapshotV1,
++  closedIssues: ReadonlySet<string>,
++  /** `acceptanceCorrectionRuntimeProven` of the installed runtime. */
++  runtimeProven: boolean,
++  onDenied?: (denial: RetryDenialV1) => void,
++): RetryPlanV1[] {
++  const plans: RetryPlanV1[] = [];
++  for (const record of snapshot.work) {
++    if (
++      !blockedOn(record, TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL) ||
++      record.counters.reviewRounds < 1 ||
++      closedIssues.has(
++        hostedIssueKey(record.repository, record.related.issueNumber!),
++      ) ||
++      ordinaryReviewRoundsSpent(snapshot, record) ||
++      !exactPublication(snapshot, record) ||
++      taskReservationCount(snapshot, record.id) >= HOSTED_AUTONOMY_MAX_RETRIES
++    ) continue;
++    if (!runtimeProven) {
++      onDenied?.({
++        id: record.id,
++        repository: record.repository,
++        reason: ACCEPTANCE_CORRECTION_REQUIRES_RUNTIME,
++      });
++      continue;
++    }
++    plans.push({
++      id: record.id,
++      repository: record.repository,
++      grant: 0,
++      nextStep: "review",
++      reviewRounds: null,
++      advanceBase: false,
++      observedBase: null,
++      detail: ACCEPTANCE_READMISSION_DETAIL,
++    });
++  }
++  return plans;
++}
++
++/**
++ * The run summary's one owner-gate line for this snapshot (none when no
++ * record is owner-gated): the count, then at most
++ * `ACCEPTANCE_OWNER_GATE_REPORTS_PER_PASS` record ids in id order and the
++ * number not named.
++ */
++export function acceptanceOwnerGateActions(
++  snapshot: RepairStateSnapshotV1,
++  closedIssues: ReadonlySet<string> = new Set(),
++): string[] {
++  const ids = snapshot.work.filter((record) =>
++    acceptanceOwnerGated(record, snapshot, closedIssues)
++  ).map((record) => record.id).sort();
++  if (ids.length === 0) return [];
++  const named = ids.slice(0, ACCEPTANCE_OWNER_GATE_REPORTS_PER_PASS);
++  const more = ids.length - named.length;
++  return [
++    `owner_gate:task_acceptance_not_fulfilled:n=${ids.length}:${
++      named.join(",")
++    }${more > 0 ? `,+${more}` : ""}`,
++  ];
++}
+diff --git a/ops/hosted-autonomy-delivery-pass.ts b/ops/hosted-autonomy-delivery-pass.ts
+index 7bebde569e..3a881b6385 100644
+--- a/ops/hosted-autonomy-delivery-pass.ts
++++ b/ops/hosted-autonomy-delivery-pass.ts
+@@ -62,16 +62,27 @@ import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "../src/repair/revie
+ import { markBlocked } from "../src/repair/transitions.ts";
+ import { runHostedCiRerunPass } from "./hosted-autonomy-ci-rerun.ts";
+ import { ciFirstApprovalEligible } from "./hosted-autonomy-ci-first.ts";
++import {
++  acceptanceOwnerGateActions,
++  acceptanceOwnerGated,
++} from "./hosted-autonomy-acceptance.ts";
+ 
+ export async function runHostedDeliveryPass(
+   context: HostedAutonomyPassContextV1,
+ ): Promise<HostedAutonomyResultV1 | null> {
+   const { deps, actions, revisions, scopeFor, readTip, readPull } = context;
+   const { snapshot, observedHead } = context;
++  // JAM B6b: a not-fulfilled acceptance no correction can follow is owner
++  // gated. It is named once in the run summary and then neither approved,
++  // read nor delivered (it used to report `spent_not_admissible` per pass).
++  actions.push(
++    ...acceptanceOwnerGateActions(snapshot, context.closedIssues),
++  );
+   // A record an earlier write of this pass touched waits for the next pass:
+   // it is neither approved nor delivered here (nor re-run, see the module).
+   const eligible = (record: (typeof snapshot.work)[number]) =>
+     deliveryEligible(record, snapshot) &&
++    !acceptanceOwnerGated(record, snapshot, context.closedIssues) &&
+     context.settled?.has(record.id) !== true;
+   // ---- check-approval pass ------------------------------------------------
+   // A candidate pushed to a pull request by the bot produces a CI run that
+diff --git a/ops/hosted-autonomy-retry-pass.ts b/ops/hosted-autonomy-retry-pass.ts
+index d43bc273ed..dd00344610 100644
+--- a/ops/hosted-autonomy-retry-pass.ts
++++ b/ops/hosted-autonomy-retry-pass.ts
+@@ -60,6 +60,10 @@ import {
+   planConflictReadmissions,
+   verifyConflictReadmissions,
+ } from "./hosted-autonomy-conflict-retries.ts";
++import {
++  acceptanceCorrectionRuntimeProven,
++  planAcceptanceReadmissions,
++} from "./hosted-autonomy-acceptance.ts";
+ 
+ /** Legacy class drift lines reported per pass (the rest are counted). */
+ export const LEGACY_DRIFT_REPORTS_PER_PASS = 12;
+@@ -405,6 +409,21 @@ export async function runHostedRetryPass(
+       legacyReviewCutoff: legacyCutoff,
+     },
+   );
++  // JAM B6a: an R80-written not-fulfilled acceptance with an ordinary round
++  // left returns to `review` under a proven acceptance-correction runtime,
++  // whose re-observation of the standing review starts its correction; its
++  // pull request is verified open below like every other plan's.
++  planned.push(...planAcceptanceReadmissions(
++    snapshot,
++    closedIssues,
++    acceptanceCorrectionRuntimeProven(
++      installedRuntime,
++      deps.acceptanceCorrectionRuntimes,
++    ),
++    (denial) => {
++      actions.push(`retry:${denial.id}:denied:${denial.reason}`);
++    },
++  ));
+   actions.push(...legacyClassDriftActions(snapshot, legacyCutoff, ciFirst));
+   const plans: RetryPlanV1[] = [];
+   // The per-pass CI correction cap counts only corrections this pass admits
+diff --git a/ops/hosted-autonomy-types.ts b/ops/hosted-autonomy-types.ts
+index 8be4b98be1..e252995775 100644
+--- a/ops/hosted-autonomy-types.ts
++++ b/ops/hosted-autonomy-types.ts
+@@ -382,6 +382,12 @@ export interface HostedAutonomyDepsV1 {
+    * (`launcherLegacyCutoff`).
+    */
+   legacyReviewCutoff?: number | null;
++  /**
++   * Exact acceptance-correction runtime revisions for the B6a re-admission,
++   * for tests. Production never sets it and uses
++   * HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES.
++   */
++  acceptanceCorrectionRuntimes?: ReadonlySet<string>;
+ }
+ 
+ /** One corrected runtime the refresh re-arm trusts, pinned in launcher source. */
+diff --git a/src/repair/acceptance-correction.ts b/src/repair/acceptance-correction.ts
+new file mode 100644
+index 0000000000..51a11041fd
+--- /dev/null
++++ b/src/repair/acceptance-correction.ts
+@@ -0,0 +1,142 @@
++/**
++ * Repair loop internals: a task acceptance the reviewer found NOT fulfilled
++ * (JAM B6). Owner rules: an unaccepted candidate never merges, and only P0/P1
++ * block a merge, so a completed review whose only refusal is a `not_fulfilled`
++ * acceptance bound to the record's own source issue and to its trusted live
++ * text is a P1. While a review round is left it is corrected exactly like any
++ * P0/P1 finding (B6a); with none left the record parks once with
++ * `TASK_ACCEPTANCE_OWNER_GATE_DETAIL`, which no runtime path and no launcher
++ * rule ever re-admits and which the launcher names in its run summary (B6b).
++ *
++ * The receipt is the runtime's normalized evidence of that review: every
++ * reviewer finding stays verbatim and in order, the reviewer's acceptance
++ * verdict and evidence stay verbatim in `taskAcceptance`, and the verdict is
++ * normalized into ONE added unresolved P1 finding with a fixed id that no
++ * reviewer finding can carry (reviewer ids are `github-review-<n>-finding-<m>`),
++ * whose message quotes the reviewer's acceptance evidence, bounded. The
++ * GitHub review journal itself is never touched.
++ *
++ * Rollback contract (generation 81 -> R80 e48e7e110): the receipt is a strict
++ * `ReviewReceiptV1` under R80's parser (no new key, a valid fingerprint, the
++ * unresolved severities derived from the findings), and R80's own predicates
++ * read it as the P1 it is: `rejectedReceipt` and `correctionFindings` start the
++ * same correction with the same first finding, the matrix consumer accepts its
++ * cell (a completed review with unresolved findings binds the checked-out
++ * head), the ceiling parks it as rejected and every merge gate refuses it. A
++ * clean-findings receipt at `work` would instead read as a reviewed head
++ * awaiting a CI correction under R80, whose green exit delivers it to a merge
++ * gate that refuses the acceptance with a state error on every run.
++ */
++import { asFindingFingerprint } from "../contracts/brands.ts";
++import { canonicalStringifySha256 } from "../contracts/canonical.ts";
++import {
++  deriveUnresolvedSeverities,
++  parseReviewReceiptV1,
++  type ReviewFindingV1,
++  type ReviewReceiptV1,
++  type ReviewTaskAcceptanceV1,
++} from "../contracts/review-receipt.ts";
++import { MaxItems } from "../contracts/validation.ts";
++
++/** Fixed id of the normalized acceptance finding (never a reviewer id). */
++export const TASK_ACCEPTANCE_FINDING_ID = "task-acceptance-not-fulfilled";
++
++/** Fixed opening of the normalized acceptance finding's message. */
++export const TASK_ACCEPTANCE_FINDING_PREFIX = "Task acceptance not fulfilled: ";
++
++/**
++ * Bound of the finding's message: the correction finding bound
++ * (`MAX_CORRECTION_FINDING_CHARS`), so the receipt finding and the finding a
++ * correction session receives are the same bytes.
++ */
++export const TASK_ACCEPTANCE_FINDING_MAX_CHARS = 2_000;
++
++/**
++ * The one owner-gated terminal park of a not-fulfilled acceptance that no
++ * correction can follow: every review round is spent (B6b), or the receipt
++ * cannot carry the acceptance finding (it already holds the most findings a
++ * receipt may). Distinct from the R80-written refusal
++ * (`TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL`), which the launcher re-admits while
++ * a round is left, so this park can never be re-admitted into a loop.
++ */
++export const TASK_ACCEPTANCE_OWNER_GATE_DETAIL =
++  "task acceptance not fulfilled and no correction can follow: owner decision required";
++
++const TRUNCATED = " [statement truncated]";
++
++/**
++ * The bounded finding text: what the issue requires that the candidate lacks,
++ * in the reviewer's own acceptance evidence, at most
++ * `TASK_ACCEPTANCE_FINDING_MAX_CHARS`.
++ */
++export function acceptanceFindingMessage(
++  acceptance: ReviewTaskAcceptanceV1,
++): string {
++  const text = `${TASK_ACCEPTANCE_FINDING_PREFIX}the review found that the ` +
++    `candidate does not satisfy source issue #${acceptance.issueNumber}. ` +
++    "Change the candidate so it satisfies everything the issue requires; " +
++    "the reviewer's acceptance evidence:" +
++    acceptance.evidence.map((item) => `\n- ${item}`).join("");
++  return text.length <= TASK_ACCEPTANCE_FINDING_MAX_CHARS
++    ? text
++    : `${
++      text.slice(0, TASK_ACCEPTANCE_FINDING_MAX_CHARS - TRUNCATED.length)
++    }${TRUNCATED}`;
++}
++
++/** True for the normalized, still unresolved acceptance finding. */
++export function isAcceptanceFinding(
++  finding: Pick<ReviewFindingV1, "id" | "severity" | "path" | "resolved">,
++): boolean {
++  return finding.id === TASK_ACCEPTANCE_FINDING_ID &&
++    finding.severity === "P1" && finding.path === null && !finding.resolved;
++}
++
++/** The normalized unresolved P1 finding of a not-fulfilled acceptance. */
++export async function acceptanceFinding(
++  acceptance: ReviewTaskAcceptanceV1,
++): Promise<ReviewFindingV1> {
++  const id = TASK_ACCEPTANCE_FINDING_ID;
++  const severity = "P1" as const;
++  const message = acceptanceFindingMessage(acceptance);
++  return {
++    id,
++    severity,
++    path: null,
++    message,
++    fingerprint: asFindingFingerprint(
++      await canonicalStringifySha256({ id, severity, path: null, message }),
++    ),
++    resolved: false,
++    resolutionEvidence: null,
++  };
++}
++
++/**
++ * `receipt` with its not-fulfilled acceptance normalized into the leading
++ * unresolved P1 finding, strictly re-parsed; null when the receipt carries no
++ * not-fulfilled acceptance, already holds a finding with the fixed id, or
++ * cannot hold one more finding.
++ */
++export async function withAcceptanceFinding(
++  receipt: ReviewReceiptV1,
++): Promise<ReviewReceiptV1 | null> {
++  const acceptance = receipt.taskAcceptance ?? null;
++  if (
++    acceptance === null || acceptance.verdict !== "not_fulfilled" ||
++    receipt.findings.length >= MaxItems.findings ||
++    receipt.findings.some((finding) =>
++      finding.id === TASK_ACCEPTANCE_FINDING_ID
++    )
++  ) return null;
++  const findings = [await acceptanceFinding(acceptance), ...receipt.findings];
++  try {
++    return parseReviewReceiptV1({
++      ...receipt,
++      findings,
++      unresolvedSeverities: deriveUnresolvedSeverities(findings),
++    });
++  } catch {
++    return null;
++  }
++}
+diff --git a/src/repair/loop-review-records.ts b/src/repair/loop-review-records.ts
+index 19c3d8034e..4853d0425c 100644
+--- a/src/repair/loop-review-records.ts
++++ b/src/repair/loop-review-records.ts
+@@ -5,7 +5,11 @@ import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+ import type { WorkRecordV1 } from "../contracts/work-record.ts";
+ import { ciCorrectionShape } from "./ci-rejection.ts";
+ import { isCiFixMarker } from "./ci-first-policy.ts";
+-import type { LegacyCutoff } from "./review-round-cap.ts";
++import {
++  latestCompletedReview,
++  type LegacyCutoff,
++} from "./review-round-cap.ts";
++import { isAcceptanceFinding } from "./acceptance-correction.ts";
+ import {
+   releaseRequestMatchesDelivery,
+   sameRepositoryIdentity,
+@@ -33,7 +37,18 @@ export function rejectedReceipt(
+       review.pullRequest.head === head &&
+       review.outcome === "completed",
+   );
+-  return receipt !== undefined && hasBlockingFindings(receipt) ? receipt : null;
++  if (receipt !== undefined && hasBlockingFindings(receipt)) return receipt;
++  // JAM B6: the LATEST completed verdict of the head rejects it as well when
++  // it is a not-fulfilled acceptance (its normalized P1). The
++  // missing-acceptance recovery re-reviews the SAME head, so that head's
++  // earlier change-only receipt may be listed first; read alone it would make
++  // the rejected head look like one awaiting a CI correction, whose green exit
++  // returns it to `review`, whose re-observation corrects it again, without
++  // end. Every other verdict keeps the first-listed rule above unchanged.
++  const latest = latestCompletedReview(snapshot, record);
++  return latest !== null && latest.findings.some(isAcceptanceFinding)
++    ? latest
++    : null;
+ }
+ 
+ /**
+diff --git a/src/repair/loop-review-result.ts b/src/repair/loop-review-result.ts
+index 7f87e49e14..6e4229b2f5 100644
+--- a/src/repair/loop-review-result.ts
++++ b/src/repair/loop-review-result.ts
+@@ -43,8 +43,13 @@ import type {
+ import {
+   classifyReviewTerminalDisposition,
+   TASK_ACCEPTANCE_MISSING_DETAIL,
++  TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL,
+   taskAcceptanceRefusal,
+ } from "./review-gate.ts";
++import {
++  TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
++  withAcceptanceFinding,
++} from "./acceptance-correction.ts";
+ import {
+   advanceToCorrection,
+   advanceToDelivery,
+@@ -260,7 +265,7 @@ export async function applyObservedReview(
+       ),
+     );
+   }
+-  const unresolved = hasBlockingFindings(receipt);
++  let unresolved = hasBlockingFindings(receipt);
+   // A completed code-quality verdict is still not a delivery. For an
+   // issue-backed record the receipt must also carry the reviewer's POSITIVE
+   // task acceptance bound to this exact source issue AND to the TRUSTED live
+@@ -328,7 +333,27 @@ export async function applyObservedReview(
+       });
+     }
+     const refusal = taskAcceptanceRefusal(receipt, record, task);
+-    if (refusal !== null) {
++    if (refusal === TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL) {
++      // JAM B6: the reviewer judged THIS issue's live text and found the
++      // candidate does not satisfy it. That is a P1 (an unaccepted candidate
++      // never merges), so the receipt carries the reviewer's acceptance
++      // statement as its leading P1 finding and the record continues exactly
++      // as a P0/P1 verdict does below: a correction while a round is left
++      // (B6a). With none left, or when the receipt cannot carry the finding,
++      // it parks once on the owner-gated message (B6b), never re-admitted.
++      const corrected = await withAcceptanceFinding(receipt);
++      if (corrected === null || reviewRoundsSpentOut(context, record)) {
++        return parkWithReceipt(
++          deps,
++          context,
++          record,
++          corrected ?? receipt,
++          TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
++        );
++      }
++      receipt = corrected;
++      unresolved = true;
++    } else if (refusal !== null) {
+       if (refusal === TASK_ACCEPTANCE_MISSING_DETAIL) {
+         // At the hard review-round ceiling a missing acceptance is final: the
+         // generation-79 recovery answers its own detail with another review,
+diff --git a/tests/fixtures/host/acceptance-b6-live.json b/tests/fixtures/host/acceptance-b6-live.json
+new file mode 100644
+index 0000000000..10b762f99e
+--- /dev/null
++++ b/tests/fixtures/host/acceptance-b6-live.json
+@@ -0,0 +1,2153 @@
++{
++  "description": "Live ai.ubq.fi repair records blocked 'task acceptance not fulfilled: the candidate does not satisfy the source issue' (JAM B6) at repair sequence 41474 (origin/sentinel-state/repair 3503d6ba7, 2026-10-17T21:40Z, R80 installed): B6a 576 (PR 1069), 653 (PR 1014), 660 (PR 1063) with review rounds left; B6b 611 (PR 1107), 1127 (PR 1145), 118 (PR 1113) with every round spent. Every reservation of those tasks and every stored review of those pull requests (none binds a current head: R80 does not keep the refusing receipt). Pull requests and issues were open at 20:39Z.",
++  "sequence": 41474,
++  "updatedAt": 1792273245789,
++  "records": [
++    {
++      "blocker": {
++        "kind": "other",
++        "message": "task acceptance not fulfilled: the candidate does not satisfy the source issue",
++        "since": 1792188280809
++      },
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "1f90f0a0b122bdcd424eb8fa6016a509bd3f6ed5"
++      },
++      "counters": {
++        "attempts": 4,
++        "retries": 0,
++        "reviewRounds": 2
++      },
++      "createdAt": 1790937399087,
++      "dependencies": [],
++      "evidence": [
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:f994e9b5ba561b1abcff06a8b329b37ca08fc003afaf0d1f8cb5f9048a055419"
++        }
++      ],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1790936156000,
++      "id": "issue-ubiquity-ai.ubq.fi-576",
++      "intent": null,
++      "kind": "work",
++      "nextStep": "blocked",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 576
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "576",
++        "kind": "issue",
++        "revision": "1d7e64e6b30cef212bca16ca7191f13685382ded"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "430b203c9e26cacd10914d6cc4af584d4a249ada",
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-576",
++        "candidateState": {
++          "preserved": {
++            "base": "430b203c9e26cacd10914d6cc4af584d4a249ada",
++            "head": "e2f269a614685596a88b4b2d657f2f6a9a23c486",
++            "operationKey": "base_refresh:1069:b33b41bf66dca8db68323c71dccdf2d88fe10c70:430b203c9e26cacd10914d6cc4af584d4a249ada",
++            "ref": "refs/heads/sentinel-candidates/dbfa483af20a89fcf57dd66b882de4eb05b21b3fb2ccd72ee3081247625ab543"
++          },
++          "publishedHead": "e2f269a614685596a88b4b2d657f2f6a9a23c486"
++        },
++        "checkpoint": null,
++        "head": "e2f269a614685596a88b4b2d657f2f6a9a23c486",
++        "pr": 1069
++      },
++      "updatedAt": 1792188281189,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": null
++    },
++    {
++      "blocker": {
++        "kind": "other",
++        "message": "task acceptance not fulfilled: the candidate does not satisfy the source issue",
++        "since": 1792218200905
++      },
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "1f90f0a0b122bdcd424eb8fa6016a509bd3f6ed5"
++      },
++      "counters": {
++        "attempts": 5,
++        "retries": 0,
++        "reviewRounds": 1
++      },
++      "createdAt": 1790951200910,
++      "dependencies": [],
++      "evidence": [],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1790950641000,
++      "id": "issue-ubiquity-ai.ubq.fi-653",
++      "intent": null,
++      "kind": "work",
++      "nextStep": "blocked",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 653
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "653",
++        "kind": "issue",
++        "revision": "dfcb82280f8c3236811cd3384f9bb1ac9a618ee9"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "973bb2f45230993da7896784f0ec4bf908bf3de9",
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-653",
++        "candidateState": {
++          "preserved": {
++            "base": "973bb2f45230993da7896784f0ec4bf908bf3de9",
++            "head": "30b03badfd275c4bf844422b52ebc546400f6e19",
++            "operationKey": "base_refresh:1014:ead33c9ec0b82aa34248131e298777c55d400930:973bb2f45230993da7896784f0ec4bf908bf3de9",
++            "ref": "refs/heads/sentinel-candidates/10a7edb9c8b3d8fcaf7b5e1716ec1cbf8ffdfd960d1c2f357cf5ec7939e993ba"
++          },
++          "publishedHead": "30b03badfd275c4bf844422b52ebc546400f6e19"
++        },
++        "checkpoint": null,
++        "head": "30b03badfd275c4bf844422b52ebc546400f6e19",
++        "pr": 1014
++      },
++      "updatedAt": 1792218201260,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": null
++    },
++    {
++      "blocker": {
++        "kind": "other",
++        "message": "task acceptance not fulfilled: the candidate does not satisfy the source issue",
++        "since": 1792224040387
++      },
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "1f90f0a0b122bdcd424eb8fa6016a509bd3f6ed5"
++      },
++      "counters": {
++        "attempts": 6,
++        "retries": 0,
++        "reviewRounds": 2
++      },
++      "createdAt": 1790951200910,
++      "dependencies": [],
++      "evidence": [
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:9d478ed2c7428c6dc50769db43f96a6503af25b33920d3761a0db5e66888dc70"
++        }
++      ],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1790950679000,
++      "id": "issue-ubiquity-ai.ubq.fi-660",
++      "intent": null,
++      "kind": "work",
++      "nextStep": "blocked",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 660
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "660",
++        "kind": "issue",
++        "revision": "dfcb82280f8c3236811cd3384f9bb1ac9a618ee9"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "2756425c16454cc7f8b49e0aa43c115364f59e7b",
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-660",
++        "candidateState": {
++          "preserved": {
++            "base": "2756425c16454cc7f8b49e0aa43c115364f59e7b",
++            "head": "5119245a104a04168a82d0a2e7596f342141164d",
++            "operationKey": "base_refresh:1063:fe46d7926a898f1cfaa4393c45f8d5bb5326d416:2756425c16454cc7f8b49e0aa43c115364f59e7b",
++            "ref": "refs/heads/sentinel-candidates/4635c37c1e9cd57f69c3da8249cb9c79c867635313a29ff21900fe17ffc05dde"
++          },
++          "publishedHead": "5119245a104a04168a82d0a2e7596f342141164d"
++        },
++        "checkpoint": null,
++        "head": "5119245a104a04168a82d0a2e7596f342141164d",
++        "pr": 1063
++      },
++      "updatedAt": 1792224040929,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": null
++    },
++    {
++      "blocker": {
++        "kind": "other",
++        "message": "task acceptance not fulfilled: the candidate does not satisfy the source issue",
++        "since": 1792148035063
++      },
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "1f90f0a0b122bdcd424eb8fa6016a509bd3f6ed5"
++      },
++      "counters": {
++        "attempts": 4,
++        "retries": 0,
++        "reviewRounds": 3
++      },
++      "createdAt": 1790942544130,
++      "dependencies": [],
++      "evidence": [
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:aa29c148f25689badc082408eb0d52adbc01a5ee1c4de4638698d3cc2f123885"
++        }
++      ],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1790938679000,
++      "id": "issue-ubiquity-ai.ubq.fi-611",
++      "intent": null,
++      "kind": "work",
++      "nextStep": "blocked",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 611
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "611",
++        "kind": "issue",
++        "revision": "1d7e64e6b30cef212bca16ca7191f13685382ded"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "8ea3def4b7a995086a8b92a80cc77bc781b00b85",
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-611",
++        "candidateState": {
++          "preserved": {
++            "base": "8ea3def4b7a995086a8b92a80cc77bc781b00b85",
++            "head": "8771b532481d5efa4870d0cbc8373764a469b5f2",
++            "operationKey": "impl:f7096d60a762455170e1afa861351cec4e8d2cb7b6dacd782a7dcbfdcdf37bc1",
++            "ref": "refs/heads/sentinel-candidates/7c8bde90be839481287472044981079fac0431a2115525f6373537498feefb9c"
++          },
++          "publishedHead": "8771b532481d5efa4870d0cbc8373764a469b5f2"
++        },
++        "checkpoint": null,
++        "head": "8771b532481d5efa4870d0cbc8373764a469b5f2",
++        "pr": 1107
++      },
++      "updatedAt": 1792148035063,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": null
++    },
++    {
++      "blocker": {
++        "kind": "other",
++        "message": "task acceptance not fulfilled: the candidate does not satisfy the source issue",
++        "since": 1792242742326
++      },
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f"
++      },
++      "counters": {
++        "attempts": 5,
++        "retries": 0,
++        "reviewRounds": 3
++      },
++      "createdAt": 1792192702137,
++      "dependencies": [],
++      "evidence": [
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:06b17744cec145b2d7033f120ea0c6595120a62d4c4b5ba04ab0dffe603994db"
++        },
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:a3ab10690200878b9ffe39cada466fa1470a08303f8da32b17a3e609768b9570"
++        }
++      ],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1792192256000,
++      "id": "issue-ubiquity-ai.ubq.fi-1127",
++      "intent": null,
++      "kind": "work",
++      "nextStep": "blocked",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 1127
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "1127",
++        "kind": "issue",
++        "revision": "b89a997835fffdb870541dc33aaf830ccd15c5e3"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "9a6b348807d4a8fd0cd1dae9107b714572780ed8",
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-1127",
++        "candidateState": {
++          "preserved": {
++            "base": "9a6b348807d4a8fd0cd1dae9107b714572780ed8",
++            "head": "aa5cd3df00c68488ce431952b2d7f23836e4741a",
++            "operationKey": "base_refresh:1145:27633738025791e9d591b99b9a72f8b5608718d3:9a6b348807d4a8fd0cd1dae9107b714572780ed8",
++            "ref": "refs/heads/sentinel-candidates/98b5ef34aecf27cc7d6bb9d4f360fc1e11440734b7d9312b14bff648dc3df3a4"
++          },
++          "publishedHead": "aa5cd3df00c68488ce431952b2d7f23836e4741a"
++        },
++        "checkpoint": null,
++        "head": "aa5cd3df00c68488ce431952b2d7f23836e4741a",
++        "pr": 1145
++      },
++      "updatedAt": 1792242742733,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": null
++    },
++    {
++      "blocker": {
++        "kind": "other",
++        "message": "task acceptance not fulfilled: the candidate does not satisfy the source issue",
++        "since": 1792173090057
++      },
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "dbae19f218141a44becd7d1fffc22d792913b4f0"
++      },
++      "counters": {
++        "attempts": 9,
++        "retries": 0,
++        "reviewRounds": 22
++      },
++      "createdAt": 1789982324611,
++      "dependencies": [],
++      "evidence": [
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:1e1a33eb9fc48e7655838d3d151461b20cd7a653df244c4a83a8cbd0a73b2c03"
++        },
++        {
++          "kind": "review_receipt",
++          "ref": "artifact:review-receipt/review-receipt:9ed85e09b8efef08e94cce7171514d672e6df6eef6fe5674a7f8159890d02b85"
++        }
++      ],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1787511987000,
++      "id": "issue-ubiquity-ai.ubq.fi-118",
++      "intent": null,
++      "kind": "work",
++      "nextStep": "blocked",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 118
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "118",
++        "kind": "issue",
++        "revision": "922c33392d8a4670968ee850312aed9a7e024f08"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "f9b310abbd4f71595356f498c50245913c07dcb7",
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-118",
++        "candidateState": {
++          "preserved": {
++            "base": "f9b310abbd4f71595356f498c50245913c07dcb7",
++            "head": "6319e1dc7bf838cd378be54057a6620aba2e3bbe",
++            "operationKey": "base_refresh:1113:1e60f69057a9b06f3240cb0e1e7090dee8351917:f9b310abbd4f71595356f498c50245913c07dcb7",
++            "ref": "refs/heads/sentinel-candidates/3fadc42f633ce1ad8e6ae300d47957d011e7b9c4ed084a2a130d199a00126776"
++          },
++          "publishedHead": "6319e1dc7bf838cd378be54057a6620aba2e3bbe"
++        },
++        "checkpoint": null,
++        "head": "6319e1dc7bf838cd378be54057a6620aba2e3bbe",
++        "pr": 1113
++      },
++      "updatedAt": 1792173090585,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": null
++    }
++  ],
++  "reservations": [
++    {
++      "attempt": 3,
++      "createdAt": 1790011941949,
++      "head": "3e109083d76c1f0dcb8c5c376c452e3e6b24843b",
++      "id": "0240a7f736deb2d19b8609ca6776733906c1594baceb795f6d9aac55d4c5f33d",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1790013781170,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1791263790174,
++      "head": "dc9db6d9bf9ac328601449ed7ef06456376f0f2b",
++      "id": "03989afe1d500456c783be90db48a0bc02559e4aad65a4c6d749d2929ed96694",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791735066399,
++      "taskId": "issue-ubiquity-ai.ubq.fi-660",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1792236061581,
++      "head": "a42418386523eb7590128d591555c62b8b375731",
++      "id": "07b46d1f36f216c5981d230b720b60ad01a631638d99a62b590311c090a25bea",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792236070671,
++      "taskId": "issue-ubiquity-ai.ubq.fi-1127",
++      "version": "v1"
++    },
++    {
++      "attempt": 11,
++      "createdAt": 1792158274770,
++      "head": "b6b9d751164946af8ac4957811ea30989498a1a8",
++      "id": "07e74bc5bdcc0bde8bd5c8cb24ff98a0bec618b4c8d76bf492b0feb05d48dc22",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792158286495,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1792213257883,
++      "head": "3876fe65703f558b0656c6384c359b48508bb777",
++      "id": "08272747c00e5355afeea671609e80d25daafb8611f296ffd1730a5ed85cadfd",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792214944939,
++      "taskId": "issue-ubiquity-ai.ubq.fi-1127",
++      "version": "v1"
++    },
++    {
++      "attempt": 5,
++      "createdAt": 1792220836923,
++      "head": "0ee5d86788d2bc42947ba60436e2f71426128d4b",
++      "id": "09d394970b3c9ce1fd6022483db976f35f9e989964845024e2ee5c14f21dd15e",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792221161915,
++      "taskId": "issue-ubiquity-ai.ubq.fi-660",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1790005725146,
++      "head": "aa8ce10d3acb625501aa4ea1a7f0060c231cf2eb",
++      "id": "1ba8184a0788bc11f2ab1ae48f4d5ecf103bc70c74724d2219df44769bd91ecb",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1790007569820,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 6,
++      "createdAt": 1792126575588,
++      "head": "1d1b71a14f52282f9d422da8999edd2b9dd62c24",
++      "id": "1bd77141f41ef5e52fba0e0290dc01e21aa1dee0acc60b0a3ee492873d2c88f2",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792127950121,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 13,
++      "createdAt": 1792160869138,
++      "head": "4bbe2e6a5d58ca40d622a2adfc172b62ac28a9a5",
++      "id": "2df3e60964933b26c3daaf602be9119d76b5b118ea2243f05fa239d656963afc",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792160883064,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 12,
++      "createdAt": 1792159637927,
++      "head": "4bbe2e6a5d58ca40d622a2adfc172b62ac28a9a5",
++      "id": "2f415fdb5578c195817ec1846f8f7017bb1dceea687730a089ab0c86c37f665a",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792159653468,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 6,
++      "createdAt": 1792152048741,
++      "head": "3cd2e537768e1574ca4b4f564b78e974108811b8",
++      "id": "337954ebfa3bd65a9fc68162242ac5b866694f7e1e12b034303dc64ceceeaccc",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792152059087,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 7,
++      "createdAt": 1792152968200,
++      "head": "3cd2e537768e1574ca4b4f564b78e974108811b8",
++      "id": "33c465c22b8154c5c14b0abdd10a5b4602b25b7db7295010653a4bcd7ffed7e1",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792152980719,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 4,
++      "createdAt": 1791756168881,
++      "head": "0ee5d86788d2bc42947ba60436e2f71426128d4b",
++      "id": "34067a0413f193c6faf5d5459893248ed2fdecc9f4578e5e1c7be842318999aa",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791757541621,
++      "taskId": "issue-ubiquity-ai.ubq.fi-660",
++      "version": "v1"
++    },
++    {
++      "attempt": 17,
++      "createdAt": 1792166504767,
++      "head": "1e60f69057a9b06f3240cb0e1e7090dee8351917",
++      "id": "3553e7a4ff89ad7b7772571063b20b301a7cc6a2a8cb17c6698aad1624f06b55",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792166515791,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 5,
++      "createdAt": 1792150771823,
++      "head": "38ede96e4328d589b79a87a99a77892dd536e281",
++      "id": "371d817d2f12acdc7dbad4987a76d17dd8f1c21bf2b123a2084381a5a4b50e02",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792150782317,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 6,
++      "createdAt": 1792222450481,
++      "head": "ded498ffbcd9f39d57f3da6e05425cf2f8059f50",
++      "id": "37d42ca33c04d3d489a172cd4eae5c38a015fef90f6b063a7ea52fc550390142",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792222782190,
++      "taskId": "issue-ubiquity-ai.ubq.fi-660",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1792111962167,
++      "head": "a4e3ac2c6fd52f2a2f39778c2eeea17128edb93c",
++      "id": "398da1289dd72486ad16b0e47be7082087aead14023e4b02439564f8b0e9e608",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792112516627,
++      "taskId": "issue-ubiquity-ai.ubq.fi-576",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1791066659053,
++      "head": "b31e31b0137bb8bc5c598c68fc0b64dcf3c233b3",
++      "id": "39cc9b44691f9664ad7ca565ab4977b19e76435964dbbe2a5a2a59a618f8c2ca",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791083729405,
++      "taskId": "issue-ubiquity-ai.ubq.fi-611",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1792113398134,
++      "head": "29afd6bd81d3d4346adb263229b936846ebd4bbe",
++      "id": "3c2257ec6b9d26ff5350942f1dce60a0a67d775f7a3e4ceea6b46e5437a1b2eb",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792113408785,
++      "taskId": "issue-ubiquity-ai.ubq.fi-576",
++      "version": "v1"
++    },
++    {
++      "attempt": 5,
++      "createdAt": 1792217148578,
++      "head": "0ee5d86788d2bc42947ba60436e2f71426128d4b",
++      "id": "3c4408aa71a138a99192f599285700acf9c83e561e56dfdbbf02b355a9d0ab44",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792217522749,
++      "taskId": "issue-ubiquity-ai.ubq.fi-653",
++      "version": "v1"
++    },
++    {
++      "attempt": 20,
++      "createdAt": 1792170717635,
++      "head": "6319e1dc7bf838cd378be54057a6620aba2e3bbe",
++      "id": "3e1bd8be545f9e0bfd09d399d259459c9119588b6de0ff43ee8ad9476d890705",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792170729979,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1791048190782,
++      "head": "4439e8546bb74653f8eeab29bae223c3038be972",
++      "id": "40376755c0596ef299de3727841b4b1f09d48584ea7983ee28906d8ce773c1f8",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791082627281,
++      "taskId": "issue-ubiquity-ai.ubq.fi-576",
++      "version": "v1"
++    },
++    {
++      "attempt": 4,
++      "createdAt": 1792149783204,
++      "head": "38ede96e4328d589b79a87a99a77892dd536e281",
++      "id": "476a92870d98c344d57f2b16028cb9856301a009cbf9b10da79206a342994138",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792149796986,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1792192790888,
++      "head": "b89a997835fffdb870541dc33aaf830ccd15c5e3",
++      "id": "4a40b61c3324219d1c08b27abd3a9ffb0522b21dd242a558105e6694e64dbf53",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792210973465,
++      "taskId": "issue-ubiquity-ai.ubq.fi-1127",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1792221513801,
++      "head": "b427c39eba5743da2b619e3e7ec10688157b37e3",
++      "id": "4db760fcba56329a5706c34cdaff9839bbc548d58233ef3cdee5349005a9f5f8",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792221523254,
++      "taskId": "issue-ubiquity-ai.ubq.fi-660",
++      "version": "v1"
++    },
++    {
++      "attempt": 16,
++      "createdAt": 1792165397937,
++      "head": "1e60f69057a9b06f3240cb0e1e7090dee8351917",
++      "id": "51477403a198b420155a137ed08e56e325ba47f8948ba9f40fc145f081d8a47e",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792165414426,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1792242193783,
++      "head": "aa5cd3df00c68488ce431952b2d7f23836e4741a",
++      "id": "51d689ea458aa3a36ef08b5d7d532d8ddc5f619c6cd4bead1e9356cd5d70ab81",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792242204028,
++      "taskId": "issue-ubiquity-ai.ubq.fi-1127",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1792239231906,
++      "head": "08288901706d685f5c273956458b2fa28ffff6e7",
++      "id": "54bf63a8429cf95a2e6e2aa523398de2222ac73d5a95630215089cfa6d3ef52d",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792239243978,
++      "taskId": "issue-ubiquity-ai.ubq.fi-1127",
++      "version": "v1"
++    },
++    {
++      "attempt": 19,
++      "createdAt": 1792169467733,
++      "head": "6319e1dc7bf838cd378be54057a6620aba2e3bbe",
++      "id": "58214ea38ecbc022a135fce58168d289f768057eb552ede3989f01224df36ddd",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792169484138,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 4,
++      "createdAt": 1792170310160,
++      "head": "a4e3ac2c6fd52f2a2f39778c2eeea17128edb93c",
++      "id": "5853c0c9ef6131a8e0ba7159f1a20011377d53b00896db80589253319abd5dd9",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792171255757,
++      "taskId": "issue-ubiquity-ai.ubq.fi-576",
++      "version": "v1"
++    },
++    {
++      "attempt": 4,
++      "createdAt": 1790016683476,
++      "head": "33dfec5405f27e67acfa0ca9caed615ae50e43e1",
++      "id": "5c121e45416612f47605d01d9cad47e4079118e1d43ec76ab9b1acce5582f7a1",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1790018525880,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 15,
++      "createdAt": 1792163575776,
++      "head": "0e84437fbafccca1019ffdbcbba8a1f288f1a2f3",
++      "id": "62b45c1ee312190fce2cbd53765bb6cb90b15b78ff03ed9d65e780cc58d64771",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792163594682,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 4,
++      "createdAt": 1792237007394,
++      "head": "ca6486b87835ee3b95dd24fa5f1dcc645ed7c97f",
++      "id": "673942f293b5b7699e12c3aca799b3c1ac4ace76ad9e6e3c95dc3eaf1fc82c8d",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792237982297,
++      "taskId": "issue-ubiquity-ai.ubq.fi-1127",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1791227436219,
++      "head": "3691fe4a36e4e4c6aae6f8c6aa04c12ed3ff6698",
++      "id": "6ca9fd2eb1ad7e38d7c5676fd15e1f80dfa0fa3339064a7711e60d53a9bd5fcc",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791583155717,
++      "taskId": "issue-ubiquity-ai.ubq.fi-611",
++      "version": "v1"
++    },
++    {
++      "attempt": 8,
++      "createdAt": 1792154984531,
++      "head": "30b561bbc13311677c0a03f3fc0363649b75b9f9",
++      "id": "6d219aac11e35ce6fb7362e82d718a0395903974fed1a2239b29b20a7f0fbf12",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792154996514,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1790020641902,
++      "head": "33dfec5405f27e67acfa0ca9caed615ae50e43e1",
++      "id": "76ff2f0a071d431bc6e9b7a38d62b8a3a6580e0c9604136b291c47394482086a",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1790022481782,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1790036657368,
++      "head": "cb0a39ed26db56eda5e3b40cc2ba6a8180e543b9",
++      "id": "821f13649e049f01fad0746ab6dd87e054f485c97c3e0d62f3efcffa5ec8ccb8",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1790038496292,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 4,
++      "createdAt": 1791755904437,
++      "head": "0ee5d86788d2bc42947ba60436e2f71426128d4b",
++      "id": "8de641e7c98821dd81f1edd528cac217b20556370f4b85a005cf179a443295a8",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791757866222,
++      "taskId": "issue-ubiquity-ai.ubq.fi-653",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1792217813846,
++      "head": "30b03badfd275c4bf844422b52ebc546400f6e19",
++      "id": "8ef9a4fd209a74a8a641fb08415d0c1116867a1a58bef199f13e8d1679c3754c",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792217822886,
++      "taskId": "issue-ubiquity-ai.ubq.fi-653",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1792148431280,
++      "head": "be91c12c88a24516167ef13ee2f884072a0d99e0",
++      "id": "93ad0e73c13619d770b9b1967850c3523a9f5107f4be7c6f3473fd6b426142c9",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792148444936,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 18,
++      "createdAt": 1792168312750,
++      "head": "6319e1dc7bf838cd378be54057a6620aba2e3bbe",
++      "id": "964e99cf9db7f540e51f4b320f3f85dc118c270f8510ea2afce472eee22abc65",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792168324047,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1792147657748,
++      "head": "8771b532481d5efa4870d0cbc8373764a469b5f2",
++      "id": "980ad36500ca082d604f22248dcc528f05413c9fd05c4e950eae834229dfdef8",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792147666807,
++      "taskId": "issue-ubiquity-ai.ubq.fi-611",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1791073615608,
++      "head": "b31e31b0137bb8bc5c598c68fc0b64dcf3c233b3",
++      "id": "a2aae7ba3e7e121598ba70fe8a8a5b30f1598efc887b590e6ed9be582a889088",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791084437285,
++      "taskId": "issue-ubiquity-ai.ubq.fi-660",
++      "version": "v1"
++    },
++    {
++      "attempt": 8,
++      "createdAt": 1792149182709,
++      "head": "8ea3def4b7a995086a8b92a80cc77bc781b00b85",
++      "id": "a3d54f5670f9930d6d9dc0117dffe94e6ae5108ba5f63f391dc30a5176de47bd",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792149473348,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1792143683442,
++      "head": "468a435814225326a77dfbe37f9314b10f970774",
++      "id": "a8135b966fb7e6b1b6f6d65dfe707ebfc2fcec7e5886e1da98673ae58a903d67",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792143694986,
++      "taskId": "issue-ubiquity-ai.ubq.fi-611",
++      "version": "v1"
++    },
++    {
++      "attempt": 22,
++      "createdAt": 1792172747748,
++      "head": "6319e1dc7bf838cd378be54057a6620aba2e3bbe",
++      "id": "ad98b4545a248b24cc62136152e2e6c3e5aad8e49bbdd874f3341085d2f36482",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792172760796,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1792146191648,
++      "head": "be91c12c88a24516167ef13ee2f884072a0d99e0",
++      "id": "aebe53c974c37313feb280471e1a1e98b318c7733ed3ad4d0ee73c369591d0ed",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792146201584,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1792147481816,
++      "head": "be91c12c88a24516167ef13ee2f884072a0d99e0",
++      "id": "b14c3d1c7db4283a6f42005883f0397cbd86e4532bf911a64fb1583d6d84b27d",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792147491363,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1792145728488,
++      "head": "468a435814225326a77dfbe37f9314b10f970774",
++      "id": "b1ecbc8ee2da2fb757a65f4717ddc16eeafb8a61a511a39975de3e1bfafa3ed0",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792145738773,
++      "taskId": "issue-ubiquity-ai.ubq.fi-611",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1791740121744,
++      "head": "0ee5d86788d2bc42947ba60436e2f71426128d4b",
++      "id": "b33287d32d94f76fc626fdde88836a1aa60bfa1e356428b415cb30a360cc9c3c",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791750950572,
++      "taskId": "issue-ubiquity-ai.ubq.fi-660",
++      "version": "v1"
++    },
++    {
++      "attempt": 21,
++      "createdAt": 1792171830025,
++      "head": "6319e1dc7bf838cd378be54057a6620aba2e3bbe",
++      "id": "bb3db308ec07db11ae4d8b2fd064a6d183604891321865892eb133e8fcad3529",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792171843955,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 9,
++      "createdAt": 1792161792343,
++      "head": "4d24681bcf4515749eb671fc120319db51ac3368",
++      "id": "be78448e106327147f7bafa9b45feb35bff561be6faab0ba06b49993834b64f7",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792162170377,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1791586112262,
++      "head": "943f9aeda2234338e06f888634718045bbf57b6e",
++      "id": "bec0526b41685c841be444be599670f3a403b4018d06ce6433117a5b4eb5cd08",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791587198906,
++      "taskId": "issue-ubiquity-ai.ubq.fi-611",
++      "version": "v1"
++    },
++    {
++      "attempt": 10,
++      "createdAt": 1792157330056,
++      "head": "b6b9d751164946af8ac4957811ea30989498a1a8",
++      "id": "bfe1f69175b505a7c8e665906c6ac205c2766bc4dc9fe70412941e25524148b2",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792157343603,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1792217192272,
++      "head": "973bb2f45230993da7896784f0ec4bf908bf3de9",
++      "id": "c52f66868b1158a7b3fb7d6896955adae00673f05beaf2b2506507872012c469",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792218419170,
++      "taskId": "issue-ubiquity-ai.ubq.fi-1127",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1791263444759,
++      "head": "dc9db6d9bf9ac328601449ed7ef06456376f0f2b",
++      "id": "c7064955f4898f3f7e5af53c5e16cd2ac7dc76ba618776eb6b486bdea4721a6e",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791735066399,
++      "taskId": "issue-ubiquity-ai.ubq.fi-653",
++      "version": "v1"
++    },
++    {
++      "attempt": 5,
++      "createdAt": 1792103620949,
++      "head": "1d1b71a14f52282f9d422da8999edd2b9dd62c24",
++      "id": "c8764ce3aa38bfa0ee8bd2f16cbebefb82246c5b8439a02eb0e282bc60637f08",
++      "kind": "budget_reservation",
++      "outcome": "reserved",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": null,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1792223477369,
++      "head": "5119245a104a04168a82d0a2e7596f342141164d",
++      "id": "cbf4bbd2439c088202dfae3e75a5e77c830aed4737c59dbe7c27cb5fe200479a",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792223487800,
++      "taskId": "issue-ubiquity-ai.ubq.fi-660",
++      "version": "v1"
++    },
++    {
++      "attempt": 9,
++      "createdAt": 1792156134725,
++      "head": "30b561bbc13311677c0a03f3fc0363649b75b9f9",
++      "id": "ced2ad68af20092492105c61e3ad28200e093dc443c2b0ef1501ddf37b4fecc9",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792156149757,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 14,
++      "createdAt": 1792162458897,
++      "head": "0e84437fbafccca1019ffdbcbba8a1f288f1a2f3",
++      "id": "d6ae8965a8cc75b1ea531e26e38c383f500b479f12f9c45fba9d591ca0deb569",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792162470544,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1790009654390,
++      "head": "25215482b82091ad438876a5f3c58d2626bd31b2",
++      "id": "dfc1f52e070b5350a173a8f43668f8253fca0adca312ceca8940f2dd68e7edd8",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1790009665040,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 4,
++      "createdAt": 1790032953950,
++      "head": "2207a757fb6f8c362e18cbf890d59ee191d53e26",
++      "id": "e38329f6519c312fbc82f2872004d926efa238ce2a986e8344ab795a8f65dcda",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1790034799756,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 7,
++      "createdAt": 1792129686032,
++      "head": "ae3c5be1a3ed46cae6bd67e952bb1050c13275d5",
++      "id": "e38d1fdf242211731756cf66fb5bf29a35368a9b0bd1c9a81c5133a78ae90db3",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792142372096,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1790024268978,
++      "head": "11ba0aaa222c0c96b1d97fc46cad41f2284c0463",
++      "id": "e565a2890e1efba0b81182e8b208a2c5139ff15f043650fd2713850a21881f99",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1790026109609,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1792188052981,
++      "head": "e2f269a614685596a88b4b2d657f2f6a9a23c486",
++      "id": "ec0b880db4a8c5886472b6043401aa3a2ff3bfd298b7264c784a44d312cf42d5",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "review_request",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792188062209,
++      "taskId": "issue-ubiquity-ai.ubq.fi-576",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1791739822300,
++      "head": "0ee5d86788d2bc42947ba60436e2f71426128d4b",
++      "id": "f26df9fe936343c668750d348ed47943ba9cdeb05a64a267b16808c70b954bd4",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791750950572,
++      "taskId": "issue-ubiquity-ai.ubq.fi-653",
++      "version": "v1"
++    },
++    {
++      "attempt": 4,
++      "createdAt": 1790040548404,
++      "head": "3661bcfd13a9c1b9056fe5dc1786bb49b18ad594",
++      "id": "f2d032bef8f81381199de4da4754fd742e544d19e22f5ce6078fa5bc3e22168e",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1790040559457,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 1,
++      "createdAt": 1791073131033,
++      "head": "b31e31b0137bb8bc5c598c68fc0b64dcf3c233b3",
++      "id": "f2f5ace0a637da758688b40c25b953caa57db5db0aa9bdabf339a1953280f08c",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791084346405,
++      "taskId": "issue-ubiquity-ai.ubq.fi-653",
++      "version": "v1"
++    },
++    {
++      "attempt": 4,
++      "createdAt": 1792147101316,
++      "head": "8ea3def4b7a995086a8b92a80cc77bc781b00b85",
++      "id": "f7096d60a762455170e1afa861351cec4e8d2cb7b6dacd782a7dcbfdcdf37bc1",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792147304911,
++      "taskId": "issue-ubiquity-ai.ubq.fi-611",
++      "version": "v1"
++    },
++    {
++      "attempt": 5,
++      "createdAt": 1792240048603,
++      "head": "ca6486b87835ee3b95dd24fa5f1dcc645ed7c97f",
++      "id": "fa7508a879a3e7290124c2cf0fcf810ee6925699c8a9658c25a74ecdbd013dbc",
++      "kind": "budget_reservation",
++      "outcome": "submitted",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792240977090,
++      "taskId": "issue-ubiquity-ai.ubq.fi-1127",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1790028495323,
++      "head": "7f99d1dab01d702d3182a48ffb7779316479e95d",
++      "id": "fcaf03fc01aca610f140dcefe3a796cf3ba28b527232e429c6444fc084a245d8",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1790030335451,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 3,
++      "createdAt": 1790044474598,
++      "head": "cfe8a0aea69a4be1b2cd49f9d1f03798cd313bfa",
++      "id": "fec88143844b66cb18239ac315e0241866da45816a86fe84d03ad5b707380ad2",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1790046485673,
++      "taskId": "issue-ubiquity-ai.ubq.fi-118",
++      "version": "v1"
++    },
++    {
++      "attempt": 2,
++      "createdAt": 1791226300801,
++      "head": "3691fe4a36e4e4c6aae6f8c6aa04c12ed3ff6698",
++      "id": "ffc3337e27e0e05a641908db08825ad63bc6d6868cfabcd5af667b2ede4d4677",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1791735066399,
++      "taskId": "issue-ubiquity-ai.ubq.fi-576",
++      "version": "v1"
++    }
++  ],
++  "reviews": [
++    {
++      "completedAt": 1792236414212,
++      "expectedReviewer": "ubiquity-sentinel[bot]",
++      "findings": [
++        {
++          "fingerprint": "35bf63b30191dffd51ea2e07b4deedf4914d2657b56109ba81b7c233b6b95154",
++          "id": "github-review-5557547606-finding-0",
++          "message": "[P1] Invalidate the pending defaults debounce on target changes\n\nIf an edit schedules the 500 ms save and the operator changes `baseSelect` before it fires, `clearDefaultsSaveQueue()` only resets the flag; the pending callback still enters this new branch and queues a save for the new target. The subsequent load can then POST freshly loaded or fallback values to the newly selected gateway; cancel or invalidate the pending debounce when the target changes.\n\nstatic/admin.js:10481-10483",
++          "path": "static/admin.js",
++          "resolutionEvidence": null,
++          "resolved": false,
++          "severity": "P1"
++        },
++        {
++          "fingerprint": "a9cabb3bd6c15b98dee34fb967a5726f404162860c125656b543228255f2f215",
++          "id": "github-review-5557547606-finding-1",
++          "message": "[P2] Reconcile filtered key views after concurrent edits\n\nWhen an expiry PATCH response arrives after another input changed during the request, `inputsUnchanged` is false and this rerender is skipped. `updateKeyStatus()` only changes the existing row's state and text, so the key remains in the old Active/Expired tab and an extended key gets no new expiry timer until another reload or queued save.\n\nstatic/admin.js:7363-7363",
++          "path": "static/admin.js",
++          "resolutionEvidence": null,
++          "resolved": false,
++          "severity": "P2"
++        },
++        {
++          "fingerprint": "b9bcaecee9dded0af5a60c10b9becd98bc35f867d1e510573b49670a1704edfe",
++          "id": "github-review-5557547606-finding-2",
++          "message": "[P3] Give live expired rows a warning accent\n\nThe new status refresh writes `data-state=\"expired\"`, but `static/style.css` still defines accents only for `active`, `warning`, and `revoked`; rows that expire while open or are edited to an expired date therefore fall back to the muted accent instead of the warning accent. Use the warning state or add an expired-row rule.\n\nstatic/admin.js:7145-7148",
++          "path": "static/admin.js",
++          "resolutionEvidence": null,
++          "resolved": false,
++          "severity": "P3"
++        }
++      ],
++      "findingsUncounted": 0,
++      "id": "review-receipt:06b17744cec145b2d7033f120ea0c6595120a62d4c4b5ba04ab0dffe603994db",
++      "kind": "review_receipt",
++      "observedAt": 1792236466086,
++      "observedReviewer": "ubiquity-sentinel[bot]",
++      "outcome": "completed",
++      "pullRequest": {
++        "base": "ca6486b87835ee3b95dd24fa5f1dcc645ed7c97f",
++        "head": "a42418386523eb7590128d591555c62b8b375731",
++        "number": 1145
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "requestId": "review-review:1145:a42418386523eb7590128d591555c62b8b375731",
++      "resultId": "msg_0797b986a6daf47d016ad35b7b0dc081978d9f7ab48aeba043",
++      "submittedAt": 1792236068500,
++      "summary": "The patch retains a cross-target defaults-save race and incomplete live key rendering.",
++      "taskAcceptance": {
++        "evidence": [
++          "The pending debounced defaults save is not invalidated by the target-change handler, so the candidate can still queue a POST for the newly selected gateway.",
++          "The candidate leaves static/style.css without an expired-row accent rule while static/admin.js assigns data-state=\"expired\".",
++          "The added JavaScript tests only regex-match source text and do not exercise delayed/reload saves, revoke cancellation, expired unrevoke behavior, or expired-key rendering; the route list also omits the revoke and unrevoke endpoints."
++        ],
++        "issueNumber": 1127,
++        "taskDigest": "180ace0a8c344c1b6593932fd3931b8e1f1f26b0212390aa8ba861c9bf2a1645",
++        "verdict": "not_fulfilled"
++      },
++      "unresolvedSeverities": [
++        "P1",
++        "P2",
++        "P3"
++      ],
++      "version": "v1"
++    },
++    {
++      "completedAt": 1792148789397,
++      "expectedReviewer": "ubiquity-sentinel[bot]",
++      "findings": [
++        {
++          "fingerprint": "e697cf4b8405199e25cfddb2b82ca29e55d8f5641cd86a3ede80437aa98da838",
++          "id": "github-review-5546860503-finding-0",
++          "message": "[P1] Anchor V3 request TTLs to the usage window\n\nThe request-row type has no `window_reset_at_ms`, so this always falls back to `reserved_at_ms`. The source writer expires both the request and its aggregate from `window_reset_at_ms` (`src/api-key-policy.ts:747-750`); a request near the start of a long/current window can therefore be skipped while its window is imported, dropping lifecycle history and potentially leaving `reserved_requests` inconsistent. Reconstruct the matching window reset or skip the related state instead of using the reservation timestamp.\n\nsrc/cache/kv-migration-base.ts:282-286",
++          "path": "src/cache/kv-migration-base.ts",
++          "resolutionEvidence": null,
++          "resolved": false,
++          "severity": "P1"
++        }
++      ],
++      "findingsUncounted": 0,
++      "id": "review-receipt:1e1a33eb9fc48e7655838d3d151461b20cd7a653df244c4a83a8cbd0a73b2c03",
++      "kind": "review_receipt",
++      "observedAt": 1792148794455,
++      "observedReviewer": "ubiquity-sentinel[bot]",
++      "outcome": "completed",
++      "pullRequest": {
++        "base": "8ea3def4b7a995086a8b92a80cc77bc781b00b85",
++        "head": "be91c12c88a24516167ef13ee2f884072a0d99e0",
++        "number": 1113
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "requestId": "review-review:1113:be91c12c88a24516167ef13ee2f884072a0d99e0:attempt-3",
++      "resultId": "msg_0d61e7baacccf27a016ad20532c570819699f6222975538808",
++      "submittedAt": 1792148439925,
++      "summary": "The migration adds bounded TTLs and Kernel V2 reconciliation, but V3 request retention uses the wrong timestamp.",
++      "taskAcceptance": {
++        "evidence": [
++          "`src/cache/kv-migration-base.ts:265-302` adds bounded TTL/skip handling, and `:324-353` imports and reconciles active Kernel V2 reservations.",
++          "`src/cache/kv-migration-usage.ts:659-724` and `src/kernel/quota-reservations.ts:114-154` validate reservation identity, scope, state, lease/window ordering, reset consistency, orphan rows, and aggregate mismatches.",
++          "`src/cache/kv-migration-base.ts:282-286` uses `reserved_at_ms` for V3 request expiry even though the source writes expiry from the matching usage window reset, so the candidate can omit valid quota lifecycle rows while retaining their aggregate."
++        ],
++        "issueNumber": 118,
++        "taskDigest": "2fd9fa1d339c92f992a619ab71101a81f1f2b6f1a6b8800f5f31dd75ff0cc99d",
++        "verdict": "not_fulfilled"
++      },
++      "unresolvedSeverities": [
++        "P1"
++      ],
++      "version": "v1"
++    },
++    {
++      "completedAt": 1792221701923,
++      "expectedReviewer": "ubiquity-sentinel[bot]",
++      "findings": [
++        {
++          "fingerprint": "214a9ba68e7039d2c7e3f6eacce91c49cf3a30e1e3d98efbefe9e4c9519d3b0d",
++          "id": "github-review-5556803463-finding-0",
++          "message": "[P1] Preserve reverse lookup for already-flattened tool choices\n\nWhen the compatibility form supplies a synthesized name such as `{ type: \"function\", function: { name: \"ns_lookup\" } }`, `toolNames` contains `ns_lookup` mapped to `{ name: \"lookup\", namespace: \"ns\" }`, but this loop compares against `original.name` and falls through to returning `ns_lookup`. This breaks the existing reverse-mapping contract and the unchanged `deepseek-catalog-branch-coverage.test.ts` assertion; retain the map-key lookup while adding the namespace-aware path.\n\nsrc/deepseek/chat-projection.ts:652-655",
++          "path": "src/deepseek/chat-projection.ts",
++          "resolutionEvidence": null,
++          "resolved": false,
++          "severity": "P1"
++        }
++      ],
++      "findingsUncounted": 0,
++      "id": "review-receipt:9d478ed2c7428c6dc50769db43f96a6503af25b33920d3761a0db5e66888dc70",
++      "kind": "review_receipt",
++      "observedAt": 1792221913411,
++      "observedReviewer": "ubiquity-sentinel[bot]",
++      "outcome": "completed",
++      "pullRequest": {
++        "base": "ded498ffbcd9f39d57f3da6e05425cf2f8059f50",
++        "head": "b427c39eba5743da2b619e3e7ec10688157b37e3",
++        "number": 1063
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "requestId": "review-review:1063:b427c39eba5743da2b619e3e7ec10688157b37e3",
++      "resultId": "msg_0a2ca9250b8abaf1016ad32203f9708190952df9193d16cbcd",
++      "submittedAt": 1792221520701,
++      "summary": "The namespace-aware choice works for original name plus namespace, but regresses existing flattened-name compatibility choices.",
++      "taskAcceptance": {
++        "evidence": [
++          "src/deepseek/chat-projection.ts:647-669 adds a namespace-aware lookup that translates the colliding original identity `{name: \"now\", namespace: \"clock\"}` to `clock_now`.",
++          "tests/deepseek-responses.test.ts:212-245 covers the top-level/namespace collision and asserts both the synthesized choice and the returned function call retain `name: \"now\"` and `namespace: \"clock\"`."
++        ],
++        "issueNumber": 660,
++        "taskDigest": "2a318b2eddf1a872631dc5d13f38fc72630cf161eef47f61b08c72584666863d",
++        "verdict": "fulfilled"
++      },
++      "unresolvedSeverities": [
++        "P1"
++      ],
++      "version": "v1"
++    },
++    {
++      "completedAt": 1792161233414,
++      "expectedReviewer": "ubiquity-sentinel[bot]",
++      "findings": [
++        {
++          "fingerprint": "7feff0574786b43c836a10a331cc6cf5ca8c32043094d9ea53fe088aad85766d",
++          "id": "github-review-5549146817-finding-0",
++          "message": "[P1] Keep paid-fallback pending markers durable\n\nWhen an unresolved `paid_fallback/v3/pending` marker is migrated, this branch applies the request-log retention TTL. The admission writer stores these markers without `expireIn`, and `getPaidFallbackOutstandingV3` treats any marker as outstanding, so an unresolved migrated request can lose its marker after a year and become deletable without reconciliation. Do not expire pending markers here.\n\nsrc/cache/kv-migration-base.ts:303-304",
++          "path": "src/cache/kv-migration-base.ts",
++          "resolutionEvidence": null,
++          "resolved": false,
++          "severity": "P1"
++        },
++        {
++          "fingerprint": "ad0699e909d9e0a466d49dd9bb82f33437d75be694036eb8c5cd55e35b7f480d",
++          "id": "github-review-5549146817-finding-1",
++          "message": "[P2] Preserve TTLs for all expiring migration groups\n\nFor importable `paid_fallback/ledger` and `embeddings/idempotency/v1` rows, `migrationExpireIn` reaches this fallback and returns `null`, so the subsequent write has no `expireIn`. Their source writers use finite retention periods, meaning migration turns stale ledger and idempotency data permanent instead of reconstructing or skipping it; add explicit cases or skip rows whose expiry cannot be safely reconstructed.\n\nsrc/cache/kv-migration-base.ts:315-315",
++          "path": "src/cache/kv-migration-base.ts",
++          "resolutionEvidence": null,
++          "resolved": false,
++          "severity": "P2"
++        }
++      ],
++      "findingsUncounted": 0,
++      "id": "review-receipt:9ed85e09b8efef08e94cce7171514d672e6df6eef6fe5674a7f8159890d02b85",
++      "kind": "review_receipt",
++      "observedAt": 1792161239972,
++      "observedReviewer": "ubiquity-sentinel[bot]",
++      "outcome": "completed",
++      "pullRequest": {
++        "base": "4d24681bcf4515749eb671fc120319db51ac3368",
++        "head": "4bbe2e6a5d58ca40d622a2adfc172b62ac28a9a5",
++        "number": 1113
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "requestId": "review-review:1113:4bbe2e6a5d58ca40d622a2adfc172b62ac28a9a5:attempt-13",
++      "resultId": "msg_0e8bd0e252bd25b5016ad235ce4a488194ae11dcd4c43ae111",
++      "submittedAt": 1792160879005,
++      "summary": "The importer applies one-year TTLs to durable pending markers and leaves other expiring migration groups permanent.",
++      "taskAcceptance": {
++        "evidence": [
++          "The candidate adds TTL reconstruction for API-key V3, paid-fallback V3 request/window/lease, and Kernel V2 rows, but importable paid-fallback ledger and embeddings idempotency rows still fall through to the no-TTL path, while paid-fallback pending markers receive an incorrect TTL.",
++          "The candidate adds Kernel V2 reservation reconciliation and validation for identity/reset and aggregate consistency, with migration tests for V3 expiry and reservation aggregation.",
++          "The base already retains V2 quota exports and history readers in src/kernel/usage.ts, so the legacy-export portion appears satisfied at the base, but the retention acceptance remains unmet."
++        ],
++        "issueNumber": 118,
++        "taskDigest": "2fd9fa1d339c92f992a619ab71101a81f1f2b6f1a6b8800f5f31dd75ff0cc99d",
++        "verdict": "not_fulfilled"
++      },
++      "unresolvedSeverities": [
++        "P1",
++        "P2"
++      ],
++      "version": "v1"
++    },
++    {
++      "completedAt": 1792239472529,
++      "expectedReviewer": "ubiquity-sentinel[bot]",
++      "findings": [
++        {
++          "fingerprint": "a4fd1b662ad02550e581173895d5100bb4dbfd28507695b78adf015731efbc1e",
++          "id": "github-review-5557717103-finding-0",
++          "message": "[P1] Preserve the Edit button when rebuilding key actions\n\n`editBtn` is appended to `actionRow`, then `renderKeyActions` immediately clears the row with `textContent = \"\"` and only adds revoke/restore/delete controls. Every API-key row therefore loses its Edit button, preventing expiry and other key edits.\n\nstatic/admin.js:6833-6833",
++          "path": "static/admin.js",
++          "resolutionEvidence": null,
++          "resolved": false,
++          "severity": "P1"
++        },
++        {
++          "fingerprint": "f3513f3771b61009c2b6f982f066aa1ecb001fe65e125cbda450d3d6ab82aa82",
++          "id": "github-review-5557717103-finding-1",
++          "message": "[P1] Make the API-key test match and exercise behavior\n\nThis assertion requires `if (statusKind !== \"revoked\")`, but the implementation uses `if (nextStatusKind !== \"revoked\")`, so the new test fails every run. Even after correcting that name, the surrounding checks only match source text rather than rendering a row or exercising delayed saves, confirmation cancellation, or the unrevoke warning.\n\ntests/static-assets.test.ts:811-811",
++          "path": "tests/static-assets.test.ts",
++          "resolutionEvidence": null,
++          "resolved": false,
++          "severity": "P1"
++        },
++        {
++          "fingerprint": "0840f6fcea6e4db4d149ae4d709407a478561a29c657e9f1d591c084221929d1",
++          "id": "github-review-5557717103-finding-2",
++          "message": "[P2] Cover revoke and unrevoke in the cache matrix\n\nThe route matrix jumps from `/admin/api-keys/changes` to kernel routes and omits the defined `POST /admin/api-keys/revoke` and `POST /admin/api-keys/unrevoke` endpoints, so a cache-header regression on either mutation route would pass the purported route-wide test.\n\ntests/static-assets.test.ts:768-773",
++          "path": "tests/static-assets.test.ts",
++          "resolutionEvidence": null,
++          "resolved": false,
++          "severity": "P2"
++        }
++      ],
++      "findingsUncounted": 0,
++      "id": "review-receipt:a3ab10690200878b9ffe39cada466fa1470a08303f8da32b17a3e609768b9570",
++      "kind": "review_receipt",
++      "observedAt": 1792239514372,
++      "observedReviewer": "ubiquity-sentinel[bot]",
++      "outcome": "completed",
++      "pullRequest": {
++        "base": "ca6486b87835ee3b95dd24fa5f1dcc645ed7c97f",
++        "head": "08288901706d685f5c273956458b2fa28ffff6e7",
++        "number": 1145
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "requestId": "review-review:1145:08288901706d685f5c273956458b2fa28ffff6e7:attempt-2",
++      "resultId": "msg_0666f00d14718ccc016ad3676d91948194aef5f46d3ac47271",
++      "submittedAt": 1792239241330,
++      "summary": "The patch introduces an API-key editing regression and a failing, incomplete test suite.",
++      "taskAcceptance": {
++        "evidence": [
++          "`renderKeyActions` clears the action row after the Edit button is appended, so API-key rows cannot be edited and the expiry-edit requirement is not fulfilled.",
++          "The new API-key test expects `statusKind` while the implementation uses `nextStatusKind`, making the test fail; its source-text assertions also do not implement the requested behavioral tests.",
++          "The route-wide cache test omits the revoke and unrevoke admin endpoints."
++        ],
++        "issueNumber": 1127,
++        "taskDigest": "180ace0a8c344c1b6593932fd3931b8e1f1f26b0212390aa8ba861c9bf2a1645",
++        "verdict": "not_fulfilled"
++      },
++      "unresolvedSeverities": [
++        "P1",
++        "P2"
++      ],
++      "version": "v1"
++    },
++    {
++      "completedAt": 1792145906384,
++      "expectedReviewer": "ubiquity-sentinel[bot]",
++      "findings": [
++        {
++          "fingerprint": "c84556a5c8686f2b360d70bb7ea294da2b23a7c0bee96ca47b6d1c2d19737548",
++          "id": "github-review-5546304440-finding-0",
++          "message": "[P1] Declare the imported text asset for TypeScript\n\nThe only asset declaration in `types/assets.d.ts` covers `*.md`, while this import targets a `.txt` file and `tsconfig.json` includes test files. The strict TypeScript gate will therefore report this module as unresolved before the evidence test can run; add a `*.txt` declaration or use a supported file-reading path.\n\ntests/sentinel-review-evidence.test.ts:4-6",
++          "path": "tests/sentinel-review-evidence.test.ts",
++          "resolutionEvidence": null,
++          "resolved": false,
++          "severity": "P1"
++        },
++        {
++          "fingerprint": "bdd20332f509a14e3ee39b4ce213ac8b4f2f3d0e98fa675b06e53502d3b6a868",
++          "id": "github-review-5546304440-finding-1",
++          "message": "[P1] Register the cases with Bun's test API\n\nThe repository executes test files with Bun and supplies Bun/Node typings, but both cases are registered with `Deno.test` at lines 17 and 50. `Deno` is not declared in this checkout, so strict checking fails; import `test` from `bun:test` and use it for both tests.\n\ntests/sentinel-review-evidence.test.ts:17-17",
++          "path": "tests/sentinel-review-evidence.test.ts",
++          "resolutionEvidence": null,
++          "resolved": false,
++          "severity": "P1"
++        }
++      ],
++      "findingsUncounted": 0,
++      "id": "review-receipt:aa29c148f25689badc082408eb0d52adbc01a5ee1c4de4638698d3cc2f123885",
++      "kind": "review_receipt",
++      "observedAt": 1792146652416,
++      "observedReviewer": "ubiquity-sentinel[bot]",
++      "outcome": "completed",
++      "pullRequest": {
++        "base": "8ea3def4b7a995086a8b92a80cc77bc781b00b85",
++        "head": "468a435814225326a77dfbe37f9314b10f970774",
++        "number": 1107
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "requestId": "review-review:1107:468a435814225326a77dfbe37f9314b10f970774:attempt-2",
++      "resultId": "msg_0d8f824fab88133e016ad1f9f02644819785aaeabf73ebff08",
++      "submittedAt": 1792145735888,
++      "summary": "The SHA records are populated, but the added evidence test cannot pass the repository's strict Bun/TypeScript gates.",
++      "taskAcceptance": {
++        "evidence": [
++          "The evidence archive records full reviewed head and base SHAs plus reviewer values in its review identity table at lines 29-42.",
++          "The canonical backlog adds a full Reviewed base SHA column for every row at lines 8-38.",
++          "The required negative check is not executable in this Bun/strict-TypeScript checkout because the test imports an undeclared .txt asset and uses Deno.test."
++        ],
++        "issueNumber": 611,
++        "taskDigest": "7ec2a76be2f2fc2c13ccff573e79b4fe38a1c97303d784717d91de913672053e",
++        "verdict": "not_fulfilled"
++      },
++      "unresolvedSeverities": [
++        "P1"
++      ],
++      "version": "v1"
++    },
++    {
++      "completedAt": 1792113458809,
++      "expectedReviewer": "ubiquity-sentinel[bot]",
++      "findings": [],
++      "findingsUncounted": 0,
++      "id": "review-receipt:f994e9b5ba561b1abcff06a8b329b37ca08fc003afaf0d1f8cb5f9048a055419",
++      "kind": "review_receipt",
++      "observedAt": 1792115457123,
++      "observedReviewer": "ubiquity-sentinel[bot]",
++      "outcome": "completed",
++      "pullRequest": {
++        "base": "a4e3ac2c6fd52f2a2f39778c2eeea17128edb93c",
++        "head": "29afd6bd81d3d4346adb263229b936846ebd4bbe",
++        "number": 1069
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "requestId": "review-review:1069:29afd6bd81d3d4346adb263229b936846ebd4bbe",
++      "resultId": "msg_0be7323a859abcdc016ad17b31ebd081978c36eef6ff770cb8",
++      "submittedAt": 1792113406529,
++      "summary": "The change correctly classifies failed Responses terminals as upstream provider-health errors and adds focused coverage.",
++      "taskAcceptance": {
++        "evidence": [
++          "src/provider/openrouter-streams.ts now records response.failed and error terminals as upstream_error while retaining success handling for other terminal events.",
++          "tests/openrouter-serving.test.ts sends a response.failed terminal and asserts upstream_error, status 200, and degraded provider health."
++        ],
++        "issueNumber": 576,
++        "taskDigest": "d44c70610cf44e61df6c0ca0d4603cb0cf60f4958b4596f8fef9486ecaeb1ee2",
++        "verdict": "fulfilled"
++      },
++      "unresolvedSeverities": [],
++      "version": "v1"
++    }
++  ]
++}
+diff --git a/tests/host/hosted-autonomy-acceptance_test.ts b/tests/host/hosted-autonomy-acceptance_test.ts
+new file mode 100644
+index 0000000000..7ecf5d15b0
+--- /dev/null
++++ b/tests/host/hosted-autonomy-acceptance_test.ts
+@@ -0,0 +1,415 @@
++/**
++ * Launcher half of JAM B6 ("task acceptance not fulfilled") over the live
++ * ai.ubq.fi records at repair sequence 41474: B6a 576, 653 and 660 (a review
++ * round left) are re-admitted to `review` only under a proven
++ * acceptance-correction runtime, and B6b 611, 1127 and 118 (every round
++ * spent) are owner-gated, named once in the run summary instead of reporting
++ * `spent_not_admissible` on every pass.
++ */
++import assert from "node:assert/strict";
++import { asWorkItemId, type GitSha } from "../../src/contracts/brands.ts";
++import {
++  parseRepairStateSnapshotV1,
++  type RepairStateSnapshotV1,
++} from "../../src/contracts/state-snapshots.ts";
++import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
++import { TASK_ACCEPTANCE_OWNER_GATE_DETAIL } from "../../src/repair/acceptance-correction.ts";
++import { TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL } from "../../src/repair/review-gate.ts";
++import {
++  ACCEPTANCE_CORRECTION_REQUIRES_RUNTIME,
++  ACCEPTANCE_OWNER_GATE_REPORTS_PER_PASS,
++  ACCEPTANCE_READMISSION_DETAIL,
++  acceptanceCorrectionRuntimeProven,
++  acceptanceOwnerGateActions,
++  acceptanceOwnerGated,
++  HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES,
++  planAcceptanceReadmissions,
++} from "../../ops/hosted-autonomy-acceptance.ts";
++import { applyHostedRetries } from "../../ops/hosted-autonomy-retries.ts";
++import { hostedIssueKey } from "../../ops/hosted-autonomy-policy.ts";
++import {
++  readHostedClosedIssues,
++  runHostedRetryPass,
++} from "../../ops/hosted-autonomy-retry-pass.ts";
++import { createHostedAutonomyScopes } from "../../ops/hosted-autonomy-scopes.ts";
++import type { HostedAutonomyPassContextV1 } from "../../ops/hosted-autonomy-scopes.ts";
++import type {
++  HostedAutonomyDepsV1,
++  HostedAutonomyPullV1,
++} from "../../ops/hosted-autonomy-types.ts";
++import { releaseAt } from "./hosted-autonomy-preservation-fixtures.ts";
++import { makeRig, type RigV1 } from "./hosted-autonomy-rig.ts";
++import {
++  deliveryOnly,
++  liveSurface,
++  openPull,
++  readSnapshot,
++} from "./hosted-autonomy-spent-fixtures.ts";
++
++const LIVE = JSON.parse(
++  await Deno.readTextFile(
++    new URL("../fixtures/host/acceptance-b6-live.json", import.meta.url),
++  ),
++);
++const id = (issue: number) => `issue-ubiquity-ai.ubq.fi-${issue}`;
++const B6A = [576, 653, 660].map(id);
++const B6B = [1127, 118, 611].map(id).sort();
++/** The pass clock: after the live snapshot instant. */
++const NOW = (LIVE.updatedAt as number) + 600_000;
++/** A generation-81 acceptance-correction runtime (test pin only). */
++const R81 = "8181818181818181818181818181818181818181" as GitSha;
++const R81_RUNTIMES: ReadonlySet<string> = new Set([R81]);
++const R81_RELEASE = releaseAt({
++  revision: R81,
++  generation: 81,
++  healthy: {
++    revision: R81,
++    generation: 81,
++    createdAt: NOW - 3_600_000,
++    observedAt: NOW - 3_500_000,
++  },
++});
++
++function liveSnapshot(
++  work: WorkRecordV1[] = LIVE.records,
++): RepairStateSnapshotV1 {
++  return parseRepairStateSnapshotV1({
++    version: "v1",
++    kind: "repair_state_snapshot",
++    stateHead: null,
++    // A fresh store starts at sequence 1 (the live one was LIVE.sequence).
++    sequence: 1,
++    updatedAt: LIVE.updatedAt,
++    incidents: [],
++    evidence: [],
++    work,
++    reservations: LIVE.reservations,
++    reviews: LIVE.reviews,
++    replays: [],
++    releaseRequests: [],
++    githubCooldowns: [],
++    attemptMemory: [],
++    lessons: [],
++  });
++}
++
++function record(snapshot: RepairStateSnapshotV1, recordId: string) {
++  const found = snapshot.work.find((row) => row.id === recordId);
++  assert.ok(found, recordId);
++  return found;
++}
++
++/** Every live pull request open at its record's head (20:39Z). */
++function livePulls(): Record<number, HostedAutonomyPullV1> {
++  return Object.fromEntries(
++    (LIVE.records as WorkRecordV1[]).map((row) => [
++      row.target.pr!,
++      openPull(row),
++    ]),
++  );
++}
++
++async function liveRig(name: string): Promise<RigV1> {
++  const { rig } = await makeRig(`acceptance-${name}`, {
++    repair: liveSnapshot(),
++  });
++  rig.githubFor = () => liveSurface({ pulls: livePulls() }).surface;
++  return rig;
++}
++
++/**
++ * One real retry pass, as the runner drives it; with `runtimes` the custody
++ * names the proven R81 runtime (the rig's own custody holds generation 1).
++ */
++async function retryPass(rig: RigV1, runtimes?: ReadonlySet<string>) {
++  const deps: HostedAutonomyDepsV1 = {
++    state: rig.state,
++    githubFor: rig.githubFor,
++    clock: { now: () => NOW },
++    ...(runtimes === undefined
++      ? {}
++      : { acceptanceCorrectionRuntimes: runtimes }),
++  };
++  const read = await rig.state.readRepair();
++  assert.ok(read.ok && read.value.status === "found");
++  const release = await rig.state.readRelease();
++  assert.ok(release.ok && release.value.status === "found");
++  const context: HostedAutonomyPassContextV1 = {
++    deps,
++    actions: [],
++    revisions: [],
++    snapshot: read.value.snapshot,
++    observedHead: read.value.head,
++    initialHead: read.value.head,
++    releaseSnapshot: runtimes === undefined
++      ? release.value.snapshot
++      : R81_RELEASE,
++    closedIssues: new Set(),
++    foreignMerged: new Map(),
++    dedicatedReservations: new Set<string>(),
++    ...createHostedAutonomyScopes(deps),
++  };
++  await readHostedClosedIssues(context);
++  const result = await runHostedRetryPass(context, read.value.head!);
++  return { result, actions: context.actions };
++}
++
++Deno.test("B6 live: the six records split into re-admissible B6a and owner-gated B6b by the ordinary round count", () => {
++  const snapshot = liveSnapshot();
++  for (const recordId of [...B6A, ...B6B]) {
++    assert.equal(
++      record(snapshot, recordId).blocker?.message,
++      TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL,
++    );
++  }
++  assert.deepEqual(
++    snapshot.work.filter((row) => acceptanceOwnerGated(row, snapshot))
++      .map((row) => row.id).sort(),
++    B6B,
++  );
++  const denied: string[] = [];
++  assert.deepEqual(
++    planAcceptanceReadmissions(snapshot, new Set(), false, (denial) => {
++      assert.equal(denial.reason, ACCEPTANCE_CORRECTION_REQUIRES_RUNTIME);
++      denied.push(denial.id);
++    }),
++    [],
++    "R80 would block the same verdict again: no plan",
++  );
++  assert.deepEqual(denied.sort(), [...B6A].sort());
++  const plans = planAcceptanceReadmissions(snapshot, new Set(), true);
++  assert.deepEqual(plans.map((plan) => plan.id).sort(), [...B6A].sort());
++  for (const plan of plans) {
++    assert.equal(plan.nextStep, "review");
++    assert.equal(plan.grant, 0);
++    assert.equal(plan.reviewRounds, null);
++    assert.equal(plan.advanceBase, false);
++    assert.equal(plan.detail, ACCEPTANCE_READMISSION_DETAIL);
++  }
++  // A closed source issue is never re-admitted.
++  const closed = new Set([
++    hostedIssueKey(record(snapshot, id(653)).repository, 653),
++  ]);
++  assert.deepEqual(
++    planAcceptanceReadmissions(snapshot, closed, true).map((plan) => plan.id)
++      .sort(),
++    [id(576), id(660)],
++  );
++  // The re-admission keeps every counter, charge, receipt and identity.
++  const applied = applyHostedRetries(
++    snapshot,
++    "a".repeat(40) as GitSha,
++    plans,
++    NOW,
++  );
++  assert.deepEqual(applied.reservations, snapshot.reservations);
++  assert.deepEqual(applied.reviews, snapshot.reviews);
++  for (const recordId of B6A) {
++    const before = record(snapshot, recordId);
++    const after = record(applied, recordId);
++    assert.equal(after.nextStep, "review");
++    assert.equal(after.blocker, null);
++    assert.equal(after.wait, null);
++    assert.equal(after.intent, null);
++    assert.deepEqual(after.counters, before.counters);
++    assert.deepEqual(after.target, before.target);
++    assert.deepEqual(after.evidence, before.evidence);
++  }
++  for (const recordId of B6B) {
++    assert.deepEqual(record(applied, recordId), record(snapshot, recordId));
++  }
++});
++
++Deno.test("B6 live: the owner gate is one bounded summary line, never re-admitted, and covers the runtime's own park", () => {
++  const snapshot = liveSnapshot();
++  assert.deepEqual(acceptanceOwnerGateActions(snapshot), [
++    `owner_gate:task_acceptance_not_fulfilled:n=3:${B6B.join(",")}`,
++  ]);
++  // A source issue the owner already closed (live 112 and 596, their pull
++  // requests merged by hand) awaits no decision: it is not named.
++  const closed611 = new Set([
++    hostedIssueKey(record(snapshot, id(611)).repository, 611),
++  ]);
++  assert.equal(
++    acceptanceOwnerGated(record(snapshot, id(611)), snapshot, closed611),
++    false,
++  );
++  assert.deepEqual(acceptanceOwnerGateActions(snapshot, closed611), [
++    `owner_gate:task_acceptance_not_fulfilled:n=2:${id(1127)},${id(118)}`,
++  ]);
++  // The runtime's owner-gated park (here on 653's shape, a round left)
++  // is owner-gated whatever its round count and never re-admitted.
++  const parked = liveSnapshot(
++    (LIVE.records as WorkRecordV1[]).map((row) =>
++      row.id === id(653)
++        ? {
++          ...row,
++          blocker: {
++            kind: "other",
++            message: TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
++            since: row.updatedAt,
++          },
++        }
++        : row
++    ),
++  );
++  assert.equal(acceptanceOwnerGated(record(parked, id(653)), parked), true);
++  assert.deepEqual(
++    planAcceptanceReadmissions(parked, new Set(), true).map((plan) => plan.id)
++      .sort(),
++    [id(576), id(660)],
++  );
++  // Beyond the bound the rest is counted, never dropped (611's shape, with
++  // its own round charges, under fresh identities).
++  const shape = record(snapshot, id(611));
++  const charges = snapshot.reservations.filter((charge) =>
++    charge.taskId === shape.id
++  );
++  const many = Array.from(
++    { length: ACCEPTANCE_OWNER_GATE_REPORTS_PER_PASS + 2 },
++    (_, index): WorkRecordV1 => ({
++      ...shape,
++      id: asWorkItemId(id(9000 + index)),
++      source: { ...shape.source, id: String(9000 + index) },
++      related: { incidentId: null, issueNumber: 9000 + index },
++    }),
++  );
++  const [line] = acceptanceOwnerGateActions({
++    ...snapshot,
++    work: many,
++    reservations: many.flatMap((row) =>
++      charges.map((charge) => ({ ...charge, taskId: row.id }))
++    ),
++  });
++  assert.ok(
++    line.startsWith(
++      `owner_gate:task_acceptance_not_fulfilled:n=${many.length}:${id(9000)},`,
++    ),
++    line,
++  );
++  assert.ok(line.endsWith(",+2"), line);
++});
++
++Deno.test("B6 live: the delivery pass names B6b once and reads, merges and writes nothing for it", async () => {
++  const rig = await liveRig("delivery");
++  try {
++    const { actions } = await deliveryOnly(rig, NOW);
++    assert.ok(
++      actions.includes(
++        `owner_gate:task_acceptance_not_fulfilled:n=3:${B6B.join(",")}`,
++      ),
++      actions.join(" "),
++    );
++    assert.equal(
++      actions.filter((action) => action.includes("spent_not_admissible"))
++        .length,
++      0,
++      actions.join(" "),
++    );
++    assert.equal(
++      actions.filter((action) =>
++        [...B6A, ...B6B].some((recordId) => action.includes(recordId)) &&
++        !action.startsWith("owner_gate:")
++      ).length,
++      0,
++      actions.join(" "),
++    );
++    assert.equal(rig.writes, 0);
++    assert.equal(rig.merges, 0);
++  } finally {
++    await Deno.remove(rig.tmp, { recursive: true });
++  }
++});
++
++Deno.test("B6 live: under R80 the retry pass names B6a as awaiting the correction runtime and writes nothing", async () => {
++  const rig = await liveRig("r80");
++  try {
++    const { result, actions } = await retryPass(rig);
++    assert.equal(result, null, JSON.stringify(actions));
++    for (const recordId of B6A) {
++      assert.ok(
++        actions.includes(
++          `retry:${recordId}:denied:${ACCEPTANCE_CORRECTION_REQUIRES_RUNTIME}`,
++        ),
++        actions.join(" "),
++      );
++    }
++    assert.equal(rig.writes, 0);
++  } finally {
++    await Deno.remove(rig.tmp, { recursive: true });
++  }
++});
++
++Deno.test("B6 live: under a proven acceptance-correction runtime B6a returns to review once, uncharged", async () => {
++  const rig = await liveRig("r81");
++  try {
++    assert.equal(
++      acceptanceCorrectionRuntimeProven(
++        R81_RELEASE.hostedRuntimes[0],
++        R81_RUNTIMES,
++      ),
++      true,
++    );
++    assert.equal(
++      acceptanceCorrectionRuntimeProven(R81_RELEASE.hostedRuntimes[0]),
++      false,
++      "the production allowlist names no runtime yet",
++    );
++    const before = await readSnapshot(rig);
++    const { result, actions } = await retryPass(rig, R81_RUNTIMES);
++    assert.equal(result?.status, "applied", JSON.stringify(actions));
++    assert.deepEqual(
++      actions.filter((action) => action.startsWith("retry:")).sort(),
++      B6A.map((recordId) =>
++        `retry:${recordId}:grant=0:${ACCEPTANCE_READMISSION_DETAIL}`
++      ).sort(),
++    );
++    const after = await readSnapshot(rig);
++    assert.deepEqual(after.reservations, before.reservations);
++    assert.deepEqual(after.reviews, before.reviews);
++    for (const recordId of B6A) {
++      const row = record(after, recordId);
++      assert.equal(row.nextStep, "review");
++      assert.equal(row.blocker, null);
++      assert.deepEqual(row.counters, record(before, recordId).counters);
++    }
++    for (const recordId of B6B) {
++      assert.deepEqual(record(after, recordId), record(before, recordId));
++    }
++    // The next pass finds nothing left to re-admit.
++    const again = await retryPass(rig, R81_RUNTIMES);
++    assert.equal(again.result, null, JSON.stringify(again.actions));
++    assert.equal(
++      again.actions.filter((action) => action.startsWith("retry:")).length,
++      0,
++      again.actions.join(" "),
++    );
++  } finally {
++    await Deno.remove(rig.tmp, { recursive: true });
++  }
++});
++
++Deno.test("B6: every allowlisted acceptance-correction runtime carries the runtime half", async () => {
++  // The pin commit that lists a revision makes this bind: its tree must hold
++  // the correction route and the owner-gated park the launcher relies on.
++  const root = decodeURIComponent(new URL("../../", import.meta.url).pathname);
++  for (const revision of HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES) {
++    const shown = await new Deno.Command("git", {
++      args: [
++        "-C",
++        root,
++        "show",
++        `${revision}:src/repair/acceptance-correction.ts`,
++      ],
++      clearEnv: true,
++      env: { PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
++      stdout: "piped",
++      stderr: "null",
++    }).output();
++    // A shallow checkout without the revision cannot prove it either way.
++    if (!shown.success) continue;
++    const text = new TextDecoder().decode(shown.stdout);
++    assert.ok(text.includes(TASK_ACCEPTANCE_OWNER_GATE_DETAIL), revision);
++    assert.ok(text.includes("export async function withAcceptanceFinding"));
++  }
++});
+diff --git a/tests/host/hosted-autonomy-spent-delivery_test.ts b/tests/host/hosted-autonomy-spent-delivery_test.ts
+index 67926bc8cb..249172bea8 100644
+--- a/tests/host/hosted-autonomy-spent-delivery_test.ts
++++ b/tests/host/hosted-autonomy-spent-delivery_test.ts
+@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
+ import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
+ import { parseReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
+ import type { ReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
++import { TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL } from "../../src/repair/review-gate.ts";
+ import {
+   authorizingReceipt,
+   BASE,
+@@ -492,8 +493,14 @@ Deno.test("spent delivery S5: a record outside the closed spent shape is never m
+         options,
+         async (rig, calls) => {
+           const { actions } = await deliveryOnly(rig);
++          // JAM B6b: a spent not-fulfilled acceptance is owner gated, named
++          // once in the summary instead of the per-pass refusal line.
+           assert.ok(
+-            actions.includes(`delivery:${record.id}:spent_not_admissible`),
++            actions.includes(
++              record.blocker?.message === TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL
++                ? `owner_gate:task_acceptance_not_fulfilled:n=1:${record.id}`
++                : `delivery:${record.id}:spent_not_admissible`,
++            ),
+             actions.join(" "),
+           );
+           assert.deepEqual(calls.merges, []);
+diff --git a/tests/host/matrix-acceptance-correction_test.ts b/tests/host/matrix-acceptance-correction_test.ts
+new file mode 100644
+index 0000000000..800043291b
+--- /dev/null
++++ b/tests/host/matrix-acceptance-correction_test.ts
+@@ -0,0 +1,181 @@
++/**
++ * JAM B6a through the hosted matrix: a head whose latest review found the
++ * task acceptance not fulfilled is a hosted correction start. The trusted
++ * planner charges one `retry` cell continuing that head with the acceptance
++ * statement as its first finding, the cell runs, and the ingest consumes it
++ * like any P0/P1 correction. R80's own plan parser accepts the planned wave
++ * (the rollback target consumes cells this generation planned).
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import type * as Matrix from "../../src/contracts/matrix.ts";
++import { canonicalStringify } from "../../src/contracts/canonical.ts";
++import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import {
++  ingestMatrixResults,
++  planMatrixWave,
++  runMatrixCell,
++} from "../../src/host/matrix.ts";
++import { withAcceptanceFinding } from "../../src/repair/acceptance-correction.ts";
++import { candidateBranch } from "../../src/repair/keys.ts";
++import { isMatrixImplementationReadyV1 } from "../../src/repair/loop-eligibility.ts";
++import { SHA2, T0, workRecord } from "../state/helpers.ts";
++import { completedReceipt } from "../repair/loop-review-fixtures.ts";
++import { NOT_FULFILLED } from "../repair/acceptance-fixtures.ts";
++import {
++  loadR80Modules,
++  r80Available,
++} from "../repair/acceptance-r80-source.ts";
++import {
++  ACTUAL,
++  makeRig,
++  RUN,
++  seedSnapshot,
++  snapshot,
++  WAVE,
++} from "./matrix-runtime-fixtures.ts";
++
++const ISSUE = 401;
++const BRANCH = candidateBranch(`issue-${ISSUE}` as never);
++const available = await r80Available();
++
++Deno.test("matrix: a not-fulfilled acceptance is planned, run and ingested as a charged correction cell", async () => {
++  const rig = await makeRig([ISSUE], 1);
++  try {
++    const record = workRecord(`issue-${ISSUE}`, {
++      source: { kind: "issue", id: String(ISSUE), revision: rig.base },
++      related: { incidentId: null, issueNumber: ISSUE },
++      target: {
++        base: rig.base,
++        branch: BRANCH,
++        checkpoint: null,
++        head: SHA2,
++        pr: 7,
++      },
++      nextStep: "work",
++      counters: { attempts: 1, retries: 0, reviewRounds: 1 },
++      firstSeenAt: T0 - 60_000,
++    });
++    const receipt = await withAcceptanceFinding(
++      completedReceipt(7, SHA2, rig.base, {
++        repository: record.repository,
++        taskAcceptance: { ...NOT_FULFILLED, issueNumber: ISSUE },
++        submittedAt: T0 - 3_000,
++        completedAt: T0 - 2_000,
++        observedAt: T0 - 1_000,
++      }),
++    );
++    assert.ok(receipt);
++    const seeded = parseRepairStateSnapshotV1({
++      ...seedSnapshot([record]),
++      reviews: [receipt],
++    });
++    const written = await rig.store.writeRepair(seeded, null);
++    assert.ok(written.ok && written.value.status === "applied");
++    const hosted = { ...rig.deps, externalImplementations: true };
++    assert.ok(
++      isMatrixImplementationReadyV1(record, seeded, rig.deps.configs[0], T0),
++    );
++
++    const planned = await planMatrixWave(hosted, rig.planOptions());
++    assert.equal(planned.plan.cells.length, 1, JSON.stringify(planned));
++    const cell = planned.plan.cells[0];
++    assert.equal(cell.request.checkoutBase, SHA2, "continues the refused head");
++    assert.deepEqual(cell.request.reviewFindings?.[0], {
++      severity: "P1",
++      path: null,
++      message: receipt.findings[0]!.message,
++    });
++    const charged = await snapshot(rig);
++    assert.equal(charged.work[0].intent?.kind, "implementation");
++    assert.equal(charged.reservations.length, 1, "one charged correction");
++    assert.equal(charged.reservations[0].purpose, "retry");
++
++    const ctx = await rig.claimCell(cell);
++    const result = await runMatrixCell(
++      ctx.deps,
++      { waveId: WAVE, run: RUN, cell },
++      ACTUAL,
++      T0,
++    );
++    assert.equal(result.status, "completed");
++    await rig.transfer([result], [ctx]);
++    const ingested = await ingestMatrixResults(
++      hosted,
++      planned.plan,
++      [result],
++      rig.ingestOptions(),
++    );
++    assert.equal(ingested.ingested, 1, JSON.stringify(ingested));
++    const after = await snapshot(rig);
++    assert.equal(after.work[0].target.head, result.receipt!.candidate!.head);
++    assert.notEqual(after.work[0].target.head, SHA2 as GitSha);
++    assert.equal(
++      after.reservations.find((row) => row.id === cell.reservationId)
++        ?.outcome,
++      "submitted",
++      "charged, never refunded",
++    );
++    assert.deepEqual(after.reviews, [receipt], "the receipt stays verbatim");
++  } finally {
++    await rig.cleanup();
++  }
++});
++
++Deno.test({
++  name: "matrix: R80's plan parser accepts the planned acceptance correction",
++  ignore: !available,
++  async fn() {
++    const loaded = await loadR80Modules(["src/contracts/matrix.ts"]);
++    const rig = await makeRig([ISSUE], 1);
++    try {
++      const [r80] = loaded.modules as unknown as [typeof Matrix];
++      const record = workRecord(`issue-${ISSUE}`, {
++        source: { kind: "issue", id: String(ISSUE), revision: rig.base },
++        related: { incidentId: null, issueNumber: ISSUE },
++        target: {
++          base: rig.base,
++          branch: BRANCH,
++          checkpoint: null,
++          head: SHA2,
++          pr: 7,
++        },
++        nextStep: "work",
++        counters: { attempts: 1, retries: 0, reviewRounds: 1 },
++        firstSeenAt: T0 - 60_000,
++      });
++      const receipt = await withAcceptanceFinding(
++        completedReceipt(7, SHA2, rig.base, {
++          repository: record.repository,
++          taskAcceptance: { ...NOT_FULFILLED, issueNumber: ISSUE },
++          submittedAt: T0 - 3_000,
++          completedAt: T0 - 2_000,
++          observedAt: T0 - 1_000,
++        }),
++      );
++      const written = await rig.store.writeRepair(
++        parseRepairStateSnapshotV1({
++          ...seedSnapshot([record]),
++          reviews: [receipt],
++        }),
++        null,
++      );
++      assert.ok(written.ok && written.value.status === "applied");
++      const planned = await planMatrixWave(
++        { ...rig.deps, externalImplementations: true },
++        rig.planOptions(),
++      );
++      assert.equal(planned.plan.cells.length, 1);
++      const parsed = r80.parseMatrixPlanV1(
++        JSON.parse(canonicalStringify(planned.plan)),
++      );
++      assert.equal(
++        canonicalStringify(parsed),
++        canonicalStringify(planned.plan),
++      );
++    } finally {
++      await rig.cleanup();
++      await loaded.dispose();
++    }
++  },
++});
+diff --git a/tests/repair/acceptance-correction_test.ts b/tests/repair/acceptance-correction_test.ts
+new file mode 100644
+index 0000000000..686ea5daea
+--- /dev/null
++++ b/tests/repair/acceptance-correction_test.ts
+@@ -0,0 +1,346 @@
++/**
++ * JAM B6 (absorbing): a completed review whose task acceptance is
++ * `not_fulfilled` (and that left no P0/P1) is corrected exactly like a P0/P1
++ * finding while a review round is left (B6a), and parks once, explicitly and
++ * owner-gated, when none is (B6b). The review receipt keeps the reviewer's
++ * acceptance verdict verbatim and carries its statement as one bounded P1
++ * finding, so every P0/P1 consumer (correction, round cap, merge gates, the
++ * matrix consumer and the rollback target R80) treats it as one.
++ */
++import assert from "node:assert/strict";
++import { asFindingFingerprint } from "../../src/contracts/brands.ts";
++import { canonicalStringifySha256 } from "../../src/contracts/canonical.ts";
++import type { ReviewTaskAcceptanceV1 } from "../../src/contracts/review-receipt.ts";
++import { MaxItems } from "../../src/contracts/validation.ts";
++import {
++  acceptanceFinding,
++  acceptanceFindingMessage,
++  TASK_ACCEPTANCE_FINDING_ID,
++  TASK_ACCEPTANCE_FINDING_MAX_CHARS,
++  TASK_ACCEPTANCE_FINDING_PREFIX,
++  TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
++  withAcceptanceFinding,
++} from "../../src/repair/acceptance-correction.ts";
++import {
++  reviewEvidenceRef,
++  reviewOperationKey,
++  reviewReceiptId,
++} from "../../src/repair/keys.ts";
++import {
++  correctionFindings,
++  headAwaitsCiCorrection,
++  headNeedsCorrection,
++  MAX_CORRECTION_FINDING_CHARS,
++} from "../../src/repair/loop-review-records.ts";
++import { isMatrixImplementationReadyV1 } from "../../src/repair/loop-eligibility.ts";
++import { repairConfigs } from "./helpers.ts";
++import { SHA1, SHA2 } from "../state/helpers.ts";
++import { acceptanceRig, NOT_FULFILLED } from "./acceptance-fixtures.ts";
++import {
++  acceptedObservation,
++  completedReceipt,
++} from "./loop-review-fixtures.ts";
++
++Deno.test("B6a: a not-fulfilled acceptance with a round left becomes a correction like a P0/P1 finding", async () => {
++  const rig = await acceptanceRig("b6a-correction", 1);
++  try {
++    const key = rig.operationKey;
++    await rig.run();
++    const state = await rig.snapshot();
++    const work = state.work[0]!;
++    assert.notEqual(work.nextStep, "blocked", JSON.stringify(work.blocker));
++    const id = await reviewReceiptId(key, SHA2);
++    const receipt = state.reviews.find((review) => review.id === id);
++    assert.ok(receipt, "the refusing receipt is durable evidence");
++    assert.deepEqual(receipt.taskAcceptance, NOT_FULFILLED, "verbatim");
++    assert.deepEqual(receipt.unresolvedSeverities, ["P1"]);
++    assert.equal(receipt.findings.length, 1);
++    const finding = receipt.findings[0]!;
++    assert.equal(finding.severity, "P1");
++    assert.equal(finding.path, null);
++    assert.equal(finding.resolved, false);
++    for (const line of NOT_FULFILLED.evidence) {
++      assert.ok(finding.message.includes(line), finding.message);
++    }
++    assert.ok(
++      work.evidence.some((ref) =>
++        ref.kind === "review_receipt" && ref.ref === reviewEvidenceRef(id)
++      ),
++    );
++    // Exactly one correction session, from the refused head, carrying the
++    // acceptance statement as its first finding.
++    assert.equal(rig.model.requests.length, 1);
++    const request = rig.model.requests[0]!;
++    assert.equal(request.checkoutBase, SHA2);
++    assert.deepEqual(request.reviewFindings?.[0], {
++      severity: "P1",
++      path: null,
++      message: finding.message,
++    });
++    assert.equal(rig.github.calls.includes("merge"), false);
++    assert.equal(
++      rig.github.calls.some((call) => call.startsWith("closeIssue:")),
++      false,
++    );
++    assert.equal(state.releaseRequests.length, 0);
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});
++
++Deno.test("B6b: a not-fulfilled acceptance with every round spent parks once, owner-gated, with its receipt", async () => {
++  const rig = await acceptanceRig("b6b-owner-gate", 3);
++  try {
++    const key = rig.operationKey;
++    await rig.run();
++    const state = await rig.snapshot();
++    const work = state.work[0]!;
++    assert.equal(work.nextStep, "blocked");
++    assert.equal(work.blocker?.kind, "other");
++    assert.equal(
++      work.blocker?.message,
++      TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
++    );
++    const id = await reviewReceiptId(key, SHA2);
++    const receipt = state.reviews.find((review) => review.id === id);
++    assert.ok(receipt, "the park keeps its receipt");
++    assert.deepEqual(receipt.unresolvedSeverities, ["P1"]);
++    assert.equal(rig.model.requests.length, 0, "no fourth round is bought");
++    assert.equal(rig.github.reviewRequestIdentities.length, 0);
++    assert.deepEqual(
++      state.reservations,
++      rig.charges,
++      "nothing charged or refunded",
++    );
++    assert.equal(rig.github.calls.includes("merge"), false);
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});
++
++Deno.test("B6: the live round shapes move (576, 653, 660 correct; 611, 1127, 118 park owner-gated)", async (t) => {
++  // Counted rounds of the live records at sequence 41474.
++  const shapes: [string, number, "correct" | "park"][] = [
++    ["653", 1, "correct"],
++    ["576 and 660", 2, "correct"],
++    ["611 and 1127", 3, "park"],
++    ["118", 22, "park"],
++  ];
++  for (const [label, rounds, outcome] of shapes) {
++    await t.step(`${label}: ${rounds} round(s) spent`, async () => {
++      const rig = await acceptanceRig(`b6-live-${rounds}`, rounds, true);
++      try {
++        await rig.run();
++        const state = await rig.snapshot();
++        const work = state.work[0]!;
++        const receiptId = await reviewReceiptId(rig.operationKey, SHA2);
++        const receipt = state.reviews.find((review) => review.id === receiptId);
++        assert.ok(receipt);
++        assert.deepEqual(receipt.unresolvedSeverities, ["P1"]);
++        if (outcome === "correct") {
++          // A hosted run leaves the correction to the planner's cell.
++          assert.equal(work.nextStep, "work");
++          assert.equal(work.blocker, null);
++          assert.equal(work.target.head, SHA2);
++          assert.equal(headNeedsCorrection(state, work, true, true), true);
++          assert.equal(headAwaitsCiCorrection(state, work, true), false);
++          assert.equal(
++            isMatrixImplementationReadyV1(
++              work,
++              state,
++              repairConfigs({
++                sessionBound: {
++                  maxDurationMs: 240_000,
++                  maxOutputChars: 200_000,
++                },
++              })[0],
++              rig.clock.now(),
++              true,
++              true,
++              true,
++            ),
++            true,
++          );
++          assert.equal(
++            correctionFindings(state, work)?.[0]?.message,
++            receipt.findings[0]!.message,
++          );
++        } else {
++          assert.equal(work.nextStep, "blocked");
++          assert.equal(
++            work.blocker?.message,
++            TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
++          );
++        }
++        assert.equal(work.counters.reviewRounds, rounds);
++        const byId = (a: { id: string }, b: { id: string }) =>
++          a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
++        assert.deepEqual(state.reservations, [...rig.charges].sort(byId));
++        assert.equal(rig.github.reviewRequestIdentities.length, 0);
++      } finally {
++        await rig.ctx.cleanup();
++      }
++    });
++  }
++});
++
++Deno.test("B6a: the correction keeps the three-round cap; a third not-fulfilled verdict parks owner-gated", async () => {
++  const rig = await acceptanceRig("b6a-cap", 2);
++  try {
++    await rig.run();
++    const corrected = await rig.snapshot();
++    const work = corrected.work[0]!;
++    assert.equal(rig.model.requests.length, 1, "one correction session");
++    const head = work.target.head!;
++    assert.notEqual(head, SHA2);
++    assert.equal(work.nextStep, "review", JSON.stringify(work));
++    assert.equal(work.counters.reviewRounds, 3, "the third round reviews it");
++    const third = reviewOperationKey(7, head, 3);
++    assert.deepEqual(
++      rig.github.reviewRequestIdentities.map((row) => row.operationKey),
++      [third],
++    );
++    rig.github.reviewObservationsByKey.set(third, {
++      ...acceptedObservation(head, NOT_FULFILLED, rig.clock.now() + 1000),
++      requestId: "review-req-3",
++      resultId: "result-3",
++    });
++    rig.clock.advance(15 * 60_000 + 1);
++    await rig.run();
++    const state = await rig.snapshot();
++    const parked = state.work[0]!;
++    assert.equal(parked.nextStep, "blocked");
++    assert.equal(parked.blocker?.message, TASK_ACCEPTANCE_OWNER_GATE_DETAIL);
++    assert.equal(parked.counters.reviewRounds, 3);
++    assert.equal(rig.model.requests.length, 1, "no correction after the cap");
++    assert.equal(rig.github.reviewRequestIdentities.length, 1, "no 4th round");
++    assert.equal(
++      state.reservations.filter((row) => row.purpose === "review_request")
++        .length,
++      3,
++    );
++    assert.equal(
++      state.reservations.some((row) =>
++        row.outcome === "confirmed_not_submitted"
++      ),
++      false,
++      "nothing refunded",
++    );
++    assert.equal(rig.github.calls.includes("merge"), false);
++  } finally {
++    await rig.ctx.cleanup();
++  }
++});
++
++Deno.test("acceptance finding: bounded, verbatim beside the reviewer's findings, and never doubled", async () => {
++  const long: ReviewTaskAcceptanceV1 = {
++    ...NOT_FULFILLED,
++    evidence: Array.from({ length: 4 }, (_, index) => `${index}`.repeat(1024)),
++  };
++  assert.equal(TASK_ACCEPTANCE_FINDING_MAX_CHARS, MAX_CORRECTION_FINDING_CHARS);
++  const message = acceptanceFindingMessage(long);
++  assert.equal(message.length, MAX_CORRECTION_FINDING_CHARS);
++  assert.ok(message.startsWith(TASK_ACCEPTANCE_FINDING_PREFIX));
++  assert.ok(message.endsWith(" [statement truncated]"));
++  const short = acceptanceFindingMessage(NOT_FULFILLED);
++  assert.ok(short.length < MAX_CORRECTION_FINDING_CHARS);
++  assert.ok(short.includes("source issue #1"));
++  const finding = await acceptanceFinding(NOT_FULFILLED);
++  assert.equal(finding.id, TASK_ACCEPTANCE_FINDING_ID);
++  assert.equal(
++    finding.fingerprint,
++    await canonicalStringifySha256({
++      id: finding.id,
++      severity: "P1",
++      path: null,
++      message: finding.message,
++    }),
++  );
++  const p3 = {
++    id: "github-review-9-finding-0",
++    severity: "P3" as const,
++    path: "src/app.ts",
++    message: "nit",
++    fingerprint: asFindingFingerprint("c".repeat(64)),
++    resolved: false,
++    resolutionEvidence: null,
++  };
++  const base = completedReceipt(7, SHA2, SHA1, {
++    findings: [p3],
++    unresolvedSeverities: ["P3"],
++    taskAcceptance: NOT_FULFILLED,
++  });
++  const corrected = await withAcceptanceFinding(base);
++  assert.ok(corrected);
++  assert.deepEqual(corrected.findings, [finding, p3]);
++  assert.deepEqual(corrected.unresolvedSeverities, ["P1", "P3"]);
++  assert.deepEqual(corrected.taskAcceptance, NOT_FULFILLED);
++  assert.equal(corrected.id, base.id);
++  assert.equal(await withAcceptanceFinding(corrected), null, "never doubled");
++  assert.equal(
++    await withAcceptanceFinding({
++      ...base,
++      taskAcceptance: { ...NOT_FULFILLED, verdict: "uncertain" },
++    }),
++    null,
++  );
++  const full = {
++    ...base,
++    findings: Array.from({ length: MaxItems.findings }, (_, index) => ({
++      ...p3,
++      id: `github-review-9-finding-${index}`,
++    })),
++  };
++  assert.equal(await withAcceptanceFinding(full), null, "no room: owner gate");
++});
++
++Deno.test("B6a: an earlier change-only receipt of the same head never outvotes the later not-fulfilled verdict", async () => {
++  // The missing-acceptance recovery re-reviews the SAME head, so the head
++  // carries the change-only receipt of round 1 (clean, no acceptance) and the
++  // not-fulfilled verdict of round 2. Whichever the state lists first, the
++  // later verdict rejects the head: otherwise the clean receipt reads as a
++  // head awaiting a CI correction whose green exit returns it to `review`,
++  // whose re-observation corrects it again, without end.
++  for (const first of [true, false]) {
++    const rig = await acceptanceRig(`b6a-dual-${first}`, 2);
++    try {
++      const seeded = await rig.snapshot();
++      const clean = completedReceipt(7, SHA2, SHA1, {
++        id: first ? "review-receipt:0" : "review-receipt:z",
++        requestId: "review-req-0",
++        resultId: "result-0",
++        taskAcceptance: null,
++        repository: seeded.work[0]!.repository,
++      });
++      const read = await rig.store.readRepair();
++      assert.ok(read.ok && read.value.status === "found");
++      const written = await rig.store.writeRepair(
++        {
++          ...seeded,
++          stateHead: read.value.head,
++          sequence: seeded.sequence + 1,
++          reviews: [clean],
++        },
++        read.value.head,
++      );
++      assert.ok(written.ok && written.value.status === "applied", first + "");
++      const outcome = await rig.run();
++      const after = await rig.snapshot();
++      assert.equal(
++        rig.model.requests.length,
++        1,
++        `first=${first} ${JSON.stringify(outcome)} seq=${after.sequence} step=${
++          after.work[0]!.nextStep
++        }`,
++      );
++      assert.ok(
++        rig.model.requests[0]!.reviewFindings?.[0]?.message.startsWith(
++          TASK_ACCEPTANCE_FINDING_PREFIX,
++        ),
++      );
++      assert.equal(rig.model.requests[0]!.checkoutBase, SHA2);
++    } finally {
++      await rig.ctx.cleanup();
++    }
++  }
++});
+diff --git a/tests/repair/acceptance-fixtures.ts b/tests/repair/acceptance-fixtures.ts
+new file mode 100644
+index 0000000000..7e21d9fdcb
+--- /dev/null
++++ b/tests/repair/acceptance-fixtures.ts
+@@ -0,0 +1,79 @@
++/**
++ * Shared JAM B6 fixtures: one issue task whose standing review of its exact
++ * published head is a completed `not_fulfilled` verdict bound to the live
++ * task text, with the record's counted review rounds also charged in the
++ * durable ledger, as the live records are.
++ */
++import assert from "node:assert/strict";
++import type { ReviewTaskAcceptanceV1 } from "../../src/contracts/review-receipt.ts";
++import { reviewOperationKey } from "../../src/repair/keys.ts";
++import { reservation, SHA2, T0, workRecord } from "../state/helpers.ts";
++import {
++  acceptedObservation,
++  FAKE_ISSUE_TASK_DIGEST,
++  reviewWaitIssueRecord,
++} from "./loop-review-fixtures.ts";
++import { makeRig, seededSnapshot } from "./loop-rig.ts";
++import { exactOpenPr, positiveLifecycle } from "./loop-candidate-fixtures.ts";
++
++/** Live-shaped statement (ai.ubq.fi 1127's reviewer evidence, PR 1145). */
++export const NOT_FULFILLED: ReviewTaskAcceptanceV1 = {
++  issueNumber: 1,
++  taskDigest: FAKE_ISSUE_TASK_DIGEST,
++  verdict: "not_fulfilled",
++  evidence: [
++    "The pending debounced defaults save is not invalidated by the target-change handler, so the candidate can still queue a POST for the newly selected gateway.",
++    'The candidate leaves static/style.css without an expired-row accent rule while static/admin.js assigns data-state="expired".',
++  ],
++};
++
++/**
++ * The record at `review` on PR 7 / head SHA2 after `rounds` counted rounds,
++ * its standing observation the completed not-fulfilled verdict. `hosted`
++ * runs the cycle as a matrix run does (the correction is a planner cell).
++ */
++export async function acceptanceRig(
++  prefix: string,
++  rounds: number,
++  hosted = false,
++) {
++  const rig = await makeRig(prefix, {
++    summaries: false,
++    github: {
++      candidateLifecycle: {
++        ...positiveLifecycle(),
++        refs: { "refs/heads/sentinel/repair/issue-1": SHA2 },
++        pullRequests: [exactOpenPr(7, SHA2, "sentinel/repair/issue-1")],
++      },
++    },
++    ...(hosted ? { externalImplementations: true } : {}),
++  });
++  const record = workRecord("issue-1", {
++    ...reviewWaitIssueRecord(SHA2),
++    counters: { attempts: 1, retries: 0, reviewRounds: rounds },
++  });
++  const charges = Array.from(
++    { length: rounds },
++    (_, index) =>
++      reservation(`acceptance-review-${index + 1}`, {
++        taskId: record.id,
++        head: SHA2,
++        attempt: index + 1,
++        purpose: "review_request",
++        outcome: "submitted",
++        settledAt: T0 + 1000,
++      }),
++  );
++  const written = await rig.store.writeRepair(
++    seededSnapshot([record], { reservations: charges }),
++    null,
++  );
++  assert.ok(written.ok && written.value.status === "applied");
++  rig.clock.advance(3600_000 + 1);
++  const operationKey = reviewOperationKey(7, SHA2, rounds);
++  rig.github.reviewObservationsByKey.set(
++    operationKey,
++    acceptedObservation(SHA2, NOT_FULFILLED, rig.clock.now() + 1000),
++  );
++  return Object.assign(rig, { charges, operationKey });
++}
+diff --git a/tests/repair/acceptance-r80-source.ts b/tests/repair/acceptance-r80-source.ts
+new file mode 100644
+index 0000000000..06d26d1097
+--- /dev/null
++++ b/tests/repair/acceptance-r80-source.ts
+@@ -0,0 +1,74 @@
++/**
++ * R80 (e48e7e110, the rollback target of the generation shipping JAM B6)
++ * for its rollback tests: its exact `src/` and `tests/` trees, extracted
++ * read-only from the local object store (`git archive`) into a disposable
++ * directory under the repository root, and imported from there so R80's own
++ * code runs over what the new generation wrote. A checkout without R80 (CI
++ * checkouts are shallow) reports `r80Available() === false` and the callers
++ * mark their cases ignored. No network, no checkout mutation.
++ */
++import { OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION as R80 } from "../../src/host/owner-install-runtime-pins.ts";
++
++const ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname)
++  .replace(/\/$/, "");
++const GIT_ENV = {
++  PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
++  GIT_CONFIG_GLOBAL: "/dev/null",
++  GIT_CONFIG_SYSTEM: "/dev/null",
++  GIT_TERMINAL_PROMPT: "0",
++};
++
++/** True when R80's commit is in the local object store. */
++export async function r80Available(): Promise<boolean> {
++  try {
++    const probe = await new Deno.Command("git", {
++      args: ["-C", ROOT, "cat-file", "-e", `${R80}^{commit}`],
++      clearEnv: true,
++      env: GIT_ENV,
++      stdout: "null",
++      stderr: "null",
++    }).output();
++    return probe.success;
++  } catch {
++    return false;
++  }
++}
++
++/**
++ * Import `paths` (repository-relative) from R80's trees; the tree stays until
++ * `dispose`, so the modules' own lazy imports and rigs still resolve.
++ */
++export async function loadR80Modules(paths: readonly string[]): Promise<{
++  modules: Record<string, unknown>[];
++  dispose(): Promise<void>;
++}> {
++  const dir = await Deno.makeTempDir({ dir: ROOT, prefix: "sentinel-r80-b6-" });
++  const dispose = () => Deno.remove(dir, { recursive: true }).catch(() => {});
++  try {
++    const archive = await new Deno.Command("git", {
++      args: ["-C", ROOT, "archive", "--format=tar", R80, "src", "tests"],
++      clearEnv: true,
++      env: GIT_ENV,
++      stdout: "piped",
++      stderr: "null",
++    }).output();
++    if (!archive.success) throw new Error("R80 source unavailable");
++    await Deno.writeFile(`${dir}/tree.tar`, archive.stdout);
++    const extracted = await new Deno.Command("tar", {
++      args: ["-xf", `${dir}/tree.tar`, "-C", dir],
++      clearEnv: true,
++      env: { PATH: GIT_ENV.PATH },
++      stdout: "null",
++      stderr: "null",
++    }).output();
++    if (!extracted.success) throw new Error("R80 source unreadable");
++    const modules: Record<string, unknown>[] = [];
++    for (const path of paths) {
++      modules.push(await import(new URL(`file://${dir}/${path}`).href));
++    }
++    return { modules, dispose };
++  } catch (error) {
++    await dispose();
++    throw error;
++  }
++}
+diff --git a/tests/repair/acceptance-rollback-r80_test.ts b/tests/repair/acceptance-rollback-r80_test.ts
+new file mode 100644
+index 0000000000..bf19157b16
+--- /dev/null
++++ b/tests/repair/acceptance-rollback-r80_test.ts
+@@ -0,0 +1,374 @@
++/**
++ * Rollback contract of JAM B6 against R80 (e48e7e110), the rollback target of
++ * the generation that ships it. R80's own code (extracted read-only from the
++ * local object store) consumes what generation 81 writes:
++ *
++ * - the B6a correction (`work`, the receipt carrying the acceptance P1):
++ *   R80's parsers accept it and R80's own loop starts the same correction
++ *   with the same first finding, never the merge-gate path that would refuse
++ *   the acceptance with a state error on every run;
++ * - the B6b owner-gated park: parsed, and idle under R80;
++ * - the launcher's B6a re-admission (`review`, blocker cleared): R80
++ *   re-observes the standing verdict and blocks it again, uncharged (the
++ *   launcher therefore re-admits only under a proven correction runtime).
++ *
++ * Ignored in a checkout without R80 (CI checkouts are shallow).
++ */
++import assert from "node:assert/strict";
++import { canonicalStringify } from "../../src/contracts/canonical.ts";
++import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import type * as Snapshots from "../../src/contracts/state-snapshots.ts";
++import {
++  TASK_ACCEPTANCE_FINDING_ID,
++  TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
++} from "../../src/repair/acceptance-correction.ts";
++import { reviewReceiptId } from "../../src/repair/keys.ts";
++import type * as Eligibility from "../../src/repair/loop-eligibility.ts";
++import type * as ReviewRecords from "../../src/repair/loop-review-records.ts";
++import { TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL } from "../../src/repair/review-gate.ts";
++import { SHA2 } from "../state/helpers.ts";
++import { acceptanceRig, NOT_FULFILLED } from "./acceptance-fixtures.ts";
++import { loadR80Modules, r80Available } from "./acceptance-r80-source.ts";
++import { repairConfigs } from "./helpers.ts";
++import type * as Candidates from "./loop-candidate-fixtures.ts";
++import type * as Fixtures from "./loop-review-fixtures.ts";
++import type * as Rig from "./loop-rig.ts";
++
++const available = await r80Available();
++
++/** R80's own modules the cases below run. */
++async function loadR80() {
++  const loaded = await loadR80Modules([
++    "src/contracts/state-snapshots.ts",
++    "src/repair/loop-review-records.ts",
++    "src/repair/loop-eligibility.ts",
++    "tests/repair/loop-rig.ts",
++    "tests/repair/loop-review-fixtures.ts",
++    "tests/repair/loop-candidate-fixtures.ts",
++  ]);
++  const [snapshots, records, eligibility, rig, fixtures, candidates] = loaded
++    .modules as unknown as [
++      typeof Snapshots,
++      typeof ReviewRecords,
++      typeof Eligibility,
++      typeof Rig,
++      typeof Fixtures,
++      typeof Candidates,
++    ];
++  return {
++    snapshots,
++    records,
++    eligibility,
++    rig,
++    fixtures,
++    candidates,
++    dispose: loaded.dispose,
++  };
++}
++
++type R80 = Awaited<ReturnType<typeof loadR80>>;
++
++/** One generation-81 hosted run over the live round shape; its snapshot. */
++async function gen81State(name: string, rounds: number) {
++  const rig = await acceptanceRig(`b6-r80-${name}`, rounds, true);
++  try {
++    await rig.run();
++    return {
++      snapshot: await rig.snapshot(),
++      now: rig.clock.now(),
++      receiptId: await reviewReceiptId(rig.operationKey, SHA2),
++      operationKey: rig.operationKey,
++    };
++  } finally {
++    await rig.ctx.cleanup();
++  }
++}
++
++/** R80's own local rig seeded with exactly `snapshot` at `now`. */
++async function r80Rig(r80: R80, name: string, snapshot: unknown, now: number) {
++  const rig = await r80.rig.makeRig(`b6-r80-own-${name}`, {
++    summaries: false,
++    github: {
++      candidateLifecycle: {
++        ...r80.candidates.positiveLifecycle(),
++        refs: { "refs/heads/sentinel/repair/issue-1": SHA2 },
++        pullRequests: [
++          r80.candidates.exactOpenPr(7, SHA2, "sentinel/repair/issue-1"),
++        ],
++      },
++    },
++  });
++  const seed = r80.snapshots.parseRepairStateSnapshotV1({
++    ...JSON.parse(canonicalStringify(snapshot)),
++    stateHead: null,
++    sequence: 1,
++  });
++  const written = await rig.store.writeRepair(seed, null);
++  assert.ok(written.ok && written.value.status === "applied");
++  rig.clock.advance(now - rig.clock.now() + 60_000);
++  return rig;
++}
++
++function parsesUnderR80(r80: R80, snapshot: RepairStateSnapshotV1) {
++  const parsed = r80.snapshots.parseRepairStateSnapshotV1(
++    JSON.parse(canonicalStringify(snapshot)),
++  );
++  assert.equal(canonicalStringify(parsed), canonicalStringify(snapshot));
++}
++
++Deno.test({
++  name:
++    "rollback to R80: B6 corrections, parks and re-admissions parse and stay safe under R80's own loop",
++  ignore: !available,
++  async fn(t) {
++    const r80 = await loadR80();
++    try {
++      await t.step("B6a correction: R80 corrects it like a P0/P1", async () => {
++        const state = await gen81State("correct", 1);
++        parsesUnderR80(r80, state.snapshot);
++        const record = state.snapshot.work[0]!;
++        assert.equal(record.nextStep, "work");
++        const receipt = state.snapshot.reviews.find((review) =>
++          review.id === state.receiptId
++        )!;
++        assert.equal(receipt.findings[0]!.id, TASK_ACCEPTANCE_FINDING_ID);
++        // R80's own predicates read the correction, not a CI wait.
++        assert.equal(
++          r80.records.headNeedsCorrection(state.snapshot, record, true, false),
++          true,
++        );
++        assert.equal(
++          r80.records.headAwaitsCiCorrection(state.snapshot, record, true),
++          false,
++          "never the green-exit path to R80's merge gate",
++        );
++        assert.deepEqual(
++          r80.records.correctionFindings(state.snapshot, record)?.[0],
++          { severity: "P1", path: null, message: receipt.findings[0]!.message },
++        );
++        const config = repairConfigs({
++          sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
++        })[0];
++        assert.equal(
++          r80.eligibility.isMatrixImplementationReadyV1(
++            record,
++            state.snapshot,
++            config,
++            state.now,
++            true,
++            true,
++          ),
++          true,
++          "R80's planner admits the same correction cell",
++        );
++        const rig = await r80Rig(r80, "correct", state.snapshot, state.now);
++        try {
++          const outcome = await rig.run();
++          assert.notEqual(
++            outcome.status,
++            "state_error",
++            JSON.stringify(outcome),
++          );
++          assert.equal(rig.model.requests.length, 1);
++          assert.equal(rig.model.requests[0]!.checkoutBase, SHA2);
++          assert.equal(
++            rig.model.requests[0]!.reviewFindings?.[0]?.message,
++            receipt.findings[0]!.message,
++          );
++          assert.equal(rig.github.calls.includes("merge"), false);
++        } finally {
++          await rig.ctx.cleanup();
++        }
++      });
++
++      await t.step(
++        "control: the same verdict stored without the P1 would jam R80",
++        async () => {
++          // Why the receipt carries the acceptance as a P1: a clean-findings
++          // receipt at `work` reads as a reviewed head awaiting a CI
++          // correction under R80, whose green exit hands it to R80's merge
++          // gate, which refuses the acceptance with a run-level state error.
++          const state = await gen81State("control", 1);
++          const clean: RepairStateSnapshotV1 = {
++            ...state.snapshot,
++            reviews: state.snapshot.reviews.map((review) =>
++              review.id === state.receiptId
++                ? {
++                  ...review,
++                  findings: review.findings.slice(1),
++                  unresolvedSeverities: [],
++                }
++                : review
++            ),
++          };
++          const record = clean.work[0]!;
++          assert.equal(
++            r80.records.headAwaitsCiCorrection(clean, record, true),
++            true,
++          );
++          const rig = await r80Rig(r80, "control", clean, state.now);
++          try {
++            const outcome = await rig.run();
++            assert.equal(
++              outcome.status,
++              "state_error",
++              JSON.stringify(outcome),
++            );
++            assert.equal(outcome.detail, TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL);
++          } finally {
++            await rig.ctx.cleanup();
++          }
++        },
++      );
++
++      await t.step(
++        "B6a after a change-only receipt of the same head: R80 blocks it, never a state error",
++        async () => {
++          // The missing-acceptance recovery re-reviews the same head: R80 reads
++          // the first-listed change-only receipt, returns the head to review
++          // and blocks the re-observed verdict (generation 81 corrects it).
++          const state = await gen81State("dual", 2);
++          const record = state.snapshot.work[0]!;
++          const dual: RepairStateSnapshotV1 = {
++            ...state.snapshot,
++            reviews: [
++              {
++                ...state.snapshot.reviews[0]!,
++                id: "review-receipt:0",
++                requestId: "review-req-0",
++                resultId: "result-0",
++                findings: [],
++                unresolvedSeverities: [],
++                taskAcceptance: null,
++              },
++              ...state.snapshot.reviews,
++            ],
++          };
++          parsesUnderR80(r80, dual);
++          assert.equal(
++            r80.records.headTaskAcceptanceMissing(dual, record),
++            true,
++          );
++          const rig = await r80Rig(r80, "dual", dual, state.now);
++          try {
++            rig.github.reviewObservationsByKey.set(
++              state.operationKey,
++              r80.fixtures.acceptedObservation(
++                SHA2,
++                NOT_FULFILLED,
++                state.now + 1000,
++              ),
++            );
++            const outcome = await rig.run();
++            assert.notEqual(
++              outcome.status,
++              "state_error",
++              JSON.stringify(outcome),
++            );
++            const after = await rig.snapshot();
++            assert.equal(after.work[0]!.nextStep, "blocked");
++            assert.equal(
++              after.work[0]!.blocker?.message,
++              TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL,
++            );
++            assert.equal(rig.model.requests.length, 0);
++            assert.equal(rig.github.reviewRequestIdentities.length, 0);
++            assert.deepEqual(after.reservations, dual.reservations);
++          } finally {
++            await rig.ctx.cleanup();
++          }
++        },
++      );
++
++      await t.step("B6b owner-gated park: parsed and idle", async () => {
++        const state = await gen81State("park", 3);
++        parsesUnderR80(r80, state.snapshot);
++        const record = state.snapshot.work[0]!;
++        assert.equal(
++          record.blocker?.message,
++          TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
++        );
++        const rig = await r80Rig(r80, "park", state.snapshot, state.now);
++        try {
++          const outcome = await rig.run();
++          assert.equal(outcome.status, "idle", JSON.stringify(outcome));
++          const after = await rig.snapshot();
++          assert.deepEqual(after.work[0], record);
++          assert.deepEqual(after.reservations, state.snapshot.reservations);
++          assert.equal(rig.model.requests.length, 0);
++          assert.equal(rig.github.reviewRequestIdentities.length, 0);
++        } finally {
++          await rig.ctx.cleanup();
++        }
++      });
++
++      await t.step(
++        "launcher re-admission: R80 blocks the same verdict again, uncharged",
++        async () => {
++          // The launcher's write: the R80 refusal with its blocker cleared and
++          // the record back at `review` (counters, charges and identity kept).
++          const rig = await r80.rig.makeRig("b6-r80-readmit", {
++            summaries: false,
++            github: {
++              candidateLifecycle: {
++                ...r80.candidates.positiveLifecycle(),
++                refs: { "refs/heads/sentinel/repair/issue-1": SHA2 },
++                pullRequests: [
++                  r80.candidates.exactOpenPr(
++                    7,
++                    SHA2,
++                    "sentinel/repair/issue-1",
++                  ),
++                ],
++              },
++            },
++          });
++          try {
++            const gen81 = await acceptanceRig("b6-r80-readmit-seed", 2);
++            let seed: RepairStateSnapshotV1;
++            try {
++              seed = await gen81.snapshot();
++            } finally {
++              await gen81.ctx.cleanup();
++            }
++            const readmitted = r80.snapshots.parseRepairStateSnapshotV1({
++              ...JSON.parse(canonicalStringify(seed)),
++              work: seed.work.map((row) => ({
++                ...row,
++                nextStep: "review",
++                wait: null,
++                blocker: null,
++              })),
++            });
++            const written = await rig.store.writeRepair(readmitted, null);
++            assert.ok(written.ok && written.value.status === "applied");
++            rig.clock.advance(3600_000 + 1);
++            const key = gen81.operationKey;
++            rig.github.reviewObservationsByKey.set(
++              key,
++              r80.fixtures.acceptedObservation(
++                SHA2,
++                NOT_FULFILLED,
++                rig.clock.now() + 1000,
++              ),
++            );
++            await rig.run();
++            const after = await rig.snapshot();
++            assert.equal(after.work[0]!.nextStep, "blocked");
++            assert.equal(
++              after.work[0]!.blocker?.message,
++              TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL,
++            );
++            assert.deepEqual(after.reservations, readmitted.reservations);
++            assert.equal(rig.model.requests.length, 0);
++            assert.equal(rig.github.reviewRequestIdentities.length, 0);
++          } finally {
++            await rig.ctx.cleanup();
++          }
++        },
++      );
++    } finally {
++      await r80.dispose();
++    }
++  },
++});
+diff --git a/tests/repair/loop-semantic-acceptance_test.ts b/tests/repair/loop-semantic-acceptance_test.ts
+index 3921ded17e..1a27c88fc3 100644
+--- a/tests/repair/loop-semantic-acceptance_test.ts
++++ b/tests/repair/loop-semantic-acceptance_test.ts
+@@ -28,6 +28,10 @@ import {
+ } from "./loop-review-fixtures.ts";
+ import { exactOpenPr, positiveLifecycle } from "./loop-candidate-fixtures.ts";
+ 
++/** The not-fulfilled verdict's expected disposition: a correction (B6a). */
++const CORRECTED = "correction";
++const refusedDetail = TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL;
++
+ Deno.test(
+   "semantic acceptance: an issue-backed delivery requires the bound positive verdict",
+   async () => {
+@@ -64,7 +68,10 @@ Deno.test(
+           verdict: "not_fulfilled",
+           evidence: ["the changed file does not implement the task"],
+         },
+-        TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL,
++        // JAM B6a: with a round left this is a correction exactly like a
++        // P0/P1 finding (tests/repair/acceptance-correction_test.ts), never
++        // a delivery and never the old terminal refusal.
++        CORRECTED,
+         "other",
+       ],
+       [
+@@ -185,18 +192,37 @@ Deno.test(
+           assert.equal(state.reservations.length, 0, label);
+           assert.equal(rig.github.calls.includes("createPr"), false, label);
+           assert.equal(rig.github.pushes.length, 0, label);
++        } else if (detail === CORRECTED) {
++          assert.notEqual(work.nextStep, "blocked", label);
++          assert.notEqual(work.blocker?.message, refusedDetail, label);
++          const receiptId = await reviewReceiptId(currentKey, head);
++          const retained = state.reviews.find((receipt) =>
++            receipt.id === receiptId
++          );
++          assert.ok(retained, label);
++          assert.deepEqual(retained.taskAcceptance, acceptance, label);
++          assert.deepEqual(retained.unresolvedSeverities, ["P1"], label);
++          assert.equal(rig.model.requests.length, 1, label);
++          assert.equal(rig.model.requests[0]!.checkoutBase, head, label);
+         } else {
+           assert.equal(work.nextStep, "blocked", label);
+           assert.equal(work.blocker?.message, detail, label);
+           assert.equal(work.blocker?.kind, kind, label);
+         }
+-        assert.equal(rig.model.requests.length, 0);
++        if (detail !== CORRECTED) {
++          assert.equal(rig.model.requests.length, 0);
++        }
+         assert.equal(
+           rig.github.calls.some((call) => call.startsWith("closeIssue:")),
+           false,
+           `${label} must never close an issue`,
+         );
+-        assert.equal(work.target.head, head);
++        if (detail === CORRECTED) {
++          // The correction replaced the refused head with its new candidate.
++          assert.notEqual(work.target.head, head, label);
++        } else {
++          assert.equal(work.target.head, head);
++        }
+         assert.equal(
+           rig.github.calls.includes("merge"),
+           false,
+-- 
+2.43.0
+

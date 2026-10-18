@@ -1,0 +1,3301 @@
+From 3a32b74add1f4a859cf17eabf7be6f029ebcf3d7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 17 Oct 2026 23:40:48 +0000
+Subject: [PATCH] fix(repair): park identical implementation failures for the
+ owner
+
+ai.ubq.fi 300 recorded 53 identical "model run failed (unavailable)"
+outcomes over 23 bases, each after a charged reservation. Every recent
+cell diagnostic reads model_candidate_unchanged_base: the issue was fixed
+upstream (ai.ubq.fi 0c120c11f6) before the first charge, the model
+completed without changing its checkout, the trusted committer refused
+unchanged_base and the port reported that as unavailable, so the cell
+exported a transient provider outage.
+
+Runtime: a completed run that left its checkout unchanged now settles as
+"model run completed without any change to its checkout" (stage model,
+class semantic_no_progress), still charged ambiguous; every other port
+error keeps "model run failed (<kind>)".
+
+Launcher: attempt memory is keyed by base, so it never refused a task
+whose base keeps moving. The retry pass now reads it base- and
+runtime-independently: three identical outcomes (blocker kind plus a
+digest of the normalized message), a transient-class streak only once it
+spans the six-hour decay window, park the record in one CAS write as an
+explicit owner-gated blocker that no retry rule matches; every later pass
+names it. An edited source issue or a changed model route (the
+maintenance step now receives the non-secret route selector variables)
+re-arms it once; a different signature resets the streak. Charges, intent,
+counters and memory are untouched. The 200-reservation cap is now named
+instead of skipped silently. Every new shape parses under R80's parsers.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H8mMNvEXtHRiTVR1wJeFLQ
+---
+ .github/workflows/supervisor.yml              |    8 +-
+ docs/DECISIONS.md                             |    2 +
+ ops/hosted-autonomy-main.ts                   |    8 +
+ ops/hosted-autonomy-matrix-bindings.ts        |    4 +-
+ ops/hosted-autonomy-policy.ts                 |   10 +
+ ops/hosted-autonomy-repeat-failure.ts         |  403 +++++
+ ops/hosted-autonomy-retries.ts                |   56 +-
+ ops/hosted-autonomy-retry-pass.ts             |   51 +-
+ ops/hosted-autonomy-types.ts                  |    6 +
+ src/host/matrix-cell.ts                       |   16 +-
+ src/host/matrix-ingest-state.ts               |    5 +
+ src/repair/attempt-policy.ts                  |   31 +
+ src/repair/loop-work.ts                       |   10 +-
+ .../fixtures/host/repeat-failure-live-v1.json | 1292 +++++++++++++++++
+ .../hosted-autonomy-repeat-failure_test.ts    |  727 ++++++++++
+ tests/host/matrix-no-change-outcome_test.ts   |  225 +++
+ tests/host/r80-contracts.ts                   |  103 ++
+ 17 files changed, 2943 insertions(+), 14 deletions(-)
+ create mode 100644 ops/hosted-autonomy-repeat-failure.ts
+ create mode 100644 tests/fixtures/host/repeat-failure-live-v1.json
+ create mode 100644 tests/host/hosted-autonomy-repeat-failure_test.ts
+ create mode 100644 tests/host/matrix-no-change-outcome_test.ts
+ create mode 100644 tests/host/r80-contracts.ts
+
+diff --git a/.github/workflows/supervisor.yml b/.github/workflows/supervisor.yml
+index 6eb06e732c..92fe6c31ab 100644
+--- a/.github/workflows/supervisor.yml
++++ b/.github/workflows/supervisor.yml
+@@ -122,13 +122,19 @@ jobs:
+         env:
+           GITHUB_TOKEN: ${{ github.token }}
+           SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
++          # The non-secret model-route selector only (never a key and never a
++          # failover override): a changed route re-arms the records the
++          # repeat-failure bound parked for the owner.
++          SENTINEL_MODEL_BASE_URL: ${{ vars.SENTINEL_MODEL_BASE_URL }}
++          SENTINEL_MODEL_ID: ${{ vars.SENTINEL_MODEL_ID }}
++          SENTINEL_MODEL_FALLBACK: ${{ vars.SENTINEL_MODEL_FALLBACK }}
+         run: >-
+           deno run --no-lock
+           --allow-read
+           --allow-write
+           --allow-run
+           --allow-net="api.github.com,*.blob.core.windows.net"
+-          --allow-env=HOME,PATH,NODE_V8_COVERAGE,GITHUB_TOKEN,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_COOLDOWN_MODE
++          --allow-env=HOME,PATH,NODE_V8_COVERAGE,GITHUB_TOKEN,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_COOLDOWN_MODE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_MODEL_FALLBACK
+           ops/hosted-autonomy.ts
+ 
+   prepare:
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index b6ce6b0b1b..36a5972b33 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -186,6 +186,8 @@ A release request the trusted controller cancelled or marked failed is terminal
+ 
+ A trusted already-merged pull request is verified by its exact head binding plus the recorded base's proven ancestry, not by first-parent equality: the base branch may advance between the reviewed snapshot and an external trusted merge, and the merge is still the reviewed delivery. A divergent, unproven or differently-parented merge is refused.
+ 
++Identical implementation failures are bounded across bases (JAM B10, 2026-10-17). Attempt memory is keyed by (task, base, runtime), so it never refused ai.ubq.fi 300, whose base moved with every merge: 53 identical "model run failed (unavailable)" outcomes over 23 bases, each a charged reservation. Root cause: every recent 300 cell's diagnostic reads `model_candidate_unchanged_base` (run 39073338516); the issue was already fixed upstream (ai.ubq.fi 0c120c11f6, before its first charge), the model completed without changing its checkout, the trusted committer refused `unchanged_base`, and the port reported that as `unavailable`. The runtime now settles that exact refusal as its own no-progress outcome, "model run completed without any change to its checkout" (stage `model`, class `semantic_no_progress`), still charged `ambiguous`, never refunded; every other port error keeps "model run failed (<kind>)". The launcher's retry pass (`ops/hosted-autonomy-repeat-failure.ts`) reads the task's attempt memory base- and runtime-independently: the signature is the blocker kind plus 16 hex of the SHA-256 of the normalized message (case, whitespace, hex identities and numbers folded); the streak stops at the newest different outcome and at the newest recorded success, and an entry straddling that boundary counts once. Three identical outcomes (the review-round cap; one past the no-progress tolerance) park the record, a transient-class streak only once it also spans the six-hour transient decay window, so a provider outage shorter than that never parks the fleet. The park is one CAS write that only replaces the blocker with "repeated identical failure; owner action required (...): <n>x <kind>|<sig> issue=<digest12> route=<route12>: <original>"; intent, counters, charges and memory are untouched, no retry rule of any launcher matches it, and every later pass names it (`repeat_failure_parked`) without writing. An edited source issue (its canonical task digest changed) or a changed model route (the maintenance step now receives the non-secret `SENTINEL_MODEL_*` selector variables, never a key or failover override) re-arms it once as an ordinary work grant through every existing gate except the same-base equivalence refusal; an identical failure after that re-parks at once, and a different signature resets the streak. Age, generation or a base move never re-arm. An issue whose digest cannot be read is withheld without a park (`repeat_failure_unverified_issue`), and the 200-reservation cap is now named (`retry_budget_exhausted`) instead of skipped silently. The park and the new detail parse under R80's own parsers.
++
+ ## Evidence, target release and local development
+ 
+ Sentinel adapts the Ubiquity physical file-size policy from `ubiquity/ts-template` revision `fc5add134e8ed3728a3da981d298d0a92eb27ac8` with Deno-native `size:report` and `size:check` tasks. Source ceilings are 1,000 lines and test ceilings are 1,500, counting comments and blanks; 500/800 are review triggers. All tracked and new nonignored code, including operations scripts, is covered without a grandfather baseline or exemptions. Keep Deno's existing formatter, linter and lockfile; the cheap size gate also runs in `test-local.ts` before typechecks/tests. This adaptation does not add an ESLint/Node toolchain or broaden local/hosted validation authority.
+diff --git a/ops/hosted-autonomy-main.ts b/ops/hosted-autonomy-main.ts
+index 385ac1cee6..36237c808e 100644
+--- a/ops/hosted-autonomy-main.ts
++++ b/ops/hosted-autonomy-main.ts
+@@ -22,6 +22,7 @@ import {
+   maintenanceFailureCategory,
+ } from "./hosted-autonomy-state.ts";
+ import { createHostedAutonomyGitHub } from "./hosted-autonomy-github.ts";
++import { repeatFailureRouteIdentity } from "./hosted-autonomy-repeat-failure.ts";
+ import {
+   CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE,
+   hostedRepositoryKey,
+@@ -175,6 +176,13 @@ export async function runHostedAutonomyMain(input?: {
+           state,
+           githubFor,
+           clock: { now: () => Date.now() },
++          // Route selector names only, never a key: a changed model route
++          // re-arms the records the repeat-failure bound parked.
++          modelRoute: repeatFailureRouteIdentity({
++            baseUrl: env("SENTINEL_MODEL_BASE_URL"),
++            model: env("SENTINEL_MODEL_ID"),
++            fallback: env("SENTINEL_MODEL_FALLBACK"),
++          }),
+           uncertainMatrix: () =>
+             runMatrixUncertaintyMaintenance(createMatrixUncertaintyMaintenance({
+               state,
+diff --git a/ops/hosted-autonomy-matrix-bindings.ts b/ops/hosted-autonomy-matrix-bindings.ts
+index 6642e4046c..69fb4d6149 100644
+--- a/ops/hosted-autonomy-matrix-bindings.ts
++++ b/ops/hosted-autonomy-matrix-bindings.ts
+@@ -23,7 +23,9 @@ export const HISTORICAL_RECOVERY_PROVIDERS: readonly string[] = [
+  * is this same pure resolver's result for an absent override (the default).
+  * The launcher evaluates that resolver from its own source; it never reads
+  * the id from an artifact, a receipt or the maintenance environment (which
+- * carries no model route at all). A test pins the no-override invariant.
++ * carries only the non-secret route selector the repeat-failure bound
++ * compares, never `SENTINEL_MODEL_FAILOVER_ID`). A test pins the no-override
++ * invariant.
+  */
+ export const RECOVERY_ROUTE_FAILOVER_MODEL: string = resolveFailoverModelId(
+   {},
+diff --git a/ops/hosted-autonomy-policy.ts b/ops/hosted-autonomy-policy.ts
+index f9010492e3..a49e74db9c 100644
+--- a/ops/hosted-autonomy-policy.ts
++++ b/ops/hosted-autonomy-policy.ts
+@@ -1,5 +1,6 @@
+ import { HISTORICAL_NOT_STARTED_DETAIL } from "../src/host/matrix-actions.ts";
+ import { CI_UNATTRIBUTED_DETAIL } from "../src/repair/ci-rejection.ts";
++import { ATTEMPT_DETAIL_NO_CHANGE } from "../src/repair/attempt-policy.ts";
+ import {
+   isDeliverableReviewRoundCeilingPark,
+   isReviewRoundCeilingPark,
+@@ -289,6 +290,15 @@ export const HOSTED_AUTONOMY_RETRYABLE: readonly {
+     prefix: "model run did not complete with a trusted candidate",
+     nextStep: "work",
+   },
++  {
++    // A completed session that left its checkout unchanged (the runtime's own
++    // no-progress class, ai.ubq.fi 300's real outcome). It gets the ordinary
++    // work grant; the repeat-failure bound
++    // (`hosted-autonomy-repeat-failure.ts`) parks it for the owner after
++    // `REPEAT_FAILURE_PARK_THRESHOLD` identical outcomes.
++    prefix: ATTEMPT_DETAIL_NO_CHANGE,
++    nextStep: "work",
++  },
+   {
+     // A truthfully proven historical not-started admission is resolved
+     // uncertainty, not a model outcome: the existing retry authority still
+diff --git a/ops/hosted-autonomy-repeat-failure.ts b/ops/hosted-autonomy-repeat-failure.ts
+new file mode 100644
+index 0000000000..43e7478340
+--- /dev/null
++++ b/ops/hosted-autonomy-repeat-failure.ts
+@@ -0,0 +1,403 @@
++/**
++ * The repeat-failure bound (JAM B10, non-progress cycle): an implementation
++ * retry that keeps failing the SAME way is parked for the owner instead of
++ * being re-granted on every base move.
++ *
++ * Durable attempt memory is keyed by (task, base, runtime), so it never
++ * refuses a task whose target base keeps moving: ai.ubq.fi 300 recorded 53
++ * identical "model run failed (unavailable)" outcomes over 23 bases, each
++ * after a fresh charged reservation, and the per-task 200-reservation cap was
++ * the only remaining bound. This module reads the same attempt memory
++ * base-independently.
++ *
++ * - Signature: the blocker class plus the first 16 hex digits of the SHA-256
++ *   of the normalized blocker message (case, whitespace, hex identities and
++ *   numbers folded), so neither the base, the runtime revision nor an
++ *   embedded SHA makes two equal failures look different.
++ * - Streak: the task's implementation outcomes newest first, across every
++ *   base and runtime; it stops at the newest outcome with a different
++ *   normalized detail and at the newest recorded success. An entry that
++ *   straddles that boundary counts once (only its last occurrence is proven
++ *   later), so the count never overstates.
++ * - Park: `REPEAT_FAILURE_PARK_THRESHOLD` (3) identical outcomes park the
++ *   record — for a transient-classified outcome only once they also span the
++ *   attempt policy's own six-hour transient decay window, so a provider
++ *   outage shorter than that window never parks the fleet. Three is the
++ *   owner's review-round cap and the attempt policy's no-progress tolerance
++ *   plus one; with an independent transient fault, three identical failures
++ *   six hours apart are already improbable, and every further grant is a
++ *   charged model start.
++ * - The park is ONE write: the record stays `blocked`, its retained intent,
++ *   counters, charges and attempt memory untouched, and only its blocker
++ *   becomes the explicit owner-gated message below, which no retry rule of
++ *   this or any earlier launcher matches. Every later pass names it
++ *   (`repeat_failure_parked`) without writing.
++ * - Re-arm: an edited source issue (its canonical task digest differs from
++ *   the one the park recorded) or a changed model route (the launcher's
++ *   route selector identity differs) returns the record to `work` once,
++ *   through the ordinary gates; a different failure signature resets the
++ *   streak by construction. An identical failure after a re-arm re-parks at
++ *   once: the change did not alter the outcome. Age, generation or a base
++ *   move alone never re-arm.
++ *
++ * Charged reservations stay charged: nothing here settles, refunds or
++ * deletes a charge, and parking only withholds a new one.
++ */
++import { createHash } from "node:crypto";
++import type { AttemptFailureClassV1 } from "../src/contracts/attempt-memory.ts";
++import { canonicalStringify } from "../src/contracts/canonical.ts";
++import {
++  parseRepairStateSnapshotV1,
++  type RepairStateSnapshotV1,
++} from "../src/contracts/state-snapshots.ts";
++import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
++import { MaxText } from "../src/contracts/validation.ts";
++import { ATTEMPT_TRANSIENT_DECAY_MS } from "../src/repair/attempt-policy.ts";
++import { sameRepository } from "./hosted-autonomy-policy.ts";
++
++/** Identical consecutive outcomes that park a record (see module doc). */
++export const REPEAT_FAILURE_PARK_THRESHOLD = 3;
++
++/** A transient-class streak must span the attempt policy's decay window. */
++export const REPEAT_FAILURE_TRANSIENT_SPAN_MS = ATTEMPT_TRANSIENT_DECAY_MS;
++
++/** The owner-gated blocker prefix; no retry rule of any launcher matches it. */
++export const REPEAT_FAILURE_PARK_PREFIX =
++  "repeated identical failure; owner action required (close or edit the issue, or change the model route): ";
++
++/** The work record contract's blocker message bound. */
++const MAX_BLOCKER_MESSAGE = MaxText.message;
++
++const PARK_PATTERN = new RegExp(
++  `^${
++    REPEAT_FAILURE_PARK_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
++  }(\\d{1,9})x ([a-z_]{1,32}\\|[0-9a-f]{16}) issue=([0-9a-f]{12}|none) route=([0-9a-f]{12}): `,
++);
++
++function sha256Hex(text: string): string {
++  return createHash("sha256").update(text, "utf8").digest("hex");
++}
++
++/** Case, whitespace, hex identities and numbers folded. */
++export function normalizeFailureMessage(message: string): string {
++  return message.normalize("NFC").toLowerCase()
++    .replace(/\b[0-9a-f]{7,64}\b/g, "<hex>")
++    .replace(/\d+/g, "<n>")
++    .replace(/\s+/g, " ")
++    .trim();
++}
++
++/** `<blocker kind>|<16 hex of the normalized message digest>`. */
++export function failureSignature(kind: string, message: string): string {
++  return `${kind}|${sha256Hex(normalizeFailureMessage(message)).slice(0, 16)}`;
++}
++
++/**
++ * The launcher's model-route identity: 12 hex digits over the non-secret
++ * route selector the supervisor workflow hands every job (`SENTINEL_MODEL_*`
++ * repository variables). Unset and empty are the same selector.
++ */
++export function repeatFailureRouteIdentity(selector: {
++  baseUrl: string | null;
++  model: string | null;
++  fallback: string | null;
++}): string {
++  const value = (raw: string | null) => (raw ?? "").trim();
++  return sha256Hex(canonicalStringify({
++    domain: "sentinel.repeat-failure.route.v1",
++    baseUrl: value(selector.baseUrl),
++    model: value(selector.model),
++    fallback: value(selector.fallback),
++  })).slice(0, 12);
++}
++
++/** The identity of an entirely unset selector (tests, absent environment). */
++export const REPEAT_FAILURE_DEFAULT_ROUTE: string = repeatFailureRouteIdentity(
++  { baseUrl: null, model: null, fallback: null },
++);
++
++export interface RepeatFailureStreakV1 {
++  signature: string;
++  /** Proven consecutive identical outcomes (never overstated). */
++  count: number;
++  firstAtMs: number;
++  lastAtMs: number;
++  /** The newest outcome's recorded class. */
++  failureClass: AttemptFailureClassV1;
++}
++
++/**
++ * The record's current identical-failure streak, or null when its blocker is
++ * not the newest recorded implementation outcome of its task.
++ */
++export function repeatFailureStreak(
++  snapshot: RepairStateSnapshotV1,
++  record: WorkRecordV1,
++): RepeatFailureStreakV1 | null {
++  const blocker = record.blocker;
++  if (record.nextStep !== "blocked" || blocker === null) return null;
++  const target = normalizeFailureMessage(blocker.message);
++  let success = Number.NEGATIVE_INFINITY;
++  const entries: {
++    normalized: string;
++    count: number;
++    firstAtMs: number;
++    lastAtMs: number;
++    failureClass: AttemptFailureClassV1;
++  }[] = [];
++  for (const memory of snapshot.attemptMemory) {
++    if (
++      memory.taskId !== record.id || memory.purpose !== "implementation" ||
++      !sameRepository(memory.repository, record.repository)
++    ) continue;
++    if (typeof memory.lastSuccessAtMs === "number") {
++      success = Math.max(success, memory.lastSuccessAtMs);
++    }
++    for (const entry of memory.entries) {
++      entries.push({
++        normalized: normalizeFailureMessage(entry.detail),
++        count: entry.count,
++        firstAtMs: entry.firstAtMs,
++        lastAtMs: entry.lastAtMs,
++        failureClass: entry.failureClass,
++      });
++    }
++  }
++  entries.sort((left, right) => right.lastAtMs - left.lastAtMs);
++  const newest = entries[0];
++  if (
++    newest === undefined || newest.normalized !== target ||
++    newest.lastAtMs <= success
++  ) return null;
++  const different = entries.find((entry) => entry.normalized !== target);
++  const boundary = Math.max(success, different?.lastAtMs ?? success);
++  let count = 0;
++  let firstAtMs = newest.lastAtMs;
++  for (const entry of entries) {
++    if (entry.normalized !== target || entry.lastAtMs <= boundary) continue;
++    // Wholly after the boundary: every occurrence counts. Straddling it:
++    // only the last occurrence is proven later.
++    const whole = entry.firstAtMs > boundary;
++    count += whole ? entry.count : 1;
++    firstAtMs = Math.min(firstAtMs, whole ? entry.firstAtMs : entry.lastAtMs);
++  }
++  return {
++    signature: failureSignature(blocker.kind, blocker.message),
++    count,
++    firstAtMs,
++    lastAtMs: newest.lastAtMs,
++    failureClass: newest.failureClass,
++  };
++}
++
++/** True once a streak has reached the bound (see module doc). */
++export function repeatFailureDue(streak: RepeatFailureStreakV1): boolean {
++  if (streak.count < REPEAT_FAILURE_PARK_THRESHOLD) return false;
++  return streak.failureClass !== "transient_infrastructure" ||
++    streak.lastAtMs - streak.firstAtMs >= REPEAT_FAILURE_TRANSIENT_SPAN_MS;
++}
++
++export interface RepeatFailureParkV1 {
++  count: number;
++  signature: string;
++  /** 12 hex of the canonical source task digest at park time, or `none`. */
++  issue: string;
++  /** The launcher route identity at park time. */
++  route: string;
++}
++
++/** The explicit owner-gated blocker message; it keeps the original detail. */
++export function repeatFailureParkMessage(
++  park: RepeatFailureParkV1,
++  original: string,
++): string {
++  return `${REPEAT_FAILURE_PARK_PREFIX}${park.count}x ${park.signature} issue=${park.issue} route=${park.route}: ${original}`
++    .slice(0, MAX_BLOCKER_MESSAGE);
++}
++
++/** The park a blocker records, or null for every other blocker. */
++export function parseRepeatFailurePark(
++  blocker: WorkRecordV1["blocker"],
++): RepeatFailureParkV1 | null {
++  if (blocker === null || blocker.kind !== "other") return null;
++  const match = PARK_PATTERN.exec(blocker.message);
++  if (match === null) return null;
++  return {
++    count: Number(match[1]),
++    signature: match[2],
++    issue: match[3],
++    route: match[4],
++  };
++}
++
++/** Launcher facts the bound reads; absent means nothing can be verified. */
++export interface RepeatFailureContextV1 {
++  /** `repeatFailureRouteIdentity` of this launcher's route selector. */
++  route: string;
++  /**
++   * The live canonical task digest (`ReviewTaskStatementV1.digest`) of each
++   * issue-backed record's source issue this pass, by record id; null when it
++   * could not be read.
++   */
++  issueDigests: ReadonlyMap<string, string | null>;
++}
++
++export type RepeatFailureVerdictV1 =
++  | { kind: "none" }
++  /** Withhold the grant and write `message` as the record's blocker. */
++  | { kind: "park"; park: RepeatFailureParkV1; message: string }
++  /** Due, but the source digest is unreadable: withhold, write nothing. */
++  | { kind: "unverified"; streak: RepeatFailureStreakV1 }
++  | { kind: "parked"; park: RepeatFailureParkV1 }
++  | {
++    kind: "rearm";
++    park: RepeatFailureParkV1;
++    trigger: "issue_edited" | "route_changed";
++  };
++
++function issueBaseline(
++  record: WorkRecordV1,
++  context: RepeatFailureContextV1 | undefined,
++): string | null {
++  if (record.related.issueNumber === null) return "none";
++  const digest = context?.issueDigests.get(record.id) ?? null;
++  return digest !== null && /^[0-9a-f]{64}$/.test(digest)
++    ? digest.slice(0, 12)
++    : null;
++}
++
++/**
++ * The bound's verdict on one blocked record. Pure; the caller applies a
++ * `park` in its own CAS write and reports every non-`none` verdict.
++ */
++export function repeatFailureVerdict(
++  snapshot: RepairStateSnapshotV1,
++  record: WorkRecordV1,
++  context?: RepeatFailureContextV1,
++): RepeatFailureVerdictV1 {
++  const parked = parseRepeatFailurePark(record.blocker);
++  const route = context?.route ?? REPEAT_FAILURE_DEFAULT_ROUTE;
++  if (parked !== null) {
++    if (context !== undefined && parked.route !== route) {
++      return { kind: "rearm", park: parked, trigger: "route_changed" };
++    }
++    const issue = issueBaseline(record, context);
++    if (
++      issue !== null && issue !== "none" && parked.issue !== "none" &&
++      issue !== parked.issue
++    ) return { kind: "rearm", park: parked, trigger: "issue_edited" };
++    return { kind: "parked", park: parked };
++  }
++  const streak = repeatFailureStreak(snapshot, record);
++  if (streak === null || !repeatFailureDue(streak)) return { kind: "none" };
++  const issue = issueBaseline(record, context);
++  if (issue === null) return { kind: "unverified", streak };
++  const park = {
++    count: streak.count,
++    signature: streak.signature,
++    issue,
++    route,
++  };
++  return {
++    kind: "park",
++    park,
++    message: repeatFailureParkMessage(park, record.blocker!.message),
++  };
++}
++
++/** True when the bound needs this record's live source digest this pass. */
++export function repeatFailureNeedsIssue(
++  snapshot: RepairStateSnapshotV1,
++  record: WorkRecordV1,
++): boolean {
++  if (record.nextStep !== "blocked" || record.related.issueNumber === null) {
++    return false;
++  }
++  if (parseRepeatFailurePark(record.blocker) !== null) return true;
++  const streak = repeatFailureStreak(snapshot, record);
++  return streak !== null && repeatFailureDue(streak);
++}
++
++/** One park the retry pass writes. */
++export interface RepeatFailureParkPlanV1 {
++  id: string;
++  repository: WorkRecordV1["repository"];
++  message: string;
++  park: RepeatFailureParkV1;
++}
++
++/**
++ * Apply parks to one snapshot (pure): only the blocker of each named,
++ * still-blocked record changes. Intent, counters, charges, reviews and
++ * attempt memory are untouched.
++ */
++export function applyRepeatFailureParks(
++  snapshot: RepairStateSnapshotV1,
++  parks: readonly RepeatFailureParkPlanV1[],
++  now: number,
++): RepairStateSnapshotV1 {
++  if (parks.length === 0) return snapshot;
++  return parseRepairStateSnapshotV1({
++    ...snapshot,
++    work: snapshot.work.map((record) => {
++      const park = parks.find((item) =>
++        item.id === record.id &&
++        sameRepository(item.repository, record.repository)
++      );
++      if (park === undefined || record.nextStep !== "blocked") return record;
++      return {
++        ...record,
++        blocker: { kind: "other", message: park.message, since: now },
++        updatedAt: now,
++      };
++    }),
++  });
++}
++
++/**
++ * The bound's gate inside `planHostedRetries`: true when the record is
++ * withheld, reported through `onDenied` (and a due park through `onPark`).
++ * A parked record is withheld everywhere; a due or unverified one only where
++ * a work grant would be planned (`atWorkGrant`).
++ */
++export function repeatFailureWithheld(
++  verdict: RepeatFailureVerdictV1,
++  record: WorkRecordV1,
++  atWorkGrant: boolean,
++  onDenied?: (
++    denial: {
++      id: string;
++      repository: WorkRecordV1["repository"];
++      reason: string;
++    },
++  ) => void,
++  onPark?: (park: RepeatFailureParkPlanV1) => void,
++): boolean {
++  const deny = (reason: string) =>
++    onDenied?.({ id: record.id, repository: record.repository, reason });
++  if (verdict.kind === "parked") {
++    deny(`repeat_failure_parked:${repeatFailureLabel(verdict.park)}`);
++    return true;
++  }
++  if (!atWorkGrant) return false;
++  if (verdict.kind === "park") {
++    onPark?.({
++      id: record.id,
++      repository: record.repository,
++      message: verdict.message,
++      park: verdict.park,
++    });
++    deny(`repeat_failure_parked:${repeatFailureLabel(verdict.park)}`);
++    return true;
++  }
++  if (verdict.kind === "unverified") {
++    deny("repeat_failure_unverified_issue");
++    return true;
++  }
++  return false;
++}
++
++/** The bounded action naming one park or parked record in the run summary. */
++export function repeatFailureLabel(park: RepeatFailureParkV1): string {
++  return `${park.signature}:x${park.count}`;
++}
+diff --git a/ops/hosted-autonomy-retries.ts b/ops/hosted-autonomy-retries.ts
+index 035502b065..da71dca9fa 100644
+--- a/ops/hosted-autonomy-retries.ts
++++ b/ops/hosted-autonomy-retries.ts
+@@ -43,6 +43,12 @@ import {
+   ciFixMarker,
+   reviewRoundAvailable,
+ } from "../src/repair/ci-first-policy.ts";
++import {
++  type RepeatFailureContextV1,
++  type RepeatFailureParkPlanV1,
++  repeatFailureVerdict,
++  repeatFailureWithheld,
++} from "./hosted-autonomy-repeat-failure.ts";
+ 
+ /**
+  * Durable reservations charged to one task, across every purpose and outcome
+@@ -457,6 +463,14 @@ export function planHostedRetries(
+      * CI-first runtime.
+      */
+     legacyReviewCutoff?: number | null;
++    /**
++     * Launcher facts of the repeat-failure bound
++     * (`hosted-autonomy-repeat-failure.ts`). Absent, nothing can be verified:
++     * a due record is withheld without a park and a parked one never re-arms.
++     */
++    repeatFailure?: RepeatFailureContextV1;
++    /** Receives each park the bound decided; the caller writes it. */
++    onRepeatFailurePark?: (park: RepeatFailureParkPlanV1) => void;
+   } = {},
+ ): RetryPlanV1[] {
+   if (!isGitSha(runtimeSha)) return [];
+@@ -499,15 +513,32 @@ export function planHostedRetries(
+     }
+     const blocker = record.blocker;
+     if (blocker === null) continue;
++    // A repeat-failure park is named every pass; an edited issue or a changed
++    // model route re-arms it once as an ordinary work grant.
++    const repeat = repeatFailureVerdict(
++      snapshot,
++      record,
++      options.repeatFailure,
++    );
++    if (repeatFailureWithheld(repeat, record, false, onDenied)) continue;
++    const rearm = repeat.kind === "rearm" ? repeat.trigger : null;
++    const rule: (typeof HOSTED_AUTONOMY_RETRYABLE)[number] | undefined =
++      rearm !== null
++        ? { prefix: `repeat_failure_rearmed:${rearm}`, nextStep: "work" }
++        : HOSTED_AUTONOMY_RETRYABLE.find((item) =>
++          blocker.message.startsWith(item.prefix)
++        );
+     if (
+       taskReservationCount(snapshot, record.id) >= HOSTED_AUTONOMY_MAX_RETRIES
+     ) {
++      // The cap is an owner state: a record this table would re-grant is named.
++      if (rule !== undefined) {
++        const { id, repository } = record;
++        onDenied?.({ id, repository, reason: "retry_budget_exhausted" });
++      }
+       continue;
+     }
+     if (!Number.isSafeInteger(now)) continue;
+-    const rule = HOSTED_AUTONOMY_RETRYABLE.find((item) =>
+-      blocker.message.startsWith(item.prefix)
+-    );
+     // A conflict resolution that was charged and did not publish keeps the
+     // conflict marker on its retained intent: one charge per (task, base tip).
+     const marked = conflictMarkerBase(record.intent);
+@@ -706,14 +737,27 @@ export function planHostedRetries(
+     if (base === null) continue;
+     const baseTip = baseTips.get(hostedRepositoryKey(record.repository)) ??
+       null;
++    // The repeat-failure bound: the same failure signature repeated across
++    // bases parks the record for the owner instead of buying another charge.
++    if (
++      rule.nextStep === "work" &&
++      repeatFailureWithheld(
++        repeat,
++        record,
++        true,
++        onDenied,
++        options.onRepeatFailurePark,
++      )
++    ) continue;
+     // Durable attempt memory gate: refuse a work-returning grant whose
+     // attempt would be equivalent to failures already recorded at this base
+     // and runtime revision. A base advance is genuinely changed evidence, so
+-    // that path is exempt; a review-returning grant has its own identity
+-    // space and is untouched. Refusals are reported, never silent.
++    // that path is exempt, and so is a repeat-failure re-arm (an edited issue
++    // or a changed model route); a review-returning grant has its own
++    // identity space and is untouched. Refusals are reported, never silent.
+     if (rule.nextStep === "work") {
+       const advancing = baseTip !== null && baseTip !== base;
+-      if (!advancing) {
++      if (!advancing && rearm === null) {
+         const equivalence = attemptEquivalenceRefusalForRecordV1({
+           record,
+           snapshot,
+diff --git a/ops/hosted-autonomy-retry-pass.ts b/ops/hosted-autonomy-retry-pass.ts
+index d43bc273ed..42d9b60841 100644
+--- a/ops/hosted-autonomy-retry-pass.ts
++++ b/ops/hosted-autonomy-retry-pass.ts
+@@ -55,6 +55,13 @@ import {
+   planBaseRefreshReadmissions,
+   verifyBaseRefreshReadmissions,
+ } from "./hosted-autonomy-base-refresh-retries.ts";
++import {
++  applyRepeatFailureParks,
++  REPEAT_FAILURE_DEFAULT_ROUTE,
++  repeatFailureLabel,
++  repeatFailureNeedsIssue,
++  type RepeatFailureParkPlanV1,
++} from "./hosted-autonomy-repeat-failure.ts";
+ import {
+   HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS,
+   planConflictReadmissions,
+@@ -386,6 +393,28 @@ export async function runHostedRetryPass(
+       legacyCutoff,
+     )
+     : new Set<string>();
++  // The repeat-failure bound reads each due or parked record's live source
++  // task digest (an edited issue re-arms a park) over its OWN repository
++  // surface; an unreadable digest withholds the grant without parking.
++  const issueDigests = new Map<string, string | null>();
++  for (const record of snapshot.work) {
++    if (
++      !repeatFailureNeedsIssue(snapshot, record) ||
++      closedIssues.has(
++        hostedIssueKey(record.repository, record.related.issueNumber!),
++      )
++    ) continue;
++    const surface = (await scopeFor(record.repository)).surface;
++    let digest: string | null = null;
++    try {
++      digest = (await surface?.readIssueTask?.(record.related.issueNumber!))
++        ?.digest ?? null;
++    } catch {
++      digest = null;
++    }
++    issueDigests.set(record.id, digest);
++  }
++  const parks: RepeatFailureParkPlanV1[] = [];
+   const planned = planHostedRetries(
+     snapshot,
+     deps.clock.now(),
+@@ -403,6 +432,13 @@ export async function runHostedRetryPass(
+       ciGreenHeads,
+       ciReadHeads,
+       legacyReviewCutoff: legacyCutoff,
++      repeatFailure: {
++        route: deps.modelRoute ?? REPEAT_FAILURE_DEFAULT_ROUTE,
++        issueDigests,
++      },
++      onRepeatFailurePark: (park) => {
++        if (!settled(park.id)) parks.push(park);
++      },
+     },
+   );
+   actions.push(...legacyClassDriftActions(snapshot, legacyCutoff, ciFirst));
+@@ -504,7 +540,7 @@ export async function runHostedRetryPass(
+       legacyCutoff,
+     ),
+   );
+-  if (plans.length > 0 || readmissions.length > 0) {
++  if (plans.length > 0 || readmissions.length > 0 || parks.length > 0) {
+     const now = deps.clock.now();
+     if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
+       return skipped("clock_invalid", observedHead, actions);
+@@ -512,7 +548,11 @@ export async function runHostedRetryPass(
+     let next: RepairStateSnapshotV1;
+     try {
+       next = applyBaseRefreshReadmissions(
+-        applyHostedRetries(snapshot, observedHead as GitSha, plans, now),
++        applyRepeatFailureParks(
++          applyHostedRetries(snapshot, observedHead as GitSha, plans, now),
++          parks,
++          now,
++        ),
+         readmissions,
+         now,
+       );
+@@ -551,6 +591,13 @@ export async function runHostedRetryPass(
+     for (const readmission of readmissions) {
+       actions.push(`retry:${readmission.id}:readmit:${readmission.detail}`);
+     }
++    for (const park of parks) {
++      actions.push(
++        `retry:${park.id}:parked:repeat_failure:${
++          repeatFailureLabel(park.park)
++        }`,
++      );
++    }
+     return {
+       kind: "hosted_autonomy",
+       status: "applied",
+diff --git a/ops/hosted-autonomy-types.ts b/ops/hosted-autonomy-types.ts
+index 8be4b98be1..d30b901b77 100644
+--- a/ops/hosted-autonomy-types.ts
++++ b/ops/hosted-autonomy-types.ts
+@@ -382,6 +382,12 @@ export interface HostedAutonomyDepsV1 {
+    * (`launcherLegacyCutoff`).
+    */
+   legacyReviewCutoff?: number | null;
++  /**
++   * `repeatFailureRouteIdentity` of the non-secret model-route selector this
++   * maintenance job was handed; a change re-arms a repeat-failure park.
++   * Absent means the unset selector (`REPEAT_FAILURE_DEFAULT_ROUTE`).
++   */
++  modelRoute?: string;
+ }
+ 
+ /** One corrected runtime the refresh re-arm trusts, pinned in launcher source. */
+diff --git a/src/host/matrix-cell.ts b/src/host/matrix-cell.ts
+index b1b4987e68..f9a99f7877 100644
+--- a/src/host/matrix-cell.ts
++++ b/src/host/matrix-cell.ts
+@@ -16,7 +16,10 @@ import type {
+ } from "../contracts/ports.ts";
+ import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
+ import { OPERATION_MARGIN_MS, type RunBoundsV1 } from "../repair/loop.ts";
+-import { ATTEMPT_DETAIL_PROVIDER_THROTTLED } from "../repair/attempt-policy.ts";
++import {
++  ATTEMPT_DETAIL_PROVIDER_THROTTLED,
++  implementationPortFailureDetail,
++} from "../repair/attempt-policy.ts";
+ import { isProviderThrottledReceiptV1 } from "../repair/model-port-retry.ts";
+ import type { MatrixBundleExporterV1 } from "./matrix-git.ts";
+ import { sameRepository } from "./matrix-identity.ts";
+@@ -232,7 +235,16 @@ export async function runMatrixCell(
+   // checkout and validates the request against its configured model/effort.
+   const receipt = await deps.model.runModel(cell.request);
+   if (!receipt.ok) {
+-    return refuse("failed", `model run failed (${receipt.error.kind})`);
++    // A completed session that left its checkout unchanged is its own model
++    // outcome (`ATTEMPT_DETAIL_NO_CHANGE`); every other port error keeps the
++    // exact `model run failed (<kind>)` transient detail.
++    return refuse(
++      "failed",
++      implementationPortFailureDetail(
++        receipt.error,
++        `model run failed (${receipt.error.kind})`,
++      ),
++    );
+   }
+   // The gateway throttled the whole turn (HTTP 429 even after the port's
+   // failover and bounded backoff) and nothing was produced: transient
+diff --git a/src/host/matrix-ingest-state.ts b/src/host/matrix-ingest-state.ts
+index e4f713cf9e..d53e754281 100644
+--- a/src/host/matrix-ingest-state.ts
++++ b/src/host/matrix-ingest-state.ts
+@@ -27,6 +27,7 @@ import {
+   implementationIntentKey,
+ } from "../repair/keys.ts";
+ import { sameRepository } from "./matrix-identity.ts";
++import { ATTEMPT_DETAIL_NO_CHANGE } from "../repair/attempt-policy.ts";
+ 
+ export function resultMatchesCell(
+   plan: MatrixPlanV1,
+@@ -173,6 +174,10 @@ export function settlementClassification(
+   detail: string,
+ ): { stage: AttemptStageV1; failureClass: AttemptFailureClassV1 } {
+   if (status === "failed") {
++    // The model ran to completion and changed nothing: a model outcome.
++    if (detail === ATTEMPT_DETAIL_NO_CHANGE) {
++      return { stage: "model", failureClass: "semantic_no_progress" };
++    }
+     if (detail.startsWith("model run failed (")) {
+       return { stage: "model", failureClass: "transient_infrastructure" };
+     }
+diff --git a/src/repair/attempt-policy.ts b/src/repair/attempt-policy.ts
+index 340215c9fa..fdfba99df4 100644
+--- a/src/repair/attempt-policy.ts
++++ b/src/repair/attempt-policy.ts
+@@ -47,6 +47,7 @@ import type {
+ } from "../contracts/ports.ts";
+ import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+ import type { WorkRecordV1 } from "../contracts/work-record.ts";
++import { CANDIDATE_COMMIT_REFUSAL_DETAILS } from "./model-port-checkout.ts";
+ 
+ /**
+  * Closed settlement details the implementation path already produces. These
+@@ -74,6 +75,32 @@ export const ATTEMPT_DETAIL_UNCERTAIN =
+  */
+ export const ATTEMPT_DETAIL_PROVIDER_THROTTLED =
+   "model run failed (unavailable)" as const;
++/**
++ * A model session that COMPLETED and left its checkout exactly at the
++ * requested base (the trusted committer's `unchanged_base` refusal). It is a
++ * model outcome — typically the task is already satisfied at base, as for
++ * ai.ubq.fi issue 300, fixed upstream before its first charge — never
++ * provider unavailability, so it is a no-progress class: the attempt stays
++ * charged and the launcher's repeat-failure bound parks it for the owner.
++ * Deliberately NOT a `model run failed (` family member.
++ */
++export const ATTEMPT_DETAIL_NO_CHANGE =
++  "model run completed without any change to its checkout" as const;
++
++/**
++ * The closed settlement detail of one failed implementation port result.
++ * Only the committer's exact unchanged-base refusal maps to
++ * `ATTEMPT_DETAIL_NO_CHANGE`; every other port error keeps the caller's
++ * existing detail byte for byte.
++ */
++export function implementationPortFailureDetail(
++  error: { readonly detail: string },
++  otherwise: string,
++): string {
++  return error.detail === CANDIDATE_COMMIT_REFUSAL_DETAILS.unchanged_base
++    ? ATTEMPT_DETAIL_NO_CHANGE
++    : otherwise;
++}
+ 
+ interface AttemptDetailClassification {
+   stage: AttemptStageV1;
+@@ -108,6 +135,10 @@ const DETAIL_CLASSIFICATION: readonly (readonly [
+     ATTEMPT_DETAIL_ARTIFACT_ONLY,
+     { stage: "candidate", failureClass: "semantic_no_progress" },
+   ],
++  [
++    ATTEMPT_DETAIL_NO_CHANGE,
++    { stage: "model", failureClass: "semantic_no_progress" },
++  ],
+   [
+     ATTEMPT_DETAIL_UNCERTAIN,
+     { stage: "reservation", failureClass: "unknown" },
+diff --git a/src/repair/loop-work.ts b/src/repair/loop-work.ts
+index 708e216ddb..c5b5c0497b 100644
+--- a/src/repair/loop-work.ts
++++ b/src/repair/loop-work.ts
+@@ -1,7 +1,10 @@
+ /** Repair loop internals: work. */
+ import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
+ import type { WorkRecordV1 } from "../contracts/work-record.ts";
+-import { ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT } from "./attempt-policy.ts";
++import {
++  ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT,
++  implementationPortFailureDetail,
++} from "./attempt-policy.ts";
+ import { candidateBranch } from "./keys.ts";
+ import {
+   ensureBaseRefreshIntent,
+@@ -287,7 +290,10 @@ export async function executeImplementationStep(
+       context,
+       prepared.record,
+       prepared.reservationId,
+-      ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT,
++      implementationPortFailureDetail(
++        receipt.error,
++        ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT,
++      ),
+     );
+   }
+   return handleModelReceipt(
+diff --git a/tests/fixtures/host/repeat-failure-live-v1.json b/tests/fixtures/host/repeat-failure-live-v1.json
+new file mode 100644
+index 0000000000..54bf5f0b4f
+--- /dev/null
++++ b/tests/fixtures/host/repeat-failure-live-v1.json
+@@ -0,0 +1,1292 @@
++{
++  "source": {
++    "stateBranch": "sentinel-state/repair",
++    "stateCommit": "b59c04a4909707b7b0752ffb490fc4ed32961022",
++    "capturedAt": "2026-10-17T22:55:00Z",
++    "note": "verbatim live work rows, every implementation attempt-memory family of those tasks and the charge each retained intent names"
++  },
++  "work": [
++    {
++      "blocker": {
++        "kind": "other",
++        "message": "model run failed (unavailable)",
++        "since": 1792278008554
++      },
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "dbae19f218141a44becd7d1fffc22d792913b4f0"
++      },
++      "counters": {
++        "attempts": 52,
++        "retries": 0,
++        "reviewRounds": 0
++      },
++      "createdAt": 1789982324611,
++      "dependencies": [],
++      "evidence": [],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1789272624000,
++      "id": "issue-ubiquity-ai.ubq.fi-300",
++      "intent": {
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-300",
++        "expectedHead": null,
++        "key": "impl:8f9e753895a04445ba10fd0ea195f318446d2d4e2ac9e8e29f8a8bcb968b8d9f",
++        "kind": "implementation",
++        "observedBase": "f2457327beae47f991c31038365a5cbd2deb917b",
++        "pr": null,
++        "requestId": "8f9e753895a04445ba10fd0ea195f318446d2d4e2ac9e8e29f8a8bcb968b8d9f",
++        "resultId": null,
++        "startedAt": 1792277868462
++      },
++      "kind": "work",
++      "nextStep": "blocked",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 300
++      },
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "300",
++        "kind": "issue",
++        "revision": "922c33392d8a4670968ee850312aed9a7e024f08"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "f2457327beae47f991c31038365a5cbd2deb917b",
++        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-300",
++        "checkpoint": null,
++        "head": null,
++        "pr": null
++      },
++      "updatedAt": 1792278008554,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": null
++    },
++    {
++      "blocker": {
++        "kind": "other",
++        "message": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++        "since": 1792277214815
++      },
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f"
++      },
++      "counters": {
++        "attempts": 5,
++        "retries": 0,
++        "reviewRounds": 0
++      },
++      "createdAt": 1792256495577,
++      "dependencies": [],
++      "evidence": [],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1792256476000,
++      "id": "issue-ubiquity-sentinel-152",
++      "intent": {
++        "branch": "sentinel/repair/issue-ubiquity-sentinel-152",
++        "expectedHead": null,
++        "key": "impl:e0efdc31588c01434ce4f2f47ca6ffcad4a2d9b807b3132d678c3f248be5463c",
++        "kind": "implementation",
++        "observedBase": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "pr": null,
++        "requestId": "e0efdc31588c01434ce4f2f47ca6ffcad4a2d9b807b3132d678c3f248be5463c",
++        "resultId": null,
++        "startedAt": 1792275409513
++      },
++      "kind": "work",
++      "nextStep": "blocked",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 152
++      },
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "152",
++        "kind": "issue",
++        "revision": "d5cc84402c5971df4031c03b5e71e55c55a3a11c"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "branch": "sentinel/repair/issue-ubiquity-sentinel-152",
++        "checkpoint": null,
++        "head": null,
++        "pr": null
++      },
++      "updatedAt": 1792277214815,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": null
++    },
++    {
++      "blocker": {
++        "kind": "other",
++        "message": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++        "since": 1792277231697
++      },
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f"
++      },
++      "counters": {
++        "attempts": 5,
++        "retries": 0,
++        "reviewRounds": 0
++      },
++      "createdAt": 1792257173450,
++      "dependencies": [],
++      "evidence": [],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1792256506000,
++      "id": "issue-ubiquity-sentinel-155",
++      "intent": {
++        "branch": "sentinel/repair/issue-ubiquity-sentinel-155",
++        "expectedHead": null,
++        "key": "impl:97db5021260f005b7d87bdfb46025a9f7aa0d04304d6a08e47f893b97ffee303",
++        "kind": "implementation",
++        "observedBase": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "pr": null,
++        "requestId": "97db5021260f005b7d87bdfb46025a9f7aa0d04304d6a08e47f893b97ffee303",
++        "resultId": null,
++        "startedAt": 1792275418130
++      },
++      "kind": "work",
++      "nextStep": "blocked",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 155
++      },
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "155",
++        "kind": "issue",
++        "revision": "d5cc84402c5971df4031c03b5e71e55c55a3a11c"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "branch": "sentinel/repair/issue-ubiquity-sentinel-155",
++        "checkpoint": null,
++        "head": null,
++        "pr": null
++      },
++      "updatedAt": 1792277231697,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": null
++    },
++    {
++      "blocker": {
++        "kind": "other",
++        "message": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++        "since": 1792277249112
++      },
++      "classification": {
++        "priority": null,
++        "severity": "P2"
++      },
++      "controller": {
++        "sha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f"
++      },
++      "counters": {
++        "attempts": 5,
++        "retries": 0,
++        "reviewRounds": 0
++      },
++      "createdAt": 1792257173450,
++      "dependencies": [],
++      "evidence": [],
++      "failingRevision": null,
++      "fingerprint": null,
++      "firstSeenAt": 1792256520000,
++      "id": "issue-ubiquity-sentinel-156",
++      "intent": {
++        "branch": "sentinel/repair/issue-ubiquity-sentinel-156",
++        "expectedHead": null,
++        "key": "impl:420a9b4cb1f6288d488374c880976855c781557d1695b12544df10acacf0aaf5",
++        "kind": "implementation",
++        "observedBase": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "pr": null,
++        "requestId": "420a9b4cb1f6288d488374c880976855c781557d1695b12544df10acacf0aaf5",
++        "resultId": null,
++        "startedAt": 1792275426760
++      },
++      "kind": "work",
++      "nextStep": "blocked",
++      "related": {
++        "incidentId": null,
++        "issueNumber": 156
++      },
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "source": {
++        "id": "156",
++        "kind": "issue",
++        "revision": "d5cc84402c5971df4031c03b5e71e55c55a3a11c"
++      },
++      "sourceSnapshotDigest": null,
++      "target": {
++        "base": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++        "branch": "sentinel/repair/issue-ubiquity-sentinel-156",
++        "checkpoint": null,
++        "head": null,
++        "pr": null
++      },
++      "updatedAt": 1792277249112,
++      "urgency": {
++        "activeProduction": false,
++        "reproducible5xx": false,
++        "severeSecurityOrDataLoss": false
++      },
++      "version": "v1",
++      "wait": null
++    }
++  ],
++  "attemptMemory": [
++    {
++      "base": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++      "entries": [
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 1,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "95a562b68a03a82cc9f9b2f7b23d280b46bb066e14d11a36b3a42528544ae13d",
++          "firstAtMs": 1792271913039,
++          "lastAtMs": 1792271913039,
++          "stage": "model"
++        },
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 1,
++          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "b71b5c03d865700345abe3310a57263eb680e5485b27dcd4e00f486aeb219936",
++          "firstAtMs": 1792277231697,
++          "lastAtMs": 1792277231697,
++          "stage": "model"
++        }
++      ],
++      "id": "02aa2fcfc2ca6ab3bf6ca4e91878a2d984e69061cd0dcf66cd977f9677bdb08c",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-sentinel-155",
++      "version": "v1"
++    },
++    {
++      "base": "c40ba146240c071216c33de08a746712b0f1506c",
++      "entries": [
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 1,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "5d22e2c26663af9673a6613207f7cff9eab8f40b14a8f1e58a1eced72732a9eb",
++          "firstAtMs": 1792270040181,
++          "lastAtMs": 1792270040181,
++          "stage": "model"
++        }
++      ],
++      "id": "06a3bc94d7244de0539dd6f6edb9eff275a267d866c7f426cfe8e15aa78f95c2",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "ded498ffbcd9f39d57f3da6e05425cf2f8059f50",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 2,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "f104f9d1a810d924145f78e5f0de6c04ec0b0c9b63f8ea2a2587a0d54dca178d",
++          "firstAtMs": 1792219132089,
++          "lastAtMs": 1792220968532,
++          "stage": "model"
++        }
++      ],
++      "id": "17a01a89567d4131d38c5caebff0b4aad23e4e38cb619c13aab7717fa08d0748",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "973bb2f45230993da7896784f0ec4bf908bf3de9",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 2,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "ee0db5ace47150f665c6bf25016fcc20ded5bf6658c5f41f0cf709262c711c72",
++          "firstAtMs": 1792215549235,
++          "lastAtMs": 1792217346247,
++          "stage": "model"
++        }
++      ],
++      "id": "18b83197749d6e94149a25f7b2d4f0f173d9de60b667f9ff37bb15983fc48fba",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "1d1b71a14f52282f9d422da8999edd2b9dd62c24",
++      "entries": [
++        {
++          "controllerSha": "41bb853a1bedfc0422bf903dfabbe23bf714b44f",
++          "count": 1,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "ea4f345154f99adcb985829836bc0722a82e37fa8535dabde2408f5ffd371f57",
++          "firstAtMs": 1792105904956,
++          "lastAtMs": 1792105904956,
++          "stage": "model"
++        }
++      ],
++      "id": "2a7c077179b6b34e95c8de1c166d6c8b7ee242f9a4f529d2dfe81903fd906d08",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "220eed2d925ca88d4b1da3fbaeb7ecad55f9d073",
++      "entries": [
++        {
++          "controllerSha": "dbae19f218141a44becd7d1fffc22d792913b4f0",
++          "count": 2,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "d68f1274c2021683554062c56992dbf83bb74203cd47b889302926517e493bd8",
++          "firstAtMs": 1791639374018,
++          "lastAtMs": 1791651997865,
++          "stage": "model"
++        }
++      ],
++      "id": "2f2bfbd1b9bb3843b4a9ca2275d2b829e360ca963408ff57b47d2b40cdeba436",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "a4e3ac2c6fd52f2a2f39778c2eeea17128edb93c",
++      "entries": [
++        {
++          "controllerSha": "41bb853a1bedfc0422bf903dfabbe23bf714b44f",
++          "count": 4,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "4b8c12fb4919eb12cb301ec0d96f3a3824df62d5ba106ea1411aaa117ede4800",
++          "firstAtMs": 1792112171446,
++          "lastAtMs": 1792117728904,
++          "stage": "model"
++        }
++      ],
++      "id": "30294ec9d85637a8a1249ad38b0ca076919684701d9db88050552316aad5fe86",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "01f482529da9c0c4ce38b32b5d760b9d72e84fc9",
++      "entries": [
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 1,
++          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "ac96f965ac789aa055dbc617118bc35df2fdc605930eafd010220be6a4b68e15",
++          "firstAtMs": 1792267061729,
++          "lastAtMs": 1792267061729,
++          "stage": "model"
++        }
++      ],
++      "id": "37969f9678948c1d511c92aadd7420efaa14af759ba4b3a503a34513e4b58108",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-sentinel-152",
++      "version": "v1"
++    },
++    {
++      "base": "f2457327beae47f991c31038365a5cbd2deb917b",
++      "entries": [
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 1,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "e57cf200edb11df8f6fdeabc2e0465da38f1c8b71623f361419fb6cae8c63e71",
++          "firstAtMs": 1792278008554,
++          "lastAtMs": 1792278008554,
++          "stage": "model"
++        }
++      ],
++      "id": "3f1b6d8f64789126034d3cab96b2d217482ae9c1597a18b330b370f743646d3b",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "81baade1111ff83de5ffc760adc0409e9981e2fa",
++      "entries": [
++        {
++          "controllerSha": "dbae19f218141a44becd7d1fffc22d792913b4f0",
++          "count": 3,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "146f769bf5015b7eb3bbfdf41f77bf9f2e0ef5edb1190431b22a6286ed16719f",
++          "firstAtMs": 1791655306315,
++          "lastAtMs": 1791660794225,
++          "stage": "model"
++        }
++      ],
++      "id": "442b85f8fd70d1518e7d38dbf488a18c22156c9f073353531d89ed958b1448fe",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "f9b310abbd4f71595356f498c50245913c07dcb7",
++      "entries": [
++        {
++          "controllerSha": "474f87eb639f97cd72b9bc4b9e56101488f841aa",
++          "count": 4,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "6a285ecf3abaead7164acef9e24b209064ec9bea7300b95b9cd5a3d1fbe4ef21",
++          "firstAtMs": 1792168161947,
++          "lastAtMs": 1792173614746,
++          "stage": "model"
++        }
++      ],
++      "id": "478ea6d1d3ac0787e46faaa265e46b3fdc3da5e93d744c7f68694d79b8081e34",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "430b203c9e26cacd10914d6cc4af584d4a249ada",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 2,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "e88e3e37d02313de01e8ad75f752bb02aa912ca28ecc9267f8eed2041f67a94d",
++          "firstAtMs": 1792187534975,
++          "lastAtMs": 1792189885551,
++          "stage": "model"
++        }
++      ],
++      "id": "49903c2fdf6752f5237da3eeb3ddbd91f8ea532bec5e6f17c303795a303eae14",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "e25d09cd0912521123922c13f6ee445665af0f6c",
++      "entries": [
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 2,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "a987cd3344e27874e9195a3062bbcb4cac03796c5ee882064f6d484d73d0b424",
++          "firstAtMs": 1792266016247,
++          "lastAtMs": 1792267897347,
++          "stage": "model"
++        }
++      ],
++      "id": "500c4807725a4fd99d5d33659b015cb618ff66a32f1647216e5cb390e87bd4d4",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 1,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "4334a59cd2ecc1d384bf54fb3da1f3e044fa4d8a8a5bce42fda2c9aa764fe2f1",
++          "firstAtMs": 1792259334288,
++          "lastAtMs": 1792259334288,
++          "stage": "model"
++        }
++      ],
++      "id": "53d2bae4f6e4750a3e070b0451bfe80fa96b8937bd7c094c68f055c34541bc80",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-sentinel-155",
++      "version": "v1"
++    },
++    {
++      "base": "4b59865e358d8643c76b4856bbe58b889083608e",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 1,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "904d63de15563f9cad37b2d7585930031b0721cd213952912641da43de7dd265",
++          "firstAtMs": 1792230683288,
++          "lastAtMs": 1792230683288,
++          "stage": "model"
++        }
++      ],
++      "id": "6c161faedebcb043852566a050515759dabaa7e0ca399e97c6502f4752c22072",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "93f62ff2451c33283cc34d9b0d34ca3a1b8268e2",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 1,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "49c0b7b9ac6755bce630cc4f1a2466c89c62099070c9fec1545cb0f9fd7016da",
++          "firstAtMs": 1792228373418,
++          "lastAtMs": 1792228373418,
++          "stage": "model"
++        }
++      ],
++      "id": "712fdfd6e3a2101e31a5afacfcd74c77081f1d32ea4cd55198fb773862e5c805",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "8ea3def4b7a995086a8b92a80cc77bc781b00b85",
++      "entries": [
++        {
++          "controllerSha": "41bb853a1bedfc0422bf903dfabbe23bf714b44f",
++          "count": 1,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "a97cc7d037ca8bea17cbaf703721486adf06483fa426039e5de937635e3d42a8",
++          "firstAtMs": 1792140668034,
++          "lastAtMs": 1792140668034,
++          "stage": "model"
++        },
++        {
++          "controllerSha": "ab3613e0224ff92266bed21dde6f40e6b0aab54a",
++          "count": 4,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "00eb00e30566f83f12b4edf384d7fa62fdcb351435f1a805737a67d1f46f3c69",
++          "firstAtMs": 1792144678294,
++          "lastAtMs": 1792150666236,
++          "stage": "model"
++        }
++      ],
++      "id": "74145e97a594f2d9d8cb3396421611876d06e0a7482d74a9fca5ef225355077c",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "01f482529da9c0c4ce38b32b5d760b9d72e84fc9",
++      "entries": [
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 1,
++          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "adbf6cb0b758c5c7f83b21172f6c5812e59d928da4312b5a2d363389351e5710",
++          "firstAtMs": 1792267098071,
++          "lastAtMs": 1792267098071,
++          "stage": "model"
++        }
++      ],
++      "id": "795b25c60587e1e23cc8519ece6824bdfc53179d0dd6aca6f87f3cb8b232eb56",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-sentinel-156",
++      "version": "v1"
++    },
++    {
++      "base": "fd5a88b71a6f93bf58c3d789d3d184bdc7dafea1",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 2,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "737581ec4ce11cb99159faeed1b5b2262460dc1cd29820ab01ca51bdba62404d",
++          "firstAtMs": 1792243363505,
++          "lastAtMs": 1792244547907,
++          "stage": "model"
++        }
++      ],
++      "id": "8b327387133da1b80fe1b70d0a1f888abece9560b7c5b4ed93f3a8b6f6663f4e",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "01f482529da9c0c4ce38b32b5d760b9d72e84fc9",
++      "entries": [
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 1,
++          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "d280ccb11dbd848621de0d1c98750da33e0b237e3f51cdff0ee74b168d224167",
++          "firstAtMs": 1792267080614,
++          "lastAtMs": 1792267080614,
++          "stage": "model"
++        }
++      ],
++      "id": "a28b11b01811068cb7494180bc49320bd63185dc720efec5d884206433e3c1fe",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-sentinel-155",
++      "version": "v1"
++    },
++    {
++      "base": "27fcf4ed99d020b15711d613d127266c691f001d",
++      "entries": [
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 2,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "1a21134702f837fe068663a8daa58e61b576c154f52ae5feb0268b4e8aad48a1",
++          "firstAtMs": 1792272777557,
++          "lastAtMs": 1792275546505,
++          "stage": "model"
++        }
++      ],
++      "id": "a661caaf63b4271cf129d95f22fb425b331bcaddf419a3e8e121033795cabf1e",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "614a4fa02f1dc9f27516c5acd85d598f678a0cfa",
++      "entries": [
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 1,
++          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "b44d57f89f4c03e9cf98eae7391d8f6ccfcfd7001373b4e8256a75d4e8904413",
++          "firstAtMs": 1792263745779,
++          "lastAtMs": 1792263745779,
++          "stage": "model"
++        }
++      ],
++      "id": "b7a38db1a87c0a5628ee19784978875f6b32d9fab420ff8fc8ab6dd79b5c717a",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-sentinel-152",
++      "version": "v1"
++    },
++    {
++      "base": "614a4fa02f1dc9f27516c5acd85d598f678a0cfa",
++      "entries": [
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 1,
++          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "e6f34bfc98c7a074a72942d82fa524ea35a423f354d7984d2d0d6daea8d652ff",
++          "firstAtMs": 1792263759948,
++          "lastAtMs": 1792263759948,
++          "stage": "model"
++        }
++      ],
++      "id": "bc62e9ec37c69ab2fb0a3cbae1b8599c575e4426051331a09ac477225a3e6917",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-sentinel-155",
++      "version": "v1"
++    },
++    {
++      "base": "ca6486b87835ee3b95dd24fa5f1dcc645ed7c97f",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 3,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "8cd9cd539fe482581a9515f45290eb59f50be8e7f2b6b89cf5e3dc158c6c43e8",
++          "firstAtMs": 1792235231075,
++          "lastAtMs": 1792238545750,
++          "stage": "model"
++        }
++      ],
++      "id": "ca09e12d060852a29e861ea7b322767579db03df58546681bc9322ef018d6387",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "27fabc04d7fd1cc0114776351df2dfd6f41e7df0",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 1,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "bdba50daaa1fd4826ca6b723ddb5993d5d7b0d3d7a6a5dc0ca149980d12299c8",
++          "firstAtMs": 1792232878534,
++          "lastAtMs": 1792232878534,
++          "stage": "model"
++        }
++      ],
++      "id": "cb02b0b1c5942ed9eb84e673825422ca7c8a6a0b1b16539bebd858c2c89af543",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++      "entries": [
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 2,
++          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "8c644fa2bcf742b7b949b2aef6dd126da46f96f5e4a46fa0cb15fa34b0622ffb",
++          "firstAtMs": 1792271927245,
++          "lastAtMs": 1792277249112,
++          "stage": "model"
++        }
++      ],
++      "id": "cbe3628919777b9117ead7da5b6f0a8e0b209e443984385dfd48539a71986511",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-sentinel-156",
++      "version": "v1"
++    },
++    {
++      "base": "bb4aeff560e2c85a9904c9261be84a4bbee5b490",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 1,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "98addc6488b6a5954a252af49e26a4934c6ec8152647939f991ee3c807996eab",
++          "firstAtMs": 1792191543422,
++          "lastAtMs": 1792191543422,
++          "stage": "model"
++        }
++      ],
++      "id": "da62339198e62cf4b40a252c3fac2e4b99358bf34dd60ed2908fa973d154132d",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++      "entries": [
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 2,
++          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "e0a991e1d378fa5718c94208c46ca6272d1dfe9b68ade261e9e6e2c15ef96d21",
++          "firstAtMs": 1792271898549,
++          "lastAtMs": 1792277214815,
++          "stage": "model"
++        }
++      ],
++      "id": "e16b8220cd633b7ee3b0a7f0d0470426d250e19df3055365ceb8287e6d9306aa",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-sentinel-152",
++      "version": "v1"
++    },
++    {
++      "base": "2756425c16454cc7f8b49e0aa43c115364f59e7b",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 1,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "a0476e46f81baa46d996b237675bb029db2cd13cc1d362bc017a62ab9adc2bd6",
++          "firstAtMs": 1792222641487,
++          "lastAtMs": 1792222641487,
++          "stage": "model"
++        }
++      ],
++      "id": "e30cb0b514acfa3977bc1222d7914d490c8faff3ca56db43bfe72e02c3f7741e",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 1,
++          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "5006a4291472ed3b0d65af30f0a5fd4e4e45b40758049aa5721f7df056fc4b97",
++          "firstAtMs": 1792259352076,
++          "lastAtMs": 1792259352076,
++          "stage": "model"
++        }
++      ],
++      "id": "e7fd6f85a229c4f774233019cb33381f030f56196c190c6f50d270aecdc1fb0b",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-sentinel-156",
++      "version": "v1"
++    },
++    {
++      "base": "614a4fa02f1dc9f27516c5acd85d598f678a0cfa",
++      "entries": [
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 1,
++          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "3947402683d6dbf4041d0583f7ceb8e53ee76d0fb4f7a163d6bb815584f875cb",
++          "firstAtMs": 1792263773866,
++          "lastAtMs": 1792263773866,
++          "stage": "model"
++        }
++      ],
++      "id": "e82742ca50843f1eedc7dab5ee30de7d9d1bc8764a8a398b05aa3f9b0cae99f8",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-sentinel-156",
++      "version": "v1"
++    },
++    {
++      "base": "3876fe65703f558b0656c6384c359b48508bb777",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 2,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "83cac5eee0f6c043317b6c80dd4de4bca5530d969c0a954238b4a63de83e1e7c",
++          "firstAtMs": 1792211667636,
++          "lastAtMs": 1792213438279,
++          "stage": "model"
++        }
++      ],
++      "id": "ed32f0af613b592295f850bdb7953d1aa76a641ae282a5f548973b3a8ecb117a",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "9cdc76dc600246d96a0841ba7fca5039cbf34196",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 2,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "3f358b666c2b9bb361d729ae3833ec0f98ec00bc51edaf02eabb6e2fd5f36e72",
++          "firstAtMs": 1792224860673,
++          "lastAtMs": 1792226753533,
++          "stage": "model"
++        }
++      ],
++      "id": "ed83f79c9f1482c805a76f3f74487280c16027f50c7936c8c5ebc24b181da36d",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "9a6b348807d4a8fd0cd1dae9107b714572780ed8",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 2,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "b280d53550b69ce0bfdf85530a19c27f05345c94670063eb125cec84f0ad3cf9",
++          "firstAtMs": 1792240187108,
++          "lastAtMs": 1792241569914,
++          "stage": "model"
++        }
++      ],
++      "id": "f50b3177b9229542fbccaad52b932752b74822959375f13b7670239c356e7e22",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 1,
++          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "efa8580131b40e9fdff1976d94157f6131476317a5c556c47a896f1b4dac0dc2",
++          "firstAtMs": 1792259280661,
++          "lastAtMs": 1792259280661,
++          "stage": "model"
++        }
++      ],
++      "id": "f8f717e9a1080d39cb0ff9fa41a66019262a37001413811869be4c4ae2c30d0e",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-sentinel-152",
++      "version": "v1"
++    },
++    {
++      "base": "3650359812f06951f2322b89d79ca13c68184150",
++      "entries": [
++        {
++          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
++          "count": 4,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "cf87fca490b6cda4e056eeb2424cba668787a587744923046b82ead3afcc7321",
++          "firstAtMs": 1792245494270,
++          "lastAtMs": 1792247873360,
++          "stage": "model"
++        },
++        {
++          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
++          "count": 2,
++          "detail": "model run failed (unavailable)",
++          "failureClass": "transient_infrastructure",
++          "fingerprint": "b5ab0653f8cf73c447450689f5c3d4c1be989e672973d63ce4677e29e1783eac",
++          "firstAtMs": 1792261908662,
++          "lastAtMs": 1792264473920,
++          "stage": "model"
++        }
++      ],
++      "id": "ff13fda75c34832048ce9751078b1919140c381748afa34ac2ff644904129fe7",
++      "kind": "attempt_memory",
++      "purpose": "implementation",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    }
++  ],
++  "reservations": [
++    {
++      "attempt": 5,
++      "createdAt": 1792275422647,
++      "head": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++      "id": "420a9b4cb1f6288d488374c880976855c781557d1695b12544df10acacf0aaf5",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792277249112,
++      "taskId": "issue-ubiquity-sentinel-156",
++      "version": "v1"
++    },
++    {
++      "attempt": 52,
++      "createdAt": 1792277861932,
++      "head": "f2457327beae47f991c31038365a5cbd2deb917b",
++      "id": "8f9e753895a04445ba10fd0ea195f318446d2d4e2ac9e8e29f8a8bcb968b8d9f",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 155687488,
++        "name": "ai.ubq.fi",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792278008554,
++      "taskId": "issue-ubiquity-ai.ubq.fi-300",
++      "version": "v1"
++    },
++    {
++      "attempt": 5,
++      "createdAt": 1792275413958,
++      "head": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++      "id": "97db5021260f005b7d87bdfb46025a9f7aa0d04304d6a08e47f893b97ffee303",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792277231697,
++      "taskId": "issue-ubiquity-sentinel-155",
++      "version": "v1"
++    },
++    {
++      "attempt": 5,
++      "createdAt": 1792275405556,
++      "head": "3f041b46d95269b29054ca5c27bce6aa179f9683",
++      "id": "e0efdc31588c01434ce4f2f47ca6ffcad4a2d9b807b3132d678c3f248be5463c",
++      "kind": "budget_reservation",
++      "outcome": "ambiguous",
++      "proofRef": null,
++      "purpose": "retry",
++      "repository": {
++        "installationId": 0,
++        "name": "sentinel",
++        "owner": "ubiquity"
++      },
++      "settledAt": 1792277214815,
++      "taskId": "issue-ubiquity-sentinel-152",
++      "version": "v1"
++    }
++  ]
++}
+diff --git a/tests/host/hosted-autonomy-repeat-failure_test.ts b/tests/host/hosted-autonomy-repeat-failure_test.ts
+new file mode 100644
+index 0000000000..4e0d8c019a
+--- /dev/null
++++ b/tests/host/hosted-autonomy-repeat-failure_test.ts
+@@ -0,0 +1,727 @@
++/**
++ * JAM B10 (non-progress cycle): implementation retries that fail the same way
++ * every time. Replays the verbatim live rows of origin/sentinel-state/repair at
++ * b59c04a49: ai.ubq.fi 300 (52 identical "model run failed (unavailable)"
++ * outcomes over 23 bases since 2026-10-10, every one a charged reservation)
++ * and sentinel 152/155/156 (output-bound overruns).
++ */
++import assert from "node:assert/strict";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import {
++  parseRepairStateSnapshotV1,
++  type RepairStateSnapshotV1,
++} from "../../src/contracts/state-snapshots.ts";
++import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
++import { canonicalStringify } from "../../src/contracts/canonical.ts";
++import {
++  ATTEMPT_DETAIL_NO_CHANGE,
++  attemptMemorySettlementMutationV1,
++} from "../../src/repair/attempt-policy.ts";
++import {
++  applyHostedRetries,
++  HOSTED_AUTONOMY_MAX_RETRIES,
++  HOSTED_AUTONOMY_RETRYABLE,
++  hostedRepositoryKey,
++  planHostedRetries,
++  type RetryPlanV1,
++  runHostedAutonomy,
++} from "../../ops/hosted-autonomy.ts";
++import {
++  applyRepeatFailureParks,
++  failureSignature,
++  normalizeFailureMessage,
++  parseRepeatFailurePark,
++  REPEAT_FAILURE_DEFAULT_ROUTE,
++  REPEAT_FAILURE_PARK_PREFIX,
++  type RepeatFailureParkPlanV1,
++  repeatFailureRouteIdentity,
++  repeatFailureStreak,
++} from "../../ops/hosted-autonomy-repeat-failure.ts";
++import { parseWithR80, r80Available } from "./r80-contracts.ts";
++import { makeRig, releaseSnapshot } from "./hosted-autonomy-rig.ts";
++
++const LIVE = JSON.parse(
++  await Deno.readTextFile(
++    new URL("../fixtures/host/repeat-failure-live-v1.json", import.meta.url),
++  ),
++) as {
++  work: WorkRecordV1[];
++  attemptMemory: unknown[];
++  reservations: unknown[];
++};
++
++/** The installed generation-80 runtime every live outcome ran under. */
++const R80 = "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481" as GitSha;
++const AI_300 = "issue-ubiquity-ai.ubq.fi-300";
++const S152 = "issue-ubiquity-sentinel-152";
++const S155 = "issue-ubiquity-sentinel-155";
++const S156 = "issue-ubiquity-sentinel-156";
++const UNAVAILABLE = "model run failed (unavailable)";
++const OUTPUT_BOUND =
++  "model run did not complete with a trusted candidate: interrupted output bound exceeded";
++/** The maintenance pass after the live capture. */
++const NOW = Date.parse("2026-10-17T23:05:00Z");
++const HOUR = 60 * 60 * 1000;
++/** The production route selector of the live workflow variables. */
++const ROUTE = repeatFailureRouteIdentity({
++  baseUrl: "",
++  model: "gpt-reserve",
++  fallback: "gateway",
++});
++/** Issue 300's live canonical task digest (any 64-hex value binds). */
++const DIGEST_300 = "3".repeat(64);
++const ignoreR80 = !await r80Available();
++const ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname);
++
++function liveSnapshot(): RepairStateSnapshotV1 {
++  return parseRepairStateSnapshotV1({
++    version: "v1",
++    kind: "repair_state_snapshot",
++    stateHead: null,
++    sequence: 1,
++    updatedAt: NOW - 60_000,
++    incidents: [],
++    evidence: [],
++    work: LIVE.work,
++    reservations: LIVE.reservations,
++    reviews: [],
++    replays: [],
++    releaseRequests: [],
++    githubCooldowns: [],
++    attemptMemory: LIVE.attemptMemory,
++    lessons: [],
++  });
++}
++
++/** Every record's own base is its repository's tip: no base advance. */
++function ownTips(snapshot: RepairStateSnapshotV1): Map<string, string | null> {
++  return new Map(
++    snapshot.work.map((record) => [
++      hostedRepositoryKey(record.repository),
++      record.target.base,
++    ]),
++  );
++}
++
++function workOf(snapshot: RepairStateSnapshotV1, id: string): WorkRecordV1 {
++  const record = snapshot.work.find((item) => item.id === id);
++  assert.ok(record !== undefined, id);
++  return record;
++}
++
++interface PassV1 {
++  plans: RetryPlanV1[];
++  parks: RepeatFailureParkPlanV1[];
++  denials: Map<string, string>;
++}
++
++/** One launcher planning pass with the bound's live facts. */
++function pass(
++  snapshot: RepairStateSnapshotV1,
++  input: {
++    now?: number;
++    route?: string;
++    digests?: Map<string, string | null>;
++    tips?: Map<string, string | null>;
++  } = {},
++): PassV1 {
++  const parks: RepeatFailureParkPlanV1[] = [];
++  const denials = new Map<string, string>();
++  const digests = input.digests ?? new Map([[AI_300, DIGEST_300]]);
++  for (const id of [S152, S155, S156]) {
++    if (!digests.has(id)) digests.set(id, `${id.length}`.padStart(64, "5"));
++  }
++  const plans = planHostedRetries(
++    snapshot,
++    input.now ?? NOW,
++    R80,
++    input.tips ?? ownTips(snapshot),
++    new Set(),
++    (denial) => denials.set(denial.id, denial.reason),
++    {
++      repeatFailure: { route: input.route ?? ROUTE, issueDigests: digests },
++      onRepeatFailurePark: (park) => parks.push(park),
++    },
++  );
++  return { plans, parks, denials };
++}
++
++/**
++ * The runtime's own settlement of one more failed implementation at `base`:
++ * the record blocked with `detail` and the SAME attempt-memory writer the
++ * matrix ingester uses, in one snapshot.
++ */
++async function settleFailure(
++  snapshot: RepairStateSnapshotV1,
++  id: string,
++  base: GitSha,
++  detail: string,
++  at: number,
++): Promise<RepairStateSnapshotV1> {
++  const record = workOf(snapshot, id);
++  const moved: WorkRecordV1 = {
++    ...record,
++    nextStep: "blocked",
++    target: { ...record.target, base },
++    blocker: { kind: "other", message: detail, since: at },
++    updatedAt: at,
++  };
++  const memory = await attemptMemorySettlementMutationV1({
++    record: moved,
++    detail,
++    now: at,
++    runtimeSha: R80,
++  });
++  const draft = structuredClone(snapshot) as RepairStateSnapshotV1;
++  draft.work = draft.work.map((item) => item.id === id ? moved : item);
++  draft.updatedAt = at;
++  memory(draft);
++  draft.attemptMemory.sort((left, right) =>
++    left.id < right.id ? -1 : left.id > right.id ? 1 : 0
++  );
++  return parseRepairStateSnapshotV1(draft);
++}
++
++/** The pass's park, applied as the retry pass writes it. */
++function parked(snapshot: RepairStateSnapshotV1, at = NOW) {
++  const first = pass(snapshot, { now: at });
++  assert.equal(first.parks.length, 1, JSON.stringify([...first.denials]));
++  return {
++    first,
++    after: applyRepeatFailureParks(snapshot, first.parks, at),
++  };
++}
++
++const NEW_BASE = "abcdefabcdefabcdefabcdefabcdefabcdefabcd" as GitSha;
++
++Deno.test(
++  "repeat failure: live ai.ubq.fi 300 is no longer re-granted after 52 identical failures",
++  () => {
++    const snapshot = liveSnapshot();
++    const denials: { id: string; reason: string }[] = [];
++    const plans = planHostedRetries(
++      snapshot,
++      NOW,
++      R80,
++      ownTips(snapshot),
++      new Set(),
++      (denial) => denials.push({ id: denial.id, reason: denial.reason }),
++    );
++    assert.deepEqual(
++      plans.map((plan) => plan.id).sort(),
++      [S152, S155, S156].sort(),
++      "only 300 is withheld; the sentinel rows are not yet past the bound",
++    );
++    const denied = denials.filter((denial) => denial.id === AI_300);
++    assert.equal(denied.length, 1, JSON.stringify(denials));
++    // Without the launcher's live issue digest the bound withholds the grant
++    // but writes nothing: no park can be re-armed by an edit it never saw.
++    assert.equal(denied[0].reason, "repeat_failure_unverified_issue");
++  },
++);
++
++Deno.test(
++  "repeat failure: live 300 parks once in an explicit owner-gated blocker that charges nothing and R80 parses",
++  async () => {
++    const snapshot = liveSnapshot();
++    const streak = repeatFailureStreak(snapshot, workOf(snapshot, AI_300));
++    assert.ok(streak !== null);
++    // Every identical outcome attempt memory recorded since 2026-10-10.
++    assert.equal(streak.count, 53);
++    assert.equal(streak.failureClass, "transient_infrastructure");
++    assert.ok(streak.lastAtMs - streak.firstAtMs > 6 * HOUR);
++    const { first, after } = parked(snapshot);
++    assert.deepEqual(
++      first.plans.map((plan) => plan.id).sort(),
++      [S152, S155, S156].sort(),
++    );
++    const park = first.parks[0];
++    assert.equal(park.id, AI_300);
++    const signature = failureSignature("other", UNAVAILABLE);
++    assert.equal(park.park.signature, signature);
++    assert.equal(park.park.count, 53);
++    assert.equal(park.park.issue, DIGEST_300.slice(0, 12));
++    assert.equal(park.park.route, ROUTE);
++    assert.equal(
++      first.denials.get(AI_300),
++      `repeat_failure_parked:${signature}:x53`,
++    );
++    const record = workOf(after, AI_300);
++    const before = workOf(snapshot, AI_300);
++    assert.equal(record.nextStep, "blocked");
++    assert.ok(record.blocker!.message.startsWith(REPEAT_FAILURE_PARK_PREFIX));
++    assert.ok(record.blocker!.message.endsWith(`: ${UNAVAILABLE}`));
++    assert.equal(record.blocker!.kind, "other");
++    assert.equal(record.blocker!.since, NOW);
++    // Only the blocker (and its time) changed: intent, counters, target and
++    // every charge, review and memory record are exactly as before.
++    assert.equal(
++      canonicalStringify({ ...record, blocker: null, updatedAt: 0 }),
++      canonicalStringify({ ...before, blocker: null, updatedAt: 0 }),
++    );
++    assert.deepEqual(after.reservations, snapshot.reservations);
++    assert.deepEqual(after.attemptMemory, snapshot.attemptMemory);
++    for (const id of [S152, S155, S156]) {
++      assert.deepEqual(workOf(after, id), workOf(snapshot, id));
++    }
++    // No launcher retry rule (this one's or an earlier one's) matches it.
++    assert.equal(
++      HOSTED_AUTONOMY_RETRYABLE.some((rule) =>
++        record.blocker!.message.startsWith(rule.prefix)
++      ),
++      false,
++    );
++    assert.deepEqual(parseRepeatFailurePark(record.blocker), park.park);
++    if (!ignoreR80) {
++      assert.deepEqual(
++        await parseWithR80(after),
++        JSON.parse(JSON.stringify(after)),
++      );
++    }
++  },
++);
++
++Deno.test({
++  name:
++    "repeat failure: the park write parses with the installed R80 runtime's own parser",
++  ignore: ignoreR80,
++  fn: async () => {
++    const { after } = parked(liveSnapshot());
++    const reparsed = await parseWithR80(after) as RepairStateSnapshotV1;
++    assert.equal(
++      workOf(reparsed, AI_300).blocker!.message,
++      workOf(after, AI_300).blocker!.message,
++    );
++  },
++});
++
++Deno.test(
++  "repeat failure: a parked record is named every pass and never rewritten or re-granted",
++  () => {
++    const { after } = parked(liveSnapshot());
++    for (
++      const at of [NOW + 5 * 60_000, NOW + 48 * HOUR, NOW + 30 * 24 * HOUR]
++    ) {
++      const next = pass(after, { now: at });
++      assert.equal(next.parks.length, 0, "no second write");
++      assert.equal(
++        next.plans.some((plan) => plan.id === AI_300),
++        false,
++        "age alone never re-arms",
++      );
++      assert.match(next.denials.get(AI_300) ?? "", /^repeat_failure_parked:/);
++    }
++    // A moved base alone never re-arms either.
++    const tips = ownTips(after);
++    tips.set(hostedRepositoryKey(workOf(after, AI_300).repository), NEW_BASE);
++    assert.equal(
++      pass(after, { tips }).plans.some((plan) => plan.id === AI_300),
++      false,
++    );
++    // Without the launcher facts nothing re-arms.
++    const bare = planHostedRetries(after, NOW, R80, ownTips(after));
++    assert.equal(bare.some((plan) => plan.id === AI_300), false);
++  },
++);
++
++Deno.test(
++  "repeat failure: an edited issue re-arms once; an identical failure after it re-parks at once",
++  async () => {
++    const { after } = parked(liveSnapshot());
++    const edited = "e".repeat(64);
++    const rearm = pass(after, { digests: new Map([[AI_300, edited]]) });
++    const plan = rearm.plans.find((item) => item.id === AI_300);
++    assert.ok(plan !== undefined, JSON.stringify([...rearm.denials]));
++    assert.equal(plan.nextStep, "work");
++    assert.equal(plan.grant, 0);
++    assert.equal(plan.detail, "other:repeat_failure_rearmed:issue_edited");
++    const granted = applyHostedRetries(after, NEW_BASE, [plan], NOW);
++    const record = workOf(granted, AI_300);
++    assert.equal(record.nextStep, "work");
++    assert.equal(record.blocker, null);
++    // Charged history is never lowered: the next start is attempt 53.
++    assert.equal(record.counters.attempts, 52);
++    assert.deepEqual(granted.reservations, after.reservations);
++    // The probe fails the same way on a new base: the edit did not change the
++    // outcome, so the record re-parks immediately with the edited baseline.
++    const failed = await settleFailure(
++      granted,
++      AI_300,
++      NEW_BASE,
++      UNAVAILABLE,
++      NOW + HOUR,
++    );
++    const again = pass(failed, {
++      now: NOW + HOUR + 60_000,
++      digests: new Map([[AI_300, edited]]),
++    });
++    assert.equal(again.plans.some((item) => item.id === AI_300), false);
++    assert.equal(again.parks.length, 1);
++    assert.equal(again.parks[0].park.count, 54);
++    assert.equal(again.parks[0].park.issue, edited.slice(0, 12));
++  },
++);
++
++Deno.test("repeat failure: a changed model route re-arms a park once", () => {
++  const { after } = parked(liveSnapshot());
++  const route = repeatFailureRouteIdentity({
++    baseUrl: "",
++    model: "owner-changed-model",
++    fallback: "gateway",
++  });
++  assert.notEqual(route, ROUTE);
++  const rearm = pass(after, { route });
++  const plan = rearm.plans.find((item) => item.id === AI_300);
++  assert.ok(plan !== undefined);
++  assert.equal(plan.detail, "other:repeat_failure_rearmed:route_changed");
++  // A moved tip still advances through the ordinary base path.
++  const tips = ownTips(after);
++  tips.set(hostedRepositoryKey(workOf(after, AI_300).repository), NEW_BASE);
++  const advancing = pass(after, { route, tips }).plans.find((item) =>
++    item.id === AI_300
++  );
++  assert.equal(advancing?.advanceBase, true);
++  assert.equal(
++    advancing?.detail,
++    "other:repeat_failure_rearmed:route_changed:base-advance",
++  );
++});
++
++Deno.test(
++  "repeat failure: a different signature resets the streak and keeps the ordinary grant",
++  async () => {
++    const snapshot = liveSnapshot();
++    const changed = await settleFailure(
++      snapshot,
++      AI_300,
++      NEW_BASE,
++      ATTEMPT_DETAIL_NO_CHANGE,
++      NOW,
++    );
++    const streak = repeatFailureStreak(changed, workOf(changed, AI_300));
++    assert.equal(streak?.count, 1);
++    const next = pass(changed, { now: NOW + 60_000 });
++    assert.equal(next.parks.length, 0);
++    assert.ok(next.plans.some((plan) => plan.id === AI_300));
++    // The no-change class is not transient: three identical outcomes park it
++    // without waiting for the six-hour window.
++    let state = changed;
++    for (const offset of [1, 2]) {
++      state = await settleFailure(
++        state,
++        AI_300,
++        `${offset}`.repeat(40) as GitSha,
++        ATTEMPT_DETAIL_NO_CHANGE,
++        NOW + offset * 10 * 60_000,
++      );
++    }
++    const due = pass(state, { now: NOW + HOUR });
++    assert.equal(due.parks.length, 1);
++    assert.equal(due.parks[0].park.count, 3);
++    assert.equal(
++      due.parks[0].park.signature,
++      failureSignature("other", ATTEMPT_DETAIL_NO_CHANGE),
++    );
++  },
++);
++
++Deno.test(
++  "repeat failure: live sentinel 152/156 park once their output-bound streak spans six hours; 155 alternates and never parks",
++  async () => {
++    const snapshot = liveSnapshot();
++    for (const id of [S152, S156]) {
++      const streak = repeatFailureStreak(snapshot, workOf(snapshot, id));
++      assert.equal(streak?.count, 5, id);
++      assert.ok(streak!.lastAtMs - streak!.firstAtMs < 6 * HOUR, id);
++    }
++    assert.equal(
++      repeatFailureStreak(snapshot, workOf(snapshot, S155))?.count,
++      1,
++      "155's newest output-bound follows an unavailable outcome",
++    );
++    // The next identical outcome, past six hours from each one's first,
++    // parks both.
++    let state = snapshot;
++    let latest = 0;
++    for (const id of [S152, S156]) {
++      const first = repeatFailureStreak(snapshot, workOf(snapshot, id))!
++        .firstAtMs;
++      latest = Math.max(latest, first + 6 * HOUR + 60_000);
++      state = await settleFailure(
++        state,
++        id,
++        NEW_BASE,
++        OUTPUT_BOUND,
++        first + 6 * HOUR + 60_000,
++      );
++    }
++    const next = pass(state, { now: latest + 60_000 });
++    const sentinel = next.parks.filter((park) => park.id !== AI_300);
++    assert.deepEqual(sentinel.map((park) => park.id).sort(), [S152, S156]);
++    assert.ok(next.plans.some((plan) => plan.id === S155));
++    for (const park of sentinel) {
++      assert.equal(park.park.count, 6);
++      assert.equal(
++        park.park.signature,
++        failureSignature("other", OUTPUT_BOUND),
++      );
++    }
++  },
++);
++
++Deno.test(
++  "repeat failure: a short transient outage never parks; an unreadable issue withholds without parking",
++  async () => {
++    const snapshot = liveSnapshot();
++    // 155's three newest outcomes are made identical within one hour.
++    let state = snapshot;
++    for (const offset of [1, 2, 3]) {
++      state = await settleFailure(
++        state,
++        S155,
++        `${offset}`.repeat(40) as GitSha,
++        UNAVAILABLE,
++        NOW + offset * 15 * 60_000,
++      );
++    }
++    assert.equal(
++      repeatFailureStreak(state, workOf(state, S155))?.count,
++      3,
++    );
++    const next = pass(state, { now: NOW + HOUR });
++    assert.equal(next.parks.some((park) => park.id === S155), false);
++    assert.ok(next.plans.some((plan) => plan.id === S155));
++    // Unreadable source digest: no grant, no write, named.
++    const unread = pass(liveSnapshot(), {
++      digests: new Map([[AI_300, null]]),
++    });
++    assert.equal(unread.parks.length, 0);
++    assert.equal(unread.plans.some((plan) => plan.id === AI_300), false);
++    assert.equal(
++      unread.denials.get(AI_300),
++      "repeat_failure_unverified_issue",
++    );
++  },
++);
++
++Deno.test("repeat failure: a recorded success or a straddling entry never overstates the streak", () => {
++  const snapshot = liveSnapshot();
++  const record = workOf(snapshot, AI_300);
++  const families = snapshot.attemptMemory.filter((memory) =>
++    memory.taskId === AI_300
++  );
++  const newest = Math.max(
++    ...families.flatMap((memory) => memory.entries.map((e) => e.lastAtMs)),
++  );
++  // A success recorded after every failure: nothing to park.
++  const succeeded = parseRepairStateSnapshotV1({
++    ...snapshot,
++    attemptMemory: snapshot.attemptMemory.map((memory) =>
++      memory.id === families[0].id
++        ? {
++          ...memory,
++          successes: 1,
++          lastSuccessAtMs: newest + 1,
++          lastSuccessRevision: R80,
++        }
++        : memory
++    ),
++  });
++  assert.equal(repeatFailureStreak(succeeded, record), null);
++  // A different outcome inside a multi-occurrence entry's window: only that
++  // entry's last occurrence is proven later than it.
++  const entries = families.flatMap((memory) =>
++    memory.entries.map((entry) => ({ memory, entry }))
++  ).sort((left, right) => right.entry.lastAtMs - left.entry.lastAtMs);
++  const { memory: straddle, entry } = entries.find((item) =>
++    item.entry.count > 1
++  )!;
++  const inserted = entry.firstAtMs + 1;
++  const later = entries.filter((item) => item.entry.firstAtMs > inserted)
++    .reduce((sum, item) => sum + item.entry.count, 0);
++  const inside = parseRepairStateSnapshotV1({
++    ...snapshot,
++    attemptMemory: snapshot.attemptMemory.map((memory) =>
++      memory.id === straddle.id
++        ? {
++          ...memory,
++          entries: [
++            ...memory.entries.filter((item) => item.lastAtMs < inserted),
++            {
++              ...entry,
++              fingerprint: "f".repeat(64),
++              detail: OUTPUT_BOUND,
++              count: 1,
++              firstAtMs: inserted,
++              lastAtMs: inserted,
++            },
++            ...memory.entries.filter((item) => item.lastAtMs >= inserted),
++          ],
++        }
++        : memory
++    ),
++  });
++  assert.ok(entry.count > 1);
++  assert.equal(repeatFailureStreak(inside, record)?.count, later + 1);
++});
++
++Deno.test("repeat failure: the signature folds identities but keeps the failure class", () => {
++  assert.equal(
++    normalizeFailureMessage("Base refresh has conflicts at 3f041b46d95269b2"),
++    normalizeFailureMessage("base refresh has  conflicts at 01f482529d"),
++  );
++  assert.notEqual(
++    failureSignature("other", "model run failed (unavailable)"),
++    failureSignature("other", "model run failed (bundle)"),
++  );
++  assert.notEqual(
++    failureSignature("other", UNAVAILABLE),
++    failureSignature("unavailable", UNAVAILABLE),
++  );
++  assert.match(failureSignature("other", UNAVAILABLE), /^other\|[0-9a-f]{16}$/);
++  assert.match(REPEAT_FAILURE_DEFAULT_ROUTE, /^[0-9a-f]{12}$/);
++  assert.equal(
++    repeatFailureRouteIdentity({ baseUrl: null, model: null, fallback: null }),
++    repeatFailureRouteIdentity({ baseUrl: "", model: " ", fallback: "" }),
++  );
++});
++
++Deno.test("repeat failure: the per-task reservation cap is named, never skipped silently", () => {
++  const snapshot = liveSnapshot();
++  const charge = (snapshot.reservations as unknown as { id: string }[])[0];
++  const template = snapshot.reservations.find((row) => row.taskId === S155)!;
++  const capped = parseRepairStateSnapshotV1({
++    ...snapshot,
++    reservations: [
++      ...snapshot.reservations,
++      ...Array.from(
++        { length: HOSTED_AUTONOMY_MAX_RETRIES },
++        (_, index) => ({
++          ...template,
++          id: (index + 1).toString(16).padStart(64, "0"),
++          attempt: 100 + index,
++          outcome: "ambiguous",
++          settledAt: template.createdAt + 1,
++        }),
++      ),
++    ].sort((left, right) => left.id < right.id ? -1 : 1),
++  });
++  assert.ok(charge !== undefined);
++  const next = pass(capped);
++  assert.equal(next.plans.some((plan) => plan.id === S155), false);
++  assert.equal(next.denials.get(S155), "retry_budget_exhausted");
++});
++
++/** The protected maintenance pass over the live rows (real CAS + readback). */
++async function maintenance(
++  rig: Awaited<ReturnType<typeof makeRig>>["rig"],
++  at: number,
++  modelRoute = ROUTE,
++) {
++  return await runHostedAutonomy({
++    state: rig.state,
++    githubFor: rig.githubFor,
++    clock: { now: () => at },
++    modelRoute,
++  });
++}
++
++Deno.test(
++  "repeat failure: the protected maintenance pass parks live 300 in its own write, then only names it",
++  async () => {
++    const { rig } = await makeRig("repeat-failure", {
++      repair: liveSnapshot(),
++      release: releaseSnapshot([], R80),
++      fixtureDir: ROOT,
++      issueTask: (number) =>
++        Promise.resolve({
++          issueNumber: number,
++          title: `live issue ${number}`,
++          body: "unchanged statement",
++          digest: number === 300 ? DIGEST_300 : "5".repeat(64),
++        }),
++    });
++    try {
++      const first = await maintenance(rig, NOW);
++      assert.equal(first.status, "applied", JSON.stringify(first));
++      const label = `${failureSignature("other", UNAVAILABLE)}:x53`;
++      assert.ok(
++        first.actions.includes(
++          `retry:${AI_300}:parked:repeat_failure:${label}`,
++        ),
++        JSON.stringify(first.actions),
++      );
++      assert.ok(
++        first.actions.includes(
++          `retry:${AI_300}:denied:repeat_failure_parked:${label}`,
++        ),
++      );
++      const read = await rig.state.readRepair();
++      assert.ok(read.ok && read.value.status === "found");
++      const after = read.value.snapshot;
++      const record = workOf(after, AI_300);
++      assert.equal(record.nextStep, "blocked");
++      assert.ok(record.blocker!.message.startsWith(REPEAT_FAILURE_PARK_PREFIX));
++      assert.equal(after.reservations.length, LIVE.reservations.length);
++      // The sentinel rows were re-granted in the same write.
++      for (const id of [S152, S155, S156]) {
++        assert.equal(workOf(after, id).nextStep, "work", id);
++      }
++      if (!ignoreR80) await parseWithR80(after);
++      const writes = rig.writes;
++      const second = await maintenance(rig, NOW + 10 * 60_000);
++      assert.ok(
++        second.actions.includes(
++          `retry:${AI_300}:denied:repeat_failure_parked:${label}`,
++        ),
++        JSON.stringify(second.actions),
++      );
++      assert.equal(rig.writes, writes, "a parked record is never rewritten");
++      // The owner switches the model route: the next pass re-arms it once.
++      const route = repeatFailureRouteIdentity({
++        baseUrl: "",
++        model: "owner-changed-model",
++        fallback: "gateway",
++      });
++      const third = await maintenance(rig, NOW + 20 * 60_000, route);
++      assert.ok(
++        third.actions.some((action) =>
++          action.startsWith(
++            `retry:${AI_300}:grant=0:other:repeat_failure_rearmed:route_changed`,
++          )
++        ),
++        JSON.stringify(third.actions),
++      );
++      const rearmed = await rig.state.readRepair();
++      assert.ok(rearmed.ok && rearmed.value.status === "found");
++      assert.equal(workOf(rearmed.value.snapshot, AI_300).nextStep, "work");
++    } finally {
++      await Deno.remove(rig.tmp, { recursive: true });
++    }
++  },
++);
++
++Deno.test("repeat failure: the maintenance step receives only the non-secret route selector", async () => {
++  const workflow = await Deno.readTextFile(
++    `${ROOT}.github/workflows/supervisor.yml`,
++  );
++  const start = workflow.indexOf("\n  maintenance:\n");
++  const end = workflow.indexOf("\n  prepare:\n");
++  assert.ok(start >= 0 && end > start);
++  const maintenance = workflow.slice(start, end);
++  for (const name of ["BASE_URL", "ID", "FALLBACK"]) {
++    const variable = `SENTINEL_MODEL_${name}`;
++    assert.ok(
++      maintenance.includes(`${variable}: \${{ vars.${variable} }}`),
++      variable,
++    );
++    assert.match(
++      maintenance,
++      new RegExp(`--allow-env=[^\\s]*\\b${variable}\\b`),
++    );
++  }
++  // No model credential or failover override reaches the launcher job.
++  for (const secret of ["SENTINEL_DEEPSEEK_API_KEY", "UOS_AI_TOKEN"]) {
++    assert.equal(maintenance.includes(secret), false, secret);
++  }
++});
+diff --git a/tests/host/matrix-no-change-outcome_test.ts b/tests/host/matrix-no-change-outcome_test.ts
+new file mode 100644
+index 0000000000..609658bbca
+--- /dev/null
++++ b/tests/host/matrix-no-change-outcome_test.ts
+@@ -0,0 +1,225 @@
++/**
++ * Root cause of ai.ubq.fi issue 300's 52 identical "model run failed
++ * (unavailable)" blocks: every recent matrix cell's own diagnostic line reads
++ * `reasonCode: model_candidate_unchanged_base` (run 39073338516, jobs
++ * 117518580134 and 117509247393). The model session COMPLETED, found the task
++ * already done at base (ai.ubq.fi 0c120c11f6 fixed tools/lint/package.json on
++ * 2026-09-22, before the first charge) and left its checkout unchanged; the
++ * trusted committer then refused `unchanged_base`, the port reported that as
++ * `unavailable`, and the cell exported only the error kind. The blocker read as
++ * a transient provider outage and the launcher re-granted it on every base
++ * move.
++ *
++ * A completed run that left its checkout unchanged is a model outcome, never
++ * provider unavailability: the cell exports its own closed detail, the
++ * ingester records it as a no-progress outcome (still charged ambiguous, never
++ * refunded), the launcher may retry it under the repeat-failure bound, and
++ * every other port error keeps its exact existing settlement.
++ */
++import assert from "node:assert/strict";
++import {
++  ingestMatrixResults,
++  planMatrixWave,
++  runMatrixCell,
++} from "../../src/host/matrix.ts";
++import type { GitSha } from "../../src/contracts/brands.ts";
++import {
++  type ModelRunReceiptV1,
++  portError,
++  type PortResultV1,
++} from "../../src/contracts/ports.ts";
++import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
++import {
++  CANDIDATE_COMMIT_REFUSAL_DETAILS,
++  candidateCommitRefusalDetail,
++  LocalCandidateCommitter,
++} from "../../src/repair/model-port-checkout.ts";
++import { settlementClassification } from "../../src/host/matrix-ingest-state.ts";
++import {
++  applyHostedRetries,
++  planHostedRetries,
++} from "../../ops/hosted-autonomy.ts";
++import { gitRun } from "../state/helpers.ts";
++import { r80Available, withR80Parsers } from "./r80-contracts.ts";
++import {
++  ACTUAL,
++  freshIssue,
++  makeRig,
++  type RigV1,
++  RUN,
++  seedSnapshot,
++  snapshot,
++  WAVE,
++} from "./matrix-runtime-fixtures.ts";
++
++const ignoreR80 = !await r80Available();
++
++/** The closed detail a completed, change-free model run settles with. */
++const NO_CHANGE = "model run completed without any change to its checkout";
++const UNAVAILABLE = "model run failed (unavailable)";
++
++function modelReturning(result: PortResultV1<ModelRunReceiptV1>) {
++  let calls = 0;
++  return {
++    port: {
++      modelId: "gpt-reserve",
++      runModel: () => {
++        calls++;
++        return Promise.resolve(result);
++      },
++    },
++    calls: () => calls,
++  };
++}
++
++async function wave(
++  rig: RigV1,
++  model: { modelId: string; runModel: () => Promise<unknown> },
++) {
++  const planned = await planMatrixWave(rig.deps, rig.planOptions());
++  assert.equal(planned.prepared, 1, JSON.stringify(planned));
++  const cell = planned.plan.cells[0];
++  const ctx = await rig.claimCell(cell);
++  // deno-lint-ignore no-explicit-any
++  (ctx.deps as any).model = model;
++  const result = await runMatrixCell(
++    ctx.deps,
++    { waveId: WAVE, run: RUN, cell },
++    ACTUAL,
++    rig.clock.now(),
++  );
++  await rig.transfer([result], [ctx]);
++  const report = await ingestMatrixResults(
++    rig.deps,
++    planned.plan,
++    [result],
++    rig.ingestOptions(),
++  );
++  return { cell, ctx, result, report };
++}
++
++async function readmit(rig: RigV1, runtimeSha: GitSha): Promise<number> {
++  const before = await rig.store.readRepair();
++  assert.ok(before.ok && before.value.status === "found");
++  const now = rig.clock.now();
++  const plans = planHostedRetries(before.value.snapshot, now, runtimeSha);
++  if (plans.length === 0) return 0;
++  const retried = await rig.store.writeRepair(
++    applyHostedRetries(before.value.snapshot, before.value.head, plans, now),
++    before.value.head,
++  );
++  assert.ok(retried.ok && retried.value.status === "applied");
++  return plans.length;
++}
++
++Deno.test(
++  "no-change outcome: the real committer refuses an untouched checkout with the exact unchanged-base detail",
++  async () => {
++    const rig = await makeRig([990300], 1);
++    try {
++      const repo = `${rig.tmp}/untouched`;
++      assert.ok(
++        (await gitRun(rig.tmp, ["clone", "-q", rig.mirrorRepo, repo], rig.env))
++          .ok,
++      );
++      const committer = new LocalCandidateCommitter(repo);
++      assert.equal(await committer.commit(rig.base), false);
++      assert.equal(committer.refusalCode, "unchanged_base");
++      // This is the exact port error detail every live 300 cell carried.
++      assert.equal(
++        candidateCommitRefusalDetail(committer),
++        CANDIDATE_COMMIT_REFUSAL_DETAILS.unchanged_base,
++      );
++    } finally {
++      await rig.cleanup();
++    }
++  },
++);
++
++Deno.test(
++  "no-change outcome: a completed run that changed nothing settles as no progress, not provider unavailability",
++  async () => {
++    const rig = await makeRig([990301], 1);
++    try {
++      const issue = freshIssue(990301, rig.base);
++      const seeded = await rig.store.writeRepair(seedSnapshot([issue]), null);
++      assert.ok(seeded.ok && seeded.value.status === "applied");
++      const model = modelReturning(
++        portError(
++          "unavailable",
++          CANDIDATE_COMMIT_REFUSAL_DETAILS.unchanged_base,
++        ),
++      );
++      const { cell, result, report } = await wave(rig, model.port);
++      assert.equal(model.calls(), 1, "exactly one model session");
++      assert.equal(result.status, "failed");
++      assert.equal(result.detail, NO_CHANGE);
++      assert.equal(result.receipt, null);
++      assert.equal(report.ingested, 1, JSON.stringify(report.entries));
++      const state = await snapshot(rig);
++      const work = state.work[0];
++      assert.equal(work.nextStep, "blocked");
++      assert.equal(work.blocker?.message, NO_CHANGE);
++      // The charge stays charged: ambiguous, never refunded.
++      assert.deepEqual(state.reservations.map((row) => row.outcome), [
++        "ambiguous",
++      ]);
++      const entries = state.attemptMemory.flatMap((memory) => memory.entries);
++      assert.equal(entries.length, 1);
++      assert.equal(entries[0].detail, NO_CHANGE);
++      assert.equal(entries[0].stage, "model");
++      assert.equal(entries[0].failureClass, "semantic_no_progress");
++      // Everything written parses under the R80 contracts (src/contracts is
++      // unchanged since R80 e48e7e110), and under R80's own parsers.
++      parseRepairStateSnapshotV1(JSON.parse(JSON.stringify(state)));
++      if (!ignoreR80) {
++        await withR80Parsers((r80) => {
++          r80.parseRepairStateSnapshotV1(state);
++          r80.parseMatrixCellResultV1(result);
++        });
++      }
++      // The launcher's retry table owns the class: it re-admits it once.
++      assert.equal(await readmit(rig, cell.runtimeSha as GitSha), 1);
++    } finally {
++      await rig.cleanup();
++    }
++  },
++);
++
++Deno.test(
++  "no-change outcome: every other port error keeps its exact unavailable settlement",
++  async () => {
++    const rig = await makeRig([990302], 1);
++    try {
++      const issue = freshIssue(990302, rig.base);
++      const seeded = await rig.store.writeRepair(seedSnapshot([issue]), null);
++      assert.ok(seeded.ok && seeded.value.status === "applied");
++      const model = modelReturning(
++        portError(
++          "unavailable",
++          CANDIDATE_COMMIT_REFUSAL_DETAILS.dirty_descendant,
++        ),
++      );
++      const { result } = await wave(rig, model.port);
++      assert.equal(result.detail, UNAVAILABLE);
++      const state = await snapshot(rig);
++      assert.equal(state.work[0].blocker?.message, UNAVAILABLE);
++      const entry = state.attemptMemory[0].entries[0];
++      assert.equal(entry.failureClass, "transient_infrastructure");
++      assert.equal(entry.stage, "model");
++    } finally {
++      await rig.cleanup();
++    }
++  },
++);
++
++Deno.test("no-change outcome: the ingester classifies the closed detail as a model no-progress outcome", () => {
++  assert.deepEqual(settlementClassification("failed", NO_CHANGE), {
++    stage: "model",
++    failureClass: "semantic_no_progress",
++  });
++  assert.deepEqual(settlementClassification("failed", UNAVAILABLE), {
++    stage: "model",
++    failureClass: "transient_infrastructure",
++  });
++});
+diff --git a/tests/host/r80-contracts.ts b/tests/host/r80-contracts.ts
+new file mode 100644
+index 0000000000..d99c9d240f
+--- /dev/null
++++ b/tests/host/r80-contracts.ts
+@@ -0,0 +1,103 @@
++/**
++ * The installed generation-80 runtime's (R80, e48e7e110) own strict repair
++ * state parser, for rollback proofs: generation 81's rollback target must
++ * parse and accept every state shape new code writes. The exact `src/contracts`
++ * tree (self-contained: it imports nothing outside itself) is extracted
++ * read-only from the local object store into a disposable directory under the
++ * repository root. A shallow checkout without the pinned commit reports
++ * `r80Available() === false` and callers mark the case ignored instead of
++ * passing it silently.
++ */
++import { OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION } from "../../src/host/owner-install-runtime-pins.ts";
++
++export const R80_RUNTIME: string = OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION;
++
++const ROOT = decodeURIComponent(new URL("../../", import.meta.url).pathname)
++  .replace(/\/$/, "");
++
++const GIT_ENV = {
++  PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
++  GIT_CONFIG_GLOBAL: "/dev/null",
++  GIT_CONFIG_SYSTEM: "/dev/null",
++  GIT_TERMINAL_PROMPT: "0",
++};
++
++/** True when the pinned R80 commit is in the local object store. */
++export async function r80Available(): Promise<boolean> {
++  try {
++    const probe = await new Deno.Command("git", {
++      args: ["-C", ROOT, "cat-file", "-e", `${R80_RUNTIME}^{commit}`],
++      clearEnv: true,
++      env: GIT_ENV,
++      stdout: "null",
++      stderr: "null",
++    }).output();
++    return probe.success;
++  } catch {
++    return false;
++  }
++}
++
++/** R80's own strict parsers for every shape this lane writes. */
++export interface R80ParsersV1 {
++  parseRepairStateSnapshotV1(input: unknown): unknown;
++  parseMatrixCellResultV1(input: unknown): unknown;
++}
++
++/** Run `use` with R80's own parsers over a JSON round trip of each input. */
++export async function withR80Parsers<T>(
++  use: (parsers: R80ParsersV1) => T | Promise<T>,
++): Promise<T> {
++  const dir = await Deno.makeTempDir({
++    dir: ROOT,
++    prefix: "sentinel-r80-contracts-",
++  });
++  try {
++    const archive = await new Deno.Command("git", {
++      args: [
++        "-C",
++        ROOT,
++        "archive",
++        "--format=tar",
++        R80_RUNTIME,
++        "src/contracts",
++      ],
++      clearEnv: true,
++      env: GIT_ENV,
++      stdout: "piped",
++      stderr: "null",
++    }).output();
++    if (!archive.success) throw new Error("R80 contracts unavailable");
++    await Deno.writeFile(`${dir}/tree.tar`, archive.stdout);
++    const extracted = await new Deno.Command("tar", {
++      args: ["-xf", `${dir}/tree.tar`, "-C", dir],
++      clearEnv: true,
++      env: { PATH: GIT_ENV.PATH },
++      stdout: "null",
++      stderr: "null",
++    }).output();
++    if (!extracted.success) throw new Error("R80 contracts unreadable");
++    const state = await import(
++      new URL(`file://${dir}/src/contracts/state-snapshots.ts`).href
++    );
++    const matrix = await import(
++      new URL(`file://${dir}/src/contracts/matrix.ts`).href
++    );
++    const roundTrip = (input: unknown) => JSON.parse(JSON.stringify(input));
++    return await use({
++      parseRepairStateSnapshotV1: (input) =>
++        state.parseRepairStateSnapshotV1(roundTrip(input)),
++      parseMatrixCellResultV1: (input) =>
++        matrix.parseMatrixCellResultV1(roundTrip(input)),
++    });
++  } finally {
++    await Deno.remove(dir, { recursive: true }).catch(() => {});
++  }
++}
++
++/** Parse `snapshot` with R80's own `parseRepairStateSnapshotV1`. */
++export function parseWithR80(snapshot: unknown): Promise<unknown> {
++  return withR80Parsers((parsers) =>
++    parsers.parseRepairStateSnapshotV1(snapshot)
++  );
++}
+-- 
+2.43.0
+
