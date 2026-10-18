@@ -16,70 +16,87 @@ generation-81 integration from handoff
 `be02faf40c77fe299c2ed7ffa91fedb00fe43c48` (#163), followed by the corrected
 merge-queue rollout (#164). Fresh reads confirm `development` and
 `sentinel-supervisor` at `87e28fd4a7796078adc4c930dd49d02651f82203`, runtime R80
-`e48e7e110e7cb2ed3385bf1be5165f05d8a4e481` installed at generation 80, healthy
-supervisor runs 39085544527 and 39090096288, and run 39091929807 still in
-progress on the same launcher. `sentinel-release` remains disabled. No R81
-candidate has been published, installed or accepted. The owner authorized normal
-fast-forward publication, exact-runtime CI, controller installation and live
-verification; remote writes were initially blocked by a suspended GitHub
-connector App. The owner unsuspended it and the prepared #1159 merge commit
-pushed normally as `0a7063f994f39d958476d9257c2eef7ce9a7abc9`; its new
-exact-head CI is pending. The live Sentinel App is separate and unchanged.
+`e48e7e110e7cb2ed3385bf1be5165f05d8a4e481` installed at generation 80, and
+successful supervisor runs 39085544527, 39090096288 and 39091929807 on that
+launcher. `sentinel-release` remains disabled. No R81 candidate has been
+published, installed or accepted. The owner authorized normal fast-forward
+publication, exact-runtime CI, controller installation and live verification.
+The owner unsuspended the GitHub connector App; the live Sentinel App is a
+separate identity and remains unchanged.
 
-The integration worktree is `/workspace/worktrees/gen81-integration`, branch
-`codex/gen81-integration`, reconciled at `58f537f9` before this ledger update.
-Accepted ancestry includes all eleven rebased handoff lanes (`codex/gen81-lanes`
-tip `e4731324887d2d6d5b25c09b7afa121e1a2fffc9`), the CI-evidence P2 repair,
-throughput/owner-summary changes (`0f5847394ed0058f338fd28717615e5c3b830956`),
-the current/R80 non-expiring-hold regression
-(`50b65843b6a29fa2a7bdf9a75906335f9ff8131c`), and workspace-owned test/cache
-fixtures (`4f1a09314c3e8089c06fe4e11317c14ee8190a15`). The decision-matrix
-checker passes 11 cases across 79 classes, 2,432 production-launcher passes and
-8,976 explored states; 14 explicit residual jams and 103 owner-visible parks
-remain honestly named. Focused module checks and a depth-1 lane run passed.
-Evidence and original patch-to-commit mapping are under
-`/workspace/evidence/gen81-lanes/`, `/workspace/evidence/ci-recheck/`,
-`/workspace/evidence/gen81-throughput-validation.json` and
-`/workspace/evidence/sentinel-test-cache/`. These are local results, not
-exact-final-R acceptance.
+The canonical integration worktree is `/workspace/worktrees/gen81-integration`,
+branch `codex/gen81-integration`. Accepted ancestry includes all eleven rebased
+handoff lanes (`e4731324887d2d6d5b25c09b7afa121e1a2fffc9`), throughput and owner
+summary changes (`0f5847394ed0058f338fd28717615e5c3b830956`), the current/R80
+non-expiring-hold regression (`50b65843b6a29fa2a7bdf9a75906335f9ff8131c`),
+workspace-owned test/cache fixtures
+(`4f1a09314c3e8089c06fe4e11317c14ee8190a15`), and the exact-base no-change
+review/closure route (`765e06bb`, including native parent custody
+`849317006889a3c46732b85cb8b1261cdea01daa`). The decision-matrix checker passes
+11 cases across 79 classes, 2,432 launcher passes and 8,976 explored states; its
+14 residual jams and 103 owner-visible parks remain named. The combined
+no-change, custody, service, retry and decision-matrix boundary passed 57 tests.
+These are local results, not exact-final-R acceptance.
 
-Remaining source ownership: `output_nochange` owns the output-volume removal and
-exact-base issue-satisfaction review route, with `integrate_lanes` covering
-historical no-change launcher holds and `ci_evidence_recheck` covering
-service/R80 payload tests in that lane. Parent-owned native review custody is
-frozen at `849317006889a3c46732b85cb8b1261cdea01daa` and is being integrated
-there. Reviews still consume durable admissions, ambiguous outcomes remain
-charged, and every persisted shape must parse under R80. The primary alone owns
-this ledger, canonical integration, the fresh combined GPT-6.1 Sol/max read-only
-audit, exact R81 freeze/validation, and later L81 publication. `ci_base_runs`
-prepares bounded final-validation orchestration; `finish_1159` prepares the
-pin/install checklist. Full exact-R validation has not run yet.
+The fresh independent GPT-6.1 Sol/max combined audit froze candidate
+`3fe776f71cc50050ef0d804b42f0450f42f5f519` (diff SHA-256
+`ef6e2f89cfe129d8c7aef941896c6a1e42fb3d463d623036ba25b2db20d4d483`). It found
+one P1: real app-server transport still terminated valid sessions at cumulative
+32 MiB or one large output frame. Its P2/P3 findings identified two remaining
+incidental caps and incomplete CI evidence retention. All corrections remain
+within the requested scope. The primary accepted remaining-cap correction
+`f9e848d3`, CI step-window/rate-limit correction
+`c882724153a648070de1422edb517ac81ae84338`, and bounded reviewer retention
+`d1e160996fca6db65f62e6bd5688bf6ab84cb152`, merged through `9fea77e7`.
 
-The ai.ubq.fi prerequisites remain unmerged. PR #1159's remote head
-`d0595ccbbb30201689f044649d868f87493415ba` has all four checks green; its
-earlier conflict resolution changes only `docs/DECISIONS.md` relative to the
-automatic remerge and retains both G3 facts. A clean merge of the subsequently
-advanced development base is prepared locally at
-`0a7063f994f39d958476d9257c2eef7ce9a7abc9`, with its exact tree verified,
-published normally and awaiting all four new checks. One P3 follow-up issue is
-prepared with a reproduced legacy GPG-cleanup race under
-`/workspace/evidence/finish-1159/`. PR #1180 at
-`46e7e30120b1aea435ff8deb875136026812e69a` has all four checks green and a
-current-head CodeRabbit approval; it preserves development push runs and adds
-non-deploying merge-group runs. After #1159 merges, refresh #1180 by merging
-development, rerun exact-head CI, review and SHA-pin the normal merge. Local
-Codex CLI review attempts failed authentication and are not claimed as completed
-reviews. Only the verified #1159 branch update has been published so far.
+Remaining R81 source ownership: `output_nochange` owns bounded streaming JSON
+projection and settlement accounting; `integrate_lanes` owns bounded early
+notification custody before turn startup; `finish_1159` owns native reviewer
+channel backpressure and the exact close fence. These lanes coordinate one
+internal notification contract and must pass a focused audit correction recheck
+together. No serialized R80 shape is widened. Volume never authorizes an
+interrupt or receipt; missing complete proof remains unavailable at natural
+settlement. Duration limits and all reservation charges remain. The primary
+alone owns this ledger, integration commits, final R81 freeze, exact-R
+validation and L81 publication. Final-validation orchestration and the
+pin/install checklist are prepared; full exact-R validation has not run.
+Evidence is under `/workspace/evidence/gen81-audit/`,
+`/workspace/evidence/gen81-evidence-corrections/`,
+`/workspace/evidence/gen81-review-volume/`, `/workspace/evidence/gen81-lanes/`,
+`/workspace/evidence/gen81-final-validation/` and
+`/workspace/evidence/gen81-install/`.
 
-Merge-queue design is owned by `throughput_visibility`, with shared contracts
-and final integration owned by the primary. Queue support must ship dark after
-healthy R81, use a non-expiring hold, reconcile queue custody before every
-mutable phase, and prevent the old direct verifier from booking queue merges. A
-native runtime membership guard is needed before production activation to cover
-owner enqueue during a long repair run. No Sentinel ruleset or branch protection
-is authorized. The separate owner steps remain the Sentinel App's Merge queues
-permission, an App-identity canary and the ai.ubq.fi ruleset; enabling a ruleset
-before enqueue support is forbidden. Owner cleanup also remains the stale
+The ai.ubq.fi prerequisites remain unmerged. PR #1159's conflict resolution
+changes only `docs/DECISIONS.md` relative to the automatic remerge and retains
+both G3 facts. The clean merge of development is published at
+`0a7063f994f39d958476d9257c2eef7ce9a7abc9`; run 39093217871 attempt 1 failed a
+pre-existing quota-proof clock race in unchanged files. One failed-job rerun
+(attempt 2) is in progress on that same head. All four checks must pass before
+the SHA-pinned normal merge. One P3 review follow-up is prepared with a
+reproduced legacy GPG-cleanup race under `/workspace/evidence/finish-1159/`. The
+independent one-line clock-race repair is prepared separately and changes no
+runtime code. PR #1180 at `46e7e30120b1aea435ff8deb875136026812e69a` has all
+four checks green and current-head CodeRabbit approval. It preserves development
+push runs and adds non-deploying merge-group runs. After #1159 merges, merge
+development into #1180, publish, rerun exact-head CI, review and SHA-pin its
+normal merge. Local Codex CLI review attempts failed authentication and are not
+completed reviews.
+
+Merge-queue support remains separate preparation for after healthy R81. The
+pure/API foundation is `7dd7a385f2d4bb209d3bef3aa0486a5f9464cc9a`, with 27
+focused tests and 41 steps plus seven actual R80 intent round trips. It changes
+no existing consumer or workflow and has no live effects. The primary owns
+shared contracts and foreign delivery-proof migration; `throughput_visibility`
+prepares launcher custody and workflow gating, and `ci_evidence_recheck`
+prepares native mutation/booking guards in isolated worktrees. Initial enqueue
+mode and immutable proof activation remain off. A proven no-rule/no-custody fast
+path preserves the direct pipeline without new permission requirements. Queue
+custody uses non-expiring holds and runs before every mutable phase; positive
+queue evidence can never fall through the legacy verifier. All writes and proof
+consumers must integrate before activation. No Sentinel ruleset or branch
+protection is authorized. The separate owner steps remain the Sentinel App's
+Merge queues permission, an App-identity canary and the ai.ubq.fi ruleset; a
+ruleset before enqueue support is forbidden. Owner cleanup remains the stale
 `SENTINEL_MODEL_ID` variable and superseded ai.ubq.fi PRs #1057, #1060 and
 #1116.
 
