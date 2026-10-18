@@ -353,7 +353,7 @@ Deno.test("B6 live: under a proven acceptance-correction runtime B6a returns to 
     assert.equal(
       acceptanceCorrectionRuntimeProven(R81_RELEASE.hostedRuntimes[0]),
       false,
-      "the production allowlist names no runtime yet",
+      "the production allowlist refuses this synthetic runtime",
     );
     const before = await readSnapshot(rig);
     const { result, actions } = await retryPass(rig, R81_RUNTIMES);
@@ -390,10 +390,41 @@ Deno.test("B6 live: under a proven acceptance-correction runtime B6a returns to 
 });
 
 Deno.test("B6: every allowlisted acceptance-correction runtime carries the runtime half", async () => {
+  assert.deepEqual([...HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES], [
+    "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+  ]);
+  const pinned = releaseAt({
+    revision: "da98f5f49c45b57cfa97a45fe647c36b1021f302" as GitSha,
+    generation: 81,
+    healthy: {
+      revision: "da98f5f49c45b57cfa97a45fe647c36b1021f302" as GitSha,
+      generation: 81,
+      createdAt: NOW - 3_600_000,
+      observedAt: NOW - 3_500_000,
+    },
+  });
+  assert.equal(
+    acceptanceCorrectionRuntimeProven(pinned.hostedRuntimes[0]),
+    true,
+  );
+  assert.equal(
+    acceptanceCorrectionRuntimeProven(R81_RELEASE.hostedRuntimes[0]),
+    false,
+  );
+
   // The pin commit that lists a revision makes this bind: its tree must hold
   // the correction route and the owner-gated park the launcher relies on.
   const root = decodeURIComponent(new URL("../../", import.meta.url).pathname);
   for (const revision of HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES) {
+    const available = await new Deno.Command("git", {
+      args: ["-C", root, "cat-file", "-e", `${revision}^{commit}`],
+      clearEnv: true,
+      env: { PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+      stdout: "null",
+      stderr: "null",
+    }).output();
+    // A depth-1 launcher checkout need not contain its pinned runtime parent.
+    if (!available.success) continue;
     const shown = await new Deno.Command("git", {
       args: [
         "-C",
@@ -406,8 +437,10 @@ Deno.test("B6: every allowlisted acceptance-correction runtime carries the runti
       stdout: "piped",
       stderr: "null",
     }).output();
-    // A shallow checkout without the revision cannot prove it either way.
-    if (!shown.success) continue;
+    assert.ok(
+      shown.success,
+      `${revision} is present but lacks its runtime half`,
+    );
     const text = new TextDecoder().decode(shown.stdout);
     assert.ok(text.includes(TASK_ACCEPTANCE_OWNER_GATE_DETAIL), revision);
     assert.ok(text.includes("export async function withAcceptanceFinding"));

@@ -71,6 +71,8 @@ export const HOSTED_AUTONOMY_CI_FIRST_RUNTIMES: ReadonlySet<string> = new Set<
 >([
   // Generation 80 (R80), pinned by its launcher commit.
   "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+  // Generation 81 (R81), pinned by its launcher commit.
+  "da98f5f49c45b57cfa97a45fe647c36b1021f302",
 ]);
 
 /**
@@ -92,7 +94,9 @@ export const HOSTED_AUTONOMY_CI_FIRST_FIX_MIN_GENERATION = 81;
  * here (its hosted route is closed), so a rollback re-admits no fix.
  */
 export const HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES: ReadonlySet<string> =
-  new Set<string>([]);
+  new Set<string>([
+    "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+  ]);
 
 /**
  * True only for an allowlisted CI-first runtime at generation 80+ whose own

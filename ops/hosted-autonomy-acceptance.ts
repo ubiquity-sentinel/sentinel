@@ -48,13 +48,14 @@ export const HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_MIN_GENERATION = 81;
 /**
  * Exact reviewed runtime revisions that correct a not-fulfilled acceptance
  * (`src/repair/acceptance-correction.ts` in that revision's tree), each named
- * by the launcher commit that pins its install. Empty until generation 81's
- * pin commit lists R81: under R80 the re-admission would only be blocked
- * again.
+ * by the launcher commit that pins its install. R81 is the first supported
+ * runtime: under R80 the re-admission would only be blocked again.
  */
 export const HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES: ReadonlySet<
   string
-> = new Set<string>([]);
+> = new Set<string>([
+  "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+]);
 
 /** Denial of the B6a re-admission under a runtime that cannot correct it. */
 export const ACCEPTANCE_CORRECTION_REQUIRES_RUNTIME =

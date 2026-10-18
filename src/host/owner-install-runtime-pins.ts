@@ -351,6 +351,19 @@ export const OWNER_DEVELOPMENT_INSTALL_GEN80_PRIOR_GENERATION =
 export const OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION =
   "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481" as GitSha;
 export const OWNER_DEVELOPMENT_INSTALL_GEN80_GENERATION = 80;
+/**
+ * Generation 80 successor: the reviewed generation 81 runtime. Only its
+ * exact healthy R80/80 predecessor with no failed settlement permits this
+ * install. Failure restores the retained R80/80 proof once at generation 82;
+ * that restored pointer cannot automatically retry this consumed rung.
+ */
+export const OWNER_DEVELOPMENT_INSTALL_GEN81_PRIOR_REVISION =
+  OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION;
+export const OWNER_DEVELOPMENT_INSTALL_GEN81_PRIOR_GENERATION =
+  OWNER_DEVELOPMENT_INSTALL_GEN80_GENERATION;
+export const OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION =
+  "da98f5f49c45b57cfa97a45fe647c36b1021f302" as GitSha;
+export const OWNER_DEVELOPMENT_INSTALL_GEN81_GENERATION = 81;
 /** Monotonic rollback target the failed generation 45 candidate rolled to. */
 export const OWNER_DEVELOPMENT_INSTALL_ROLLBACK_TARGET_GENERATION =
   OWNER_DEVELOPMENT_INSTALL_ASSIGN_FIRST_GENERATION + 2;

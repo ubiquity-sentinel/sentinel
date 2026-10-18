@@ -158,6 +158,8 @@ export const LEGACY_REVIEW_CUTOFF: LegacyReviewCutoffPinV1 = {
   revisions: [
     // Generation 80 (R80), pinned by its launcher commit at 1792256700000.
     "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+    // Generation 81 (R81), pinned by its launcher commit.
+    "da98f5f49c45b57cfa97a45fe647c36b1021f302",
   ],
 };
 

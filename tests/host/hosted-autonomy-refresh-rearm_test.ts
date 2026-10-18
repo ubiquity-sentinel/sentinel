@@ -463,7 +463,7 @@ Deno.test("refresh re-arm: a rollback that advanced the generation to 78 on gene
   await expectRetained(record, rollback, "runtime", null);
 });
 
-Deno.test("refresh re-arm: the shipped allowlist names only generations 77 through 80, so an unnamed corrected runtime never re-arms", async () => {
+Deno.test("refresh re-arm: the shipped allowlist names only generations 77 through 81, so an unnamed corrected runtime never re-arms", async () => {
   assert.deepEqual(
     HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES.map((row) => row.revision),
     [
@@ -471,7 +471,12 @@ Deno.test("refresh re-arm: the shipped allowlist names only generations 77 throu
       "474f87eb639f97cd72b9bc4b9e56101488f841aa",
       "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
       "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+      "da98f5f49c45b57cfa97a45fe647c36b1021f302",
     ],
+  );
+  assert.equal(
+    HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES.at(-1)?.activatedNotBefore,
+    1792299493000,
   );
   for (const row of HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES) {
     assert.ok(Number.isSafeInteger(row.activatedNotBefore));
