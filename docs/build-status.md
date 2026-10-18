@@ -5,10 +5,10 @@ primary coordinator maintains it under the owner's 2026-10-13 takeover
 directive; Muse ownership is retired. Keep present state, remaining work and
 exact evidence references here; replace stale checkpoints instead of appending a
 session transcript. Current design decisions belong in
-[MASTER-PLAN.md](../MASTER-PLAN.md) and [DECISIONS.md](DECISIONS.md). Current
-coordinator identity is `gpt-6-astra` with `ultra` effort, verified from this
-migration session's own-turn metadata; worker identity and runtime routing are
-reported separately.
+[MASTER-PLAN.md](../MASTER-PLAN.md) and [DECISIONS.md](DECISIONS.md). The
+current primary continues the existing integration role. Actual model and effort
+are unverified at the latest continuation checkpoint; earlier identity records
+are historical. Worker identity and runtime routing are reported separately.
 
 ## Active task register
 
@@ -21,7 +21,32 @@ authenticated account `0x4007` and carry `sentinel:skip` during manual
 ownership. Only the primary changes this ledger, accepts source, commits,
 integrates or publishes.
 
-### Migration continuation, 2026-10-18 14:58 UTC
+### Migration continuation, 2026-10-18 15:17 UTC
+
+Corrected inactive source `674f8cc324946f9577e96a73b2722ca3db16ca7c`, tree
+`76c50bf8faacb3166b622b061baa45b8f6fb338b`, is published by normal fast-forward
+to development. Native CI `39139730301` started at 15:16:25 UTC and remains
+pending; its expected duration is 40–60 minutes. Eight focused tests/eight
+steps, scoped statics and the exact committed-source cold bootstrap passed.
+Independent local closure is `ci-correction-audit/local-evidence-closure.json`,
+SHA-256 `95bee4eae8752e52cdc88678545f5de0ba4c82be452a173c0f8c2b704cb2ce13`.
+Publication/readback is under `source-publication-674f/`; L81 and disabled
+release are unchanged. Recovery remains separately owned and unaccepted.
+
+The prepared canary base `queue-canary` conflicts with fixture heads under
+`queue-canary/`. The primary assigns the minimal base-only correction to
+`queue-canary-base` to module `migration-canary-refnames-20261018`, aid
+`0348fc3562`, branch
+`codex/master-plan-migration-canary-refnames-20261018-a0348fc3562`, worktree
+`/home/codex/repos/ubiquity/sentinel/.codex-worktrees/master-plan-migration-canary-refnames-20261018-a0348fc3562`,
+exact base `674f8cc324946f9577e96a73b2722ca3db16ca7c`. Sole writer
+`migration_canary_packet` owns the four canary/projection literal consumers,
+directly affected tests/docs and a versioned execution packet. Fixture head
+prefix, production development rule scope, authority/one-shot/actor gates and
+the nine-fixture count remain unchanged. Root retains ledger, integration,
+publication and effects. Acceptance requires the actual local Git ref
+failure/success and affected real parser/runner/projection consumers before
+fixture creation. No remote canary effects have occurred.
 
 The owner explicitly approved the isolated canary and then granted standing
 production-cutover approval for this job ("Always approved"; "Finish the job you
@@ -78,10 +103,10 @@ exact-commit checks passed 42 test executions/68 steps, 17 native persisted
 snapshots through R80, the real cold child and actual depth-one source reads;
 two historical cases are explicitly ignored. Independent local evidence closure
 SHA-256 `8558a84b92d4902e3e13a497836252272c00e95e0222430b5323c77b035a3899`
-accepts inactive publication. New native CI `39131885021`, attempt 1/job
-`117688559982`, is in progress on exact `01ef88a5`; no native acceptance,
-installation or queue activation is claimed yet. The next work is approved
-canary execution after required CI, followed by the verified production rollout.
+accepts inactive publication. Historical native CI `39131885021`, attempt 1/job
+`117688559982`, timed out on exact `01ef88a5`; it is unaccepted. No runtime
+installation or queue activation is claimed. The next work is approved canary
+execution after required CI, followed by the verified production rollout.
 
 Shared foundation module `migration-future-pins` is assigned to one isolated
 implementation worker before F freezes: original goal ID
