@@ -252,7 +252,7 @@ export interface HostedAutonomyGitHubV1 {
   followUpIssues?: HostedFollowUpIssuesV1;
 }
 
-/** One issue or pull request of a complete created-since listing. */
+/** One issue or pull request of a created-since listing. */
 export interface HostedIssueListingItemV1 {
   number: number;
   /** The creator's login, exactly as GitHub reports it. */
@@ -279,9 +279,10 @@ export interface HostedIssueOriginV1 {
  */
 export interface HostedFollowUpIssuesV1 {
   /**
-   * Every issue and pull request created at or after `sinceMs`, newest
-   * first, read page by page until an item older than `sinceMs` or a short
-   * last page proves the listing complete within `maxPages`; otherwise null.
+   * Every issue and pull request created at or after `sinceMs`, newest first.
+   * A short last page proves completeness; when the page bound is reached the
+   * returned prefix is still proven down to its oldest item. Null means the
+   * prefix itself could not be read and validated.
    */
   listCreatedSince(input: {
     sinceMs: number;
@@ -290,12 +291,16 @@ export interface HostedFollowUpIssuesV1 {
   /** One existing issue's creator and first body line, or null. */
   readIssueOrigin(number: number): Promise<HostedIssueOriginV1 | null>;
   /**
-   * Create one issue with exactly this title and body (no labels, no
-   * assignees). The new number only when GitHub's answer is an issue of this
+   * Create one issue with exactly this title and body, optionally adding the
+   * named labels. The new number only when GitHub's answer is an issue of this
    * repository created by the sentinel App that echoes the exact text;
    * otherwise null (the create may still have happened).
    */
-  create(input: { title: string; body: string }): Promise<number | null>;
+  create(input: {
+    title: string;
+    body: string;
+    labels?: readonly string[];
+  }): Promise<number | null>;
 }
 
 export interface HostedSelfRunV1 {

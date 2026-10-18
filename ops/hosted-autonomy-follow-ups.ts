@@ -9,8 +9,9 @@
  *
  * One aggregated issue per PR keeps a review's findings together, costs one
  * Sentinel admission rather than one per finding, and gives a deterministic
- * idempotency key: the body's first line is a marker naming the repository,
- * the PR and the receipt, so the same follow-up is never filed twice.
+ * idempotency key: the body's first line is a marker naming the repository
+ * and PR. Receipt and depth remain audit data, but a newer receipt can never
+ * create a second follow-up for that PR.
  */
 import type { ReleaseRequestV1 } from "../src/contracts/release.ts";
 import type {
@@ -20,6 +21,7 @@ import type {
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import {
+  HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
   hostedRepositoryKey,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
@@ -28,10 +30,14 @@ import {
   identityBoundReviews,
   reviewBlocksMerge,
 } from "./hosted-autonomy-spent-delivery.ts";
+import { latestPullReview } from "../src/repair/carried-review.ts";
+import {
+  REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX,
+} from "../src/repair/review-round-cap.ts";
 
 /** Requests created before 2026-10-16T00:00Z (the owner decision) never count. */
 export const FOLLOW_UP_EPOCH = 1792108800000;
-/** A request is considered for 72 hours, then never again. */
+/** Historical bound retained for compatibility with older callers. */
 export const FOLLOW_UP_WINDOW_MS = 72 * 60 * 60 * 1000;
 /** Issues created per pass; an unproven create counts. */
 export const FOLLOW_UP_MAX_CREATES_PER_PASS = 2;
@@ -41,6 +47,8 @@ export const FOLLOW_UP_MAX_MERGE_CHECKS_PER_PASS = 4;
 export const FOLLOW_UP_MAX_CANDIDATES_PER_PASS = 8;
 /** Listing pages (100 items each) per repository and pass. */
 export const FOLLOW_UP_MAX_LISTING_PAGES = 5;
+/** GitHub's issue-list page size used by the follow-up surface. */
+export const FOLLOW_UP_LISTING_PAGE_SIZE = 100;
 /** Margin between the launcher's request clock and GitHub's `created_at`. */
 export const FOLLOW_UP_LISTING_SKEW_MS = 10 * 60 * 1000;
 /** Wall-clock budget of one pass, checked before every GitHub call. */
@@ -50,8 +58,8 @@ export const FOLLOW_UP_MAX_FINDING_CHARS = 1500;
 /** Well inside the runtime's 16,384-character task-statement bound. */
 export const FOLLOW_UP_MAX_BODY_CHARS = 12_000;
 export const FOLLOW_UP_MAX_TITLE_CHARS = 120;
-/** A follow-up of a follow-up is depth 2; depth 3 is never filed. */
-export const FOLLOW_UP_MAX_DEPTH = 2;
+/** Depth 3 is filed, but opted out so it cannot re-enter Sentinel. */
+export const FOLLOW_UP_MAX_DEPTH = 3;
 
 const MARKER_RE =
   /^<!-- sentinel:review-followup:v1 repo=([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100}) pr=([1-9][0-9]{0,9}) receipt=([A-Za-z0-9:_.-]{1,200}) depth=([1-9][0-9]?) -->$/;
@@ -98,8 +106,7 @@ export function markerNamesCandidate(
   const marker = parseFollowUpMarker(line);
   return marker !== null && marker.owner === candidate.repository.owner &&
     marker.name === candidate.repository.name &&
-    marker.pullRequest === candidate.pullRequest &&
-    marker.receiptId === candidate.receipt.id;
+    marker.pullRequest === candidate.pullRequest;
 }
 
 /** One merged PR whose latest review left P2/P3 findings unresolved. */
@@ -112,9 +119,85 @@ export interface FollowUpCandidateV1 {
   sourceIssue: number | null;
 }
 
+const OFF_TIP_MERGE_RE = /^merge ([0-9a-f]{40}) has parents /;
+
+/** The trusted merge revision recorded by a carried off-tip park, or null. */
+function offTipParkMergeRevision(
+  record: RepairStateSnapshotV1["work"][number],
+): string | null {
+  if (
+    record.nextStep !== "blocked" || record.blocker?.kind !== "other" ||
+    !record.blocker.message.startsWith(
+      REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX,
+    )
+  ) return null;
+  const detail = record.blocker.message.slice(
+    REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX.length,
+  );
+  return OFF_TIP_MERGE_RE.exec(detail)?.[1] ?? null;
+}
+
+/** Build the same candidate shape for a merge parked without a request. */
+function offTipParkCandidate(
+  snapshot: Pick<RepairStateSnapshotV1, "reviews">,
+  record: RepairStateSnapshotV1["work"][number],
+): FollowUpCandidateV1 | null {
+  const mergeRevision = offTipParkMergeRevision(record);
+  const pullRequest = record.target.pr;
+  const head = record.target.head;
+  const base = record.target.base;
+  if (
+    mergeRevision === null || record.source.kind !== "issue" ||
+    record.related.issueNumber === null || pullRequest === null ||
+    head === null || base === null || record.blocker === null
+  ) return null;
+  const receipt = latestPullReview(
+    snapshot,
+    record,
+    HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
+  );
+  if (
+    receipt === null || receipt.resultId === null ||
+    receipt.completedAt === null || reviewBlocksMerge(receipt)
+  ) return null;
+  const request: ReleaseRequestV1 = {
+    version: "v1",
+    kind: "release_request",
+    id: `off-tip:${record.id}:${mergeRevision}`,
+    target: { repository: record.repository, environment: "production" },
+    revision: mergeRevision as ReleaseRequestV1["revision"],
+    source: {
+      pullRequest,
+      reviewRequestId: receipt.requestId,
+      reviewReceiptId: receipt.id,
+      head,
+      base,
+    },
+    status: "fulfilled",
+    failureReason: null,
+    createdAt: record.blocker.since,
+  };
+  const findings = receipt.findings.filter((finding) =>
+    !finding.resolved &&
+    (finding.severity === "P2" || finding.severity === "P3")
+  );
+  if (findings.length === 0) return null;
+  return {
+    request,
+    repository: record.repository,
+    pullRequest,
+    receipt,
+    findings,
+    sourceIssue: receipt.taskAcceptance?.issueNumber ??
+      record.related.issueNumber,
+  };
+}
+
 /**
- * Production release requests (open, or fulfilled by a release) created in
- * [max(epoch, now - window), now], oldest first, one per (repository, PR).
+ * Production release requests (open, or fulfilled by a release) created at or
+ * after the owner-decision epoch, plus carried off-tip parks, newest first,
+ * one per (repository, PR). The lower bound is fixed rather than anchored at
+ * `now`: a launcher installed after a request was created must still see it.
  * The findings come from the LATEST identity-bound completed App review of
  * the request's exact PR, head and base, which must have zero uncounted
  * findings and no unresolved P0/P1; only its unresolved P2/P3 findings count,
@@ -124,24 +207,16 @@ export function planFollowUpCandidates(
   snapshot: Pick<RepairStateSnapshotV1, "releaseRequests" | "reviews" | "work">,
   now: number,
 ): FollowUpCandidateV1[] {
-  const from = Math.max(FOLLOW_UP_EPOCH, now - FOLLOW_UP_WINDOW_MS);
   const requests = snapshot.releaseRequests
     .filter((request) =>
       request.target.environment === "production" &&
       (request.status === "open" || request.status === "fulfilled") &&
-      request.createdAt >= from && request.createdAt <= now
-    )
-    .sort((a, b) =>
-      a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+      request.createdAt >= FOLLOW_UP_EPOCH && request.createdAt <= now
     );
-  const seen = new Set<string>();
   const candidates: FollowUpCandidateV1[] = [];
   for (const request of requests) {
     const repository = request.target.repository;
     const pullRequest = request.source.pullRequest;
-    const key = `${hostedRepositoryKey(repository)}#${pullRequest}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
     // A refreshed head merged under a carried review files the findings of
     // the review it carried (the request names that exact receipt).
     const receipt = identityBoundReviews(
@@ -172,7 +247,26 @@ export function planFollowUpCandidates(
         record?.related.issueNumber ?? null,
     });
   }
-  return candidates;
+  for (const record of snapshot.work) {
+    const candidate = offTipParkCandidate(snapshot, record);
+    if (
+      candidate !== null && candidate.request.createdAt >= FOLLOW_UP_EPOCH &&
+      candidate.request.createdAt <= now
+    ) candidates.push(candidate);
+  }
+  candidates.sort((a, b) =>
+    b.request.createdAt - a.request.createdAt ||
+    (a.request.id < b.request.id ? -1 : a.request.id > b.request.id ? 1 : 0)
+  );
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = `${
+      hostedRepositoryKey(candidate.repository)
+    }#${candidate.pullRequest}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 // C0 controls except tab and LF, DEL, C1 controls, zero-width and bidi
@@ -266,8 +360,9 @@ export interface FollowUpIssueV1 {
 /**
  * Render the one follow-up issue of a merged PR, or null when nothing may be
  * filed (no finding, an identity the marker cannot encode, or a depth outside
- * 1..FOLLOW_UP_MAX_DEPTH). Trailing findings that do not fit the bounds are
- * dropped deterministically into one "more findings" line.
+ * 1..FOLLOW_UP_MAX_DEPTH). Depth 3 is marked opt-out by the launcher.
+ * Trailing findings that do not fit the bounds are dropped deterministically
+ * into one "more findings" line.
  */
 export function renderFollowUpIssue(input: {
   candidate: FollowUpCandidateV1;

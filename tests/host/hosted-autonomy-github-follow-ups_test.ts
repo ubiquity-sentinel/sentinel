@@ -100,7 +100,7 @@ function page(first: number, count: number, start: number) {
   );
 }
 
-Deno.test("follow-up port: the created-since listing is complete only when proven", async (t) => {
+Deno.test("follow-up port: created-since listing returns an ordered bounded prefix", async (t) => {
   const pageNo = (call: CallV1) =>
     Number(new URL(`https://x${call.path}`).searchParams.get("page"));
   await t.step("a short page completes the listing", async () => {
@@ -142,11 +142,22 @@ Deno.test("follow-up port: the created-since listing is complete only when prove
       );
     },
   );
+  await t.step("the page cap returns its verified prefix", async () => {
+    await withFetch(
+      (call) =>
+        page(1000 - (pageNo(call) - 1) * 100, 100, (pageNo(call) - 1) * 100),
+      async (calls) => {
+        const listing = await port().followUpIssues!.listCreatedSince({
+          sinceMs: NOW - 300 * 60_000,
+          maxPages: 2,
+        });
+        assert.equal(listing?.length, 200);
+        assert.equal(listing?.at(-1)?.createdAt, Date.parse(created(199)));
+        assert.equal(calls.length, 2);
+      },
+    );
+  });
   const refusals: [string, (call: CallV1) => unknown][] = [
-    [
-      "page bound reached",
-      (call) => page(1000 - (pageNo(call) - 1) * 100, 100, pageNo(call) - 1),
-    ],
     ["out of order", () => [item(3, 5), item(2, 1)]],
     ["duplicate", () => [item(3, 1), item(3, 2)]],
     [
@@ -225,6 +236,30 @@ Deno.test("follow-up port: one issue's origin and the create answer are bound to
       }]);
     });
   });
+  for (
+    const [name, labels, expected] of [
+      ["matching opt-out echo", [{ name: "sentinel:skip" }], 77],
+      ["missing opt-out echo", undefined, null],
+      ["wrong opt-out echo", [{ name: "other" }], null],
+      ["malformed opt-out echo", ["sentinel:skip"], null],
+    ] as const
+  ) {
+    await t.step(name, async () => {
+      await withFetch(() => answer({ labels }), async (calls) => {
+        assert.equal(
+          await port().followUpIssues!.create({
+            ...input,
+            labels: ["sentinel:skip"],
+          }),
+          expected,
+        );
+        assert.deepEqual(calls[0].body, {
+          ...input,
+          labels: ["sentinel:skip"],
+        });
+      });
+    });
+  }
   const refusals: [string, Record<string, unknown>][] = [
     ["another creator", { user: { login: "github-actions[bot]" } }],
     ["another repository", {
@@ -438,7 +473,7 @@ Deno.test("follow-up render: bounded body, deterministic overflow, only open P2/
     renderFollowUpIssue({
       candidate: mixed,
       mergeRevision: "8a99ecbeaf8fd5f845fd6be034e284dd370f332c",
-      depth: 3,
+      depth: 4,
     }),
     null,
   );

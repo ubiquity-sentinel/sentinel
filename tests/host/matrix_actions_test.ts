@@ -32,6 +32,7 @@ import {
   workRecord,
 } from "../state/helpers.ts";
 import { rig } from "./matrix-actions-fixtures.ts";
+import { inactiveNativeQueueFixture } from "../github/native-queue-fixture.ts";
 
 for (const scenario of ["bootstrap", "ordinary", "failed preflight"] as const) {
   Deno.test(`bootstrap pass: ${scenario} preserves pending work and mandatory drain`, async () => {
@@ -429,6 +430,7 @@ Deno.test("preservation maintenance: real repair startup skips five blocked cand
           runMatrixUncertaintyMaintenance({
             state,
             clock: r.clock,
+            nativeQueueFor: () => inactiveNativeQueueFixture(),
             binding: {
               repairCommit: captureHead,
               runtimeSha: r.sha,

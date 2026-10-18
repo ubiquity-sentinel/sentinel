@@ -604,7 +604,10 @@ export async function modernRecoveryScenario(
         ) {
           assert.deepEqual(
             (result as HostedAutonomyResultV1).actions,
-            [`existing-ref:${recovered.id}:preserved`],
+            [
+              "queue:inactive_no_rule",
+              `existing-ref:${recovered.id}:preserved`,
+            ],
           );
           // The existing ref keeps its single original update: re-proved,
           // never rewritten.
@@ -618,9 +621,10 @@ export async function modernRecoveryScenario(
             candidate,
           );
         } else if (inflight) {
+          // The explicit dormant queue observation precedes preservation.
           assert.deepEqual(
             (result as HostedAutonomyResultV1).actions,
-            ["current-matrix:ingested:1"],
+            ["queue:inactive_no_rule", "current-matrix:ingested:1"],
           );
         }
         assert.equal(
@@ -787,6 +791,7 @@ export async function modernRecoveryScenario(
         // charged, and its producer's next (duplicate) visit finishes it.
         assert(!(result instanceof Error), String(result));
         assert.deepEqual((result as HostedAutonomyResultV1).actions, [
+          "queue:inactive_no_rule",
           "current-matrix:ingested:1",
         ]);
         assert.equal(casRefused, 1, "the same pass must reach its CAS");
@@ -801,7 +806,10 @@ export async function modernRecoveryScenario(
         assert.equal(charge.outcome, "submitted");
         f.rig.state.writeRepair = originalWrite;
         const revisited = await run();
-        assert.deepEqual(revisited.actions, ["current-matrix:ingested:1"]);
+        assert.deepEqual(revisited.actions, [
+          "queue:inactive_no_rule",
+          "current-matrix:ingested:1",
+        ]);
         const finished = await f.rig.state.readRepair();
         assert(finished.ok && finished.value.status === "found");
         const preserved = finished.value.snapshot.work.find((row) =>

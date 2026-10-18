@@ -31,6 +31,17 @@ import type {
   HostedIssueOriginV1,
 } from "../../ops/hosted-autonomy-types.ts";
 import { HOSTED_AUTONOMY_PASS_DEADLINE_MS } from "../../ops/hosted-autonomy-continuation.ts";
+import { runHostedFollowUpPass } from "../../ops/hosted-autonomy-follow-up-pass.ts";
+import { planFollowUpCandidates } from "../../ops/hosted-autonomy-follow-ups.ts";
+import {
+  carriedCalls,
+  carriedOptions,
+  carriedPass,
+  LIVE_618,
+  MOVED_TIP,
+  REFRESHED,
+  refreshed618,
+} from "./hosted-autonomy-carried-fixtures.ts";
 import {
   allLiveReceipts,
   APP,
@@ -100,7 +111,7 @@ function requestPull(
 
 interface FakeIssuesV1 {
   port: HostedFollowUpIssuesV1;
-  created: { title: string; body: string }[];
+  created: { title: string; body: string; labels?: readonly string[] }[];
   issues: HostedIssueListingItemV1[];
   listings: number;
 }
@@ -133,7 +144,9 @@ function fakeIssues(
             ? options.origins[number]
             : { number, author: "0x4007", firstLine: "An ordinary issue" },
         ),
-      create: (input: { title: string; body: string }) => {
+      create: (
+        input: { title: string; body: string; labels?: readonly string[] },
+      ) => {
         fake.created.push(input);
         const number = 5000 + fake.created.length;
         fake.issues.push({
@@ -232,31 +245,31 @@ Deno.test("follow-ups F1: each live merged PR with an open P2 gets exactly one a
   const issues = fakeIssues();
   const { results, writes } = await followUpRun("f1", issues, { passes: 2 });
   assert.equal(issues.created.length, 2, JSON.stringify(results[0].actions));
-  // Oldest request first: PR 1105 (11:50Z) before PR 1052 (12:40Z).
-  assert.equal(issues.created[0].body.split("\n", 1)[0], FIRST_LINE_1105);
+  // Newest request first: PR 1052 (12:40Z) before PR 1105 (11:50Z).
+  assert.equal(issues.created[1].body.split("\n", 1)[0], FIRST_LINE_1105);
   assert.equal(
-    issues.created[0].title,
+    issues.created[1].title,
     "Review follow-ups from #1105: 1 P2/P3 finding",
   );
   assert.ok(
-    issues.created[0].body.includes(
+    issues.created[1].body.includes(
       "[`src/live/upstream.ts:165-168`](https://github.com/ubiquity/ai.ubq.fi/blob/c1fbeaffe5b4cc0550dcd45d9979f5b71760bd78/src/live/upstream.ts#L165-L168)",
     ),
   );
   assert.equal(
-    issues.created[1].title,
+    issues.created[0].title,
     "Review follow-ups from #1052: 1 P2/P3 finding",
   );
-  assert.equal(issues.created[1].body, BODY_1052);
+  assert.equal(issues.created[0].body, BODY_1052);
   const [request1052, request1105] = [liveRequest(1052), liveRequest(1105)];
   assert.deepEqual(followUps(results[0].actions), [
-    `followup:${request1105.id}:pr=1105:filed=#5001`,
-    `followup:${request1052.id}:pr=1052:filed=#5002`,
+    `followup:${request1052.id}:pr=1052:filed=#5001`,
+    `followup:${request1105.id}:pr=1105:filed=#5002`,
   ]);
   // The next pass finds both and files nothing; no state is ever written.
   assert.deepEqual(followUps(results[1].actions), [
-    `followup:${request1105.id}:pr=1105:exists=#5001`,
-    `followup:${request1052.id}:pr=1052:exists=#5002`,
+    `followup:${request1052.id}:pr=1052:exists=#5001`,
+    `followup:${request1105.id}:pr=1105:exists=#5002`,
   ]);
   assert.equal(writes, 0);
   for (const issue of issues.created) {
@@ -284,8 +297,9 @@ function listed(
   return { number, author, createdAt: NOW - 60_000, pullRequest, firstLine };
 }
 
-Deno.test("follow-ups F2: an App-authored marker of any depth dedupes; another login's or a PR's never does", async () => {
-  const depth2 = FIRST_LINE_1052.replace("depth=1", "depth=2");
+Deno.test("follow-ups F2: an App-authored marker of any receipt or depth dedupes; another login's or a PR's never does", async () => {
+  const depth2 = FIRST_LINE_1052.replace("depth=1", "depth=2")
+    .replace(/receipt=\S+/, `receipt=review-receipt:${"f".repeat(64)}`);
   const issues = fakeIssues({
     issues: [
       listed(4001, APP, depth2),
@@ -295,8 +309,8 @@ Deno.test("follow-ups F2: an App-authored marker of any depth dedupes; another l
   });
   const { results } = await followUpRun("f2", issues);
   assert.deepEqual(followUps(results[0].actions), [
-    `followup:${liveRequest(1105).id}:pr=1105:filed=#5001`,
     `followup:${liveRequest(1052).id}:pr=1052:exists=#4001`,
+    `followup:${liveRequest(1105).id}:pr=1105:filed=#5001`,
   ]);
   assert.equal(issues.created.length, 1);
 });
@@ -309,8 +323,8 @@ Deno.test("follow-ups F3: an unproven listing creates nothing", async (t) => {
       assert.equal(issues.created.length, 0);
       assert.equal(issues.listings, 1, "one listing per repository and pass");
       assert.deepEqual(followUps(results[0].actions), [
-        `followup:${liveRequest(1105).id}:pr=1105:listing_unproven`,
         `followup:${liveRequest(1052).id}:pr=1052:listing_unproven`,
+        `followup:${liveRequest(1105).id}:pr=1105:listing_unproven`,
       ]);
     });
   }
@@ -320,12 +334,12 @@ Deno.test("follow-ups F4: an unproven create is settled by the next listing, nev
   const issues = fakeIssues({ createUnproven: true });
   const { results } = await followUpRun("f4", issues, { passes: 2 });
   assert.deepEqual(followUps(results[0].actions), [
-    `followup:${liveRequest(1105).id}:pr=1105:create_unproven`,
     `followup:${liveRequest(1052).id}:pr=1052:create_unproven`,
+    `followup:${liveRequest(1105).id}:pr=1105:create_unproven`,
   ]);
   assert.deepEqual(followUps(results[1].actions), [
-    `followup:${liveRequest(1105).id}:pr=1105:exists=#5001`,
-    `followup:${liveRequest(1052).id}:pr=1052:exists=#5002`,
+    `followup:${liveRequest(1052).id}:pr=1052:exists=#5001`,
+    `followup:${liveRequest(1105).id}:pr=1105:exists=#5002`,
   ]);
   assert.equal(issues.created.length, 2);
 });
@@ -441,7 +455,7 @@ Deno.test("follow-ups F6: creates, deadlines and body bounds stay bounded", asyn
   );
 });
 
-Deno.test("follow-ups F7: a follow-up of a follow-up is depth 2, never deeper", async (t) => {
+Deno.test("follow-ups F7: depth 3 is filed with opt-out, deeper findings are exhausted", async (t) => {
   const request = liveRequest(1052);
   const marker = (depth: number) =>
     `<!-- sentinel:review-followup:v1 repo=ubiquity/ai.ubq.fi pr=900 receipt=review-receipt:${
@@ -457,6 +471,11 @@ Deno.test("follow-ups F7: a follow-up of a follow-up is depth 2, never deeper", 
       number: 600,
       author: APP,
       firstLine: marker(2),
+    }, "depth=3 -->"],
+    ["source is a depth-3 follow-up", {
+      number: 600,
+      author: APP,
+      firstLine: marker(3),
     }, "depth_exhausted"],
     ["a human's forged marker", {
       number: 600,
@@ -477,6 +496,10 @@ Deno.test("follow-ups F7: a follow-up of a follow-up is depth 2, never deeper", 
         assert.equal(issues.created.length, 0);
       } else {
         assert.ok(issues.created[0].body.split("\n", 1)[0].endsWith(expected));
+        assert.deepEqual(
+          issues.created[0].labels,
+          expected === "depth=3 -->" ? ["sentinel:skip"] : undefined,
+        );
       }
     });
   }
@@ -491,13 +514,12 @@ Deno.test("follow-ups F7: a follow-up of a follow-up is depth 2, never deeper", 
   });
 });
 
-Deno.test("follow-ups F8: only production requests inside the window and after the owner decision count", async (t) => {
+Deno.test("follow-ups F8: production requests since the fixed epoch remain eligible beyond 72 hours", async (t) => {
   const base = liveRequest(1052);
   const cases: [string, Record<string, unknown>][] = [
     ["before 2026-10-16T00:00Z", {
       createdAt: Date.parse("2026-10-15T23:59:59Z"),
     }],
-    ["older than 72 hours", { createdAt: NOW - 72 * 3_600_000 - 1 }],
     ["a failed request", { status: "failed", failureReason: "rejected" }],
     ["a cancelled request", {
       status: "cancelled",
@@ -519,6 +541,17 @@ Deno.test("follow-ups F8: only production requests inside the window and after t
       assert.equal(issues.listings, 0, "nothing is even listed");
     });
   }
+  await t.step("a post-epoch request still files after 72 hours", async () => {
+    const issues = fakeIssues();
+    const { results } = await followUpRun("f8-old-eligible", issues, {
+      requests: [base],
+      now: () => NOW + 73 * 3_600_000,
+    });
+    assert.deepEqual(followUps(results[0].actions), [
+      `followup:${base.id}:pr=1052:filed=#5001`,
+    ]);
+    assert.equal(issues.created.length, 1);
+  });
   await t.step(
     "a review with an unresolved P1 is never a candidate",
     async () => {
@@ -608,4 +641,89 @@ Deno.test("follow-ups F9: the runner files in the same run as a merge and never 
       await Deno.remove(rig.tmp, { recursive: true });
     }
   });
+});
+
+Deno.test("follow-ups F10: a real off-tip carried park files its retained review without a release request", async (t) => {
+  const record = refreshed618();
+  const finding =
+    allLiveReceipts().find((row) =>
+      row.id === liveRequest(1052).source.reviewReceiptId
+    )!.findings[0];
+  const receipts = liveReceipts(LIVE_618).map((receipt) =>
+    parseReviewReceiptV1({
+      ...receipt,
+      findings: [finding],
+      unresolvedSeverities: ["P2"],
+    })
+  );
+  const merged = mergedPull(record, "9e".repeat(20));
+  const { after } = await carriedPass(
+    "follow-up-off-tip",
+    record,
+    { afterMerge: { 1071: merged } },
+    {},
+    receipts,
+  );
+  assert.equal(after.work[0].nextStep, "blocked");
+  assert.deepEqual(
+    after.releaseRequests,
+    [],
+    "off-tip delivery did not book a request",
+  );
+  const [candidate] = planFollowUpCandidates(after, NOW);
+  assert.equal(candidate.pullRequest, 1071);
+  assert.equal(candidate.request.source.head, REFRESHED);
+  assert.equal(candidate.request.source.base, MOVED_TIP);
+  assert.equal(candidate.receipt.pullRequest.head, LIVE_618.target.head);
+  assert.equal(candidate.request.source.reviewReceiptId, candidate.receipt.id);
+
+  for (const trusted of [true, false]) {
+    await t.step(
+      trusted ? "App merge files once" : "owner merge refuses",
+      async () => {
+        const issues = fakeIssues();
+        const { surface } = liveSurface(carriedOptions(
+          after.work[0],
+          receipts,
+          carriedCalls(),
+          {
+            pulls: { 1071: { ...merged, mergedBy: trusted ? APP : "0x4007" } },
+          },
+        ));
+        surface.followUpIssues = issues.port;
+        const rig = await liveRig(
+          `f10-${trusted}`,
+          liveSnapshot(after.work, after.reviews, after.releaseRequests),
+          surface,
+        );
+        try {
+          const deps = {
+            state: rig.state,
+            githubFor: rig.githubFor,
+            clock: { now: () => NOW },
+            queueCustody: darkQueueFixture(rig),
+          };
+          const actions = await runHostedFollowUpPass(deps);
+          const tag = `followup:${candidate.request.id}:pr=1071`;
+          assert.deepEqual(actions, [
+            `${tag}:${trusted ? "filed=#5001" : "merge_unverified"}`,
+          ]);
+          assert.equal(issues.created.length, trusted ? 1 : 0);
+          if (trusted) {
+            assert.deepEqual(await runHostedFollowUpPass(deps), [
+              `${tag}:exists=#5001`,
+            ]);
+            assert.ok(issues.created[0].body.includes(candidate.receipt.id));
+          }
+          assert.equal(
+            rig.writes,
+            0,
+            "follow-ups preserve the parked record and charges",
+          );
+        } finally {
+          await Deno.remove(rig.tmp, { recursive: true });
+        }
+      },
+    );
+  }
 });
