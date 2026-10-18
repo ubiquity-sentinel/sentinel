@@ -14,7 +14,10 @@ import {
   type QueueIntentState,
 } from "./hosted-autonomy-queue-intent.ts";
 import { queueHold } from "./hosted-autonomy-queue-writer.ts";
-import { decideQueuePolicy } from "./hosted-autonomy-queue-policy.ts";
+import {
+  decideQueuePolicy,
+  hasCompleteQueueAuthorizationFacts,
+} from "./hosted-autonomy-queue-policy.ts";
 
 export async function submitQueueAdmission(
   input: QueueRecordPass,
@@ -56,6 +59,26 @@ export async function submitQueueAdmission(
     intent,
     updatedAt: deps.clock.now(),
   };
+  const markNotSubmitted = async (
+    reason: string,
+  ): Promise<QueueRecordOutcome> => {
+    const failure = queueFailure(
+      intent,
+      "not_submitted",
+      previous?.refusals ?? 0,
+      previous?.queueFailures ?? 0,
+      deps.clock.now(),
+      true,
+    );
+    record = {
+      ...record,
+      intent: failure,
+      updatedAt: deps.clock.now(),
+    };
+    if (!await writer.update([record])) return stop();
+    writer.actions.push(`${tag}:pre_effect_not_submitted:${reason}`);
+    return { ready: true, submitted: false };
+  };
   if (!await writer.update([record])) {
     writer.actions.push(`${tag}:intent_unverified`);
     return stop();
@@ -73,6 +96,19 @@ export async function submitQueueAdmission(
     deps.clock.now() >= input.deadline
   ) {
     writer.actions.push(`${tag}:pre_effect_observation_changed`);
+    if (
+      rules.status === "complete" && rules.value === false &&
+      scan.status === "complete" && member.status === "complete" &&
+      canonicalStringify(scan.value.repository) ===
+        canonicalStringify(queue.repository) &&
+      scan.value.baseRef === "development" &&
+      member.value.entry === null && member.value.mergedRevision === null &&
+      member.value.pull.head === binding.head &&
+      scan.value.entries.every((item) =>
+        item.pull.number !== binding.pullRequest
+      ) &&
+      canonicalStringify(member.value.pull) === canonicalStringify(pull)
+    ) return await markNotSubmitted("queue_disabled");
     return stop();
   }
   const auth = await queue.authorization.readAuthorization({
@@ -108,6 +144,13 @@ export async function submitQueueAdmission(
         "reason" in decision ? decision.reason : "refused"
       }`,
     );
+    const facts = auth.value.facts;
+    if (
+      decision.action === "hold" && member.value.entry === null &&
+      member.value.mergedRevision === null &&
+      member.value.pull.head === binding.head &&
+      hasCompleteQueueAuthorizationFacts(facts)
+    ) return await markNotSubmitted("authorization_refused");
     return { ready: true, submitted: false };
   }
   // A competing state writer between the readback and effect revokes this pass's authority.
