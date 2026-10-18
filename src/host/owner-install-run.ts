@@ -56,8 +56,20 @@ import {
 } from "./existing-pr-runtime-capability.ts";
 import { readHostedWriterQuiescence } from "./hosted-writer-quiescence.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
-import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
-import type { HostedRuntimeRollout } from "./hosted-runtime-rollout.ts";
+import {
+  QUEUE_RUNTIME_CAPABILITY,
+  type QueueRuntimeCapability,
+} from "./queue-runtime-capability.ts";
+import {
+  HOSTED_RUNTIME_ROLLOUT,
+  type HostedRuntimeRollout,
+  parseHostedRuntimeRollout,
+} from "./hosted-runtime-rollout.ts";
+import {
+  type OwnerFutureRecoveryAuthority,
+  ownerFutureRecoveryUnchanged,
+  readOwnerFutureRecoveryAuthority,
+} from "./owner-install-future-recovery.ts";
 
 /**
  * Fixed production entry point. Reads only the named native identity and
@@ -98,10 +110,16 @@ export async function runOwnerDevelopmentInstallMain(input?: {
   }
   const custodyCapability = input?.existingPrRuntimeCapability ??
     EXISTING_PR_RUNTIME_CAPABILITY;
+  const rollout = parseHostedRuntimeRollout(
+    input?.rollout ?? HOSTED_RUNTIME_ROLLOUT,
+  );
   const custodyActive = custodyCapability.custodyActivated === true;
   let fenceRun: OwnerStartupRecoveryAuthorityV1["run"] | undefined;
   let startupRun: OwnerStartupRecoveryAuthorityV1["run"] | undefined;
-  if (input?.startupRecovery === true || custodyActive) {
+  if (
+    input?.startupRecovery === true || custodyActive ||
+    rollout.recoveries.length > 0
+  ) {
     const runId = Number(Deno.env.get("GITHUB_RUN_ID"));
     const runAttempt = Number(Deno.env.get("GITHUB_RUN_ATTEMPT"));
     if (
@@ -250,6 +268,35 @@ export async function runOwnerDevelopmentInstallMain(input?: {
       );
     }
   }
+  const futureInput = fenceRun === undefined ? undefined : {
+    state,
+    token: nativeToken,
+    current,
+    run: fenceRun,
+    queue: input?.queueRuntimeCapability ?? QUEUE_RUNTIME_CAPABILITY,
+    custody: custodyCapability,
+    rollout,
+  };
+  let future: OwnerFutureRecoveryAuthority | undefined;
+  if (
+    rollout.recoveries.some((row) =>
+      row.fromRevision === pointer?.activeRevision &&
+      row.fromGeneration === pointer.generation
+    )
+  ) {
+    future = futureInput === undefined
+      ? undefined
+      : await readOwnerFutureRecoveryAuthority(futureInput);
+    if (future === undefined) {
+      return report(
+        waitingResult(
+          "exact future recovery custody is unavailable",
+          current.snapshot,
+          current.head,
+        ),
+      );
+    }
+  }
   const plan = planOwnerDevelopmentInstall(
     current.snapshot,
     now,
@@ -257,7 +304,8 @@ export async function runOwnerDevelopmentInstallMain(input?: {
     startup,
     input?.queueRuntimeCapability,
     input?.existingPrRuntimeCapability,
-    input?.rollout,
+    rollout,
+    future,
   );
   if (plan.status === "waiting" || plan.status === "no_change") {
     return report({
@@ -368,6 +416,8 @@ export async function runOwnerDevelopmentInstallMain(input?: {
       startup,
       input?.queueRuntimeCapability,
       input?.existingPrRuntimeCapability,
+      future,
+      rollout,
     );
     files = await ownerDevelopmentInstallFiles(planned, current.head);
     message = ownerDevelopmentInstallCommitMessage({
@@ -395,12 +445,15 @@ export async function runOwnerDevelopmentInstallMain(input?: {
     planned,
     files,
     message,
-    !custodyActive && startup === undefined
+    !custodyActive && startup === undefined && future === undefined
       ? undefined
       : async () =>
         await revalidateDrain() && (startup === undefined ||
           (await ownerStartupRepairUnchanged(state, startup) &&
-            await ownerStartupNativeQuiescent(nativeToken, startup.run))),
+            await ownerStartupNativeQuiescent(nativeToken, startup.run))) &&
+        (future === undefined ||
+          (futureInput !== undefined &&
+            await ownerFutureRecoveryUnchanged(futureInput, future))),
   );
   if (written.status !== "confirmed") {
     return report({

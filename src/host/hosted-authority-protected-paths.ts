@@ -44,6 +44,7 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/host/owner-install-plan.ts",
     "src/host/owner-install-run.ts",
     "src/host/owner-install-snapshot.ts",
+    "src/host/owner-install-future-recovery.ts",
     "src/host/queue-runtime-capability.ts",
     // Final target effects, producer ancestry and delivery/enqueue authority.
     "ops/hosted-autonomy-delivery-proof.ts",

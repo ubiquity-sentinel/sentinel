@@ -1,5 +1,5 @@
 /** Future rollout data is separate from the frozen code profile that reads it. */
-import { type GitSha, isGitSha } from "../contracts/brands.ts";
+import { type GitSha, isGitSha, isSha256Hex } from "../contracts/brands.ts";
 import source from "./hosted-runtime-rollout.json" with { type: "json" };
 
 export interface HostedRuntimeRolloutInstall {
@@ -15,6 +15,16 @@ export interface HostedRuntimeRolloutActivation {
   readonly activatedNotBefore: number;
 }
 
+export interface HostedRuntimeRecovery {
+  readonly fromRevision: GitSha;
+  readonly fromGeneration: number;
+  readonly toRevision: GitSha;
+  readonly toGeneration: number;
+  readonly failedProofSha256: string;
+  readonly retainedHealthyProofSha256: string;
+  readonly healthyWitnessHead: GitSha;
+}
+
 export interface HostedRuntimeRollout {
   readonly version: 1;
   readonly installs: readonly HostedRuntimeRolloutInstall[];
@@ -25,6 +35,7 @@ export interface HostedRuntimeRollout {
   readonly ciFirstFix: readonly GitSha[];
   readonly acceptanceCorrection: readonly GitSha[];
   readonly legacyReview: readonly GitSha[];
+  readonly recoveries: readonly HostedRuntimeRecovery[];
 }
 
 const INVALID = "invalid hosted runtime rollout";
@@ -45,6 +56,7 @@ export function parseHostedRuntimeRollout(
       "ciFirstFix",
       "acceptanceCorrection",
       "legacyReview",
+      "recoveries",
     ]);
     if (row.version !== 1) throw new Error(INVALID);
     const installs = array(row.installs).map(install);
@@ -63,6 +75,13 @@ export function parseHostedRuntimeRollout(
     ) throw new Error(INVALID);
     const refreshRearm = activations(row.refreshRearm);
     const conflictResolution = activations(row.conflictResolution);
+    const recoveries = array(row.recoveries).map(recovery);
+    if (
+      new Set(recoveries.map((r) => `${r.fromRevision}:${r.fromGeneration}`))
+          .size !== recoveries.length ||
+      new Set(recoveries.map((r) => r.failedProofSha256)).size !==
+        recoveries.length
+    ) throw new Error(INVALID);
     const times = new Map<GitSha, number>();
     for (const pin of [...refreshRearm, ...conflictResolution]) {
       const prior = times.get(pin.revision);
@@ -81,6 +100,7 @@ export function parseHostedRuntimeRollout(
       ciFirstFix: revisions(row.ciFirstFix),
       acceptanceCorrection: revisions(row.acceptanceCorrection),
       legacyReview: revisions(row.legacyReview),
+      recoveries: Object.freeze(recoveries),
     });
   } catch {
     throw new Error(INVALID);
@@ -156,6 +176,36 @@ function revisions(value: unknown): readonly GitSha[] {
     throw new Error(INVALID);
   }
   return Object.freeze(rows);
+}
+
+function recovery(value: unknown): HostedRuntimeRecovery {
+  const row = object(value, [
+    "fromRevision",
+    "fromGeneration",
+    "toRevision",
+    "toGeneration",
+    "failedProofSha256",
+    "retainedHealthyProofSha256",
+    "healthyWitnessHead",
+  ]);
+  if (
+    !isGitSha(row.fromRevision) || !isGitSha(row.toRevision) ||
+    row.fromRevision === row.toRevision || !positive(row.fromGeneration) ||
+    !positive(row.toGeneration) ||
+    row.toGeneration !== row.fromGeneration + 1 ||
+    !isGitSha(row.healthyWitnessHead) ||
+    !isSha256Hex(row.failedProofSha256) ||
+    !isSha256Hex(row.retainedHealthyProofSha256)
+  ) throw new Error(INVALID);
+  return Object.freeze({
+    fromRevision: row.fromRevision,
+    fromGeneration: row.fromGeneration,
+    toRevision: row.toRevision,
+    toGeneration: row.toGeneration,
+    failedProofSha256: row.failedProofSha256,
+    retainedHealthyProofSha256: row.retainedHealthyProofSha256,
+    healthyWitnessHead: row.healthyWitnessHead,
+  });
 }
 
 function activations(
