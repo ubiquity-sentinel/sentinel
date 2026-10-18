@@ -1,4 +1,5 @@
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
+import { HOSTED_AUTHORITY_PROTECTED_PATHS } from "./hosted-authority-protected-paths.ts";
 import {
   parseRepositoryConfigV1,
   type RepositoryConfigV1,
@@ -93,6 +94,7 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       },
     },
     protectedPaths: [
+      ...HOSTED_AUTHORITY_PROTECTED_PATHS,
       "src/repair/model-port-notifications.ts",
       "src/github/reviewer-retention.ts",
       "src/host/review-owner-channel-event.ts",
