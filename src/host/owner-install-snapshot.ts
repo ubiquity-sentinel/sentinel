@@ -21,9 +21,10 @@ import type {
 } from "./owner-install-types.ts";
 import { planOwnerDevelopmentInstall } from "./owner-install-plan.ts";
 import {
-  allowsQueueOwnerInstallMove,
-  type QueueRuntimeCapability,
-} from "./queue-runtime-capability.ts";
+  allowsHostedOwnerInstallMove,
+} from "./hosted-runtime-compatibility.ts";
+import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
+import type { ExistingPrRuntimeCapability } from "./existing-pr-runtime-capability.ts";
 import {
   MAX_COMMIT_MESSAGE_CHARS,
   sha256HexText,
@@ -45,8 +46,9 @@ export function buildOwnerDevelopmentInstallSnapshot(
   startup?: OwnerStartupRecoveryAuthorityV1,
   /** Trusted in-process fixture only; production defaults to reviewed source. */
   capability?: QueueRuntimeCapability,
+  custodyCapability?: ExistingPrRuntimeCapability,
 ): ReleaseStateSnapshotV1 {
-  if (!allowsQueueOwnerInstallMove(move, capability)) {
+  if (!allowsHostedOwnerInstallMove(move, capability, custodyCapability)) {
     throw new Error(STATIC_PLAN);
   }
   const parsed = tryParse(parseReleaseStateSnapshotV1, snapshot);
@@ -60,7 +62,14 @@ export function buildOwnerDevelopmentInstallSnapshot(
   const binding = recovery?.binding ?? CLOSED_C_WAVE;
   const recoveryPlan = recovery === undefined
     ? undefined
-    : planOwnerDevelopmentInstall(state, now, recovery, undefined, capability);
+    : planOwnerDevelopmentInstall(
+      state,
+      now,
+      recovery,
+      undefined,
+      capability,
+      custodyCapability,
+    );
   const heldMatrixRollback = recovery !== undefined &&
     recovery.releaseHead === head &&
     move.action === "rollback" && move.priorRevision === recovery.candidate &&
@@ -87,6 +96,7 @@ export function buildOwnerDevelopmentInstallSnapshot(
       recovery,
       startup,
       capability,
+      custodyCapability,
     );
     if (
       startup.releaseHead !== head ||
