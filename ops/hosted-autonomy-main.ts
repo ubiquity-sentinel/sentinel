@@ -7,6 +7,8 @@ import {
 import { emitHostedParkSummary } from "./hosted-autonomy-summary.ts";
 import { writeQueueCustodyOutput } from "./hosted-autonomy-queue-output.ts";
 import { createHostedQueueCoordinator } from "./hosted-autonomy-queue-host.ts";
+import { createMaintenancePublicationFor } from "../src/host/maintenance-existing-pr-publication.ts";
+import { DurableGitHubCooldownGate } from "../src/repair/github-cooldown.ts";
 import {
   createMatrixUncertaintyMaintenance,
   runMatrixUncertaintyMaintenance,
@@ -235,6 +237,17 @@ export async function runHostedAutonomyMain(input?: {
             githubFor,
             token: apiToken,
             clock: { now: () => Date.now() },
+            publicationFor: createMaintenancePublicationFor({
+              sourceDir: Deno.cwd(),
+              scratch,
+              state,
+              clock: { now: () => Date.now() },
+              token: apiToken,
+              gate: new DurableGitHubCooldownGate({
+                state,
+                clock: { now: () => Date.now() },
+              }),
+            }),
           }),
           onQueueCustodyReady,
           // Route selector names only, never a key: a changed model route

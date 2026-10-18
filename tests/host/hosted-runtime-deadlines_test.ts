@@ -356,6 +356,8 @@ Deno.test("hosted runtime: the real host hands its origin-anchored deadline to t
     const setup: string[] = [];
     const captured: Parameters<typeof runActionsTargetCycles>[0][] = [];
     const capturedAt: number[] = [];
+    let queueReads = 0;
+    let unexpectedHttp = 0;
     let observedRoute = "";
     const fakeOutcome = { status: "idle", detail: "fixture" } as const;
     const capability = {} as never;
@@ -375,6 +377,24 @@ Deno.test("hosted runtime: the real host hands its origin-anchored deadline to t
         },
         workDir: checkoutDir,
         stateRemoteUrl: remote.remoteUrl,
+        http: (request) => {
+          const url = new URL(request.url);
+          if (
+            request.method === "GET" &&
+            url.origin === "https://api.github.com" &&
+            url.pathname ===
+              "/repos/ubiquity/ai.ubq.fi/rules/branches/development"
+          ) {
+            queueReads++;
+            return Promise.resolve({
+              status: 200,
+              headers: new Headers(),
+              bodyText: "[]",
+            });
+          }
+          unexpectedHttp++;
+          throw new Error("fixture forbids other HTTP");
+        },
         refreshSelf: () => {
           setup.push("refresh-self");
           // The self mirror refresh is real setup work; here it consumes
@@ -408,6 +428,8 @@ Deno.test("hosted runtime: the real host hands its origin-anchored deadline to t
 
     // The host ran its real setup and reached the production call.
     assert.deepEqual(setup, ["refresh-self", "preflight", "target-cycles"]);
+    assert.equal(queueReads, 1);
+    assert.equal(unexpectedHttp, 0);
     assert.equal(captured.length, 1);
     const supplied = captured[0]!.deadline;
     const atCall = capturedAt[0]!;

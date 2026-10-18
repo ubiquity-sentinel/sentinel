@@ -54,8 +54,16 @@ export async function runMatrixPlanEntrypoint(input: {
   planPath?: string;
 }): Promise<MatrixPlanReportV1 & { planDigest: string }> {
   const report = await planMatrixWave(input.deps, input.options);
+  return await writeMatrixPlanReport(report, input.planPath);
+}
+
+/** Persist a strictly constructed report, including an honest zero-grant host hold. */
+export async function writeMatrixPlanReport(
+  report: MatrixPlanReportV1,
+  planPath = MATRIX_PLAN_PATH,
+): Promise<MatrixPlanReportV1 & { planDigest: string }> {
   const planDigest = await writeJsonArtifact(
-    input.planPath ?? MATRIX_PLAN_PATH,
+    planPath,
     report.plan,
   );
   return { ...report, planDigest };

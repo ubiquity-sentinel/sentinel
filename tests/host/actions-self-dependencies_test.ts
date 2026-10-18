@@ -110,6 +110,7 @@ Deno.test("Actions self dependencies: real host refuses absent producer then run
     };
   });
   let httpCalls = 0;
+  let queueReads = 0;
   const modelResults: PortResultV1<ModelRunReceiptV1>[] = [];
   const actualModels: LocalCheckoutModelPort[] = [];
   const runHost = () =>
@@ -121,7 +122,20 @@ Deno.test("Actions self dependencies: real host refuses absent producer then run
       refreshSelf: () => Promise.resolve(rig.base),
       resolveDefaultBranch: () => Promise.resolve("development"),
       preflight: () => Promise.resolve(),
-      http: () => {
+      http: (request) => {
+        const url = new URL(request.url);
+        if (
+          request.method === "GET" && url.origin === "https://api.github.com" &&
+          url.pathname ===
+            "/repos/ubiquity/ai.ubq.fi/rules/branches/development"
+        ) {
+          queueReads++;
+          return Promise.resolve({
+            status: 200,
+            headers: new Headers(),
+            bodyText: "[]",
+          });
+        }
         httpCalls++;
         throw new Error("fixture forbids HTTP");
       },
@@ -196,6 +210,7 @@ Deno.test("Actions self dependencies: real host refuses absent producer then run
     assert.equal(await rig.git(["status", "--porcelain"], rig.checkout), "");
     await rig.assertClean();
     assert.equal(httpCalls, 0);
+    assert.equal(queueReads, 2);
     const read = await rig.release.readRelease();
     assert(read.ok && read.value.status === "found");
     assert.equal(

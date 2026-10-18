@@ -30,6 +30,8 @@ import { FakeClock, FakeGithub, MemoryState } from "../repair/helpers.ts";
 import { gitRun, makeRemoteCtx, T0, testGitEnv } from "../state/helpers.ts";
 import { createHostedReviewOwnerCustody } from "../../src/host/review-owner-host.ts";
 import type { ReviewOwnerCustodyBroker } from "../../src/host/review-owner-custody.ts";
+import { response, snapshotWire } from "../github/merge-queue-fixtures.ts";
+import type { HttpRequestV1 } from "../../src/github/http.ts";
 
 export const ROOT = decodeURIComponent(
   new URL("../../", import.meta.url).pathname,
@@ -412,7 +414,22 @@ export async function rig(
         GITHUB_OUTPUT: root + "/" + name + "/output",
         SENTINEL_COOLDOWN_MODE: "off",
       },
-      http: () => Promise.reject(new Error("no external HTTP allowed")),
+      http: (request: HttpRequestV1) => {
+        const path = new URL(request.url).pathname;
+        if (
+          request.method === "GET" &&
+          path === "/repos/ubiquity/ai.ubq.fi/rules/branches/development"
+        ) {
+          return Promise.resolve(response([]));
+        }
+        if (
+          request.method === "POST" && path === "/graphql" &&
+          request.body?.includes("mergeQueue(branch:")
+        ) {
+          return Promise.resolve(response(snapshotWire(null)));
+        }
+        return Promise.reject(new Error("no external HTTP allowed"));
+      },
       composeGithub: (
         config: { repository: { owner: string; name: string } },
       ) => github.get(config.repository.owner + "/" + config.repository.name)!,
