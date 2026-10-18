@@ -18,6 +18,7 @@ import type {
 } from "./hosted-runtime-identity.ts";
 import { readNativeMatrixStdin, runtimeJob } from "./hosted-runtime-matrix.ts";
 import { APP_TOKEN_MINTED_NOT_BEFORE_ENV } from "./hosted-app-token-window.ts";
+import { HOSTED_APP_MINT_GRANT_ENV } from "./hosted-app-grant.ts";
 import { reviewCommandItemRefusalLines } from "./hosted-runtime-status.ts";
 import { runHostedRuntimeWithReviewCustody } from "./review-owner-host.ts";
 
@@ -113,18 +114,21 @@ export async function runHostedRuntimeMain(): Promise<
 }
 
 /**
- * Job-scoped launcher inputs. Each name is read ONLY in the one job whose
- * workflow step grants it, so a cell or the planner never requests a name its
+ * Job-scoped launcher inputs. Each name is read ONLY in the jobs whose
+ * workflow steps grant it, so a cell never requests a name its
  * own `--allow-env` grant lacks (that read would refuse the whole launch).
  */
 export function readJobScopedLauncherEnv(
   job: "repair" | "matrix_plan" | "matrix_cell",
   read: (name: string) => string | undefined,
 ): Record<string, string | undefined> {
-  if (job === "matrix_plan") return { GITHUB_OUTPUT: read("GITHUB_OUTPUT") };
-  if (job === "repair") {
+  if (job === "repair" || job === "matrix_plan") {
     return {
+      ...(job === "matrix_plan"
+        ? { GITHUB_OUTPUT: read("GITHUB_OUTPUT") }
+        : {}),
       [APP_TOKEN_MINTED_NOT_BEFORE_ENV]: read(APP_TOKEN_MINTED_NOT_BEFORE_ENV),
+      [HOSTED_APP_MINT_GRANT_ENV]: read(HOSTED_APP_MINT_GRANT_ENV),
     };
   }
   return {};

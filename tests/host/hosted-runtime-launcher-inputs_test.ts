@@ -22,11 +22,18 @@ const ROOT = decodeURIComponent(HERE.pathname).replace(
 const LAUNCHER_JOBS = ["matrix_plan", "matrix_cell", "repair"] as const;
 /**
  * Job-scoped launcher inputs: each is read only for the one job whose step
- * grants it (the planner's output file; the repair job's App-token mint bound).
+ * grants it (the planner's output file; planner/repair App mint evidence).
  */
 const JOB_INPUTS: Readonly<Record<string, readonly string[]>> = {
-  matrix_plan: ["GITHUB_OUTPUT"],
-  repair: ["SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE"],
+  matrix_plan: [
+    "GITHUB_OUTPUT",
+    "SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE",
+    "SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT",
+  ],
+  repair: [
+    "SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE",
+    "SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT",
+  ],
 };
 const MINT_BOUND = "SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE";
 const DIRS = { home: "/h", tmp: "/t", denoDir: "/d" };
@@ -92,12 +99,11 @@ Deno.test("hosted launcher: every host key the child builder reads is a launcher
     for (const key of consulted) {
       assert.ok(allowed.has(key), `${job}: the launcher must read ${key}`);
     }
-    // The repair child really consumed the bound: it receives the derived
-    // window, and no other job consults or forwards it.
-    assert.equal(consulted.has(MINT_BOUND), job === "repair", job);
+    // Only the trusted repair/planner children receive a derived App window.
+    assert.equal(consulted.has(MINT_BOUND), job !== "matrix_cell", job);
     assert.equal(
       Object.hasOwn(child, "SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER"),
-      job === "repair",
+      job !== "matrix_cell",
       job,
     );
   }
