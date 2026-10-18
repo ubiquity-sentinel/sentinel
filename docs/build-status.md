@@ -78,8 +78,13 @@ Evidence:
 Development now includes normally merged PR #160 at
 `9b7c3e5cec4d45c4e0985ab28bd524b4bb69237b`. Its postmerge CI 39121415774 failed
 one local Git-clone fixture setup with an object-copy ENOENT; 3,224 tests /
-1,305 steps passed. The same tree passed premerge CI. Root is diagnosing the
-fixture boundary before a corrected run; no retry or new publication is claimed.
+1,305 steps passed. The same tree passed premerge CI. The scoped correction
+makes the fixture use Git transport instead of copying loose objects. Root
+verified the one-file patch, all nine local checks and 29 unique affected cases;
+a fresh independent Sol/max review found no P0/P1. A real local clone/repack
+race reproduced the failure class, but the native interleaving remains unproven.
+Corrected-source native CI is still pending. Evidence:
+`/workspace/evidence/pr160-continuation/postmerge-9b7c3e5/fixture-correction/root-acceptance.json`.
 Sentinel-supervisor remains exact L81; no queue runtime is installed.
 
 Ordinary R81 run 39114941481 completed successfully with 21 jobs, including all

@@ -272,6 +272,8 @@ export async function historicalMalformedRig(
   const cloned = await gitRun(rig.tmp, [
     "clone",
     "-q",
+    // Fetch the object graph instead of racing loose-object copies in local Git.
+    "--no-local",
     "--branch",
     "sentinel-state/repair",
     `${rig.tmp}/remote.git`,
