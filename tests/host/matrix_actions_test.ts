@@ -1,4 +1,5 @@
 /** Real repair-startup preservation maintenance coverage. */
+import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import type { WorkItemId } from "../../src/contracts/brands.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
@@ -417,26 +418,28 @@ Deno.test("preservation maintenance: real repair startup skips five blocked cand
     const heldRelease = await state.readRelease();
     const before = await state.readRepair();
     assert.ok(before.ok && before.value.status === "found");
-    await runHostedAutonomy({
-      state,
-      clock: r.clock,
-      githubFor: () => {
-        throw Error("ordinary publication refused");
-      },
-      uncertainMatrix: () =>
-        runMatrixUncertaintyMaintenance({
-          state,
-          clock: r.clock,
-          binding: {
-            repairCommit: captureHead,
-            runtimeSha: r.sha,
-            generation: 1,
-            reservationIds: implementationIds,
-          },
-          confirmCompletedExecution: () => Promise.resolve(true),
-          readExecution: () => Promise.resolve(portOk(failed)),
-        }),
-    });
+    await runHostedAutonomy(
+      await withDarkQueueAuthority({
+        state,
+        clock: r.clock,
+        githubFor: () => {
+          throw Error("ordinary publication refused");
+        },
+        uncertainMatrix: () =>
+          runMatrixUncertaintyMaintenance({
+            state,
+            clock: r.clock,
+            binding: {
+              repairCommit: captureHead,
+              runtimeSha: r.sha,
+              generation: 1,
+              reservationIds: implementationIds,
+            },
+            confirmCompletedExecution: () => Promise.resolve(true),
+            readExecution: () => Promise.resolve(portOk(failed)),
+          }),
+      }),
+    );
     const after = await state.readRepair();
     assert.ok(after.ok && after.value.status === "found");
     assert.equal(

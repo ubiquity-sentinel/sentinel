@@ -127,7 +127,10 @@ Deno.test("hosted autonomy: ref revalidation, mismatch disposition and retry pre
   try {
     const first = await run(rig, github);
     assert.equal(first.reason, "applied", JSON.stringify(first));
-    assert.deepEqual(first.actions, [`revalidate:${TARGET}:cleared`]);
+    assert.deepEqual(first.actions, [
+      "queue:inactive_no_rule",
+      `revalidate:${TARGET}:cleared`,
+    ]);
     assert.deepEqual(
       requests,
       [],

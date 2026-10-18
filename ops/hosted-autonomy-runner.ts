@@ -144,8 +144,11 @@ export async function runHostedAutonomy(
         : {}),
       ...(deps.closedMatrix
         ? {
-          closedMatrix: async () => {
-            const ports = await deps.closedMatrix!(guarded);
+          closedMatrix: async (state = guarded) => {
+            // Producer-specific writers also enforce release custody and deadline.
+            const ports = await deps.closedMatrix!(
+              protectQueueState(state, context),
+            );
             return { ...ports, state: protectQueueState(ports.state, context) };
           },
         }

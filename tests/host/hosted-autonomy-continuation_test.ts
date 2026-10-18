@@ -64,7 +64,7 @@ const indexOf = (actions: readonly string[], prefix: string) =>
 Deno.test("continuation: a re-admission, a merge with its release request and a retirement land in one pass on fresh heads", async () => {
   const state = await threeDue();
   const github = surfaces(state);
-  const result = await runHostedAutonomy(passDeps(state, github));
+  const result = await runHostedAutonomy(await passDeps(state, github));
   assert.equal(result.status, "applied", JSON.stringify(result));
   assert.equal(state.log.length, 3, JSON.stringify(result.actions));
   assertCasChain(state.log, INITIAL);
@@ -112,7 +112,9 @@ Deno.test("continuation: a re-admission, a merge with its release request and a 
 
 Deno.test("continuation: protected main prints the one aggregate result line and exits zero", async () => {
   const state = await threeDue();
-  const { exit, lines } = await captureMain(passDeps(state, surfaces(state)));
+  const { exit, lines } = await captureMain(
+    await passDeps(state, surfaces(state)),
+  );
   assert.equal(exit, 0);
   const result = resultLine(lines);
   assert.equal(result.status, "applied");
@@ -142,7 +144,7 @@ Deno.test("continuation: a refused compare-and-swap in a later phase stops the p
   const state = await threeDue();
   state.refuse.add(2);
   const github = surfaces(state);
-  const result = await runHostedAutonomy(passDeps(state, github));
+  const result = await runHostedAutonomy(await passDeps(state, github));
   assert.equal(result.status, "applied", JSON.stringify(result));
   assert.equal(result.reason, "retried");
   assert.equal(result.beforeHead, INITIAL);
@@ -163,7 +165,9 @@ Deno.test("continuation: a refused compare-and-swap in a later phase stops the p
   );
   const again = await threeDue();
   again.refuse.add(2);
-  const { exit, lines } = await captureMain(passDeps(again, surfaces(again)));
+  const { exit, lines } = await captureMain(
+    await passDeps(again, surfaces(again)),
+  );
   assert.equal(exit, 0);
   assert.deepEqual(resultLine(lines), JSON.parse(JSON.stringify(result)));
 });
@@ -174,7 +178,7 @@ Deno.test("continuation: a head moved between phases stops before the next phase
   // second.
   state.moveHeadOnRead = 2;
   const github = surfaces(state);
-  const result = await runHostedAutonomy(passDeps(state, github));
+  const result = await runHostedAutonomy(await passDeps(state, github));
   assert.equal(result.status, "applied", JSON.stringify(result));
   assert.equal(result.reason, "retried");
   assert.equal(state.log.length, 1);
@@ -190,7 +194,11 @@ Deno.test("continuation: past the start limit the next phase defers; at the limi
     const state = await threeDue();
     const github = surfaces(state);
     const result = await runHostedAutonomy(
-      passDeps(state, github, () => NOW + (state.writes === 0 ? 0 : late)),
+      await passDeps(
+        state,
+        github,
+        () => NOW + (state.writes === 0 ? 0 : late),
+      ),
     );
     assert.equal(result.status, "applied", JSON.stringify(result));
     assert.equal(github.merges.length, merges, `elapsed ${late}`);
@@ -204,7 +212,7 @@ Deno.test("continuation: past the start limit the next phase defers; at the limi
   const state = await threeDue();
   const github = surfaces(state);
   const result = await runHostedAutonomy(
-    passDeps(state, github, () => state.writes === 0 ? NOW : Number.NaN),
+    await passDeps(state, github, () => state.writes === 0 ? NOW : Number.NaN),
   );
   assert.equal(
     result.actions.at(-1),
@@ -218,7 +226,11 @@ Deno.test("continuation: a late clock never gates a pass that has not written", 
   const github = surfaces(state, { checkGreen: false });
   let calls = 0;
   const result = await runHostedAutonomy(
-    passDeps(state, github, () => NOW + (calls++ === 0 ? 0 : 10 * LIMIT_MS)),
+    await passDeps(
+      state,
+      github,
+      () => NOW + (calls++ === 0 ? 0 : 10 * LIMIT_MS),
+    ),
   );
   assert.equal(result.status, "skipped", JSON.stringify(result));
   assert.equal(result.reason, "checks_pending");
@@ -268,7 +280,7 @@ Deno.test("continuation: a candidate-ref revalidation still ends the pass before
     branch === candidateBranch(id as never)
       ? Promise.resolve(SHA2)
       : base(branch);
-  const result = await runHostedAutonomy(passDeps(state, github));
+  const result = await runHostedAutonomy(await passDeps(state, github));
   assert.equal(result.status, "applied", JSON.stringify(result));
   assert.equal(result.reason, "applied");
   assert.ok(result.actions.includes(`revalidate:${id}:cleared`));
@@ -285,7 +297,7 @@ Deno.test("continuation: an error thrown in a continued phase defers it and keep
   const github = surfaces(state, {
     throwAfterWrite: () => new Error("transport torn down"),
   });
-  const { exit, lines } = await captureMain(passDeps(state, github));
+  const { exit, lines } = await captureMain(await passDeps(state, github));
   assert.equal(exit, 0);
   const result = resultLine(lines);
   assert.equal(result.status, "applied", JSON.stringify(result));
@@ -309,19 +321,21 @@ Deno.test("continuation: an error thrown in a continued phase defers it and keep
   // An integrity fault still fails closed, never a deferral.
   const strict = await threeDue();
   await assert.rejects(
-    () =>
-      runHostedAutonomy(passDeps(
-        strict,
-        surfaces(strict, {
-          throwAfterWrite: () =>
-            new CurrentMatrixRecoveryIntegrityFailure(
-              "current matrix readback incomplete",
-              INITIAL,
-              null,
-              null,
-            ),
-        }),
-      )),
+    async () =>
+      runHostedAutonomy(
+        await passDeps(
+          strict,
+          surfaces(strict, {
+            throwAfterWrite: () =>
+              new CurrentMatrixRecoveryIntegrityFailure(
+                "current matrix readback incomplete",
+                INITIAL,
+                null,
+                null,
+              ),
+          }),
+        ),
+      ),
     CurrentMatrixRecoveryIntegrityFailure,
   );
 });

@@ -6,6 +6,7 @@
  * store with the real snapshot and transition rules (`TransitionState`),
  * recording every write it accepts.
  */
+import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import {
@@ -338,17 +339,17 @@ export function surfaces(
 }
 
 /** The pass's own deps over one store and one pair of surfaces. */
-export function passDeps(
+export async function passDeps(
   state: RecordingState,
   github: SurfacesV1,
   now: () => number = () => NOW,
-): HostedAutonomyDepsV1 {
-  return {
+): Promise<HostedAutonomyDepsV1> {
+  return await withDarkQueueAuthority({
     state: state as unknown as StateReadView & RepairStateWriter,
     githubFor: github.githubFor,
     clock: { now },
     conflictResolutionRuntimes: PIN,
-  };
+  });
 }
 
 /** The applied CAS chain: each write expects exactly the head before it. */

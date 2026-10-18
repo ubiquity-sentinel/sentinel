@@ -1,9 +1,17 @@
 import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 /** Actual maintenance consumer and charged state transitions over disposable Git. */
 import assert from "node:assert/strict";
+import { inactiveNativeQueueFixture } from "../github/native-queue-fixture.ts";
+import {
+  entryWire,
+  pullWire,
+  response,
+} from "../github/merge-queue-fixtures.ts";
+import { pullFactsWire } from "../github/queue-delivery-reader-fixtures.ts";
 import { darkQueueCoordinatorFixture } from "./hosted-autonomy-dark-queue-fixture.ts";
 import type { HostedAutonomyDepsV1 } from "../../ops/hosted-autonomy-types.ts";
 import type { GitSha, WorkItemId } from "../../src/contracts/brands.ts";
+import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import {
@@ -325,6 +333,7 @@ async function fixture(submittedPreservation = false) {
   const deps: MatrixUncertaintyMaintenanceDepsV1 = {
     state,
     clock,
+    nativeQueueFor: () => inactiveNativeQueueFixture(),
     binding: {
       repairCommit: saved.value.head,
       runtimeSha: SHA1,
@@ -903,3 +912,200 @@ async function runDarkAutonomy(deps: HostedAutonomyDepsV1) {
     queue: await darkQueueCoordinatorFixture(deps),
   });
 }
+
+Deno.test("uncertainty maintenance defers missing, unknown, queued and drifting native custody without writes", async (t) => {
+  for (
+    const mode of [
+      "missing",
+      "unavailable",
+      "queued",
+      "state_drift",
+      "observation_lost",
+      "no_rule",
+    ] as const
+  ) {
+    await t.step(mode, async () => {
+      const f = await fixture();
+      try {
+        const before = await f.state.readRepair();
+        const release = await f.state.readRelease();
+        let ruleReads = 0;
+        let queueReads = 0;
+        let branch = "";
+        const native = createMatrixUncertaintyMaintenance({
+          state: f.state,
+          clock,
+          token: "fixture-state-token",
+          apiToken: "fixture-target-token",
+          artifactRoot: f.root + "/queue-artifacts",
+          http: (request) => {
+            assert.equal(
+              request.headers.get("authorization"),
+              "Bearer fixture-target-token",
+            );
+            const url = new URL(request.url);
+            if (url.pathname.endsWith("/rules/branches/development")) {
+              assert.equal(request.method, "GET");
+              ruleReads++;
+              if (
+                mode === "unavailable" ||
+                (mode === "observation_lost" && ruleReads > 1)
+              ) {
+                return Promise.resolve(response({}, 503));
+              }
+              return Promise.resolve(
+                response(mode === "queued" ? [{ type: "merge_queue" }] : []),
+              );
+            }
+            if (url.pathname.endsWith("/pulls")) {
+              assert.equal(request.method, "GET");
+              branch = url.searchParams.get("head")!.slice("ubiquity:".length);
+              return Promise.resolve(response([{
+                number: 7,
+                title: "existing candidate",
+                body: "",
+                state: "open",
+                head: { ref: branch, sha: SHA2 },
+                base: { ref: "development", sha: SHA1 },
+                user: { login: "ubiquity-sentinel[bot]" },
+                created_at: new Date(T0).toISOString(),
+                updated_at: new Date(T0).toISOString(),
+                merged_at: null,
+                merge_commit_sha: null,
+                review_decision: null,
+              }]));
+            }
+            assert.equal(url.pathname, "/graphql");
+            assert.equal(request.method, "POST");
+            assert.ok(!request.body?.includes("mutation"));
+            queueReads++;
+            return Promise.resolve(response(pullFactsWire({
+              headRefName: branch,
+              headRefOid: SHA2,
+              merged: false,
+              mergedBy: null,
+              mergeCommit: null,
+              isInMergeQueue: true,
+              mergeQueueEntry: entryWire({
+                pullRequest: pullWire({
+                  headRefName: branch,
+                  headRefOid: SHA2,
+                }),
+              }),
+            })));
+          },
+        });
+        const outcome = await runMatrixUncertaintyMaintenance({
+          ...f.deps,
+          nativeQueueFor: mode === "missing"
+            ? undefined
+            : (repository, state) => {
+              let reads = 0;
+              return native.nativeQueueFor!(
+                repository,
+                mode !== "state_drift" ? state : {
+                  ...state,
+                  readRepair: async () => {
+                    const read = await state.readRepair();
+                    return ++reads > 1 && read.ok &&
+                        read.value.status === "found"
+                      ? portOk({ ...read.value, head: SHA2 })
+                      : read;
+                  },
+                },
+              );
+            },
+        });
+        assert.equal(outcome.quarantined, mode === "no_rule" ? 13 : 0);
+        const after = await f.state.readRepair();
+        if (mode === "no_rule") {
+          assert(after.ok && after.value.status === "found");
+          for (const original of f.records) {
+            const row: WorkRecordV1 = after.value.snapshot.work.find((entry) =>
+              entry.id === original.id
+            )!;
+            assert.equal(row.nextStep, "blocked");
+            assert.deepEqual(row.intent, original.intent);
+            const charge: BudgetReservationV1 = after.value.snapshot
+              .reservations.find((entry) =>
+                entry.id === original.intent!.requestId
+              )!;
+            assert.equal(charge.outcome, "ambiguous");
+            assert.equal(charge.proofRef, null);
+          }
+        } else {
+          assert.deepEqual(after, before, "no charge, intent or wait changes");
+        }
+        assert.deepEqual(await f.state.readRelease(), release);
+        assert.equal(queueReads, mode === "queued" ? 13 : 0);
+        assert.equal(ruleReads > 0, mode !== "missing");
+      } finally {
+        await f.cleanup();
+      }
+    });
+  }
+});
+
+Deno.test("uncertainty maintenance retains a charged partial settlement when native custody becomes unavailable", async () => {
+  const f = await fixture();
+  try {
+    const before = await f.state.readRepair();
+    assert(before.ok && before.value.status === "found");
+    let rules = 0;
+    const native = createMatrixUncertaintyMaintenance({
+      state: f.state,
+      clock,
+      token: "fixture-state-token",
+      apiToken: "fixture-target-token",
+      artifactRoot: f.root + "/queue-artifacts",
+      http: (request) => {
+        assert.equal(request.method, "GET");
+        assert.equal(
+          new URL(request.url).pathname,
+          "/repos/ubiquity/ai.ubq.fi/rules/branches/development",
+        );
+        // Preflight and entry observe no rule. After the charge CAS the final
+        // work transition cannot establish native custody anymore.
+        return Promise.resolve(response([], ++rules < 3 ? 200 : 503));
+      },
+    });
+    const held = await runMatrixUncertaintyMaintenance({
+      ...f.deps,
+      nativeQueueFor: native.nativeQueueFor,
+    });
+    assert.equal(held.quarantined, 0);
+    const after = await f.state.readRepair();
+    assert(after.ok && after.value.status === "found");
+    assert.notEqual(after.value.head, before.value.head);
+    assert.equal(held.appliedHead, after.value.head);
+    assert.deepEqual(after.value.snapshot.work, before.value.snapshot.work);
+    const chargeId = f.records[0].intent!.requestId;
+    assert.deepEqual(
+      after.value.snapshot.reservations,
+      before.value.snapshot.reservations.map((charge) =>
+        charge.id === chargeId
+          ? { ...charge, outcome: "ambiguous", settledAt: NOW }
+          : charge
+      ),
+    );
+    assert.deepEqual(
+      after.value.snapshot.attemptMemory,
+      before.value.snapshot.attemptMemory,
+    );
+    const resumed = await runMatrixUncertaintyMaintenance(f.deps);
+    assert.equal(resumed.quarantined, 13);
+    const complete = await f.state.readRepair();
+    assert(complete.ok && complete.value.status === "found");
+    assert.deepEqual(
+      complete.value.snapshot.reservations.find((charge) =>
+        charge.id === chargeId
+      ),
+      after.value.snapshot.reservations.find((charge) =>
+        charge.id === chargeId
+      ),
+      "the original ambiguous charge is never refunded or charged again",
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
