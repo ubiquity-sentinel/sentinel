@@ -14,15 +14,22 @@ is not asserted as fresh metadata.
 Current continuation checkpoint 2026-10-18: the primary coordinator owns
 generation-81 integration from handoff
 `be02faf40c77fe299c2ed7ffa91fedb00fe43c48` (#163), followed by the corrected
-merge-queue rollout (#164). Fresh reads confirm `development` and
+merge-queue rollout (#164). Fresh reads confirm `development` at owner
+documentation commit `646eab67a4518a2034785ae708bdd1c7922d7d1e` and
 `sentinel-supervisor` at `87e28fd4a7796078adc4c930dd49d02651f82203`, runtime R80
 `e48e7e110e7cb2ed3385bf1be5165f05d8a4e481` installed at generation 80, and
-successful supervisor runs 39085544527, 39090096288 and 39091929807 on that
-launcher. `sentinel-release` remains disabled. No R81 candidate has been
-published, installed or accepted. The owner authorized normal fast-forward
-publication, exact-runtime CI, controller installation and live verification.
-The owner unsuspended the GitHub connector App; the live Sentinel App is a
-separate identity and remains unchanged.
+successful supervisor run 39095553458 with its own settled healthy execution
+proof on that launcher. Run 39097588521 has passed maintenance, preparation,
+matrix planning and its cell; repair remains in progress. `sentinel-release`
+remains disabled. No R81 candidate has been published, installed or accepted.
+The owner authorized normal fast-forward publication, exact-runtime CI,
+controller installation and live verification. The owner unsuspended the GitHub
+connector App; the live Sentinel App is a separate identity and remains
+unchanged. Owner documentation on development separately records the
+implementation override `gpt-reserve`; preserve that owner change and all
+existing workflow variable expressions. Exact R81 CI may run from its frozen
+`codex/**` branch before L81 integrates these unrelated owner documentation
+commits. The installer still requires exact successful R81 CI and ancestry.
 
 The canonical integration worktree is `/workspace/worktrees/gen81-integration`,
 branch `codex/gen81-integration`. Accepted ancestry includes all eleven rebased
@@ -98,9 +105,10 @@ SHA-pinned merge produced `624466337a9e92e9f36385d8801b29807e41ccb9`. Only
 `.github/workflows/deno-deploy.yml` differed from its base (seven additions, two
 deletions). Its exact-tree local full verify attempt passed static gates but
 could not run ARM64 native fixtures on this x64 host; hosted CI supplied that
-missing platform evidence. Local Codex CLI authentication failures are not
-review receipts. A separate one-line deterministic quota clock test fix remains
-prepared and unpublished.
+missing platform evidence. Postmerge development run 39098081444 passed all four
+checks without cancellation, supplying usable base CI. Local Codex CLI
+authentication failures are not review receipts. A separate one-line
+deterministic quota clock test fix remains prepared and unpublished.
 
 Merge-queue support remains a separate, dormant candidate for after healthy R81.
 Foundation `7dd7a385f2d4bb209d3bef3aa0486a5f9464cc9a` and the 118-file combined
@@ -139,10 +147,12 @@ intent or provenance retains strict custody. Fresh state and rule checks must
 pass before a retried effect; actual final-port refusals retain their intent and
 charges. Its five source hashes match
 `/workspace/evidence/queue-dormant-retry/manifest.json`; 35 tests and 73 steps,
-including actual R80 parsing, and all scoped static gates pass. Final combined
-correction review and queue acceptance remain unproved. No queue runtime is
-published or installed. The full audit and reproducers are under
-`/workspace/evidence/merge-queue/audit/`.
+including actual R80 parsing, and all scoped static gates pass. The independent
+focused addendum passes clean `37f740d397ae95c106db14303e8e959d6929383b`: all 15
+tests and 58 steps pass, including the original red reproductions. No P0/P1
+remains in the combined queue/correction scope. Queue installation and live
+acceptance remain unproved. No queue runtime is published or installed. The full
+audit and reproducers are under `/workspace/evidence/merge-queue/audit/`.
 
 Two conservative liveness limitations are retained for review as P2 follow-ups:
 a definitely unsent admission can retain its non-expiring hold after a later
@@ -151,15 +161,33 @@ at-most-once marker pending owner reconciliation. Neither ambiguity nor elapsed
 time releases custody or refunds charges. Carried VPS acceptance remains pending
 under the existing release boundary; `sentinel-release` stays disabled.
 
-A separate owner canary packet is prepared; its bounded App-only runner is
-implemented with empty source grants and under separate independent review.
-Activation requires an accepted canary, exact historical direct witnesses and an
-installed queue-aware rollback target. No Sentinel ruleset or branch protection
-is authorized. The separate owner steps remain the Sentinel App's Merge queues
-permission, the queue-canary run and the ai.ubq.fi ruleset; a production ruleset
-before installed enqueue support is forbidden. Owner cleanup remains the stale
-`SENTINEL_MODEL_ID` variable and superseded ai.ubq.fi PRs #1057, #1060 and
-#1116.
+The bounded App-only canary runner is integrated with nine exact owned files
+from patch SHA-256
+`928d46b535a86f10c8e4185ec394b8b1b9bb2615a0167ae601b778a95cfca29b`. Its
+independent review and focused correction addendum pass with no P0/P1; both P2
+findings are corrected. Producer checks passed 29 tests and 75 steps;
+independent HTTP correction checks passed 8 tests and 60 steps. Source grants
+remain empty, and no canary effect or live permission change has occurred.
+Evidence is under `/workspace/evidence/merge-queue/canary-runner/` and
+`canary-audit/`.
+
+Activation remains gated by an accepted native canary, exact historical direct
+witnesses, expected production rule projection and an installed proof-capable
+fallback. Read-only install planning identified two implementation gaps: the
+lower-only selector was unwired, and old-runtime selection lacked an activated
+queue capability boundary. The isolated `queue-kill-switch` and
+`queue-runtime-capability` workers own those corrections; only the primary owns
+shared integration and this ledger. The proposed disabled-to-active production
+ruleset projection still requires native canary evidence. Stage the production
+ruleset disabled and install accepted proof-capable fallback/admission revisions
+before owner activation; never enable then rebuild pins. Prospective generation
+numbers are not authority. Detailed evidence is in
+`/workspace/evidence/merge-queue/install-plan.md`. No Sentinel ruleset or branch
+protection is authorized. The separate owner steps remain the Sentinel App's
+Merge queues permission, the queue-canary run and the ai.ubq.fi ruleset; a
+production ruleset before installed enqueue support is forbidden. Owner cleanup
+remains the stale `SENTINEL_MODEL_ID` variable and superseded ai.ubq.fi PRs
+#1057, #1060 and #1116.
 
 | Current boundary                                                       | Exact evidence and next action                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
