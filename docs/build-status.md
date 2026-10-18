@@ -40,7 +40,8 @@ delivery effects remain pending. Bootstrap health is not an autonomous issue
 delivery claim. L81's committed depth-1 tests passed 57 tests / 38 steps; merged
 input checks passed 32 tests / 38 steps plus static gates. Its exact native CI,
 39106152644, remains separately in progress. Dormant queue source is prepared
-for development-only publication; sentinel-supervisor stays exact L81.
+and published on development at `de496e6d3c71cb4794153e4876e51f1da2acf2df`; its
+native CI is pending and sentinel-supervisor stays exact L81.
 
 `sentinel-release` remains disabled. The pre-existing Sentinel ruleset 23197448
 protects only `sentinel-state/release`; it was not added or changed by this
@@ -145,12 +146,13 @@ tracked files and all accepted ancestry, plus two actual cross-composition tests
 combined queue, dormant transient-read and removal corrections, App-only canary
 runner, lower-only selector, import-cycle fix and exact runtime capability
 guards. All queue mode/proof defaults remain off/false; source canary grants,
-capability/migration pins and historical witness pins remain empty. This
-checkpoint authorizes development-only source publication after verified R81
-health; sentinel-supervisor stays exact L81 and no queue runtime is installed.
-Queue custody runs first, uses non-expiring holds and cannot fall through to the
-old direct verifier. Every changed state shape remains R80-readable; old-runtime
-execution after activation is separately refused by exact capability gates.
+capability/migration pins and historical witness pins remain empty. This source
+is published on development at `de496e6d3c71cb4794153e4876e51f1da2acf2df` after
+verified R81 health. Sentinel-supervisor stays exact L81 and no queue runtime is
+installed. Queue custody runs first, uses non-expiring holds and cannot fall
+through to the old direct verifier. Every changed state shape remains
+R80-readable; old-runtime execution after activation is separately refused by
+exact capability gates.
 
 Fresh independent audit passes `854532e3556c5fa94ecbee050dfa9563efa79bb7`, delta
 SHA-256 `d363e92abd5ab472521bbf02a67537d25086a4be2754af4fb4948061d7854a82`. It
@@ -225,9 +227,11 @@ planner/pass; no P0/P1 is found. The existing-head continuation is locally
 corrected at `bba1f4971547c1540f0ccb58e579ef4399159194`: incomplete newest-first
 listings cannot prove an unseen marker absent at or beyond the ten-minute
 creation-skew boundary; observed matching markers still settle existing work.
-All 23 affected tests / 60 steps and scoped static checks pass. Refresh once
-against the final published source, then fast-forward the existing branch for
-exact native CI, current-head review and normal SHA-pinned merge. Evidence:
+All 23 affected tests / 60 steps and scoped static checks pass. This
+continuation contains the final published development base and preserves the
+original PR head as an ancestor; only this ledger changed during that final
+refresh. The existing branch is ready for fast-forward publication, then exact
+native CI, current-head review and normal SHA-pinned merge. Evidence:
 `/workspace/evidence/gen81-pr160-reconciliation/` and
 `/workspace/evidence/pr160-continuation/root-acceptance.json`.
 
