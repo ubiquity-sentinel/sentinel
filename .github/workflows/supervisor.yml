@@ -45,6 +45,9 @@ jobs:
   maintenance:
     outputs:
       queueCustodyReady: ${{ steps.autonomy.outputs.queueCustodyReady }}
+      runtimeMigrationOnly: ${{ steps.autonomy.outputs.runtimeMigrationOnly }}
+      runtimeMigrationRevision: ${{ steps.autonomy.outputs.runtimeMigrationRevision }}
+      runtimeMigrationGeneration: ${{ steps.autonomy.outputs.runtimeMigrationGeneration }}
     # The scoped generation-68 verification settled healthy, so the maintenance
     # writer is restored to its protected-ref condition; it performs bounded
     # self-upkeep (retries and reviewed-head delivery) before prepare.
@@ -144,7 +147,7 @@ jobs:
 
   prepare:
     needs: maintenance
-    if: always() && needs.maintenance.result == 'success' && needs.maintenance.outputs.queueCustodyReady == 'true' && github.ref == 'refs/heads/sentinel-supervisor'
+    if: always() && needs.maintenance.result == 'success' && (needs.maintenance.outputs.queueCustodyReady == 'true' || needs.maintenance.outputs.runtimeMigrationOnly == 'true') && github.ref == 'refs/heads/sentinel-supervisor'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The one-shot owner installation reads the fixed runtime revision's
@@ -160,6 +163,8 @@ jobs:
       run: ${{ steps.prepare.outputs.run }}
       revision: ${{ steps.prepare.outputs.revision }}
       modelStartsEnabled: ${{ steps.prepare.outputs.modelStartsEnabled }}
+      executionPurpose: ${{ steps.prepare.outputs.executionPurpose }}
+      generation: ${{ steps.prepare.outputs.generation }}
     steps:
       - name: Checkout protected supervisor source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -561,7 +566,7 @@ jobs:
     # missing producers charged and unresolved. finalize still waits for every
     # cell and this consumer, so no producer is settled before its own job ends.
     needs: [maintenance, prepare, matrix_plan]
-    if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.maintenance.outputs.queueCustodyReady == 'true' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && (needs.prepare.outputs.modelStartsEnabled != 'true' || needs.matrix_plan.result == 'success') }}
+    if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && ((needs.maintenance.outputs.queueCustodyReady == 'true' && (needs.prepare.outputs.modelStartsEnabled != 'true' || needs.matrix_plan.result == 'success')) || (needs.maintenance.outputs.runtimeMigrationOnly == 'true' && needs.prepare.outputs.modelStartsEnabled == 'false' && needs.prepare.outputs.executionPurpose == 'bootstrap' && needs.prepare.outputs.revision == needs.maintenance.outputs.runtimeMigrationRevision && needs.prepare.outputs.generation == needs.maintenance.outputs.runtimeMigrationGeneration)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment:

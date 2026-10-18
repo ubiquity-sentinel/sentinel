@@ -76,7 +76,10 @@ native checkout, full harness, all checks and the 26-file receipt manifest.
 Evidence:
 `/workspace/evidence/merge-queue/native-ci-second-correction/publication/native-ci/root-acceptance.json`.
 Development now includes normally merged PR #160 at
-`9b7c3e5cec4d45c4e0985ab28bd524b4bb69237b`; its postmerge CI is pending.
+`9b7c3e5cec4d45c4e0985ab28bd524b4bb69237b`. Its postmerge CI 39121415774 failed
+one local Git-clone fixture setup with an object-copy ENOENT; 3,224 tests /
+1,305 steps passed. The same tree passed premerge CI. Root is diagnosing the
+fixture boundary before a corrected run; no retry or new publication is claimed.
 Sentinel-supervisor remains exact L81; no queue runtime is installed.
 
 Ordinary R81 run 39114941481 completed successfully with 21 jobs, including all
@@ -85,9 +88,15 @@ sixteen settled, startup-ready health gates at release state
 `02b8e5debb578a34970bd36ccb301ec7c2bef62b`. Log digest:
 `900e7a6328c4cf3109b60e6d6861a3799c50f22d087536ba96bf813bc1726a09`. Evidence:
 `/workspace/evidence/gen81-live/run39114941481/root-runtime-acceptance.json`. A
-later supervisor run is in progress; no later completed health is claimed.
-Native GitHub also verifies that existing ai.ubq.fi PR #1101 was normally merged
-by `ubiquity-sentinel[bot]`, yielding development
+later completed ordinary run, 39118222197, also passed all 11 jobs, including
+six matrix cells. Root verified all 42 manifest files, exact R81/L81 and saved
+terminal identity, and independently refetched the native repair log digest
+`a0b18b92a6696b3a646f9e8086d10e73155535ac3666ff4c9b2dc6347b26c9c1`. Evidence:
+`/workspace/evidence/gen81-live/latest-ordinary-refresh/root-runtime-acceptance.json`.
+The next ordinary run was active at observation; cancelled queued dispatches had
+no jobs. No new delivery attribution is inferred. Native GitHub also verifies
+that existing ai.ubq.fi PR #1101 was normally merged by
+`ubiquity-sentinel[bot]`, yielding development
 `984aa8a63183d60a15036321d2dc7aefd8e5d1b3`. This is native App merge evidence;
 it is not attributed to an exact R81 effect or accepted deployment.
 
@@ -420,10 +429,20 @@ defaults remain false/empty. Evidence is under
 `existing-pr-lifecycle-contract-proposal/principal-adapter-plan/implementation/`,
 `existing-pr-root-wiring/` and `existing-pr-self-dependencies/`. These are local
 source acceptances, not installed behavior. The root wiring lane imports the
-current9b7 development tree and retains all accepted tips. Actual parent/host,
-maintenance migration and producer readback wiring plus the principal-through-
-lifecycle effect boundary remain in progress. Adopted Sentinel PR merges stay an
-explicit owner gate; target PR-closing behavior is not widened.
+current9b7 development tree and retains all accepted tips. Further accepted
+tranches are parent verification3721d74b (41 tests / 69 steps), actual Actions
+self-dependency consumer07c70725 (including all 19 offline mint/post tests),
+maintenance migration8a9bc766 (49 tests / 70 steps), and original-PR lifecycle
+d680acd5 (186 tests / 246 steps). Root independently verified their frozen
+hashes, checks and preserved ancestry. The actual workflow migration predicates
+now pass 22 affected tests, including exact model-disabled bootstrap matching
+and ordinary/finalize controls. Source profiles, capabilities and future pins
+remain empty or false. Actual runtime queue composition and
+principal-through-lifecycle effect validation remain in progress; combined
+review and native acceptance are pending. Adopted Sentinel PR merges stay an
+explicit owner gate; target PR-closing behavior is not widened. Genuine
+conflicting adopted base refresh also refuses before a new model charge; its
+conflict producer is not yet supported.
 
 Root owns shared-contract acceptance, workflow/factory wiring, integration and
 publication. The lifecycle worker owns successor, refresh, effect and postmerge

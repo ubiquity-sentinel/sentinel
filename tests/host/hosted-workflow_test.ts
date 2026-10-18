@@ -579,6 +579,8 @@ Deno.test("hosted workflow: prepare saves the bootstrap intent and exact output 
     assert.deepEqual(rig.output, [
       "run=true",
       `revision=${rig.launcherSha}`,
+      "executionPurpose=bootstrap",
+      "generation=1",
       "modelStartsEnabled=false",
     ]);
 
@@ -755,6 +757,8 @@ Deno.test(
       assert.deepEqual(rig.output, [
         "run=true",
         `revision=${rig.launcherSha}`,
+        "executionPurpose=ordinary",
+        "generation=1",
         "modelStartsEnabled=true",
       ]);
       assert.equal(
@@ -868,6 +872,8 @@ Deno.test("hosted workflow: ordinary work starts on the next dispatch after sett
     assert.deepEqual(rig.output, [
       "run=true",
       `revision=${rig.launcherSha}`,
+      "executionPurpose=ordinary",
+      "generation=1",
       "modelStartsEnabled=true",
     ]);
 
@@ -973,7 +979,11 @@ Deno.test("hosted workflow: the shared cooldown gate blocks a new native request
     const result = await rig.run("prepare", RUN_ID);
     assert.equal(result.run, false, JSON.stringify(result));
     assert.equal(result.status, "pending");
-    assert.deepEqual(rig.output, ["run=false"]);
+    assert.deepEqual(rig.output, [
+      "run=false",
+      "executionPurpose=",
+      "generation=",
+    ]);
     assert.equal(
       rig.http.calls.length,
       0,
