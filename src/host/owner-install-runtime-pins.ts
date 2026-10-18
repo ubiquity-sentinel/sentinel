@@ -364,6 +364,18 @@ export const OWNER_DEVELOPMENT_INSTALL_GEN81_PRIOR_GENERATION =
 export const OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION =
   "da98f5f49c45b57cfa97a45fe647c36b1021f302" as GitSha;
 export const OWNER_DEVELOPMENT_INSTALL_GEN81_GENERATION = 81;
+/**
+ * Prepared review-identity successor of exact healthy R81/81. Its request
+ * schema changes no persisted state. Failure restores the retained R81/81
+ * proof once at generation 83; a restored pointer cannot retry this rung.
+ */
+export const OWNER_DEVELOPMENT_INSTALL_GEN82_PRIOR_REVISION =
+  OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION;
+export const OWNER_DEVELOPMENT_INSTALL_GEN82_PRIOR_GENERATION =
+  OWNER_DEVELOPMENT_INSTALL_GEN81_GENERATION;
+export const OWNER_DEVELOPMENT_INSTALL_GEN82_REVISION =
+  "9f7cdcc0e7d4206730a25c2e51cf216d93d41f29" as GitSha;
+export const OWNER_DEVELOPMENT_INSTALL_GEN82_GENERATION = 82;
 /** Monotonic rollback target the failed generation 45 candidate rolled to. */
 export const OWNER_DEVELOPMENT_INSTALL_ROLLBACK_TARGET_GENERATION =
   OWNER_DEVELOPMENT_INSTALL_ASSIGN_FIRST_GENERATION + 2;

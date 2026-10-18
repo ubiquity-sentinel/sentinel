@@ -599,9 +599,10 @@ Deno.test("CI first: generation 81 opens the hosted pre-review fix route; its fi
     true,
     "open in hosted generation-81 runs",
   );
-  // R81 alone opens hosted pre-review fixes; rollback R80 remains CI-first.
-  assert.deepEqual([...HOSTED_AUTONOMY_CI_FIRST_RUNTIMES], [R80, R81]);
-  assert.deepEqual([...HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES], [R81]);
+  // R81 and its schema-only successor keep fixes open; R80 stays CI-first.
+  const R82 = "9f7cdcc0e7d4206730a25c2e51cf216d93d41f29" as GitSha;
+  assert.deepEqual([...HOSTED_AUTONOMY_CI_FIRST_RUNTIMES], [R80, R81, R82]);
+  assert.deepEqual([...HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES], [R81, R82]);
   assert.equal(ciFirstFixRuntimeProven(installed(R81, 81)), true);
   assert.equal(ciFirstFixRuntimeProven(installed(R81, 80)), false);
   assert.equal(ciFirstFixRuntimeProven(installed(FIX_RUNTIME, 81)), false);

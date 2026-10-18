@@ -99,6 +99,11 @@ export const HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES:
       revision: "da98f5f49c45b57cfa97a45fe647c36b1021f302",
       activatedNotBefore: 1792299493000,
     },
+    // Source preparation bound: 2026-10-18T11:51:00Z, not live proof.
+    {
+      revision: "9f7cdcc0e7d4206730a25c2e51cf216d93d41f29",
+      activatedNotBefore: 1792324260000,
+    },
   ];
 
 /**

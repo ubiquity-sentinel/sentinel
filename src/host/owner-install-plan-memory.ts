@@ -28,6 +28,10 @@ import {
   OWNER_DEVELOPMENT_INSTALL_GEN81_PRIOR_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_GEN81_PRIOR_REVISION,
   OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_GEN82_GENERATION,
+  OWNER_DEVELOPMENT_INSTALL_GEN82_PRIOR_GENERATION,
+  OWNER_DEVELOPMENT_INSTALL_GEN82_PRIOR_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_GEN82_REVISION,
   OWNER_DEVELOPMENT_INSTALL_LEARNING_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_LEARNING_PRIOR_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_LEARNING_PRIOR_REVISION,
@@ -98,6 +102,52 @@ export function planOwnerInstallMemory(
   context: OwnerInstallPlanContextV1,
 ): OwnerDevelopmentInstallPlanV1 | undefined {
   const { runtime, revision, generation, healthy, failed } = context;
+  // A failed R81 keeps its existing R80-at82 rollback below.
+  if (
+    revision === OWNER_DEVELOPMENT_INSTALL_GEN82_PRIOR_REVISION &&
+    generation === OWNER_DEVELOPMENT_INSTALL_GEN82_PRIOR_GENERATION &&
+    healthy !== null && failed === null
+  ) {
+    return movePlan(
+      "install",
+      runtime,
+      OWNER_DEVELOPMENT_INSTALL_GEN82_REVISION,
+      OWNER_DEVELOPMENT_INSTALL_GEN82_GENERATION,
+      healthy,
+      "install the generation 82 review-identity runtime after its exact generation 81 healthy proof",
+    );
+  }
+
+  if (
+    revision === OWNER_DEVELOPMENT_INSTALL_GEN82_REVISION &&
+    generation === OWNER_DEVELOPMENT_INSTALL_GEN82_GENERATION
+  ) {
+    if (failed !== null) {
+      const prior = healthyProofFor(
+        runtime,
+        OWNER_DEVELOPMENT_INSTALL_GEN82_PRIOR_REVISION,
+        OWNER_DEVELOPMENT_INSTALL_GEN82_PRIOR_GENERATION,
+      );
+      if (prior === null) {
+        return waiting(
+          "the exact recorded generation 81 healthy proof for the generation 82 rollback is unavailable",
+        );
+      }
+      return movePlan(
+        "rollback",
+        runtime,
+        OWNER_DEVELOPMENT_INSTALL_GEN82_PRIOR_REVISION,
+        runtime.generation + 1,
+        prior,
+        "roll back the failed generation 82 runtime to its recorded proven predecessor",
+      );
+    }
+    if (healthy !== null) {
+      return noChange("the owner development installation is complete");
+    }
+    return waiting("the generation 82 healthy proof is not recorded");
+  }
+
   // A failed generation 80 retains the existing generation 80 rollback below.
   if (
     revision === OWNER_DEVELOPMENT_INSTALL_GEN81_PRIOR_REVISION &&

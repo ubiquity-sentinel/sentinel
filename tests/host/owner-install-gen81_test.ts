@@ -307,7 +307,7 @@ Deno.test("owner install gen81: connected R81 failure restores exact P80 once at
   }
 });
 
-Deno.test("owner install gen81: healthy R81 is complete", () =>
+Deno.test("owner install gen81: healthy R81 needs the exact successor native proof", () =>
   expectUnmoved(
     runtimeRecord({
       revision: R81,
@@ -315,8 +315,7 @@ Deno.test("owner install gen81: healthy R81 is complete", () =>
       healthyProof: healthyProof(R81, 81, 504),
       executionProof: healthyProof(R81, 81, 504),
     }),
-    "no_change",
-    "the owner development installation is complete",
+    "waiting",
   ));
 
 Deno.test("owner install gen81: restored P80 at82 never reinstalls R81", async (t) => {

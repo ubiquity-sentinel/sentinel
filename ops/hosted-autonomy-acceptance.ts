@@ -55,6 +55,8 @@ export const HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES: ReadonlySet<
   string
 > = new Set<string>([
   "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+  // Generation 82 review-identity runtime, prepared for guarded installation.
+  "9f7cdcc0e7d4206730a25c2e51cf216d93d41f29",
 ]);
 
 /** Denial of the B6a re-admission under a runtime that cannot correct it. */

@@ -21,6 +21,7 @@ import { buildChildEnvironment } from "../../src/host/hosted-runtime-child.ts";
 import {
   OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
   OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_GEN82_REVISION,
 } from "../../src/host/owner-install-runtime-pins.ts";
 import {
   LEGACY_REVIEW_CUTOFF_ENV,
@@ -101,6 +102,7 @@ Deno.test("legacy cutoff: the generation 80 install pin sets one instant for eve
     revisions: [
       OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
       OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+      OWNER_DEVELOPMENT_INSTALL_GEN82_REVISION,
     ],
   });
   // Every R80 activation bound of the launcher is that same instant.

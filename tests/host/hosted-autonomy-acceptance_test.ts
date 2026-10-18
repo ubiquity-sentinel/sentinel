@@ -392,6 +392,7 @@ Deno.test("B6 live: under a proven acceptance-correction runtime B6a returns to 
 Deno.test("B6: every allowlisted acceptance-correction runtime carries the runtime half", async () => {
   assert.deepEqual([...HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES], [
     "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+    "9f7cdcc0e7d4206730a25c2e51cf216d93d41f29",
   ]);
   const pinned = releaseAt({
     revision: "da98f5f49c45b57cfa97a45fe647c36b1021f302" as GitSha,
