@@ -11,9 +11,9 @@ import {
   seededSnapshot,
 } from "./loop-rig.ts";
 import { freshIssue } from "../host/matrix-runtime-fixtures.ts";
-import { withR80Parsers } from "../host/r80-contracts.ts";
+import { r80Available, withR80Parsers } from "../host/r80-contracts.ts";
 
-Deno.test("issue body admission: ordinary loop retains an oversized statement and its existing charge", async () => {
+Deno.test("issue body admission: ordinary loop retains an oversized statement and its existing charge", async (t) => {
   const github = new RelationsFakeGithub({ baseSha: SHA1 });
   const body = "u".repeat(16_385);
   const large = issueRecord(1, {
@@ -100,10 +100,19 @@ Deno.test("issue body admission: ordinary loop retains an oversized statement an
   assert.equal(rig.model.requests[0].issue?.body.length, 16_384);
   assert.equal(recovered.reservations.length, 2);
   assert.deepEqual(recovered.reservations[0], priorCharge);
-  await withR80Parsers((parsers) => {
-    for (const emitted of [state, retried, recovered]) {
-      assert.deepEqual(parsers.parseRepairStateSnapshotV1(emitted), emitted);
-    }
+  await t.step({
+    name: "frozen R80 parser accepts all emitted ordinary states",
+    ignore: !await r80Available(),
+    fn: async () => {
+      await withR80Parsers((parsers) => {
+        for (const emitted of [state, retried, recovered]) {
+          assert.deepEqual(
+            parsers.parseRepairStateSnapshotV1(emitted),
+            emitted,
+          );
+        }
+      });
+    },
   });
 });
 

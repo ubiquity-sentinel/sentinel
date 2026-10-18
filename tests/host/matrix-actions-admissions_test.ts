@@ -256,7 +256,8 @@ Deno.test("matrix actions: manifest byte budget leaves overflow issues unreserve
     memory.setRelease(release.value.snapshot);
     const rows = Array.from({ length: 128 }, (_, index) => ({
       ...issue(index + 1),
-      body: "X".repeat(17 * 1024),
+      // Each statement is admissible; their combined manifest exceeds its bound.
+      body: "X".repeat(16 * 1024),
     }));
     const source = r.github.get("ubiquity/sentinel")!;
     source.listOpenIssues = () => Promise.resolve(portOk(rows));
