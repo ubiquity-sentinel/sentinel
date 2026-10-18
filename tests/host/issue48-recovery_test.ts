@@ -17,6 +17,8 @@ Deno.test("workflow maintenance contract: rejects mixed recovery and ordinary ad
   );
   const skippedIf = "    if: $" + "{{ false }}";
   const protectedIf = "    if: github.ref == 'refs/heads/sentinel-supervisor'";
+  const custodyReady =
+    " && needs.maintenance.outputs.queueCustodyReady == 'true'";
   const ordinary = text
     .replace(skippedIf, protectedIf)
     .replace(
@@ -33,7 +35,10 @@ Deno.test("workflow maintenance contract: rejects mixed recovery and ordinary ad
     .replace(
       "needs.maintenance.result == 'success'",
       "needs.maintenance.result == 'skipped'",
-    );
+    )
+    // The historical recovery-only fixture suppresses maintenance entirely;
+    // ordinary admission must still require its successful custody output.
+    .replace(custodyReady, "");
   assert.equal(assertSupervisorMaintenanceContract(ordinary), "ordinary");
   assert.equal(assertSupervisorMaintenanceContract(recovery), "recovery");
   for (
@@ -49,6 +54,8 @@ Deno.test("workflow maintenance contract: rejects mixed recovery and ordinary ad
       ),
       recovery.replace("needs: maintenance\n", ""),
       ordinary.replace(" && needs.maintenance.result == 'success'", ""),
+      ordinary.replace(custodyReady, ""),
+      ordinary.replace(custodyReady, custodyReady.replace("'true'", "'false'")),
     ]
   ) assert.throws(() => assertSupervisorMaintenanceContract(malformed));
 });
@@ -1212,22 +1219,27 @@ Deno.test("issue48 recovery: supervisor workflow dependency and locking contract
     "the maintenance job mounts the protected environment",
   );
 
-  // Ordinary prepare requires successful maintenance. The pinned recovery-only
-  // controller may skip it only with the complete mutually exclusive contract.
-  // Repair still requires prepare success explicitly.
+  // Ordinary prepare requires successful maintenance and its custody proof.
+  // The pinned recovery-only controller may skip maintenance only with the
+  // complete mutually exclusive contract. Repair retains every prior gate.
   const prepare = text.slice(prepareAt, repairAt);
   assert.ok(prepare.includes("needs: maintenance"));
   assert.ok(
     prepare.includes(
       `if: always() && needs.maintenance.result == '${
         mode === "ordinary" ? "success" : "skipped"
-      }' && github.ref == 'refs/heads/sentinel-supervisor'`,
+      }'${
+        mode === "ordinary"
+          ? " && needs.maintenance.outputs.queueCustodyReady == 'true'"
+          : ""
+      } && github.ref == 'refs/heads/sentinel-supervisor'`,
     ),
   );
   const repair = text.slice(repairAt, finalizeAt);
+  assert.ok(repair.includes("needs: [maintenance, prepare, matrix_plan]"));
   assert.ok(
     repair.includes(
-      "if: ${{ !cancelled() && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && (needs.prepare.outputs.modelStartsEnabled != 'true' || needs.matrix_plan.result == 'success') }}",
+      "if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.maintenance.outputs.queueCustodyReady == 'true' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && (needs.prepare.outputs.modelStartsEnabled != 'true' || needs.matrix_plan.result == 'success') }}",
     ),
   );
   const finalize = text.slice(finalizeAt);

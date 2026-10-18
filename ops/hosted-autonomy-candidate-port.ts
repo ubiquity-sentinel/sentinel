@@ -17,6 +17,7 @@ import type { HttpTransportV1 } from "../src/github/http.ts";
 import type { ReviewServiceTransportV1 } from "../src/github/review-service.ts";
 import { composeGitHubHost } from "../src/host/github.ts";
 import { createCandidatePreserver } from "../src/host/actions-candidates-preserve.ts";
+import { createMaintenanceNativeQueue } from "../src/host/maintenance-native-queue.ts";
 import { createLocalCandidateLoader } from "../src/host/local-candidate.ts";
 import { githubGitAuthEnv } from "../src/host/local.ts";
 import { restorableCandidate } from "./hosted-autonomy-blocked-candidate.ts";
@@ -58,11 +59,16 @@ export function createHostedCandidateRecoveryPort(input: {
 }): GitHubPort {
   const refuse = () =>
     Promise.reject(new Error("C maintenance capability refused"));
+  const nativeQueue = createMaintenanceNativeQueue({
+    ...input,
+    repository: input.config.repository,
+  });
   const host = composeGitHubHost({
     repository: input.config.repository,
     clock: input.clock,
     http: input.http,
     cooldownGate: input.gate,
+    nativeQueue,
     auth: {
       authorizationHeader: () =>
         Promise.resolve(portOk(`Bearer ${input.token}`)),
@@ -124,6 +130,7 @@ export function createHostedCandidateRecoveryPort(input: {
   };
   return new Proxy({} as GitHubPort, {
     get: (_, key) => {
+      if (key === "nativeQueue") return nativeQueue;
       if (key === "readRef") {
         return async (ref: string) =>
           await readBound(ref) ? host.port.readRef(ref) : portError(

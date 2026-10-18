@@ -35,7 +35,11 @@ async function removalRig(reason: "CHECKS_FAILED" | "CHECKS_TIMEOUT") {
     entry: null as unknown,
     membership: {
       baseRefOid: rig.facts.binding.base,
-      author: { login: APP.login },
+      author: {
+        __typename: APP.type,
+        id: APP.nodeId,
+        login: "ubiquity-sentinel",
+      },
       mergedBy: null,
     } as Record<string, unknown>,
     total: undefined as number | undefined,

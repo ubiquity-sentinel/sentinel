@@ -18,7 +18,10 @@ import {
   type HostedRuntimeRecordV1,
 } from "../../src/contracts/hosted-supervisor.ts";
 import { buildChildEnvironment } from "../../src/host/hosted-runtime-child.ts";
-import { OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION } from "../../src/host/owner-install-runtime-pins.ts";
+import {
+  OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+} from "../../src/host/owner-install-runtime-pins.ts";
 import {
   LEGACY_REVIEW_CUTOFF_ENV,
   legacyReviewCutoffForExecution,
@@ -91,11 +94,14 @@ function custody(runtime: HostedRuntimeRecordV1) {
 
 Deno.test("legacy cutoff: the generation 80 install pin sets one instant for every CI-first revision", () => {
   // The launcher commit that pins generation 80's install sets the instant
-  // (its own) and names exactly the pinned R80.
+  // (its own); generation 81 appends R81 without changing that instant.
   const pinned = Date.parse("2026-10-17T17:05:00Z");
   assert.deepEqual(LEGACY_REVIEW_CUTOFF, {
     activatedNotBefore: pinned,
-    revisions: [OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION],
+    revisions: [
+      OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
+      OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+    ],
   });
   // Every R80 activation bound of the launcher is that same instant.
   for (
@@ -109,6 +115,13 @@ Deno.test("legacy cutoff: the generation 80 install pin sets one instant for eve
     );
     assert.equal(row?.activatedNotBefore, pinned);
   }
+  assert.equal(
+    legacyReviewCutoffForExecution({
+      revision: OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+      createdAt: 1792299493000,
+    }),
+    pinned,
+  );
   // The pinned R80 receives it once it runs at or after the instant; an R80
   // execution before it, R79 and any unpinned revision receive none.
   assert.equal(

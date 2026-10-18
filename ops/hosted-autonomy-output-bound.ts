@@ -235,7 +235,10 @@ export async function settleOutputBoundCells(
       ATTEMPT_DETAIL_INTERRUPTED_BOUND,
       { stage: "model", failureClass: "transient_infrastructure" },
     );
-    if (step.kind === "state_error") return false;
+    if (
+      step.kind === "state_error" || step.kind === "deferred" ||
+      (step.kind === "progress" && step.queueHold === true)
+    ) return false;
   }
   return true;
 }

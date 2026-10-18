@@ -59,6 +59,8 @@ export const HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES: ReadonlySet<string> =
     "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
     // Generation 80 (R80), pinned by its launcher commit.
     "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+    // Generation 81 (R81), pinned by its launcher commit.
+    "da98f5f49c45b57cfa97a45fe647c36b1021f302",
   ]);
 
 /**

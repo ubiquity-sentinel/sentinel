@@ -18,6 +18,7 @@
  * The retry table's conflict-marker guard is pinned in
  * `hosted-autonomy-conflict-guard_test.ts`.
  */
+import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import type {
   RepairStateWriter,
@@ -174,18 +175,20 @@ function surface(facts: Facts = {}): HostedAutonomyGitHubV1 {
   } as HostedAutonomyGitHubV1;
 }
 
-function runWith(
+async function runWith(
   state: TransitionState,
   facts: Facts = {},
   /** null runs the production allowlist. */
   runtimes: readonly HostedRefreshRearmRuntimeV1[] | null = PIN,
 ): Promise<HostedAutonomyResultV1> {
-  return runHostedAutonomy({
-    state: state as unknown as StateReadView & RepairStateWriter,
-    githubFor: () => surface(facts),
-    clock: { now: () => NOW },
-    ...(runtimes === null ? {} : { conflictResolutionRuntimes: runtimes }),
-  });
+  return runHostedAutonomy(
+    await withDarkQueueAuthority({
+      state: state as unknown as StateReadView & RepairStateWriter,
+      githubFor: () => surface(facts),
+      clock: { now: () => NOW },
+      ...(runtimes === null ? {} : { conflictResolutionRuntimes: runtimes }),
+    }),
+  );
 }
 
 Deno.test("conflict re-admission: the hosted route opens at generation 79 and no runtime that keeps it closed is allowlisted", () => {
@@ -598,12 +601,14 @@ Deno.test("conflict re-admission: one pass re-admits every verified open pull re
     snapshotOf(records, []),
     installedOpener(),
   );
-  const result = await runHostedAutonomy({
-    state: state as unknown as StateReadView & RepairStateWriter,
-    githubFor: () => manySurface(reads, moved.target.branch),
-    clock: { now: () => NOW },
-    conflictResolutionRuntimes: PIN,
-  });
+  const result = await runHostedAutonomy(
+    await withDarkQueueAuthority({
+      state: state as unknown as StateReadView & RepairStateWriter,
+      githubFor: () => manySurface(reads, moved.target.branch),
+      clock: { now: () => NOW },
+      conflictResolutionRuntimes: PIN,
+    }),
+  );
   assert.equal(result.status, "applied", JSON.stringify(result));
   const readmitted = result.actions.filter((action) =>
     action.endsWith(`:readmit:${CONFLICT_READMISSION_DETAIL}`)
@@ -635,12 +640,14 @@ Deno.test("conflict re-admission: moved-tip re-pends and re-admissions all proce
     ),
     installedOpener(),
   );
-  const result = await runHostedAutonomy({
-    state: state as unknown as StateReadView & RepairStateWriter,
-    githubFor: () => manySurface([]),
-    clock: { now: () => NOW },
-    conflictResolutionRuntimes: PIN,
-  });
+  const result = await runHostedAutonomy(
+    await withDarkQueueAuthority({
+      state: state as unknown as StateReadView & RepairStateWriter,
+      githubFor: () => manySurface([]),
+      clock: { now: () => NOW },
+      conflictResolutionRuntimes: PIN,
+    }),
+  );
   assert.equal(result.status, "applied", JSON.stringify(result));
   const repended = result.actions.filter((action) =>
     action.endsWith(":conflict_resolution:base-advance")

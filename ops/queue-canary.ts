@@ -24,6 +24,10 @@ import {
   type CanaryAction,
   type CanaryGrant,
 } from "./queue-canary-pins.ts";
+import {
+  type QueueRulesProjectionCollection,
+  validProjectionTargets,
+} from "./queue-rules-projection-read.ts";
 
 export interface CanaryHost {
   repository: string;
@@ -65,6 +69,12 @@ export interface CanaryPort {
   priorAccepted(grant: CanaryGrant): Promise<boolean>;
   enqueueCanary(grant: CanaryGrant): Promise<QueueAdmission>;
   dequeueCanary(grant: CanaryGrant, entry: QueueEntry): Promise<QueueDequeue>;
+  /** Optional readers fail closed; existing mutation-only ports gain no capability. */
+  collectProjection?(
+    host: CanaryHost,
+    identity: CanaryIdentity,
+    grant: CanaryGrant,
+  ): Promise<QueueRulesProjectionCollection>;
 }
 export interface CanaryEvidence {
   kind: "sentinel.queue-canary.v1";
@@ -79,6 +89,7 @@ export interface CanaryEvidence {
   after: CanaryObservation | null;
   outcome: QueueAdmission | QueueDequeue | null;
   productionDeliveryProof: false;
+  projection?: QueueRulesProjectionCollection;
 }
 const equal = (a: unknown, b: unknown) =>
   canonicalStringify(a) === canonicalStringify(b);
@@ -94,7 +105,9 @@ export async function canaryBindingDigest(grant: CanaryGrant): Promise<string> {
 }
 function validGrant(grant: CanaryGrant): boolean {
   const { pull, appActor, prior } = grant;
-  return equal(pull.repository, CANARY_REPOSITORY) &&
+  return (grant.projectionTargets === undefined ||
+    validProjectionTargets(grant.projectionTargets)) &&
+    equal(pull.repository, CANARY_REPOSITORY) &&
     pull.baseRef === CANARY_BRANCH && Number.isSafeInteger(pull.number) &&
     pull.number > 0 &&
     /^[A-Za-z0-9_-]{1,256}$/.test(pull.nodeId) &&
@@ -191,6 +204,24 @@ export async function runQueueCanary(input: {
     const grant = selected[0];
     if (!equal(evidence.identity.actor, grant.appActor)) {
       return await finish("actor_pin_mismatch");
+    }
+    if (grant.projectionTargets !== undefined) {
+      if (host.action !== "preflight" && host.action !== "observe") {
+        return await finish("projection_read_only");
+      }
+      if (!port.collectProjection) {
+        return await finish("projection_reader_unavailable");
+      }
+      evidence.projection = await port.collectProjection(
+        host,
+        evidence.identity,
+        grant,
+      );
+      if (evidence.projection.status !== "collected") {
+        return await finish("projection_unavailable");
+      }
+      evidence.status = "observed";
+      return await finish("projection_observation");
     }
     evidence.before = await port.observe(grant);
     if (host.action === "preflight" || host.action === "observe") {

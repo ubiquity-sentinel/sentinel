@@ -26,7 +26,11 @@ import {
   type ModelRouteV1,
 } from "./model-route.ts";
 import type { GitHubAuthProviderV1 } from "../github/auth.ts";
-import { GitHubQueueDeliveryClient } from "../github/client-queue-delivery.ts";
+import { GitHubPrAssociationsClient } from "../github/client-pr-associations.ts";
+import {
+  createExistingPrTakeover,
+  type ExistingPrTakeoverHostInput,
+} from "./existing-pr-takeover.ts";
 import { createQueueProvenanceReader } from "../github/queue-delivery-provenance.ts";
 import { createQueueDeliveryReader } from "../github/queue-delivery-reader.ts";
 import { createNativeQueueGuard } from "../github/native-queue-guard.ts";
@@ -167,6 +171,13 @@ export interface LocalGitHubInputV1 {
   selfMergeEnabled?: boolean;
   /** Trusted host selector can only lower the reviewed queue admission mode. */
   queueMode?: unknown;
+  /** Trusted source capabilities; missing grants refuse takeover effects. */
+  takeoverAuthority?: Pick<
+    ExistingPrTakeoverHostInput,
+    | "runtimeCapabilityAccepted"
+    | "contentsWriteAllowed"
+    | "verifyProducedCandidate"
+  >;
 }
 
 /** Compose the one authenticated GitHub port over the shared cooldown gate. */
@@ -221,7 +232,7 @@ export function composeLocalGitHub(
     authorizationHeader: () => Promise.resolve(portOk(`Bearer ${input.token}`)),
   };
   const gate = input.gate;
-  const client = new GitHubQueueDeliveryClient({
+  const client = new GitHubPrAssociationsClient({
     repository,
     apiBaseUrl: API_BASE_URL,
     http: input.http,
@@ -426,6 +437,29 @@ export function composeLocalGitHub(
     trustedPrAuthor: input.login,
     ensureCandidateObjects,
     ensureBaseObjects,
+  });
+  Object.defineProperty(host.port, "existingPrTakeover", {
+    enumerable: true,
+    value: createExistingPrTakeover({
+      repository,
+      baseBranch,
+      client,
+      port: host.port,
+      state: input.state,
+      clock: input.clock,
+      gate,
+      token: input.token,
+      sourcePath: input.sourcePath,
+      scratch: input.scratch,
+      trustedPath: input.trustedPath,
+      gitExecutable: trustedGitPath(input.trustedPath),
+      remoteUrl,
+      protectedPaths: selectTrustedTargetPolicyV1(
+        createLocalRepositoryConfig(),
+        repository,
+      ).protectedPaths,
+      ...input.takeoverAuthority,
+    }),
   });
   // The carried-review patch proof is composed on the SAME executor: the
   // refreshed candidate's exact durable objects are restored first (its

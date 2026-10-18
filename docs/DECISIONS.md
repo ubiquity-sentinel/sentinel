@@ -1,263 +1,1893 @@
 # Sentinel decisions
 
-These are current owner decisions for Sentinel. [AGENTS.md](../AGENTS.md) governs execution, [MASTER-PLAN.md](../MASTER-PLAN.md) defines scope and invariants, and [build-status.md](build-status.md) records current ownership and acceptance. Superseded choices, task-specific exceptions and consumed permissions remain in Git history; current task authorization governs continuation.
+These are current owner decisions for Sentinel. [AGENTS.md](../AGENTS.md)
+governs execution, [MASTER-PLAN.md](../MASTER-PLAN.md) defines scope and
+invariants, and [build-status.md](build-status.md) records current ownership and
+acceptance. Superseded choices, task-specific exceptions and consumed
+permissions remain in Git history; current task authorization governs
+continuation.
 
 ## Runtime and dispatch
 
 ### Integration ownership after Muse retirement
 
-On 2026-10-13, the owner stated that Muse is retired and directed the current coordinator to take over Sentinel. The sole primary integration owner is now the current GPT-6.1 Sol coordinator; independent milestone audits use a fresh GPT-6.1 Sol/max agent. This replaces the Astra-specific development ownership and auditor restriction, not runtime model/review policy, credential custody, CI, source/target identity or promotion ownership. Preserve existing dirty work and recorded lane identities; only the primary writes the authoritative build-status ledger. The owner reaffirmed the recorded takeover for this continuation on 2026-10-14; actual coordinator model/effort is reported separately from role ownership in the ledger and does not change the selected execution route.
+On 2026-10-13, the owner stated that Muse is retired and directed the current
+coordinator to take over Sentinel. The sole primary integration owner is now the
+current GPT-6.1 Sol coordinator; independent milestone audits use a fresh
+GPT-6.1 Sol/max agent. This replaces the Astra-specific development ownership
+and auditor restriction, not runtime model/review policy, credential custody,
+CI, source/target identity or promotion ownership. Preserve existing dirty work
+and recorded lane identities; only the primary writes the authoritative
+build-status ledger. The owner reaffirmed the recorded takeover for this
+continuation on 2026-10-14; actual coordinator model/effort is reported
+separately from role ownership in the ledger and does not change the selected
+execution route.
 
-Sentinel runs in GitHub Actions. Per the owner directive of 2026-10-07 (commit `5aac94da8`, "Make it fully autonomous"), `supervisor-dispatch.yml` runs every five minutes and dispatches the exact protected `sentinel-supervisor` ref; `observe.yml` and `repair.yml` stay manual-only, and `sentinel-release` remains disabled. The installed trusted-host CLI stays available for explicit dispatch: `sentinel status`, `sentinel run observe`, `sentinel run supervisor`, and `sentinel receipts <run-id>`. The supervisor uses the exact protected `sentinel-supervisor` ref and authenticated execution receipts; neither time nor list order selects a runtime.
+Sentinel runs in GitHub Actions. Per the owner directive of 2026-10-07 (commit
+`5aac94da8`, "Make it fully autonomous"), `supervisor-dispatch.yml` runs every
+five minutes and dispatches the exact protected `sentinel-supervisor` ref;
+`observe.yml` and `repair.yml` stay manual-only, and `sentinel-release` remains
+disabled. The installed trusted-host CLI stays available for explicit dispatch:
+`sentinel status`, `sentinel run observe`, `sentinel run supervisor`, and
+`sentinel receipts <run-id>`. The supervisor uses the exact protected
+`sentinel-supervisor` ref and authenticated execution receipts; neither time nor
+list order selects a runtime.
 
-On 2026-10-15, the owner removed the repeated approval rule for hosted execution and changed candidates. This supersedes the former attempt-specific confirmation requirement. Within an authorized Sentinel task, continue through protected publication, hosted end-to-end verification, runtime/supervisor dispatch and necessary corrected candidates, retries or reruns without repeated approval. Complete applicable local checks first, retain exact workflow/target/SHA and result evidence, and diagnose failures before retrying. Preserve integrity, custody, durable accounting, review/CI, target ownership and exclusive promotion authority. Independent credential, security and numeric retention approvals and explicit whole-repository local-sweep authorization remain required. The scheduled autonomous dispatcher and the runtime's own retries retain their existing runtime behavior.
+On 2026-10-15, the owner removed the repeated approval rule for hosted execution
+and changed candidates. This supersedes the former attempt-specific confirmation
+requirement. Within an authorized Sentinel task, continue through protected
+publication, hosted end-to-end verification, runtime/supervisor dispatch and
+necessary corrected candidates, retries or reruns without repeated approval.
+Complete applicable local checks first, retain exact workflow/target/SHA and
+result evidence, and diagnose failures before retrying. Preserve integrity,
+custody, durable accounting, review/CI, target ownership and exclusive promotion
+authority. Independent credential, security and numeric retention approvals and
+explicit whole-repository local-sweep authorization remain required. The
+scheduled autonomous dispatcher and the runtime's own retries retain their
+existing runtime behavior.
 
 ## Source-only stabilization installer preparation
 
-The 2026-10-14 takeover implementation prepares a separate fixed stabilization transition for immutable repaired runtime candidate `c8d2e87468399abb54cc9d9a749ae7b400835bbb` from the exact healthy generation-74 revision `4baeaf67d9677a317bc37831486c075b143fe68f`. The previous unconsumed candidate `2cf3a988313c12876faca8ff30fd85473073181c` failed native CI; the repaired candidate preserves the runtime bytes while fixing harness discovery and stale behavioral fixtures. Its two pending local cases and exact committed-tree size check now pass, with prior unchanged-input statics reused. Freeze runtime R before the later controller C is committed; C pins this exact R and still requires successful exact-R native CI and all installation gates. This source-preparation decision preserves installer identity, custody and readiness gates. Reuse the existing installer interfaces and native CI, ancestry, quiescence, prior-proof, expected-state and one-shot rollback gates; add no CLI, environment variable, credential, workflow input or persisted schema. Preserve all existing generation-75 retry constants and provenance as a distinct revision-bound transition. Changed live state must hold for reconciliation, not widen this transition. The primary records isolated module r28-stabilization-install in the stabilization handoff and integrates its source only after focused checks and an independent exact-delta audit. Protected publication and hosted verification follow authorized task continuation in AGENTS.md; release and the restricted bridge retain their disabled/setup_only boundaries.
+The 2026-10-14 takeover implementation prepares a separate fixed stabilization
+transition for immutable repaired runtime candidate
+`c8d2e87468399abb54cc9d9a749ae7b400835bbb` from the exact healthy generation-74
+revision `4baeaf67d9677a317bc37831486c075b143fe68f`. The previous unconsumed
+candidate `2cf3a988313c12876faca8ff30fd85473073181c` failed native CI; the
+repaired candidate preserves the runtime bytes while fixing harness discovery
+and stale behavioral fixtures. Its two pending local cases and exact
+committed-tree size check now pass, with prior unchanged-input statics reused.
+Freeze runtime R before the later controller C is committed; C pins this exact R
+and still requires successful exact-R native CI and all installation gates. This
+source-preparation decision preserves installer identity, custody and readiness
+gates. Reuse the existing installer interfaces and native CI, ancestry,
+quiescence, prior-proof, expected-state and one-shot rollback gates; add no CLI,
+environment variable, credential, workflow input or persisted schema. Preserve
+all existing generation-75 retry constants and provenance as a distinct
+revision-bound transition. Changed live state must hold for reconciliation, not
+widen this transition. The primary records isolated module
+r28-stabilization-install in the stabilization handoff and integrates its source
+only after focused checks and an independent exact-delta audit. Protected
+publication and hosted verification follow authorized task continuation in
+AGENTS.md; release and the restricted bridge retain their disabled/setup_only
+boundaries.
 
 ## Deterministic gateway source verification
 
-The integration owner selects the existing fixed ordinary code-CI workflow to execute the gateway aggregate command `sh scripts/verify.sh` on immutable integrated recovery source `bfa99c93e4dedd08c36d8dfd34e15b037baacac5`. The earlier exact9d83 source passed native literal verification after its local resource interruption; that baseline proof does not cover the changed recovery source. Repin only the six source SHA literals and three derived identity labels, preserving the workflow mechanism and requiring a fresh exact-source native result. The gateway lint-migration note limiting CI changes applies to that earlier task; this scoped stabilization decision leaves its existing CI and production behavior intact. Reuse the existing Sentinel m07-ci-loop lane and add only `.github/workflows/gateway-source-verify.yml`; its push trigger is restricted to the canonical coding branch and changes to that file. Use existing pinned public checkout/setup actions, exact source verification, a clean allowlisted child environment, public lock-pinned tooling, and no credentials, dotenv discovery, deployment, live E2E, model calls or runtime/supervisor invocation. The exact gateway coding branch may be normally published as an unaccepted source carrier before its gate runs; that publication grants no shipping, readiness, promotion or target authority. The native job must retain exact controller/source identity, runtime versions, unchanged tracked inputs and the actual literal command result. Keep runtime R and controller C immutable. Native source CI, the interrupted production-isolation receipt, source shipping, protected publication and original live/capture/rollback acceptance remain separate; hosted continuation follows the authorized task and its preserved authority boundaries.
+The integration owner selects the existing fixed ordinary code-CI workflow to
+execute the gateway aggregate command `sh scripts/verify.sh` on immutable
+integrated recovery source `bfa99c93e4dedd08c36d8dfd34e15b037baacac5`. The
+earlier exact9d83 source passed native literal verification after its local
+resource interruption; that baseline proof does not cover the changed recovery
+source. Repin only the six source SHA literals and three derived identity
+labels, preserving the workflow mechanism and requiring a fresh exact-source
+native result. The gateway lint-migration note limiting CI changes applies to
+that earlier task; this scoped stabilization decision leaves its existing CI and
+production behavior intact. Reuse the existing Sentinel m07-ci-loop lane and add
+only `.github/workflows/gateway-source-verify.yml`; its push trigger is
+restricted to the canonical coding branch and changes to that file. Use existing
+pinned public checkout/setup actions, exact source verification, a clean
+allowlisted child environment, public lock-pinned tooling, and no credentials,
+dotenv discovery, deployment, live E2E, model calls or runtime/supervisor
+invocation. The exact gateway coding branch may be normally published as an
+unaccepted source carrier before its gate runs; that publication grants no
+shipping, readiness, promotion or target authority. The native job must retain
+exact controller/source identity, runtime versions, unchanged tracked inputs and
+the actual literal command result. Keep runtime R and controller C immutable.
+Native source CI, the interrupted production-isolation receipt, source shipping,
+protected publication and original live/capture/rollback acceptance remain
+separate; hosted continuation follows the authorized task and its preserved
+authority boundaries.
 
 ## VPS settlement and telemetry recovery
 
-The 2026-10-14 actual local review of gateway9d83 produced six findings that were independently reproduced through real driver and terminal-log consumers. One paired r12 owner owns Gateway driver/journal/receipt semantics and their Sentinel wire/controller/trusted-verifier consumers; one disjoint gateway r18 owner owns terminal admission logging and metrics. Existing VPS sample fields and phase/action literals stay fixed. The accepted m08 verifier files `src/host/vps-release.ts` and `tests/host/vps-release-host_test.ts` transfer only for this correction to r12 after current clean-tip/ancestry/holder reconciliation; no other m08 scope or live authority transfers.
+The 2026-10-14 actual local review of gateway9d83 produced six findings that
+were independently reproduced through real driver and terminal-log consumers.
+One paired r12 owner owns Gateway driver/journal/receipt semantics and their
+Sentinel wire/controller/trusted-verifier consumers; one disjoint gateway r18
+owner owns terminal admission logging and metrics. Existing VPS sample fields
+and phase/action literals stay fixed. The accepted m08 verifier files
+`src/host/vps-release.ts` and `tests/host/vps-release-host_test.ts` transfer
+only for this correction to r12 after current clean-tip/ancestry/holder
+reconciliation; no other m08 scope or live authority transfers.
 
-Prepared failed settlement is a narrow no-promotion path: require the CAS-bound prepared sequence1 receipt with null intent, health, restoration, settlement and error, and trusted committed failed state carrying the exact same driver and a fail intent. The derived sequence2 failed receipt keeps all identity fields, retains null driver intent, and carries the verified failed settlement and existing acceptance_insufficient error. Both parsers must accept only this narrow null-intent terminal form; journal rules must not permit stripping an existing intent.
+Prepared failed settlement is a narrow no-promotion path: require the CAS-bound
+prepared sequence1 receipt with null intent, health, restoration, settlement and
+error, and trusted committed failed state carrying the exact same driver and a
+fail intent. The derived sequence2 failed receipt keeps all identity fields,
+retains null driver intent, and carries the verified failed settlement and
+existing acceptance_insufficient error. Both parsers must accept only this
+narrow null-intent terminal form; journal rules must not permit stripping an
+existing intent.
 
-Terminal cleanup retries retain exact current CAS, operation/request identity, terminal phase/disposition and the original stored settlement tuple. Authenticate that tuple against its original release-state commit, directly when current or through existing readReleaseAt bound to a freshly fixed head with proven ancestry. Reconstruct only the known terminal patch from the authenticated predecessor, including sequence increment and bounded observed timestamp, then require exact equality of every remaining identity, intent, pin and native-proof field. Missing or changed evidence keeps the pin. After verification, retry only the existing idempotent pin removal and return the unchanged terminal receipt; do not rewrite its journal, restart, select a release or invent new settlement state. Controller reconciliation must retry observed terminals with their original tuple and continue to later work after success rather than starving requests.
+Terminal cleanup retries retain exact current CAS, operation/request identity,
+terminal phase/disposition and the original stored settlement tuple.
+Authenticate that tuple against its original release-state commit, directly when
+current or through existing readReleaseAt bound to a freshly fixed head with
+proven ancestry. Reconstruct only the known terminal patch from the
+authenticated predecessor, including sequence increment and bounded observed
+timestamp, then require exact equality of every remaining identity, intent, pin
+and native-proof field. Missing or changed evidence keeps the pin. After
+verification, retry only the existing idempotent pin removal and return the
+unchanged terminal receipt; do not rewrite its journal, restart, select a
+release or invent new settlement state. Controller reconciliation must retry
+observed terminals with their original tuple and continue to later work after
+success rather than starving requests.
 
-The same driver owner adds bounded exact loopback listener readiness after candidate and prior restarts, using existing deployment limits, and resumes an outstanding rollback restart independently of selector equality. Preserve strict public proof, unrelated-selector refusal, CAS, daemon-reload-refusal zero-restart behavior and nondestructive post-ingress retries. No model receives service, credential or state authority.
+The same driver owner adds bounded exact loopback listener readiness after
+candidate and prior restarts, using existing deployment limits, and resumes an
+outstanding rollback restart independently of selector equality. Preserve strict
+public proof, unrelated-selector refusal, CAS, daemon-reload-refusal
+zero-restart behavior and nondestructive post-ingress retries. No model receives
+service, credential or state authority.
 
-Terminal logging gains the internal field admission_stage with values pre_admission or accepted, propagated at the actual acceptance boundary. The rejection wrapper must receive an explicit stage because it is called both before and after acceptance. Metrics may exclude only positively tagged pre-admission orphans; unknown/accepted orphans, invalid stage values and contradictions remain incomplete. Legacy terminal rows with matching acceptance remain valid. Journal-loss detection must match actual loss notices, not ordinary application rate-limit field names. This adds no OpenAI response field, endpoint, environment variable or VPS sample-schema field.
+Terminal logging gains the internal field admission_stage with values
+pre_admission or accepted, propagated at the actual acceptance boundary. The
+rejection wrapper must receive an explicit stage because it is called both
+before and after acceptance. Metrics may exclude only positively tagged
+pre-admission orphans; unknown/accepted orphans, invalid stage values and
+contradictions remain incomplete. Legacy terminal rows with matching acceptance
+remain valid. Journal-loss detection must match actual loss notices, not
+ordinary application rate-limit field names. This adds no OpenAI response field,
+endpoint, environment variable or VPS sample-schema field.
 
-Previously proved R and C remain immutable and uninstalled. Changed Sentinel consumer bytes require a new frozen runtime candidate and later fixed installer pin with fresh applicable local/native proof before protected publication; the old source-green controller is not final installation readiness for these corrections. Preserve the same healthy74 predecessor, monotonic rollback, custody and exact installation evidence under authorized task continuation.
+Previously proved R and C remain immutable and uninstalled. Changed Sentinel
+consumer bytes require a new frozen runtime candidate and later fixed installer
+pin with fresh applicable local/native proof before protected publication; the
+old source-green controller is not final installation readiness for these
+corrections. Preserve the same healthy74 predecessor, monotonic rollback,
+custody and exact installation evidence under authorized task continuation.
 
 ### Deferred telemetry cohorts
 
-The fixed one-interval terminal lookahead cannot cover supported healthy requests: buffered inference can last 30 minutes and progressing streams have no finite total-duration cap. The local correction keeps the existing VPS sample wire fields and authentic acceptance-event timestamps, observes exact health every 30 seconds, and joins later terminals through bounded journal slices. Unresolved cohorts remain collecting and never count as complete; missing or contradictory evidence remains unavailable, and a real observation gap still restarts coverage. Acceptance still requires the complete baseline, 60 consecutive complete cohorts, unchanged denominators, thresholds and inference proof.
+The fixed one-interval terminal lookahead cannot cover supported healthy
+requests: buffered inference can last 30 minutes and progressing streams have no
+finite total-duration cap. The local correction keeps the existing VPS sample
+wire fields and authentic acceptance-event timestamps, observes exact health
+every 30 seconds, and joins later terminals through bounded journal slices.
+Unresolved cohorts remain collecting and never count as complete; missing or
+contradictory evidence remains unavailable, and a real observation gap still
+restarts coverage. Acceptance still requires the complete baseline, 60
+consecutive complete cohorts, unchanged denominators, thresholds and inference
+proof.
 
-One paired owner will implement the private query/progress/checkpoint contract after the r12 bridge correction integrates. Reuse RetentionPolicyV1 and existing scoped encryption-key capabilities, with no new environment variable, CLI option or live default. Queries share a bounded per-tick budget; private encrypted join metadata uses authenticated operation/revision/policy binding and CAS, contains no prompt, response body or raw log message, and cannot discard unresolved requests to fit bounds. Absent policy/capabilities, expiry, corruption and overflow remain unavailable. The detailed implementation contract is frozen at /tmp/sentinel-resume-20261014/gateway/observation-window-check/supported-lifetimes/implementation-contract.md, SHA-256 37b8923df3ca7d9b0b3f8af7474599fe3077ebadc6fca8a7b415e51fabbcbb9d; it is implementation guidance, not a second task ledger or activation authority.
+One paired owner will implement the private query/progress/checkpoint contract
+after the r12 bridge correction integrates. Reuse RetentionPolicyV1 and existing
+scoped encryption-key capabilities, with no new environment variable, CLI option
+or live default. Queries share a bounded per-tick budget; private encrypted join
+metadata uses authenticated operation/revision/policy binding and CAS, contains
+no prompt, response body or raw log message, and cannot discard unresolved
+requests to fit bounds. Absent policy/capabilities, expiry, corruption and
+overflow remain unavailable. The detailed implementation contract is frozen at
+/tmp/sentinel-resume-20261014/gateway/observation-window-check/supported-lifetimes/implementation-contract.md,
+SHA-256 37b8923df3ca7d9b0b3f8af7474599fe3077ebadc6fca8a7b415e51fabbcbb9d; it is
+implementation guidance, not a second task ledger or activation authority.
 
-Local tests may inject explicit policies. The proposed live telemetry-artifact bounds of 48 hours and 64 MiB per operation are unapproved and uninstalled; they do not change journald retention or request timeouts. Activation requires the owner's numeric policy approval and existing scoped key/source proof under the activation checklist. Complete source and local checks before requesting that numeric policy approval.
+Local tests may inject explicit policies. The proposed live telemetry-artifact
+bounds of 48 hours and 64 MiB per operation are unapproved and uninstalled; they
+do not change journald retention or request timeouts. Activation requires the
+owner's numeric policy approval and existing scoped key/source proof under the
+activation checklist. Complete source and local checks before requesting that
+numeric policy approval.
 
-Bridge adoption (sentinel#150, generation 81). ubiquity/ai.ubq.fi#1027 (merged at e50c298b) shipped that contract as a new bridge-facing `VpsJournalMetrics` interface. The bridge selects the interface from the owner-pinned, hash-verified `ops/vps-release-metrics.ts` itself (`vpsMetricsInterface`, `src/release/vps-metrics.ts`): the window shape (5-argument constructor, `sample` only, generic `run(program, args, cwd)`) of the currently pinned driver ai.ubq.fi 21e4a2a9 composes exactly as before and the controller keeps its old per-slot rules; the joined shape (6-argument constructor, `beginTick`/`progress`, exported `runVpsJournalCommand`) is composed with its five options (owner `telemetry.retention` and `telemetry.cipher`, a `context` read from committed release state that binds the unique monitoring operation and re-reads a saved checkpoint at its own state revision, the pinned tree's `createVpsJoinFileStorage`, and the run deadline), the bounded `(args, limits, cwd)` journal runner, and a controller that begins one tick per monitoring run before sampling, samples only exact 30 s slots, waits on a collecting slot instead of treating it as a gap, and holds acceptance while a baseline slot is collecting. Any other shape, or a joined driver without owner telemetry custody, is unavailable. So the change activates exactly with a driver re-pin and needs no coordinated Sentinel release. The loader refuses, before evaluating any module, a driver, metrics or join-storage graph that names a `bun:` module (`assertDenoLoadableVpsGraph`). At e50c298b, and at ai.ubq.fi `development` as of 2026-10-17, `ops/vps-release-driver.ts` and `ops/vps-metrics-storage.ts` both reach `ops/deploy-lock.ts` (`bun:ffi`), and the driver's `runVpsCommand` uses `Bun.spawn`. The Deno bridge therefore cannot run any driver past e50c298b until the driver offers a Deno-loadable deploy lock and command runner. Such a pin is refused with `trusted VPS driver needs a host that can load Bun-only modules`, as before but now named. `tests/host/vps-release-driver-interface_test.ts` runs the exact upstream metrics bytes of both revisions (vendored under `tests/fixtures/vps/ai.ubq.fi/`, each checked against its Git blob id) through the real loader and controller, so an interface mismatch fails CI. No state field, stdout code or bridge result shape changes; `sentinel-release` stays disabled.
+Bridge adoption (sentinel#150, generation 81). ubiquity/ai.ubq.fi#1027 (merged
+at e50c298b) shipped that contract as a new bridge-facing `VpsJournalMetrics`
+interface. The bridge selects the interface from the owner-pinned, hash-verified
+`ops/vps-release-metrics.ts` itself (`vpsMetricsInterface`,
+`src/release/vps-metrics.ts`): the window shape (5-argument constructor,
+`sample` only, generic `run(program, args, cwd)`) of the currently pinned driver
+ai.ubq.fi 21e4a2a9 composes exactly as before and the controller keeps its old
+per-slot rules; the joined shape (6-argument constructor,
+`beginTick`/`progress`, exported `runVpsJournalCommand`) is composed with its
+five options (owner `telemetry.retention` and `telemetry.cipher`, a `context`
+read from committed release state that binds the unique monitoring operation and
+re-reads a saved checkpoint at its own state revision, the pinned tree's
+`createVpsJoinFileStorage`, and the run deadline), the bounded
+`(args, limits, cwd)` journal runner, and a controller that begins one tick per
+monitoring run before sampling, samples only exact 30 s slots, waits on a
+collecting slot instead of treating it as a gap, and holds acceptance while a
+baseline slot is collecting. Any other shape, or a joined driver without owner
+telemetry custody, is unavailable. So the change activates exactly with a driver
+re-pin and needs no coordinated Sentinel release. The loader refuses, before
+evaluating any module, a driver, metrics or join-storage graph that names a
+`bun:` module (`assertDenoLoadableVpsGraph`). At e50c298b, and at ai.ubq.fi
+`development` as of 2026-10-17, `ops/vps-release-driver.ts` and
+`ops/vps-metrics-storage.ts` both reach `ops/deploy-lock.ts` (`bun:ffi`), and
+the driver's `runVpsCommand` uses `Bun.spawn`. The Deno bridge therefore cannot
+run any driver past e50c298b until the driver offers a Deno-loadable deploy lock
+and command runner. Such a pin is refused with
+`trusted VPS driver needs a host that can load Bun-only modules`, as before but
+now named. `tests/host/vps-release-driver-interface_test.ts` runs the exact
+upstream metrics bytes of both revisions (vendored under
+`tests/fixtures/vps/ai.ubq.fi/`, each checked against its Git blob id) through
+the real loader and controller, so an interface mismatch fails CI. No state
+field, stdout code or bridge result shape changes; `sentinel-release` stays
+disabled.
 
 ## Concurrent issue processing
 
-Use isolated concurrent issue workers across configured targets, one trusted state/integration coordinator and exclusive serialized merge/promotion ownership. Artificial hourly/weekly model-start, unfinished-PR, concurrent-review, review-drain and ordinary hourly-delay caps are lifted. GitHub/provider capacity and configured session/deadline safeguards still apply.
+Use isolated concurrent issue workers across configured targets, one trusted
+state/integration coordinator and exclusive serialized merge/promotion
+ownership. Artificial hourly/weekly model-start, unfinished-PR,
+concurrent-review, review-drain and ordinary hourly-delay caps are lifted.
+GitHub/provider capacity and configured session/deadline safeguards still apply.
 
-The trusted start-limit policy is `liveStartLimits: { perHour: null, perSevenDays: null }`; a wholly null or invalid policy does not enable inference. Preserve unique task/admission identity, durable reservations and ambiguous/submitted history, source freshness, exact-head semantic review/CI and credential/state separation. No manual quota or state rewriting is authorized.
+The trusted start-limit policy is
+`liveStartLimits: { perHour: null, perSevenDays: null }`; a wholly null or
+invalid policy does not enable inference. Preserve unique task/admission
+identity, durable reservations and ambiguous/submitted history, source
+freshness, exact-head semantic review/CI and credential/state separation. No
+manual quota or state rewriting is authorized.
 
-Matrix planning reserves the existing five-minute operation margin for native job handoff. Stop reading further candidates when a full configured session and completion margin no longer fit. Preserve the shared execution start/deadline and cell-side refusal; planner throughput is not permission to shorten safeguards.
+Matrix planning reserves the existing five-minute operation margin for native
+job handoff. Stop reading further candidates when a full configured session and
+completion margin no longer fit. Preserve the shared execution start/deadline
+and cell-side refusal; planner throughput is not permission to shorten
+safeguards.
 
 ## Runtime model policy and trusted route configuration
 
-Preserve the runtime implementation policy `gpt-5.6-luna` with max reasoning. Local coding-agent routing or a task-scoped worker model does not change production routing.
+Owner decision 2026-10-18 supersedes the earlier runtime model selections below:
+use `gpt-reserve` as the runtime implementation primary and `gpt-6-luna` for the
+existing HTTP 429 failover, both with max reasoning. Set the existing trusted
+`SENTINEL_IMPLEMENTATION_MODEL_ID` repository override to `gpt-reserve`; retain
+`SENTINEL_MODEL_FAILOVER_ID`'s existing `gpt-6-luna` default, the same endpoint
+and credentials, execution deadlines and durable admission/accounting. Preserve
+the supported route interfaces below. Local coding-agent routing or a
+task-scoped worker model does not change production routing, and this decision
+alone does not prove the live route.
 
-The trusted route configuration in [src/host/model-route.ts](../src/host/model-route.ts) also supports the gateway alias `gpt-reserve`, explicit `SENTINEL_MODEL_BASE_URL`/`SENTINEL_MODEL_ID` configuration and the previously owner-authorized DeepSeek-direct route selected by `SENTINEL_MODEL_FALLBACK=deepseek` with the existing scoped key. Those interfaces are retained; this consolidation neither selects a route nor asserts which route is live. Reconcile the approved policy and actual installed configuration before a future route change. Invalid/incomplete configuration refuses, and receipts bind the submitted model/provider to actual thread/turn/routing evidence. Max reasoning remains required.
+The trusted route configuration in
+[src/host/model-route.ts](../src/host/model-route.ts) also supports the gateway
+alias `gpt-reserve`, explicit `SENTINEL_MODEL_BASE_URL`/`SENTINEL_MODEL_ID`
+configuration and the previously owner-authorized DeepSeek-direct route selected
+by `SENTINEL_MODEL_FALLBACK=deepseek` with the existing scoped key. Those
+interfaces are retained; this consolidation neither selects a route nor asserts
+which route is live. Reconcile the approved policy and actual installed
+configuration before a future route change. Invalid/incomplete configuration
+refuses, and receipts bind the submitted model/provider to actual
+thread/turn/routing evidence. Max reasoning remains required.
 
-On 2026-10-17 the owner chose `gpt-6.1-sol` on the ai.ubq.fi gateway as the implementation model, once generation 80 had six consecutive clean supervisor runs. The supervisor workflow binds `SENTINEL_MODEL_ID` to `vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol'` in the plan, cell and repair jobs alike, so a nonempty `SENTINEL_IMPLEMENTATION_MODEL_ID` repository variable overrides it. The older `SENTINEL_MODEL_ID` repository variable, which held `gpt-reserve`, is no longer read and can be deleted. Reasoning stays `max`, the 429 failover stays `gpt-6-luna` and reviews stay on `codex-auto-review`.
+On 2026-10-17 the owner chose `gpt-6.1-sol` on the ai.ubq.fi gateway as the
+implementation model, once generation 80 had six consecutive clean supervisor
+runs. The supervisor workflow binds `SENTINEL_MODEL_ID` to
+`vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol'` in the plan, cell and
+repair jobs alike, so a nonempty `SENTINEL_IMPLEMENTATION_MODEL_ID` repository
+variable overrides it. The older `SENTINEL_MODEL_ID` repository variable, which
+held `gpt-reserve`, is no longer read and can be deleted. Reasoning stays `max`,
+the 429 failover stays `gpt-6-luna` and reviews stay on `codex-auto-review`.
 
 ## Review and development delivery
 
-Development changes require no development PR or Codex review: make the scoped change, immediately run the applicable local checks and deliver directly. Autonomous runtime target repairs retain their PR, completed current-head review, CI and merge gates. Review scope excludes changes limited to tests, fixtures, boot scripts, development tooling, documentation or other non-runtime files.
+Development changes require no development PR or Codex review: make the scoped
+change, immediately run the applicable local checks and deliver directly.
+Autonomous runtime target repairs retain their PR, completed current-head
+review, CI and merge gates. Review scope excludes changes limited to tests,
+fixtures, boot scripts, development tooling, documentation or other non-runtime
+files.
 
-A qualified `already_satisfied_at_base` review permits a distinct guarded terminal-satisfaction path, not fulfilled acceptance, a new repair, merge authorization or a release request. Persist the exact-bound closure intent before effects; preserve the original verdict, candidate, accounting and provenance. The trusted controller closes only its own exact unmerged PR and the digest-bound source issue, reconciles ambiguous effects and retries partial closure without repeating a confirmed PR close. Missing native review, task, head/base, CI, ownership or closure-capability evidence cannot authorize completion. Ordinary fulfilled delivery retains its existing merge and release gates.
+A qualified `already_satisfied_at_base` review permits a distinct guarded
+terminal-satisfaction path, not fulfilled acceptance, a new repair, merge
+authorization or a release request. Persist the exact-bound closure intent
+before effects; preserve the original verdict, candidate, accounting and
+provenance. The trusted controller closes only its own exact unmerged PR and the
+digest-bound source issue, reconciles ambiguous effects and retries partial
+closure without repeating a confirmed PR close. Missing native review, task,
+head/base, CI, ownership or closure-capability evidence cannot authorize
+completion. Ordinary fulfilled delivery retains its existing merge and release
+gates.
 
-GitHub PR closure has no atomic expected-head merge-style CAS. The terminal path relies on trusted serialized intent, an immediate identity read and response/readback identity checks; it must not claim server-side atomicity. Already-blocked historical records do not become eligible merely because this forward path is installed; they require a separately verified native recovery transition, not a manual state rewrite.
+GitHub PR closure has no atomic expected-head merge-style CAS. The terminal path
+relies on trusted serialized intent, an immediate identity read and
+response/readback identity checks; it must not claim server-side atomicity.
+Already-blocked historical records do not become eligible merely because this
+forward path is installed; they require a separately verified native recovery
+transition, not a manual state rewrite.
 
-Never post `@codex review` or otherwise invoke the hosted Codex GitHub app. Runtime target PRs use only the internal structured reviewer through gateway `codex-auto-review`. Silence, a reaction or absence of comments does not establish a completed review. No unresolved P0/P1 may pass the gate; changed candidate bytes need matching evidence.
+Never post `@codex review` or otherwise invoke the hosted Codex GitHub app.
+Runtime target PRs use only the internal structured reviewer through gateway
+`codex-auto-review`. Silence, a reaction or absence of comments does not
+establish a completed review. No unresolved P0/P1 may pass the gate; changed
+candidate bytes need matching evidence.
 
-Review rounds are capped at three per task, hard, everywhere (owner decision 2026-10-16, after ai.ubq.fi issue 684 / PR 1059 reached 44 rounds). A task's spent rounds are the larger of its `review_request` admissions in the durable ledger (any head, pull request or generation; ambiguous and in-flight admissions count, a proven `confirmed_not_submitted` refund does not) and its counter less those refunds. With no round left, no review is requested and nothing is refreshed, corrected, published or re-admitted for a further review: the runtime parks the record with an `other` blocker under the fixed prefix `review round ceiling reached: ` (no completed review of the current head, unresolved P0/P1, no task acceptance, a base moved after the last review, or a reviewed head awaiting delivery), keeping its pull request, head, receipts and charges. A park is never handed back for review. Only the REVIEWED and BASE_MOVED parks, matched by exact message, may merge, and only through the spent-round delivery rule, which itself requires the latest completed review of the exact head and base to leave no unresolved P0/P1 and the head's required CI to be green; a BASE_MOVED park merges only through its moved-base rule. The spent-round rule admits exactly those two parks (`isDeliverableReviewRoundCeilingPark`) on every repository, the Gateway included; while the moved-base rule ships disabled a BASE_MOVED park is `base_moved` and, like every undeliverable park, stays idle and spends nothing. The one-time legacy exception covers ai.ubq.fi records whose rounds were spent under the old review-before-CI order and whose CI is red: an issue record parked `CI checks failed…` with at least three rounds spent. At the decision-time state (sequence 36388) that class is exactly the owner's twelve (595, 597, 605, 610, 618, 668, 672, 673, 680, 694, 698 and 879); generation 79 keeps parking records into it while it reviews before CI (nine more by sequence 37449: 137, 575, 602, 634, 638, 678, 679, 693 and 754; seven more by sequence 38912, 2026-10-17T09:07Z: 583, 615, 617, 629, 633, 650 and 1128). Membership is a rule, not a table (round-1 recheck P2 [1]; `legacyReviewRoundPin` in `src/repair/review-round-cap.ts`), evaluated against ONE cutoff C no later than the FIRST CI-first runtime's activation. C is pinned once (`LEGACY_REVIEW_CUTOFF.activatedNotBefore`: the instant of the launcher commit that pins generation 80's install, set by that same commit, null until then) and never moves: every later CI-first runtime is appended to `LEGACY_REVIEW_CUTOFF.revisions` by the commit that pins its install and reuses generation 80's C, never its own instant (round-2 recheck P2: with one cutoff row per revision, the next CI-first runtime pinned at its own instant turned records new under generation 80 into legacy ones and gave them a fourth round). C is handed only to runs of a pinned CI-first revision, and only while it is no later than every recorded execution of ANY pinned revision (the current run and every execution release custody still records: hosted release proofs and the runtime's intent and retained proofs, as `refreshFixActivation` reads them), so a C moved past an earlier CI-first activation that custody still shows is refused for every revision and nothing is legacy. The launcher hands C to the runtime through one child environment key (`SENTINEL_LEGACY_REVIEW_CUTOFF`, `src/host/legacy-review-cutoff-env.ts`, checked against the release custody the launcher read the execution from), which the runtime reads into its existing cycle dependencies: no state field is added and R79 never sees it. A record whose first review admission is after C is legacy under no CI-first runtime (`tests/host/legacy-review-cutoff_test.ts`). An ai.ubq.fi issue record is legacy when at least one of its counted review admissions was created before C and its pin, its spent rounds less its counted review admissions created at or after C, reaches three. Its one final round is open while no review was admitted for it at or after C (only a CI fix may be admitted on that alone) and armed for a review only once a CI fix (a counted `retry` admission) was charged at or after C, so the final review is always of a CI-fixed head; a member whose head is green, or whose latest review left an unresolved P0/P1, gets no further review. A record with no review admission before C is never legacy, so a record new under generation 80 can never get a fourth round, whatever its counter; no cutoff (none pinned, a malformed value, another revision, R79) means no record is legacy. The rule covers the records in flight at the install, which no install-time table could (live 645, 646, 657, 663 and 1140 were in review on red heads under R79 at sequence 39670; at fresh state 07023736b, sequence 40040, all five are parked `CI checks failed: …` with pins 6, 6, 6, 5 and 3 and an open final round). The owner's twelve and the sixteen R79 parked afterwards are members by the same rule (`tests/repair/ci-first-legacy_test.ts` derives the class from the cut state 18369d9b9 and from fresh state 3bbd4b9f5). Whether the class is the rule rather than the owner's list of twelve still needs the owner's confirmation. This replaces round 1's table and its install-time regeneration gate. Drift is still never silent: every maintenance pass reports each record of the owner's class shape (`legacyReviewRoundClassPin`: parked `CI checks failed…` with three rounds spent) that the rule leaves without its final round under the installed runtime's cutoff (`legacyReviewRoundClassDrift`, as `retry:<id>:denied:legacy_class_unpinned:…` or `legacy_class_pin_mismatch:…`, at most 12 per pass and a count of the rest), and, under a proven CI-first runtime without a pinned cutoff, only their count (`retry:legacy_class:denied:cutoff_unpinned=<n>`); under any other runtime no final round is granted to anyone and nothing is reported. A spent record whose base moved reads its own head's CI before anything else: a red head keeps the merge gate's `CI checks failed: …` blocker, so a legacy record stays in the class (live 649 and 1128 sat spent and red in `delivery` and would otherwise have left it as BASE_MOVED parks), except that a legacy record whose final round is open and whose red head its own change did not break (its reviewed base red too, a base check still running, or no usable base evidence) parks with the runtime's non-correctable `CI checks failed without base evidence: …` blocker instead, still in the class and re-admitted only by the green rule, after a bounded `ci_pending` wait at `delivery` while a base check is still running (round-2 recheck P3: with the generic blocker the launcher's correction rule re-admitted it as a CI correction on every pass and `correctFailedHeadBeforeRefresh` declined the fix every time, one correction slot per pass and no progress; `tests/repair/ci-first-legacy-moved-base_test.ts`), a pending head waits in `delivery` and parks `review round ceiling reached: the reviewed head's required CI did not finish within 6 hours: …` past that bound (round-1 recheck P3 [4]: no check runs, or a check that never completes, re-armed `ci_pending` forever), and a green head takes the carried refresh below when its latest completed review authorizes it, otherwise it parks BASE_MOVED. The CI-first legacy rule uses the same rule. The historical "review rounds exhausted without an accepted verdict (…)" block is no longer re-armed into review.
+Review rounds are capped at three per task, hard, everywhere (owner decision
+2026-10-16, after ai.ubq.fi issue 684 / PR 1059 reached 44 rounds). A task's
+spent rounds are the larger of its `review_request` admissions in the durable
+ledger (any head, pull request or generation; ambiguous and in-flight admissions
+count, a proven `confirmed_not_submitted` refund does not) and its counter less
+those refunds. With no round left, no review is requested and nothing is
+refreshed, corrected, published or re-admitted for a further review: the runtime
+parks the record with an `other` blocker under the fixed prefix
+`review round ceiling reached:` (no completed review of the current head,
+unresolved P0/P1, no task acceptance, a base moved after the last review, or a
+reviewed head awaiting delivery), keeping its pull request, head, receipts and
+charges. A park is never handed back for review. Only the REVIEWED and
+BASE_MOVED parks, matched by exact message, may merge, and only through the
+spent-round delivery rule, which itself requires the latest completed review of
+the exact head and base to leave no unresolved P0/P1 and the head's required CI
+to be green; a BASE_MOVED park merges only through its moved-base rule. The
+spent-round rule admits exactly those two parks
+(`isDeliverableReviewRoundCeilingPark`) on every repository, the Gateway
+included; while the moved-base rule ships disabled a BASE_MOVED park is
+`base_moved` and, like every undeliverable park, stays idle and spends nothing.
+The one-time legacy exception covers ai.ubq.fi records whose rounds were spent
+under the old review-before-CI order and whose CI is red: an issue record parked
+`CI checks failed…` with at least three rounds spent. At the decision-time state
+(sequence 36388) that class is exactly the owner's twelve (595, 597, 605, 610,
+618, 668, 672, 673, 680, 694, 698 and 879); generation 79 keeps parking records
+into it while it reviews before CI (nine more by sequence 37449: 137, 575, 602,
+634, 638, 678, 679, 693 and 754; seven more by sequence 38912,
+2026-10-17T09:07Z: 583, 615, 617, 629, 633, 650 and 1128). Membership is a rule,
+not a table (round-1 recheck P2 [1]; `legacyReviewRoundPin` in
+`src/repair/review-round-cap.ts`), evaluated against ONE cutoff C no later than
+the FIRST CI-first runtime's activation. C is pinned once
+(`LEGACY_REVIEW_CUTOFF.activatedNotBefore`: the instant of the launcher commit
+that pins generation 80's install, set by that same commit, null until then) and
+never moves: every later CI-first runtime is appended to
+`LEGACY_REVIEW_CUTOFF.revisions` by the commit that pins its install and reuses
+generation 80's C, never its own instant (round-2 recheck P2: with one cutoff
+row per revision, the next CI-first runtime pinned at its own instant turned
+records new under generation 80 into legacy ones and gave them a fourth round).
+C is handed only to runs of a pinned CI-first revision, and only while it is no
+later than every recorded execution of ANY pinned revision (the current run and
+every execution release custody still records: hosted release proofs and the
+runtime's intent and retained proofs, as `refreshFixActivation` reads them), so
+a C moved past an earlier CI-first activation that custody still shows is
+refused for every revision and nothing is legacy. The launcher hands C to the
+runtime through one child environment key (`SENTINEL_LEGACY_REVIEW_CUTOFF`,
+`src/host/legacy-review-cutoff-env.ts`, checked against the release custody the
+launcher read the execution from), which the runtime reads into its existing
+cycle dependencies: no state field is added and R79 never sees it. A record
+whose first review admission is after C is legacy under no CI-first runtime
+(`tests/host/legacy-review-cutoff_test.ts`). An ai.ubq.fi issue record is legacy
+when at least one of its counted review admissions was created before C and its
+pin, its spent rounds less its counted review admissions created at or after C,
+reaches three. Its one final round is open while no review was admitted for it
+at or after C (only a CI fix may be admitted on that alone) and armed for a
+review only once a CI fix (a counted `retry` admission) was charged at or after
+C, so the final review is always of a CI-fixed head; a member whose head is
+green, or whose latest review left an unresolved P0/P1, gets no further review.
+A record with no review admission before C is never legacy, so a record new
+under generation 80 can never get a fourth round, whatever its counter; no
+cutoff (none pinned, a malformed value, another revision, R79) means no record
+is legacy. The rule covers the records in flight at the install, which no
+install-time table could (live 645, 646, 657, 663 and 1140 were in review on red
+heads under R79 at sequence 39670; at fresh state 07023736b, sequence 40040, all
+five are parked `CI checks failed: …` with pins 6, 6, 6, 5 and 3 and an open
+final round). The owner's twelve and the sixteen R79 parked afterwards are
+members by the same rule (`tests/repair/ci-first-legacy_test.ts` derives the
+class from the cut state 18369d9b9 and from fresh state 3bbd4b9f5). Whether the
+class is the rule rather than the owner's list of twelve still needs the owner's
+confirmation. This replaces round 1's table and its install-time regeneration
+gate. Drift is still never silent: every maintenance pass reports each record of
+the owner's class shape (`legacyReviewRoundClassPin`: parked `CI checks failed…`
+with three rounds spent) that the rule leaves without its final round under the
+installed runtime's cutoff (`legacyReviewRoundClassDrift`, as
+`retry:<id>:denied:legacy_class_unpinned:…` or `legacy_class_pin_mismatch:…`, at
+most 12 per pass and a count of the rest), and, under a proven CI-first runtime
+without a pinned cutoff, only their count
+(`retry:legacy_class:denied:cutoff_unpinned=<n>`); under any other runtime no
+final round is granted to anyone and nothing is reported. A spent record whose
+base moved reads its own head's CI before anything else: a red head keeps the
+merge gate's `CI checks failed: …` blocker, so a legacy record stays in the
+class (live 649 and 1128 sat spent and red in `delivery` and would otherwise
+have left it as BASE_MOVED parks), except that a legacy record whose final round
+is open and whose red head its own change did not break (its reviewed base red
+too, a base check still running, or no usable base evidence) parks with the
+runtime's non-correctable `CI checks failed without base evidence: …` blocker
+instead, still in the class and re-admitted only by the green rule, after a
+bounded `ci_pending` wait at `delivery` while a base check is still running
+(round-2 recheck P3: with the generic blocker the launcher's correction rule
+re-admitted it as a CI correction on every pass and
+`correctFailedHeadBeforeRefresh` declined the fix every time, one correction
+slot per pass and no progress;
+`tests/repair/ci-first-legacy-moved-base_test.ts`), a pending head waits in
+`delivery` and parks
+`review round ceiling reached: the reviewed head's required CI did not finish within 6 hours: …`
+past that bound (round-1 recheck P3 [4]: no check runs, or a check that never
+completes, re-armed `ci_pending` forever), and a green head takes the carried
+refresh below when its latest completed review authorizes it, otherwise it parks
+BASE_MOVED. The CI-first legacy rule uses the same rule. The historical "review
+rounds exhausted without an accepted verdict (…)" block is no longer re-armed
+into review.
 
-Delivery line (generation 80, runtime). A reviewed head whose base moved needs a refreshed head, which needs a review round of its own; when several reviewed records of one repository wait on one tip, every merge moves the base of all the others, so refreshing them together cost each of them a round per merge and the third merge left the rest at the ceiling (8 of the 17 ai.ubq.fi PRs merged since 2026-10-16T00:00Z needed four or more reviewed heads, all reviews clean). The delivery step therefore refreshes such a record only at the front of its repository's line (`deliveryQueueAhead`, `src/repair/delivery-queue.ts`). Generation 81 orders the line by delivery readiness, then pull request number (JAM J3, live 2026-10-17/18: ordered by number alone, red heads awaiting a CI fix and CI-fixed heads on the tip awaiting their CI before their final review held it for hours ahead of 698 and 879, PRs 1112 and 1120, green, reviewed and spent). Each reviewed, unmerged issue task of the repository with a round spent stands in one place (`lineStanding`): landing (a carried refresh in flight, reviewed on the tip waiting to merge, a carried refreshed head on the tip), ready (deliverable now on a moved base: spent, latest review clean, its next step the mechanical refresh: its reviewed head in `delivery` with no CI wait, or a carried head whose base moved again), re-review (heading for a review round on the tip: a refresh in flight with a round left, a head on the tip waiting for its CI or its review at `work`, a review in flight there), reviewed (a round left, in `delivery` on a moved base) or waiting (a reviewed head back at `work` for its CI fix or correction, a reviewed head whose CI is pending, a head awaiting its CI or review on a moved base, a spent record without a clean review). A spent record (deliverable now: its step read its reviewed head green and its latest review authorizing it, or it is a carried head) waits only behind a landing contender or a ready one with a lower number; nothing that still needs a review, a CI fix or its CI holds it, so it takes the line as soon as it is deliverable. A record with a round left also waits behind every ready contender, a re-review and a reviewed one with a lower number (two refreshed heads racing for one tip would cost one of them a round); a waiting contender holds nobody. One record lands at a time, so the launcher's one merge per pass moves the base once. The step that reads a spent reviewed head green clears a `ci_pending` wait left from an earlier poll once before it defers, so the line sees it ready (a head whose CI turned green otherwise lost its place to every higher number); every later deferral writes nothing. Otherwise the step defers with nothing charged, refreshed or requested and, but for that one clear, nothing written; the stale merge intent of a reconciled merge is kept. A stuck contender holds nobody, so it never blocks the line: one with 12 or more consecutive executions without durable progress (`counters.stalled`; live 594 re-armed one wait 104 times) or one nothing has written for 2 hours (a step that defers without a write every run; live 647 and 604 sat untouched in review for 81 and 33 hours). A spent record whose latest completed review is clean is a contender too, and takes its carried refresh (below) only at the front. The line adds no state shape: generation 79 refreshes every such record at once exactly as before, and under generation 80, the rollback target of 81, a refresh this line admitted is a base-refresh intent or a carried refreshed head on the tip, which that runtime's own line holds every other record behind. The line serialises only moved-base refreshes: a published candidate with no review yet is no contender, so a new candidate reviewed on the same tip can merge before the front record and cost it a round, as does a base move from outside the line (an owner merge, the launcher's spent merge). It bounds the rounds the queue's own refreshes spend; it does not make every merge free (round-1 recheck P3 [3]), and a record that still reaches the ceiling on a moved base takes the carried refresh below instead of parking for good.
+Delivery line (generation 80, runtime). A reviewed head whose base moved needs a
+refreshed head, which needs a review round of its own; when several reviewed
+records of one repository wait on one tip, every merge moves the base of all the
+others, so refreshing them together cost each of them a round per merge and the
+third merge left the rest at the ceiling (8 of the 17 ai.ubq.fi PRs merged since
+2026-10-16T00:00Z needed four or more reviewed heads, all reviews clean). The
+delivery step therefore refreshes such a record only at the front of its
+repository's line (`deliveryQueueAhead`, `src/repair/delivery-queue.ts`).
+Generation 81 orders the line by delivery readiness, then pull request number
+(JAM J3, live 2026-10-17/18: ordered by number alone, red heads awaiting a CI
+fix and CI-fixed heads on the tip awaiting their CI before their final review
+held it for hours ahead of 698 and 879, PRs 1112 and 1120, green, reviewed and
+spent). Each reviewed, unmerged issue task of the repository with a round spent
+stands in one place (`lineStanding`): landing (a carried refresh in flight,
+reviewed on the tip waiting to merge, a carried refreshed head on the tip),
+ready (deliverable now on a moved base: spent, latest review clean, its next
+step the mechanical refresh: its reviewed head in `delivery` with no CI wait, or
+a carried head whose base moved again), re-review (heading for a review round on
+the tip: a refresh in flight with a round left, a head on the tip waiting for
+its CI or its review at `work`, a review in flight there), reviewed (a round
+left, in `delivery` on a moved base) or waiting (a reviewed head back at `work`
+for its CI fix or correction, a reviewed head whose CI is pending, a head
+awaiting its CI or review on a moved base, a spent record without a clean
+review). A spent record (deliverable now: its step read its reviewed head green
+and its latest review authorizing it, or it is a carried head) waits only behind
+a landing contender or a ready one with a lower number; nothing that still needs
+a review, a CI fix or its CI holds it, so it takes the line as soon as it is
+deliverable. A record with a round left also waits behind every ready contender,
+a re-review and a reviewed one with a lower number (two refreshed heads racing
+for one tip would cost one of them a round); a waiting contender holds nobody.
+One record lands at a time, so the launcher's one merge per pass moves the base
+once. The step that reads a spent reviewed head green clears a `ci_pending` wait
+left from an earlier poll once before it defers, so the line sees it ready (a
+head whose CI turned green otherwise lost its place to every higher number);
+every later deferral writes nothing. Otherwise the step defers with nothing
+charged, refreshed or requested and, but for that one clear, nothing written;
+the stale merge intent of a reconciled merge is kept. A stuck contender holds
+nobody, so it never blocks the line: one with 12 or more consecutive executions
+without durable progress (`counters.stalled`; live 594 re-armed one wait 104
+times) or one nothing has written for 2 hours (a step that defers without a
+write every run; live 647 and 604 sat untouched in review for 81 and 33 hours).
+A spent record whose latest completed review is clean is a contender too, and
+takes its carried refresh (below) only at the front. The line adds no state
+shape: generation 79 refreshes every such record at once exactly as before, and
+under generation 80, the rollback target of 81, a refresh this line admitted is
+a base-refresh intent or a carried refreshed head on the tip, which that
+runtime's own line holds every other record behind. The line serialises only
+moved-base refreshes: a published candidate with no review yet is no contender,
+so a new candidate reviewed on the same tip can merge before the front record
+and cost it a round, as does a base move from outside the line (an owner merge,
+the launcher's spent merge). It bounds the rounds the queue's own refreshes
+spend; it does not make every merge free (round-1 recheck P3 [3]), and a record
+that still reaches the ceiling on a moved base takes the carried refresh below
+instead of parking for good.
 
-Spent records on a moved base (owner decision 2026-10-16 (2); the coordinator's choice under it, recorded here in place of round 1's "owner decision required before generation 80 is installed" gate). The hard ceiling and the exact-base merge rule together left a spent record whose base moved with no path to merge but the moved-base merge (D3). Decision (2) says such a PR merges ("the 3 rounds are spent with no unresolved P0/P1, the PR merges") and forbids turning `development` red. Of the options, (a) D3 merges a result no CI ran on (the head's checks ran against its old base, the tip's against the tip alone), so it can turn `development` red, which decision (2) forbids; (c) leaving the records parked contradicts "the PR merges"; (b) keeps every merged result CI-tested and the merged patch exactly the reviewed one. The coordinator therefore chooses (b), and D3 stays disabled. The rule (runtime half `src/repair/loop-carried-delivery.ts`, launcher half `carriedMergeGate` in `ops/hosted-autonomy-spent-delivery.ts`): a spent record whose latest completed review authorizes its head H0 on base B0 (no unresolved P0/P1, nothing uncounted, the App reviewer, the live task accepted) and whose base moved to tip T gets one mechanical, conflict-free refresh: the runtime's existing deterministic base refresh merges T into H0, with no model and no charge, counted neither as a review round nor as a CI fix attempt. The refreshed head H1 carries H0's authorization only when the pull request's own patch is unchanged: the merge-base patches `git diff B0...H0` and `git diff T...H1`, each from its unique merge base (a criss-cross history is no proof), rendered with every option fixed (`--binary --full-index --no-renames`, no external diff or textconv) and compared by the SHA-256 of their raw bytes (`src/github/git-carried-patch.ts`). Full blob ids on every index line make equal bytes mean equal contents, modes, renames and binary payloads, so a base change touching a reviewed path fails the proof even when it merges cleanly. The runtime re-derives that proof from git on every step; no state field is added, so R79 parses everything generation 80 writes. The merge itself is the launcher's (round-2 recheck P1): the runtime's merge port refuses every merge on a branch without enforced strict up-to-date checks (`evaluateEffectiveProtections`, `protection_required` before any write), and live ai.ubq.fi's `development` has no rules, rulesets or classic protection, so every ai.ubq.fi merge is made by the launcher's delivery pass at the exact base (2026-10-17: `merge:issue-ubiquity-ai.ubq.fi-664:pr=1067`, `…-688:pr=1115`). A carried merge through the runtime's port could therefore never land, and the record would have refreshed and held its repository's delivery line on every base move. So the runtime never merges a carried head and adds no merge path of its own (the round-1 carried parameter of the port is gone): once H1's own required CI is green and the task is still accepted, the record holds the carried-merge marker at `work` for the launcher: a `backoff` wait of exactly `CARRIED_MERGE_MARKER_MS` (4 minutes) from its `since`, written only by this step (`carriedMergeMarker`, `src/repair/carried-review.ts`), a length no other generation-79 or generation-80 wait has (the CI fix marker is zero-length, the merge port's refusal backoff at `delivery` is 5 minutes, every red-base backoff at least 30 minutes), so it adds no state field. The launcher's delivery pass then merges H1 only (a) for a spent record at `work` that holds that exact marker (round-2 recheck P3: any `backoff` at `work` used to count, so a model-written CI fix waiting on the CI-first red-base hold read as proved; any other wait is `carried_awaiting_runtime`), whose head has no completed review of its own and whose LATEST completed review of the pull request (any head, the App reviewer) is a clean one of an earlier head H0, authorized for the live task as of H0's identity (`carriedMergeReceipt`, `carriedAuthorizingReceipt`); (b) at exactly T: the tip it reads is the record's base, T is a strict ancestor of H1 (compare `T...H1` `ahead`), and the tip re-read UNCACHED as the last read before the merge call is still T (round-2 recheck P3: the tip was read once per pass, before up to a dozen reads, and GitHub's merge API guards only the head), so the merge result is H1's own tree, the one its CI tested; a merge commit whose parents are not exactly [T, H1] is never booked: the pass reports `delivery:<id>:carried_merged_off_tip:sha=…` and, on the Gateway, parks the record `review round ceiling reached: the carried merge landed off its tip: merge … has parents …, not <T>,<H1>` (undeliverable, so later passes leave it alone; a self record is never rewritten by the pass, and its runtime parks it once its bounded wait for the delivery record ends), the same for a lost-write adoption of such a merge; (c) on H1's own green required CI (every check run on the exact head completed successfully; `test-local` for the self scope); (d) when the exact patch proof re-derived from GitHub's Git data holds (round-2 recheck P3: the rendered compare diffs it used to compare carry 9-hex abbreviated blob ids, fold renames and render a binary change as "Binary files ... differ", so two binary payloads whose abbreviated ids collide rendered alike): the full sets of (path, old mode, old blob id, new mode, new blob id) of merge-base(B0, H0) -> H0 and of T -> H1 are equal, each read from the recursive Git Trees API of the merge base GitHub's compare names and of the head (`mergeBaseTreeChanges`, `ops/hosted-autonomy-github-trees.ts`; compare `files[]` carry only the new blob id, with no mode or old blob), and T is the refreshed side's own merge base; a tree GitHub truncates (past its entry or size limit) or any unreadable answer is no proof (`carried_proof_unavailable`). Full blob ids make equal sets mean equal contents, text or binary, and modes, and the old side binds the base content each change applies to, as the runtime's `--full-index --no-renames` proof does; the merge base is the one GitHub names, and a criss-cross history (several merge bases) is refused by the runtime's git proof, which must hold before it writes the marker. GitHub's rendered diffs are still read, as evidence only; and (e) every ordinary spent gate holds (source issue open, a Gateway release request that will bind, the foreign base ref, the final task re-read and opt-out, one merge call per pass). The proof (H0, B0, H1, T, the receipt, the SHA-256 and size of the shared exact change set, both rendered diff digests as evidence and H1's green workflow runs) is the merge commit's message and the pass's action line `delivery:<id>:carried_merge:pr=…:reviewed=<H0>@<B0>:receipt=…:refreshed=<H1>@<T>:changes=<sha256>/<paths>:patch=<d0>/<d1>:ci=<runs>` (`unrendered` for a diff GitHub would not render). The record then moves to `delivery` beside a production release request that names H0's receipt with H1 and T as its source (`carriedRequestBindsDelivery`), and later passes report it as `delivery:<id>:carried:pr=…:reviewed=<H0>@<B0>:receipt=…:merged=<H1>@<T>:sha=…`; the follow-up filing uses that receipt. Every other launcher merge re-reads the tip uncached before its merge call too and merges nothing once it moved (`base_moved`); GitHub still has no base compare-and-swap, so only the moments between that read and the call remain. A carried head the runtime awaits is read on EVERY pass while it holds its repository's delivery line (round-2 recheck P2: in the rotating spent window of eight it waited up to two hours at live sizes, holding the line, and each tip move meanwhile discarded its green CI and spent one of its refreshes): at most the line's front such record per self or Gateway repository, on top of the window and taking none of its slots (`spentReadWindow`, `holdsDeliveryLine`). A carried merge whose state write was lost is adopted by the next pass only with the App as merger, green CI on H1, the verified merge and the patch proof again; a self record's request is written without rewriting the record, and the runtime then moves it to `delivery` itself once it sees the merged pull request and that request. A carried merge is made only for the self scope and the Gateway, whose bookkeeping the pass writes (`carried_unsupported` otherwise). Bounds, all derived without a state field: at most one refresh per record per base tip (the refresh intent key binds the pull request, the head and the observed tip, and a refreshed record waits its turn again in the delivery line); at most `CARRIED_REFRESH_LIMIT` (6) refreshes per reviewed head, counted from git as the first-parent distance from H0 to the current head, so the refresh that clears every wait cannot reset it (round-2 recheck P1: the 6-hour bound restarted on every base move); and every wait parks after 6 hours: H1's CI pending (`…the refreshed head's required CI did not finish within 6 hours: …`), the proof unavailable, the pull request still reporting the head H1 was refreshed from (GitHub reports a push asynchronously; round-2 recheck P2: one stale read used to park the record UNREVIEWED for good, now only a foreign head, a closed pull request or an unmerged close parks), or the delivery record after a merge each keep their `since`; the launcher's merge, whose marker restarts its `since` on every poll so its shape stays exact, counts its 6 hours from H1's own required CI completion (`…the carried delivery stalled for 6 hours: …`). The base moving again after the limit parks `review round ceiling reached: the base moved again after the carried refresh limit: …`. A refresh conflict keeps the refresh's own terminal `base refresh has conflicts at <T>` block; a differing patch parks `review round ceiling reached: the refreshed head does not carry the reviewed patch: …` with both identities and digests; a red H1 parks `…the refreshed head's required CI failed: …` (no CI fix: any fix changes the patch, so it could never carry the review, and the CI-fix allowance stays unspent). None of these parks is deliverable, none spends anything further, and a parked record is no delivery-line contender; a record waiting on the launcher stops holding the line after 12 polls without progress (`DELIVERY_QUEUE_STALL_LIMIT`). No merge intent is written for a carried merge (R79 would execute it against a head the receipt does not name and stop with a state error). A carried delivery can never be accepted or closed by the release path as it stands (round-2 rechecks P3): `gatewayRequestBindsDelivery` requires the request's receipt to name the record's own head and base (H0 is not H1), so R80's `observeGatewayVpsDelivery` and the launcher's closure gate answer `wait` before reading any release state, and for the self scope `acceptRelease` refuses through `deliveryTaskRefusal`, whose authorizing receipt needs the exact head, and blocks the merged record `missing_evidence`; R79 answers the same. While `sentinel-release` is disabled that wait is every request's, but once releases are enabled it would be permanent for carried deliveries. Generation-81 follow-up, required before releases are enabled: release acceptance and closure accept a carried request through `carriedRequestBindsDelivery` (the receipt an earlier head of the same pull request, the proof re-derived, the task authorized as of `reviewedIdentity`). Until then a carried merge's source issue still closes through GitHub's own closing reference on the merge: the pull request body carries `Resolves #<issue>` and the App merges into the default branch, as for every launcher merge (verified live 2026-10-17: ai.ubq.fi issues 600, 664, 684 and 688 were closed `completed` by the merging App 1 to 2 seconds after it merged PRs 1052, 1067, 1059 and 1115 into `development`, the default branch, with no App-performed closure event, while their release requests are still open), but the record itself stays in `delivery` beside its open request. The launcher returns a spent record whose head it read green on a moved base to the runtime's `delivery` step only under a proven CI-first runtime (a `:green` plan, never a CI correction slot). Live, fresh state 9dba8b8aa (sequence 40150, 2026-10-17T13:59Z; ai.ubq.fi `development` at 365035981): the 16 spent records the recheck named (600, 616, 674, 589, 880, 651, 670, 682, 686, 683, 594, 661, 649, 599, 609, 641) and 684 (PR 1059, 70 rounds) were merged by the sentinel App through the launcher's delivery pass (PRs 1052, 1070, 1096, 1104, 1121, 1013, 1093, 1058, 1114, 1100, 1051, 1064, 1012, 1091, 1110, 1007 and 1059) and wait in `delivery` beside their open release requests, so generation 80 refreshes none of them and no carried merge is pending. 647 (PR 1011, at `review` on its unbound review intent `review:1011:d632c224…:attempt-4`, counter 3, ledger 4, never a completed review) has nothing to carry and never parks (round-2 recheck P3): its intent is the `reviewRounds + 1` one, so `observeReview` defers it ("review intent has no exact bound journal") without a write on every run, under R79 and R80 alike (unchanged at fresh state 1937e2825, sequence 40384, last written 2026-10-14T00:12Z); idle for more than 2 hours, it holds no one's delivery line.
+Spent records on a moved base (owner decision 2026-10-16 (2); the coordinator's
+choice under it, recorded here in place of round 1's "owner decision required
+before generation 80 is installed" gate). The hard ceiling and the exact-base
+merge rule together left a spent record whose base moved with no path to merge
+but the moved-base merge (D3). Decision (2) says such a PR merges ("the 3 rounds
+are spent with no unresolved P0/P1, the PR merges") and forbids turning
+`development` red. Of the options, (a) D3 merges a result no CI ran on (the
+head's checks ran against its old base, the tip's against the tip alone), so it
+can turn `development` red, which decision (2) forbids; (c) leaving the records
+parked contradicts "the PR merges"; (b) keeps every merged result CI-tested and
+the merged patch exactly the reviewed one. The coordinator therefore chooses
+(b), and D3 stays disabled. The rule (runtime half
+`src/repair/loop-carried-delivery.ts`, launcher half `carriedMergeGate` in
+`ops/hosted-autonomy-spent-delivery.ts`): a spent record whose latest completed
+review authorizes its head H0 on base B0 (no unresolved P0/P1, nothing
+uncounted, the App reviewer, the live task accepted) and whose base moved to tip
+T gets one mechanical, conflict-free refresh: the runtime's existing
+deterministic base refresh merges T into H0, with no model and no charge,
+counted neither as a review round nor as a CI fix attempt. The refreshed head H1
+carries H0's authorization only when the pull request's own patch is unchanged:
+the merge-base patches `git diff B0...H0` and `git diff T...H1`, each from its
+unique merge base (a criss-cross history is no proof), rendered with every
+option fixed (`--binary --full-index --no-renames`, no external diff or
+textconv) and compared by the SHA-256 of their raw bytes
+(`src/github/git-carried-patch.ts`). Full blob ids on every index line make
+equal bytes mean equal contents, modes, renames and binary payloads, so a base
+change touching a reviewed path fails the proof even when it merges cleanly. The
+runtime re-derives that proof from git on every step; no state field is added,
+so R79 parses everything generation 80 writes. The merge itself is the
+launcher's (round-2 recheck P1): the runtime's merge port refuses every merge on
+a branch without enforced strict up-to-date checks
+(`evaluateEffectiveProtections`, `protection_required` before any write), and
+live ai.ubq.fi's `development` has no rules, rulesets or classic protection, so
+every ai.ubq.fi merge is made by the launcher's delivery pass at the exact base
+(2026-10-17: `merge:issue-ubiquity-ai.ubq.fi-664:pr=1067`, `…-688:pr=1115`). A
+carried merge through the runtime's port could therefore never land, and the
+record would have refreshed and held its repository's delivery line on every
+base move. So the runtime never merges a carried head and adds no merge path of
+its own (the round-1 carried parameter of the port is gone): once H1's own
+required CI is green and the task is still accepted, the record holds the
+carried-merge marker at `work` for the launcher: a `backoff` wait of exactly
+`CARRIED_MERGE_MARKER_MS` (4 minutes) from its `since`, written only by this
+step (`carriedMergeMarker`, `src/repair/carried-review.ts`), a length no other
+generation-79 or generation-80 wait has (the CI fix marker is zero-length, the
+merge port's refusal backoff at `delivery` is 5 minutes, every red-base backoff
+at least 30 minutes), so it adds no state field. The launcher's delivery pass
+then merges H1 only (a) for a spent record at `work` that holds that exact
+marker (round-2 recheck P3: any `backoff` at `work` used to count, so a
+model-written CI fix waiting on the CI-first red-base hold read as proved; any
+other wait is `carried_awaiting_runtime`), whose head has no completed review of
+its own and whose LATEST completed review of the pull request (any head, the App
+reviewer) is a clean one of an earlier head H0, authorized for the live task as
+of H0's identity (`carriedMergeReceipt`, `carriedAuthorizingReceipt`); (b) at
+exactly T: the tip it reads is the record's base, T is a strict ancestor of H1
+(compare `T...H1` `ahead`), and the tip re-read UNCACHED as the last read before
+the merge call is still T (round-2 recheck P3: the tip was read once per pass,
+before up to a dozen reads, and GitHub's merge API guards only the head), so the
+merge result is H1's own tree, the one its CI tested; a merge commit whose
+parents are not exactly [T, H1] is never booked: the pass reports
+`delivery:<id>:carried_merged_off_tip:sha=…` and, on the Gateway, parks the
+record
+`review round ceiling reached: the carried merge landed off its tip: merge … has parents …, not <T>,<H1>`
+(undeliverable, so later passes leave it alone; a self record is never rewritten
+by the pass, and its runtime parks it once its bounded wait for the delivery
+record ends), the same for a lost-write adoption of such a merge; (c) on H1's
+own green required CI (every check run on the exact head completed successfully;
+`test-local` for the self scope); (d) when the exact patch proof re-derived from
+GitHub's Git data holds (round-2 recheck P3: the rendered compare diffs it used
+to compare carry 9-hex abbreviated blob ids, fold renames and render a binary
+change as "Binary files ... differ", so two binary payloads whose abbreviated
+ids collide rendered alike): the full sets of (path, old mode, old blob id, new
+mode, new blob id) of merge-base(B0, H0) -> H0 and of T -> H1 are equal, each
+read from the recursive Git Trees API of the merge base GitHub's compare names
+and of the head (`mergeBaseTreeChanges`, `ops/hosted-autonomy-github-trees.ts`;
+compare `files[]` carry only the new blob id, with no mode or old blob), and T
+is the refreshed side's own merge base; a tree GitHub truncates (past its entry
+or size limit) or any unreadable answer is no proof
+(`carried_proof_unavailable`). Full blob ids make equal sets mean equal
+contents, text or binary, and modes, and the old side binds the base content
+each change applies to, as the runtime's `--full-index --no-renames` proof does;
+the merge base is the one GitHub names, and a criss-cross history (several merge
+bases) is refused by the runtime's git proof, which must hold before it writes
+the marker. GitHub's rendered diffs are still read, as evidence only; and (e)
+every ordinary spent gate holds (source issue open, a Gateway release request
+that will bind, the foreign base ref, the final task re-read and opt-out, one
+merge call per pass). The proof (H0, B0, H1, T, the receipt, the SHA-256 and
+size of the shared exact change set, both rendered diff digests as evidence and
+H1's green workflow runs) is the merge commit's message and the pass's action
+line
+`delivery:<id>:carried_merge:pr=…:reviewed=<H0>@<B0>:receipt=…:refreshed=<H1>@<T>:changes=<sha256>/<paths>:patch=<d0>/<d1>:ci=<runs>`
+(`unrendered` for a diff GitHub would not render). The record then moves to
+`delivery` beside a production release request that names H0's receipt with H1
+and T as its source (`carriedRequestBindsDelivery`), and later passes report it
+as
+`delivery:<id>:carried:pr=…:reviewed=<H0>@<B0>:receipt=…:merged=<H1>@<T>:sha=…`;
+the follow-up filing uses that receipt. Every other launcher merge re-reads the
+tip uncached before its merge call too and merges nothing once it moved
+(`base_moved`); GitHub still has no base compare-and-swap, so only the moments
+between that read and the call remain. A carried head the runtime awaits is read
+on EVERY pass while it holds its repository's delivery line (round-2 recheck P2:
+in the rotating spent window of eight it waited up to two hours at live sizes,
+holding the line, and each tip move meanwhile discarded its green CI and spent
+one of its refreshes): at most the line's front such record per self or Gateway
+repository, on top of the window and taking none of its slots
+(`spentReadWindow`, `holdsDeliveryLine`). A carried merge whose state write was
+lost is adopted by the next pass only with the App as merger, green CI on H1,
+the verified merge and the patch proof again; a self record's request is written
+without rewriting the record, and the runtime then moves it to `delivery` itself
+once it sees the merged pull request and that request. A carried merge is made
+only for the self scope and the Gateway, whose bookkeeping the pass writes
+(`carried_unsupported` otherwise). Bounds, all derived without a state field: at
+most one refresh per record per base tip (the refresh intent key binds the pull
+request, the head and the observed tip, and a refreshed record waits its turn
+again in the delivery line); at most `CARRIED_REFRESH_LIMIT` (6) refreshes per
+reviewed head, counted from git as the first-parent distance from H0 to the
+current head, so the refresh that clears every wait cannot reset it (round-2
+recheck P1: the 6-hour bound restarted on every base move); and every wait parks
+after 6 hours: H1's CI pending
+(`…the refreshed head's required CI did not finish within 6 hours: …`), the
+proof unavailable, the pull request still reporting the head H1 was refreshed
+from (GitHub reports a push asynchronously; round-2 recheck P2: one stale read
+used to park the record UNREVIEWED for good, now only a foreign head, a closed
+pull request or an unmerged close parks), or the delivery record after a merge
+each keep their `since`; the launcher's merge, whose marker restarts its `since`
+on every poll so its shape stays exact, counts its 6 hours from H1's own
+required CI completion (`…the carried delivery stalled for 6 hours: …`). The
+base moving again after the limit parks
+`review round ceiling reached: the base moved again after the carried refresh limit: …`.
+A refresh conflict keeps the refresh's own terminal
+`base refresh has conflicts at <T>` block; a differing patch parks
+`review round ceiling reached: the refreshed head does not carry the reviewed patch: …`
+with both identities and digests; a red H1 parks
+`…the refreshed head's required CI failed: …` (no CI fix: any fix changes the
+patch, so it could never carry the review, and the CI-fix allowance stays
+unspent). None of these parks is deliverable, none spends anything further, and
+a parked record is no delivery-line contender; a record waiting on the launcher
+stops holding the line after 12 polls without progress
+(`DELIVERY_QUEUE_STALL_LIMIT`). No merge intent is written for a carried merge
+(R79 would execute it against a head the receipt does not name and stop with a
+state error). A carried delivery can never be accepted or closed by the release
+path as it stands (round-2 rechecks P3): `gatewayRequestBindsDelivery` requires
+the request's receipt to name the record's own head and base (H0 is not H1), so
+R80's `observeGatewayVpsDelivery` and the launcher's closure gate answer `wait`
+before reading any release state, and for the self scope `acceptRelease` refuses
+through `deliveryTaskRefusal`, whose authorizing receipt needs the exact head,
+and blocks the merged record `missing_evidence`; R79 answers the same. While
+`sentinel-release` is disabled that wait is every request's, but once releases
+are enabled it would be permanent for carried deliveries. Generation-81
+follow-up, required before releases are enabled: release acceptance and closure
+accept a carried request through `carriedRequestBindsDelivery` (the receipt an
+earlier head of the same pull request, the proof re-derived, the task authorized
+as of `reviewedIdentity`). Until then a carried merge's source issue still
+closes through GitHub's own closing reference on the merge: the pull request
+body carries `Resolves #<issue>` and the App merges into the default branch, as
+for every launcher merge (verified live 2026-10-17: ai.ubq.fi issues 600, 664,
+684 and 688 were closed `completed` by the merging App 1 to 2 seconds after it
+merged PRs 1052, 1067, 1059 and 1115 into `development`, the default branch,
+with no App-performed closure event, while their release requests are still
+open), but the record itself stays in `delivery` beside its open request. The
+launcher returns a spent record whose head it read green on a moved base to the
+runtime's `delivery` step only under a proven CI-first runtime (a `:green` plan,
+never a CI correction slot). Live, fresh state 9dba8b8aa (sequence 40150,
+2026-10-17T13:59Z; ai.ubq.fi `development` at 365035981): the 16 spent records
+the recheck named (600, 616, 674, 589, 880, 651, 670, 682, 686, 683, 594, 661,
+649, 599, 609, 641) and 684 (PR 1059, 70 rounds) were merged by the sentinel App
+through the launcher's delivery pass (PRs 1052, 1070, 1096, 1104, 1121, 1013,
+1093, 1058, 1114, 1100, 1051, 1064, 1012, 1091, 1110, 1007 and 1059) and wait in
+`delivery` beside their open release requests, so generation 80 refreshes none
+of them and no carried merge is pending. 647 (PR 1011, at `review` on its
+unbound review intent `review:1011:d632c224…:attempt-4`, counter 3, ledger 4,
+never a completed review) has nothing to carry and never parks (round-2 recheck
+P3): its intent is the `reviewRounds + 1` one, so `observeReview` defers it
+("review intent has no exact bound journal") without a write on every run, under
+R79 and R80 alike (unchanged at fresh state 1937e2825, sequence 40384, last
+written 2026-10-14T00:12Z); idle for more than 2 hours, it holds no one's
+delivery line.
 
-The reviewer vendors `openai/codex` tag `rust-v0.162.0`, `codex-rs/prompts/templates/review/rubric.md`, SHA-256 `ec60e7f36a1d1c2679ce095c0205ecc56f7dd8fb57707a13ef362072390f219f`. Do not edit the vendored constant in [src/github/codex-review-rubric.ts](../src/github/codex-review-rubric.ts). Sentinel's read-only boundary and attached harness schema override the rubric's output-format section. A re-sync needs a new upstream pin/hash and current-candidate validation; [the alignment note](codex-review-rubric-alignment-2026-10-08.md) gives verification details.
+The reviewer vendors `openai/codex` tag `rust-v0.162.0`,
+`codex-rs/prompts/templates/review/rubric.md`, SHA-256
+`ec60e7f36a1d1c2679ce095c0205ecc56f7dd8fb57707a13ef362072390f219f`. Do not edit
+the vendored constant in
+[src/github/codex-review-rubric.ts](../src/github/codex-review-rubric.ts).
+Sentinel's read-only boundary and attached harness schema override the rubric's
+output-format section. A re-sync needs a new upstream pin/hash and
+current-candidate validation;
+[the alignment note](codex-review-rubric-alignment-2026-10-08.md) gives
+verification details.
 
-Never add Sentinel branch protection rules or rulesets, or recreate deleted rules. Applicable target protections still govern autonomous target merge.
+Never add Sentinel branch protection rules or rulesets, or recreate deleted
+rules. Applicable target protections still govern autonomous target merge.
 
 ## GitHub identity and target scope
 
-Repository-visible autonomous Sentinel activity uses the existing `ubiquity-sentinel` App, App ID `4682172`, bot login `ubiquity-sentinel[bot]`: candidate pushes, PR creation/merge, review publication, issue closure and CI approval. Existing durable state refs use the native Actions token. App private keys and installation tokens remain trusted-host capabilities; workers receive neither.
+Repository-visible autonomous Sentinel activity uses the existing
+`ubiquity-sentinel` App, App ID `4682172`, bot login `ubiquity-sentinel[bot]`:
+candidate pushes, PR creation/merge, review publication, issue closure and CI
+approval. Existing durable state refs use the native Actions token. App private
+keys and installation tokens remain trusted-host capabilities; workers receive
+neither.
 
-`sentinel.targets.json` is the only target source. Minted installation-token scope must include every committed target; App installation selection alone does not widen a token narrowed by `repositories`. Each target uses its own default branch, authenticated mirror, review checkout and Git objects. Self-scope installation ID `0` is the explicit reserved local scope; foreign targets use their own verified App installation. Target preparation failures must be reported as failed rather than addressed.
+`sentinel.targets.json` is the only target source. Minted installation-token
+scope must include every committed target; App installation selection alone does
+not widen a token narrowed by `repositories`. Each target uses its own default
+branch, authenticated mirror, review checkout and Git objects. Self-scope
+installation ID `0` is the explicit reserved local scope; foreign targets use
+their own verified App installation. Target preparation failures must be
+reported as failed rather than addressed.
 
-Eligibility is default-on for open issues, with opt-out only through the standalone first-line `<!-- sentinel:skip -->` body comment or `sentinel:skip` label. Re-read source before admission; gaining either opt-out revokes eligibility before a start is charged. No author, assignment, estimate, template or file-hint admission gate is added.
+Eligibility is default-on for open issues, with opt-out only through the
+standalone first-line `<!-- sentinel:skip -->` body comment or `sentinel:skip`
+label. Re-read source before admission; gaining either opt-out revokes
+eligibility before a start is charged. No author, assignment, estimate, template
+or file-hint admission gate is added.
 
-Issue-backed repair PR bodies are exactly `Resolves #N`; a record without an issue reference keeps a descriptive non-closing body. A failed closure is retried as closure only. Source merge/closure does not substitute for runtime/deployment acceptance receipts.
+Issue-backed repair PR bodies are exactly `Resolves #N`; a record without an
+issue reference keeps a descriptive non-closing body. A failed closure is
+retried as closure only. Source merge/closure does not substitute for
+runtime/deployment acceptance receipts.
 
 ## Failure accounting and diagnostics
 
-An authenticated terminal interruption whose only failed bound is output size and whose candidate/bundle are both absent may enter the existing failed-implementation consumer. Preserve the original over-limit metrics, all identity/carrier/request/model/duration checks and original charge. Settlement is AMBIGUOUS/BLOCKED with the original intent; it grants no import, publication, refund, fabricated result or weakened output bound. Other invalid, successful or candidate-bearing over-limit receipts remain rejected.
+An authenticated terminal interruption whose only failed bound is output size
+and whose candidate/bundle are both absent may enter the existing
+failed-implementation consumer. Preserve the original over-limit metrics, all
+identity/carrier/request/model/duration checks and original charge. Settlement
+is AMBIGUOUS/BLOCKED with the original intent; it grants no import, publication,
+refund, fabricated result or weakened output bound. Other invalid, successful or
+candidate-bearing over-limit receipts remain rejected.
 
-Numeric GitHub pagination aliases are accepted only after authenticating the same repository ID/name and retaining host/path/query/page guards. Native-carrier reads stay scoped to their exact run; custody and per-request dispositions must survive runtime upgrades. Generation or age alone cannot retire unresolved preservation authority.
+Numeric GitHub pagination aliases are accepted only after authenticating the
+same repository ID/name and retaining host/path/query/page guards.
+Native-carrier reads stay scoped to their exact run; custody and per-request
+dispositions must survive runtime upgrades. Generation or age alone cannot
+retire unresolved preservation authority.
 
-Gateway unavailable diagnostics retain numeric HTTP status without response bodies, URLs, authentication headers or credentials. Error kind and fail-closed observation remain unchanged; the status alone does not establish a producer root cause.
+Gateway unavailable diagnostics retain numeric HTTP status without response
+bodies, URLs, authentication headers or credentials. Error kind and fail-closed
+observation remain unchanged; the status alone does not establish a producer
+root cause.
 
-A settled hosted child that reports state_error or source_error surfaces its own bounded authored detail as one advisory line beside the terminal, so a failed hosted run names its closed failure instead of collapsing to the static settled-failed text. The advisory never carries raw stderr, credentials or model text and never changes the terminal, health, settlement or exit status.
+A settled hosted child that reports state_error or source_error surfaces its own
+bounded authored detail as one advisory line beside the terminal, so a failed
+hosted run names its closed failure instead of collapsing to the static
+settled-failed text. The advisory never carries raw stderr, credentials or model
+text and never changes the terminal, health, settlement or exit status.
 
-A failed delivery port call emits one closed sentinel_merge_event (event kind, PR number, closed port error kind, allow-listed detail code) beside the unchanged unavailable wait, and the launcher forwards each accepted event as a hosted_merge_event advisory. The event never carries a message, body, URL, path or credential, and it never changes the wait, intent, terminal or exit status.
+A failed delivery port call emits one closed sentinel_merge_event (event kind,
+PR number, closed port error kind, allow-listed detail code) beside the
+unchanged unavailable wait, and the launcher forwards each accepted event as a
+hosted_merge_event advisory. The event never carries a message, body, URL, path
+or credential, and it never changes the wait, intent, terminal or exit status.
 
-A bound review attempt whose own settle deadline passed without an accepted verdict is provably dead: an interrupted owner, a lost submission response or an unreadable pending journal can never produce the polled record. The observation step recovers it — a surviving review_request intent is counted once and cleared, a plain observation wait only clears — and requests a fresh uniquely admitted round instead of re-arming the transient wait forever.
+A bound review attempt whose own settle deadline passed without an accepted
+verdict is provably dead: an interrupted owner, a lost submission response or an
+unreadable pending journal can never produce the polled record. The observation
+step recovers it — a surviving review_request intent is counted once and
+cleared, a plain observation wait only clears — and requests a fresh uniquely
+admitted round instead of re-arming the transient wait forever.
 
 ## Blocked-work recovery and decomposition (2026-10-15)
 
-Only unresolved P0/P1 findings reject a reviewed head, send it to correction, fail task-acceptance recovery or qualify a historical correction review for a legacy-loss proof, exactly as the merge gate decides; unresolved P2/P3 findings never spend a correction round.
+Only unresolved P0/P1 findings reject a reviewed head, send it to correction,
+fail task-acceptance recovery or qualify a historical correction review for a
+legacy-loss proof, exactly as the merge gate decides; unresolved P2/P3 findings
+never spend a correction round.
 
-The maintenance retry pass may re-admit a blocked implementation whose outcome is uncertain ("implementation outcome uncertain…", "authenticated historical matrix manifest rejected:…") only when the record holds no produced candidate (no head, pull request or preservation state), its retained intent, if any, is an implementation intent whose own charge for that task is settled ambiguous, and its producing matrix evidence is past retention: eight days after that charge was created (after the blocker was set when no intent is retained), while supervisor.yml retains matrix artifacts for seven. The original charge stays settled and is never refunded; the new attempt is a separately charged admission with the next monotonic identity, and the existing closed-issue, retry-budget, attempt-memory and pull-request gates still apply. Unresolved candidate preservation is never retired by age: those records stay with the preserved-candidate recovery and mismatch disposition, which require native ref, producer and pull-request evidence.
+The maintenance retry pass may re-admit a blocked implementation whose outcome
+is uncertain ("implementation outcome uncertain…", "authenticated historical
+matrix manifest rejected:…") only when the record holds no produced candidate
+(no head, pull request or preservation state), its retained intent, if any, is
+an implementation intent whose own charge for that task is settled ambiguous,
+and its producing matrix evidence is past retention: eight days after that
+charge was created (after the blocker was set when no intent is retained), while
+supervisor.yml retains matrix artifacts for seven. The original charge stays
+settled and is never refunded; the new attempt is a separately charged admission
+with the next monotonic identity, and the existing closed-issue, retry-budget,
+attempt-memory and pull-request gates still apply. Unresolved candidate
+preservation is never retired by age: those records stay with the
+preserved-candidate recovery and mismatch disposition, which require native ref,
+producer and pull-request evidence.
 
-An issue-backed merge intent at least one poll old whose pull request is observed open and unmerged after the configured base moved is replaced by the durable base-refresh intent, so the candidate is refreshed and re-reviewed instead of re-arming a refused merge; a more recent intent keeps the exact merge reconciliation because its own merge may still be landing.
+An issue-backed merge intent at least one poll old whose pull request is
+observed open and unmerged after the configured base moved is replaced by the
+durable base-refresh intent, so the candidate is refreshed and re-reviewed
+instead of re-arming a refused merge; a more recent intent keeps the exact merge
+reconciliation because its own merge may still be landing.
 
-A session interrupted at its configured duration bound, or settled by the host timeout at that bound, counts as one time-bound exhaustion like a matrix host timeout; matrix ingestion of such a cell keeps the count, and a maintenance retry preserves it. One exhaustion decomposes a whole, unproduced issue (no candidate head or pull request) into serial parts; a correction record keeps its candidate and is never decomposed. A part keeps its `<issue id>:part-<i>-of-<n>` work id, and its candidate branch maps the colon to a hyphen (`sentinel/repair/<issue id>-part-<i>-of-<n>`), because git refs cannot contain colons; every colon-free id keeps its exact branch. Decomposition is currently a scoped retry, accepted by the owner on 2026-10-15: each part publishes a pull request that resolves the whole issue and is reviewed against the whole issue, so a split issue delivers only when part 1 fulfills it; a part refused by review parks the issue with its open pull request for manual follow-up. Part-aware acceptance, non-closing part pull requests and merge-satisfied part dependencies are a later generation. A failed generation 76 rolls back once to da9d6b437, whose candidate branches keep the colon, so a part created under 76 cannot publish after that rollback.
+A session interrupted at its configured duration bound, or settled by the host
+timeout at that bound, counts as one time-bound exhaustion like a matrix host
+timeout; matrix ingestion of such a cell keeps the count, and a maintenance
+retry preserves it. One exhaustion decomposes a whole, unproduced issue (no
+candidate head or pull request) into serial parts; a correction record keeps its
+candidate and is never decomposed. A part keeps its `<issue id>:part-<i>-of-<n>`
+work id, and its candidate branch maps the colon to a hyphen
+(`sentinel/repair/<issue id>-part-<i>-of-<n>`), because git refs cannot contain
+colons; every colon-free id keeps its exact branch. Decomposition is currently a
+scoped retry, accepted by the owner on 2026-10-15: each part publishes a pull
+request that resolves the whole issue and is reviewed against the whole issue,
+so a split issue delivers only when part 1 fulfills it; a part refused by review
+parks the issue with its open pull request for manual follow-up. Part-aware
+acceptance, non-closing part pull requests and merge-satisfied part dependencies
+are a later generation. A failed generation 76 rolls back once to da9d6b437,
+whose candidate branches keep the colon, so a part created under 76 cannot
+publish after that rollback.
 
-A runtime-mismatch-parked preserved candidate whose deterministic `sentinel-candidates` preservation ref already holds its exact recorded head is restored through the trusted preserver and the same compare-and-swap write as artifact recovery (owner-delegated to the coordinator, 2026-10-15): the exact head SHA on that owned ref is sufficient content evidence, the preserver re-proves it in a fresh object store and re-checks protected paths, and nothing is charged, refunded or started. A blocker-bound producer whose plan artifact is expired or unlisted is unrecoverable from artifacts: maintenance records it as a typed skip that writes nothing, and its records stay blocked for an evidence-based disposition, never an age-based one.
+A runtime-mismatch-parked preserved candidate whose deterministic
+`sentinel-candidates` preservation ref already holds its exact recorded head is
+restored through the trusted preserver and the same compare-and-swap write as
+artifact recovery (owner-delegated to the coordinator, 2026-10-15): the exact
+head SHA on that owned ref is sufficient content evidence, the preserver
+re-proves it in a fresh object store and re-checks protected paths, and nothing
+is charged, refunded or started. A blocker-bound producer whose plan artifact is
+expired or unlisted is unrecoverable from artifacts: maintenance records it as a
+typed skip that writes nothing, and its records stay blocked for an
+evidence-based disposition, never an age-based one.
 
-The same exact-ref restore covers candidates the generation-63 matrix custody parked as "candidate preservation unresolved" (2026-10-16). Such a parked candidate is disposed only on native proof that it is gone: its preservation ref and managed branch are exact 404s, no pull request was opened from the branch, the exact head commit is an exact 404 while the record's base commit reads back, and its producing artifact is past retention. A "candidate preservation validation refused" candidate (the trusted validator's deterministic refusal) is disposed only after the base advanced, at least 24 hours after the refusal, and while its task holds fewer than 6 durable reservations. A disposed record takes the runtime's own proven-absence shape (no intent, candidate descriptor or head) with a `candidate preservation unrecoverable` blocker the retry pass owns. Its consumed charge stays untouched and the retry gates still apply, and a record whose charge a dedicated matrix recovery owns is left to that recovery. Separately, the generation-77 publication validator bounds only the base edge of a commit whose parents include the trusted base, because every other entry of that commit is trusted base content. Before this, any base refresh over a base movement wider than the changed-path bound was a deterministic structural refusal (ai.ubq.fi 649, PR 1012). Once a runtime whose exact revision is allowlisted as corrected (`HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES`, empty until the generation-77 launcher names R77) is installed, maintenance re-arms such a refused refresh at most once a day, only when the refusal predates that runtime's activation, and only when the candidate's branch, preservation ref and single open trusted pull request all still name the exact head; the runtime's own refresh then runs from `delivery`.
+The same exact-ref restore covers candidates the generation-63 matrix custody
+parked as "candidate preservation unresolved" (2026-10-16). Such a parked
+candidate is disposed only on native proof that it is gone: its preservation ref
+and managed branch are exact 404s, no pull request was opened from the branch,
+the exact head commit is an exact 404 while the record's base commit reads back,
+and its producing artifact is past retention. A "candidate preservation
+validation refused" candidate (the trusted validator's deterministic refusal) is
+disposed only after the base advanced, at least 24 hours after the refusal, and
+while its task holds fewer than 6 durable reservations. A disposed record takes
+the runtime's own proven-absence shape (no intent, candidate descriptor or head)
+with a `candidate preservation unrecoverable` blocker the retry pass owns. Its
+consumed charge stays untouched and the retry gates still apply, and a record
+whose charge a dedicated matrix recovery owns is left to that recovery.
+Separately, the generation-77 publication validator bounds only the base edge of
+a commit whose parents include the trusted base, because every other entry of
+that commit is trusted base content. Before this, any base refresh over a base
+movement wider than the changed-path bound was a deterministic structural
+refusal (ai.ubq.fi 649, PR 1012). Once a runtime whose exact revision is
+allowlisted as corrected (`HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES`, empty until
+the generation-77 launcher names R77) is installed, maintenance re-arms such a
+refused refresh at most once a day, only when the refusal predates that
+runtime's activation, and only when the candidate's branch, preservation ref and
+single open trusted pull request all still name the exact head; the runtime's
+own refresh then runs from `delivery`.
 
-Each re-entry of a refused candidate buys a fresh charged model run, and a refusal can recur at every new base, so the retry pass's 200-reservation budget is no bound for it: the base advance, a 24-hour wait from the refusal and a cap of 6 reservations per task (every purpose and outcome, the retry budget's unit) limit a candidate the validator keeps refusing to a few runs (2026-10-16). The refresh re-arm never trusts a generation number, because a rollback advances it too (a failed 77 restores 41bb853a1 at generation 78, which would otherwise re-arm, refuse and re-block PR 1012 daily). Its activation instant comes only from the launcher's pinned bounds and release custody that never moves forward: each allowlist entry's `activatedNotBefore` (the instant of the launcher commit that pins it, which precedes the owner install that commit performs), every hosted-release proof of an allowlisted runtime, and each pointer settlement of a generation earlier than the installed one; the earliest wins. The installed generation's own settlements change on every run and never count. A pinned bound later than any recorded execution of its own revision is provably wrong and never counts. When nothing qualifies, nothing is re-armed. The pinned bound is required because an owner install, the installed runtime's bootstrap and that bootstrap's settlement all happen in one supervisor run after that run's maintenance, so no maintenance ever observes the earlier generation's settlement under the new pointer (2026-10-16).
+Each re-entry of a refused candidate buys a fresh charged model run, and a
+refusal can recur at every new base, so the retry pass's 200-reservation budget
+is no bound for it: the base advance, a 24-hour wait from the refusal and a cap
+of 6 reservations per task (every purpose and outcome, the retry budget's unit)
+limit a candidate the validator keeps refusing to a few runs (2026-10-16). The
+refresh re-arm never trusts a generation number, because a rollback advances it
+too (a failed 77 restores 41bb853a1 at generation 78, which would otherwise
+re-arm, refuse and re-block PR 1012 daily). Its activation instant comes only
+from the launcher's pinned bounds and release custody that never moves forward:
+each allowlist entry's `activatedNotBefore` (the instant of the launcher commit
+that pins it, which precedes the owner install that commit performs), every
+hosted-release proof of an allowlisted runtime, and each pointer settlement of a
+generation earlier than the installed one; the earliest wins. The installed
+generation's own settlements change on every run and never count. A pinned bound
+later than any recorded execution of its own revision is provably wrong and
+never counts. When nothing qualifies, nothing is re-armed. The pinned bound is
+required because an owner install, the installed runtime's bootstrap and that
+bootstrap's settlement all happen in one supervisor run after that run's
+maintenance, so no maintenance ever observes the earlier generation's settlement
+under the new pointer (2026-10-16).
 
-A refreshed candidate the trusted publication validator refuses is parked for the owner, never retried, re-armed or detached (JAM B11, sentinel issue 157 / PR 160, 2026-10-17). Root cause: R79 (549c7a691) implemented and preserved 784e233ec for issue 157 at d5cc84402; it edits `ops/hosted-autonomy-follow-ups.ts`, `ops/hosted-autonomy-follow-up-pass.ts` and `ops/hosted-autonomy-github-issues.ts`, and R79 published it as PR 160; those three files are among the owner-protected paths R80 (e48e7e110, installed at 18:16Z) added. When `development` moved to 614a4fa02, R80 regenerated the deterministic refresh merge 18cceb957 and the validator refused it: "a protected entry does not match the trusted base tree" (reproduced byte-identically offline; R79's validator accepts both heads, R80's refuses both). That refusal is correct policy, but R80 counted the deterministic `invalid` verdict as a transient failure, re-ran the same doomed refresh twice (70 minutes), dropped the reason, blocked through `markTerminalBlocked`, which cleared `target.pr` and left PR 160 bound to no record, and the re-arm pass then reported `refresh:...:retained:activation` on every pass, because a refusal at or after the corrected validator's activation is never re-armed. The runtime now parks the first deterministic preservation verdict of an unmarked refresh (`invalid` with one of `DETERMINISTIC_PUBLICATION_DETAILS`) at once as "base refresh refused by trusted validation; owner action required (land the change by hand or close the issue): <reason>", the reason being "candidate touches a protected path" for a protected-entry verdict and the closed validator detail otherwise; a malformed request and a marked conflict-resolution refresh keep the bounded failure accounting. The park and the bounded failure block both keep the still-open pull request as `target.pr` (`markBlocked`, not `markTerminalBlocked`); the identity-contradiction and closed-publication blocks still clear it. The launcher's re-arm pass parks an R80-written refusal at or after the activation (or with no provable activation) in one CAS write: the same prefix with the original message after it, and the PR binding restored from the same native publication facts a re-arm verifies; an unverified publication is parked without a binding and bound by one later write once it verifies, never guessed. Every park is named on every later pass (`refresh:<id>:owner_required:pr=<n|unverified>`), a bound one without a read or a write, an unbound one after a read-only re-verification. No retry, re-admission, CI or delivery rule matches the prefix, so nothing charges, refunds, pushes, reviews, merges, closes a pull request or deletes a branch for it; the owner lands the change by hand (or edits the protected policy) or closes the issue, after which closure leaves it as every other closed-issue block. A fresh implementation was not chosen: the issue's own fix lives in protected launcher files, so any model candidate would be refused again. Every shape parses under R80's own parser and R80's selection skips it.
+A refreshed candidate the trusted publication validator refuses is parked for
+the owner, never retried, re-armed or detached (JAM B11, sentinel issue 157 / PR
+160, 2026-10-17). Root cause: R79 (549c7a691) implemented and preserved
+784e233ec for issue 157 at d5cc84402; it edits
+`ops/hosted-autonomy-follow-ups.ts`, `ops/hosted-autonomy-follow-up-pass.ts` and
+`ops/hosted-autonomy-github-issues.ts`, and R79 published it as PR 160; those
+three files are among the owner-protected paths R80 (e48e7e110, installed at
+18:16Z) added. When `development` moved to 614a4fa02, R80 regenerated the
+deterministic refresh merge 18cceb957 and the validator refused it: "a protected
+entry does not match the trusted base tree" (reproduced byte-identically
+offline; R79's validator accepts both heads, R80's refuses both). That refusal
+is correct policy, but R80 counted the deterministic `invalid` verdict as a
+transient failure, re-ran the same doomed refresh twice (70 minutes), dropped
+the reason, blocked through `markTerminalBlocked`, which cleared `target.pr` and
+left PR 160 bound to no record, and the re-arm pass then reported
+`refresh:...:retained:activation` on every pass, because a refusal at or after
+the corrected validator's activation is never re-armed. The runtime now parks
+the first deterministic preservation verdict of an unmarked refresh (`invalid`
+with one of `DETERMINISTIC_PUBLICATION_DETAILS`) at once as "base refresh
+refused by trusted validation; owner action required (land the change by hand or
+close the issue): <reason>", the reason being "candidate touches a protected
+path" for a protected-entry verdict and the closed validator detail otherwise; a
+malformed request and a marked conflict-resolution refresh keep the bounded
+failure accounting. The park and the bounded failure block both keep the
+still-open pull request as `target.pr` (`markBlocked`, not
+`markTerminalBlocked`); the identity-contradiction and closed-publication blocks
+still clear it. The launcher's re-arm pass parks an R80-written refusal at or
+after the activation (or with no provable activation) in one CAS write: the same
+prefix with the original message after it, and the PR binding restored from the
+same native publication facts a re-arm verifies; an unverified publication is
+parked without a binding and bound by one later write once it verifies, never
+guessed. Every park is named on every later pass
+(`refresh:<id>:owner_required:pr=<n|unverified>`), a bound one without a read or
+a write, an unbound one after a read-only re-verification. No retry,
+re-admission, CI or delivery rule matches the prefix, so nothing charges,
+refunds, pushes, reviews, merges, closes a pull request or deletes a branch for
+it; the owner lands the change by hand (or edits the protected policy) or closes
+the issue, after which closure leaves it as every other closed-issue block. A
+fresh implementation was not chosen: the issue's own fix lives in protected
+launcher files, so any model candidate would be refused again. Every shape
+parses under R80's own parser and R80's selection skips it.
 
-A parked runtime-mismatch candidate whose exact head the trusted preserver refuses with a deterministic publication verdict, for the record's own deterministic preservation ref, is recorded instead of silently skipped, and only while that ref reads back absent: an exact candidate already at its ref keeps custody. A protected-entry verdict (the candidate edits an owner-protected path, as ai.ubq.fi 587, 608, 764, 785 and 905 do) takes the runtime's own terminal "candidate touches a protected path" block, which no retry rule or disposition class re-admits, so the owner handles it. Any other deterministic verdict takes the runtime's "candidate preservation validation refused" block, which the REFUSED class above owns. Either way the intent is cleared, the target, head and descriptor are kept, the consumed charge is never refunded, and the walk reports `current-matrix:preservation-protected:N` or `current-matrix:preservation-refused:N` (2026-10-16).
+A parked runtime-mismatch candidate whose exact head the trusted preserver
+refuses with a deterministic publication verdict, for the record's own
+deterministic preservation ref, is recorded instead of silently skipped, and
+only while that ref reads back absent: an exact candidate already at its ref
+keeps custody. A protected-entry verdict (the candidate edits an owner-protected
+path, as ai.ubq.fi 587, 608, 764, 785 and 905 do) takes the runtime's own
+terminal "candidate touches a protected path" block, which no retry rule or
+disposition class re-admits, so the owner handles it. Any other deterministic
+verdict takes the runtime's "candidate preservation validation refused" block,
+which the REFUSED class above owns. Either way the intent is cleared, the
+target, head and descriptor are kept, the consumed charge is never refunded, and
+the walk reports `current-matrix:preservation-protected:N` or
+`current-matrix:preservation-refused:N` (2026-10-16).
 
 ## Generation 77 installation (2026-10-16)
 
-Generation 77 is R77 ab3613e02, the merge of the live launcher with the integrated runtime lanes, pinned by the launcher commit that adds its owner-install rung. Only an exact healthy 41bb853a1 generation-76 proof with no failed proof installs it at 77; a failed 77 restores that recorded 76 proof once at 78, and a rolled-back 41bb853a1 at 78 is outside the installation chain, so a rollback never re-installs R77. The refresh re-arm trusts R77 by exact revision with an activation bound of the pinning commit's instant, never by generation number. The CI-rejection correction route stays closed in hosted runs (empty runtime allowlist) because the generation-76 rollback target refuses its matrix cell. Review custody events are delivered strictly in the owner's counter order; a counter still missing one deadline after the last delivered progress is skipped with a content-free diagnostic, which keeps a refused owner frame confined to its own review.
+Generation 77 is R77 ab3613e02, the merge of the live launcher with the
+integrated runtime lanes, pinned by the launcher commit that adds its
+owner-install rung. Only an exact healthy 41bb853a1 generation-76 proof with no
+failed proof installs it at 77; a failed 77 restores that recorded 76 proof once
+at 78, and a rolled-back 41bb853a1 at 78 is outside the installation chain, so a
+rollback never re-installs R77. The refresh re-arm trusts R77 by exact revision
+with an activation bound of the pinning commit's instant, never by generation
+number. The CI-rejection correction route stays closed in hosted runs (empty
+runtime allowlist) because the generation-76 rollback target refuses its matrix
+cell. Review custody events are delivered strictly in the owner's counter order;
+a counter still missing one deadline after the last delivered progress is
+skipped with a content-free diagnostic, which keeps a refused owner frame
+confined to its own review.
 
 ## Generation 78 installation (2026-10-16)
 
-Generation 78 is R78 474f87eb6, the live launcher 3779f76aa plus three reviewed runtime lanes (the hosted CI-correction route opened, base-refresh conflict resolution carried with its hosted route closed, and the own-cell job-log settle deferral), pinned by the launcher commit that adds its owner-install rung. Only an exact healthy ab3613e02 generation-77 proof with no failed proof installs it at 78; a failed 78 restores that recorded 77 proof once at 79, waiting when it is no longer retained, and a restored ab3613e02 at 79 is outside the installation chain, so a rollback never re-installs R78. The launcher names R78 by exact revision in the CI-correction runtime allowlist (which also requires R78's own healthy proof at its installed generation) and in the refresh re-arm allowlist with the pinning commit's instant; the conflict-resolution allowlist stays empty, so its hosted route opens only in a later generation whose rollback target is R78.
+Generation 78 is R78 474f87eb6, the live launcher 3779f76aa plus three reviewed
+runtime lanes (the hosted CI-correction route opened, base-refresh conflict
+resolution carried with its hosted route closed, and the own-cell job-log settle
+deferral), pinned by the launcher commit that adds its owner-install rung. Only
+an exact healthy ab3613e02 generation-77 proof with no failed proof installs it
+at 78; a failed 78 restores that recorded 77 proof once at 79, waiting when it
+is no longer retained, and a restored ab3613e02 at 79 is outside the
+installation chain, so a rollback never re-installs R78. The launcher names R78
+by exact revision in the CI-correction runtime allowlist (which also requires
+R78's own healthy proof at its installed generation) and in the refresh re-arm
+allowlist with the pinning commit's instant; the conflict-resolution allowlist
+stays empty, so its hosted route opens only in a later generation whose rollback
+target is R78.
 
-Generation 78 opens the CI-rejection correction route in hosted runs (2026-10-16). Its rollback target R77 runs the same consumer, which accepts the planned cell (a head reviewed clean against the record's exact base, the planner's CI finding first) and isolates it as an authenticated runtime mismatch: the record is blocked with its original charge retained, never refunded. Every other state the open route writes is inert under R77 or ends in R77's own legacy CI block, except a reviewed head returned to `work` to await its correction, for which R77 re-publishes the same head and requests one more review: one charged review round per such record, never a model start, a refund or a merge without review. The launcher re-admits at most 12 CI corrections per pass (4 until 2026-10-17, raised to work the CI-red backlog while the owner's Codex quota allows), which bounds how many records can await a correction when a rollback lands; only corrections whose pull request it verified open count, so closed or unreadable pull requests never hold a slot. The launcher re-admits a CI-parked head for correction only under an exact allowlisted runtime of generation 78 or later with its own healthy proof (R77, including R77 restored at 79, is excluded by revision), and only once the head's single flake re-run can no longer act: the head was re-run, has nothing re-runnable, holds more failed runs than one pass re-runs, sits outside the re-run shape, or its base moved; an unreadable listing waits. The runtime's own "CI checks failed without base evidence" block keeps the free re-run and green re-admission, never a correction. Each record still gets at most `3 − reviewRounds` charged corrections, each one `retry` reservation, one cell and one review round, under the 200-reservation task budget.
+Generation 78 opens the CI-rejection correction route in hosted runs
+(2026-10-16). Its rollback target R77 runs the same consumer, which accepts the
+planned cell (a head reviewed clean against the record's exact base, the
+planner's CI finding first) and isolates it as an authenticated runtime
+mismatch: the record is blocked with its original charge retained, never
+refunded. Every other state the open route writes is inert under R77 or ends in
+R77's own legacy CI block, except a reviewed head returned to `work` to await
+its correction, for which R77 re-publishes the same head and requests one more
+review: one charged review round per such record, never a model start, a refund
+or a merge without review. The launcher re-admits at most 12 CI corrections per
+pass (4 until 2026-10-17, raised to work the CI-red backlog while the owner's
+Codex quota allows), which bounds how many records can await a correction when a
+rollback lands; only corrections whose pull request it verified open count, so
+closed or unreadable pull requests never hold a slot. The launcher re-admits a
+CI-parked head for correction only under an exact allowlisted runtime of
+generation 78 or later with its own healthy proof (R77, including R77 restored
+at 79, is excluded by revision), and only once the head's single flake re-run
+can no longer act: the head was re-run, has nothing re-runnable, holds more
+failed runs than one pass re-runs, sits outside the re-run shape, or its base
+moved; an unreadable listing waits. The runtime's own "CI checks failed without
+base evidence" block keeps the free re-run and green re-admission, never a
+correction. Each record still gets at most `3 − reviewRounds` charged
+corrections, each one `retry` reservation, one cell and one review round, under
+the 200-reservation task budget.
 
 ## Generation 79 installation (2026-10-16)
 
-Generation 79 is R79 549c7a691, the live launcher d69c4cba6 plus four reviewed lanes: refused CI re-runs settle (dce2885bd), an in-flight candidate preservation finishes from its exact producer (5fb5e33bb, also published alone as a launcher update), the hosted conflict-resolution route opens (55999a660), and a late conflict cell is finished in maintenance with at most 4 resolutions in flight, a lost cell holding its slot for at most 8 days (549c7a691). It is pinned by the launcher commit that adds its owner-install rung: only an exact healthy 474f87eb6 generation-78 proof with no failed proof installs it at 79; a failed 79 restores that recorded 78 proof once at 80, waiting when it is no longer retained, and a restored 474f87eb6 at 80 is outside the installation chain. The launcher names R79 by exact revision in the CI-correction, refresh re-arm and conflict-resolution runtime allowlists (each requiring R79's own healthy proof at its installed generation); R78 keeps the hosted conflict route closed and is never listed for it, so a rollback stops new resolutions.
+Generation 79 is R79 549c7a691, the live launcher d69c4cba6 plus four reviewed
+lanes: refused CI re-runs settle (dce2885bd), an in-flight candidate
+preservation finishes from its exact producer (5fb5e33bb, also published alone
+as a launcher update), the hosted conflict-resolution route opens (55999a660),
+and a late conflict cell is finished in maintenance with at most 4 resolutions
+in flight, a lost cell holding its slot for at most 8 days (549c7a691). It is
+pinned by the launcher commit that adds its owner-install rung: only an exact
+healthy 474f87eb6 generation-78 proof with no failed proof installs it at 79; a
+failed 79 restores that recorded 78 proof once at 80, waiting when it is no
+longer retained, and a restored 474f87eb6 at 80 is outside the installation
+chain. The launcher names R79 by exact revision in the CI-correction, refresh
+re-arm and conflict-resolution runtime allowlists (each requiring R79's own
+healthy proof at its installed generation); R78 keeps the hosted conflict route
+closed and is never listed for it, so a rollback stops new resolutions.
 
 ## Generation 79 hosted conflict resolution (2026-10-16)
 
-Generation 79 opens the base-refresh conflict-resolution route in hosted runs (`HOSTED_CONFLICT_RESOLUTIONS`): a refresh conflict on an in-shape published candidate H writes the uncharged pending refresh intent with the conflict marker (PR kept) instead of the terminal block, the trusted matrix planner re-confirms the base tip and branch and grants one `retry` charge per (task, base tip) as a cell continuing H with the base B to merge (at most 4 such resolutions in flight; a pending resolution past that cap stays pending, uncharged, for a later wave), the cell's trusted host commits the merge M with exactly the parents H and B, the ingest proves H and B are ancestors of M and preserves M under the refresh binding of (PR, H, B) before it consumes the receipt, and the hosted loop reconciles that preservation and lease-pushes M over H so the open pull request is re-reviewed against B. Each hosted job has its own mirror and M cannot be regenerated, so the preservation comes first: a later job, or the rollback target, publishes M from an empty mirror by reconciling that ref. A transient preservation failure (unavailable, rate limited, credential, a thrown port) keeps the receipt unconsumed, writing nothing (the one charge stays `reserved`, the marked implementation intent stays bound), so a later scan of the retained artifact retries in its own mirror; that holds for 24 hours after the admission, after which, and on a definite refusal, the receipt is consumed as before and the publication's bounded failure accounting owns the outcome. A merge touching a protected path is never preserved. Its rollback target R78 474f87eb6 keeps the hosted route closed, and tests that run R78's own extracted code show it handles or isolates everything the open route writes: its parsers accept every snapshot and the planner's `mergeBase` request; its hosted loop terminal-blocks a pending resolution uncharged and unpushed, leaves an in-flight resolution and its `reserved` charge untouched (fresh or stale), publishes a resolved merge exactly like generation 79, and writes nothing for an advanced merge or a charged, blocked resolution; its consumer authenticates the bound conflict cell and isolates it as a runtime mismatch with the marked intent and the `reserved` charge retained, never refunded. Such an isolated record stays blocked for the owner: the mismatch disposition retains it (a candidate head is present) and no retry or re-admission rule matches it. That is why the in-flight set is bounded: at most 4 conflict resolutions in flight, and at most 4 conflict resolutions returned per maintenance pass, so a rollback strands at most a wave's handful, never every parked conflict at once.
+Generation 79 opens the base-refresh conflict-resolution route in hosted runs
+(`HOSTED_CONFLICT_RESOLUTIONS`): a refresh conflict on an in-shape published
+candidate H writes the uncharged pending refresh intent with the conflict marker
+(PR kept) instead of the terminal block, the trusted matrix planner re-confirms
+the base tip and branch and grants one `retry` charge per (task, base tip) as a
+cell continuing H with the base B to merge (at most 4 such resolutions in
+flight; a pending resolution past that cap stays pending, uncharged, for a later
+wave), the cell's trusted host commits the merge M with exactly the parents H
+and B, the ingest proves H and B are ancestors of M and preserves M under the
+refresh binding of (PR, H, B) before it consumes the receipt, and the hosted
+loop reconciles that preservation and lease-pushes M over H so the open pull
+request is re-reviewed against B. Each hosted job has its own mirror and M
+cannot be regenerated, so the preservation comes first: a later job, or the
+rollback target, publishes M from an empty mirror by reconciling that ref. A
+transient preservation failure (unavailable, rate limited, credential, a thrown
+port) keeps the receipt unconsumed, writing nothing (the one charge stays
+`reserved`, the marked implementation intent stays bound), so a later scan of
+the retained artifact retries in its own mirror; that holds for 24 hours after
+the admission, after which, and on a definite refusal, the receipt is consumed
+as before and the publication's bounded failure accounting owns the outcome. A
+merge touching a protected path is never preserved. Its rollback target R78
+474f87eb6 keeps the hosted route closed, and tests that run R78's own extracted
+code show it handles or isolates everything the open route writes: its parsers
+accept every snapshot and the planner's `mergeBase` request; its hosted loop
+terminal-blocks a pending resolution uncharged and unpushed, leaves an in-flight
+resolution and its `reserved` charge untouched (fresh or stale), publishes a
+resolved merge exactly like generation 79, and writes nothing for an advanced
+merge or a charged, blocked resolution; its consumer authenticates the bound
+conflict cell and isolates it as a runtime mismatch with the marked intent and
+the `reserved` charge retained, never refunded. Such an isolated record stays
+blocked for the owner: the mismatch disposition retains it (a candidate head is
+present) and no retry or re-admission rule matches it. That is why the in-flight
+set is bounded: at most 4 conflict resolutions in flight, and at most 4 conflict
+resolutions returned per maintenance pass, so a rollback strands at most a
+wave's handful, never every parked conflict at once.
 
-The launcher re-admits a candidate parked on a refresh conflict only under an exact allowlisted conflict-resolution runtime of generation 79 or later holding its own healthy proof, and only for a block written before that runtime's pinned activation. One maintenance pass returns at most 4 conflict resolutions (`HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS`), counting the moved-tip re-pends below and these re-admissions together and only those whose pull request it verified open, so a dropped one never holds a slot; one past the cap is not read and waits for a later pass. This bounds both the rollback exposure and the burst on the model route when the opening runtime is first pinned (about 29 parked conflicts qualified on 2026-10-16). The allowlist stays empty until the commit that pins generation 79 names it (that commit also names it in the CI-correction and refresh re-arm allowlists, or installing it switches those passes off); R77 and R78 keep the hosted route closed and are never listed, so either one restored at any generation is excluded by revision, and a test proves every listed revision present locally opens the route in its own tree.
+The launcher re-admits a candidate parked on a refresh conflict only under an
+exact allowlisted conflict-resolution runtime of generation 79 or later holding
+its own healthy proof, and only for a block written before that runtime's pinned
+activation. One maintenance pass returns at most 4 conflict resolutions
+(`HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS`), counting the moved-tip
+re-pends below and these re-admissions together and only those whose pull
+request it verified open, so a dropped one never holds a slot; one past the cap
+is not read and waits for a later pass. This bounds both the rollback exposure
+and the burst on the model route when the opening runtime is first pinned (about
+29 parked conflicts qualified on 2026-10-16). The allowlist stays empty until
+the commit that pins generation 79 names it (that commit also names it in the
+CI-correction and refresh re-arm allowlists, or installing it switches those
+passes off); R77 and R78 keep the hosted route closed and are never listed, so
+either one restored at any generation is excluded by revision, and a test proves
+every listed revision present locally opens the route in its own tree.
 
-The retry table's conflict-marker guard refuses a marked record only while the resolution's own charge is settled charged (`submitted` or `ambiguous`, never refunded) and the configured base tip is unreadable or still the marked tip: that tip's one charge is spent, whatever the record's age, generation or blocker class. Once the target moved past the marked tip, a record whose blocker class the table already retries returns to a plain refresh at the new tip (no marker, the pull request, attempt floor and charges kept; the retry pass still requires the pull request open, the class's evidence-expiry wait still applies and a record with no review round left stays blocked), so a renewed conflict costs at most one charge at that new tip, and under R78 that refresh terminal-blocks uncharged. A resolution blocked for touching a protected path, or with any other class the table never retries, writes no attempt memory, so re-pending it would charge one more resolution per base move: it stays owner-terminal at every tip (`conflict_resolution_protected`, `conflict_resolution_terminal`), like the same block without a marker. A charge that is not a settled charge of this task (still `reserved` in flight or isolated, missing, or `confirmed_not_submitted` by the runtime's own refund path) leaves the record's own class in charge, whose settled-intent rule refuses an unsettled implementation charge; a settled charge bound to another task, repository or purpose is refused. A never-started conflict cell is settled `ambiguous` by ingest and is treated like any spent charge, so it never buys a second charge at the same tip.
+The retry table's conflict-marker guard refuses a marked record only while the
+resolution's own charge is settled charged (`submitted` or `ambiguous`, never
+refunded) and the configured base tip is unreadable or still the marked tip:
+that tip's one charge is spent, whatever the record's age, generation or blocker
+class. Once the target moved past the marked tip, a record whose blocker class
+the table already retries returns to a plain refresh at the new tip (no marker,
+the pull request, attempt floor and charges kept; the retry pass still requires
+the pull request open, the class's evidence-expiry wait still applies and a
+record with no review round left stays blocked), so a renewed conflict costs at
+most one charge at that new tip, and under R78 that refresh terminal-blocks
+uncharged. A resolution blocked for touching a protected path, or with any other
+class the table never retries, writes no attempt memory, so re-pending it would
+charge one more resolution per base move: it stays owner-terminal at every tip
+(`conflict_resolution_protected`, `conflict_resolution_terminal`), like the same
+block without a marker. A charge that is not a settled charge of this task
+(still `reserved` in flight or isolated, missing, or `confirmed_not_submitted`
+by the runtime's own refund path) leaves the record's own class in charge, whose
+settled-intent rule refuses an unsettled implementation charge; a settled charge
+bound to another task, repository or purpose is refused. A never-started
+conflict cell is settled `ambiguous` by ingest and is treated like any spent
+charge, so it never buys a second charge at the same tip.
 
-The in-flight bound counts every conflict resolution a rollback could still isolate, a record at `work` whose marked implementation intent still holds its own `reserved` charge (an earlier wave's unconsumed cell, or a receipt kept unconsumed while its merge is not yet preserved) and started, by that intent's own `startedAt` (the admission), less than 8 days before the planner's read (`CONFLICT_CELL_EVIDENCE_EXPIRY_MS`: the cell artifacts' `retention-days: 7` plus a day, the launcher's evidence-expiry horizon), before the planner grants another, so no more than 4 are ever in flight, not 4 per wave, and one rollback strands at most 4. A resolution R78 already isolated frees its slot: R78's isolation refuses any record not at `work`, so it cannot be isolated again, and nothing automatic settles its `reserved` charge (it stays blocked for the owner, never refunded), so counting it would only close the route for good after a rollback and a roll-forward. Each further rollback strands at most another 4. A record at `work` whose cell evidence was lost (its cell artifact never uploaded: a cancelled or timed-out job, a lost runner) also keeps its charge `reserved` with nothing to settle it, and state alone cannot tell it from a cell not yet consumed, so it keeps its slot until its admission is 8 days old; past that no consumer and no rollback can authenticate or isolate its cell, so it leaves the count, and only the count: the record, its `reserved` charge (never refunded) and any preservation stay byte-identical, since leaving a concurrency count is not a retirement. Lost cells can therefore hold the route closed for at most 8 days, not for good. When the cap is full the planner's zero-cell diagnostic counts every held-back pending resolution as `conflictResolutionCap` and names the cap and the ids of the records holding it. A late conflict cell is usually consumed by maintenance, so the launcher's candidate port also opens the exact refresh-binding ref of an in-flight conflict resolution's merge (the record's own pull request and head H with its marked base B; the preserver still re-proves the whole binding before any remote read): maintenance preserves M on the remote before it consumes the receipt, inside the 24-hour window and past it. Its gate used to refuse that ref, so maintenance deferred its walk on the cell for 24 hours and then consumed the receipt with M only in its own discarded mirror; a genuinely transient preservation failure keeps the existing 24-hour rule. A consumed conflict cell clears the record's timeout streak through its resolved intent, bound by the cell's merge request and the receipt head, so it is reported `ingested` and never defers the launcher's producer walk.
+The in-flight bound counts every conflict resolution a rollback could still
+isolate, a record at `work` whose marked implementation intent still holds its
+own `reserved` charge (an earlier wave's unconsumed cell, or a receipt kept
+unconsumed while its merge is not yet preserved) and started, by that intent's
+own `startedAt` (the admission), less than 8 days before the planner's read
+(`CONFLICT_CELL_EVIDENCE_EXPIRY_MS`: the cell artifacts' `retention-days: 7`
+plus a day, the launcher's evidence-expiry horizon), before the planner grants
+another, so no more than 4 are ever in flight, not 4 per wave, and one rollback
+strands at most 4. A resolution R78 already isolated frees its slot: R78's
+isolation refuses any record not at `work`, so it cannot be isolated again, and
+nothing automatic settles its `reserved` charge (it stays blocked for the owner,
+never refunded), so counting it would only close the route for good after a
+rollback and a roll-forward. Each further rollback strands at most another 4. A
+record at `work` whose cell evidence was lost (its cell artifact never uploaded:
+a cancelled or timed-out job, a lost runner) also keeps its charge `reserved`
+with nothing to settle it, and state alone cannot tell it from a cell not yet
+consumed, so it keeps its slot until its admission is 8 days old; past that no
+consumer and no rollback can authenticate or isolate its cell, so it leaves the
+count, and only the count: the record, its `reserved` charge (never refunded)
+and any preservation stay byte-identical, since leaving a concurrency count is
+not a retirement. Lost cells can therefore hold the route closed for at most 8
+days, not for good. When the cap is full the planner's zero-cell diagnostic
+counts every held-back pending resolution as `conflictResolutionCap` and names
+the cap and the ids of the records holding it. A late conflict cell is usually
+consumed by maintenance, so the launcher's candidate port also opens the exact
+refresh-binding ref of an in-flight conflict resolution's merge (the record's
+own pull request and head H with its marked base B; the preserver still
+re-proves the whole binding before any remote read): maintenance preserves M on
+the remote before it consumes the receipt, inside the 24-hour window and past
+it. Its gate used to refuse that ref, so maintenance deferred its walk on the
+cell for 24 hours and then consumed the receipt with M only in its own discarded
+mirror; a genuinely transient preservation failure keeps the existing 24-hour
+rule. A consumed conflict cell clears the record's timeout streak through its
+resolved intent, bound by the cell's merge request and the receipt head, so it
+is reported `ingested` and never defers the launcher's producer walk.
 
 ## Spent-round delivery and review follow-ups (2026-10-16, launcher only)
 
-Owner decision 2026-10-16: review rounds are capped at three, CI comes before review, a PR merges once its latest completed current-head review has no unresolved P0/P1 (or its three rounds are spent with none), its remaining P2/P3 findings are filed as new issues, and a PR whose required CI is red never merges. The launcher (`ops/`, so it may ship before any runtime) implements the merge and follow-up halves for records the runtime already parked.
+Owner decision 2026-10-16: review rounds are capped at three, CI comes before
+review, a PR merges once its latest completed current-head review has no
+unresolved P0/P1 (or its three rounds are spent with none), its remaining P2/P3
+findings are filed as new issues, and a PR whose required CI is red never
+merges. The launcher (`ops/`, so it may ship before any runtime) implements the
+merge and follow-up halves for records the runtime already parked.
 
-A record whose ordinary review rounds are spent (the runtime's own count over the durable ledger, `ordinaryReviewRoundsSpent`) and that is parked in `work` or `blocked` is merged through the trusted delivery path only in the closed spent shape (`spentDeliveryAdmissible`): no open intent, PR, head, base and an issue source, no newer candidate than the reviewed head, and when blocked one of the allowlisted (kind, prefix) blockers (`HOSTED_AUTONOMY_SPENT_DELIVERY_BLOCKERS`: the merge-gate CI failure, the unattributed CI block, the retired review-rounds quota block) or the runtime's REVIEWED or BASE_MOVED review-round ceiling park, by exact message. Task-acceptance, retired, hand-merged, preservation-unrecoverable, conflict, release and attempt-budget blocks are never merged (`spent_not_admissible`). Every delivery-pass merge, spent or not, is decided by the LATEST identity-bound completed review of the exact PR, head and base by the sentinel App reviewer (by completion time, then observation time, then id): a later P0/P1 or uncounted finding refuses (`latest_review_blocking`) even after an earlier clean review. Before the one external merge per pass the source issue must be open (`issue_not_open`), required CI must be green on the exact head (`checks_pending`; self `test-local`, a target every check run) and, on the Gateway, the runtime's own `gatewayRequestBindsDelivery` must bind a provisional request to the record as it will be written (`request_unbindable`), so a merge whose release request could never be recorded is impossible. The Gateway record is then written with the runtime's own `advanceToDelivery` (wait and blocker cleared; counters, evidence, intent and target unchanged) beside one open production request, the same shapes the eleven live delivered Gateway records hold; releases stay disabled, nothing fabricates a release, later passes report `already_recorded` and `release_unavailable`, and the source issue closes through the PR body's closing keyword. An already-merged spent PR (the lost-write window) is adopted only from the App's own verified merge with green CI on its head; a hand merge is `merged_outside_trusted_path` and nothing is recorded. At most eight parked spent records are read per pass, from an offset that rotates every five minutes; a record an earlier write of the same maintenance pass settled takes no slot and waits for the next pass. Beside the eight, a carried head the runtime awaits is read on every pass while it holds its repository's delivery line, at most the line's front one per self or Gateway repository (generation 80, see the carried merge above). The delivery pass, which the continuation runner runs at most once per maintenance pass, calls merge at most once: from the moment it calls merge, whatever the answer (merged, refused, lost or thrown) and whatever fails after it (the post-merge pull read, the opt-out read, the request binding), every later open pull request in that pass is `merge_deferred` before any gate is read, because the base tip and its CI were read once for the pass and that merge may have moved the tip to a commit whose CI nobody has checked; an already-merged pull request is still settled read-only in the same pass.
+A record whose ordinary review rounds are spent (the runtime's own count over
+the durable ledger, `ordinaryReviewRoundsSpent`) and that is parked in `work` or
+`blocked` is merged through the trusted delivery path only in the closed spent
+shape (`spentDeliveryAdmissible`): no open intent, PR, head, base and an issue
+source, no newer candidate than the reviewed head, and when blocked one of the
+allowlisted (kind, prefix) blockers (`HOSTED_AUTONOMY_SPENT_DELIVERY_BLOCKERS`:
+the merge-gate CI failure, the unattributed CI block, the retired review-rounds
+quota block) or the runtime's REVIEWED or BASE_MOVED review-round ceiling park,
+by exact message. Task-acceptance, retired, hand-merged,
+preservation-unrecoverable, conflict, release and attempt-budget blocks are
+never merged (`spent_not_admissible`). Every delivery-pass merge, spent or not,
+is decided by the LATEST identity-bound completed review of the exact PR, head
+and base by the sentinel App reviewer (by completion time, then observation
+time, then id): a later P0/P1 or uncounted finding refuses
+(`latest_review_blocking`) even after an earlier clean review. Before the one
+external merge per pass the source issue must be open (`issue_not_open`),
+required CI must be green on the exact head (`checks_pending`; self
+`test-local`, a target every check run) and, on the Gateway, the runtime's own
+`gatewayRequestBindsDelivery` must bind a provisional request to the record as
+it will be written (`request_unbindable`), so a merge whose release request
+could never be recorded is impossible. The Gateway record is then written with
+the runtime's own `advanceToDelivery` (wait and blocker cleared; counters,
+evidence, intent and target unchanged) beside one open production request, the
+same shapes the eleven live delivered Gateway records hold; releases stay
+disabled, nothing fabricates a release, later passes report `already_recorded`
+and `release_unavailable`, and the source issue closes through the PR body's
+closing keyword. An already-merged spent PR (the lost-write window) is adopted
+only from the App's own verified merge with green CI on its head; a hand merge
+is `merged_outside_trusted_path` and nothing is recorded. At most eight parked
+spent records are read per pass, from an offset that rotates every five minutes;
+a record an earlier write of the same maintenance pass settled takes no slot and
+waits for the next pass. Beside the eight, a carried head the runtime awaits is
+read on every pass while it holds its repository's delivery line, at most the
+line's front one per self or Gateway repository (generation 80, see the carried
+merge above). The delivery pass, which the continuation runner runs at most once
+per maintenance pass, calls merge at most once: from the moment it calls merge,
+whatever the answer (merged, refused, lost or thrown) and whatever fails after
+it (the post-merge pull read, the opt-out read, the request binding), every
+later open pull request in that pass is `merge_deferred` before any gate is
+read, because the base tip and its CI were read once for the pass and that merge
+may have moved the tip to a commit whose CI nobody has checked; an
+already-merged pull request is still settled read-only in the same pass.
 
-The retry pass's green CI rule, which returns a CI-parked head that turned green on its unchanged reviewed base to the runtime's `delivery` step under any runtime, leaves a head whose ordinary review rounds are spent (a legacy record included) to this rule: under a proven CI-first runtime the retry pass reads the CI of at most 16 spent CI-parked heads per pass (`HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS`), and a green one on its exact reviewed base is denied `green_spent_left_to_delivery` and merged by the delivery pass of the same maintenance pass at that base, or refused. A spent head is planned as a CI correction only when its CI was read this pass and is not green, so a green legacy head is never handed to the runtime as a correction (round-1 recheck P3 [2]); a green one on a moved base returns to `delivery` only under a proven CI-first runtime, for the carried refresh above; an unread one is not planned at all. The retry phase runs before the delivery phase and the delivery pass skips a record an earlier write of the pass settled, so the hand-off used to settle these records for the pass: no launcher merge, and once the base moved before the runtime's step, R79 refreshed and reviewed the head a fourth time (a legacy record spent its one final round on a head whose CI nobody had read) and R80 parked it. Green 618, 698 and 879 merge on their existing clean review, with no final round, only through this rule (`tests/host/hosted-autonomy-spent-green-chain_test.ts` runs the whole chain), and no green re-admission hands a spent record to any runtime but a proven CI-first one, whose delivery step only carries its review, so the green rule is not a path to a legacy final review either.
+The retry pass's green CI rule, which returns a CI-parked head that turned green
+on its unchanged reviewed base to the runtime's `delivery` step under any
+runtime, leaves a head whose ordinary review rounds are spent (a legacy record
+included) to this rule: under a proven CI-first runtime the retry pass reads the
+CI of at most 16 spent CI-parked heads per pass
+(`HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS`), and a green one on its exact
+reviewed base is denied `green_spent_left_to_delivery` and merged by the
+delivery pass of the same maintenance pass at that base, or refused. A spent
+head is planned as a CI correction only when its CI was read this pass and is
+not green, so a green legacy head is never handed to the runtime as a correction
+(round-1 recheck P3 [2]); a green one on a moved base returns to `delivery` only
+under a proven CI-first runtime, for the carried refresh above; an unread one is
+not planned at all. The retry phase runs before the delivery phase and the
+delivery pass skips a record an earlier write of the pass settled, so the
+hand-off used to settle these records for the pass: no launcher merge, and once
+the base moved before the runtime's step, R79 refreshed and reviewed the head a
+fourth time (a legacy record spent its one final round on a head whose CI nobody
+had read) and R80 parked it. Green 618, 698 and 879 merge on their existing
+clean review, with no final round, only through this rule
+(`tests/host/hosted-autonomy-spent-green-chain_test.ts` runs the whole chain),
+and no green re-admission hands a spent record to any runtime but a proven
+CI-first one, whose delivery step only carries its review, so the green rule is
+not a path to a legacy final review either.
 
-Moved-base merge (decision D3, `HOSTED_AUTONOMY_SPENT_MOVED_BASE_MERGE`) ships DISABLED (`false`), and stays disabled under the coordinator's choice of option (b) above, because the merged result is never CI-tested. The runtime refreshes any candidate whose base moved, which creates a new head and costs another review round (ai.ubq.fi 684 reached 50 rounds that way); D3 would instead merge a spent Gateway record whose reviewed base B moved onto the current tip T when B is a strict ancestor of T (compare `ahead`), the pull still records B as its base, GitHub reports it mergeable, the exact head is green and T's own CI is complete and green (`base_moved`, `mergeability_pending`, `merge_conflicted`, `base_ci_pending` otherwise). None of those checks tests T plus the head: the head's green check runs ran on `refs/pull/N/merge` against B, and T's CI covers T alone. Live, PR 1071's green run tested base 8a99ecbe, 110 commits and 72 files behind the tip; PR 1120's drift edits a file the PR also edits; PR 1011's head CI ran 384 commits behind with 2 of the current workflow's 4 jobs (`darwin-native` and `mac-containment` never ran), yet every check run on its head is green. Such a merge can turn `development` red, which the owner rule forbids, and R79 then parks every refreshed candidate on the red base. While the flag is false every record keeps the exact-base rule and a moved base is `base_moved` with no compare or tip-CI read; R79's own merges always refresh onto the current tip, so its PR CI ran against that tip. Before D3 is enabled the gate must also require that the head's green check names include every check name on T (a stale-workflow head like PR 1011 refuses), refuse a B...T drift that touches any file the PR changes or any dependency, lockfile or CI file, and bound how far T is ahead of B; spent records on a moved base are instead rescued through the carried refresh above. The self scope keeps the exact-base rule either way.
+Moved-base merge (decision D3, `HOSTED_AUTONOMY_SPENT_MOVED_BASE_MERGE`) ships
+DISABLED (`false`), and stays disabled under the coordinator's choice of option
+(b) above, because the merged result is never CI-tested. The runtime refreshes
+any candidate whose base moved, which creates a new head and costs another
+review round (ai.ubq.fi 684 reached 50 rounds that way); D3 would instead merge
+a spent Gateway record whose reviewed base B moved onto the current tip T when B
+is a strict ancestor of T (compare `ahead`), the pull still records B as its
+base, GitHub reports it mergeable, the exact head is green and T's own CI is
+complete and green (`base_moved`, `mergeability_pending`, `merge_conflicted`,
+`base_ci_pending` otherwise). None of those checks tests T plus the head: the
+head's green check runs ran on `refs/pull/N/merge` against B, and T's CI covers
+T alone. Live, PR 1071's green run tested base 8a99ecbe, 110 commits and 72
+files behind the tip; PR 1120's drift edits a file the PR also edits; PR 1011's
+head CI ran 384 commits behind with 2 of the current workflow's 4 jobs
+(`darwin-native` and `mac-containment` never ran), yet every check run on its
+head is green. Such a merge can turn `development` red, which the owner rule
+forbids, and R79 then parks every refreshed candidate on the red base. While the
+flag is false every record keeps the exact-base rule and a moved base is
+`base_moved` with no compare or tip-CI read; R79's own merges always refresh
+onto the current tip, so its PR CI ran against that tip. Before D3 is enabled
+the gate must also require that the head's green check names include every check
+name on T (a stale-workflow head like PR 1011 refuses), refuse a B...T drift
+that touches any file the PR changes or any dependency, lockfile or CI file, and
+bound how far T is ahead of B; spent records on a moved base are instead rescued
+through the carried refresh above. The self scope keeps the exact-base rule
+either way.
 
-Once per maintenance pass, after the whole chain including every phase it continued to (unless it failed), and never starting a read or create later than `HOSTED_AUTONOMY_PASS_DEADLINE_MS` after the pass started (otherwise `followup:deadline`), the launcher files ONE issue per merged PR in the target repository for the unresolved P2/P3 findings of that PR's latest clean current-head review, from production requests (open or fulfilled) created since 2026-10-16T00:00Z and within the last 72 hours. Each is re-verified live (merged by the App under the request's merge commit and head, trusted author, base branch, integrated); a hand or owner merge never gets one. The body's first line is `<!-- sentinel:review-followup:v1 repo=<owner>/<name> pr=<pr> receipt=<receipt id> depth=<d> -->`; before any create the repository's created-since listing is read and proven complete, and an App-authored issue with that marker at any depth means it exists, so nothing is filed twice without state. The reviewer's text is quoted inert (controls removed, no live mention, issue reference or line-leading slash command) inside a tilde fence, each finding links its `path:a-b` at the reviewed head, and the issue is an ordinary Sentinel-admissible issue (it carries no opt-out). Bounds: two creates, four merge checks and eight unfiled candidates per pass, five listing pages, a 60-second budget, twenty findings of at most 1,500 characters, a 12,000-character body and a 120-character title; a follow-up of a follow-up is depth 2 and depth 3 is never filed. The capability (`followUpIssues`: one listing GET, one issue GET and the issue POST, each bound to the exact repository and the App creator) exists only on the launcher's port, never in `src/github` or a model worker. Accepted risk: a follow-up an administrator deletes inside the 72-hour window is filed once more.
+Once per maintenance pass, after the whole chain including every phase it
+continued to (unless it failed), and never starting a read or create later than
+`HOSTED_AUTONOMY_PASS_DEADLINE_MS` after the pass started (otherwise
+`followup:deadline`), the launcher files ONE issue per merged PR in the target
+repository for the unresolved P2/P3 findings of that PR's latest clean
+current-head review, from production requests (open or fulfilled) created since
+2026-10-16T00:00Z and within the last 72 hours. Each is re-verified live (merged
+by the App under the request's merge commit and head, trusted author, base
+branch, integrated); a hand or owner merge never gets one. The body's first line
+is
+`<!-- sentinel:review-followup:v1 repo=<owner>/<name> pr=<pr> receipt=<receipt id> depth=<d> -->`;
+before any create the repository's created-since listing is read and proven
+complete, and an App-authored issue with that marker at any depth means it
+exists, so nothing is filed twice without state. The reviewer's text is quoted
+inert (controls removed, no live mention, issue reference or line-leading slash
+command) inside a tilde fence, each finding links its `path:a-b` at the reviewed
+head, and the issue is an ordinary Sentinel-admissible issue (it carries no
+opt-out). Bounds: two creates, four merge checks and eight unfiled candidates
+per pass, five listing pages, a 60-second budget, twenty findings of at most
+1,500 characters, a 12,000-character body and a 120-character title; a follow-up
+of a follow-up is depth 2 and depth 3 is never filed. The capability
+(`followUpIssues`: one listing GET, one issue GET and the issue POST, each bound
+to the exact repository and the App creator) exists only on the launcher's port,
+never in `src/github` or a model worker. Accepted risk: a follow-up an
+administrator deletes inside the 72-hour window is filed once more.
 
-Rollback: the written snapshots parse under R79 549c7a691, R79's own binding binds them and its delivery step waits on the open request (no merge, no refresh intent), the launcher L79 7e38d16a4 reports `already_recorded` and `release_unavailable` over them and writes nothing, and R79's task-statement check and intake opt-out reader admit the follow-up issues; the follow-ups write no state and no matrix cell.
+Rollback: the written snapshots parse under R79 549c7a691, R79's own binding
+binds them and its delivery step waits on the open request (no merge, no refresh
+intent), the launcher L79 7e38d16a4 reports `already_recorded` and
+`release_unavailable` over them and writes nothing, and R79's task-statement
+check and intake opt-out reader admit the follow-up issues; the follow-ups write
+no state and no matrix cell.
 
 ## Generation 80 installation (2026-10-17)
 
-Generation 80 is R80 e48e7e110, the live launcher 413f9eff6 plus the reviewed generation-80 lanes: the hard three-round review ceiling on every review path (125d184b4), the launcher's spent-round merge on green CI with review follow-up issues (b9ae9534f), CI first, then review, with CI fixes charged as retries (f9c59b834), one legacy final review round on a green head (ed975acb3), the delivery line that serialises moved-base refreshes (319ee6fdd), the carried refresh of a spent record on a moved base under the legacy cutoff rule (f1c7ddaa2, 0cac1abfe), and the exact carried-merge marker and tree proof with an uncached tip before every launcher merge (d99ed7570, which also reverts the macOS lane 12af5da8a), and two test-only CI fixes (d5cc84402 formats a JSON fixture; e48e7e110 guards two rollback-parse checks on the generation-79 source being present). It is pinned by the launcher commit that adds its owner-install rung: only an exact healthy 549c7a691 generation-79 proof with no failed proof installs it at 80; a failed 80 restores that recorded 79 proof once at 81, waiting when it is no longer retained, and a restored 549c7a691 at 81 is outside the installation chain. The launcher names R80 by exact revision in the CI-correction, refresh re-arm, conflict-resolution and CI-first runtime allowlists (each requiring R80's own healthy proof at its installed generation), the refresh re-arm and conflict-resolution rows with the pinning commit's instant 2026-10-17T17:05:00Z (1792256700000), and the same commit pins the one legacy review cutoff C (`LEGACY_REVIEW_CUTOFF`) at that instant with R80 as its first revision, so C is no later than generation 80's first activation. The CI-first fix allowlist stays empty (R80 keeps `HOSTED_PRE_REVIEW_CI_FIXES` false because R79 refuses that cell). R79 is never listed as a CI-first runtime and receives no cutoff, so a rollback grants no legacy final round.
+Generation 80 is R80 e48e7e110, the live launcher 413f9eff6 plus the reviewed
+generation-80 lanes: the hard three-round review ceiling on every review path
+(125d184b4), the launcher's spent-round merge on green CI with review follow-up
+issues (b9ae9534f), CI first, then review, with CI fixes charged as retries
+(f9c59b834), one legacy final review round on a green head (ed975acb3), the
+delivery line that serialises moved-base refreshes (319ee6fdd), the carried
+refresh of a spent record on a moved base under the legacy cutoff rule
+(f1c7ddaa2, 0cac1abfe), and the exact carried-merge marker and tree proof with
+an uncached tip before every launcher merge (d99ed7570, which also reverts the
+macOS lane 12af5da8a), and two test-only CI fixes (d5cc84402 formats a JSON
+fixture; e48e7e110 guards two rollback-parse checks on the generation-79 source
+being present). It is pinned by the launcher commit that adds its owner-install
+rung: only an exact healthy 549c7a691 generation-79 proof with no failed proof
+installs it at 80; a failed 80 restores that recorded 79 proof once at 81,
+waiting when it is no longer retained, and a restored 549c7a691 at 81 is outside
+the installation chain. The launcher names R80 by exact revision in the
+CI-correction, refresh re-arm, conflict-resolution and CI-first runtime
+allowlists (each requiring R80's own healthy proof at its installed generation),
+the refresh re-arm and conflict-resolution rows with the pinning commit's
+instant 2026-10-17T17:05:00Z (1792256700000), and the same commit pins the one
+legacy review cutoff C (`LEGACY_REVIEW_CUTOFF`) at that instant with R80 as its
+first revision, so C is no later than generation 80's first activation. The
+CI-first fix allowlist stays empty (R80 keeps `HOSTED_PRE_REVIEW_CI_FIXES` false
+because R79 refuses that cell). R79 is never listed as a CI-first runtime and
+receives no cutoff, so a rollback grants no legacy final round.
 
 ## Generation 80 CI-first pipeline (2026-10-16)
 
-Owner decision 2026-10-16: CI first, then review, then merge. `requestReviewFor` gates every review request on the exact fresh head's required CI (`src/repair/loop-ci-first.ts`), after its freshness gate and before any reservation: green proceeds; running or absent checks wait at `work` in a `ci_pending` wait that keeps its `since` and parks after 6 hours (`CI did not finish before review within 6 hours: ...`); a red base backs off 30 minutes uncharged; a failure no base evidence attributes (a cancelled, absent or inconclusive base check, or a head check that never concluded) proves nothing about the candidate, so it waits like running CI, uncharged and bounded, and parks as `CI did not finish before review within 6 hours: ... without base evidence`, which the launcher's re-run and green rules re-admit, never a terminal block; a candidate-caused failure takes the existing CI correction for a head reviewed clean on its base, the CI fix marker (a zero-length `backoff` at `work`) for a never-reviewed head where the pre-review route is open, and otherwise parks (`CI red before review; awaiting a CI fix: ...`). A head already reviewed clean on its base by a change-only verdict (the missing task acceptance re-request, the only reviewed head that asks for another review) waits for its CI at `review` and is never parked: at `work` it would read as awaiting a CI correction whose non-failing exit delivers it to a merge gate that refuses the missing acceptance on every run, and a CI correction whose failure is gone returns such a head to `review` instead of delivery. A candidate-caused failure on such a head still takes the charged CI correction at `work`; R79 consumes that state as the same correction while the failure persists, and only a failure that clears between a rollback and the correction's admission would reach R79's own non-failing exit into its refusing merge gate, which needs a change-only verdict (none completed live since 2026-10-02). No non-green path reserves a review or counts a round, so every corrected head, refreshed head and conflict resolution passes CI before its next review.
+Owner decision 2026-10-16: CI first, then review, then merge. `requestReviewFor`
+gates every review request on the exact fresh head's required CI
+(`src/repair/loop-ci-first.ts`), after its freshness gate and before any
+reservation: green proceeds; running or absent checks wait at `work` in a
+`ci_pending` wait that keeps its `since` and parks after 6 hours
+(`CI did not finish before review within 6 hours: ...`); a red base backs off 30
+minutes uncharged; a failure no base evidence attributes (a cancelled, absent or
+inconclusive base check, or a head check that never concluded) proves nothing
+about the candidate, so it waits like running CI, uncharged and bounded, and
+parks as
+`CI did not finish before review within 6 hours: ... without base evidence`,
+which the launcher's re-run and green rules re-admit, never a terminal block; a
+candidate-caused failure takes the existing CI correction for a head reviewed
+clean on its base, the CI fix marker (a zero-length `backoff` at `work`) for a
+never-reviewed head where the pre-review route is open, and otherwise parks
+(`CI red before review; awaiting a CI fix: ...`). A head already reviewed clean
+on its base by a change-only verdict (the missing task acceptance re-request,
+the only reviewed head that asks for another review) waits for its CI at
+`review` and is never parked: at `work` it would read as awaiting a CI
+correction whose non-failing exit delivers it to a merge gate that refuses the
+missing acceptance on every run, and a CI correction whose failure is gone
+returns such a head to `review` instead of delivery. A candidate-caused failure
+on such a head still takes the charged CI correction at `work`; R79 consumes
+that state as the same correction while the failure persists, and only a failure
+that clears between a rollback and the correction's admission would reach R79's
+own non-failing exit into its refusing merge gate, which needs a change-only
+verdict (none completed live since 2026-10-02). No non-green path reserves a
+review or counts a round, so every corrected head, refreshed head and conflict
+resolution passes CI before its next review.
 
-A CI fix is charged in the existing `counters.retries` (`countRetry`, also counting `attempts`) and never counts a review round: at most 3 per record, never lowered, a refunded never-submitted admission included; then the record parks with `CI fix attempts exhausted (3 of 3): ...`, which no fix or refresh re-admits (from generation 81 the once-per-head re-run and the green rule take the pre-review gate's park of a never-reviewed head, see below). A fix also needs a review round for the fixed head, counted by the hard ceiling's own rule over the durable ledger (`reviewRoundsLeft`; CI fix charges are not `review_request` admissions and never count): fewer than 3 spent, or the one-time legacy final review of the owner's legacy class, whose ceiling is its pin + 1: every ai.ubq.fi issue record whose rounds reached three under the old review-before-CI order, by the cutoff rule above (the twelve the owner named, 595, 597, 605, 610, 618, 668, 672, 673, 680, 694, 698 and 879, the sixteen R79 parked the same way afterwards, 137, 575, 583, 602, 615, 617, 629, 633, 634, 638, 650, 678, 679, 693, 754 and 1128, and the records in flight at the install). Its open final round admits the CI fix; the fix arms it for the review. One rule under one cutoff serves every check (`legacyReviewRoundPin`, `legacyFinalRoundOpen`, `legacyFinalRoundArmed` in `src/repair/review-round-cap.ts`), and every launcher read that counts rounds takes the same cutoff: the correction planner, the flake re-run's settled read that every correction plan requires (`readCiRerunSettled`; round-2 recheck P1: read without the cutoff it settled no legacy record, so 645, 646, 657, 663 and 1140 would never have got their CI fix or final review, silently, since a record pinned at its spent count reports no drift; `tests/host/hosted-autonomy-legacy-settled_test.ts` runs the real retry pass on the 645 shape) and the conflict re-admission. So the CI fix admission, the review-round ceiling and the launcher's legacy re-admission can never disagree on who gets the final review. The hosted pre-review fix route stays closed in generation 80 (`HOSTED_PRE_REVIEW_CI_FIXES`): R79, its rollback target, refuses that cell generically; generation 80's consumer accepts it so a later generation can open it. Every refreshed head is a head no review has completed on, so this park is not limited to new candidates: a reviewed record whose base moved and whose refreshed head is red (live, most refreshes onto 2756425c16, 973bb2f and ded498f failed validate on prettier and eslint drift: 645, 646, 649, 1128, 583, 615, 617, 629, 633) parks `CI red before review; awaiting a CI fix: ...` in a hosted generation-80 run with no route out, where R79 reviewed it and then corrected it (`tests/repair/ci-first-refresh-red_test.ts`). The coordinator accepts this for generation 80 (its round-2 choice): such a park waits for generation 81, a follow-up, not a ship condition of generation 80, scheduled once R80 is healthy: R80 as its rollback target, `HOSTED_PRE_REVIEW_CI_FIXES` true and its runtime pinned in `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`, whose fix rule re-admits exactly these parks through the CI fix marker (the same test pins that route). The launcher approves held CI runs for published heads at `work` and for pre-review parks, re-runs a red pre-review park once, returns a green one to `work` under any runtime, and re-admits a red one with the fix marker only under an allowlisted fix runtime (none yet); the legacy final-review re-admission runs only under an allowlisted CI-first runtime (`HOSTED_AUTONOMY_CI_FIRST_RUNTIMES`, which names R80 from its install pin and counts it only once R80 holds its own healthy proof). The legacy final round is the same single round everywhere: a CI-fixed legacy head whose refresh conflicts keeps it for the resolved merge (`conflictResolutionShape` counts `reviewRoundsLeft` alone; live 597 and 668 conflict), and no launcher re-admission hands it to a runtime not proven CI-first (`legacyFinalRoundAdmissible`, denial `legacy_round_requires_ci_first`): the retry table's work, review and conflict re-pend grants, the pre-review CI-first returns (which also need a review round left), the CI correction's legacy rule, and the base-refresh, conflict and refresh re-arm re-admissions. R79 reviews before CI, so under it that round would be spent on a red head; under R79 a pending resolution generation 80 wrote for such a record is refused by R79's own shape (three or more rounds), so R79 runs the ordinary refresh, which blocks on the same conflict uncharged.
+A CI fix is charged in the existing `counters.retries` (`countRetry`, also
+counting `attempts`) and never counts a review round: at most 3 per record,
+never lowered, a refunded never-submitted admission included; then the record
+parks with `CI fix attempts exhausted (3 of 3): ...`, which no fix or refresh
+re-admits (from generation 81 the once-per-head re-run and the green rule take
+the pre-review gate's park of a never-reviewed head, see below). A fix also
+needs a review round for the fixed head, counted by the hard ceiling's own rule
+over the durable ledger (`reviewRoundsLeft`; CI fix charges are not
+`review_request` admissions and never count): fewer than 3 spent, or the
+one-time legacy final review of the owner's legacy class, whose ceiling is its
+pin + 1: every ai.ubq.fi issue record whose rounds reached three under the old
+review-before-CI order, by the cutoff rule above (the twelve the owner named,
+595, 597, 605, 610, 618, 668, 672, 673, 680, 694, 698 and 879, the sixteen R79
+parked the same way afterwards, 137, 575, 583, 602, 615, 617, 629, 633, 634,
+638, 650, 678, 679, 693, 754 and 1128, and the records in flight at the
+install). Its open final round admits the CI fix; the fix arms it for the
+review. One rule under one cutoff serves every check (`legacyReviewRoundPin`,
+`legacyFinalRoundOpen`, `legacyFinalRoundArmed` in
+`src/repair/review-round-cap.ts`), and every launcher read that counts rounds
+takes the same cutoff: the correction planner, the flake re-run's settled read
+that every correction plan requires (`readCiRerunSettled`; round-2 recheck P1:
+read without the cutoff it settled no legacy record, so 645, 646, 657, 663 and
+1140 would never have got their CI fix or final review, silently, since a record
+pinned at its spent count reports no drift;
+`tests/host/hosted-autonomy-legacy-settled_test.ts` runs the real retry pass on
+the 645 shape) and the conflict re-admission. So the CI fix admission, the
+review-round ceiling and the launcher's legacy re-admission can never disagree
+on who gets the final review. The hosted pre-review fix route stays closed in
+generation 80 (`HOSTED_PRE_REVIEW_CI_FIXES`): R79, its rollback target, refuses
+that cell generically; generation 80's consumer accepts it so a later generation
+can open it. Every refreshed head is a head no review has completed on, so this
+park is not limited to new candidates: a reviewed record whose base moved and
+whose refreshed head is red (live, most refreshes onto 2756425c16, 973bb2f and
+ded498f failed validate on prettier and eslint drift: 645, 646, 649, 1128, 583,
+615, 617, 629, 633) parks `CI red before review; awaiting a CI fix: ...` in a
+hosted generation-80 run with no route out, where R79 reviewed it and then
+corrected it (`tests/repair/ci-first-refresh-red_test.ts`). The coordinator
+accepts this for generation 80 (its round-2 choice): such a park waits for
+generation 81, a follow-up, not a ship condition of generation 80, scheduled
+once R80 is healthy: R80 as its rollback target, `HOSTED_PRE_REVIEW_CI_FIXES`
+true and its runtime pinned in `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`, whose
+fix rule re-admits exactly these parks through the CI fix marker (the same test
+pins that route). The launcher approves held CI runs for published heads at
+`work` and for pre-review parks, re-runs a red pre-review park once, returns a
+green one to `work` under any runtime, and re-admits a red one with the fix
+marker only under an allowlisted fix runtime (none yet); the legacy final-review
+re-admission runs only under an allowlisted CI-first runtime
+(`HOSTED_AUTONOMY_CI_FIRST_RUNTIMES`, which names R80 from its install pin and
+counts it only once R80 holds its own healthy proof). The legacy final round is
+the same single round everywhere: a CI-fixed legacy head whose refresh conflicts
+keeps it for the resolved merge (`conflictResolutionShape` counts
+`reviewRoundsLeft` alone; live 597 and 668 conflict), and no launcher
+re-admission hands it to a runtime not proven CI-first
+(`legacyFinalRoundAdmissible`, denial `legacy_round_requires_ci_first`): the
+retry table's work, review and conflict re-pend grants, the pre-review CI-first
+returns (which also need a review round left), the CI correction's legacy rule,
+and the base-refresh, conflict and refresh re-arm re-admissions. R79 reviews
+before CI, so under it that round would be spent on a red head; under R79 a
+pending resolution generation 80 wrote for such a record is refused by R79's own
+shape (three or more rounds), so R79 runs the ordinary refresh, which blocks on
+the same conflict uncharged.
 
 ## Generation 81 pre-review CI fixes (2026-10-17, issue #153)
 
-Generation 81 has R80 e48e7e110 as its rollback target and opens the hosted pre-review CI fix route that generation 80 kept closed (`HOSTED_PRE_REVIEW_CI_FIXES` true, runtime): R80's consumer isolates every pre-review fix cell generation 81 plans, a never-reviewed candidate's and a reviewed record's refreshed head's alike, as an authenticated runtime mismatch with the charge kept reserved (`tests/host/matrix-ci-first-gen79_test.ts`, run against R80's own source), and R80's own loop parks the CI fix marker precisely and uncharged (`tests/repair/ci-first-rollback-gen80_test.ts`). So a red head no completed review binds, including every red refreshed head of a reviewed record (645, 646, 649, 1128, 583, 615, 617, 629, 633 at the integration review; 13 of 18 candidate heads at the cifix review), takes the CI fix marker at the runtime's gate instead of parking: a CI fix charged in `counters.retries`, never a review round, at most 3 per record, then the exhausted park. No new state shape, cell kind or stdout line: every hosted write parses under R80.
+Generation 81 has R80 e48e7e110 as its rollback target and opens the hosted
+pre-review CI fix route that generation 80 kept closed
+(`HOSTED_PRE_REVIEW_CI_FIXES` true, runtime): R80's consumer isolates every
+pre-review fix cell generation 81 plans, a never-reviewed candidate's and a
+reviewed record's refreshed head's alike, as an authenticated runtime mismatch
+with the charge kept reserved (`tests/host/matrix-ci-first-gen79_test.ts`, run
+against R80's own source), and R80's own loop parks the CI fix marker precisely
+and uncharged (`tests/repair/ci-first-rollback-gen80_test.ts`). So a red head no
+completed review binds, including every red refreshed head of a reviewed record
+(645, 646, 649, 1128, 583, 615, 617, 629, 633 at the integration review; 13 of
+18 candidate heads at the cifix review), takes the CI fix marker at the
+runtime's gate instead of parking: a CI fix charged in `counters.retries`, never
+a review round, at most 3 per record, then the exhausted park. No new state
+shape, cell kind or stdout line: every hosted write parses under R80.
 
-Launcher (ops/, may ship before the runtime, correct under R80): under a proven CI-first runtime (R80 included) a red or pending pre-review park whose base moved returns to `work` with nothing charged and no marker (`retry:<id>:grant=0:...:base-moved`): the runtime's freshness gate refreshes it deterministically and its CI gate runs before any review. It needs a review round left by the ceiling's own count, since the runtime's ceiling gate would otherwise park it before the refresh; an open legacy final round is a CI fix's to arm, so a legacy record whose round is still unarmed waits for the fix rule. The unchanged-base condition stays only on the green rule, which serves any runtime. The pre-review gate's exhausted park of a head no completed review binds now gets the once-per-head re-run and the green rule (a flake green again on its unchanged base returns for its review); it never gets a fix or a moved-base refresh. The merge gate writes the same message for a reviewed head, whose green head belongs to delivery rather than to another review, so that park keeps generation 80's terms. The fix rule re-admits a red park R80 wrote on its unchanged base through the CI fix marker only under a fix runtime: `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES` stays empty here and generation 81's own pin commit lists R81 there and in the CI-first and CI-correction allowlists; `ciFirstFixRuntimeProven` counts a listed revision only at generation 81+, as a proven CI-first runtime with its own healthy proof, and a test proves `HOSTED_PRE_REVIEW_CI_FIXES` true in every listed revision's tree. Under R80 a moved-base return of a candidate-caused red head parks again on the refreshed head, at most once per base move per record, until R81 is installed.
+Launcher (ops/, may ship before the runtime, correct under R80): under a proven
+CI-first runtime (R80 included) a red or pending pre-review park whose base
+moved returns to `work` with nothing charged and no marker
+(`retry:<id>:grant=0:...:base-moved`): the runtime's freshness gate refreshes it
+deterministically and its CI gate runs before any review. It needs a review
+round left by the ceiling's own count, since the runtime's ceiling gate would
+otherwise park it before the refresh; an open legacy final round is a CI fix's
+to arm, so a legacy record whose round is still unarmed waits for the fix rule.
+The unchanged-base condition stays only on the green rule, which serves any
+runtime. The pre-review gate's exhausted park of a head no completed review
+binds now gets the once-per-head re-run and the green rule (a flake green again
+on its unchanged base returns for its review); it never gets a fix or a
+moved-base refresh. The merge gate writes the same message for a reviewed head,
+whose green head belongs to delivery rather than to another review, so that park
+keeps generation 80's terms. The fix rule re-admits a red park R80 wrote on its
+unchanged base through the CI fix marker only under a fix runtime:
+`HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES` stays empty here and generation 81's own
+pin commit lists R81 there and in the CI-first and CI-correction allowlists;
+`ciFirstFixRuntimeProven` counts a listed revision only at generation 81+, as a
+proven CI-first runtime with its own healthy proof, and a test proves
+`HOSTED_PRE_REVIEW_CI_FIXES` true in every listed revision's tree. Under R80 a
+moved-base return of a candidate-caused red head parks again on the refreshed
+head, at most once per base move per record, until R81 is installed.
 
-Live at repair sequence 41064 (2026-10-17T20:18Z, R80 installed at generation 80): two ai.ubq.fi records sit in the CI-red pre-review park and none in the pending or exhausted park. 1148 (PR 1149, never reviewed) parked on 3650359812 while development moved to e25d09cd09: L80 never re-admits it, while this launcher returns it under R80 at once for its uncharged refresh. 575 (legacy, its final round armed by R80's CI correction, one round left) parked on the tip: it waits for its base to move (refresh), for a green head (the green rule), or for a pinned R81 to take its fix once its re-run settles. At sequence 40627 (R79 installed) no record sat in these parks. The 36 ai.ubq.fi merge-gate CI parks there (all legacy, none on the tip) reach the pre-review gate only through R80's CI correction, which arms the final round; this launcher returns every such red park on a moved base for its refresh under R80, where L80 returned none.
+Live at repair sequence 41064 (2026-10-17T20:18Z, R80 installed at generation
+80): two ai.ubq.fi records sit in the CI-red pre-review park and none in the
+pending or exhausted park. 1148 (PR 1149, never reviewed) parked on 3650359812
+while development moved to e25d09cd09: L80 never re-admits it, while this
+launcher returns it under R80 at once for its uncharged refresh. 575 (legacy,
+its final round armed by R80's CI correction, one round left) parked on the tip:
+it waits for its base to move (refresh), for a green head (the green rule), or
+for a pinned R81 to take its fix once its re-run settles. At sequence 40627 (R79
+installed) no record sat in these parks. The 36 ai.ubq.fi merge-gate CI parks
+there (all legacy, none on the tip) reach the pre-review gate only through R80's
+CI correction, which arms the final round; this launcher returns every such red
+park on a moved base for its refresh under R80, where L80 returned none.
 
 ## Generation 81 CI failure evidence for corrections (2026-10-17)
 
-Owner request 2026-10-17: a CI correction (post-review and pre-review CI fix alike) must carry enough failure context to fix any kind of CI failure. Live, 38 of 49 open Sentinel PRs on ubiquity/ai.ubq.fi were red on their `validate` job while the finding named only the check; their annotations carry nothing useful (a Node.js deprecation warning and "Process completed with exit code N") and their check output is empty, so the job log is the evidence.
+Owner request 2026-10-17: a CI correction (post-review and pre-review CI fix
+alike) must carry enough failure context to fix any kind of CI failure. Live, 38
+of 49 open Sentinel PRs on ubiquity/ai.ubq.fi were red on their `validate` job
+while the finding named only the check; their annotations carry nothing useful
+(a Node.js deprecation warning and "Process completed with exit code N") and
+their check output is empty, so the job log is the evidence.
 
-The trusted matrix cell collects the evidence when it prepares a CI correction cell (the planner's CI finding first, `checkoutBase` set, no `mergeBase`), after every admission and reservation check and before its final start-bound check (`src/host/matrix-cell-ci-evidence.ts`), with the cell's scoped read-only App token through the target's cooldown gate (the cell gate records nothing). The reader (`src/github/client-ci-evidence.ts`) is repository-scoped and never throws: per failing check (at most 8 named, logs for at most 4) the identity, workflow name and file, job, failing steps, annotations (at most 10) and, for Actions jobs, a bounded excerpt of the signed job log, read through the existing trusted results-host check without credentials in explicit 4 MiB ranges: the first 32 MiB, then the last 256 KiB with the gap marked; other check runs give their output, commit statuses their description. The excerpt is generic first (`src/repair/ci-evidence-excerpt.ts`): the failing step (the one with `##[error]`, else the last step), kept whole when it fits its share; otherwise its header and tail, windows around the strong failure markers above the tail that shrink to fit (40/8 down to bare markers, then first and last alternately), and the rest of the share filled nearest first: the markers' after-context, their before-context, the contiguous run after the first marker, weak windows (only for unrecognized failures), then the step's start and end alternately. The scanner keeps each step's first and last 16 KiB and the 16 KiB after its first strong marker for this, so a key line with no failure word in the middle of a step (a generated-file diff header, a Jest expected/received diff, the last line of a traceback) survives (`synthetic-gen-drift.txt`, `synthetic-jest-diff.txt`, `synthetic-traceback-mid.txt`; review P2). Formatter, linter, compiler and test-name hints are optional summaries. Every line is cleaned (timestamps, ANSI, control, bidi), made repository-relative, redacted of credential shapes (never 40/64-hex SHAs or paths) and capped at 400 characters; the content sits between two markers carrying a fresh 128-bit nonce, scrubbed of the nonce, the marker label and code fences, under a header that it is UNTRUSTED output of the candidate's code, to be used only as a description of the failure. Budgets: 32 KiB of fenced content, 4 to 16 KiB per check, at most 36,000 characters for the section (`MAX_CI_EVIDENCE_PROMPT_CHARS`), 60 s and 64 requests per correction, and the first rate limit stops every later read (a cell records none); over the 38 live logs of 20:26Z and the 39 red heads of 23:00Z every true error line is kept, through the real reader, at a 16, 8 or 4 KiB share (a small failing step is kept whole in about 500 characters; the 1.9 MB logs fill about 15,000 of a 16 KiB share). The label "candidate" or "likely infrastructure" is advisory (all 39 live red heads are "candidate", none "likely infrastructure"); correction and round policy are unchanged.
+The trusted matrix cell collects the evidence when it prepares a CI correction
+cell (the planner's CI finding first, `checkoutBase` set, no `mergeBase`), after
+every admission and reservation check and before its final start-bound check
+(`src/host/matrix-cell-ci-evidence.ts`), with the cell's scoped read-only App
+token through the target's cooldown gate (the cell gate records nothing). The
+reader (`src/github/client-ci-evidence.ts`) is repository-scoped and never
+throws: per failing check (at most 8 named, logs for at most 4) the identity,
+workflow name and file, job, failing steps, annotations (at most 10) and, for
+Actions jobs, a bounded excerpt of the signed job log, read through the existing
+trusted results-host check without credentials in explicit 4 MiB ranges: the
+first 32 MiB, then the last 256 KiB with the gap marked; other check runs give
+their output, commit statuses their description. The excerpt is generic first
+(`src/repair/ci-evidence-excerpt.ts`): the failing step (the one with
+`##[error]`, else the last step), kept whole when it fits its share; otherwise
+its header and tail, windows around the strong failure markers above the tail
+that shrink to fit (40/8 down to bare markers, then first and last alternately),
+and the rest of the share filled nearest first: the markers' after-context,
+their before-context, the contiguous run after the first marker, weak windows
+(only for unrecognized failures), then the step's start and end alternately. The
+scanner keeps each step's first and last 16 KiB and the 16 KiB after its first
+strong marker for this, so a key line with no failure word in the middle of a
+step (a generated-file diff header, a Jest expected/received diff, the last line
+of a traceback) survives (`synthetic-gen-drift.txt`, `synthetic-jest-diff.txt`,
+`synthetic-traceback-mid.txt`; review P2). Formatter, linter, compiler and
+test-name hints are optional summaries. Every line is cleaned (timestamps, ANSI,
+control, bidi), made repository-relative, redacted of credential shapes (never
+40/64-hex SHAs or paths) and capped at 400 characters; the content sits between
+two markers carrying a fresh 128-bit nonce, scrubbed of the nonce, the marker
+label and code fences, under a header that it is UNTRUSTED output of the
+candidate's code, to be used only as a description of the failure. Budgets: 32
+KiB of fenced content, 4 to 16 KiB per check, at most 36,000 characters for the
+section (`MAX_CI_EVIDENCE_PROMPT_CHARS`), 60 s and 64 requests per correction,
+and the first rate limit stops every later read (a cell records none); over the
+38 live logs of 20:26Z and the 39 red heads of 23:00Z every true error line is
+kept, through the real reader, at a 16, 8 or 4 KiB share (a small failing step
+is kept whole in about 500 characters; the 1.9 MB logs fill about 15,000 of a 16
+KiB share). The label "candidate" or "likely infrastructure" is advisory (all 39
+live red heads are "candidate", none "likely infrastructure"); correction and
+round policy are unchanged.
 
-Nothing new is persisted or planned: the evidence travels beside the digest-bound request as `runModel(request, { untrustedCiEvidence })` into the user turn's input only (the role paragraph stays last), never into the Codex thread's system-level `baseInstructions`, which keep the prompt without evidence, so CI output never arrives with instruction authority and is sent once (review P2); and never into state, the plan, a receipt or stdout. The finding keeps its prefix and only drops "; no CI log text is available", so R80 (the rollback target) parses every request and carrier this generation writes (`tests/host/ci-evidence-r80_test.ts`). Any failure (permission, rate limit, timeout, expired or oversized log, no spare time) degrades to a one-line reason in the prompt and one plain stderr line (`sentinel ci-evidence: <reason> <owner/name>`); it never blocks, refuses or re-charges the cell. Every hosted implementation prompt now also tells the implementer to read the repository's CI workflows and run the fast checks that apply to its changes when they work offline in the checkout; the host itself never runs the target's toolchain (that would execute candidate code in a credentialed process). The model sandbox has no network and no installed dependencies, so for ai.ubq.fi (prettier, eslint and tsc from `node_modules`) the model cannot run those gates itself: a trusted, read-only dependency tree installed credential-free from the base lockfile with scripts disabled is a separate owner decision. The matrix cell's App token mint adds `permission-actions: read` (`.github/workflows/supervisor.yml`); without it the jobs and logs of a foreign target answer 403 and the evidence holds identity and annotations with the reason `forbidden_actions_read`.
+Nothing new is persisted or planned: the evidence travels beside the
+digest-bound request as `runModel(request, { untrustedCiEvidence })` into the
+user turn's input only (the role paragraph stays last), never into the Codex
+thread's system-level `baseInstructions`, which keep the prompt without
+evidence, so CI output never arrives with instruction authority and is sent once
+(review P2); and never into state, the plan, a receipt or stdout. The finding
+keeps its prefix and only drops "; no CI log text is available", so R80 (the
+rollback target) parses every request and carrier this generation writes
+(`tests/host/ci-evidence-r80_test.ts`). Any failure (permission, rate limit,
+timeout, expired or oversized log, no spare time) degrades to a one-line reason
+in the prompt and one plain stderr line
+(`sentinel ci-evidence: <reason> <owner/name>`); it never blocks, refuses or
+re-charges the cell. Every hosted implementation prompt now also tells the
+implementer to read the repository's CI workflows and run the fast checks that
+apply to its changes when they work offline in the checkout; the host itself
+never runs the target's toolchain (that would execute candidate code in a
+credentialed process). The model sandbox has no network and no installed
+dependencies, so for ai.ubq.fi (prettier, eslint and tsc from `node_modules`)
+the model cannot run those gates itself: a trusted, read-only dependency tree
+installed credential-free from the base lockfile with scripts disabled is a
+separate owner decision. The matrix cell's App token mint adds
+`permission-actions: read` (`.github/workflows/supervisor.yml`); without it the
+jobs and logs of a foreign target answer 403 and the evidence holds identity and
+annotations with the reason `forbidden_actions_read`.
 
 ## Generation 81 task acceptance corrections (2026-10-17, JAM B6)
 
-Owner rules: an unaccepted candidate never merges and only P0/P1 block a merge, so a completed review whose only refusal is a `not_fulfilled` task acceptance, bound to the record's own source issue and to its trusted live text, is a P1. The runtime (`src/repair/acceptance-correction.ts`, `applyObservedReview`) keeps the receipt with every reviewer finding verbatim and the reviewer's acceptance verbatim, and normalizes the verdict into one leading unresolved P1 finding (id `task-acceptance-not-fulfilled`, the reviewer's acceptance evidence, at most 2,000 characters). The record then continues exactly as a P0/P1 verdict does: while a review round is left (`reviewRoundsLeft`) it returns to `work` for the ordinary charged correction, whose first finding is that statement (B6a); with none left, or when the receipt already holds the most findings a receipt may, it parks once with the receipt as `task acceptance not fulfilled and no correction can follow: owner decision required` (B6b), which no runtime path and no launcher rule re-admits. The three-round ceiling, charging, refunds and every merge gate are unchanged. A head whose latest completed review carries that acceptance P1 is rejected even when an earlier receipt of the same head is listed first (`rejectedReceipt`; every other verdict keeps the first-listed rule): the missing-acceptance recovery re-reviews the same head, and its earlier change-only receipt must not turn the rejected head into one awaiting a CI correction that bounces between `work` and `review` without end.
+Owner rules: an unaccepted candidate never merges and only P0/P1 block a merge,
+so a completed review whose only refusal is a `not_fulfilled` task acceptance,
+bound to the record's own source issue and to its trusted live text, is a P1.
+The runtime (`src/repair/acceptance-correction.ts`, `applyObservedReview`) keeps
+the receipt with every reviewer finding verbatim and the reviewer's acceptance
+verbatim, and normalizes the verdict into one leading unresolved P1 finding (id
+`task-acceptance-not-fulfilled`, the reviewer's acceptance evidence, at most
+2,000 characters). The record then continues exactly as a P0/P1 verdict does:
+while a review round is left (`reviewRoundsLeft`) it returns to `work` for the
+ordinary charged correction, whose first finding is that statement (B6a); with
+none left, or when the receipt already holds the most findings a receipt may, it
+parks once with the receipt as
+`task acceptance not fulfilled and no correction can follow: owner decision required`
+(B6b), which no runtime path and no launcher rule re-admits. The three-round
+ceiling, charging, refunds and every merge gate are unchanged. A head whose
+latest completed review carries that acceptance P1 is rejected even when an
+earlier receipt of the same head is listed first (`rejectedReceipt`; every other
+verdict keeps the first-listed rule): the missing-acceptance recovery re-reviews
+the same head, and its earlier change-only receipt must not turn the rejected
+head into one awaiting a CI correction that bounces between `work` and `review`
+without end.
 
-Rollback to R80 (e48e7e110): the receipt is a strict R80 receipt, and R80's own loop and planner predicates read the P1 as the P1 it is and start the same correction with the same first finding (`tests/repair/acceptance-rollback-r80_test.ts`, run against R80's own source); R80's plan parser accepts the planned cell (`tests/host/matrix-acceptance-correction_test.ts`), and R80's matrix consumer accepts it by the same rule as any P0/P1 correction (a completed review with unresolved findings binds the checked-out head). Storing the verdict without the P1 would not be safe: R80 would read a clean-findings head at `work` as awaiting a CI correction whose green exit reaches its merge gate, which refuses the acceptance with a run-level state error on every run (the rollback test's control). The owner-gated park is idle under R80, and a head whose change-only receipt R80 lists first is returned to review and blocked again by R80, never a state error.
+Rollback to R80 (e48e7e110): the receipt is a strict R80 receipt, and R80's own
+loop and planner predicates read the P1 as the P1 it is and start the same
+correction with the same first finding
+(`tests/repair/acceptance-rollback-r80_test.ts`, run against R80's own source);
+R80's plan parser accepts the planned cell
+(`tests/host/matrix-acceptance-correction_test.ts`), and R80's matrix consumer
+accepts it by the same rule as any P0/P1 correction (a completed review with
+unresolved findings binds the checked-out head). Storing the verdict without the
+P1 would not be safe: R80 would read a clean-findings head at `work` as awaiting
+a CI correction whose green exit reaches its merge gate, which refuses the
+acceptance with a run-level state error on every run (the rollback test's
+control). The owner-gated park is idle under R80, and a head whose change-only
+receipt R80 lists first is returned to review and blocked again by R80, never a
+state error.
 
-Launcher (`ops/hosted-autonomy-acceptance.ts`): a record R80 blocked with exactly `task acceptance not fulfilled: the candidate does not satisfy the source issue` while an ordinary round is left returns to `review` with only its blocker cleared (`retry:<id>:grant=0:other:task acceptance not fulfilled:review`), on its open issue and verified-open pull request, so the runtime re-observes the standing completed review (no new review, nothing charged) and corrects it. It runs only under an allowlisted acceptance-correction runtime at generation 81+ with its own healthy proof (`HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES`, empty until generation 81's pin commit lists R81; a test checks every listed revision's tree): R80 would block the same verdict again on every pass. Under any other runtime the retry pass names each such record (`retry:<id>:denied:acceptance_correction_requires_runtime`). The owner-gated park and the R80 refusal once its ordinary rounds are spent, on a source issue the pass did not read closed, are skipped by the delivery pass without a read and named once per pass in its result line (`owner_gate:task_acceptance_not_fulfilled:n=<count>:<ids>`), replacing `delivery:<id>:spent_not_admissible` on every pass; nothing is written for them and no GitHub write is added. The two sets are split by the ordinary round count and the runtime writes the R80 refusal never again, so no record cycles between them.
+Launcher (`ops/hosted-autonomy-acceptance.ts`): a record R80 blocked with
+exactly
+`task acceptance not fulfilled: the candidate does not satisfy the source issue`
+while an ordinary round is left returns to `review` with only its blocker
+cleared (`retry:<id>:grant=0:other:task acceptance not fulfilled:review`), on
+its open issue and verified-open pull request, so the runtime re-observes the
+standing completed review (no new review, nothing charged) and corrects it. It
+runs only under an allowlisted acceptance-correction runtime at generation 81+
+with its own healthy proof (`HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES`,
+empty until generation 81's pin commit lists R81; a test checks every listed
+revision's tree): R80 would block the same verdict again on every pass. Under
+any other runtime the retry pass names each such record
+(`retry:<id>:denied:acceptance_correction_requires_runtime`). The owner-gated
+park and the R80 refusal once its ordinary rounds are spent, on a source issue
+the pass did not read closed, are skipped by the delivery pass without a read
+and named once per pass in its result line
+(`owner_gate:task_acceptance_not_fulfilled:n=<count>:<ids>`), replacing
+`delivery:<id>:spent_not_admissible` on every pass; nothing is written for them
+and no GitHub write is added. The two sets are split by the ordinary round count
+and the runtime writes the R80 refusal never again, so no record cycles between
+them.
 
-Live at repair sequence 41474 (2026-10-17T21:40Z, R80 installed): ai.ubq.fi 576 (PR 1069, 2 rounds), 653 (PR 1014, 1 round) and 660 (PR 1063, 2 rounds) are B6a, re-admitted on the first pass after R81 is pinned and proven, and corrected on the runtime's next review observation and matrix plan; 611 (PR 1107), 1127 (PR 1145) and 118 (PR 1113, 22 rounds) are B6b, owner-gated from the first pass of this launcher. 112 (PR 1085) and 596 (PR 1088) carry the same spent refusal, but the owner merged both pull requests by hand and closed both issues on 2026-10-16, so they are not named and keep their existing `spent_not_admissible` line. R80 kept none of their refusing receipts, so the B6b records carry no stored acceptance statement; the owner reads it on each pull request's submitted Sentinel review (`Task acceptance (issue #<n>): not_fulfilled` and its evidence).
+Live at repair sequence 41474 (2026-10-17T21:40Z, R80 installed): ai.ubq.fi 576
+(PR 1069, 2 rounds), 653 (PR 1014, 1 round) and 660 (PR 1063, 2 rounds) are B6a,
+re-admitted on the first pass after R81 is pinned and proven, and corrected on
+the runtime's next review observation and matrix plan; 611 (PR 1107), 1127
+(PR 1145) and 118 (PR 1113, 22 rounds) are B6b, owner-gated from the first pass
+of this launcher. 112 (PR 1085) and 596 (PR 1088) carry the same spent refusal,
+but the owner merged both pull requests by hand and closed both issues on
+2026-10-16, so they are not named and keep their existing `spent_not_admissible`
+line. R80 kept none of their refusing receipts, so the B6b records carry no
+stored acceptance statement; the owner reads it on each pull request's submitted
+Sentinel review (`Task acceptance (issue #<n>): not_fulfilled` and its
+evidence).
 
 ## Retained macOS local mode and issue #100 (2026-10-17)
 
-Owner context 2026-10-17: Sentinel's intended runtime is GitHub Actions on Linux; the retained macOS local-supervisor mode is not used. Issue #100 (the native Codex cannot apply its own Seatbelt profile inside the macOS local supervisor's child sandbox) concerns that retained local mode only and has no Actions impact, so it is closed as not planned for now. Generation 80 ships no macOS change: the opt-in Codex exemption of the local supervisor's child profile and the `check:macos-boundary` owner check (12af5da8a) are reverted, and the local supervisor, its child profile and their tests are byte-identical to the live launcher 413f9eff6. If the local mode is used again, #100 is reopened, and a supervisor-owned broker, not an exemption that lets repair-host code reach an unconfined Codex, is the route.
+Owner context 2026-10-17: Sentinel's intended runtime is GitHub Actions on
+Linux; the retained macOS local-supervisor mode is not used. Issue #100 (the
+native Codex cannot apply its own Seatbelt profile inside the macOS local
+supervisor's child sandbox) concerns that retained local mode only and has no
+Actions impact, so it is closed as not planned for now. Generation 80 ships no
+macOS change: the opt-in Codex exemption of the local supervisor's child profile
+and the `check:macos-boundary` owner check (12af5da8a) are reverted, and the
+local supervisor, its child profile and their tests are byte-identical to the
+live launcher 413f9eff6. If the local mode is used again, #100 is reopened, and
+a supervisor-owned broker, not an exemption that lets repair-host code reach an
+unconfined Codex, is the route.
 
 ## Required CI coverage (issue #154, generation 81)
 
-Required CI is green only when every expected check exists. `decideCiGate` judges the check runs that exist, and GitHub creates a check run only when its job starts: ai.ubq.fi's `verify-artifact` (`needs: [validate, mac-containment, darwin-native]`) has none until those finish. Live, the carried head f0008beb62 of PR 1064 (a refresh onto 9cdc76dc) showed three of three runs green from 08:41:53Z to 08:41:58Z, so a CI-first poll would have requested a review, a carried poll written the carried-merge marker, and a launcher read in the same window merged a head whose required job never ran. The expected checks are those of the base the head is tested against, but only the base check suites that share a check name with the head (`missingExpectedChecks`, `src/repair/ci-coverage.ts`): sentinel `development` carries a `dispatch` run from every five-minute schedule in its own suite, which no pull request head ever runs (live 9a1b1d924: `dispatch` and `test-local`), so the base's raw name set would hold every self head forever. A commit status (no suite) is never expected. The runtime port reads a base for this rule through its own lenient read, `readCheckSuites` (name and `check_suite.id` of each check run, never persisted; the exact-head binding and the item bound stay, a malformed suite is a parse failure, commit statuses are not read), not through the strict CI read: that read bounds a check name at 64 characters, and live sentinel `development` (fast-forwarded with `sentinel-supervisor`, so its tip also carries the supervisor.yml runs) holds 78-character `matrix_cell (<cellId>)` runs: 7 of 22 runs on L80 9a1b1d924, 33 of 75 on the tip 3f041b46d. Read strictly, every self base was unreadable and every self head was deferred forever at the review gate, the ceiling's refresh and the carried step. The strict CI read (`readChecks`) is unchanged from R80 and reads no suite. The sentinel self scope reads no base at all, as the launcher's retry pass and its self merge gate do: its gate is the one named `test-local` job (ci.yml, no `needs:`), and its tip gains a `dispatch` run every five minutes.
+Required CI is green only when every expected check exists. `decideCiGate`
+judges the check runs that exist, and GitHub creates a check run only when its
+job starts: ai.ubq.fi's `verify-artifact`
+(`needs: [validate, mac-containment, darwin-native]`) has none until those
+finish. Live, the carried head f0008beb62 of PR 1064 (a refresh onto 9cdc76dc)
+showed three of three runs green from 08:41:53Z to 08:41:58Z, so a CI-first poll
+would have requested a review, a carried poll written the carried-merge marker,
+and a launcher read in the same window merged a head whose required job never
+ran. The expected checks are those of the base the head is tested against, but
+only the base check suites that share a check name with the head
+(`missingExpectedChecks`, `src/repair/ci-coverage.ts`): sentinel `development`
+carries a `dispatch` run from every five-minute schedule in its own suite, which
+no pull request head ever runs (live 9a1b1d924: `dispatch` and `test-local`), so
+the base's raw name set would hold every self head forever. A commit status (no
+suite) is never expected. The runtime port reads a base for this rule through
+its own lenient read, `readCheckSuites` (name and `check_suite.id` of each check
+run, never persisted; the exact-head binding and the item bound stay, a
+malformed suite is a parse failure, commit statuses are not read), not through
+the strict CI read: that read bounds a check name at 64 characters, and live
+sentinel `development` (fast-forwarded with `sentinel-supervisor`, so its tip
+also carries the supervisor.yml runs) holds 78-character
+`matrix_cell (<cellId>)` runs: 7 of 22 runs on L80 9a1b1d924, 33 of 75 on the
+tip 3f041b46d. Read strictly, every self base was unreadable and every self head
+was deferred forever at the review gate, the ceiling's refresh and the carried
+step. The strict CI read (`readChecks`) is unchanged from R80 and reads no
+suite. The sentinel self scope reads no base at all, as the launcher's retry
+pass and its self merge gate do: its gate is the one named `test-local` job
+(ci.yml, no `needs:`), and its tip gains a `dispatch` run every five minutes.
 
-Runtime (generation 81): the CI-first review gate requires coverage of the record's base before it requests a review, and waits like running CI (`ci_pending`, `since` kept, uncharged) until the bound parks `CI did not finish before review within 6 hours: verify-artifact(absent)`; the ceiling's moved-base read requires the reviewed head to cover its reviewed base before its one refresh (waits at `delivery`, parks under `REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX`); the carried step requires H1 to cover T before it writes the carried-merge marker (parks under `REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX`). A base listing that cannot be read is awaited like running CI at each of the three steps (the same `ci_pending` wait, `since` kept, and the same park with `base checks unreadable` in place of the absent names), never a deferral without a write: such a deferral sets no wait, bound or park, so no launcher rule could re-admit the record, and a self record stalled at the tip also held the repository's delivery line (`deliveryQueueAhead`) until it counted as stuck. An unreadable head listing still defers, as in R80; so does the red path's strict base read for failure attribution (`loop-ci-first.ts`, R80's own, out of this change). The runtime's own merge gate (`gateDeliveryOnChecks`, also its release and closure gates) and the self merge port keep their rule: their heads passed the CI-first gate before review, the self CI is the single `test-local` job, and the runtime's port refuses every ai.ubq.fi merge, which the launcher makes.
+Runtime (generation 81): the CI-first review gate requires coverage of the
+record's base before it requests a review, and waits like running CI
+(`ci_pending`, `since` kept, uncharged) until the bound parks
+`CI did not finish before review within 6 hours: verify-artifact(absent)`; the
+ceiling's moved-base read requires the reviewed head to cover its reviewed base
+before its one refresh (waits at `delivery`, parks under
+`REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX`); the carried step requires H1
+to cover T before it writes the carried-merge marker (parks under
+`REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX`). A base listing that cannot be
+read is awaited like running CI at each of the three steps (the same
+`ci_pending` wait, `since` kept, and the same park with `base checks unreadable`
+in place of the absent names), never a deferral without a write: such a deferral
+sets no wait, bound or park, so no launcher rule could re-admit the record, and
+a self record stalled at the tip also held the repository's delivery line
+(`deliveryQueueAhead`) until it counted as stuck. An unreadable head listing
+still defers, as in R80; so does the red path's strict base read for failure
+attribution (`loop-ci-first.ts`, R80's own, out of this change). The runtime's
+own merge gate (`gateDeliveryOnChecks`, also its release and closure gates) and
+the self merge port keep their rule: their heads passed the CI-first gate before
+review, the self CI is the single `test-local` job, and the runtime's port
+refuses every ai.ubq.fi merge, which the launcher makes.
 
-Launcher (`ops/`, may ship before the runtime; it imports only the pure rule): `hasAllChecksGreen(head, base?)` is tri-state: true for a complete, non-empty, all-success listing that covers `base` when one is named; false for a readable listing that does not; null when the head's or the base's listing cannot be read and proven complete, is malformed, or the head has no check run. Every launcher merge passes the base the head was tested against (`preMergeGate` the reviewed base, `carriedMergeGate` T), so a marker written in the gap by R80, which reads no base, merges nothing (`checks_pending`). The retry pass reads foreign CI-parked heads against their record base (a self head keeps the head-only read; the self merge gate is its one named `test-local` job), records a head in `ciReadHeads` only after a successful non-empty listing, and plans no CI correction and no CI fix for a head whose listing was unreadable (`ciUnreadHeads`; the issue's case: a rate-limited listing of green legacy 618 read as red and, its re-run settled, took one of the four correction slots). Reads of a tip's own CI (the re-run's base read, the disabled moved-base rule), the closure gate and the lost-write adoption keep the head-only rule.
+Launcher (`ops/`, may ship before the runtime; it imports only the pure rule):
+`hasAllChecksGreen(head, base?)` is tri-state: true for a complete, non-empty,
+all-success listing that covers `base` when one is named; false for a readable
+listing that does not; null when the head's or the base's listing cannot be read
+and proven complete, is malformed, or the head has no check run. Every launcher
+merge passes the base the head was tested against (`preMergeGate` the reviewed
+base, `carriedMergeGate` T), so a marker written in the gap by R80, which reads
+no base, merges nothing (`checks_pending`). The retry pass reads foreign
+CI-parked heads against their record base (a self head keeps the head-only read;
+the self merge gate is its one named `test-local` job), records a head in
+`ciReadHeads` only after a successful non-empty listing, and plans no CI
+correction and no CI fix for a head whose listing was unreadable
+(`ciUnreadHeads`; the issue's case: a rate-limited listing of green legacy 618
+read as red and, its re-run settled, took one of the four correction slots).
+Reads of a tip's own CI (the re-run's base read, the disabled moved-base rule),
+the closure gate and the lost-write adoption keep the head-only rule.
 
-Accepted residuals: a whole workflow with no check run on the head yet is not inferred (no shared name); a self workflow that gains a `needs:` job is not covered by this rule in either the runtime or the launcher; a base read inside the base's own gap expects that gap's names only (both five-second windows would have to overlap); a pull request that renames or removes a job of its own workflow would wait and park (`.github/workflows/` is a protected path). Rollback: every write is a shape R80 writes itself (`ci_pending` at `work`, `review` or `delivery`, and parks under the existing prefixes); the tests parse every write under R80 e48e7e110 and run R80's own `preReviewCiParked` over the park, which R80's launcher re-admits like its own pending park. Under R80 a waiting head is reviewed or carried as R80 always did. L80's boolean read is the launcher rollback.
+Accepted residuals: a whole workflow with no check run on the head yet is not
+inferred (no shared name); a self workflow that gains a `needs:` job is not
+covered by this rule in either the runtime or the launcher; a base read inside
+the base's own gap expects that gap's names only (both five-second windows would
+have to overlap); a pull request that renames or removes a job of its own
+workflow would wait and park (`.github/workflows/` is a protected path).
+Rollback: every write is a shape R80 writes itself (`ci_pending` at `work`,
+`review` or `delivery`, and parks under the existing prefixes); the tests parse
+every write under R80 e48e7e110 and run R80's own `preReviewCiParked` over the
+park, which R80's launcher re-admits like its own pending park. Under R80 a
+waiting head is reviewed or carried as R80 always did. L80's boolean read is the
+launcher rollback.
 
 ## Release-deferred Gateway delivery (JAM B12)
 
-A merged ai.ubq.fi delivery whose source issue closed through its closing keyword waits at `delivery` beside its open production release request, and the Sentinel release path stays disabled (the VPS release contract is an open owner decision, Sentinel #10, #13, #152), so the release ref holds no VPS release record and `observeGatewayVpsDelivery` can only answer `wait`. R80 re-armed a five-minute `unavailable` wait for every such record on every runtime cycle (live 670 rewrote it 138 times; 348 of 632 repair-state commits between 2026-10-17T16:34Z and 20:36Z were these re-arms of 25 records, each spending a delivery-bucket step), and the launcher's closure-delivery pass ran the full closure gate (source task, opt-out, pull and two release reads) for each and printed one `delivery:<id>:release_unavailable` line per record per pass. The record is not marked done: `src/release/vps-controller.ts` begins open requests from the repair state without consulting the record, but only the record consumes the outcome, through the runtime's `observeReleaseAcceptance` (accepted: the closure intent and its reconciliation of the already-closed issue; failed or rolled back: `release <phase>` block) and the launcher's `gatewayClosureGate` (closure intent, `reconcile:<id>:already_closed`, or `blockGatewayDelivery`), both of which bind only a record at `delivery` (`gatewayRequestBindsDelivery`), while a done record never moves again; merged-but-not-deployed work is never reported as delivered (stabilization plan). Next runtime generation (rollback target R80): when the open request has no VPS release record on a positively read release ref (`gatewayReleaseDeferred`), the delivery step writes once an open-ended `unavailable` wait at `delivery` (`deferRelease`; no generation-80 path writes an open-ended `unavailable` wait, so the shape adds no state field), which selection skips, so the record costs no step and no write afterwards. Once per run, and only when such a record exists, the runtime reads the release ref once (`resumeDeferredRelease`); a deferred record whose request the release ref now records, whose request is no longer open, or that holds an intent has its wait released and is observed on the same run; nothing else is written, and each record is looked at once per run. A cancelled or failed request is never deferred. The launcher counts such a delivery (Gateway, `delivery`, no intent, one open matching request without a VPS release record in the pass's release snapshot) in one line per pass, `release-deferred:count=<n>:release_path=disabled` (`queued` once the release ref holds VPS release records but not these requests' records), and spends no read on it in the closure-delivery, retirement and foreign-closure loops (its request was recorded only after its merge, so it is never closed unmerged); the decision reads the snapshots, never the wait, so it holds for R80's re-armed waits and the new shape alike, and the full gate runs again on the first pass after the release ref records the request. Rollback: R80 parses the deferred shape and skips it (`isWaiting`), so it writes nothing over it; the live launcher 3f041b46d, which never reads the wait, reports `release_unavailable` over it and writes nothing, and an accepted, failed or rolled-back release is still consumed by any launcher's closure gate (an accepted release closes the deferred record out to `done`). Live, fresh state 31e7cc24a (sequence 42434, 2026-10-17T23:51Z): 26 records (577, 579, 589, 592, 594, 595, 598, 599, 600, 609, 616, 618, 641, 649, 651, 659, 661, 664, 670, 674, 682, 683, 684, 686, 688, 880) are deferred on the new runtime's first ordinary pass (no hosted step limit) and are then not rewritten; 618's request is a carried delivery that does not bind until the carried release acceptance follow-up ships.
+A merged ai.ubq.fi delivery whose source issue closed through its closing
+keyword waits at `delivery` beside its open production release request, and the
+Sentinel release path stays disabled (the VPS release contract is an open owner
+decision, Sentinel #10, #13, #152), so the release ref holds no VPS release
+record and `observeGatewayVpsDelivery` can only answer `wait`. R80 re-armed a
+five-minute `unavailable` wait for every such record on every runtime cycle
+(live 670 rewrote it 138 times; 348 of 632 repair-state commits between
+2026-10-17T16:34Z and 20:36Z were these re-arms of 25 records, each spending a
+delivery-bucket step), and the launcher's closure-delivery pass ran the full
+closure gate (source task, opt-out, pull and two release reads) for each and
+printed one `delivery:<id>:release_unavailable` line per record per pass. The
+record is not marked done: `src/release/vps-controller.ts` begins open requests
+from the repair state without consulting the record, but only the record
+consumes the outcome, through the runtime's `observeReleaseAcceptance`
+(accepted: the closure intent and its reconciliation of the already-closed
+issue; failed or rolled back: `release <phase>` block) and the launcher's
+`gatewayClosureGate` (closure intent, `reconcile:<id>:already_closed`, or
+`blockGatewayDelivery`), both of which bind only a record at `delivery`
+(`gatewayRequestBindsDelivery`), while a done record never moves again;
+merged-but-not-deployed work is never reported as delivered (stabilization
+plan). Next runtime generation (rollback target R80): when the open request has
+no VPS release record on a positively read release ref
+(`gatewayReleaseDeferred`), the delivery step writes once an open-ended
+`unavailable` wait at `delivery` (`deferRelease`; no generation-80 path writes
+an open-ended `unavailable` wait, so the shape adds no state field), which
+selection skips, so the record costs no step and no write afterwards. Once per
+run, and only when such a record exists, the runtime reads the release ref once
+(`resumeDeferredRelease`); a deferred record whose request the release ref now
+records, whose request is no longer open, or that holds an intent has its wait
+released and is observed on the same run; nothing else is written, and each
+record is looked at once per run. A cancelled or failed request is never
+deferred. The launcher counts such a delivery (Gateway, `delivery`, no intent,
+one open matching request without a VPS release record in the pass's release
+snapshot) in one line per pass,
+`release-deferred:count=<n>:release_path=disabled` (`queued` once the release
+ref holds VPS release records but not these requests' records), and spends no
+read on it in the closure-delivery, retirement and foreign-closure loops (its
+request was recorded only after its merge, so it is never closed unmerged); the
+decision reads the snapshots, never the wait, so it holds for R80's re-armed
+waits and the new shape alike, and the full gate runs again on the first pass
+after the release ref records the request. Rollback: R80 parses the deferred
+shape and skips it (`isWaiting`), so it writes nothing over it; the live
+launcher 3f041b46d, which never reads the wait, reports `release_unavailable`
+over it and writes nothing, and an accepted, failed or rolled-back release is
+still consumed by any launcher's closure gate (an accepted release closes the
+deferred record out to `done`). Live, fresh state 31e7cc24a (sequence 42434,
+2026-10-17T23:51Z): 26 records (577, 579, 589, 592, 594, 595, 598, 599, 600,
+609, 616, 618, 641, 649, 651, 659, 661, 664, 670, 674, 682, 683, 684, 686,
+688, 880) are deferred on the new runtime's first ordinary pass (no hosted step
+limit) and are then not rewritten; 618's request is a carried delivery that does
+not bind until the carried release acceptance follow-up ships.
 
 ## Durable memory and self-healing
 
-Sentinel records machine-readable attempt memory and a deterministic lesson digest in the existing Git repair state; trusted writers own every write and model workers never write state. Bounded records carry the attempt fingerprint, the stage reached, a closed failure class, counts and the runtime revision. Unchanged replays of a recorded failure are refused with a precise reason, and the implementer prompt carries verified prior attempts, cross-task repository lessons and regression facts.
+Sentinel records machine-readable attempt memory and a deterministic lesson
+digest in the existing Git repair state; trusted writers own every write and
+model workers never write state. Bounded records carry the attempt fingerprint,
+the stage reached, a closed failure class, counts and the runtime revision.
+Unchanged replays of a recorded failure are refused with a precise reason, and
+the implementer prompt carries verified prior attempts, cross-task repository
+lessons and regression facts.
 
-The system is version-controlled and regression-aware: a recorded success stores the exact runtime revision that produced it, and a failure mode that previously succeeded at an older revision is reported as a regression (worked before, broken now) in the lesson digest and the implementer prompt, which must prefer restoring the older working behavior over re-implementing. Rollback authority stays with the owner-development install chain: a healthy proof moves generations, a failed candidate restores the recorded proven predecessor once, and no model, worker or recovery pass may pin, roll back or promote a runtime revision.
+The system is version-controlled and regression-aware: a recorded success stores
+the exact runtime revision that produced it, and a failure mode that previously
+succeeded at an older revision is reported as a regression (worked before,
+broken now) in the lesson digest and the implementer prompt, which must prefer
+restoring the older working behavior over re-implementing. Rollback authority
+stays with the owner-development install chain: a healthy proof moves
+generations, a failed candidate restores the recorded proven predecessor once,
+and no model, worker or recovery pass may pin, roll back or promote a runtime
+revision.
 
-Bounded self-upkeep passes defer instead of failing the run: exhausting a recovery pass's budget, absent custody or an unavailable producer is reported with an explicit bounded reason, writes nothing and lets prepare, matrix_plan and delivery continue. Only integrity faults (tampered, conflicting or changed custody) fail closed.
+Bounded self-upkeep passes defer instead of failing the run: exhausting a
+recovery pass's budget, absent custody or an unavailable producer is reported
+with an explicit bounded reason, writes nothing and lets prepare, matrix_plan
+and delivery continue. Only integrity faults (tampered, conflicting or changed
+custody) fail closed.
 
-One maintenance pass continues after a write (2026-10-16). Since generation 78 most cells finish after their own repair job's consumer stopped, so nearly every pass began with the history walk's ingest and returned on it, and conflict re-admissions, merges and release requests starved behind it. After an applied maintenance write, a delivery-bookkeeping retirement or closure, an ordinary retry grant or re-admission, or a release request, the pass re-reads repair and release state, requires exactly the head that write left and runs the remaining phases there in the same order (delivery-bookkeeping closure, retry, delivery, closure), each at most once and each with its own expected-head compare-and-swap and readback. A record an earlier write of the pass touched (its row or one of its charges) waits for the next pass, so no record is re-granted, merged, retired or closed in the pass that just wrote it, and every other record gets the decision a pass without that write would make on the same state; each source issue is still read once per pass. The candidate-ref revalidation, the mismatch and preservation dispositions, the refresh re-arm and a Gateway release block or closure intent still end the pass. A refused compare-and-swap, a moved head, a nonterminal release, a thrown error, or a continued phase that would start more than 600 s into the pass (`HOSTED_AUTONOMY_PASS_DEADLINE_MS` 840 s, inside the job's 15 minutes with a minute of setup, less the 240 s `HOSTED_AUTONOMY_PHASE_RESERVE_MS`) stops it as a deferral with the writes already made; integrity faults still fail closed. The pass prints one `hosted_autonomy` line with the same keys and closed reasons (the first write's before head, the last write's applied head and reason, every action in order and one `continuation:<phase>:<outcome>` action when it stopped early) and one `sentinel_autonomy_continuation` timing line (integer offsets or null, no `status` key). Retry and delivery still run once per pass, so the per-pass bounds hold: one external merge, the CI-correction cap and at most 4 conflict resolutions. Issue closures and retirements can reach 5 in the delivery-bookkeeping closure and 5 in the final closure, always on different records. No state shape changes: every write is one the installed runtime and its rollback target already parse and validate.
+One maintenance pass continues after a write (2026-10-16). Since generation 78
+most cells finish after their own repair job's consumer stopped, so nearly every
+pass began with the history walk's ingest and returned on it, and conflict
+re-admissions, merges and release requests starved behind it. After an applied
+maintenance write, a delivery-bookkeeping retirement or closure, an ordinary
+retry grant or re-admission, or a release request, the pass re-reads repair and
+release state, requires exactly the head that write left and runs the remaining
+phases there in the same order (delivery-bookkeeping closure, retry, delivery,
+closure), each at most once and each with its own expected-head compare-and-swap
+and readback. A record an earlier write of the pass touched (its row or one of
+its charges) waits for the next pass, so no record is re-granted, merged,
+retired or closed in the pass that just wrote it, and every other record gets
+the decision a pass without that write would make on the same state; each source
+issue is still read once per pass. The candidate-ref revalidation, the mismatch
+and preservation dispositions, the refresh re-arm and a Gateway release block or
+closure intent still end the pass. A refused compare-and-swap, a moved head, a
+nonterminal release, a thrown error, or a continued phase that would start more
+than 600 s into the pass (`HOSTED_AUTONOMY_PASS_DEADLINE_MS` 840 s, inside the
+job's 15 minutes with a minute of setup, less the 240 s
+`HOSTED_AUTONOMY_PHASE_RESERVE_MS`) stops it as a deferral with the writes
+already made; integrity faults still fail closed. The pass prints one
+`hosted_autonomy` line with the same keys and closed reasons (the first write's
+before head, the last write's applied head and reason, every action in order and
+one `continuation:<phase>:<outcome>` action when it stopped early) and one
+`sentinel_autonomy_continuation` timing line (integer offsets or null, no
+`status` key). Retry and delivery still run once per pass, so the per-pass
+bounds hold: one external merge, the CI-correction cap and at most 4 conflict
+resolutions. Issue closures and retirements can reach 5 in the
+delivery-bookkeeping closure and 5 in the final closure, always on different
+records. No state shape changes: every write is one the installed runtime and
+its rollback target already parse and validate.
 
-The progressive matrix consumer treats a cell of its own in-progress run whose job has completed but whose native job log, or the cell marker in it, is not served yet like a still-running cell (generation 78): for up to five minutes after the job's authenticated completion the whole wave is skipped for that scan, nothing is ingested and every producer stays charged and unresolved. A served log that conflicts, a log of any other run, and a log still unserved past that bound keep the plain fail-closed refusal.
+The progressive matrix consumer treats a cell of its own in-progress run whose
+job has completed but whose native job log, or the cell marker in it, is not
+served yet like a still-running cell (generation 78): for up to five minutes
+after the job's authenticated completion the whole wave is skipped for that
+scan, nothing is ingested and every producer stays charged and unresolved. A
+served log that conflicts, a log of any other run, and a log still unserved past
+that bound keep the plain fail-closed refusal.
 
-A release request the trusted controller cancelled or marked failed is terminal delivery evidence: the affected delivery record is parked blocked with the recorded failure reason instead of waiting for release acceptance that can no longer exist.
+A release request the trusted controller cancelled or marked failed is terminal
+delivery evidence: the affected delivery record is parked blocked with the
+recorded failure reason instead of waiting for release acceptance that can no
+longer exist.
 
-A trusted already-merged pull request is verified by its exact head binding plus the recorded base's proven ancestry, not by first-parent equality: the base branch may advance between the reviewed snapshot and an external trusted merge, and the merge is still the reviewed delivery. A divergent, unproven or differently-parented merge is refused.
+A trusted already-merged pull request is verified by its exact head binding plus
+the recorded base's proven ancestry, not by first-parent equality: the base
+branch may advance between the reviewed snapshot and an external trusted merge,
+and the merge is still the reviewed delivery. A divergent, unproven or
+differently-parented merge is refused.
 
-Identical implementation failures are bounded across bases (JAM B10, 2026-10-17). Attempt memory is keyed by (task, base, runtime), so it never refused ai.ubq.fi 300, whose base moved with every merge: 53 identical "model run failed (unavailable)" outcomes over 23 bases, each a charged reservation. Root cause: every recent 300 cell's diagnostic reads `model_candidate_unchanged_base` (run 39073338516); the issue was already fixed upstream (ai.ubq.fi 0c120c11f6, before its first charge), the model completed without changing its checkout, the trusted committer refused `unchanged_base`, and the port reported that as `unavailable`. The runtime now settles that exact refusal as its own no-progress outcome, "model run completed without any change to its checkout" (stage `model`, class `semantic_no_progress`), still charged `ambiguous`, never refunded; every other port error keeps "model run failed (<kind>)". The launcher's retry pass (`ops/hosted-autonomy-repeat-failure.ts`) reads the task's attempt memory base- and runtime-independently: the signature is the blocker kind plus 16 hex of the SHA-256 of the normalized message (case, whitespace, hex identities and numbers folded); the streak stops at the newest different outcome and at the newest recorded success, and an entry straddling that boundary counts once. Three identical outcomes (the review-round cap; one past the no-progress tolerance) park the record, a transient-class streak only once it also spans the six-hour transient decay window, so a provider outage shorter than that never parks the fleet. The park is one CAS write that only replaces the blocker with "repeated identical failure; owner action required (...): <n>x <kind>|<sig> issue=<digest12> route=<route12>: <original>"; intent, counters, charges and memory are untouched, no retry rule of any launcher matches it, and every later pass names it (`repeat_failure_parked`) without writing. An edited source issue (its canonical task digest changed) or a changed model route (the maintenance step now receives the non-secret `SENTINEL_MODEL_*` selector variables, never a key or failover override) re-arms it once as an ordinary work grant through every existing gate except the same-base equivalence refusal; an identical failure after that re-parks at once, and a different signature resets the streak. Age, generation or a base move never re-arm. An issue whose digest cannot be read is withheld without a park (`repeat_failure_unverified_issue`), and the 200-reservation cap is now named (`retry_budget_exhausted`) instead of skipped silently. The park and the new detail parse under R80's own parsers.
+Identical implementation failures are bounded across bases (JAM B10,
+2026-10-17). Attempt memory is keyed by (task, base, runtime), so it never
+refused ai.ubq.fi 300, whose base moved with every merge: 53 identical "model
+run failed (unavailable)" outcomes over 23 bases, each a charged reservation.
+Root cause: every recent 300 cell's diagnostic reads
+`model_candidate_unchanged_base` (run 39073338516); the issue was already fixed
+upstream (ai.ubq.fi 0c120c11f6, before its first charge), the model completed
+without changing its checkout, the trusted committer refused `unchanged_base`,
+and the port reported that as `unavailable`. The runtime now settles that exact
+refusal as its own no-progress outcome, "model run completed without any change
+to its checkout" (stage `model`, class `semantic_no_progress`), still charged
+`ambiguous`, never refunded; every other port error keeps "model run failed
+(<kind>)". The launcher's retry pass (`ops/hosted-autonomy-repeat-failure.ts`)
+reads the task's attempt memory base- and runtime-independently: the signature
+is the blocker kind plus 16 hex of the SHA-256 of the normalized message (case,
+whitespace, hex identities and numbers folded); the streak stops at the newest
+different outcome and at the newest recorded success, and an entry straddling
+that boundary counts once. Three identical outcomes (the review-round cap; one
+past the no-progress tolerance) park the record, a transient-class streak only
+once it also spans the six-hour transient decay window, so a provider outage
+shorter than that never parks the fleet. The park is one CAS write that only
+replaces the blocker with "repeated identical failure; owner action required
+(...): <n>x <kind>|<sig> issue=<digest12> route=<route12>: <original>"; intent,
+counters, charges and memory are untouched, no retry rule of any launcher
+matches it, and every later pass names it (`repeat_failure_parked`) without
+writing. An edited source issue (its canonical task digest changed) or a changed
+model route (the maintenance step now receives the non-secret `SENTINEL_MODEL_*`
+selector variables, never a key or failover override) re-arms it once as an
+ordinary work grant through every existing gate except the same-base equivalence
+refusal; an identical failure after that re-parks at once, and a different
+signature resets the streak. Age, generation or a base move never re-arm. An
+issue whose digest cannot be read is withheld without a park
+(`repeat_failure_unverified_issue`), and the 200-reservation cap is now named
+(`retry_budget_exhausted`) instead of skipped silently. The park and the new
+detail parse under R80's own parsers.
 
 ## Evidence, target release and local development
 
-Sentinel adapts the Ubiquity physical file-size policy from `ubiquity/ts-template` revision `fc5add134e8ed3728a3da981d298d0a92eb27ac8` with Deno-native `size:report` and `size:check` tasks. Source ceilings are 1,000 lines and test ceilings are 1,500, counting comments and blanks; 500/800 are review triggers. All tracked and new nonignored code, including operations scripts, is covered without a grandfather baseline or exemptions. Keep Deno's existing formatter, linter and lockfile; the cheap size gate also runs in `test-local.ts` before typechecks/tests. This adaptation does not add an ESLint/Node toolchain or broaden local/hosted validation authority.
+Sentinel adapts the Ubiquity physical file-size policy from
+`ubiquity/ts-template` revision `fc5add134e8ed3728a3da981d298d0a92eb27ac8` with
+Deno-native `size:report` and `size:check` tasks. Source ceilings are 1,000
+lines and test ceilings are 1,500, counting comments and blanks; 500/800 are
+review triggers. All tracked and new nonignored code, including operations
+scripts, is covered without a grandfather baseline or exemptions. Keep Deno's
+existing formatter, linter and lockfile; the cheap size gate also runs in
+`test-local.ts` before typechecks/tests. This adaptation does not add an
+ESLint/Node toolchain or broaden local/hosted validation authority.
 
-Use fast module checks and directly affected production-consumer boundaries with fake external transports, temporary Git/state and injected clocks. Enforce a 300-second deadline on each local validation command. One named changed-lifecycle scenario is final local acceptance; whole-repository sweeps require a separate explicit request. [AGENTS.md](../AGENTS.md) defines observation, teardown and evidence rules.
+Use fast module checks and directly affected production-consumer boundaries with
+fake external transports, temporary Git/state and injected clocks. Enforce a
+300-second deadline on each local validation command. One named
+changed-lifecycle scenario is final local acceptance; whole-repository sweeps
+require a separate explicit request. [AGENTS.md](../AGENTS.md) defines
+observation, teardown and evidence rules.
 
-Preserve candidate durability, exact reviewed heads, independent state/promotion ownership, healthy prior identity and exact rollback. Gateway deployment follows its current trusted VPS contract; Deno target receipts cannot establish VPS delivery. Finite encrypted evidence retention, objective telemetry and uninterrupted acceptance coverage remain activation requirements in [activation-checklist.md](activation-checklist.md).
+Preserve candidate durability, exact reviewed heads, independent state/promotion
+ownership, healthy prior identity and exact rollback. Gateway deployment follows
+its current trusted VPS contract; Deno target receipts cannot establish VPS
+delivery. Finite encrypted evidence retention, objective telemetry and
+uninterrupted acceptance coverage remain activation requirements in
+[activation-checklist.md](activation-checklist.md).
 
 ## Frozen Bun reader compatibility
 
-The 2026-10-15 gateway deployment prerequisite permits a trusted, exact-source registry to select the frozen causal reader's runtime. Legacy captures retain their recorded Git SHA and Deno binding. Bun captures require the pinned Linux ARM64 Bun binary, authenticated schema-3 artifact, lockfile and dependency/native graphs, and the fixed pre-import confinement bootstrap. Unknown bindings or unsupported platforms refuse; dotenv loading and dependency installation remain disabled.
+The 2026-10-15 gateway deployment prerequisite permits a trusted, exact-source
+registry to select the frozen causal reader's runtime. Legacy captures retain
+their recorded Git SHA and Deno binding. Bun captures require the pinned Linux
+ARM64 Bun binary, authenticated schema-3 artifact, lockfile and
+dependency/native graphs, and the fixed pre-import confinement bootstrap.
+Unknown bindings or unsupported platforms refuse; dotenv loading and dependency
+installation remain disabled.
 
-The Bun reader applies the existing gateway Landlock/seccomp helper before importing captured source and verifies source, helper, configuration and graph identity at every launch. Acceptance requires the actual original/composed causal pair, production `prepareReplayRequest` proof consumption, and native read/write/network/process denial evidence bound to the selected final gateway artifact. This prerequisite does not change repaired-candidate execution, target policy, model routing or Sentinel runtime promotion; the broader recovery task remains paused.
+The Bun reader applies the existing gateway Landlock/seccomp helper before
+importing captured source and verifies source, helper, configuration and graph
+identity at every launch. Acceptance requires the actual original/composed
+causal pair, production `prepareReplayRequest` proof consumption, and native
+read/write/network/process denial evidence bound to the selected final gateway
+artifact. This prerequisite does not change repaired-candidate execution, target
+policy, model routing or Sentinel runtime promotion; the broader recovery task
+remains paused.
 
-Sanitized v2 upstream attempts use a fixed positive synthetic clock origin of 1 because the frozen gateway reader rejects zero absolute attempt timestamps. Preserve relative durations, chunk offsets and null fields, and refuse unsafe integer results. New fixture digests describe the new canonical bytes; existing stored refs, proofs and captured-source identities are never rewritten, and a recomposition mismatch continues to refuse.
+Sanitized v2 upstream attempts use a fixed positive synthetic clock origin of 1
+because the frozen gateway reader rejects zero absolute attempt timestamps.
+Preserve relative durations, chunk offsets and null fields, and refuse unsafe
+integer results. New fixture digests describe the new canonical bytes; existing
+stored refs, proofs and captured-source identities are never rewritten, and a
+recomposition mismatch continues to refuse.
 
 ## Historical retry disposition (consumed)
 
-The sixteen historical retry admissions stuck by the missing-artifact matrix wave 37354374590 are consumed. All sixteen bound retry reservations settled `ambiguous` on 2026-10-09, the records were re-admitted, and issue 398 and issue 541 were delivered by the runtime and closed (PRs 955 and 958); the remaining entries carry their own fresh intents or blockers. [ops/historical-retry-disposition.ts](../ops/historical-retry-disposition.ts) reports `already_applied` and writes nothing once every bound reservation is settled `ambiguous`, regardless of later record movement, and the one-shot maintenance step was removed from [supervisor.yml](../.github/workflows/supervisor.yml).
+The sixteen historical retry admissions stuck by the missing-artifact matrix
+wave 37354374590 are consumed. All sixteen bound retry reservations settled
+`ambiguous` on 2026-10-09, the records were re-admitted, and issue 398 and issue
+541 were delivered by the runtime and closed (PRs 955 and 958); the remaining
+entries carry their own fresh intents or blockers.
+[ops/historical-retry-disposition.ts](../ops/historical-retry-disposition.ts)
+reports `already_applied` and writes nothing once every bound reservation is
+settled `ambiguous`, regardless of later record movement, and the one-shot
+maintenance step was removed from
+[supervisor.yml](../.github/workflows/supervisor.yml).
 
-The three C63 rows (issues 576, 616 and 618) were the exception: their failed C63 admissions stayed charged and blocked with the retained intent, and the retry pass excluded them because historical C63 recovery failed closed on any row that moved. Their C63 cells are authenticated failures that can settle nothing more, so (2026-10-16) the ordinary retry authority now retries them like any other "model run did not complete" record, and [ops/hosted-autonomy-historical-recovery.ts](../ops/hosted-autonomy-historical-recovery.ts) treats a row whose bound charge is settled `ambiguous` and whose record no longer carries that admission's intent as consumed. The original charges stay charged, and any other drift from the exact binding still fails closed.
+The three C63 rows (issues 576, 616 and 618) were the exception: their failed
+C63 admissions stayed charged and blocked with the retained intent, and the
+retry pass excluded them because historical C63 recovery failed closed on any
+row that moved. Their C63 cells are authenticated failures that can settle
+nothing more, so (2026-10-16) the ordinary retry authority now retries them like
+any other "model run did not complete" record, and
+[ops/hosted-autonomy-historical-recovery.ts](../ops/hosted-autonomy-historical-recovery.ts)
+treats a row whose bound charge is settled `ambiguous` and whose record no
+longer carries that admission's intent as consumed. The original charges stay
+charged, and any other drift from the exact binding still fails closed.
 
 ## Generation 81 throughput and owner visibility
 
-The 2026-10-18 owner directive lifts the incidental per-pass counts for closures and retirements (five), spent-record reads (eight), CI reruns (three), and conflict resolutions (four per maintenance pass and per runtime wave), plus the generic 200-reservation retry refusal. Every eligible spent record is read on each pass. Charged reservation history remains intact; the three review rounds, three CI fixes per task, same-base conflict charge rule, deterministic preservation-refusal guard, storage bounds, configured deadlines and one merge per pass remain in force. The retained numeric conflict and rerun policy surfaces use `Number.MAX_SAFE_INTEGER`, preserving existing diagnostic contracts without a reachable throughput throttle. This supersedes the older count descriptions above.
+The 2026-10-18 owner directive lifts the incidental per-pass counts for closures
+and retirements (five), spent-record reads (eight), CI reruns (three), and
+conflict resolutions (four per maintenance pass and per runtime wave), plus the
+generic 200-reservation retry refusal. Every eligible spent record is read on
+each pass. Charged reservation history remains intact; the three review rounds,
+three CI fixes per task, same-base conflict charge rule, deterministic
+preservation-refusal guard, storage bounds, configured deadlines and one merge
+per pass remain in force. The retained numeric conflict and rerun policy
+surfaces use `Number.MAX_SAFE_INTEGER`, preserving existing diagnostic contracts
+without a reachable throughput throttle. This supersedes the older count
+descriptions above.
 
-The maintenance job appends all blocked task identities and their PR bindings to the native GitHub Actions run summary, including task-acceptance, repeated-failure, protected-path, refresh-refusal, review-ceiling and CI-attempt parks. Unknown blocker classes also appear, so a new owner-gated park cannot silently disappear from the summary. Only closed reason labels are emitted, never raw blocker diagnostics. The summary is a read of final repair state and grants no admission or state-write authority; unavailable state is reported explicitly, and a summary failure cannot interrupt the live pipeline.
+The maintenance job appends all blocked task identities and their PR bindings to
+the native GitHub Actions run summary, including task-acceptance,
+repeated-failure, protected-path, refresh-refusal, review-ceiling and CI-attempt
+parks. Unknown blocker classes also appear, so a new owner-gated park cannot
+silently disappear from the summary. Only closed reason labels are emitted,
+never raw blocker diagnostics. The summary is a read of final repair state and
+grants no admission or state-write authority; unavailable state is reported
+explicitly, and a summary failure cannot interrupt the live pipeline.

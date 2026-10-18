@@ -94,6 +94,11 @@ export const HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES:
       revision: "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
       activatedNotBefore: 1792256700000,
     },
+    // Generation 81 (R81), bound before publication and first activation.
+    {
+      revision: "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+      activatedNotBefore: 1792299493000,
+    },
   ];
 
 /**

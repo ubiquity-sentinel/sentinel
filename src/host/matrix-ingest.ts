@@ -16,6 +16,7 @@ import {
 } from "../repair/loop.ts";
 import { ATTEMPT_DETAIL_INTERRUPTED_BOUND } from "../repair/attempt-policy.ts";
 import { sessionBoundExhausted } from "../repair/loop-implementation-result.ts";
+import type { StepResultV1 } from "../repair/loop-types.ts";
 import type { MatrixBundleImporterV1 } from "./matrix-git.ts";
 import {
   configForRepository,
@@ -284,6 +285,7 @@ export async function ingestMatrixResults(
       });
       continue;
     }
+    let step: StepResultV1;
     if (
       interruptedOutputFailure(
         result,
@@ -303,7 +305,7 @@ export async function ingestMatrixResults(
         });
         continue;
       }
-      const step = await settleFailedImplementation(
+      step = await settleFailedImplementation(
         { ...deps, controllerSha: cell.runtimeSha },
         context,
         record,
@@ -311,14 +313,6 @@ export async function ingestMatrixResults(
         ATTEMPT_DETAIL_INTERRUPTED_BOUND,
         { stage: "model", failureClass: "transient_infrastructure" },
       );
-      if (step.kind === "state_error") {
-        entries.push({
-          cellId: cell.cellId,
-          disposition: "state_error",
-          detail: step.detail,
-        });
-        continue;
-      }
     } else if (result.status === "completed" && result.receipt !== null) {
       exhausted = sessionBoundExhausted(result.receipt, config);
       if (
@@ -377,7 +371,7 @@ export async function ingestMatrixResults(
           continue;
         }
       }
-      const step = await handleModelReceipt(
+      step = await handleModelReceipt(
         { ...deps, controllerSha: cell.runtimeSha },
         context,
         record,
@@ -385,28 +379,10 @@ export async function ingestMatrixResults(
         result.receipt,
         config,
       );
-      if (step.kind === "state_error") {
-        entries.push({
-          cellId: cell.cellId,
-          disposition: "state_error",
-          detail: step.detail,
-        });
-        continue;
-      }
-      // The receipt was not consumed: the reservation and the implementation
-      // intent stay charged and bound for a later scan.
-      if (step.kind === "deferred") {
-        entries.push({
-          cellId: cell.cellId,
-          disposition: "deferred",
-          detail: step.detail,
-        });
-        continue;
-      }
     } else {
       const failureDetail = result.detail ??
         "matrix cell produced no trusted receipt";
-      const step = await settleFailedImplementation(
+      step = await settleFailedImplementation(
         { ...deps, controllerSha: cell.runtimeSha },
         context,
         record,
@@ -417,14 +393,24 @@ export async function ingestMatrixResults(
           failureDetail,
         ),
       );
-      if (step.kind === "state_error") {
-        entries.push({
-          cellId: cell.cellId,
-          disposition: "state_error",
-          detail: step.detail,
-        });
-        continue;
-      }
+    }
+    if (step.kind === "state_error" || step.kind === "deferred") {
+      entries.push({
+        cellId: cell.cellId,
+        disposition: step.kind,
+        detail: step.detail,
+      });
+      continue;
+    }
+    // A newly persisted queue hold is ordinary loop progress, but the exact
+    // producer result remains unconsumed, just like an already-existing hold.
+    if (step.kind === "progress" && step.queueHold === true) {
+      entries.push({
+        cellId: cell.cellId,
+        disposition: "deferred",
+        detail: "native merge queue custody hold",
+      });
+      continue;
     }
     ingested++;
     // A session the duration bound cut off is itself a time-bound exhaustion

@@ -307,17 +307,34 @@ Deno.test("owner install gen80: connected R80 failure restores exact P79 once at
   }
 });
 
-Deno.test("owner install gen80: healthy R80 is complete", () =>
-  expectUnmoved(
-    runtimeRecord({
-      revision: R80,
-      generation: 80,
-      healthyProof: healthyProof(R80, 80, 504),
-      executionProof: healthyProof(R80, 80, 504),
+Deno.test("owner install gen80: healthy R80 advances only to the pinned generation 81 successor", async () => {
+  const fixture = await concurrencyInstallerFixture(
+    releaseSnapshot({
+      runtime: runtimeRecord({
+        revision: R80,
+        generation: 80,
+        healthyProof: healthyProof(R80, 80, 504),
+        executionProof: healthyProof(R80, 80, 504),
+      }),
     }),
-    "no_change",
-    "the owner development installation is complete",
-  ));
+    undefined,
+    "da98f5f49c45b57cfa97a45fe647c36b1021f302" as GitSha,
+  );
+  try {
+    assert.equal(await fixture.run(), 0);
+    assert.equal(fixture.reports.at(-1)?.status, "installed");
+    const read = await fixture.read();
+    assert.ok(read.ok && read.value.status === "found");
+    assert.equal(
+      read.value.snapshot.hostedRuntimes[0].activeRevision,
+      "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+    );
+    assert.equal(read.value.snapshot.hostedRuntimes[0].generation, 81);
+    assert.equal(fixture.patches(), 1);
+  } finally {
+    await fixture.close();
+  }
+});
 
 Deno.test("owner install gen80: restored P79 at81 never reinstalls R80", async (t) => {
   const retained = healthyProof(P79, 79, 501);

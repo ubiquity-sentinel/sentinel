@@ -18,8 +18,10 @@ import type {
 import {
   decodeQueueWire,
   invalidQueueWire,
+  parseGraphQLQueueActor,
   parseQueueMembership,
   parseQueuePull,
+  QUEUE_GRAPHQL_ACTOR_FIELDS,
   QUEUE_MEMBERSHIP_QUERY,
   queueGraphqlData,
   queueObject,
@@ -40,17 +42,17 @@ export interface QueueCommitObservation {
 }
 const PULL_FACTS_QUERY = QUEUE_MEMBERSHIP_QUERY.replace(
   "isInMergeQueue",
-  "baseRefOid author { login } mergedBy { __typename login ... on Bot { id } ... on User { id } } isInMergeQueue",
+  `baseRefOid author { ${QUEUE_GRAPHQL_ACTOR_FIELDS} } mergedBy { ${QUEUE_GRAPHQL_ACTOR_FIELDS} } isInMergeQueue`,
 );
-function actor(value: unknown, graphql = false): QueueActor | null {
+function actor(value: unknown): QueueActor | null {
   if (value === null) return null;
   const row = queueObject(value);
-  const type = graphql ? row.__typename : row.type;
+  const type = row.type;
   if (type !== "Bot" && type !== "User") {
     return invalidQueueWire("unsupported_actor");
   }
   return {
-    nodeId: queueString(graphql ? row.id : row.node_id),
+    nodeId: queueString(row.node_id),
     login: queueString(row.login, 100),
     type,
   };
@@ -130,8 +132,10 @@ export class GitHubQueueDeliveryClient extends GitHubMergeQueueEvidenceClient {
         return {
           pull: parseQueuePull(row, this.repository),
           base: queueSha(row.baseRefOid),
-          author: queueString(queueObject(row.author).login, 100),
-          mergedBy: actor(row.mergedBy, true),
+          author: parseGraphQLQueueActor(row.author).login,
+          mergedBy: row.mergedBy === null
+            ? null
+            : parseGraphQLQueueActor(row.mergedBy),
         };
       });
       if (identity.status !== "complete") return identity;

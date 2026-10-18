@@ -90,6 +90,7 @@ const GEN79 = await gen79Available();
 const GEN80 = await gen80Available();
 /** R80, the pinned CI-first runtime and generation 81's rollback target. */
 const R80 = "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481";
+const R81 = "da98f5f49c45b57cfa97a45fe647c36b1021f302";
 
 const RED_PARK = "CI red before review; awaiting a CI fix: validate(failure)";
 const PENDING_PARK =
@@ -598,11 +599,12 @@ Deno.test("CI first: generation 81 opens the hosted pre-review fix route; its fi
     true,
     "open in hosted generation-81 runs",
   );
-  // The install pin names R80 as the one CI-first runtime; generation 81's
-  // own pin commit lists R81 in the fix allowlist (and as a CI-first and a
-  // CI-correction runtime): until then no runtime opens the hosted fix rule.
-  assert.deepEqual([...HOSTED_AUTONOMY_CI_FIRST_RUNTIMES], [R80]);
-  assert.equal(HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES.size, 0);
+  // R81 alone opens hosted pre-review fixes; rollback R80 remains CI-first.
+  assert.deepEqual([...HOSTED_AUTONOMY_CI_FIRST_RUNTIMES], [R80, R81]);
+  assert.deepEqual([...HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES], [R81]);
+  assert.equal(ciFirstFixRuntimeProven(installed(R81, 81)), true);
+  assert.equal(ciFirstFixRuntimeProven(installed(R81, 80)), false);
+  assert.equal(ciFirstFixRuntimeProven(installed(FIX_RUNTIME, 81)), false);
   assert.equal(HOSTED_AUTONOMY_CI_FIRST_FIX_MIN_GENERATION, 81);
   for (const revision of HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES) {
     assert.ok(HOSTED_AUTONOMY_CI_FIRST_RUNTIMES.has(revision), revision);

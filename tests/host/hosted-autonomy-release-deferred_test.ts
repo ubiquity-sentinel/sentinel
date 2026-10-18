@@ -8,6 +8,7 @@
  * or written for it, and the full gate runs again for a request the release
  * ref records. Live record, request and receipt shapes.
  */
+import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import { makeRig } from "./hosted-autonomy-rig.ts";
 import {
@@ -111,11 +112,13 @@ async function deferredPasses(shape: string, work: readonly WorkRecordV1[]) {
     const { surface, reads } = countingSurface(github);
     const before = await sequence(rig.state);
     for (let pass = 0; pass < 3; pass++) {
-      const result = await runHostedAutonomy({
-        state: rig.state,
-        githubFor: () => surface,
-        clock: { now: () => NOW + pass * 300_000 },
-      });
+      const result = await runHostedAutonomy(
+        await withDarkQueueAuthority({
+          state: rig.state,
+          githubFor: () => surface,
+          clock: { now: () => NOW + pass * 300_000 },
+        }),
+      );
       assert.deepEqual(
         result.actions.filter((action) => action.startsWith("release-")),
         ["release-deferred:count=3:release_path=disabled"],
@@ -148,11 +151,13 @@ Deno.test("B12 launcher: a request the release ref records gets the full closure
   const { rig, github, request, now } = await recordedRig("monitoring");
   try {
     const { surface, reads } = countingSurface(github);
-    const result = await runHostedAutonomy({
-      state: rig.state,
-      githubFor: () => surface,
-      clock: { now: () => now + 300_000 },
-    });
+    const result = await runHostedAutonomy(
+      await withDarkQueueAuthority({
+        state: rig.state,
+        githubFor: () => surface,
+        clock: { now: () => now + 300_000 },
+      }),
+    );
     assert.deepEqual(
       result.actions.filter((action) => action.startsWith("release-")),
       ["release-deferred:count=2:release_path=queued"],
@@ -182,12 +187,14 @@ Deno.test("B12 launcher: an accepted release closes out a record the runtime lef
   try {
     const { surface } = countingSurface(github);
     const resumed = recordFor(request);
-    const pass = (offset: number) =>
-      runHostedAutonomy({
-        state: rig.state,
-        githubFor: () => surface,
-        clock: { now: () => now + offset },
-      });
+    const pass = async (offset: number) =>
+      runHostedAutonomy(
+        await withDarkQueueAuthority({
+          state: rig.state,
+          githubFor: () => surface,
+          clock: { now: () => now + offset },
+        }),
+      );
     const first = await pass(300_000);
     assert.ok(
       first.actions.includes(`intent:${resumed.id}:issue_closure`),

@@ -4,6 +4,7 @@ import { LocalSessionTracker } from "../../src/host/local-client.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { FakeClock, MemoryState } from "../repair/helpers.ts";
+import { seededSnapshot } from "../repair/loop-rig.ts";
 import { renderReviewJournalBody } from "../../src/github/review-journal.ts";
 import { mergeRequest } from "../github/merge-helpers.ts";
 import { reviewWire } from "../github/helpers.ts";
@@ -135,18 +136,27 @@ Deno.test("local GitHub review owner: explicit self capability reaches native re
     const request = mergeRequest();
     const repository = { owner: "ubiquity", name, installationId };
     request.review = { ...request.review, repository };
-    let reads = 0;
+    const input = localInput();
+    // A present empty snapshot and a successful empty rule read prove the queue
+    // is inactive. Absent state or a 404 rule response must keep refusing.
+    input.state.repair = seededSnapshot([]);
+    const requests: string[] = [];
+    const rulesPath = `/repos/ubiquity/${name}/rules/branches/development`;
+    const pullPath =
+      `/repos/ubiquity/${name}/pulls/${request.pullRequestNumber}`;
     const port = composeLocalGitHub({
-      ...localInput(),
+      ...input,
       repository,
       login: request.review.expectedReviewer,
       ...(flag === undefined ? {} : { selfMergeEnabled: flag }),
-      http: () => {
-        reads++;
+      http: (read) => {
+        const path = new URL(read.url).pathname;
+        requests.push(`${read.method} ${path}`);
+        const rules = path === rulesPath;
         return Promise.resolve({
-          status: 404,
+          status: rules ? 200 : 404,
           headers: new Headers(),
-          bodyText: "{}",
+          bodyText: rules ? "[]" : "{}",
         });
       },
     });
@@ -159,7 +169,15 @@ Deno.test("local GitHub review owner: explicit self capability reaches native re
       proof: {} as never,
       persist: () => Promise.resolve(portOk(undefined)),
     });
-    assert.equal(reads, activated ? 0 : 1, JSON.stringify(result));
+    assert.deepEqual(
+      requests,
+      activated
+        ? []
+        : name === "ai.ubq.fi"
+        ? [`GET ${rulesPath}`, `GET ${pullPath}`]
+        : [`GET ${pullPath}`],
+      JSON.stringify(result),
+    );
     assert.equal(result.ok, false);
     if (!result.ok) {
       assert.equal(result.error.kind, activated ? "invalid" : "not_found");

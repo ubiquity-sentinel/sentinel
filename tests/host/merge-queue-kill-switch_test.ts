@@ -166,7 +166,11 @@ async function factoryRig() {
         return Promise.resolve(response({}, 503));
       } else {body = membershipWire(entry, {
           baseRefOid: SHA1,
-          author: { login: APP.login },
+          author: {
+            __typename: APP.type,
+            id: APP.nodeId,
+            login: "ubiquity-sentinel",
+          },
           mergedBy: null,
         });}
     } else if (path === "/pulls/7") {

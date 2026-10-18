@@ -45,11 +45,15 @@ export const WORKFLOW_SHA256 =
 export function pullFactsWire(overrides: Record<string, unknown> = {}) {
   return membershipWire(null, {
     baseRefOid: SHA1,
-    author: { login: APP.login },
+    author: {
+      __typename: APP.type,
+      id: APP.nodeId,
+      login: "ubiquity-sentinel",
+    },
     mergedBy: {
       __typename: GROUP_BOT.type,
       id: GROUP_BOT.nodeId,
-      login: GROUP_BOT.login,
+      login: "github-merge-queue",
     },
     merged: true,
     mergeCommit: { oid: SHA4 },

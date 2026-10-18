@@ -5,6 +5,7 @@
  * installed, only for a refusal written before that runtime's activation, and
  * only from its exact native publication. Nothing is charged or refunded.
  */
+import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import type {
@@ -175,19 +176,21 @@ function surface(facts: Facts = {}): HostedAutonomyGitHubV1 {
   };
 }
 
-function runAt(
+async function runAt(
   state: TransitionState,
   facts: Facts,
   now: number,
   /** null runs the production allowlist. */
   runtimes: readonly HostedRefreshRearmRuntimeV1[] | null = [pin(R77)],
 ): Promise<HostedAutonomyResultV1> {
-  return runHostedAutonomy({
-    state: state as unknown as StateReadView & RepairStateWriter,
-    githubFor: () => surface(facts),
-    clock: { now: () => now },
-    ...(runtimes === null ? {} : { refreshRearmRuntimes: runtimes }),
-  });
+  return runHostedAutonomy(
+    await withDarkQueueAuthority({
+      state: state as unknown as StateReadView & RepairStateWriter,
+      githubFor: () => surface(facts),
+      clock: { now: () => now },
+      ...(runtimes === null ? {} : { refreshRearmRuntimes: runtimes }),
+    }),
+  );
 }
 
 const CHARGE = reservation("d".repeat(64), {
@@ -334,25 +337,27 @@ Deno.test("refresh re-arm: a record with no review round left stays blocked with
     );
     const before = canonicalStringify(state.snapshot);
     let listings = 0;
-    const result = await runHostedAutonomy({
-      state: state as unknown as StateReadView & RepairStateWriter,
-      githubFor: () => {
-        const github = surface();
-        const listing = github.mismatchDisposition!;
-        return {
-          ...github,
-          mismatchDisposition: {
-            ...listing,
-            listPullsByHead: (branch: string) => {
-              listings++;
-              return listing.listPullsByHead(branch);
+    const result = await runHostedAutonomy(
+      await withDarkQueueAuthority({
+        state: state as unknown as StateReadView & RepairStateWriter,
+        githubFor: () => {
+          const github = surface();
+          const listing = github.mismatchDisposition!;
+          return {
+            ...github,
+            mismatchDisposition: {
+              ...listing,
+              listPullsByHead: (branch: string) => {
+                listings++;
+                return listing.listPullsByHead(branch);
+              },
             },
-          },
-        };
-      },
-      clock: { now: () => T0 + 2 * DAY },
-      refreshRearmRuntimes: [pin(R77)],
-    });
+          };
+        },
+        clock: { now: () => T0 + 2 * DAY },
+        refreshRearmRuntimes: [pin(R77)],
+      }),
+    );
     assert.equal(state.writes, 0, JSON.stringify(result));
     assert.equal(canonicalStringify(state.snapshot), before);
     assert(
@@ -463,7 +468,7 @@ Deno.test("refresh re-arm: a rollback that advanced the generation to 78 on gene
   await expectRetained(record, rollback, "runtime", null);
 });
 
-Deno.test("refresh re-arm: the shipped allowlist names only generations 77 through 80, so an unnamed corrected runtime never re-arms", async () => {
+Deno.test("refresh re-arm: the shipped allowlist names only generations 77 through 81, so an unnamed corrected runtime never re-arms", async () => {
   assert.deepEqual(
     HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES.map((row) => row.revision),
     [
@@ -471,7 +476,12 @@ Deno.test("refresh re-arm: the shipped allowlist names only generations 77 throu
       "474f87eb639f97cd72b9bc4b9e56101488f841aa",
       "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
       "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+      "da98f5f49c45b57cfa97a45fe647c36b1021f302",
     ],
+  );
+  assert.equal(
+    HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES.at(-1)?.activatedNotBefore,
+    1792299493000,
   );
   for (const row of HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES) {
     assert.ok(Number.isSafeInteger(row.activatedNotBefore));

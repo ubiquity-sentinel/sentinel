@@ -68,14 +68,27 @@ function timestamp(value: unknown): number {
   }
   return queueInteger(Date.parse(text), 0);
 }
-function actor(value: unknown): QueueActor {
+/** Canonical REST spelling for authenticated GraphQL actors; Node/type stay exact. */
+export function parseGraphQLQueueActor(value: unknown): QueueActor {
   const row = queueObject(value);
   if (row.__typename !== "Bot" && row.__typename !== "User") {
     return invalidQueueWire("unsupported_actor");
   }
+  const login = queueString(row.login, 100);
+  if (row.__typename === "User" && /\[bot\]$/i.test(login)) {
+    return invalidQueueWire("unsupported_actor");
+  }
+  let canonicalLogin = login;
+  if (row.__typename === "Bot") {
+    const slug = login.endsWith("[bot]") ? login.slice(0, -5) : login;
+    if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(slug)) {
+      return invalidQueueWire("unsupported_actor");
+    }
+    canonicalLogin = queueString(`${slug}[bot]`, 100);
+  }
   return {
     nodeId: queueString(row.id),
-    login: queueString(row.login, 100),
+    login: canonicalLogin,
     type: row.__typename,
   };
 }
@@ -153,7 +166,7 @@ export function parseQueueEntry(
     pull: parseQueuePull(row.pullRequest, expected),
     position: queueInteger(row.position),
     state,
-    enqueuer: actor(row.enqueuer),
+    enqueuer: parseGraphQLQueueActor(row.enqueuer),
     enqueuedAt: timestamp(row.enqueuedAt),
     baseCommit: commit(row.baseCommit),
     headCommit: commit(row.headCommit),
@@ -270,7 +283,9 @@ export function parseQueueEventPage(
       const base = {
         id: queueString(event.id),
         at: timestamp(event.createdAt),
-        actor: event.actor === null ? null : actor(event.actor),
+        actor: event.actor === null
+          ? null
+          : parseGraphQLQueueActor(event.actor),
       };
       if (event.__typename === "AddedToMergeQueueEvent") added.push(base);
       else if (event.__typename === "RemovedFromMergeQueueEvent") {
@@ -293,9 +308,10 @@ export function parseQueueEventPage(
 const PULL =
   "id number baseRefName headRefName headRefOid repository { name owner { login } }";
 // Actor has no `id` field; only its concrete Node types expose one.
-const ACTOR = "__typename login ... on Bot { id } ... on User { id }";
+export const QUEUE_GRAPHQL_ACTOR_FIELDS =
+  "__typename login ... on Bot { id } ... on User { id }";
 const ENTRY =
-  `id position state enqueuedAt jump solo enqueuer { ${ACTOR} } baseCommit { oid } headCommit { oid } pullRequest { ${PULL} }`;
+  `id position state enqueuedAt jump solo enqueuer { ${QUEUE_GRAPHQL_ACTOR_FIELDS} } baseCommit { oid } headCommit { oid } pullRequest { ${PULL} }`;
 export const QUEUE_SNAPSHOT_QUERY =
   `query($owner:String!,$name:String!,$branch:String!,$ref:String!,$after:String) {
   repository(owner:$owner,name:$name) { name owner { login } ref(qualifiedName:$ref) { name target { __typename oid } }
@@ -310,8 +326,8 @@ export const QUEUE_EVENTS_QUERY =
   `query($owner:String!,$name:String!,$number:Int!,$after:String) {
   repository(owner:$owner,name:$name) { name owner { login } pullRequest(number:$number) { ${PULL}
     timelineItems(first:100,after:$after,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT]) { totalCount pageInfo { hasNextPage endCursor } nodes {
-      __typename ... on AddedToMergeQueueEvent { id createdAt actor { ${ACTOR} } }
-      ... on RemovedFromMergeQueueEvent { id createdAt beforeCommit { oid } reason actor { ${ACTOR} } }
+      __typename ... on AddedToMergeQueueEvent { id createdAt actor { ${QUEUE_GRAPHQL_ACTOR_FIELDS} } }
+      ... on RemovedFromMergeQueueEvent { id createdAt beforeCommit { oid } reason actor { ${QUEUE_GRAPHQL_ACTOR_FIELDS} } }
     } }
   } }
 }`;

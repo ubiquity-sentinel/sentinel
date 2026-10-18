@@ -42,67 +42,80 @@ Deno.test("queue intent: exact receipt/task binding rejects substitution and dup
   );
 });
 
-Deno.test("queue intent: every valid closed stage/bucket and both admission keys round-trip under exact R80", async () => {
-  assert.equal(
-    await gen80Available(),
-    true,
-    "exact rollback source must exist for queue compatibility validation",
-  );
-  const old = await loadGen80Modules(["src/contracts/state-snapshots.ts"]);
-  try {
-    const parseOld = old.modules[0]
-      .parseRepairStateSnapshotV1 as typeof parseRepairStateSnapshotV1;
-    const f = await orchestrationRig();
-    const record = f.state.repair!.work[0];
-    const initial = await createQueueIntent(record, f.proof.binding, f.now());
-    let cases = 0;
-    for (const [detail, bucket] of QUEUE_FAILURE_DETAILS) {
-      for (const suffix of ["", ":a1", ":d1", ":a1:d1"]) {
-        const row = {
-          ...queueHold(record, f.now()),
-          intent: {
-            ...initial,
-            key: initial.key + suffix,
-            requestId: "c8bde880-3b8a-4f84-8036-d30a43cf7c12",
-            resultId: "MQE_7",
-            failure: {
-              kind: "merge_queue_v1",
-              detail,
-              atMs: f.now(),
-              attempts: bucket.refusals + bucket.queueFailures + 1,
-            },
-          },
-        };
-        if (parseQueueIntent(row) === null) {
-          continue;
-        }
-        const snapshot = parseRepairStateSnapshotV1({
-          ...f.state.repair,
-          work: [row],
-        });
-        assert.equal(
-          canonicalStringify(parseOld(snapshot)),
-          canonicalStringify(snapshot),
-        );
-        cases++;
-      }
-    }
-    for (const suffix of ["", ":d1"]) {
+async function assertQueueIntentRoundTrips(
+  parseSnapshot: typeof parseRepairStateSnapshotV1,
+): Promise<void> {
+  const f = await orchestrationRig();
+  const record = f.state.repair!.work[0];
+  const initial = await createQueueIntent(record, f.proof.binding, f.now());
+  let cases = 0;
+  for (const [detail, bucket] of QUEUE_FAILURE_DETAILS) {
+    for (const suffix of ["", ":a1", ":d1", ":a1:d1"]) {
       const row = {
         ...queueHold(record, f.now()),
-        intent: { ...initial, key: initial.key + suffix },
+        intent: {
+          ...initial,
+          key: initial.key + suffix,
+          requestId: "c8bde880-3b8a-4f84-8036-d30a43cf7c12",
+          resultId: "MQE_7",
+          failure: {
+            kind: "merge_queue_v1",
+            detail,
+            atMs: f.now(),
+            attempts: bucket.refusals + bucket.queueFailures + 1,
+          },
+        },
       };
+      if (parseQueueIntent(row) === null) {
+        continue;
+      }
       const snapshot = parseRepairStateSnapshotV1({
         ...f.state.repair,
         work: [row],
       });
       assert.equal(
-        canonicalStringify(parseOld(snapshot)),
+        canonicalStringify(parseSnapshot(JSON.parse(JSON.stringify(snapshot)))),
         canonicalStringify(snapshot),
       );
+      cases++;
     }
-    assert.ok(cases > 200, `only ${cases} codec cases tested`);
-  } finally {
-    await old.dispose();
   }
+  for (const suffix of ["", ":d1"]) {
+    const row = {
+      ...queueHold(record, f.now()),
+      intent: { ...initial, key: initial.key + suffix },
+    };
+    const snapshot = parseRepairStateSnapshotV1({
+      ...f.state.repair,
+      work: [row],
+    });
+    assert.equal(
+      canonicalStringify(parseSnapshot(JSON.parse(JSON.stringify(snapshot)))),
+      canonicalStringify(snapshot),
+    );
+  }
+  assert.ok(cases > 200, `only ${cases} codec cases tested`);
+}
+
+Deno.test("queue intent: every valid closed stage/bucket and both admission keys round-trip under current codec", async () => {
+  await assertQueueIntentRoundTrips(parseRepairStateSnapshotV1);
+});
+
+Deno.test({
+  name:
+    "queue intent: every valid closed stage/bucket and both admission keys round-trip under exact R80",
+  // CI checkouts are shallow. Only historical execution depends on the local
+  // old Git object; the same complete case matrix above always runs today.
+  ignore: !await gen80Available(),
+  fn: async () => {
+    const old = await loadGen80Modules(["src/contracts/state-snapshots.ts"]);
+    try {
+      await assertQueueIntentRoundTrips(
+        old.modules[0]
+          .parseRepairStateSnapshotV1 as typeof parseRepairStateSnapshotV1,
+      );
+    } finally {
+      await old.dispose();
+    }
+  },
 });
