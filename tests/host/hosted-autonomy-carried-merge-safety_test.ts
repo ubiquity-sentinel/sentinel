@@ -22,7 +22,6 @@ import {
   type WorkRecordV1,
 } from "../../src/contracts/work-record.ts";
 import type { ReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
-import { hostedRepositoryKey } from "../../ops/hosted-autonomy-policy.ts";
 import { carriedMergeMarker } from "../../src/repair/carried-review.ts";
 import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "../../src/repair/review-round-cap.ts";
 import {
@@ -62,7 +61,6 @@ import {
 } from "./hosted-autonomy-spent-fixtures.ts";
 
 const SLOT = 300_000;
-const WINDOW_TIPS = new Map([[hostedRepositoryKey(LIVE_618.repository), B0]]);
 const GEN79 = await gen79Available();
 
 /** A parked spent CI-red record (the live 618 shape) for another issue. */
@@ -108,7 +106,7 @@ Deno.test("carried merge safety: an awaited carried head that holds the delivery
   const slot0 = Math.floor(NOW / SLOT) * SLOT;
   for (let k = 0; k < 13; k++) {
     const at = slot0 + k * SLOT + 1_000;
-    const window = spentReadWindow(snapshot, at, WINDOW_TIPS);
+    const window = spentReadWindow(snapshot, at);
     assert.ok(window.has(carried.id), `slot ${k}`);
     // The window itself still reads eight peers: the exemption takes no slot.
     assert.equal(window.size, HOSTED_AUTONOMY_SPENT_READS_PER_PASS + 1);
@@ -145,7 +143,6 @@ Deno.test("carried merge safety: the exemption is bounded to the line's front re
     const window = spentReadWindow(
       snapshot,
       slot0 + k * SLOT + 1_000,
-      WINDOW_TIPS,
     );
     assert.ok(window.has(front.id), `front, slot ${k}`);
     assert.ok(window.size <= HOSTED_AUTONOMY_SPENT_READS_PER_PASS + 1);
@@ -162,7 +159,6 @@ Deno.test("carried merge safety: the exemption is bounded to the line's front re
     const window = spentReadWindow(
       stalledSnapshot,
       slot0 + k * SLOT + 1_000,
-      WINDOW_TIPS,
     );
     assert.equal(window.size, HOSTED_AUTONOMY_SPENT_READS_PER_PASS);
     if (window.has(stalled.id)) seen++;
@@ -525,7 +521,7 @@ Deno.test("carried merge safety: unavailable before a merge rotates instead of t
   const { snapshot } = crowded(carried);
   let seen = 0;
   for (let k = 0; k < 13; k++) {
-    const window = spentReadWindow(snapshot, NOW + k * SLOT, WINDOW_TIPS);
+    const window = spentReadWindow(snapshot, NOW + k * SLOT);
     assert.equal(window.size, HOSTED_AUTONOMY_SPENT_READS_PER_PASS);
     if (window.has(carried.id)) seen++;
   }
@@ -535,7 +531,7 @@ Deno.test("carried merge safety: unavailable before a merge rotates instead of t
   );
 });
 
-Deno.test("spent delivery window: with D3 off stale-base parks spend no task or pull reads", async () => {
+Deno.test("spent delivery window: stale-base parks rotate within the read bound and never authorize an open merge", async () => {
   const exact = liveRecord(618);
   const receipts = liveReceipts(exact);
   const peers = Array.from(
@@ -565,7 +561,7 @@ Deno.test("spent delivery window: with D3 off stale-base parks spend no task or 
   const tasks: number[] = [];
   const pulls: number[] = [];
   let tipReads = 0;
-  const { surface } = liveSurface({
+  const { surface, calls } = liveSurface({
     tip: exact.target.base,
     pulls: { 1071: openPull(exact) },
     tasks: { 618: liveTask(618, receipts) },
@@ -591,11 +587,25 @@ Deno.test("spent delivery window: with D3 off stale-base parks spend no task or 
     surface,
   );
   try {
-    const { actions } = await deliveryOnly(rig);
-    assert.deepEqual(tasks, [618]);
-    assert.deepEqual(pulls, [1071]);
-    assert.equal(tipReads, 1);
-    assert.ok(actions.includes(`delivery:${exact.id}:checks_pending`));
+    let exactObserved = false;
+    const observed = new Set<number>();
+    for (let slot = 0; slot < 13; slot++) {
+      tasks.length = 0;
+      pulls.length = 0;
+      const previousTipReads = tipReads;
+      const { result, actions } = await deliveryOnly(rig, NOW + slot * SLOT);
+      assert.equal(result, null);
+      assert.ok(tasks.length <= HOSTED_AUTONOMY_SPENT_READS_PER_PASS);
+      assert.ok(pulls.length <= HOSTED_AUTONOMY_SPENT_READS_PER_PASS);
+      assert.equal(tipReads - previousTipReads, 1);
+      for (const issue of tasks) observed.add(issue);
+      if (actions.includes(`delivery:${exact.id}:checks_pending`)) {
+        exactObserved = true;
+      }
+    }
+    assert.ok(exactObserved, "the exact-base candidate remains readable");
+    assert.equal(observed.size, 13, "stale parks also retain recovery slots");
+    assert.deepEqual(calls.merges, []);
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });
   }

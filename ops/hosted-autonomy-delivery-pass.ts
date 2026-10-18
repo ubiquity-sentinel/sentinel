@@ -158,8 +158,9 @@ export async function runHostedDeliveryPass(
     }
   }
 
-  // Read each candidate repository's tip before allocating spent read slots:
-  // with D3 off, an ordinary park on another base cannot deliver this pass.
+  // Cache each candidate repository's tip for the merge gates and refusal
+  // reporting. A moved-base park still rotates through pull observation:
+  // it may already have merged before a bookkeeping write was lost.
   for (const record of snapshot.work) {
     if (
       eligible(record) && parkedStep(record) &&
@@ -175,9 +176,7 @@ export async function runHostedDeliveryPass(
   const spentReadable = spentReadWindow(
     snapshot,
     deps.clock.now(),
-    deliveryTips,
     context.settled,
-    movedBaseMerge,
   );
   // The tip's own CI, read at most once per repository per pass (a2).
   const tipGreen = new Map<string, boolean>();

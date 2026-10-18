@@ -38,7 +38,6 @@ import {
   runAt,
   TIP,
 } from "./hosted-autonomy-spent-fixtures.ts";
-import { hostedRepositoryKey } from "../../ops/hosted-autonomy-policy.ts";
 import { spentReadWindow } from "../../ops/hosted-autonomy-spent-delivery.ts";
 
 /** The three live records whose exact head is green after the re-runs. */
@@ -751,14 +750,10 @@ Deno.test("spent delivery: a record an earlier write of the pass settled takes n
   // delivery pass skips it, so it must not displace an unsettled record.
   const { records, reviews } = tenSpentRecords();
   const snapshot = liveSnapshot(records, reviews);
-  const tips = new Map([[
-    hostedRepositoryKey(records[0].repository),
-    records[0].target.base,
-  ]]);
-  const window = spentReadWindow(snapshot, NOW, tips);
+  const window = spentReadWindow(snapshot, NOW);
   assert.equal(window.size, 8);
   const settled = new Set([...window].slice(0, 2));
-  const continued = spentReadWindow(snapshot, NOW, tips, settled);
+  const continued = spentReadWindow(snapshot, NOW, settled);
   assert.equal(continued.size, 8);
   for (const id of settled) assert.equal(continued.has(id), false, id);
   assert.deepEqual(
