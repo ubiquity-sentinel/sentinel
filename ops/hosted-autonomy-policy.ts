@@ -1,4 +1,4 @@
-import { HISTORICAL_NOT_STARTED_DETAIL } from "../src/host/matrix-actions.ts";
+import { HISTORICAL_NOT_STARTED_DETAIL } from "../src/host/matrix-quarantine-state.ts";
 import { CI_UNATTRIBUTED_DETAIL } from "../src/repair/ci-rejection.ts";
 import { ATTEMPT_DETAIL_NO_CHANGE } from "../src/repair/attempt-policy.ts";
 import {
