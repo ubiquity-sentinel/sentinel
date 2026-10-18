@@ -4,6 +4,11 @@ import {
   queueRefusalIsTransient,
 } from "./loop-queue-guard.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
+import {
+  checkExistingPrOperation,
+  prepareExistingPrEffect,
+} from "./loop-existing-pr.ts";
+import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 /** Repair loop internals: base refresh. */
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import { BASE_REFRESH_CONFLICT_DETAIL } from "../contracts/ports.ts";
@@ -169,7 +174,38 @@ export async function ensureBaseRefreshIntent(
     requestId: null,
     resultId: null,
   };
-  return persistWork(deps, context, setIntent(record, intent, readAt));
+  const authority = await prepareExistingPrEffect(deps, context, record, {
+    operation: "refresh",
+    phase: "prepare",
+    observedBase,
+  });
+  if (!authority.ok) {
+    return {
+      kind: "deferred",
+      detail: "existing PR refresh planning custody unavailable",
+    };
+  }
+  if (authority.value !== undefined) {
+    const grant = authority.value;
+    if (
+      grant.kind === "native_preservation" ||
+      !(await deps.github.existingPrTakeover!.authorizeEffect(
+        grant.proof,
+        grant.request,
+      )).ok
+    ) {
+      return {
+        kind: "deferred",
+        detail: "existing PR refresh planning custody unavailable",
+      };
+    }
+  }
+  return persistWork(
+    deps,
+    context,
+    setIntent(record, intent, readAt),
+    authority.value === undefined ? undefined : context.head!,
+  );
 }
 
 /**
@@ -300,7 +336,8 @@ export async function executeBaseRefreshIntent(
     );
   if (candidateState !== undefined) {
     if (
-      candidateState.preserved === null || preservationRef === null ||
+      candidateState.preserved === null && !hasTakeoverCustody(durable) ||
+      preservationRef === null ||
       candidateState.publishedHead !== durable.target.head
     ) {
       return {
@@ -308,16 +345,30 @@ export async function executeBaseRefreshIntent(
         detail: "base refresh published head mismatch",
       };
     }
+    const candidate = {
+      operationKey: intent.key,
+      base: expectedBase,
+      head: preparedHead,
+      ref: preservationRef,
+    };
+    const authority = await prepareExistingPrEffect(deps, context, durable, {
+      operation: "refresh",
+      phase: "preserve",
+      observedBase: expectedBase,
+      nextHead: preparedHead,
+      candidate,
+    });
+    if (!authority.ok) {
+      return {
+        kind: "deferred",
+        detail: "existing PR refresh preservation custody unavailable",
+      };
+    }
     const preserved = await deps.github.preserveCandidate({
       taskId: durable.id,
-      candidate: {
-        operationKey: intent.key,
-        base: expectedBase,
-        head: preparedHead,
-        ref: preservationRef,
-      },
+      candidate,
       publishedHead: candidateState.publishedHead,
-    });
+    }, authority.value);
     if (!preserved.ok) {
       // The trusted validator's verdict on the deterministic merge of the
       // exact candidate and base is final for this intent: re-running it can
@@ -399,10 +450,31 @@ export async function executeBaseRefreshIntent(
     }
     // The branch still carries the old candidate: one exact expected-ref push
     // publishes the deterministic prepared commit.
+    const authority = await prepareExistingPrEffect(deps, context, durable, {
+      operation: "refresh",
+      phase: "publish",
+      observedBase: expectedBase,
+      nextHead: preparedHead,
+      ...(preservationRef === null ? {} : {
+        candidate: {
+          operationKey: intent.key,
+          base: expectedBase,
+          head: preparedHead,
+          ref: preservationRef,
+        },
+      }),
+    });
+    if (!authority.ok) {
+      return {
+        kind: "deferred",
+        detail: "existing PR refresh publication custody unavailable",
+      };
+    }
     const pushed = await deps.github.pushHead(
       ref,
       preparedHead,
       record.target.head,
+      authority.value,
     );
     if (!pushed.ok && queueEffectRefused(pushed.error)) {
       return holdQueueRecord(
@@ -446,6 +518,26 @@ export async function executeBaseRefreshIntent(
   // Branch, PR, checkpoint, counters, source, evidence and prior reviews are
   // preserved.
   const doneAt = deps.clock.now();
+  const acknowledgedCustody = await checkExistingPrOperation(
+    deps,
+    context,
+    durable,
+    {
+      operation: "refresh",
+      phase: "publish",
+      observedBase: expectedBase,
+      nextHead: preparedHead,
+      ...(preservationRef === null ? {} : {
+        candidate: {
+          operationKey: intent.key,
+          base: expectedBase,
+          head: preparedHead,
+          ref: preservationRef,
+        },
+      }),
+    },
+  );
+  if (acknowledgedCustody !== null) return acknowledgedCustody;
   const refreshed: WorkRecordV1 = {
     ...durable,
     target: candidateState === undefined || preservationRef === null
@@ -470,7 +562,12 @@ export async function executeBaseRefreshIntent(
     intent: null,
     updatedAt: doneAt,
   };
-  return persistWork(deps, context, refreshed);
+  return persistWork(
+    deps,
+    context,
+    refreshed,
+    hasTakeoverCustody(durable) ? context.head! : undefined,
+  );
 }
 
 /**
@@ -581,6 +678,18 @@ async function prepareRefreshHead(
       detail: BASE_REFRESH_CAPABILITY_DETAIL,
     });
   }
+  const authority = await prepareExistingPrEffect(deps, context, record, {
+    operation: "refresh",
+    phase: "prepare",
+    observedBase: expectedBase,
+    ...(persistedPrepared === null ? {} : { nextHead: persistedPrepared }),
+  });
+  if (!authority.ok) {
+    return {
+      kind: "deferred",
+      detail: "existing PR refresh preparation custody unavailable",
+    };
+  }
   const prepared = await prepare({
     pullRequestNumber: record.target.pr,
     branch: record.target.branch,
@@ -588,7 +697,7 @@ async function prepareRefreshHead(
     previousBase: record.target.base,
     expectedBase,
     ...(persistedPrepared === null ? {} : { preparedHead: persistedPrepared }),
-  });
+  }, authority.value);
   if (!prepared.ok) {
     if (queueEffectRefused(prepared.error)) {
       return holdQueueRecord(

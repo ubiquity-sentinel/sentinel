@@ -5,6 +5,9 @@ import {
   canonicalStringifySha256,
 } from "../src/contracts/canonical.ts";
 import type { Clock, StateReadView } from "../src/contracts/ports.ts";
+import { portError, portOk } from "../src/contracts/ports.ts";
+import type { ExistingPrTakeoverPort } from "../src/contracts/existing-pr-takeover.ts";
+import { hasTakeoverCustody } from "../src/github/existing-pr-takeover-provenance.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
@@ -65,6 +68,14 @@ export interface HostedQueueAuthorityOptions {
   clock: Clock;
   githubFor: HostedAutonomyDepsV1["githubFor"];
   clientFor(repository: RepositoryIdentityV1): GitHubQueueDeliveryClient | null;
+  /** Actual same-App host port; absent authority refuses retained native PR effects. */
+  existingPrFor?(
+    repository: RepositoryIdentityV1,
+  ): ExistingPrTakeoverPort | undefined;
+  /** Read-only retained publication identity; no repair/planner principal is minted here. */
+  publicationFor?(
+    repository: RepositoryIdentityV1,
+  ): Pick<ExistingPrTakeoverPort, "resolvePublication"> | undefined;
   /** Trusted source construction only. No environment variable can supply pins. */
   configuration?: {
     mode: QueueMode;
@@ -110,10 +121,13 @@ export function createHostedQueueAuthority(
   async function bounded<T>(
     run: (deadline: number) => Promise<T>,
     refused: () => T,
+    until = clock.now() + READ_MS,
   ): Promise<T> {
-    const deadline = createDeadline(READ_MS);
+    const remaining = Math.min(READ_MS, until - clock.now());
+    if (!Number.isSafeInteger(until) || remaining <= 0) return refused();
+    const deadline = createDeadline(remaining);
     try {
-      return await deadline.race(run(clock.now() + READ_MS));
+      return await deadline.race(run(Math.min(until, clock.now() + remaining)));
     } catch {
       return refused();
     } finally {
@@ -145,6 +159,22 @@ export function createHostedQueueAuthority(
       client,
       policy,
       provenance: createQueueProvenanceReader({ state, clock, policy }),
+      publication: async (request) => {
+        const port = options.publicationFor?.(repository);
+        const observed = await state.readRepair();
+        if (
+          port === undefined || !observed.ok ||
+          observed.value.status !== "found" ||
+          !equal(observed.value.snapshot, request.snapshot)
+        ) return unavailable();
+        const proof = await port.resolvePublication({
+          ...request,
+          expectedStateHead: observed.value.head,
+        });
+        return proof.ok
+          ? { status: "complete", value: proof.value }
+          : unavailable();
+      },
       directWitness: ({ binding, revision }) => {
         const matches = policy.historicalDirectWitnesses.filter((entry) =>
           equal(entry.binding, binding) && entry.revision === revision
@@ -683,8 +713,49 @@ export function createHostedQueueAuthority(
       return changed && equal(next.releaseRequests, requests) &&
         clock.now() < deadline && await current(before, expectedHead);
     }, () => false);
+  const authorizeEnqueue: NonNullable<
+    HostedQueueAuthorizationPort["authorizeEnqueue"]
+  > = (request) =>
+    bounded(
+      async (deadline) => {
+        const { record, snapshot, observedHead } = request;
+        if (!hasTakeoverCustody(record)) return portOk(undefined);
+        const port = options.existingPrFor?.(record.repository);
+        if (
+          port === undefined || record.target.head === null ||
+          !await current(snapshot, observedHead, record)
+        ) {
+          return portError(
+            "unavailable",
+            "existing PR enqueue custody unavailable",
+          );
+        }
+        const proofRequest = {
+          record,
+          snapshot,
+          expectedStateHead: observedHead,
+          expectedHead: record.target.head,
+          operation: "enqueue" as const,
+          deadline,
+        };
+        const proof = await port.resolve(proofRequest);
+        if (!proof.ok) return proof;
+        const allowed = await port.authorizeEffect(proof.value, proofRequest);
+        if (!allowed.ok) return allowed;
+        const client = options.clientFor(record.repository);
+        const finalQueue = await client?.readQueue("development");
+        return finalQueue?.status === "complete" &&
+            queueEqual(finalQueue.value, request.queue) &&
+            clock.now() < deadline &&
+            await current(snapshot, observedHead, record)
+          ? portOk(undefined)
+          : portError("unavailable", "existing PR enqueue custody unavailable");
+      },
+      () => portError("unavailable", "existing PR enqueue custody unavailable"),
+      request.deadline,
+    );
   return {
-    authorization: { readAuthorization, readRemoval },
+    authorization: { readAuthorization, readRemoval, authorizeEnqueue },
     resolveDelivery,
     verifyProtectedWrite,
   };

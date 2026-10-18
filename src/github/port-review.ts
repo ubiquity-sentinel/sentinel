@@ -9,6 +9,7 @@ import type {
   ReviewRequestOutcomeV1,
   ReviewSubmissionV1,
 } from "../contracts/ports.ts";
+import type { TakeoverEffectAuthorization } from "../contracts/existing-pr-takeover.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import type { GitHubReviewCommentWireV1, GitHubReviewWireV1 } from "./wire.ts";
 import { normalizeReviewObservation } from "./review-normalize.ts";
@@ -21,6 +22,7 @@ export abstract class GitHubPortReview extends GitHubPortPublication {
 
   async requestReview(
     request: ReviewSubmissionV1,
+    takeover?: TakeoverEffectAuthorization,
   ): Promise<PortResultV1<ReviewRequestOutcomeV1>> {
     if (request.operationKey.length === 0) {
       return portError("invalid", "operation key is required");
@@ -73,6 +75,11 @@ export abstract class GitHubPortReview extends GitHubPortPublication {
         expectedHead: request.expectedHead,
       });
       if (!finalGuard.ok) return finalGuard;
+      const custody = await this.takeoverEffect(
+        { kind: "review", request },
+        takeover,
+      );
+      if (!custody.ok) return custody;
       return this.reviewService.submitReview({
         operationKey: request.operationKey,
         prNumber: request.prNumber,

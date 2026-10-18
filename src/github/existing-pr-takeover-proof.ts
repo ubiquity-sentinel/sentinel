@@ -34,6 +34,7 @@ import {
 
 const OPERATIONS = new Set([
   "correct",
+  "preserve_successor",
   "publish",
   "review",
   "refresh",
@@ -78,44 +79,13 @@ export function createTakeoverProofPort(
 
   const verify = async (input: TakeoverProofRequest): Promise<boolean> => {
     try {
-      if (
-        !live(input) || !isGitSha(input.expectedStateHead) ||
-        !isGitSha(input.expectedHead) ||
-        !OPERATIONS.has(input.operation) ||
-        input.record.nextStep === "done" || input.record.target.head === null ||
-        input.record.target.pr === null ||
-        input.record.target.branch === null ||
-        (input.operation === "publish"
-          ? !isGitSha(input.nextHead) ||
-            input.nextHead !== input.record.target.head ||
-            input.expectedHead !==
-              input.record.target.candidateState?.publishedHead
-          : input.nextHead !== undefined ||
-            input.expectedHead !== input.record.target.head)
-      ) return false;
+      if (!live(input) || !requestShape(input)) return false;
       const principal = takeoverPrincipalBinding(input);
       if (
         principal === null ||
         !(await revalidateTakeoverPrincipal(deps.principal, principal)).ok ||
         !live(input)
       ) return false;
-      if (input.operation === "refresh") {
-        // Preparing a refresh retains custody of H/B0 while the native base is B1.
-        // Publication/recovery of the prepared result needs its own produced-head proof.
-        const intent = input.record.intent;
-        if (
-          !isGitSha(input.observedBase) ||
-          input.observedBase === input.record.target.base ||
-          intent?.kind !== "base_refresh" ||
-          intent.branch !== input.record.target.branch ||
-          intent.pr !== input.record.target.pr ||
-          intent.expectedHead !== input.expectedHead ||
-          intent.observedBase !== input.observedBase ||
-          intent.key !==
-            `base_refresh:${intent.pr}:${input.expectedHead}:${input.observedBase}` ||
-          intent.requestId !== null || intent.resultId !== null
-        ) return false;
-      } else if (input.observedBase !== undefined) return false;
       const before = await deps.state.readRepair();
       if (
         !live(input) || !before.ok || before.value.status !== "found" ||
@@ -150,13 +120,17 @@ export function createTakeoverProofPort(
         native.writableBranch !== true || native.protectedPathsClear !== true ||
         native.queueCustodyClear !== true ||
         native.head !== input.expectedHead ||
-        native.base !== (input.observedBase ?? input.record.target.base) ||
+        (!(input.operation === "refresh" && isGitSha(input.nextHead) &&
+          input.record.intent?.resultId === input.nextHead) &&
+          native.base !== (input.observedBase ?? input.record.target.base)) ||
         input.snapshot.work.some((other) =>
           other.id !== input.record.id &&
           other.target.pr === input.record.target.pr &&
           equal(other.repository, input.record.repository)
         ) ||
         binding.taskId !== input.record.id ||
+        (input.taskDigest !== undefined &&
+          input.taskDigest !== binding.issueDigest) ||
         binding.baseRef !== deps.baseBranch ||
         !equal(binding.repository, deps.repository) ||
         binding.issueNumber !== input.record.related.issueNumber ||
@@ -175,7 +149,11 @@ export function createTakeoverProofPort(
       const sameNativeHead =
         input.record.target.head === anchor.record.target.head &&
         input.record.target.base === anchor.record.target.base;
-      const descriptor = input.record.target.candidateState?.preserved;
+      const preserved = input.record.target.candidateState?.preserved;
+      const descriptor =
+        preserved === null && input.operation === "preserve_successor"
+          ? input.candidate
+          : preserved;
       if (
         facts.anchorRef !== anchor.nativeRef ||
         facts.anchorHead !== anchor.record.target.head ||
@@ -199,6 +177,8 @@ export function createTakeoverProofPort(
               !isGitSha(facts.custody.predecessor)))) ||
         facts.nextHead !== (input.nextHead ?? null) ||
         (input.nextHead !== undefined &&
+          !(input.operation === "refresh" &&
+            (input.phase ?? "prepare") === "prepare") &&
           facts.nextDescendsFromExpected !== true)
       ) return false;
       if (!(await revalidateTakeoverPrincipal(deps.principal, principal)).ok) {
@@ -257,4 +237,77 @@ export function createTakeoverProofPort(
       }
     },
   };
+}
+
+/** Transient operation shapes never rewrite the persisted V1 intent. */
+function requestShape(input: TakeoverProofRequest): boolean {
+  const { record } = input;
+  const intent = record.intent;
+  if (
+    !isGitSha(input.expectedStateHead) || !isGitSha(input.expectedHead) ||
+    !OPERATIONS.has(input.operation) || record.nextStep === "done" ||
+    record.target.head === null ||
+    record.target.pr === null || record.target.branch === null ||
+    input.operation !== "review" && input.taskDigest !== undefined
+  ) return false;
+  if (input.operation === "refresh") {
+    const phase = input.phase ?? "prepare";
+    if (
+      !isGitSha(input.observedBase) || input.observedBase === record.target.base
+    ) return false;
+    // Planning may authorize only the exact intent CAS. The concrete refresh
+    // boundary below separately requires its already-persisted intent.
+    if (intent === null) {
+      return phase === "prepare" && input.nextHead === undefined &&
+        input.candidate === undefined &&
+        input.expectedHead === record.target.head;
+    }
+    if (
+      intent.kind !== "base_refresh" ||
+      intent.branch !== record.target.branch ||
+      intent.pr !== record.target.pr ||
+      intent.expectedHead !== record.target.head ||
+      intent.observedBase !== input.observedBase ||
+      intent.key !==
+        `base_refresh:${intent.pr}:${record.target.head}:${input.observedBase}` ||
+      intent.requestId !== null
+    ) return false;
+    if (phase === "prepare") {
+      return input.candidate === undefined &&
+        (intent.resultId === null
+          ? input.nextHead === undefined &&
+            input.expectedHead === record.target.head
+          : isGitSha(intent.resultId) && input.nextHead === intent.resultId &&
+            (input.expectedHead === record.target.head ||
+              input.expectedHead === intent.resultId));
+    }
+    return (phase === "preserve" || phase === "publish") &&
+      isGitSha(intent.resultId) &&
+      input.nextHead === intent.resultId &&
+      input.candidate?.head === intent.resultId &&
+      input.candidate.base === input.observedBase &&
+      input.candidate.operationKey === intent.key &&
+      (input.expectedHead === record.target.head ||
+        input.expectedHead === intent.resultId);
+  }
+  if (input.phase !== undefined || input.observedBase !== undefined) {
+    return false;
+  }
+  if (input.operation === "preserve_successor") {
+    return intent?.kind === "candidate_preservation" &&
+      record.target.candidateState?.preserved === null &&
+      input.expectedHead === record.target.candidateState.publishedHead &&
+      input.nextHead === record.target.head &&
+      input.nextHead !== input.expectedHead &&
+      input.candidate?.head === record.target.head &&
+      input.candidate.base === record.target.base &&
+      input.candidate.operationKey === intent.key &&
+      input.candidate.ref === intent.branch;
+  }
+  if (input.candidate !== undefined) return false;
+  return input.operation === "publish"
+    ? isGitSha(input.nextHead) && input.nextHead === record.target.head &&
+      (input.expectedHead === record.target.candidateState?.publishedHead ||
+        input.expectedHead === input.nextHead)
+    : input.nextHead === undefined && input.expectedHead === record.target.head;
 }

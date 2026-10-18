@@ -1,3 +1,4 @@
+import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
 /** Production serial/matrix routing with explicit unavailable native custody. */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -115,8 +116,10 @@ export function existingPrLifecycleRig(
       });
     },
     authorizeAdoption: unavailable,
+    authorizeBoundary: unavailable,
     preserveNativeHead: unavailable,
     resolve: unavailable,
+    resolvePublication: unavailable,
     authorizeEffect: unavailable,
   };
   Object.defineProperty(github, "existingPrTakeover", { value: takeover });
@@ -149,11 +152,17 @@ import { createRepairStateStore } from "../../src/state/mod.ts";
 import { createExistingPrTakeover } from "../../src/host/existing-pr-takeover.ts";
 import type { LoopContextV1 } from "../../src/repair/loop-types.ts";
 import { nativeFixture } from "../host/existing-pr-native-fixtures.ts";
-import { SELF_REPO, snapshot } from "../host/actions-candidates-fixture.ts";
+import {
+  gitRun,
+  SELF_REPO,
+  snapshot,
+} from "../host/actions-candidates-fixture.ts";
 
 /** Real immutable Git object and state history; only native API/principal responses are offline ports. */
-export async function nativeLifecycleRig() {
-  const native = await nativeFixture();
+export async function nativeLifecycleRig(
+  repository: RepositoryIdentityV1 = SELF_REPO,
+) {
+  const native = await nativeFixture(undefined, undefined, repository);
   const { ctx, clock } = native;
   const state = createRepairStateStore({
     remoteUrl: `file://${ctx.bare}`,
@@ -172,14 +181,14 @@ export async function nativeLifecycleRig() {
     checkpoint: null,
   };
   const initial = snapshot([fresh], [reservation("a".repeat(64), {
-    repository: SELF_REPO,
+    repository,
     outcome: "ambiguous",
     settledAt: clock.now(),
   })]);
   const seeded = await state.writeRepair(initial, null);
   assert.ok(seeded.ok && seeded.value.status === "applied");
   const configs = repairConfigs({
-    repository: SELF_REPO,
+    repository,
     adapter: { kind: "github" },
   });
   const controls = {
@@ -187,19 +196,52 @@ export async function nativeLifecycleRig() {
     principalCalls: 0,
     afterPrincipal: async () => {},
   };
-  const takeover = createExistingPrTakeover({
-    ...native.factoryInput,
-    state,
-    principal: {
-      async revalidate() {
-        controls.principalCalls++;
-        await controls.afterPrincipal();
-        return controls.principal
+  const composeTakeover = () =>
+    createExistingPrTakeover({
+      ...native.factoryInput,
+      state,
+      async ensureLocalCandidate(_taskId, head) {
+        const fetched = await gitRun(native.sourcePath, [
+          "fetch",
+          "--no-tags",
+          `file://${ctx.tmp}/work`,
+          head,
+        ], ctx.env);
+        return fetched.ok
           ? { ok: true as const, value: undefined }
-          : portError("unavailable", "fixture principal revoked");
+          : portError("unavailable", "fixture candidate import failed");
       },
-    },
-  });
+      principal: {
+        async revalidate() {
+          controls.principalCalls++;
+          await controls.afterPrincipal();
+          return controls.principal
+            ? { ok: true as const, value: undefined }
+            : portError("unavailable", "fixture principal revoked");
+        },
+      },
+    });
+  if (repository.owner === "ubiquity" && repository.name === "ai.ubq.fi") {
+    const queueReader = createQueueDeliveryReader({
+      repository,
+      clock,
+      client: native.client,
+      policy: POLICY,
+    });
+    Object.defineProperty(native.host.port, "nativeQueue", {
+      value: createNativeQueueGuard({
+        repository,
+        clock,
+        state,
+        client: native.client,
+        reader: queueReader,
+        policy: POLICY,
+        mode: "off",
+        proofActivated: false,
+      }),
+    });
+  }
+  const takeover = composeTakeover();
   Object.defineProperty(native.host.port, "existingPrTakeover", {
     value: takeover,
   });
@@ -226,7 +268,23 @@ export async function nativeLifecycleRig() {
       executionBaseline: null,
     };
   };
-  return { ...native, state, deps, controls, takeover, initial, reload };
+  return {
+    ...native,
+    nativeControls: native.controls,
+    state,
+    deps,
+    controls,
+    takeover,
+    initial,
+    reload,
+    restartTakeover() {
+      const next = composeTakeover();
+      Object.defineProperty(native.host.port, "existingPrTakeover", {
+        value: next,
+      });
+      return next;
+    },
+  };
 }
 
 import { GitHubQueueDeliveryClient } from "../../src/github/client-queue-delivery.ts";

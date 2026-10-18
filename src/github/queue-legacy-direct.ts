@@ -1,3 +1,6 @@
+import type { TakeoverPublicationProof } from "../contracts/existing-pr-takeover.ts";
+import { hasTakeoverCustody } from "./existing-pr-takeover-provenance.ts";
+import { takeoverPublicationMatches } from "./existing-pr-publication-proof.ts";
 import { hasQueueDeliveryProvenance } from "./queue-delivery-provenance.ts";
 /** Shared preactivation direct grant. It is never a VerifiedDelivery proof. */
 import type { GitSha } from "../contracts/brands.ts";
@@ -28,6 +31,7 @@ export interface QueueLegacyDirectGrant {
   status: "legacy_direct";
   binding: QueueBinding;
   revision: GitSha;
+  publicationProof?: TakeoverPublicationProof;
   carried?: { reviewedBase: GitSha; reviewedHead: GitSha; patchDigest: string };
 }
 export type QueueLegacyDirectRead =
@@ -85,11 +89,27 @@ export async function resolveQueueLegacyDirect(
   );
   if (observed.status !== "complete") return observed;
   const { pull, mergedBy } = observed.value;
+  const publication = hasTakeoverCustody(record)
+    ? await options.reader.readPublication?.({
+      record,
+      snapshot: state.value.snapshot,
+      deadline: input.deadline,
+      revision: input.revision,
+    })
+    : { status: "complete" as const, value: null };
+  if (publication?.status !== "complete") return unavailable();
   if (
     pull.state !== "merged" || pull.head !== record.target.head ||
     pull.mergeSha !== input.revision || pull.baseRef !== "development" ||
     pull.headRef !== record.target.branch || pull.author === null ||
-    !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author) ||
+    (hasTakeoverCustody(record)
+      ? !takeoverPublicationMatches(
+        publication.value ?? undefined,
+        record,
+        input.revision,
+        pull.author,
+      )
+      : !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author)) ||
     mergedBy?.type !== "Bot" ||
     mergedBy.login !== HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR
   ) return unavailable();
@@ -164,6 +184,9 @@ export async function resolveQueueLegacyDirect(
       status: "legacy_direct",
       binding: binding.value.binding,
       revision: input.revision,
+      ...(publication.value === null
+        ? {}
+        : { publicationProof: publication.value }),
       ...(carried === undefined ? {} : { carried }),
     },
   };
