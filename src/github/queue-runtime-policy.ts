@@ -1,5 +1,8 @@
 /** Reviewed source pins. Repository variables may lower enqueue mode only. */
-import type { QueueMode } from "../../ops/hosted-autonomy-queue-policy.ts";
+import {
+  effectiveQueueMode,
+  type QueueMode,
+} from "../../ops/hosted-autonomy-queue-policy.ts";
 import type { QueueProofPolicy } from "../../ops/hosted-autonomy-queue-proof.ts";
 import type { QueueActor } from "./merge-queue-types.ts";
 
@@ -44,3 +47,24 @@ export const QUEUE_PROOF_POLICY: QueueProofPolicy = Object.freeze({
   historicalDirectManifestDigest: null,
   historicalDirectWitnesses: Object.freeze([]),
 });
+
+/** Trusted source configuration; never supplied by a workflow input or model. */
+export interface QueueRuntimeConfiguration {
+  mode: QueueMode;
+  proofActivated: boolean;
+  policy: QueueProofPolicy;
+  pins: HostedQueueAuthorityPins;
+}
+
+/** A host selector lowers admission only; accepted proof and pins stay source-owned. */
+export function resolveQueueRuntimeConfiguration(
+  selector: unknown,
+  source: QueueRuntimeConfiguration = {
+    mode: QUEUE_MODE_CEILING,
+    proofActivated: QUEUE_PROOF_ACTIVATED,
+    policy: QUEUE_PROOF_POLICY,
+    pins: QUEUE_AUTHORITY_PINS,
+  },
+): QueueRuntimeConfiguration {
+  return { ...source, mode: effectiveQueueMode(source.mode, selector) };
+}

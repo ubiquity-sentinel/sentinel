@@ -195,6 +195,7 @@ export async function runHostedAutonomyMain(input?: {
           githubFor,
           clock: { now: () => Date.now() },
           queue: createHostedQueueCoordinator({
+            queueMode: env("SENTINEL_MERGE_QUEUE"),
             state,
             githubFor,
             token: apiToken,

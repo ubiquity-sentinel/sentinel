@@ -31,9 +31,8 @@ import { createQueueProvenanceReader } from "../github/queue-delivery-provenance
 import { createQueueDeliveryReader } from "../github/queue-delivery-reader.ts";
 import { createNativeQueueGuard } from "../github/native-queue-guard.ts";
 import {
-  QUEUE_MODE_CEILING,
-  QUEUE_PROOF_ACTIVATED,
-  QUEUE_PROOF_POLICY,
+  type QueueRuntimeConfiguration,
+  resolveQueueRuntimeConfiguration,
 } from "../github/queue-runtime-policy.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
 import { GitReviewSnapshot } from "../github/review-snapshot.ts";
@@ -166,10 +165,19 @@ export interface LocalGitHubInputV1 {
   ownerSettlement?: ReviewOwnerSettlementResolverV1;
   /** Trusted opt-in; the port additionally requires the exact reserved self scope. */
   selfMergeEnabled?: boolean;
+  /** Trusted host selector can only lower the reviewed queue admission mode. */
+  queueMode?: unknown;
 }
 
 /** Compose the one authenticated GitHub port over the shared cooldown gate. */
-export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
+export function composeLocalGitHub(
+  input: LocalGitHubInputV1,
+  sourceQueueConfiguration?: QueueRuntimeConfiguration,
+): GitHubPort {
+  const queue = resolveQueueRuntimeConfiguration(
+    input.queueMode,
+    sourceQueueConfiguration,
+  );
   const custody = input.ownerCustody;
   if (
     (input.ownerExecution !== undefined || custody !== undefined) &&
@@ -221,16 +229,16 @@ export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
     cooldownGate: gate,
     clock: input.clock,
     includeIssueRelations: true,
-  }, QUEUE_PROOF_POLICY.workflowId);
+  }, queue.policy.workflowId);
   const queueReader = createQueueDeliveryReader({
     repository,
     clock: input.clock,
     client,
-    policy: QUEUE_PROOF_POLICY,
+    policy: queue.policy,
     provenance: createQueueProvenanceReader({
       state: input.state,
       clock: input.clock,
-      policy: QUEUE_PROOF_POLICY,
+      policy: queue.policy,
     }),
   });
   const nativeQueue = createNativeQueueGuard({
@@ -239,9 +247,9 @@ export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
     clock: input.clock,
     client,
     reader: queueReader,
-    mode: QUEUE_MODE_CEILING,
-    proofActivated: QUEUE_PROOF_ACTIVATED,
-    policy: QUEUE_PROOF_POLICY,
+    mode: queue.mode,
+    proofActivated: queue.proofActivated,
+    policy: queue.policy,
   });
   const snapshot = new GitReviewSnapshot({
     trustedPath: input.trustedPath,

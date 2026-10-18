@@ -7,13 +7,15 @@ import {
 } from "../src/contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { GitHubQueueDeliveryClient } from "../src/github/client-queue-delivery.ts";
-import { fetchHttpTransport } from "../src/github/http.ts";
+import {
+  fetchHttpTransport,
+  type HttpTransportV1,
+} from "../src/github/http.ts";
 import { DurableGitHubCooldownGate } from "../src/repair/github-cooldown.ts";
 import { DEFAULT_APP_INSTALLATION_ID } from "../src/host/actions-target-cycles.ts";
 import {
-  QUEUE_MODE_CEILING,
-  QUEUE_PROOF_ACTIVATED,
-  QUEUE_PROOF_POLICY,
+  type QueueRuntimeConfiguration,
+  resolveQueueRuntimeConfiguration,
 } from "../src/github/queue-runtime-policy.ts";
 import { createHostedQueueAuthority } from "./hosted-autonomy-queue-authority.ts";
 import type { HostedAutonomyDepsV1 } from "./hosted-autonomy-types.ts";
@@ -24,7 +26,15 @@ export function createHostedQueueCoordinator(input: {
   clock: Clock;
   token: string;
   githubFor: HostedAutonomyDepsV1["githubFor"];
-}): HostedQueueCoordinatorDeps {
+  /** Protected repository variable, never a target PR or workflow input. */
+  queueMode?: unknown;
+  /** Trusted transport seam; production uses authenticated native fetch. */
+  http?: HttpTransportV1;
+}, source?: QueueRuntimeConfiguration): HostedQueueCoordinatorDeps {
+  const configuration = resolveQueueRuntimeConfiguration(
+    input.queueMode,
+    source,
+  );
   const repository: RepositoryIdentityV1 = {
     owner: "ubiquity",
     name: "ai.ubq.fi",
@@ -37,27 +47,31 @@ export function createHostedQueueCoordinator(input: {
   const client = new GitHubQueueDeliveryClient({
     repository,
     apiBaseUrl: "https://api.github.com",
-    http: fetchHttpTransport(),
+    http: input.http ?? fetchHttpTransport(),
     clock: input.clock,
     cooldownGate: gate,
     auth: {
       authorizationHeader: () =>
         Promise.resolve(portOk(`Bearer ${input.token}`)),
     },
-  }, QUEUE_PROOF_POLICY.workflowId);
+  }, configuration.policy.workflowId);
   const clientFor = (scope: RepositoryIdentityV1) =>
     scope.owner === repository.owner &&
       scope.name === repository.name &&
       scope.installationId === repository.installationId
       ? client
       : null;
-  const authority = createHostedQueueAuthority({ ...input, clientFor });
+  const authority = createHostedQueueAuthority({
+    ...input,
+    clientFor,
+    configuration,
+  });
   return {
     repository,
     config: {
-      mode: QUEUE_MODE_CEILING,
-      proofActivated: QUEUE_PROOF_ACTIVATED,
-      appActor: QUEUE_PROOF_POLICY.appActor,
+      mode: configuration.mode,
+      proofActivated: configuration.proofActivated,
+      appActor: configuration.policy.appActor,
       probation: true,
     },
     surface: client,

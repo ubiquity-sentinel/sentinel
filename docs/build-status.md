@@ -175,13 +175,22 @@ Activation remains gated by an accepted native canary, exact historical direct
 witnesses, expected production rule projection and an installed proof-capable
 fallback. Read-only install planning identified two implementation gaps: the
 lower-only selector was unwired, and old-runtime selection lacked an activated
-queue capability boundary. The isolated `queue-kill-switch` and
-`queue-runtime-capability` workers own those corrections; only the primary owns
-shared integration and this ledger. The proposed disabled-to-active production
-ruleset projection still requires native canary evidence. Stage the production
-ruleset disabled and install accepted proof-capable fallback/admission revisions
-before owner activation; never enable then rebuild pins. Prospective generation
-numbers are not authority. Detailed evidence is in
+queue capability boundary. The lower-only switch is now integrated from the
+twelve-file patch
+`72d27541c9bb8cc556a2944502703bb5ebd24c0e2b23bf23bed5a9f258a6cca7`. Actual
+coordinator/native-client admission and restart tests prove the selector lowers
+admission while proof pins, custody and charges remain unchanged; 52 tests and
+62 steps pass in the affected boundary, with final focused 23-test/36-step
+evidence overlapping that coverage. Broader host lifecycle checks exposed a
+pre-existing unpublished queue import cycle at `HISTORICAL_NOT_STARTED_DETAIL`;
+the isolated `queue-import-cycle` worker owns its correction. The
+`queue-runtime-capability` worker owns the activated-era exact runtime guard.
+Only the primary owns shared integration and this ledger. Independent review of
+these combined corrections remains pending. The proposed disabled-to-active
+production ruleset projection still requires native canary evidence. Stage the
+production ruleset disabled and install accepted proof-capable
+fallback/admission revisions before owner activation; never enable then rebuild
+pins. Prospective generation numbers are not authority. Detailed evidence is in
 `/workspace/evidence/merge-queue/install-plan.md`. No Sentinel ruleset or branch
 protection is authorized. The separate owner steps remain the Sentinel App's
 Merge queues permission, the queue-canary run and the ai.ubq.fi ruleset; a
