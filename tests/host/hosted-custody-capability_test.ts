@@ -4,6 +4,7 @@ import {
   parseHostedCustodyCapability,
 } from "../../src/host/hosted-custody-capability.ts";
 import { EXISTING_PR_RUNTIME_CAPABILITY } from "../../src/host/existing-pr-runtime-capability.ts";
+import { EXISTING_PR_TAKEOVER_POLICY } from "../../src/github/existing-pr-takeover-policy.ts";
 import { QUEUE_RUNTIME_CAPABILITY } from "../../src/host/queue-runtime-capability.ts";
 import {
   QUEUE_PROOF_ACTIVATED,
@@ -33,6 +34,7 @@ const migration = {
 function data() {
   return {
     version: 1,
+    takeover: { activated: false },
     queue: {
       proofActivated: true,
       revisions: [CANDIDATE],
@@ -54,6 +56,8 @@ function rejected(value: unknown) {
 }
 
 Deno.test("hosted custody data: all production consumers share dormant frozen source", () => {
+  assert.equal(EXISTING_PR_TAKEOVER_POLICY, HOSTED_CUSTODY_CAPABILITY.takeover);
+  assert.ok(Object.isFrozen(HOSTED_CUSTODY_CAPABILITY.takeover));
   assert.equal(QUEUE_RUNTIME_CAPABILITY, HOSTED_CUSTODY_CAPABILITY.queue);
   assert.equal(
     EXISTING_PR_RUNTIME_CAPABILITY,
@@ -62,6 +66,7 @@ Deno.test("hosted custody data: all production consumers share dormant frozen so
   assert.equal(QUEUE_PROOF_ACTIVATED, QUEUE_RUNTIME_CAPABILITY.proofActivated);
   assert.deepEqual(HOSTED_CUSTODY_CAPABILITY, {
     version: 1,
+    takeover: { activated: false },
     queue: { proofActivated: false, revisions: [], ownerInstallMigrations: [] },
     existingPr: {
       custodyActivated: false,
@@ -97,6 +102,14 @@ Deno.test("hosted custody data: malformed shape never reaches runtime policy", (
   rejected({ ...data(), unexpected: true });
   rejected(Object.assign(Object.create({ inherited: true }), data()));
   rejected({ ...data(), [Symbol("extra")]: true });
+  const { takeover: _, ...missingTakeover } = data();
+  rejected(missingTakeover);
+  for (const takeover of [null, [], {}, { activated: true, extra: true }]) {
+    rejected({ ...data(), takeover });
+  }
+  for (const activated of [undefined, null, 0, "true"]) {
+    rejected({ ...data(), takeover: { activated } });
+  }
   for (const key of ["queue", "existingPr"] as const) {
     const base = data();
     const flag = key === "queue" ? "proofActivated" : "custodyActivated";
@@ -139,6 +152,32 @@ Deno.test("hosted custody data: malformed shape never reaches runtime policy", (
   });
   rejected(accessor);
   assert.equal(getterCalls, 0);
+});
+
+Deno.test("hosted custody data: disabling adoption never relaxes the retained custody floor", () => {
+  const source = data();
+  source.queue.proofActivated = false;
+  const parsed = parseHostedCustodyCapability(source);
+  assert.equal(parsed.takeover.activated, false);
+  assert.equal(parsed.existingPr.custodyActivated, true);
+  assert.equal(
+    allowsHostedRuntime(CANDIDATE, parsed.queue, parsed.existingPr),
+    true,
+  );
+  assert.equal(
+    allowsHostedRuntime(LAUNCHER, parsed.queue, parsed.existingPr),
+    false,
+  );
+  source.takeover.activated = true;
+  assert.equal(
+    parsed.takeover.activated,
+    false,
+    "parsed admission is copied and frozen",
+  );
+  assert.ok(Object.isFrozen(parsed.takeover));
+  const activated = parseHostedCustodyCapability(source);
+  assert.deepEqual(activated.existingPr, parsed.existingPr);
+  assert.deepEqual(activated.queue, parsed.queue);
 });
 
 Deno.test("hosted custody data: migration pins require distinct exact revisions and safe increment", () => {

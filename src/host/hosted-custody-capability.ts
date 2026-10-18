@@ -9,6 +9,7 @@ import source from "./hosted-custody-capability.json" with { type: "json" };
 
 export interface HostedCustodyCapability {
   readonly version: 1;
+  readonly takeover: { readonly activated: boolean };
   readonly queue: QueueRuntimeCapability;
   readonly existingPr: ExistingPrRuntimeCapability;
 }
@@ -21,8 +22,9 @@ export function parseHostedCustodyCapability(
   value: unknown,
 ): HostedCustodyCapability {
   try {
-    const root = object(value, ["version", "queue", "existingPr"]);
+    const root = object(value, ["version", "takeover", "queue", "existingPr"]);
     if (root.version !== 1) throw new Error(INVALID);
+    const takeover = object(root.takeover, ["activated"]);
     const queue = object(root.queue, [
       "proofActivated",
       "revisions",
@@ -34,11 +36,13 @@ export function parseHostedCustodyCapability(
       "ownerInstallMigrations",
     ]);
     if (
+      typeof takeover.activated !== "boolean" ||
       typeof queue.proofActivated !== "boolean" ||
       typeof existingPr.custodyActivated !== "boolean"
     ) throw new Error(INVALID);
     return Object.freeze({
       version: 1,
+      takeover: Object.freeze({ activated: takeover.activated }),
       queue: Object.freeze({
         proofActivated: queue.proofActivated,
         revisions: revisions(queue.revisions),

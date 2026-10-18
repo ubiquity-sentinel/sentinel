@@ -290,6 +290,7 @@ export async function principalSourceFixture() {
   await write(launcher, "sentinel.targets.json", targetText);
   const capability = {
     version: 1,
+    takeover: { activated: false },
     queue: { proofActivated: false, revisions: [], ownerInstallMigrations: [] },
     existingPr: {
       custodyActivated: true,

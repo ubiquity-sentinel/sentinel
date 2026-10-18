@@ -325,23 +325,10 @@ function principalFor(
           !scope.ok || !live(value, binding.deadline) ||
           !await exactTask(value, binding)
         ) return refused();
-        const compatible = await revalidateHostedRuntimeCompatibility(
-          {
-            state: value.host.state,
-            identity: value.host.source.identity,
-            execution: value.host.source.execution,
-            controllerSha: value.host.source.execution.revision,
-            clock: value.host.clock,
-            deadline: Math.min(
-              binding.deadline,
-              value.notAfter,
-              value.host.deadline,
-            ),
-          },
-          value.capability.queue,
-          value.capability.existingPr,
-        );
-        return compatible.ok && live(value, binding.deadline) &&
+        // Scope requests are awaited native observations. Source, current job
+        // and installed execution must still match after their final response.
+        return await freshHost(value, binding.deadline) &&
+            live(value, binding.deadline) &&
             await exactTask(value, binding)
           ? portOk(undefined)
           : refused();
@@ -411,5 +398,7 @@ export function composeHostedAppGitHub(
       verifyProducedCandidate,
     }),
   });
-  return composeLocalGitHub(local);
+  // Admission is independent of the runtime custody floor. Only the verified
+  // native launcher's distinct source policy can activate these effect paths.
+  return composeLocalGitHub(local, undefined, value.capability.takeover);
 }
