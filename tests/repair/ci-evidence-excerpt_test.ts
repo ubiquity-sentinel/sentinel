@@ -205,6 +205,43 @@ Deno.test("a log without a ##[error] marker falls back to at most three recent s
   ]);
 });
 
+Deno.test("job API failure windows outrank unrelated error groups in the existing three retained slots", () => {
+  const epoch = Date.parse("2026-10-17T10:00:00Z");
+  const line = (seconds: number, text: string) =>
+    `${new Date(epoch + seconds * 1_000).toISOString()} ${text}`;
+  const windows = [3, 6, 9].map((second, index) => ({
+    name: `Friendly failed step ${index}`,
+    startedAt: epoch + second * 1_000,
+    completedAt: epoch + (second + 1) * 1_000,
+  }));
+  const scanner = new CiLogScanner(windows);
+  const lines = [
+    line(0, "##[group]Run earlier successful test"),
+    line(0, "##[error]an expected test diagnostic"),
+    line(1, "##[group]Run another successful test"),
+    line(1, "##[error]another expected diagnostic"),
+    ...[3, 6, 9].flatMap((second, index) => [
+      line(second, `##[group]Run command-${index}`),
+      line(second, "##[endgroup]"),
+      // Job metadata truncates this final diagnostic to the completed second.
+      line(second + 1.9, `markerless budget diagnostic ${index}`),
+    ]),
+    ...Array.from({ length: 20 }, (_, index) => [
+      line(index + 12, `##[group]Run upload-${index}`),
+      line(index + 12, "##[error]unrelated upload diagnostic"),
+    ]).flat(),
+  ];
+  scanner.pushText(lines.join("\n") + "\n");
+  const log = scanner.finish();
+  assert.equal(log.steps.length, 3);
+  const excerpt = excerptFromLog(log, 16_384)!;
+  for (let index = 0; index < 3; index++) {
+    assert.ok(excerpt.text.includes(`markerless budget diagnostic ${index}`));
+  }
+  assert.ok(!excerpt.text.includes("unrelated upload diagnostic"));
+  assert.ok(excerpt.text.length <= 16_384);
+});
+
 Deno.test("a gap in the scan is marked and the tail's failing step is still found", () => {
   const scanner = new CiLogScanner();
   const encoder = new TextEncoder();

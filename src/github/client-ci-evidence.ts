@@ -273,10 +273,11 @@ export abstract class GitHubClientCiEvidence extends GitHubClientNativeCi
     check.annotations = await this.ciAnnotations(collection, run.id);
     let log = null;
     if (withLog && job !== null) {
-      const read = await this.ciJobLog(collection, job.id);
+      const read = await this.ciJobLog(collection, job);
       log = read.log;
       check.truncatedScan = read.truncated;
       if (read.reason !== null) check.unavailable = read.reason;
+      if (read.reason === "rate_limited") collection.stopped = read.reason;
       if (log !== null) {
         check.hints = extractHints(log.steps);
         const excerpt = excerptFromLog(log, ciExcerptShare(check, count));
@@ -355,11 +356,11 @@ export abstract class GitHubClientCiEvidence extends GitHubClientNativeCi
 
   private async ciJobLog(
     collection: CollectionV1,
-    jobId: number,
+    job: JobWireV1,
   ): Promise<SignedLogReadV1> {
     const got = await this.ciGet(
       collection,
-      `/actions/jobs/${jobId}/logs`,
+      `/actions/jobs/${job.id}/logs`,
       {},
       "manual",
     );
@@ -397,6 +398,17 @@ export abstract class GitHubClientCiEvidence extends GitHubClientNativeCi
       http: this.options.http,
       url: signed,
       deadline: collection.deadline,
+      failedSteps: job.steps.flatMap((step) =>
+        FAILING_STEP.includes(step.conclusion ?? "") &&
+          step.startedAt !== null && step.completedAt !== null &&
+          step.completedAt >= step.startedAt
+          ? [{
+            name: step.name,
+            startedAt: step.startedAt,
+            completedAt: step.completedAt,
+          }]
+          : []
+      ).slice(0, MAX_CI_FAILING_STEPS),
       takeRequest: () => {
         if (collection.requests >= MAX_CI_EVIDENCE_REQUESTS) return false;
         collection.requests++;
