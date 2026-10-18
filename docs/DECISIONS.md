@@ -61,6 +61,19 @@ reconciled after quiescence before any live row is prepared; older snapshots are
 historical. This decision authorizes isolated implementation and validation, not
 a fabricated health reset or an old-runtime execution/fallback exception.
 
+The independent contract audit additionally requires revision-first refusal: the
+future recovery issuer always rejects R80, and R81 at any generation except the
+exact legacy transition cannot fall through to generic recovery. Maintenance may
+emit the existing migration-only target only after authenticating exact clean
+source, committed rollout/capability data, both grants/floors, matching
+failure/earlier own-health digests and idle/drained unchanged state. That
+read-only output carries no movement authority or health. The existing trusted
+prepare issuer must still authenticate full native
+failure/health/witness/CI/source evidence before App CAS; existing workflow
+predicates restrict the eventual repair child to the same exact model-disabled
+successor bootstrap. No workflow, schema, flag or default activation changes are
+needed.
+
 ### Isolated canary ref namespace
 
 Keep `queue-canary` as the isolated canary base and use `queue-canary-fixtures/`

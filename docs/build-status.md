@@ -21,7 +21,35 @@ authenticated account `0x4007` and carry `sentinel:skip` during manual
 ownership. Only the primary changes this ledger, accepts source, commits,
 integrates or publishes.
 
-### Migration continuation, 2026-10-18 17:54 UTC
+### Migration continuation, 2026-10-18 18:36 UTC
+
+Current canonical HEAD is `1c419e62847ff7d58e863c171f9d3cb8dd91c407`. The
+primary accepted independent recovery source/evidence audit
+`legacy-first-recovery-audit/source-evidence-final-v2.md`, SHA-256
+`0338a67567a68d3a0fd17a46af5b94a719db0845d6b9e6300ddb61404dcd58a4`, and
+committed the seven-file worker tip `5567d1455d6701171c4f27a037df0a9ce4e06d6c`.
+All 34 tests/112 steps plus scoped statics passed on frozen patch
+`c831562cc2fdbfac3c5d6ea76b32baa235a3aee6c8f5c04fc84bb8824821c3c1`; final
+manifest `e2c5cba22ffd0acc79204111e5bede772ad1a5e40bd68cce331272769267092e`
+records setup exclusions and observation gaps. The primary normally merged that
+worker and native development `1838df313105bab219d71602695a7f758a65125e` (PR
+#172), proving both ancestors. The upstream six-file queue/dequeue delta has no
+file overlap with recovery or intake; required combined validation is its named
+dequeue-completion case plus actual legacy maintenance/no-effects and the
+connected workflow lifecycle. These final combined checks and new-source native
+CI remain pending; prior exact-patch audit does not cover the combined
+candidate.
+
+A full filesystem prevented the first Git add/commit before any source commit or
+merge. Root atomically deduplicated 15 task-owned frozen binary copies after
+exact content/mode/owner checks, preserving every path and byte and reclaiming
+1,441,252,880 duplicate bytes. Receipt is `disk-recovery-20261018.json`; no
+source, logs, evidence, credentials or unrelated state were removed. The
+interrupted worker storage follow-ups failed with a quota-ledger503, and no
+broad cleanup was performed. Both accepted source commits were reverified after
+recovery. Protected L81 is unchanged. The missing UOS terminal handler receipt
+remains a separate canary evidence gap; standing canary/production approval is
+active.
 
 Corrected inactive source `674f8cc324946f9577e96a73b2722ca3db16ca7c`, tree
 `76c50bf8faacb3166b622b061baa45b8f6fb338b`, is published and its native CI
@@ -110,7 +138,7 @@ No additional unchanged-input local boundary test is required. Exact new-source
 native CI and installed/live acceptance remain pending.
 
 The primary assigns disjoint module `migration-legacy-first-recovery-20261018`,
-aid `76c858c8d7`, to sole writer `migration_future_pins` at
+aid `76c858c8d7`, to sole writer `migration_legacy_first_recovery_impl` at
 `/home/codex/repos/ubiquity/sentinel/.codex-worktrees/master-plan-migration-legacy-first-recovery-20261018-a76c858c8d7`,
 branch `codex/master-plan-migration-legacy-first-recovery-20261018-a76c858c8d7`,
 exact base `6f1d2f74b7d31b627d8066e507c59fa977c64ead`. Own only
@@ -125,6 +153,24 @@ live recovery row, source grant, workflow or runtime policy is changed.
 Integrate this recovery module after its audit, then validate the combined
 candidate before publication. Root retains all ledger, Git integration,
 acceptance and native effects.
+
+Independent legacy contract audit found two required corrections before source
+acceptance: reserve known R80/R81 revision identity before generic future
+classification, and route exact failed legacy recovery through maintenance
+before the installer can issue authority. The primary accepts
+`assignments/migration_legacy_first_recovery_no_fallthrough_v2.md` SHA-256
+`b41195d406356a00c4c0e66e00e431b878e0f3083bbff1d8a1abc4b038d90c5e` and
+`legacy-first-recovery-audit/maintenance-routing-addendum.md` SHA-256
+`6206243fabd92e5fd136d4b191cd7f9ab20c6db9798129b37a0254b185413fea`. Sole writer
+`migration_legacy_first_recovery_impl` additionally owns
+`ops/hosted-autonomy-runtime-compatibility.ts` and only the required
+actual-output consumer case in `tests/host/hosted-workflow-migration_test.ts`.
+Existing workflow, schemas and flags remain unchanged. The read-only route
+returns only the exact target and existing `migration_only` output with no move;
+full native recovery authority remains with prepare. Required connected proof
+starts at real maintenance, feeds actual outputs through workflow conditions,
+then proves App CAS, same-run model-disabled successor bootstrap and genuine
+health. No published source or live acceptance is claimed yet.
 
 The prepared canary base `queue-canary` conflicts with its original fixture head
 prefix `queue-canary/`. The initial base-only proposal is rejected: fixed AI
