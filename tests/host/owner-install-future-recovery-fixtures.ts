@@ -25,7 +25,15 @@ import {
   parseHostedRuntimeRollout,
 } from "../../src/host/hosted-runtime-rollout.ts";
 import { sha256HexText } from "../../src/host/owner-install-api.ts";
+import {
+  OWNER_DEVELOPMENT_INSTALL_GEN81_GENERATION,
+  OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+} from "../../src/host/owner-install-runtime-pins.ts";
 import { principalSourceFixture } from "./hosted-app-principal-fixtures.ts";
+import { runHostedAutonomyMain } from "../../ops/hosted-autonomy-main.ts";
+import type { HostedMaintenanceCompatibilityFixture } from "../../ops/hosted-autonomy-compatibility.ts";
+import { snapshotWire } from "../github/merge-queue-fixtures.ts";
+import { nativeWriterFixture } from "./existing-pr-runtime-fixtures.ts";
 import { createOwnerInstallTransport } from "./owner-install-fixture-transport.ts";
 import {
   releaseSnapshot,
@@ -73,6 +81,7 @@ async function nativeProof(
   outcome: "healthy" | "failed",
   released = false,
   saved?: HostedExecutionIntentV1,
+  ordinary = false,
 ) {
   const execution = saved ?? parseHostedExecutionIntentV1({
     id: `${runId}:1:repair`,
@@ -83,7 +92,7 @@ async function nativeProof(
     generation,
     purpose: released
       ? "candidate"
-      : outcome === "failed"
+      : outcome === "failed" && !ordinary
       ? "bootstrap"
       : "ordinary",
     releaseId: released ? "fixture-release" : null,
@@ -172,6 +181,7 @@ export async function futureRecoveryFixture(
     restored?: boolean;
     fault?: Fault;
     releaseCas?: boolean;
+    legacyFirst?: boolean;
   } = {},
 ) {
   const source = await principalSourceFixture();
@@ -260,9 +270,25 @@ export async function futureRecoveryFixture(
     );
     assert.ok(repairWrite.ok && repairWrite.value.status === "applied");
     const repairHead = repairWrite.value.head;
+    const fromRevision = options.legacyFirst
+      ? OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION
+      : FUTURE;
+    const fromGeneration = options.legacyFirst
+      ? OWNER_DEVELOPMENT_INSTALL_GEN81_GENERATION
+      : options.restored
+      ? 84
+      : 82;
     const healthy = await nativeProof(
-      options.ownHealth || options.restored ? FUTURE : PRIOR,
-      options.ownHealth || options.restored ? 82 : 81,
+      options.legacyFirst
+        ? fromRevision
+        : options.ownHealth || options.restored
+        ? FUTURE
+        : PRIOR,
+      options.legacyFirst
+        ? fromGeneration
+        : options.ownHealth || options.restored
+        ? 82
+        : 81,
       500,
       BASE,
       "healthy",
@@ -273,14 +299,15 @@ export async function futureRecoveryFixture(
         observedAt: RECOVERY_NOW + 1,
       });
     }
-    const fromGeneration = options.restored ? 84 : 82;
     const failed = await nativeProof(
-      FUTURE,
+      fromRevision,
       fromGeneration,
       501,
       BASE + (options.fault === "chronology" ? 1000 : 10_000),
       "failed",
       options.fault === "purpose",
+      undefined,
+      options.legacyFirst,
     );
     let sequence = 0;
     const seed = async (runtime: HostedRuntimeRecordV1, parent?: GitSha) => {
@@ -351,7 +378,7 @@ export async function futureRecoveryFixture(
     );
     const currentHead = await seed(
       runtimeRecord({
-        revision: FUTURE,
+        revision: fromRevision,
         generation: fromGeneration,
         healthyProof: healthy.proof,
         executionProof: failed.proof,
@@ -363,7 +390,7 @@ export async function futureRecoveryFixture(
       "HEAD",
     ]) as GitSha;
     const row = {
-      fromRevision: FUTURE,
+      fromRevision,
       fromGeneration,
       toRevision: successor,
       toGeneration: fromGeneration + 1,
@@ -379,15 +406,23 @@ export async function futureRecoveryFixture(
       ...HOSTED_RUNTIME_ROLLOUT,
       recoveries: [row],
       installs: [
+        ...(options.legacyFirst
+          ? [{
+            fromRevision,
+            fromGeneration,
+            toRevision: successor,
+            toGeneration: fromGeneration + 1,
+            rollbackToPrior: false,
+          }]
+          : [{
+            fromRevision: PRIOR,
+            fromGeneration: 81,
+            toRevision: FUTURE,
+            toGeneration: 82,
+            rollbackToPrior: false,
+          }]),
         {
-          fromRevision: PRIOR,
-          fromGeneration: 81,
-          toRevision: FUTURE,
-          toGeneration: 82,
-          rollbackToPrior: false,
-        },
-        {
-          fromRevision: FUTURE,
+          fromRevision: options.legacyFirst ? successor : FUTURE,
           fromGeneration: 82,
           toRevision: NEXT_NORMAL,
           toGeneration: 83,
@@ -395,6 +430,39 @@ export async function futureRecoveryFixture(
         },
       ],
     });
+    const migrations = options.legacyFirst
+      ? [{
+        fromRevision,
+        fromGeneration,
+        toRevision: successor,
+        toGeneration: fromGeneration + 1,
+      }]
+      : [];
+    const revisions = options.legacyFirst
+      ? [NEXT_NORMAL, successor]
+      : [FUTURE, NEXT_NORMAL, successor];
+    const queue = {
+      proofActivated: true,
+      revisions,
+      ...(options.legacyFirst ? { ownerInstallMigrations: migrations } : {}),
+    };
+    const custody = {
+      custodyActivated: true,
+      revisions,
+      ...(options.legacyFirst ? { ownerInstallMigrations: migrations } : {}),
+    };
+    if (options.legacyFirst) {
+      await source.write(
+        source.launcher,
+        "src/host/hosted-custody-capability.json",
+        JSON.stringify({
+          version: 1,
+          takeover: { activated: false },
+          queue,
+          existingPr: custody,
+        }),
+      );
+    }
     await source.write(source.launcher, ".gitignore", ".sentinel/\n");
     await source.write(
       source.launcher,
@@ -594,14 +662,6 @@ export async function futureRecoveryFixture(
     Deno.cwd = () => source.launcher;
     Deno.env.get = (key) =>
       Object.hasOwn(environment, key) ? environment[key] : original.env(key);
-    const queue = {
-      proofActivated: true,
-      revisions: [FUTURE, NEXT_NORMAL, successor],
-    };
-    const custody = {
-      custodyActivated: true,
-      revisions: [FUTURE, NEXT_NORMAL, successor],
-    };
     const current = async () => {
       const read = await state.readRelease();
       assert.ok(read.ok && read.value.status === "found");
@@ -634,6 +694,70 @@ export async function futureRecoveryFixture(
         custody,
         rollout,
       }),
+      maintenance: async (
+        overrides: HostedMaintenanceCompatibilityFixture = {},
+      ) => {
+        const output = `${source.root}/maintenance-output`;
+        let effects = 0;
+        const forbidden = () => {
+          effects++;
+          throw new Error(
+            "migration routing must never construct maintenance writers",
+          );
+        };
+        const native = nativeWriterFixture(run, "maintenance");
+        const code = await runHostedAutonomyMain({
+          env: {
+            ...environment,
+            GITHUB_JOB: "maintenance",
+            GITHUB_OUTPUT: output,
+          },
+          deps: {
+            state: {
+              readRepair: () => state.readRepair(),
+              readRelease: () => state.readRelease(),
+              writeRepair: forbidden,
+            },
+            clock: { now: () => now },
+            githubFor: forbidden,
+            uncertainMatrix: forbidden,
+            onQueueCustodyReady: forbidden,
+          },
+          compatibility: {
+            queue,
+            custody,
+            rollout,
+            nativeRead: native.read,
+            http: (request) => {
+              const path = new URL(request.url).pathname;
+              assert.ok(
+                path.includes("/rules/branches/") || path === "/graphql",
+              );
+              if (path === "/graphql") {
+                assert.ok(
+                  JSON.parse(request.body!).query.trimStart().startsWith(
+                    "query",
+                  ),
+                );
+              } else assert.equal(request.method, "GET");
+              return Promise.resolve({
+                status: 200,
+                headers: new Headers(),
+                bodyText: JSON.stringify(
+                  path === "/graphql" ? snapshotWire(null) : [],
+                ),
+              });
+            },
+            ...overrides,
+          },
+        });
+        const outputs = Object.fromEntries(
+          (await Deno.readTextFile(output)).trimEnd().split("\n").map((line) =>
+            line.split("=", 2)
+          ),
+        );
+        return { code, effects, outputs, native };
+      },
       close: async () => {
         Deno.Command = original.command;
         globalThis.fetch = original.fetch;

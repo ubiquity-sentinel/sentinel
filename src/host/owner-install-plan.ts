@@ -43,7 +43,6 @@ import {
 import { planOwnerInstallMemory } from "./owner-install-plan-memory.ts";
 import {
   allowsHostedOwnerInstallMove,
-  allowsHostedRuntimeMove,
   runtimeCompatibilityRefusal,
 } from "./hosted-runtime-compatibility.ts";
 import {
@@ -57,6 +56,7 @@ import {
 import type { HostedRuntimeRollout } from "./hosted-runtime-rollout.ts";
 import { planOwnerInstallRollout } from "./owner-install-plan-rollout.ts";
 import {
+  allowsOwnerFutureRecoveryMove,
   type OwnerFutureRecoveryAuthority,
   planOwnerFutureRecovery,
 } from "./owner-install-future-recovery.ts";
@@ -95,11 +95,13 @@ export function planOwnerDevelopmentInstall(
   if (
     future !== undefined &&
     (plan.status === "install" || plan.status === "rollback") &&
-    !allowsHostedRuntimeMove(
-      plan.move.priorRevision,
-      plan.move.nextRevision,
+    !allowsOwnerFutureRecoveryMove(
+      snapshot,
+      plan.move,
+      future,
       capability,
       custodyCapability,
+      rollout,
     )
   ) return waiting(runtimeCompatibilityRefusal(custodyCapability));
   if (

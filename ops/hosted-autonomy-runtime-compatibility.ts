@@ -12,6 +12,7 @@ import {
   allowsHostedRuntime,
 } from "../src/host/hosted-runtime-compatibility.ts";
 import { planOwnerDevelopmentInstall } from "../src/host/owner-install-plan.ts";
+import { readOwnerLegacyFirstRecoveryTarget } from "../src/host/owner-install-future-recovery.ts";
 import type { OwnerDevelopmentInstallMoveV1 } from "../src/host/owner-install-types.ts";
 import {
   QUEUE_RUNTIME_CAPABILITY,
@@ -95,9 +96,21 @@ export async function readHostedMaintenanceCompatibility(
       input.rollout,
     );
     // The predecessor must finish its genuine normal finalize before migration.
-    if (
-      !compatible && (runtime.execution !== null || plan?.status !== "install")
-    ) return hold();
+    if (!compatible && runtime.execution !== null) return hold();
+    const legacy = !compatible && plan?.status !== "install"
+      ? await readOwnerLegacyFirstRecoveryTarget({
+        snapshot,
+        repair: repair.value.snapshot,
+        launcherSha: input.native.run.launcherSha,
+        now: input.clock.now(),
+        queue,
+        custody,
+        rollout: input.rollout,
+      })
+      : undefined;
+    if (!compatible && plan?.status !== "install" && legacy === undefined) {
+      return hold();
+    }
     const native = await readHostedWriterQuiescence({
       ...input.native,
       phase: "maintenance",
@@ -143,7 +156,15 @@ export async function readHostedMaintenanceCompatibility(
       }
       return { status: "ordinary" };
     }
-    if (plan?.status !== "install") return hold();
+    if (plan?.status !== "install") {
+      return legacy === undefined ? hold() : {
+        status: "migration_only",
+        releaseHead: release.value.head,
+        repairHead: repair.value.head,
+        ...legacy,
+        move: null,
+      };
+    }
     return {
       status: "migration_only",
       releaseHead: release.value.head,
