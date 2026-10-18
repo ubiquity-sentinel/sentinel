@@ -13,6 +13,39 @@ identity and runtime routing are reported separately.
 
 ## Active task register
 
+The primary records `migration-canary-grant-tests-20261018` (aid `1f6f3a2d3a`)
+as prepared for future S, not integrated. Retained worker
+`migration_canary_packet` changed only `tests/host/queue-canary_test.ts` and
+`tests/host/queue-projection-collector_test.ts` on branch
+`codex/master-plan-migration-canary-grant-tests-20261018-a1f6f3a2d3a`, worktree
+`<repository root>/.codex-worktrees/master-plan-migration-canary-grant-tests-20261018-a1f6f3a2d3a`,
+exact base `e16a99d211f2845968e7b6dbf962f48355d68017`. The frozen uncommitted
+patch is `canary-grant-tests/owned.patch`, SHA-256
+`e8867f6fa13148a530bf06e0aede828b8e7bbedc6e1fd9d32448424f90c8cdda`; five
+registered bounded checks passed, including both named cases and the two-file
+consumer boundary (19 tests, 44 steps), plus scoped formatting, lint and types.
+Primary verified all 35 manifest hashes and exact full-index lane diff.
+Empty-grant rejection still proves zero enqueue/dequeue, and the real collector
+preserves the frozen full source grant list by deep equality. All processes are
+settled; all 1,361 protected canonical production/test/workflow files remain
+unchanged from e16. Root owns integration of this exact patch with actual S
+grants and acceptance of that new combined candidate. No grants, runtime code or
+hosted effects changed. The stable plan identity remains
+`/Users/nv/repos/ubiquity/sentinel/MASTER-PLAN.md`.
+
+The binding source-CI approval remains pending for exact immutable
+`e16a99d211f2845968e7b6dbf962f48355d68017`; this documentation-only continuation
+does not substitute another candidate or authorize an attempt. The pre-existing
+b8 run `39160464816:1`, job `117772503396`, was independently confirmed in
+progress at 20:24:14 UTC; its retained observation is under
+`combined-recovery-native-preparation/b8-segment-3-final-read/` and does not
+accept e16. The correlated original PR1235 UOS terminal handler receipt remains
+unavailable. The verified remaining-rollout dependency packet is
+`rollout-remaining-2017/packet.json`, SHA-256
+`1036ac6a53455f1a8a1970051cafefae040512ca6282bf05c20750fd41a1c0bc`. Source,
+installed runtime and live-delivery acceptance remain separate; the full goal is
+incomplete.
+
 The existing primary adopts the 2026-10-18 19:49 UTC Mac-root
 review-task-binding coordination without ownership transfer. Trusted
 active-model hook confirms `gpt-6-astra`/`ultra`; worker identity and runtime
