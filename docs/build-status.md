@@ -13,37 +13,71 @@ identity and runtime routing are reported separately.
 
 ## Active task register
 
-The primary adopts the explicit owner-supersession correction as module
-`binding-owner-supersession-20261018`, aid `b4fdafd9c3`, under the existing
-bounded repair approval. Canonical remains
-`596d1fcc63cf2a883408089e01d6a963f6ce4bf5`; source e16 CI `39164327314:1`, job
-`117783993768`, is independently verified successful with 3,457 tests, 1,760
-steps and zero failures. Reuse its retained native receipt under
-`review-task-binding-adoption/source-publication-e16/native-ci/`; no unchanged
-e16 dispatch or publication is needed. The exact failed execution
-`39167387867:1:repair` is release-linked PRIOR for
-`release:f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5`, not
-ordinary. Earlier contrary audit wording is withdrawn while original artifacts
-remain preserved. Neither e16 nor this documentation checkpoint clears the
-nonterminal release gate or proves installation.
-
-The accepted implementation contract is
-`review-task-binding-adoption/owner-supersession/CONTRACT.md` in the migration
-evidence workspace. One implementation writer,
-`binding_owner_supersession_impl`, owns its enumerated
-types/parser/transition/prepare/installer/consumer tests in isolated worktree
+Module `binding-owner-supersession-20261018`, aid `b4fdafd9c3`, has one
+implementation writer, `/root/binding_owner_supersession_impl`, on branch
+`codex/master-plan-binding-owner-supersession-20261018-ab4fdafd9c3` in
 `<repository root>/.codex-worktrees/master-plan-binding-owner-supersession-20261018-ab4fdafd9c3`,
-branch `codex/master-plan-binding-owner-supersession-20261018-ab4fdafd9c3`,
-exact base `596d1fcc63cf2a883408089e01d6a963f6ce4bf5`. It returns an uncommitted
-scoped diff and registered bounded RED/GREEN evidence; the primary alone
-integrates, materializes live pins, publishes and promotes. The requested atomic
-operation records distinct authenticated owner supersession and installs
-accepted capable F with the actual prepare-bound model-disabled bootstrap in one
-expected-head App transaction. First-F failure recovery and capable-runtime
-rollback must pass their real consumers before activation; old R81 must never
-read unsupported state. Task170 remains wanted and delivery-pending. Read-only
-`binding_nonterminal_gate_audit` owns only the focused first-F failure-route
-assessment. No source activation, live state write or acceptance is claimed.
+at exact writer base `596d1fcc63cf2a883408089e01d6a963f6ce4bf5`. Canonical
+contract checkpoint is `f209824ae91a7e344ca18baa590bd35d8ebd83f8`. The writer
+returns an uncommitted scoped diff; the primary alone integrates, edits the
+ledger, materializes live pins, publishes and promotes. Ownership has not
+transferred.
+
+The frozen contract is
+`review-task-binding-adoption/owner-supersession/CONTRACT.md`, SHA256
+`01b901d456344e2e96543f2de9d7d9329fd535a9dbf82a8cf3fc5dbe3fffcfb6`, in migration
+evidence. Its file-only amendments `SCOPE-1.md`, `SCOPE-2.md`, `SCOPE-4.md` and
+`SCOPE-5.md` and semantics amendments `SEMANTICS-3.md`, `SEMANTICS-6.md` and
+`SEMANTICS-7.md` bind the same writer. The adjacent `coordination-result.json`
+is a non-authoritative coordination projection.
+
+Published source `e16a99d211f2845968e7b6dbf962f48355d68017` has successful exact
+native CI `39164327314:1`, job `117783993768`: 3,457 tests, 1,760 steps and zero
+failures, with all 55 archived manifest entries verified. Retained R
+`9f7cdcc0e7d4206730a25c2e51cf216d93d41f29` and W
+`e19ff1c4ecb2db292ada491ad7cf60a43c0f58ac` ancestry is already accepted. Reuse
+that evidence; it does not certify changed capable F, whose exact candidate and
+replacement binding remain unfrozen.
+
+Original `39167387867:1:repair` remains genuine failed, settled PRIOR for
+`release:f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5` on
+R81/81. Its authenticated native terminal marker is retained under
+`owner-supersession/current-state-observation/original-prior-proof/allow-escape-sequences-get/`;
+only `observedAt` is excluded from its immutable fingerprint, and the
+unavailable old saved-state observation is not reconstructed. The retained
+22:15:28 UTC state observation separately records latest failed PRIOR
+`39170939335:1:repair`, R81/81, the original request open/requested with null
+proofs and execution, and incomplete native drain with queued run
+`34874909140:1`. Latest failure keeps its exact full saved proof, digest and
+head binding. Fresh state and drain must be reconciled before live intent
+materialization.
+
+Development evidence includes initial causal RED
+`b9e61a63-cef2-4af9-8cd9-94eab85761a2` at the writer base: actual maintenance
+migration=false, installer waiting and zero PATCH, with original PRIOR custody
+preserved. The latest reported local lifecycle
+`109f3775-d0b4-422e-af15-e0cad25b6246` is GREEN for atomic F, failed-F hold,
+explicit F2/task binding and recovery, actual F2 structured review/task
+delivery, later capable installation/failure, exact F2 rollback and restored
+health. Real-Git journal custody receipt `4a7d4e02-8f06-4c4e-af7b-b104334d6ef3`
+is GREEN. These are local fake-external-port development results, not final
+candidate or installed acceptance.
+
+Independent audit identified P1 native custody registration as a real
+installed-composition gap. Frozen `SEMANTICS-8.md` assigns the same writer a
+truthful owner_successor register/arm/settle lifecycle through the existing
+native channel/broker, with actual factory-to-broker composition testing.
+Earlier reviewer-class GREEN receipts remain lower-boundary evidence; full
+installed composition is not accepted. The original PR/base-task contracts,
+model configuration and custody controls remain unchanged.
+
+Final changed-boundary checks, including `SEMANTICS-7`, healthy pending-task
+correction, negatives and statics, remain pending. The writer must freeze exact
+source/evidence for independent auditor
+`/root/binding_supersession_milestone_audit`; final audit, changed-candidate
+native CI, installation and live acceptance all remain pending. Task170 remains
+wanted and delivery-pending. No live write, source activation or installed
+binding acceptance is claimed.
 
 The primary adopts the necessary UOS first-fixture observability seam as module
 `uos-canary-receipt-20261018`, aid `74e2bebf72`, in repository

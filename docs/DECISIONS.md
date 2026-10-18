@@ -11,22 +11,67 @@ continuation.
 
 ### Explicit prepromotion owner supersession
 
-The 2026-10-18 bounded binding-repair approval authorizes a distinct committed,
-source-authenticated owner-supersession intent for the still-wanted requested
-release f437. Issue closure, age, failure and retained-code ancestry supply no
-cancellation authority. Preserve its original request, all proofs and
-accounting, including native `39167387867:1:repair` as failed PRIOR bound to
-that release. The accepted contract in migration evidence at
-`review-task-binding-adoption/owner-supersession/CONTRACT.md` uses one trusted
-expected-head App transaction to persist an immutable disposition and install
-the accepted capable F with a real prepare-bound model-disabled bootstrap, only
-after all source, CI, custody, profile, native-drain and failure-recovery gates
-pass. No unsupported terminal shape may reach an R81 reader. First-F failure
-must hold or use a proved exact capable recovery successor through the existing
-source-authenticated issuer; direct R81 rollback remains fenced. Later healthy
-capable runtimes retain their exact rollback and restoration requirements. The
-old delivery obligation remains pending until genuine successor acceptance.
-Generic recovery refusals, credential routes, runtime model configuration and
+`SEMANTICS-8.md` requires truthful owner_successor registration, durable
+running-readback, arm and settlement through the existing native review-owner
+channel and custody broker. Normal PR and base-task semantics stay unchanged; a
+merged delivery-pending task cannot use a false PR or already_satisfied_at_base
+envelope. Production-composition proof must include the actual local GitHub
+factory, channel, broker, reviewer and durable acceptance consumers, faking only
+external session/API ports. No unregistered reviewer path or alternate
+credential/model route is accepted.
+
+A distinct committed, source-authenticated owner-supersession intent is required
+for the still-wanted requested release f437. Issue closure, age, failure,
+ancestry or an install marker supplies no cancellation authority. The frozen
+owner-supersession contract and `SEMANTICS-3.md`, `SEMANTICS-6.md` and
+`SEMANTICS-7.md` require a distinct private authority ahead of both generic
+nonterminal recovery refusals; generic future recovery retains its phase
+restrictions and authentication predicates.
+
+One trusted non-force expected-head App transaction persists the immutable owner
+disposition and installs accepted capable F with the real prepare-bound
+model-disabled bootstrap only after all source, CI, profile, custody,
+native-drain and unchanged-head gates pass. Preserve the original request, proof
+slots, disposition history, reservations and charges. The release remains
+truthfully `owner_superseded`; pointer movement or bootstrap success alone does
+not discharge its delivery obligation. No unsupported state may reach an R81
+reader.
+
+Native `39167387867:1:repair` remains failed, settled PRIOR bound to the
+original release. If its old saved-state `observedAt` is unavailable, the
+existing native proof reader may authenticate a genuine fresh full observation:
+exclude only `observedAt` from the immutable fingerprint, retain the actual
+first fresh observation, and require immutable-field equality and monotonic
+observation on revalidation. Never reconstruct an old saved receipt or
+reclassify the original PRIOR. The latest active failure and historical healthy
+witness retain their exact full saved-proof, digest and head bindings and all
+existing native/source/CI/custody gates.
+
+Task delivery requires a fresh, reserved, charged and settled actual internal
+structured review of the installed successor against the unchanged source task,
+bound to its exact snapshot, native execution, health, CI and accounting.
+Persist the intent/running/completed owner-review journal in the distinct
+optional `ownerSuccessorReviews` collection through the existing repair
+expected-head writer; normal PR review receipts remain unchanged. The trusted
+release/App controller verifies the produced evidence, appends a separate
+immutable `ownerAcceptance` receipt through normal App CAS and full readback,
+and the original task consumes it through existing delivery bookkeeping. A
+successor link, old PR review, prior successor review, bootstrap or pointer
+alone cannot authorize delivery.
+
+First-F bootstrap failure stays failed and held unless the distinct
+supersession-aware route reaches the existing full source-authenticated issuer
+for an exact CI-verified capable recovery successor. Carrying the wanted task to
+F2 or a healthy corrected successor requires positive exact source
+successor/task intent and an immutable binding appended in the same capable
+pointer/bootstrap transaction. Each successor waits for its own health and
+produces its own fresh structured task review; missing binding and ancestry
+alone cannot inherit acceptance. Preserve the original disposition, proof/review
+history and accounting. An old supersession record must not permanently block
+authenticated normal capable correction or exact healthy-capable rollback and
+restoration. Direct R81 rollback remains refused.
+
+Credential routes, runtime model configuration, generic recovery refusals and
 release health rules remain unchanged.
 
 ### Standing approval for the migration rollout
