@@ -27,6 +27,10 @@ import type {
 } from "../../ops/hosted-autonomy-types.ts";
 import { MemoryState } from "../repair/helpers.ts";
 import {
+  darkQueueCoordinatorFixture,
+  darkQueueFixture,
+} from "../host/hosted-autonomy-dark-queue-fixture.ts";
+import {
   APP,
   BASE,
   candidateBranch,
@@ -67,7 +71,11 @@ export interface LauncherWorldV1 {
 export const SUMMARY_ANCHOR = anchor(
   "launcher.parkSummary",
   "ops/hosted-autonomy-main.ts",
-  'await emitHostedParkSummary(state, env("GITHUB_STEP_SUMMARY"));',
+  `await emitHostedParkSummary(
+          state,
+          env("GITHUB_STEP_SUMMARY"),
+          summaryActions,
+        );`,
 );
 
 export const FAVORABLE: LauncherWorldV1 = {
@@ -249,6 +257,7 @@ export async function runLauncherPass(
   state.setRelease(releaseSnapshot());
   const calls = { merges: [] as number[], reruns: [] as number[] };
   const surface = worldSurface(world, snapshot.work, tasks, calls);
+  const queueDeps = { state, githubFor: () => surface };
   const log = console.log;
   console.log = () => {};
   let result: HostedAutonomyResultV1;
@@ -257,6 +266,8 @@ export async function runLauncherPass(
       state,
       githubFor: () => surface,
       clock: { now: () => now },
+      queueCustody: darkQueueFixture(queueDeps),
+      queue: await darkQueueCoordinatorFixture(queueDeps),
     });
   } finally {
     console.log = log;
@@ -264,7 +275,7 @@ export async function runLauncherPass(
   // The production main emits this same renderer after the pass. Keep the
   // mapping to record identity explicit: summary rows use issue links rather
   // than the maintenance log's internal work id.
-  const summary = renderHostedParkSummary(state.repair!);
+  const summary = renderHostedParkSummary(state.repair!, result.actions);
   const summaryActions = state.repair!.work.filter((record) =>
     record.nextStep === "blocked" && summary.includes(
       record.related.issueNumber === null

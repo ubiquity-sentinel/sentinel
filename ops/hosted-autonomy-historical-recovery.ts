@@ -1,5 +1,4 @@
 import type {
-  GitHubPort,
   IncidentAdapter,
   RepairStateWriter,
   ReplayPort,
@@ -17,6 +16,10 @@ import type { HistoricalMatrixQuarantineDepsV1 } from "../src/host/matrix-action
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import { implementationIntentKey } from "../src/repair/keys.ts";
 import { createLocalRepositoryConfig } from "../src/host/local.ts";
+import {
+  MaintenanceQueueCustodyUnavailable,
+  maintenanceQueueOnlyPort,
+} from "../src/host/maintenance-native-queue.ts";
 import {
   HISTORICAL_C63,
   HISTORICAL_RECOVERY_PROVIDERS,
@@ -286,6 +289,19 @@ export async function recoverHostedHistoricalC63(
     state,
     clock: deps.clock,
   });
+  const nativeQueue = deps.nativeQueueFor?.(config.repository, state);
+  if (nativeQueue === undefined) return { ingested: 0, deferred: true };
+  for (const { record } of pending) {
+    if (
+      (await nativeQueue.inspect({
+        record,
+        operation: "resume",
+        deadline: deadlineAt,
+      })).status !== "allow"
+    ) {
+      return { ingested: 0, deferred: true };
+    }
+  }
   const refused = <T>(): T =>
     new Proxy({}, {
       get: () => () =>
@@ -294,38 +310,47 @@ export async function recoverHostedHistoricalC63(
   const selected = new Set<string>(
     requests.map((request) => request.reservationId),
   );
-  const report = await ingestMatrixResults(
-    {
-      state,
-      clock: deps.clock,
-      configs: [config],
-      controllerSha: HISTORICAL_C63.runtimeSha,
-      github: refused<GitHubPort>(),
-      githubCooldown: gate,
-      incidents: refused<IncidentAdapter>(),
-      replay: refused<ReplayPort>(),
-      model: {
-        runModel: () =>
-          Promise.reject(new Error("C63 maintenance model refused")),
-      },
-      budget: new RollingStartBudget({
+  let report;
+  try {
+    report = await ingestMatrixResults(
+      {
         state,
         clock: deps.clock,
         configs: [config],
-      }),
-      externalImplementations: true,
-    },
-    {
-      ...wave.plan,
-      cells: wave.plan.cells.filter((cell) => selected.has(cell.reservationId)),
-    },
-    wave.results,
-    {
-      deadline: deadlineAt,
-      expectedProvider: HISTORICAL_RECOVERY_PROVIDERS,
-      failoverModel: RECOVERY_ROUTE_FAILOVER_MODEL,
-    },
-  );
+        controllerSha: HISTORICAL_C63.runtimeSha,
+        github: maintenanceQueueOnlyPort(nativeQueue),
+        githubCooldown: gate,
+        incidents: refused<IncidentAdapter>(),
+        replay: refused<ReplayPort>(),
+        model: {
+          runModel: () =>
+            Promise.reject(new Error("C63 maintenance model refused")),
+        },
+        budget: new RollingStartBudget({
+          state,
+          clock: deps.clock,
+          configs: [config],
+        }),
+        externalImplementations: true,
+      },
+      {
+        ...wave.plan,
+        cells: wave.plan.cells.filter((cell) =>
+          selected.has(cell.reservationId)
+        ),
+      },
+      wave.results,
+      {
+        deadline: deadlineAt,
+        expectedProvider: HISTORICAL_RECOVERY_PROVIDERS,
+        failoverModel: RECOVERY_ROUTE_FAILOVER_MODEL,
+      },
+    );
+  } catch (error) {
+    if (!(error instanceof MaintenanceQueueCustodyUnavailable)) throw error;
+    await custody();
+    return { ingested: 0, deferred: true };
+  }
   if (report.ingested !== pending.length) {
     throw new Error("historical matrix settlement incomplete");
   }

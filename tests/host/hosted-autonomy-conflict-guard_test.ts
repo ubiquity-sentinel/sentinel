@@ -18,6 +18,7 @@
  * implementation charge; a settled charge bound to another task, repository
  * or purpose is refused outright.
  */
+import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type {
@@ -384,12 +385,14 @@ function surface(pullState: "open" | "closed"): HostedAutonomyGitHubV1 {
   } as HostedAutonomyGitHubV1;
 }
 
-function maintain(state: TransitionState, pullState: "open" | "closed") {
-  return runHostedAutonomy({
-    state: state as unknown as StateReadView & RepairStateWriter,
-    githubFor: () => surface(pullState),
-    clock: { now: () => NOW },
-  });
+async function maintain(state: TransitionState, pullState: "open" | "closed") {
+  return runHostedAutonomy(
+    await withDarkQueueAuthority({
+      state: state as unknown as StateReadView & RepairStateWriter,
+      githubFor: () => surface(pullState),
+      clock: { now: () => NOW },
+    }),
+  );
 }
 
 const installed = () =>
@@ -532,31 +535,33 @@ Deno.test("conflict guard: one maintenance pass re-pends every moved-base record
     snapshotOf(tasks.map((task) => task.record), tasks.map((t) => t.spent)),
     installed(),
   );
-  const result = await runHostedAutonomy({
-    state: state as unknown as StateReadView & RepairStateWriter,
-    githubFor: () => ({
-      ...surface("open"),
-      readBaseTip: (branch: string) =>
-        Promise.resolve(branch === "development" ? TIP : HEAD),
-      readPull: (number: number) => {
-        reads.push(number);
-        return Promise.resolve({
-          number,
-          state: number === closedPr ? "closed" : "open",
-          merged: false,
-          mergeCommitSha: null,
-          headSha: HEAD,
-          baseRef: "development",
-          baseSha: B0,
-          author: "ubiquity-sentinel[bot]",
-          parents: [],
-          revisionOnBaseBranch: false,
-          baseAncestorOfRevision: false,
-        });
-      },
-    } as HostedAutonomyGitHubV1),
-    clock: { now: () => NOW },
-  });
+  const result = await runHostedAutonomy(
+    await withDarkQueueAuthority({
+      state: state as unknown as StateReadView & RepairStateWriter,
+      githubFor: () => ({
+        ...surface("open"),
+        readBaseTip: (branch: string) =>
+          Promise.resolve(branch === "development" ? TIP : HEAD),
+        readPull: (number: number) => {
+          reads.push(number);
+          return Promise.resolve({
+            number,
+            state: number === closedPr ? "closed" : "open",
+            merged: false,
+            mergeCommitSha: null,
+            headSha: HEAD,
+            baseRef: "development",
+            baseSha: B0,
+            author: "ubiquity-sentinel[bot]",
+            parents: [],
+            revisionOnBaseBranch: false,
+            baseAncestorOfRevision: false,
+          });
+        },
+      } as HostedAutonomyGitHubV1),
+      clock: { now: () => NOW },
+    }),
+  );
   assert.equal(result.status, "applied", JSON.stringify(result));
   const granted = result.actions.filter((action) =>
     action.endsWith(":conflict_resolution:base-advance")

@@ -139,6 +139,13 @@ Deno.test("target policy: composed gateway candidate preserver rejects deploymen
         const path = new URL(request.url).pathname;
         reads.push(`${request.method} ${path}`);
         assert.equal(request.method, "GET");
+        if (path === "/repos/ubiquity/ai.ubq.fi/rules/branches/development") {
+          return Promise.resolve({
+            status: 200,
+            headers: new Headers(),
+            bodyText: "[]",
+          });
+        }
         assert.ok(path.startsWith("/repos/ubiquity/ai.ubq.fi/git/ref/"));
         return Promise.resolve({
           status: 404,
@@ -186,7 +193,10 @@ Deno.test("target policy: composed gateway candidate preserver rejects deploymen
       );
     }
     assert.equal(publicationCalls, 0);
-    assert.equal(reads.length, 1);
+    assert.deepEqual(reads, [
+      "GET /repos/ubiquity/ai.ubq.fi/rules/branches/development",
+      `GET /repos/ubiquity/ai.ubq.fi/git/ref/${ref.slice("refs/".length)}`,
+    ]);
     assert.deepEqual(
       state.repair,
       before,
