@@ -2,6 +2,7 @@
 
 import type {
   GitHubBranchProtectionsV1,
+  GitHubCheckSuitesV1,
   GitHubChecksV1,
   GitHubPullRequestV1,
   GitHubRefV1,
@@ -12,6 +13,7 @@ import { expectArray, expectRecord } from "../contracts/validation.ts";
 import {
   parseBranchRuleWire,
   parseCheckRunWire,
+  parseCheckSuiteMemberWire,
   parseCommitStatusWire,
   parseProtectionWire,
   parsePullReviewDecisionWire,
@@ -35,6 +37,34 @@ import { parseWire, parseWith, repoPath } from "./client-response.ts";
 import { REVIEW_DECISION_QUERY } from "./client-issue-wire.ts";
 
 export abstract class GitHubClientReads extends GitHubClientIssues {
+  /** Host-authored base-review jobs; unrelated supervisor jobs are not task CI. */
+  async readBaseReviewChecks(
+    sha: GitSha,
+    names: readonly string[],
+  ): Promise<PortResultV1<GitHubChecksV1>> {
+    const collected = await this.collectCheckRuns(sha);
+    if (!collected.ok) return collected;
+    const checks = [];
+    for (const item of collected.value) {
+      if (
+        typeof item !== "object" || item === null ||
+        !names.includes(String((item as Record<string, unknown>).name))
+      ) continue;
+      const app = (item as Record<string, unknown>).app as
+        | Record<string, unknown>
+        | undefined;
+      if (app?.id !== 15368 || app.slug !== "github-actions") {
+        return portError("unavailable", "base CI producer mismatch");
+      }
+      const parsed = parseWith(item, (v) => parseCheckRunWire(v, "$"));
+      if (!parsed.ok) return parsed;
+      if (parsed.value.head !== sha) {
+        return portError("unavailable", "base CI head mismatch");
+      }
+      checks.push(parsed.value);
+    }
+    return portOk({ head: sha, checks });
+  }
   /** Raw open/closed PR list for a head ref (discovery; exact match later). */
   async listPullRequestsByHeadRef(
     headRef: string,
@@ -103,8 +133,9 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
     );
   }
 
-  async readChecks(sha: GitSha): Promise<PortResultV1<GitHubChecksV1>> {
-    const collected = await this.collectPages(
+  /** Every check-run page of exactly one commit, raw, item bound applied. */
+  private collectCheckRuns(sha: GitSha): Promise<PortResultV1<unknown[]>> {
+    return this.collectPages(
       `/repos/${repoPath(this.repository)}/commits/${sha}/check-runs`,
       { per_page: String(this.perPage) },
       (body) => {
@@ -117,6 +148,10 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
         ) as unknown[];
       },
     );
+  }
+
+  async readChecks(sha: GitSha): Promise<PortResultV1<GitHubChecksV1>> {
+    const collected = await this.collectCheckRuns(sha);
     if (!collected.ok) return collected;
     const checks = [];
     for (const item of collected.value) {
@@ -156,6 +191,31 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
         "unavailable",
         "GitHub API checks collection size bound exceeded",
       );
+    }
+    return portOk({ head: sha, checks });
+  }
+
+  /**
+   * The coverage rule's base read (`GitHubPort.readCheckSuites`): the same
+   * complete, item-bounded check-run listing as `readChecks`, every run bound
+   * to `sha`, reduced to name and suite with no label bound on the name.
+   */
+  async readCheckSuites(
+    sha: GitSha,
+  ): Promise<PortResultV1<GitHubCheckSuitesV1>> {
+    const collected = await this.collectCheckRuns(sha);
+    if (!collected.ok) return collected;
+    const checks: GitHubCheckSuitesV1["checks"] = [];
+    for (const item of collected.value) {
+      const parsed = parseWith(item, (v) => parseCheckSuiteMemberWire(v, "$"));
+      if (!parsed.ok) return parsed;
+      if (parsed.value.head !== sha) {
+        return portError(
+          "unavailable",
+          "checks collection does not match the requested head",
+        );
+      }
+      checks.push({ name: parsed.value.name, suite: parsed.value.suite });
     }
     return portOk({ head: sha, checks });
   }

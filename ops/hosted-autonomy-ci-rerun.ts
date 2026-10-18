@@ -2,7 +2,9 @@
  * Launcher-only flake path for a reviewed head parked on the runtime's
  * merge-gate CI failure ("CI checks failed: ...", or the CI-correction
  * runtime's "CI checks failed without base evidence: ..."), and for a head
- * the CI-first gate parked red or pending before its review. When the exact
+ * the CI-first gate parked before its review (red, pending, or with its CI
+ * fixes exhausted on a head no review has completed on: a flake there returns
+ * through the green rule, never through a fourth fix). When the exact
  * head holds a clean review against a base that is still the base tip and is
  * itself all green, the failed workflow run on that head is re-run ONCE.
  * Nothing is written: GitHub's own `run_attempt` is the durable once-per-head
@@ -20,7 +22,7 @@
  *
  * The pass charges, refunds and decides nothing about the failure: it only
  * asks GitHub to repeat the repository's own deterministic check on the exact
- * reviewed head, at most `HOSTED_AUTONOMY_CI_RERUNS_PER_PASS` runs per pass.
+ * reviewed head. There is no per-pass count throttle.
  */
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import {
@@ -33,14 +35,14 @@ import {
   hostedIssueKey,
 } from "./hosted-autonomy-policy.ts";
 import {
-  preReviewCiParked,
   preReviewFixEligible,
+  preReviewGateParked,
 } from "./hosted-autonomy-ci-first.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import type { HostedAutonomyHeadRunV1 } from "./hosted-autonomy-types.ts";
 
-/** Bound on workflow runs one maintenance pass re-runs. */
-export const HOSTED_AUTONOMY_CI_RERUNS_PER_PASS = 3;
+/** Retired count throttle; keep the numeric policy surface compatible. */
+export const HOSTED_AUTONOMY_CI_RERUNS_PER_PASS = Number.MAX_SAFE_INTEGER;
 
 /** GitHub refuses a re-run more than 30 days after the run's first attempt. */
 export const HOSTED_AUTONOMY_CI_RERUN_WINDOW_MS = 30 * 86_400_000;
@@ -95,8 +97,8 @@ export function ciRerunRuns(
 
 /**
  * Local gates: the CI-parked, clean-reviewed, unreleased shape with no
- * operation in flight (or a head the CI-first gate parked red or pending
- * before its review), on a published head whose candidate is durably
+ * operation in flight (or a head the CI-first gate parked before its review,
+ * its exhausted park included), on a published head whose candidate is durably
  * preserved, for a source issue not already known closed.
  */
 function rerunShape(
@@ -110,7 +112,7 @@ function rerunShape(
     candidate !== undefined && candidate.preserved !== null &&
     candidate.publishedHead === head &&
     (ciGreenRedeliveryEligible(snapshot, record) ||
-      preReviewCiParked(snapshot, record)) &&
+      preReviewGateParked(snapshot, record)) &&
     !closedIssues.has(
       hostedIssueKey(record.repository, record.related.issueNumber!),
     );
@@ -254,7 +256,7 @@ export async function runHostedCiRerunPass(
     // head's own failure worth one more attempt.
     let baseGreen: boolean;
     try {
-      baseGreen = await surface.hasAllChecksGreen(tip);
+      baseGreen = await surface.hasAllChecksGreen(tip) === true;
     } catch {
       baseGreen = false;
     }

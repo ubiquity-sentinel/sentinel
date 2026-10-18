@@ -1,6 +1,10 @@
 /** Bounded notification, loop-guard and terminal settlement state machine. */
 import type { ModelRunRequestV1 } from "../contracts/ports.ts";
-import type { CodexSessionV1 } from "./codex-transport.ts";
+import type {
+  CodexOutputPathV1,
+  CodexServerNotificationV1,
+  CodexSessionV1,
+} from "./codex-transport.ts";
 import { FailedCommandLoopGuard } from "./failed-command-loop.ts";
 import {
   closedModelErrorInfo,
@@ -76,11 +80,20 @@ export async function awaitSettlement(
   turnId: string,
   maxOutputChars: number,
   durationBoundMs: number = request.maxDurationMs,
+  earlyEvidence?: () => {
+    observedParamsChars: number;
+    criticalEvidenceLost: boolean;
+  },
 ): Promise<() => AwaitedSettlementV1> {
   const boundMs = Number.isSafeInteger(durationBoundMs) && durationBoundMs > 0
     ? Math.min(durationBoundMs, request.maxDurationMs)
     : request.maxDurationMs;
   let outputChars = 0;
+  const totalOutputChars = () =>
+    Math.min(
+      Number.MAX_SAFE_INTEGER,
+      outputChars + (earlyEvidence?.().observedParamsChars ?? 0),
+    );
   let interruptCause: ModelInterruptCauseV1 = "none";
   let errorInfo: ReturnType<typeof closedModelErrorInfo> | null = null;
   // Bounded COMPLETE correlated routing events for this exact thread/turn
@@ -343,12 +356,14 @@ export async function awaitSettlement(
     item: Record<string, unknown>,
     itemId: string,
     receivedOthersActive: boolean,
+    outputTruncated: boolean,
   ): CapturedObservationV1 => {
     const rawCommand = typeof item.command === "string" ? item.command : null;
     const rawCwd = typeof item.cwd === "string" ? item.cwd : null;
-    const rawOutput = typeof item.aggregatedOutput === "string"
-      ? item.aggregatedOutput
-      : null;
+    const rawOutput =
+      !outputTruncated && typeof item.aggregatedOutput === "string"
+        ? item.aggregatedOutput
+        : null;
     return {
       receivedGeneration: generation,
       receivedSteerAcked: steerAcked,
@@ -366,7 +381,10 @@ export async function awaitSettlement(
     };
   };
 
-  const collectCompleted = (params: unknown) => {
+  const collectCompleted = (
+    params: unknown,
+    truncated: readonly CodexOutputPathV1[],
+  ) => {
     const record = params as Record<string, unknown> | null;
     // Normalize exact completed items for this thread/turn only; events for
     // other threads/turns are stale and ignored (never a sequence break).
@@ -380,7 +398,10 @@ export async function awaitSettlement(
       // or-malformed changes can never prove output.
       generation++;
       guard.resetProgress();
-      if (hasValidCompletedChanges(item)) {
+      if (
+        !truncated.includes("item.changes[].diff") &&
+        hasValidCompletedChanges(item)
+      ) {
         recordResultItem(item, "fileChange");
       }
       return;
@@ -391,7 +412,8 @@ export async function awaitSettlement(
       // anything missing/blank/over-bound is never recorded as proof.
       const text = typeof item.text === "string" ? item.text : null;
       if (
-        text !== null && text.trim().length > 0 &&
+        !truncated.includes("item.text") && text !== null &&
+        text.trim().length > 0 &&
         text.length <= MAX_OUTPUT_CHARS
       ) {
         recordResultItem(item, "agentMessage");
@@ -403,7 +425,10 @@ export async function awaitSettlement(
     // completed, exit code 0, nonempty bounded command/cwd and a bounded
     // schema-valid commandActions array (empty supported). The failed-
     // command-loop classification below is untouched by this proof gate.
-    if (hasValidCommandExecution(item)) {
+    if (
+      !truncated.includes("item.aggregatedOutput") &&
+      hasValidCommandExecution(item)
+    ) {
       recordResultItem(item, "commandExecution");
     }
     let itemId: string | null = null;
@@ -434,7 +459,12 @@ export async function awaitSettlement(
     // count for an unrelated completion); what remains are the OTHER
     // commands still active at receipt, captured before any async work.
     activeCommandIds.delete(itemId);
-    const job = captureCompleted(item, itemId, activeCommandIds.size > 0);
+    const job = captureCompleted(
+      item,
+      itemId,
+      activeCommandIds.size > 0,
+      truncated.includes("item.aggregatedOutput"),
+    );
     enqueue(job);
   };
 
@@ -641,7 +671,11 @@ export async function awaitSettlement(
     settleNow();
   };
 
-  const onEvent = (method: string, params: unknown) => {
+  const onEvent = (event: CodexServerNotificationV1) => {
+    const { method, params } = event;
+    if (earlyEvidence?.().criticalEvidenceLost) guardDisabled = true;
+    const observedChars = event.outputVolume?.observedParamsChars ??
+      JSON.stringify(params ?? {}).length;
     // Once the final evidence is captured nothing can change the receipt.
     if (evidenceFinalized) return;
     if (stopped) {
@@ -651,8 +685,11 @@ export async function awaitSettlement(
       // terminal; it uses the same identity/bound/off-policy validation and
       // still counts toward routing output.
       if (method === "model/rerouted") {
-        outputChars += JSON.stringify(params ?? {}).length;
-        if (outputChars > maxOutputChars) {
+        outputChars = Math.min(
+          Number.MAX_SAFE_INTEGER,
+          outputChars + observedChars,
+        );
+        if (totalOutputChars() > maxOutputChars) {
           failEvidence("routing evidence exceeded output bound");
           return;
         }
@@ -664,8 +701,11 @@ export async function awaitSettlement(
     // to the total (malformed, over-bound and unknown events included) and
     // crossing the bound interrupts the turn — no event bypasses the total
     // through an event-specific early return.
-    outputChars += JSON.stringify(params ?? {}).length;
-    if (method !== "turn/completed" && outputChars > maxOutputChars) {
+    outputChars = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      outputChars + observedChars,
+    );
+    if (method !== "turn/completed" && totalOutputChars() > maxOutputChars) {
       requestInterrupt("output_limit");
     }
     if (method === "item/started") {
@@ -673,7 +713,10 @@ export async function awaitSettlement(
       return;
     }
     if (method === "item/completed") {
-      collectCompleted(params);
+      collectCompleted(
+        params,
+        event.outputVolume?.truncatedOutputPaths ?? [],
+      );
       return;
     }
     if (method === "turn/completed") {
@@ -707,7 +750,7 @@ export async function awaitSettlement(
   }, boundMs + graceMs + SETTLE_GRACE_MS_EXTRA);
 
   try {
-    session.onNotification((event) => onEvent(event.method, event.params));
+    session.onNotification(onEvent);
   } catch {
     // Registration is part of the bounded session lifecycle. If a trusted
     // transport rejects it synchronously, settle through the same path as
@@ -739,8 +782,11 @@ export async function awaitSettlement(
       },
       terminal,
       terminalOrigin,
-      unavailable,
-      outputChars,
+      unavailable: unavailable ??
+        (earlyEvidence?.().criticalEvidenceLost
+          ? { detail: "early notification evidence was not retained" }
+          : null),
+      outputChars: totalOutputChars(),
       reroutes: [...reroutes],
       resultItems: [...resultItems],
       loopStopped,

@@ -61,6 +61,9 @@ const DAY = 24 * 60 * 60 * 1000;
 const BRANCH = candidateBranch(ID as never);
 const REFUSAL =
   "base refresh failed 3 consecutive times: invalid candidate could not be preserved";
+/** The runtime's owner-gated refresh park (`BASE_REFRESH_REFUSED_PREFIX`). */
+const OWNER_PARK =
+  "base refresh refused by trusted validation; owner action required (land the change by hand or close the issue): ";
 /** The generation-76 runtime, without the base-edge validator fix. */
 const R76 = "41bb853a1bedfc0422bf903dfabbe23bf714b44f";
 /** A stand-in corrected runtime revision. */
@@ -401,6 +404,46 @@ async function expectStateRetained(
   );
 }
 
+/**
+ * The corrected validator's own refusal (JAM B11): one CAS write parks it for
+ * the owner with the verified PR restored, and the next pass only names it.
+ */
+async function expectParked(
+  record: WorkRecordV1,
+  release: ReleaseStateSnapshotV1,
+  runtimes: readonly HostedRefreshRearmRuntimeV1[] | null = [pin(R77)],
+  now = T0 + 2 * DAY,
+): Promise<void> {
+  const state = new TransitionState(snapshotOf([record], [CHARGE]), release);
+  const charges = canonicalStringify(state.snapshot.reservations);
+  const result = await runAt(state, {}, now, runtimes);
+  assert.equal(result.status, "applied", JSON.stringify(result));
+  assert(
+    result.actions.includes(`refresh:${ID}:owner_parked:pr=1012`),
+    JSON.stringify(result),
+  );
+  assert.equal(state.writes, 1);
+  assert.deepEqual(state.snapshot.work[0], {
+    ...record,
+    blocker: {
+      kind: "other",
+      message: `${OWNER_PARK}${record.blocker!.message}`,
+      since: now,
+    },
+    target: { ...record.target, pr: 1012 },
+    updatedAt: now,
+  });
+  assert.equal(canonicalStringify(state.snapshot.reservations), charges);
+  const parked = canonicalStringify(state.snapshot);
+  const later = await runAt(state, {}, now + DAY, runtimes);
+  assert.equal(state.writes, 1, JSON.stringify(later));
+  assert.equal(canonicalStringify(state.snapshot), parked);
+  assert(
+    later.actions.includes(`refresh:${ID}:owner_required:pr=1012`),
+    JSON.stringify(later),
+  );
+}
+
 Deno.test("refresh re-arm: a rollback that advanced the generation to 78 on generation-76 code keeps the record blocked", async () => {
   const record = await refusedRefresh();
   // A failed 77 restores 41bb853a1 once at generation 78: the generation
@@ -438,7 +481,7 @@ Deno.test("refresh re-arm: the shipped allowlist names only generations 77 throu
   await expectRetained(record, FIXED(), "runtime", []);
 });
 
-Deno.test("refresh re-arm: a refusal written after the corrected runtime's activation is its own and stays blocked", async () => {
+Deno.test("refresh re-arm: a refusal written after the corrected runtime's activation is its own and parks for the owner", async () => {
   const record = await refusedRefresh();
   const after = releaseAt({
     revision: R77,
@@ -450,7 +493,7 @@ Deno.test("refresh re-arm: a refusal written after the corrected runtime's activ
       observedAt: T0 - 60 * 60 * 1000,
     },
   });
-  await expectRetained(record, after, "activation");
+  await expectParked(record, after);
   // A refusal exactly at the activation instant is not before it.
   const at = releaseAt({
     revision: R77,
@@ -462,7 +505,7 @@ Deno.test("refresh re-arm: a refusal written after the corrected runtime's activ
       observedAt: T0,
     },
   });
-  await expectRetained(record, at, "activation");
+  await expectParked(record, at);
 });
 
 /**
@@ -541,37 +584,29 @@ Deno.test("refresh re-arm: a healthy owner install whose bootstrap settled in th
   }
 });
 
-Deno.test("refresh re-arm: after a healthy owner install, a refusal at or after the pinned bound is the corrected runtime's own", async () => {
+Deno.test("refresh re-arm: after a healthy owner install, a refusal at or after the pinned bound is the corrected runtime's own and parks for the owner", async () => {
   const installedAt = PINNED + DAY;
   const release = ownerInstalledAndBootstrapped(installedAt);
   for (const since of [PINNED, installedAt + 60 * 60 * 1000]) {
     const record = await refusedRefresh();
-    const state = new TransitionState(
-      snapshotOf([{ ...record, blocker: { ...record.blocker!, since } }], [
-        CHARGE,
-      ]),
+    await expectParked(
+      { ...record, blocker: { ...record.blocker!, since } },
       release,
-    );
-    const before = canonicalStringify(state.snapshot);
-    const result = await runAt(state, {}, installedAt + 30 * DAY);
-    assert.equal(state.writes, 0, JSON.stringify(result));
-    assert.equal(canonicalStringify(state.snapshot), before);
-    assert(
-      result.actions.includes(`refresh:${ID}:retained:activation`),
-      JSON.stringify(result),
+      [pin(R77)],
+      installedAt + 30 * DAY,
     );
   }
 });
 
-Deno.test("refresh re-arm: a pinned bound later than the runtime's own recorded execution never counts", async () => {
+Deno.test("refresh re-arm: a pinned bound later than the runtime's own recorded execution never counts, so no re-arm is ever proven and the refusal parks for the owner", async () => {
   // R77 already executed before this pin: the pin is not its activation
-  // bound, and with only its own proofs nothing else qualifies.
+  // bound, and with only its own proofs nothing else qualifies. With no
+  // provable activation the refusal is never re-armed; it is named for the
+  // owner instead of being retained forever.
   const record = await refusedRefresh();
   const release = ownerInstalledAndBootstrapped(T0 + DAY);
-  await expectRetained(record, release, "activation", [
-    pin(R77, T0 + DAY + 10 * 60_000),
-  ]);
-  await expectRetained(
+  await expectParked(record, release, [pin(R77, T0 + DAY + 10 * 60_000)]);
+  await expectParked(
     record,
     releaseAt({
       revision: R77,
@@ -583,7 +618,6 @@ Deno.test("refresh re-arm: a pinned bound later than the runtime's own recorded 
         observedAt: T0 + 2 * 60 * 60 * 1000,
       },
     }),
-    "activation",
   );
 });
 

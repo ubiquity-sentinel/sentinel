@@ -5,7 +5,11 @@ import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { ciCorrectionShape } from "./ci-rejection.ts";
 import { isCiFixMarker } from "./ci-first-policy.ts";
-import type { LegacyCutoff } from "./review-round-cap.ts";
+import {
+  latestCompletedReview,
+  type LegacyCutoff,
+} from "./review-round-cap.ts";
+import { isAcceptanceFinding } from "./acceptance-correction.ts";
 import {
   releaseRequestMatchesDelivery,
   sameRepositoryIdentity,
@@ -33,7 +37,18 @@ export function rejectedReceipt(
       review.pullRequest.head === head &&
       review.outcome === "completed",
   );
-  return receipt !== undefined && hasBlockingFindings(receipt) ? receipt : null;
+  if (receipt !== undefined && hasBlockingFindings(receipt)) return receipt;
+  // JAM B6: the LATEST completed verdict of the head rejects it as well when
+  // it is a not-fulfilled acceptance (its normalized P1). The
+  // missing-acceptance recovery re-reviews the SAME head, so that head's
+  // earlier change-only receipt may be listed first; read alone it would make
+  // the rejected head look like one awaiting a CI correction, whose green exit
+  // returns it to `review`, whose re-observation corrects it again, without
+  // end. Every other verdict keeps the first-listed rule above unchanged.
+  const latest = latestCompletedReview(snapshot, record);
+  return latest !== null && latest.findings.some(isAcceptanceFinding)
+    ? latest
+    : null;
 }
 
 /**

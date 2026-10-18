@@ -47,7 +47,58 @@ import {
   W,
 } from "./census-shapes.ts";
 
+import { baseRefreshRefusedMessage } from "../../src/repair/loop-base-refresh-failure.ts";
+import { CONFLICT_PROTECTED_DETAIL } from "../../src/repair/conflict-resolution.ts";
+import {
+  failureSignature,
+  REPEAT_FAILURE_DEFAULT_ROUTE,
+  repeatFailureParkMessage,
+} from "../../ops/hosted-autonomy-repeat-failure.ts";
+import { DEFAULT_SHAPE, taskStatement } from "./world.ts";
+import { TASK_ACCEPTANCE_OWNER_GATE_DETAIL } from "../../src/repair/acceptance-correction.ts";
+
 export const LATE_CLASSES: ParkClassV1[] = [
+  {
+    id: "impl.repeat_failure",
+    message: repeatFailureParkMessage({
+      count: 3,
+      signature: failureSignature("other", "model run did not complete"),
+      issue: (await taskStatement(DEFAULT_SHAPE.issue)).digest.slice(0, 12),
+      route: REPEAT_FAILURE_DEFAULT_ROUTE,
+    }, "model run did not complete"),
+    kind: "other",
+    writer: W(
+      "ops/hosted-autonomy-repeat-failure.ts",
+      "message: repeatFailureParkMessage(park, record.blocker!.message),",
+      "w.impl.repeat_failure",
+    ),
+    trigger: "pipeline",
+    variants: [{ tag: "fresh", candidate: "fresh", intent: "none" }],
+  },
+  {
+    id: "ref.refused",
+    message: baseRefreshRefusedMessage(CONFLICT_PROTECTED_DETAIL),
+    kind: "other",
+    writer: W(
+      "src/repair/loop-base-refresh-failure.ts",
+      "baseRefreshRefusedMessage(reason),",
+      "w.ref.refused",
+    ),
+    trigger: "pipeline",
+    variants: [pub("round1", 1, "clean")],
+  },
+  {
+    id: "rev.acceptance_owner",
+    message: TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
+    kind: "other",
+    writer: W(
+      "src/repair/loop-review-result.ts",
+      "corrected ?? receipt,\n          TASK_ACCEPTANCE_OWNER_GATE_DETAIL,",
+      "w.rev.acceptance_owner",
+    ),
+    trigger: "pipeline",
+    variants: [pub("spent", 3, "unaccepted")],
+  },
   // ------------------------------------------------------------------ review
   {
     id: "rev.not_fulfilled",

@@ -370,7 +370,10 @@ Deno.test(
     // seeded from the sentinel checkout only, exactly as the hosted host does,
     // so it provably cannot resolve a foreign repository's commit; that is the
     // defect this test pins.
-    const root = await Deno.makeTempDir({ prefix: "sentinel-target-mirror-" });
+    const root = await Deno.makeTempDir({
+      dir: Deno.cwd(),
+      prefix: "sentinel-target-mirror-",
+    });
     // A private credential-free git home: no user/system config, no hooks and
     // no credential helper can leak in from this host.
     const home = `${root}/git-home`;

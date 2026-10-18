@@ -25,6 +25,17 @@
  * host; private finite constants cover every bound.
  */
 
+import {
+  CodexJsonFrame,
+  type CodexOutputVolumeV1,
+  type ProjectedCodexFrame,
+} from "./codex-json-frame.ts";
+export { CODEX_OUTPUT_PATHS, isCodexOutputPathV1 } from "./codex-json-frame.ts";
+export type {
+  CodexOutputPathV1,
+  CodexOutputVolumeV1,
+} from "./codex-json-frame.ts";
+
 /** Static sanitized error for malformed/missing protocol evidence. */
 export class CodexProtocolError extends Error {
   constructor(
@@ -53,6 +64,8 @@ export interface CodexServerRequestV1 {
 export interface CodexServerNotificationV1 {
   method: string;
   params: unknown;
+  /** Trusted transport accounting; producer-supplied metadata is never copied. */
+  outputVolume?: CodexOutputVolumeV1;
 }
 
 export interface CodexTransportOptionsV1 {
@@ -62,9 +75,9 @@ export interface CodexTransportOptionsV1 {
   cwd: string;
   /** Minimal child environment; never inherited wholesale. */
   env: Readonly<Record<string, string>>;
-  /** Maximum UTF-8 bytes buffered per inbound line. */
+  /** Maximum retained control/envelope characters per inbound frame. */
   maxLineBytes?: number;
-  /** Maximum inbound notification bytes retained for output accounting. */
+  /** Maximum queued notification characters before applying read backpressure. */
   maxNotificationBytes?: number;
   /** Maximum stderr bytes retained for diagnostics. */
   maxStderrBytes?: number;
@@ -104,9 +117,13 @@ export interface CodexSessionV1 {
   /** Register the single notification consumer. Notifications arriving
    * before registration are retained in a bounded ordered backlog and
    * delivered exactly once at registration, in wire order. */
-  onNotification(handler: (event: CodexServerNotificationV1) => void): void;
+  onNotification(
+    handler: (event: CodexServerNotificationV1) => void | Promise<void>,
+  ): void;
   /** Register the single server-request consumer (unsolicited requests). */
-  onServerRequest(handler: (request: CodexServerRequestV1) => void): void;
+  onServerRequest(
+    handler: (request: CodexServerRequestV1) => void | Promise<void>,
+  ): void;
   /** Tear down; resolves only after owned child/descendant settlement. */
   close(): Promise<void>;
   /**
@@ -141,25 +158,23 @@ export class CodexSubprocessSession implements CodexSessionV1 {
     resolve: (value: unknown) => void;
     reject: (error: CodexProtocolError) => void;
   }>();
+  private readonly closingRequestIds = new Set<string | number>();
   private notificationHandler:
-    | ((event: CodexServerNotificationV1) => void)
+    | ((event: CodexServerNotificationV1) => void | Promise<void>)
     | null = null;
-  /**
-   * Ordered backlog for inbound notifications that arrive before the consumer
-   * registers. The existing inbound notification byte bound (observableBytes
-   * vs maxNotificationBytes) is applied to every notification before it is
-   * queued, so this backlog is finite by the same bound as live delivery.
-   */
+  /** Ordered, bounded undelivered backlog. A full backlog pauses pipe reads. */
   private readonly pendingNotifications: CodexServerNotificationV1[] = [];
   private serverRequestHandler:
-    | ((request: CodexServerRequestV1) => void)
+    | ((request: CodexServerRequestV1) => void | Promise<void>)
     | null = null;
   private stdoutDone: Promise<void> = Promise.resolve();
   private stderrDone: Promise<void> = Promise.resolve();
   private stdoutReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private stderrReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private stderrTail = "";
-  private observableBytes = 0;
+  private queuedChars = 0;
+  private resumeNotifications: (() => void) | null = null;
+  private delivering: Promise<void> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
   /**
@@ -268,19 +283,41 @@ export class CodexSubprocessSession implements CodexSessionV1 {
     this.write({ jsonrpc: "2.0", method, params: params ?? {} });
   }
 
-  onNotification(handler: (event: CodexServerNotificationV1) => void): void {
+  onNotification(
+    handler: (event: CodexServerNotificationV1) => void | Promise<void>,
+  ): void {
     if (this.fatalError !== null) throw this.fatalError;
     this.notificationHandler = handler;
-    // Drain pre-registration notifications now, exactly once and in wire
-    // order (the backlog is bounded by the notification byte bound above),
-    // so a terminal event racing the turn/start response is never dropped.
-    if (this.pendingNotifications.length > 0) {
-      const backlog = this.pendingNotifications.splice(0);
-      for (const event of backlog) handler(event);
+    const drain = this.drainNotifications();
+    if (drain instanceof Promise) {
+      this.delivering = drain.catch((error) => this.fail(error)).finally(() => {
+        this.delivering = null;
+        this.resumeNotifications?.();
+        this.resumeNotifications = null;
+      });
+    } else {
+      this.resumeNotifications?.();
+      this.resumeNotifications = null;
     }
   }
 
-  onServerRequest(handler: (request: CodexServerRequestV1) => void): void {
+  private drainNotifications(): void | Promise<void> {
+    while (
+      this.pendingNotifications.length > 0 && this.notificationHandler !== null
+    ) {
+      if (this.closed || this.fatalError !== null) return;
+      const event = this.pendingNotifications.shift()!;
+      this.queuedChars -= JSON.stringify(event).length;
+      const delivery = this.notificationHandler(event);
+      if (delivery instanceof Promise) {
+        return delivery.then(() => this.drainNotifications());
+      }
+    }
+  }
+
+  onServerRequest(
+    handler: (request: CodexServerRequestV1) => void | Promise<void>,
+  ): void {
     if (this.fatalError !== null) throw this.fatalError;
     this.serverRequestHandler = handler;
   }
@@ -300,15 +337,25 @@ export class CodexSubprocessSession implements CodexSessionV1 {
 
   private async settleClosed(): Promise<void> {
     this.closed = true;
+    if (this.pendingNotifications.length > 0) {
+      this.fail(
+        new CodexProtocolError(
+          "child_exited_without_terminal",
+          "unconsumed notification evidence at close",
+        ),
+      );
+    }
+    this.pendingNotifications.length = 0;
+    this.queuedChars = 0;
+    this.resumeNotifications?.();
+    this.resumeNotifications = null;
     if (this.timer !== null) {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    for (const id of this.pending.keys()) this.closingRequestIds.add(id);
     this.rejectAll(
-      new CodexProtocolError(
-        "child_exited_without_terminal",
-        "session closed",
-      ),
+      new CodexProtocolError("child_exited_without_terminal", "session closed"),
     );
     const child = this.child;
     if (child === null) {
@@ -334,8 +381,28 @@ export class CodexSubprocessSession implements CodexSessionV1 {
       ]);
     }
     this.groupSettled = !groupAlive(child.pid);
-    // Cancel the captured pumps: after the group signals, no owned writer
-    // remains, and a canceled reader cannot keep settlement (or close) pending.
+    // Async consumers can expose a terminal before its producer callback
+    // resolves. Drain every already-read frame (including late routing or
+    // malformed evidence) and EOF before accepting close. Cancellation first
+    // would silently drop contradictions already buffered behind the terminal.
+    let stdoutDrained = false;
+    await bounded(
+      Promise.allSettled([
+        this.stdoutDone.then(() => {
+          stdoutDrained = true;
+        }),
+        this.stderrDone,
+      ]),
+      this.closeStreamSettleMs,
+    );
+    if (!stdoutDrained) {
+      this.fail(
+        new CodexProtocolError(
+          "child_exited_without_terminal",
+          "codex notification stream did not drain at close",
+        ),
+      );
+    }
     this.cancelPumps();
     await bounded(
       Promise.allSettled([this.stdoutDone, this.stderrDone]),
@@ -381,82 +448,61 @@ export class CodexSubprocessSession implements CodexSessionV1 {
   private async pumpStdout(stream: ReadableStream<Uint8Array>): Promise<void> {
     const reader = stream.getReader();
     this.stdoutReader = reader;
-    let buffer = "";
+    let frame = new CodexJsonFrame(this.maxLineBytes);
     const decoder = new TextDecoder("utf-8", { fatal: true });
     try {
       for (;;) {
         let read: ReadableStreamReadResult<Uint8Array>;
         try {
           read = await reader.read();
-        } catch {
-          // Canceled at close; settlement below is bounded.
-          return;
+        } catch (error) {
+          if (this.closed) return;
+          throw error;
         }
-        if (read.done) {
-          try {
-            buffer += decoder.decode();
-          } catch {
-            this.fail(
-              new CodexProtocolError(
-                "malformed_line",
-                "codex stream contained invalid UTF-8",
-              ),
-            );
-            return;
+        const text = read.done
+          ? decoder.decode()
+          : decoder.decode(read.value, { stream: true });
+        for (let index = 0; index < text.length; index++) {
+          if (this.fatalError !== null) return;
+          const char = text[index];
+          if (char !== "\n") {
+            frame.push(char);
+            continue;
           }
-          if (buffer.trim().length > 0) {
-            this.fail(
-              new CodexProtocolError(
-                "malformed_line",
-                "codex stream ended with an unterminated frame",
-              ),
-            );
-          }
-          break;
-        }
-        try {
-          buffer += decoder.decode(read.value, { stream: true });
-        } catch {
-          this.fail(
-            new CodexProtocolError(
-              "malformed_line",
-              "codex stream contained invalid UTF-8",
-            ),
-          );
-          return;
-        }
-        if (buffer.length > this.maxLineBytes * 4) {
-          this.fail(
-            new CodexProtocolError(
-              "malformed_line",
-              "codex stream line bound exceeded",
-            ),
-          );
-          return;
-        }
-        for (;;) {
-          const newline = buffer.indexOf("\n");
-          if (newline === -1) break;
-          const line = buffer.slice(0, newline);
-          buffer = buffer.slice(newline + 1);
-          if (line.trim().length === 0) continue;
-          if (line.length > this.maxLineBytes) {
-            this.fail(
-              new CodexProtocolError(
-                "malformed_line",
-                "codex line bound exceeded",
-              ),
-            );
-            // A fatal bound failure ends the pump: the rest of the buffer
-            // must not be re-queued or delivered.
-            return;
-          }
-          const outcome = this.handleLine(line);
-          if (outcome !== null) {
+          const projected = frame.finish();
+          frame = new CodexJsonFrame(this.maxLineBytes);
+          if (projected === null) continue;
+          const outcome = this.handleFrame(projected);
+          if (outcome instanceof Promise) await outcome;
+          else if (outcome !== null) {
             this.fail(outcome);
             return;
           }
+          if (this.delivering !== null) await this.delivering;
+          if (
+            this.notificationHandler === null &&
+            this.queuedChars >= this.maxNotificationBytes
+          ) {
+            await new Promise<void>((resolve) => {
+              this.resumeNotifications = resolve;
+            });
+          }
         }
+        if (read.done) {
+          if (!frame.empty) throw new Error("unterminated JSON frame");
+          break;
+        }
+      }
+    } catch (error) {
+      if (this.fatalError === null) {
+        this.fail(
+          new CodexProtocolError(
+            "malformed_line",
+            error instanceof Error
+              ? error.message.slice(0, 160)
+              : "malformed JSON stream",
+          ),
+        );
       }
     } finally {
       reader.releaseLock();
@@ -497,16 +543,11 @@ export class CodexSubprocessSession implements CodexSessionV1 {
   }
 
   /** Returns a protocol error instead of throwing across async pumps. */
-  private handleLine(line: string): CodexProtocolError | null {
-    // After a fatal failure no further frame may be queued or delivered; the
-    // pump reports the sticky error and stops processing the buffer.
+  private handleFrame(
+    projected: ProjectedCodexFrame,
+  ): CodexProtocolError | null | Promise<void> {
     if (this.fatalError !== null) return this.fatalError;
-    let frame: unknown;
-    try {
-      frame = JSON.parse(line);
-    } catch {
-      return new CodexProtocolError("malformed_line", "malformed JSON frame");
-    }
+    const frame = projected.value;
     if (typeof frame !== "object" || frame === null) {
       return new CodexProtocolError("malformed_line", "malformed frame shape");
     }
@@ -518,29 +559,31 @@ export class CodexSubprocessSession implements CodexSessionV1 {
         // Never grant; the controller rejects unsolicited approval requests.
         return null; // handled below via the server-request rejection path
       }
-      this.observableBytes += line.length;
-      if (this.observableBytes > this.maxNotificationBytes) {
-        return new CodexProtocolError(
-          "stream_output_bound_exceeded",
-          "codex notification byte bound exceeded",
-        );
-      }
       const notification: CodexServerNotificationV1 = {
         method,
         params: record.params,
+        ...(projected.outputVolume === undefined
+          ? {}
+          : { outputVolume: projected.outputVolume }),
       };
       if (this.notificationHandler !== null) {
-        this.notificationHandler(notification);
+        const delivery = this.notificationHandler(notification);
+        if (delivery instanceof Promise) return delivery;
       } else {
-        // No consumer yet: retain once, in wire order, until registration
-        // drains the backlog (bounded by the byte bound applied above).
+        if (this.closed) {
+          return new CodexProtocolError(
+            "child_exited_without_terminal",
+            "unconsumed notification evidence at close",
+          );
+        }
         this.pendingNotifications.push(notification);
+        this.queuedChars += JSON.stringify(notification).length;
       }
       return null;
     }
     if (typeof record.method === "string" && "id" in record) {
       // Server request: respond with an explicit rejection, never approval.
-      this.write({
+      const rejected = this.write({
         jsonrpc: "2.0",
         id: record.id,
         error: {
@@ -548,17 +591,19 @@ export class CodexSubprocessSession implements CodexSessionV1 {
           message: "server request not supported by bounded controller",
         },
       });
-      this.serverRequestHandler?.({
-        id: record.id as string | number,
-        method: record.method,
-        params: record.params,
+      return rejected.then(async () => {
+        await this.serverRequestHandler?.({
+          id: record.id as string | number,
+          method: record.method as string,
+          params: record.params,
+        });
       });
-      return null;
     }
     if ("id" in record && ("result" in record || "error" in record)) {
       const id = record.id as string | number;
       const entry = this.pending.get(id);
       if (entry === undefined) {
+        if (this.closed && this.closingRequestIds.delete(id)) return null;
         return new CodexProtocolError(
           "unknown_request_id",
           "response for unknown request id",
@@ -597,6 +642,9 @@ export class CodexSubprocessSession implements CodexSessionV1 {
     // Discard the bounded pre-registration backlog: a terminal retained
     // before the failure must never be delivered after the stream failed.
     this.pendingNotifications.length = 0;
+    this.queuedChars = 0;
+    this.resumeNotifications?.();
+    this.resumeNotifications = null;
     this.rejectAll(this.fatalError);
     const child = this.child;
     if (child !== null) {
@@ -616,7 +664,7 @@ export class CodexSubprocessSession implements CodexSessionV1 {
     this.pending.clear();
   }
 
-  private write(frame: unknown): void {
+  private write(frame: unknown): Promise<void> {
     const writer = this.stdinWriter;
     if (this.closed || writer === null) {
       this.rejectAll(
@@ -625,7 +673,7 @@ export class CodexSubprocessSession implements CodexSessionV1 {
           "session closed",
         ),
       );
-      return;
+      return Promise.resolve();
     }
     const bytes = new TextEncoder().encode(JSON.stringify(frame) + "\n");
     // Serialize: exactly one write in flight per session, strictly ordered.
@@ -637,6 +685,7 @@ export class CodexSubprocessSession implements CodexSessionV1 {
         // A failed write (terminated child) never breaks the chain; close
         // rejects the affected requests and settles the child.
       });
+    return this.writeChain;
   }
 }
 

@@ -2,6 +2,7 @@
 
 import type {
   GitHubBranchProtectionsV1,
+  GitHubCheckSuitesV1,
   GitHubChecksV1,
   GitHubIssueRelationsV1,
   GitHubIssueV1,
@@ -394,6 +395,10 @@ export abstract class GitHubClientHttp {
   ): Promise<PortResultV1<GitHubReviewDecisionV1>>;
 
   abstract readChecks(sha: GitSha): Promise<PortResultV1<GitHubChecksV1>>;
+
+  abstract readCheckSuites(
+    sha: GitSha,
+  ): Promise<PortResultV1<GitHubCheckSuitesV1>>;
 
   abstract readProtections(
     branch: string,

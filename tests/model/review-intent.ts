@@ -7,9 +7,9 @@
  * review bound. The control binds the journal first (the submission did
  * land) and must move.
  *
- * `observeReview` checks the saved intent against the journal BEFORE the
- * expiry recovery (`reviewAttemptExpired`): an unbound journal returns
- * `deferred` without a write, so the bound never fires.
+ * The saved intent must expire even when its journal never binds. The
+ * admitted request remains charged while the CI-first gate decides whether
+ * another round is permitted.
  */
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
@@ -25,10 +25,9 @@ import { charge, hexId } from "./world.ts";
 export const REVIEW_INTENT_ANCHOR = anchor(
   "r.reviewIntentUnbound",
   "src/repair/loop-review-observation.ts",
-  `      return {
-        kind: "deferred",
-        detail: "review intent has no exact bound journal",
-      };`,
+  `if (reviewAttemptExpired(record, now)) {
+        return recoverExpiredReviewAttempt(deps, context, record, now);
+      }`,
 );
 
 export interface ReviewIntentVerdictV1 {
@@ -38,6 +37,9 @@ export interface ReviewIntentVerdictV1 {
   outcomes: string[];
   /** Journal reads of the intent's exact key (the step did run). */
   observed: number;
+  recovered: boolean;
+  charged: boolean;
+  rounds: number;
 }
 
 /** The runtime verdict the lifecycle uses (`primeReviewIntent`). */
@@ -137,5 +139,16 @@ export async function reviewIntentVerdict(
     );
     if (decision((await rig.snapshot()).work[0]) !== before) moved = true;
   }
-  return { moved, outcomes, observed };
+  const final = await rig.snapshot();
+  const record = final.work[0]!;
+  return {
+    moved,
+    outcomes,
+    observed,
+    recovered: record.intent?.key !== key,
+    charged: final.reservations.some((row) =>
+      row.id === requestId && row.outcome === "ambiguous"
+    ),
+    rounds: record.counters.reviewRounds,
+  };
 }

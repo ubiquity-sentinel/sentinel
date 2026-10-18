@@ -47,6 +47,7 @@ import type {
 } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { CANDIDATE_COMMIT_REFUSAL_DETAILS } from "./model-port-checkout.ts";
 
 /**
  * Closed settlement details the implementation path already produces. These
@@ -74,6 +75,32 @@ export const ATTEMPT_DETAIL_UNCERTAIN =
  */
 export const ATTEMPT_DETAIL_PROVIDER_THROTTLED =
   "model run failed (unavailable)" as const;
+/**
+ * A model session that COMPLETED and left its checkout exactly at the
+ * requested base (the trusted committer's `unchanged_base` refusal). It is a
+ * model outcome — typically the task is already satisfied at base, as for
+ * ai.ubq.fi issue 300, fixed upstream before its first charge — never
+ * provider unavailability, so it is a no-progress class: the attempt stays
+ * charged and the launcher's repeat-failure bound parks it for the owner.
+ * Deliberately NOT a `model run failed (` family member.
+ */
+export const ATTEMPT_DETAIL_NO_CHANGE =
+  "model run completed without any change to its checkout" as const;
+
+/**
+ * The closed settlement detail of one failed implementation port result.
+ * Only the committer's exact unchanged-base refusal maps to
+ * `ATTEMPT_DETAIL_NO_CHANGE`; every other port error keeps the caller's
+ * existing detail byte for byte.
+ */
+export function implementationPortFailureDetail(
+  error: { readonly detail: string },
+  otherwise: string,
+): string {
+  return error.detail === CANDIDATE_COMMIT_REFUSAL_DETAILS.unchanged_base
+    ? ATTEMPT_DETAIL_NO_CHANGE
+    : otherwise;
+}
 
 interface AttemptDetailClassification {
   stage: AttemptStageV1;
@@ -107,6 +134,10 @@ const DETAIL_CLASSIFICATION: readonly (readonly [
   [
     ATTEMPT_DETAIL_ARTIFACT_ONLY,
     { stage: "candidate", failureClass: "semantic_no_progress" },
+  ],
+  [
+    ATTEMPT_DETAIL_NO_CHANGE,
+    { stage: "model", failureClass: "semantic_no_progress" },
   ],
   [
     ATTEMPT_DETAIL_UNCERTAIN,

@@ -16,6 +16,8 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { ReviewTaskStatementV1 } from "../../src/contracts/review-receipt.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
+import { renderHostedParkSummary } from "../../ops/hosted-autonomy-summary.ts";
+import { anchor } from "./anchors.ts";
 import { runHostedAutonomy } from "../../ops/hosted-autonomy-runner.ts";
 import type {
   HostedAutonomyGitHubV1,
@@ -61,6 +63,12 @@ export interface LauncherWorldV1 {
   /** Creation instant of the failed head runs (re-run window). */
   rerunCreatedAt?: number;
 }
+
+export const SUMMARY_ANCHOR = anchor(
+  "launcher.parkSummary",
+  "ops/hosted-autonomy-main.ts",
+  'await emitHostedParkSummary(state, env("GITHUB_STEP_SUMMARY"));',
+);
 
 export const FAVORABLE: LauncherWorldV1 = {
   issueOpen: true,
@@ -253,10 +261,21 @@ export async function runLauncherPass(
   } finally {
     console.log = log;
   }
+  // The production main emits this same renderer after the pass. Keep the
+  // mapping to record identity explicit: summary rows use issue links rather
+  // than the maintenance log's internal work id.
+  const summary = renderHostedParkSummary(state.repair!);
+  const summaryActions = state.repair!.work.filter((record) =>
+    record.nextStep === "blocked" && summary.includes(
+      record.related.issueNumber === null
+        ? `| ${record.id} |`
+        : `| ${record.repository.owner}/${record.repository.name}#${record.related.issueNumber} |`,
+    )
+  ).map((record) => `summary:${record.id}:blocked`);
   return {
     result,
     after: state.repair!,
-    actions: [...result.actions],
+    actions: [...result.actions, ...summaryActions],
     merges: calls.merges,
     reruns: calls.reruns,
   };

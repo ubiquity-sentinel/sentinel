@@ -13,11 +13,13 @@ import { generatedArtifactOnly } from "../github/review-snapshot.ts";
 import {
   ATTEMPT_DETAIL_INCOMPLETE,
   ATTEMPT_DETAIL_LOOP_STOP,
+  ATTEMPT_DETAIL_NO_CHANGE,
   ATTEMPT_DETAIL_PROVIDER_THROTTLED,
   ATTEMPT_DETAIL_UNCERTAIN,
   attemptMemorySettlementMutationV1,
   attemptMemorySuccessMutationV1,
 } from "./attempt-policy.ts";
+import { holdNoChange, noChangeIssue } from "./base-satisfaction-marker.ts";
 import { conflictResolutionInFlight } from "./conflict-resolution.ts";
 import { isProviderThrottledReceiptV1 } from "./model-port-retry.ts";
 import {
@@ -88,7 +90,12 @@ export async function settleFailedImplementation(
     ...(classification === undefined ? {} : { classification }),
   });
   return persistAfterSettlement(deps, context.bounds, (draft) => {
-    replaceWorkMutation(blocked)(draft);
+    replaceWorkMutation(
+      detail === ATTEMPT_DETAIL_NO_CHANGE && noChangeIssue(record) &&
+        record.intent?.kind === "implementation"
+        ? holdNoChange(record, now)
+        : blocked,
+    )(draft);
     memory(draft);
   });
 }

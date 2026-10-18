@@ -26,6 +26,7 @@ import type { HttpRequestV1, HttpResponseV1 } from "../../src/github/http.ts";
 
 export async function selfMergeFixture() {
   const temp = await Deno.makeTempDir({
+    dir: Deno.cwd(),
     prefix: "sentinel-native-self-merge-",
   });
   const work = `${temp}/work`, remote = `${temp}/remote.git`;

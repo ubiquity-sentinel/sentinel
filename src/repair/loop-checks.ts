@@ -1,9 +1,11 @@
 /** Repair loop internals: checks. */
 import type { GitHubCheckV1 } from "../contracts/ports.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import { missingExpectedChecks } from "./ci-coverage.ts";
 import { failedChecks, latestChecks } from "./ci-rejection.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { routeFailedDeliveryChecks } from "./loop-ci-correction.ts";
+import { isSelfScopeZero } from "./loop-legacy-loss.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -18,6 +20,11 @@ import { markBlocked, setWait } from "./transitions.ts";
  * is still running or when no checks are recorded (no evidence CI ran).
  * Returns a block detail when any check failed (including skipped/neutral,
  * matching requiredChecksState semantics). Exported for focused testing.
+ *
+ * It judges only the checks that exist: GitHub creates a `needs:` job's
+ * check run only once its dependencies finish. The CI-first review gate and
+ * the carried delivery steps therefore also require coverage of the base the
+ * head is tested against (`absentExpectedChecks`) before a "proceed" counts.
  */
 export function decideCiGate(
   checks: GitHubCheckV1[],
@@ -40,6 +47,36 @@ export function decideCiGate(
   const pending = deduped.some((check) => check.status !== "completed");
   if (pending) return "wait";
   return "proceed";
+}
+
+/**
+ * The expected checks `head` (the record's head's own check runs, green by
+ * `decideCiGate`) does not report yet, against the base it is tested on (the
+ * record's base): the names of each check suite of that base that shares a
+ * name with the head
+ * (`missingExpectedChecks`; sentinel issue #154). Empty when every expected
+ * check exists; null when the base's runs cannot be read, which proves
+ * nothing either way: every caller then waits like running CI (a bounded
+ * `ci_pending` wait that parks under its own pending prefix), never a silent
+ * deferral no launcher rule re-admits.
+ *
+ * The base read is the port's lenient `readCheckSuites` (name and suite
+ * only), not the strict `readChecks`: a base may carry runs no pull request
+ * head runs whose names exceed the strict label bound. The sentinel self
+ * scope reads no base at all, like the launcher: its gate is the one named
+ * `test-local` job (ci.yml, no `needs:`), and its `development` tip also
+ * carries a `dispatch` run per five-minute schedule and the supervisor.yml
+ * runs of `sentinel-supervisor`, which is fast-forwarded with it.
+ */
+export async function absentExpectedChecks(
+  deps: RepairCycleDepsV1,
+  record: WorkRecordV1,
+  head: readonly GitHubCheckV1[],
+): Promise<string[] | null> {
+  if (isSelfScopeZero(record.repository)) return [];
+  const observed = await deps.github.readCheckSuites(record.target.base);
+  if (!observed.ok) return null;
+  return missingExpectedChecks(head, observed.value.checks);
 }
 
 /**

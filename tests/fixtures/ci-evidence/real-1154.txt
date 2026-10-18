@@ -1,0 +1,408 @@
+﻿2026-10-17T19:54:35.4728946Z Current runner version: '2.337.0'
+2026-10-17T19:54:35.4757875Z ##[group]Runner Image Provisioner
+2026-10-17T19:54:35.4758952Z Hosted Compute Agent
+2026-10-17T19:54:36.5798301Z ##[group]Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+2026-10-17T19:54:36.5799847Z with:
+2026-10-17T19:54:36.5800993Z   fetch-depth: 0
+2026-10-17T19:54:36.5801706Z   repository: ubiquity/ai.ubq.fi
+2026-10-17T19:54:36.5806746Z   token: ***
+2026-10-17T19:54:36.5807436Z   ssh-strict: true
+2026-10-17T19:54:36.5808122Z   ssh-user: git
+2026-10-17T19:54:36.5808852Z   persist-credentials: true
+2026-10-17T19:54:36.5809636Z   clean: true
+2026-10-17T19:54:36.5810383Z   sparse-checkout-cone-mode: true
+2026-10-17T19:54:36.5811282Z   fetch-tags: false
+2026-10-17T19:54:36.5811957Z   show-progress: true
+2026-10-17T19:55:27.2216963Z ##[group]Run set -euo pipefail
+2026-10-17T19:55:27.2217316Z [36;1mset -euo pipefail[0m
+2026-10-17T19:55:27.2219908Z [36;1mbun --no-env-file --no-install -e 'import {join,resolve} from "node:path"; import {buildNativeKv} from "./scripts/build-native-kv.ts"; const workspace=process.env.RUNNER_TEMP; if(!workspace) throw new Error("Missing runner temporary directory"); const artifactDirectory=join(workspace,"uos-native-kv/artifact"); const buildReceipt=await buildNativeKv(artifactDirectory,{toolchainDirectory:join(workspace,"uos-native-kv/toolchain/bin"),workspaceDirectory:resolve(process.env.GITHUB_WORKSPACE,"../uos-native-kv-builds")}); console.log(JSON.stringify({artifactDirectory,expectedProvenanceSha256:buildReceipt.provenanceSha256,inputsManifest:resolve("tools/native-kv/inputs.json"),buildReceipt}));'  > "$RUNNER_TEMP/uos-native-kv/receipt.json"[0m
+2026-10-17T19:55:27.2252957Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-17T19:55:27.2253332Z ##[endgroup]
+2026-10-17T19:57:49.2613621Z ##[group]Run set -euo pipefail
+2026-10-17T19:57:49.2613945Z [36;1mset -euo pipefail[0m
+2026-10-17T19:57:49.2614587Z [36;1mbun --no-env-file --no-install run test ops/tests/mac-native-auth-permissions.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"[0m
+2026-10-17T19:57:49.2616148Z [36;1mbun --no-env-file --no-install run test:vps ops/tests/first-bun-cutover.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"[0m
+2026-10-17T19:57:49.2617093Z [36;1mbun --no-env-file --no-install run test:deploy-guards "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"[0m
+2026-10-17T19:57:49.2618277Z [36;1mbun --no-env-file --no-install run test:vps ops/tests/vps-release.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"[0m
+2026-10-17T19:57:49.2647812Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-17T19:57:49.2648135Z ##[endgroup]
+2026-10-17T19:57:49.2743295Z $ bun --no-env-file scripts/test-runner.ts main ops/tests/mac-native-auth-permissions.test.ts "--native-kv-binding={\"artifactDirectory\":\"/home/runner/work/_temp/uos-native-kv/artifact\",\"expectedProvenanceSha256\":\"182a7bdaf7ca63ba93e4bc390136c5ac20f7c5d5794e287e49572699a7180a4c\",\"inputsManifest\":\"/home/runner/work/ai.ubq.fi/ai.ubq.fi/tools/native-kv/inputs.json\",\"buildReceipt\":{\"path\":\"/home/runner/work/_temp/uos-native-kv/artifact/native-kv.node\",\"sha256\":\"b64e6ce51a75a571ed1f68d8e4e9ff82300a83cec0b2857d22ba02314be9382c\",\"provenancePath\":\"/home/runner/work/_temp/uos-native-kv/artifact/native-kv.provenance.json\",\"provenanceSha256\":\"182a7bdaf7ca63ba93e4bc390136c5ac20f7c5d5794e287e49572699a7180a4c\",\"inputsSha256\":\"060218c18a617a642b72705df8d976047fd124a3f069517ee7bed6896c600033\",\"sourceSha256\":\"ab71a0516b6b2440f1f9a8bfde70199ac5e75c3c69816d68b3f80bc45285c899\",\"patchSha256\":\"f79d5356ddae5f1d5d8658671f9e842452e566240cb637
+2026-10-17T19:57:49.3020145Z 
+2026-10-17T20:01:24.8666116Z ##[group]Run set -euo pipefail
+2026-10-17T20:01:24.8666453Z [36;1mset -euo pipefail[0m
+2026-10-17T20:01:24.8666873Z [36;1msh scripts/verify.sh --native-kv-binding="$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"[0m
+2026-10-17T20:01:24.8696338Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-17T20:01:24.8696759Z ##[endgroup]
+2026-10-17T20:01:24.8862012Z ==> installing locked quality dependencies
+2026-10-17T20:01:25.1829850Z 
+2026-10-17T20:01:25.1830656Z ==> strict Bun TypeScript (all entry points)
+2026-10-17T20:01:25.1847996Z $ bun --no-env-file --no-install scripts/patch-bun-types.ts && bun --no-env-file node_modules/typescript/bin/tsc --noEmit --project tsconfig.json
+2026-10-17T20:01:44.9606727Z 
+2026-10-17T20:01:44.9607219Z ==> prettier (all supported first-party formats)
+2026-10-17T20:01:45.0434998Z Checking formatting...
+2026-10-17T20:02:03.9295323Z All matched files use Prettier code style!
+2026-10-17T20:02:04.3024965Z 
+2026-10-17T20:02:04.3025602Z ==> eslint (template ruleset)
+2026-10-17T20:06:23.7524688Z 
+2026-10-17T20:06:23.7525245Z /home/runner/work/ai.ubq.fi/ai.ubq.fi/tests/live-sideband-http.test.ts
+2026-10-17T20:06:23.7525910Z   728:33  error  Async arrow function has no 'await' expression  @typescript-eslint/require-await
+2026-10-17T20:06:23.7526258Z 
+2026-10-17T20:06:23.7526597Z ✖ 1 problem (1 error, 0 warnings)
+2026-10-17T20:06:23.7526759Z 
+2026-10-17T20:06:26.6978131Z !!! FAILED: eslint (template ruleset)
+2026-10-17T20:06:26.7006071Z 
+2026-10-17T20:06:26.7006367Z ==> knip (unused files/exports/deps)
+2026-10-17T20:06:28.4723015Z 
+2026-10-17T20:06:28.4723529Z ==> file size ratchet
+2026-10-17T20:06:28.5154163Z size:check: OK (676 files checked, 0 grandfathered, caps 1000 source / 1500 test)
+2026-10-17T20:06:28.5185320Z 
+2026-10-17T20:06:28.5185678Z ==> Bun test (vps deploy guards)
+2026-10-17T20:06:28.5438844Z 
+2026-10-17T20:06:28.5439412Z ==> deploy-guards: tests/vps-deploy-guards.test.ts
+2026-10-17T20:06:28.5523395Z bun test v1.4.0 (34cbb9a40)
+2026-10-17T20:06:28.5550985Z 
+2026-10-17T20:06:28.5551480Z tests/vps-deploy-guards.test.ts:
+2026-10-17T20:06:30.6861257Z {"fixture":"actual_launcher","profile":"current","sha":"c2a9e9cb1cd46025eb2d0519de1242d47e9e17d1","oldSha":"07c091bde8c42bbb1bada2f09aa1e47633be795a","physical_ports":[35217,36291],"proxy_port":38291,"control_port":38935,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"7ee0ecee8b7ac464d71b745c9d40fc0ad05a01ec05da271b4db9398d152caf61"}
+2026-10-17T20:06:41.1362525Z {"proof":"same_sha_actual_recovery","candidate":"c2a9e9cb1cd46025eb2d0519de1242d47e9e17d1","previous":"07c091bde8c42bbb1bada2f09aa1e47633be795a","snapshot":"98d24f549a88dd77c02dd568971630d299cc9442045541f69e9666370d2900dd","trace":["unit-exec /bin/sh /home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-2JvD8m/ops/launch-vps.sh","launcher-options {\"requested_port\":8001,\"physical_port\":35217,\"env_port\":\"8001\"}","proxy-observed {\"loaded_port\":35217,\"status\":200,\"body\":\"{\\\"release\\\":{\\\"git_sha\\\":\\\"07c091bde8c42bbb1bada2f09aa1e47633be795a\\\",\\\"deployment_id\\\":\\\"vps-07c091bde8c42bbb1bada2f09aa1e47633be795a\\\"}}\"}","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet
+2026-10-17T20:06:41.3656647Z (pass) VPS actual rollback and persistent/cleared same-SHA retry preserve immutable bytes [12758.44ms]
+2026-10-17T20:06:43.4017051Z {"fixture":"actual_launcher","profile":"current","sha":"cd5301e93b6f3a1b99f31ceb60a5f01c23bd8ee4","oldSha":"5741afa748edef33d3753d467daa25e70edc3162","physical_ports":[37047,44141],"proxy_port":36719,"control_port":33989,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"db6b9dace50a231db19fa66a249cfce3676439df55ad02884b00e9b1c729d986"}
+2026-10-17T20:06:51.7394134Z {"proof":"post_ingress_retry","trace":["unit-exec /bin/sh /home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-OCMDkG/ops/launch-vps.sh","launcher-options {\"requested_port\":8001,\"physical_port\":37047,\"env_port\":\"8001\"}","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","sudo -n systemctl show caddy -p MainPID --value","sudo -n nsenter -t 42 -m -- sudo -u caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile","git archive --format=tar --output=/home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-OCMDkG/.data/releases/.staging-9XTF7o.tar 5741afa748edef33d3753d467daa25e70edc3162","proxy-observed {\"loa
+2026-10-17T20:06:51.8002270Z (pass) VPS post-ingress failure retains candidate and retries without restart [10434.56ms]
+2026-10-17T20:06:53.8482084Z {"fixture":"actual_launcher","profile":"current","sha":"48c1919b919765a423a7e8dc726b2013f8236666","oldSha":"74c4c4b7697a85f5f56c05939b5459251535c190","physical_ports":[37739,36549],"proxy_port":35193,"control_port":32835,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"d3cbd271182330f1387048d6cc527da0f18f1234b9ace2815e79c89411a32f82"}
+2026-10-17T20:06:56.5940134Z {"proof":"daemon_refusal_prior_listener_untouched","exit_code":1,"trace":["unit-exec /bin/sh /home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-u0ujnT/ops/launch-vps.sh","launcher-options {\"requested_port\":8001,\"physical_port\":37739,\"env_port\":\"8001\"}","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","sudo -n systemctl show caddy -p MainPID --value","sudo -n nsenter -t 42 -m -- sudo -u caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile","git archive --format=tar --output=/home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-u0ujnT/.data/releases/.staging-JFRvQO.tar 74c4c4b7697a85f5f56c05939b545
+2026-10-17T20:06:56.6521112Z (pass) VPS daemon-reload refusal preserves prior listener and issues no gateway restart (#264) [4851.87ms]
+2026-10-17T20:06:58.6759812Z {"fixture":"actual_launcher","profile":"unknown","sha":"a6218b6bfb9e75e0fd48485f20e6cec332848232","oldSha":"76bb3e0ed78db06629339581dabc81c69fd74964","physical_ports":[38909,34697],"proxy_port":39435,"control_port":44029,"launcher_hash":"f61dc03492457c60600f038545f3dc93e43e0b3e027a10f2e027dc848c2d33e6","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"2374076458da3c6c15911d8755733ea12052af3b225653ffecbba684dc1719d9"}
+2026-10-17T20:06:59.4307332Z {"proof":"unsupported_predecessor_preserved","profile":"unknown","trace":["unit-exec /bin/sh /home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-JvrxXe/ops/launch-vps.sh","launcher-options {\"requested_port\":8001,\"physical_port\":38909,\"env_port\":\"8001\"}","proxy-observed {\"loaded_port\":38909,\"status\":200,\"body\":\"{\\\"release\\\":{\\\"git_sha\\\":\\\"76bb3e0ed78db06629339581dabc81c69fd74964\\\",\\\"deployment_id\\\":\\\"vps-76bb3e0ed78db06629339581dabc81c69fd74964\\\"}}\"}","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","sudo -n systemctl show caddy -p MainPID --value","sudo -n nsenter -t 42 -m -- sudo -u caddy caddy validate --config /etc/ca
+2026-10-17T20:06:59.4662013Z (pass) VPS refuses unsupported predecessor unknown before activation [2814.07ms]
+2026-10-17T20:07:01.4874743Z {"fixture":"actual_launcher","profile":"env-port","sha":"13d105ddfdda97721baad45a57922c7e7f72c64c","oldSha":"6c9e3c299056779d73bd24a55a55877856fd88ea","physical_ports":[41001,35795],"proxy_port":37777,"control_port":45893,"launcher_hash":"f29029234d55dea64c09726ee7341cfb1078ddf26425519c0700db4fa4cd0983","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"51545a34ceed4a2805f4990cf221ad22f2e367d232189b5a98fef8fcdae36723"}
+2026-10-17T20:07:02.2446837Z {"proof":"unsupported_predecessor_preserved","profile":"env-port","trace":["unit-exec /bin/sh /home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-fkCaVn/ops/launch-vps.sh","launcher-options {\"requested_port\":8001,\"physical_port\":41001,\"env_port\":\"8001\"}","proxy-observed {\"loaded_port\":41001,\"status\":200,\"body\":\"{\\\"release\\\":{\\\"git_sha\\\":\\\"6c9e3c299056779d73bd24a55a55877856fd88ea\\\",\\\"deployment_id\\\":\\\"vps-6c9e3c299056779d73bd24a55a55877856fd88ea\\\"}}\"}","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","sudo -n systemctl show caddy -p MainPID --value","sudo -n nsenter -t 42 -m -- sudo -u caddy caddy validate --config /etc/c
+2026-10-17T20:07:02.2823880Z (pass) VPS refuses unsupported predecessor env-port before activation [2816.14ms]
+2026-10-17T20:07:03.5662097Z {"fixture":"actual_launcher","profile":"legacy","sha":"a29f8bf6d89459cb231ee2e163c43d2d8e376b48","oldSha":"53b69d67f35f29e2032f62a4866fb547ed7727ab","physical_ports":[43741,35155],"proxy_port":38931,"control_port":40667,"launcher_hash":"fde18debbfe01ba17716d34d0e8de2415ec92de75b7d9e3804e4e5cdb627e8ea","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"4a27f17cb7aa6b01f40f1771fc757eab6101dc0d54512bc148d1b1134afe25ae"}
+2026-10-17T20:07:04.3295984Z {"proof":"unsupported_predecessor_preserved","profile":"legacy","trace":["unit-exec '/home/runner/.bun/bin/bun' --no-env-file --no-install '/home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-Dn9jsU/legacy-listener.ts'","proxy-observed {\"loaded_port\":43741,\"status\":200,\"body\":\"{\\\"release\\\":{\\\"git_sha\\\":\\\"53b69d67f35f29e2032f62a4866fb547ed7727ab\\\",\\\"deployment_id\\\":\\\"vps-53b69d67f35f29e2032f62a4866fb547ed7727ab\\\"}}\"}","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","sudo -n systemctl show caddy -p MainPID --value","sudo -n nsenter -t 42 -m -- sudo -u caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile","git ar
+2026-10-17T20:07:04.3656706Z (pass) VPS refuses unsupported predecessor legacy before activation [2083.29ms]
+2026-10-17T20:07:06.3852621Z {"fixture":"actual_launcher","profile":"current","sha":"966c163b18bef040d1dd6cb349a0a35a90535d55","oldSha":"232aa3d137ec8b71f66fe3bdcee18abf3835edee","physical_ports":[36735,36983],"proxy_port":40385,"control_port":39849,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"d4a3529f780056dd33db797ecbc75ed5d208532f1e96c421fc4e7f615144fae4"}
+2026-10-17T20:07:06.5502246Z (pass) VPS prior listener survives archive-refused [2184.60ms]
+2026-10-17T20:07:08.5709484Z {"fixture":"actual_launcher","profile":"current","sha":"29114a661e23eb60a7a4f2b7cb1c2290b82104dc","oldSha":"63e1eb45d941d434099995d9f9f29fa18673c7d9","physical_ports":[34621,43759],"proxy_port":39899,"control_port":37951,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"6dd8b403c1cea7d1ea22dffeeb7288ffa5fcc598a659843943bdc78c4e9ba958"}
+2026-10-17T20:07:09.3864024Z (pass) VPS prior listener survives preparation-refused [2836.09ms]
+2026-10-17T20:07:11.4084413Z {"fixture":"actual_launcher","profile":"current","sha":"4061960c67d14e81f04d0406f935342726511691","oldSha":"e304234c0705c760896c12c74ed6d1a1071c4088","physical_ports":[35927,42449],"proxy_port":33715,"control_port":34207,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"7941e603b57f5dcb8a9835db5e16202140839a0089c7bc61118c919a8be6854c"}
+2026-10-17T20:07:15.0618509Z (pass) VPS prior listener survives restart-refused [5675.45ms]
+2026-10-17T20:07:17.0784645Z {"fixture":"actual_launcher","profile":"current","sha":"433605cee0c3e1653b138ba2d5098753da751321","oldSha":"75af359c3bde2134cd9a8cb1920a9e4f07b464dd","physical_ports":[40683,37907],"proxy_port":41239,"control_port":40623,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"8db998a16aa5abee14c2e18cbffb281f7d561d31565131dd79d1290db81ce83f"}
+2026-10-17T20:07:21.5579775Z (pass) VPS prior listener survives readiness-refused [6496.08ms]
+2026-10-17T20:09:49.3172792Z (pass) admin API key handlers report a missing KV store [1.59ms]
+2026-10-17T20:09:49.3208903Z (pass) admin API key create validates its fields and reports persistence failures [3.56ms]
+2026-10-17T20:09:49.3211829Z (pass) retired API-key banked reset settings are rejected without mutation [0.31ms]
+2026-10-17T20:09:49.3224780Z (pass) admin API key create reports an unusable Metered pricing response [1.27ms]
+2026-10-17T20:09:49.3235289Z (pass) admin API key paid fallback history validates the key id and limit [1.03ms]
+2026-10-17T20:09:49.3239433Z [ai.ubq.fi] Failed to load paid fallback ledger: 553 | test("admin API key paid fallback history reports a ledger read failure", async () => {
+2026-10-17T20:09:49.3240012Z 554 |   kvStore.clear();
+2026-10-17T20:09:49.3240221Z 555 |   const failingKv = {
+2026-10-17T20:09:49.3240605Z 556 |     get: () => Promise.resolve({ key: [], value: { id: "broken" }, versionstamp: "00000000000000000001" }),
+2026-10-17T20:09:49.3241020Z 557 |     list: () => {
+2026-10-17T20:09:49.3241255Z 558 |       throw new Error("ledger unavailable");
+2026-10-17T20:09:49.3241517Z                       ^
+2026-10-17T20:09:49.3241719Z error: ledger unavailable
+2026-10-17T20:09:49.3242112Z       at list (/home/runner/work/ai.ubq.fi/ai.ubq.fi/tests/admin-api-keys-coverage.test.ts:558:17)
+2026-10-17T20:09:49.3242709Z       at <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/src/paid-fallback/ledger-state.ts:230:32)
+2026-10-17T20:09:49.3243293Z       at async <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/src/admin/api-keys.ts:559:28)
+2026-10-17T20:09:50.0866589Z       at async <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/src/models/codex-models-fetch.ts:533:21)
+2026-10-17T20:09:50.0867174Z       at async <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/src/admin/codex.ts:227:41)
+2026-10-17T20:09:50.0867710Z       at async <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/src/admin/codex.ts:428:28)
+2026-10-17T20:09:50.0868300Z       at async <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/tests/admin-codex-coverage.test.ts:317:31)
+2026-10-17T20:09:50.0868684Z 
+2026-10-17T20:09:50.0868837Z 310 |   assert.equal(rejectedPayload.code, "invalid_api_key");
+2026-10-17T20:09:50.0869323Z 311 |   assert.match(rejectedPayload.message ?? "", /Invalid Codex auth\.json \(upstream 401\)/);
+2026-10-17T20:09:50.0869860Z 312 |   assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_auth"])), false);
+2026-10-17T20:09:50.0870214Z 313 | 
+2026-10-17T20:09:50.0870415Z 314 |   const originalFetch = globalThis.fetch;
+2026-10-17T20:09:50.0870879Z 315 |   globalThis.fetch = createFetchMock(() => Promise.reject(new Error("upstream is unreachable")));
+2026-10-17T20:09:50.0871346Z                                                                     ^
+2026-10-17T20:09:50.0871632Z error: upstream is unreachable
+2026-10-17T20:09:50.0872041Z       at <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/tests/admin-codex-coverage.test.ts:315:63)
+2026-10-17T20:09:50.0872604Z       at <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/src/codex/dispatch.ts:79:18)
+2026-10-17T20:09:50.0873169Z       at <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/src/models/codex-models-fetch.ts:533:21)
+2026-10-17T20:09:50.0875415Z (pass) admin codex auth maps upstream rejection and unreachable upstreams onto errors [3.27ms]
+2026-10-17T20:09:50.0876152Z (pass) admin codex auth requires an existing catalog for a rate-limited upload [0.81ms]
+2026-10-17T20:09:50.0879090Z (pass) admin codex auth keeps the stored catalog for a rate-limited upload [0.74ms]
+2026-10-17T20:09:50.0919230Z (pass) admin codex auth rejects an empty and an oversized upstream catalog [3.97ms]
+2026-10-17T20:09:50.0947937Z (pass) admin codex auth stores the upstream catalog and reports catalog seeding [2.88ms]
+2026-10-17T20:09:50.0956089Z [ai.ubq.fi] Codex catalog seed failed: 59 | const delegateKv = (overrides: Json): Kv => ({ ...baseKv, ...overrides }) as unknown as Kv;
+2026-10-17T20:09:50.0956609Z 60 | 
+2026-10-17T20:09:50.0956821Z 61 | const throwingSetKv = (message: string): Kv =>
+2026-10-17T20:09:50.0957394Z 62 |   delegateKv({
+2026-10-17T20:09:50.0957610Z 63 |     set: () => {
+2026-10-17T20:09:50.0957814Z 64 |       throw new Error(message);
+2026-10-17T20:09:50.0958041Z                      ^
+2026-10-17T20:09:50.0958248Z error: catalog store is unavailable
+2026-10-17T20:09:50.0958639Z       at set (/home/runner/work/ai.ubq.fi/ai.ubq.fi/tests/admin-codex-coverage.test.ts:64:17)
+2026-10-17T20:09:50.0959172Z       at <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/src/catalog/store.ts:261:14)
+2026-10-17T20:09:50.0959482Z 
+2026-10-17T20:09:50.5704021Z (pass) Cerebras claims its id unless the Codex snapshot already owns it [0.31ms]
+2026-10-17T20:09:50.5706146Z (pass) the model picker refuses to render without KV [0.20ms]
+2026-10-17T20:09:50.5738232Z (pass) catalog builder and public/admin handlers retain runtime ids and tiers when the optional full snapshot rejects [3.09ms]
+2026-10-17T20:09:50.5762356Z [ai.ubq.fi] auth {"scope":"admin","token_present":false,"token_shape":null,"ok":false,"method":"missing","status":401,"reason":"missing_token","path":"/admin/models/catalog","headers":{"x-github-owner":null,"x-github-repo":null,"x-github-installation-id":null,"x-ubiquity-kernel-token":"missing"}}
+2026-10-17T20:09:50.5766660Z (pass) optional snapshot failure containment preserves snapshot shape checks and critical control read failures [2.89ms]
+2026-10-17T20:09:50.5782436Z [ai.ubq.fi] Codex catalog generation initialization failed: 116 |   readonly reads: { key: string; consistency?: "strong" | "eventual" }[] = [];
+2026-10-17T20:09:50.5783001Z 117 | 
+2026-10-17T20:09:50.5783378Z 118 |   override get<T>(key: KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> {
+2026-10-17T20:09:50.5783847Z 119 |     const encodedKey = keyOf(key);
+2026-10-17T20:09:50.5784215Z 120 |     this.reads.push({ key: encodedKey, consistency: options?.consistency });
+2026-10-17T20:09:50.5784813Z 121 |     if (this.rejectedKeys.has(encodedKey)) return Promise.reject(new Error("fixture KV read unavailable"));
+2026-10-17T20:09:50.5785326Z                                                                            ^
+2026-10-17T20:09:50.5785776Z error: fixture KV read unavailable
+2026-10-17T20:09:50.5786180Z       at get (/home/runner/work/ai.ubq.fi/ai.ubq.fi/tests/admin-models-catalog.test.ts:121:70)
+2026-10-17T20:09:50.5786733Z       at <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/src/catalog/store.ts:302:28)
+2026-10-17T20:09:50.5787250Z       at <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/src/catalog/index.ts:407:28)
+2026-10-17T20:10:26.1934754Z (pass) lithos: a malformed payload is refused with a message instead of throwing [0.18ms]
+2026-10-17T20:10:26.1935349Z (pass) lithos: model resolution is case-insensitive and returns the canonical id [0.05ms]
+2026-10-17T20:10:26.1939286Z (pass) lithos: a supplied key wins and a missing key fails closed [0.37ms]
+2026-10-17T20:10:26.1940233Z (pass) lithos: the ultra-chat tier's normalized /models/ echo is accepted and the requested id is echoed back [0.09ms]
+2026-10-17T20:10:26.1944954Z (pass) lithos: an absent, matching or slug-normalized model echo is accepted while a different model is refused [0.39ms]
+2026-10-17T20:10:26.1945407Z 
+2026-10-17T20:10:26.1945589Z  9 pass
+2026-10-17T20:10:26.1945760Z  0 fail
+2026-10-17T20:10:26.1945938Z Ran 9 tests across 1 file. [69.00ms]
+2026-10-17T20:10:26.1984279Z 
+2026-10-17T20:10:26.1984612Z ==> main: tests/lithos-wiring.test.ts
+2026-10-17T20:10:26.2063650Z bun test v1.4.0 (34cbb9a40)
+2026-10-17T20:10:26.2089977Z 
+2026-10-17T20:10:26.2090344Z tests/lithos-wiring.test.ts:
+2026-10-17T20:10:26.2971679Z (pass) lithos wiring: dispatches Chat Completions to the vendor with the bearer key and a verbatim reasoning_effort [6.33ms]
+2026-10-17T20:10:26.3026260Z (pass) lithos wiring: relays the vendor's Chat stream frames and its unconditional usage [5.50ms]
+2026-10-17T20:10:26.3066915Z (pass) lithos wiring: streams the translated Responses event sequence [4.10ms]
+2026-10-17T20:10:26.3081047Z (pass) lithos wiring: serves /v1/responses through the shared profile translation [1.43ms]
+2026-10-17T20:10:26.3094903Z [ai.ubq.fi] lithos_upstream_error {"status":402,"code":"insufficient_quota","message":"Your organization has no credit remaining.","request":{"model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","reasoning_effort":"medium","stream":false,"tools":0,"tool_choice":null,"max_tokens":null,"message_count":1,"last_user_index":0,"omitted_message_count":0,"messages":[{"index":0,"role":"user","reasoning":"absent","tool_calls":0,"content":"string","after_last_user":false}]}}
+2026-10-17T20:10:26.3099406Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-429-budget","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"window_ms":120000,"window_source":"retry-after-ms","retry_after":"17","retry_after_ms":120000,"remaining_tokens":0,"limit_tokens":200000,"reset_tokens":"45s","remaining_requests":0,"limit_requests":600,"reset_requests":"12s","should_retry":null}
+2026-10-17T20:10:26.3102772Z [ai.ubq.fi] lithos_upstream_error {"status":429,"code":"rate_limit_exceeded","message":"Rate limit exceeded for input_tokens.","request":{"model":"deepseek-ai/DeepSeek-V4.1-Flash","reasoning_effort":"medium","stream":false,"tools":0,"tool_choice":null,"max_tokens":null,"message_count":1,"last_user_index":0,"omitted_message_count":0,"messages":[{"index":0,"role":"user","reasoning":"absent","tool_calls":0,"content":"string","after_last_user":false}]}}
+2026-10-17T20:10:26.3105343Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-429-overloaded","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","attempt":1,"window_ms":null,"window_source":null,"retry_after":null,"retry_after_ms":null,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.3107373Z [ai.ubq.fi] lithos_rate_limit_failover {"request_id":"lithos-429-overloaded","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","sibling_model":"deepseek-ai/DeepSeek-V4.1-Flash-fast","attempt":1}
+2026-10-17T20:10:26.3109343Z [ai.ubq.fi] lithos_upstream_error {"status":429,"code":"provider_overloaded","message":"The model is at capacity.","request":{"model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","reasoning_effort":"medium","stream":false,"tools":0,"tool_choice":null,"max_tokens":null,"message_count":1,"last_user_index":0,"omitted_message_count":0,"messages":[{"index":0,"role":"user","reasoning":"absent","tool_calls":0,"content":"string","after_last_user":false}]}}
+2026-10-17T20:10:26.3112001Z [ai.ubq.fi] lithos_upstream_error {"status":404,"code":"model_not_found","message":"The model does not exist.","request":{"model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","reasoning_effort":"medium","stream":false,"tools":0,"tool_choice":null,"max_tokens":null,"message_count":1,"last_user_index":0,"omitted_message_count":0,"messages":[{"index":0,"role":"user","reasoning":"absent","tool_calls":0,"content":"string","after_last_user":false}]}}
+2026-10-17T20:10:26.3114844Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-429-overloaded","model":"deepseek-ai/DeepSeek-V4.1-Flash-fast","attempt":2,"window_ms":null,"window_source":null,"retry_after":null,"retry_after_ms":null,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.3117486Z [ai.ubq.fi] lithos_upstream_error {"status":400,"code":"400","message":"Invalid value for 'n': must be 1","request":{"model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","reasoning_effort":"medium","stream":false,"tools":0,"tool_choice":null,"max_tokens":null,"message_count":1,"last_user_index":0,"omitted_message_count":0,"messages":[{"index":0,"role":"user","reasoning":"absent","tool_calls":0,"content":"string","after_last_user":false}]}}
+2026-10-17T20:10:26.3120356Z [ai.ubq.fi] lithos_upstream_error {"status":500,"code":"lithos_upstream_error","message":null,"request":{"model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","reasoning_effort":"medium","stream":false,"tools":0,"tool_choice":null,"max_tokens":null,"message_count":1,"last_user_index":0,"omitted_message_count":0,"messages":[{"index":0,"role":"user","reasoning":"absent","tool_calls":0,"content":"string","after_last_user":false}]}}
+2026-10-17T20:10:26.3122352Z [ai.ubq.fi] lithos_rate_limit_failover {"request_id":"lithos-429-overloaded","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","sibling_model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":2}
+2026-10-17T20:10:26.3123288Z (pass) lithos wiring: maps the vendor's refusal semantics distinctly [3.84ms]
+2026-10-17T20:10:26.3124710Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-429-overloaded","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":3,"window_ms":null,"window_source":null,"retry_after":null,"retry_after_ms":null,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.3187116Z (pass) lithos wiring: the catalog advertises eight addressable ids only while the key is configured [6.62ms]
+2026-10-17T20:10:26.3188582Z (pass) lithos rate-limit waits follow the vendor's own header precedence [0.23ms]
+2026-10-17T20:10:26.3190900Z (pass) lithos rate-limit numeric headers reject nonfinite waits and retain finite precedence [0.26ms]
+2026-10-17T20:10:26.3194121Z (pass) lithos rate-limit numeric windows reject nonfinite deadlines and keep finite expiry [0.15ms]
+2026-10-17T20:10:26.3194761Z (pass) lithos refusal windows select the highest recovered rung at its own deadline [0.08ms]
+2026-10-17T20:10:26.3202056Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-window-overlap","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","attempt":1,"window_ms":60000,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":60000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.3203910Z [ai.ubq.fi] lithos_rate_limit_failover {"request_id":"lithos-window-overlap","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","sibling_model":"deepseek-ai/DeepSeek-V4.1-Flash-fast","attempt":1}
+2026-10-17T20:10:26.3205804Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-window-overlap","model":"deepseek-ai/DeepSeek-V4.1-Flash-fast","attempt":2,"window_ms":1000,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":1000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.3207584Z [ai.ubq.fi] lithos_rate_limit_failover {"request_id":"lithos-window-overlap","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","sibling_model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":2}
+2026-10-17T20:10:26.3208808Z [ai.ubq.fi] lithos_rate_limit_failover {"request_id":"lithos-window-retained","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","sibling_model":"deepseek-ai/DeepSeek-V4.1-Flash-fast","attempt":1}
+2026-10-17T20:10:26.3218775Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-window-overlap","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","attempt":1,"window_ms":60000,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":60000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.3220960Z [ai.ubq.fi] lithos_rate_limit_failover {"request_id":"lithos-window-overlap","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","sibling_model":"deepseek-ai/DeepSeek-V4.1-Flash-fast","attempt":1}
+2026-10-17T20:10:26.3222874Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-window-overlap","model":"deepseek-ai/DeepSeek-V4.1-Flash-fast","attempt":2,"window_ms":120000,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":120000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.3224808Z [ai.ubq.fi] lithos_rate_limit_failover {"request_id":"lithos-window-overlap","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","sibling_model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":2}
+2026-10-17T20:10:26.3226214Z [ai.ubq.fi] lithos_rate_limit_failover {"request_id":"lithos-window-retained","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","sibling_model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1}
+2026-10-17T20:10:26.3246032Z (pass) lithos refusal windows preserve each rung's own reset in handler routing [4.53ms]
+2026-10-17T20:10:26.3246637Z (pass) lithos rate-limit snapshots capture the vendor's own budgets, bounded [0.13ms]
+2026-10-17T20:10:26.3269822Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-failover-chat","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","attempt":1,"window_ms":5000,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":5000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.3271919Z (pass) lithos wiring: an Ultra refusal fails over once to the sibling tier's own bucket [3.11ms]
+2026-10-17T20:10:26.3272837Z [ai.ubq.fi] lithos_rate_limit_failover {"request_id":"lithos-failover-chat","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","sibling_model":"deepseek-ai/DeepSeek-V4.1-Flash-fast","attempt":1}
+2026-10-17T20:10:26.3277582Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-429-relay","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","attempt":1,"window_ms":null,"window_source":null,"retry_after":null,"retry_after_ms":5000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":"0.02s","remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":"false"}
+2026-10-17T20:10:26.3279337Z [ai.ubq.fi] lithos_rate_limit_failover {"request_id":"lithos-429-relay","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","sibling_model":"deepseek-ai/DeepSeek-V4.1-Flash-fast","attempt":1}
+2026-10-17T20:10:26.3281053Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-429-relay","model":"deepseek-ai/DeepSeek-V4.1-Flash-fast","attempt":2,"window_ms":null,"window_source":null,"retry_after":null,"retry_after_ms":5000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":"0.02s","remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":"false"}
+2026-10-17T20:10:26.3282743Z [ai.ubq.fi] lithos_rate_limit_failover {"request_id":"lithos-429-relay","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","sibling_model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":2}
+2026-10-17T20:10:26.3284415Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-429-relay","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":3,"window_ms":null,"window_source":null,"retry_after":null,"retry_after_ms":5000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":"0.02s","remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":"false"}
+2026-10-17T20:10:26.3286842Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-429-absorb-chat","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","attempt":1,"window_ms":120,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":120,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.3288615Z [ai.ubq.fi] lithos_rate_limit_failover {"request_id":"lithos-429-absorb-chat","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","sibling_model":"deepseek-ai/DeepSeek-V4.1-Flash-fast","attempt":1}
+2026-10-17T20:10:26.3290389Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-429-absorb-chat","model":"deepseek-ai/DeepSeek-V4.1-Flash-fast","attempt":2,"window_ms":120,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":120,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.3292166Z [ai.ubq.fi] lithos_rate_limit_failover {"request_id":"lithos-429-absorb-chat","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","sibling_model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":2}
+2026-10-17T20:10:26.3293905Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-429-absorb-chat","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":3,"window_ms":120,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":120,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.3296503Z [ai.ubq.fi] lithos_upstream_error {"status":429,"code":"rate_limit_exceeded","message":"Rate limit exceeded for input_tokens.","request":{"model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","reasoning_effort":"medium","stream":false,"tools":0,"tool_choice":null,"max_tokens":null,"message_count":1,"last_user_index":0,"omitted_message_count":0,"messages":[{"index":0,"role":"user","reasoning":"absent","tool_calls":0,"content":"string","after_last_user":false}]}}
+2026-10-17T20:10:26.3298559Z (pass) lithos wiring: a refusal on both tiers is relayed without waiting [0.81ms]
+2026-10-17T20:10:26.3299476Z [ai.ubq.fi] lithos_rate_limit_wait {"request_id":"lithos-429-absorb-chat","model":"deepseek-ai/DeepSeek-V4.1-Flash-ultra","attempt":3,"wait_ms":120,"wait_source":"retry-after-ms","waited_ms":120,"cap_ms":75000}
+2026-10-17T20:10:26.4496361Z (pass) lithos wiring: a refusal on both tiers is absorbed by the vendor's own window, then the requested tier answers [121.52ms]
+2026-10-17T20:10:26.4508762Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-wait-chat-already-deadline","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"window_ms":10000,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":10000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.4510771Z [ai.ubq.fi] lithos_rate_limit_wait {"request_id":"lithos-wait-chat-already-deadline","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"wait_ms":10000,"wait_source":"retry-after-ms","waited_ms":10000,"cap_ms":75000}
+2026-10-17T20:10:26.4519784Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-wait-chat-already-cancellation","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"window_ms":10000,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":10000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.4521782Z [ai.ubq.fi] lithos_rate_limit_wait {"request_id":"lithos-wait-chat-already-cancellation","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"wait_ms":10000,"wait_source":"retry-after-ms","waited_ms":10000,"cap_ms":75000}
+2026-10-17T20:10:26.4523718Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-wait-chat-during-deadline","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"window_ms":10000,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":10000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.4525793Z [ai.ubq.fi] lithos_rate_limit_wait {"request_id":"lithos-wait-chat-during-deadline","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"wait_ms":10000,"wait_source":"retry-after-ms","waited_ms":10000,"cap_ms":75000}
+2026-10-17T20:10:26.4537480Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-wait-chat-during-cancellation","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"window_ms":10000,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":10000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.4539672Z [ai.ubq.fi] lithos_rate_limit_wait {"request_id":"lithos-wait-chat-during-cancellation","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"wait_ms":10000,"wait_source":"retry-after-ms","waited_ms":10000,"cap_ms":75000}
+2026-10-17T20:10:26.4551207Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-wait-responses-already-deadline","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"window_ms":10000,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":10000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.4553198Z [ai.ubq.fi] lithos_rate_limit_wait {"request_id":"lithos-wait-responses-already-deadline","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"wait_ms":10000,"wait_source":"retry-after-ms","waited_ms":10000,"cap_ms":75000}
+2026-10-17T20:10:26.4556082Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-wait-responses-already-cancellation","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"window_ms":10000,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":10000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.4558076Z [ai.ubq.fi] lithos_rate_limit_wait {"request_id":"lithos-wait-responses-already-cancellation","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"wait_ms":10000,"wait_source":"retry-after-ms","waited_ms":10000,"cap_ms":75000}
+2026-10-17T20:10:26.4560107Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-wait-responses-during-deadline","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"window_ms":10000,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":10000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:26.4562038Z [ai.ubq.fi] lithos_rate_limit_wait {"request_id":"lithos-wait-responses-during-deadline","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"wait_ms":10000,"wait_source":"retry-after-ms","waited_ms":10000,"cap_ms":75000}
+2026-10-17T20:10:26.4568550Z [ai.ubq.fi] lithos_rate_limit_refusal {"request_id":"lithos-wait-responses-during-cancellation","model":"deepseek-ai/DeepSeek-V4.1-Flash","attempt":1,"window_ms":10000,"window_source":"retry-after-ms","retry_after":null,"retry_after_ms":10000,"remaining_tokens":null,"limit_tokens":null,"reset_tokens":null,"remaining_requests":null,"limit_requests":null,"reset_requests":null,"should_retry":null}
+2026-10-17T20:10:28.2903102Z (pass) POST /v1/live fails closed when the selected account disappears while its token is refreshing [10.44ms]
+2026-10-17T20:10:28.2903711Z 
+2026-10-17T20:10:28.2904183Z  10 pass
+2026-10-17T20:10:28.2904386Z  0 fail
+2026-10-17T20:10:28.2904571Z Ran 10 tests across 1 file. [348.00ms]
+2026-10-17T20:10:28.2974313Z 
+2026-10-17T20:10:28.2974740Z ==> main: tests/live-network-policy.test.ts
+2026-10-17T20:10:28.3050294Z bun test v1.4.0 (34cbb9a40)
+2026-10-17T20:10:28.3078183Z 
+2026-10-17T20:10:28.3078419Z tests/live-network-policy.test.ts:
+2026-10-17T20:10:28.3318902Z (pass) live destinations are explicit http(s) origins with their effective TCP port [0.32ms]
+2026-10-17T20:10:28.3321067Z (pass) live network plans scope one endpoint per platform and fail closed elsewhere [0.31ms]
+2026-10-17T20:10:28.3342305Z (pass) only the explicitly selected e2e segment selects the live policy [2.02ms]
+2026-10-17T20:10:28.3348270Z (pass) live argv keeps the deterministic namespace and only adds the scoped relay and forwarder [0.64ms]
+2026-10-17T20:10:29.4404059Z (pass) live timeout settles the private process tree and removes the relay directory [1105.48ms]
+2026-10-17T20:10:29.9788168Z {"proof":[{"name":"host-loopback","reachable":true,"denied":4,"loopback":true,"unix":true,"descendant":true},{"name":"ipv4","reachable":true,"denied":4,"loopback":true,"unix":true,"descendant":true},{"name":"hostname","reachable":true,"denied":4,"loopback":true,"unix":true,"descendant":true},{"name":"deterministic-host-loopback","reachable":false,"denied":4,"loopback":true,"unix":true,"descendant":true},{"name":"deterministic-hostname","reachable":false,"denied":4,"loopback":true,"unix":true,"descendant":true},{"name":"live-e2e","code":0},{"name":"deterministic-e2e","code":1}],"hits":{"loopback":3,"strayLoopback":1,"gateway":8,"strayPort":1,"external":2}}
+2026-10-17T20:10:29.9791183Z (pass) live policy reaches only its approved loopback, IPv4 or hostname fixture while deterministic profiles stay local-only [538.40ms]
+2026-10-17T20:10:29.9791864Z 
+2026-10-17T20:10:29.9791953Z  6 pass
+2026-10-17T20:10:29.9792115Z  0 fail
+2026-10-17T20:10:29.9792280Z  68 expect() calls
+2026-10-17T20:10:29.9792477Z Ran 6 tests across 1 file. [1.67s]
+2026-10-17T20:10:29.9818038Z 
+2026-10-17T20:10:29.9818532Z ==> main: tests/live-sideband-http.test.ts
+2026-10-17T20:10:29.9895987Z bun test v1.4.0 (34cbb9a40)
+2026-10-17T20:10:29.9923844Z 
+2026-10-17T20:10:29.9924333Z tests/live-sideband-http.test.ts:
+2026-10-17T20:10:30.2757538Z (pass) GET /v1/live/<call_id> keeps the frames a client sends immediately after the 101, in order [230.17ms]
+2026-10-17T20:10:30.3603597Z (pass) GET /v1/live/<call_id> flushes a delayed-open queue at the UTF-8 payload byte boundary and keeps relaying [84.61ms]
+2026-10-17T20:10:30.4285705Z (pass) GET /v1/live/<call_id> rejects oversized UTF-8 and binary client frames before the delayed upstream opens [68.15ms]
+2026-10-17T20:10:30.5005926Z (pass) GET /v1/live/<call_id> caps a delayed-open queue by bytes below the frame-count limit [72.02ms]
+2026-10-17T20:10:30.5638537Z (pass) GET /v1/live/<call_id> checks pending bytes plus the next frame during queued flush and direct send [63.24ms]
+2026-10-17T20:10:30.5866445Z (pass) GET /v1/live/<call_id> bridges the sideband to the mapped account's upstream and relays frames both ways [22.78ms]
+2026-10-17T20:10:30.5973303Z (pass) GET /v1/live/<call_id> rejects an unauthenticated upgrade without dialing upstream [10.67ms]
+2026-10-17T20:10:30.6063037Z (pass) GET /v1/live/<call_id> answers 404 for an unknown call id without dialing upstream [8.95ms]
+2026-10-17T20:10:32.6338656Z 293 |     waitForUpstreamHandshake: async () => {
+2026-10-17T20:10:32.6339114Z 294 |       for (let attempt = 0; attempt < 200; attempt += 1) {
+2026-10-17T20:10:32.6339455Z 295 |         if (upstreamHandshakeStarted) return;
+2026-10-17T20:10:32.6339806Z 296 |         await new Promise((resolve) => setTimeout(resolve, 10));
+2026-10-17T20:10:32.6340124Z 297 |       }
+2026-10-17T20:10:32.6340419Z 298 |       throw new Error("the gateway never started the upstream handshake");
+2026-10-17T20:10:32.6340767Z                       ^
+2026-10-17T20:10:32.6341015Z error: the gateway never started the upstream handshake
+2026-10-17T20:10:32.6341495Z       at <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/tests/live-sideband-http.test.ts:298:17)
+2026-10-17T20:10:32.6342122Z       at async <anonymous> (/home/runner/work/ai.ubq.fi/ai.ubq.fi/tests/live-sideband-http.test.ts:725:19)
+2026-10-17T20:10:32.6342795Z (fail) GET /v1/live/<call_id> retires a terminal upstream mapping before closing and allowing reconnect [2027.48ms]
+2026-10-17T20:10:32.6439477Z (pass) GET /v1/live/<call_id> answers 403 for a different valid principal without dialing upstream [10.13ms]
+2026-10-17T20:10:32.6526181Z (pass) GET /v1/live/<call_id> fails closed for a mapping with no recorded principal [8.66ms]
+2026-10-17T20:10:32.6859362Z (pass) GET /v1/live/<call_id> lets the creating principal reconnect on the same upstream account [33.28ms]
+2026-10-17T20:10:32.7139932Z (pass) GET /v1/live/<call_id> refreshes the mapped account's expired token before dialing upstream [28.04ms]
+2026-10-17T20:10:32.7513137Z (pass) GET /v1/live/<call_id> refreshes again on reconnect when the mapped credential expired again [37.27ms]
+2026-10-17T20:10:32.7615418Z (pass) GET /v1/live/<call_id> answers 404 when the mapped account is no longer configured [10.24ms]
+2026-10-17T20:10:32.7615938Z 
+2026-10-17T20:10:32.7616023Z  14 pass
+2026-10-17T20:10:32.7616188Z  1 fail
+2026-10-17T20:10:32.7616363Z Ran 15 tests across 1 file. [2.77s]
+2026-10-17T20:10:32.7720825Z FAILED tests/live-sideband-http.test.ts (exit 1)
+2026-10-17T20:10:32.7721571Z 
+2026-10-17T20:10:32.7721686Z ==> main: tests/local-admin-auth.test.ts
+2026-10-17T20:10:32.7799081Z bun test v1.4.0 (34cbb9a40)
+2026-10-17T20:10:32.7826160Z 
+2026-10-17T20:10:32.7826596Z tests/local-admin-auth.test.ts:
+2026-10-17T20:10:32.9467557Z (pass) serve runtime options keep admin auth enabled by default [0.14ms]
+2026-10-17T20:10:32.9471891Z (pass) serve runtime options accept only one exact disable-admin-auth flag [0.46ms]
+2026-10-17T20:10:32.9472400Z (pass) disable-admin-auth is rejected in Deno Deploy [0.05ms]
+2026-10-17T20:10:32.9473630Z (pass) loopback detection accepts local TCP hostnames only [0.17ms]
+2026-10-17T20:10:32.9475657Z (pass) admin auth can only be disabled on a loopback TCP listener [0.19ms]
+2026-10-17T20:12:52.0252104Z (pass) the Mac launcher overrides only child SQLite temp after explicit root dotenv loading [0.45ms]
+2026-10-17T20:12:52.0284727Z (pass) copied service launcher ops retain every static relative dependency on both platform branches [3.14ms]
+2026-10-17T20:12:52.0285312Z 
+2026-10-17T20:12:52.0285693Z  27 pass
+2026-10-17T20:12:52.0285873Z  0 fail
+2026-10-17T20:12:52.0286189Z Ran 27 tests across 1 file. [150.00ms]
+2026-10-17T20:12:52.0324243Z 
+2026-10-17T20:12:52.0324651Z ==> mac-native-auth: ops/tests/mac-native-auth-permissions.test.ts
+2026-10-17T20:12:52.0401770Z bun test v1.4.0 (34cbb9a40)
+2026-10-17T20:12:52.0429563Z 
+2026-10-17T20:12:52.0429921Z ops/tests/mac-native-auth-permissions.test.ts:
+2026-10-17T20:12:54.1992043Z {"case":"dotenv custom home","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":27,"serverPid":27,"settled":true}
+2026-10-17T20:12:54.2350213Z (pass) Mac plist native permissions: dotenv custom home [2153.49ms]
+2026-10-17T20:12:56.3146424Z {"case":"default home","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":60,"serverPid":60,"settled":true}
+2026-10-17T20:12:56.3497307Z (pass) Mac plist native permissions: default home [2114.98ms]
+2026-10-17T20:12:58.4331053Z {"case":"empty override","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":93,"serverPid":93,"settled":true}
+2026-10-17T20:12:58.4671981Z (pass) Mac plist native permissions: empty override [2117.47ms]
+2026-10-17T20:13:00.5415051Z {"case":"inherited override wins","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":126,"serverPid":126,"settled":true}
+2026-10-17T20:13:00.5771636Z (pass) Mac plist native permissions: inherited override wins [2109.95ms]
+2026-10-17T20:13:02.6399025Z {"case":"spaces and literal comma","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":159,"serverPid":159,"settled":true}
+2026-10-17T20:13:02.6733258Z (pass) Mac plist native permissions: spaces and literal comma [2096.13ms]
+2026-10-17T20:13:04.7441791Z {"case":"custom without HOME","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":192,"serverPid":192,"settled":true}
+2026-10-17T20:13:04.7809307Z (pass) Mac plist native permissions: custom without HOME [2107.55ms]
+2026-10-17T20:13:06.5388876Z (pass) Mac plist native permissions: missing home refuses startup [1757.93ms]
+2026-10-17T20:13:08.6116874Z {"case":"literal symlink alias","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":253,"serverPid":253,"settled":true}
+2026-10-17T20:13:08.6469868Z (pass) Mac plist native permissions: literal symlink alias [2108.12ms]
+2026-10-17T20:13:10.7344604Z {"case":"absent native directory permits entry","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":286,"serverPid":286,"settled":true}
+2026-10-17T20:13:10.7692913Z (pass) Mac plist native permissions: absent native directory permits entry [2122.22ms]
+2026-10-17T20:13:12.0381026Z (pass) Mac plist native permissions: missing managed runtime fails closed [1268.79ms]
+2026-10-17T20:13:13.2996821Z (pass) Mac plist native permissions: corrupt managed runtime fails closed [1261.54ms]
+2026-10-17T20:13:13.2997338Z 
+2026-10-17T20:13:13.2997598Z  11 pass
+2026-10-17T20:13:13.2997768Z  0 fail
+2026-10-17T20:13:13.2998057Z Ran 11 tests across 1 file. [21.26s]
+2026-10-17T20:13:13.3092593Z 
+2026-10-17T20:13:13.3093023Z ==> mac-maintenance: ops/tests/mac-event-maintenance.test.ts
+2026-10-17T20:13:13.3167938Z bun test v1.4.0 (34cbb9a40)
+2026-10-17T20:13:13.3193196Z 
+2026-10-17T20:13:13.3193469Z ops/tests/mac-event-maintenance.test.ts:
+2026-10-17T20:13:13.5690243Z {"fixtureManifest":{"ops/release-artifact.ts":"c99b675c072567458e8b859e4710c30d9371af47ba72f7481d07224ada572f7c","ops/native-kv-release.ts":"dae54b41150ff939df2bb2f66b40030bcafef1f2664ee18d2915c2298983fcf6","src/storage/native-addon.ts":"3127f82fd82711cc56f800b9a58e6e625a13f49a6ff7f0c29de3389d73bb8b2e","src/runtime/native-kv-bootstrap.ts":"43529e0f1bd0600151cfecc0b32ccb7d4182d8978db120f26b4c54aff1b69b91","src/config.ts":"e4786fe7e6f0ff4ab7d1c00d9cc6ae9b00e4a8a87606574d8b9e53935efac9dd","src/kv.ts":"cd2dbb53b5057859a82051bb84d4abd870fa066a97bef5552bf8cc1f57be9450","src/codex/reset-settings.ts":"7329d1a4cac2dc1b481dfeb78828f6692ac2aa03965e6ec6f237fad8d9b0d1be","src/auth/local-admin.ts":"76fb56e247eb3414ab2cda66096898525ca46b42ec5fba2847111ca1984e5186","src/auth/local-development-key.ts":"780871864a72f0d245985e0ca1b5ad5a78ed98a634e57a39eac2989a771a9654","src/cache/prompt-analytics.ts":"999ae5ec6d8709038c8068a0f3d9da00e910d279a93fa24b3f37c059d237979c","src/paid
+2026-10-17T20:13:13.5697920Z (pass) Mac entry preserves event maintenance and defers missing settlement logs without periodic intervals [223.38ms]
+2026-10-17T20:13:13.5698351Z 
+2026-10-17T20:13:13.5698423Z  1 pass
+2026-10-17T20:13:13.5698586Z  0 fail
+2026-10-17T20:13:13.5698762Z Ran 1 test across 1 file. [252.00ms]
+2026-10-17T20:13:13.5728523Z test:main: 248 files, 1 failures
+2026-10-17T20:13:13.5752988Z !!! FAILED: Bun test (main and isolated measurement/hook/Mac fixtures)
+2026-10-17T20:13:13.5753272Z 
+2026-10-17T20:13:13.5754342Z ==> Bun test (sentinel local)
+2026-10-17T20:13:13.6003365Z 
+2026-10-17T20:13:13.6004089Z ==> sentinel: tests/sentinel-replay-export.test.ts
+2026-10-17T20:13:13.6087221Z bun test v1.4.0 (34cbb9a40)
+2026-10-17T20:13:13.6114894Z 
+2026-10-17T20:13:13.6115033Z tests/sentinel-replay-export.test.ts:
+2026-10-17T20:13:13.8326869Z [ai.ubq.fi] auth {"scope":"admin","token_present":false,"token_shape":null,"ok":false,"method":"missing","status":401,"reason":"missing_token","path":"/admin/sentinel/replay-captures","headers":{"x-github-owner":null,"x-github-repo":null,"x-github-installation-id":null,"x-ubiquity-kernel-token":"missing"}}
+2026-10-17T20:13:13.8340143Z (pass) anonymous replay-captures requests are rejected before any storage access [2.98ms]
+2026-10-17T20:13:13.8433841Z (pass) an authenticated admin passkey reaches the replay export [9.32ms]
+2026-10-17T20:15:01.0346526Z 
+2026-10-17T20:15:01.0347066Z benchmarks/baselines/tests/adapter-b.test.ts:
+2026-10-17T20:15:01.0997230Z (pass) B: implements the BenchmarkAdapter contract and is refused by default [0.04ms]
+2026-10-17T20:15:01.1187344Z (pass) B: default instance refuses to run without cloning or spawning [19.00ms]
+2026-10-17T20:15:01.1312864Z (pass) B: live driver is refused without the explicit allowLiveProcess opt-in [12.52ms]
+2026-10-17T20:15:01.1616498Z (pass) B: scripted driver completes nav-001 and records bridge events [30.30ms]
+2026-10-17T20:15:01.1617629Z (pass) B: pinned provenance record matches the live primary-source facts [0.06ms]
+2026-10-17T20:15:01.1618327Z (pass) B: assumed JSONL parser maps events and skips unverified lines [0.26ms]
+2026-10-17T20:15:01.1619034Z (pass) B: bridge event mapping produces schema-valid trajectory events [0.07ms]
+2026-10-17T20:15:01.1624710Z (pass) B: child stderr is drained without waiting for stdout [0.52ms]
+2026-10-17T20:15:01.1793068Z (pass) B: native child emits stdout after stderr exceeds pipe capacity [16.78ms]
+2026-10-17T20:15:01.2804197Z (pass) B: native child settles when its caller aborts [101.05ms]
+2026-10-17T20:15:01.2804514Z 
+2026-10-17T20:15:01.2804601Z  10 pass
+2026-10-17T20:15:01.2804763Z  0 fail
+2026-10-17T20:15:01.2804944Z Ran 10 tests across 1 file. [248.00ms]
+2026-10-17T20:15:01.2854901Z 
+2026-10-17T20:15:01.2855640Z ==> benchmark: benchmarks/baselines/tests/adapter-d.test.ts
+2026-10-17T20:15:01.2934807Z bun test v1.4.0 (34cbb9a40)
+2026-10-17T20:15:01.2961369Z 
+2026-10-17T20:15:01.2961705Z benchmarks/baselines/tests/adapter-d.test.ts:
+2026-10-17T20:15:01.3634293Z (pass) D: implements the BenchmarkAdapter contract and is refused by default [0.03ms]
+2026-10-17T20:15:01.3826558Z (pass) D: default instance refuses to run (unapproved control model, no transport) [19.20ms]
+2026-10-17T20:15:01.4024039Z (pass) D: configured fake transport completes nav-001 under the control model [19.73ms]
+2026-10-17T20:15:01.4139363Z (pass) D: a mismatched upstream model is rejected deterministically [11.56ms]
+2026-10-17T20:15:01.4140418Z (pass) D: control model approval gate stays closed for the placeholder [0.15ms]
+2026-10-17T20:15:01.4140758Z 
+2026-10-17T20:15:01.4140831Z  5 pass
+2026-10-17T20:15:01.4141000Z  0 fail
+2026-10-17T20:15:01.4141176Z Ran 5 tests across 1 file. [120.00ms]
+2026-10-17T20:15:01.4188016Z 
+2026-10-17T20:15:01.4188573Z ==> benchmark: benchmarks/baselines/tests/registry.test.ts
+2026-10-17T20:15:01.4265329Z bun test v1.4.0 (34cbb9a40)
+2026-10-17T20:15:01.4291803Z 
+2026-10-17T20:15:01.4292586Z benchmarks/baselines/tests/registry.test.ts:
+2026-10-17T20:15:01.4978347Z (pass) registry: exposes exactly A, B, D in stable order, all external [0.14ms]
+2026-10-17T20:15:01.5039044Z (pass) registry: the runner refuses every baseline adapter [6.11ms]
+2026-10-17T20:15:01.5049677Z (pass) registry: mixed reference + baseline selection still refuses the live adapter [1.10ms]
+2026-10-17T20:15:01.5050468Z (pass) registry: gate assertion helper rejects the baselines [0.11ms]
+2026-10-17T20:15:01.5051022Z 
+2026-10-17T20:15:01.5051286Z  4 pass
+2026-10-17T20:15:01.5051503Z  0 fail
+2026-10-17T20:15:01.5051690Z Ran 4 tests across 1 file. [78.00ms]
+2026-10-17T20:15:01.5102120Z test:benchmark: 14 files, 0 failures
+2026-10-17T20:15:01.5120480Z 
+2026-10-17T20:15:01.5120622Z verify: FAILED
+2026-10-17T20:15:01.5138216Z ##[error]Process completed with exit code 1.
+2026-10-17T20:15:01.5283050Z Post job cleanup.
+2026-10-17T20:15:01.5979372Z [command]/usr/bin/git version
+2026-10-17T20:15:01.6013608Z git version 2.55.0

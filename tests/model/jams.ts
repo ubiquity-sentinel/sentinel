@@ -138,6 +138,9 @@ const OWNER_GATES: ReadonlySet<string> = new Set([
   "impl.no_receipt@cap200",
   "rev.admission_refused",
   "rev.acceptance_mismatch",
+  "rev.acceptance_owner",
+  "ref.refused",
+  "impl.repeat_failure",
   "ci.fix_exhausted",
   "ceil.unreviewed",
   "ceil.rejected",
@@ -460,91 +463,32 @@ export async function runChecker(
 }
 
 /**
- * Every counterexample on the current code (3f041b46d launcher, R80
- * runtime). Documented expected failures: the test asserts the checker finds
+ * Every counterexample on the integrated generation-81 source. Launcher
+ * scenarios keep the installed R80 pin until the separate launcher rollout. Documented expected failures: the test asserts the checker finds
  * exactly these. Fixing one means removing it here.
  */
 export const KNOWN_JAMS: readonly string[] = [
-  // J1, parks the owner rules expect to progress (no launcher rule, no line).
-  "J1:park:impl.loop_stop@fresh", // "failed_command_loop": no retry prefix
-  "J1:park:impl.loop_stop@correction",
-  "J1:park:impl.artifact_only@fresh", // artifact-only candidate: no prefix
-  "J1:park:impl.artifact_only@correction",
-  "J1:park:impl.uncertain@correction", // evidence expiry needs no head/PR
-  "J1:park:impl.matrix_uncertain@correction",
-  "J1:park:cell.source_read_unavailable@fresh", // cell refusal details
-  "J1:park:cell.state_unavailable@fresh", // are blockers no prefix matches
-  "J1:park:cell.bundle_failed@fresh",
-  "J1:park:cell.bundle_capability@fresh",
-  "J1:park:cell.no_receipt@fresh",
-  "J1:park:cell.source_changed@fresh",
-  "J1:park:cell.native_dependencies@fresh",
-  "J1:park:ci.pre_review_red@new", // fix route closed in R80 (gen 81)
-  "J1:park:ci.pre_review_red@corrected",
-  "J1:park:ci.pre_review_pending@new", // green rule needs the unmoved base
-  "J1:park:del.ci_unattributed@round1", // green rule needs the unmoved base
-  "J1:park:rev.not_fulfilled@round1", // rounds left, no correction rule
-  "J1:park:rev.uncertain@round1",
-  "J1:park:rev.digest_drift@round1", // issue edited after the review
-  "J1:park:rev.stale_source@new", // issue reopened
-  "J1:park:rev.task_shape@new", // issue body over bound
-  "J1:park:rev.settled_without_intent@round1", // rule needs the cleared PR
-  "J1:park:ref.failed_unavailable@round1", // 3 transient refresh failures
-  "J1:park:ref.failed_conflict@round1",
-  "J1:park:term.retired@reopened", // retired, then the issue reopened
-  "J1:park:term.retired@reopened_fresh",
-  "J1:decomposition:part-parked", // later parts `dependency` forever
-  // J1, owner gates by design that nothing announces.
-  "J1:park:impl.no_receipt@cap200", // 200-reservation cap, silent skip
-  "J1:park:impl.protected_path@noted",
-  "J1:park:impl.admission_disabled@fresh",
-  "J1:park:rev.admission_refused@new",
-  "J1:park:rev.acceptance_mismatch@round1",
-  "J1:park:ci.fix_exhausted@new",
-  "J1:park:ceil.unreviewed@spent",
-  "J1:park:ceil.rejected@spent",
-  "J1:park:ceil.unaccepted@spent",
-  "J1:park:carried.reviewed_ci_pending@spent",
-  "J1:park:carried.patch_changed@spent",
-  "J1:park:carried.ci_failed@spent",
-  "J1:park:carried.ci_pending@spent",
-  "J1:park:carried.stalled@spent",
-  "J1:park:carried.refresh_limit@spent",
-  "J1:park:carried.off_tip@spent",
-  "J1:park:ref.failed_permission@round1",
-  "J1:park:rel.failed@self",
-  "J1:park:rel.cancelled@round1",
-  "J1:park:merge.head_mismatch@round1",
-  "J1:park:merge.release_identity@round1",
-  "J1:park:pres.ref_missing@published",
-  "J1:park:pub.pr_base_mismatch@published",
-  "J1:park:pub.pr_head_mismatch@published",
-  "J1:park:pub.pr_identity_mismatch@published",
-  "J1:park:cell.runtime_mismatch@fresh",
-  "J1:park:cell.base_not_current@fresh",
-  "J1:park:misc.unconfigured@fresh",
-  "J1:wait:work.manual", // sessionBound null: wait.until null forever
-  "J1:wait:review.intent_unbound", // lost review submission (604/630/647)
-  // J1, absorbing although the owner rules require progress; the maintenance
-  // log names them every pass, but only with a status line.
-  "J1:logged:ceil.reviewed@spent", // moved base; moved-base merge disabled
-  "J1:logged:ceil.base_moved@spent", // and the carried refresh never runs
-  "J1:logged:ci.pre_review_red@legacy", // fix route closed in R80
-  "J1:logged:delivery.review_pending_null", // receipt no longer parses
-  // J2, cycles no ranking bounds.
-  "J2:coop:delivery.released:vps_release_record_absent", // Gateway VPS
+  // Every blocked census row is now named by the production run summary.
+  // These waits are not blocked records, so visibility alone cannot fix them.
+  "J1:wait:work.manual",
+  "J1:logged:ceil.reviewed@spent",
+  "J1:logged:ceil.base_moved@spent",
+  "J1:logged:delivery.review_pending_null",
+  // An adversarial environment can keep CI or merge gates unavailable.
   "J2:adv:delivery.merge:merge_refused_again",
   "J2:adv:delivery.ci_wait:ci_still_pending",
   "J2:adv:delivery.base_red:base_still_red",
   "J2:adv:work.base_red:base_still_red",
+  // Repeated identical outcomes park after their bound. A different normalized
+  // signature resets that streak; without the retired lifetime quota, a model
+  // that keeps producing different failures can continue indefinitely. This is
+  // an explicit residual, not evidence for reinstating a reservation throttle.
+  "J2:adv:blocked:impl.failed+work.fresh+work.impl:cell_impl.failed_changed_signature+launcher_readmission+matrix_grant",
   "J2:human:delivery.head_changed:merge_refused_head_mismatch",
   "J2:human:review.ctx_wait:task_context_still_unavailable",
-  // The owner closes the PR unmerged: the record republishes a replacement
-  // PR (pr-continuity.ts), not retired as the owner rules have it.
   "J2:human:work.noted+work.published:pr_closed_by_owner+preserved_published",
-  // J3, caps and orderings that starve eligible records.
+  // The merge queue removes the serial merge slot in its later generation.
   "J3:delivery:one-merge-per-pass",
-  "J3:closures:five-slots",
   "J3:runtime:state-error-abort",
 ];
 
@@ -556,4 +500,5 @@ export const KNOWN_JAMS: readonly string[] = [
  */
 export const KNOWN_PR_REPLACEMENTS: readonly string[] = [
   "pr_closed_by_owner", // retireClosedPublication, then a new PR is created
+  "expired_intent_recovered", // only after a later owner close on that path
 ];

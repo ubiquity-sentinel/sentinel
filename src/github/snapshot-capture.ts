@@ -52,7 +52,9 @@ export abstract class GitSnapshotCapture extends GitSnapshotReader {
   /**
    * Capture the exact immutable changed-path manifest for `base...head`. Ready
    * and immutable on success; every unsupported/incomplete/over-bound input is
-   * rejected as `unavailable` instead of being omitted or truncated.
+   * rejected as `unavailable` instead of being omitted or truncated. An exact
+   * base=head capture has no changed paths and supports only task assessment;
+   * the structured reviewer requires a bound task before starting it.
    */
   async capture(input: {
     base: GitSha;
@@ -126,7 +128,9 @@ export abstract class GitSnapshotCapture extends GitSnapshotReader {
     if (rawText === null) return portError("unavailable", SNAPSHOT_RAW_DETAIL);
     const changes = parseRawChanges(rawText);
     if (changes === null) return portError("unavailable", SNAPSHOT_RAW_DETAIL);
-    if (changes.length === 0) {
+    // Exact-base task assessment needs no invented change. A distinct empty
+    // candidate remains refused, and publication keeps its separate guard.
+    if (changes.length === 0 && input.base !== input.head) {
       return portError("unavailable", SNAPSHOT_EMPTY_DETAIL);
     }
     const structuralDetail = this.validateChanges(changes);

@@ -272,7 +272,7 @@ function plan(
 }
 
 Deno.test(
-  "base refresh re-admission: the retry-budget and closed-issue gates apply",
+  "base refresh re-admission: reservation history does not block an open source issue",
   () => {
     const auth = authRecord();
     assert.equal(plan([auth]).candidates.length, 1);
@@ -282,8 +282,8 @@ Deno.test(
     );
     assert.equal(
       plan([auth], budget).candidates.length,
-      0,
-      "the credential rule shares the retry budget",
+      1,
+      "accumulated reservations do not throttle the credential rule",
     );
     assert.equal(
       plan([auth], [], new Set([hostedIssueKey(AI, 641)])).candidates.length,

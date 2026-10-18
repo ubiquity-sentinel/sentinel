@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { parseReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
 import type { ReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
+import { TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL } from "../../src/repair/review-gate.ts";
 import {
   authorizingReceipt,
   BASE,
@@ -492,8 +493,14 @@ Deno.test("spent delivery S5: a record outside the closed spent shape is never m
         options,
         async (rig, calls) => {
           const { actions } = await deliveryOnly(rig);
+          // JAM B6b: a spent not-fulfilled acceptance is owner gated, named
+          // once in the summary instead of the per-pass refusal line.
           assert.ok(
-            actions.includes(`delivery:${record.id}:spent_not_admissible`),
+            actions.includes(
+              record.blocker?.message === TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL
+                ? `owner_gate:task_acceptance_not_fulfilled:n=1:${record.id}`
+                : `delivery:${record.id}:spent_not_admissible`,
+            ),
             actions.join(" "),
           );
           assert.deepEqual(calls.merges, []);
@@ -718,7 +725,7 @@ function tenSpentRecords(): {
   return { records, reviews };
 }
 
-Deno.test("spent delivery: at most eight spent records are read per pass, rotating with the clock", async () => {
+Deno.test("spent delivery: every eligible spent record is read on each pass", async () => {
   const { records, reviews } = tenSpentRecords();
   const seen = new Set<string>();
   for (const now of [NOW, NOW + 300_000]) {
@@ -732,7 +739,7 @@ Deno.test("spent delivery: at most eight spent records are read per pass, rotati
         const deferred = actions.filter((action) =>
           action.endsWith(":spent_deferred")
         );
-        assert.equal(deferred.length, 2, actions.join(" "));
+        assert.equal(deferred.length, 0, actions.join(" "));
         assert.deepEqual(calls.merges, []);
         for (const record of records) {
           if (!deferred.includes(`delivery:${record.id}:spent_deferred`)) {
@@ -742,7 +749,7 @@ Deno.test("spent delivery: at most eight spent records are read per pass, rotati
       },
     );
   }
-  assert.ok(seen.size > 8, "the window rotates");
+  assert.equal(seen.size, 10, "no spent record waits for a rotating slot");
 });
 
 Deno.test("spent delivery: a record an earlier write of the pass settled takes no read slot", () => {
@@ -751,7 +758,7 @@ Deno.test("spent delivery: a record an earlier write of the pass settled takes n
   const { records, reviews } = tenSpentRecords();
   const snapshot = liveSnapshot(records, reviews);
   const window = spentReadWindow(snapshot, NOW);
-  assert.equal(window.size, 8);
+  assert.equal(window.size, 10);
   const settled = new Set([...window].slice(0, 2));
   const continued = spentReadWindow(snapshot, NOW, settled);
   assert.equal(continued.size, 8);

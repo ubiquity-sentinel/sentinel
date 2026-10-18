@@ -28,6 +28,10 @@ import {
 } from "./loop-review-fixtures.ts";
 import { exactOpenPr, positiveLifecycle } from "./loop-candidate-fixtures.ts";
 
+/** The not-fulfilled verdict's expected disposition: a correction (B6a). */
+const CORRECTED = "correction";
+const refusedDetail = TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL;
+
 Deno.test(
   "semantic acceptance: an issue-backed delivery requires the bound positive verdict",
   async () => {
@@ -64,7 +68,10 @@ Deno.test(
           verdict: "not_fulfilled",
           evidence: ["the changed file does not implement the task"],
         },
-        TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL,
+        // JAM B6a: with a round left this is a correction exactly like a
+        // P0/P1 finding (tests/repair/acceptance-correction_test.ts), never
+        // a delivery and never the old terminal refusal.
+        CORRECTED,
         "other",
       ],
       [
@@ -185,18 +192,37 @@ Deno.test(
           assert.equal(state.reservations.length, 0, label);
           assert.equal(rig.github.calls.includes("createPr"), false, label);
           assert.equal(rig.github.pushes.length, 0, label);
+        } else if (detail === CORRECTED) {
+          assert.notEqual(work.nextStep, "blocked", label);
+          assert.notEqual(work.blocker?.message, refusedDetail, label);
+          const receiptId = await reviewReceiptId(currentKey, head);
+          const retained = state.reviews.find((receipt) =>
+            receipt.id === receiptId
+          );
+          assert.ok(retained, label);
+          assert.deepEqual(retained.taskAcceptance, acceptance, label);
+          assert.deepEqual(retained.unresolvedSeverities, ["P1"], label);
+          assert.equal(rig.model.requests.length, 1, label);
+          assert.equal(rig.model.requests[0]!.checkoutBase, head, label);
         } else {
           assert.equal(work.nextStep, "blocked", label);
           assert.equal(work.blocker?.message, detail, label);
           assert.equal(work.blocker?.kind, kind, label);
         }
-        assert.equal(rig.model.requests.length, 0);
+        if (detail !== CORRECTED) {
+          assert.equal(rig.model.requests.length, 0);
+        }
         assert.equal(
           rig.github.calls.some((call) => call.startsWith("closeIssue:")),
           false,
           `${label} must never close an issue`,
         );
-        assert.equal(work.target.head, head);
+        if (detail === CORRECTED) {
+          // The correction replaced the refused head with its new candidate.
+          assert.notEqual(work.target.head, head, label);
+        } else {
+          assert.equal(work.target.head, head);
+        }
         assert.equal(
           rig.github.calls.includes("merge"),
           false,

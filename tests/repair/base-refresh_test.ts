@@ -1145,6 +1145,8 @@ Deno.test(
     assert.equal(work.wait, null, "no wait is re-armed");
     assert.equal(work.target.head, OLD_HEAD, "the candidate is retained");
     assert.equal(work.target.base, SHA1);
+    // The terminal block never detaches the still-open PR (JAM B11).
+    assert.equal(work.target.pr, 7, "the open PR stays bound to its record");
     assert.equal(rig.model.requests.length, 0, "no model start");
   },
 );

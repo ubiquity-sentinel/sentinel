@@ -67,7 +67,9 @@ export function initialStates(): PStateV1[] {
 export function key(state: PStateV1): string {
   return `${state.phase}|r${state.rounds}|f${state.fixes}|b${state.refreshFail}|c${state.carried}|${
     state.aged ? "aged" : "-"
-  }|${state.moved ? "moved" : "-"}|${state.repo}|pr:${state.pr}`;
+  }|${state.moved ? "moved" : "-"}|${state.repo}|pr:${state.pr}|failure:${
+    state.lastFailure ?? "none"
+  }:${state.sameFailures ?? 0}`;
 }
 
 /** The abstract waits the runtime never ends on its own (until === null). */

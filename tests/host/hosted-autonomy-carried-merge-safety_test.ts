@@ -26,7 +26,6 @@ import { carriedMergeMarker } from "../../src/repair/carried-review.ts";
 import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "../../src/repair/review-round-cap.ts";
 import {
   carriedMergeAwaited,
-  HOSTED_AUTONOMY_SPENT_READS_PER_PASS,
   spentReadWindow,
 } from "../../ops/hosted-autonomy-spent-delivery.ts";
 import type { HostedAutonomyGitHubV1 } from "../../ops/hosted-autonomy-types.ts";
@@ -101,19 +100,18 @@ function crowded(carried: WorkRecordV1 = refreshed618()) {
   };
 }
 
-Deno.test("carried merge safety: an awaited carried head that holds the delivery line is readable on every pass, beside the full rotating window", () => {
+Deno.test("carried merge safety: an awaited carried head that holds the delivery line is readable on every pass, beside every eligible spent record", () => {
   const { carried, snapshot } = crowded();
   const slot0 = Math.floor(NOW / SLOT) * SLOT;
   for (let k = 0; k < 13; k++) {
     const at = slot0 + k * SLOT + 1_000;
     const window = spentReadWindow(snapshot, at);
     assert.ok(window.has(carried.id), `slot ${k}`);
-    // The window itself still reads eight peers: the exemption takes no slot.
-    assert.equal(window.size, HOSTED_AUTONOMY_SPENT_READS_PER_PASS + 1);
+    assert.equal(window.size, 13, "all eligible records are readable");
   }
 });
 
-Deno.test("carried merge safety: the exemption is bounded to the line's front record per repository, and ends with the line", () => {
+Deno.test("carried merge safety: all carried heads and stalled peers remain readable without a rotating window", () => {
   const front = refreshed618();
   // A second awaited carried record of the same repository, later in line.
   const second = parseWorkRecordV1({
@@ -142,11 +140,15 @@ Deno.test("carried merge safety: the exemption is bounded to the line's front re
   for (let k = 0; k < 13; k++) {
     const window = spentReadWindow(snapshot, slot0 + k * SLOT + 1_000);
     assert.ok(window.has(front.id), `front, slot ${k}`);
-    assert.ok(window.size <= HOSTED_AUTONOMY_SPENT_READS_PER_PASS + 1);
+    assert.equal(window.size, 14);
     if (window.has(second.id)) secondSeen++;
   }
-  assert.ok(secondSeen < 13, "the record behind the front rotates");
-  // A carried record that stopped holding the line (stalled) rotates too.
+  assert.equal(
+    secondSeen,
+    13,
+    "the record behind the front is always readable",
+  );
+  // A stalled carried record remains readable without holding the line.
   const stalled = refreshed618({
     counters: { ...LIVE_618.counters, stalled: 12 },
   });
@@ -154,10 +156,10 @@ Deno.test("carried merge safety: the exemption is bounded to the line's front re
   let seen = 0;
   for (let k = 0; k < 13; k++) {
     const window = spentReadWindow(stalledSnapshot, slot0 + k * SLOT + 1_000);
-    assert.equal(window.size, HOSTED_AUTONOMY_SPENT_READS_PER_PASS);
+    assert.equal(window.size, 13);
     if (window.has(stalled.id)) seen++;
   }
-  assert.equal(seen, 8);
+  assert.equal(seen, 13);
 });
 
 Deno.test("carried merge safety: the launcher merges the awaited carried head in its first pass whatever the window's slot", async () => {

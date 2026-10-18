@@ -323,7 +323,7 @@ Deno.test(
 );
 
 Deno.test(
-  "reviewer: unused reasoning streams are opted out while clean completion and the event bound stay unchanged",
+  "reviewer: unused reasoning streams are opted out without ending a loud review",
   async () => {
     const session = new ScriptedCodexSession();
     session.live = (scripted) => {
@@ -379,8 +379,7 @@ Deno.test(
     contains(submittedPrompt(session), `Base ${BASE}; head ${HEAD};`);
     assert.equal(session.turnStarts(), 1);
 
-    // Control: a server that ignores the opt-out and floods notifications is
-    // still stopped by the EXISTING finite event bound, never a clean review.
+    // A server that ignores the opt-out still gets its full review duration.
     const breach = new ScriptedCodexSession();
     breach.live = (scripted) => {
       for (let index = 0; index < 4_200; index++) {
@@ -400,11 +399,11 @@ Deno.test(
       );
       scripted.emit("turn/completed", turnCompleted(scripted.turnId));
     };
-    const bounded = await startReview(breach, await snapshotFixture());
-    assert.equal(bounded.status, "unavailable");
-    contains(bounded.detail ?? "", "event bound was exceeded");
-    assert.equal(bounded.result, null);
-    assert.equal(bounded.execution, null);
+    const completed = await startReview(breach, await snapshotFixture());
+    assert.equal(completed.status, "clean");
+    assert.deepEqual(completed.result, CLEAN_RESULT);
+    assert.equal(completed.resultId, "item-late");
+    assert.equal(completed.execution?.turnId, "turn-1");
   },
 );
 

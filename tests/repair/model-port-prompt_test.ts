@@ -331,9 +331,6 @@ Deno.test(
         "expected test assertions",
         "gpt-reserve",
         "max reasoning",
-        "total event output allowance is 12345 characters",
-        "every tool notification counts against it",
-        "repeated full output is charged again",
         "max_output_tokens at or below 2000",
         "targeted symbol searches followed by excerpts of at most 100 lines",
         "read the applicable instructions only once",
@@ -341,7 +338,7 @@ Deno.test(
         "check the actual failure instead of retrying",
         "stop broad source surveying",
         "smallest edit",
-        "reserve most of the allowance for implementation and focused validation",
+        "reserve most of the session for implementation and focused validation",
         "necessary source context",
         "keep individual command output bounded",
         "never dump docs/build-status.md in full",
@@ -354,6 +351,11 @@ Deno.test(
         `runtime prompt carries: ${required}`,
       );
     }
+    assert.equal(
+      prompt.includes("output allowance"),
+      false,
+      "the runtime does not impose a streamed-output allowance",
+    );
     assert.equal(
       prompt.includes("439 kb"),
       false,

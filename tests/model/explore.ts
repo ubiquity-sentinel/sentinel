@@ -381,7 +381,13 @@ export function linkCensus(
       const moved = rows.filter((verdict) => !verdict.absorbing);
       if (moved.length === 0) return null;
       const to = phaseOf(moved[0]!);
-      return to === null ? null : { to, red: moved.length === rows.length };
+      return to === null ? null : {
+        to,
+        red: moved.length === rows.length,
+        baseMove: moved.some((row) =>
+          row.headCi === "red" && row.movedBy?.includes("[tip=moved")
+        ),
+      };
     };
     const unspent = regime(false);
     const spent = regime(true);

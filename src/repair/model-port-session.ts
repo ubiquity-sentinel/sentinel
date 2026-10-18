@@ -7,6 +7,7 @@ import type {
   PortResultV1,
 } from "../contracts/ports.ts";
 import { portError } from "../contracts/ports.ts";
+import type { ModelRunOptionsV1 } from "../contracts/ports-model.ts";
 import { CodexProtocolError, type CodexSessionV1 } from "./codex-transport.ts";
 import type {
   CandidateCommitterV1,
@@ -19,6 +20,7 @@ import {
 } from "./model-port-receipt.ts";
 import { buildPrompt } from "./model-port-prompt.ts";
 import { awaitSettlement } from "./model-port-settlement.ts";
+import { EarlyNotificationSession } from "./model-port-notifications.ts";
 import {
   failoverWindowMsV1,
   isProviderThrottledResultV1,
@@ -187,7 +189,12 @@ export class CodexImplementationPort implements ImplementationPort {
 
   async runModel(
     request: ModelRunRequestV1,
+    options?: ModelRunOptionsV1,
   ): Promise<PortResultV1<ModelRunReceiptV1>> {
+    // Untrusted CI evidence rides beside the request into every attempt's
+    // turn input (failover and backoff included), never into the thread's
+    // instructions, and it is never part of a receipt.
+    const ciEvidence = options?.untrustedCiEvidence;
     // Fail-closed model policy validation BEFORE any session or model work:
     // the requested runtime model must be exactly the route-selected model this
     // port was constructed with (never a literal) and the effort exactly `max`.
@@ -205,6 +212,8 @@ export class CodexImplementationPort implements ImplementationPort {
       request,
       this.modelId,
       this.coreVerifier,
+      undefined,
+      ciEvidence,
     );
     // Gateway 429 failover: when the primary model is rate limited, retry
     // ONCE with the failover model on the same endpoint and credentials.
@@ -232,6 +241,7 @@ export class CodexImplementationPort implements ImplementationPort {
       this.failoverModelId,
       failoverVerifier,
       failoverWindowMs,
+      ciEvidence,
     );
     if (!isProviderThrottledResultV1(failover, request)) return failover;
     // Both throttled: bounded backoff in this admission and session budget,
@@ -245,12 +255,19 @@ export class CodexImplementationPort implements ImplementationPort {
       sleep,
       attempt: (model, windowMs) =>
         model === this.modelId
-          ? this.runAttempt(request, this.modelId, this.coreVerifier, windowMs)
+          ? this.runAttempt(
+            request,
+            this.modelId,
+            this.coreVerifier,
+            windowMs,
+            ciEvidence,
+          )
           : this.runAttempt(
             failoverRequest,
             this.failoverModelId,
             failoverVerifier,
             windowMs,
+            ciEvidence,
           ),
     });
   }
@@ -267,6 +284,7 @@ export class CodexImplementationPort implements ImplementationPort {
     expectedModel: string,
     verifier: ReceiptVerifierV1,
     durationBoundMs?: number,
+    ciEvidence?: string,
   ): Promise<PortResultV1<ModelRunReceiptV1>> {
     // The attempt's request must name exactly the model this attempt submits;
     // the receipt then truthfully records the model that was requested.
@@ -295,12 +313,29 @@ export class CodexImplementationPort implements ImplementationPort {
     try {
       session = await this.options.openSession();
       // CodexSubprocessSession is intentionally lazy so construction remains
-      // side-effect free.  Open it at the exact model boundary; an already
+      // side-effect free. Open it at the exact model boundary; an already
       // opened concrete session is accepted because open() is idempotent.
       session.open?.();
+      // Consume before any protocol request: a model can emit a whole turn
+      // before turn/start responds, so transport backpressure must never
+      // wait for the response that enables settlement registration.
+      let earlyNotifications: EarlyNotificationSession;
+      try {
+        earlyNotifications = new EarlyNotificationSession(session);
+      } catch {
+        return portError("unavailable", "notification registration failed");
+      }
+      session = earlyNotifications;
       await this.initialize(session);
-      const prompt = buildPrompt(request, this.localIteration);
-      const thread = await this.startThread(session, request, prompt);
+      // The thread's base instructions are the system-level slot: they hold
+      // only the trusted prompt. Untrusted CI evidence (output of running the
+      // candidate's code) reaches the model only once, in the user turn, so
+      // it never arrives with instruction authority.
+      const instructions = buildPrompt(request, this.localIteration);
+      const prompt = ciEvidence === undefined
+        ? instructions
+        : buildPrompt(request, this.localIteration, ciEvidence);
+      const thread = await this.startThread(session, request, instructions);
       const turn = await this.startTurn(
         session,
         request,
@@ -316,6 +351,7 @@ export class CodexImplementationPort implements ImplementationPort {
         turn.turnId,
         request.maxOutputChars,
         durationBoundMs,
+        () => earlyNotifications.getEarlyEvidence(),
       );
       // The model must be fully closed, including its owned process group,
       // before the trusted host inspects or commits the checkout. A direct

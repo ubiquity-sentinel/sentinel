@@ -24,13 +24,17 @@
  * Termination is checked by ranking: counters bounded by the owner rules live
  * in the state (review rounds, CI fixes, refresh failures, carried
  * refreshes), and edges carry the effect on the remaining ledger rankings
- * (`A`: the 200-reservation retry budget a model start spends; `rerun`: the
- * once-per-head flake re-run, replenished by a new head). A strongly
+ * (`rerun`: the once-per-head flake re-run, replenished by a new head).
+ * Durable reservations stay charged but impose no lifetime retry ranking. A strongly
  * connected component is safe when some ranking is spent inside it and never
  * replenished there; those edges are removed and the remainder re-checked
  * (lexicographic ranking by SCC decomposition). What remains is a cycle no
  * ranking bounds: J2.
  */
+import {
+  REPEAT_FAILURE_TRANSIENT_SPAN_MS,
+  repeatFailureDue,
+} from "../../ops/hosted-autonomy-repeat-failure.ts";
 import type { GitHubCheckV1 } from "../../src/contracts/ports.ts";
 import {
   attributeFailedChecks,
@@ -58,6 +62,7 @@ import { publicationOpens } from "./pr-continuity.ts";
 import { REVIEW_INTENT, REVIEW_INTENT_ANCHOR } from "./review-intent.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import {
+  gatewayReleaseDeferred,
   gatewayRequestBindsDelivery,
   observeGatewayVpsDelivery,
 } from "../../src/repair/vps-delivery.ts";
@@ -74,7 +79,7 @@ import {
 export { indefiniteWaits, initialStates, key } from "./pipeline-states.ts";
 
 export type Fairness = "sys" | "coop" | "adv" | "base" | "human" | "infra";
-export type Rank = "A" | "rerun";
+export type Rank = "rerun";
 
 export type Phase =
   | "work.fresh"
@@ -108,6 +113,9 @@ export interface PStateV1 {
   rounds: number;
   /** CI fixes spent (0..3). */
   fixes: number;
+  /** Last abstract failure signature and its consecutive occurrences. */
+  lastFailure?: string | null;
+  sameFailures?: number;
   /** Consecutive failures of the current refresh intent (0..2). */
   refreshFail: number;
   /** Mechanical refreshes a spent reviewed head was carried through. */
@@ -152,7 +160,7 @@ const parkCache = new Map<string, string>();
  * over the live release-ref shape (no `vpsReleases` at all) for a merged,
  * reviewed Gateway delivery whose request binds it.
  */
-export const VPS = { binds: false, absentWaits: false };
+export const VPS = { binds: false, absentWaits: false, deferred: false };
 
 /** `reviewRoundsLeft` over a concretized record holding `rounds` charges. */
 export async function primeRounds(): Promise<void> {
@@ -172,6 +180,7 @@ export async function primeRounds(): Promise<void> {
     gateway.reviews[0]!,
   );
   const release = releaseSnapshot();
+  VPS.deferred = gatewayReleaseDeferred(release, request);
   VPS.absentWaits = (await observeGatewayVpsDelivery(
     {
       readRelease: () =>
@@ -283,6 +292,8 @@ export interface ReadmissionV1 {
   to: Phase;
   /** Re-admitted for a deterministically red head too (else: flake only). */
   red: boolean;
+  /** A persistent-red re-admission requires another base change. */
+  baseMove: boolean;
 }
 
 /** A class's re-admission with rounds left and with every round spent. */
@@ -332,7 +343,7 @@ export function successors(
           at(from, "review.requested", { rounds: from.rounds + 1 }),
           "ci_green:review_requested",
           "coop",
-          { consumes: ["A"], anchor: A.ciFirst },
+          { anchor: A.ciFirst },
         );
       }
     }
@@ -365,6 +376,9 @@ export function successors(
   const refreshOutcomes = (from: PStateV1, reviewed: boolean) => {
     add(at(from, "work.published"), "refresh_published", "sys");
     add(park(from, "ref.conflict"), "refresh_conflict", "coop");
+    add(park(from, "ref.refused"), "refresh_validation_refused", "human", {
+      anchor: A.refreshRefused,
+    });
     if (from.refreshFail + 1 >= MAX_BASE_REFRESH_FAILURES) {
       add(park(from, "ref.failed_unavailable"), "refresh_failed_3x", "adv", {
         anchor: A.refreshFail,
@@ -428,7 +442,7 @@ export function successors(
       add(
         at(state, readmission.to, { refreshFail: 0 }),
         "launcher_readmission",
-        readmission.red ? "sys" : "adv",
+        readmission.baseMove ? "base" : readmission.red ? "sys" : "adv",
         readmission.red ? {} : { consumes: ["rerun"] },
       );
     }
@@ -451,7 +465,6 @@ export function successors(
         return edges;
       }
       add(at(state, "work.impl"), "matrix_grant", "sys", {
-        consumes: ["A"],
         anchor: A.grant,
       });
       add(at(state, "work.manual"), "session_bound_absent", "human", {
@@ -459,10 +472,15 @@ export function successors(
       });
       return edges;
     case "work.impl":
-      add(at(state, "work.noted"), "cell_completed", "coop", {
-        replenishes: ["rerun"],
-        anchor: A.ingest,
-      });
+      add(
+        at(state, "work.noted", { lastFailure: null, sameFailures: 0 }),
+        "cell_completed",
+        "coop",
+        {
+          replenishes: ["rerun"],
+          anchor: A.ingest,
+        },
+      );
       add(park(state, "impl.protected_path"), "cell_protected_path", "coop");
       for (
         const failure of [
@@ -478,9 +496,40 @@ export function successors(
           "cell.bundle_failed",
         ]
       ) {
-        add(park(state, failure), `cell_${failure}`, "adv", {
-          anchor: A.ingest,
+        const count = state.lastFailure === failure
+          ? (state.sameFailures ?? 0) + 1
+          : 1;
+        // Collapse the finite six-hour transient span, which the real bound
+        // tests advance explicitly. Beyond it, an identical streak must park;
+        // changing the failure signature starts another streak, not a refund.
+        const due = repeatFailureDue({
+          signature: failure,
+          count,
+          failureClass: "transient_infrastructure",
+          firstAtMs: NOW - REPEAT_FAILURE_TRANSIENT_SPAN_MS,
+          lastAtMs: NOW,
         });
+        add(
+          park(
+            {
+              ...state,
+              lastFailure: failure,
+              sameFailures: Math.min(count, 3),
+            },
+            due ? "impl.repeat_failure" : failure,
+          ),
+          due ? "identical_failure_owner_park" : `cell_${failure}`,
+          "adv",
+          { anchor: A.ingest },
+        );
+        if (count > 1) {
+          add(
+            park({ ...state, lastFailure: failure, sameFailures: 1 }, failure),
+            `cell_${failure}_changed_signature`,
+            "adv",
+            { anchor: A.ingest },
+          );
+        }
       }
       add(
         park(state, "cell.source_changed"),
@@ -568,7 +617,14 @@ export function successors(
         "coop",
         { anchor: left === 0 ? A.rejectedPark : A.correction },
       );
-      add(park(state, "rev.not_fulfilled"), "review_not_fulfilled", "coop");
+      add(
+        left === 0
+          ? park(state, "rev.acceptance_owner")
+          : at(state, "work.fresh"),
+        "review_not_fulfilled",
+        "coop",
+        { anchor: A.acceptanceCorrection },
+      );
       add(park(state, "rev.uncertain"), "review_uncertain", "adv");
       add(
         left === 0
@@ -576,7 +632,6 @@ export function successors(
           : at(state, "review.requested", { rounds: state.rounds + 1 }),
         "review_acceptance_missing",
         "adv",
-        { consumes: ["A"] },
       );
       add(
         at(state, "review.ctx_wait"),
@@ -603,17 +658,19 @@ export function successors(
       );
       return edges;
     case "review.intent_unbound":
-      // The REAL repair loop's verdict (`review-intent.ts`): it defers the
-      // record without a write on every run, past the review bound.
+      // The real repair loop expires an unbound saved request without
+      // refunding its charge. Re-enter the CI-first gate: it must still
+      // respect the three-round ceiling before requesting another review.
       if (REVIEW_INTENT.unboundMoves === null) {
         throw new Error("primeReviewIntent() first");
       }
       if (REVIEW_INTENT.unboundMoves) {
         add(
-          at(state, "review.requested", { rounds: state.rounds + 1 }),
+          left === 0
+            ? park(state, ceilingClass("none"))
+            : at(state, "work.published"),
           "expired_intent_recovered",
           "sys",
-          { consumes: ["A"] },
         );
       }
       return edges;
@@ -749,7 +806,14 @@ export function successors(
         state.repo === "gateway" && options.vpsWriterAbsent !== false &&
         VPS.binds && VPS.absentWaits
       ) {
-        add(state, "vps_release_record_absent", "coop", { anchor: A.vpsWait });
+        // The release controller is an external dependency. The new runtime
+        // writes one stable deferred wait; it does not re-arm every pass.
+        add(
+          state,
+          VPS.deferred ? "release_deferred" : "vps_release_record_absent",
+          VPS.deferred ? "infra" : "coop",
+          { anchor: VPS.deferred ? A.releaseDeferred : A.vpsWait },
+        );
       } else {
         add(at(state, "delivery.closure"), "release_accepted", "coop");
       }

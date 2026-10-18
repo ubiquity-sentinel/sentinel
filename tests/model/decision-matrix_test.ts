@@ -1,11 +1,6 @@
 /**
- * Decision-matrix regression checker preserved from the generation-81 handoff
- * (wt81-verify, acfaa4d55). This test pins that lane's diagnostic baseline; it
- * is not a proof that generation 81 is integrated or that every modeled state
- * is reachable in production. The handoff's stopped verification contains
- * refuted reachability claims as well as confirmed jams, so a passing result
- * must not be used as release acceptance. Reachability verification and the
- * behavioral lanes remain separate integration work.
+ * Formal check that the Sentinel decision matrix never jams, or a precise
+ * list of where it does.
  *
  * A record JAMS when, for an open issue (and open Sentinel PR):
  * - J1: it reaches an absorbing state that is not terminal by design and
@@ -115,7 +110,11 @@ Deno.test("decision matrix: every park the lifecycle reaches is in the census", 
 
 Deno.test("decision matrix: known positive (a) re-retiring every pass is caught on 01f482529^", async () => {
   assert.equal(await preFixFixtureFaithful(), true);
-  const before = await retirementFairness(preFixRetirements, "pre-01f482529");
+  const before = await retirementFairness(
+    preFixRetirements,
+    "pre-01f482529",
+    5,
+  );
   assert.ok(before.starved.length > 0, "pre-fix starves the records to retire");
   assert.ok(before.holders.length > 0, "pre-fix rewrites retired rows");
   const run = await checker();
@@ -157,6 +156,11 @@ Deno.test("decision matrix: the Gateway release wait is the real verdict on the 
   // VPS release record the live release ref never holds.
   assert.equal(VPS.binds, true);
   assert.equal(VPS.absentWaits, true);
+  assert.equal(
+    VPS.deferred,
+    true,
+    "missing release proof holds one stable state",
+  );
 });
 
 Deno.test("decision matrix: review resumes the record's open PR and never opens a second one", async () => {
@@ -211,12 +215,56 @@ Deno.test("decision matrix: review resumes the record's open PR and never opens 
   assert.ok(KNOWN_JAMS.some((id) => id.includes("pr_closed_by_owner")));
 });
 
-Deno.test("decision matrix: a lost review submission never moves in the real loop; a landed one does", async () => {
+Deno.test("decision matrix: a lost review submission expires without refunding its round", async () => {
   const lost = await reviewIntentVerdict(false);
   const landed = await reviewIntentVerdict(true);
   console.log(`lost: ${lost.outcomes.join(" | ")}`);
-  assert.ok(lost.observed >= 6, "every run read the intent's journal");
-  assert.equal(lost.moved, false, "deferred without a write on every run");
+  assert.ok(
+    lost.observed >= 1,
+    "the saved journal was checked before recovery",
+  );
+  assert.equal(lost.recovered, true, "the expired intent is cleared");
+  assert.equal(lost.charged, true, "the ambiguous admission stays charged");
+  assert.equal(lost.moved, true);
+  assert.ok(lost.rounds >= 2 && lost.rounds <= 3);
   assert.equal(landed.moved, true, "a bound journal counts the round");
-  assert.ok(KNOWN_JAMS.includes("J1:wait:review.intent_unbound"));
+  assert.equal(landed.charged, true);
+  assert.ok(!KNOWN_JAMS.includes("J1:wait:review.intent_unbound"));
+});
+
+Deno.test("decision matrix: integrated recovery and acceptance routes retain the round ceiling", async () => {
+  const { graph } = await checker();
+  for (const [id, state] of graph.states) {
+    assert.ok(state.rounds >= 0 && state.rounds <= 3, id);
+    for (const edge of graph.edges.get(id) ?? []) {
+      if (edge.event !== "review_not_fulfilled") continue;
+      assert.equal(
+        edge.to.phase,
+        state.rounds === 3 ? "blocked:rev.acceptance_owner" : "work.fresh",
+        id,
+      );
+      assert.equal(edge.to.pr, state.pr, "acceptance correction keeps its PR");
+    }
+  }
+});
+
+Deno.test("decision matrix: identical failures park while changing signatures remain an explicit residual", async () => {
+  const { graph } = await checker();
+  const parks = [...graph.edges.values()].flat().filter((edge) =>
+    edge.event === "identical_failure_owner_park"
+  );
+  assert.ok(parks.length > 0, "the repeat-failure guard is modeled");
+  for (const edge of parks) {
+    assert.equal(edge.to.phase, "blocked:impl.repeat_failure");
+    assert.equal(edge.to.sameFailures, 3);
+  }
+  const cycles = nonTerminating(graph, "adv").filter((cycle) =>
+    cycle.cycle.some((step) => step.edge.event === "matrix_grant")
+  );
+  assert.ok(cycles.length > 0, "the changing-signature residual stays visible");
+  assert.ok(
+    cycles.every((cycle) =>
+      cycle.cycle.some((step) => step.edge.event.endsWith("_changed_signature"))
+    ),
+  );
 });
