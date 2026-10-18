@@ -6,8 +6,9 @@ directive; Muse ownership is retired. Keep present state, remaining work and
 exact evidence references here; replace stale checkpoints instead of appending a
 session transcript. Current design decisions belong in
 [MASTER-PLAN.md](../MASTER-PLAN.md) and [DECISIONS.md](DECISIONS.md). Current
-coordinator model/effort metadata is unavailable; historical verified identity
-is not asserted as fresh metadata.
+coordinator identity is `gpt-6-astra` with `ultra` effort, verified from this
+migration session's own-turn metadata; worker identity and runtime routing are
+reported separately.
 
 ## Active task register
 
@@ -19,6 +20,87 @@ no replacement PR is opened. Issues #157, #163 and #164 are assigned to
 authenticated account `0x4007` and carry `sentinel:skip` during manual
 ownership. Only the primary changes this ledger, accepts source, commits,
 integrates or publishes.
+
+### Migration continuation, 2026-10-18 12:58 UTC
+
+The current primary resumes the full stability, outstanding-issue repair,
+existing-PR takeover and guarded merge-queue goal from transport checkpoint
+`52c4ca3e8800fa39b4572125f1ac4e3084ab5498`. Trusted own-turn metadata identifies
+this primary as `gpt-6-astra` with `ultra` effort; this does not change runtime
+model policy. The original master-plan goal identity and all accepted ancestry
+remain intact.
+
+The migration clone is
+`/home/codex/repos/ubiquity/sentinel/.codex-worktrees/sentinel-migration-20261018`.
+The sole continuation/integration checkout is
+`/home/codex/repos/ubiquity/sentinel/.codex-worktrees/sentinel-continuation`,
+branch `continuation/sentinel-migration`, exact base
+`80e7a3dcede4eea1c9325ba4338098f986b8336e`. All 59 packaged files passed their
+SHA-256 manifest and all seven paused files were restored byte-exact from
+`restore-map.json`. These files remain unaccepted and dirty. The unrelated
+original root checkout and historical lanes are preserved. Receipt:
+`/home/codex/repos/ubiquity/sentinel/.codex-worktrees/sentinel-migration-evidence-20261018/restore-receipt.json`.
+
+| Module                                            | Isolated ownership                                                                                                                                                                                                                             | Acceptance still required                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `migration-fallback-p1-20261018`                  | Settled Sol/max execution worker; branch `codex/migration-fallback-p1-20261018`, worktree `sentinel-migration-fallback-p1-20261018`, base `80e7a3d`; only `actions-repair-host.ts` and the three restored principal/routing fixture/test files | Frozen four-file patch integrated into the canonical dirty candidate with expected-old hash checks. Actual host routing, six admission refusals and the serial model consumer have causal RED/GREEN, retaining every charge/refusal and dormant positive control. Deadline regression passes; principal/helper/queue boundary passed 17 tests/18 steps in 255.375 seconds; scoped static checks pass. Handback SHA-256 `08acd625f5f00660e33040e2a39da311d2cad42176ceaca0cfd70188066c8fa6`; exact-host SHA-256 `0be77547d3411e5d9134e049e7755d2f18ec59b00fd6c0030d8aa5fdc1cb5660`. |
+| `migration-authority-paths-20261018`              | Settled Sol/max execution worker; branch `codex/migration-authority-paths-20261018`, worktree `sentinel-migration-authority-paths-20261018`, base `80e7a3d`; only the three restored authority-path/frame files                                | Accepted unchanged into the dirty canonical candidate: root verified exact diff and all three hashes; causal baseline failed the three missing protections and frame labels, candidate passed 3 tests/10 steps, existing launcher diagnostic boundary and scoped static checks passed. Frozen diff SHA-256 `f195ca38473d9f86be26a003fbb94464aa49fc237d4b413d85d01fe8f66c732d`; evidence `authority-paths/handback.json` under the migration evidence root. Commit and combined acceptance remain pending.                                                                         |
+| `migration-r80-custody-20261018`                  | Settled Sol/max compatibility worker; branch `codex/migration-r80-custody-20261018`, worktree `sentinel-migration-r80-custody-20261018`, base `80e7a3d`; only new `tests/host/existing-pr-native-r80_test.ts`                                  | Exact R80 `e48e7e110e7cb2ed3385bf1be5165f05d8a4e481` accepted all 17 real persisted adoption/correction/refresh snapshots in two passing cases. The actual depth-one guard reported both cases ignored, not passed. Scoped static checks passed. Root integrated exact file hash `fdb4d7124ec3aaf735bd9f83938ef1e9e171eb747dd6fae8eaea6756008ee5fb`; no production/schema changes or old-runtime execution.                                                                                                                                                                       |
+| Integration, live readback and canary preparation | Primary owns this ledger, acceptance, commits, integration and publication; separate workers perform read-only native readback and packet reconciliation                                                                                       | Exact combined audit, committed-source cold bootstrap, R80 parsing, depth-one source reads, development-only publication and exact native CI; installation and live delivery remain separate                                                                                                                                                                                                                                                                                                                                                                                      |
+
+Fresh native refs still match development
+`12bc367852188aa94132b7658d774ec413295c1d` and launcher
+`00b6649eeff51a9754bf3748f793137db9bf8605`; `sentinel-release` is disabled and
+issue #164 remains assigned to `0x4007`. Root inspected and accepted the
+independent native receipt for CI `39124867746`, attempt 1, job `117667744672`:
+actual checkout `12bc3678`, exact workflow/full credential-free harness, 3,225
+tests/1,305 steps/zero failures. Acceptance SHA-256
+`34c8342740bca55b83ae9d24769bf89e2303a94b01846540d1588ac2e053aaf8` under
+`ci-12bc-acceptance/`. This closes the prior fixture-correction CI gate only.
+
+Fresh ordinary runtime proof for `39127415789:1:repair`, job `117676659253`,
+passes all sixteen explicit native/saved-proof comparisons at release-state
+`58ed48c8160fbbf83cdbe1690e11d0e01231af3a`: exact R81
+`da98f5f49c45b57cfa97a45fe647c36b1021f302`/generation 81, exact L81, healthy,
+settled and startup-ready. The native archive's decoded repair-log digest equals
+saved `2e1b5898bf17a2e13103b71259d532387954db042f14e80b000e49013617f032`. Root
+inspected the proof identities and accepts the independent read-only worker
+evidence in `runtime-proof/proof-summary.json` (SHA-256
+`b8ee56430b5aa57de74ad8bb273ee8cc66f512a6aac9384b464f4dec886c3ae8`). No raw
+native logs or state were retained. This is runtime health, not autonomous issue
+delivery. The earlier observer's vanished `/tmp` files are not accepted
+evidence; it and its processes are settled.
+
+AI source and the refreshed canary packet are frozen to
+`1e540da15d3822e72c14bb565635a9fa1c841011`, whose native push CI `39127658187`
+passed all seven jobs. All nine fixture patches and exact workflow restoration
+passed structural applicability while preserving 1,072 original entries. The
+review manifest SHA-256 is
+`549c6e7bb56875b6136f097bca0e737da8a8107932b4e5a809a1871f89873be9` under
+`canary-analysis/`; original packet bytes remain unchanged. App Merge queues
+permission is already accepted. Isolated canary and later production ruleset
+approval remain pending; no fixture, grant, rule, runtime pin or admission is
+activated by this continuation.
+
+The source-only routing helper `5321a4e682cbcb329ed39e6b9639a793f67f4ca5`,
+actual queue prelude/read-only maintenance tranche
+`5c8907ea783b82f9b9d6bb189b3e933a0a0bcecc` and same-token effects tranche
+`a93c30e678f2525c9ca0aba87d7ddf48ca2f5921` are retained in base `80e7a3d`; their
+transported acceptance records are historical evidence, not fresh checks. Finish
+the missing-principal fallback P1 first. Both queue and independent existing-PR
+custody floors must be accepted before future activation, and future runtime F
+must itself contain the accepted compiled queue proof/policy before launcher L
+pins it.
+
+Fresh independent initial audit `combined-audit/initial-audit.json` (SHA-256
+`e5c19708e4a3daaf3431ef9a7facc94e733e6ac78584c8d38d278b3157df0217`) verified 81
+read-file hashes, all 59 package hashes and the causal RED receipts. It found no
+additional P0/P1 and identified the now-covered native-snapshot R80 gap and
+corrected source-routing deadline observation. Worker-reported checks and root
+integration are separate: final exact combined audit, committed-source cold
+bootstrap, actual depth-one source reads, applicable combined checks and
+publication/native CI remain pending. This checkpoint supersedes older
+current-status prose below; historical acceptance receipts remain preserved.
 
 ### Live boundary
 

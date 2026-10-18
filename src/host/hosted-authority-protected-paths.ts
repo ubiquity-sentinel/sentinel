@@ -22,6 +22,7 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/host/hosted-app-principal-source.ts",
     "src/host/hosted-app-principal.ts",
     "src/host/hosted-app-source-profiles.json",
+    "src/host/hosted-app-takeover-routing.ts",
     "src/host/hosted-custody-capability.json",
     "src/host/hosted-custody-capability.ts",
     "src/host/hosted-runtime-compatibility-authority.ts",
@@ -61,6 +62,8 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/github/queue-legacy-direct.ts",
     "src/host/existing-pr-produced-custody.ts",
     "src/host/repair-queue-custody.ts",
+    "src/host/actions-queue-custody.ts",
+    "src/host/maintenance-existing-pr-publication.ts",
     // Pre-writer maintenance gate and exact model-disabled future bootstrap.
     "ops/hosted-autonomy-compatibility-queue.ts",
     "ops/hosted-autonomy-compatibility.ts",

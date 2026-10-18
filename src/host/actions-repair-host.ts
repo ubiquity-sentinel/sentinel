@@ -1,7 +1,7 @@
 /** Hosted actions-repair-host responsibility. */
 import { canonicalStringify } from "../contracts/canonical.ts";
 import { asGitSha } from "../contracts/brands.ts";
-import { DenoReplayRuntime } from "../replay/runtime.ts";
+import { DenoReplayRuntime, type ReplayRuntimeV1 } from "../replay/runtime.ts";
 import { ReviewOwnerChannelClient } from "./review-owner-channel.ts";
 import { reviewOwnerChildInput } from "./review-owner-child-input.ts";
 import { parseCarrier } from "./matrix-actions-shared.ts";
@@ -104,6 +104,7 @@ import {
   createHostedAppPrincipalContext,
   type HostedAppGitHubInput,
 } from "./hosted-app-principal.ts";
+import { readHostedAppTakeoverRouting } from "./hosted-app-takeover-routing.ts";
 import { readHostedSelfDependencyPreparer } from "./hosted-self-dependencies.ts";
 import {
   ensureRepairStateSeed,
@@ -361,16 +362,37 @@ export async function runActionsRepairHost(
   // The private context binds the actual App token to clean protected source,
   // native job facts and the already verified saved execution. Metadata alone
   // never grants takeover authority; cells cannot request this capability.
+  const sourceRuntime = new DenoReplayRuntime(denoExecutable);
+  const sourceProcess: ReplayRuntimeV1 = {
+    run: (command) => {
+      const remaining = deadline - clock.now();
+      if (!Number.isSafeInteger(remaining) || remaining <= 0) {
+        return Promise.reject(new Error("hosted App source deadline expired"));
+      }
+      return sourceRuntime.run({
+        ...command,
+        maxDurationMs: Math.min(command.maxDurationMs, remaining),
+      });
+    },
+  };
+  const takeoverSource = {
+    launcherDir: joinPath(sourceDir, "..", "launcher"),
+    runtimeDir: sourceDir,
+    identity,
+    execution,
+    process: sourceProcess,
+  };
+  // Source routing is independent of whether a valid App mint is available.
+  // Active or unknown configured admission must discover/hold an existing PR;
+  // this does not grant a principal, Contents access or any effect capability.
+  const takeoverRouting = await readHostedAppTakeoverRouting(
+    takeoverSource,
+    deps.hostedAppSourceProfiles,
+  );
   const takeoverContext = identity.job !== "matrix_cell" &&
       appToken !== undefined
     ? await createHostedAppPrincipalContext({
-      source: {
-        launcherDir: joinPath(sourceDir, "..", "launcher"),
-        runtimeDir: sourceDir,
-        identity,
-        execution,
-        process: new DenoReplayRuntime(denoExecutable),
-      },
+      source: takeoverSource,
       state,
       clock,
       gate,
@@ -523,15 +545,19 @@ export async function runActionsRepairHost(
     };
     return scopeLocalRepairIssues(
       takeoverContext === null
-        ? composeLocalGitHub({
-          ...common,
-          clock,
-          state,
-          gate,
-          http,
-          token: writeToken,
-          login,
-        })
+        ? composeLocalGitHub(
+          {
+            ...common,
+            clock,
+            state,
+            gate,
+            http,
+            token: writeToken,
+            login,
+          },
+          undefined,
+          { activated: takeoverRouting.status !== "inactive" },
+        )
         : composeHostedAppGitHub(takeoverContext, common),
     );
   };

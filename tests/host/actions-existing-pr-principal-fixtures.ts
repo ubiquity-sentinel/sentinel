@@ -2,24 +2,32 @@
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { GitHubPort } from "../../src/contracts/ports.ts";
-import { parseReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import {
+  parseReleaseStateSnapshotV1,
+  parseRepairStateSnapshotV1,
+} from "../../src/contracts/state-snapshots.ts";
 import {
   createReleaseStateStore,
   createRepairStateStore,
 } from "../../src/state/mod.ts";
 import { runActionsRepairHost } from "../../src/host/actions.ts";
-import type { ActionsRepairHostDepsV1 } from "../../src/host/actions-target-cycles.ts";
+import type {
+  ActionsRepairHostDepsV1,
+  ActionsTargetCyclesInputV1,
+} from "../../src/host/actions-target-cycles.ts";
 import { HOSTED_RUNTIME_WORKFLOW_REF } from "../../src/host/hosted-runtime-identity.ts";
 import { type HttpTransportV1, requestHeader } from "../../src/github/http.ts";
 import { principalHostFixture } from "./hosted-app-principal-fixtures.ts";
 import { nativeFixture } from "./existing-pr-native-fixtures.ts";
 import { runProof } from "./actions-supervisor-fixture.ts";
 import { captureConsoleLog } from "./local-test-helpers.ts";
-import { makeRemoteCtx, testGitEnv } from "../state/helpers.ts";
+import { makeRemoteCtx, testGitEnv, workRecord } from "../state/helpers.ts";
 import { DenoReplayRuntime } from "../../src/replay/runtime.ts";
+import { issueWire } from "../github/helpers.ts";
 
 export async function actionsExistingPrincipalFixture(
   takeoverActivated = true,
+  unmarked = false,
 ) {
   const principal = await principalHostFixture();
   const native = await nativeFixture();
@@ -117,7 +125,24 @@ export async function actionsExistingPrincipalFixture(
     );
     releaseHead = written.value.head;
   }
-  const repair = await state.writeRepair(native.state.repair!, null);
+  const seed = unmarked
+    ? parseRepairStateSnapshotV1({
+      ...native.state.repair!,
+      work: [workRecord("issue-1", {
+        repository: native.request.binding.repository,
+        source: { kind: "issue", id: "1", revision: native.ctx.base },
+        controller: { sha: revision },
+        target: {
+          base: native.ctx.base,
+          head: null,
+          branch: "sentinel/issue-1",
+          pr: null,
+          checkpoint: null,
+        },
+      })],
+    })
+    : native.state.repair!;
+  const repair = await state.writeRepair(seed, null);
   assert(repair.ok && repair.value.status === "applied");
   const request = { ...native.request, expectedStateHead: repair.value.head };
   const bin = root + "/bin";
@@ -160,6 +185,37 @@ export async function actionsExistingPrincipalFixture(
       "actual host REST port uses its captured target credential",
     );
     targetCalls.push({ method: input.method, path });
+    if (path === "/repos/ubiquity/sentinel/issues/1") {
+      return {
+        status: 200,
+        headers: new Headers(),
+        bodyText: JSON.stringify(issueWire({
+          number: 1,
+          title: "Repair source",
+          body: native.controls.body,
+        })),
+      };
+    }
+    if (
+      path === "/graphql" &&
+      JSON.parse(input.body!).query.includes("SentinelIssueRelations")
+    ) {
+      return {
+        status: 200,
+        headers: new Headers(),
+        bodyText: JSON.stringify({
+          data: {
+            repository: {
+              issue: {
+                number: 1,
+                blockedBy: { nodes: [], pageInfo: { hasNextPage: false } },
+                subIssues: { totalCount: 0 },
+              },
+            },
+          },
+        }),
+      };
+    }
     if (controls.revoked && path === "/installation/repositories") {
       return Promise.resolve({
         status: 401,
@@ -294,7 +350,12 @@ export async function actionsExistingPrincipalFixture(
     request,
     targetCalls,
     gitCalls,
-    async run(effect: (port: GitHubPort) => Promise<void>) {
+    async run(
+      effect: (
+        port: GitHubPort,
+        input: ActionsTargetCyclesInputV1,
+      ) => Promise<void>,
+    ) {
       const result = await runActionsRepairHost({
         ...deps,
         runTargetCycles: async (input) => {
@@ -306,7 +367,7 @@ export async function actionsExistingPrincipalFixture(
           assert(composed !== undefined);
           assert.equal(port.existingPrTakeover, composed.existingPrTakeover);
           assert.equal(input.modelStartsEnabled, true);
-          await effect(port);
+          await effect(port, input);
           return {
             outcome: { status: "idle", detail: "fixture native boundary" },
             addressed: ["ubiquity/sentinel"],

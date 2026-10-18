@@ -151,11 +151,10 @@ Deno.test("Actions existing PR principal: stale or unproven authority refuses be
         let observedScope = false;
         await rig.run(async (port) => {
           assert(port.existingPrTakeover !== undefined);
-          const fallback = scenario === "forged metadata" ||
-            scenario === "native fallback";
           assert.equal(
             port.existingPrTakeover.coordinationActivated,
-            !fallback,
+            true,
+            "missing principal keeps restrictive source routing without granting effects",
           );
           if (scenario === "revoked") rig.controls.revoked = true;
           else if (scenario === "expired") {

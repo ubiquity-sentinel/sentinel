@@ -14,6 +14,9 @@ Deno.test("hosted authority: actual repair keeps forbidden candidates charged an
     const path of [
       ".github/actions/sentinel-app-token/lib/mint-grant.js",
       "src/host/hosted-app-source-profiles.json",
+      "src/host/hosted-app-takeover-routing.ts",
+      "src/host/actions-queue-custody.ts",
+      "src/host/maintenance-existing-pr-publication.ts",
       "src/host/hosted-runtime-bootstrap.ts",
       "src/host/owner-install-plan-proof.ts",
       "src/host/self-dependency-preparation.ts",
@@ -84,11 +87,14 @@ Deno.test("hosted authority: real launcher emits only closed authority frame bas
     rig.process.child = exited("", 7, {
       stderr: new TextEncoder().encode([
         "error: Uncaught Error: fixture abort",
+        "    at file:///private/runtime/src/host/hosted-unknown-authority.ts:12:6",
+        "    at file:///private/runtime/src/host/synthetic-secret-value.ts:13:7",
         "    at file:///private/launcher/src/host/hosted-app-principal-source.ts:9:3",
         "    at file:///private/runtime/src/host/hosted-self-dependencies.ts:10:4",
         "    at file:///private/runtime/ops/hosted-autonomy-queue-proof.ts:11:5",
-        "    at file:///private/runtime/src/host/hosted-unknown-authority.ts:12:6",
-        "    at file:///private/runtime/src/host/synthetic-secret-value.ts:13:7",
+        "    at file:///private/runtime/src/host/hosted-app-takeover-routing.ts:9:3",
+        "    at file:///private/runtime/src/host/actions-queue-custody.ts:10:4",
+        "    at file:///private/runtime/src/host/maintenance-existing-pr-publication.ts:11:5",
       ].join("\n")),
     });
     const result = await launch(rig);
@@ -98,6 +104,9 @@ Deno.test("hosted authority: real launcher emits only closed authority frame bas
       "hosted-app-principal-source.ts:9:3",
       "hosted-self-dependencies.ts:10:4",
       "hosted-autonomy-queue-proof.ts:11:5",
+      "hosted-app-takeover-routing.ts:9:3",
+      "actions-queue-custody.ts:10:4",
+      "maintenance-existing-pr-publication.ts:11:5",
     ]);
     const serialized = JSON.stringify(result);
     for (
