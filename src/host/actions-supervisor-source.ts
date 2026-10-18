@@ -42,6 +42,10 @@ import type {
   SnapshotCursorV1,
 } from "./actions-supervisor-state.ts";
 import { HOSTED_SUPERVISOR_REVIEWER } from "./actions-supervisor-bootstrap.ts";
+import {
+  allowsQueueRuntimeMove,
+  QUEUE_RUNTIME_CAPABILITY_REFUSED,
+} from "./queue-runtime-capability.ts";
 
 export async function startExecution(
   input: HostedSupervisorInputV1,
@@ -53,6 +57,13 @@ export async function startExecution(
   releaseId: string | null,
   nextOrdinaryAt?: number,
 ): Promise<HostedSupervisorOutcomeV1> {
+  if (
+    !allowsQueueRuntimeMove(
+      runtime.activeRevision,
+      revision,
+      input.queueRuntimeCapability,
+    )
+  ) return pending(QUEUE_RUNTIME_CAPABILITY_REFUSED);
   if (isSettledCurrentRun(runtime, input.run)) {
     return idle(STATIC_IDLE_SETTLED);
   }
@@ -87,6 +98,13 @@ export async function planReleaseWork(
   releases: readonly HostedReleaseRecordV1[],
   release: HostedReleaseRecordV1,
 ): Promise<HostedSupervisorOutcomeV1 | "written" | null> {
+  if (
+    !allowsQueueRuntimeMove(
+      release.priorRevision,
+      release.request.revision,
+      input.queueRuntimeCapability,
+    )
+  ) return pending(QUEUE_RUNTIME_CAPABILITY_REFUSED);
   const now = input.clock.now();
   if (release.phase === "requested" && release.priorProof === null) {
     return await startExecution(
@@ -464,8 +482,18 @@ export async function settleWithPreflight(
       item.id === settlement.execution.releaseId
     );
     if (record === undefined) return { refused: STATIC_REQUEST };
-    const authorized = await authorizePromotionSource(input, record);
-    if (!authorized.ok) return { refused: authorized.detail };
+    // Old executions may settle, but cannot create a promotion intent in the
+    // activated era. attachReleaseSettlement applies the same capability gate.
+    if (
+      allowsQueueRuntimeMove(
+        record.priorRevision,
+        record.request.revision,
+        input.queueRuntimeCapability,
+      )
+    ) {
+      const authorized = await authorizePromotionSource(input, record);
+      if (!authorized.ok) return { refused: authorized.detail };
+    }
   }
   const applied = await settleRuntime(
     input,

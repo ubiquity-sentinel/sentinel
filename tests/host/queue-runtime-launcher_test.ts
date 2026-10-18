@@ -1,0 +1,275 @@
+import assert from "node:assert/strict";
+import type { GitSha } from "../../src/contracts/brands.ts";
+import { parseHostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
+import { ReviewOwnerCustodyBroker } from "../../src/host/review-owner-custody.ts";
+import { runHostedRuntimeLauncher } from "../../src/host/hosted-runtime-launcher.ts";
+import { HOSTED_RUNTIME_CHILD_ENTRYPOINT } from "../../src/host/hosted-runtime-identity.ts";
+import { runOwnerDevelopmentInstallMain } from "../../src/host/owner-install-run.ts";
+import { planOwnerDevelopmentInstall } from "../../src/host/owner-install-plan.ts";
+import { buildOwnerDevelopmentInstallSnapshot } from "../../src/host/owner-install-snapshot.ts";
+import { QUEUE_RUNTIME_CAPABILITY_REFUSED } from "../../src/host/queue-runtime-capability.ts";
+import { concurrencyInstallerFixture } from "./owner-install-fixture.ts";
+import { NOW } from "./owner-install-fixture-constants.ts";
+import {
+  failedProof,
+  healthyProof,
+  releaseSnapshot,
+  runtimeRecord,
+} from "./owner-install-fixture-proofs.ts";
+import {
+  childLine,
+  exited,
+  makeRig,
+  OTHER_REVISION,
+  seedRelease,
+} from "./hosted-runtime-fixture.ts";
+
+// Existing exact rungs are reused only to test policy enforcement. No production
+// capability pin is inferred from their healthy proofs or these fixture grants.
+const P79 = "549c7a69186b3d2070aa4e69c92ee846d183ce8f" as GitSha;
+const R80 = "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481" as GitSha;
+const policy = (revisions: readonly GitSha[]) => ({
+  proofActivated: true,
+  revisions,
+});
+
+function ownerSnapshot(rollback: boolean) {
+  const prior = healthyProof(P79, 79, 501);
+  return releaseSnapshot({
+    runtime: runtimeRecord({
+      revision: rollback ? R80 : P79,
+      generation: rollback ? 80 : 79,
+      healthyProof: prior,
+      executionProof: rollback ? failedProof(R80, 80) : prior,
+    }),
+  });
+}
+
+Deno.test("queue runtime capability: production owner install and rollback reject either unaccepted side", async (t) => {
+  for (const rollback of [false, true]) {
+    for (const revisions of [[P79], [R80], []]) {
+      await t.step(
+        `${rollback ? "rollback" : "install"}/${revisions.join()}`,
+        async () => {
+          const source = ownerSnapshot(rollback);
+          const fixture = await concurrencyInstallerFixture(
+            source,
+            undefined,
+            R80,
+          );
+          try {
+            const beforeRepair = await fixture.readRepair();
+            assert.equal(
+              await runOwnerDevelopmentInstallMain({
+                queueRuntimeCapability: policy(revisions),
+              }),
+              0,
+            );
+            assert.equal(fixture.reports.at(-1)?.status, "waiting");
+            assert.equal(
+              fixture.reports.at(-1)?.detail,
+              QUEUE_RUNTIME_CAPABILITY_REFUSED,
+            );
+            assert.equal(fixture.patches(), 0);
+            assert.equal(await fixture.head(), fixture.beforeHead);
+            assert.deepEqual(await fixture.readRepair(), beforeRepair);
+            assert.ok(
+              fixture.requests.every((request) => request.method === "GET"),
+            );
+          } finally {
+            await fixture.close();
+          }
+        },
+      );
+    }
+  }
+});
+
+Deno.test("queue runtime capability: production owner install retains existing exact CI and CAS gates", async (t) => {
+  for (const refusal of [undefined, "ci", "parent"] as const) {
+    await t.step(refusal ?? "accepted", async () => {
+      const fixture = await concurrencyInstallerFixture(
+        ownerSnapshot(false),
+        refusal,
+        R80,
+      );
+      try {
+        assert.equal(
+          await runOwnerDevelopmentInstallMain({
+            queueRuntimeCapability: policy([P79, R80]),
+          }),
+          0,
+        );
+        if (refusal === undefined) {
+          assert.equal(fixture.reports.at(-1)?.status, "installed");
+          assert.equal(fixture.patches(), 1);
+          const read = await fixture.read();
+          assert.ok(read.ok && read.value.status === "found");
+          assert.equal(
+            read.value.snapshot.hostedRuntimes[0].activeRevision,
+            R80,
+          );
+          assert.equal(read.value.snapshot.hostedRuntimes[0].generation, 80);
+        } else {
+          assert.notEqual(fixture.reports.at(-1)?.status, "installed");
+          assert.equal(fixture.patches(), 0);
+          if (refusal === "parent") {
+            assert.notEqual(await fixture.head(), fixture.beforeHead);
+          } else assert.equal(await fixture.head(), fixture.beforeHead);
+        }
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+Deno.test("queue runtime capability: owner snapshot builder cannot bypass the planner or turn a migration into an old-runtime grant", () => {
+  const source = ownerSnapshot(false);
+  const plan = planOwnerDevelopmentInstall(source, NOW);
+  assert.equal(plan.status, "install");
+  assert.ok(plan.status === "install");
+  const head = "a".repeat(40) as GitSha;
+  assert.throws(() =>
+    buildOwnerDevelopmentInstallSnapshot(
+      source,
+      head,
+      plan.move,
+      NOW,
+      undefined,
+      undefined,
+      policy([R80]),
+    )
+  );
+  assert.equal(
+    planOwnerDevelopmentInstall(
+      source,
+      NOW,
+      undefined,
+      undefined,
+      policy([R80]),
+    ).status,
+    "waiting",
+  );
+  const allowed = buildOwnerDevelopmentInstallSnapshot(
+    source,
+    head,
+    plan.move,
+    NOW,
+    undefined,
+    undefined,
+    policy([P79, R80]),
+  );
+  assert.equal(allowed.hostedRuntimes[0].activeRevision, R80);
+  assert.deepEqual(
+    allowed.hostedRuntimes[0].lastHealthyProof,
+    source.hostedRuntimes[0].lastHealthyProof,
+  );
+});
+
+Deno.test("queue runtime capability: actual launcher blocks all purposes and matrix replay before child or review custody starts", async (t) => {
+  const cases = [
+    ["repair", "ordinary"],
+    ["repair", "bootstrap"],
+    ["repair", "prior"],
+    ["repair", "candidate"],
+    ["repair", "rollback"],
+    ["matrix_plan", "ordinary"],
+    ["matrix_cell", "ordinary"],
+  ] as const;
+  for (const [job, purpose] of cases) {
+    await t.step(`${job}/${purpose}`, async () => {
+      const rig = await makeRig();
+      try {
+        rig.execution = parseHostedExecutionIntentV1({
+          ...rig.execution,
+          purpose,
+          releaseId: ["prior", "candidate", "rollback"].includes(purpose)
+            ? "release-fixture"
+            : null,
+        });
+        await seedRelease(rig);
+        const before = await rig.release.readRelease();
+        let custodyStarts = 0;
+        const broker = purpose === "ordinary"
+          ? new ReviewOwnerCustodyBroker(rig.execution, [{
+            repository: {
+              owner: "ubiquity",
+              name: "sentinel",
+              installationId: 0,
+            },
+            provider: "fixture",
+            model: "fixture",
+            permissionProfile: "fixture",
+            session: {
+              command: ["never-start"],
+              cwd: rig.runtimeDir,
+              env: {},
+              operationDeadlineMs: 1000,
+            },
+          }])
+          : undefined;
+        if (broker !== undefined) {
+          broker.start = () => {
+            custodyStarts++;
+            return Promise.reject(new Error("custody must not start"));
+          };
+        }
+        const result = await runHostedRuntimeLauncher({
+          state: rig.release,
+          clock: rig.clock,
+          env: { ...rig.env, GITHUB_JOB: job },
+          launcherDir: rig.launcherDir,
+          runtimeDir: rig.runtimeDir,
+          denoExecutable: Deno.execPath(),
+          process: rig.process,
+          reviewCustody: broker,
+        }, {
+          ...policy([OTHER_REVISION]),
+          ownerInstallMigrations: [{
+            fromRevision: rig.execution.revision,
+            fromGeneration: 1,
+            toRevision: OTHER_REVISION,
+            toGeneration: 2,
+          }],
+        });
+        assert.equal(result.status, "unavailable");
+        assert.equal(result.terminal, null);
+        assert.equal(
+          rig.process.calls.filter((call) =>
+            call.args.includes(HOSTED_RUNTIME_CHILD_ENTRYPOINT) ||
+            call.args.includes("src/host/matrix-actions.ts")
+          ).length,
+          0,
+        );
+        assert.equal(custodyStarts, 0);
+        assert.deepEqual(await rig.release.readRelease(), before);
+      } finally {
+        await rig.cleanup();
+      }
+    });
+  }
+});
+
+Deno.test("queue runtime capability: exact accepted runtime runs from a different launcher SHA", async () => {
+  const rig = await makeRig();
+  try {
+    await seedRelease(rig);
+    assert.notEqual(rig.identity.launcherSha, rig.execution.revision);
+    rig.process.child = exited(childLine(rig.execution));
+    const result = await runHostedRuntimeLauncher({
+      state: rig.release,
+      clock: rig.clock,
+      env: rig.env,
+      launcherDir: rig.launcherDir,
+      runtimeDir: rig.runtimeDir,
+      denoExecutable: Deno.execPath(),
+      process: rig.process,
+    }, policy([rig.execution.revision]));
+    assert.equal(result.status, "healthy");
+    assert.equal(rig.process.childCalls().length, 1);
+    assert.equal(result.terminal?.execution.revision, rig.execution.revision);
+  } finally {
+    await rig.cleanup();
+  }
+});

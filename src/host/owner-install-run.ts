@@ -50,6 +50,7 @@ import {
   testLocalCheckSucceeded,
 } from "./owner-install-api.ts";
 import { failedResult, report, waitingResult } from "./owner-install-result.ts";
+import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
 
 /**
  * Fixed production entry point. Reads only the named native identity and
@@ -67,6 +68,8 @@ export async function runOwnerDevelopmentInstallMain(input?: {
   startupRecovery?: boolean;
   /** Immutable-history fixture seam; production always uses the source pin. */
   startupWitness?: GitSha;
+  /** Trusted in-process fixture only; never read from the environment. */
+  queueRuntimeCapability?: QueueRuntimeCapability;
 }): Promise<number> {
   const repository = Deno.env.get("GITHUB_REPOSITORY");
   const ref = Deno.env.get("GITHUB_REF");
@@ -237,6 +240,7 @@ export async function runOwnerDevelopmentInstallMain(input?: {
     now,
     recovery,
     startup,
+    input?.queueRuntimeCapability,
   );
   if (plan.status === "waiting" || plan.status === "no_change") {
     return report({
@@ -307,6 +311,7 @@ export async function runOwnerDevelopmentInstallMain(input?: {
       now,
       recovery,
       startup,
+      input?.queueRuntimeCapability,
     );
     files = await ownerDevelopmentInstallFiles(planned, current.head);
     message = ownerDevelopmentInstallCommitMessage({

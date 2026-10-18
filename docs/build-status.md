@@ -24,12 +24,16 @@ matrix planning and its cell; repair remains in progress. `sentinel-release`
 remains disabled. No R81 candidate has been published, installed or accepted.
 The owner authorized normal fast-forward publication, exact-runtime CI,
 controller installation and live verification. The owner unsuspended the GitHub
-connector App; the live Sentinel App is a separate identity and remains
-unchanged. Owner documentation on development separately records the
-implementation override `gpt-reserve`; preserve that owner change and all
-existing workflow variable expressions. Exact R81 CI may run from its frozen
-`codex/**` branch before L81 integrates these unrelated owner documentation
-commits. The installer still requires exact successful R81 CI and ancestry.
+connector App; the live Sentinel App is a separate identity whose queue
+permission grant the owner has now confirmed. A fresh read also found the
+pre-existing repository ruleset `23197448` protecting only
+`sentinel-state/release` (created 2026-09-13); it is unchanged, and no new
+Sentinel ruleset or branch protection was added. Owner documentation on
+development separately records the implementation override `gpt-reserve`;
+preserve that owner change and all existing workflow variable expressions. Exact
+R81 CI may run from its frozen `codex/**` branch before L81 integrates these
+unrelated owner documentation commits. The installer still requires exact
+successful R81 CI and ancestry.
 
 The canonical integration worktree is `/workspace/worktrees/gen81-integration`,
 branch `codex/gen81-integration`. Accepted ancestry includes all eleven rebased
@@ -81,13 +85,23 @@ loop-guard cases pass; the patch and exact hashes are retained under
 deterministic red reproductions and abandoned toy repositories are retained
 under `/workspace/evidence/gen81-final-validation/` and
 `/workspace/evidence/gen81-lanes/`. The corrected R81 is frozen at
-`da98f5f49c45b57cfa97a45fe647c36b1021f302`; all seven normal static gates pass,
-and its complete normal/depth-1 test manifest is running. Queue source remains
-separate and cannot alter that exact candidate. Hosted exact-R CI, L81 pins,
-controller installation and live verification remain separate unproved gates.
-The primary alone owns this ledger, canonical integration and publication. The
-original review/correction evidence remains under
-`/workspace/evidence/gen81-audit/`, `/workspace/evidence/gen81-output-volume/`,
+`da98f5f49c45b57cfa97a45fe647c36b1021f302`; all 137 normal jobs pass, including
+all static gates and 3,058 tests / 843 steps across 445 files. Eleven existing
+platform/history guarded ignores are retained in the receipts. Its exact depth-1
+clone and seven shallow static gates also pass; the complete shallow test
+manifest is running. Queue source remains separate and cannot alter that exact
+candidate. Hosted exact-R CI, L81 pins, controller installation and live
+verification remain separate unproved gates. The primary alone owns this ledger,
+canonical integration and publication. The owner additionally requires taking
+over referenced or linked open PRs instead of opening duplicates. Current
+runtime discovery is limited to its generated or saved candidate branch; the
+isolated `queue-import-cycle` worker is auditing a native takeover path for the
+next runtime after R81. Preserve existing PRs and branches, refuse ambiguous or
+unwritable takeover visibly, and never create a fallback duplicate. This new
+requirement does not establish that current R80 or the frozen R81 enforces
+general cross-branch takeover. The original review/correction evidence remains
+under `/workspace/evidence/gen81-audit/`,
+`/workspace/evidence/gen81-output-volume/`,
 `/workspace/evidence/gen81-review-custody/` and
 `/workspace/evidence/gen81-install/`.
 
@@ -189,14 +203,22 @@ pass with the switch applied. The switch also adds its named variable to the
 actual child test's declared allowlist; its original permission refusal is
 reproduced and corrected. These exact patches are retained under
 `/workspace/evidence/queue-import-cycle/` and
-`/workspace/evidence/queue-kill-switch-supplement/`. The
-`queue-runtime-capability` worker owns the activated-era exact runtime guard.
-Only the primary owns shared integration and this ledger. Independent review of
-these combined corrections remains pending. The proposed disabled-to-active
-production ruleset projection still requires native canary evidence. Stage the
-production ruleset disabled and install accepted proof-capable
-fallback/admission revisions before owner activation; never enable then rebuild
-pins. Prospective generation numbers are not authority. Detailed evidence is in
+`/workspace/evidence/queue-kill-switch-supplement/`. The thirteen-file exact
+runtime capability guard is also integrated from patch
+`dd4eb456fe270f04697e391d3d370bf58fb2eae9563e4ed60672d741fd1c0802`. It guards
+controller selection, generic pointer replay, owner installation and actual
+repair/matrix child launch. Finite owner migration tuples permit only the exact
+owner-install move into an accepted runtime; they never grant predecessor
+execution or rollback. Production capability pins and migration tuples remain
+empty. Its 70 tests and 59 steps pass, including actual R80 parsing of emitted
+release-state lifecycles. Existing verification-only bootstrap behavior for an
+accepted failed candidate remains unchanged. Only the primary owns shared
+integration and this ledger; fresh combined correction review remains pending.
+The proposed disabled-to-active production ruleset projection still requires
+native canary evidence. Stage the production ruleset disabled and install
+accepted proof-capable fallback/admission revisions before owner activation;
+never enable then rebuild pins. Prospective generation numbers are not
+authority. Detailed evidence is in
 `/workspace/evidence/merge-queue/install-plan.md`. No Sentinel ruleset or branch
 protection is authorized. The owner explicitly confirmed the Sentinel App's
 Merge queues read/write permission was granted and accepted; native

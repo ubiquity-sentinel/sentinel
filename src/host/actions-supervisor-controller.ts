@@ -36,6 +36,12 @@ import type {
 } from "./actions-supervisor-state.ts";
 import { STATIC_STATE } from "./actions-supervisor-bootstrap.ts";
 import {
+  allowsQueueExecution,
+  allowsQueueRuntime,
+  allowsQueueRuntimeMove,
+  QUEUE_RUNTIME_CAPABILITY_REFUSED,
+} from "./queue-runtime-capability.ts";
+import {
   authenticateSamePointerRecovery,
   authorizePromotionSource,
   buildRequestedReceipt,
@@ -103,6 +109,17 @@ export async function runHostedSupervisorPrepare(
         execution.id === executionIdOfRun(input.run) &&
         execution.launcherSha === input.run.launcherSha
       ) {
+        if (
+          !allowsQueueExecution(
+            execution,
+            releases,
+            input.queueRuntimeCapability,
+          ) || !allowsQueueRuntimeMove(
+            runtime.activeRevision,
+            execution.revision,
+            input.queueRuntimeCapability,
+          )
+        ) return pending(QUEUE_RUNTIME_CAPABILITY_REFUSED);
         return { status: "run", execution };
       }
       const settlement = await readSettlement(input, execution);
@@ -125,6 +142,12 @@ export async function runHostedSupervisorPrepare(
 
     if (runtime === null) {
       if (releases.length > 0) return pending(STATIC_BOOTSTRAP_RELEASE);
+      if (
+        !allowsQueueRuntime(
+          input.run.launcherSha,
+          input.queueRuntimeCapability,
+        )
+      ) return pending(QUEUE_RUNTIME_CAPABILITY_REFUSED);
       let verified: PortResultV1<boolean>;
       try {
         verified = await input.evidence.verifyRevision(input.run.launcherSha);
@@ -183,7 +206,31 @@ export async function runHostedSupervisorPrepare(
       ) return pending(STATIC_CONFLICT);
     }
 
-    const recovery = planPointerRecovery(runtime, releases, input.clock.now());
+    const savedMove = releases.find((item) =>
+      (item.phase === "promoting" || item.phase === "rollback_pending") &&
+      item.pointerIntent !== null
+    );
+    if (
+      savedMove?.pointerIntent !== undefined && savedMove.pointerIntent !== null
+    ) {
+      if (
+        !allowsQueueRuntimeMove(
+          savedMove.pointerIntent.expectedRevision,
+          savedMove.pointerIntent.nextRevision,
+          input.queueRuntimeCapability,
+        ) || !allowsQueueRuntimeMove(
+          savedMove.priorRevision,
+          savedMove.request.revision,
+          input.queueRuntimeCapability,
+        )
+      ) return pending(QUEUE_RUNTIME_CAPABILITY_REFUSED);
+    }
+    const recovery = planPointerRecovery(
+      runtime,
+      releases,
+      input.clock.now(),
+      input.queueRuntimeCapability,
+    );
     if (recovery !== null) {
       // A persisted promote intent is durable, not self-authorizing: before
       // the pointer actually moves on a RESUMED intent, the current trusted
@@ -248,6 +295,13 @@ export async function runHostedSupervisorPrepare(
     const selected = await selectSourceRequest(input, releases, runtime);
     if (selected.kind === "pending") return pending(selected.detail);
     if (selected.kind === "found") {
+      if (
+        !allowsQueueRuntimeMove(
+          runtime.activeRevision,
+          selected.request.revision,
+          input.queueRuntimeCapability,
+        )
+      ) return pending(QUEUE_RUNTIME_CAPABILITY_REFUSED);
       const receipt = buildRequestedReceipt(
         selected.request,
         runtime.activeRevision,
