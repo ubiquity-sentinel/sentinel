@@ -89,8 +89,9 @@ function keyOf(
 
 /**
  * Extract at most ONE signature from one job log, most specific first. A log
- * that matches nothing still yields the job-level class, which is honest: the
- * job failed and no allowlisted pattern explained it.
+ * that matches nothing still yields the job-level class unless the structured
+ * job conclusion identifies cancellation, which is honest even without log
+ * output from a cancelled job.
  */
 export function extractSelfFailureSignature(
   logText: string,
@@ -135,6 +136,14 @@ export function extractSelfFailureSignature(
     return {
       key: keyOf("exit", context, code),
       summary: `the job exited with code ${code}`,
+    };
+  }
+  const cancellation = context.conclusion === "cancelled" ||
+    /The operation was cancel(?:l)?ed\b/i.test(logText);
+  if (cancellation) {
+    return {
+      key: keyOf("cancelled", context),
+      summary: "the job was cancelled before it completed",
     };
   }
   return {
