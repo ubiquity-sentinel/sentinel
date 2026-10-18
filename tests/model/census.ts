@@ -17,9 +17,8 @@
  * forever (the base tip only moves forward, so: once the tip has moved), no
  * pass with the base CI green or red at any later time changes its decision
  * fields, and no runtime recovery takes it. It is VISIBLE when every one of
- * those passes emits an action line naming it (the owner's only active
- * signal: the protected maintenance log; the blocker in the state ref is
- * passive). J1 is an absorbing shape, not terminal by design, with an open
+ * those passes names it in the maintenance log or production run summary
+ * (the blocker in the state ref alone is passive). J1 is an absorbing shape, not terminal by design, with an open
  * issue (and an open pull request where the shape has one) that is not
  * visible. The parks that are absorbing AND visible are the owner-gated
  * terminal-by-design ones, reported separately.
@@ -156,7 +155,7 @@ export interface ParkVerdictV1 {
    * forever), however the head's CI and the base's CI read.
    */
   absorbing: boolean;
-  /** Every pass in that world named the record in an action line. */
+  /** Every pass named the record in an action line or rendered summary row. */
   visible: boolean;
   /** First move observed in any world (authority/action, world). */
   movedBy: string | null;
