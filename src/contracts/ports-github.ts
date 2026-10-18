@@ -1,3 +1,4 @@
+import type { NativeQueueGuardV1 } from "../github/native-queue-guard.ts";
 import type { GitSha, WorkItemId } from "./brands.ts";
 import type { SelfMergeExecutionV1 } from "./self-merge.ts";
 import type { GitHubRateLimitV1 } from "./github-cooldown.ts";
@@ -8,6 +9,7 @@ import type {
   CarriedPatchProofV1,
   CarriedPatchRequestV1,
   GitHubBranchProtectionsV1,
+  GitHubCheckSuitesV1,
   GitHubChecksV1,
   GitHubIssueV1,
   GitHubPullRequestV1,
@@ -28,6 +30,8 @@ import type {
 } from "./ports-github-requests.ts";
 
 export interface GitHubPort {
+  /** Trusted queue custody capability; absent gateway effect authority fails closed. */
+  readonly nativeQueue?: NativeQueueGuardV1;
   /**
    * Exact trusted review publisher identity configured for this port. The
    * repair loop uses this value for every review request and receipt binding;
@@ -44,6 +48,15 @@ export interface GitHubPort {
     number: number,
   ): Promise<PortResultV1<GitHubPullRequestV1 | null>>;
   readChecks(head: GitSha): Promise<PortResultV1<GitHubChecksV1>>;
+  /**
+   * The check runs of `head` reduced to name and check suite, for the
+   * required-CI coverage rule's read of a base only (`absentExpectedChecks`).
+   * Lenient where `readChecks` is strict: it judges no conclusion, so a run's
+   * name has no label bound (sentinel `development` carries 78-character
+   * `matrix_cell (<cellId>)` runs) and commit statuses, which are never
+   * expected, are not read; the item bound and the exact-head binding stay.
+   */
+  readCheckSuites(head: GitSha): Promise<PortResultV1<GitHubCheckSuitesV1>>;
   readProtections(
     baseBranch: string,
   ): Promise<PortResultV1<GitHubBranchProtectionsV1>>;

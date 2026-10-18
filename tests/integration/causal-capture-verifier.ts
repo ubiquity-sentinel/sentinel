@@ -98,6 +98,7 @@ export class FakeCodexSession implements CodexSessionV1 {
     | ((event: CodexServerNotificationV1) => void)
     | null = null;
   private turnStarted = false;
+  private emission: ReturnType<typeof setTimeout> | null = null;
 
   open(): void {
     this.openCalls++;
@@ -117,6 +118,7 @@ export class FakeCodexSession implements CodexSessionV1 {
         });
       case "turn/start":
         this.turnStarted = true;
+        this.emitTerminal();
         return Promise.resolve({ turn: { id: "turn-1" } });
       case "turn/interrupt":
         return Promise.resolve({});
@@ -131,13 +133,19 @@ export class FakeCodexSession implements CodexSessionV1 {
 
   onNotification(handler: (event: CodexServerNotificationV1) => void): void {
     this.notifications = handler;
-    if (this.turnStarted) {
-      // The real app-server emits the terminal event only after the listener
-      // is registered inside awaitSettlement; the fake mirrors that order.
+    this.emitTerminal();
+  }
+
+  private emitTerminal(): void {
+    if (
+      this.turnStarted && this.notifications !== null && this.emission === null
+    ) {
+      // Notifications are independent of the turn/start response: support
+      // both an already registered consumer and a late listener.
       // A completed run requires genuine correlated output evidence: one
       // successful file-change item for the exact thread/turn, delivered
       // before the terminal event (never notification-byte counts).
-      queueMicrotask(() => {
+      this.emission = setTimeout(() => {
         this.notifications?.({
           method: "item/completed",
           params: {
@@ -163,13 +171,14 @@ export class FakeCodexSession implements CodexSessionV1 {
             turn: { id: "turn-1", status: "completed", durationMs: 5 },
           },
         });
-      });
+      }, 0);
     }
   }
 
   onServerRequest(): void {}
 
   close(): Promise<void> {
+    if (this.emission !== null) clearTimeout(this.emission);
     this.closeCalls++;
     return Promise.resolve();
   }

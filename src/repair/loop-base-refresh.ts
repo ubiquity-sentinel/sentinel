@@ -1,3 +1,9 @@
+import {
+  holdQueueRecord,
+  queueEffectRefused,
+  queueRefusalIsTransient,
+} from "./loop-queue-guard.ts";
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: base refresh. */
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import { BASE_REFRESH_CONFLICT_DETAIL } from "../contracts/ports.ts";
@@ -7,6 +13,7 @@ import type {
   WorkRecordV1,
 } from "../contracts/work-record.ts";
 import {
+  conflictMarkerBase,
   conflictResolutionRouteOpen,
   conflictResolutionShape,
   pendingConflictRecord,
@@ -23,7 +30,9 @@ import {
   BASE_REFRESH_PUSH_DETAIL,
   BASE_REFRESH_REF_READ_DETAIL,
   BASE_REFRESH_UNPREPARED_DETAIL,
+  baseRefreshRefusalReason,
   failBaseRefresh,
+  refuseBaseRefresh,
 } from "./loop-base-refresh-failure.ts";
 import { configFor, retireClosedPublication } from "./loop-records.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
@@ -53,8 +62,11 @@ export {
   BASE_REFRESH_PRESERVE_DETAIL,
   BASE_REFRESH_PUSH_DETAIL,
   BASE_REFRESH_REF_READ_DETAIL,
+  BASE_REFRESH_REFUSED_PREFIX,
   BASE_REFRESH_UNPREPARED_DETAIL,
+  baseRefreshRefusedMessage,
   failBaseRefresh,
+  isBaseRefreshRefusedPark,
   MAX_BASE_REFRESH_FAILURES,
 } from "./loop-base-refresh-failure.ts";
 
@@ -87,6 +99,13 @@ export async function ensureBaseRefreshIntent(
   record: WorkRecordV1,
   beforeRefresh?: (observedBase: GitSha) => Promise<StepResultV1 | null>,
 ): Promise<StepResultV1 | null> {
+  const queueGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "refresh",
+  );
+  if (queueGuard !== null) return queueGuard;
   const config = configFor(deps, record.repository);
   if (config === null) return null;
   if (
@@ -184,6 +203,13 @@ export async function executeBaseRefreshIntent(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "refresh",
+  );
+  if (queueGuard !== null) return queueGuard;
   const intent = record.intent;
   if (
     intent === null || intent.kind !== "base_refresh" ||
@@ -293,6 +319,21 @@ export async function executeBaseRefreshIntent(
       publishedHead: candidateState.publishedHead,
     });
     if (!preserved.ok) {
+      // The trusted validator's verdict on the deterministic merge of the
+      // exact candidate and base is final for this intent: re-running it can
+      // only repeat the verdict (sentinel issue 157: a candidate R79 produced
+      // edits paths R80 protects). It parks once for the owner, with the
+      // closed reason and the open PR kept. A marked conflict-resolution
+      // refresh keeps its marker accounting below.
+      const reason = conflictMarkerBase(intent) === null
+        ? baseRefreshRefusalReason(
+          preserved.error.kind,
+          preserved.error.detail,
+        )
+        : null;
+      if (reason !== null) {
+        return refuseBaseRefresh(deps, context, durable, reason);
+      }
       return failBaseRefresh(deps, context, durable, durableIntent, {
         kind: preserved.error.kind,
         detail: BASE_REFRESH_PRESERVE_DETAIL,
@@ -327,6 +368,16 @@ export async function executeBaseRefreshIntent(
   }
   const ref = `refs/heads/${record.target.branch}`;
   const current = await deps.github.readRef(ref);
+  const observedGuard = await guardQueueOperation(
+    deps,
+    context,
+    durable,
+    "refresh",
+    current.ok && current.value?.sha === preparedHead
+      ? preparedHead
+      : undefined,
+  );
+  if (observedGuard !== null) return observedGuard;
   if (!current.ok || current.value === null) {
     return failBaseRefresh(deps, context, durable, durableIntent, {
       kind: current.ok ? "unavailable" : current.error.kind,
@@ -353,6 +404,14 @@ export async function executeBaseRefreshIntent(
       preparedHead,
       record.target.head,
     );
+    if (!pushed.ok && queueEffectRefused(pushed.error)) {
+      return holdQueueRecord(
+        deps,
+        context,
+        durable,
+        queueRefusalIsTransient(pushed.error),
+      );
+    }
     if (!pushed.ok || pushed.value !== "applied") {
       // Unknown/error/lost push: keep the same durable intent and wait bounded;
       // a later run reconciles the exact ref before repeating. The bounded
@@ -371,6 +430,14 @@ export async function executeBaseRefreshIntent(
       detail: BASE_REFRESH_FOREIGN_HEAD_DETAIL,
     });
   }
+  const publishedGuard = await guardQueueOperation(
+    deps,
+    context,
+    durable,
+    "refresh",
+    preparedHead,
+  );
+  if (publishedGuard !== null) return publishedGuard;
   // Success: the refreshed candidate becomes the exact target and the existing
   // publication path requests a fresh review for the new head. For a
   // new-format record the target base/head, the successor descriptor and the
@@ -426,6 +493,13 @@ export async function reconcileRefreshPublication(
   record: WorkRecordV1,
   intent: IncompleteOperationV1,
 ): Promise<StepResultV1 | null> {
+  const queueGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "refresh",
+  );
+  if (queueGuard !== null) return queueGuard;
   if (record.target.pr === null) return null;
   const pull = await deps.github.readPullRequest(record.target.pr);
   if (!pull.ok) {
@@ -516,6 +590,14 @@ async function prepareRefreshHead(
     ...(persistedPrepared === null ? {} : { preparedHead: persistedPrepared }),
   });
   if (!prepared.ok) {
+    if (queueEffectRefused(prepared.error)) {
+      return holdQueueRecord(
+        deps,
+        context,
+        record,
+        queueRefusalIsTransient(prepared.error),
+      );
+    }
     if (
       prepared.error.kind === "conflict" &&
       prepared.error.detail === BASE_REFRESH_CONFLICT_DETAIL

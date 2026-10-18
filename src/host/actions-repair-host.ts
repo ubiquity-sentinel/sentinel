@@ -5,6 +5,7 @@ import { DenoReplayRuntime } from "../replay/runtime.ts";
 import { ReviewOwnerChannelClient } from "./review-owner-channel.ts";
 import { reviewOwnerChildInput } from "./review-owner-child-input.ts";
 import { parseCarrier } from "./matrix-actions-shared.ts";
+import { cellCiEvidenceReader } from "./matrix-cell-ci-evidence.ts";
 import {
   createTrustedGatewayCapabilities,
   isGatewayTarget,
@@ -166,6 +167,7 @@ export async function runActionsRepairHost(
     SENTINEL_REVIEW_MODEL_ID: Deno.env.get("SENTINEL_REVIEW_MODEL_ID"),
   };
   const modelRoute = resolveModelRoute(routeEnv);
+  const queueMode = readEnv("SENTINEL_MERGE_QUEUE");
   // The dedicated structured-review model override is resolved EXACTLY ONCE
   // here alongside the route: an unset or blank value yields the owner's
   // preferred default (`codex-auto-review`); a declared-but-invalid value
@@ -456,6 +458,7 @@ export async function runActionsRepairHost(
   // git remote and cooldown scope all address exactly that repository.
   const composeProductionGithub = (config: RepositoryConfigV1): GitHubPort =>
     scopeLocalRepairIssues(composeLocalGitHub({
+      queueMode,
       clock,
       state,
       gate,
@@ -782,6 +785,21 @@ export async function runActionsRepairHost(
       },
       prepareTarget,
       composeGithub: composeTargetGithub,
+      // A matrix cell reads its CI correction's failure evidence with its own
+      // scoped read-only App token (`cellCiEvidenceReader`). The reader never
+      // reaches the model worker: only the rendered, fenced text does.
+      ...(deps.job === "matrix_cell"
+        ? {
+          composeCiEvidence: (config: RepositoryConfigV1) =>
+            cellCiEvidenceReader({
+              repository: config.repository,
+              http,
+              clock,
+              token: writeToken,
+              gate,
+            }),
+        }
+        : {}),
       // The one advisory line reports every committed target as addressed or
       // skipped (an unavailable default branch, or out of time). It carries no
       // `status` property, so the launcher can never read it as a child record.

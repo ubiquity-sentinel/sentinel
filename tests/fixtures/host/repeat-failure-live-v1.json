@@ -1,0 +1,1292 @@
+{
+  "source": {
+    "stateBranch": "sentinel-state/repair",
+    "stateCommit": "b59c04a4909707b7b0752ffb490fc4ed32961022",
+    "capturedAt": "2026-10-17T22:55:00Z",
+    "note": "verbatim live work rows, every implementation attempt-memory family of those tasks and the charge each retained intent names"
+  },
+  "work": [
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "model run failed (unavailable)",
+        "since": 1792278008554
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "dbae19f218141a44becd7d1fffc22d792913b4f0"
+      },
+      "counters": {
+        "attempts": 52,
+        "retries": 0,
+        "reviewRounds": 0
+      },
+      "createdAt": 1789982324611,
+      "dependencies": [],
+      "evidence": [],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1789272624000,
+      "id": "issue-ubiquity-ai.ubq.fi-300",
+      "intent": {
+        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-300",
+        "expectedHead": null,
+        "key": "impl:8f9e753895a04445ba10fd0ea195f318446d2d4e2ac9e8e29f8a8bcb968b8d9f",
+        "kind": "implementation",
+        "observedBase": "f2457327beae47f991c31038365a5cbd2deb917b",
+        "pr": null,
+        "requestId": "8f9e753895a04445ba10fd0ea195f318446d2d4e2ac9e8e29f8a8bcb968b8d9f",
+        "resultId": null,
+        "startedAt": 1792277868462
+      },
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 300
+      },
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "source": {
+        "id": "300",
+        "kind": "issue",
+        "revision": "922c33392d8a4670968ee850312aed9a7e024f08"
+      },
+      "sourceSnapshotDigest": null,
+      "target": {
+        "base": "f2457327beae47f991c31038365a5cbd2deb917b",
+        "branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-300",
+        "checkpoint": null,
+        "head": null,
+        "pr": null
+      },
+      "updatedAt": 1792278008554,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+        "since": 1792277214815
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f"
+      },
+      "counters": {
+        "attempts": 5,
+        "retries": 0,
+        "reviewRounds": 0
+      },
+      "createdAt": 1792256495577,
+      "dependencies": [],
+      "evidence": [],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1792256476000,
+      "id": "issue-ubiquity-sentinel-152",
+      "intent": {
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-152",
+        "expectedHead": null,
+        "key": "impl:e0efdc31588c01434ce4f2f47ca6ffcad4a2d9b807b3132d678c3f248be5463c",
+        "kind": "implementation",
+        "observedBase": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+        "pr": null,
+        "requestId": "e0efdc31588c01434ce4f2f47ca6ffcad4a2d9b807b3132d678c3f248be5463c",
+        "resultId": null,
+        "startedAt": 1792275409513
+      },
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 152
+      },
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "source": {
+        "id": "152",
+        "kind": "issue",
+        "revision": "d5cc84402c5971df4031c03b5e71e55c55a3a11c"
+      },
+      "sourceSnapshotDigest": null,
+      "target": {
+        "base": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-152",
+        "checkpoint": null,
+        "head": null,
+        "pr": null
+      },
+      "updatedAt": 1792277214815,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+        "since": 1792277231697
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f"
+      },
+      "counters": {
+        "attempts": 5,
+        "retries": 0,
+        "reviewRounds": 0
+      },
+      "createdAt": 1792257173450,
+      "dependencies": [],
+      "evidence": [],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1792256506000,
+      "id": "issue-ubiquity-sentinel-155",
+      "intent": {
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-155",
+        "expectedHead": null,
+        "key": "impl:97db5021260f005b7d87bdfb46025a9f7aa0d04304d6a08e47f893b97ffee303",
+        "kind": "implementation",
+        "observedBase": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+        "pr": null,
+        "requestId": "97db5021260f005b7d87bdfb46025a9f7aa0d04304d6a08e47f893b97ffee303",
+        "resultId": null,
+        "startedAt": 1792275418130
+      },
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 155
+      },
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "source": {
+        "id": "155",
+        "kind": "issue",
+        "revision": "d5cc84402c5971df4031c03b5e71e55c55a3a11c"
+      },
+      "sourceSnapshotDigest": null,
+      "target": {
+        "base": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-155",
+        "checkpoint": null,
+        "head": null,
+        "pr": null
+      },
+      "updatedAt": 1792277231697,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    },
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+        "since": 1792277249112
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f"
+      },
+      "counters": {
+        "attempts": 5,
+        "retries": 0,
+        "reviewRounds": 0
+      },
+      "createdAt": 1792257173450,
+      "dependencies": [],
+      "evidence": [],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1792256520000,
+      "id": "issue-ubiquity-sentinel-156",
+      "intent": {
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-156",
+        "expectedHead": null,
+        "key": "impl:420a9b4cb1f6288d488374c880976855c781557d1695b12544df10acacf0aaf5",
+        "kind": "implementation",
+        "observedBase": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+        "pr": null,
+        "requestId": "420a9b4cb1f6288d488374c880976855c781557d1695b12544df10acacf0aaf5",
+        "resultId": null,
+        "startedAt": 1792275426760
+      },
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 156
+      },
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "source": {
+        "id": "156",
+        "kind": "issue",
+        "revision": "d5cc84402c5971df4031c03b5e71e55c55a3a11c"
+      },
+      "sourceSnapshotDigest": null,
+      "target": {
+        "base": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-156",
+        "checkpoint": null,
+        "head": null,
+        "pr": null
+      },
+      "updatedAt": 1792277249112,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    }
+  ],
+  "attemptMemory": [
+    {
+      "base": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+      "entries": [
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "95a562b68a03a82cc9f9b2f7b23d280b46bb066e14d11a36b3a42528544ae13d",
+          "firstAtMs": 1792271913039,
+          "lastAtMs": 1792271913039,
+          "stage": "model"
+        },
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 1,
+          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "b71b5c03d865700345abe3310a57263eb680e5485b27dcd4e00f486aeb219936",
+          "firstAtMs": 1792277231697,
+          "lastAtMs": 1792277231697,
+          "stage": "model"
+        }
+      ],
+      "id": "02aa2fcfc2ca6ab3bf6ca4e91878a2d984e69061cd0dcf66cd977f9677bdb08c",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-sentinel-155",
+      "version": "v1"
+    },
+    {
+      "base": "c40ba146240c071216c33de08a746712b0f1506c",
+      "entries": [
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "5d22e2c26663af9673a6613207f7cff9eab8f40b14a8f1e58a1eced72732a9eb",
+          "firstAtMs": 1792270040181,
+          "lastAtMs": 1792270040181,
+          "stage": "model"
+        }
+      ],
+      "id": "06a3bc94d7244de0539dd6f6edb9eff275a267d866c7f426cfe8e15aa78f95c2",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "ded498ffbcd9f39d57f3da6e05425cf2f8059f50",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 2,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "f104f9d1a810d924145f78e5f0de6c04ec0b0c9b63f8ea2a2587a0d54dca178d",
+          "firstAtMs": 1792219132089,
+          "lastAtMs": 1792220968532,
+          "stage": "model"
+        }
+      ],
+      "id": "17a01a89567d4131d38c5caebff0b4aad23e4e38cb619c13aab7717fa08d0748",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "973bb2f45230993da7896784f0ec4bf908bf3de9",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 2,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "ee0db5ace47150f665c6bf25016fcc20ded5bf6658c5f41f0cf709262c711c72",
+          "firstAtMs": 1792215549235,
+          "lastAtMs": 1792217346247,
+          "stage": "model"
+        }
+      ],
+      "id": "18b83197749d6e94149a25f7b2d4f0f173d9de60b667f9ff37bb15983fc48fba",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "1d1b71a14f52282f9d422da8999edd2b9dd62c24",
+      "entries": [
+        {
+          "controllerSha": "41bb853a1bedfc0422bf903dfabbe23bf714b44f",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "ea4f345154f99adcb985829836bc0722a82e37fa8535dabde2408f5ffd371f57",
+          "firstAtMs": 1792105904956,
+          "lastAtMs": 1792105904956,
+          "stage": "model"
+        }
+      ],
+      "id": "2a7c077179b6b34e95c8de1c166d6c8b7ee242f9a4f529d2dfe81903fd906d08",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "220eed2d925ca88d4b1da3fbaeb7ecad55f9d073",
+      "entries": [
+        {
+          "controllerSha": "dbae19f218141a44becd7d1fffc22d792913b4f0",
+          "count": 2,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "d68f1274c2021683554062c56992dbf83bb74203cd47b889302926517e493bd8",
+          "firstAtMs": 1791639374018,
+          "lastAtMs": 1791651997865,
+          "stage": "model"
+        }
+      ],
+      "id": "2f2bfbd1b9bb3843b4a9ca2275d2b829e360ca963408ff57b47d2b40cdeba436",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "a4e3ac2c6fd52f2a2f39778c2eeea17128edb93c",
+      "entries": [
+        {
+          "controllerSha": "41bb853a1bedfc0422bf903dfabbe23bf714b44f",
+          "count": 4,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "4b8c12fb4919eb12cb301ec0d96f3a3824df62d5ba106ea1411aaa117ede4800",
+          "firstAtMs": 1792112171446,
+          "lastAtMs": 1792117728904,
+          "stage": "model"
+        }
+      ],
+      "id": "30294ec9d85637a8a1249ad38b0ca076919684701d9db88050552316aad5fe86",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "01f482529da9c0c4ce38b32b5d760b9d72e84fc9",
+      "entries": [
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 1,
+          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "ac96f965ac789aa055dbc617118bc35df2fdc605930eafd010220be6a4b68e15",
+          "firstAtMs": 1792267061729,
+          "lastAtMs": 1792267061729,
+          "stage": "model"
+        }
+      ],
+      "id": "37969f9678948c1d511c92aadd7420efaa14af759ba4b3a503a34513e4b58108",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-sentinel-152",
+      "version": "v1"
+    },
+    {
+      "base": "f2457327beae47f991c31038365a5cbd2deb917b",
+      "entries": [
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "e57cf200edb11df8f6fdeabc2e0465da38f1c8b71623f361419fb6cae8c63e71",
+          "firstAtMs": 1792278008554,
+          "lastAtMs": 1792278008554,
+          "stage": "model"
+        }
+      ],
+      "id": "3f1b6d8f64789126034d3cab96b2d217482ae9c1597a18b330b370f743646d3b",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "81baade1111ff83de5ffc760adc0409e9981e2fa",
+      "entries": [
+        {
+          "controllerSha": "dbae19f218141a44becd7d1fffc22d792913b4f0",
+          "count": 3,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "146f769bf5015b7eb3bbfdf41f77bf9f2e0ef5edb1190431b22a6286ed16719f",
+          "firstAtMs": 1791655306315,
+          "lastAtMs": 1791660794225,
+          "stage": "model"
+        }
+      ],
+      "id": "442b85f8fd70d1518e7d38dbf488a18c22156c9f073353531d89ed958b1448fe",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "f9b310abbd4f71595356f498c50245913c07dcb7",
+      "entries": [
+        {
+          "controllerSha": "474f87eb639f97cd72b9bc4b9e56101488f841aa",
+          "count": 4,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "6a285ecf3abaead7164acef9e24b209064ec9bea7300b95b9cd5a3d1fbe4ef21",
+          "firstAtMs": 1792168161947,
+          "lastAtMs": 1792173614746,
+          "stage": "model"
+        }
+      ],
+      "id": "478ea6d1d3ac0787e46faaa265e46b3fdc3da5e93d744c7f68694d79b8081e34",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "430b203c9e26cacd10914d6cc4af584d4a249ada",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 2,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "e88e3e37d02313de01e8ad75f752bb02aa912ca28ecc9267f8eed2041f67a94d",
+          "firstAtMs": 1792187534975,
+          "lastAtMs": 1792189885551,
+          "stage": "model"
+        }
+      ],
+      "id": "49903c2fdf6752f5237da3eeb3ddbd91f8ea532bec5e6f17c303795a303eae14",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "e25d09cd0912521123922c13f6ee445665af0f6c",
+      "entries": [
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 2,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "a987cd3344e27874e9195a3062bbcb4cac03796c5ee882064f6d484d73d0b424",
+          "firstAtMs": 1792266016247,
+          "lastAtMs": 1792267897347,
+          "stage": "model"
+        }
+      ],
+      "id": "500c4807725a4fd99d5d33659b015cb618ff66a32f1647216e5cb390e87bd4d4",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "4334a59cd2ecc1d384bf54fb3da1f3e044fa4d8a8a5bce42fda2c9aa764fe2f1",
+          "firstAtMs": 1792259334288,
+          "lastAtMs": 1792259334288,
+          "stage": "model"
+        }
+      ],
+      "id": "53d2bae4f6e4750a3e070b0451bfe80fa96b8937bd7c094c68f055c34541bc80",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-sentinel-155",
+      "version": "v1"
+    },
+    {
+      "base": "4b59865e358d8643c76b4856bbe58b889083608e",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "904d63de15563f9cad37b2d7585930031b0721cd213952912641da43de7dd265",
+          "firstAtMs": 1792230683288,
+          "lastAtMs": 1792230683288,
+          "stage": "model"
+        }
+      ],
+      "id": "6c161faedebcb043852566a050515759dabaa7e0ca399e97c6502f4752c22072",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "93f62ff2451c33283cc34d9b0d34ca3a1b8268e2",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "49c0b7b9ac6755bce630cc4f1a2466c89c62099070c9fec1545cb0f9fd7016da",
+          "firstAtMs": 1792228373418,
+          "lastAtMs": 1792228373418,
+          "stage": "model"
+        }
+      ],
+      "id": "712fdfd6e3a2101e31a5afacfcd74c77081f1d32ea4cd55198fb773862e5c805",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "8ea3def4b7a995086a8b92a80cc77bc781b00b85",
+      "entries": [
+        {
+          "controllerSha": "41bb853a1bedfc0422bf903dfabbe23bf714b44f",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "a97cc7d037ca8bea17cbaf703721486adf06483fa426039e5de937635e3d42a8",
+          "firstAtMs": 1792140668034,
+          "lastAtMs": 1792140668034,
+          "stage": "model"
+        },
+        {
+          "controllerSha": "ab3613e0224ff92266bed21dde6f40e6b0aab54a",
+          "count": 4,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "00eb00e30566f83f12b4edf384d7fa62fdcb351435f1a805737a67d1f46f3c69",
+          "firstAtMs": 1792144678294,
+          "lastAtMs": 1792150666236,
+          "stage": "model"
+        }
+      ],
+      "id": "74145e97a594f2d9d8cb3396421611876d06e0a7482d74a9fca5ef225355077c",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "01f482529da9c0c4ce38b32b5d760b9d72e84fc9",
+      "entries": [
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 1,
+          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "adbf6cb0b758c5c7f83b21172f6c5812e59d928da4312b5a2d363389351e5710",
+          "firstAtMs": 1792267098071,
+          "lastAtMs": 1792267098071,
+          "stage": "model"
+        }
+      ],
+      "id": "795b25c60587e1e23cc8519ece6824bdfc53179d0dd6aca6f87f3cb8b232eb56",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-sentinel-156",
+      "version": "v1"
+    },
+    {
+      "base": "fd5a88b71a6f93bf58c3d789d3d184bdc7dafea1",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 2,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "737581ec4ce11cb99159faeed1b5b2262460dc1cd29820ab01ca51bdba62404d",
+          "firstAtMs": 1792243363505,
+          "lastAtMs": 1792244547907,
+          "stage": "model"
+        }
+      ],
+      "id": "8b327387133da1b80fe1b70d0a1f888abece9560b7c5b4ed93f3a8b6f6663f4e",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "01f482529da9c0c4ce38b32b5d760b9d72e84fc9",
+      "entries": [
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 1,
+          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "d280ccb11dbd848621de0d1c98750da33e0b237e3f51cdff0ee74b168d224167",
+          "firstAtMs": 1792267080614,
+          "lastAtMs": 1792267080614,
+          "stage": "model"
+        }
+      ],
+      "id": "a28b11b01811068cb7494180bc49320bd63185dc720efec5d884206433e3c1fe",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-sentinel-155",
+      "version": "v1"
+    },
+    {
+      "base": "27fcf4ed99d020b15711d613d127266c691f001d",
+      "entries": [
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 2,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "1a21134702f837fe068663a8daa58e61b576c154f52ae5feb0268b4e8aad48a1",
+          "firstAtMs": 1792272777557,
+          "lastAtMs": 1792275546505,
+          "stage": "model"
+        }
+      ],
+      "id": "a661caaf63b4271cf129d95f22fb425b331bcaddf419a3e8e121033795cabf1e",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "614a4fa02f1dc9f27516c5acd85d598f678a0cfa",
+      "entries": [
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 1,
+          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "b44d57f89f4c03e9cf98eae7391d8f6ccfcfd7001373b4e8256a75d4e8904413",
+          "firstAtMs": 1792263745779,
+          "lastAtMs": 1792263745779,
+          "stage": "model"
+        }
+      ],
+      "id": "b7a38db1a87c0a5628ee19784978875f6b32d9fab420ff8fc8ab6dd79b5c717a",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-sentinel-152",
+      "version": "v1"
+    },
+    {
+      "base": "614a4fa02f1dc9f27516c5acd85d598f678a0cfa",
+      "entries": [
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 1,
+          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "e6f34bfc98c7a074a72942d82fa524ea35a423f354d7984d2d0d6daea8d652ff",
+          "firstAtMs": 1792263759948,
+          "lastAtMs": 1792263759948,
+          "stage": "model"
+        }
+      ],
+      "id": "bc62e9ec37c69ab2fb0a3cbae1b8599c575e4426051331a09ac477225a3e6917",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-sentinel-155",
+      "version": "v1"
+    },
+    {
+      "base": "ca6486b87835ee3b95dd24fa5f1dcc645ed7c97f",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 3,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "8cd9cd539fe482581a9515f45290eb59f50be8e7f2b6b89cf5e3dc158c6c43e8",
+          "firstAtMs": 1792235231075,
+          "lastAtMs": 1792238545750,
+          "stage": "model"
+        }
+      ],
+      "id": "ca09e12d060852a29e861ea7b322767579db03df58546681bc9322ef018d6387",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "27fabc04d7fd1cc0114776351df2dfd6f41e7df0",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "bdba50daaa1fd4826ca6b723ddb5993d5d7b0d3d7a6a5dc0ca149980d12299c8",
+          "firstAtMs": 1792232878534,
+          "lastAtMs": 1792232878534,
+          "stage": "model"
+        }
+      ],
+      "id": "cb02b0b1c5942ed9eb84e673825422ca7c8a6a0b1b16539bebd858c2c89af543",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+      "entries": [
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 2,
+          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "8c644fa2bcf742b7b949b2aef6dd126da46f96f5e4a46fa0cb15fa34b0622ffb",
+          "firstAtMs": 1792271927245,
+          "lastAtMs": 1792277249112,
+          "stage": "model"
+        }
+      ],
+      "id": "cbe3628919777b9117ead7da5b6f0a8e0b209e443984385dfd48539a71986511",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-sentinel-156",
+      "version": "v1"
+    },
+    {
+      "base": "bb4aeff560e2c85a9904c9261be84a4bbee5b490",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "98addc6488b6a5954a252af49e26a4934c6ec8152647939f991ee3c807996eab",
+          "firstAtMs": 1792191543422,
+          "lastAtMs": 1792191543422,
+          "stage": "model"
+        }
+      ],
+      "id": "da62339198e62cf4b40a252c3fac2e4b99358bf34dd60ed2908fa973d154132d",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+      "entries": [
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 2,
+          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "e0a991e1d378fa5718c94208c46ca6272d1dfe9b68ade261e9e6e2c15ef96d21",
+          "firstAtMs": 1792271898549,
+          "lastAtMs": 1792277214815,
+          "stage": "model"
+        }
+      ],
+      "id": "e16b8220cd633b7ee3b0a7f0d0470426d250e19df3055365ceb8287e6d9306aa",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-sentinel-152",
+      "version": "v1"
+    },
+    {
+      "base": "2756425c16454cc7f8b49e0aa43c115364f59e7b",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 1,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "a0476e46f81baa46d996b237675bb029db2cd13cc1d362bc017a62ab9adc2bd6",
+          "firstAtMs": 1792222641487,
+          "lastAtMs": 1792222641487,
+          "stage": "model"
+        }
+      ],
+      "id": "e30cb0b514acfa3977bc1222d7914d490c8faff3ca56db43bfe72e02c3f7741e",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 1,
+          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "5006a4291472ed3b0d65af30f0a5fd4e4e45b40758049aa5721f7df056fc4b97",
+          "firstAtMs": 1792259352076,
+          "lastAtMs": 1792259352076,
+          "stage": "model"
+        }
+      ],
+      "id": "e7fd6f85a229c4f774233019cb33381f030f56196c190c6f50d270aecdc1fb0b",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-sentinel-156",
+      "version": "v1"
+    },
+    {
+      "base": "614a4fa02f1dc9f27516c5acd85d598f678a0cfa",
+      "entries": [
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 1,
+          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "3947402683d6dbf4041d0583f7ceb8e53ee76d0fb4f7a163d6bb815584f875cb",
+          "firstAtMs": 1792263773866,
+          "lastAtMs": 1792263773866,
+          "stage": "model"
+        }
+      ],
+      "id": "e82742ca50843f1eedc7dab5ee30de7d9d1bc8764a8a398b05aa3f9b0cae99f8",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-sentinel-156",
+      "version": "v1"
+    },
+    {
+      "base": "3876fe65703f558b0656c6384c359b48508bb777",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 2,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "83cac5eee0f6c043317b6c80dd4de4bca5530d969c0a954238b4a63de83e1e7c",
+          "firstAtMs": 1792211667636,
+          "lastAtMs": 1792213438279,
+          "stage": "model"
+        }
+      ],
+      "id": "ed32f0af613b592295f850bdb7953d1aa76a641ae282a5f548973b3a8ecb117a",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "9cdc76dc600246d96a0841ba7fca5039cbf34196",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 2,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "3f358b666c2b9bb361d729ae3833ec0f98ec00bc51edaf02eabb6e2fd5f36e72",
+          "firstAtMs": 1792224860673,
+          "lastAtMs": 1792226753533,
+          "stage": "model"
+        }
+      ],
+      "id": "ed83f79c9f1482c805a76f3f74487280c16027f50c7936c8c5ebc24b181da36d",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "9a6b348807d4a8fd0cd1dae9107b714572780ed8",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 2,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "b280d53550b69ce0bfdf85530a19c27f05345c94670063eb125cec84f0ad3cf9",
+          "firstAtMs": 1792240187108,
+          "lastAtMs": 1792241569914,
+          "stage": "model"
+        }
+      ],
+      "id": "f50b3177b9229542fbccaad52b932752b74822959375f13b7670239c356e7e22",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 1,
+          "detail": "model run did not complete with a trusted candidate: interrupted output bound exceeded",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "efa8580131b40e9fdff1976d94157f6131476317a5c556c47a896f1b4dac0dc2",
+          "firstAtMs": 1792259280661,
+          "lastAtMs": 1792259280661,
+          "stage": "model"
+        }
+      ],
+      "id": "f8f717e9a1080d39cb0ff9fa41a66019262a37001413811869be4c4ae2c30d0e",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-sentinel-152",
+      "version": "v1"
+    },
+    {
+      "base": "3650359812f06951f2322b89d79ca13c68184150",
+      "entries": [
+        {
+          "controllerSha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
+          "count": 4,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "cf87fca490b6cda4e056eeb2424cba668787a587744923046b82ead3afcc7321",
+          "firstAtMs": 1792245494270,
+          "lastAtMs": 1792247873360,
+          "stage": "model"
+        },
+        {
+          "controllerSha": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "count": 2,
+          "detail": "model run failed (unavailable)",
+          "failureClass": "transient_infrastructure",
+          "fingerprint": "b5ab0653f8cf73c447450689f5c3d4c1be989e672973d63ce4677e29e1783eac",
+          "firstAtMs": 1792261908662,
+          "lastAtMs": 1792264473920,
+          "stage": "model"
+        }
+      ],
+      "id": "ff13fda75c34832048ce9751078b1919140c381748afa34ac2ff644904129fe7",
+      "kind": "attempt_memory",
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    }
+  ],
+  "reservations": [
+    {
+      "attempt": 5,
+      "createdAt": 1792275422647,
+      "head": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+      "id": "420a9b4cb1f6288d488374c880976855c781557d1695b12544df10acacf0aaf5",
+      "kind": "budget_reservation",
+      "outcome": "ambiguous",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1792277249112,
+      "taskId": "issue-ubiquity-sentinel-156",
+      "version": "v1"
+    },
+    {
+      "attempt": 52,
+      "createdAt": 1792277861932,
+      "head": "f2457327beae47f991c31038365a5cbd2deb917b",
+      "id": "8f9e753895a04445ba10fd0ea195f318446d2d4e2ac9e8e29f8a8bcb968b8d9f",
+      "kind": "budget_reservation",
+      "outcome": "ambiguous",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 155687488,
+        "name": "ai.ubq.fi",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1792278008554,
+      "taskId": "issue-ubiquity-ai.ubq.fi-300",
+      "version": "v1"
+    },
+    {
+      "attempt": 5,
+      "createdAt": 1792275413958,
+      "head": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+      "id": "97db5021260f005b7d87bdfb46025a9f7aa0d04304d6a08e47f893b97ffee303",
+      "kind": "budget_reservation",
+      "outcome": "ambiguous",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1792277231697,
+      "taskId": "issue-ubiquity-sentinel-155",
+      "version": "v1"
+    },
+    {
+      "attempt": 5,
+      "createdAt": 1792275405556,
+      "head": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+      "id": "e0efdc31588c01434ce4f2f47ca6ffcad4a2d9b807b3132d678c3f248be5463c",
+      "kind": "budget_reservation",
+      "outcome": "ambiguous",
+      "proofRef": null,
+      "purpose": "retry",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1792277214815,
+      "taskId": "issue-ubiquity-sentinel-152",
+      "version": "v1"
+    }
+  ]
+}

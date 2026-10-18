@@ -21,6 +21,14 @@
  * and the record blocks with ATTEMPT_DETAIL_INTERRUPTED_BOUND; its candidate
  * is never imported or preserved. R78 and R79 parse and accept every write,
  * and every near miss of that closed class still fails maintenance.
+ *
+ * The #151 follow-ups: the classifier authenticates receipts against the
+ * ingest's own route options (never a second copy of its constants); a
+ * record or charge another writer moves between the ingest and the settle
+ * defers the pass instead of failing it, while a binding already wrong when
+ * the pass begins still fails; and the torn-pair re-entry finishes only a
+ * pair already torn when the pass began, on a charge no audited settler but
+ * this one can tear.
  */
 import assert from "node:assert/strict";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
@@ -55,15 +63,22 @@ import {
   interruptedOutputFailure,
   verifyMatrixReceiptV1,
 } from "../../src/host/matrix-identity.ts";
-import type { MatrixIngestReportV1 } from "../../src/host/matrix-ingest.ts";
+import type {
+  MatrixIngestOptionsV1,
+  MatrixIngestReportV1,
+} from "../../src/host/matrix-ingest.ts";
 import { CLOSED_C_WAVE } from "../../src/host/modern-matrix-recovery.ts";
 import { ATTEMPT_DETAIL_INTERRUPTED_BOUND } from "../../src/repair/attempt-policy.ts";
+import { clearIntent, markBlocked } from "../../src/repair/transitions.ts";
 import { recoverHostedCurrentMatrix } from "../../ops/hosted-autonomy-current-recovery.ts";
 import {
   HISTORICAL_RECOVERY_PROVIDERS,
   RECOVERY_ROUTE_FAILOVER_MODEL,
 } from "../../ops/hosted-autonomy-matrix-bindings.ts";
-import { outputBoundOverrun } from "../../ops/hosted-autonomy-output-bound.ts";
+import {
+  outputBoundCells,
+  outputBoundOverrun,
+} from "../../ops/hosted-autonomy-output-bound.ts";
 import {
   CurrentMatrixRecoveryIntegrityFailure,
   recoverHostedMatrixProducer,
@@ -135,6 +150,12 @@ const CONFIG = repositoryConfig(undefined, undefined, {
   repository: LIVE.work[0].repository,
   liveStartLimits: { perHour: null, perSevenDays: null },
 });
+
+/** The producer route the ingest verifies these receipts against today. */
+const ROUTE = {
+  expectedProvider: HISTORICAL_RECOVERY_PROVIDERS,
+  failoverModel: RECOVERY_ROUTE_FAILOVER_MODEL,
+};
 
 /** The live cells: issue, cell id and the cell job's logged receipt facts. */
 const SPECS = [
@@ -216,6 +237,18 @@ type RawResult = Record<string, unknown> & {
 interface VariantV1 {
   result?: (raw: RawResult) => RawResult;
   state?: (snapshot: RepairStateSnapshotV1) => RepairStateSnapshotV1;
+  /**
+   * The ingest's own route, changed on the very options object the producer
+   * hands the ingest (every pass): one route source drifting from another.
+   */
+  route?: Partial<
+    Pick<MatrixIngestOptionsV1, "expectedProvider" | "failoverModel">
+  >;
+  /**
+   * Another writer's commit (the owner's, or any concurrent writer's) that
+   * lands once, right after the first pass's ingest and before its settle.
+   */
+  midPass?: (snapshot: RepairStateSnapshotV1) => RepairStateSnapshotV1;
 }
 
 async function resultOf(
@@ -417,7 +450,13 @@ async function producerRig(variant: VariantV1 = {}) {
     imported: [] as string[],
     preserved: [] as string[],
     reports: [] as MatrixIngestReportV1[],
+    routes: [] as unknown[],
     deferred: 0,
+  };
+  // The snapshot the concurrent writer committed, once it landed.
+  const edit = {
+    pending: variant.midPass,
+    landed: null as RepairStateSnapshotV1 | null,
   };
   const refs = new Map<string, string>();
   const github = {
@@ -471,8 +510,18 @@ async function producerRig(variant: VariantV1 = {}) {
     readExecution: () => Promise.resolve(portOk(SAVED)),
     // The production consumer itself; only its report is recorded.
     ingest: async (...args: Parameters<typeof ingestMatrixResults>) => {
+      if (variant.route) Object.assign(args[3], variant.route);
       const report = await ingestMatrixResults(...args);
       calls.reports.push(report);
+      calls.routes.push({
+        expectedProvider: args[3].expectedProvider,
+        failoverModel: args[3].failoverModel,
+      });
+      const change = edit.pending;
+      if (change) {
+        edit.pending = undefined;
+        edit.landed = await concurrentWrite(state, change);
+      }
       return report;
     },
   });
@@ -512,12 +561,37 @@ async function producerRig(variant: VariantV1 = {}) {
     refuse,
     writes,
     calls,
+    edit,
     results,
     pass,
     walk,
     row,
     charge,
   };
+}
+
+/**
+ * Another writer's commit to the same repair store, outside this pass's
+ * composed writer: the store's own compare-and-swap and transition rules
+ * (this tree's, R80's) still apply.
+ */
+async function concurrentWrite(
+  state: TransitionState,
+  change: (snapshot: RepairStateSnapshotV1) => RepairStateSnapshotV1,
+): Promise<RepairStateSnapshotV1> {
+  const next = {
+    ...change(structuredClone(state.snapshot)),
+    stateHead: state.head,
+    sequence: state.snapshot.sequence + 1,
+    updatedAt: NOW,
+  };
+  const written = await TransitionState.prototype.writeRepair.call(
+    state,
+    next,
+    state.head,
+  );
+  assert(written.ok && written.value.status === "applied");
+  return structuredClone(state.snapshot);
 }
 
 /** The consumer's dispositions by task, in plan order. */
@@ -636,7 +710,7 @@ Deno.test("output bound: the closed class is exactly a completed authenticated r
   assert.notEqual(RECOVERY_ROUTE_FAILOVER_MODEL, MODEL);
   const at = (mutate?: (raw: RawResult) => RawResult) =>
     resultOf(SPECS[0], cell, mutate);
-  assert.equal(outputBoundOverrun(await at(), cell), true);
+  assert.equal(outputBoundOverrun(await at(), cell, ROUTE), true);
   // The failover model is the same route's receipt, and a deepseek route is
   // a documented recovery provider.
   assert.equal(
@@ -645,6 +719,7 @@ Deno.test("output bound: the closed class is exactly a completed authenticated r
         actual(raw, { observedModel: RECOVERY_ROUTE_FAILOVER_MODEL })
       ),
       cell,
+      ROUTE,
     ),
     true,
   );
@@ -652,23 +727,120 @@ Deno.test("output bound: the closed class is exactly a completed authenticated r
     outputBoundOverrun(
       await at((raw) => actual(raw, { provider: "deepseek" })),
       cell,
+      ROUTE,
     ),
     true,
   );
   for (const [name, variant] of NEAR_MISSES) {
     if (!variant.result) continue;
     assert.equal(
-      outputBoundOverrun(await at(variant.result), cell),
+      outputBoundOverrun(await at(variant.result), cell, ROUTE),
       false,
       name,
     );
   }
   // The consumer's own interrupted class is not this one.
   assert.equal(
-    outputBoundOverrun((await producerRig()).results[2], PLAN.cells[2]),
+    outputBoundOverrun((await producerRig()).results[2], PLAN.cells[2], ROUTE),
     false,
   );
 });
+
+/**
+ * The ingest's route drifting from the historical constants (#151 finding
+ * 1), each on a 1127 receipt that is over its bound either way: `true` when
+ * the drifted route authenticates it (a real overrun the fixed constants
+ * would miss), `false` when the drifted route refuses its identity (a
+ * provider or model rejection the fixed constants would take for an
+ * overrun).
+ */
+const ROUTE_DRIFTS: [string, VariantV1, boolean][] = [
+  ["a route that also admits openai", {
+    route: { expectedProvider: [...HISTORICAL_RECOVERY_PROVIDERS, "openai"] },
+    result: (raw) => actual(raw, { provider: "openai" }),
+  }, true],
+  ["a route that no longer admits deepseek", {
+    route: { expectedProvider: ["uos"] },
+    result: (raw) => actual(raw, { provider: "deepseek" }),
+  }, false],
+  ["a route that fails over to another model", {
+    route: { failoverModel: "gpt-other" },
+    result: (raw) => actual(raw, { observedModel: "gpt-other" }),
+  }, true],
+  ["a route without a failover model", {
+    route: { failoverModel: undefined },
+    result: (raw) =>
+      actual(raw, { observedModel: RECOVERY_ROUTE_FAILOVER_MODEL }),
+  }, false],
+];
+
+Deno.test("output bound: the classifier verifies identity against the route it is handed, never a fixed one", async () => {
+  const cell = PLAN.cells[0];
+  for (const [name, variant, overrun] of ROUTE_DRIFTS) {
+    const route = { ...ROUTE, ...variant.route };
+    const result = await resultOf(SPECS[0], cell, variant.result);
+    assert.equal(outputBoundOverrun(result, cell, route), overrun, name);
+    // The fixed historical route decides the opposite: exactly the drift.
+    assert.equal(outputBoundOverrun(result, cell, ROUTE), !overrun, name);
+    const report: MatrixIngestReportV1 = {
+      waveId: PLAN.waveId,
+      ingested: 0,
+      entries: [{
+        cellId: cell.cellId,
+        disposition: "receipt_rejected",
+        detail: null,
+      }],
+    };
+    assert.deepEqual(
+      [...outputBoundCells(report, [cell], [result], route)],
+      overrun ? [cell.cellId] : [],
+      name,
+    );
+  }
+});
+
+for (const [name, variant, overrun] of ROUTE_DRIFTS) {
+  Deno.test(
+    `output bound: the producer classifies with the ingest's own route: ${name} ${
+      overrun ? "settles 1127" : "still fails maintenance"
+    }`,
+    async () => {
+      const rig = await producerRig(variant);
+      const outcome = await rig.pass().then(
+        (value) => value,
+        (error: unknown) => error,
+      );
+      // The ingest verified against the drifted route and refused 1127.
+      assert.deepEqual(rig.calls.routes, [{ ...ROUTE, ...variant.route }]);
+      assert.deepEqual(
+        dispositions(rig.calls.reports[0]).map((row) => row.disposition),
+        ["receipt_rejected", "duplicate", "ingested"],
+      );
+      if (overrun) {
+        assert(!(outcome instanceof Error), String(outcome));
+        assert.deepEqual(
+          (outcome as Awaited<ReturnType<typeof rig.pass>>).result?.actions,
+          ["current-matrix:ingested:2", "current-matrix:output-bound:1"],
+        );
+        assertInterruptedBound(rig, OVER, OVER_CHARGE);
+        return;
+      }
+      assert(
+        outcome instanceof CurrentMatrixRecoveryIntegrityFailure,
+        String(outcome),
+      );
+      assert.equal(outcome.message, "current matrix ingestion incomplete");
+      assert.deepEqual(
+        rig.row(OVER),
+        rig.before.work.find((row) => row.id === OVER),
+      );
+      assert.deepEqual(
+        rig.charge(OVER_CHARGE),
+        rig.before.reservations.find((row) => row.id === OVER_CHARGE),
+      );
+    },
+  );
+}
 
 Deno.test("output bound: the live producer pass settles 1127 as the runtime's interrupted-output failure instead of failing maintenance", async () => {
   const rig = await producerRig();
@@ -683,6 +855,8 @@ Deno.test("output bound: the live producer pass settles 1127 as the runtime's in
   assert.equal(outcome.result?.beforeHead, rig.beforeHead);
   assert.equal(outcome.result?.appliedHead, rig.state.head);
   assert.equal(rig.calls.deferred, 0);
+  // The ingest verified against the historical producer route.
+  assert.deepEqual(rig.calls.routes, [ROUTE]);
   // The real consumer's verdicts are unchanged: 1127 is still refused.
   assert.equal(rig.calls.reports.length, 1);
   assert.deepEqual(dispositions(rig.calls.reports[0]), [
@@ -908,6 +1082,214 @@ Deno.test("output bound: a settlement whose record write was lost finishes on th
     mayHaveWritten: false,
   });
   assert.equal(rig.state.head, head);
+});
+
+/** 1127's record, changed by another writer. */
+function overRecord(
+  snapshot: RepairStateSnapshotV1,
+  change: (row: WorkRecordV1) => WorkRecordV1,
+): RepairStateSnapshotV1 {
+  return {
+    ...snapshot,
+    work: snapshot.work.map((row) => row.id === OVER ? change(row) : row),
+  };
+}
+
+/** 1127's charge, settled by another writer. */
+function overCharge(
+  snapshot: RepairStateSnapshotV1,
+  outcome: "ambiguous" | "submitted",
+): RepairStateSnapshotV1 {
+  return {
+    ...snapshot,
+    reservations: snapshot.reservations.map((row) =>
+      row.id === OVER_CHARGE ? { ...row, outcome, settledAt: NOW } : row
+    ),
+  };
+}
+
+/**
+ * A commit that lands between the ingest and the settle of one pass (#151
+ * findings 2 and 3), and what the NEXT pass then does with 1127: `benign`
+ * with the dispositions its ingest reports (1127 left as the writer left
+ * it, its charge never refunded), `settled` (a pair the writer tore is
+ * finished only once a pass begins with it torn), or `refused` (a binding
+ * that is genuinely wrong when the pass begins stays an integrity fault).
+ */
+const MID_PASS: [
+  string,
+  (snapshot: RepairStateSnapshotV1) => RepairStateSnapshotV1,
+  "benign" | "settled" | "refused",
+  string[],
+][] = [
+  [
+    "the owner closes 1127's issue",
+    (snapshot) =>
+      overRecord(
+        snapshot,
+        (row) =>
+          markBlocked(clearIntent(row, NOW), "other", "issue closed", NOW),
+      ),
+    "benign",
+    ["duplicate"],
+  ],
+  [
+    "the owner blocks 1127, its intent and charge kept",
+    (snapshot) =>
+      overRecord(
+        snapshot,
+        (row) => markBlocked(row, "other", "held by its owner", NOW),
+      ),
+    "benign",
+    ["duplicate"],
+  ],
+  [
+    "1127's record is rebound to another issue",
+    (snapshot) =>
+      overRecord(snapshot, (row) => ({
+        ...row,
+        related: { ...row.related, issueNumber: 9999 },
+        updatedAt: NOW,
+      })),
+    "benign",
+    ["binding_mismatch", "duplicate"],
+  ],
+  [
+    "another writer settles 1127's charge ambiguous",
+    (snapshot) => overCharge(snapshot, "ambiguous"),
+    "settled",
+    ["receipt_rejected", "duplicate"],
+  ],
+  [
+    "another writer settles 1127's charge submitted",
+    (snapshot) => overCharge(snapshot, "submitted"),
+    "refused",
+    ["receipt_rejected", "duplicate"],
+  ],
+];
+
+for (const [name, midPass, next, nextDispositions] of MID_PASS) {
+  Deno.test(`output bound: ${name} between the ingest and the settle defers the pass; the next pass is ${next}`, async () => {
+    const rig = await producerRig({ midPass });
+    const deferred = await rig.pass();
+    assert.deepEqual(deferred, {
+      result: null,
+      deferred: true,
+      mayHaveWritten: true,
+    });
+    assert.equal(rig.calls.deferred, 1);
+    // The settler wrote nothing for 1127: its record and charge are exactly
+    // what the other writer committed, and it has no attempt memory.
+    const landed = rig.edit.landed!;
+    assert.notEqual(landed, null);
+    assert.deepEqual(rig.row(OVER), landed.work.find((row) => row.id === OVER));
+    assert.deepEqual(
+      rig.charge(OVER_CHARGE),
+      landed.reservations.find((row) => row.id === OVER_CHARGE),
+    );
+    assert.notEqual(rig.charge(OVER_CHARGE).outcome, "confirmed_not_submitted");
+    assert.equal(
+      rig.state.snapshot.attemptMemory.some((row) => row.taskId === OVER),
+      false,
+    );
+    // The consumer's own 1131 settlement had already landed.
+    assertInterruptedBound(rig, INTERRUPTED, INTERRUPTED_CHARGE);
+
+    const second = await rig.pass().then(
+      (value) => value,
+      (error: unknown) => error,
+    );
+    assert.deepEqual(
+      dispositions(rig.calls.reports[1]).map((row) => row.disposition),
+      nextDispositions,
+    );
+    if (next === "refused") {
+      assert(
+        second instanceof CurrentMatrixRecoveryIntegrityFailure,
+        String(second),
+      );
+      assert.equal(second.message, "current matrix ingestion incomplete");
+      assert.deepEqual(
+        rig.row(OVER),
+        landed.work.find((row) => row.id === OVER),
+      );
+      return;
+    }
+    assert(!(second instanceof Error), String(second));
+    const outcome = second as Awaited<ReturnType<typeof rig.pass>>;
+    assert.equal(outcome.result?.status, "applied", JSON.stringify(outcome));
+    if (next === "settled") {
+      assert.deepEqual(outcome.result?.actions, [
+        "current-matrix:ingested:1",
+        "current-matrix:output-bound:1",
+      ]);
+      assertInterruptedBound(rig, OVER, OVER_CHARGE);
+    } else {
+      assert.deepEqual(outcome.result?.actions, ["current-matrix:ingested:1"]);
+      assert.deepEqual(
+        rig.row(OVER),
+        landed.work.find((row) => row.id === OVER),
+      );
+      assert.equal(rig.charge(OVER_CHARGE).outcome, "reserved");
+    }
+    assert.equal(rig.calls.deferred, 1);
+  });
+}
+
+/**
+ * Every production call of a charge settlement that writes the charge apart
+ * from its record, by file: the audit behind the torn-pair re-entry (#151
+ * finding 3, `settleOutputBoundCells`). Each one is either this settler, or
+ * one that can never reach an output-bound cell's charge: the consumer's
+ * own (it refuses this receipt), the serial work step (never with external
+ * implementations), the review settlements (review charges only, including
+ * the three exact-base review admission settlements), the
+ * historical quarantine (dedicated charges, never requested here) and the
+ * uncertainty quarantine (its fixed generation-63 charges, only while
+ * generation 63 is active). A new or moved one changes this table: before
+ * updating it, prove it cannot tear an output-bound cell's charge, or tag
+ * that settler's first write so the re-entry can tell whose pair it is.
+ */
+const AUDITED_SETTLERS = {
+  "ops/hosted-autonomy-output-bound.ts": 1,
+  "src/host/matrix-ingest.ts": 2,
+  "src/host/matrix-quarantine-state.ts": 1,
+  "src/host/matrix-uncertainty-maintenance.ts": 1,
+  "src/repair/loop-accounting.ts": 2,
+  "src/repair/loop-base-satisfaction.ts": 3,
+  "src/repair/loop-conflict-resolution.ts": 1,
+  "src/repair/loop-implementation-result.ts": 5,
+  "src/repair/loop-implementation.ts": 2,
+  "src/repair/loop-publication.ts": 1,
+  "src/repair/loop-review-recovery.ts": 1,
+  "src/repair/loop-review-request.ts": 5,
+  "src/repair/loop-work.ts": 2,
+};
+
+const SETTLER_CALL =
+  /(?<!function )\b(?:settleFailedImplementation|settleAndBlock|handleImplementationUncertainty|settleReviewCharge)\(|\.settleModelStart\(/g;
+
+Deno.test("output bound: every settler that could tear a charge from its record is the audited one", async () => {
+  const root = new URL("../../", import.meta.url);
+  const found: Record<string, number> = {};
+  const walk = async (dir: string): Promise<void> => {
+    const entries = [];
+    for await (const entry of Deno.readDir(new URL(dir, root))) {
+      entries.push(entry);
+    }
+    for (const entry of entries.sort((a, b) => a.name < b.name ? -1 : 1)) {
+      const path = `${dir}${entry.name}`;
+      if (entry.isDirectory) await walk(`${path}/`);
+      else if (entry.isFile && path.endsWith(".ts")) {
+        const text = await Deno.readTextFile(new URL(path, root));
+        const calls = text.match(SETTLER_CALL)?.length ?? 0;
+        if (calls > 0) found[path] = calls;
+      }
+    }
+  };
+  await walk("src/");
+  await walk("ops/");
+  assert.deepEqual(found, AUDITED_SETTLERS);
 });
 
 /** R78 and R79: their transition rules and R79's own repair loop. */

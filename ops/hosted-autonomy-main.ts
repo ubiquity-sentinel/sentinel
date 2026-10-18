@@ -1,3 +1,6 @@
+import { emitHostedParkSummary } from "./hosted-autonomy-summary.ts";
+import { writeQueueCustodyOutput } from "./hosted-autonomy-queue-output.ts";
+import { createHostedQueueCoordinator } from "./hosted-autonomy-queue-host.ts";
 import {
   createMatrixUncertaintyMaintenance,
   runMatrixUncertaintyMaintenance,
@@ -22,6 +25,7 @@ import {
   maintenanceFailureCategory,
 } from "./hosted-autonomy-state.ts";
 import { createHostedAutonomyGitHub } from "./hosted-autonomy-github.ts";
+import { repeatFailureRouteIdentity } from "./hosted-autonomy-repeat-failure.ts";
 import {
   CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE,
   hostedRepositoryKey,
@@ -106,6 +110,12 @@ export async function runHostedAutonomyMain(input?: {
 }): Promise<number> {
   const env = (key: string) =>
     input === undefined ? readEnv(key) : input.env[key] ?? null;
+  // Missing output and every failure before custody are closed at the workflow boundary.
+  await writeQueueCustodyOutput(env("GITHUB_OUTPUT"), false);
+  const onQueueCustodyReady = async (ready: boolean) => {
+    await writeQueueCustodyOutput(env("GITHUB_OUTPUT"), ready);
+    await input?.deps.onQueueCustodyReady?.(ready);
+  };
   const facts = await readCheckoutFacts();
   const validated = validateIssue48QuotaHostedIdentity({
     repository: env("GITHUB_REPOSITORY"),
@@ -133,9 +143,22 @@ export async function runHostedAutonomyMain(input?: {
     return report(failed("identity_rejected", null));
   }
   let result: HostedAutonomyResultV1;
+  let summaryActions: readonly string[] = [];
   try {
     if (input) {
-      result = await runHostedAutonomy(input.deps);
+      try {
+        result = await runHostedAutonomy({
+          ...input.deps,
+          onQueueCustodyReady,
+        });
+        summaryActions = result.actions;
+      } finally {
+        await emitHostedParkSummary(
+          input.deps.state,
+          env("GITHUB_STEP_SUMMARY"),
+          summaryActions,
+        );
+      }
     } else {
       const scratch = `${Deno.cwd()}/.hosted-autonomy`;
       Deno.mkdirSync(scratch, { recursive: true, mode: 0o700 });
@@ -148,11 +171,6 @@ export async function runHostedAutonomyMain(input?: {
         remoteUrl: ISSUE48_QUOTA_REMOTE_URL,
         runner,
       });
-      // Live learning visibility: emit a bounded digest of durable memory
-      // before the pass, so operators can see what Sentinel has learned
-      // (refused replays, resolved families, versioned regressions). Advisory
-      // only: a digest failure never blocks the maintenance pass.
-      await emitMemoryDigest(state);
       // One surface per exact repository identity: the durable snapshot may
       // carry work for several repositories, and each record is delivered under
       // its OWN repository, never under the self repository.
@@ -168,6 +186,7 @@ export async function runHostedAutonomyMain(input?: {
         return created;
       };
       const artifactRoot = await Deno.makeTempDir({
+        dir: scratch,
         prefix: "sentinel-maintenance-matrix-",
       });
       try {
@@ -175,13 +194,31 @@ export async function runHostedAutonomyMain(input?: {
           state,
           githubFor,
           clock: { now: () => Date.now() },
-          uncertainMatrix: () =>
-            runMatrixUncertaintyMaintenance(createMatrixUncertaintyMaintenance({
-              state,
-              clock: { now: () => Date.now() },
-              token: stateToken,
-              artifactRoot,
-            })),
+          queue: createHostedQueueCoordinator({
+            queueMode: env("SENTINEL_MERGE_QUEUE"),
+            state,
+            githubFor,
+            token: apiToken,
+            clock: { now: () => Date.now() },
+          }),
+          onQueueCustodyReady,
+          // Route selector names only, never a key: a changed model route
+          // re-arms the records the repeat-failure bound parked.
+          modelRoute: repeatFailureRouteIdentity({
+            baseUrl: env("SENTINEL_MODEL_BASE_URL"),
+            model: env("SENTINEL_MODEL_ID"),
+            fallback: env("SENTINEL_MODEL_FALLBACK"),
+          }),
+          uncertainMatrix: (guardedState = state, protectedRecordIds) =>
+            runMatrixUncertaintyMaintenance({
+              ...createMatrixUncertaintyMaintenance({
+                state: guardedState,
+                clock: { now: () => Date.now() },
+                token: stateToken,
+                artifactRoot,
+              }),
+              protectedRecordIds,
+            }),
           closedMatrix: (guardedState = state) =>
             createHostedClosedMatrixRecovery({
               state: guardedState,
@@ -207,7 +244,15 @@ export async function runHostedAutonomyMain(input?: {
             revalidateNotStarted: true,
           }),
         });
+        summaryActions = result.actions;
       } finally {
+        // Advisory visibility follows the unconditional queue custody prelude.
+        await emitMemoryDigest(state);
+        await emitHostedParkSummary(
+          state,
+          env("GITHUB_STEP_SUMMARY"),
+          summaryActions,
+        );
         await Deno.remove(artifactRoot, { recursive: true });
       }
     }

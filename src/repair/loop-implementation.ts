@@ -1,3 +1,4 @@
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: implementation. */
 import type { GitSha } from "../contracts/brands.ts";
 import type { ModelRunRequestV1 } from "../contracts/ports.ts";
@@ -72,6 +73,8 @@ export async function prepareImplementationStart(
   config: RepositoryConfigV1,
   beforeAdmission?: (request: ModelRunRequestV1) => Promise<boolean>,
 ): Promise<StepResultV1 | PreparedImplementationV1> {
+  const queueGuard = await guardQueueOperation(deps, context, record, "resume");
+  if (queueGuard !== null) return queueGuard;
   // No NEW model work after the 90-minute cutoff (or at/after the total run
   // deadline): the start is rejected before any reservation is made (nothing
   // is charged), and the record stays exactly as it was so a later run inside
@@ -322,6 +325,13 @@ export async function prepareImplementationStart(
     };
   }
 
+  const queueBeforeAdmission = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "resume",
+  );
+  if (queueBeforeAdmission !== null) return queueBeforeAdmission;
   const reservation = await deps.budget.reserveModelStart({
     repository: record.repository,
     taskId: record.id,
@@ -388,6 +398,14 @@ export async function prepareImplementationStart(
     };
   }
 
+  const admittedGuard = await guardQueueOperation(
+    deps,
+    fresh,
+    current,
+    "resume",
+  );
+  if (admittedGuard !== null) return admittedGuard;
+
   // A CI fix (of a reviewed head or a never-reviewed one) is charged in
   // `counters.retries` as well as `attempts` and never counts a review round;
   // its fix marker is consumed by the admission.
@@ -419,6 +437,13 @@ export async function prepareImplementationStart(
     replaceWorkMutation(withIntent),
   );
   if (persisted.kind !== "progress") return persisted;
+  const intendedGuard = await guardQueueOperation(
+    deps,
+    fresh,
+    withIntent,
+    "resume",
+  );
+  if (intendedGuard !== null) return intendedGuard;
 
   // Recheck the shared gate immediately before the model run: the durable
   // admission and intent writes were awaited wall-clock work. A cooldown
@@ -510,6 +535,14 @@ export async function prepareImplementationStart(
       detail: "implementation start crossed the run bounds after admission",
     };
   }
+
+  const submitGuard = await guardQueueOperation(
+    deps,
+    fresh,
+    withIntent,
+    "resume",
+  );
+  if (submitGuard !== null) return submitGuard;
 
   return {
     kind: "prepared",

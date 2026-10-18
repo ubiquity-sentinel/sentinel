@@ -29,9 +29,11 @@ import { portOk } from "../../src/contracts/ports.ts";
 import type { MergeRequestV1 } from "../../src/contracts/merge-request.ts";
 import type { ReviewTaskStatementV1 } from "../../src/contracts/review-receipt.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { reviewTaskStatementDigest } from "../../src/contracts/review-receipt.ts";
+import { missingExpectedChecks } from "../../src/repair/ci-coverage.ts";
 import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
 import { runHostedDeliveryPass } from "../../ops/hosted-autonomy-delivery-pass.ts";
@@ -213,7 +215,15 @@ export class QueueGithub extends FakeGithub {
       readDefaultBranch: () => Promise.resolve("development"),
       readBaseTip: () => Promise.resolve(this.remoteBase),
       hasSuccessfulCheck: (head) => Promise.resolve(this.green(head)),
-      hasAllChecksGreen: (head) => Promise.resolve(this.green(head)),
+      // With the base the head is tested against, every check name of each
+      // base suite the head shares a name with must exist on the head too.
+      hasAllChecksGreen: (head, base) =>
+        Promise.resolve(
+          this.green(head) &&
+            (base === undefined ||
+              missingExpectedChecks(this.checksOf(head), this.checksOf(base))
+                  .length === 0),
+        ),
       readPull: (number) => {
         const pr = this.pulls.get(number);
         return Promise.resolve(pr === undefined ? null : pullOf(pr));
@@ -472,12 +482,15 @@ export async function queueRig(
     reviewer?: string;
     /** The runtime port refuses every merge, as on live ai.ubq.fi. */
     livePolicy?: boolean;
+    /** The one repository (default ai.ubq.fi). */
+    repository?: RepositoryIdentityV1;
   } = {},
 ) {
+  const repository = options.repository ?? REPO;
   const clock = new FakeClock(T0);
   const state = new MemoryState();
   const configs = repairConfigs({
-    repository: REPO,
+    repository,
     adapter: { kind: "github" },
     sessionBound: { maxDurationMs: 240_000, maxOutputChars: 200_000 },
     liveStartLimits: { perHour: 1_000, perSevenDays: 10_000 },
@@ -493,7 +506,7 @@ export async function queueRig(
     github.heads.set(branch, head);
     github.pulls.set(pr, { number: pr, branch, issue: index, mergeSha: null });
     records.push(workRecord(id, {
-      repository: REPO,
+      repository,
       source: { kind: "issue", id: String(index), revision: SHA1 },
       related: { incidentId: null, issueNumber: index },
       target: { base: SHA1, branch, checkpoint: null, head, pr },

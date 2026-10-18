@@ -148,13 +148,19 @@ export interface LegacyReviewCutoffPinV1 {
 }
 
 /**
- * The one legacy cutoff. Unpinned until the generation-80 runtime is pinned
- * for installation: that commit sets the instant (its own) and the first
- * revision; a later CI-first runtime only appends its revision.
+ * The one legacy cutoff, pinned by the launcher commit that pins the
+ * generation-80 runtime for installation: that commit set the instant (its
+ * own, 2026-10-17T17:05:00Z) and the first revision (R80); a later CI-first
+ * runtime only appends its revision.
  */
 export const LEGACY_REVIEW_CUTOFF: LegacyReviewCutoffPinV1 = {
-  activatedNotBefore: null,
-  revisions: [],
+  activatedNotBefore: 1792256700000,
+  revisions: [
+    // Generation 80 (R80), pinned by its launcher commit at 1792256700000.
+    "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+    // Generation 81 (R81), pinned by its launcher commit.
+    "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+  ],
 };
 
 /** One recorded execution (release custody or the current run). */

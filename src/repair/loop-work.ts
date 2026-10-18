@@ -1,7 +1,11 @@
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: work. */
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
-import { ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT } from "./attempt-policy.ts";
+import {
+  ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT,
+  implementationPortFailureDetail,
+} from "./attempt-policy.ts";
 import { candidateBranch } from "./keys.ts";
 import {
   ensureBaseRefreshIntent,
@@ -87,6 +91,8 @@ export async function executeWorkStep(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(deps, context, record, "resume");
+  if (queueGuard !== null) return queueGuard;
   const config = configFor(deps, record.repository);
   if (config === null) {
     return persistWork(
@@ -280,6 +286,13 @@ export async function executeImplementationStep(
     config,
   );
   if (prepared.kind !== "prepared") return prepared;
+  const submitGuard = await guardQueueOperation(
+    deps,
+    prepared.context,
+    prepared.record,
+    "resume",
+  );
+  if (submitGuard !== null) return submitGuard;
   const receipt = await deps.model.runModel(prepared.request);
   if (!receipt.ok) {
     return settleFailedImplementation(
@@ -287,7 +300,10 @@ export async function executeImplementationStep(
       context,
       prepared.record,
       prepared.reservationId,
-      ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT,
+      implementationPortFailureDetail(
+        receipt.error,
+        ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT,
+      ),
     );
   }
   return handleModelReceipt(
@@ -309,6 +325,8 @@ export async function executeDeliveryStep(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(deps, context, record, "resume");
+  if (queueGuard !== null) return queueGuard;
   if (record.target.pr === null || record.target.head === null) {
     return {
       kind: "state_error",

@@ -8,6 +8,7 @@ import {
   type PortResultV1,
 } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import type { ModelRunOptionsV1 } from "../contracts/ports-model.ts";
 import type { ModelRouteV1 } from "./model-route.ts";
 import { CodexSubprocessSession } from "../repair/codex-transport.ts";
 import {
@@ -153,6 +154,7 @@ export class LocalCheckoutModelPort implements ImplementationPort {
 
   async runModel(
     request: ModelRunRequestV1,
+    options?: ModelRunOptionsV1,
   ): Promise<PortResultV1<ModelRunReceiptV1>> {
     // The caller's model start boundary: checkout preparation below is
     // charged to the same session budget a gateway 429 backoff may use.
@@ -344,7 +346,10 @@ export class LocalCheckoutModelPort implements ImplementationPort {
     const modelRequest = checkoutBase === request.base
       ? request
       : { ...request, base: checkoutBase };
-    const result = await port.runModel(modelRequest);
+    // CI failure evidence (a CI correction cell) passes through unchanged; it
+    // reaches only the user turn's prompt, never the persisted request or
+    // receipt.
+    const result = await port.runModel(modelRequest, options);
     return await finalizeLocalModelResult({
       stateRoot: this.input.stateRoot,
       request,

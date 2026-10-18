@@ -1,4 +1,10 @@
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
+import { QUEUE_PROOF_ACTIVATED } from "../src/github/queue-runtime-policy.ts";
+import {
+  type HostedQueueCustodyContext,
+  queueRecordProtected,
+} from "./hosted-autonomy-queue-context.ts";
 import {
   parseReleaseRequestV1,
   type ReleaseRequestV1,
@@ -186,7 +192,13 @@ export function verifiedMergedDelivery(
   record: HostedAutonomyRecordV1,
   pull: HostedAutonomyPullV1,
   baseBranch: string | null,
+  custody?: HostedQueueCustodyContext,
 ): HostedMergedDeliveryV1 | null {
+  if (
+    isGatewayVpsRepository(record.repository) &&
+    (QUEUE_PROOF_ACTIVATED || custody?.proofActivated === true ||
+      queueRecordProtected(record, custody))
+  ) return null;
   const head = record.target.head;
   const base = record.target.base;
   if (head === null || base === null || baseBranch === null) return null;

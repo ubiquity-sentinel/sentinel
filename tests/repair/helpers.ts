@@ -1,3 +1,5 @@
+import { inactiveNativeQueueFixture } from "../github/native-queue-fixture.ts";
+import type { NativeQueueGuardV1 } from "../../src/github/native-queue-guard.ts";
 /**
  * m04-repair test helpers: fake ports (recording, no product logic) and a
  * memory state capability with exact-identity CAS plus sequence validation
@@ -191,6 +193,7 @@ export interface FakeGithubCandidateLifecycleV1 {
 }
 
 export interface FakeGithubOptionsV1 {
+  nativeQueue?: NativeQueueGuardV1 | null;
   baseSha?: GitSha;
   issues?: Partial<GitHubIssueV1>[];
   openIssues?: Partial<GitHubIssueV1>[];
@@ -221,8 +224,15 @@ export interface FakeGithubOptionsV1 {
   checks?: GitHubCheckV1[];
 }
 
+/**
+ * A fake check run with the check suite GitHub reports it in: the strict CI
+ * read carries no suite; the coverage read (`readCheckSuites`) reports it.
+ */
+export type SuitedCheckV1 = GitHubCheckV1 & { suite?: number };
+
 /** Recording fake GitHubPort; product logic never lives here. */
 export class FakeGithub implements GitHubPort {
+  nativeQueue: NativeQueueGuardV1 | undefined;
   /** Explicit trusted publisher identity; the loop must use this value. */
   readonly reviewerIdentity: string = "chatgpt-codex-connector[bot]";
   readonly calls: string[] = [];
@@ -284,6 +294,9 @@ export class FakeGithub implements GitHubPort {
   private nextPrNumber = 7;
 
   constructor(options: FakeGithubOptionsV1 = {}) {
+    this.nativeQueue = options.nativeQueue === null
+      ? undefined
+      : options.nativeQueue ?? inactiveNativeQueueFixture();
     this.options = options;
     this.lifecycle = options.candidateLifecycle;
     if (this.lifecycle !== undefined) {
@@ -419,6 +432,24 @@ export class FakeGithub implements GitHubPort {
       completedAt: 2,
     };
     return Promise.resolve(portOk({ head: _head, checks: [green] }));
+  }
+
+  /**
+   * The coverage read of a base: this fake's own check read (including any
+   * test override of `readChecks`) reduced to name and suite, as the real
+   * port's lenient `readCheckSuites` reports them; an unreadable listing stays
+   * unreadable.
+   */
+  async readCheckSuites(head: GitSha) {
+    const read = await this.readChecks(head);
+    if (!read.ok) return read;
+    return portOk({
+      head,
+      checks: read.value.checks.map((check) => ({
+        name: check.name,
+        suite: (check as SuitedCheckV1).suite ?? null,
+      })),
+    });
   }
 
   readProtections(_baseBranch: string) {

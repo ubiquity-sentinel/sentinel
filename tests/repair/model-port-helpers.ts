@@ -35,6 +35,7 @@ export class FakeCodexSession implements CodexSessionV1 {
     | ((event: CodexServerNotificationV1) => void)
     | null = null;
   private turnStarted = false;
+  private emission: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     /**
@@ -67,6 +68,7 @@ export class FakeCodexSession implements CodexSessionV1 {
       }
       case "turn/start":
         this.turnStarted = true;
+        this.emitTerminal();
         return Promise.resolve({ turn: { id: "turn-1" } });
       case "turn/interrupt":
         return Promise.resolve({});
@@ -81,13 +83,23 @@ export class FakeCodexSession implements CodexSessionV1 {
 
   onNotification(handler: (event: CodexServerNotificationV1) => void): void {
     this.notifications = handler;
-    if (this.turnStarted) {
-      // The real app-server emits the terminal event only after the listener
-      // is registered inside awaitSettlement; the fake mirrors that order.
+    this.emitTerminal();
+  }
+
+  private emitTerminal(): void {
+    if (
+      this.turnStarted && this.notifications !== null && this.emission === null
+    ) {
+      // A consumer may register before turn/start responds. Emit when the
+      // turn starts as well as when a late consumer registers, as the real
+      // app-server's independent notification stream does.
       // A completed run needs genuine correlated output evidence: one
       // successful file-change item for the exact thread/turn, delivered
       // before the terminal event.
-      queueMicrotask(() => {
+      this.emission = setTimeout(() => {
+        if (this.notifications !== null) {
+          this.beforeTerminal(this.notifications);
+        }
         this.notifications?.({
           method: "item/completed",
           params: {
@@ -103,13 +115,18 @@ export class FakeCodexSession implements CodexSessionV1 {
             turn: { id: "turn-1", status: "completed", durationMs: 5 },
           },
         });
-      });
+      }, 0);
     }
   }
+
+  protected beforeTerminal(
+    _handler: (event: CodexServerNotificationV1) => void,
+  ): void {}
 
   onServerRequest(): void {}
 
   close(): Promise<void> {
+    if (this.emission !== null) clearTimeout(this.emission);
     this.closeCalls++;
     this.closed = true;
     return Promise.resolve();
@@ -135,10 +152,9 @@ export class ReasoningStreamSession extends FakeCodexSession {
     super();
   }
 
-  override onNotification(
+  protected override beforeTerminal(
     handler: (event: CodexServerNotificationV1) => void,
   ): void {
-    super.onNotification(handler);
     const delta = this.breach ? "r".repeat(4_096) : "thinking";
     handler({
       method: "item/reasoning/summaryTextDelta",
@@ -177,6 +193,8 @@ export class ScriptedSession implements CodexSessionV1 {
   private notifications:
     | ((event: CodexServerNotificationV1) => void)
     | null = null;
+  private turnStarted = false;
+  private emission: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly threadAck: Record<string, unknown>,
@@ -206,6 +224,8 @@ export class ScriptedSession implements CodexSessionV1 {
       case "thread/start":
         return Promise.resolve(this.threadAck);
       case "turn/start":
+        this.turnStarted = true;
+        this.emitEvents();
         return Promise.resolve(this.turnAck);
       case "turn/interrupt":
         if (this.interruptTerminalStatus !== undefined) {
@@ -235,7 +255,20 @@ export class ScriptedSession implements CodexSessionV1 {
 
   onNotification(handler: (event: CodexServerNotificationV1) => void): void {
     this.notifications = handler;
-    for (const event of this.events) handler(event);
+    this.emitEvents();
+  }
+
+  private emitEvents(): void {
+    if (
+      !this.turnStarted || this.notifications === null || this.emission !== null
+    ) {
+      return;
+    }
+    // These fixtures exercise the ordinary live stream after turn/start.
+    // Dedicated real-subprocess tests cover the independent early stream.
+    this.emission = setTimeout(() => {
+      for (const event of this.events) this.notifications?.(event);
+    }, 0);
   }
 
   /** Deliver one event through the registered handler, as the transport would. */
@@ -244,6 +277,7 @@ export class ScriptedSession implements CodexSessionV1 {
   }
 
   async close(): Promise<void> {
+    if (this.emission !== null) clearTimeout(this.emission);
     this.closeCalls++;
     if (this.closeScript !== undefined) {
       await this.closeScript((method, params) => this.emit(method, params));

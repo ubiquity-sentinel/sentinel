@@ -10,6 +10,7 @@ import {
   vpsDigest,
   type VpsHealthProof,
   type VpsIdentity,
+  type VpsMetricsSample,
   type VpsMutation,
   type VpsOperation,
   type VpsPrepare,
@@ -17,12 +18,29 @@ import {
   type VpsSettlement,
 } from "../../src/contracts/vps-release-wire.ts";
 import { VpsReleaseController } from "../../src/release/vps-controller.ts";
-import { verifyCommittedSettlement } from "../../src/host/vps-release.ts";
+import type {
+  VpsMetricsProgress,
+  VpsMetricsWork,
+} from "../../src/release/vps-metrics.ts";
+import {
+  composeTrustedVpsReleaseHost,
+  verifyCommittedSettlement,
+} from "../../src/host/vps-release.ts";
 import {
   composeVpsReleasePort,
   type NativeVpsDriverV1,
 } from "../../src/release/vps-port.ts";
 import { makeGitCtx, publishRepairRequest, storeAt } from "./helpers.ts";
+import {
+  installVpsDriverHook,
+  JOINED_DRIVER_SHA,
+  joinedDriverFiles,
+  journalCoverage,
+  journalRange,
+  journalRows,
+  testCipher,
+  writeVpsDriverTree,
+} from "./vps-driver-fixture.ts";
 
 const fixture = parseVpsReleaseRecordV1(
   JSON.parse(
@@ -50,6 +68,7 @@ class FakeNativeVpsDriver implements NativeVpsDriverV1 {
       ...this.receipt,
       binding: input.binding,
       controllerSha: input.controllerSha,
+      driverSha256: input.expectedDriverSha256,
     });
     return Promise.resolve(this.receipt);
   }
@@ -144,7 +163,16 @@ class FakeNativeVpsDriver implements NativeVpsDriverV1 {
   }
 }
 
-async function scenario(failures = 0) {
+async function scenario(
+  failures = 0,
+  joined: {
+    metricsWork: VpsMetricsWork;
+    sample?: (
+      input: { identity: VpsIdentity; windowStart: number; windowEnd: number },
+      now: number,
+    ) => Promise<VpsMetricsSample>;
+  } | null = null,
+) {
   const context = await makeGitCtx("vps-controller");
   const state = storeAt(context, "vps-controller", "release");
   await publishRepairRequest(context, fixture.request);
@@ -154,7 +182,7 @@ async function scenario(failures = 0) {
     driver,
     metrics: {
       sample: (input) =>
-        Promise.resolve({
+        joined?.sample?.(input, now) ?? Promise.resolve({
           ...input,
           sampledAt: now,
           requestCount: 100,
@@ -189,6 +217,7 @@ async function scenario(failures = 0) {
     logsLagMs: 0,
     port,
     clock: { now: () => now },
+    ...(joined ? { metricsWork: joined.metricsWork } : {}),
   };
   const controller = new VpsReleaseController(options);
   const record = async (): Promise<VpsReleaseRecordV1> => {
@@ -335,5 +364,205 @@ Deno.test("VPS controller: unobserved gap resets coverage and CAS refusal preven
     assert.equal(refused.driver.activations, 0);
   } finally {
     await refused.context.cleanup();
+  }
+});
+
+Deno.test("VPS controller: joined metrics begin each tick before sampling and hold a collecting window without restarting", async () => {
+  const events: string[] = [];
+  let startedAt = 0;
+  const collecting = (input: { windowStart: number }, now: number) =>
+    startedAt > 0 && input.windowStart === startedAt + 60_000 &&
+    now < startedAt + 180_000;
+  const rig = await scenario(0, {
+    metricsWork: {
+      beginTick: (at) => events.push(`tick:${at}`),
+      progress: (input): Promise<VpsMetricsProgress> =>
+        Promise.resolve(
+          events.at(-1) === `collecting:${input.windowStart}`
+            ? { state: "collecting", reason: "terminal_or_slice_pending" }
+            : { state: "complete", reason: null },
+        ),
+    },
+    sample: (input, now) => {
+      const pending = collecting(input, now);
+      events.push(`${pending ? "collecting" : "sample"}:${input.windowStart}`);
+      return Promise.resolve({
+        ...input,
+        sampledAt: now,
+        requestCount: pending ? null : 100,
+        fiveXxCount: pending ? null : 0,
+        timeoutCount: pending ? null : 0,
+        streamFailureCount: pending ? null : 0,
+        upstreamWideFault: pending ? null : false,
+        coverage: pending ? "incomplete" : "complete",
+        coverageDigest: pending ? null : "e".repeat(64),
+      });
+    },
+  });
+  try {
+    await rig.controller.run();
+    await rig.controller.run();
+    await rig.controller.run();
+    const monitoring = await rig.record();
+    assert.equal(monitoring.phase, "monitoring");
+    startedAt = monitoring.monitoring.startedAt!;
+    const held: number[] = [];
+    for (let slot = 0; slot < 80; slot++) {
+      rig.advance(30_000);
+      events.push(`run:${rig.options.clock.now()}`);
+      await rig.controller.run();
+      const record = await rig.record();
+      if (record.phase === "accepted") break;
+      assert.equal(record.monitoring.startedAt, startedAt, "never restarted");
+      assert.equal(record.monitoring.continuous, true);
+      held.push(record.monitoring.samples.length);
+    }
+    const accepted = await rig.record();
+    assert.equal(accepted.phase, "accepted");
+    assert.equal(accepted.monitoring.startedAt, startedAt);
+    assert.equal(accepted.monitoring.samples.length, 60);
+    assert.deepEqual(held.slice(0, 7), [0, 1, 2, 2, 2, 5, 6]);
+    const runs = events.flatMap((event, index) =>
+      event.startsWith("run:") ? [index] : []
+    );
+    assert.ok(runs.length >= 60);
+    for (const [position, index] of runs.entries()) {
+      const tick = events.slice(index + 1, runs[position + 1]);
+      if (tick.length === 0) continue;
+      assert.equal(
+        tick[0],
+        `tick:${events[index].slice(4)}`,
+        "each monitoring run begins its tick at its observation time before sampling",
+      );
+      assert.equal(tick.filter((event) => event.startsWith("tick:")).length, 1);
+    }
+  } finally {
+    await rig.context.cleanup();
+  }
+});
+
+Deno.test("VPS controller: the real #1027 VpsJournalMetrics drive acceptance through the composed bridge host", async () => {
+  const policy = {
+    ...fixture.policy,
+    minRequests: 2,
+    baselineWindowMs: 300_000,
+    baselineMinSamples: 10,
+  };
+  const rig = await scenario();
+  const tree = await writeVpsDriverTree(
+    JOINED_DRIVER_SHA,
+    await joinedDriverFiles(),
+  );
+  const hook = installVpsDriverHook({ create: () => rig.driver });
+  try {
+    const candidate = fixture.driver.candidate;
+    const prior = fixture.driver.prior.identity;
+    // Monitoring starts at the fixture's creation time (the clock holds for
+    // the first three runs); the request accepted in candidate window 2 only
+    // terminates in window 5, as buffered inference may.
+    const startedAt = fixture.createdAt;
+    const journal: [number, number, number][] = [];
+    const composed = await composeTrustedVpsReleaseHost({
+      clock: rig.options.clock,
+      stateRead: rig.state,
+      stateWrite: rig.state,
+      repository: fixture.request.target.repository,
+      environment: "production",
+      controllerSha: fixture.driver.controllerSha as GitSha,
+      targetRoot: "/home/codex/repos/ubiquity/ai.ubq.fi",
+      pinnedDriver: {
+        releaseRoot: tree.releaseRoot,
+        identity: tree.identity,
+        moduleSha256: tree.moduleSha256,
+      },
+      policy,
+      logsLagMs: 0,
+      timeoutKinds: [],
+      upstreamWideKinds: [],
+      verifySource: () => Promise.resolve(true),
+      journalCoverage: (start, end) =>
+        Promise.resolve(journalCoverage(start, end)),
+      readInferenceProof: (identity) =>
+        Promise.resolve({
+          revision: identity.gitSha,
+          observedAt: rig.options.clock.now(),
+          origin: "mac-direct-vps",
+          authenticated: true,
+          succeeded: true,
+          proofDigest: "f".repeat(64),
+        }),
+      wait: () => Promise.resolve(),
+      deadline: fixture.createdAt + 86_400_000,
+      telemetry: {
+        retention: {
+          evidenceMaxAgeMs: 172_800_000,
+          evidenceMaxBytes: 16_777_216,
+        },
+        cipher: await testCipher(),
+      },
+      platform: {
+        fetch,
+        run: () => Promise.reject(new Error("no generic command expected")),
+        journal: (args, limits) => {
+          const [start, end] = journalRange(args);
+          journal.push([start, limits.deadline, rig.options.clock.now()]);
+          const requests = [{
+            id: "buffered-inference",
+            identity: candidate,
+            acceptedAt: startedAt + 65_000,
+            terminalAt: startedAt + 151_000,
+          }];
+          for (
+            let at = Math.floor(start / 10_000) * 10_000 - 10_000;
+            at < end;
+            at += 10_000
+          ) {
+            for (const identity of [candidate, prior]) {
+              requests.push({
+                id: `${identity.gitSha.slice(0, 7)}-${at}`,
+                identity,
+                acceptedAt: at + 1_000,
+                terminalAt: at + 2_000,
+              });
+            }
+          }
+          return Promise.resolve(journalRows(requests, start, end));
+        },
+      },
+    });
+    assert.ok(composed.ok, "the joined driver composes");
+    assert.ok(composed.value.metricsWork);
+    const controller = new VpsReleaseController(composed.value);
+    await controller.run();
+    await controller.run();
+    await controller.run();
+    assert.equal((await rig.record()).monitoring.startedAt, startedAt);
+    const held: number[] = [];
+    for (let slot = 0; slot < 80; slot++) {
+      rig.advance(30_000);
+      await controller.run();
+      const record = await rig.record();
+      if (record.phase === "accepted") break;
+      assert.equal(record.monitoring.startedAt, startedAt, "never restarted");
+      held.push(record.monitoring.samples.length);
+    }
+    const accepted = await rig.record();
+    assert.equal(accepted.phase, "accepted");
+    assert.equal(accepted.monitoring.samples.length, 60);
+    assert.equal(accepted.monitoring.baseline.length, 10);
+    assert.equal(accepted.acceptance?.passed, true);
+    assert.equal(accepted.monitoring.samples[2].requestCount, 4);
+    assert.deepEqual(held.slice(0, 6), [0, 1, 2, 2, 2, 5]);
+    assert.ok(journal.length > 0);
+    for (const [, deadline, now] of journal) {
+      assert.equal(deadline, now + 20_000, "each tick begins at its own time");
+    }
+    assert.equal(
+      hook.sealed.get(fixture.driver.operationId)?.sequence !== undefined,
+      true,
+    );
+  } finally {
+    await tree.cleanup();
+    await rig.context.cleanup();
   }
 });

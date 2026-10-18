@@ -1,3 +1,9 @@
+import {
+  holdQueueRecord,
+  queueEffectRefused,
+  queueRefusalIsTransient,
+} from "./loop-queue-guard.ts";
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: publication. */
 import type { GitSha } from "../contracts/brands.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
@@ -40,6 +46,13 @@ export async function executePublishStep(
   record: WorkRecordV1,
   config: RepositoryConfigV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "publication",
+  );
+  if (queueGuard !== null) return queueGuard;
   const now = deps.clock.now();
   const head = record.target.head;
   if (head === null) {
@@ -87,6 +100,14 @@ export async function executePublishStep(
   let expectedRemoteHead: GitSha | null = null;
   if (candidateState !== undefined) {
     const ref = await deps.github.readRef(`refs/heads/${branch}`);
+    const observedGuard = await guardQueueOperation(
+      deps,
+      context,
+      record,
+      "publication",
+      ref.ok && ref.value?.sha === head ? head : undefined,
+    );
+    if (observedGuard !== null) return observedGuard;
     if (!ref.ok) {
       return persistWork(
         deps,
@@ -135,6 +156,14 @@ export async function executePublishStep(
     expectedRemoteHead = ref.value === null ? null : ref.value.sha;
   } else if (record.target.pr !== null) {
     const ref = await deps.github.readRef(`refs/heads/${branch}`);
+    const observedGuard = await guardQueueOperation(
+      deps,
+      context,
+      record,
+      "publication",
+      ref.ok && ref.value?.sha === head ? head : undefined,
+    );
+    if (observedGuard !== null) return observedGuard;
     if (!ref.ok || ref.value === null) {
       return persistWork(
         deps,
@@ -179,6 +208,14 @@ export async function executePublishStep(
     expectedRemoteHead,
   );
   if (!push.ok) {
+    if (queueEffectRefused(push.error)) {
+      return holdQueueRecord(
+        deps,
+        context,
+        withIntent,
+        queueRefusalIsTransient(push.error),
+      );
+    }
     // The saved push intent must stay durable: the response may have been
     // lost after the write, and the next run reconciles the exact remote ref
     // before repeating rather than blindly retrying an ambiguous write.
@@ -216,6 +253,14 @@ export async function executePublishStep(
       config,
     );
   }
+  const publishedGuard = await guardQueueOperation(
+    deps,
+    context,
+    withIntent,
+    "publication",
+    head,
+  );
+  if (publishedGuard !== null) return publishedGuard;
   const proved = withPublishedHead(withIntent, head, deps.clock.now());
   const provedWrite = await persistWork(deps, context, proved);
   if (provedWrite.kind !== "progress") return provedWrite;
@@ -228,6 +273,13 @@ export async function reconcilePublishIntent(
   record: WorkRecordV1,
   config: RepositoryConfigV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "publication",
+  );
+  if (queueGuard !== null) return queueGuard;
   const intent = record.intent!;
   const now = deps.clock.now();
   // Reconciliation observes exact remote objects: gate before the first
@@ -248,6 +300,16 @@ export async function reconcilePublishIntent(
   if (intent.kind === "push") {
     const candidateState = record.target.candidateState;
     const ref = await deps.github.readRef(`refs/heads/${intent.branch}`);
+    const observedGuard = await guardQueueOperation(
+      deps,
+      context,
+      record,
+      "publication",
+      ref.ok && ref.value?.sha === intent.expectedHead
+        ? intent.expectedHead
+        : undefined,
+    );
+    if (observedGuard !== null) return observedGuard;
     if (!ref.ok) {
       return persistWork(
         deps,
@@ -332,6 +394,13 @@ export async function reconcilePublishIntent(
       };
     }
     const pr = await deps.github.findPullRequestByHeadRef(intent.branch);
+    const observedGuard = await guardQueueOperation(
+      deps,
+      context,
+      record,
+      "publication",
+    );
+    if (observedGuard !== null) return observedGuard;
     if (!pr.ok) {
       return persistWork(
         deps,
@@ -428,6 +497,13 @@ export async function reconcilePublishIntent(
     // (the issue-140 livelock, where a closed PR recorded only in intent.pr was
     // re-adopted on every run).
     const dead = await deps.github.readPullRequest(prNumber);
+    const observedGuard = await guardQueueOperation(
+      deps,
+      afterSettlement,
+      current,
+      "publication",
+    );
+    if (observedGuard !== null) return observedGuard;
     if (
       dead.ok && dead.value !== null &&
       dead.value.headRef === candidateBranch(current.id) &&
@@ -475,9 +551,24 @@ export async function reconcileOrphanPublication(
     if (branch === null || head === null) continue;
     if (attempted.has(record.id)) continue;
     attempted.add(record.id);
+    const queueGuard = await guardQueueOperation(
+      deps,
+      context,
+      record,
+      "publication",
+    );
+    if (queueGuard !== null) return queueGuard;
     const config = configFor(deps, record.repository);
     if (config === null) continue;
     const found = await deps.github.findPullRequestByHeadRef(branch);
+    const observedGuard = await guardQueueOperation(
+      deps,
+      context,
+      record,
+      "publication",
+      head,
+    );
+    if (observedGuard !== null) return observedGuard;
     if (!found.ok) {
       return { kind: "deferred", detail: "orphan PR discovery unavailable" };
     }

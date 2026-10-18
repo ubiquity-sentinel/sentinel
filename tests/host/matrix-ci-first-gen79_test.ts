@@ -10,12 +10,17 @@
  *   mismatch (the charge stays reserved, never refunded);
  * - the pre-review fix cell (no completed review of the head) stays closed in
  *   hosted generation-80 runs because R79 refuses it generically, which would
- *   fail every later repair run. This tree's consumer accepts it (CI finding
- *   first, the record's exact base, no completed review of the head, a
- *   charged CI fix in `counters.retries`), so generation 80 is a safe
- *   rollback target for the generation that opens it.
+ *   fail every later repair run. Generation 80's consumer accepts it (CI
+ *   finding first, the record's exact base, no completed review of the head,
+ *   a charged CI fix in `counters.retries`), so generation 80 is a safe
+ *   rollback target for the generation that opens it;
+ * - generation 81 opens it in hosted runs (`HOSTED_PRE_REVIEW_CI_FIXES`):
+ *   R80 (e48e7e110), its rollback target, isolates every pre-review fix cell
+ *   generation 81 plans, a never-reviewed candidate's and a reviewed record's
+ *   refreshed head's (reviews of earlier heads only) alike, with the charge
+ *   kept reserved, and refuses nothing it already isolated.
  *
- * The R79 cases are ignored in a checkout without R79.
+ * The R79 and R80 cases are ignored in a checkout without that revision.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -26,7 +31,12 @@ import { ciCorrectionFinding } from "../../src/repair/ci-rejection.ts";
 import * as ThisFixtures from "./matrix-artifact-fixtures.ts";
 import * as ThisHelpers from "../state/helpers.ts";
 import { T0 } from "../state/helpers.ts";
-import { gen79Available, loadGen79Modules } from "./gen77-runtime-source.ts";
+import {
+  gen79Available,
+  gen80Available,
+  loadGen79Modules,
+  loadGen80Modules,
+} from "./gen77-runtime-source.ts";
 
 type Fixtures = typeof ThisFixtures;
 type Helpers = typeof ThisHelpers;
@@ -44,6 +54,7 @@ interface ConsumerV1 {
 }
 
 const available = await gen79Available();
+const available80 = await gen80Available();
 
 function thisTree(): ConsumerV1 {
   return {
@@ -56,8 +67,18 @@ function thisTree(): ConsumerV1 {
   };
 }
 
-async function r79(): Promise<ConsumerV1> {
-  const loaded = await loadGen79Modules([
+function r79(): Promise<ConsumerV1> {
+  return consumerOf(loadGen79Modules);
+}
+
+function r80(): Promise<ConsumerV1> {
+  return consumerOf(loadGen80Modules);
+}
+
+async function consumerOf(
+  load: typeof loadGen79Modules,
+): Promise<ConsumerV1> {
+  const loaded = await load([
     "src/host/matrix-artifacts.ts",
     "src/host/matrix-artifact-port.ts",
     "src/contracts/matrix.ts",
@@ -119,27 +140,35 @@ async function bindFix(
   );
 }
 
-/** A completed review of SHA2 on PR 12 against `base` with `severities`. */
-function review(c: ConsumerV1, base: GitSha, severities: string[]) {
-  return c.helpers.reviewReceipt(`review-${severities.join("")}${base}`, {
-    pullRequest: { number: 12, head: c.helpers.SHA2, base },
-    outcome: "completed",
-    observedReviewer: "chatgpt-codex-connector[bot]",
-    resultId: `result-${severities.join("")}`,
-    findings: severities.map((severity, index) => ({
-      id: `finding-${index}`,
-      severity,
-      path: `src/x${index}.ts`,
-      message: `finding ${index}`,
-      fingerprint: "e".repeat(64),
-      resolved: false,
-      resolutionEvidence: null,
-    })),
-    unresolvedSeverities: severities,
-    submittedAt: T0 - 2_000,
-    completedAt: T0 - 1_000,
-    observedAt: T0 - 500,
-  });
+/** A completed review on PR 12 against `base` with `severities`. */
+function review(
+  c: ConsumerV1,
+  base: GitSha,
+  severities: string[],
+  head: GitSha = c.helpers.SHA2,
+) {
+  return c.helpers.reviewReceipt(
+    `review-${severities.join("")}${base}${head}`,
+    {
+      pullRequest: { number: 12, head, base },
+      outcome: "completed",
+      observedReviewer: "chatgpt-codex-connector[bot]",
+      resultId: `result-${severities.join("")}`,
+      findings: severities.map((severity, index) => ({
+        id: `finding-${index}`,
+        severity,
+        path: `src/x${index}.ts`,
+        message: `finding ${index}`,
+        fingerprint: "e".repeat(64),
+        resolved: false,
+        resolutionEvidence: null,
+      })),
+      unresolvedSeverities: severities,
+      submittedAt: T0 - 2_000,
+      completedAt: T0 - 1_000,
+      observedAt: T0 - 500,
+    },
+  );
 }
 
 /** A later consumer run (another runtime) over the producer's wave. */
@@ -179,6 +208,15 @@ const PRE_REVIEW: CaseV1 = {
   name: "pre-review fix: no review of the head, one CI fix charged",
   reviews: () => [],
   reviewRounds: 0,
+  retries: 1,
+};
+/** The head reviewed clean before the base moved (the refresh's parent). */
+const EARLIER_HEAD = "9".repeat(40) as GitSha;
+const REFRESHED: CaseV1 = {
+  name:
+    "pre-review fix of a reviewed record's refreshed head: an earlier head reviewed clean, none of this one",
+  reviews: (c) => [review(c, c.helpers.SHA1, [], EARLIER_HEAD)],
+  reviewRounds: 1,
   retries: 1,
 };
 const LEGACY_CLEAN: CaseV1 = {
@@ -272,9 +310,33 @@ Deno.test({
   },
 });
 
-Deno.test("generation 80 consumer isolates the pre-review CI fix cell a later generation plans", async (t) => {
+Deno.test({
+  name:
+    "rollback to generation 80: R80 isolates every pre-review CI fix cell generation 81 plans",
+  ignore: !available80,
+  async fn(t) {
+    const c = await r80();
+    try {
+      await verdicts(c, t, [
+        // Why the hosted pre-review route opens in generation 81.
+        [PRE_REVIEW, "mismatch"],
+        [REFRESHED, "mismatch"],
+        [LEGACY_CLEAN, "mismatch"],
+        [LEGACY_P2, "mismatch"],
+        // Shapes no planner grants keep the generic refusal.
+        [UNCHARGED, "generic"],
+        [OTHER_BASE, "generic"],
+      ]);
+    } finally {
+      await c.dispose();
+    }
+  },
+});
+
+Deno.test("this tree's consumer isolates the pre-review CI fix cell it plans in hosted runs", async (t) => {
   await verdicts(thisTree(), t, [
     [PRE_REVIEW, "mismatch"],
+    [REFRESHED, "mismatch"],
     [LEGACY_CLEAN, "mismatch"],
     [LEGACY_P2, "mismatch"],
     // Shapes no planner grants keep the generic refusal.

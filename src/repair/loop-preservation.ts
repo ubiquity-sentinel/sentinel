@@ -1,3 +1,9 @@
+import {
+  guardQueueOperation,
+  holdQueueRecord,
+  queueEffectRefused,
+  queueRefusalIsTransient,
+} from "./loop-queue-guard.ts";
 /** Repair loop internals: preservation. */
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import type {
@@ -78,6 +84,13 @@ export async function executeCandidatePreservation(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "publication",
+  );
+  if (queueGuard !== null) return queueGuard;
   const intent = record.intent;
   const candidateState = record.target.candidateState;
   const head = record.target.head;
@@ -116,11 +129,33 @@ export async function executeCandidatePreservation(
     ref: preservationRef,
   };
   const publishedHead: GitSha | null = candidateState.publishedHead;
+  const effectGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "publication",
+  );
+  if (effectGuard !== null) return effectGuard;
   const preserved = await deps.github.preserveCandidate({
     taskId: record.id,
     candidate,
     publishedHead,
   });
+  if (!preserved.ok && queueEffectRefused(preserved.error)) {
+    return holdQueueRecord(
+      deps,
+      context,
+      record,
+      queueRefusalIsTransient(preserved.error),
+    );
+  }
+  const observedGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "publication",
+  );
+  if (observedGuard !== null) return observedGuard;
   const at = deps.clock.now();
   if (!preserved.ok) {
     // A trusted content refusal is deterministic for this exact immutable

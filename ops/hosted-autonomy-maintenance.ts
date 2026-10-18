@@ -21,6 +21,7 @@ import { recoverHostedHistoricalC63 } from "./hosted-autonomy-historical-recover
 import { RECOVERY_ROUTE_FAILOVER_MODEL } from "./hosted-autonomy-matrix-bindings.ts";
 import { isDeferredCurrentMatrixHistoryBudget } from "./hosted-autonomy-policy.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
+import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 
 /**
  * Recover authenticated matrix custody before ordinary retry and delivery.
@@ -50,7 +51,19 @@ export async function runHostedMatrixMaintenance(
     const releaseRead = read.ok && read.value.status === "found"
       ? await deps.state.readRelease()
       : null;
+    const protectedBatch = read.ok && read.value.status === "found" &&
+      closed !== undefined &&
+      closedBinding.cells.some((cell) =>
+        read.value.status === "found" &&
+        read.value.snapshot.work.some((row) =>
+          row.id === cell.taskId && queueRecordProtected(row, deps.queueCustody)
+        )
+      );
+    if (protectedBatch) {
+      actions.push("queue:closed_matrix_atomic_batch_deferred");
+    }
     if (
+      !protectedBatch &&
       releaseRead?.ok && releaseRead.value.status === "found" &&
       releaseRead.value.snapshot.hostedRuntimes.every((row) =>
         row.execution === null

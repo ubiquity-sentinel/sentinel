@@ -1,3 +1,5 @@
+import { inactiveNativeQueueFixture } from "./native-queue-fixture.ts";
+import type { NativeQueueGuardV1 } from "../../src/github/native-queue-guard.ts";
 // Test-only helpers for the m01-github suite. The helpers synthesize
 // credential-free HTTP/Git/service transport fakes: they record calls and
 // return canned values — no product logic lives in the fakes, every check
@@ -822,7 +824,10 @@ export function errorWire(message: string): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 
 export interface MakePortOptions {
+  nativeQueue?: NativeQueueGuardV1 | null;
   script?: ScriptEntry[];
+  /** The port's one repository (default `REPO`). */
+  repository?: RepositoryIdentityV1;
   /** Custom transport override (defaults to the scripted transport). */
   http?: HttpTransportV1;
   auth?: GitHubAuthProviderV1;
@@ -851,7 +856,10 @@ export function makePort(
 } {
   const transport = new ScriptedHttpTransport(options.script ?? []);
   const portOptions: GitHubPortOptionsV1 = {
-    repository: REPO,
+    nativeQueue: options.nativeQueue === null
+      ? undefined
+      : options.nativeQueue ?? inactiveNativeQueueFixture(),
+    repository: options.repository ?? REPO,
     apiBaseUrl: options.apiBaseUrl ?? "https://api.github.com",
     http: options.http ?? transport.fetch.bind(transport) as HttpTransportV1,
     auth: options.auth ?? new FakeAuthProvider(),

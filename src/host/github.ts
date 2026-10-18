@@ -1,3 +1,4 @@
+import type { NativeQueueGuardV1 } from "../github/native-queue-guard.ts";
 /**
  * Wave C trusted GitHub host composition seam.
  *
@@ -65,6 +66,8 @@ const ERR_GIT_SETTINGS = "github host git settings are invalid";
 
 /** Every capability the trusted host supplies to compose the GitHub port. */
 export interface GitHubHostOptionsV1 {
+  /** Trusted queue custody capability; absent gateway effect authority fails closed. */
+  readonly nativeQueue?: NativeQueueGuardV1;
   /**
    * Exact repository identity; re-parsed with the frozen repository parser
    * before anything is constructed.
@@ -169,6 +172,7 @@ export function composeGitHubHost(
   //    capability; the port keeps its frozen production defaults.
   const port = createGitHubPort({
     repository,
+    nativeQueue: options.nativeQueue,
     http: options.http,
     auth: options.auth,
     cooldownGate: options.cooldownGate,

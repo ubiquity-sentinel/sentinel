@@ -29,6 +29,11 @@ import {
 import type { StabilityPolicyV1 } from "../contracts/repository-policy.ts";
 import { validateStabilityPolicy } from "./config.ts";
 import { evaluateVpsAcceptance } from "./vps-acceptance.ts";
+import type {
+  VpsJournalRequest,
+  VpsMetricsProgress,
+  VpsMetricsWork,
+} from "./vps-metrics.ts";
 
 export interface VpsControllerOptionsV1 {
   stateRead: StateReadView;
@@ -41,6 +46,12 @@ export interface VpsControllerOptionsV1 {
   logsLagMs: number;
   port: VpsReleasePortV1;
   clock: Clock;
+  /**
+   * Present only for a pinned driver with the joined VpsJournalMetrics
+   * interface (ubiquity/ai.ubq.fi#1027): each monitoring run begins one bounded
+   * tick, and a window still collecting its terminals is waited for, not a gap.
+   */
+  metricsWork?: VpsMetricsWork;
 }
 export type VpsCycleV1 = {
   status: "idle" | "waiting" | "advanced" | "blocked" | "conflict";
@@ -88,8 +99,53 @@ export class VpsReleaseController {
       options.repository.installationId < 1 ||
       !["production", "isolated"].includes(options.environment) ||
       !validateStabilityPolicy(options.policy).ok ||
-      !Number.isSafeInteger(options.logsLagMs) || options.logsLagMs < 0
+      !Number.isSafeInteger(options.logsLagMs) || options.logsLagMs < 0 ||
+      (options.metricsWork !== undefined &&
+        (typeof options.metricsWork.beginTick !== "function" ||
+          typeof options.metricsWork.progress !== "function"))
     ) throw new TypeError("VPS controller configuration is invalid");
+  }
+  /** Joined collection state of a window sampled in this tick; null without it. */
+  private async progress(
+    input: VpsJournalRequest,
+  ): Promise<VpsMetricsProgress["state"] | null> {
+    if (this.options.metricsWork === undefined) return null;
+    try {
+      return (await this.options.metricsWork.progress(input)).state;
+    } catch {
+      return "unavailable";
+    }
+  }
+  /** Fills baseline slots in order; true when a joined slot is still collecting. */
+  private async sampleBaseline(
+    record: VpsReleaseRecordV1,
+    baseline: VpsReleaseRecordV1["monitoring"]["baseline"],
+  ): Promise<boolean> {
+    const baselineEnd = Math.floor(record.driver.createdAt / 30_000) * 30_000,
+      baselineStart = baselineEnd - record.policy.baselineWindowMs;
+    let baselineThisRun = 0;
+    while (
+      baseline.length < record.policy.baselineWindowMs / 30_000 &&
+      baselineThisRun < 64
+    ) {
+      const start = baselineStart + baseline.length * 30_000;
+      const input = {
+        identity: record.driver.prior.identity,
+        windowStart: start,
+        windowEnd: start + 30_000,
+      };
+      const sample = await this.options.port.sampleMetrics(input);
+      const progress = await this.progress(input);
+      if (progress === "collecting") return true;
+      if (
+        !sample.ok || sample.value.coverage !== "complete" ||
+        !sameVps(sample.value.identity, record.driver.prior.identity) ||
+        (progress !== null && progress !== "complete")
+      ) break;
+      baseline.push(sample.value);
+      baselineThisRun++;
+    }
+    return false;
   }
   private result(
     status: VpsCycleV1["status"],
@@ -421,8 +477,8 @@ export class VpsReleaseController {
         (now - monitor.startedAt - 30_000 - this.options.logsLagMs) / 30_000,
       ),
     );
-    if (due - samples.length > 1) {
-      return this.write(
+    const restart = () =>
+      this.write(
         context,
         this.patch(record, {
           monitoring: {
@@ -436,54 +492,47 @@ export class VpsReleaseController {
           inference: null,
         }),
       );
+    const work = this.options.metricsWork;
+    // Without the joined tick a skipped slot is a gap. A joined window may stay
+    // collecting across ticks; the health observation above still restarts on
+    // a real gap.
+    if (work === undefined && due - samples.length > 1) return restart();
+    if (work !== undefined) {
+      try {
+        work.beginTick(now);
+      } catch {
+        return this.result("blocked", record, "metrics_tick_unavailable");
+      }
     }
-    if (due > samples.length) {
+    let baselineCollecting = false;
+    for (
+      let sampled = 0;
+      due > samples.length && sampled < (work === undefined ? 1 : 60);
+      sampled++
+    ) {
       const windowStart = monitor.startedAt + samples.length * 30_000;
-      const sample = await this.options.port.sampleMetrics({
+      const input = {
         identity: record.driver.candidate,
         windowStart,
         windowEnd: windowStart + 30_000,
-      });
+      };
+      const sample = await this.options.port.sampleMetrics(input);
+      const progress = await this.progress(input);
+      if (
+        progress === "collecting" && sample.ok &&
+        sample.value.coverage === "incomplete" &&
+        sameVps(sample.value.identity, record.driver.candidate)
+      ) break;
       if (
         !sample.ok || sample.value.coverage !== "complete" ||
-        !sameVps(sample.value.identity, record.driver.candidate)
-      ) {
-        return this.write(
-          context,
-          this.patch(record, {
-            monitoring: {
-              startedAt: now,
-              lastObservedAt: now,
-              continuous: false,
-              baseline,
-              samples: [],
-            },
-            acceptance: null,
-            inference: null,
-          }),
-        );
-      }
+        !sameVps(sample.value.identity, record.driver.candidate) ||
+        (progress !== null && progress !== "complete")
+      ) return restart();
       samples.push(sample.value);
-      const baselineEnd = Math.floor(record.driver.createdAt / 30_000) * 30_000,
-        baselineStart = baselineEnd - record.policy.baselineWindowMs;
-      let baselineThisRun = 0;
-      while (
-        baseline.length < record.policy.baselineWindowMs / 30_000 &&
-        baselineThisRun < 64
-      ) {
-        const start = baselineStart + baseline.length * 30_000;
-        const sample = await this.options.port.sampleMetrics({
-          identity: record.driver.prior.identity,
-          windowStart: start,
-          windowEnd: start + 30_000,
-        });
-        if (
-          !sample.ok || sample.value.coverage !== "complete" ||
-          !sameVps(sample.value.identity, record.driver.prior.identity)
-        ) break;
-        baseline.push(sample.value);
-        baselineThisRun++;
-      }
+      if (work === undefined) await this.sampleBaseline(record, baseline);
+    }
+    if (work !== undefined) {
+      baselineCollecting = await this.sampleBaseline(record, baseline);
     }
     const next = this.patch(record, {
       monitoring: {
@@ -494,7 +543,9 @@ export class VpsReleaseController {
         samples,
       },
     });
-    if (samples.length < 60) return this.write(context, next);
+    if (samples.length < 60 || baselineCollecting) {
+      return this.write(context, next);
+    }
     const acceptance = evaluateVpsAcceptance(record.policy, baseline, samples);
     if (acceptance.objectiveFailure) {
       return this.write(

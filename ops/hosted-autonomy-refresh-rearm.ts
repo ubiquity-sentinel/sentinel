@@ -29,6 +29,19 @@
  * one refresh refusal re-arms at most once a day (no model start is ever
  * involved). A record with no review round left is never re-armed: the
  * refreshed head could not be reviewed under the hard review-round ceiling.
+ *
+ * A refusal at or after that activation (or with no provable activation) is
+ * the corrected validator's own verdict on immutable content, which no re-arm
+ * can change (sentinel issue 157: a candidate R79 produced edits paths R80
+ * protects). It is parked ONCE as the runtime's explicit owner-gated block
+ * (`BASE_REFRESH_REFUSED_PREFIX`, the original message kept after it), in the
+ * same CAS write that restores the pull-request binding the terminal block
+ * detached, when the same native publication facts verify it; an unverified
+ * publication is parked without a binding and bound by one later write once
+ * it verifies, never fabricated. Every owner-gated park (launcher- or
+ * runtime-written) is then named on every pass
+ * (`refresh:<id>:owner_required:pr=<n|unverified>`) and never rewritten. No
+ * pull request is closed, no branch deleted, nothing pushed or charged.
  */
 import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
@@ -44,7 +57,11 @@ import {
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
-import { BASE_REFRESH_PRESERVE_DETAIL } from "../src/repair/loop-base-refresh.ts";
+import {
+  BASE_REFRESH_PRESERVE_DETAIL,
+  baseRefreshRefusedMessage,
+  isBaseRefreshRefusedPark,
+} from "../src/repair/loop-base-refresh.ts";
 import { reviewRoundsLeft } from "../src/repair/review-round-cap.ts";
 import {
   candidateBranch,
@@ -95,6 +112,17 @@ export const HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES:
     {
       revision: "549c7a69186b3d2070aa4e69c92ee846d183ce8f",
       activatedNotBefore: 1792185359753,
+    },
+    // Generation 80 (R80, which keeps the base-edge bound), pinned by its
+    // launcher commit at 1792256700000.
+    {
+      revision: "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+      activatedNotBefore: 1792256700000,
+    },
+    // Generation 81 (R81), bound before publication and first activation.
+    {
+      revision: "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+      activatedNotBefore: 1792299493000,
     },
   ];
 
@@ -193,6 +221,9 @@ const HEADS = "refs/heads/";
 
 type Verdict =
   | { kind: "rearm"; pr: number }
+  | { kind: "park"; pr: number | null }
+  | { kind: "bind"; pr: number }
+  | { kind: "owner"; pr: number | null }
   | { kind: "retain"; reason: string }
   | null;
 
@@ -207,6 +238,72 @@ interface Runtime {
   legacyCutoff: number | null;
 }
 
+/** The exact preserved, published candidate shape a re-arm or binding needs. */
+async function publishedShape(record: WorkRecordV1): Promise<boolean> {
+  const head = record.target.head;
+  const state = record.target.candidateState;
+  const preserved = state?.preserved ?? null;
+  return head !== null && record.target.branch === candidateBranch(record.id) &&
+    preserved !== null && preserved.head === head &&
+    preserved.base === record.target.base && state?.publishedHead === head &&
+    preserved.ref.startsWith(HEADS) &&
+    preserved.ref === await candidatePreservationRef(
+        record.repository,
+        record.id,
+        preserved.operationKey,
+      );
+}
+
+/**
+ * The record's exact open publication, verified from its OWN repository
+ * surface: the managed branch and the preservation ref both at the exact
+ * head, exactly one open pull request from that branch by a trusted author
+ * against the configured base, at that head. The pull-request number, or the
+ * closed reason it does not verify (never a guessed number).
+ */
+async function verifiedPull(
+  context: HostedAutonomyPassContextV1,
+  record: WorkRecordV1,
+): Promise<number | string> {
+  if (!await publishedShape(record)) return "shape";
+  const head = record.target.head!;
+  const branch = record.target.branch!;
+  const preserved = record.target.candidateState!.preserved!;
+  const scope = await context.scopeFor(record.repository);
+  const surface = scope.surface;
+  const listing = surface?.mismatchDisposition;
+  if (!surface || !listing || scope.baseBranch === null) return "surface";
+  const tip = async (ref: string) => {
+    try {
+      return await surface.readBaseTip(ref);
+    } catch {
+      return null;
+    }
+  };
+  if (await tip(branch) !== head) return "branch";
+  if (await tip(preserved.ref.slice(HEADS.length)) !== head) {
+    return "preservation_ref";
+  }
+  let pulls: Awaited<ReturnType<typeof listing.listPullsByHead>> = null;
+  try {
+    pulls = await listing.listPullsByHead(branch);
+  } catch {
+    pulls = null;
+  }
+  const open =
+    pulls?.filter((row) => row.state === "open" && row.head === branch) ?? [];
+  if (pulls === null || open.length !== 1) return "pull_listing";
+  const pull = await context.readPull(scope, open[0]!.number);
+  if (
+    pull === null || pull.number !== open[0]!.number ||
+    pull.state !== "open" || pull.merged !== false ||
+    pull.headSha !== head || pull.baseRef !== scope.baseBranch ||
+    pull.author === null ||
+    !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author)
+  ) return "pull";
+  return pull.number;
+}
+
 async function judge(
   context: HostedAutonomyPassContextV1,
   record: WorkRecordV1,
@@ -216,14 +313,40 @@ async function judge(
   const blocker = record.blocker;
   if (
     record.nextStep !== "blocked" || record.wait !== null ||
-    record.intent !== null || blocker?.kind !== "other" ||
-    !REFUSED_REFRESH.test(blocker.message)
+    record.intent !== null || blocker?.kind !== "other"
   ) return null;
+  const parked = isBaseRefreshRefusedPark(blocker.message);
+  if (!parked && !REFUSED_REFRESH.test(blocker.message)) return null;
   const issue = record.related.issueNumber;
   if (
     record.source.kind !== "issue" || issue === null ||
     context.closedIssues.has(hostedIssueKey(record.repository, issue))
   ) return null;
+  // An owner-gated park is named on every pass. Its binding is restored by
+  // one write once the publication verifies, and is never re-read after.
+  if (parked) {
+    if (record.target.pr !== null) {
+      return { kind: "owner", pr: record.target.pr };
+    }
+    const pr = await verifiedPull(context, record);
+    return typeof pr === "number"
+      ? { kind: "bind", pr }
+      : { kind: "owner", pr: null };
+  }
+  // The corrected validator's own refusal (at or after its activation, or
+  // with no provable activation) is a verdict no re-arm can change: it is
+  // parked for the owner, whatever its review rounds, with the binding the
+  // terminal block detached restored when it verifies.
+  if (
+    runtime.fixed &&
+    (runtime.activation === null || blocker.since >= runtime.activation)
+  ) {
+    if (record.target.pr !== null) {
+      return { kind: "park", pr: record.target.pr };
+    }
+    const pr = await verifiedPull(context, record);
+    return { kind: "park", pr: typeof pr === "number" ? pr : null };
+  }
   // The re-armed delivery refreshes onto the moved base, and the refreshed
   // head needs a review round of its own: with none left (the hard ceiling,
   // owner decision 2026-10-16) the record stays blocked, before any read.
@@ -237,66 +360,46 @@ async function judge(
   if (!legacyFinalRoundAdmissible(context.snapshot, record, runtime.ciFirst)) {
     return { kind: "retain", reason: LEGACY_ROUND_REQUIRES_CI_FIRST };
   }
-  const head = record.target.head;
-  const branch = record.target.branch;
-  const state = record.target.candidateState;
-  const preserved = state?.preserved ?? null;
-  if (
-    record.target.pr !== null || head === null ||
-    branch !== candidateBranch(record.id) || preserved === null ||
-    preserved.head !== head || preserved.base !== record.target.base ||
-    state?.publishedHead !== head || !preserved.ref.startsWith(HEADS) ||
-    preserved.ref !== await candidatePreservationRef(
-        record.repository,
-        record.id,
-        preserved.operationKey,
-      )
-  ) return { kind: "retain", reason: "shape" };
-  if (!runtime.fixed) return { kind: "retain", reason: "runtime" };
-  // A refusal at or after the corrected runtime's activation may be its own.
-  if (runtime.activation === null || blocker.since >= runtime.activation) {
-    return { kind: "retain", reason: "activation" };
+  if (record.target.pr !== null || !await publishedShape(record)) {
+    return { kind: "retain", reason: "shape" };
   }
+  if (!runtime.fixed) return { kind: "retain", reason: "runtime" };
   if (now - blocker.since < REFRESH_REARM_PACING_MS) {
     return { kind: "retain", reason: "pacing" };
   }
-  const scope = await context.scopeFor(record.repository);
-  const surface = scope.surface;
-  const listing = surface?.mismatchDisposition;
-  if (!surface || !listing || scope.baseBranch === null) {
-    return { kind: "retain", reason: "surface" };
-  }
-  const tip = async (ref: string) => {
-    try {
-      return await surface.readBaseTip(ref);
-    } catch {
-      return null;
-    }
+  const pr = await verifiedPull(context, record);
+  return typeof pr === "number"
+    ? { kind: "rearm", pr }
+    : { kind: "retain", reason: pr };
+}
+
+/**
+ * The one owner-gated write of a record. A park keeps the record blocked with
+ * no intent or wait, replaces only the blocker (the runtime's owner-gated
+ * prefix, the original message after it) and restores a verified binding; a
+ * binding sets only the verified `target.pr` of an existing park. Candidate,
+ * counters, evidence and every charge are untouched.
+ */
+function ownerWrite(
+  record: WorkRecordV1,
+  own: { kind: "park" | "bind"; pr: number | null },
+  now: number,
+): WorkRecordV1 {
+  const pr = own.pr ?? record.target.pr;
+  return {
+    ...record,
+    ...(own.kind === "park"
+      ? {
+        blocker: {
+          kind: "other" as const,
+          message: baseRefreshRefusedMessage(record.blocker!.message),
+          since: now,
+        },
+      }
+      : {}),
+    target: { ...record.target, pr },
+    updatedAt: now,
   };
-  if (await tip(branch) !== head) return { kind: "retain", reason: "branch" };
-  if (await tip(preserved.ref.slice(HEADS.length)) !== head) {
-    return { kind: "retain", reason: "preservation_ref" };
-  }
-  let pulls: Awaited<ReturnType<typeof listing.listPullsByHead>> = null;
-  try {
-    pulls = await listing.listPullsByHead(branch);
-  } catch {
-    pulls = null;
-  }
-  const open =
-    pulls?.filter((row) => row.state === "open" && row.head === branch) ?? [];
-  if (pulls === null || open.length !== 1) {
-    return { kind: "retain", reason: "pull_listing" };
-  }
-  const pull = await context.readPull(scope, open[0]!.number);
-  if (
-    pull === null || pull.number !== open[0]!.number ||
-    pull.state !== "open" || pull.merged !== false ||
-    pull.headSha !== head || pull.baseRef !== scope.baseBranch ||
-    pull.author === null ||
-    !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author)
-  ) return { kind: "retain", reason: "pull" };
-  return { kind: "rearm", pr: pull.number };
 }
 
 export async function runHostedRefreshRearmPass(
@@ -330,6 +433,11 @@ export async function runHostedRefreshRearmPass(
       ),
   };
   const rearmed = new Map<string, number>();
+  /** Owner-gated parks and late bindings this pass writes, by record id. */
+  const owned = new Map<
+    string,
+    Exclude<Verdict, null> & { kind: "park" | "bind" }
+  >();
   for (const record of snapshot.work) {
     // A record an earlier write of this pass touched waits for the next pass.
     if (context.settled?.has(record.id)) continue;
@@ -339,9 +447,19 @@ export async function runHostedRefreshRearmPass(
       actions.push(`refresh:${record.id}:retained:${verdict.reason}`);
       continue;
     }
+    if (verdict.kind === "owner") {
+      actions.push(
+        `refresh:${record.id}:owner_required:pr=${verdict.pr ?? "unverified"}`,
+      );
+      continue;
+    }
+    if (verdict.kind === "park" || verdict.kind === "bind") {
+      owned.set(record.id, verdict);
+      continue;
+    }
     rearmed.set(record.id, verdict.pr);
   }
-  if (rearmed.size === 0) return null;
+  if (rearmed.size === 0 && owned.size === 0) return null;
   if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
     return skipped("clock_invalid", observedHead, actions);
   }
@@ -353,6 +471,8 @@ export async function runHostedRefreshRearmPass(
       sequence: snapshot.sequence + 1,
       updatedAt: now,
       work: snapshot.work.map((record) => {
+        const own = owned.get(record.id);
+        if (own !== undefined) return ownerWrite(record, own, now);
         const pr = rearmed.get(record.id);
         return pr === undefined ? record : {
           ...record,
@@ -392,6 +512,13 @@ export async function runHostedRefreshRearmPass(
     return failed("readback_unverified", observedHead, actions);
   }
   for (const [id, pr] of rearmed) actions.push(`refresh:${id}:rearmed:${pr}`);
+  for (const [id, own] of owned) {
+    actions.push(
+      own.kind === "park"
+        ? `refresh:${id}:owner_parked:pr=${own.pr ?? "unverified"}`
+        : `refresh:${id}:owner_bound:pr=${own.pr}`,
+    );
+  }
   return {
     kind: "hosted_autonomy",
     status: "applied",

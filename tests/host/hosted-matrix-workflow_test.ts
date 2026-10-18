@@ -27,7 +27,7 @@ Deno.test("protected matrix workflow preserves verification, fanout, credentials
   assert.match(cell, /needs.matrix_plan.outputs.hasCells == 'true'/);
   assert.match(cell, /fail-fast: false/);
   assert.ok(!cell.includes("max-parallel"));
-  assert.match(repair, /needs: \[prepare, matrix_plan\]/);
+  assert.match(repair, /needs: \[maintenance, prepare, matrix_plan\]/);
   assert.ok(
     !repair.includes("matrix_cell"),
     "the consumer must start with the cells, before every sibling settles",
@@ -42,6 +42,11 @@ Deno.test("protected matrix workflow preserves verification, fanout, credentials
   assert.match(cell, /permission-contents: read/);
   assert.match(cell, /permission-issues: read/);
   assert.match(cell, /permission-pull-requests: read/);
+  // Generation 81: the cell reads the failing job's steps and log for CI
+  // failure evidence; its App token mint still grants nothing writable.
+  assert.match(cell, /permission-checks: read/);
+  assert.match(cell, /permission-actions: read/);
+  assert.ok(!/permission-[a-z-]+: write/.test(cell));
   assert.ok(!cell.includes("SENTINEL_SUPERVISOR_APP_PRIVATE_KEY:"));
   assert.ok(plan.includes("group: sentinel-repair"));
   assert.ok(!cell.includes("sentinel-repair"));

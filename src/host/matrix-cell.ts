@@ -16,10 +16,15 @@ import type {
 } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import { OPERATION_MARGIN_MS, type RunBoundsV1 } from "../repair/loop.ts";
-import { ATTEMPT_DETAIL_PROVIDER_THROTTLED } from "../repair/attempt-policy.ts";
+import {
+  ATTEMPT_DETAIL_PROVIDER_THROTTLED,
+  implementationPortFailureDetail,
+} from "../repair/attempt-policy.ts";
 import { isProviderThrottledReceiptV1 } from "../repair/model-port-retry.ts";
 import type { MatrixBundleExporterV1 } from "./matrix-git.ts";
 import { sameRepository } from "./matrix-identity.ts";
+import type { CiEvidenceReaderV1 } from "../repair/ci-evidence-types.ts";
+import { prepareCellCiEvidence } from "./matrix-cell-ci-evidence.ts";
 
 export interface MatrixCellDepsV1 {
   /** Trusted fresh clock and original shared run bounds; never artifact claims. */
@@ -43,6 +48,12 @@ export interface MatrixCellDepsV1 {
    * result as failed/ambiguous instead of claiming a recoverable candidate.
    */
   bundle?: MatrixBundleExporterV1;
+  /**
+   * Trusted read-only CI failure evidence reader for the cell's target, built
+   * on the cell's scoped read token (generation 81). Used only for a CI
+   * correction request; absent means no evidence is attached.
+   */
+  ciEvidence?: CiEvidenceReaderV1;
 }
 
 function resultBinding(
@@ -213,6 +224,19 @@ export async function runMatrixCell(
     return refuse("not_started", "planned reservation is not reserved");
   }
 
+  // A CI correction's failure evidence is read now, after the admission is
+  // verified and within the time the start can spare (never a refusal);
+  // it travels beside the request into the model's user turn (never its
+  // system instructions) and is never persisted.
+  const ciEvidence = await prepareCellCiEvidence({
+    reader: deps.ciEvidence,
+    request: cell.request,
+    repository: cell.repository,
+    now: deps.clock.now(),
+    bounds: deps.bounds,
+    sessionBound: deps.sessionBound,
+  });
+
   // Source and durable-intent reads were awaited wall-clock work. Recheck at
   // the final start boundary with the full configured session and margin.
   const startsAt = deps.clock.now();
@@ -230,9 +254,22 @@ export async function runMatrixCell(
 
   // Exactly one model session; the port owns the isolated, credential-free
   // checkout and validates the request against its configured model/effort.
-  const receipt = await deps.model.runModel(cell.request);
+  const receipt = ciEvidence === undefined
+    ? await deps.model.runModel(cell.request)
+    : await deps.model.runModel(cell.request, {
+      untrustedCiEvidence: ciEvidence,
+    });
   if (!receipt.ok) {
-    return refuse("failed", `model run failed (${receipt.error.kind})`);
+    // A completed session that left its checkout unchanged is its own model
+    // outcome (`ATTEMPT_DETAIL_NO_CHANGE`); every other port error keeps the
+    // exact `model run failed (<kind>)` transient detail.
+    return refuse(
+      "failed",
+      implementationPortFailureDetail(
+        receipt.error,
+        `model run failed (${receipt.error.kind})`,
+      ),
+    );
   }
   // The gateway throttled the whole turn (HTTP 429 even after the port's
   // failover and bounded backoff) and nothing was produced: transient

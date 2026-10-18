@@ -1,14 +1,30 @@
 /** Exact bounded runtime implementer prompt. */
 import type { ModelRunRequestV1 } from "../contracts/ports.ts";
 import {
+  CI_EVIDENCE_FIX_INSTRUCTION,
+  CI_SELF_CHECK_INSTRUCTION,
   FOCUSED_TESTS_ALLOWED,
+  MAX_CI_EVIDENCE_PROMPT_CHARS,
   MAX_ISSUE_BODY_CHARS,
   MAX_PROMPT_CHARS,
 } from "./model-port-policy.ts";
+import { renderCiEvidenceUnavailable } from "./ci-evidence-render.ts";
 
+/**
+ * The implementer prompt. `ciEvidence` is the trusted host's rendered CI
+ * failure evidence section for a CI correction (fenced untrusted content,
+ * `ci-evidence-render.ts`); it is never part of the request or its digest.
+ * Without it the context is capped at `MAX_PROMPT_CHARS` exactly as before;
+ * with it the context is capped so the role paragraph still fits, the
+ * evidence follows, and the role paragraph stays last and intact. The
+ * evidence-bearing prompt is only ever the user turn's input; the thread's
+ * system-level base instructions are always the prompt without evidence
+ * (`model-port-session.ts`), so CI output never arrives as instructions.
+ */
 export function buildPrompt(
   request: ModelRunRequestV1,
   localIteration: boolean,
+  ciEvidence?: string,
 ): string {
   const parts: string[] = [
     `Repository: ${request.repository.owner}/${request.repository.name}`,
@@ -140,38 +156,49 @@ export function buildPrompt(
           .join("\n"),
     );
   }
-  parts.push(
+  const role =
     "Runtime implementer role: you are the bounded runtime implementer for " +
-      "this task. Edit only the current provided checkout, and only the files " +
-      "needed to resolve the problem. Do not run git add, git commit or git " +
-      "push, do not create or use worktrees, and do not delegate to other " +
-      "agents or subagents: the trusted host owns commits, pushes, review and " +
-      "release. Follow the applicable repository instructions for this " +
-      "checkout, but do not take over master-plan orchestration or change " +
-      "admission, budget, credential or model policy. The runtime model " +
-      `policy is fixed at ${request.model} with ${request.reasoning} ` +
-      "reasoning; do not change it or introduce a fallback. Do not modify " +
-      "protected paths, do not write or commit credentials, and do not " +
-      "rewrite expected test assertions to force success. Keep the change " +
-      "minimal and do not refactor beyond it. Your total event output " +
-      `allowance is ${request.maxOutputChars} characters, and every tool ` +
-      "notification counts against it; repeated full output is charged " +
-      "again. Keep every command's max_output_tokens at or below 2000 and " +
-      "keep individual command output bounded: prefer targeted symbol " +
-      "searches followed by excerpts of at most 100 lines. Read the " +
-      "applicable instructions only once, never repeat a full file read, " +
-      "and check the actual failure instead of retrying the same failing " +
-      "command unchanged. Stop broad source surveying once the target " +
-      "behavior is understood and make the smallest edit; reserve most of " +
-      "the allowance for implementation and focused validation of observed " +
-      "runtime behavior." +
-      (localIteration
-        ? " No tests or reviews are allowed in this local pass."
-        : FOCUSED_TESTS_ALLOWED) +
-      " Never dump docs/build-status.md in full; inspect only the " +
-      "current checkpoint or bounded matching sections. Finish with a " +
-      "concise final response listing the files changed and the checks " +
-      "run.",
+    "this task. Edit only the current provided checkout, and only the files " +
+    "needed to resolve the problem. Do not run git add, git commit or git " +
+    "push, do not create or use worktrees, and do not delegate to other " +
+    "agents or subagents: the trusted host owns commits, pushes, review and " +
+    "release. Follow the applicable repository instructions for this " +
+    "checkout, but do not take over master-plan orchestration or change " +
+    "admission, budget, credential or model policy. The runtime model " +
+    `policy is fixed at ${request.model} with ${request.reasoning} ` +
+    "reasoning; do not change it or introduce a fallback. Do not modify " +
+    "protected paths, do not write or commit credentials, and do not " +
+    "rewrite expected test assertions to force success. Keep the change " +
+    "minimal and do not refactor beyond it. Keep every command's " +
+    "max_output_tokens at or below 2000 and " +
+    "keep individual command output bounded: prefer targeted symbol " +
+    "searches followed by excerpts of at most 100 lines. Read the " +
+    "applicable instructions only once, never repeat a full file read, " +
+    "and check the actual failure instead of retrying the same failing " +
+    "command unchanged. Stop broad source surveying once the target " +
+    "behavior is understood and make the smallest edit; reserve most of " +
+    "the session for implementation and focused validation of observed " +
+    "runtime behavior." +
+    (localIteration
+      ? " No tests or reviews are allowed in this local pass."
+      : FOCUSED_TESTS_ALLOWED + CI_SELF_CHECK_INSTRUCTION +
+        (ciEvidence === undefined ? "" : CI_EVIDENCE_FIX_INSTRUCTION)) +
+    " Never dump docs/build-status.md in full; inspect only the " +
+    "current checkpoint or bounded matching sections. Finish with a " +
+    "concise final response listing the files changed and the checks " +
+    "run.";
+  if (ciEvidence === undefined) {
+    parts.push(role);
+    return parts.join("\n\n").slice(0, MAX_PROMPT_CHARS);
+  }
+  // A section over its bound never arrives cut (its closing marker would be
+  // lost); the fixed unavailable line replaces it.
+  const evidence = ciEvidence.length <= MAX_CI_EVIDENCE_PROMPT_CHARS
+    ? ciEvidence
+    : renderCiEvidenceUnavailable("oversize");
+  const context = parts.join("\n\n").slice(
+    0,
+    Math.max(0, MAX_PROMPT_CHARS - role.length - 4),
   );
-  return parts.join("\n\n").slice(0, MAX_PROMPT_CHARS);
+  return [context, evidence, role].join("\n\n");
 }

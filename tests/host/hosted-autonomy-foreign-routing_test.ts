@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import type { WorkItemId } from "../../src/contracts/brands.ts";
+import { resolveHostedDelivery } from "../../ops/hosted-autonomy-delivery-proof.ts";
+import { createHostedAutonomyScopes } from "../../ops/hosted-autonomy-scopes.ts";
 import {
   createHostedAutonomyGitHub,
   hostedDeliveryKey,
@@ -173,10 +175,14 @@ Deno.test(
             },
         ));
       }
-      const payload = url.includes("/check-runs")
+      // Each listing is bound to the commit it was asked for: the merge gate
+      // reads the head's runs and the reviewed base's (whose suites name the
+      // checks the head must report too).
+      const listed = /\/commits\/([0-9a-f]{40})\/check-runs/.exec(url)?.[1];
+      const payload = listed !== undefined
         ? checkRunPage([
-          checkRun("validate"),
-          checkRun("verify-artifact"),
+          checkRun("validate", { head_sha: listed }),
+          checkRun("verify-artifact", { head_sha: listed }),
         ], 2)
         : url.includes("/commits/")
         ? { parents: [{ sha: BASE }, { sha: HEAD }] }
@@ -248,7 +254,7 @@ Deno.test(
 Deno.test(
   "hosted autonomy: a foreign head is green only when every check-run on it succeeded",
   async () => {
-    const gate = async (checkRuns: unknown[]): Promise<boolean> => {
+    const gate = async (checkRuns: unknown[]): Promise<boolean | null> => {
       const original = globalThis.fetch;
       globalThis.fetch = (() =>
         Promise.resolve(
@@ -262,8 +268,9 @@ Deno.test(
       }
     };
     // Zero check-runs is not green: a foreign repository has no other
-    // deterministic signal, so an unverified head is never delivered.
-    assert.equal(await gate([]), false);
+    // deterministic signal, so an unverified head is never delivered. It is
+    // no evidence of a failure either: unreadable (null), never red.
+    assert.equal(await gate([]), null);
     assert.equal(
       await gate([checkRun("validate", {
         status: "in_progress",
@@ -284,8 +291,9 @@ Deno.test(
       ]),
       false,
     );
-    // A run reported on a different head is not a run on this one.
-    assert.equal(await gate([checkRun("validate", { head_sha: SHA1 })]), false);
+    // A run reported on a different head is not a run on this one: the
+    // listing is not bound to the head, so it is unreadable (null).
+    assert.equal(await gate([checkRun("validate", { head_sha: SHA1 })]), null);
     // The foreign repository's own names are the gate: both green delivers.
     assert.equal(
       await gate([checkRun("validate"), checkRun("verify-artifact")]),
@@ -412,8 +420,29 @@ Deno.test(
     const released = new Map([
       [hostedDeliveryKey(SELF_REPO, 51, HEAD, BASE), {}],
     ]);
+    const proofRig = await makeRig("foreign-closure-proof", {
+      repair: closable,
+      pull: foreignPullFacts(),
+    });
+    const proofDeps = {
+      state: proofRig.rig.state,
+      githubFor: proofRig.rig.githubFor,
+      clock: { now: () => 0 },
+    };
+    const proofScope = await createHostedAutonomyScopes(proofDeps).scopeFor(
+      FOREIGN_REPO,
+    );
+    const proof = await resolveHostedDelivery(
+      { deps: proofDeps, snapshot: closable, observedHead: SHA1 },
+      closable.work[1],
+      proofScope,
+      foreignPullFacts(),
+      "closure",
+    );
+    await Deno.remove(proofRig.rig.tmp, { recursive: true });
+    assert.ok(proof);
     const foreignMerged = new Map([
-      [hostedDeliveryKey(FOREIGN_REPO, FOREIGN_PR, HEAD, BASE), {}],
+      [hostedDeliveryKey(FOREIGN_REPO, FOREIGN_PR, HEAD, BASE), proof],
     ]);
     assert.deepEqual(
       planHostedClosures(

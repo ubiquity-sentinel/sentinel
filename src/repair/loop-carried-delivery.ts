@@ -1,3 +1,5 @@
+import { guardQueueDelivery } from "./loop-queue-guard.ts";
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /**
  * Repair loop internals: spent records on a moved base (owner decision
  * 2026-10-16 (2), "the 3 rounds are spent with no unresolved P0/P1, the PR
@@ -11,8 +13,11 @@
  * refreshed head H1 carries H0's review only while the pull request's own
  * patch is byte-identical (`proveCarriedPatch`: the merge-base patch of H0
  * against B0 equals that of H1 against T, binary-safe, by SHA-256), re-derived
- * from git on every step; once H1's OWN required CI is green and the task is
- * still accepted, the record holds the exact carried-merge marker at `work`
+ * from git on every step; once H1's OWN required CI is green (every existing
+ * run green and every expected check present: each check name of T's check
+ * suites that share a name with H1, `absentExpectedChecks`, sentinel issue
+ * #154) and the task is still accepted, the record holds the exact
+ * carried-merge marker at `work`
  * (`carriedMergeMarker`) for the launcher's delivery pass, which merges only
  * under that marker, re-derives the exact proof itself and merges H1 at
  * exactly T (`ops/hosted-autonomy-spent-delivery.ts`). The runtime never
@@ -40,7 +45,9 @@
  * base-refresh intent, `ci_pending`/`backoff`/`unavailable` waits at `work`, an
  * `other` blocker, the `delivery` transition beside a release request the
  * launcher wrote). Under R79 a refreshed head at `work` is published and
- * reviewed as R79 does with every refreshed head.
+ * reviewed as R79 does with every refreshed head. Generation 81 adds one
+ * write of an existing shape (R80 writes it too): a deliverable head that
+ * defers in the line clears its stale `ci_pending` wait at `delivery` once.
  */
 import type { GitSha } from "../contracts/brands.ts";
 import {
@@ -58,6 +65,7 @@ import {
   reviewedIdentity,
 } from "./carried-review.ts";
 import {
+  absentCheckLabels,
   ciCheckLabels,
   failedChecks,
   latestChecks,
@@ -65,7 +73,7 @@ import {
 } from "./ci-rejection.ts";
 import { ensureBaseRefreshIntent } from "./loop-base-refresh.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
-import { decideCiGate } from "./loop-checks.ts";
+import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
 import {
   observeHeadFailure,
   RED_BASE_RECHECK_MS,
@@ -97,7 +105,12 @@ import {
   REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX,
   REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX,
 } from "./review-round-cap.ts";
-import { advanceToDelivery, markBlocked, setWait } from "./transitions.ts";
+import {
+  advanceToDelivery,
+  clearWait,
+  markBlocked,
+  setWait,
+} from "./transitions.ts";
 
 /**
  * Bound on every carried-delivery wait (CI, proof, a lagging pull request,
@@ -163,7 +176,9 @@ function pendingLabels(checks: readonly GitHubCheckV1[]): string {
  * The delivery step of a spent record whose base moved to `observedBase`
  * (nothing written yet). The reviewed head's own CI is read first: red parks
  * with the merge gate's own `CI checks failed: ...` blocker (the owner's
- * legacy class keeps it), pending waits at `delivery` and parks after
+ * legacy class keeps it), pending (or green while an expected check of its
+ * reviewed base does not exist on it yet, or that base's runs cannot be
+ * read) waits at `delivery` and parks after
  * `CARRIED_WAIT_BOUND_MS`. A green head whose latest completed review
  * authorizes it on its base, on a port that can prove the carried patch,
  * waits its turn in the repository's delivery line and then returns null:
@@ -226,6 +241,26 @@ export async function spentOnMovedBase(
       markBlocked(record, "other", decision.blocked, deps.clock.now()),
     );
   }
+  // Every existing run is green: a check its reviewed base's suites expect
+  // and GitHub has not created on it yet is awaited like a running one, and
+  // so is a reviewed base whose runs cannot be read.
+  const absent = await absentExpectedChecks(
+    deps,
+    record,
+    observed.value.checks,
+  );
+  if (absent === null || absent.length > 0) {
+    return boundedWait(
+      deps,
+      context,
+      record,
+      "ci_pending",
+      CHECK_POLL_MS,
+      `${REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX}${
+        absentCheckLabels(absent)
+      }`,
+    );
+  }
   const reviewer = deps.github.reviewerIdentity;
   const receipt = latestPullReview(context.snapshot, record, reviewer);
   if (
@@ -252,7 +287,14 @@ export async function spentOnMovedBase(
       REVIEW_ROUND_CEILING_BASE_MOVED,
     );
   }
-  return deliveryQueueDeferral(deps, context, record, observedBase);
+  const deferral = deliveryQueueDeferral(deps, context, record, observedBase);
+  // Deliverable now: a `ci_pending` wait left from an earlier poll would read
+  // to the line as a head still waiting for its CI, and every higher number
+  // would go first. It is cleared once (the next deferral writes nothing).
+  if (deferral !== null && record.wait?.reason === "ci_pending") {
+    return persistWork(deps, context, clearWait(record, deps.clock.now()));
+  }
+  return deferral;
 }
 
 /**
@@ -330,7 +372,8 @@ function patchChangedDetail(
  * launcher's delivery record; still at the head this one was refreshed from:
  * a bounded wait for GitHub to report the push), the tip (moved again: one
  * more refresh through the line, at most `CARRIED_REFRESH_LIMIT`), the head's
- * own CI, the live task acceptance of the reviewed identity, and then the
+ * own CI (green, with every check T's suites expect present), the live task
+ * acceptance of the reviewed identity, and then the
  * carried-merge marker for the launcher's merge, bounded from that CI's
  * completion.
  */
@@ -339,6 +382,8 @@ export async function executeCarriedDelivery(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): Promise<StepResultV1 | null> {
+  const queueGuard = await guardQueueOperation(deps, context, record, "resume");
+  if (queueGuard !== null) return queueGuard;
   const { pr, head } = record.target;
   const prove = deps.github.proveCarriedPatch?.bind(deps.github);
   if (
@@ -397,7 +442,7 @@ export async function executeCarriedDelivery(
   }
   if (observed.state === "merged") {
     return observed.head === head && observed.mergeSha !== null
-      ? carriedMerged(deps, context, record, receipt)
+      ? carriedMerged(deps, context, record, receipt, observed.mergeSha)
       : null;
   }
   if (observed.state !== "open") return null;
@@ -449,6 +494,27 @@ export async function executeCarriedDelivery(
       record,
       checks.value.checks,
       decision,
+    );
+  }
+  // Every existing run on H1 is green; a check T's suites expect that GitHub
+  // has not created on H1 yet (a `needs:` job) is awaited like a running one,
+  // so the marker never names a head whose required job never ran; a T whose
+  // runs cannot be read is awaited the same way.
+  const absent = await absentExpectedChecks(
+    deps,
+    record,
+    checks.value.checks,
+  );
+  if (absent === null || absent.length > 0) {
+    return boundedWait(
+      deps,
+      context,
+      record,
+      "ci_pending",
+      CHECK_POLL_MS,
+      `${REVIEW_ROUND_CEILING_CARRIED_CI_PENDING_PREFIX}${
+        absentCheckLabels(absent)
+      }`,
     );
   }
   const task = await readDeliveryTaskContext(deps, record);
@@ -589,12 +655,21 @@ async function gateCarriedChecks(
  * it waits, bounded: the launcher adopts its own lost write from the same
  * gates, and a merge outside that path is never booked here.
  */
-function carriedMerged(
+async function carriedMerged(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
   receipt: ReviewReceiptV1,
+  revision: GitSha,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueDelivery(
+    deps,
+    context,
+    record,
+    receipt,
+    revision,
+  );
+  if (queueGuard !== null) return queueGuard;
   const booked = context.snapshot.releaseRequests.some((request) =>
     request.target.environment === "production" &&
     releaseRequestMatchesDelivery(request, record) &&

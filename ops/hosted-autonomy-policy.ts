@@ -1,5 +1,6 @@
-import { HISTORICAL_NOT_STARTED_DETAIL } from "../src/host/matrix-actions.ts";
+import { HISTORICAL_NOT_STARTED_DETAIL } from "../src/host/matrix-quarantine-state.ts";
 import { CI_UNATTRIBUTED_DETAIL } from "../src/repair/ci-rejection.ts";
+import { ATTEMPT_DETAIL_NO_CHANGE } from "../src/repair/attempt-policy.ts";
 import {
   isDeliverableReviewRoundCeilingPark,
   isReviewRoundCeilingPark,
@@ -130,19 +131,8 @@ export const HOSTED_AUTONOMY_BASE_BRANCH = "development";
 /** The deterministic check the merge requires on the exact reviewed head. */
 export const HOSTED_AUTONOMY_REQUIRED_CHECK = "test-local";
 
-/**
- * Bound on automatic retry grants per task, counted in the task's durable
- * reservations: every reservation for the task counts, whatever its purpose or
- * outcome, including one still `reserved`. A reservation is the charge the
- * runtime persists before any model start, so this unit cannot be reset,
- * refunded away or left uncharged by this pass; the preserved `retries` counter
- * is history and is never incremented or reset here. A transient provider
- * outage must never permanently kill a task, and a single task must never loop
- * cheaply either: the retry only ever runs inside an execution, and executions
- * are hourly unless a release or a health gap starts one, so the cadence itself
- * is the rate limit. (An earlier 30-minute blocker cooldown also gated retries
- * that carry a fresh reservation identity, which merely wedged tasks that were
- * otherwise recoverable.)
+/** Retired reservation ceiling, retained only for exported API compatibility.
+ * Reservation history stays charged and is never an admission throttle.
  */
 export const HOSTED_AUTONOMY_MAX_RETRIES = 200;
 
@@ -246,7 +236,7 @@ export const PRESERVATION_UNRECOVERABLE_PREFIX =
  * refresh failed 3 consecutive times: auth_failed ...") need the owned open
  * PR and published head verified on the exact branch and a target-specific
  * transition, so they have their own exact rule in
- * `hosted-autonomy-base-refresh-retries.ts` under the same retry budget and
+ * `hosted-autonomy-base-refresh-retries.ts` under the same charged-identity and
  * closed-issue gates.
  */
 export const HOSTED_AUTONOMY_RETRYABLE: readonly {
@@ -287,6 +277,15 @@ export const HOSTED_AUTONOMY_RETRYABLE: readonly {
   },
   {
     prefix: "model run did not complete with a trusted candidate",
+    nextStep: "work",
+  },
+  {
+    // A completed session that left its checkout unchanged (the runtime's own
+    // no-progress class, ai.ubq.fi 300's real outcome). It gets the ordinary
+    // work grant; the repeat-failure bound
+    // (`hosted-autonomy-repeat-failure.ts`) parks it for the owner after
+    // `REPEAT_FAILURE_PARK_THRESHOLD` identical outcomes.
+    prefix: ATTEMPT_DETAIL_NO_CHANGE,
     nextStep: "work",
   },
   {

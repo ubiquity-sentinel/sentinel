@@ -1,3 +1,9 @@
+import {
+  holdQueueRecord,
+  queueEffectRefused,
+  queueRefusalIsTransient,
+} from "./loop-queue-guard.ts";
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: publication state. */
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
@@ -22,12 +28,19 @@ import {
 } from "./transitions.ts";
 
 /** Continue an exactly proved publication: request review or create the PR. */
-export function continuePublication(
+export async function continuePublication(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
   config: RepositoryConfigV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "publication",
+  );
+  if (queueGuard !== null) return queueGuard;
   if (record.target.pr !== null) {
     return requestReviewFor(deps, context, record, record.target.pr);
   }
@@ -40,6 +53,13 @@ export async function createPullRequestFor(
   record: WorkRecordV1,
   config: RepositoryConfigV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "publication",
+  );
+  if (queueGuard !== null) return queueGuard;
   const now = deps.clock.now();
   // Hard review-round ceiling: no first or replacement pull request is opened
   // for a candidate that can never be reviewed. Every caller has proved the
@@ -118,6 +138,14 @@ export async function createPullRequestFor(
     expectedHeadRef: head,
   });
   if (!created.ok) {
+    if (queueEffectRefused(created.error)) {
+      return holdQueueRecord(
+        deps,
+        context,
+        withIntent,
+        queueRefusalIsTransient(created.error),
+      );
+    }
     // The saved pull_request intent must stay durable: the response may have
     // been lost after the write, and the next run reconciles the exact head
     // ref before repeating rather than blindly retrying an ambiguous write.
@@ -146,6 +174,13 @@ export async function createPullRequestFor(
       ),
     );
   }
+  const publishedGuard = await guardQueueOperation(
+    deps,
+    context,
+    withIntent,
+    "publication",
+  );
+  if (publishedGuard !== null) return publishedGuard;
   const withPr: WorkRecordV1 = {
     ...record,
     target: { ...record.target, pr: created.value.number },

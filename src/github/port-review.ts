@@ -31,6 +31,12 @@ export abstract class GitHubPortReview extends GitHubPortPublication {
         "reviewer identity is not the trusted reviewer",
       );
     }
+    const queueGuard = await this.queueEffect({
+      operation: "resume",
+      pullRequest: request.prNumber,
+      expectedHead: request.expectedHead,
+    });
+    if (!queueGuard.ok) return queueGuard;
     const pull = await this.client.readPullRequest(request.prNumber);
     if (!pull.ok) return pull;
     if (pull.value === null) {
@@ -60,8 +66,14 @@ export abstract class GitHubPortReview extends GitHubPortPublication {
     }
     // Exactly one transport submission; a lost response stays ambiguous and is
     // reconciled later by the operation key.
-    const submitted = await this.gatedRemoteCall(() =>
-      this.reviewService.submitReview({
+    const submitted = await this.gatedRemoteCall(async () => {
+      const finalGuard = await this.queueEffect({
+        operation: "resume",
+        pullRequest: request.prNumber,
+        expectedHead: request.expectedHead,
+      });
+      if (!finalGuard.ok) return finalGuard;
+      return this.reviewService.submitReview({
         operationKey: request.operationKey,
         prNumber: request.prNumber,
         expectedHead: request.expectedHead,
@@ -70,8 +82,8 @@ export abstract class GitHubPortReview extends GitHubPortPublication {
         latestStartAt: request.latestStartAt,
         settleBy: request.settleBy,
         task: request.task ?? null,
-      })
-    );
+      });
+    });
     if (!submitted.ok) return submitted;
     switch (submitted.value.status) {
       case "submitted":

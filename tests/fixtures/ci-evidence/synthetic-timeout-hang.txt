@@ -1,0 +1,23 @@
+2026-10-17T10:00:00.0000000Z ﻿Current runner version: '2.337.0'
+2026-10-17T10:00:01.0007919Z ##[group]Runner Image Provisioner
+2026-10-17T10:00:02.0015838Z Hosted Compute Agent
+2026-10-17T10:00:03.0023757Z ##[endgroup]
+2026-10-17T10:00:04.0031676Z ##[group]Run actions/checkout@v4
+2026-10-17T10:00:05.0039595Z with:
+2026-10-17T10:00:06.0047514Z   repository: example/project
+2026-10-17T10:00:07.0055433Z   token: ***
+2026-10-17T10:00:08.0063352Z ##[endgroup]
+2026-10-17T10:00:09.0071271Z Syncing repository: example/project
+2026-10-17T10:00:10.0079190Z [command]/usr/bin/git version
+2026-10-17T10:00:11.0087109Z git version 2.55.0
+2026-10-17T10:00:12.0095028Z ##[group]Run deno test --allow-net
+2026-10-17T10:00:13.0102947Z [36;1mdeno test --allow-net[0m
+2026-10-17T10:00:14.0110866Z shell: /usr/bin/bash -e {0}
+2026-10-17T10:00:15.0118785Z ##[endgroup]
+2026-10-17T10:00:16.0126704Z running 12 tests from ./tests/server_test.ts
+2026-10-17T10:00:17.0134623Z server answers health ... ok (12ms)
+2026-10-17T10:00:18.0142542Z server drains open sockets on shutdown ...
+2026-10-17T10:00:19.0150461Z ##[error]The action 'Run deno test --allow-net' has timed out after 10 minutes.
+2026-10-17T10:00:20.0158380Z Post job cleanup.
+2026-10-17T10:00:21.0166299Z [command]/usr/bin/git version
+2026-10-17T10:00:22.0174218Z git version 2.55.0

@@ -11,6 +11,7 @@
  * stays as it is; nothing is refunded, started, pushed or published here.
  */
 import type { GitSha } from "../src/contracts/brands.ts";
+import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import type { GitHubPort } from "../src/contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../src/contracts/repository-config.ts";
@@ -48,6 +49,7 @@ export async function restoreExistingCandidateRefs(input: {
   ]);
   if (!read.ok || read.value.status !== "found") return null;
   const candidates = read.value.snapshot.work.filter((record) =>
+    !queueRecordProtected(record, deps.queueCustody) &&
     restorableParkedCandidate(record) &&
     !dedicated.has(record.intent?.requestId ?? "")
   );

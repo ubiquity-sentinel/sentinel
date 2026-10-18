@@ -1,0 +1,19 @@
+2026-10-17T10:00:00.0000000Z ﻿Current runner version: '2.337.0'
+2026-10-17T10:00:01.0007919Z ##[group]Runner Image Provisioner
+2026-10-17T10:00:02.0015838Z Hosted Compute Agent
+2026-10-17T10:00:03.0023757Z ##[endgroup]
+2026-10-17T10:00:04.0031676Z ##[group]Run actions/checkout@v4
+2026-10-17T10:00:05.0039595Z with:
+2026-10-17T10:00:06.0047514Z   repository: example/project
+2026-10-17T10:00:07.0055433Z   token: ***
+2026-10-17T10:00:08.0063352Z ##[endgroup]
+2026-10-17T10:00:09.0071271Z Syncing repository: example/project
+2026-10-17T10:00:10.0079190Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+2026-10-17T10:00:11.0087109Z remote: Internal Server Error
+2026-10-17T10:00:12.0095028Z Error: fatal: unable to access 'https://github.com/example/project/': The requested URL returned error: 500
+2026-10-17T10:00:13.0102947Z The process '/usr/bin/git' failed with exit code 128
+2026-10-17T10:00:14.0110866Z Waiting 14 seconds before trying again
+2026-10-17T10:00:15.0118785Z ##[error]The process '/usr/bin/git' failed with exit code 128
+2026-10-17T10:00:16.0126704Z Post job cleanup.
+2026-10-17T10:00:17.0134623Z [command]/usr/bin/git version
+2026-10-17T10:00:18.0142542Z git version 2.55.0

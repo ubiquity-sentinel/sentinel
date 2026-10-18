@@ -1,3 +1,4 @@
+import type { NativeQueueGuardV1 } from "./native-queue-guard.ts";
 // port contracts.
 
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
@@ -11,6 +12,8 @@ import type {
 } from "./review-service.ts";
 
 export interface GitHubPortOptionsV1 {
+  /** Trusted queue custody capability; absent gateway effect authority fails closed. */
+  readonly nativeQueue?: NativeQueueGuardV1;
   /** Protected host-only self strategy; ignored for every foreign target. */
   selfMergeEnabled?: boolean;
   repository: RepositoryIdentityV1;

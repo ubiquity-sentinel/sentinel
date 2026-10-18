@@ -2,16 +2,26 @@
  * Repair loop internals: bounded base-refresh failure accounting.
  *
  * Every failed execution of one exact base-refresh intent is recorded on that
- * same intent with a closed kind and detail, and the record blocks terminally
- * after MAX_BASE_REFRESH_FAILURES consecutive failures. The one exception is a
+ * same intent with a closed kind and detail, and the record blocks after
+ * MAX_BASE_REFRESH_FAILURES consecutive failures. The one exception is a
  * genuine authentication failure of THIS job's GitHub credential, which is a
- * per-job condition and persists nothing.
+ * per-job condition and persists nothing. The trusted validator's
+ * deterministic verdict on the prepared candidate is no failure to count: it
+ * parks the record at once for the owner (`refuseBaseRefresh`). Neither block
+ * detaches the record's still-open pull request.
  */
 import type {
   IncompleteOperationV1,
   WorkRecordV1,
 } from "../contracts/work-record.ts";
-import { conflictMarkerBase } from "./conflict-resolution.ts";
+import {
+  DETERMINISTIC_PUBLICATION_DETAILS,
+  PUBLICATION_PROTECTED_DETAIL,
+} from "../github/snapshot-policy.ts";
+import {
+  CONFLICT_PROTECTED_DETAIL,
+  conflictMarkerBase,
+} from "./conflict-resolution.ts";
 import { CHECK_POLL_MS } from "./loop-bounds.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
@@ -19,12 +29,7 @@ import type {
   RepairCycleDepsV1,
   StepResultV1,
 } from "./loop-types.ts";
-import {
-  clearIntent,
-  markTerminalBlocked,
-  setIntent,
-  setWait,
-} from "./transitions.ts";
+import { clearIntent, markBlocked, setIntent, setWait } from "./transitions.ts";
 
 /**
  * Consecutive failed executions of one exact base-refresh intent that are
@@ -56,6 +61,79 @@ export const BASE_REFRESH_PUSH_DETAIL = "prepared candidate was not published";
 
 export const BASE_REFRESH_FOREIGN_HEAD_DETAIL =
   "candidate ref carries an unrelated head";
+
+/**
+ * The owner-gated park of a refresh whose prepared candidate the trusted
+ * publication validator refused. The refusal is a verdict on immutable
+ * content (the deterministic merge of the exact candidate and base), so no
+ * retry, re-arm or fresh model run can change it; the owner lands the change
+ * by hand or closes the issue. The prefix is matched by no retry rule, by no
+ * re-admission and by no delivery rule; the launcher names every record that
+ * carries it on every pass (`refresh:<id>:owner_required:pr=<n>`). The text
+ * after it is a closed reason: CONFLICT_PROTECTED_DETAIL for a protected-path
+ * verdict, any other closed validator detail as is, or (written by the
+ * launcher for a generation-80 block) the original blocker message.
+ */
+export const BASE_REFRESH_REFUSED_PREFIX =
+  "base refresh refused by trusted validation; owner action required (land the change by hand or close the issue): ";
+
+/** The owner-gated park message for one closed refusal reason. */
+export function baseRefreshRefusedMessage(reason: string): string {
+  return `${BASE_REFRESH_REFUSED_PREFIX}${reason}`;
+}
+
+/** True for any owner-gated refresh park (runtime- or launcher-written). */
+export function isBaseRefreshRefusedPark(message: string): boolean {
+  return message.startsWith(BASE_REFRESH_REFUSED_PREFIX) &&
+    message.length > BASE_REFRESH_REFUSED_PREFIX.length;
+}
+
+/**
+ * The closed refusal reason of a preservation answer when it is the trusted
+ * validator's deterministic verdict on the candidate (`invalid` with one of
+ * DETERMINISTIC_PUBLICATION_DETAILS); null for every other answer, including
+ * a malformed request, which keeps the bounded failure accounting.
+ */
+export function baseRefreshRefusalReason(
+  kind: string,
+  portDetail: string | undefined,
+): string | null {
+  if (
+    kind !== "invalid" || portDetail === undefined ||
+    !DETERMINISTIC_PUBLICATION_DETAILS.includes(portDetail)
+  ) return null;
+  return portDetail === PUBLICATION_PROTECTED_DETAIL
+    ? CONFLICT_PROTECTED_DETAIL
+    : portDetail;
+}
+
+/**
+ * Park the record once for the owner on the trusted validator's verdict: the
+ * refresh intent (and its never-pushed prepared result) is cleared and the
+ * record blocks with the owner-gated message. Unlike `markTerminalBlocked`,
+ * the still-open pull request stays bound as `target.pr`, and the candidate
+ * head/base, its preserved descriptor and published head, the branch, the
+ * counters, the evidence and every charge are untouched: nothing is pushed,
+ * charged, refunded or reviewed, and no later run rewrites the park.
+ */
+export function refuseBaseRefresh(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  reason: string,
+): Promise<StepResultV1> {
+  const at = deps.clock.now();
+  return persistWork(
+    deps,
+    context,
+    markBlocked(
+      clearIntent(record, at),
+      "other",
+      baseRefreshRefusedMessage(reason),
+      at,
+    ),
+  );
+}
 
 /**
  * Closed suffix of a counted `auth_failed` that is NOT a credential failure
@@ -116,7 +194,8 @@ function isCredentialFailure(failure: BaseRefreshFailureV1): boolean {
  * only while the consecutive failure count is under MAX_BASE_REFRESH_FAILURES;
  * at the bound the intent is cleared and the record blocks with the classified
  * message, so a livelocked refresh becomes a visible blocker instead of an
- * endless `unavailable` wait. Target, counters, evidence and reviews are
+ * endless `unavailable` wait. Target (including the still-open pull request,
+ * which generation 80 detached here), counters, evidence and reviews are
  * preserved.
  *
  * A genuine authentication failure of this job's credential (see
@@ -160,13 +239,10 @@ export function failBaseRefresh(
     return persistWork(
       deps,
       context,
-      clearIntent(
-        markTerminalBlocked(
-          record,
-          "other",
-          `base refresh failed ${failures} consecutive times: ${failure.kind} ${detail}`,
-          at,
-        ),
+      markBlocked(
+        clearIntent(record, at),
+        "other",
+        `base refresh failed ${failures} consecutive times: ${failure.kind} ${detail}`,
         at,
       ),
     );

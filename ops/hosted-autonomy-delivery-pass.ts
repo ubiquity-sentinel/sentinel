@@ -6,6 +6,14 @@ import {
   parseRepairStateSnapshotV1,
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
+import { QUEUE_PROOF_ACTIVATED } from "../src/github/queue-runtime-policy.ts";
+import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
+import {
+  type HostedDeliveryProof,
+  resolveHostedDelivery,
+  retainHostedDeliveryProvenance,
+} from "./hosted-autonomy-delivery-proof.ts";
+import { queueBookingDraft } from "./hosted-autonomy-queue-booking.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import type { ReleaseRequestV1 } from "../src/contracts/release.ts";
@@ -16,7 +24,6 @@ import {
   boundReviewReceipts,
   buildHostedReleaseRequest,
   readTrustedTask,
-  verifiedMergedDelivery,
 } from "./hosted-autonomy-delivery.ts";
 import {
   adoptableSpentMerge,
@@ -62,16 +69,35 @@ import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "../src/repair/revie
 import { markBlocked } from "../src/repair/transitions.ts";
 import { runHostedCiRerunPass } from "./hosted-autonomy-ci-rerun.ts";
 import { ciFirstApprovalEligible } from "./hosted-autonomy-ci-first.ts";
+import {
+  acceptanceOwnerGateActions,
+  acceptanceOwnerGated,
+} from "./hosted-autonomy-acceptance.ts";
 
 export async function runHostedDeliveryPass(
   context: HostedAutonomyPassContextV1,
 ): Promise<HostedAutonomyResultV1 | null> {
   const { deps, actions, revisions, scopeFor, readTip, readPull } = context;
   const { snapshot, observedHead } = context;
+  if (deps.queueCustody?.ready === false) return null;
+  const protectedRecord = (record: HostedAutonomyRecordV1) =>
+    queueRecordProtected(record, deps.queueCustody);
+  const strictGateway = (record: HostedAutonomyRecordV1) =>
+    isGatewayVpsRepository(record.repository) &&
+    (QUEUE_PROOF_ACTIVATED || deps.queueCustody?.proofActivated === true ||
+      protectedRecord(record));
+  // JAM B6b: a not-fulfilled acceptance no correction can follow is owner
+  // gated. It is named once in the run summary and then neither approved,
+  // read nor delivered (it used to report `spent_not_admissible` per pass).
+  actions.push(
+    ...acceptanceOwnerGateActions(snapshot, context.closedIssues),
+  );
   // A record an earlier write of this pass touched waits for the next pass:
   // it is neither approved nor delivered here (nor re-run, see the module).
   const eligible = (record: (typeof snapshot.work)[number]) =>
-    deliveryEligible(record, snapshot) &&
+    ((strictGateway(record) && record.nextStep !== "done") ||
+      (deliveryEligible(record, snapshot) &&
+        !acceptanceOwnerGated(record, snapshot, context.closedIssues))) &&
     context.settled?.has(record.id) !== true;
   // ---- check-approval pass ------------------------------------------------
   // A candidate pushed to a pull request by the bot produces a CI run that
@@ -82,6 +108,7 @@ export async function runHostedDeliveryPass(
   // must be green BEFORE its review, so a published head waiting at `work`
   // (or parked by the pre-review gate) is approved too.
   for (const record of snapshot.work) {
+    if (protectedRecord(record)) continue;
     if (
       !eligible(record) &&
       !(ciFirstApprovalEligible(snapshot, record) &&
@@ -116,7 +143,13 @@ export async function runHostedDeliveryPass(
   }
   // A clean-reviewed head parked on a failed CI run against its green,
   // current base gets that run re-run once (state-free; see the module).
-  await runHostedCiRerunPass(context);
+  await runHostedCiRerunPass({
+    ...context,
+    settled: new Set([
+      ...context.settled ?? [],
+      ...snapshot.work.filter(protectedRecord).map((record) => record.id),
+    ]),
+  });
 
   // ---- delivery pass ------------------------------------------------------
   // Each repository's base tip is read once in this pass from that repository's
@@ -181,6 +214,18 @@ export async function runHostedDeliveryPass(
     const head = record.target.head;
     const base = record.target.base;
     if (pullRequest === null || head === null || base === null) continue;
+    if (strictGateway(record)) {
+      const booking = await queueBookingDraft(context, record);
+      if (booking !== null) {
+        return await writeDeliveryState(
+          context,
+          booking.snapshot,
+          `request:${record.id}:${booking.requestId}`,
+          booking.revision,
+        );
+      }
+      continue;
+    }
     // A record outside the runtime's own review/delivery steps is merged only
     // under the closed spent shape; nothing else about it is read.
     const parked = parkedStep(record);
@@ -239,7 +284,7 @@ export async function runHostedDeliveryPass(
       );
       continue;
     }
-    const receipt = verdict.receipt;
+    let receipt = verdict.receipt;
     const self = isHostedSelf(record.repository);
     const gateway = isGatewayVpsRepository(record.repository);
     if (
@@ -273,10 +318,24 @@ export async function runHostedDeliveryPass(
     }
 
     let revision: string | null = null;
+    let foreignProof: HostedDeliveryProof | null = null;
+    if (!self && pull.merged) {
+      foreignProof = await resolveHostedDelivery(
+        context,
+        record,
+        scope,
+        pull,
+        parked ? "adoption" : "delivery",
+      );
+    }
     // True when this record is merged (or adopted) under the spent rule: a
     // parked record always, a review/delivery record only onto a moved base.
     let spentMerge = parked;
     if (pull.state === "open" && pull.merged === false) {
+      if (gateway && deps.queueCustody?.ready !== true) {
+        actions.push(`delivery:${record.id}:queue_context_unavailable`);
+        continue;
+      }
       if (mergeCalled) {
         actions.push(`delivery:${record.id}:merge_deferred`);
         continue;
@@ -410,12 +469,12 @@ export async function runHostedDeliveryPass(
       // is adopted (a carried one only with its patch proof); a hand merge is
       // reported and nothing is recorded.
       if (
+        (!self && foreignProof === null) ||
         !await adoptableSpentMerge(
           scope.surface,
           pull,
           self,
           head,
-          verifiedMergedDelivery(record, pull, scope.baseBranch) !== null,
         ) ||
         (carried &&
           (await carriedPatchRefusal(scope.surface, receipt, head, base))
@@ -430,9 +489,27 @@ export async function runHostedDeliveryPass(
       continue;
     }
     if (pull.merged !== true || pull.mergeCommitSha === null) continue;
+    if (!self) {
+      foreignProof ??= await resolveHostedDelivery(
+        context,
+        record,
+        scope,
+        pull,
+        "delivery",
+        revision,
+      );
+      if (foreignProof === null) {
+        actions.push(
+          `delivery:${record.id}:${
+            gateway ? "merge_proof_unavailable" : "merge_not_observed"
+          }`,
+        );
+        continue;
+      }
+      receipt = foreignProof.receipt;
+    }
     // A merge performed earlier in THIS pass is an external write and keeps
     // the one-merge bound; an already-merged pull is read-only.
-    const mergedThisPass = revision !== null;
     if (revision === null) revision = pull.mergeCommitSha;
     if (revision !== pull.mergeCommitSha) continue;
     // A carried merge is booked only when it landed exactly on the refreshed
@@ -440,7 +517,7 @@ export async function runHostedDeliveryPass(
     // that landed off that tip (the tip moved between the re-read and the
     // merge) is reported and, on the Gateway, parked precisely instead.
     if (
-      carried &&
+      carried && foreignProof?.kind !== "queue" &&
       (pull.parents.length !== 2 || pull.parents[0] !== base ||
         pull.parents[1] !== head)
     ) {
@@ -483,7 +560,8 @@ export async function runHostedDeliveryPass(
       );
     }
     if (
-      !baseAndHeadAreMerged(pull, base, head) || !pull.revisionOnBaseBranch
+      self &&
+      (!baseAndHeadAreMerged(pull, base, head) || !pull.revisionOnBaseBranch)
     ) {
       actions.push(`delivery:${record.id}:merge_not_observed`);
       continue;
@@ -494,7 +572,7 @@ export async function runHostedDeliveryPass(
       // recorded and no release is invented. The verified merge facts are
       // handed to the closure pass, which closes the record's OWN issue from
       // exactly this evidence.
-      const evidence = verifiedMergedDelivery(record, pull, scope.baseBranch);
+      const evidence = foreignProof;
       if (evidence === null) {
         actions.push(`delivery:${record.id}:merge_not_observed`);
         continue;
@@ -505,11 +583,8 @@ export async function runHostedDeliveryPass(
       );
       actions.push(`delivery:${record.id}:foreign_merged`);
       revisions.push(revision);
-      // One external merge per pass stays the bound. An already-merged
-      // verified delivery is read-only, so keep scanning and settle the rest
-      // of the backlog in the same pass: with an unconditional break the four
-      // stacked merges stalled 70 runs behind every newly verified delivery.
-      if (mergedThisPass) break;
+      // The direct effect cap only stops another merge. Already-merged queue
+      // deliveries can still be booked after this external merge.
       continue;
     }
 
@@ -549,9 +624,13 @@ export async function runHostedDeliveryPass(
     // record exactly as it is written.
     let delivered: HostedAutonomyRecordV1 = record;
     if (gateway) {
+      const retained = foreignProof === null
+        ? null
+        : retainHostedDeliveryProvenance(record, foreignProof);
+      if (retained === null) continue;
       const advanced = spentMerge
-        ? spentDelivered(record, now)
-        : { ...record, nextStep: "delivery" as const, updatedAt: now };
+        ? spentDelivered(retained, now)
+        : { ...retained, nextStep: "delivery" as const, updatedAt: now };
       if (advanced === null) {
         return skipped("snapshot_invalid", observedHead, actions);
       }

@@ -123,6 +123,7 @@ export class PreparedStructuredReview extends PreparedReviewOutcome
     // terminal is sticky and cannot be skipped by an early break.
     const buffered = [...this.earlyEvents];
     this.earlyEvents.length = 0;
+    this.earlyBytes = 0;
     for (const event of buffered) this.processEvent(event);
     await this.settlement;
     return this.buildOutcome();
@@ -153,7 +154,10 @@ export class PreparedStructuredReview extends PreparedReviewOutcome
       this.now,
       this.hardSettleBy,
     );
-    if (this.unavailable === null) return closed;
+    if (
+      this.unavailable === null && this.deferredUnavailable === null &&
+      this.finalMessage?.truncated !== true
+    ) return closed;
     return { ...closed, failure: CLOSE_FAILED_MARKER };
   }
 }

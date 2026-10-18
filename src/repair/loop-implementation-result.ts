@@ -1,3 +1,4 @@
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: implementation result. */
 import type {
   AttemptFailureClassV1,
@@ -13,11 +14,13 @@ import { generatedArtifactOnly } from "../github/review-snapshot.ts";
 import {
   ATTEMPT_DETAIL_INCOMPLETE,
   ATTEMPT_DETAIL_LOOP_STOP,
+  ATTEMPT_DETAIL_NO_CHANGE,
   ATTEMPT_DETAIL_PROVIDER_THROTTLED,
   ATTEMPT_DETAIL_UNCERTAIN,
   attemptMemorySettlementMutationV1,
   attemptMemorySuccessMutationV1,
 } from "./attempt-policy.ts";
+import { holdNoChange, noChangeIssue } from "./base-satisfaction-marker.ts";
 import { conflictResolutionInFlight } from "./conflict-resolution.ts";
 import { isProviderThrottledReceiptV1 } from "./model-port-retry.ts";
 import {
@@ -25,7 +28,7 @@ import {
   candidatePreservationRef,
   implementationIntentKey,
 } from "./keys.ts";
-import { persistAfterSettlement, settleAndBlock } from "./loop-accounting.ts";
+import { settleAndBlock } from "./loop-accounting.ts";
 import { MATRIX_PREDECESSOR_DEFERRED } from "./loop-bounds.ts";
 import {
   handleConflictResolutionReceipt,
@@ -51,6 +54,21 @@ import {
   setIntent,
 } from "./transitions.ts";
 
+/** A settlement may observe new custody; keep the charge without adopting its stale record. */
+async function guardedSettlement(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  mutation: Parameters<typeof persistTransition>[2],
+): Promise<StepResultV1> {
+  const fresh = await loadSnapshot(deps, context.bounds);
+  if (fresh === null) {
+    return { kind: "state_error", detail: "repair state unavailable" };
+  }
+  const guard = await guardQueueOperation(deps, fresh, record, "resume");
+  return guard ?? await persistTransition(deps, fresh, mutation);
+}
+
 /**
  * Trusted terminal handling for a start that produced no usable receipt: the
  * reservation settles ambiguous (charged, never refunded from absence) and the
@@ -68,6 +86,8 @@ export async function settleFailedImplementation(
     failureClass: AttemptFailureClassV1;
   },
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(deps, context, record, "resume");
+  if (queueGuard !== null) return queueGuard;
   const now = deps.clock.now();
   const blocked = await settleAndBlock(
     deps,
@@ -87,8 +107,13 @@ export async function settleFailedImplementation(
     runtimeSha: deps.controllerSha,
     ...(classification === undefined ? {} : { classification }),
   });
-  return persistAfterSettlement(deps, context.bounds, (draft) => {
-    replaceWorkMutation(blocked)(draft);
+  return guardedSettlement(deps, context, record, (draft) => {
+    replaceWorkMutation(
+      detail === ATTEMPT_DETAIL_NO_CHANGE && noChangeIssue(record) &&
+        record.intent?.kind === "implementation"
+        ? holdNoChange(record, now)
+        : blocked,
+    )(draft);
     memory(draft);
   });
 }
@@ -134,6 +159,8 @@ export async function handleModelReceipt(
   receipt: ModelRunReceiptV1,
   config: RepositoryConfigV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(deps, context, record, "resume");
+  if (queueGuard !== null) return queueGuard;
   const now = deps.clock.now();
   const candidate = receipt.candidate;
   // A conflict resolution's change set is read against the merged base, and
@@ -197,7 +224,7 @@ export async function handleModelReceipt(
       now,
       runtimeSha: deps.controllerSha,
     });
-    return persistAfterSettlement(deps, context.bounds, (draft) => {
+    return guardedSettlement(deps, context, record, (draft) => {
       replaceWorkMutation(blocked)(draft);
       memory(draft);
     });
@@ -226,6 +253,13 @@ export async function handleModelReceipt(
   // target head for a legacy record. Model output never establishes it. It is
   // observed before anything is consumed.
   const priorPublished = await verifiedPublishedHead(deps, context, record);
+  const observedGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "resume",
+  );
+  if (observedGuard !== null) return observedGuard;
   // A hosted (matrix) ingest never consumes a legacy record's receipt on an
   // unavailable observation. Hosted admission DOES start legacy records that
   // carry a head (a review or CI correction), and noting the candidate in the
@@ -253,6 +287,13 @@ export async function handleModelReceipt(
   if (afterSettlement === null) {
     return { kind: "state_error", detail: "repair state unavailable" };
   }
+  const settledGuard = await guardQueueOperation(
+    deps,
+    afterSettlement,
+    record,
+    "resume",
+  );
+  if (settledGuard !== null) return settledGuard;
   const operationKey = implementationIntentKey(reservationId);
   const preservationRef = await candidatePreservationRef(
     record.repository,
@@ -332,6 +373,8 @@ export async function handleImplementationUncertainty(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(deps, context, record, "resume");
+  if (queueGuard !== null) return queueGuard;
   const reservationId = record.intent?.requestId;
   if (
     reservationId !== null && reservationId !== undefined &&
@@ -353,7 +396,7 @@ export async function handleImplementationUncertainty(
   const blocked = markBlocked(record, "other", ATTEMPT_DETAIL_UNCERTAIN, now);
   // The saved intent has no authenticated producing runtime. Preserve its
   // charge and blocked custody without fabricating a new memory outcome.
-  return persistAfterSettlement(deps, context.bounds, (draft) => {
+  return guardedSettlement(deps, context, record, (draft) => {
     replaceWorkMutation(blocked)(draft);
   });
 }

@@ -19,6 +19,10 @@ import {
 } from "../../src/contracts/hosted-supervisor.ts";
 import { buildChildEnvironment } from "../../src/host/hosted-runtime-child.ts";
 import {
+  OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+} from "../../src/host/owner-install-runtime-pins.ts";
+import {
   LEGACY_REVIEW_CUTOFF_ENV,
   legacyReviewCutoffForExecution,
   legacyReviewCutoffForRuntime,
@@ -33,6 +37,8 @@ import {
   reviewRoundsLeft,
 } from "../../src/repair/review-round-cap.ts";
 import { reservation, T0, workRecord } from "../state/helpers.ts";
+import { HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES } from "../../ops/hosted-autonomy-conflict-retries.ts";
+import { HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES } from "../../ops/hosted-autonomy-refresh-rearm.ts";
 import { healthyProof, releaseSnapshot } from "./hosted-autonomy-rig.ts";
 
 const HOUR = 60 * 60_000;
@@ -86,16 +92,55 @@ function custody(runtime: HostedRuntimeRecordV1) {
   return { ...base, hostedRuntimes: [runtime] };
 }
 
-Deno.test("legacy cutoff: generation 80 ships unpinned, one instant for every CI-first revision", () => {
+Deno.test("legacy cutoff: the generation 80 install pin sets one instant for every CI-first revision", () => {
+  // The launcher commit that pins generation 80's install sets the instant
+  // (its own); generation 81 appends R81 without changing that instant.
+  const pinned = Date.parse("2026-10-17T17:05:00Z");
   assert.deepEqual(LEGACY_REVIEW_CUTOFF, {
-    activatedNotBefore: null,
-    revisions: [],
+    activatedNotBefore: pinned,
+    revisions: [
+      OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
+      OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+    ],
   });
-  // No pin, nothing legacy, for any revision.
+  // Every R80 activation bound of the launcher is that same instant.
+  for (
+    const rows of [
+      HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES,
+      HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES,
+    ]
+  ) {
+    const row = rows.find((entry) =>
+      entry.revision === OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION
+    );
+    assert.equal(row?.activatedNotBefore, pinned);
+  }
   assert.equal(
-    legacyReviewCutoffForExecution({ revision: R80, createdAt: C80 + HOUR }),
-    null,
+    legacyReviewCutoffForExecution({
+      revision: OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+      createdAt: 1792299493000,
+    }),
+    pinned,
   );
+  // The pinned R80 receives it once it runs at or after the instant; an R80
+  // execution before it, R79 and any unpinned revision receive none.
+  assert.equal(
+    legacyReviewCutoffForExecution({
+      revision: OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
+      createdAt: pinned + HOUR,
+    }),
+    pinned,
+  );
+  for (
+    const execution of [
+      {
+        revision: OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
+        createdAt: pinned - 1,
+      },
+      { revision: R79, createdAt: pinned + HOUR },
+      { revision: R80, createdAt: C80 + HOUR },
+    ]
+  ) assert.equal(legacyReviewCutoffForExecution(execution), null);
   // Pinned: generation 80 and every later CI-first runtime receive the SAME
   // instant, whatever instant a later install commit carries.
   const r80 = runtimeAt(R80, 80, C80 + HOUR);

@@ -9,10 +9,15 @@
  * missing-review recovery, expired observation and post-drain), so no review
  * is ever requested for a head whose required CI is not green:
  *
- * - green: the review proceeds exactly as before;
- * - running or absent checks, a failed check still running on the base, or a
- *   failure no base evidence attributes (the base check was cancelled, absent
- *   or inconclusive, or the head's own check never concluded): a bounded
+ * - green, with every expected check present: the review proceeds exactly
+ *   as before. Expected are the check names of each base check suite that
+ *   shares a name with the head (`absentExpectedChecks`, sentinel issue
+ *   #154): GitHub creates a `needs:` job's check run only once its
+ *   dependencies finish, so green existing runs alone are not green CI;
+ * - running, absent or not yet created checks (or a base whose runs cannot
+ *   be read to tell), a failed check still running on the base, or a failure
+ *   no base evidence attributes (the base check was cancelled, absent or
+ *   inconclusive, or the head's own check never concluded): a bounded
  *   `ci_pending` wait (`since` kept across polls) and, for a never-reviewed
  *   head, a precise park after `PRE_REVIEW_CI_BOUND_MS` that the launcher's
  *   re-run and green rules re-admit; meanwhile a moved base refreshes the
@@ -47,6 +52,7 @@ import {
   decideCiDisposition,
   failedChecks,
   latestChecks,
+  preReviewAbsentDetail,
   preReviewPendingDetail,
   preReviewRedDetail,
   preReviewUnattributedDetail,
@@ -58,7 +64,7 @@ import {
   preReviewCiFixRouteOpen,
 } from "./ci-first-policy.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
-import { decideCiGate } from "./loop-checks.ts";
+import { absentExpectedChecks, decideCiGate } from "./loop-checks.ts";
 import {
   observeHeadFailure,
   RED_BASE_RECHECK_MS,
@@ -180,8 +186,10 @@ function routeCandidateFailure(
     return persistWork(deps, context, advanceToCorrection(record, now));
   }
   // Any other red head has no completed review: a new candidate, and also a
-  // REVIEWED record's refreshed head. Where the pre-review fix route is closed
-  // (hosted generation 80) both park until generation 81 opens it.
+  // REVIEWED record's refreshed head. Both take the CI fix marker where the
+  // pre-review fix route is open (in process, and hosted from generation 81)
+  // and park where it is closed (hosted generation 80, or no fix or round
+  // left by the ceiling's own count).
   const marked = atWork(record, ciFixMarker(now), now);
   if (
     headAwaitsPreReviewCiFix(
@@ -229,7 +237,21 @@ export async function gateReviewOnCi(
   if (!observed.ok) return UNAVAILABLE;
   const checks = observed.value.checks;
   const decision = decideCiGate(checks);
-  if (decision === "proceed") return null;
+  if (decision === "proceed") {
+    // Every existing run is green; the jobs GitHub has not created yet are
+    // awaited like running ones (bounded, uncharged, the same park prefix),
+    // and so is a base whose runs cannot be read (no evidence either way).
+    const absent = await absentExpectedChecks(deps, record, checks);
+    if (absent !== null && absent.length === 0) return null;
+    return awaitChecks(
+      deps,
+      context,
+      record,
+      [],
+      now,
+      () => preReviewAbsentDetail(absent),
+    );
+  }
   if (decision === "wait") {
     return awaitChecks(
       deps,

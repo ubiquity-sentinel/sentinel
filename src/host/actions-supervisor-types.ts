@@ -12,6 +12,7 @@ import type {
 } from "../contracts/ports.ts";
 import type { ReleaseRequestV1 } from "../contracts/release.ts";
 import type { ReviewTaskStatementV1 } from "../contracts/review-receipt.ts";
+import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
 
 export interface HostedSupervisorRunIdentityV1 {
   runId: number;
@@ -54,6 +55,8 @@ export interface HostedSupervisorInputV1 {
   evidence: HostedSupervisorEvidencePortV1;
   /** Temporary explicit owner recovery: resume only its genuine saved bootstrap. */
   ownerStartupRecoveryOnly?: boolean;
+  /** Trusted in-process fixture only; production uses immutable source pins. */
+  queueRuntimeCapability?: QueueRuntimeCapability;
 }
 
 export type HostedSupervisorOutcomeV1 =

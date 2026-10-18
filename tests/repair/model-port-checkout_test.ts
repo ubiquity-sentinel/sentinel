@@ -92,7 +92,10 @@ Deno.test(
   async (t) => {
     for (const pending of ["clean", "unstaged", "staged", "untracked"]) {
       await t.step(pending, async () => {
-        const root = await Deno.makeTempDir({ prefix: "sentinel-descendant-" });
+        const root = await Deno.makeTempDir({
+          dir: Deno.cwd(),
+          prefix: "sentinel-descendant-",
+        });
         const home = `${root}/home`;
         await Deno.mkdir(home);
         const env = testGitEnv(home);
@@ -172,7 +175,10 @@ Deno.test(
 Deno.test(
   "local candidate committer: stages sandbox edits and creates one descendant",
   async () => {
-    const root = await Deno.makeTempDir({ prefix: "sentinel-model-commit-" });
+    const root = await Deno.makeTempDir({
+      dir: Deno.cwd(),
+      prefix: "sentinel-model-commit-",
+    });
     const home = `${root}/home`;
     await Deno.mkdir(home);
     const env = testGitEnv(home);
@@ -217,7 +223,10 @@ Deno.test(
 Deno.test(
   "model-port: checkout inventory includes both sides of a source rename",
   async () => {
-    const root = await Deno.makeTempDir({ prefix: "sentinel-model-rename-" });
+    const root = await Deno.makeTempDir({
+      dir: Deno.cwd(),
+      prefix: "sentinel-model-rename-",
+    });
     const home = `${root}/home`;
     await Deno.mkdir(home);
     const env = testGitEnv(home);

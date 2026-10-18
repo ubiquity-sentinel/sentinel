@@ -1,3 +1,4 @@
+import { guardQueueDelivery } from "./loop-queue-guard.ts";
 /** Repair loop internals: release. */
 import {
   hostedReceiptBindsRequest,
@@ -9,15 +10,22 @@ import {
   type LocalReleaseReceiptV1,
   parseLocalReleaseReceiptV1,
 } from "../contracts/local-release.ts";
-import type { PortResultV1 } from "../contracts/ports.ts";
+import type { PortResultV1, StateReadView } from "../contracts/ports.ts";
 import type { ReleaseRequestV1 } from "../contracts/release.ts";
+import {
+  parseReleaseStateSnapshotV1,
+  type ReleaseStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { closureIntentKey } from "./keys.ts";
 import { RELEASE_POLL_MS } from "./loop-bounds.ts";
 import { retryClosure } from "./loop-closure.ts";
 import { gateDeliveryOnChecks } from "./loop-checks.ts";
+import { releaseRequestMatchesDelivery } from "./loop-records.ts";
 import {
+  gatewayReleaseDeferred,
   isGatewayVpsRepository,
+  isReleaseDeferredWait,
   observeGatewayVpsDelivery,
 } from "./vps-delivery.ts";
 import { persistWork } from "./loop-state.ts";
@@ -70,6 +78,94 @@ export function waitRelease(
       now,
     ),
   );
+}
+
+/**
+ * Merged; release deferred while the release path is disabled (JAM B12). The
+ * record stays at `delivery` beside its open request: it is never marked
+ * done, because only this record consumes the release outcome (acceptance
+ * reconciles the closure, a failed or rolled-back release blocks it) and a
+ * done record never moves again. Written once; selection then skips it.
+ */
+export function deferRelease(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  now: number,
+): Promise<StepResultV1> {
+  return persistWork(
+    deps,
+    context,
+    setWait(record, { reason: "unavailable", since: now, until: null }, now),
+  );
+}
+
+/** One positively read and reparsed release snapshot; anything else is null. */
+export async function readReleaseSnapshot(
+  state: Pick<StateReadView, "readRelease">,
+): Promise<ReleaseStateSnapshotV1 | null> {
+  try {
+    const read = await state.readRelease();
+    if (!read.ok || read.value.status !== "found") return null;
+    return parseReleaseStateSnapshotV1(read.value.snapshot);
+  } catch {
+    return null;
+  }
+}
+
+/** Run-local state of the deferred-release resume pass. */
+export interface ReleaseResumeRunV1 {
+  /** The release snapshot read once per run (undefined until needed). */
+  release?: ReleaseStateSnapshotV1 | null;
+  /** Deferred records already looked at in this run. */
+  attempted: Set<string>;
+}
+
+/**
+ * The resume pass for deferred releases: once per run, and only when a
+ * deferred record exists, the release ref is read ONCE; a deferred record
+ * whose request the release ref now records (or that is no longer an open,
+ * intent-free deferral) has its wait released, so the ordinary delivery step
+ * observes the release outcome on this same run. A still-deferred record is
+ * not touched, an unreadable release ref changes nothing, and each record is
+ * looked at once per run, so the pass never loops or rewrites.
+ */
+export async function resumeDeferredRelease(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  run: ReleaseResumeRunV1,
+): Promise<StepResultV1 | null> {
+  for (const record of context.snapshot.work) {
+    if (!isReleaseDeferredWait(record) || run.attempted.has(record.id)) {
+      continue;
+    }
+    if (run.release === undefined) {
+      run.release = await readReleaseSnapshot(deps.state);
+    }
+    if (run.release === null) return null;
+    run.attempted.add(record.id);
+    const queueGuard = await guardQueueDelivery(deps, context, record);
+    if (queueGuard !== null) return queueGuard;
+    const request = context.snapshot.releaseRequests.find((item) =>
+      releaseRequestMatchesDelivery(item, record)
+    );
+    if (
+      record.intent === null && request !== undefined &&
+      gatewayReleaseDeferred(run.release, request)
+    ) continue;
+    const now = deps.clock.now();
+    const since = record.wait!.since;
+    return persistWork(
+      deps,
+      context,
+      setWait(
+        record,
+        { reason: "unavailable", since, until: Math.max(now, since) },
+        now,
+      ),
+    );
+  }
+  return null;
 }
 
 /**
@@ -191,6 +287,14 @@ export async function acceptRelease(
   request: ReleaseRequestV1,
   now: number,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueDelivery(
+    deps,
+    context,
+    record,
+    releaseRequestReceipt(context.snapshot.reviews, request),
+    request.revision,
+  );
+  if (queueGuard !== null) return queueGuard;
   if (record.related.issueNumber === null) {
     return persistWork(deps, context, markDone(record, now));
   }
@@ -257,6 +361,14 @@ export async function observeReleaseAcceptance(
   record: WorkRecordV1,
   request: ReleaseRequestV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueDelivery(
+    deps,
+    context,
+    record,
+    releaseRequestReceipt(context.snapshot.reviews, request),
+    request.revision,
+  );
+  if (queueGuard !== null) return queueGuard;
   // A request the trusted controller cancelled (or failed) is terminal
   // authorization evidence: no release entry can ever appear for it, so the
   // record is parked with the recorded reason instead of waiting forever.
@@ -281,6 +393,15 @@ export async function observeReleaseAcceptance(
   }
   const now = deps.clock.now();
   if (isGatewayVpsRepository(record.repository)) {
+    // Merged, release deferred while the release path is disabled: no release
+    // record can be observed for this request, so the record waits in its one
+    // stable shape instead of re-arming a poll every cycle (JAM B12).
+    if (record.intent === null && request.status === "open") {
+      const release = await readReleaseSnapshot(deps.state);
+      if (release !== null && gatewayReleaseDeferred(release, request)) {
+        return deferRelease(deps, context, record, now);
+      }
+    }
     const observed = await observeGatewayVpsDelivery(
       deps.state,
       record,

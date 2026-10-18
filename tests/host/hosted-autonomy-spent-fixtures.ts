@@ -35,6 +35,10 @@ import type {
   HostedAutonomyResultV1,
 } from "../../ops/hosted-autonomy-types.ts";
 import { makeRig, type RigV1 } from "./hosted-autonomy-rig.ts";
+import {
+  darkQueueCoordinatorFixture,
+  darkQueueFixture,
+} from "./hosted-autonomy-dark-queue-fixture.ts";
 
 const LIVE = JSON.parse(
   await Deno.readTextFile(
@@ -286,7 +290,7 @@ export async function liveRig(
  */
 export type SpentDepsV1 = Pick<
   HostedAutonomyDepsV1,
-  "spentMovedBaseMerge" | "legacyReviewCutoff"
+  "spentMovedBaseMerge" | "legacyReviewCutoff" | "queueCustody"
 >;
 
 /** The deps that enable the moved-base merge (D3) for a test of its gate. */
@@ -302,6 +306,8 @@ export async function runAt(
     state: rig.state,
     githubFor: rig.githubFor,
     clock: { now: () => now },
+    queueCustody: darkQueueFixture(rig),
+    queue: await darkQueueCoordinatorFixture(rig),
     ...extra,
   });
 }
@@ -320,6 +326,8 @@ export async function deliveryOnly(
     state: rig.state,
     githubFor: rig.githubFor,
     clock: { now: () => now },
+    queueCustody: darkQueueFixture(rig),
+    queue: await darkQueueCoordinatorFixture(rig),
     ...extra,
   };
   const actions: string[] = [];

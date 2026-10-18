@@ -1,0 +1,221 @@
+﻿2026-10-17T11:56:11.9357898Z Current runner version: '2.337.0'
+2026-10-17T11:56:11.9383889Z ##[group]Runner Image Provisioner
+2026-10-17T11:56:11.9384807Z Hosted Compute Agent
+2026-10-17T11:56:12.8440566Z ##[group]Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+2026-10-17T11:56:12.8442044Z with:
+2026-10-17T11:56:12.8443094Z   fetch-depth: 0
+2026-10-17T11:56:12.8443701Z   repository: ubiquity/ai.ubq.fi
+2026-10-17T11:56:12.8447779Z   token: ***
+2026-10-17T11:56:12.8448328Z   ssh-strict: true
+2026-10-17T11:56:12.8448879Z   ssh-user: git
+2026-10-17T11:56:12.8449502Z   persist-credentials: true
+2026-10-17T11:56:12.8450354Z   clean: true
+2026-10-17T11:56:12.8450926Z   sparse-checkout-cone-mode: true
+2026-10-17T11:56:12.8451671Z   fetch-tags: false
+2026-10-17T11:56:12.8452208Z   show-progress: true
+2026-10-17T11:56:50.6138241Z ##[group]Run bash ops/prepare-ci-native-toolchain.sh
+2026-10-17T11:56:50.6138646Z [36;1mbash ops/prepare-ci-native-toolchain.sh[0m
+2026-10-17T11:56:50.6168126Z shell: /usr/bin/bash -e {0}
+2026-10-17T11:56:50.6168362Z ##[endgroup]
+2026-10-17T11:56:50.6356915Z   % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+2026-10-17T11:56:50.6357473Z                                  Dload  Upload  Total   Spent   Left   Speed
+2026-10-17T11:56:57.3673915Z ##[group]Run set -euo pipefail
+2026-10-17T11:56:57.3674234Z [36;1mset -euo pipefail[0m
+2026-10-17T11:56:57.3676818Z [36;1mbun --no-env-file --no-install -e 'import {join,resolve} from "node:path"; import {buildNativeKv} from "./scripts/build-native-kv.ts"; const workspace=process.env.RUNNER_TEMP; if(!workspace) throw new Error("Missing runner temporary directory"); const artifactDirectory=join(workspace,"uos-native-kv/artifact"); const buildReceipt=await buildNativeKv(artifactDirectory,{toolchainDirectory:join(workspace,"uos-native-kv/toolchain/bin"),workspaceDirectory:resolve(process.env.GITHUB_WORKSPACE,"../uos-native-kv-builds")}); console.log(JSON.stringify({artifactDirectory,expectedProvenanceSha256:buildReceipt.provenanceSha256,inputsManifest:resolve("tools/native-kv/inputs.json"),buildReceipt}));'  > "$RUNNER_TEMP/uos-native-kv/receipt.json"[0m
+2026-10-17T11:56:57.3710787Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-17T11:56:57.3711157Z ##[endgroup]
+2026-10-17T11:59:13.5546039Z ##[group]Run set -euo pipefail
+2026-10-17T11:59:13.5546403Z [36;1mset -euo pipefail[0m
+2026-10-17T11:59:13.5547044Z [36;1mbun --no-env-file --no-install run test ops/tests/mac-native-auth-permissions.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"[0m
+2026-10-17T11:59:13.5548083Z [36;1mbun --no-env-file --no-install run test:vps ops/tests/first-bun-cutover.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"[0m
+2026-10-17T11:59:13.5549036Z [36;1mbun --no-env-file --no-install run test:deploy-guards "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"[0m
+2026-10-17T11:59:13.5550489Z [36;1mbun --no-env-file --no-install run test:vps ops/tests/vps-release.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"[0m
+2026-10-17T11:59:13.5580806Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-17T11:59:13.5581124Z ##[endgroup]
+2026-10-17T11:59:13.5675165Z $ bun --no-env-file scripts/test-runner.ts main ops/tests/mac-native-auth-permissions.test.ts "--native-kv-binding={\"artifactDirectory\":\"/home/runner/work/_temp/uos-native-kv/artifact\",\"expectedProvenanceSha256\":\"4298e9605cc786d5d7f1462dc01e50550b157b6ee227848d30171b8c8e4658ca\",\"inputsManifest\":\"/home/runner/work/ai.ubq.fi/ai.ubq.fi/tools/native-kv/inputs.json\",\"buildReceipt\":{\"path\":\"/home/runner/work/_temp/uos-native-kv/artifact/native-kv.node\",\"sha256\":\"35b081c330a7c220698e6e7c4bbd883712b3074000f85a5650067754e27e220d\",\"provenancePath\":\"/home/runner/work/_temp/uos-native-kv/artifact/native-kv.provenance.json\",\"provenanceSha256\":\"4298e9605cc786d5d7f1462dc01e50550b157b6ee227848d30171b8c8e4658ca\",\"inputsSha256\":\"060218c18a617a642b72705df8d976047fd124a3f069517ee7bed6896c600033\",\"sourceSha256\":\"ab71a0516b6b2440f1f9a8bfde70199ac5e75c3c69816d68b3f80bc45285c899\",\"patchSha256\":\"f79d5356ddae5f1d5d8658671f9e842452e566240cb637
+2026-10-17T11:59:13.5942506Z 
+2026-10-17T11:59:13.5943252Z ==> mac-native-auth: ops/tests/mac-native-auth-permissions.test.ts
+2026-10-17T11:59:13.6346524Z bun test v1.4.0 (34cbb9a40)
+2026-10-17T11:59:13.6372484Z 
+2026-10-17T11:59:13.6372776Z ops/tests/mac-native-auth-permissions.test.ts:
+2026-10-17T11:59:15.9122127Z {"case":"dotenv custom home","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":27,"serverPid":27,"settled":true}
+2026-10-17T11:59:15.9446025Z (pass) Mac plist native permissions: dotenv custom home [2269.80ms]
+2026-10-17T11:59:18.0461394Z {"case":"default home","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":60,"serverPid":60,"settled":true}
+2026-10-17T11:59:18.0784576Z (pass) Mac plist native permissions: default home [2133.84ms]
+2026-10-17T11:59:20.1721628Z {"case":"empty override","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":93,"serverPid":93,"settled":true}
+2026-10-17T11:59:20.2036761Z (pass) Mac plist native permissions: empty override [2125.16ms]
+2026-10-17T11:59:22.2807313Z {"case":"inherited override wins","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":126,"serverPid":126,"settled":true}
+2026-10-17T11:59:22.3123337Z (pass) Mac plist native permissions: inherited override wins [2108.64ms]
+2026-10-17T11:59:24.3884655Z {"case":"spaces and literal comma","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":159,"serverPid":159,"settled":true}
+2026-10-17T11:59:24.4197483Z (pass) Mac plist native permissions: spaces and literal comma [2107.40ms]
+2026-10-17T11:59:26.4973919Z {"case":"custom without HOME","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":192,"serverPid":192,"settled":true}
+2026-10-17T11:59:26.5298051Z (pass) Mac plist native permissions: custom without HOME [2110.05ms]
+2026-10-17T11:59:28.3075229Z (pass) Mac plist native permissions: missing home refuses startup [1777.65ms]
+2026-10-17T11:59:30.3926453Z {"case":"literal symlink alias","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":253,"serverPid":253,"settled":true}
+2026-10-17T11:59:30.4239263Z (pass) Mac plist native permissions: literal symlink alias [2116.42ms]
+2026-10-17T11:59:32.5056291Z {"case":"absent native directory permits entry","runtimeHash":"086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9","actualKernel":"linux","realSeatbelt":false,"taskPid":286,"serverPid":286,"settled":true}
+2026-10-17T11:59:32.5376184Z (pass) Mac plist native permissions: absent native directory permits entry [2113.72ms]
+2026-10-17T11:59:33.8252852Z (pass) Mac plist native permissions: missing managed runtime fails closed [1287.55ms]
+2026-10-17T11:59:35.1005244Z (pass) Mac plist native permissions: corrupt managed runtime fails closed [1275.26ms]
+2026-10-17T11:59:35.1005893Z 
+2026-10-17T11:59:35.1007100Z  11 pass
+2026-10-17T11:59:35.1011229Z  0 fail
+2026-10-17T11:59:35.1011712Z Ran 11 tests across 1 file. [21.47s]
+2026-10-17T11:59:35.1089023Z test:main: 1 files, 0 failures
+2026-10-17T11:59:35.1174561Z $ bun --no-env-file scripts/test-runner.ts vps ops/tests/first-bun-cutover.test.ts "--native-kv-binding={\"artifactDirectory\":\"/home/runner/work/_temp/uos-native-kv/artifact\",\"expectedProvenanceSha256\":\"4298e9605cc786d5d7f1462dc01e50550b157b6ee227848d30171b8c8e4658ca\",\"inputsManifest\":\"/home/runner/work/ai.ubq.fi/ai.ubq.fi/tools/native-kv/inputs.json\",\"buildReceipt\":{\"path\":\"/home/runner/work/_temp/uos-native-kv/artifact/native-kv.node\",\"sha256\":\"35b081c330a7c220698e6e7c4bbd883712b3074000f85a5650067754e27e220d\",\"provenancePath\":\"/home/runner/work/_temp/uos-native-kv/artifact/native-kv.provenance.json\",\"provenanceSha256\":\"4298e9605cc786d5d7f1462dc01e50550b157b6ee227848d30171b8c8e4658ca\",\"inputsSha256\":\"060218c18a617a642b72705df8d976047fd124a3f069517ee7bed6896c600033\",\"sourceSha256\":\"ab71a0516b6b2440f1f9a8bfde70199ac5e75c3c69816d68b3f80bc45285c899\",\"patchSha256\":\"f79d5356ddae5f1d5d8658671f9e842452e566240cb637d77c0458f58
+2026-10-17T11:59:35.1426347Z 
+2026-10-17T11:59:35.1426911Z ==> vps: ops/tests/first-bun-cutover.test.ts
+2026-10-17T11:59:35.1505333Z bun test v1.4.0 (34cbb9a40)
+2026-10-17T11:59:35.1529026Z 
+2026-10-17T11:59:35.1529258Z ops/tests/first-bun-cutover.test.ts:
+2026-10-17T11:59:35.1955132Z (pass) cutover protocol captures the live boundary before stop and requires preservation before conversion/start [0.48ms]
+2026-10-17T11:59:35.1965084Z (pass) every interrupted protocol phase preserves startup authority and never chooses stale recovery after possible Bun writes [1.09ms]
+2026-10-17T11:59:35.1969344Z (pass) cancellation completes recovery and unproved recovery never records accepted or restored [0.45ms]
+2026-10-17T11:59:35.1975288Z (pass) hosted proof requires shipping push identity, every real CI gate and an independently published archive digest [0.58ms]
+2026-10-17T11:59:35.1990926Z (pass) an unbound artifact cannot copy payloads or bypass mutable-root provenance [1.53ms]
+2026-10-17T11:59:35.2009891Z (pass) Sentinel contract rejects draft, mismatched inputs, absent denials, unsupported isolation and duplicate evidence [1.88ms]
+2026-10-17T11:59:35.2147859Z (pass) reader acceptance requires pinned private bytes and unchanged retained evidence, not the receipt's own claim [13.74ms]
+2026-10-17T11:59:35.2255843Z (pass) an explicit owner waiver verifies exact artifact and instruction bytes but never passes the accepted-reader parser [10.81ms]
+2026-10-17T11:59:35.2274161Z (pass) missing, ambiguous, legacy and unknown gate inputs fail before any stopping intent [1.83ms]
+2026-10-17T11:59:35.2408662Z (pass) owner waiver refuses expired, forged, cross-artifact, runtime and instruction bindings before stop [13.42ms]
+2026-10-17T11:59:35.2529441Z (pass) owner-waived kind and hash survive journal serialization and latest-state recovery ownership [12.06ms]
+2026-10-17T11:59:35.3643925Z (pass) relocated immutable operator imports its complete existing module closure [111.43ms]
+2026-10-17T11:59:35.3645092Z (pass) a global unlimited cgroup override cannot satisfy the cutover budget [0.18ms]
+2026-10-17T11:59:35.3821375Z (pass) stopped SQLite checkpoint retains all rows and rejects oversized values before conversion [17.56ms]
+2026-10-17T11:59:35.6554493Z (pass) database-scale hashing streams under a small measured RSS increase [273.24ms]
+2026-10-17T11:59:35.6556699Z (pass) effective typed unit command rejects a legacy override or extra startup command [0.33ms]
+2026-10-17T11:59:35.6584324Z (pass) effective drop-in bytes are pinned and execution/environment changes fail before startup [2.70ms]
+2026-10-17T11:59:35.6586834Z (pass) supervisor runtime resource updates can target only the exact reviewed task unit [0.29ms]
+2026-10-17T11:59:35.7115891Z (pass) stalled holder inspection is killed and reaped within its own deadline [52.81ms]
+2026-10-17T11:59:35.7143369Z (pass) forward link-before-receipt interruption preserves both copies and only trusts the unchanged stopped legacy source [2.74ms]
+2026-10-17T11:59:35.7156641Z (pass) capacity accounts for WAL bytes and checkpoint refuses a sidecar symlink before touching its target [1.31ms]
+2026-10-17T11:59:35.7180897Z (pass) baseline-left-live codec probes use private disk scratch and clean up on success and failure [2.44ms]
+2026-10-17T11:59:35.7213683Z (pass) prepared-only ExecStopPost verifies the still-live baseline and never stops it after preflight refusal [3.26ms]
+2026-10-17T11:59:35.7642215Z (pass) immutable release extraction under private umask keeps exact CI source modes and private manifests [42.82ms]
+2026-10-17T11:59:39.5412562Z (pass) a self-consistent existing candidate for the same Git SHA must still equal its exact accepted CI manifest [3776.98ms]
+2026-10-17T11:59:39.5413078Z 
+2026-10-17T11:59:39.5413152Z  25 pass
+2026-10-17T11:59:39.5413307Z  0 fail
+2026-10-17T11:59:39.5413480Z Ran 25 tests across 1 file. [4.39s]
+2026-10-17T11:59:39.5543356Z test:vps: 1 files, 0 failures
+2026-10-17T11:59:39.5617425Z $ bun --no-env-file scripts/test-runner.ts deploy-guards "--native-kv-binding={\"artifactDirectory\":\"/home/runner/work/_temp/uos-native-kv/artifact\",\"expectedProvenanceSha256\":\"4298e9605cc786d5d7f1462dc01e50550b157b6ee227848d30171b8c8e4658ca\",\"inputsManifest\":\"/home/runner/work/ai.ubq.fi/ai.ubq.fi/tools/native-kv/inputs.json\",\"buildReceipt\":{\"path\":\"/home/runner/work/_temp/uos-native-kv/artifact/native-kv.node\",\"sha256\":\"35b081c330a7c220698e6e7c4bbd883712b3074000f85a5650067754e27e220d\",\"provenancePath\":\"/home/runner/work/_temp/uos-native-kv/artifact/native-kv.provenance.json\",\"provenanceSha256\":\"4298e9605cc786d5d7f1462dc01e50550b157b6ee227848d30171b8c8e4658ca\",\"inputsSha256\":\"060218c18a617a642b72705df8d976047fd124a3f069517ee7bed6896c600033\",\"sourceSha256\":\"ab71a0516b6b2440f1f9a8bfde70199ac5e75c3c69816d68b3f80bc45285c899\",\"patchSha256\":\"f79d5356ddae5f1d5d8658671f9e842452e566240cb637d77c0458f58c89bf98\",\"workspacePatch
+2026-10-17T11:59:39.5860188Z 
+2026-10-17T11:59:39.5860649Z ==> deploy-guards: tests/vps-deploy-guards.test.ts
+2026-10-17T11:59:39.5935402Z bun test v1.4.0 (34cbb9a40)
+2026-10-17T11:59:39.5959928Z 
+2026-10-17T11:59:39.5960106Z tests/vps-deploy-guards.test.ts:
+2026-10-17T11:59:41.7153575Z {"fixture":"actual_launcher","profile":"current","sha":"3ad8009cdaa40d8e43789225d672f46d8f02acbf","oldSha":"b9c711a4261279dde24b455249e46e15bf775042","physical_ports":[39383,33437],"proxy_port":41755,"control_port":45823,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"94ddb36bd849a7358a2ea733fc20bd722b86df2c052d3ef8feeda36586b8e35b"}
+2026-10-17T11:59:52.2653701Z {"proof":"same_sha_actual_recovery","candidate":"3ad8009cdaa40d8e43789225d672f46d8f02acbf","previous":"b9c711a4261279dde24b455249e46e15bf775042","snapshot":"0ed3a2bb27673a88915ae82e087665f2f97361961d669f4cea0abf7b8a446e60","trace":["unit-exec /bin/sh /home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-W8JOtA/ops/launch-vps.sh","launcher-options {\"requested_port\":8001,\"physical_port\":39383,\"env_port\":\"8001\"}","proxy-observed {\"loaded_port\":39383,\"status\":200,\"body\":\"{\\\"release\\\":{\\\"git_sha\\\":\\\"b9c711a4261279dde24b455249e46e15bf775042\\\",\\\"deployment_id\\\":\\\"vps-b9c711a4261279dde24b455249e46e15bf775042\\\"}}\"}","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet
+2026-10-17T11:59:52.3212796Z (pass) VPS actual rollback and persistent/cleared same-SHA retry preserve immutable bytes [12675.49ms]
+2026-10-17T11:59:54.3665633Z {"fixture":"actual_launcher","profile":"current","sha":"409e9736f6bdc5779fc40f69b219ddfcd0d8b701","oldSha":"b172b478d60ec1d24a890fb57f067490b2d127c9","physical_ports":[46671,42741],"proxy_port":35437,"control_port":37113,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"79f4119a5f0d3c72a3e45f566ee78cca18b2f5a15438b45c9593115024c638ec"}
+2026-10-17T11:59:58.7576288Z 761 | });
+2026-10-17T11:59:58.7576864Z 762 | withLauncher("VPS same-SHA retry restores the previous release after an interrupted candidate-ready run", async (f, a) => {
+2026-10-17T11:59:58.7577495Z 763 |   await write(f.root, "stop-after-candidate-ready", "fault\n");
+2026-10-17T11:59:58.7577902Z 764 |   const interrupted = await runDeployFixture(f, a.options);
+2026-10-17T11:59:58.7578250Z 765 |   assert.notEqual(interrupted.code, 0);
+2026-10-17T11:59:58.7578677Z 766 |   assert.equal(await readlink(f.root + "/.data/current"), "releases/" + a.sha);
+2026-10-17T11:59:58.7579039Z                ^
+2026-10-17T11:59:58.7579267Z AssertionError: Expected values to be strictly equal:
+2026-10-17T11:59:58.7579790Z + actual - expected
+2026-10-17T11:59:58.7579955Z 
+2026-10-17T11:59:58.7580458Z + 'releases/b172b478d60ec1d24a890fb57f067490b2d127c9'
+2026-10-17T11:59:58.7580823Z - 'releases/409e9736f6bdc5779fc40f69b219ddfcd0d8b701'
+2026-10-17T11:59:58.7581076Z 
+2026-10-17T11:59:58.7581158Z  generatedMessage: true,
+2026-10-17T11:59:58.7581438Z      actual: "releases/b172b478d60ec1d24a890fb57f067490b2d127c9",
+2026-10-17T11:59:58.7581819Z    expected: "releases/409e9736f6bdc5779fc40f69b219ddfcd0d8b701",
+2026-10-17T11:59:58.7582134Z    operator: "strictEqual",
+2026-10-17T11:59:58.7582340Z        diff: "simple",
+2026-10-17T11:59:58.7582531Z        code: "ERR_ASSERTION"
+2026-10-17T11:59:58.7582677Z 
+2026-10-17T11:59:58.7582886Z       at /home/runner/work/ai.ubq.fi/ai.ubq.fi/tests/vps-deploy-guards.test.ts:766:10
+2026-10-17T11:59:58.7583611Z       at /home/runner/work/ai.ubq.fi/ai.ubq.fi/tests/vps-deploy-guards.test.ts:719:13
+2026-10-17T11:59:58.7584019Z       at processTicksAndRejections (native:7:39)
+2026-10-17T11:59:58.7584519Z (fail) VPS same-SHA retry restores the previous release after an interrupted candidate-ready run [6436.33ms]
+2026-10-17T12:00:00.0689327Z {"fixture":"actual_launcher","profile":"legacy-supported","sha":"f1de5e41e06b124ba73cc63ccb14233550862a4b","oldSha":"ece5ddd9301dd2d9c519a3cd1ff6848d401725af","physical_ports":[35977,38297],"proxy_port":43895,"control_port":33691,"launcher_hash":"043e36ae688bdcff5d6f8d78ef9f9830fbe27920fa2d0381fe3de638fdbda1cc","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"5b9262a4524511451635e7cb94c3029e9348594b163e9a49a07d196498d6d3e7"}
+2026-10-17T12:00:05.0890819Z (pass) VPS legacy same-SHA retry refuses cross-codec rollback after an interrupted candidate-ready run [6331.37ms]
+2026-10-17T12:00:07.1491793Z {"fixture":"actual_launcher","profile":"current","sha":"31c70687082a48d4dd7de5e5ccbf3308e4bbf8d1","oldSha":"f28479f9256591c92129808f4fb3fd571a7b3135","physical_ports":[40459,41175],"proxy_port":44221,"control_port":41525,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"6f435fe53d06fa262e674606aecc49c0adfb665759c4e80664b9587c89a6bb35"}
+2026-10-17T12:00:15.4808776Z {"proof":"post_ingress_retry","trace":["unit-exec /bin/sh /home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-p8P7yJ/ops/launch-vps.sh","launcher-options {\"requested_port\":8001,\"physical_port\":40459,\"env_port\":\"8001\"}","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","sudo -n systemctl show caddy -p MainPID --value","sudo -n nsenter -t 42 -m -- sudo -u caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile","git archive --format=tar --output=/home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-p8P7yJ/.data/releases/.staging-yffimv.tar f28479f9256591c92129808f4fb3fd571a7b3135","proxy-observed {\"loa
+2026-10-17T12:00:15.5407217Z (pass) VPS post-ingress failure retains candidate and retries without restart [10451.67ms]
+2026-10-17T12:00:17.6085781Z {"fixture":"actual_launcher","profile":"current","sha":"60950fa096dc71421d616a0a6d73026589e6eaaa","oldSha":"9861a6e034699a4e7f6f17518af64f8093cbbaa8","physical_ports":[41931,35099],"proxy_port":33083,"control_port":44615,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"e011a4641deb098c1b7ce6ca254064fd7fcae70966b67c99aee341cfb7772bb4"}
+2026-10-17T12:00:20.3463711Z {"proof":"daemon_refusal_prior_listener_untouched","exit_code":1,"trace":["unit-exec /bin/sh /home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-CYc4PD/ops/launch-vps.sh","launcher-options {\"requested_port\":8001,\"physical_port\":41931,\"env_port\":\"8001\"}","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","sudo -n systemctl show caddy -p MainPID --value","sudo -n nsenter -t 42 -m -- sudo -u caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile","git archive --format=tar --output=/home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-CYc4PD/.data/releases/.staging-HWO6vX.tar 9861a6e034699a4e7f6f17518af64
+2026-10-17T12:00:20.4048373Z (pass) VPS daemon-reload refusal preserves prior listener and issues no gateway restart (#264) [4864.08ms]
+2026-10-17T12:00:22.4645801Z {"fixture":"actual_launcher","profile":"unknown","sha":"bd12fb9dd16b3a2d758a0a951e37c75f9d884596","oldSha":"d1655e88107519b2c1271336f348a8d3fb667ba6","physical_ports":[36659,46379],"proxy_port":35253,"control_port":43181,"launcher_hash":"f61dc03492457c60600f038545f3dc93e43e0b3e027a10f2e027dc848c2d33e6","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"c5ad22b1e214e907dd4cef10ba5b4ae3803b5f0138a9e1b85d1150ffaed7c72a"}
+2026-10-17T12:00:23.2240275Z {"proof":"unsupported_predecessor_preserved","profile":"unknown","trace":["unit-exec /bin/sh /home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-ddBgCS/ops/launch-vps.sh","launcher-options {\"requested_port\":8001,\"physical_port\":36659,\"env_port\":\"8001\"}","proxy-observed {\"loaded_port\":36659,\"status\":200,\"body\":\"{\\\"release\\\":{\\\"git_sha\\\":\\\"d1655e88107519b2c1271336f348a8d3fb667ba6\\\",\\\"deployment_id\\\":\\\"vps-d1655e88107519b2c1271336f348a8d3fb667ba6\\\"}}\"}","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","sudo -n systemctl show caddy -p MainPID --value","sudo -n nsenter -t 42 -m -- sudo -u caddy caddy validate --config /etc/ca
+2026-10-17T12:00:23.2589546Z (pass) VPS refuses unsupported predecessor unknown before activation [2854.13ms]
+2026-10-17T12:00:25.2961130Z {"fixture":"actual_launcher","profile":"env-port","sha":"d690dbc4fbf230b9c384676691f8ea205c61e404","oldSha":"d5ce5c708552111c98d823a5e2fbd26322db2043","physical_ports":[37645,36697],"proxy_port":42283,"control_port":36027,"launcher_hash":"f29029234d55dea64c09726ee7341cfb1078ddf26425519c0700db4fa4cd0983","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"0d94bc0b4734095aa189f2a0365404d347157f386bbddc03913cec6aa5b07390"}
+2026-10-17T12:00:26.0622351Z {"proof":"unsupported_predecessor_preserved","profile":"env-port","trace":["unit-exec /bin/sh /home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-Q6Lkmx/ops/launch-vps.sh","launcher-options {\"requested_port\":8001,\"physical_port\":37645,\"env_port\":\"8001\"}","proxy-observed {\"loaded_port\":37645,\"status\":200,\"body\":\"{\\\"release\\\":{\\\"git_sha\\\":\\\"d5ce5c708552111c98d823a5e2fbd26322db2043\\\",\\\"deployment_id\\\":\\\"vps-d5ce5c708552111c98d823a5e2fbd26322db2043\\\"}}\"}","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","sudo -n systemctl show caddy -p MainPID --value","sudo -n nsenter -t 42 -m -- sudo -u caddy caddy validate --config /etc/c
+2026-10-17T12:00:26.0976319Z (pass) VPS refuses unsupported predecessor env-port before activation [2838.67ms]
+2026-10-17T12:00:27.3902380Z {"fixture":"actual_launcher","profile":"legacy","sha":"361bd0056ff8accb06539d55ce42b9db8e0644dc","oldSha":"6377a5e2074b8d6d34a7d540fde92e284828c5f7","physical_ports":[44723,43669],"proxy_port":38389,"control_port":43725,"launcher_hash":"fde18debbfe01ba17716d34d0e8de2415ec92de75b7d9e3804e4e5cdb627e8ea","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"c0fa334e5556dc557b47b9314a67b93514fa55f02c00d472a9b8070f302cca80"}
+2026-10-17T12:00:28.1430939Z {"proof":"unsupported_predecessor_preserved","profile":"legacy","trace":["unit-exec '/home/runner/.bun/bin/bun' --no-env-file --no-install '/home/runner/work/ai.ubq.fi/ai.ubq.fi/.cleanup-evidence/vps-deploy-guards-fixtures/case-7SCbuR/legacy-listener.ts'","proxy-observed {\"loaded_port\":44723,\"status\":200,\"body\":\"{\\\"release\\\":{\\\"git_sha\\\":\\\"6377a5e2074b8d6d34a7d540fde92e284828c5f7\\\",\\\"deployment_id\\\":\\\"vps-6377a5e2074b8d6d34a7d540fde92e284828c5f7\\\"}}\"}","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","git status --porcelain --untracked-files=no","git branch --show-current","git rev-parse HEAD","git rev-parse --verify --quiet refs/remotes/origin/development","sudo -n systemctl show caddy -p MainPID --value","sudo -n nsenter -t 42 -m -- sudo -u caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile","git ar
+2026-10-17T12:00:28.1787374Z (pass) VPS refuses unsupported predecessor legacy before activation [2081.06ms]
+2026-10-17T12:00:30.2206059Z {"fixture":"actual_launcher","profile":"current","sha":"e2c9715a2fd920bbb47dfafb27298577cd40d5c0","oldSha":"a1296a8c0cdbc5882104eca133b50f126745a535","physical_ports":[33543,44097],"proxy_port":38553,"control_port":44531,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"1704aac24f176c9d450774657743604f496dab88d59a948b37d43dfce233f3fa"}
+2026-10-17T12:00:30.3780496Z (pass) VPS prior listener survives archive-refused [2199.27ms]
+2026-10-17T12:00:32.4021086Z {"fixture":"actual_launcher","profile":"current","sha":"d28ab6ad1833f961ed01410d7cdd4ef5381835a2","oldSha":"9b2bea88e8597debdd71b6a746341037ba587735","physical_ports":[36971,37249],"proxy_port":37439,"control_port":35025,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"e310340ecdd503bafc86a7e1cad4029b7e6c9285b9c645487f236fe252e8567e"}
+2026-10-17T12:00:33.2085483Z (pass) VPS prior listener survives preparation-refused [2830.49ms]
+2026-10-17T12:00:35.2467102Z {"fixture":"actual_launcher","profile":"current","sha":"f6217c4b5dd7528ffa48e93cb62e1c0d68556c00","oldSha":"2b65b36eac5557abc79ec5cdab715e850f9b2ebe","physical_ports":[33013,40087],"proxy_port":33813,"control_port":32869,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"9076573868001fbb8ab02def39a42b75b49c9397169d9bac00cb4305c499ad7f"}
+2026-10-17T12:00:38.8588474Z (pass) VPS prior listener survives restart-refused [5650.28ms]
+2026-10-17T12:00:40.9462055Z {"fixture":"actual_launcher","profile":"current","sha":"b7d39d1b9c39f62df49a68fd7b88a3bbd0635b38","oldSha":"dfe4484bb5668a0c6c3be9de977e950c8bba143f","physical_ports":[37193,45093],"proxy_port":42315,"control_port":46503,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"0a0e9ed22c51d7ec2e47dc9844577caf73553329d5c24e77ee054b56fc9e6187"}
+2026-10-17T12:00:45.4757407Z (pass) VPS prior listener survives readiness-refused [6616.90ms]
+2026-10-17T12:00:47.5443878Z {"fixture":"actual_launcher","profile":"current","sha":"ba9253f418844d2772897016f6f51f2601e9cef2","oldSha":"a30cf6aa646dd7ce3d30ef01764543c5c84df8fc","physical_ports":[33359,37345],"proxy_port":43477,"control_port":34947,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"58adc29a82d1c1b33eea987e5016d158f3e4876a9e3d871af5d9d3bf7e2d0926"}
+2026-10-17T12:00:51.2878634Z (pass) VPS fixture readiness rejects a foreign listener on the mapped release port [5812.03ms]
+2026-10-17T12:00:53.3492379Z {"fixture":"actual_launcher","profile":"current","sha":"32e3ba0d962195d40a9631310dedd6909debdeb8","oldSha":"6d7c2773aaabe83aa39979207d3633ef708fadea","physical_ports":[36509,39373],"proxy_port":46231,"control_port":44981,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"7cf5cb8993a80ffebe4535212fa4eb303e5273c6f66a9017b2c32b289a35a0c1"}
+2026-10-17T12:00:57.9187628Z (pass) VPS rejects unsafe recovery no-receipt [6630.92ms]
+2026-10-17T12:00:59.9731273Z {"fixture":"actual_launcher","profile":"current","sha":"56f26e9407bfe7db9e27fcedee92928c0e5d9805","oldSha":"9e2c589f3fc69af28014e6e684b2dcdbf0894796","physical_ports":[32881,43623],"proxy_port":42023,"control_port":40697,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"0a424bf14e633b9224d217d855697ac8732c15aeadb9b8e9fc6baa445fe81619"}
+2026-10-17T12:01:04.5615135Z (pass) VPS rejects unsafe recovery malformed [6642.71ms]
+2026-10-17T12:01:06.6022406Z {"fixture":"actual_launcher","profile":"current","sha":"b9108a4b0091a6fb6776bffb2d631d71f944a5f8","oldSha":"ba1d889f437717ac36d005c44ba9eeb0be68d9c2","physical_ports":[46347,38495],"proxy_port":41599,"control_port":40085,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"6ae48f0adb8cc02bdfb5c645d9fb125ae863c34805c5a898248f8a86e88a5254"}
+2026-10-17T12:01:11.8713821Z (pass) VPS rejects unsafe recovery stale [7309.82ms]
+2026-10-17T12:01:13.9276596Z {"fixture":"actual_launcher","profile":"current","sha":"1541cc57245503af4d7ff0d77d8e8c409bae964e","oldSha":"b3ff0c246f091216969778bb12f727e8a6290ae9","physical_ports":[44077,40893],"proxy_port":36197,"control_port":38807,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"0a29ac73a0ce487291ba5e1549b87c5be91f727c6ac8c08e2c1d61fac922c67c"}
+2026-10-17T12:01:18.5599158Z (pass) VPS rejects unsafe recovery symlink [6688.57ms]
+2026-10-17T12:01:20.6037556Z {"fixture":"actual_launcher","profile":"current","sha":"1a27870e9cdd268c644466f42ecfd1f87502a43a","oldSha":"74a21b1ef920bda97633b2aca59530e5177c5f2b","physical_ports":[44971,35655],"proxy_port":42529,"control_port":32979,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"9671322f0245b8b35eded460b22da8e108a4608b44fdcc616aac60d3dc46c7d0"}
+2026-10-17T12:01:25.8298591Z (pass) VPS rejects unsafe recovery wrong-selector [7269.95ms]
+2026-10-17T12:01:27.8978185Z {"fixture":"actual_launcher","profile":"current","sha":"4df3dc5682261f54adfee3441e37046388f4eb88","oldSha":"1dab3ef7874a0d113721ad2c32a2c2e3fc617859","physical_ports":[32837,44995],"proxy_port":37755,"control_port":45443,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"a0fca0c2b85085b33b2dcd1edb4248f48e02e34146e0b5efb1d6817d8d8bee72"}
+2026-10-17T12:01:32.5387949Z (pass) VPS rejects unsafe recovery candidate-file [6708.86ms]
+2026-10-17T12:01:34.5910542Z {"fixture":"actual_launcher","profile":"current","sha":"c6bfed9b56b45b22a8c298604022e01836baf4d8","oldSha":"b8819f2cfb1844795ce373a194c429ea7b538161","physical_ports":[34711,38459],"proxy_port":36693,"control_port":33757,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"22eca38325acdf3062ac9c465b352412ca788dc00686247d34be584cb1af2bee"}
+2026-10-17T12:01:39.4659388Z (pass) VPS rejects unsafe recovery manifest [6927.18ms]
+2026-10-17T12:01:41.5021113Z {"fixture":"actual_launcher","profile":"current","sha":"53fd40658bb70a81149a8189122277d4444656db","oldSha":"7c52a12ae40020f44494c23220832371145d68a9","physical_ports":[34511,39251],"proxy_port":46073,"control_port":36333,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"d841133ac19c1c3d4f5c8800a475a52cf4293d04fdafa5ced730dd7cd65e7865"}
+2026-10-17T12:01:46.2035903Z (pass) VPS rejects unsafe recovery extra-file [6737.60ms]
+2026-10-17T12:01:48.2391919Z {"fixture":"actual_launcher","profile":"current","sha":"07500043f1461228e77ff157ed6eda6b1b360b65","oldSha":"f49a7f7667f8b58856092045112e7b57673cb8f4","physical_ports":[46303,37693],"proxy_port":36511,"control_port":37099,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"5baa342a458e2391cd55ffb2abb79a31652a2d4ee24e3a9e45202627b4c73689"}
+2026-10-17T12:01:52.8344710Z (pass) VPS rejects unsafe recovery candidate-symlink [6630.92ms]
+2026-10-17T12:01:54.8892869Z {"fixture":"actual_launcher","profile":"current","sha":"af6b57b7e8258435f12d261a52839b49cc4e352b","oldSha":"4daa42e83fa0867704977c0a33a0391dd6adbd7f","physical_ports":[38865,37701],"proxy_port":46285,"control_port":43203,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"8cd53d8959a5557405e08c5130cd0151da76aea3a88aaf5ed51cc5779f936c2b"}
+2026-10-17T12:01:59.4761235Z (pass) VPS rejects unsafe recovery manifest-symlink [6641.57ms]
+2026-10-17T12:02:01.5333244Z {"fixture":"actual_launcher","profile":"current","sha":"88729d2798dda143d12fdd4022e105a83b58ba1d","oldSha":"97f85c6d1e38501c1b9802fb97c8ab1cba990579","physical_ports":[39621,37591],"proxy_port":35691,"control_port":42479,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"5d964e4970a54d62fb2eb26059e2f3be7b80b7a702f91fb08bd9ff9d0ecb5f88"}
+2026-10-17T12:02:06.2144868Z (pass) VPS rejects unsafe recovery generated-identity [6738.32ms]
+2026-10-17T12:02:08.2479381Z {"fixture":"actual_launcher","profile":"current","sha":"bf0a05200f3b3be4c6f0b23515a05e10b0d541ce","oldSha":"c16086680fb22a3bd6a46d8b4bd3e31524bf2565","physical_ports":[46883,45817],"proxy_port":33979,"control_port":34003,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"08e484e543c739d3c2a56e90efdf970c66624737bc4cfe92011d510e94f09c3d"}
+2026-10-17T12:02:13.6411602Z (pass) VPS rejects unsafe recovery previous-file [7426.70ms]
+2026-10-17T12:02:15.6705038Z {"fixture":"actual_launcher","profile":"current","sha":"03cfd7ea5e4bc2f9f40a437f302fedf2d18eae6e","oldSha":"f4aecaca945095bfd7cf4756c3c7c139fd031b7b","physical_ports":[37517,44517],"proxy_port":32997,"control_port":46245,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"aa7e14dc4149d71685c0a61d9a363313d7ab12c3ea40c6602e1508b08c6d8422"}
+2026-10-17T12:02:21.4920843Z (pass) VPS selected immutable release retries without restart and refuses not-ready identity [7850.87ms]
+2026-10-17T12:02:21.6736133Z {"fixture":"actual_launcher","profile":"bootstrap","sha":"b234703655656e5b1abc5fff72b9ab67142b5bc5","oldSha":"3d53bbc038a781c55274f11179224493999847e6","physical_ports":[36575,36603],"proxy_port":36869,"control_port":44433,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"bbc30756b74185ab5161ff41c4a0ccea1f7451600d4456a25ca966b21ef9c613"}
+2026-10-17T12:02:27.3823424Z (pass) VPS first deployment keeps its restarted candidate selected and resumes reload and public verification for the same SHA (#764) [5890.18ms]
+2026-10-17T12:02:27.5609883Z {"fixture":"actual_launcher","profile":"bootstrap","sha":"369e4fbbf4fd504b6530c320fe6bbeda8bfedc93","oldSha":"112b4a666b37cc2298d6aa5d36cc54d17b38947d","physical_ports":[38251,37185],"proxy_port":40541,"control_port":41605,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"17cb8ab2e2188dbd0a3ec6ad488a80a7aa94456d149769a5a28c5e118b0877f3"}
+2026-10-17T12:02:33.0235993Z (pass) VPS first deployment restarts only its selected verified candidate on a same-SHA retry after a readiness fault (#764) [5641.26ms]
+2026-10-17T12:02:33.1955482Z {"fixture":"actual_launcher","profile":"bootstrap","sha":"208252dddedb299bcc385a0104642c85eeee7290","oldSha":"7e1d847df0487e6984d193e7315914db541901ee","physical_ports":[33127,39469],"proxy_port":33117,"control_port":38051,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"42e677c6b24ba99952bfe7b8f3efd21811282581f0b70913314e36f06ae66d03"}
+2026-10-17T12:02:37.0989885Z (pass) VPS first deployment clears its unstarted selector on daemon-reload refusal and retries the same SHA (#764) [4075.32ms]
+2026-10-17T12:02:37.2696000Z {"fixture":"actual_launcher","profile":"bootstrap","sha":"0e22d84bf48c0d78b76216aabd8ad21f52569fb0","oldSha":"99d28cb9740ee6f07aa81a83ab2c8e3678cc0c0c","physical_ports":[41441,42889],"proxy_port":37437,"control_port":34445,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"547ff623cefc793a6dac5a24ecfe3f8fc3476131683b13731d5050235c1f9e69"}
+2026-10-17T12:02:40.4209916Z (pass) VPS first deployment refuses a same-SHA retry once its restarted candidate is no longer selected (#764) [3322.05ms]
+2026-10-17T12:02:42.4715373Z {"fixture":"actual_launcher","profile":"current","sha":"03e7a9a6f8897e27c3fd6df15fcb7e77a626c437","oldSha":"924fec62ba5c22b254f32f06b2cbfd0578b7fa76","physical_ports":[36069,33685],"proxy_port":46573,"control_port":38833,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"707529a70158b057b2c6a50c6d121e5b14cc990d1600ae09a9f01ea1486bf7a7"}
+2026-10-17T12:02:46.1473638Z (pass) VPS ingress preflight preserves same-SHA retry on unreadable [5726.36ms]
+2026-10-17T12:02:48.1869323Z {"fixture":"actual_launcher","profile":"current","sha":"12e93394eab7f7ef75a4a03b7e8920362a9f981d","oldSha":"213039af11ceaed4630e3c0081904c125fb2b3e9","physical_ports":[42385,45853],"proxy_port":35709,"control_port":34815,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"6096841d9095f0bae8ee478aed6a73f2cf746ea45090baffa085f7277c633a9c"}
+2026-10-17T12:02:51.8901408Z (pass) VPS ingress preflight preserves same-SHA retry on no-caddy [5742.77ms]
+2026-10-17T12:02:53.9205586Z {"fixture":"actual_launcher","profile":"current","sha":"4739acec737b5bd41f0722b1121dc75ba06fb0de","oldSha":"5c766e69cca6f2e47d7738b265131eb9113208e2","physical_ports":[34631,33321],"proxy_port":41667,"control_port":38213,"launcher_hash":"6bf9f9ec060a15433b31b7325561b904e5205e49bf5a227ddd1e4643f08bd507","unit_hash":"d3ab2b0d56706f4965c25ef077bf93b27ae34d322cb0c474f3ad371f337432f3","bootstrap_hash":"d4b5553297a8fd1759c4bc4d63a095c0af23a0010fe94bde04c900b2e0c3996a"}
+2026-10-17T12:02:57.5900131Z (pass) VPS ingress preflight preserves same-SHA retry on invalid-caddy [5699.79ms]
+2026-10-17T12:02:57.6389172Z (pass) VPS deployment rejects a non-canonical root before any Git subprocess runs [48.95ms]
+2026-10-17T12:02:57.7093461Z (pass) VPS deployment guards reject a relocated fixture that is not on the development branch [70.42ms]
+2026-10-17T12:02:57.7825423Z (pass) VPS deployment guards reject a relocated HEAD that differs from origin/development [73.17ms]
+2026-10-17T12:02:57.8461647Z (pass) VPS deployment guards fail closed when the relocated fixture lacks the origin/development tracking ref [63.61ms]
+2026-10-17T12:02:57.9312673Z (pass) VPS deployment guards accept a relocated matching preflight and stop at the .data write boundary [85.08ms]
+2026-10-17T12:02:58.3119742Z (pass) VPS deployment revalidates under the deployment lock and rejects a candidate that changed while queued [380.69ms]
+2026-10-17T12:02:58.3120259Z 
+2026-10-17T12:02:58.3120337Z 1 tests failed:
+2026-10-17T12:02:58.3120783Z (fail) VPS same-SHA retry restores the previous release after an interrupted candidate-ready run [6436.33ms]
+2026-10-17T12:02:58.3121174Z 
+2026-10-17T12:02:58.3121246Z  38 pass
+2026-10-17T12:02:58.3121403Z  1 fail
+2026-10-17T12:02:58.3121583Z Ran 39 tests across 1 file. [198.72s]
+2026-10-17T12:02:58.3230828Z FAILED tests/vps-deploy-guards.test.ts (exit 1)
+2026-10-17T12:02:58.3231170Z test:deploy-guards: 1 files, 1 failures
+2026-10-17T12:02:58.3248756Z error: script "test:deploy-guards" exited with code 1
+2026-10-17T12:02:58.3268126Z ##[error]Process completed with exit code 1.
+2026-10-17T12:02:58.3418165Z Post job cleanup.
+2026-10-17T12:02:58.4101360Z [command]/usr/bin/git version
+2026-10-17T12:02:58.4134498Z git version 2.55.0

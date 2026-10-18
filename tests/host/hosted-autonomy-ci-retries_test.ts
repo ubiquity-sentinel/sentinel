@@ -540,7 +540,7 @@ Deno.test("hosted autonomy: a CI-parked head is re-admitted for correction only 
 function ciFleet(count: number) {
   const heads = Array.from(
     { length: count },
-    (_, index) => String(index + 1).repeat(40) as GitSha,
+    (_, index) => (index + 1).toString(16).repeat(40) as GitSha,
   );
   const records = heads.map((head, index) =>
     ciBlocked({
@@ -566,7 +566,7 @@ function ciFleet(count: number) {
 }
 
 Deno.test("hosted autonomy: the planner plans every CI correction candidate; the per-pass cap is the retry pass's", () => {
-  assert.equal(HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS, 4);
+  assert.equal(HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS, 12);
   const { heads, records, snapshot } = ciFleet(6);
   const plans = planHostedRetries(
     snapshot,
@@ -717,9 +717,12 @@ Deno.test("hosted autonomy: closed or unreadable pull requests never hold one of
 });
 
 Deno.test("hosted autonomy: one retry pass admits at most HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS verified CI corrections, green heads uncounted", async () => {
-  // Six open correction candidates and one head green again on its unchanged
-  // base. No re-run capability, so every flake re-run is settled.
-  const { heads, records, snapshot } = ciFleet(7);
+  // Two open correction candidates past the cap and one head green again on
+  // its unchanged base. No re-run capability, so every flake re-run is
+  // settled.
+  const CAP = HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS;
+  const GREEN = CAP + 2;
+  const { heads, records, snapshot } = ciFleet(CAP + 3);
   const { rig, github } = await makeRig("ci-correction-cap-open", {
     repair: snapshot,
     baseTip: BASE,
@@ -732,7 +735,7 @@ Deno.test("hosted autonomy: one retry pass admits at most HOSTED_AUTONOMY_CI_COR
       reads.push(number);
       return Promise.resolve(pullAt(number, heads[number - 70], true));
     },
-    hasAllChecksGreen: (sha: string) => Promise.resolve(sha === heads[6]),
+    hasAllChecksGreen: (sha: string) => Promise.resolve(sha === heads[GREEN]),
   });
   try {
     const { result, actions, after } = await withPinnedRuntime(() =>
@@ -740,23 +743,21 @@ Deno.test("hosted autonomy: one retry pass admits at most HOSTED_AUTONOMY_CI_COR
     );
     assert.equal(result?.status, "applied", JSON.stringify(actions));
     assert.deepEqual(actions, [
-      `retry:${records[4].id}:skipped:ci_correction_cap`,
-      `retry:${records[5].id}:skipped:ci_correction_cap`,
-      ...records.slice(0, 4).map((record) =>
+      `retry:${records[CAP].id}:skipped:ci_correction_cap`,
+      `retry:${records[CAP + 1].id}:skipped:ci_correction_cap`,
+      ...records.slice(0, CAP).map((record) =>
         `retry:${record.id}:grant=0:other:CI checks failed:`
       ),
-      `retry:${records[6].id}:grant=0:other:CI checks failed::green`,
+      `retry:${records[GREEN].id}:grant=0:other:CI checks failed::green`,
     ]);
     // A candidate past the cap costs no pull request read.
-    assert.deepEqual(reads, [70, 71, 72, 73, 76]);
+    assert.deepEqual(reads, [
+      ...Array.from({ length: CAP }, (_, index) => 70 + index),
+      70 + GREEN,
+    ]);
     assert.deepEqual(
       after.work.map((record) => record.nextStep),
-      [
-        ...Array(HOSTED_AUTONOMY_CI_CORRECTIONS_PER_PASS).fill("delivery"),
-        "blocked",
-        "blocked",
-        "delivery",
-      ],
+      [...Array(CAP).fill("delivery"), "blocked", "blocked", "delivery"],
     );
     assert.deepEqual(after.reservations, snapshot.reservations);
     // The next pass admits the two that waited.
@@ -764,7 +765,7 @@ Deno.test("hosted autonomy: one retry pass admits at most HOSTED_AUTONOMY_CI_COR
     assert.equal(next.result?.status, "applied");
     assert.deepEqual(
       next.after.work.map((record) => record.nextStep),
-      Array(7).fill("delivery"),
+      Array(CAP + 3).fill("delivery"),
     );
   } finally {
     await Deno.remove(rig.tmp, { recursive: true });

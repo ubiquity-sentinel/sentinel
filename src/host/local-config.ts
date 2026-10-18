@@ -93,6 +93,18 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       },
     },
     protectedPaths: [
+      "src/repair/model-port-notifications.ts",
+      "src/github/reviewer-retention.ts",
+      "src/host/review-owner-channel-event.ts",
+      "src/repair/codex-json-frame.ts",
+      "src/repair/codex-transport.ts",
+      "src/repair/model-port-settlement.ts",
+      "src/repair/base-satisfaction-marker.ts",
+      "src/repair/loop-base-satisfaction.ts",
+      "src/github/base-review-comments.ts",
+      "src/github/base-review-evidence.ts",
+      "src/github/base-review-service.ts",
+      "src/github/base-review-owner.ts",
       ".github/workflows/",
       "AGENTS.md",
       "MASTER-PLAN.md",
@@ -372,7 +384,14 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
     // 13 s of headroom and therefore not a real bound but a coin flip. The
     // 110-minute run deadline still fits two such sessions plus the reserved
     // validation and publication margin.
-    sessionBound: { maxDurationMs: 1_800_000, maxOutputChars: 4_000_000 },
+    // Streamed volume never ends a newly planned session. Keep the existing
+    // positive safe-integer wire field so R80 can parse plans and receipts;
+    // this value cannot be reached during the unchanged 30-minute deadline.
+    // The model port retains only bounded evidence, independent of this total.
+    sessionBound: {
+      maxDurationMs: 1_800_000,
+      maxOutputChars: Number.MAX_SAFE_INTEGER,
+    },
     retention: null,
     stabilityPolicy: null,
   });

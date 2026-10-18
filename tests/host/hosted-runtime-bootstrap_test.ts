@@ -12,6 +12,7 @@ Deno.test("hosted runtime: bootstrap-only real child empty stdin aggregate", asy
   });
   await Deno.chmod(root, 0o700);
   const gatewayRoot = await Deno.makeTempDir({
+    dir: root,
     prefix: "sentinel-bootstrap-only-gateway-",
   });
   await Deno.chmod(gatewayRoot, 0o700);
@@ -298,7 +299,7 @@ console.log(JSON.stringify({ kind: "bootstrap_fixture", result, modelCalls, http
     "--frozen",
     "--cached-only",
     `--config=${frozen}/deno.json`,
-    `--allow-read=${root},${gatewayRoot},/usr,/bin,/opt/node-lts/bin/node,${Deno.execPath()}`,
+    `--allow-read=${root},${gatewayRoot},/usr,/bin,${Deno.execPath()}`,
     `--allow-write=${root},${gatewayRoot}`,
     "--allow-run",
     "--allow-env=PATH,NODE_V8_COVERAGE",

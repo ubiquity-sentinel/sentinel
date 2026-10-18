@@ -1,12 +1,18 @@
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: cycle. */
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { createRunBounds, DEFAULT_STEP_LIMIT } from "./loop-bounds.ts";
+import { resumeBaseSatisfaction } from "./loop-base-satisfaction.ts";
 import { declaredOperationFits } from "./loop-eligibility.ts";
 import { pollIntake } from "./loop-intake.ts";
 import { bridgeLegacyLoss } from "./loop-legacy-loss.ts";
 import { createPostDrainContinuation } from "./loop-post-drain.ts";
 import { reconcileOrphanPublication } from "./loop-publication.ts";
+import {
+  type ReleaseResumeRunV1,
+  resumeDeferredRelease,
+} from "./loop-release.ts";
 import {
   recoverBlockedAlreadySatisfied,
   recoverBlockedMissingTaskReview,
@@ -51,6 +57,7 @@ export async function runRepairCycle(
   // bounds are deferred so that lower-ranked deterministic work still runs;
   // the run ends in the existing typed "margin" outcome when nothing remains.
   const deferred = new Set<string>();
+  const baseReviewAttempted = new Set<string>();
 
   // One run-local attempt per task and legacy-loss phase: a phase is never
   // proved twice in the same run, even after a state reload.
@@ -67,6 +74,8 @@ export async function runRepairCycle(
   const missingTaskReviewAttempted = new Set<string>();
   // One run-local re-observation per historical already-satisfied block.
   const alreadySatisfiedAttempted = new Set<string>();
+  // One release read per run, and one look per deferred release record.
+  const releaseResume: ReleaseResumeRunV1 = { attempted: new Set() };
   // Intake is polled exactly once per run. A deferred (cooldown or bound)
   // iteration must never re-poll the sources: subsequent loop iterations reuse
   // the run-local deferral tracking instead of repeating intake reads.
@@ -151,6 +160,21 @@ export async function runRepairCycle(
     if (tracking.steps >= stepLimit) {
       return { status: "step_limit", steps: tracking.steps };
     }
+
+    const baseReview = await resumeBaseSatisfaction(
+      deps,
+      context,
+      baseReviewAttempted,
+    );
+    if (baseReview?.kind === "state_error") {
+      return { status: "state_error", detail: baseReview.detail };
+    }
+    if (baseReview?.kind === "progress") {
+      didWork = true;
+      tracking.steps++;
+      continue;
+    }
+    if (baseReview?.kind === "deferred") continue;
 
     // Bounded pre-ranking legacy-loss bridge (optional capability): a proven
     // lost legacy candidate is committed as truthful missing_evidence BEFORE
@@ -245,6 +269,18 @@ export async function runRepairCycle(
       return { status: "state_error", detail: alreadySatisfied.detail };
     }
     if (alreadySatisfied?.kind === "progress") {
+      didWork = true;
+      tracking.steps++;
+      continue;
+    }
+
+    // A release deferred while the release path is disabled resumes once the
+    // release ref records its request; otherwise it costs nothing (JAM B12).
+    const resumed = await resumeDeferredRelease(deps, context, releaseResume);
+    if (resumed?.kind === "state_error") {
+      return { status: "state_error", detail: resumed.detail };
+    }
+    if (resumed?.kind === "progress") {
       didWork = true;
       tracking.steps++;
       continue;
@@ -353,6 +389,13 @@ export async function releaseReviewQuotaWait(
     attempted.add(id);
     const record = context.snapshot.work.find((work) => work.id === id);
     if (record === undefined) continue;
+    const queueGuard = await guardQueueOperation(
+      deps,
+      context,
+      record,
+      "resume",
+    );
+    if (queueGuard !== null) return queueGuard;
     // Release eligibility without erasing the submitted attempt's deadline.
     // A confirmed submission no longer has an intent, so this wait is its
     // only durable start anchor until observation settles or replaces it.

@@ -7,6 +7,11 @@ import type { ReleaseRequestV1 } from "../src/contracts/release.ts";
 import type { ReviewTaskStatementV1 } from "../src/contracts/review-receipt.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
+import { hostedDeliveryProofMatches } from "./hosted-autonomy-delivery-proof.ts";
+import {
+  type HostedQueueCustodyContext,
+  queueRecordProtected,
+} from "./hosted-autonomy-queue-context.ts";
 import { authorizingReceipt } from "./hosted-autonomy-delivery.ts";
 import { intentClosable } from "./hosted-autonomy-retries.ts";
 import {
@@ -93,7 +98,12 @@ export function planHostedClosures(
     );
     const delivered = isHostedSelf(record.repository)
       ? released.has(key)
-      : foreignMerged.has(key);
+      : hostedDeliveryProofMatches(
+        foreignMerged.get(key),
+        snapshot,
+        record,
+        tasks.get(record.id) ?? "unavailable",
+      );
     if (!delivered) continue;
     // Delivered evidence alone never closes a task: the SAME shared semantic
     // predicate that authorized the delivery must still authorize the closure
@@ -135,10 +145,13 @@ export function planHostedRetirements(
   snapshot: RepairStateSnapshotV1,
   closedIssues: ReadonlySet<string>,
   closedUnmerged: ReadonlySet<string> = new Set(),
+  custody?: HostedQueueCustodyContext,
 ): HostedClosurePlanV1[] {
   const plans: HostedClosurePlanV1[] = [];
   for (const record of snapshot.work) {
-    if (record.nextStep === "done") continue;
+    if (record.nextStep === "done" || queueRecordProtected(record, custody)) {
+      continue;
+    }
     if (
       record.nextStep === "blocked" &&
       record.intent?.kind === "candidate_preservation" &&
@@ -162,6 +175,14 @@ export function planHostedRetirements(
     // Only a definitively closed-unmerged pull proves the task can never
     // deliver; anything else leaves the record alone.
     if (!closedUnmerged.has(record.id)) continue;
+    // Already retired (this exact parking): planning it again would rewrite
+    // the same row every pass and take a retirement slot from a record that
+    // still needs one.
+    if (
+      record.nextStep === "blocked" && record.intent === null &&
+      record.blocker?.kind === "other" &&
+      record.blocker.message === HOSTED_AUTONOMY_RETIRED
+    ) continue;
     // Retirement clears the intent, so it must never take an unsettled
     // implementation intent away from the runtime's own uncertainty handler.
     // `intentClosable` is that same settled-intent rule; it is consulted only

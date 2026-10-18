@@ -13,6 +13,7 @@ import type {
   HostedAutonomyGitHubV1,
   HostedAutonomyPullV1,
 } from "./hosted-autonomy-types.ts";
+import type { HostedDeliveryProof } from "./hosted-autonomy-delivery-proof.ts";
 
 export interface HostedAutonomyScopeV1 {
   readonly repository: RepositoryIdentityV1;
@@ -100,7 +101,7 @@ export interface HostedAutonomyPassContextV1 {
   initialHead: string;
   releaseSnapshot: ReleaseStateSnapshotV1;
   closedIssues: Set<string>;
-  foreignMerged: Map<string, unknown>;
+  foreignMerged: Map<string, HostedDeliveryProof>;
   /** Reservations the dedicated matrix recoveries own (never disposed here). */
   dedicatedReservations: ReadonlySet<string>;
   /**

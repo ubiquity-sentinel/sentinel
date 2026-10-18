@@ -1,0 +1,40 @@
+﻿2026-10-16T21:16:03.6135967Z Current runner version: '2.337.0'
+2026-10-16T21:16:03.6169580Z ##[group]Runner Image Provisioner
+2026-10-16T21:16:03.6170664Z Hosted Compute Agent
+2026-10-16T21:16:04.6516427Z ##[group]Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+2026-10-16T21:16:04.6517995Z with:
+2026-10-16T21:16:04.6518620Z   fetch-depth: 0
+2026-10-16T21:16:04.6519229Z   repository: ubiquity/ai.ubq.fi
+2026-10-16T21:16:04.6523461Z   token: ***
+2026-10-16T21:16:04.6524047Z   ssh-strict: true
+2026-10-16T21:16:04.6524693Z   ssh-user: git
+2026-10-16T21:16:04.6525302Z   persist-credentials: true
+2026-10-16T21:16:04.6525905Z   clean: true
+2026-10-16T21:16:04.6526603Z   sparse-checkout-cone-mode: true
+2026-10-16T21:16:04.6527247Z   fetch-tags: false
+2026-10-16T21:16:04.6528185Z   show-progress: true
+2026-10-16T21:16:16.7152236Z ##[group]Run oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+2026-10-16T21:16:16.7152979Z with:
+2026-10-16T21:16:16.7153346Z   bun-version: 1.4.0
+2026-10-16T21:16:16.7153801Z   no-cache: false
+2026-10-16T21:16:16.7156462Z   token: ***
+2026-10-16T21:16:16.7157146Z ##[endgroup]
+2026-10-16T21:16:17.0039778Z Cache hit for: bun-2OR8eH8UFoswErRw1R8LaaEpodE=
+2026-10-16T21:16:17.7161819Z Received 35441105 of 35441105 (100.0%), 60.1 MBs/sec
+2026-10-16T21:16:17.8218211Z ##[group]Run bun --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile
+2026-10-16T21:16:17.8219047Z [36;1mbun --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile[0m
+2026-10-16T21:16:17.8272278Z shell: /usr/bin/bash -e {0}
+2026-10-16T21:16:17.8272627Z ##[endgroup]
+2026-10-16T21:16:17.8385552Z bun install v1.4.0 (34cbb9a40)
+2026-10-16T21:16:17.8394151Z Resolving dependencies
+2026-10-16T21:16:18.2440646Z ##[group]Run bun --no-env-file run check
+2026-10-16T21:16:18.2441013Z [36;1mbun --no-env-file run check[0m
+2026-10-16T21:16:18.2487644Z shell: /usr/bin/bash -e {0}
+2026-10-16T21:16:18.2487945Z ##[endgroup]
+2026-10-16T21:16:18.2572381Z $ bun --no-env-file --no-install scripts/patch-bun-types.ts && bun --no-env-file node_modules/typescript/bin/tsc --noEmit --project tsconfig.json
+2026-10-16T21:16:38.7233792Z tests/provider-selection.test.ts(654,36): error TS2345: Argument of type 'SelectionKv' is not assignable to parameter of type 'Kv'.
+2026-10-16T21:16:38.7263089Z   Type 'SelectionKv' is missing the following properties from type 'Kv': getMany, delete, list, enqueue, and 4 more.
+2026-10-16T21:16:39.7084865Z ##[error]Process completed with exit code 2.
+2026-10-16T21:16:39.7262181Z Post job cleanup.
+2026-10-16T21:16:39.7953419Z [command]/usr/bin/git version
+2026-10-16T21:16:39.7987498Z git version 2.55.0

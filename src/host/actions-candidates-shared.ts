@@ -138,7 +138,7 @@ export interface ActionsCandidatePreserverInputV1 {
   /** Trusted API base for tests; production uses the public API. */
   apiBaseUrl?: string;
   /** THE same host port instance: authenticated readRef + create-only push. */
-  port: Pick<GitHubPort, "readRef" | "pushHead">;
+  port: Pick<GitHubPort, "readRef" | "pushHead" | "nativeQueue">;
   /** Trusted configured protected paths (from the real repository config). */
   protectedPaths: readonly string[];
   /**

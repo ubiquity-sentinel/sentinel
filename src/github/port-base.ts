@@ -1,3 +1,8 @@
+import {
+  isNativeQueueTarget,
+  type NativeQueueGuardV1,
+  type QueueEffectRequest,
+} from "./native-queue-guard.ts";
 // port base.
 
 import type { GitSha } from "../contracts/brands.ts";
@@ -7,6 +12,7 @@ import type {
   CandidatePreservationRequestV1,
   Clock,
   GitHubBranchProtectionsV1,
+  GitHubCheckSuitesV1,
   GitHubChecksV1,
   GitHubCooldownGateV1,
   GitHubRefV1,
@@ -42,6 +48,7 @@ import {
 } from "./port-contracts.ts";
 
 export abstract class GitHubPortBase {
+  readonly nativeQueue?: NativeQueueGuardV1;
   protected readonly selfMergeEnabled: boolean;
   /**
    * Exact trusted review publisher identity configured for this port. The
@@ -62,6 +69,7 @@ export abstract class GitHubPortBase {
   protected readonly cooldownGate: GitHubCooldownGateV1;
 
   constructor(options: GitHubPortOptionsV1) {
+    this.nativeQueue = options.nativeQueue;
     this.selfMergeEnabled = options.selfMergeEnabled === true &&
       options.repository.owner === "ubiquity" &&
       options.repository.name === "sentinel" &&
@@ -98,6 +106,26 @@ export abstract class GitHubPortBase {
       includeIssueRelations: options.includeIssueRelations,
       requestDeadlineMs: options.requestDeadlineMs,
     });
+  }
+
+  protected async queueEffect(
+    input: Omit<QueueEffectRequest, "deadline">,
+  ): Promise<PortResultV1<void>> {
+    if (!isNativeQueueTarget(this.repository)) return portOk(undefined);
+    if (this.nativeQueue === undefined) {
+      return portError(
+        "unavailable",
+        "native queue custody capability missing",
+      );
+    }
+    const decision = await this.nativeQueue.inspectEffect({
+      ...input,
+      deadline: this.clock.now() + 30_000,
+    });
+    return decision.status === "allow" ? portOk(undefined) : portError(
+      "unavailable",
+      `native queue custody hold: ${decision.reason}`,
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -141,6 +169,10 @@ export abstract class GitHubPortBase {
 
   readChecks(head: GitSha): Promise<PortResultV1<GitHubChecksV1>> {
     return this.client.readChecks(head);
+  }
+
+  readCheckSuites(head: GitSha): Promise<PortResultV1<GitHubCheckSuitesV1>> {
+    return this.client.readCheckSuites(head);
   }
 
   readProtections(

@@ -231,7 +231,8 @@ Deno.test(
       `base refresh failed 3 consecutive times: auth_failed ${detail}`,
     );
     assert.equal(blocked.intent, null);
-    assert.equal(blocked.target.pr, null);
+    // The terminal block keeps the still-open PR bound (JAM B11).
+    assert.equal(blocked.target.pr, 7);
     // The launcher's credential-expiry rule re-admits only the exact legacy
     // expiry messages; a permission refusal stays a visible terminal block.
     const denials: string[] = [];
@@ -244,13 +245,14 @@ Deno.test(
     assert.deepEqual(candidates, []);
     assert.deepEqual(denials, []);
     // The same record under the exact legacy (generation <= 76) expiry
-    // message is the class the launcher does re-admit, so the refusal above
-    // is decided by the message alone.
+    // message, in the legacy detached shape, is the class the launcher does
+    // re-admit, so the refusal above is decided by the message alone.
     const legacy = {
       ...last,
       sequence: last.sequence + 1,
       work: [{
         ...blocked,
+        target: { ...blocked.target, pr: null },
         blocker: {
           kind: "other" as const,
           message:

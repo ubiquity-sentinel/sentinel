@@ -10,6 +10,17 @@ import type {
   ReviewOwnerCustodyV1,
   ReviewOwnerRegistrationV1,
 } from "../github/review-owner-evidence.ts";
+import {
+  parseBaseReviewOwnerArm,
+  parseBaseReviewOwnerRegistration,
+  parseBaseReviewOwnerSettled,
+} from "../github/base-review-owner.ts";
+import { parseReviewChannelNotification } from "./review-owner-channel-event.ts";
+import type {
+  BaseReviewOwnerArmV1,
+  BaseReviewOwnerCustodyV1,
+  BaseReviewOwnerRegistrationV1,
+} from "../github/base-review-owner.ts";
 
 export interface ReviewOwnerChannelDescriptorV1 {
   version: "v1";
@@ -17,7 +28,10 @@ export interface ReviewOwnerChannelDescriptorV1 {
   ownerRunId: string;
 }
 
-export const REVIEW_CHANNEL_BOUND = 4 * 1024 * 1024;
+// The transport's projected envelope is at most 4 Mi UTF-16 code units. Its
+// UTF-8 serialization may need three bytes per unit, plus this private wrapper.
+export const REVIEW_CHANNEL_BOUND = 16 * 1024 * 1024;
+const EVENT_WINDOW = 256;
 
 /** Bound for one owner frame to become visible: a response or an event gap. */
 export const REVIEW_CHANNEL_DEADLINE_MS = 20_000;
@@ -54,7 +68,8 @@ export async function readReviewChannelFile(path: string): Promise<unknown> {
 }
 
 /** One bounded RPC client; no executable, PID, credentials or model route is sent. */
-export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
+export class ReviewOwnerChannelClient
+  implements ReviewOwnerCustodyV1, BaseReviewOwnerCustodyV1 {
   private readonly watcher: Deno.FsWatcher;
   private readonly pending = new Map<
     string,
@@ -65,7 +80,12 @@ export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
     }
   >();
   private readonly sessions = new Map<string, BrokeredReviewSession>();
-  private readonly seen = new Set<string>();
+  private readonly fences = new Set<{
+    through: number;
+    resolve(): void;
+    reject(error: Error): void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
   private readonly task: Promise<void>;
   private stopped = false;
   private faulted = false;
@@ -95,6 +115,11 @@ export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
   private gapDelay = REVIEW_CHANNEL_GAP_RESCAN_MS;
   private gapTimer: ReturnType<typeof setTimeout> | null = null;
   private scanTail: Promise<void> = Promise.resolve();
+  private eventTask: Promise<void> | null = null;
+  private stopEvents!: () => void;
+  private readonly eventsStopped = new Promise<void>((resolve) => {
+    this.stopEvents = resolve;
+  });
 
   constructor(
     readonly descriptor: ReviewOwnerChannelDescriptorV1,
@@ -122,6 +147,23 @@ export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
 
   async settled(input: ReviewOwnerRegistrationV1): Promise<void> {
     await this.call("finalized", parseReviewOwnerRegistration(input));
+  }
+
+  async registerBaseReview(
+    input: BaseReviewOwnerRegistrationV1,
+  ): Promise<void> {
+    await this.call(
+      "registerBaseReview",
+      parseBaseReviewOwnerRegistration(input),
+    );
+  }
+
+  async armBaseReview(input: BaseReviewOwnerArmV1): Promise<void> {
+    await this.call("armBaseReview", parseBaseReviewOwnerArm(input));
+  }
+
+  async settledBaseReview(input: { requestId: string }): Promise<void> {
+    await this.call("settledBaseReview", parseBaseReviewOwnerSettled(input));
   }
 
   openSession(
@@ -178,6 +220,7 @@ export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
 
   async close(): Promise<void> {
     this.stopped = true;
+    this.stopEvents();
     this.clearGapTimer();
     this.watcher.close();
     for (const entry of this.pending.values()) {
@@ -185,14 +228,65 @@ export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
       entry.reject(new Error("review custody channel closed"));
     }
     this.pending.clear();
+    this.settleFences();
     await this.task;
     await this.scanTail;
+    await this.eventTask;
+  }
+
+  /** Registration wakes disk-backed events without retaining their payloads. */
+  wakeEvents(): void {
+    const wake = () => this.scan().catch(() => this.fault());
+    if (this.eventTask !== null) this.eventTask.finally(wake).catch(() => {});
+    else void wake();
+  }
+
+  /** Close cannot settle before every event emitted by the owned process drains. */
+  waitForEvents(through: unknown): Promise<void> {
+    if (!Number.isSafeInteger(through) || (through as number) < 0) {
+      return Promise.reject(
+        new Error("review custody event fence unavailable"),
+      );
+    }
+    if (this.stopped || this.faulted) {
+      return Promise.reject(new Error("review custody channel unavailable"));
+    }
+    if (this.nextEvent > (through as number)) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const fence = {
+        through: through as number,
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          this.fences.delete(fence);
+          reject(new Error("review custody event fence deadline reached"));
+        }, REVIEW_CHANNEL_DEADLINE_MS),
+      };
+      this.fences.add(fence);
+      this.wakeEvents();
+    });
+  }
+
+  private settleFences(): void {
+    for (const fence of this.fences) {
+      if (this.stopped || this.faulted) {
+        this.fences.delete(fence);
+        clearTimeout(fence.timer);
+        fence.reject(new Error("review custody channel unavailable"));
+      } else if (this.nextEvent > fence.through) {
+        this.fences.delete(fence);
+        clearTimeout(fence.timer);
+        fence.resolve();
+      }
+    }
   }
 
   /** Existing unavailable path: pending calls fail and nothing more dispatches. */
   private fault(): void {
     this.faulted = true;
+    this.stopEvents();
     this.clearGapTimer();
+    this.settleFences();
     for (const entry of this.pending.values()) {
       entry.reject(new Error("review custody channel unavailable"));
     }
@@ -221,7 +315,6 @@ export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
     const directory = this.descriptor.directory;
     const listedAt = performance.now();
     const responses: string[] = [];
-    const fresh: { listed: number }[] = [];
     let highest = 0;
     for await (const file of Deno.readDir(directory)) {
       const event = EVENT_FRAME.exec(file.name);
@@ -230,37 +323,52 @@ export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
         if (counter < this.nextEvent) continue;
         const held = this.heldEvents.get(counter);
         if (held === undefined) {
+          if (this.heldEvents.size >= EVENT_WINDOW) {
+            const last = Math.max(...this.heldEvents.keys());
+            if (counter > last) continue;
+            this.heldEvents.delete(last);
+          }
           const frame = { name: file.name, listed: Number.POSITIVE_INFINITY };
           this.heldEvents.set(counter, frame);
-          fresh.push(frame);
         } else if (held.name !== file.name) {
           throw new Error("review custody event sequence contradictory");
         }
         highest = Math.max(highest, counter);
-      } else if (RESPONSE_FRAME.test(file.name) && !this.seen.has(file.name)) {
+      } else if (RESPONSE_FRAME.test(file.name)) {
         responses.push(file.name);
       }
     }
     const listedUntil = performance.now();
-    for (const frame of fresh) frame.listed = listedUntil;
-    await this.dispatchEvents();
+    for (const frame of this.heldEvents.values()) {
+      if (!Number.isFinite(frame.listed)) frame.listed = listedUntil;
+    }
+    highest = this.heldEvents.size > 0
+      ? Math.max(...this.heldEvents.keys())
+      : 0;
     const last = this.holes.at(-1);
     if (
       highest >= this.nextEvent && (last === undefined || highest > last.above)
     ) {
       this.holes.push({ above: highest, since: listedUntil });
     }
-    await this.skipMissingFrames(listedAt);
-    this.previousListing = listedAt;
+    // Responses are independent from the event consumer: a callback or handler
+    // registration may itself depend on initialize/thread/start returning.
     responses.sort();
     for (const name of responses) {
-      this.seen.add(name);
-      const raw = await readReviewChannelFile(
-        directory + "/" + name,
-      ) as Record<string, unknown>;
+      let raw: Record<string, unknown>;
+      try {
+        raw = await readReviewChannelFile(directory + "/" + name) as Record<
+          string,
+          unknown
+        >;
+      } catch (error) {
+        if (error instanceof Deno.errors.NotFound) continue;
+        throw error;
+      }
       if (typeof raw.id !== "string") continue;
       const entry = this.pending.get(raw.id);
       if (!entry) continue;
+      await Deno.remove(directory + "/" + name);
       this.pending.delete(raw.id);
       clearTimeout(entry.timer);
       if (raw.error === true) {
@@ -272,27 +380,61 @@ export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
         );
       } else entry.resolve(raw.result);
     }
+    this.skipMissingFrames(listedAt);
+    this.previousListing = listedAt;
+    this.startEvents();
     this.watchGap(listedAt);
   }
 
+  private startEvents(): void {
+    if (this.eventTask !== null || this.stopped || this.faulted) return;
+    this.eventTask = this.dispatchEvents().catch(() => this.fault()).finally(
+      () => {
+        this.eventTask = null;
+      },
+    );
+  }
+
   private async dispatchEvents(): Promise<void> {
+    // No registered recipient: leave every payload in the private disk spool.
+    if (![...this.sessions.values()].some((session) => session.ready())) return;
+    let delivered = false;
     for (
       let frame = this.heldEvents.get(this.nextEvent);
       frame !== undefined;
       frame = this.heldEvents.get(this.nextEvent)
     ) {
-      this.heldEvents.delete(this.nextEvent);
-      this.nextEvent++;
-      this.headArrival = Math.max(this.headArrival, frame.listed);
+      if (this.stopped || this.faulted) return;
       const raw = await readReviewChannelFile(
         this.descriptor.directory + "/" + frame.name,
       ) as Record<string, unknown>;
       if (typeof raw.requestId === "string") {
-        this.sessions.get(raw.requestId)?.event(raw);
+        const session = this.sessions.get(raw.requestId);
+        if (session !== undefined) {
+          if (!session.ready(raw.type)) break;
+          await Promise.race([
+            session.event(raw, this.nextEvent),
+            this.eventsStopped,
+          ]);
+          if (this.stopped || this.faulted) return;
+        }
       }
+      this.heldEvents.delete(this.nextEvent);
+      this.nextEvent++;
+      this.settleFences();
+      this.headArrival = Math.max(this.headArrival, frame.listed);
+      while (this.holes.length > 0 && this.holes[0]!.above <= this.nextEvent) {
+        this.holes.shift();
+      }
+      await Deno.remove(this.descriptor.directory + "/" + frame.name);
+      delivered = true;
     }
     while (this.holes.length > 0 && this.holes[0]!.above <= this.nextEvent) {
       this.holes.shift();
+    }
+    if (delivered && !this.stopped && !this.faulted) {
+      // Refill only the bounded filename window; payloads remain on disk.
+      queueMicrotask(() => this.wakeEvents());
     }
   }
 
@@ -327,11 +469,12 @@ export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
    * counter of 401 would read as unauthorized). Past the line cap, one count
    * line closes the skip run that first passed it.
    */
-  private async skipMissingFrames(listedAt: number): Promise<void> {
+  private skipMissingFrames(listedAt: number): void {
     const before = this.skipped;
     for (
       let hole = this.holes[0];
       !this.stopped && this.heldEvents.size > 0 && hole !== undefined &&
+      !this.heldEvents.has(this.nextEvent) && this.eventTask === null &&
       this.previousListing - this.gapClock(hole) >= this.gapDeadlineMs;
       hole = this.holes[0]
     ) {
@@ -344,7 +487,8 @@ export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
         }));
       }
       this.nextEvent++;
-      await this.dispatchEvents();
+      this.settleFences();
+      if (this.heldEvents.has(this.nextEvent)) this.startEvents();
     }
     if (before <= MAX_SKIP_DIAGNOSTICS && this.skipped > MAX_SKIP_DIAGNOSTICS) {
       console.log(JSON.stringify({
@@ -364,7 +508,10 @@ export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
   private watchGap(listedAt: number): void {
     if (this.stopped || this.faulted) return;
     const hole = this.holes[0];
-    if (this.heldEvents.size === 0 || hole === undefined) {
+    if (
+      this.heldEvents.size === 0 || hole === undefined ||
+      this.heldEvents.has(this.nextEvent)
+    ) {
       this.gapHead = 0;
       this.clearGapTimer();
       return;
@@ -389,10 +536,14 @@ export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
 
 class BrokeredReviewSession implements CodexSessionV1 {
   private opened: Promise<unknown> | null = null;
-  private notification: ((event: CodexServerNotificationV1) => void) | null =
-    null;
-  private serverRequest: ((event: CodexServerRequestV1) => void) | null = null;
-  private readonly backlog: Record<string, unknown>[] = [];
+  private notification:
+    | ((event: CodexServerNotificationV1) => void | Promise<void>)
+    | null = null;
+  private serverRequest:
+    | ((event: CodexServerRequestV1) => void | Promise<void>)
+    | null = null;
+  private closed = false;
+  private lastObservedEvent = 0;
   private settled = false;
   private closePromise: Promise<void> | null = null;
   private notificationTail: Promise<unknown> = Promise.resolve();
@@ -430,16 +581,22 @@ class BrokeredReviewSession implements CodexSessionV1 {
     );
     this.notificationTail.catch(() => {});
   }
-  onNotification(handler: (event: CodexServerNotificationV1) => void): void {
+  onNotification(
+    handler: (event: CodexServerNotificationV1) => void | Promise<void>,
+  ): void {
     this.notification = handler;
-    this.flush();
+    this.client.wakeEvents();
   }
-  onServerRequest(handler: (event: CodexServerRequestV1) => void): void {
+  onServerRequest(
+    handler: (event: CodexServerRequestV1) => void | Promise<void>,
+  ): void {
     this.serverRequest = handler;
-    this.flush();
+    this.client.wakeEvents();
   }
   close(): Promise<void> {
     this.closePromise ??= (async () => {
+      this.closed = true;
+      this.client.wakeEvents();
       if (this.opened === null) {
         this.settled = true;
         return;
@@ -447,8 +604,16 @@ class BrokeredReviewSession implements CodexSessionV1 {
       await this.opened;
       const result = await this.client.call("close", {
         requestId: this.identity.requestId,
-      }) as { settled?: unknown };
+      }) as { settled?: unknown; eventThrough?: unknown; faulted?: unknown };
       this.settled = result.settled === true;
+      if (result.faulted !== false) {
+        throw new Error("review custody owner evidence unavailable");
+      }
+      if (
+        !Number.isSafeInteger(result.eventThrough) ||
+        (result.eventThrough as number) < this.lastObservedEvent
+      ) throw new Error("review custody event fence moved backward");
+      await this.client.waitForEvents(result.eventThrough);
       if (!this.settled) {
         throw new Error("review custody session remains unsettled");
       }
@@ -458,22 +623,20 @@ class BrokeredReviewSession implements CodexSessionV1 {
   isSettled(): boolean {
     return this.settled;
   }
-  event(raw: Record<string, unknown>): void {
-    this.backlog.push(raw);
-    this.flush();
+  ready(type?: unknown): boolean {
+    if (this.closed) return true;
+    return type === "notification"
+      ? this.notification !== null
+      : type === "serverRequest"
+      ? this.serverRequest !== null
+      : this.notification !== null || this.serverRequest !== null;
   }
-  private flush(): void {
-    while (this.backlog.length > 0) {
-      const event = this.backlog[0]!;
-      if (event.type === "notification") {
-        if (this.notification === null) return;
-        this.backlog.shift();
-        this.notification(event.event as CodexServerNotificationV1);
-      } else {
-        if (this.serverRequest === null) return;
-        this.backlog.shift();
-        this.serverRequest(event.event as CodexServerRequestV1);
-      }
-    }
+  async event(raw: Record<string, unknown>, counter: number): Promise<void> {
+    this.lastObservedEvent = counter;
+    if (raw.type === "notification") {
+      await this.notification?.(parseReviewChannelNotification(raw.event));
+    } else if (raw.type === "serverRequest") {
+      await this.serverRequest?.(raw.event as CodexServerRequestV1);
+    } else throw new Error("review custody event type unavailable");
   }
 }

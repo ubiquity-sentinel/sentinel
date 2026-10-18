@@ -178,6 +178,21 @@ export interface ModelRunReceiptV1 {
   error: string | null;
 }
 
+/**
+ * Per-start inputs the trusted host hands the model port beside the request.
+ * They are never persisted, never part of the request digest or a receipt,
+ * and an older runtime that ignores them still runs the same request.
+ */
+export interface ModelRunOptionsV1 {
+  /**
+   * Rendered CI failure evidence for a CI correction (generation 81): a
+   * trusted header and a nonce-fenced block of UNTRUSTED CI output, collected
+   * by the host with a read-only credential the model never receives
+   * (`src/repair/ci-evidence-render.ts`).
+   */
+  untrustedCiEvidence?: string;
+}
+
 export interface ImplementationPort {
   /**
    * Route-selected implementation model id this port is configured with. The
@@ -190,5 +205,6 @@ export interface ImplementationPort {
   readonly modelId?: string;
   runModel(
     request: ModelRunRequestV1,
+    options?: ModelRunOptionsV1,
   ): Promise<PortResultV1<ModelRunReceiptV1>>;
 }

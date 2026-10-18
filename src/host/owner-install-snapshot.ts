@@ -21,6 +21,10 @@ import type {
 } from "./owner-install-types.ts";
 import { planOwnerDevelopmentInstall } from "./owner-install-plan.ts";
 import {
+  allowsQueueOwnerInstallMove,
+  type QueueRuntimeCapability,
+} from "./queue-runtime-capability.ts";
+import {
   MAX_COMMIT_MESSAGE_CHARS,
   sha256HexText,
   STATIC_PLAN,
@@ -39,7 +43,12 @@ export function buildOwnerDevelopmentInstallSnapshot(
   now: number,
   recovery?: OwnerMatrixRecoveryEvidenceV1,
   startup?: OwnerStartupRecoveryAuthorityV1,
+  /** Trusted in-process fixture only; production defaults to reviewed source. */
+  capability?: QueueRuntimeCapability,
 ): ReleaseStateSnapshotV1 {
+  if (!allowsQueueOwnerInstallMove(move, capability)) {
+    throw new Error(STATIC_PLAN);
+  }
   const parsed = tryParse(parseReleaseStateSnapshotV1, snapshot);
   if (!parsed.ok || !isGitSha(head)) throw new Error(STATIC_PLAN);
   if (!Number.isSafeInteger(now) || now < 0) throw new Error(STATIC_PLAN);
@@ -51,7 +60,7 @@ export function buildOwnerDevelopmentInstallSnapshot(
   const binding = recovery?.binding ?? CLOSED_C_WAVE;
   const recoveryPlan = recovery === undefined
     ? undefined
-    : planOwnerDevelopmentInstall(state, now, recovery);
+    : planOwnerDevelopmentInstall(state, now, recovery, undefined, capability);
   const heldMatrixRollback = recovery !== undefined &&
     recovery.releaseHead === head &&
     move.action === "rollback" && move.priorRevision === recovery.candidate &&
@@ -72,7 +81,13 @@ export function buildOwnerDevelopmentInstallSnapshot(
     throw new Error(STATIC_PLAN);
   }
   if (startup !== undefined) {
-    const intended = planOwnerDevelopmentInstall(state, now, recovery, startup);
+    const intended = planOwnerDevelopmentInstall(
+      state,
+      now,
+      recovery,
+      startup,
+      capability,
+    );
     if (
       startup.releaseHead !== head ||
       (intended.status !== "install" && intended.status !== "rollback") ||

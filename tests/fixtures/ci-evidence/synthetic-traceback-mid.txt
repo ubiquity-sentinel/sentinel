@@ -1,0 +1,139 @@
+2026-10-17T10:00:00.0000000Z ﻿Current runner version: '2.337.0'
+2026-10-17T10:00:01.0007919Z ##[group]Runner Image Provisioner
+2026-10-17T10:00:02.0015838Z Hosted Compute Agent
+2026-10-17T10:00:03.0023757Z ##[endgroup]
+2026-10-17T10:00:04.0031676Z ##[group]Run actions/checkout@v4
+2026-10-17T10:00:05.0039595Z with:
+2026-10-17T10:00:06.0047514Z   repository: example/project
+2026-10-17T10:00:07.0055433Z   token: ***
+2026-10-17T10:00:08.0063352Z ##[endgroup]
+2026-10-17T10:00:09.0071271Z Syncing repository: example/project
+2026-10-17T10:00:10.0079190Z [command]/usr/bin/git version
+2026-10-17T10:00:11.0087109Z git version 2.55.0
+2026-10-17T10:00:12.0095028Z ##[group]Run ./scripts/check-schemas.sh
+2026-10-17T10:00:13.0102947Z [36;1m./scripts/check-schemas.sh[0m
+2026-10-17T10:00:14.0110866Z shell: /usr/bin/bash -e {0}
+2026-10-17T10:00:15.0118785Z ##[endgroup]
+2026-10-17T10:00:16.0126704Z check-schemas: regenerating the schema bundle
+2026-10-17T10:00:17.0134623Z Traceback (most recent call last):
+2026-10-17T10:00:18.0142542Z   File "tools/gen/__main__.py", line 4, in <module>
+2026-10-17T10:00:19.0150461Z     main()
+2026-10-17T10:00:20.0158380Z   File "tools/gen/stage00.py", line 10, in run_stage00
+2026-10-17T10:00:21.0166299Z     run_stage01(spec)
+2026-10-17T10:00:22.0174218Z   File "tools/gen/stage01.py", line 13, in run_stage01
+2026-10-17T10:00:23.0182137Z     run_stage02(spec)
+2026-10-17T10:00:24.0190056Z   File "tools/gen/stage02.py", line 16, in run_stage02
+2026-10-17T10:00:25.0197975Z     run_stage03(spec)
+2026-10-17T10:00:26.0205894Z   File "tools/gen/stage03.py", line 19, in run_stage03
+2026-10-17T10:00:27.0213813Z     run_stage04(spec)
+2026-10-17T10:00:28.0221732Z   File "tools/gen/stage04.py", line 22, in run_stage04
+2026-10-17T10:00:29.0229651Z     run_stage05(spec)
+2026-10-17T10:00:30.0237570Z   File "tools/gen/stage05.py", line 25, in run_stage05
+2026-10-17T10:00:31.0245489Z     run_stage06(spec)
+2026-10-17T10:00:32.0253408Z   File "tools/gen/stage06.py", line 28, in run_stage06
+2026-10-17T10:00:33.0261327Z     run_stage07(spec)
+2026-10-17T10:00:34.0269246Z   File "tools/gen/stage07.py", line 31, in run_stage07
+2026-10-17T10:00:35.0277165Z     run_stage08(spec)
+2026-10-17T10:00:36.0285084Z   File "tools/gen/stage08.py", line 34, in run_stage08
+2026-10-17T10:00:37.0293003Z     run_stage09(spec)
+2026-10-17T10:00:38.0300922Z   File "tools/gen/stage09.py", line 37, in run_stage09
+2026-10-17T10:00:39.0308841Z     run_stage10(spec)
+2026-10-17T10:00:40.0316760Z   File "tools/gen/stage10.py", line 40, in run_stage10
+2026-10-17T10:00:41.0324679Z     run_stage11(spec)
+2026-10-17T10:00:42.0332598Z   File "tools/gen/stage11.py", line 43, in run_stage11
+2026-10-17T10:00:43.0340517Z     run_stage12(spec)
+2026-10-17T10:00:44.0348436Z   File "tools/gen/stage12.py", line 46, in run_stage12
+2026-10-17T10:00:45.0356355Z     run_stage13(spec)
+2026-10-17T10:00:46.0364274Z   File "tools/gen/stage13.py", line 49, in run_stage13
+2026-10-17T10:00:47.0372193Z     run_stage14(spec)
+2026-10-17T10:00:48.0380112Z   File "tools/gen/stage14.py", line 52, in run_stage14
+2026-10-17T10:00:49.0388031Z     version = spec["schema_version"]
+2026-10-17T10:00:50.0395950Z               ~~~~^^^^^^^^^^^^^^^^^^
+2026-10-17T10:00:51.0403869Z KeyError: 'schema_version'
+2026-10-17T10:00:52.0411788Z check-schemas: generator exited 1; validating the existing bundle instead
+2026-10-17T10:00:53.0419707Z check-schemas: schema 000 unchanged
+2026-10-17T10:00:54.0427626Z check-schemas: schema 001 unchanged
+2026-10-17T10:00:55.0435545Z check-schemas: schema 002 unchanged
+2026-10-17T10:00:56.0443464Z check-schemas: schema 003 unchanged
+2026-10-17T10:00:57.0451383Z check-schemas: schema 004 unchanged
+2026-10-17T10:00:58.0459302Z check-schemas: schema 005 unchanged
+2026-10-17T10:00:59.0467221Z check-schemas: schema 006 unchanged
+2026-10-17T10:01:00.0475140Z check-schemas: schema 007 unchanged
+2026-10-17T10:01:01.0483059Z check-schemas: schema 008 unchanged
+2026-10-17T10:01:02.0490978Z check-schemas: schema 009 unchanged
+2026-10-17T10:01:03.0498897Z check-schemas: schema 010 unchanged
+2026-10-17T10:01:04.0506816Z check-schemas: schema 011 unchanged
+2026-10-17T10:01:05.0514735Z check-schemas: schema 012 unchanged
+2026-10-17T10:01:06.0522654Z check-schemas: schema 013 unchanged
+2026-10-17T10:01:07.0530573Z check-schemas: schema 014 unchanged
+2026-10-17T10:01:08.0538492Z check-schemas: schema 015 unchanged
+2026-10-17T10:01:09.0546411Z check-schemas: schema 016 unchanged
+2026-10-17T10:01:10.0554330Z check-schemas: schema 017 unchanged
+2026-10-17T10:01:11.0562249Z check-schemas: schema 018 unchanged
+2026-10-17T10:01:12.0570168Z check-schemas: schema 019 unchanged
+2026-10-17T10:01:13.0578087Z check-schemas: schema 020 unchanged
+2026-10-17T10:01:14.0586006Z check-schemas: schema 021 unchanged
+2026-10-17T10:01:15.0593925Z check-schemas: schema 022 unchanged
+2026-10-17T10:01:16.0601844Z check-schemas: schema 023 unchanged
+2026-10-17T10:01:17.0609763Z check-schemas: schema 024 unchanged
+2026-10-17T10:01:18.0617682Z check-schemas: schema 025 unchanged
+2026-10-17T10:01:19.0625601Z check-schemas: schema 026 unchanged
+2026-10-17T10:01:20.0633520Z check-schemas: schema 027 unchanged
+2026-10-17T10:01:21.0641439Z check-schemas: schema 028 unchanged
+2026-10-17T10:01:22.0649358Z check-schemas: schema 029 unchanged
+2026-10-17T10:01:23.0657277Z check-schemas: schema 030 unchanged
+2026-10-17T10:01:24.0665196Z check-schemas: schema 031 unchanged
+2026-10-17T10:01:25.0673115Z check-schemas: schema 032 unchanged
+2026-10-17T10:01:26.0681034Z check-schemas: schema 033 unchanged
+2026-10-17T10:01:27.0688953Z check-schemas: schema 034 unchanged
+2026-10-17T10:01:28.0696872Z check-schemas: schema 035 unchanged
+2026-10-17T10:01:29.0704791Z check-schemas: schema 036 unchanged
+2026-10-17T10:01:30.0712710Z check-schemas: schema 037 unchanged
+2026-10-17T10:01:31.0720629Z check-schemas: schema 038 unchanged
+2026-10-17T10:01:32.0728548Z check-schemas: schema 039 unchanged
+2026-10-17T10:01:33.0736467Z check-schemas: schema 040 unchanged
+2026-10-17T10:01:34.0744386Z check-schemas: schema 041 unchanged
+2026-10-17T10:01:35.0752305Z check-schemas: schema 042 unchanged
+2026-10-17T10:01:36.0760224Z check-schemas: schema 043 unchanged
+2026-10-17T10:01:37.0768143Z check-schemas: schema 044 unchanged
+2026-10-17T10:01:38.0776062Z check-schemas: schema 045 unchanged
+2026-10-17T10:01:39.0783981Z check-schemas: schema 046 unchanged
+2026-10-17T10:01:40.0791900Z check-schemas: schema 047 unchanged
+2026-10-17T10:01:41.0799819Z check-schemas: schema 048 unchanged
+2026-10-17T10:01:42.0807738Z check-schemas: schema 049 unchanged
+2026-10-17T10:01:43.0815657Z check-schemas: schema 050 unchanged
+2026-10-17T10:01:44.0823576Z check-schemas: schema 051 unchanged
+2026-10-17T10:01:45.0831495Z check-schemas: schema 052 unchanged
+2026-10-17T10:01:46.0839414Z check-schemas: schema 053 unchanged
+2026-10-17T10:01:47.0847333Z check-schemas: schema 054 unchanged
+2026-10-17T10:01:48.0855252Z check-schemas: schema 055 unchanged
+2026-10-17T10:01:49.0863171Z check-schemas: schema 056 unchanged
+2026-10-17T10:01:50.0871090Z check-schemas: schema 057 unchanged
+2026-10-17T10:01:51.0879009Z check-schemas: schema 058 unchanged
+2026-10-17T10:01:52.0886928Z check-schemas: schema 059 unchanged
+2026-10-17T10:01:53.0894847Z check-schemas: schema 060 unchanged
+2026-10-17T10:01:54.0902766Z check-schemas: schema 061 unchanged
+2026-10-17T10:01:55.0910685Z check-schemas: schema 062 unchanged
+2026-10-17T10:01:56.0918604Z check-schemas: schema 063 unchanged
+2026-10-17T10:01:57.0926523Z check-schemas: schema 064 unchanged
+2026-10-17T10:01:58.0934442Z check-schemas: schema 065 unchanged
+2026-10-17T10:01:59.0942361Z check-schemas: schema 066 unchanged
+2026-10-17T10:02:00.0950280Z check-schemas: schema 067 unchanged
+2026-10-17T10:02:01.0958199Z check-schemas: schema 068 unchanged
+2026-10-17T10:02:02.0966118Z check-schemas: schema 069 unchanged
+2026-10-17T10:02:03.0974037Z check-schemas: schema 070 unchanged
+2026-10-17T10:02:04.0981956Z check-schemas: schema 071 unchanged
+2026-10-17T10:02:05.0989875Z check-schemas: schema 072 unchanged
+2026-10-17T10:02:06.0997794Z check-schemas: schema 073 unchanged
+2026-10-17T10:02:07.1005713Z check-schemas: schema 074 unchanged
+2026-10-17T10:02:08.1013632Z check-schemas: schema 075 unchanged
+2026-10-17T10:02:09.1021551Z check-schemas: schema 076 unchanged
+2026-10-17T10:02:10.1029470Z check-schemas: schema 077 unchanged
+2026-10-17T10:02:11.1037389Z check-schemas: schema 078 unchanged
+2026-10-17T10:02:12.1045308Z check-schemas: schema 079 unchanged
+2026-10-17T10:02:13.1053227Z check-schemas: 1 generator step did not complete
+2026-10-17T10:02:14.1061146Z ##[error]Process completed with exit code 1.
+2026-10-17T10:02:15.1069065Z Post job cleanup.
+2026-10-17T10:02:16.1076984Z [command]/usr/bin/git version
+2026-10-17T10:02:17.1084903Z git version 2.55.0
+2026-10-17T10:02:18.1092822Z Cleaning up orphan processes

@@ -334,6 +334,36 @@ export const OWNER_DEVELOPMENT_INSTALL_GEN79_PRIOR_GENERATION =
 export const OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION =
   "549c7a69186b3d2070aa4e69c92ee846d183ce8f" as GitSha;
 export const OWNER_DEVELOPMENT_INSTALL_GEN79_GENERATION = 79;
+/**
+ * Generation 79 successor: the development runtime with the CI-first review
+ * gate (CI first, then review), the hard three-round review ceiling, the
+ * delivery line, the carried refresh of a spent record on a moved base under
+ * a byte-identical patch proof (merged by the launcher on green CI) and the
+ * one legacy review cutoff rule. Only the exact generation 79 healthy
+ * settlement with no failed settlement permits installation at 80; its first
+ * failed candidate restores that retained generation 79 proof once at
+ * generation 81.
+ */
+export const OWNER_DEVELOPMENT_INSTALL_GEN80_PRIOR_REVISION =
+  OWNER_DEVELOPMENT_INSTALL_GEN79_REVISION;
+export const OWNER_DEVELOPMENT_INSTALL_GEN80_PRIOR_GENERATION =
+  OWNER_DEVELOPMENT_INSTALL_GEN79_GENERATION;
+export const OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION =
+  "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481" as GitSha;
+export const OWNER_DEVELOPMENT_INSTALL_GEN80_GENERATION = 80;
+/**
+ * Generation 80 successor: the reviewed generation 81 runtime. Only its
+ * exact healthy R80/80 predecessor with no failed settlement permits this
+ * install. Failure restores the retained R80/80 proof once at generation 82;
+ * that restored pointer cannot automatically retry this consumed rung.
+ */
+export const OWNER_DEVELOPMENT_INSTALL_GEN81_PRIOR_REVISION =
+  OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION;
+export const OWNER_DEVELOPMENT_INSTALL_GEN81_PRIOR_GENERATION =
+  OWNER_DEVELOPMENT_INSTALL_GEN80_GENERATION;
+export const OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION =
+  "da98f5f49c45b57cfa97a45fe647c36b1021f302" as GitSha;
+export const OWNER_DEVELOPMENT_INSTALL_GEN81_GENERATION = 81;
 /** Monotonic rollback target the failed generation 45 candidate rolled to. */
 export const OWNER_DEVELOPMENT_INSTALL_ROLLBACK_TARGET_GENERATION =
   OWNER_DEVELOPMENT_INSTALL_ASSIGN_FIRST_GENERATION + 2;

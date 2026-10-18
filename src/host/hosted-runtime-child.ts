@@ -109,6 +109,11 @@ export function buildChildEnvironment(
     const value = env[key];
     if (isNonEmptyText(value)) child[key] = value;
   }
+  // Admission selector belongs to the trusted runtime host, never a model client.
+  // Preserve invalid nonempty values so the child's lower-only resolver disables.
+  if (typeof env.SENTINEL_MERGE_QUEUE === "string") {
+    child.SENTINEL_MERGE_QUEUE = env.SENTINEL_MERGE_QUEUE;
+  }
   if (legacyReviewCutoff !== null) {
     child[LEGACY_REVIEW_CUTOFF_ENV] = String(legacyReviewCutoff);
   }

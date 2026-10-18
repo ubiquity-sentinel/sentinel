@@ -41,6 +41,11 @@ import {
   planOwnerInstallConcurrency,
 } from "./owner-install-plan-concurrency.ts";
 import { planOwnerInstallMemory } from "./owner-install-plan-memory.ts";
+import {
+  allowsQueueOwnerInstallMove,
+  QUEUE_RUNTIME_CAPABILITY_REFUSED,
+  type QueueRuntimeCapability,
+} from "./queue-runtime-capability.ts";
 
 /**
  * Pure planning boundary. The snapshot is re-validated, so an unparsed or
@@ -48,6 +53,27 @@ import { planOwnerInstallMemory } from "./owner-install-plan-memory.ts";
  * the caller supplies the exact read snapshot and the current clock.
  */
 export function planOwnerDevelopmentInstall(
+  snapshot: ReleaseStateSnapshotV1,
+  now: number,
+  recovery?: OwnerMatrixRecoveryEvidenceV1,
+  startup?: OwnerStartupRecoveryAuthorityV1,
+  /** Trusted in-process fixture only; production defaults to reviewed source. */
+  capability?: QueueRuntimeCapability,
+): OwnerDevelopmentInstallPlanV1 {
+  const plan = planOwnerDevelopmentInstallUnchecked(
+    snapshot,
+    now,
+    recovery,
+    startup,
+  );
+  if (
+    (plan.status === "install" || plan.status === "rollback") &&
+    !allowsQueueOwnerInstallMove(plan.move, capability)
+  ) return waiting(QUEUE_RUNTIME_CAPABILITY_REFUSED);
+  return plan;
+}
+
+function planOwnerDevelopmentInstallUnchecked(
   snapshot: ReleaseStateSnapshotV1,
   now: number,
   recovery?: OwnerMatrixRecoveryEvidenceV1,

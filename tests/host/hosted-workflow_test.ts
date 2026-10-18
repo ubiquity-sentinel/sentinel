@@ -1262,13 +1262,33 @@ Deno.test("hosted workflow: forwards the configured model route and secret to ru
     ["SENTINEL_MODEL_FALLBACK", "vars"],
     ["SENTINEL_DEEPSEEK_API_KEY", "secrets"],
   ];
+  // The owner-chosen implementation model is the default when the override
+  // var is unset; a nonempty SENTINEL_IMPLEMENTATION_MODEL_ID overrides it.
+  // The older SENTINEL_MODEL_ID var is deliberately no longer read.
+  const routeSources: Readonly<Record<string, string>> = {
+    SENTINEL_MODEL_ID: "vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol'",
+  };
   const runtimeEnvLines = envBlock.split("\n").map((line) => line.trim());
   for (const [name, context] of routeBindings) {
+    const source = routeSources[name] ?? `${context}.${name}`;
     assert.ok(
-      runtimeEnvLines.includes(`${name}: \${{ ${context}.${name} }}`),
+      runtimeEnvLines.includes(`${name}: \${{ ${source} }}`),
       `runtime env block must bind ${name} from ${context}`,
     );
   }
+  // Plan, cells and repair must resolve one model: every job binds the
+  // implementation model id with the same expression.
+  const modelBindings = new Set(
+    workflow.split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("SENTINEL_MODEL_ID:")),
+  );
+  assert.deepEqual(
+    [...modelBindings],
+    [
+      "SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}",
+    ],
+  );
 
   // The Deno grant must permit exactly the names the step now binds.
   const grantPrefix = "          --allow-env=";

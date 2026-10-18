@@ -170,6 +170,7 @@ Deno.test("delivery matches an existing release request by source PR/head and re
     const seed = seededSnapshot(
       [deliveryRecord(SHA3)],
       {
+        reviews: [completedReceipt(7, SHA3, SHA1)],
         releaseRequests: [releaseRequest("release-7", {
           // Merged revision differs from the reviewed head: the lookup must
           // NOT match on `revision` — it matches source PR/head instead.
@@ -177,7 +178,7 @@ Deno.test("delivery matches an existing release request by source PR/head and re
           source: {
             pullRequest: 7,
             reviewRequestId: "review-req-1",
-            reviewReceiptId: null,
+            reviewReceiptId: completedReceipt(7, SHA3, SHA1).id,
             head: SHA3,
             base: SHA1,
           },
