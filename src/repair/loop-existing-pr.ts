@@ -1,6 +1,12 @@
 /** Shared serial/matrix pre-admission custody coordinator; all writes use V1 CAS. */
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import type {
+  TakeoverEffectAuthorization,
+  TakeoverOperation,
+  TakeoverProofRequest,
+} from "../contracts/existing-pr-takeover.ts";
+import { portError, portOk, type PortResultV1 } from "../contracts/ports.ts";
 import { EXISTING_PR_TAKEOVER_ACTIVATED } from "../github/existing-pr-takeover-policy.ts";
 import {
   hasTakeoverCustody,
@@ -142,7 +148,7 @@ export async function routeExistingPr(
   }
   try {
     if (
-      held && record.intent === null &&
+      held && record.blocker?.message !== TAKEOVER_NATIVE_PRESERVING &&
       record.blocker?.message !== TAKEOVER_NATIVE_PRESERVED
     ) {
       const anchor = await readTakeoverAnchor({
@@ -280,4 +286,121 @@ export async function reconcileExistingPrs(
     attempted.add(record.id);
   }
   return null;
+}
+
+/** Admission/readiness only. Actual effects resolve fresh authority after their state CAS. */
+export async function checkExistingPrCustody(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  operation: TakeoverOperation,
+): Promise<StepResultV1 | null> {
+  if (!hasTakeoverCustody(record)) return null;
+  const unavailable: StepResultV1 = {
+    kind: "deferred",
+    detail: "existing PR operation custody unavailable",
+  };
+  const port = deps.github.existingPrTakeover;
+  if (
+    port === undefined || context.head === null || record.target.head === null
+  ) return unavailable;
+  const request = {
+    record,
+    snapshot: context.snapshot,
+    expectedStateHead: context.head,
+    expectedHead: record.target.head,
+    operation,
+    deadline: context.bounds.runDeadline,
+  };
+  try {
+    const proof = await port.resolve(request);
+    return proof.ok && (await port.authorizeEffect(proof.value, request)).ok
+      ? null
+      : unavailable;
+  } catch {
+    return unavailable;
+  }
+}
+
+/** A fresh operation proof for the actual adapter; never serialized into state or worker input. */
+export async function prepareExistingPrEffect(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  operation:
+    & Pick<
+      TakeoverProofRequest,
+      | "operation"
+      | "phase"
+      | "observedBase"
+      | "nextHead"
+      | "candidate"
+      | "taskDigest"
+    >
+    & { expectedHead?: TakeoverProofRequest["expectedHead"] },
+): Promise<PortResultV1<TakeoverEffectAuthorization | undefined>> {
+  if (!hasTakeoverCustody(record)) return portOk(undefined);
+  const port = deps.github.existingPrTakeover;
+  if (
+    port === undefined || context.head === null || record.target.head === null
+  ) {
+    return portError("unavailable", "existing PR effect custody unavailable");
+  }
+  let expectedHead = operation.expectedHead ?? record.target.head;
+  if (
+    operation.operation === "refresh" && operation.nextHead !== undefined &&
+    operation.expectedHead === undefined
+  ) {
+    const observed = await deps.github.readRef(
+      `refs/heads/${record.target.branch}`,
+    );
+    if (
+      !observed.ok || observed.value === null ||
+      observed.value.sha !== record.target.head &&
+        observed.value.sha !== operation.nextHead
+    ) {
+      return portError(
+        "unavailable",
+        "existing PR prepared publication identity unavailable",
+      );
+    }
+    expectedHead = observed.value.sha;
+  }
+  const request: TakeoverProofRequest = {
+    ...operation,
+    record,
+    snapshot: context.snapshot,
+    expectedStateHead: context.head,
+    expectedHead,
+    deadline: context.bounds.runDeadline,
+  };
+  try {
+    const proof = await port.resolve(request);
+    return proof.ok ? portOk({ proof: proof.value, request }) : proof;
+  } catch {
+    return portError("unavailable", "existing PR effect custody unavailable");
+  }
+}
+
+/** One fresh read/bookkeeping authority, distinct from the later concrete effect proof. */
+export async function checkExistingPrOperation(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  operation: Parameters<typeof prepareExistingPrEffect>[3],
+): Promise<StepResultV1 | null> {
+  const grant = await prepareExistingPrEffect(deps, context, record, operation);
+  if (grant.ok && grant.value === undefined) return null;
+  if (
+    grant.ok && grant.value?.kind !== "native_preservation" &&
+    grant.value !== undefined &&
+    (await deps.github.existingPrTakeover!.authorizeEffect(
+      grant.value.proof,
+      grant.value.request,
+    )).ok
+  ) return null;
+  return {
+    kind: "deferred",
+    detail: "existing PR operation custody unavailable",
+  };
 }

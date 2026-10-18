@@ -1,3 +1,5 @@
+import type { ExistingPrTakeoverPort } from "../contracts/existing-pr-takeover.ts";
+import { canonicalStringify } from "../contracts/canonical.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 import type {
@@ -33,6 +35,7 @@ import {
 } from "./existing-pr-takeover.ts";
 import { createQueueProvenanceReader } from "../github/queue-delivery-provenance.ts";
 import { createQueueDeliveryReader } from "../github/queue-delivery-reader.ts";
+import type { ExistingPrTakeoverPolicy } from "../github/existing-pr-takeover-policy.ts";
 import { createNativeQueueGuard } from "../github/native-queue-guard.ts";
 import {
   type QueueRuntimeConfiguration,
@@ -185,6 +188,7 @@ export interface LocalGitHubInputV1 {
 export function composeLocalGitHub(
   input: LocalGitHubInputV1,
   sourceQueueConfiguration?: QueueRuntimeConfiguration,
+  sourceTakeoverPolicy?: ExistingPrTakeoverPolicy,
 ): GitHubPort {
   const queue = resolveQueueRuntimeConfiguration(
     input.queueMode,
@@ -242,11 +246,28 @@ export function composeLocalGitHub(
     clock: input.clock,
     includeIssueRelations: true,
   }, queue.policy.workflowId);
+  let takeoverPort: ExistingPrTakeoverPort | undefined;
   const queueReader = createQueueDeliveryReader({
     repository,
     clock: input.clock,
     client,
     policy: queue.policy,
+    publication: async (request) => {
+      const observed = await input.state.readRepair();
+      if (
+        takeoverPort === undefined || !observed.ok ||
+        observed.value.status !== "found" ||
+        canonicalStringify(observed.value.snapshot) !==
+          canonicalStringify(request.snapshot)
+      ) return { status: "unavailable", reason: "drift" };
+      const proof = await takeoverPort.resolvePublication({
+        ...request,
+        expectedStateHead: observed.value.head,
+      });
+      return proof.ok
+        ? { status: "complete", value: proof.value }
+        : { status: "unavailable", reason: "incomplete" };
+    },
     provenance: createQueueProvenanceReader({
       state: input.state,
       clock: input.clock,
@@ -441,7 +462,7 @@ export function composeLocalGitHub(
   });
   Object.defineProperty(host.port, "existingPrTakeover", {
     enumerable: true,
-    value: createExistingPrTakeover({
+    value: takeoverPort = createExistingPrTakeover({
       repository,
       baseBranch,
       client,
@@ -455,6 +476,13 @@ export function composeLocalGitHub(
       trustedPath: input.trustedPath,
       gitExecutable: trustedGitPath(input.trustedPath),
       remoteUrl,
+      policy: sourceTakeoverPolicy,
+      ensureLocalCandidate: createLocalCandidateLoader({
+        stateRoot: input.stateRoot,
+        sourcePath: input.sourcePath,
+        scratch: input.scratch,
+        trustedPath: input.trustedPath,
+      }),
       protectedPaths: selectTrustedTargetPolicyV1(
         createLocalRepositoryConfig(),
         repository,

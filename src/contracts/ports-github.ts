@@ -1,4 +1,7 @@
-import type { ExistingPrTakeoverPort } from "./existing-pr-takeover.ts";
+import type {
+  ExistingPrTakeoverPort,
+  TakeoverEffectAuthorization,
+} from "./existing-pr-takeover.ts";
 import type { NativeQueueGuardV1 } from "../github/native-queue-guard.ts";
 import type { GitSha, WorkItemId } from "./brands.ts";
 import type { SelfMergeExecutionV1 } from "./self-merge.ts";
@@ -82,18 +85,21 @@ export interface GitHubPort {
    */
   prepareBaseRefresh?(
     request: PrepareBaseRefreshRequestV1,
+    takeover?: TakeoverEffectAuthorization,
   ): Promise<PortResultV1<GitSha>>;
   /** Pushes the trusted candidate commit; the model never publishes itself. */
   pushHead(
     ref: string,
     sha: GitSha,
     expectedRef: GitSha | null,
+    takeover?: TakeoverEffectAuthorization,
   ): Promise<PortResultV1<WriteOutcomeV1>>;
   createPullRequest(
     request: PullRequestCreateV1,
   ): Promise<PortResultV1<PullRequestPublishV1>>;
   requestReview(
     request: ReviewSubmissionV1,
+    takeover?: TakeoverEffectAuthorization,
   ): Promise<PortResultV1<ReviewRequestOutcomeV1>>;
   observeReview(
     request: ReviewObservationRequestV1,
@@ -101,6 +107,7 @@ export interface GitHubPort {
   mergePullRequest(
     request: MergeRequestV1,
     execution?: SelfMergeExecutionV1,
+    takeover?: TakeoverEffectAuthorization,
   ): Promise<PortResultV1<MergeOutcomeV1>>;
   /**
    * Optional trusted carried-review patch proof (owner decision 2026-10-16
@@ -143,6 +150,7 @@ export interface GitHubPort {
    */
   preserveCandidate(
     request: CandidatePreservationRequestV1,
+    takeover?: TakeoverEffectAuthorization,
   ): Promise<PortResultV1<void>>;
   /**
    * Optional trusted legacy candidate-loss proof capability.

@@ -246,7 +246,13 @@ export async function resolveHostedDelivery(
       if (
         QUEUE_PROOF_ACTIVATED || custody.proofActivated ||
         queueRecordProtected(record, custody) ||
-        verifiedMergedDelivery(record, pull, scope.baseBranch, custody)
+        verifiedMergedDelivery(
+            record,
+            pull,
+            scope.baseBranch,
+            custody,
+            resolution.publicationProof,
+          )
             ?.revision !== revision
       ) return null;
       return mint("legacy", revision, record, receipt, task);

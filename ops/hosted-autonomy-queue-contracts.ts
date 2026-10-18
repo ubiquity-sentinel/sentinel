@@ -1,5 +1,6 @@
 /** Shared queue coordinator capabilities. Only trusted host composition supplies these. */
 import type { GitSha } from "../src/contracts/brands.ts";
+import type { PortResultV1 } from "../src/contracts/ports.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
@@ -25,6 +26,10 @@ export interface QueueAuthorizationRequest {
   queue: QueueSnapshot;
 }
 export interface HostedQueueAuthorizationPort {
+  /** Final adopted-PR App/custody gate; never a substitute for queue policy or intent provenance. */
+  authorizeEnqueue?(
+    request: QueueAuthorizationRequest & { deadline: number },
+  ): Promise<PortResultV1<void>>;
   readAuthorization(request: QueueAuthorizationRequest): Promise<
     QueueRead<{
       binding: QueueBinding;

@@ -14,6 +14,7 @@ import {
   type PreserverGitRunV1,
 } from "./actions-candidates-objects.ts";
 import { githubGitAuthEnv } from "./local-github-auth.ts";
+import { GitReviewSnapshot } from "../github/review-snapshot.ts";
 
 export interface NativeTakeoverGitInput {
   repository: RepositoryIdentityV1;
@@ -216,6 +217,28 @@ export function createNativeTakeoverGit(input: NativeTakeoverGitInput) {
   }
 
   return {
+    async validateLocal(
+      base: GitSha,
+      head: GitSha,
+      publishedHead: GitSha | null,
+      deadline: number,
+    ) {
+      if (!live(deadline)) return failed();
+      const validator = new GitReviewSnapshot({
+        trustedPath: input.trustedPath,
+        repositoryDir: input.sourcePath,
+        gitExecutable: input.gitExecutable,
+      });
+      const checked = await validator.validatePublication({
+        base,
+        head,
+        publishedHead,
+        protectedPaths: input.protectedPaths,
+      });
+      return checked.ok && live(deadline)
+        ? portOk({ protectedPathsClear: true })
+        : failed();
+    },
     inspect(
       pull: NativeAssociationPull,
       deadline: number,

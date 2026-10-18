@@ -63,6 +63,12 @@ export async function createPullRequestFor(
   if (queueGuard !== null) return queueGuard;
   const existingPr = await routeExistingPr(deps, context, record);
   if (existingPr.status === "step") return existingPr.step;
+  if (existingPr.status === "custody_ready") {
+    return {
+      kind: "deferred",
+      detail: "existing PR custody forbids replacement publication",
+    };
+  }
   const now = deps.clock.now();
   // Hard review-round ceiling: no first or replacement pull request is opened
   // for a candidate that can never be reviewed. Every caller has proved the
