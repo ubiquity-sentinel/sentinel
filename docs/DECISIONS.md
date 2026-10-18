@@ -24,6 +24,37 @@ rollback checks before the corresponding effects. The App permission grant is
 already complete. This authorization does not itself establish any execution or
 acceptance result.
 
+At 20:39 UTC on 2026-10-18, after the coordinator reported the later Mac
+coordination approval hold, the owner explicitly replied: "Why the fuck is it
+blocked. You’re approved". This clears the pending exact e16 source-CI attempt
+and reaffirms continuation of the already authorized migration rollout. Do not
+turn the earlier coordination-only hold into repeated generic approval requests.
+Record each concrete workflow, target, candidate, expected duration and
+assertion before execution, and continue the authorized publication,
+verification, corrections and guarded rollout. Missing real processing evidence
+remains an evidence problem to resolve, not an unanswered approval; source,
+credential, custody, accounting, CI, readiness, promotion and rollback gates
+still apply.
+
+### First-fixture UOS processing evidence
+
+The approved safeguard requires the same first PR to survive real UOS processing
+before more fixtures; it does not require the original opened event's private
+log, a particular historical delivery ID or a literal304 receipt. Independent
+provenance audit `uos-current-audit-2041/decision.md` identifies
+original-event-only as an added interpretation, superseding that restriction in
+the older canary gate assessment. A genuine later edited invocation on the same
+PR may establish the safeguard after an observable truthful handler outcome is
+available. Preserve its head/base/author, non-closing body, manual task custody
+and current OPEN readback. Silence, elapsed time or CI alone still cannot prove
+actual processing. The narrow necessary receipt change belongs to the existing
+UOS ownership handler and its tests, with idempotence, safe App-owned comment
+handling, preserved role/start/close rules and no new
+credential/workflow/flag/environment interface. Reconcile and verify the
+existing main/Deno producer deployment before one meaningful non-closing title
+edit; Azure is a disabled legacy route. Do not fabricate historical results or
+start further fixtures before real same-PR processing is accepted.
+
 ### Raw issue discovery and model admission bounds
 
 The live R81 issue reader rejects an entire valid response when one issue body

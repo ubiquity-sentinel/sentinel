@@ -13,6 +13,35 @@ identity and runtime routing are reported separately.
 
 ## Active task register
 
+The primary adopts the necessary UOS first-fixture observability seam as module
+`uos-canary-receipt-20261018`, aid `74e2bebf72`, in repository
+`ubiquity-os-marketplace/command-start-stop`. Read-only audit
+`uos-current-audit-2041/decision.md` establishes that original-event-only proof
+was an added restriction: genuine later edited processing of the same first PR
+can meet the approved safeguard. Existing repository access has admin/push
+rights and org configuration selects `@main`. Fresh deployment-custody audit
+found the active `Deploy` workflow (`update-configuration.yml`,
+workflow120816121), publishing `dist/<ref>` through the existing plugin action
+and deploying `src/worker.ts` through the existing Deno action; Azure
+workflow160340638 is disabled and must not be used. The clean source root at
+`/home/codex/repos/ubiquity-os-marketplace/command-start-stop` remains
+untouched; the isolated lane is
+`.codex-worktrees/master-plan-uos-canary-receipt-20261018-a74e2bebf72`, branch
+`codex/master-plan-uos-canary-receipt-20261018-a74e2bebf72`, base production
+main `7920d8c558a9fde102ece5954e4cb52f91489c94`. Worker
+`uos_receipt_implementation` owns only the existing pull-request ownership
+handler and `tests/pull-request.test.ts`. Root accepted its truthful, sanitized,
+App-owned idempotent receipt contract and bounded validation commands. Source
+issue `ubiquity-os-marketplace/command-start-stop#243` is OPEN and assigned to
+the authenticated human `0x4007`; the unrelated human-owned PR221 is untouched.
+The existing SDK was hydrated from the unchanged frozen lockfile with lifecycle
+scripts disabled, and source implementation/local handler validation is in
+progress. Preserve all ownership/start/close/role-failure behavior; no new
+workflow, flags, environment variables or credential route. Root owns source
+acceptance, publication, existing main/Deno deployment custody and the eventual
+single meaningful edit to PR1235. No real handler evidence or deployment is
+claimed by this assignment.
+
 The primary records `migration-canary-grant-tests-20261018` (aid `1f6f3a2d3a`)
 as prepared for future S, not integrated. Retained worker
 `migration_canary_packet` changed only `tests/host/queue-canary_test.ts` and
@@ -33,14 +62,27 @@ grants and acceptance of that new combined candidate. No grants, runtime code or
 hosted effects changed. The stable plan identity remains
 `/Users/nv/repos/ubiquity/sentinel/MASTER-PLAN.md`.
 
-The binding source-CI approval remains pending for exact immutable
-`e16a99d211f2845968e7b6dbf962f48355d68017`; this documentation-only continuation
-does not substitute another candidate or authorize an attempt. The pre-existing
-b8 run `39160464816:1`, job `117772503396`, was independently confirmed in
-progress at 20:24:14 UTC; its retained observation is under
-`combined-recovery-native-preparation/b8-segment-3-final-read/` and does not
-accept e16. The correlated original PR1235 UOS terminal handler receipt remains
-unavailable. The verified remaining-rollout dependency packet is
+The owner explicitly reaffirmed approval at 20:39 UTC. Exact immutable candidate
+`e16a99d211f2845968e7b6dbf962f48355d68017`, tree
+`d185888b310d675981abe3903b9fb21d092bad4d`, was normally fast-forwarded from b8
+to `development` and read back there. Native source CI `39164327314:1`,
+`test-local` job `117783993768`, is running with exact head/workflow identity
+verified. The recorded attempt expects 45–60 minutes plus queue and requires
+complete successful credential-free harness proof. Authorization/preflight and
+native evidence are under
+`review-task-binding-adoption/source-publication-e16/`. The pre-existing b8 CI
+`39160464816:1`, job `117772503396`, completed successfully at 20:37:38 UTC.
+Primary accepted its independently verified native proof: 3,456 tests/1,760
+steps/zero failures, exact source/tree/workflow/check-suite/Actions App
+identity, and all14 artifact hashes;
+`source-publication-e16/native-ci/b8-terminal/root-acceptance.json` records
+source-only acceptance and cannot accept e16. No runtime or queue activation
+occurred. Fresh independent read-only worker `uos_gate_current_audit` owns
+current PR1235 processing-evidence refresh and requirement-provenance audit,
+without source/effect/ledger authority, under `uos-current-audit-2041/`. The
+original UOS receipt was previously unavailable; do not reuse that old
+observation as a fresh result or mistake it for an approval question. The
+verified prior remaining-rollout dependency packet is
 `rollout-remaining-2017/packet.json`, SHA-256
 `1036ac6a53455f1a8a1970051cafefae040512ca6282bf05c20750fd41a1c0bc`. Source,
 installed runtime and live-delivery acceptance remain separate; the full goal is
@@ -60,13 +102,14 @@ Independent read-only workers `binding_merge_audit` and `binding_evidence_plan`
 own source/merge assessment and retained-evidence reuse mapping respectively;
 neither owns writes. The supplied independent audit already verified all 11
 retained INDEX hashes, so missing temporary handbacks do not invalidate them.
-New binding-fix hosted/runtime/supervisor/E2E attempts require the requested
-explicit per-attempt approval; source integration/local validation is
-authorized, and the already-started b8 source CI remains separate. Return a
-non-authoritative result artifact under
-`/tmp/sentinel-backlog-binding-coordination-20261018/` with a durable workspace
-mirror, exact candidate, disposition, affected validation and concrete remaining
-action.
+The Mac coordination originally held new hosted attempts; the owner's later
+20:39 UTC approval clears that hold for continuing the original authorized task.
+Preserve concrete per-attempt records and all technical/custody gates. Source
+integration/local validation and the exact e16 source-CI attempt are authorized,
+while the earlier b8 source CI remains separate. Return a non-authoritative
+result artifact under `/tmp/sentinel-backlog-binding-coordination-20261018/`
+with a durable workspace mirror, exact candidate, disposition, affected
+validation and concrete remaining action.
 
 The review-task-binding fix is accepted for source integration at
 `2846a3678a26f5223d029f8665f199e2724d9005`, tree
@@ -88,15 +131,13 @@ test was repeated.
 Fresh runtime readback at20:06UTC confirms R81/gen81 under L81 still carries all
 three pre-fix binding blobs, with execution null and latest retained failed
 ordinary proof39161064029; the intake failure is separate and is not claimed
-fixed by R/W. Source integration is not installed acceptance. No new hosted
-attempt for this binding fix has been launched. Next approval packet must name
-the final documentation-only descendant of tested2846, normal development
-publication triggering `.github/workflows/ci.yml` / `test-local`,
-expected45–60min plus queue, and exact-current-candidate native identity plus
-complete successful harness. Installation must follow the existing guarded
-rollout; no direct R or old C/M63 install is authorized. Existing b8
-CI39160464816 was already started before this coordination and does not accept
-the new binding candidate. Requested coordination result goes under
+fixed by R/W. Source integration is not installed acceptance. The explicitly
+approved e16 publication has now triggered `.github/workflows/ci.yml` /
+`test-local`; require its exact-current-candidate native identity and complete
+successful harness. Installation must follow the existing guarded rollout; no
+direct R or old C/M63 install is authorized. Existing b8 CI39160464816 was
+already started before this coordination and does not accept the new binding
+candidate. Requested coordination result goes under
 `/tmp/sentinel-backlog-binding-coordination-20261018/` with a durable mirror in
 `review-task-binding-adoption/`; this ledger remains authoritative.
 
