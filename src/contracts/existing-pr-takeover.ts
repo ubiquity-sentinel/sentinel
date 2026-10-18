@@ -3,7 +3,7 @@ import type { GitSha, WorkItemId } from "./brands.ts";
 import type { PortResultV1 } from "./ports.ts";
 import type { RepositoryIdentityV1 } from "./shared.ts";
 import type { RepairStateSnapshotV1 } from "./state-snapshots.ts";
-import type { WorkRecordV1 } from "./work-record.ts";
+import type { CandidatePreservationV1, WorkRecordV1 } from "./work-record.ts";
 
 export type TakeoverParkReason =
   | "association_unproven"
@@ -16,6 +16,8 @@ export type TakeoverParkReason =
   | "head_moved"
   | "source_changed"
   | "queue_custody"
+  | "principal_unavailable"
+  | "closed_publication"
   | "custody_unproven";
 
 /** Native identity from Issue.closedByPullRequestsReferences, fully paginated. */
@@ -81,6 +83,41 @@ export type TakeoverOperation =
   | "merge"
   | "enqueue";
 
+/** Host-only App authority, bound to the actual REST/Git port and mint/execution. */
+export interface TakeoverPrincipalBinding {
+  repository: RepositoryIdentityV1;
+  taskId: WorkItemId;
+  expectedStateHead: GitSha;
+  pullRequest: number;
+  branch: string;
+  head: GitSha;
+  base: GitSha;
+  operation: TakeoverOperation | "native_preserve" | "preserve_successor";
+  phase: "native" | "current" | "prepare" | "preserve" | "publish";
+  /** Exact prospective successor when the operation names one; otherwise null. */
+  nextHead: GitSha | null;
+  deadline: number;
+}
+
+/** No structural grant, login, token or environment metadata is accepted as authority. */
+export interface TakeoverPrincipalAuthority {
+  revalidate(binding: TakeoverPrincipalBinding): Promise<PortResultV1<void>>;
+}
+
+/** Verified by trusted producer readers, never inferred from descriptor syntax. */
+export type TakeoverCandidateCustody =
+  | { kind: "native" }
+  | {
+    kind: "implementation";
+    reservationId: string;
+    candidate: CandidatePreservationV1;
+  }
+  | {
+    kind: "base_refresh";
+    predecessor: GitSha;
+    candidate: CandidatePreservationV1;
+  };
+
 /** Only the trusted factory can issue a recognized object; structure grants nothing. */
 export interface TakeoverCustodyProof {
   readonly kind: "verified_existing_pr_custody";
@@ -110,6 +147,15 @@ export interface TakeoverPreserveRequest {
   deadline: number;
 }
 
+/** Fresh pre-intent authorization. A successful result grants only the exact intent CAS. */
+export interface TakeoverAdoptionRequest {
+  record: WorkRecordV1;
+  snapshot: RepairStateSnapshotV1;
+  expectedStateHead: GitSha;
+  candidate: NativeTakeoverObservation;
+  deadline: number;
+}
+
 /** Actual trusted Git observations, separate from claims in a V1 descriptor. */
 export interface TakeoverCandidateObservation {
   anchorRef: string;
@@ -118,8 +164,8 @@ export interface TakeoverCandidateObservation {
   anchorRestored: boolean;
   currentHead: GitSha;
   currentBase: GitSha;
-  /** True only after verifying the real producer's state/reservation or refresh proof. */
-  currentProducerVerified: boolean;
+  /** Null means unproved; native heads never pretend to have a model producer. */
+  custody: TakeoverCandidateCustody | null;
   currentDescendsFromAnchor: boolean;
   nextHead: GitSha | null;
   nextDescendsFromExpected: boolean;
@@ -127,9 +173,14 @@ export interface TakeoverCandidateObservation {
 
 /** Optional only at composition; absence must suppress takeover effects/create fallback. */
 export interface ExistingPrTakeoverPort {
+  /** Source-policy routing metadata only; never principal or effect authority. */
+  readonly coordinationActivated: boolean;
   discover(
     input: { record: WorkRecordV1; deadline: number },
   ): Promise<TakeoverDiscovery>;
+  authorizeAdoption(
+    input: TakeoverAdoptionRequest,
+  ): Promise<PortResultV1<void>>;
   preserveNativeHead(
     input: TakeoverPreserveRequest,
   ): Promise<PortResultV1<void>>;

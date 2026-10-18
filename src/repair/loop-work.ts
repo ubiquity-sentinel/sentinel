@@ -1,3 +1,4 @@
+import { routeExistingPr } from "./loop-existing-pr.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: work. */
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
@@ -93,6 +94,8 @@ export async function executeWorkStep(
 ): Promise<StepResultV1> {
   const queueGuard = await guardQueueOperation(deps, context, record, "resume");
   if (queueGuard !== null) return queueGuard;
+  const existingPr = await routeExistingPr(deps, context, record);
+  if (existingPr.status === "step") return existingPr.step;
   const config = configFor(deps, record.repository);
   if (config === null) {
     return persistWork(

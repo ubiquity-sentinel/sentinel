@@ -1,3 +1,4 @@
+import { reconcileExistingPrs } from "../repair/loop-existing-pr.ts";
 /** Trusted serialized planning, decomposition and admission diagnostics. */
 import { deriveReservationId } from "../budget/mod.ts";
 import type { GitSha } from "../contracts/brands.ts";
@@ -288,6 +289,8 @@ export async function planMatrixWave(
     MAX_MATRIX_CELLS,
   );
   const attemptedIds = new Set<string>();
+  const takeoverAttempted = new Set<string>();
+  const takeoverRefused = new Set<string>();
   const cells: MatrixCellPlanV1[] = [];
   const manifest = (entries: MatrixCellPlanV1[]): MatrixPlanV1 => ({
     version: MATRIX_PLAN_VERSION,
@@ -331,6 +334,20 @@ export async function planMatrixWave(
     if (context === null) break;
     const now = deps.clock.now();
     if (now >= bounds.modelCutoff || now >= bounds.runDeadline) break;
+    const takeover = await reconcileExistingPrs(
+      deps,
+      context,
+      takeoverAttempted,
+      takeoverRefused,
+      options.githubForRepository === undefined
+        ? undefined
+        : (record) => options.githubForRepository!(record.repository),
+    );
+    if (takeover !== null) {
+      if (takeover.kind === "state_error" || takeover.kind === "margin") break;
+      if (takeover.kind === "deferred") deferred++;
+      continue;
+    }
     const ranked = rankEligibleWork(context.snapshot, deps.configs, now);
     // At most HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE resolutions in flight, on
     // this fresh read (this wave's grants, earlier cells, kept receipts): a
@@ -364,7 +381,7 @@ export async function planMatrixWave(
       };
     }
     const nextId = ranked.ordered.find((id) => {
-      if (attemptedIds.has(id)) return false;
+      if (attemptedIds.has(id) || takeoverRefused.has(id)) return false;
       const record = context.snapshot.work.find((work) => work.id === id);
       if (record === undefined) return false;
       if (

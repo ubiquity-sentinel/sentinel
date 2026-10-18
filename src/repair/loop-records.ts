@@ -1,3 +1,4 @@
+import { hasTakeoverCustody } from "../github/existing-pr-takeover-provenance.ts";
 /** Repair loop internals: records. */
 import type { GitSha } from "../contracts/brands.ts";
 import type { ReleaseRequestV1 } from "../contracts/release.ts";
@@ -104,6 +105,7 @@ export function retireClosedPublication(
   now: number,
   nextStep: WorkRecordV1["nextStep"] = record.nextStep,
 ): WorkRecordV1 {
+  if (hasTakeoverCustody(record)) return record;
   return {
     ...record,
     nextStep,

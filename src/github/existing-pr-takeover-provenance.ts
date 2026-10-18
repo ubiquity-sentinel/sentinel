@@ -1,7 +1,10 @@
 /** Existing V1 evidence references authenticate ancestry; they are not review verdicts. */
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
-import type { TakeoverBinding } from "../contracts/existing-pr-takeover.ts";
+import type {
+  TakeoverBinding,
+  TakeoverPreserveRequest,
+} from "../contracts/existing-pr-takeover.ts";
 import type { StateReadView } from "../contracts/ports.ts";
 import {
   parseEvidenceRef,
@@ -16,6 +19,23 @@ export const TAKEOVER_EVIDENCE_NAMESPACE =
   "artifact:review-receipt/pr-takeover-v1";
 export const TAKEOVER_NATIVE_PRESERVED =
   "existing pull request takeover custody: native head preserved";
+export const TAKEOVER_NATIVE_PRESERVING =
+  "existing pull request takeover custody: preserving native head";
+
+export function nativeTakeoverIntentKey(
+  input: TakeoverPreserveRequest,
+): string {
+  return `pr_takeover:${input.bindingDigest}:${input.head}:${input.base}`;
+}
+
+/** A marker suppresses fallback, but only readTakeoverAnchor proves ancestry. */
+export function hasTakeoverCustody(record: WorkRecordV1): boolean {
+  return record.evidence.some((row) =>
+    row.ref.startsWith(TAKEOVER_EVIDENCE_NAMESPACE)
+  ) || record.intent?.key.startsWith("pr_takeover:") === true ||
+    record.blocker?.message === TAKEOVER_NATIVE_PRESERVING ||
+    record.blocker?.message === TAKEOVER_NATIVE_PRESERVED;
+}
 const HEX = /^[0-9a-f]{64}$/;
 const POINTER =
   /^artifact:review-receipt\/pr-takeover-v1\/([0-9a-f]{64})\/([0-9a-f]{40})$/;

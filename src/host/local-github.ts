@@ -176,6 +176,7 @@ export interface LocalGitHubInputV1 {
     ExistingPrTakeoverHostInput,
     | "runtimeCapabilityAccepted"
     | "contentsWriteAllowed"
+    | "principal"
     | "verifyProducedCandidate"
   >;
 }

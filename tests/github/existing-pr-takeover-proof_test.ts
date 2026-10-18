@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { portError } from "../../src/contracts/ports.ts";
 import type { TakeoverCustodyProof } from "../../src/contracts/existing-pr-takeover.ts";
 import type { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { createTakeoverProofPort } from "../../src/github/existing-pr-takeover-proof.ts";
@@ -243,7 +244,11 @@ Deno.test("takeover proof: publishing a real produced successor binds both candi
     false,
     "descriptor syntax cannot prove producer custody",
   );
-  rig.candidate.currentProducerVerified = true;
+  rig.candidate.custody = {
+    kind: "implementation",
+    reservationId: "a".repeat(64),
+    candidate: rig.request.record.target.candidateState.preserved!,
+  };
   const ready = await rig.port.resolve(rig.request);
   assert.ok(ready.ok);
   assert.equal(
@@ -431,4 +436,49 @@ Deno.test({
       await old.dispose();
     }
   },
+});
+
+Deno.test("takeover proof: absent, revoked and throwing principal never supplies effect authority", async (t) => {
+  for (
+    const mode of [
+      "absent",
+      "revoked",
+      "throwing",
+      "revoked-after-observation",
+    ] as const
+  ) {
+    await t.step(mode, async () => {
+      const r = await takeoverFixture();
+      let calls = 0;
+      const principal = mode === "absent" ? undefined : {
+        revalidate: () => {
+          calls++;
+          if (mode === "throwing") throw new Error("private fixture error");
+          return Promise.resolve(
+            mode === "revoked" || calls > 1
+              ? portError("unavailable", "fixture revoked")
+              : { ok: true as const, value: undefined },
+          );
+        },
+      };
+      assert.equal(
+        (await createTakeoverProofPort({ ...r.deps, principal }).resolve(
+          r.request,
+        )).ok,
+        false,
+      );
+      assert.equal(r.request.snapshot.reservations.length, 0);
+    });
+  }
+});
+
+Deno.test("takeover proof: original native head refuses an invented producer descriptor", async () => {
+  const r = await takeoverFixture();
+  r.request.record.target.candidateState!.preserved = {
+    operationKey: "impl:" + "a".repeat(64),
+    base: SHA1,
+    head: SHA3,
+    ref: "refs/heads/sentinel-candidates/" + "b".repeat(64),
+  };
+  assert.equal((await r.port.resolve(r.request)).ok, false);
 });

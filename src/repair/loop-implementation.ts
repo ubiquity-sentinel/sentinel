@@ -1,3 +1,4 @@
+import { routeExistingPr } from "./loop-existing-pr.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: implementation. */
 import type { GitSha } from "../contracts/brands.ts";
@@ -75,6 +76,14 @@ export async function prepareImplementationStart(
 ): Promise<StepResultV1 | PreparedImplementationV1> {
   const queueGuard = await guardQueueOperation(deps, context, record, "resume");
   if (queueGuard !== null) return queueGuard;
+  const existingPr = await routeExistingPr(deps, context, record);
+  if (existingPr.status === "step") return existingPr.step;
+  if (existingPr.status === "custody_ready") {
+    return {
+      kind: "deferred",
+      detail: "existing PR correction requires its operation custody proof",
+    };
+  }
   // No NEW model work after the 90-minute cutoff (or at/after the total run
   // deadline): the start is rejected before any reservation is made (nothing
   // is charged), and the record stays exactly as it was so a later run inside

@@ -1,3 +1,4 @@
+import { routeExistingPr } from "./loop-existing-pr.ts";
 import {
   holdQueueRecord,
   queueEffectRefused,
@@ -60,6 +61,8 @@ export async function createPullRequestFor(
     "publication",
   );
   if (queueGuard !== null) return queueGuard;
+  const existingPr = await routeExistingPr(deps, context, record);
+  if (existingPr.status === "step") return existingPr.step;
   const now = deps.clock.now();
   // Hard review-round ceiling: no first or replacement pull request is opened
   // for a candidate that can never be reviewed. Every caller has proved the

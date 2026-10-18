@@ -2,7 +2,8 @@
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type {
   ExistingPrTakeoverPort,
-  TakeoverPreserveRequest,
+  TakeoverCandidateCustody,
+  TakeoverPrincipalAuthority,
   TakeoverProofRequest,
 } from "../contracts/existing-pr-takeover.ts";
 import {
@@ -19,7 +20,9 @@ import {
 } from "../github/existing-pr-takeover-policy.ts";
 import { createTakeoverProofPort } from "../github/existing-pr-takeover-proof.ts";
 import {
+  nativeTakeoverIntentKey,
   TAKEOVER_EVIDENCE_NAMESPACE,
+  TAKEOVER_NATIVE_PRESERVING,
   takeoverAnchorRef,
   takeoverBindingDigest,
   takeoverNativeRef,
@@ -34,15 +37,11 @@ import {
   type NativeTakeoverGitInput,
 } from "./existing-pr-native-git.ts";
 
-export const TAKEOVER_NATIVE_PRESERVING =
-  "existing pull request takeover custody: preserving native head";
-
-/** Real Git-ref operation identity, never a model implementation identity. */
-export function nativeTakeoverIntentKey(
-  input: TakeoverPreserveRequest,
-): string {
-  return `pr_takeover:${input.bindingDigest}:${input.head}:${input.base}`;
-}
+export {
+  nativeTakeoverIntentKey,
+  TAKEOVER_NATIVE_PRESERVING,
+} from "../github/existing-pr-takeover-provenance.ts";
+import { revalidateTakeoverPrincipal } from "../github/existing-pr-takeover-effect.ts";
 
 export interface ExistingPrTakeoverHostInput extends NativeTakeoverGitInput {
   state: Pick<StateReadView, "readRepair" | "readRepairAt">;
@@ -53,10 +52,13 @@ export interface ExistingPrTakeoverHostInput extends NativeTakeoverGitInput {
   policy?: ExistingPrTakeoverPolicy;
   runtimeCapabilityAccepted?: () => boolean;
   contentsWriteAllowed?: () => boolean;
+  principal?: TakeoverPrincipalAuthority;
   /** Actual producer state/reservation proof; descriptor syntax is insufficient. */
   verifyProducedCandidate?: (
     request: TakeoverProofRequest,
-  ) => Promise<PortResultV1<boolean>>;
+  ) => Promise<
+    PortResultV1<Exclude<TakeoverCandidateCustody, { kind: "native" }> | null>
+  >;
 }
 
 const same = (a: unknown, b: unknown) =>
@@ -93,6 +95,7 @@ export function createExistingPrTakeover(
     baseBranch: input.baseBranch,
     policy,
     runtimeCapabilityAccepted,
+    principal: input.principal,
     async readNative(request) {
       const found = await discover(request);
       return found.status === "candidate" ? portOk(found.candidate) : refused();
@@ -109,14 +112,14 @@ export function createExistingPrTakeover(
         request.deadline,
       );
       if (!restored.ok || !restored.value.protectedPathsClear) return refused();
-      let currentProducerVerified = false;
+      let custody: TakeoverCandidateCustody = { kind: "native" };
       if (
         target.head !== anchorHead || target.base !== anchor.record.target.base
       ) {
         const producer = await input.verifyProducedCandidate?.(request);
         const descriptor = target.candidateState?.preserved;
         if (
-          producer?.ok !== true || producer.value !== true ||
+          producer?.ok !== true || producer.value === null ||
           descriptor === undefined || descriptor === null ||
           descriptor.head !== target.head || descriptor.base !== target.base ||
           descriptor.ref !== await candidatePreservationRef(
@@ -134,7 +137,7 @@ export function createExistingPrTakeover(
         if (!candidate.ok || !candidate.value.protectedPathsClear) {
           return refused();
         }
-        currentProducerVerified = true;
+        custody = producer.value;
       }
       const ancestry = await git.isAncestor(
         anchorHead,
@@ -156,7 +159,7 @@ export function createExistingPrTakeover(
         anchorRestored: true,
         currentHead: target.head,
         currentBase: target.base,
-        currentProducerVerified,
+        custody,
         currentDescendsFromAnchor: ancestry.value,
         nextHead: request.nextHead ?? null,
         nextDescendsFromExpected: next.value,
@@ -165,8 +168,71 @@ export function createExistingPrTakeover(
   });
 
   return {
+    get coordinationActivated() {
+      return policy.activated === true;
+    },
     discover,
     ...proof,
+    async authorizeAdoption(request) {
+      try {
+        if (!effectsAllowed(request.deadline)) return refused();
+        const { candidate, record } = request;
+        const binding = candidate.binding;
+        const before = await input.state.readRepair();
+        if (
+          !before.ok || before.value.status !== "found" ||
+          before.value.head !== request.expectedStateHead ||
+          !same(before.value.snapshot, request.snapshot) ||
+          !same(
+            request.snapshot.work.find((row) => row.id === record.id),
+            record,
+          ) ||
+          !same(binding.repository, input.repository) ||
+          binding.taskId !== record.id ||
+          request.snapshot.work.some((other) =>
+            other.id !== record.id &&
+            same(other.repository, record.repository) &&
+            other.target.pr === binding.pullRequest
+          )
+        ) return refused();
+        const principalBinding = {
+          repository: binding.repository,
+          taskId: record.id,
+          expectedStateHead: request.expectedStateHead,
+          pullRequest: binding.pullRequest,
+          branch: binding.headRef,
+          head: candidate.head,
+          base: candidate.base,
+          operation: "native_preserve" as const,
+          phase: "native" as const,
+          nextHead: null,
+          deadline: request.deadline,
+        };
+        const authorized = await revalidateTakeoverPrincipal(
+          input.principal,
+          principalBinding,
+        );
+        if (!authorized.ok) return authorized;
+        const observed = await discover(request);
+        if (
+          !(await revalidateTakeoverPrincipal(
+            input.principal,
+            principalBinding,
+          )).ok
+        ) return refused();
+        const after = await input.state.readRepair();
+        return effectsAllowed(request.deadline) &&
+            observed.status === "candidate" &&
+            same(observed.candidate, candidate) && after.ok &&
+            after.value.status === "found" &&
+            after.value.head === request.expectedStateHead &&
+            same(after.value.snapshot, request.snapshot)
+          ? portOk(undefined)
+          : refused();
+      } catch {
+        return refused();
+      }
+    },
     async preserveNativeHead(raw) {
       try {
         const request = structuredClone(raw);
@@ -223,6 +289,20 @@ export function createExistingPrTakeover(
         ) return refused();
         const unchanged = async () => {
           if (!effectsAllowed(request.deadline)) return false;
+          const principal = await revalidateTakeoverPrincipal(input.principal, {
+            repository: request.binding.repository,
+            taskId: request.binding.taskId,
+            expectedStateHead: request.expectedStateHead,
+            pullRequest: request.binding.pullRequest,
+            branch: request.binding.headRef,
+            head: request.head,
+            base: request.base,
+            operation: "native_preserve",
+            phase: "native",
+            nextHead: null,
+            deadline: request.deadline,
+          });
+          if (!principal.ok || !effectsAllowed(request.deadline)) return false;
           const current = await input.state.readRepair();
           return current.ok && current.value.status === "found" &&
             current.value.head === stateHead &&

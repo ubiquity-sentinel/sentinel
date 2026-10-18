@@ -6,6 +6,7 @@ import type {
   NativeTakeoverObservation,
   TakeoverCandidateObservation,
   TakeoverCustodyProof,
+  TakeoverPrincipalAuthority,
   TakeoverProofRequest,
 } from "../contracts/existing-pr-takeover.ts";
 import {
@@ -26,6 +27,10 @@ import {
   type TakeoverAnchor,
   takeoverBindingDigest,
 } from "./existing-pr-takeover-provenance.ts";
+import {
+  revalidateTakeoverPrincipal,
+  takeoverPrincipalBinding,
+} from "./existing-pr-takeover-effect.ts";
 
 const OPERATIONS = new Set([
   "correct",
@@ -52,6 +57,7 @@ export interface TakeoverProofDependencies {
   policy?: ExistingPrTakeoverPolicy;
   /** Trusted installed-source fence, independent of queue mode/occupancy. */
   runtimeCapabilityAccepted(): boolean;
+  principal?: TakeoverPrincipalAuthority;
   readNative(
     input: TakeoverProofRequest,
   ): Promise<PortResultV1<NativeTakeoverObservation>>;
@@ -86,6 +92,12 @@ export function createTakeoverProofPort(
               input.record.target.candidateState?.publishedHead
           : input.nextHead !== undefined ||
             input.expectedHead !== input.record.target.head)
+      ) return false;
+      const principal = takeoverPrincipalBinding(input);
+      if (
+        principal === null ||
+        !(await revalidateTakeoverPrincipal(deps.principal, principal)).ok ||
+        !live(input)
       ) return false;
       if (input.operation === "refresh") {
         // Preparing a refresh retains custody of H/B0 while the native base is B1.
@@ -171,15 +183,27 @@ export function createTakeoverProofPort(
         facts.currentHead !== input.record.target.head ||
         facts.currentBase !== input.record.target.base ||
         facts.currentDescendsFromAnchor !== true ||
+        (sameNativeHead &&
+          (facts.custody?.kind !== "native" || descriptor !== null)) ||
         (!sameNativeHead &&
-          (facts.currentProducerVerified !== true || descriptor === undefined ||
+          (facts.custody === null || facts.custody.kind === "native" ||
+            descriptor === undefined ||
             descriptor === null ||
             descriptor.head !== input.record.target.head ||
-            descriptor.base !== input.record.target.base)) ||
+            descriptor.base !== input.record.target.base ||
+            !equal(facts.custody.candidate, descriptor) ||
+            (facts.custody.kind === "implementation" &&
+              descriptor.operationKey !==
+                `impl:${facts.custody.reservationId}`) ||
+            (facts.custody.kind === "base_refresh" &&
+              !isGitSha(facts.custody.predecessor)))) ||
         facts.nextHead !== (input.nextHead ?? null) ||
         (input.nextHead !== undefined &&
           facts.nextDescendsFromExpected !== true)
       ) return false;
+      if (!(await revalidateTakeoverPrincipal(deps.principal, principal)).ok) {
+        return false;
+      }
       const after = await deps.state.readRepair();
       return live(input) && after.ok && after.value.status === "found" &&
         after.value.head === before.value.head &&

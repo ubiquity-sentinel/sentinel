@@ -288,6 +288,7 @@ export async function nativeFixture(
     policy: controls.policy,
     runtimeCapabilityAccepted: () => controls.fence,
     contentsWriteAllowed: () => controls.write,
+    principal: { revalidate: () => Promise.resolve(portOk(undefined)) },
   };
   return {
     ctx,

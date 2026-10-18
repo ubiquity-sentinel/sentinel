@@ -110,7 +110,7 @@ export async function takeoverFixture() {
     anchorRestored: true,
     currentHead: SHA3,
     currentBase: SHA1,
-    currentProducerVerified: false,
+    custody: { kind: "native" },
     currentDescendsFromAnchor: true,
     nextHead: null,
     nextDescendsFromExpected: false,
@@ -147,6 +147,7 @@ export async function takeoverFixture() {
     baseBranch: "development",
     policy,
     runtimeCapabilityAccepted: () => fence,
+    principal: { revalidate: () => Promise.resolve(portOk(undefined)) },
     readNative: () => {
       hooks.native();
       return Promise.resolve(portOk(structuredClone(native)));
