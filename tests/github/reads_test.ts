@@ -3,6 +3,7 @@
 // pagination with cycle/size bounds, partial reads as unavailable, sanitized
 // errors and Authorization header use. All fixtures are synthetic.
 import assert from "node:assert/strict";
+import { MAX_ISSUE_BODY } from "../../src/github/wire.ts";
 
 import {
   checkRunWire,
@@ -143,7 +144,7 @@ Deno.test("listOpenIssues: page bound and mid-pagination failure are unavailable
 });
 
 Deno.test("readIssue: oversized body is unavailable (incomplete), never truncated", async () => {
-  const bigBody = "x".repeat(16385);
+  const bigBody = "x".repeat(MAX_ISSUE_BODY + 1);
   const { port } = makePort({
     script: [
       httpRespond(
