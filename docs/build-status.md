@@ -357,9 +357,13 @@ runtime review rounds and one settled charged implementation reservation. Exact
 native run 39113598607 / job 117634717794 passed 3,215 tests / 1,305 steps and
 failed the same ten base cases; all twenty-two follow-up cases passed. Receipt:
 `/workspace/evidence/pr160-continuation/corrected-base-validation/native-ci/summary.json`.
-After the scoped fixture correction is accepted, merge that base into this same
-PR, pass current native CI, obtain fresh review, then merge normally SHA-pinned.
-No replacement PR or force push; no historical runtime target/state rewrite.
+The audited test-only correction `2b32bdbd449cbc615c239af40474941cefcb0c55` is
+now merged locally into this same PR branch. Only this ledger conflicted; all
+eight non-ledger PR files remain byte-identical to f82/f23 and every other file
+equals the corrected base. Current combined validation and native CI must pass
+before fresh review and normal SHA-pinned merge. No replacement PR or force
+push; no historical runtime target/state rewrite. Evidence:
+`/workspace/evidence/pr160-continuation/second-corrected-base-validation/`.
 
 General cross-branch runtime PR adoption is separate, inactive work in
 `/workspace/worktrees/existing-pr-integration`. Root committed validated
