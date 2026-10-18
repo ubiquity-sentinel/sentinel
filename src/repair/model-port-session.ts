@@ -20,6 +20,7 @@ import {
 } from "./model-port-receipt.ts";
 import { buildPrompt } from "./model-port-prompt.ts";
 import { awaitSettlement } from "./model-port-settlement.ts";
+import { EarlyNotificationSession } from "./model-port-notifications.ts";
 import {
   failoverWindowMsV1,
   isProviderThrottledResultV1,
@@ -312,9 +313,19 @@ export class CodexImplementationPort implements ImplementationPort {
     try {
       session = await this.options.openSession();
       // CodexSubprocessSession is intentionally lazy so construction remains
-      // side-effect free.  Open it at the exact model boundary; an already
+      // side-effect free. Open it at the exact model boundary; an already
       // opened concrete session is accepted because open() is idempotent.
       session.open?.();
+      // Consume before any protocol request: a model can emit a whole turn
+      // before turn/start responds, so transport backpressure must never
+      // wait for the response that enables settlement registration.
+      let earlyNotifications: EarlyNotificationSession;
+      try {
+        earlyNotifications = new EarlyNotificationSession(session);
+      } catch {
+        return portError("unavailable", "notification registration failed");
+      }
+      session = earlyNotifications;
       await this.initialize(session);
       // The thread's base instructions are the system-level slot: they hold
       // only the trusted prompt. Untrusted CI evidence (output of running the
@@ -340,6 +351,7 @@ export class CodexImplementationPort implements ImplementationPort {
         turn.turnId,
         request.maxOutputChars,
         durationBoundMs,
+        () => earlyNotifications.getEarlyEvidence(),
       );
       // The model must be fully closed, including its owned process group,
       // before the trusted host inspects or commits the checkout. A direct
