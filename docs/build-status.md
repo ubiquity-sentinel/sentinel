@@ -11,271 +11,171 @@ is not asserted as fresh metadata.
 
 ## Active task register
 
-Current continuation checkpoint 2026-10-18: the primary coordinator owns
-generation-81 integration from handoff
-`be02faf40c77fe299c2ed7ffa91fedb00fe43c48` (#163), followed by the corrected
-merge-queue rollout (#164). Fresh reads confirm `development` at owner
-documentation commit `646eab67a4518a2034785ae708bdd1c7922d7d1e` and
-`sentinel-supervisor` at `87e28fd4a7796078adc4c930dd49d02651f82203`, runtime R80
-`e48e7e110e7cb2ed3385bf1be5165f05d8a4e481` installed at generation 80, and
-successful supervisor run 39095553458 with its own settled healthy execution
-proof on that launcher. Run 39097588521 has passed maintenance, preparation,
-matrix planning and its cell. Its repair job completed successfully at 05:48:34
-UTC; native finalization remains pending. `sentinel-release` remains disabled.
-No R81 candidate has been published, installed or accepted. The owner authorized
-normal fast-forward publication, exact-runtime CI, controller installation and
-live verification. The owner unsuspended the GitHub connector App; the live
-Sentinel App is a separate identity whose queue permission grant the owner has
-now confirmed. A fresh read also found the pre-existing repository ruleset
-`23197448` protecting only `sentinel-state/release` (created 2026-09-13); it is
-unchanged, and no new Sentinel ruleset or branch protection was added. Owner
-documentation on development separately records the implementation override
-`gpt-reserve`; preserve that owner change and all existing workflow variable
-expressions. Exact R81 CI may run from its frozen `codex/**` branch before L81
-integrates these unrelated owner documentation commits. The installer still
-requires exact successful R81 CI and ancestry.
+The primary coordinator owns the 2026-10-18 handoff
+`be02faf40c77fe299c2ed7ffa91fedb00fe43c48`: finish the ai.ubq.fi prerequisites,
+ship generation 81 through existing PR #165 and protected installation, then
+roll out the corrected merge queue (#164). Existing referenced PRs are reused;
+no replacement PR is opened. Issues #163 and #164 are assigned to authenticated
+account `0x4007` and carry `sentinel:skip` during manual ownership. Only the
+primary changes this ledger, accepts source, commits, integrates or publishes.
 
-The canonical integration worktree is `/workspace/worktrees/gen81-integration`,
-branch `codex/gen81-integration`. Accepted ancestry includes all eleven rebased
-handoff lanes (`e4731324887d2d6d5b25c09b7afa121e1a2fffc9`), throughput and owner
-summary changes (`0f5847394ed0058f338fd28717615e5c3b830956`), the current/R80
-non-expiring-hold regression (`50b65843b6a29fa2a7bdf9a75906335f9ff8131c`),
-workspace-owned test/cache fixtures
-(`4f1a09314c3e8089c06fe4e11317c14ee8190a15`), and the exact-base no-change
-review/closure route (`765e06bb`, including native parent custody
-`849317006889a3c46732b85cb8b1261cdea01daa`). The decision-matrix checker passes
-11 cases across 79 classes, 2,432 launcher passes and 8,976 explored states; its
-14 residual jams and 103 owner-visible parks remain named. The combined
-no-change, custody, service, retry and decision-matrix boundary passed 57 tests.
-These are local results, not exact-final-R acceptance.
+### Live boundary
 
-The fresh independent GPT-6.1 Sol/max combined audit froze candidate
-`3fe776f71cc50050ef0d804b42f0450f42f5f519` (diff SHA-256
-`ef6e2f89cfe129d8c7aef941896c6a1e42fb3d463d623036ba25b2db20d4d483`). Its one P1
-found remaining app-server volume stops; its P2/P3 findings identified two
-incidental caps and incomplete CI evidence retention. The primary integrated cap
-correction `f9e848d3`, CI correction `c882724153a648070de1422edb517ac81ae84338`,
-reviewer retention `d1e160996fca6db65f62e6bd5688bf6ab84cb152`, native custody
-`e5532b00c95faf17942cbbdca1b6296532f7b31a`, streaming transport
-`b834314a999280a1a5024433aa16f674555af608`, and early notification custody
-`fa322be1cde50ec6528cba7ae20668abff3a8046`, preserving all accepted ancestry.
+Development remains `646eab67a4518a2034785ae708bdd1c7922d7d1e`; the protected
+launcher remains `87e28fd4a7796078adc4c930dd49d02651f82203`. Runtime R80
+`e48e7e110e7cb2ed3385bf1be5165f05d8a4e481` remains installed at generation 80.
+Supervisor 39101820036 completed successfully. Release-state commit
+`cab6df6ee1b7d3b38fa982234093f6be2c1404e1` retains that execution's own settled,
+startup-ready healthy proof, bound to repair job 117602103694; the native log
+digest independently matches. A new ordinary R80 execution from 39103444110 is
+in progress. Evidence is `/workspace/evidence/live-post-39101820036/`. This
+proves runtime health, not new autonomous delivery. The earlier 39097588521
+delivery inventory found no new autonomous merge; maintenance observations are
+not delivered issues.
 
-The focused correction addendum is PASS on clean
-`ab307010405974b524704df57f080087104fc487`, correction diff SHA-256
-`1dabacc0905fd97793860a6f9e97fb69b75b7871b31081f955f1dd239b6b3399`. No P0/P1
-remains; all three original P2s and the P3 are corrected. Independent original
-output reproducers, 94 additional boundary cases, four corrected test
-fixture/inventory cases, and the actual reviewer-to-parent-custody-to-native
-app-server composition passed. That composition delivered 44,051,463 output
-characters before the turn acknowledgement, passed R80's own running/result/
-ready parsers, and rejected a late off-policy reroute. Output memory and early
-spool storage remain bounded; critical evidence loss refuses proof at natural
-settlement. Duration limits and all reservation charges remain. Missing CI step
-timestamps still use the explicitly advisory bounded fallback.
+`sentinel-release` remains disabled. The pre-existing Sentinel ruleset 23197448
+protects only `sentinel-state/release`; it was not added or changed by this
+task. No new Sentinel ruleset or branch protection is authorized. Preserve the
+owner's separate development documentation and implementation override
+`gpt-reserve`, and all four workflow expressions
+`${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}`. A requested
+model alias alone does not prove which provider/model actually executed.
 
-The exact-R81 run at `810712b5361a1e615099bddbb95b81314ff7bab6` passed all
-static gates and 94 bounded jobs before stopping with two timed-out integration
-fixtures. Those fakes, plus a third affected host fixture found by inspection,
-emitted completion only when listeners registered after turn start; R81 now
-correctly subscribes before starting the turn. This candidate corrects only
-those three test fixtures and preserves all production behavior and assertions.
-All 18 cases across the three affected integration files and 19 adjacent
-loop-guard cases pass; the patch and exact hashes are retained under
-`/workspace/evidence/gen81-integration-fixtures/`. The old receipts,
-deterministic red reproductions and abandoned toy repositories are retained
-under `/workspace/evidence/gen81-final-validation/` and
-`/workspace/evidence/gen81-lanes/`. The corrected R81 is frozen at
-`da98f5f49c45b57cfa97a45fe647c36b1021f302`; all 137 normal jobs pass, including
-all static gates and 3,058 tests / 843 steps across 445 files. Eleven existing
-platform/history guarded ignores are retained in the receipts. Its exact depth-1
-clone and seven shallow static gates also pass; the complete shallow test
-manifest is running. Queue source remains separate and cannot alter that exact
-candidate. Hosted exact-R CI, L81 pins, controller installation and live
-verification remain separate unproved gates. The primary alone owns this ledger,
-canonical integration and publication. The owner additionally requires taking
-over referenced or linked open PRs instead of opening duplicates. Current
-runtime discovery is limited to its generated or saved candidate branch; the
-isolated `queue-import-cycle` worker is auditing a native takeover path for the
-next runtime after R81. Preserve existing PRs and branches, refuse ambiguous or
-unwritable takeover visibly, and never create a fallback duplicate. This new
-requirement does not establish that current R80 or the frozen R81 enforces
-general cross-branch takeover. The original review/correction evidence remains
-under `/workspace/evidence/gen81-audit/`,
-`/workspace/evidence/gen81-output-volume/`,
-`/workspace/evidence/gen81-review-custody/` and
-`/workspace/evidence/gen81-install/`.
+### ai.ubq.fi prerequisites complete
 
-The primary is reusing existing generation-81 PR #165 and its original branch
-`sentinel/repair/issue-ubiquity-sentinel-163`. Issue #163 has `sentinel:skip`
-during manual ownership, and the PR is temporarily draft until integration is
-ready. Reconciliation of original head
-`848b907c98d6c37da63485cbed8ee5741126be4b` proves its checker behavior is
-already included or superseded in exact R81. A normal merge is prepared in
-`/workspace/worktrees/gen81-pr165-integration`; its executable tree matches R81
-and only the three owner/integration documents differ. The existing PR history
-and owner development ancestry are retained. No replacement PR is opened.
-Evidence is `/workspace/evidence/gen81-pr165/`.
+PR #1159 merged normally with exact head
+`0a7063f994f39d958476d9257c2eef7ce9a7abc9`, yielding
+`4c189c05d78f723fcbf06063f1624e35949332d1`. Its conflict resolution changed only
+`docs/DECISIONS.md` relative to the automatic remerge and kept both G3 facts.
+All four checks passed in run 39093217871 attempt 2. Current-head review had no
+P0/P1; the one retained P3 is follow-up #1182. Evidence:
+`/workspace/evidence/finish-1159/`.
 
-The first ai.ubq.fi prerequisite is complete: #1159 was merged normally with
-head SHA pinned to `0a7063f994f39d958476d9257c2eef7ce9a7abc9`, yielding
-`4c189c05d78f723fcbf06063f1624e35949332d1`. Its documentation conflict
-resolution changes only `docs/DECISIONS.md` relative to the automatic remerge
-and retains both G3 facts. Run 39093217871 attempt 2 passed all four checks; the
-one failed-job rerun addressed a proven pre-existing clock race in unchanged
-files. Current-head source review found no new P0/P1. The retained P3 migration
-cleanup finding is filed once as ai.ubq.fi #1182. PR #1180 is also complete:
-head `5b080ea0e0947c76230a0d08854e584f4771c9ab` received current-head approval,
-all four native checks passed on run 39096740114 attempt 1, and the normal
-SHA-pinned merge produced `624466337a9e92e9f36385d8801b29807e41ccb9`. Only
-`.github/workflows/deno-deploy.yml` differed from its base (seven additions, two
-deletions). Its exact-tree local full verify attempt passed static gates but
-could not run ARM64 native fixtures on this x64 host; hosted CI supplied that
-missing platform evidence. Postmerge development run 39098081444 passed all four
-checks without cancellation, supplying usable base CI. Local Codex CLI
-authentication failures are not review receipts. A separate one-line
-deterministic quota clock test fix remains prepared and unpublished.
+PR #1180 merged exact approved head `5b080ea0e0947c76230a0d08854e584f4771c9ab`,
+yielding `624466337a9e92e9f36385d8801b29807e41ccb9`. Only deno-deploy.yml
+changed: development runs are not cancelled, merge_group checks run, and only
+development pushes deploy. All four checks passed in 39096740114; postmerge
+development run 39098081444 also passed all four without cancellation. Evidence:
+`/workspace/evidence/ci-base-runs/final-5b080ea0/`. A separate deterministic
+quota clock fixture correction remains prepared and unpublished.
 
-Merge-queue support remains a separate, dormant candidate for after healthy R81.
-Foundation `7dd7a385f2d4bb209d3bef3aa0486a5f9464cc9a` and the 118-file combined
-queue candidate `4f097fd4492951c5e69b017acf8b9f3303766660` are integrated with
-R81 ancestry here. The primary owns final integration and shared policy; the
-native, launcher-custody, foreign-consumer and authority writers have frozen
-their scoped manifests under `/workspace/evidence/merge-queue/`,
-`/workspace/evidence/merge-queue-delivery-consumers/` and
-`/workspace/evidence/queue-authority/`. Combined formatting, lint and canonical
-source typechecks pass. The actual protected writer plus authority plus mixed
-direct/queue delivery pass passes, with queue holds, native-entry intent and all
-counters retained. Actual R80 parsers accept the held/booked/closure/done states
-and durable ancestor provenance reference. Native guards cover final effects,
-recovery, admission, preservation, result settlement and booking.
+### Generation 81: exact runtime accepted locally, hosted CI pending
 
-Queue custody runs first and uses non-expiring holds. Current native entry,
-complete authenticated events, exact removal beforeCommit semantics, immutable
-review/task identity, ordered merge parents and full tree changes bind proof.
-The exact tested merge revision must use the accepted workflow bytes and all
-four canonical merge-group checks must succeed. Predecessor `.github/` edits
-refuse admission. Missing evidence never falls through to direct proof. Source
-mode and immutable proof activation remain off; all canary pins remain empty. A
-fresh no-rule/no-custody REST path preserves the live direct pipeline without
-requiring queue permissions. The fresh independent combined audit of
-`b5c3092830ab8b8341dfcccc4dde940149c228ab` found two reproduced P1 blockers: a
-transient dormant-state read could latch permanent custody, and unmerged removal
-reconciliation called a merged-only evidence reader. The launcher custody scope
-passed, including a 90-day restart with no repeated effect. The removal
-correction in this commit uses complete native event reads and fresh membership
-before and after, with actual-client CI/timeout reentry and refusal regressions
-(48 tests, 104 steps plus static gates). Its four source hashes match
-`/workspace/evidence/queue-removal-correction/manifest.json`. The dormant retry
-correction is also integrated: fresh preactivation failures without observed
-custody receive a finite unavailable wait. Any queue rule, native entry, durable
-intent or provenance retains strict custody. Fresh state and rule checks must
-pass before a retried effect; actual final-port refusals retain their intent and
-charges. Its five source hashes match
-`/workspace/evidence/queue-dormant-retry/manifest.json`; 35 tests and 73 steps,
-including actual R80 parsing, and all scoped static gates pass. The independent
-focused addendum passes clean `37f740d397ae95c106db14303e8e959d6929383b`: all 15
-tests and 58 steps pass, including the original red reproductions. No P0/P1
-remains in the combined queue/correction scope. Queue installation and live
-acceptance remain unproved. No queue runtime is published or installed. The full
-audit and reproducers are under `/workspace/evidence/merge-queue/audit/`.
+R81 is frozen at `da98f5f49c45b57cfa97a45fe647c36b1021f302` in
+`/workspace/worktrees/gen81-integration`. It retains all eleven rebased lane
+ancestors, throughput and owner summaries, unchanged-base satisfaction review,
+and the output-volume corrections. The combined adversarial audit and focused
+correction addendum pass with no P0/P1; all original P2/P3 findings were also
+corrected. The native reviewer composition accepted 44,051,463 output characters
+before acknowledgement and passed R80's own parsers. Memory/storage and duration
+bounds remain; reservation charges and the three-round/three-CI-fix owner rules
+remain. Evidence: `/workspace/evidence/gen81-audit/correction-addendum.md`.
 
-Two conservative liveness limitations are retained for review as P2 follow-ups:
-a definitely unsent admission can retain its non-expiring hold after a later
-preflight refusal, and a definitely completed dequeue retains its durable
-at-most-once marker pending owner reconciliation. Neither ambiguity nor elapsed
-time releases custody or refunds charges. Carried VPS acceptance remains pending
-under the existing release boundary; `sentinel-release` stays disabled.
+All 275 bounded exact-R81 validation jobs pass. Normal checkout: 3,058 tests /
+843 steps across 445 files, eleven existing guarded ignores. Depth-1 checkout:
+2,992 tests / 778 steps across the same files; additional historical-source
+ignores are explicit and passed in the normal checkout. Both trees remained
+clean. The three corrected integration fakes support early notification
+subscription without changing production behavior or assertions. Complete
+receipts and ignore inventory are under
+`/workspace/evidence/gen81-final-validation/`. The decision-matrix checker
+retains 14 named residual jams and 103 owner-visible parks; checker reachability
+is not proof of eventual delivery or live acceptance.
 
-The bounded App-only canary runner is integrated with nine exact owned files
-from patch SHA-256
-`928d46b535a86f10c8e4185ec394b8b1b9bb2615a0167ae601b778a95cfca29b`. Its
-independent review and focused correction addendum pass with no P0/P1; both P2
-findings are corrected. Producer checks passed 29 tests and 75 steps;
-independent HTTP correction checks passed 8 tests and 60 steps. Source grants
-remain empty, and no canary effect or live permission change has occurred.
-Evidence is under `/workspace/evidence/merge-queue/canary-runner/` and
-`canary-audit/`.
+Exact R81 is published on staging branch `codex/gen81-runtime-da98f5f4` for
+native run 39103195042. Existing PR #165 retains its original branch and
+history, with normal merge head `faef6cb59188bc9e27091113cb5c0fe82ae85b18` and
+tree `f98551268f5d9b2d5260893345ba3f89e788bc8f`. All executable files equal R81;
+only AGENTS, DECISIONS and this ledger differ to preserve owner/current facts.
+Original checker content is included or superseded by the integrated lane.
+Latest current-head PR CI is 39103866242. Both hosted gates remain pending. The
+PR is open and temporarily draft. Its required body is exactly `Resolves #163`;
+the failed bot auto-assignment was diagnosed and the owner authorized assignment
+to the current authenticated account. Evidence:
+`/workspace/evidence/gen81-pr165/`.
 
-Activation remains gated by an accepted native canary, exact historical direct
-witnesses, expected production rule projection and an installed proof-capable
-fallback. Read-only install planning identified two implementation gaps: the
-lower-only selector was unwired, and old-runtime selection lacked an activated
-queue capability boundary. The lower-only switch is now integrated from the
-twelve-file patch
-`72d27541c9bb8cc556a2944502703bb5ebd24c0e2b23bf23bed5a9f258a6cca7`. Actual
-coordinator/native-client admission and restart tests prove the selector lowers
-admission while proof pins, custody and charges remain unchanged; 52 tests and
-62 steps pass in the affected boundary, with final focused 23-test/36-step
-evidence overlapping that coverage. Broader host lifecycle checks exposed a
-pre-existing unpublished queue import cycle at `HISTORICAL_NOT_STARTED_DETAIL`.
-The one-line correction imports its existing leaf owner module directly; both
-failing host consumers now pass (13 tests), and seven cold executable imports
-pass with the switch applied. The switch also adds its named variable to the
-actual child test's declared allowlist; its original permission refusal is
-reproduced and corrected. These exact patches are retained under
-`/workspace/evidence/queue-import-cycle/` and
-`/workspace/evidence/queue-kill-switch-supplement/`. The thirteen-file exact
-runtime capability guard is also integrated from patch
-`dd4eb456fe270f04697e391d3d370bf58fb2eae9563e4ed60672d741fd1c0802`. It guards
-controller selection, generic pointer replay, owner installation and actual
-repair/matrix child launch. Finite owner migration tuples permit only the exact
-owner-install move into an accepted runtime; they never grant predecessor
-execution or rollback. Production capability pins and migration tuples remain
-empty. Its 70 tests and 59 steps pass, including actual R80 parsing of emitted
-release-state lifecycles. Existing verification-only bootstrap behavior for an
-accepted failed candidate remains unchanged. Only the primary owns shared
-integration and this ledger. The fresh GPT-6.1 Sol/max combined correction
-review passes frozen `3c51706f73bfe793068abccb8de3f92457d1d233` with no P0/P1 or
-new P2/P3. Four independent tests / eight steps, eight fresh entrypoint imports,
-exact size/diff checks and six hash-bound evidence groups pass. The two prior P2
-holds remain. Review evidence is
-`/workspace/evidence/merge-queue/activation-audit/report.md` (SHA-256
-`2fb26f1f018733f267759aa23c9149576ea5dcf6e39f87a79c6b09745ac11ce0`). This
-accepts dormant source preparation only; native canary, projection, historical
-witnesses, exact future runtime/launcher CI, installation, fallback health and
-live delivery remain unproved. The proposed disabled-to-active production
-ruleset projection still requires native canary evidence. Stage the production
-ruleset disabled and install accepted proof-capable fallback/admission revisions
-before owner activation; never enable then rebuild pins. Prospective generation
-numbers are not authority. Detailed evidence is in
-`/workspace/evidence/merge-queue/install-plan.md`. No Sentinel ruleset or branch
-protection is authorized. The owner explicitly confirmed the Sentinel App's
-Merge queues read/write permission was granted and accepted; native
-App-authenticated canary verification remains pending. The queue-canary run and
-ai.ubq.fi ruleset remain owner steps; production activation before installed
-enqueue support is forbidden. Owner cleanup remains the stale
-`SENTINEL_MODEL_ID` variable and superseded ai.ubq.fi PRs #1057, #1060 and
-#1116.
+L81's fourteen-file pin patch is prepared and independently audited, SHA-256
+`477728957d4a81d351a03a0c8575b04c152a7cd99f52e0eaf516dba83fd62de1`. It installs
+exact R81/81 from healthy R80/80, permits one failed-R81 rollback to R80/82
+without automatic retry, and preserves the old failed-R80 rung. Six route
+allowlists bind R81; the legacy cutoff remains 1792256700000. Producer and fresh
+independent normal/shallow consumer checks pass. After both hosted CI gates and
+current-head review pass: ready and SHA-pin normal-merge #165, apply L81 to
+fresh development, check the final input, then fast-forward development and
+sentinel-supervisor. Only the protected controller writes installation state.
+Verify exact installed R81/81 own health and delivery separately; reopen #163 if
+the merge auto-closes it before live acceptance. Procedure and proof boundaries:
+`/workspace/evidence/gen81-install/README.md`.
 
-The exact R81 normal and depth-1 acceptance is complete: all 275 bounded jobs
-pass, with 3,058 tests / 843 steps normally and 2,992 tests / 778 steps shallow;
-all additional shallow ignores are explicit historical-source guards. Exact R81
-is published only on staging branch `codex/gen81-runtime-da98f5f4` for native
-run 39103195042. Existing PR #165 carries normal merge
-`faef6cb59188bc9e27091113cb5c0fe82ae85b18`, preserving its original branch and
-owner documentation ancestry; its executable tree equals R81. Native CI remains
-pending. Supervisor 39097588521 finalized successfully with its own settled R80
-health proof; this proves health, not new autonomous delivery. The manual
-ai.ubq.fi prerequisites remain complete. Evidence is under
-`gen81-final-validation`, `gen81-hosted`, `gen81-pr165` and
-`live-post-39097588521` in `/workspace/evidence/`.
+### Queue: dormant source accepted, native activation remains gated
 
-Native historical evidence exposed one further queue identity defect: GraphQL
-returns a Bot's App slug without `[bot]`, while REST returns the suffixed login.
-The shared native wire parser now canonicalizes only typed Bot actors and keeps
-opaque node identity. Direct historical proof additionally requires the same
-native actor node/type/login for mergedBy and commit author. The actual-client
-and canary regressions pass; the producer's 108 tests / 234 steps cover affected
-consumers. The pure disabled-to-active ruleset projection compiler is also
-integrated, requiring accepted complete same-ID native D/A/D/A captures and
-refusing unsupported transformations. Its 17 tests / 78 steps pass. It adds no
-production caller or accepted profile and cannot authorize queue admission.
-Patch manifests are under `/workspace/evidence/queue-native-actor/` and
-`/workspace/evidence/queue-rules-projection/`. Exact combined static/consumer
-checks pass; a fresh independent correction audit is pending. All queue mode,
-proof, canary and runtime capability pins remain off or empty. The 27 historical
-direct-operation witness proposals now have native receipts, but remain
-unaccepted pending review; no authoritative state has been changed.
+Canonical queue work is `/workspace/worktrees/merge-queue-consumers`, separate
+from frozen R81. Accepted ancestry includes combined queue, dormant
+transient-read and removal corrections, App-only canary runner, lower-only
+selector, import-cycle fix and exact runtime capability guards. All queue
+mode/proof defaults remain off/false; source canary grants, capability/migration
+pins and historical witness pins remain empty. No queue source is published or
+installed. Queue custody runs first, uses non-expiring holds and cannot fall
+through to the old direct verifier. Every changed state shape remains
+R80-readable; old-runtime execution after activation is separately refused by
+exact capability gates.
+
+Fresh independent audit passes `854532e3556c5fa94ecbee050dfa9563efa79bb7`, delta
+SHA-256 `d363e92abd5ab472521bbf02a67537d25086a4be2754af4fb4948061d7854a82`. It
+covers native GraphQL Bot normalization with retained node/type identity, strict
+historical direct actor matching, and the pure ruleset projection compiler.
+Producer actor checks passed 108 tests / 234 steps; projection checks passed 17
+tests / 78 steps; root combined checks passed 26 tests / 106 steps; independent
+probes passed three tests / four steps plus cold imports and statics. No new
+P0/P1 or P2/P3 remains. Report:
+`/workspace/evidence/merge-queue/native-projection-audit/report.md`, SHA-256
+`5cc8619c2d14e950f44ac3646aa3b4b3cc2de7f81ee2ee2e27b272d6c3f0597f`.
+
+A separately reproduced stale local-github review-owner fixture now supplies a
+valid empty repair snapshot and successful empty rules read before the retained
+PR refusal. No production guard changes. Its exact one-file patch SHA-256 is
+`89f9286e8aaeffe2ea051cff0187d07f734a3bb59ddef012b1bc910920e5ef5b`; 18 tests /
+eight steps and scoped statics pass. Evidence:
+`/workspace/evidence/queue-review-owner-fixture/`. The trusted read-only raw
+projection collector is separately owned in
+`/workspace/worktrees/queue-projection-collector`; its native capture wiring is
+not yet accepted.
+
+All 27 active historical direct deliveries now have independently verified
+native operation, B/H/M, task/review, tree and reachability evidence. The three
+original failed acknowledgements remain failed; immutable native creation
+commits prove those writes landed. Finite witness entries are safely derivable,
+but none is accepted or installed yet. Refresh live inventory before activation.
+Evidence:
+`/workspace/evidence/merge-queue/historical-inventory/operation-receipts/`. Two
+prior P2 conservative holds remain for follow-up: definitely-unsent admission
+after refusal, and completed dequeue markers pending reconciliation. Existing
+follow-ups #1147/#1148 are not duplicated. Genuine VPS delivery acceptance
+remains pending under its existing boundary.
+
+The owner confirmed runtime App 4682172 / installation 155687488 has Merge
+queues read/write granted and accepted. Do not ask again. After healthy R81,
+publish reviewed dormant source preserving its runtime pins; obtain owner
+approval for concrete queue-canary fixtures, grants and disabled ruleset. Native
+same-ID D/A/D/A captures must establish the projection profile. Stage production
+disabled, compile accepted expected active rules, install and verify
+proof-capable enqueue-off fallback F, then enqueue-capable A with exact healthy
+F fallback. Verify the wired selector before the owner activates the exact
+staged production ruleset. Never enable then rebuild pins. Native canary,
+profile/witness acceptance, future exact runtime/launcher CI, installation and
+live delivery remain separate gates. Owner packet:
+`/workspace/evidence/merge-queue/canary-owner-packet.md`.
+
+General cross-branch runtime PR adoption is only separately prepared work in
+`/workspace/worktrees/existing-pr-integration` and
+`/workspace/worktrees/open-pr-native`. It remains disabled and unpublished;
+lifecycle/fence integration is unassigned. It does not delay R81 or queue
+rollout and is not claimed as current runtime behavior. The current task already
+preserves and reuses PR #165.
+
+Owner cleanup remains deletion of stale `SENTINEL_MODEL_ID` and closure of
+superseded ai.ubq.fi PRs #1057, #1060 and #1116. Remaining owner queue steps are
+the concrete canary and ruleset; source review and preparation proceed first.
 
 | Current boundary                                                       | Exact evidence and next action                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
