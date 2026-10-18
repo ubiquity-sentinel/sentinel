@@ -21,7 +21,88 @@ authenticated account `0x4007` and carry `sentinel:skip` during manual
 ownership. Only the primary changes this ledger, accepts source, commits,
 integrates or publishes.
 
-### Migration continuation, 2026-10-18 12:58 UTC
+### Migration continuation, 2026-10-18 14:58 UTC
+
+The owner explicitly approved the isolated canary and then granted standing
+production-cutover approval for this job ("Always approved"; "Finish the job you
+can always cut over production"). Canary and production approval are no longer
+pending; do not re-request them. The recorded technical, custody,
+source-identity and rollback gates remain mandatory. Exact authorization
+receipt: `source-publication/standing-owner-approval.json` under the migration
+evidence root; the current decision is recorded in `DECISIONS.md`.
+
+Native CI `39131885021:1` is unaccepted: job `117688559982` was cancelled by its
+confirmed 45-minute timeout at 14:16:18 UTC, with three prior failed cases and
+no final harness success marker. Exact failures are the two workflow contracts
+in `tests/host/issue48-recovery_test.ts` and actual-parent repair-death case in
+`tests/host/review-owner-host_test.ts`. Native source/job/Actions-App identities
+match `01ef88a5`; full sanitized evidence is under `ci-01ef-acceptance/`. The
+last cases were still progressing, so the revised finite code-CI bound is 60
+minutes; no runtime/model deadline changes. No unchanged native retry or canary
+effect has occurred.
+
+The three exact failures now have causal local RED/GREEN. Their causes were
+stale workflow fixture predicates and missing read-only queue observations in
+the real review-owner lifecycle fixture; production workflow admission and
+review-owner implementation are unchanged. The primary committed the review
+fixture as `b57262bd288b210895a1f45265a05b54007e5f62` and workflow/CI correction
+as `1d6020a71b230ff7dfcf12ec1119b4487ef1b65b`, preserving both through normal
+merges in canonical `ace5d92b9d3dbef71abbd58d0140ef6d50e6fe3a`. Local workflow
+acceptance passed 23 tests/4 steps; the review fixture and seven adjacent tests
+passed with original native-carrier, process-death and cleanup assertions
+retained. Evidence roots are `ci-workflow-fix/` and `ci-review-owner-fix/`. Only
+code-CI timeout moved 45→60, and the trusted owner installer gained the exact
+verified signed-log network scope needed by future recovery. Corrected combined
+checks/audit and a new native CI run remain pending; recovery source is still
+isolated and unaccepted.
+
+The eight-file future-pin foundation passed its causal RED/GREEN and 25 tests/24
+steps, was committed by the primary as
+`80e6cbd3b9499a181c0be921ab64a5119f527855`, and integrated normally into
+canonical `0db9c78a1da816d0e3da87f880a71e43ca6acc95`. Its accepted worker tip is
+preserved as an ancestor. This local foundation is not yet published. The next
+isolated modules all start at exact `0db9c78a1`; full lane mappings are in
+`correction-lanes.json` under migration evidence.
+
+| Module                                                         | Sole writer and scope                                                                                                                                                                                              | Acceptance                                                                                                                                                            |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `migration-ci-workflow-contracts`, aid `2a40b087f3`            | Branch/worktree `master-plan-migration-ci-workflow-contracts-a2a40b087f3`; workflow contract tests/helper, applicable supervisor predicates and the source-CI timeout only                                         | Reproduce both exact workflow failures, preserve security assertions, pass affected contracts and confirm only the code-CI deadline changed                           |
+| `migration-ci-review-owner`, aid `4826bfd079`                  | Branch/worktree `master-plan-migration-ci-review-owner-a4826bfd079`; review-owner host and its actual-parent lifecycle test                                                                                        | Reproduce exact parent/repair-death failure, retain cleanup/native-carrier assertions, pass actual consumer boundary                                                  |
+| `migration-future-runtime-recovery-20261018`, aid `0fa0a42cf1` | Branch/worktree `master-plan-migration-future-runtime-recovery-202610-a0fa0a42cf1`; shared recovery data, exact native-proof authority, owner planner/writer and bootstrap producer with focused tests/protections | Prove failed-first-F and failed-restored-F recovery plus fresh-generation rollback bootstrap without fabricated health, manual state changes or old-runtime execution |
+
+Inactive source `01ef88a5a4aeb2b50bf0e7827ab12164430c847d`, tree
+`75108fac5db57eac85a69bdd2bd17b954332c02a`, is published by normal fast-forward
+to development from `12bc367852188aa94132b7658d774ec413295c1d`. L81 remains
+`00b6649eeff51a9754bf3748f793137db9bf8605` and release remains disabled. Final
+exact-commit checks passed 42 test executions/68 steps, 17 native persisted
+snapshots through R80, the real cold child and actual depth-one source reads;
+two historical cases are explicitly ignored. Independent local evidence closure
+SHA-256 `8558a84b92d4902e3e13a497836252272c00e95e0222430b5323c77b035a3899`
+accepts inactive publication. New native CI `39131885021`, attempt 1/job
+`117688559982`, is in progress on exact `01ef88a5`; no native acceptance,
+installation or queue activation is claimed yet. The next work is approved
+canary execution after required CI, followed by the verified production rollout.
+
+Shared foundation module `migration-future-pins` is assigned to one isolated
+implementation worker before F freezes: original goal ID
+`/Users/nv/repos/ubiquity/sentinel/MASTER-PLAN.md`, aid `3be4df864c`, branch
+`codex/master-plan-migration-future-pins-a3be4df864c`, worktree
+`/home/codex/repos/ubiquity/sentinel/.codex-worktrees/master-plan-migration-future-pins-a3be4df864c`,
+exact base `01ef88a5a4aeb2b50bf0e7827ab12164430c847d`. It owns only the rollout
+parser/JSON, acceptance-correction and legacy-cutoff consumers, and their four
+named tests/fixture. Add the two independent reviewed-data lists under the
+decision above; no native IDs, runtime pins, admissions or effects are enabled.
+Canary source grants and later F/A source preparation depend on accepted
+foundation integration; native fixture preparation and read-only rollout
+planning continue independently.
+
+The handoff's three superseded AI PRs #1057/#1060/#1116 were already closed
+without merging; no closure was performed here. The primary removed only unused
+repository variable `SENTINEL_MODEL_ID` after proving both exact live workflow
+trees use `SENTINEL_IMPLEMENTATION_MODEL_ID` and have no stale-variable
+consumer. The active implementation override and valid runtime environment key
+are unchanged. Exact original variable backup and verified DELETE/404 receipt
+are under `owner-cleanup-reconciliation/`; no credential value was printed.
 
 The current primary resumes the full stability, outstanding-issue repair,
 existing-PR takeover and guarded merge-queue goal from transport checkpoint
