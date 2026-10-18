@@ -40,47 +40,58 @@ These are local results, not exact-final-R acceptance.
 
 The fresh independent GPT-6.1 Sol/max combined audit froze candidate
 `3fe776f71cc50050ef0d804b42f0450f42f5f519` (diff SHA-256
-`ef6e2f89cfe129d8c7aef941896c6a1e42fb3d463d623036ba25b2db20d4d483`). It found
-one P1: real app-server transport still terminated valid sessions at cumulative
-32 MiB or one large output frame. Its P2/P3 findings identified two remaining
-incidental caps and incomplete CI evidence retention. All corrections remain
-within the requested scope. The primary accepted remaining-cap correction
-`f9e848d3`, CI step-window/rate-limit correction
-`c882724153a648070de1422edb517ac81ae84338`, and bounded reviewer retention
-`d1e160996fca6db65f62e6bd5688bf6ab84cb152`, merged through `9fea77e7`.
+`ef6e2f89cfe129d8c7aef941896c6a1e42fb3d463d623036ba25b2db20d4d483`). Its one P1
+found remaining app-server volume stops; its P2/P3 findings identified two
+incidental caps and incomplete CI evidence retention. The primary integrated cap
+correction `f9e848d3`, CI correction `c882724153a648070de1422edb517ac81ae84338`,
+reviewer retention `d1e160996fca6db65f62e6bd5688bf6ab84cb152`, native custody
+`e5532b00c95faf17942cbbdca1b6296532f7b31a`, streaming transport
+`b834314a999280a1a5024433aa16f674555af608`, and early notification custody
+`fa322be1cde50ec6528cba7ae20668abff3a8046`, preserving all accepted ancestry.
 
-Remaining R81 source ownership: `output_nochange` owns bounded streaming JSON
-projection and settlement accounting; `integrate_lanes` owns bounded early
-notification custody before turn startup; `finish_1159` owns native reviewer
-channel backpressure and the exact close fence. These lanes coordinate one
-internal notification contract and must pass a focused audit correction recheck
-together. No serialized R80 shape is widened. Volume never authorizes an
-interrupt or receipt; missing complete proof remains unavailable at natural
-settlement. Duration limits and all reservation charges remain. The primary
-alone owns this ledger, integration commits, final R81 freeze, exact-R
-validation and L81 publication. Final-validation orchestration and the
-pin/install checklist are prepared; full exact-R validation has not run.
-Evidence is under `/workspace/evidence/gen81-audit/`,
-`/workspace/evidence/gen81-evidence-corrections/`,
-`/workspace/evidence/gen81-review-volume/`, `/workspace/evidence/gen81-lanes/`,
+The focused correction addendum is PASS on clean
+`ab307010405974b524704df57f080087104fc487`, correction diff SHA-256
+`1dabacc0905fd97793860a6f9e97fb69b75b7871b31081f955f1dd239b6b3399`. No P0/P1
+remains; all three original P2s and the P3 are corrected. Independent original
+output reproducers, 94 additional boundary cases, four corrected test
+fixture/inventory cases, and the actual reviewer-to-parent-custody-to-native
+app-server composition passed. That composition delivered 44,051,463 output
+characters before the turn acknowledgement, passed R80's own running/result/
+ready parsers, and rejected a late off-policy reroute. Output memory and early
+spool storage remain bounded; critical evidence loss refuses proof at natural
+settlement. Duration limits and all reservation charges remain. Missing CI step
+timestamps still use the explicitly advisory bounded fallback.
+
+All R81 writers are frozen. This commit records the audited code as the R81
+candidate; full exact-commit formatting (including JSON), lint, size, canonical
+check list, every test at CI permissions, and the depth-1 clone validation are
+next. Hosted exact-R CI, the later L81 pins, controller installation and live
+verification remain separate unproved gates. The primary alone owns this ledger,
+canonical integration, final validation and publication. Local evidence is under
+`/workspace/evidence/gen81-audit/` (including `correction-addendum.md` and its
+manifest), `/workspace/evidence/gen81-output-volume/`,
+`/workspace/evidence/gen81-review-custody/`,
+`/workspace/evidence/gen81-lanes/early-notifications-report.json`,
 `/workspace/evidence/gen81-final-validation/` and
 `/workspace/evidence/gen81-install/`.
 
-The ai.ubq.fi prerequisites remain unmerged. PR #1159's conflict resolution
-changes only `docs/DECISIONS.md` relative to the automatic remerge and retains
-both G3 facts. The clean merge of development is published at
-`0a7063f994f39d958476d9257c2eef7ce9a7abc9`; run 39093217871 attempt 1 failed a
-pre-existing quota-proof clock race in unchanged files. One failed-job rerun
-(attempt 2) is in progress on that same head. All four checks must pass before
-the SHA-pinned normal merge. One P3 review follow-up is prepared with a
-reproduced legacy GPG-cleanup race under `/workspace/evidence/finish-1159/`. The
-independent one-line clock-race repair is prepared separately and changes no
-runtime code. PR #1180 at `46e7e30120b1aea435ff8deb875136026812e69a` has all
-four checks green and current-head CodeRabbit approval. It preserves development
-push runs and adds non-deploying merge-group runs. After #1159 merges, merge
-development into #1180, publish, rerun exact-head CI, review and SHA-pin its
-normal merge. Local Codex CLI review attempts failed authentication and are not
-completed reviews.
+The first ai.ubq.fi prerequisite is complete: #1159 was merged normally with
+head SHA pinned to `0a7063f994f39d958476d9257c2eef7ce9a7abc9`, yielding
+`4c189c05d78f723fcbf06063f1624e35949332d1`. Its documentation conflict
+resolution changes only `docs/DECISIONS.md` relative to the automatic remerge
+and retains both G3 facts. Run 39093217871 attempt 2 passed all four checks; the
+one failed-job rerun addressed a proven pre-existing clock race in unchanged
+files. Current-head source review found no new P0/P1. The retained P3 migration
+cleanup finding is filed once as ai.ubq.fi #1182. PR #1180 is refreshed normally
+through new development `670d2b3a` at local head
+`5b080ea0e0947c76230a0d08854e584f4771c9ab`; only the workflow differs from its
+base (seven additions, two deletions). Fourteen focused workflow/deployment
+admission cases pass. The exact-tree full verify attempt, publication, fresh
+four-check native CI, current-head review and SHA-pinned normal merge remain.
+The x64 local host cannot run the repository's ARM64 native fixture; this setup
+boundary must not be represented as a full local pass. Actual local Codex CLI
+review attempts failed authentication and are not completed reviews. A separate
+one-line deterministic quota clock test fix is prepared, not published.
 
 Merge-queue support remains separate preparation for after healthy R81. The
 pure/API foundation is `7dd7a385f2d4bb209d3bef3aa0486a5f9464cc9a`, with 27
