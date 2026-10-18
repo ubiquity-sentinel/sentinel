@@ -2,6 +2,7 @@
 
 import type {
   GitHubBranchProtectionsV1,
+  GitHubCheckSuitesV1,
   GitHubChecksV1,
   GitHubPullRequestV1,
   GitHubRefV1,
@@ -12,6 +13,7 @@ import { expectArray, expectRecord } from "../contracts/validation.ts";
 import {
   parseBranchRuleWire,
   parseCheckRunWire,
+  parseCheckSuiteMemberWire,
   parseCommitStatusWire,
   parseProtectionWire,
   parsePullReviewDecisionWire,
@@ -103,8 +105,9 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
     );
   }
 
-  async readChecks(sha: GitSha): Promise<PortResultV1<GitHubChecksV1>> {
-    const collected = await this.collectPages(
+  /** Every check-run page of exactly one commit, raw, item bound applied. */
+  private collectCheckRuns(sha: GitSha): Promise<PortResultV1<unknown[]>> {
+    return this.collectPages(
       `/repos/${repoPath(this.repository)}/commits/${sha}/check-runs`,
       { per_page: String(this.perPage) },
       (body) => {
@@ -117,6 +120,10 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
         ) as unknown[];
       },
     );
+  }
+
+  async readChecks(sha: GitSha): Promise<PortResultV1<GitHubChecksV1>> {
+    const collected = await this.collectCheckRuns(sha);
     if (!collected.ok) return collected;
     const checks = [];
     for (const item of collected.value) {
@@ -156,6 +163,31 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
         "unavailable",
         "GitHub API checks collection size bound exceeded",
       );
+    }
+    return portOk({ head: sha, checks });
+  }
+
+  /**
+   * The coverage rule's base read (`GitHubPort.readCheckSuites`): the same
+   * complete, item-bounded check-run listing as `readChecks`, every run bound
+   * to `sha`, reduced to name and suite with no label bound on the name.
+   */
+  async readCheckSuites(
+    sha: GitSha,
+  ): Promise<PortResultV1<GitHubCheckSuitesV1>> {
+    const collected = await this.collectCheckRuns(sha);
+    if (!collected.ok) return collected;
+    const checks: GitHubCheckSuitesV1["checks"] = [];
+    for (const item of collected.value) {
+      const parsed = parseWith(item, (v) => parseCheckSuiteMemberWire(v, "$"));
+      if (!parsed.ok) return parsed;
+      if (parsed.value.head !== sha) {
+        return portError(
+          "unavailable",
+          "checks collection does not match the requested head",
+        );
+      }
+      checks.push({ name: parsed.value.name, suite: parsed.value.suite });
     }
     return portOk({ head: sha, checks });
   }

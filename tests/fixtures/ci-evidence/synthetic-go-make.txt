@@ -1,0 +1,30 @@
+2026-10-17T10:00:00.0000000Z ﻿Current runner version: '2.337.0'
+2026-10-17T10:00:01.0007919Z ##[group]Runner Image Provisioner
+2026-10-17T10:00:02.0015838Z Hosted Compute Agent
+2026-10-17T10:00:03.0023757Z ##[endgroup]
+2026-10-17T10:00:04.0031676Z ##[group]Run actions/checkout@v4
+2026-10-17T10:00:05.0039595Z with:
+2026-10-17T10:00:06.0047514Z   repository: example/project
+2026-10-17T10:00:07.0055433Z   token: ***
+2026-10-17T10:00:08.0063352Z ##[endgroup]
+2026-10-17T10:00:09.0071271Z Syncing repository: example/project
+2026-10-17T10:00:10.0079190Z [command]/usr/bin/git version
+2026-10-17T10:00:11.0087109Z git version 2.55.0
+2026-10-17T10:00:12.0095028Z ##[group]Run make ci
+2026-10-17T10:00:13.0102947Z [36;1mmake ci[0m
+2026-10-17T10:00:14.0110866Z shell: /usr/bin/bash -e {0}
+2026-10-17T10:00:15.0118785Z ##[endgroup]
+2026-10-17T10:00:16.0126704Z go vet ./...
+2026-10-17T10:00:17.0134623Z go test ./...
+2026-10-17T10:00:18.0142542Z ok  	example.com/project/internal/cache	0.412s
+2026-10-17T10:00:19.0150461Z --- FAIL: TestRouterRejectsUnknownMethod (0.00s)
+2026-10-17T10:00:20.0158380Z     router_test.go:88: status = 200, want 405
+2026-10-17T10:00:21.0166299Z FAIL
+2026-10-17T10:00:22.0174218Z FAIL	example.com/project/internal/router	0.019s
+2026-10-17T10:00:23.0182137Z ok  	example.com/project/internal/store	1.003s
+2026-10-17T10:00:24.0190056Z FAIL
+2026-10-17T10:00:25.0197975Z make: *** [Makefile:14: test] Error 1
+2026-10-17T10:00:26.0205894Z ##[error]Process completed with exit code 2.
+2026-10-17T10:00:27.0213813Z Post job cleanup.
+2026-10-17T10:00:28.0221732Z [command]/usr/bin/git version
+2026-10-17T10:00:29.0229651Z git version 2.55.0

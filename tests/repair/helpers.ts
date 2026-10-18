@@ -221,6 +221,12 @@ export interface FakeGithubOptionsV1 {
   checks?: GitHubCheckV1[];
 }
 
+/**
+ * A fake check run with the check suite GitHub reports it in: the strict CI
+ * read carries no suite; the coverage read (`readCheckSuites`) reports it.
+ */
+export type SuitedCheckV1 = GitHubCheckV1 & { suite?: number };
+
 /** Recording fake GitHubPort; product logic never lives here. */
 export class FakeGithub implements GitHubPort {
   /** Explicit trusted publisher identity; the loop must use this value. */
@@ -419,6 +425,24 @@ export class FakeGithub implements GitHubPort {
       completedAt: 2,
     };
     return Promise.resolve(portOk({ head: _head, checks: [green] }));
+  }
+
+  /**
+   * The coverage read of a base: this fake's own check read (including any
+   * test override of `readChecks`) reduced to name and suite, as the real
+   * port's lenient `readCheckSuites` reports them; an unreadable listing stays
+   * unreadable.
+   */
+  async readCheckSuites(head: GitSha) {
+    const read = await this.readChecks(head);
+    if (!read.ok) return read;
+    return portOk({
+      head,
+      checks: read.value.checks.map((check) => ({
+        name: check.name,
+        suite: (check as SuitedCheckV1).suite ?? null,
+      })),
+    });
   }
 
   readProtections(_baseBranch: string) {

@@ -22,7 +22,11 @@ import {
   planHostedRetries,
   type RetryPlanV1,
 } from "./hosted-autonomy-retries.ts";
-import { hostedIssueKey, sameRepository } from "./hosted-autonomy-policy.ts";
+import {
+  hostedIssueKey,
+  isHostedSelf,
+  sameRepository,
+} from "./hosted-autonomy-policy.ts";
 import {
   ciCorrectionRuntimeProven,
   ciGreenHeadKey,
@@ -36,10 +40,10 @@ import {
   ordinaryReviewRoundsSpent,
 } from "../src/repair/review-round-cap.ts";
 import {
+  ciFirstFixRuntimeProven,
   ciFirstRuntimeProven,
-  HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
   launcherLegacyCutoff,
-  preReviewCiParked,
+  preReviewGateParked,
 } from "./hosted-autonomy-ci-first.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
 import { runHostedMismatchDispositionPass } from "./hosted-autonomy-mismatch-pass.ts";
@@ -56,10 +60,21 @@ import {
   verifyBaseRefreshReadmissions,
 } from "./hosted-autonomy-base-refresh-retries.ts";
 import {
+  applyRepeatFailureParks,
+  REPEAT_FAILURE_DEFAULT_ROUTE,
+  repeatFailureLabel,
+  repeatFailureNeedsIssue,
+  type RepeatFailureParkPlanV1,
+} from "./hosted-autonomy-repeat-failure.ts";
+import {
   HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS,
   planConflictReadmissions,
   verifyConflictReadmissions,
 } from "./hosted-autonomy-conflict-retries.ts";
+import {
+  acceptanceCorrectionRuntimeProven,
+  planAcceptanceReadmissions,
+} from "./hosted-autonomy-acceptance.ts";
 
 /** Legacy class drift lines reported per pass (the rest are counted). */
 export const LEGACY_DRIFT_REPORTS_PER_PASS = 12;
@@ -318,9 +333,11 @@ export async function runHostedRetryPass(
   // (repository, issue number).
   const closedIssues = context.closedIssues;
   // A head parked on its merge-gate CI failure (or by the CI-first gate
-  // before its review) whose base tip is still the record's base is read for
-  // green CI on its OWN repository surface (a re-run flake, or CI that
-  // finished late); only a head proven all green there can re-admit. A
+  // before its review, its exhausted park included) whose base tip is still
+  // the record's base is read for green CI on its OWN repository surface (a
+  // re-run flake, or CI that finished late); only a head proven all green
+  // there can re-admit. A pre-review park on a moved base needs no read: under
+  // a proven CI-first runtime it returns for the runtime's refresh. A
   // merge-gate park whose ordinary rounds are spent is read only under a
   // proven CI-first runtime (at any base, at most
   // `HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS` per pass, rotating): green at
@@ -333,6 +350,7 @@ export async function runHostedRetryPass(
     : launcherLegacyCutoff(installedRuntime, ciFirst, release);
   const ciGreenHeads = new Set<string>();
   const ciReadHeads = new Set<string>();
+  const ciUnreadHeads = new Set<string>();
   const spentReads = spentCiReadWindow(
     snapshot.work.filter((record) =>
       ciFirst && record.nextStep === "blocked" &&
@@ -349,7 +367,7 @@ export async function runHostedRetryPass(
       record.nextStep !== "blocked" || head === null ||
       !((ciGreenRedeliveryEligible(snapshot, record) &&
         !ordinaryReviewRoundsSpent(snapshot, record)) ||
-        preReviewCiParked(snapshot, record) || spentRead) ||
+        preReviewGateParked(snapshot, record) || spentRead) ||
       closedIssues.has(
         hostedIssueKey(record.repository, record.related.issueNumber!),
       )
@@ -359,25 +377,37 @@ export async function runHostedRetryPass(
       scope.surface === null ||
       (!spentRead && retryTips.get(scope.key) !== record.target.base)
     ) continue;
+    // Tri-state, and for a foreign head against the base it was tested on
+    // (every check that base's suites expect must exist; the self gate is
+    // its one named `test-local` job, whose base also holds a `dispatch` run
+    // per five-minute schedule). Only a successful, non-empty listing is a
+    // read: an unreadable one (rate limited, failing, incomplete, empty) is
+    // no evidence, so the head is neither green nor read red, and it plans
+    // nothing this pass (sentinel issue #154: it took a correction slot).
     let green: boolean | null = null;
     try {
-      green = await scope.surface.hasAllChecksGreen(head);
+      green = await scope.surface.hasAllChecksGreen(
+        head,
+        isHostedSelf(record.repository) ? undefined : record.target.base,
+      );
     } catch {
       green = null;
     }
-    if (green === null) continue;
-    ciReadHeads.add(ciGreenHeadKey(record.repository, head));
-    if (green) ciGreenHeads.add(ciGreenHeadKey(record.repository, head));
+    const key = ciGreenHeadKey(record.repository, head);
+    if (green === null) {
+      ciUnreadHeads.add(key);
+      continue;
+    }
+    ciReadHeads.add(key);
+    if (green) ciGreenHeads.add(key);
   }
   // Flake first: a CI-parked head is re-admitted for a correction only once
   // its single re-run (run by the delivery pass) can no longer act. Read only
   // under a proven CI-correction runtime, the only one the rule activates for.
-  // A pre-review CI fix is re-admitted only under a fix runtime (none in
-  // generation 80), so only that runtime reads those heads' re-runs.
-  const ciFixRuntime = ciFirstRuntimeProven(
-    installedRuntime,
-    HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
-  );
+  // A pre-review CI fix is re-admitted only under a fix runtime (generation
+  // 81+, pinned by its own launcher commit), so only that runtime reads those
+  // heads' re-runs.
+  const ciFixRuntime = ciFirstFixRuntimeProven(installedRuntime);
   const ciRerunSettled = ciCorrectionRuntimeProven(installedRuntime)
     ? await readCiRerunSettled(
       { ...context, snapshot },
@@ -386,6 +416,28 @@ export async function runHostedRetryPass(
       legacyCutoff,
     )
     : new Set<string>();
+  // The repeat-failure bound reads each due or parked record's live source
+  // task digest (an edited issue re-arms a park) over its OWN repository
+  // surface; an unreadable digest withholds the grant without parking.
+  const issueDigests = new Map<string, string | null>();
+  for (const record of snapshot.work) {
+    if (
+      !repeatFailureNeedsIssue(snapshot, record) ||
+      closedIssues.has(
+        hostedIssueKey(record.repository, record.related.issueNumber!),
+      )
+    ) continue;
+    const surface = (await scopeFor(record.repository)).surface;
+    let digest: string | null = null;
+    try {
+      digest = (await surface?.readIssueTask?.(record.related.issueNumber!))
+        ?.digest ?? null;
+    } catch {
+      digest = null;
+    }
+    issueDigests.set(record.id, digest);
+  }
+  const parks: RepeatFailureParkPlanV1[] = [];
   const planned = planHostedRetries(
     snapshot,
     deps.clock.now(),
@@ -402,9 +454,32 @@ export async function runHostedRetryPass(
       ciRerunSettled,
       ciGreenHeads,
       ciReadHeads,
+      ciUnreadHeads,
       legacyReviewCutoff: legacyCutoff,
+      repeatFailure: {
+        route: deps.modelRoute ?? REPEAT_FAILURE_DEFAULT_ROUTE,
+        issueDigests,
+      },
+      onRepeatFailurePark: (park) => {
+        if (!settled(park.id)) parks.push(park);
+      },
     },
   );
+  // JAM B6a: an R80-written not-fulfilled acceptance with an ordinary round
+  // left returns to `review` under a proven acceptance-correction runtime,
+  // whose re-observation of the standing review starts its correction; its
+  // pull request is verified open below like every other plan's.
+  planned.push(...planAcceptanceReadmissions(
+    snapshot,
+    closedIssues,
+    acceptanceCorrectionRuntimeProven(
+      installedRuntime,
+      deps.acceptanceCorrectionRuntimes,
+    ),
+    (denial) => {
+      actions.push(`retry:${denial.id}:denied:${denial.reason}`);
+    },
+  ));
   actions.push(...legacyClassDriftActions(snapshot, legacyCutoff, ciFirst));
   const plans: RetryPlanV1[] = [];
   // The per-pass CI correction cap counts only corrections this pass admits
@@ -504,7 +579,7 @@ export async function runHostedRetryPass(
       legacyCutoff,
     ),
   );
-  if (plans.length > 0 || readmissions.length > 0) {
+  if (plans.length > 0 || readmissions.length > 0 || parks.length > 0) {
     const now = deps.clock.now();
     if (!Number.isSafeInteger(now) || now < snapshot.updatedAt) {
       return skipped("clock_invalid", observedHead, actions);
@@ -512,7 +587,11 @@ export async function runHostedRetryPass(
     let next: RepairStateSnapshotV1;
     try {
       next = applyBaseRefreshReadmissions(
-        applyHostedRetries(snapshot, observedHead as GitSha, plans, now),
+        applyRepeatFailureParks(
+          applyHostedRetries(snapshot, observedHead as GitSha, plans, now),
+          parks,
+          now,
+        ),
         readmissions,
         now,
       );
@@ -550,6 +629,13 @@ export async function runHostedRetryPass(
     }
     for (const readmission of readmissions) {
       actions.push(`retry:${readmission.id}:readmit:${readmission.detail}`);
+    }
+    for (const park of parks) {
+      actions.push(
+        `retry:${park.id}:parked:repeat_failure:${
+          repeatFailureLabel(park.park)
+        }`,
+      );
     }
     return {
       kind: "hosted_autonomy",

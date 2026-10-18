@@ -1,0 +1,1069 @@
+{
+  "work": [
+    {
+      "blocker": {
+        "kind": "other",
+        "message": "base refresh failed 3 consecutive times: invalid candidate could not be preserved",
+        "since": 1792266249092
+      },
+      "classification": {
+        "priority": null,
+        "severity": "P2"
+      },
+      "controller": {
+        "sha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f"
+      },
+      "counters": {
+        "attempts": 1,
+        "retries": 0,
+        "reviewRounds": 0
+      },
+      "createdAt": 1792257173450,
+      "dependencies": [],
+      "evidence": [],
+      "failingRevision": null,
+      "fingerprint": null,
+      "firstSeenAt": 1792256529000,
+      "id": "issue-ubiquity-sentinel-157",
+      "intent": null,
+      "kind": "work",
+      "nextStep": "blocked",
+      "related": {
+        "incidentId": null,
+        "issueNumber": 157
+      },
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "source": {
+        "id": "157",
+        "kind": "issue",
+        "revision": "d5cc84402c5971df4031c03b5e71e55c55a3a11c"
+      },
+      "sourceSnapshotDigest": null,
+      "target": {
+        "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
+        "branch": "sentinel/repair/issue-ubiquity-sentinel-157",
+        "candidateState": {
+          "preserved": {
+            "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
+            "head": "784e233ec22eae4d29c8eb951c1f42bafc06121f",
+            "operationKey": "impl:f0c249b0d19f6a6ddae8476c6ed83530e259fb26973dc28bbc0129201a5bb352",
+            "ref": "refs/heads/sentinel-candidates/20112f1756c43d9444e2026331ffaf8473ffebeca6006f31af00888b86f4db93"
+          },
+          "publishedHead": "784e233ec22eae4d29c8eb951c1f42bafc06121f"
+        },
+        "checkpoint": null,
+        "head": "784e233ec22eae4d29c8eb951c1f42bafc06121f",
+        "pr": null
+      },
+      "updatedAt": 1792266249092,
+      "urgency": {
+        "activeProduction": false,
+        "reproducible5xx": false,
+        "severeSecurityOrDataLoss": false
+      },
+      "version": "v1",
+      "wait": null
+    }
+  ],
+  "refreshing": {
+    "blocker": null,
+    "classification": {
+      "priority": null,
+      "severity": "P2"
+    },
+    "controller": {
+      "sha": "549c7a69186b3d2070aa4e69c92ee846d183ce8f"
+    },
+    "counters": {
+      "attempts": 1,
+      "retries": 0,
+      "reviewRounds": 0
+    },
+    "createdAt": 1792257173450,
+    "dependencies": [],
+    "evidence": [],
+    "failingRevision": null,
+    "fingerprint": null,
+    "firstSeenAt": 1792256529000,
+    "id": "issue-ubiquity-sentinel-157",
+    "intent": {
+      "branch": "sentinel/repair/issue-ubiquity-sentinel-157",
+      "expectedHead": "784e233ec22eae4d29c8eb951c1f42bafc06121f",
+      "key": "base_refresh:160:784e233ec22eae4d29c8eb951c1f42bafc06121f:614a4fa02f1dc9f27516c5acd85d598f678a0cfa",
+      "kind": "base_refresh",
+      "observedBase": "614a4fa02f1dc9f27516c5acd85d598f678a0cfa",
+      "pr": 160,
+      "requestId": null,
+      "resultId": "18cceb9579ef4975ecec03f0dda1bfb92392263b",
+      "startedAt": 1792262142968
+    },
+    "kind": "work",
+    "nextStep": "work",
+    "related": {
+      "incidentId": null,
+      "issueNumber": 157
+    },
+    "repository": {
+      "installationId": 0,
+      "name": "sentinel",
+      "owner": "ubiquity"
+    },
+    "source": {
+      "id": "157",
+      "kind": "issue",
+      "revision": "d5cc84402c5971df4031c03b5e71e55c55a3a11c"
+    },
+    "sourceSnapshotDigest": null,
+    "target": {
+      "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
+      "branch": "sentinel/repair/issue-ubiquity-sentinel-157",
+      "candidateState": {
+        "preserved": {
+          "base": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
+          "head": "784e233ec22eae4d29c8eb951c1f42bafc06121f",
+          "operationKey": "impl:f0c249b0d19f6a6ddae8476c6ed83530e259fb26973dc28bbc0129201a5bb352",
+          "ref": "refs/heads/sentinel-candidates/20112f1756c43d9444e2026331ffaf8473ffebeca6006f31af00888b86f4db93"
+        },
+        "publishedHead": "784e233ec22eae4d29c8eb951c1f42bafc06121f"
+      },
+      "checkpoint": null,
+      "head": "784e233ec22eae4d29c8eb951c1f42bafc06121f",
+      "pr": 160
+    },
+    "updatedAt": 1792262148939,
+    "urgency": {
+      "activeProduction": false,
+      "reproducible5xx": false,
+      "severeSecurityOrDataLoss": false
+    },
+    "version": "v1",
+    "wait": {
+      "reason": "unavailable",
+      "since": 1792260344200,
+      "until": 1792260644200
+    }
+  },
+  "reservations": [
+    {
+      "attempt": 1,
+      "createdAt": 1792257286947,
+      "head": "d5cc84402c5971df4031c03b5e71e55c55a3a11c",
+      "id": "f0c249b0d19f6a6ddae8476c6ed83530e259fb26973dc28bbc0129201a5bb352",
+      "kind": "budget_reservation",
+      "outcome": "submitted",
+      "proofRef": null,
+      "purpose": "implementation",
+      "repository": {
+        "installationId": 0,
+        "name": "sentinel",
+        "owner": "ubiquity"
+      },
+      "settledAt": 1792259370427,
+      "taskId": "issue-ubiquity-sentinel-157",
+      "version": "v1"
+    }
+  ],
+  "pullRequest": {
+    "number": 160,
+    "head": "784e233ec22eae4d29c8eb951c1f42bafc06121f",
+    "headRef": "sentinel/repair/issue-ubiquity-sentinel-157",
+    "baseRef": "development",
+    "author": "ubiquity-sentinel[bot]",
+    "state": "open"
+  },
+  "observedBase": "614a4fa02f1dc9f27516c5acd85d598f678a0cfa",
+  "preparedHead": "18cceb9579ef4975ecec03f0dda1bfb92392263b",
+  "release": {
+    "version": "v1",
+    "kind": "release_state_snapshot",
+    "stateHead": "71779fde2f584e28ec97a1068e16664909d1fcbd",
+    "sequence": 1713,
+    "updatedAt": 1792281490071,
+    "releases": [],
+    "hostedRuntimes": [
+      {
+        "activeRevision": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+        "createdAt": 1789358128122,
+        "execution": {
+          "createdAt": 1792281490071,
+          "generation": 80,
+          "id": "39080597401:1:repair",
+          "launcherSha": "706969a9f6af9b9f818937ee7b003b6d60f38d5c",
+          "purpose": "ordinary",
+          "releaseId": null,
+          "revision": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+          "runAttempt": 1,
+          "runId": 39080597401
+        },
+        "generation": 80,
+        "id": "ubiquity/sentinel:0:production",
+        "kind": "hosted_runtime",
+        "lastExecutionProof": {
+          "baseSha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+          "execution": {
+            "createdAt": 1792277775472,
+            "generation": 80,
+            "id": "39076299304:1:repair",
+            "launcherSha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+            "purpose": "ordinary",
+            "releaseId": null,
+            "revision": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+            "runAttempt": 1,
+            "runId": 39076299304
+          },
+          "finishedAt": 1792281096000,
+          "jobId": 117526584422,
+          "logDigest": "ef0859f94a751b4ad48b7e54c537d72dea70b83d42f7fa66eae44bbbc536cb3b",
+          "observedAt": 1792281109645,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1792277884000,
+          "startupReady": true,
+          "terminalAt": 1792281092145,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "lastHealthyProof": {
+          "baseSha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+          "execution": {
+            "createdAt": 1792277775472,
+            "generation": 80,
+            "id": "39076299304:1:repair",
+            "launcherSha": "3f041b46d95269b29054ca5c27bce6aa179f9683",
+            "purpose": "ordinary",
+            "releaseId": null,
+            "revision": "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
+            "runAttempt": 1,
+            "runId": 39076299304
+          },
+          "finishedAt": 1792281096000,
+          "jobId": 117526584422,
+          "logDigest": "ef0859f94a751b4ad48b7e54c537d72dea70b83d42f7fa66eae44bbbc536cb3b",
+          "observedAt": 1792281109645,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1792277884000,
+          "startupReady": true,
+          "terminalAt": 1792281092145,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "nextOrdinaryAt": 1792281490071,
+        "updatedAt": 1792281490071,
+        "version": "v1"
+      }
+    ],
+    "hostedReleases": [
+      {
+        "candidateProof": {
+          "baseSha": "7e052c591ee8d7bc8dc5beaadbf143aeda7cde3c",
+          "execution": {
+            "createdAt": 1789481874318,
+            "generation": 4,
+            "id": "34980411924:1:repair",
+            "launcherSha": "c65a3d29ed03f32b0328d4ff1e92caa2931ee030",
+            "purpose": "candidate",
+            "releaseId": "release:44ca04f3e81cbdfe357ce3ba5a780cbee7072e144d4a9da0fd3235a227b9a5d3",
+            "revision": "7e052c591ee8d7bc8dc5beaadbf143aeda7cde3c",
+            "runAttempt": 1,
+            "runId": 34980411924
+          },
+          "finishedAt": 1789482006000,
+          "jobId": 104419877885,
+          "logDigest": "321d1039c1733590fa27dbe03967ce22fd8404085229ee6bb0aeade890dc0e44",
+          "observedAt": 1789482022599,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1789481883000,
+          "startupReady": true,
+          "terminalAt": 1789482002364,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "createdAt": 1789481691856,
+        "id": "release:44ca04f3e81cbdfe357ce3ba5a780cbee7072e144d4a9da0fd3235a227b9a5d3",
+        "kind": "hosted_release",
+        "phase": "accepted",
+        "pointerIntent": null,
+        "priorProof": {
+          "baseSha": "7e052c591ee8d7bc8dc5beaadbf143aeda7cde3c",
+          "execution": {
+            "createdAt": 1789481694768,
+            "generation": 3,
+            "id": "34980121968:1:repair",
+            "launcherSha": "c65a3d29ed03f32b0328d4ff1e92caa2931ee030",
+            "purpose": "prior",
+            "releaseId": "release:44ca04f3e81cbdfe357ce3ba5a780cbee7072e144d4a9da0fd3235a227b9a5d3",
+            "revision": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
+            "runAttempt": 1,
+            "runId": 34980121968
+          },
+          "finishedAt": 1789481787000,
+          "jobId": 104418740659,
+          "logDigest": "eceff146455819e1f82d54ac4466d49058c33122be977e97dfcf8994b7a5ce27",
+          "observedAt": 1789481800003,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1789481703000,
+          "startupReady": true,
+          "terminalAt": 1789481785207,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "priorRevision": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
+        "request": {
+          "createdAt": 1789481644789,
+          "failureReason": null,
+          "id": "release:44ca04f3e81cbdfe357ce3ba5a780cbee7072e144d4a9da0fd3235a227b9a5d3",
+          "kind": "release_request",
+          "revision": "7e052c591ee8d7bc8dc5beaadbf143aeda7cde3c",
+          "source": {
+            "base": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
+            "head": "969edbdfd80d8c8723364038dbf3176bb1a027ce",
+            "pullRequest": 54,
+            "reviewReceiptId": "review-review:54:969edbdfd80d8c8723364038dbf3176bb1a027ce:attempt-2",
+            "reviewRequestId": "review-review:54:969edbdfd80d8c8723364038dbf3176bb1a027ce:attempt-2"
+          },
+          "status": "open",
+          "target": {
+            "environment": "production",
+            "repository": {
+              "installationId": 0,
+              "name": "sentinel",
+              "owner": "ubiquity"
+            }
+          },
+          "version": "v1"
+        },
+        "rollbackProof": null,
+        "updatedAt": 1789482029523,
+        "version": "v1"
+      },
+      {
+        "candidateProof": {
+          "baseSha": "78fabed30fa13cb6c2beb4f358bef5c4161c8833",
+          "execution": {
+            "createdAt": 1791211486616,
+            "generation": 62,
+            "id": "37326981273:1:repair",
+            "launcherSha": "1d0ea02ebc4c1357233e4b7105f6e0b2cd131133",
+            "purpose": "candidate",
+            "releaseId": "release:600779ace38ec2c1899cc5a9d3a2b0b4be6e3ecd43ab283df7d79ca5bf3d9518",
+            "revision": "2bca04186b3e462c63ba3d9ce996f4a5d3fd03b6",
+            "runAttempt": 1,
+            "runId": 37326981273
+          },
+          "finishedAt": 1791213364000,
+          "jobId": 111820854091,
+          "logDigest": "d9381215083a43e1a85ba62d6ff5266e010ded2179a22e95f79e3d2af46b734a",
+          "observedAt": 1791213386599,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1791211496000,
+          "startupReady": true,
+          "terminalAt": 1791213360159,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "createdAt": 1791153413434,
+        "id": "release:600779ace38ec2c1899cc5a9d3a2b0b4be6e3ecd43ab283df7d79ca5bf3d9518",
+        "kind": "hosted_release",
+        "phase": "accepted",
+        "pointerIntent": null,
+        "priorProof": {
+          "baseSha": "78fabed30fa13cb6c2beb4f358bef5c4161c8833",
+          "execution": {
+            "createdAt": 1791208366468,
+            "generation": 61,
+            "id": "37319457942:1:repair",
+            "launcherSha": "1d0ea02ebc4c1357233e4b7105f6e0b2cd131133",
+            "purpose": "prior",
+            "releaseId": "release:600779ace38ec2c1899cc5a9d3a2b0b4be6e3ecd43ab283df7d79ca5bf3d9518",
+            "revision": "ac98dc80ff9c3eca5f36aca91493168e9ff74596",
+            "runAttempt": 1,
+            "runId": 37319457942
+          },
+          "finishedAt": 1791210874000,
+          "jobId": 111797115776,
+          "logDigest": "569cdb2e7f5dabe49db8b940ade699a90d7c41f16e78d7bc39546dcc04d5a022",
+          "observedAt": 1791210888356,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1791208376000,
+          "startupReady": true,
+          "terminalAt": 1791210870241,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "priorRevision": "ac98dc80ff9c3eca5f36aca91493168e9ff74596",
+        "request": {
+          "createdAt": 1791147197116,
+          "failureReason": null,
+          "id": "release:600779ace38ec2c1899cc5a9d3a2b0b4be6e3ecd43ab283df7d79ca5bf3d9518",
+          "kind": "release_request",
+          "revision": "2bca04186b3e462c63ba3d9ce996f4a5d3fd03b6",
+          "source": {
+            "base": "ac98dc80ff9c3eca5f36aca91493168e9ff74596",
+            "head": "f68a4240bb3dc0435ceb92d4caa886f4d1b05cfe",
+            "pullRequest": 111,
+            "reviewReceiptId": "review-receipt:13c1b8759feb6ce4b06834bc86b62b528a406bc3682159f95f94e17705f8911e",
+            "reviewRequestId": "review-review:111:f68a4240bb3dc0435ceb92d4caa886f4d1b05cfe"
+          },
+          "status": "open",
+          "target": {
+            "environment": "production",
+            "repository": {
+              "installationId": 0,
+              "name": "sentinel",
+              "owner": "ubiquity"
+            }
+          },
+          "version": "v1"
+        },
+        "rollbackProof": null,
+        "updatedAt": 1791213387594,
+        "version": "v1"
+      },
+      {
+        "candidateProof": {
+          "baseSha": "78fabed30fa13cb6c2beb4f358bef5c4161c8833",
+          "execution": {
+            "createdAt": 1791216535040,
+            "generation": 63,
+            "id": "37338351799:1:repair",
+            "launcherSha": "1d0ea02ebc4c1357233e4b7105f6e0b2cd131133",
+            "purpose": "candidate",
+            "releaseId": "release:1ace1c10fc89d802a2810408de2c6715877e275ff6073c19bfa6791fcb1c4c9c",
+            "revision": "e4cef46332cf124a8c283d798a963cf5f66e45c2",
+            "runAttempt": 1,
+            "runId": 37338351799
+          },
+          "finishedAt": 1791218284000,
+          "jobId": 111859480339,
+          "logDigest": "d228cebdec36e9f40516266e06379f779caf511e091912365c005c4dc35ed71a",
+          "observedAt": 1791218296849,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1791216547000,
+          "startupReady": true,
+          "terminalAt": 1791218279379,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "createdAt": 1791214146300,
+        "id": "release:1ace1c10fc89d802a2810408de2c6715877e275ff6073c19bfa6791fcb1c4c9c",
+        "kind": "hosted_release",
+        "phase": "accepted",
+        "pointerIntent": null,
+        "priorProof": {
+          "baseSha": "78fabed30fa13cb6c2beb4f358bef5c4161c8833",
+          "execution": {
+            "createdAt": 1791214149188,
+            "generation": 62,
+            "id": "37332751924:1:repair",
+            "launcherSha": "1d0ea02ebc4c1357233e4b7105f6e0b2cd131133",
+            "purpose": "prior",
+            "releaseId": "release:1ace1c10fc89d802a2810408de2c6715877e275ff6073c19bfa6791fcb1c4c9c",
+            "revision": "2bca04186b3e462c63ba3d9ce996f4a5d3fd03b6",
+            "runAttempt": 1,
+            "runId": 37332751924
+          },
+          "finishedAt": 1791215907000,
+          "jobId": 111841308967,
+          "logDigest": "443c2a185aff4cad977d75c0588f10dbbde82694f661c222c1763947cd40ff86",
+          "observedAt": 1791215920344,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1791214166000,
+          "startupReady": true,
+          "terminalAt": 1791215902693,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "priorRevision": "2bca04186b3e462c63ba3d9ce996f4a5d3fd03b6",
+        "request": {
+          "createdAt": 1791153377388,
+          "failureReason": null,
+          "id": "release:1ace1c10fc89d802a2810408de2c6715877e275ff6073c19bfa6791fcb1c4c9c",
+          "kind": "release_request",
+          "revision": "e4cef46332cf124a8c283d798a963cf5f66e45c2",
+          "source": {
+            "base": "2bca04186b3e462c63ba3d9ce996f4a5d3fd03b6",
+            "head": "c179162df53091a772c3da38cbac1b3841d0f359",
+            "pullRequest": 108,
+            "reviewReceiptId": "review-receipt:b7a1c87dee47b074f172c92967880aff151290993592dfe949466d6f4a7fff7a",
+            "reviewRequestId": "review-review:108:c179162df53091a772c3da38cbac1b3841d0f359:attempt-3"
+          },
+          "status": "open",
+          "target": {
+            "environment": "production",
+            "repository": {
+              "installationId": 0,
+              "name": "sentinel",
+              "owner": "ubiquity"
+            }
+          },
+          "version": "v1"
+        },
+        "rollbackProof": null,
+        "updatedAt": 1791218297994,
+        "version": "v1"
+      },
+      {
+        "candidateProof": {
+          "baseSha": "f47f1d2af1e1721f2dae0e885dad6a8383d7b170",
+          "execution": {
+            "createdAt": 1789678292675,
+            "generation": 18,
+            "id": "35273273110:1:repair",
+            "launcherSha": "c08d74d6621e8012d5ec1be3423ea660bada298b",
+            "purpose": "candidate",
+            "releaseId": "release:56fae4b9358db4e74c19a91054aef926b07202c05738dd688562ad8614e2e9b7",
+            "revision": "1ed66cd191271cc206aaf436d0f93d245aaee936",
+            "runAttempt": 1,
+            "runId": 35273273110
+          },
+          "finishedAt": 1789678370000,
+          "jobId": 105377764667,
+          "logDigest": "ea9930ebc5c5a8e1814865dc25d59bd596243e2c607c3fb8aec6ecbd487b2f39",
+          "observedAt": 1789678389358,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1789678300000,
+          "startupReady": true,
+          "terminalAt": 1789678368630,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "createdAt": 1789677933689,
+        "id": "release:56fae4b9358db4e74c19a91054aef926b07202c05738dd688562ad8614e2e9b7",
+        "kind": "hosted_release",
+        "phase": "accepted",
+        "pointerIntent": null,
+        "priorProof": {
+          "baseSha": "8023c41d7c42238adec4fe45d59fa1963a335899",
+          "execution": {
+            "createdAt": 1789677935728,
+            "generation": 17,
+            "id": "35272524410:1:repair",
+            "launcherSha": "c08d74d6621e8012d5ec1be3423ea660bada298b",
+            "purpose": "prior",
+            "releaseId": "release:56fae4b9358db4e74c19a91054aef926b07202c05738dd688562ad8614e2e9b7",
+            "revision": "fc25d716981870ce6b7038c2eda94ed2430cca58",
+            "runAttempt": 1,
+            "runId": 35272524410
+          },
+          "finishedAt": 1789678069000,
+          "jobId": 105375822103,
+          "logDigest": "5fde61712de9e722a8391cc74fc95609276425145c50774f5c20e8bf72154af2",
+          "observedAt": 1789678088966,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1789677942000,
+          "startupReady": true,
+          "terminalAt": 1789678065706,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "priorRevision": "fc25d716981870ce6b7038c2eda94ed2430cca58",
+        "request": {
+          "createdAt": 1789677909885,
+          "failureReason": null,
+          "id": "release:56fae4b9358db4e74c19a91054aef926b07202c05738dd688562ad8614e2e9b7",
+          "kind": "release_request",
+          "revision": "1ed66cd191271cc206aaf436d0f93d245aaee936",
+          "source": {
+            "base": "fc25d716981870ce6b7038c2eda94ed2430cca58",
+            "head": "2bce9809d992be6d013f9dcf45892ea15e40c3d4",
+            "pullRequest": 51,
+            "reviewReceiptId": "review-receipt:7826d27e94648e79d03f7f3900e721345c63c06edac2982de0b79b3144240e12",
+            "reviewRequestId": "review-review:51:2bce9809d992be6d013f9dcf45892ea15e40c3d4:attempt-14"
+          },
+          "status": "open",
+          "target": {
+            "environment": "production",
+            "repository": {
+              "installationId": 0,
+              "name": "sentinel",
+              "owner": "ubiquity"
+            }
+          },
+          "version": "v1"
+        },
+        "rollbackProof": null,
+        "updatedAt": 1789678399867,
+        "version": "v1"
+      },
+      {
+        "candidateProof": {
+          "baseSha": "0fcdb5505417798e3ec7626333d4621fff67c26d",
+          "execution": {
+            "createdAt": 1791011763175,
+            "generation": 56,
+            "id": "37105593639:1:repair",
+            "launcherSha": "6d945731b421cd478a624cfc3114a227e0f41bec",
+            "purpose": "candidate",
+            "releaseId": "release:1581e7102d6ef116df262980809066faac3d8236eb3cbb4e8317b99da49cc04a",
+            "revision": "0fcdb5505417798e3ec7626333d4621fff67c26d",
+            "runAttempt": 1,
+            "runId": 37105593639
+          },
+          "finishedAt": 1791013303000,
+          "jobId": 111153903523,
+          "logDigest": "436d2e0cef966d89a87d64cb7050d170dee9a0160bcf8305ae4ea993db9c8964",
+          "observedAt": 1791013312669,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1791011772000,
+          "startupReady": true,
+          "terminalAt": 1791013298856,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "createdAt": 1791010235558,
+        "id": "release:1581e7102d6ef116df262980809066faac3d8236eb3cbb4e8317b99da49cc04a",
+        "kind": "hosted_release",
+        "phase": "accepted",
+        "pointerIntent": null,
+        "priorProof": {
+          "baseSha": "0fcdb5505417798e3ec7626333d4621fff67c26d",
+          "execution": {
+            "createdAt": 1791010237844,
+            "generation": 55,
+            "id": "37103561796:1:repair",
+            "launcherSha": "6d945731b421cd478a624cfc3114a227e0f41bec",
+            "purpose": "prior",
+            "releaseId": "release:1581e7102d6ef116df262980809066faac3d8236eb3cbb4e8317b99da49cc04a",
+            "revision": "275fee6dba74800b47e555f3f316b60be566ccb4",
+            "runAttempt": 1,
+            "runId": 37103561796
+          },
+          "finishedAt": 1791011695000,
+          "jobId": 111149935704,
+          "logDigest": "c17737403f994fd46ab150fdb334db244052eb36fa24dfd45bc3b715f6484f7e",
+          "observedAt": 1791011708955,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1791010245000,
+          "startupReady": true,
+          "terminalAt": 1791011692398,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "priorRevision": "275fee6dba74800b47e555f3f316b60be566ccb4",
+        "request": {
+          "createdAt": 1791010211372,
+          "failureReason": null,
+          "id": "release:1581e7102d6ef116df262980809066faac3d8236eb3cbb4e8317b99da49cc04a",
+          "kind": "release_request",
+          "revision": "0fcdb5505417798e3ec7626333d4621fff67c26d",
+          "source": {
+            "base": "275fee6dba74800b47e555f3f316b60be566ccb4",
+            "head": "fef3a50aff68c22bbc2ef7cd88005c0a15343d9f",
+            "pullRequest": 107,
+            "reviewReceiptId": "review-receipt:cccbc4a2937db93c1557eef820cc3d379c1e4409071c666d8efffa9de0f1bddb",
+            "reviewRequestId": "review-review:107:fef3a50aff68c22bbc2ef7cd88005c0a15343d9f:attempt-4"
+          },
+          "status": "open",
+          "target": {
+            "environment": "production",
+            "repository": {
+              "installationId": 0,
+              "name": "sentinel",
+              "owner": "ubiquity"
+            }
+          },
+          "version": "v1"
+        },
+        "rollbackProof": null,
+        "updatedAt": 1791013313099,
+        "version": "v1"
+      },
+      {
+        "candidateProof": {
+          "baseSha": "38c70a5bf3e58ff3fb1c7cfeb7a91e98105c3d1a",
+          "execution": {
+            "createdAt": 1789703089486,
+            "generation": 24,
+            "id": "35304290387:1:repair",
+            "launcherSha": "4a38a913932cae938b3f2837edcb454018d5bb00",
+            "purpose": "candidate",
+            "releaseId": "release:c9405599111ee3176eaeb57cdfae043693ced4089dc3d68e28fd338649ec928e",
+            "revision": "38c70a5bf3e58ff3fb1c7cfeb7a91e98105c3d1a",
+            "runAttempt": 1,
+            "runId": 35304290387
+          },
+          "finishedAt": 1789703158000,
+          "jobId": 105473389709,
+          "logDigest": "a532077471f2dc9bed29d0214dc4b125c614ca18efd0d883295e55418727766b",
+          "observedAt": 1789703176336,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1789703095000,
+          "startupReady": true,
+          "terminalAt": 1789703155858,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "createdAt": 1789702875384,
+        "id": "release:c9405599111ee3176eaeb57cdfae043693ced4089dc3d68e28fd338649ec928e",
+        "kind": "hosted_release",
+        "phase": "accepted",
+        "pointerIntent": null,
+        "priorProof": {
+          "baseSha": "38c70a5bf3e58ff3fb1c7cfeb7a91e98105c3d1a",
+          "execution": {
+            "createdAt": 1789702877635,
+            "generation": 23,
+            "id": "35304095632:1:repair",
+            "launcherSha": "4a38a913932cae938b3f2837edcb454018d5bb00",
+            "purpose": "prior",
+            "releaseId": "release:c9405599111ee3176eaeb57cdfae043693ced4089dc3d68e28fd338649ec928e",
+            "revision": "cf8e6610b206f80b976785d12eef9d8fa1706311",
+            "runAttempt": 1,
+            "runId": 35304095632
+          },
+          "finishedAt": 1789702943000,
+          "jobId": 105472748244,
+          "logDigest": "3559b6a9dbdf4416a89935aa10b9afca2ea432d3024b5a7acb577bee46bab472",
+          "observedAt": 1789702955341,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1789702883000,
+          "startupReady": true,
+          "terminalAt": 1789702940457,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "priorRevision": "cf8e6610b206f80b976785d12eef9d8fa1706311",
+        "request": {
+          "createdAt": 1789702852155,
+          "failureReason": null,
+          "id": "release:c9405599111ee3176eaeb57cdfae043693ced4089dc3d68e28fd338649ec928e",
+          "kind": "release_request",
+          "revision": "38c70a5bf3e58ff3fb1c7cfeb7a91e98105c3d1a",
+          "source": {
+            "base": "cf8e6610b206f80b976785d12eef9d8fa1706311",
+            "head": "ee2307bbc5e066aeb80736ea91b19e91469005c5",
+            "pullRequest": 78,
+            "reviewReceiptId": "review-receipt:ffa3b09596fdd78d7ef06cfab636b8438a56affc5f0bf377f65c7a381cb15b71",
+            "reviewRequestId": "review-review:78:ee2307bbc5e066aeb80736ea91b19e91469005c5:attempt-3"
+          },
+          "status": "open",
+          "target": {
+            "environment": "production",
+            "repository": {
+              "installationId": 0,
+              "name": "sentinel",
+              "owner": "ubiquity"
+            }
+          },
+          "version": "v1"
+        },
+        "rollbackProof": null,
+        "updatedAt": 1789703186984,
+        "version": "v1"
+      },
+      {
+        "candidateProof": {
+          "baseSha": "989af8a52179702a5fd063337d09b2b376e739f1",
+          "execution": {
+            "createdAt": 1789365905968,
+            "generation": 2,
+            "id": "34811959137:1:repair",
+            "launcherSha": "2a24c4d9cb16ffcd7fec0ea75364be9fa0adf9d7",
+            "purpose": "candidate",
+            "releaseId": "release:c8958a08eaa25953233643862a0bbd0717400468d43a7db31546523df55cd453",
+            "revision": "989af8a52179702a5fd063337d09b2b376e739f1",
+            "runAttempt": 1,
+            "runId": 34811959137
+          },
+          "finishedAt": 1789366024000,
+          "jobId": 103874980013,
+          "logDigest": "9bfe931f80a40eb188df317dc26417ed91c73222739af0b03acd2e9c481f6844",
+          "observedAt": 1789366074602,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1789365912000,
+          "startupReady": true,
+          "terminalAt": 1789366021898,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "createdAt": 1789365747959,
+        "id": "release:c8958a08eaa25953233643862a0bbd0717400468d43a7db31546523df55cd453",
+        "kind": "hosted_release",
+        "phase": "accepted",
+        "pointerIntent": null,
+        "priorProof": {
+          "baseSha": "989af8a52179702a5fd063337d09b2b376e739f1",
+          "execution": {
+            "createdAt": 1789365750293,
+            "generation": 1,
+            "id": "34811564193:1:repair",
+            "launcherSha": "2a24c4d9cb16ffcd7fec0ea75364be9fa0adf9d7",
+            "purpose": "prior",
+            "releaseId": "release:c8958a08eaa25953233643862a0bbd0717400468d43a7db31546523df55cd453",
+            "revision": "cfe3d22694385e6273977a5a9502e8a1c5ecf2d0",
+            "runAttempt": 1,
+            "runId": 34811564193
+          },
+          "finishedAt": 1789365824000,
+          "jobId": 103874509333,
+          "logDigest": "ec05b537875118b72ec7025d01193210e9e06165f87fd45a8da3fb433bb7a18f",
+          "observedAt": 1789365841241,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1789365757000,
+          "startupReady": true,
+          "terminalAt": 1789365822390,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "priorRevision": "cfe3d22694385e6273977a5a9502e8a1c5ecf2d0",
+        "request": {
+          "createdAt": 1789365588220,
+          "failureReason": null,
+          "id": "release:c8958a08eaa25953233643862a0bbd0717400468d43a7db31546523df55cd453",
+          "kind": "release_request",
+          "revision": "989af8a52179702a5fd063337d09b2b376e739f1",
+          "source": {
+            "base": "2a24c4d9cb16ffcd7fec0ea75364be9fa0adf9d7",
+            "head": "f9df73e53a4c322391c2628b7e372389fa33d4bb",
+            "pullRequest": 30,
+            "reviewReceiptId": "review-receipt:06710412c652919f0c9bdaf5d5106b80f8c6041b2381c366c5ee746510aac250",
+            "reviewRequestId": "review-review:30:f9df73e53a4c322391c2628b7e372389fa33d4bb"
+          },
+          "status": "open",
+          "target": {
+            "environment": "production",
+            "repository": {
+              "installationId": 0,
+              "name": "sentinel",
+              "owner": "ubiquity"
+            }
+          },
+          "version": "v1"
+        },
+        "rollbackProof": null,
+        "updatedAt": 1789366079418,
+        "version": "v1"
+      },
+      {
+        "candidateProof": {
+          "baseSha": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
+          "execution": {
+            "createdAt": 1789401365213,
+            "generation": 3,
+            "id": "34865360653:1:repair",
+            "launcherSha": "2a24c4d9cb16ffcd7fec0ea75364be9fa0adf9d7",
+            "purpose": "candidate",
+            "releaseId": "release:f09b150553eb12ddabd47ef143b90b4195cba3250aeb546de45a14696c8407aa",
+            "revision": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
+            "runAttempt": 1,
+            "runId": 34865360653
+          },
+          "finishedAt": 1789401495000,
+          "jobId": 104047880098,
+          "logDigest": "aab10ea1bce7de42cc86a0fbb8b53f594bf643a07f235b0c5b9f5a2796e6b94f",
+          "observedAt": 1789401510823,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1789401375000,
+          "startupReady": true,
+          "terminalAt": 1789401491757,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "createdAt": 1789400959788,
+        "id": "release:f09b150553eb12ddabd47ef143b90b4195cba3250aeb546de45a14696c8407aa",
+        "kind": "hosted_release",
+        "phase": "accepted",
+        "pointerIntent": null,
+        "priorProof": {
+          "baseSha": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
+          "execution": {
+            "createdAt": 1789400962036,
+            "generation": 2,
+            "id": "34864638664:1:repair",
+            "launcherSha": "2a24c4d9cb16ffcd7fec0ea75364be9fa0adf9d7",
+            "purpose": "prior",
+            "releaseId": "release:f09b150553eb12ddabd47ef143b90b4195cba3250aeb546de45a14696c8407aa",
+            "revision": "989af8a52179702a5fd063337d09b2b376e739f1",
+            "runAttempt": 1,
+            "runId": 34864638664
+          },
+          "finishedAt": 1789401208000,
+          "jobId": 104045417818,
+          "logDigest": "857b59c5e2bc58bd7973301eca40b93c21d12b4b82305970fa4c7affc4f654b8",
+          "observedAt": 1789401223797,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1789400968000,
+          "startupReady": true,
+          "terminalAt": 1789401205694,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "priorRevision": "989af8a52179702a5fd063337d09b2b376e739f1",
+        "request": {
+          "createdAt": 1789400877658,
+          "failureReason": null,
+          "id": "release:f09b150553eb12ddabd47ef143b90b4195cba3250aeb546de45a14696c8407aa",
+          "kind": "release_request",
+          "revision": "1d618965c2cb8d0bcaa4fc298ed0973c4b9fa9ca",
+          "source": {
+            "base": "a3353a801ccda59a5e324ec7fcdde89df7b22a7c",
+            "head": "9cd504a0b6f959342d1a7565db7f1523cca04f25",
+            "pullRequest": 52,
+            "reviewReceiptId": "review-review:52:9cd504a0b6f959342d1a7565db7f1523cca04f25:round-2",
+            "reviewRequestId": "review-review:52:9cd504a0b6f959342d1a7565db7f1523cca04f25:round-2"
+          },
+          "status": "open",
+          "target": {
+            "environment": "production",
+            "repository": {
+              "installationId": 0,
+              "name": "sentinel",
+              "owner": "ubiquity"
+            }
+          },
+          "version": "v1"
+        },
+        "rollbackProof": null,
+        "updatedAt": 1789401518171,
+        "version": "v1"
+      },
+      {
+        "candidateProof": {
+          "baseSha": "20aae115b44ed740c37e2452de4d5530b66430ec",
+          "execution": {
+            "createdAt": 1789489921250,
+            "generation": 5,
+            "id": "34995564960:1:repair",
+            "launcherSha": "848f26fe4c43af4a3f496520f48187f59f3671a7",
+            "purpose": "candidate",
+            "releaseId": "release:a67bd055498a804e03d6d5f3d31f349a38f8cdc550e126ddf0eecca48c547172",
+            "revision": "20aae115b44ed740c37e2452de4d5530b66430ec",
+            "runAttempt": 1,
+            "runId": 34995564960
+          },
+          "finishedAt": 1789490026000,
+          "jobId": 104470918832,
+          "logDigest": "328dfc9173dd8fa2b7981236c95a81177f22192fbdd2d196275e0afb01bebb3d",
+          "observedAt": 1789490037534,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1789489928000,
+          "startupReady": true,
+          "terminalAt": 1789490023445,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "createdAt": 1789489743448,
+        "id": "release:a67bd055498a804e03d6d5f3d31f349a38f8cdc550e126ddf0eecca48c547172",
+        "kind": "hosted_release",
+        "phase": "accepted",
+        "pointerIntent": null,
+        "priorProof": {
+          "baseSha": "20aae115b44ed740c37e2452de4d5530b66430ec",
+          "execution": {
+            "createdAt": 1789489745728,
+            "generation": 4,
+            "id": "34994258988:1:repair",
+            "launcherSha": "848f26fe4c43af4a3f496520f48187f59f3671a7",
+            "purpose": "prior",
+            "releaseId": "release:a67bd055498a804e03d6d5f3d31f349a38f8cdc550e126ddf0eecca48c547172",
+            "revision": "7e052c591ee8d7bc8dc5beaadbf143aeda7cde3c",
+            "runAttempt": 1,
+            "runId": 34994258988
+          },
+          "finishedAt": 1789489827000,
+          "jobId": 104469866647,
+          "logDigest": "8d8037593a0868b278aec0fda0b36f28a269c3a79adf32c9918ac2e036b9a83c",
+          "observedAt": 1789489847574,
+          "outcome": "healthy",
+          "ref": "refs/heads/sentinel-supervisor",
+          "repository": "ubiquity/sentinel",
+          "settled": true,
+          "startedAt": 1789489752000,
+          "startupReady": true,
+          "terminalAt": 1789489825655,
+          "workflowId": 357012162,
+          "workflowPath": ".github/workflows/supervisor.yml"
+        },
+        "priorRevision": "7e052c591ee8d7bc8dc5beaadbf143aeda7cde3c",
+        "request": {
+          "createdAt": 1789488907428,
+          "failureReason": null,
+          "id": "release:a67bd055498a804e03d6d5f3d31f349a38f8cdc550e126ddf0eecca48c547172",
+          "kind": "release_request",
+          "revision": "20aae115b44ed740c37e2452de4d5530b66430ec",
+          "source": {
+            "base": "10a863c0c813bb384c1ff67bbe67ee380f9b18c9",
+            "head": "c89f4b14715d5a9e795c00a61ae88b804c0b38b1",
+            "pullRequest": 62,
+            "reviewReceiptId": "review-receipt:648c5a716e77d8288b354e849f6e5c86edde3c4844771e6d6b5f29ff1e113616",
+            "reviewRequestId": "review-review:62:c89f4b14715d5a9e795c00a61ae88b804c0b38b1"
+          },
+          "status": "open",
+          "target": {
+            "environment": "production",
+            "repository": {
+              "installationId": 0,
+              "name": "sentinel",
+              "owner": "ubiquity"
+            }
+          },
+          "version": "v1"
+        },
+        "rollbackProof": null,
+        "updatedAt": 1789490042640,
+        "version": "v1"
+      }
+    ],
+    "githubCooldowns": []
+  }
+}

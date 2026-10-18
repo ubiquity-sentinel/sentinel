@@ -1,5 +1,6 @@
 import { HISTORICAL_NOT_STARTED_DETAIL } from "../src/host/matrix-actions.ts";
 import { CI_UNATTRIBUTED_DETAIL } from "../src/repair/ci-rejection.ts";
+import { ATTEMPT_DETAIL_NO_CHANGE } from "../src/repair/attempt-policy.ts";
 import {
   isDeliverableReviewRoundCeilingPark,
   isReviewRoundCeilingPark,
@@ -287,6 +288,15 @@ export const HOSTED_AUTONOMY_RETRYABLE: readonly {
   },
   {
     prefix: "model run did not complete with a trusted candidate",
+    nextStep: "work",
+  },
+  {
+    // A completed session that left its checkout unchanged (the runtime's own
+    // no-progress class, ai.ubq.fi 300's real outcome). It gets the ordinary
+    // work grant; the repeat-failure bound
+    // (`hosted-autonomy-repeat-failure.ts`) parks it for the owner after
+    // `REPEAT_FAILURE_PARK_THRESHOLD` identical outcomes.
+    prefix: ATTEMPT_DETAIL_NO_CHANGE,
     nextStep: "work",
   },
   {

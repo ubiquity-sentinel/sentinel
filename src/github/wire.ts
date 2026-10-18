@@ -330,6 +330,28 @@ export function parseCheckRunWire(input: unknown, path: string): GitHubCheckV1 {
   return { name, status, conclusion, head, startedAt, completedAt };
 }
 
+/**
+ * One check run as the coverage rule reads a base (`readCheckSuites`): its
+ * name (no label bound: no conclusion is judged), its exact head and its
+ * check suite (null when absent; present, it must be exact). The strict CI
+ * read (`parseCheckRunWire`) reads no suite.
+ */
+export function parseCheckSuiteMemberWire(
+  input: unknown,
+  path: string,
+): { name: string; head: GitSha; suite: number | null } {
+  const obj = expectRecord(input, path);
+  const name = expectNonEmptyString(obj.name, `${path}.name`, MaxText.message);
+  const head = expectWireSha(obj.head_sha, `${path}.head_sha`);
+  const suite = obj.check_suite === undefined || obj.check_suite === null
+    ? null
+    : expectPositiveInt(
+      expectRecord(obj.check_suite, `${path}.check_suite`).id,
+      `${path}.check_suite.id`,
+    );
+  return { name, head, suite };
+}
+
 /** Normalize one commit-status context into the shared exact-head check type. */
 export function parseCommitStatusWire(
   input: unknown,

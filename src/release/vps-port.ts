@@ -85,6 +85,53 @@ export function composeVpsReleasePort(
 export interface PinnedVpsDriverModuleV1 {
   createVpsDeploymentDriver(deps: unknown): NativeVpsDriverV1;
 }
+/** A pinned module graph that names a `bun:` module, which no Deno host can load. */
+export class VpsBunOnlyGraphError extends TypeError {
+  constructor(readonly module: string) {
+    super("Pinned VPS driver module graph needs a Bun host");
+  }
+}
+const MODULE_SPECIFIER = /(?:\bfrom|\bimport)\s*\(?\s*["']([^"'\n]+)["']/g;
+/**
+ * Walks the relative import graph of verified driver modules and refuses any
+ * file that names a `bun:` module, before a single one of them is evaluated.
+ * Over-approximate on purpose: a `bun:` literal anywhere in a reachable file
+ * refuses. A missing target is left to the import itself, which fails closed
+ * for a runtime import and never loads an erased type-only one.
+ */
+export async function assertDenoLoadableVpsGraph(
+  releaseRoot: string,
+  entries: readonly string[],
+): Promise<void> {
+  const seen = new Set<string>(), pending = [...entries];
+  while (pending.length > 0) {
+    const path = pending.pop()!;
+    if (seen.has(path)) continue;
+    if (seen.add(path).size > 4096) {
+      throw new TypeError("Pinned VPS driver module graph is too large");
+    }
+    let text: string;
+    try {
+      text = await Deno.readTextFile(`${releaseRoot}/${path}`);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) continue;
+      throw error;
+    }
+    if (/["']bun:/.test(text)) throw new VpsBunOnlyGraphError(path);
+    for (const [, specifier] of text.matchAll(MODULE_SPECIFIER)) {
+      if (!specifier.startsWith("./") && !specifier.startsWith("../")) continue;
+      const parts = path.split("/").slice(0, -1);
+      for (const part of specifier.split("/")) {
+        if (part === "..") {
+          if (parts.pop() === undefined) {
+            throw new TypeError("Pinned VPS driver import escapes its tree");
+          }
+        } else if (part !== "." && part !== "") parts.push(part);
+      }
+      pending.push(parts.join("/"));
+    }
+  }
+}
 /** Every byte in the immutable driver release is verified BEFORE evaluating its module. */
 export async function loadPinnedVpsDriver(
   input: { releaseRoot: string; identity: VpsIdentity; moduleSha256: string },
@@ -145,6 +192,11 @@ export async function loadPinnedVpsDriver(
   if (
     await digest(await Deno.readFile(modulePath)) !== sha256(input.moduleSha256)
   ) throw new TypeError("Pinned VPS driver module identity changed");
+  // The bridge evaluates both modules; a Bun-only graph is refused unevaluated.
+  await assertDenoLoadableVpsGraph(input.releaseRoot, [
+    "ops/vps-release-driver.ts",
+    "ops/vps-release-metrics.ts",
+  ]);
   const module = await import(
     new URL(`file://${modulePath}`).href
   ) as PinnedVpsDriverModuleV1;

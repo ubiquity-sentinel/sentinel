@@ -184,8 +184,11 @@ export async function postDrainTaskScenario(
       },
     });
     // Live shape (ai.ubq.fi 647/604): an ambiguous review submission whose
-    // attempt never bound a journal is deferred by every cycle, so the cycle
-    // ends in "margin" with a deferral that is neither matrix nor horizon.
+    // attempt never bound a journal, beside the previous round's wait. It is
+    // deferred until its own start is a full review bound old (then it is
+    // recovered, `review-saved-request-expiry_test.ts`), so this cycle, inside
+    // that bound, ends in "margin" with a deferral that is neither matrix nor
+    // horizon.
     const stuckBranch = "sentinel/repair/issue-4";
     const stuckKey = `review:8:${SHA2}:attempt-2`;
     const stuckCharge = reservation("stuck-review-attempt-2", {
@@ -194,8 +197,8 @@ export async function postDrainTaskScenario(
       head: SHA2,
       purpose: "review_request",
       outcome: "ambiguous",
-      createdAt: T0 - 46 * 60_000,
-      settledAt: T0 - 45 * 60_000,
+      createdAt: T0 - 2 * 60_000 + 1_000,
+      settledAt: T0 - 2 * 60_000 + 2_000,
       proofRef: null,
     });
     const stuckWork = workRecord("issue-4", {
@@ -217,7 +220,7 @@ export async function postDrainTaskScenario(
       intent: {
         kind: "review_request",
         key: stuckKey,
-        startedAt: T0 - 45 * 60_000,
+        startedAt: T0 - 2 * 60_000,
         branch: stuckBranch,
         expectedHead: SHA2,
         observedBase: SHA1,
@@ -227,7 +230,7 @@ export async function postDrainTaskScenario(
       },
       counters: { attempts: 1, retries: 0, reviewRounds: 1 },
       createdAt: T0 - 60 * 60_000,
-      updatedAt: T0 - 45 * 60_000,
+      updatedAt: T0 - 2 * 60_000,
     });
     if (mode === "unbound-intent") {
       rig.github.candidatePullRequests.set(8, {

@@ -7,7 +7,10 @@ import {
 } from "../contracts/release.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
-import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  parseReleaseStateSnapshotV1,
+  type ReleaseStateSnapshotV1,
+} from "../contracts/state-snapshots.ts";
 import {
   parseVpsReleaseRecordV1,
   vpsRecordBindsRequest,
@@ -80,6 +83,37 @@ export function gatewayClosureIntentBindsRequest(
     intent.observedBase === record.target.base &&
     intent.pr === record.target.pr &&
     intent.branch === null && intent.resultId === null;
+}
+
+/**
+ * Release deferred (JAM B12): the merged delivery's production request is
+ * open and the positively read release ref holds no VPS release record for
+ * it. Only the release-role controller (`src/release/vps-controller.ts`)
+ * writes that record, when it begins the request, so until then
+ * `observeGatewayVpsDelivery` can only ever answer `wait` for the request:
+ * while the release path is disabled nothing writes it at all. A cancelled
+ * or failed request is never deferred: it carries its own terminal reason.
+ */
+export function gatewayReleaseDeferred(
+  release: Pick<ReleaseStateSnapshotV1, "vpsReleases">,
+  request: ReleaseRequestV1,
+): boolean {
+  return request.status === "open" &&
+    !(release.vpsReleases ?? []).some((item) => item.request.id === request.id);
+}
+
+/**
+ * The one stable runtime shape of a deferred release: a Gateway record at
+ * `delivery` holding an open-ended `unavailable` wait. Selection skips it
+ * (`isWaiting`), so it costs no step and no write; the runtime's once-per-run
+ * resume pass (`resumeDeferredRelease`) releases it as soon as the release
+ * ref records its request. No generation-80 path writes an open-ended
+ * `unavailable` wait, and R80 parses and skips it.
+ */
+export function isReleaseDeferredWait(record: WorkRecordV1): boolean {
+  return isGatewayVpsRepository(record.repository) &&
+    record.nextStep === "delivery" &&
+    record.wait?.reason === "unavailable" && record.wait.until === null;
 }
 
 export type GatewayVpsAcceptanceV1 =
