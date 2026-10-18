@@ -233,15 +233,15 @@ Deno.test(
 );
 
 Deno.test(
-  "snapshot: an unchanged base/head pair has nothing to review",
+  "snapshot: an unchanged base/head pair is an exact-base task manifest",
   async () => {
     await withRepo(async (repo) => {
       await Deno.writeTextFile(`${repo}/account.ts`, "export const a = 1;\n");
       const base = await commitAll(repo, "only");
       const capture = await producer(repo).capture({ base, head: base });
-      assert.ok(!capture.ok, "an unchanged pair must be unavailable");
-      if (capture.ok) assert.fail("expected rejection");
-      assert.equal(capture.error.kind, "unavailable");
+      if (!capture.ok) assert.fail(capture.error.detail);
+      assert.deepEqual(capture.value.files, []);
+      assert.equal(capture.value.base, capture.value.head);
     });
   },
 );

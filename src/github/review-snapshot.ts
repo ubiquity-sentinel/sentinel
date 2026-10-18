@@ -459,3 +459,4 @@ export { verifyReviewSnapshotDigest } from "./snapshot-manifest.ts";
 export { validateReviewSnapshotV1 } from "./snapshot-manifest.ts";
 export { renderReviewPrompt } from "./snapshot-manifest.ts";
 export type { GitReviewSnapshotOptionsV1 } from "./snapshot-reader.ts";
+export { BASE_TASK_INSTRUCTIONS } from "./snapshot-manifest.ts";
