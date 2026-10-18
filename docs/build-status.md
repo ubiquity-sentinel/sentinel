@@ -6,11 +6,66 @@ directive; Muse ownership is retired. Keep present state, remaining work and
 exact evidence references here; replace stale checkpoints instead of appending a
 session transcript. Current design decisions belong in
 [MASTER-PLAN.md](../MASTER-PLAN.md) and [DECISIONS.md](DECISIONS.md). The
-current primary continues the existing integration role. Actual model and effort
-are unverified at the latest continuation checkpoint; earlier identity records
-are historical. Worker identity and runtime routing are reported separately.
+current primary continues the existing integration role. The trusted
+active-model hook on 2026-10-18 verifies the current coordinator as gpt-6-astra
+with ultra reasoning effort; earlier identity records remain historical. Worker
+identity and runtime routing are reported separately.
 
 ## Active task register
+
+The existing primary adopts the 2026-10-18 19:49 UTC Mac-root
+review-task-binding coordination without ownership transfer. Trusted
+active-model hook confirms `gpt-6-astra`/`ultra`; worker identity and runtime
+model routing remain separate. Retained R
+`9f7cdcc0e7d4206730a25c2e51cf216d93d41f29` and W
+`e19ff1c4ecb2db292ada491ad7cf60a43c0f58ac` are imported by local Git fetch from
+the original repository and are assigned for normal ancestry-preserving
+integration of only `src/github/review-result-contracts.ts`,
+`src/github/reviewer-prepared.ts` and `tests/github/codex-reviewer_test.ts`.
+Preserve both histories and do not adopt unrelated old C/M63 installer changes.
+Independent read-only workers `binding_merge_audit` and `binding_evidence_plan`
+own source/merge assessment and retained-evidence reuse mapping respectively;
+neither owns writes. The supplied independent audit already verified all 11
+retained INDEX hashes, so missing temporary handbacks do not invalidate them.
+New binding-fix hosted/runtime/supervisor/E2E attempts require the requested
+explicit per-attempt approval; source integration/local validation is
+authorized, and the already-started b8 source CI remains separate. Return a
+non-authoritative result artifact under
+`/tmp/sentinel-backlog-binding-coordination-20261018/` with a durable workspace
+mirror, exact candidate, disposition, affected validation and concrete remaining
+action.
+
+The review-task-binding fix is accepted for source integration at
+`2846a3678a26f5223d029f8665f199e2724d9005`, tree
+`d3a79e1b54cf5bd0dabf08999d9eed0a259a349f`, after normal R merge
+`8e9671e5ae4a816fa1144d0b7acde4bb499d6aa6` and normal W merge with no tree
+delta. Both exact histories are ancestors; only the three authorized code/test
+files differ from b8. Source audit SHA-256
+`12a6e1aa90d3e53d0da35b6bd9531b7980f008542ad7c0956ed723cbc8ed7ef9` confirmed
+per-invocation identity enums and shared-schema isolation, with no unrelated
+installer adoption. All six fresh registered local targets passed on exact2846:
+fmt/lint/types, reviewer/base-task15 tests/7steps, one real-Git publication
+lifecycle, and size1,267 files/zero violations. Primary verified all57 artifact
+hashes, exact before/after input equality and settled handles in
+`review-task-binding-adoption/validation/HANDBACK.json`, SHA-256
+`41230bff87cec0e48461df059e6a2047755bc36c6d285d5916f72b2c500348a3`. One55-second
+observation gap is recorded as a supervision deviation; no unchanged successful
+test was repeated.
+
+Fresh runtime readback at20:06UTC confirms R81/gen81 under L81 still carries all
+three pre-fix binding blobs, with execution null and latest retained failed
+ordinary proof39161064029; the intake failure is separate and is not claimed
+fixed by R/W. Source integration is not installed acceptance. No new hosted
+attempt for this binding fix has been launched. Next approval packet must name
+the final documentation-only descendant of tested2846, normal development
+publication triggering `.github/workflows/ci.yml` / `test-local`,
+expected45–60min plus queue, and exact-current-candidate native identity plus
+complete successful harness. Installation must follow the existing guarded
+rollout; no direct R or old C/M63 install is authorized. Existing b8
+CI39160464816 was already started before this coordination and does not accept
+the new binding candidate. Requested coordination result goes under
+`/tmp/sentinel-backlog-binding-coordination-20261018/` with a durable mirror in
+`review-task-binding-adoption/`; this ledger remains authoritative.
 
 The primary coordinator owns the 2026-10-18 handoff
 `be02faf40c77fe299c2ed7ffa91fedb00fe43c48`: finish the ai.ubq.fi prerequisites,
