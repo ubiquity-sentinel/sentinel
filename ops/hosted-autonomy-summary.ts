@@ -22,6 +22,8 @@ const QUEUE_OWNER_LABELS: Readonly<Record<string, string>> = {
   "removal_unproven_owner_action":
     "Owner: queue removal lacks accepted native proof",
   "dequeue_pending_owner_action": "Owner: queue dequeue remains uncertain",
+  "dequeue_complete_entry_owner_action":
+    "Owner: queue entry changed after dequeue proof",
 };
 function reason(record: WorkRecordV1, actions: readonly string[]): string {
   if (queueRecordProtected(record)) {
@@ -39,6 +41,9 @@ function reason(record: WorkRecordV1, actions: readonly string[]): string {
     if (queue.queueFailures >= 2) return "Owner: repeated queue CI failure";
     if (queue.stage === "dequeue_pending") {
       return "Owner: queue dequeue remains uncertain";
+    }
+    if (queue.stage === "dequeue_complete") {
+      return "Queue dequeue completion proven; awaiting re-entry";
     }
     if (queue.stage === "owner_park") {
       return "Owner: queue operation needs a decision";

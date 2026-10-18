@@ -12,6 +12,7 @@ import {
   createQueueIntent,
   queueFailure,
   type QueueIntentState,
+  queueReentryIntent,
 } from "./hosted-autonomy-queue-intent.ts";
 import { queueHold } from "./hosted-autonomy-queue-writer.ts";
 import { decideQueuePolicy } from "./hosted-autonomy-queue-policy.ts";
@@ -27,6 +28,8 @@ export async function submitQueueAdmission(
   const tag = `queue:${input.record.id}`;
   let intent = previous === null
     ? await createQueueIntent(input.record, binding, deps.clock.now())
+    : previous.stage === "dequeue_complete"
+    ? queueReentryIntent(previous)
     : { ...previous.intent, requestId: null, resultId: null };
   // A proven ejection permits exactly one new admission, never an age-based retry reset.
   if (
