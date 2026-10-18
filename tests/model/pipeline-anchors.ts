@@ -60,6 +60,16 @@ export const A = {
     "src/repair/loop-review-result.ts",
     "? advanceToCorrection(clearIntent(withEvidence, now), now)",
   ),
+  acceptanceCorrection: anchor(
+    "p.acceptanceCorrection",
+    "src/repair/loop-review-result.ts",
+    "if (refusal === TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL) {",
+  ),
+  releaseDeferred: anchor(
+    "p.releaseDeferred",
+    "src/repair/loop-release.ts",
+    "return deferRelease(deps, context, record, now);",
+  ),
   rejectedPark: anchor(
     "p.rejectedPark",
     "src/repair/loop-review-result.ts",
@@ -124,6 +134,11 @@ export const A = {
     "p.releaseWait",
     "src/repair/loop-release.ts",
     '{ reason: "unavailable", since: now, until: now + RELEASE_POLL_MS },',
+  ),
+  refreshRefused: anchor(
+    "p.refreshRefused",
+    "src/repair/loop-base-refresh-failure.ts",
+    "export function refuseBaseRefresh(",
   ),
   refreshFail: anchor(
     "p.refreshFail",

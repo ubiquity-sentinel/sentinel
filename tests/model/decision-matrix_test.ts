@@ -152,6 +152,11 @@ Deno.test("decision matrix: the Gateway release wait is the real verdict on the 
   // VPS release record the live release ref never holds.
   assert.equal(VPS.binds, true);
   assert.equal(VPS.absentWaits, true);
+  assert.equal(
+    VPS.deferred,
+    true,
+    "missing release proof holds one stable state",
+  );
 });
 
 Deno.test("decision matrix: review resumes the record's open PR and never opens a second one", async () => {
@@ -206,12 +211,35 @@ Deno.test("decision matrix: review resumes the record's open PR and never opens 
   assert.ok(KNOWN_JAMS.some((id) => id.includes("pr_closed_by_owner")));
 });
 
-Deno.test("decision matrix: a lost review submission never moves in the real loop; a landed one does", async () => {
+Deno.test("decision matrix: a lost review submission expires without refunding its round", async () => {
   const lost = await reviewIntentVerdict(false);
   const landed = await reviewIntentVerdict(true);
   console.log(`lost: ${lost.outcomes.join(" | ")}`);
-  assert.ok(lost.observed >= 6, "every run read the intent's journal");
-  assert.equal(lost.moved, false, "deferred without a write on every run");
+  assert.ok(
+    lost.observed >= 1,
+    "the saved journal was checked before recovery",
+  );
+  assert.equal(lost.recovered, true, "the expired intent is cleared");
+  assert.equal(lost.charged, true, "the ambiguous admission stays charged");
+  assert.equal(lost.moved, true);
+  assert.ok(lost.rounds >= 2 && lost.rounds <= 3);
   assert.equal(landed.moved, true, "a bound journal counts the round");
-  assert.ok(KNOWN_JAMS.includes("J1:wait:review.intent_unbound"));
+  assert.equal(landed.charged, true);
+  assert.ok(!KNOWN_JAMS.includes("J1:wait:review.intent_unbound"));
+});
+
+Deno.test("decision matrix: integrated recovery and acceptance routes retain the round ceiling", async () => {
+  const { graph } = await checker();
+  for (const [id, state] of graph.states) {
+    assert.ok(state.rounds >= 0 && state.rounds <= 3, id);
+    for (const edge of graph.edges.get(id) ?? []) {
+      if (edge.event !== "review_not_fulfilled") continue;
+      assert.equal(
+        edge.to.phase,
+        state.rounds === 3 ? "blocked:rev.acceptance_owner" : "work.fresh",
+        id,
+      );
+      assert.equal(edge.to.pr, state.pr, "acceptance correction keeps its PR");
+    }
+  }
 });

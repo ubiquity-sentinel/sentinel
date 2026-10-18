@@ -711,8 +711,11 @@ Deno.test("repeat failure: the maintenance step receives only the non-secret rou
   const maintenance = workflow.slice(start, end);
   for (const name of ["BASE_URL", "ID", "FALLBACK"]) {
     const variable = `SENTINEL_MODEL_${name}`;
+    const expression = name === "ID"
+      ? "vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol'"
+      : `vars.${variable}`;
     assert.ok(
-      maintenance.includes(`${variable}: \${{ vars.${variable} }}`),
+      maintenance.includes(`${variable}: \${{ ${expression} }}`),
       variable,
     );
     assert.match(

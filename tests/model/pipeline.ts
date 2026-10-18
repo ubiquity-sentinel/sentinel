@@ -58,6 +58,7 @@ import { publicationOpens } from "./pr-continuity.ts";
 import { REVIEW_INTENT, REVIEW_INTENT_ANCHOR } from "./review-intent.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import {
+  gatewayReleaseDeferred,
   gatewayRequestBindsDelivery,
   observeGatewayVpsDelivery,
 } from "../../src/repair/vps-delivery.ts";
@@ -152,7 +153,7 @@ const parkCache = new Map<string, string>();
  * over the live release-ref shape (no `vpsReleases` at all) for a merged,
  * reviewed Gateway delivery whose request binds it.
  */
-export const VPS = { binds: false, absentWaits: false };
+export const VPS = { binds: false, absentWaits: false, deferred: false };
 
 /** `reviewRoundsLeft` over a concretized record holding `rounds` charges. */
 export async function primeRounds(): Promise<void> {
@@ -172,6 +173,7 @@ export async function primeRounds(): Promise<void> {
     gateway.reviews[0]!,
   );
   const release = releaseSnapshot();
+  VPS.deferred = gatewayReleaseDeferred(release, request);
   VPS.absentWaits = (await observeGatewayVpsDelivery(
     {
       readRelease: () =>
@@ -283,6 +285,8 @@ export interface ReadmissionV1 {
   to: Phase;
   /** Re-admitted for a deterministically red head too (else: flake only). */
   red: boolean;
+  /** A persistent-red re-admission requires another base change. */
+  baseMove: boolean;
 }
 
 /** A class's re-admission with rounds left and with every round spent. */
@@ -365,6 +369,9 @@ export function successors(
   const refreshOutcomes = (from: PStateV1, reviewed: boolean) => {
     add(at(from, "work.published"), "refresh_published", "sys");
     add(park(from, "ref.conflict"), "refresh_conflict", "coop");
+    add(park(from, "ref.refused"), "refresh_validation_refused", "human", {
+      anchor: A.refreshRefused,
+    });
     if (from.refreshFail + 1 >= MAX_BASE_REFRESH_FAILURES) {
       add(park(from, "ref.failed_unavailable"), "refresh_failed_3x", "adv", {
         anchor: A.refreshFail,
@@ -428,7 +435,7 @@ export function successors(
       add(
         at(state, readmission.to, { refreshFail: 0 }),
         "launcher_readmission",
-        readmission.red ? "sys" : "adv",
+        readmission.baseMove ? "base" : readmission.red ? "sys" : "adv",
         readmission.red ? {} : { consumes: ["rerun"] },
       );
     }
@@ -568,7 +575,14 @@ export function successors(
         "coop",
         { anchor: left === 0 ? A.rejectedPark : A.correction },
       );
-      add(park(state, "rev.not_fulfilled"), "review_not_fulfilled", "coop");
+      add(
+        left === 0
+          ? park(state, "rev.acceptance_owner")
+          : at(state, "work.fresh"),
+        "review_not_fulfilled",
+        "coop",
+        { anchor: A.acceptanceCorrection },
+      );
       add(park(state, "rev.uncertain"), "review_uncertain", "adv");
       add(
         left === 0
@@ -603,17 +617,19 @@ export function successors(
       );
       return edges;
     case "review.intent_unbound":
-      // The REAL repair loop's verdict (`review-intent.ts`): it defers the
-      // record without a write on every run, past the review bound.
+      // The real repair loop expires an unbound saved request without
+      // refunding its charge. Re-enter the CI-first gate: it must still
+      // respect the three-round ceiling before requesting another review.
       if (REVIEW_INTENT.unboundMoves === null) {
         throw new Error("primeReviewIntent() first");
       }
       if (REVIEW_INTENT.unboundMoves) {
         add(
-          at(state, "review.requested", { rounds: state.rounds + 1 }),
+          left === 0
+            ? park(state, ceilingClass("none"))
+            : at(state, "work.published"),
           "expired_intent_recovered",
           "sys",
-          { consumes: ["A"] },
         );
       }
       return edges;
@@ -749,7 +765,14 @@ export function successors(
         state.repo === "gateway" && options.vpsWriterAbsent !== false &&
         VPS.binds && VPS.absentWaits
       ) {
-        add(state, "vps_release_record_absent", "coop", { anchor: A.vpsWait });
+        // The release controller is an external dependency. The new runtime
+        // writes one stable deferred wait; it does not re-arm every pass.
+        add(
+          state,
+          VPS.deferred ? "release_deferred" : "vps_release_record_absent",
+          VPS.deferred ? "infra" : "coop",
+          { anchor: VPS.deferred ? A.releaseDeferred : A.vpsWait },
+        );
       } else {
         add(at(state, "delivery.closure"), "release_accepted", "coop");
       }

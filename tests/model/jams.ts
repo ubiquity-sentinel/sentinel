@@ -138,6 +138,9 @@ const OWNER_GATES: ReadonlySet<string> = new Set([
   "impl.no_receipt@cap200",
   "rev.admission_refused",
   "rev.acceptance_mismatch",
+  "rev.acceptance_owner",
+  "ref.refused",
+  "impl.repeat_failure",
   "ci.fix_exhausted",
   "ceil.unreviewed",
   "ceil.rejected",
@@ -460,8 +463,8 @@ export async function runChecker(
 }
 
 /**
- * Every counterexample on the current code (3f041b46d launcher, R80
- * runtime). Documented expected failures: the test asserts the checker finds
+ * Every counterexample on the integrated generation-81 source. Launcher
+ * scenarios keep the installed R80 pin until the separate launcher rollout. Documented expected failures: the test asserts the checker finds
  * exactly these. Fixing one means removing it here.
  */
 export const KNOWN_JAMS: readonly string[] = [
@@ -479,11 +482,7 @@ export const KNOWN_JAMS: readonly string[] = [
   "J1:park:cell.no_receipt@fresh",
   "J1:park:cell.source_changed@fresh",
   "J1:park:cell.native_dependencies@fresh",
-  "J1:park:ci.pre_review_red@new", // fix route closed in R80 (gen 81)
-  "J1:park:ci.pre_review_red@corrected",
-  "J1:park:ci.pre_review_pending@new", // green rule needs the unmoved base
   "J1:park:del.ci_unattributed@round1", // green rule needs the unmoved base
-  "J1:park:rev.not_fulfilled@round1", // rounds left, no correction rule
   "J1:park:rev.uncertain@round1",
   "J1:park:rev.digest_drift@round1", // issue edited after the review
   "J1:park:rev.stale_source@new", // issue reopened
@@ -495,7 +494,6 @@ export const KNOWN_JAMS: readonly string[] = [
   "J1:park:term.retired@reopened_fresh",
   "J1:decomposition:part-parked", // later parts `dependency` forever
   // J1, owner gates by design that nothing announces.
-  "J1:park:impl.no_receipt@cap200", // 200-reservation cap, silent skip
   "J1:park:impl.protected_path@noted",
   "J1:park:impl.admission_disabled@fresh",
   "J1:park:rev.admission_refused@new",
@@ -524,15 +522,12 @@ export const KNOWN_JAMS: readonly string[] = [
   "J1:park:cell.base_not_current@fresh",
   "J1:park:misc.unconfigured@fresh",
   "J1:wait:work.manual", // sessionBound null: wait.until null forever
-  "J1:wait:review.intent_unbound", // lost review submission (604/630/647)
   // J1, absorbing although the owner rules require progress; the maintenance
   // log names them every pass, but only with a status line.
   "J1:logged:ceil.reviewed@spent", // moved base; moved-base merge disabled
   "J1:logged:ceil.base_moved@spent", // and the carried refresh never runs
-  "J1:logged:ci.pre_review_red@legacy", // fix route closed in R80
   "J1:logged:delivery.review_pending_null", // receipt no longer parses
   // J2, cycles no ranking bounds.
-  "J2:coop:delivery.released:vps_release_record_absent", // Gateway VPS
   "J2:adv:delivery.merge:merge_refused_again",
   "J2:adv:delivery.ci_wait:ci_still_pending",
   "J2:adv:delivery.base_red:base_still_red",
@@ -556,4 +551,5 @@ export const KNOWN_JAMS: readonly string[] = [
  */
 export const KNOWN_PR_REPLACEMENTS: readonly string[] = [
   "pr_closed_by_owner", // retireClosedPublication, then a new PR is created
+  "expired_intent_recovered", // only after a later owner close on that path
 ];
