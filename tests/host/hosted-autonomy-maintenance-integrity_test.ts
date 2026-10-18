@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { darkQueueCoordinatorFixture } from "./hosted-autonomy-dark-queue-fixture.ts";
 import {
   captureHostedAutonomyMain,
   makeRig,
@@ -58,7 +59,10 @@ async function captureNativeMain(
   const previous = Deno.cwd();
   try {
     Deno.chdir(checkout);
-    return await captureHostedAutonomyMain(deps, head.stdout.trim());
+    return await captureHostedAutonomyMain({
+      ...deps,
+      queue: await darkQueueCoordinatorFixture(deps),
+    }, head.stdout.trim());
   } finally {
     Deno.chdir(previous);
   }

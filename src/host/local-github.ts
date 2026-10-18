@@ -26,7 +26,15 @@ import {
   type ModelRouteV1,
 } from "./model-route.ts";
 import type { GitHubAuthProviderV1 } from "../github/auth.ts";
-import { GitHubApiClient } from "../github/client.ts";
+import { GitHubQueueDeliveryClient } from "../github/client-queue-delivery.ts";
+import { createQueueProvenanceReader } from "../github/queue-delivery-provenance.ts";
+import { createQueueDeliveryReader } from "../github/queue-delivery-reader.ts";
+import { createNativeQueueGuard } from "../github/native-queue-guard.ts";
+import {
+  QUEUE_MODE_CEILING,
+  QUEUE_PROOF_ACTIVATED,
+  QUEUE_PROOF_POLICY,
+} from "../github/queue-runtime-policy.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
 import { GitReviewSnapshot } from "../github/review-snapshot.ts";
 import { CodexStructuredReviewer } from "../github/codex-reviewer.ts";
@@ -205,7 +213,7 @@ export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
     authorizationHeader: () => Promise.resolve(portOk(`Bearer ${input.token}`)),
   };
   const gate = input.gate;
-  const client = new GitHubApiClient({
+  const client = new GitHubQueueDeliveryClient({
     repository,
     apiBaseUrl: API_BASE_URL,
     http: input.http,
@@ -213,6 +221,27 @@ export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
     cooldownGate: gate,
     clock: input.clock,
     includeIssueRelations: true,
+  }, QUEUE_PROOF_POLICY.workflowId);
+  const queueReader = createQueueDeliveryReader({
+    repository,
+    clock: input.clock,
+    client,
+    policy: QUEUE_PROOF_POLICY,
+    provenance: createQueueProvenanceReader({
+      state: input.state,
+      clock: input.clock,
+      policy: QUEUE_PROOF_POLICY,
+    }),
+  });
+  const nativeQueue = createNativeQueueGuard({
+    repository,
+    state: input.state,
+    clock: input.clock,
+    client,
+    reader: queueReader,
+    mode: QUEUE_MODE_CEILING,
+    proofActivated: QUEUE_PROOF_ACTIVATED,
+    policy: QUEUE_PROOF_POLICY,
   });
   const snapshot = new GitReviewSnapshot({
     trustedPath: input.trustedPath,
@@ -297,6 +326,7 @@ export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
   });
   const host = composeGitHubHost({
     repository,
+    nativeQueue,
     http: input.http,
     auth,
     cooldownGate: gate,
@@ -380,6 +410,7 @@ export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
     return portOk(undefined);
   };
   host.port.prepareBaseRefresh = createPrepareBaseRefresh({
+    clock: input.clock,
     git: host.git,
     repository,
     observer: host.port,

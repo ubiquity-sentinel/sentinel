@@ -1,3 +1,5 @@
+import { guardQueueOperation } from "./loop-queue-guard.ts";
+import { guardQueueDelivery } from "./loop-queue-guard.ts";
 /** Repair loop internals: closure. */
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { reviewEvidenceRef } from "./keys.ts";
@@ -29,6 +31,8 @@ export async function retryAlreadySatisfiedClosure(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(deps, context, record, "resume");
+  if (queueGuard !== null) return queueGuard;
   const intent = record.intent;
   const close = deps.github.closeAlreadySatisfiedTask;
   if (intent?.kind !== "already_satisfied_closure" || close === undefined) {
@@ -119,6 +123,8 @@ export async function retryClosure(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueDelivery(deps, context, record);
+  if (queueGuard !== null) return queueGuard;
   const issueNumber = record.related.issueNumber;
   if (issueNumber === null) {
     if (isGatewayVpsRepository(record.repository)) {

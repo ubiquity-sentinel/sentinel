@@ -1,3 +1,5 @@
+import { inactiveNativeQueueFixture } from "../github/native-queue-fixture.ts";
+import type { NativeQueueGuardV1 } from "../../src/github/native-queue-guard.ts";
 /**
  * m04-repair test helpers: fake ports (recording, no product logic) and a
  * memory state capability with exact-identity CAS plus sequence validation
@@ -191,6 +193,7 @@ export interface FakeGithubCandidateLifecycleV1 {
 }
 
 export interface FakeGithubOptionsV1 {
+  nativeQueue?: NativeQueueGuardV1 | null;
   baseSha?: GitSha;
   issues?: Partial<GitHubIssueV1>[];
   openIssues?: Partial<GitHubIssueV1>[];
@@ -229,6 +232,7 @@ export type SuitedCheckV1 = GitHubCheckV1 & { suite?: number };
 
 /** Recording fake GitHubPort; product logic never lives here. */
 export class FakeGithub implements GitHubPort {
+  nativeQueue: NativeQueueGuardV1 | undefined;
   /** Explicit trusted publisher identity; the loop must use this value. */
   readonly reviewerIdentity: string = "chatgpt-codex-connector[bot]";
   readonly calls: string[] = [];
@@ -290,6 +294,9 @@ export class FakeGithub implements GitHubPort {
   private nextPrNumber = 7;
 
   constructor(options: FakeGithubOptionsV1 = {}) {
+    this.nativeQueue = options.nativeQueue === null
+      ? undefined
+      : options.nativeQueue ?? inactiveNativeQueueFixture();
     this.options = options;
     this.lifecycle = options.candidateLifecycle;
     if (this.lifecycle !== undefined) {

@@ -11,8 +11,14 @@ import {
   authorizingReceipt,
   historicalMergedPublication,
   readTrustedTask,
-  verifiedMergedDelivery,
 } from "./hosted-autonomy-delivery.ts";
+import {
+  hostedDeliveryProofMatches,
+  resolveHostedDelivery,
+  retainHostedDeliveryProvenance,
+} from "./hosted-autonomy-delivery-proof.ts";
+import { hasQueueIntentNamespace } from "./hosted-autonomy-queue-policy.ts";
+import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 import { intentClosable } from "./hosted-autonomy-retries.ts";
 import {
   acceptedReleases,
@@ -52,6 +58,19 @@ async function gatewayClosureGate(
   record: HostedAutonomyRecordV1,
   revision: string,
 ): Promise<"accepted" | "wait" | { blocked: string }> {
+  const scope = await context.scopeFor(record.repository);
+  const pull = record.target.pr === null
+    ? null
+    : await context.readPull(scope, record.target.pr);
+  const proof = await resolveHostedDelivery(
+    context,
+    record,
+    scope,
+    pull,
+    "closure",
+    revision,
+  );
+  if (proof === null) return "wait";
   const requests = context.snapshot.releaseRequests.filter((request) =>
     releaseRequestMatchesDelivery(request, record)
   );
@@ -59,9 +78,12 @@ async function gatewayClosureGate(
   const request = requests[0];
   const referenced = releaseRequestReceipt(context.snapshot.reviews, request);
   if (
+    referenced?.id !== proof.reviewReceiptId ||
+    request.source.reviewRequestId !== proof.reviewRequestId
+  ) return "wait";
+  if (
     !await gatewayRequestBindsDelivery(request, record, referenced, revision)
   ) return "wait";
-  const scope = await context.scopeFor(record.repository);
   let optedOut: boolean | null = null;
   try {
     optedOut =
@@ -138,6 +160,7 @@ function blockGatewayDelivery(
   reason: string,
 ) {
   context.actions.push(`delivery:${record.id}:release_blocked`);
+  if (queueRecordProtected(record, context.deps.queueCustody)) return null;
   return persistGatewayDelivery(
     context,
     markBlocked(record, "other", reason, context.deps.clock.now()),
@@ -174,7 +197,9 @@ function gatewayIntentClosable(
   context: HostedAutonomyPassContextV1,
   record: HostedAutonomyRecordV1,
 ): boolean {
-  return intentClosable(record, context.snapshot.reservations) ||
+  // Candidate eligibility only: every gateway closure still needs fresh proof.
+  return hasQueueIntentNamespace(record) ||
+    intentClosable(record, context.snapshot.reservations) ||
     (isGatewayVpsRepository(record.repository) &&
       context.snapshot.releaseRequests.some((request) =>
         releaseRequestMatchesDelivery(request, record) &&
@@ -187,6 +212,7 @@ export async function runHostedClosurePass(
   deliveryOnly = false,
 ): Promise<HostedAutonomyResultV1 | null> {
   const { deps, actions, revisions, scopeFor, readPull } = context;
+  if (deps.queueCustody?.ready === false) return null;
   let { snapshot, observedHead } = context;
   const { closedIssues, foreignMerged } = context;
   // A record an earlier write of this pass touched waits for the next pass.
@@ -223,7 +249,13 @@ export async function runHostedClosurePass(
       }
       const pull = await readPull(scope, pr);
       if (pull === null) continue;
-      const evidence = verifiedMergedDelivery(record, pull, scope.baseBranch);
+      const evidence = await resolveHostedDelivery(
+        context,
+        record,
+        scope,
+        pull,
+        "closure",
+      );
       if (evidence === null) continue;
       if (isGatewayVpsRepository(record.repository)) {
         const gate = await gatewayClosureGate(
@@ -267,7 +299,10 @@ export async function runHostedClosurePass(
   // the record alone.
   const closedUnmerged = new Set<string>();
   for (const record of snapshot.work) {
-    if (record.nextStep === "done") continue;
+    if (
+      record.nextStep === "done" ||
+      queueRecordProtected(record, deps.queueCustody)
+    ) continue;
     const issueNumber = record.related.issueNumber;
     if (
       issueNumber === null ||
@@ -291,6 +326,7 @@ export async function runHostedClosurePass(
     snapshot,
     closedIssues,
     closedUnmerged,
+    deps.queueCustody,
   ).filter((plan) => !settled(plan.id));
   let retirementResult: HostedAutonomyResultV1 | null = null;
   if (retirements.length > 0) {
@@ -382,7 +418,7 @@ export async function runHostedClosurePass(
     // Counted once by the delivery-only pass; nothing is read for it here.
     if (gatewayReleaseDeferredIn(context, record)) continue;
     const key = hostedDeliveryKey(record.repository, pullRequest, head, base);
-    if (foreignMerged.has(key)) continue;
+    // A prior capability is revalidated below against the fresh task and exact row.
     const scope = await scopeFor(record.repository);
     // The same trusted, immediately-preceding source-issue read authorizes the
     // merge evidence this closure will consume, exactly as it did the merge.
@@ -404,7 +440,13 @@ export async function runHostedClosurePass(
         pull.mergedBy !== HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR
       )
     ) continue;
-    const evidence = verifiedMergedDelivery(record, pull, scope.baseBranch);
+    const evidence = await resolveHostedDelivery(
+      context,
+      record,
+      scope,
+      pull,
+      recovered.has(record.id) ? "adoption" : "closure",
+    );
     if (evidence === null) continue;
     if (isGatewayVpsRepository(record.repository)) {
       const gate = await gatewayClosureGate(context, record, evidence.revision);
@@ -443,7 +485,7 @@ export async function runHostedClosurePass(
     const key = hostedDeliveryKey(record.repository, pullRequest, head, base);
     const delivered = isHostedSelf(record.repository)
       ? released.has(key)
-      : foreignMerged.has(key);
+      : foreignMerged.get(key) !== undefined;
     if (!delivered) continue;
     const scope = await scopeFor(record.repository);
     closureTasks.set(
@@ -468,13 +510,16 @@ export async function runHostedClosurePass(
       record.nextStep !== "delivery" ||
       record.related.issueNumber === null || record.target.pr === null ||
       record.target.head === null || record.target.base === null ||
-      !foreignMerged.has(
-        hostedDeliveryKey(
+      !hostedDeliveryProofMatches(
+        foreignMerged.get(hostedDeliveryKey(
           record.repository,
           record.target.pr,
           record.target.head,
           record.target.base,
-        ),
+        )),
+        snapshot,
+        record,
+        closureTasks.get(record.id) ?? "unavailable",
       ) ||
       !gatewayIntentClosable(context, record) ||
       authorizingReceipt(
@@ -505,9 +550,13 @@ export async function runHostedClosurePass(
       const scope = await scopeFor(plan.repository);
       if (isGatewayVpsRepository(record.repository)) {
         const pull = await readPull(scope, record.target.pr!);
-        const evidence = pull === null
-          ? null
-          : verifiedMergedDelivery(record, pull, scope.baseBranch);
+        const evidence = pull === null ? null : await resolveHostedDelivery(
+          context,
+          record,
+          scope,
+          pull,
+          "closure",
+        );
         const gate = evidence === null
           ? "wait"
           : await gatewayClosureGate(context, record, evidence.revision);
@@ -541,7 +590,13 @@ export async function runHostedClosurePass(
             pull === null || pull.number !== record.target.pr ||
             pull.author !== HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR ||
             pull.mergedBy !== HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR ||
-            verifiedMergedDelivery(record, pull, scope.baseBranch) === null
+            await resolveHostedDelivery(
+                context,
+                record,
+                scope,
+                pull,
+                "adoption",
+              ) === null
           ) {
             actions.push(`close:${plan.id}:issue=${plan.issueNumber}:refused`);
             continue;
@@ -575,11 +630,23 @@ export async function runHostedClosurePass(
         }
         if (gate !== "accepted") continue;
         if (record.intent?.kind !== "issue_closure") {
+          const proof = await resolveHostedDelivery(
+            context,
+            record,
+            scope,
+            await readPull(scope, record.target.pr!),
+            "closure",
+            request.revision,
+          );
+          const retained = proof === null
+            ? null
+            : retainHostedDeliveryProvenance(record, proof);
+          if (retained === null) continue;
           const now = deps.clock.now();
           actions.push(`intent:${record.id}:issue_closure`);
           return persistGatewayDelivery(
             context,
-            setIntent(record, {
+            setIntent(retained, {
               kind: "issue_closure",
               key: closureIntentKey(plan.issueNumber),
               startedAt: now,
@@ -610,6 +677,26 @@ export async function runHostedClosurePass(
           closed = true;
           actions.push(`reconcile:${record.id}:already_closed`);
         }
+      }
+      if (!isHostedSelf(record.repository)) {
+        const pull = await readPull(scope, record.target.pr!);
+        const request = snapshot.releaseRequests.find((item) =>
+          releaseRequestMatchesDelivery(item, record)
+        );
+        const proof = await resolveHostedDelivery(
+          context,
+          record,
+          scope,
+          pull,
+          "closure",
+          request?.revision ?? null,
+        );
+        if (
+          proof === null ||
+          (request !== undefined &&
+            (request.source.reviewReceiptId !== proof.reviewReceiptId ||
+              request.source.reviewRequestId !== proof.reviewRequestId))
+        ) continue;
       }
       if (scope.surface !== null) {
         try {

@@ -1,3 +1,4 @@
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /**
  * Repair loop internals: the charged base-refresh conflict resolution.
  *
@@ -64,6 +65,13 @@ export async function executeConflictResolutionStep(
   record: WorkRecordV1,
   implement: () => Promise<StepResultV1>,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "conflict",
+  );
+  if (queueGuard !== null) return queueGuard;
   const intent = record.intent;
   if (
     intent === null ||
@@ -107,6 +115,13 @@ export async function confirmConflictResolution(
 ): Promise<
   { kind: "confirmed"; head: GitSha; mergeBase: GitSha } | StepResultV1
 > {
+  const queueGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "conflict",
+  );
+  if (queueGuard !== null) return queueGuard;
   const mergeBase = conflictResolutionAdmissible(
     conflictResolutionRouteOpen(deps),
     context.snapshot,
@@ -249,6 +264,13 @@ export async function handleConflictResolutionReceipt(
   merged: { head: GitSha; changedPaths: readonly string[] },
   config: RepositoryConfigV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "conflict",
+  );
+  if (queueGuard !== null) return queueGuard;
   const mergeBase = conflictMarkerBase(record.intent);
   const { head, pr, branch } = record.target;
   if (mergeBase === null || head === null || pr === null || branch === null) {

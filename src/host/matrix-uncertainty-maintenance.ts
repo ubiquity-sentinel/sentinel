@@ -80,6 +80,8 @@ export const MATRIX_UNCERTAINTY_BINDING: MatrixUncertaintyBindingV1 = {
 };
 
 export interface MatrixUncertaintyMaintenanceDepsV1 {
+  /** External native custody excludes both the work row and its charged admission. */
+  protectedRecordIds?: ReadonlySet<string>;
   state: StateReadView & RepairStateWriter;
   clock: Clock;
   confirmCompletedExecution(
@@ -555,6 +557,11 @@ export async function runMatrixUncertaintyMaintenance(
   } as RepairCycleDepsV1;
   let quarantined = 0;
   for (const id of binding.reservationIds) {
+    if (
+      expected.snapshot.reservations.some((row) =>
+        row.id === id && deps.protectedRecordIds?.has(row.taskId)
+      )
+    ) continue;
     const source = original.value.snapshot.work.filter((row) =>
       row.intent?.requestId === id
     );
@@ -655,6 +662,11 @@ export async function runMatrixUncertaintyMaintenance(
     quarantined++;
   }
   for (const id of preservationIds) {
+    if (
+      expected.snapshot.reservations.some((row) =>
+        row.id === id && deps.protectedRecordIds?.has(row.taskId)
+      )
+    ) continue;
     const source = original.value.snapshot.work.filter((row) =>
       row.intent?.requestId === id
     );

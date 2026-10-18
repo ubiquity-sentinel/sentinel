@@ -40,6 +40,7 @@ export async function recoverHostedHistoricalC63(
     )
   ) return { ingested: 0, deferred: false };
   const captured = HISTORICAL_C63.rows.flatMap((binding) => {
+    if (deps.protectedRecordIds?.has(binding.id)) return [];
     const record = before.snapshot.work.find((row) => row.id === binding.id);
     const reservation = before.snapshot.reservations.find((row) =>
       row.id === binding.reservation

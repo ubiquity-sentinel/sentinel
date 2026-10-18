@@ -1,3 +1,7 @@
+import {
+  darkQueueCoordinatorFixture,
+  darkQueueFixture,
+} from "./hosted-autonomy-dark-queue-fixture.ts";
 /**
  * Review follow-up issues (owner decision 2026-10-16: merge with the
  * remaining P2/P3 findings filed as new issues). After the maintenance chain
@@ -164,6 +168,7 @@ async function followUpRun(
   issues: FakeIssuesV1,
   options: {
     requests?: ReleaseRequestV1[];
+    records?: WorkRecordV1[];
     reviews?: ReviewReceiptV1[];
     pulls?: Record<number, HostedAutonomyPullV1>;
     passes?: number;
@@ -179,11 +184,23 @@ async function followUpRun(
   const { surface } = liveSurface({
     tip: TIP,
     pulls: { ...pulls, ...options.pulls },
+    tasks: Object.fromEntries(
+      live.records.map((
+        row,
+      ) => [
+        row.related.issueNumber!,
+        liveTask(row.related.issueNumber!, options.reviews ?? live.reviews),
+      ]),
+    ),
     extra: { followUpIssues: issues.port },
   });
   const rig = await liveRig(
     name,
-    liveSnapshot(live.records, options.reviews ?? live.reviews, requests),
+    liveSnapshot(
+      options.records ?? live.records,
+      options.reviews ?? live.reviews,
+      requests,
+    ),
     surface,
   );
   try {
@@ -197,6 +214,8 @@ async function followUpRun(
               state: rig.state,
               githubFor: rig.githubFor,
               clock: { now: options.now },
+              queueCustody: darkQueueFixture(rig),
+              queue: await darkQueueCoordinatorFixture(rig),
             }),
       );
     }
@@ -371,6 +390,11 @@ Deno.test("follow-ups F6: creates, deadlines and body bounds stay bounded", asyn
     const { results } = await followUpRun("f6-creates", issues, {
       requests: [...live.requests, third.request],
       reviews: [...live.reviews, third.receipt],
+      records: [...live.records, {
+        ...live.records[1],
+        id: `${live.records[1].id}-third` as WorkRecordV1["id"],
+        target: { ...live.records[1].target, pr: 1130 },
+      }],
       passes: 2,
     });
     assert.equal(issues.created.length, 3);

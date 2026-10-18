@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import type { WorkItemId } from "../../src/contracts/brands.ts";
+import { resolveHostedDelivery } from "../../ops/hosted-autonomy-delivery-proof.ts";
+import { createHostedAutonomyScopes } from "../../ops/hosted-autonomy-scopes.ts";
 import {
   createHostedAutonomyGitHub,
   hostedDeliveryKey,
@@ -418,8 +420,29 @@ Deno.test(
     const released = new Map([
       [hostedDeliveryKey(SELF_REPO, 51, HEAD, BASE), {}],
     ]);
+    const proofRig = await makeRig("foreign-closure-proof", {
+      repair: closable,
+      pull: foreignPullFacts(),
+    });
+    const proofDeps = {
+      state: proofRig.rig.state,
+      githubFor: proofRig.rig.githubFor,
+      clock: { now: () => 0 },
+    };
+    const proofScope = await createHostedAutonomyScopes(proofDeps).scopeFor(
+      FOREIGN_REPO,
+    );
+    const proof = await resolveHostedDelivery(
+      { deps: proofDeps, snapshot: closable, observedHead: SHA1 },
+      closable.work[1],
+      proofScope,
+      foreignPullFacts(),
+      "closure",
+    );
+    await Deno.remove(proofRig.rig.tmp, { recursive: true });
+    assert.ok(proof);
     const foreignMerged = new Map([
-      [hostedDeliveryKey(FOREIGN_REPO, FOREIGN_PR, HEAD, BASE), {}],
+      [hostedDeliveryKey(FOREIGN_REPO, FOREIGN_PR, HEAD, BASE), proof],
     ]);
     assert.deepEqual(
       planHostedClosures(

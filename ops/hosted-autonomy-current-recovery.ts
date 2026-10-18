@@ -1,4 +1,5 @@
 import type { ClosedCWaveBindingV1 } from "../src/host/modern-matrix-recovery.ts";
+import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 import {
   HOSTED_RUNTIME_ID,
   type HostedExecutionIntentV1,
@@ -89,6 +90,7 @@ export async function recoverHostedCurrentMatrix(
   }
   if (
     !repair.value.snapshot.work.some((row) =>
+      !queueRecordProtected(row, deps.queueCustody) &&
       isMatrixRecoveryPending(row) &&
       !dedicated.has(row.intent?.requestId ?? "")
     )
@@ -120,8 +122,18 @@ export async function recoverHostedCurrentMatrix(
   const covered = new Set<string>();
   // Reservations of a newer producer whose plan evidence is gone: no older
   // wave may settle them in this walk.
-  const excluded = new Set<string>();
+  const protectedIds = new Set(
+    repair.value.snapshot.work.filter((row) =>
+      queueRecordProtected(row, deps.queueCustody)
+    ).map((row) => row.id),
+  );
+  const excluded = new Set<string>(
+    repair.value.snapshot.reservations.filter((row) =>
+      protectedIds.has(row.taskId)
+    ).map((row) => row.id),
+  );
   const pending = repair.value.snapshot.work.filter((row) =>
+    !queueRecordProtected(row, deps.queueCustody) &&
     isMatrixRecoveryPending(row) &&
     !dedicated.has(row.intent?.requestId ?? "")
   );

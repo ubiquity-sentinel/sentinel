@@ -407,9 +407,8 @@ export async function adoptableSpentMerge(
   pull: HostedAutonomyPullV1,
   self: boolean,
   head: string,
-  verified: boolean,
 ): Promise<boolean> {
-  return pull.mergedBy === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR && verified &&
+  return pull.mergedBy === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR &&
     await headIsGreen(surface, self, head);
 }
 

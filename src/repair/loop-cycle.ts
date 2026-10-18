@@ -1,3 +1,4 @@
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: cycle. */
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
@@ -388,6 +389,13 @@ export async function releaseReviewQuotaWait(
     attempted.add(id);
     const record = context.snapshot.work.find((work) => work.id === id);
     if (record === undefined) continue;
+    const queueGuard = await guardQueueOperation(
+      deps,
+      context,
+      record,
+      "resume",
+    );
+    if (queueGuard !== null) return queueGuard;
     // Release eligibility without erasing the submitted attempt's deadline.
     // A confirmed submission no longer has an intent, so this wait is its
     // only durable start anchor until observation settles or replaces it.

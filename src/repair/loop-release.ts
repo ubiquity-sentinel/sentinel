@@ -1,3 +1,4 @@
+import { guardQueueDelivery } from "./loop-queue-guard.ts";
 /** Repair loop internals: release. */
 import {
   hostedReceiptBindsRequest,
@@ -143,6 +144,8 @@ export async function resumeDeferredRelease(
     }
     if (run.release === null) return null;
     run.attempted.add(record.id);
+    const queueGuard = await guardQueueDelivery(deps, context, record);
+    if (queueGuard !== null) return queueGuard;
     const request = context.snapshot.releaseRequests.find((item) =>
       releaseRequestMatchesDelivery(item, record)
     );
@@ -284,6 +287,14 @@ export async function acceptRelease(
   request: ReleaseRequestV1,
   now: number,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueDelivery(
+    deps,
+    context,
+    record,
+    releaseRequestReceipt(context.snapshot.reviews, request),
+    request.revision,
+  );
+  if (queueGuard !== null) return queueGuard;
   if (record.related.issueNumber === null) {
     return persistWork(deps, context, markDone(record, now));
   }
@@ -350,6 +361,14 @@ export async function observeReleaseAcceptance(
   record: WorkRecordV1,
   request: ReleaseRequestV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueDelivery(
+    deps,
+    context,
+    record,
+    releaseRequestReceipt(context.snapshot.reviews, request),
+    request.revision,
+  );
+  if (queueGuard !== null) return queueGuard;
   // A request the trusted controller cancelled (or failed) is terminal
   // authorization evidence: no release entry can ever appear for it, so the
   // record is parked with the recorded reason instead of waiting forever.

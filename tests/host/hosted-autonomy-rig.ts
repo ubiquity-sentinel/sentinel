@@ -38,6 +38,10 @@ import type { ReleaseRequestV1 } from "../../src/contracts/release.ts";
 import { gitRun, makeRemoteCtx, SHA1, T0 } from "../state/helpers.ts";
 import { persistHostedReceipt } from "./hosted-receipt-fixture.ts";
 import {
+  darkQueueCoordinatorFixture,
+  darkQueueFixture,
+} from "./hosted-autonomy-dark-queue-fixture.ts";
+import {
   authorizingReceipt,
   BASE,
   deliveryRecord,
@@ -474,6 +478,12 @@ export async function run(
   return await runHostedAutonomy({
     state: rig.state,
     githubFor: github === undefined ? rig.githubFor : () => github,
+    queueCustody: darkQueueFixture(
+      github === undefined ? rig : { ...rig, githubFor: () => github },
+    ),
+    queue: await darkQueueCoordinatorFixture(
+      github === undefined ? rig : { ...rig, githubFor: () => github },
+    ),
     clock: { now: () => T0 + 5_000_000 },
   });
 }

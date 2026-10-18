@@ -1,3 +1,4 @@
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: review result. */
 import type { ReviewObservationV1 } from "../contracts/ports.ts";
 import {
@@ -205,6 +206,8 @@ export async function applyObservedReview(
   /** Exact identity this observation was read under; the receipt is bound to it. */
   observedOperationKey: string,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(deps, context, record, "resume");
+  if (queueGuard !== null) return queueGuard;
   const now = deps.clock.now();
   if (value.observedHead !== record.target.head) {
     // A review of a different head never advances this task; one pending

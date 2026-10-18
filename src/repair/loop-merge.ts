@@ -1,3 +1,11 @@
+import { queueDeliveryProvenanceRef } from "../github/queue-delivery-provenance.ts";
+import {
+  holdQueueRecord,
+  queueEffectRefused,
+  queueRefusalIsTransient,
+} from "./loop-queue-guard.ts";
+import { guardQueueDelivery } from "./loop-queue-guard.ts";
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: merge. */
 import type { GitSha } from "../contracts/brands.ts";
 import { parseMergeRequestV1 } from "../contracts/merge-request.ts";
@@ -90,6 +98,8 @@ export async function executeMerge(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(deps, context, record, "merge");
+  if (queueGuard !== null) return queueGuard;
   const now = deps.clock.now();
   // Merge is a GitHub write: gate before any preparation or intent write (a
   // cooling installation never writes a merge intent it cannot act on; the
@@ -268,6 +278,14 @@ export async function executeMerge(
   );
   if (self.failure !== null) return self.failure;
   if (!merged.ok) {
+    if (queueEffectRefused(merged.error)) {
+      return holdQueueRecord(
+        deps,
+        context,
+        self.record,
+        queueRefusalIsTransient(merged.error),
+      );
+    }
     emitMergePortError(
       "merge_port_error",
       mergeRequest.pullRequestNumber,
@@ -306,6 +324,34 @@ export async function handleMergeOutcome(
 ): Promise<StepResultV1> {
   const now = deps.clock.now();
   if (outcome.outcome === "merged") {
+    const queueGuard = await guardQueueDelivery(
+      deps,
+      context,
+      record,
+      receipt,
+      outcome.mergeSha,
+      (proof) => {
+        if (proof.status !== "verified" || proof.delivery.kind !== "queue") {
+          return true;
+        }
+        if (context.head === null) return false;
+        const ref = queueDeliveryProvenanceRef(
+          proof.delivery,
+          record,
+          context.head,
+        );
+        if (ref === null) return false;
+        if (
+          !record.evidence.some((item) =>
+            item.kind === ref.kind && item.ref === ref.ref
+          )
+        ) {
+          record = { ...record, evidence: [...record.evidence, ref] };
+        }
+        return true;
+      },
+    );
+    if (queueGuard !== null) return queueGuard;
     const cleared = clearIntent(
       outcome.selfMerge === undefined ? record : {
         ...record,
@@ -385,6 +431,8 @@ export async function reconcileMergeIntent(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(deps, context, record, "merge");
+  if (queueGuard !== null) return queueGuard;
   if (record.intent?.selfMerge !== undefined) {
     const receipt = mergeIntentReceipt(context.snapshot.reviews, record);
     if (

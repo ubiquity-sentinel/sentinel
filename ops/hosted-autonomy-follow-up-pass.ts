@@ -14,6 +14,10 @@
  * the supervisor's concurrency group), and a request older than the window is
  * never looked at again, so nothing is ever filed twice.
  */
+import { QUEUE_PROOF_ACTIVATED } from "../src/github/queue-runtime-policy.ts";
+import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
+import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
+import { resolveHostedDelivery } from "./hosted-autonomy-delivery-proof.ts";
 import { readRepairSafely } from "./hosted-autonomy-state.ts";
 import { createHostedAutonomyScopes } from "./hosted-autonomy-scopes.ts";
 import { baseAndHeadAreMerged } from "./hosted-autonomy-delivery.ts";
@@ -53,6 +57,9 @@ export function followUpMergeVerified(
   baseBranch: string | null,
 ): boolean {
   const { request } = candidate;
+  if (isGatewayVpsRepository(candidate.repository) && QUEUE_PROOF_ACTIVATED) {
+    return false;
+  }
   return pull !== null && baseBranch !== null && pull.merged === true &&
     pull.mergeCommitSha === request.revision &&
     pull.headSha === request.source.head &&
@@ -75,6 +82,7 @@ export async function runHostedFollowUpPass(
   passDeadline: number = Number.POSITIVE_INFINITY,
 ): Promise<string[]> {
   const actions: string[] = [];
+  if (deps.queueCustody?.ready === false) return actions;
   const started = deps.clock.now();
   if (!Number.isSafeInteger(started)) return actions;
   // A deadline that is not a number counts as already passed.
@@ -87,7 +95,8 @@ export async function runHostedFollowUpPass(
   if (read === null || !read.ok || read.value.status !== "found") {
     return actions;
   }
-  const candidates = planFollowUpCandidates(read.value.snapshot, started);
+  const observed = read.value;
+  const candidates = planFollowUpCandidates(observed.snapshot, started);
   if (candidates.length === 0) return actions;
   const inBudget = () => {
     const now = deps.clock.now();
@@ -161,7 +170,36 @@ export async function runHostedFollowUpPass(
     }
     checks++;
     const pull = await readPull(scope, candidate.pullRequest);
-    if (!followUpMergeVerified(pull, candidate, scope.baseBranch)) {
+    const gateway = isGatewayVpsRepository(candidate.repository);
+    const record = read.value.snapshot.work.find((row) =>
+      releaseRequestMatchesDelivery(candidate.request, row)
+    );
+    const gatewayProof = async () => {
+      if (record === undefined) return null;
+      const currentPull = await readPull(scope, candidate.pullRequest);
+      const proof = await resolveHostedDelivery(
+        { deps, snapshot: observed.snapshot, observedHead: observed.head },
+        record,
+        scope,
+        currentPull,
+        "follow_up",
+        candidate.request.revision,
+      );
+      if (
+        proof?.kind === "legacy" &&
+        !followUpMergeVerified(currentPull, candidate, scope.baseBranch)
+      ) return null;
+      return proof !== null && proof.reviewReceiptId === candidate.receipt.id &&
+          proof.reviewRequestId === candidate.request.source.reviewRequestId &&
+          proof.taskDigest === candidate.receipt.taskAcceptance?.taskDigest
+        ? proof
+        : null;
+    };
+    if (
+      gateway
+        ? await gatewayProof() === null
+        : !followUpMergeVerified(pull, candidate, scope.baseBranch)
+    ) {
       actions.push(`${tag}:merge_unverified`);
       continue;
     }
@@ -204,6 +242,11 @@ export async function runHostedFollowUpPass(
     if (!inBudget()) {
       actions.push(`${tag}:deadline`);
       break;
+    }
+    // Depth/source reads cannot turn an old proof into authority for a changed task.
+    if (gateway && await gatewayProof() === null) {
+      actions.push(`${tag}:merge_unverified`);
+      continue;
     }
     creates++;
     let number: number | null = null;

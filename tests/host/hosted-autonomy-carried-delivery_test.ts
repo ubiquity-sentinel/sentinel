@@ -158,6 +158,9 @@ Deno.test("carried merge (launcher): the refreshed head merges at exactly its ti
   assert.deepEqual(calls.trees, [
     `${B0}...${H0}`,
     `${MOVED_TIP}...${REFRESHED}`,
+    // The fresh dark-path resolver independently revalidates carried delivery.
+    `${B0}...${H0}`,
+    `${MOVED_TIP}...${REFRESHED}`,
   ]);
   assert.deepEqual(calls.compares, [
     `${B0}...${H0}`,
