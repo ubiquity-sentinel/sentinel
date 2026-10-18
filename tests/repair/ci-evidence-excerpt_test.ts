@@ -172,14 +172,14 @@ Deno.test("windows shrink before markers are dropped, and first and last markers
   assert.match(overflow.text, /exit code 2/);
 });
 
-Deno.test("a log without a ##[error] marker falls back to its last step; at most three error steps are kept", () => {
+Deno.test("a log without a ##[error] marker falls back to at most three recent steps; at most three error steps are kept", () => {
   const noError = fixtureText("synthetic-opaque.txt").replace(
     /##\[error\]/g,
     "",
   );
   const log = scan(new TextEncoder().encode(noError));
-  assert.equal(log.steps.length, 1);
-  assert.equal(log.steps[0].header, "Run ./scripts/release-gate.sh");
+  assert.equal(log.steps.length, 3);
+  assert.equal(log.steps.at(-1)?.header, "Run ./scripts/release-gate.sh");
   const many: string[] = [];
   for (let step = 0; step < 5; step++) {
     many.push(
@@ -193,6 +193,14 @@ Deno.test("a log without a ##[error] marker falls back to its last step; at most
   assert.deepEqual(kept.map((step) => step.header), [
     "Run step-0",
     "Run step-1",
+    "Run step-4",
+  ]);
+  const recent = scan(new TextEncoder().encode(
+    many.join("\n").replaceAll("##[error]", ""),
+  )).steps;
+  assert.deepEqual(recent.map((step) => step.header), [
+    "Run step-2",
+    "Run step-3",
     "Run step-4",
   ]);
 });

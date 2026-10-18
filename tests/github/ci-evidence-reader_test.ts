@@ -206,6 +206,30 @@ Deno.test("reader: the live 1009 failure yields identity, failing step, annotati
   assert.ok(fake.requests.length <= 8, String(fake.requests.length));
 });
 
+Deno.test("reader: an unrecognized failed step survives a later always-run action", async () => {
+  const lines = [
+    "##[group]Run ./scripts/release-gate.sh",
+    "shell: /usr/bin/bash -e {0}",
+    "##[endgroup]",
+    "release gate: bundle size 412 KiB exceeds the 400 KiB budget for dist/app.js",
+    // Some failed jobs have no runner error marker, and still run cleanup or
+    // artifact actions. The fallback must not show only that successful action.
+    "##[group]Run actions/upload-artifact@v4",
+    "##[endgroup]",
+    "Artifact upload completed",
+    "Post job cleanup.",
+  ];
+  const evidence = await read(
+    new FakeGitHub(
+      new TextEncoder().encode(lines.join("\n") + "\n"),
+    ),
+  );
+  const excerpt = evidence.checks[0].excerpt ?? "";
+  assert.match(excerpt, /bundle size 412 KiB exceeds the 400 KiB budget/);
+  assert.match(excerpt, /Run actions\/upload-artifact@v4/);
+  assert.ok(excerpt.length <= 16 * 1024);
+});
+
 Deno.test("reader: an untrusted log redirect is refused without fetching it", async () => {
   const fake = new FakeGitHub(fixtureBytes("real-1009.txt"));
   fake.routes.set(`${API}/actions/jobs/${JOB}/logs`, () => ({

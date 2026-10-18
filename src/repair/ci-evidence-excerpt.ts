@@ -11,8 +11,8 @@
  * positions. A step boundary is a `##[group]Run ...` line or `Post job
  * cleanup.`. A step with a `##[error]` line is a final (failing) step; at
  * most three are kept (the first two and the latest). A log with no
- * `##[error]` falls back to its last step before cleanup, so an unrecognized
- * failure still yields an excerpt.
+ * `##[error]` falls back to its last three steps before cleanup, so an
+ * unrecognized failure is not lost to a later always-run action.
  *
  * Selection fits each step into a character share. A step that fits is kept
  * whole. Otherwise the header and the tail always; then windows around the
@@ -125,7 +125,7 @@ export interface CiRetainedStepV1 {
 }
 
 export interface CiScannedLogV1 {
-  /** Failing steps (with `##[error]`), or the last step as a fallback. */
+  /** Failing steps (with `##[error]`), or the last three as a fallback. */
   steps: CiRetainedStepV1[];
   runnerLost: boolean;
   totalLines: number;
@@ -314,7 +314,7 @@ export class CiLogScanner {
   private dropPartial = false;
   private step = new StepState("Set up job", false);
   private readonly failing: CiRetainedStepV1[] = [];
-  private last: CiRetainedStepV1 | null = null;
+  private readonly recent: CiRetainedStepV1[] = [];
   private runnerLost = false;
   private totalLines = 0;
 
@@ -354,9 +354,7 @@ export class CiLogScanner {
     this.closeStep();
     const steps = this.failing.length > 0
       ? [...this.failing]
-      : this.last === null
-      ? []
-      : [this.last];
+      : [...this.recent];
     return { steps, runnerLost: this.runnerLost, totalLines: this.totalLines };
   }
 
@@ -397,8 +395,12 @@ export class CiLogScanner {
       if (this.failing.length < MAX_KEPT_STEPS) this.failing.push(step);
       else this.failing[MAX_KEPT_STEPS - 1] = step;
     }
-    if (step.header !== "Post job cleanup" || this.last === null) {
-      this.last = step;
+    if (step.header !== "Post job cleanup" || this.recent.length === 0) {
+      // No runner error marker may be available for an unfamiliar failure.
+      // Keep bounded context before the last action too: an always-run upload
+      // or cleanup must not replace the failed command's only diagnostic.
+      if (this.recent.length >= MAX_KEPT_STEPS) this.recent.shift();
+      this.recent.push(step);
     }
   }
 }
