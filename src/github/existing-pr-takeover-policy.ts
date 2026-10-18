@@ -1,5 +1,8 @@
+import { HOSTED_CUSTODY_CAPABILITY } from "../host/hosted-custody-capability.ts";
+
 /** Source-owned activation only; repository variables cannot raise this boundary. */
-export const EXISTING_PR_TAKEOVER_ACTIVATED = false;
+export const EXISTING_PR_TAKEOVER_ACTIVATED = HOSTED_CUSTODY_CAPABILITY.takeover
+  .activated;
 
 /**
  * This flag alone is insufficient: the trusted launcher must also prove the
@@ -11,7 +14,5 @@ export interface ExistingPrTakeoverPolicy {
   readonly activated: boolean;
 }
 
-export const EXISTING_PR_TAKEOVER_POLICY: ExistingPrTakeoverPolicy = Object
-  .freeze({
-    activated: EXISTING_PR_TAKEOVER_ACTIVATED,
-  });
+export const EXISTING_PR_TAKEOVER_POLICY: ExistingPrTakeoverPolicy =
+  HOSTED_CUSTODY_CAPABILITY.takeover;

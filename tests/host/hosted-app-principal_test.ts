@@ -394,3 +394,43 @@ Deno.test("hosted principal factory: real REST and Git composition capture the s
     await rig.close();
   }
 });
+
+Deno.test("hosted principal handoff: authenticated admission data must be present, exact and boolean", async (t) => {
+  for (const shape of ["missing", "unknown", "nonboolean"]) {
+    await t.step(shape, async () => {
+      const rig = await principalHostFixture();
+      try {
+        const value: Record<string, unknown> = structuredClone(rig.capability);
+        if (shape === "missing") delete value.takeover;
+        else {value.takeover = shape === "unknown"
+            ? { activated: false, callerOverride: true }
+            : { activated: "true" };}
+        await rig.write(
+          rig.launcher,
+          "src/host/hosted-custody-capability.json",
+          JSON.stringify(value),
+        );
+        await rig.commitLauncher();
+        const source = await readHostedAppSourceEvidence(
+          rig.source,
+          rig.profiles,
+        );
+        assert(
+          source !== null,
+          "the native source and code profile are authentic",
+        );
+        assert.equal(
+          await verifyHostedAppPrincipalHandoff(rig.hostInput, rig.profiles),
+          false,
+        );
+        assert.equal(
+          await createHostedAppPrincipalContext(rig.hostInput, rig.profiles),
+          null,
+        );
+        assert.equal(rig.state.repairWrites, 0);
+      } finally {
+        await rig.close();
+      }
+    });
+  }
+});
