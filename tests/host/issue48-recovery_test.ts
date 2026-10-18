@@ -18,7 +18,7 @@ Deno.test("workflow maintenance contract: rejects mixed recovery and ordinary ad
   const skippedIf = "    if: $" + "{{ false }}";
   const protectedIf = "    if: github.ref == 'refs/heads/sentinel-supervisor'";
   const custodyReady =
-    " && needs.maintenance.outputs.queueCustodyReady == 'true'";
+    " && (needs.maintenance.outputs.queueCustodyReady == 'true' || needs.maintenance.outputs.runtimeMigrationOnly == 'true')";
   const ordinary = text
     .replace(skippedIf, protectedIf)
     .replace(
@@ -1230,7 +1230,7 @@ Deno.test("issue48 recovery: supervisor workflow dependency and locking contract
         mode === "ordinary" ? "success" : "skipped"
       }'${
         mode === "ordinary"
-          ? " && needs.maintenance.outputs.queueCustodyReady == 'true'"
+          ? " && (needs.maintenance.outputs.queueCustodyReady == 'true' || needs.maintenance.outputs.runtimeMigrationOnly == 'true')"
           : ""
       } && github.ref == 'refs/heads/sentinel-supervisor'`,
     ),
@@ -1239,7 +1239,7 @@ Deno.test("issue48 recovery: supervisor workflow dependency and locking contract
   assert.ok(repair.includes("needs: [maintenance, prepare, matrix_plan]"));
   assert.ok(
     repair.includes(
-      "if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.maintenance.outputs.queueCustodyReady == 'true' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && (needs.prepare.outputs.modelStartsEnabled != 'true' || needs.matrix_plan.result == 'success') }}",
+      "if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && ((needs.maintenance.outputs.queueCustodyReady == 'true' && (needs.prepare.outputs.modelStartsEnabled != 'true' || needs.matrix_plan.result == 'success')) || (needs.maintenance.outputs.runtimeMigrationOnly == 'true' && needs.prepare.outputs.modelStartsEnabled == 'false' && needs.prepare.outputs.executionPurpose == 'bootstrap' && needs.prepare.outputs.revision == needs.maintenance.outputs.runtimeMigrationRevision && needs.prepare.outputs.generation == needs.maintenance.outputs.runtimeMigrationGeneration)) }}",
     ),
   );
   const finalize = text.slice(finalizeAt);
