@@ -21,10 +21,44 @@ authenticated account `0x4007` and carry `sentinel:skip` during manual
 ownership. Only the primary changes this ledger, accepts source, commits,
 integrates or publishes.
 
-### Migration continuation, 2026-10-18 18:36 UTC
+### Migration continuation, 2026-10-18 19:44 UTC
 
-Current canonical HEAD is `1c419e62847ff7d58e863c171f9d3cb8dd91c407`. The
-primary accepted independent recovery source/evidence audit
+Native source CI `39156259410:1` / job `117759993206` failed on exact published
+`d1279be08299f59d3f4452d16f56425b0d16c30e`: 3,453 tests passed, 1,760 steps and
+three failures. It is unaccepted; full native identity and sanitized terminal
+proof are under
+`combined-recovery-native-preparation/run-39156259410-attempt-1-segment-3/`.
+Production remains R81/L81 and no runtime/queue activation occurred.
+
+The primary reproduced all three failures in a real depth-one checkout and
+corrected only `tests/host/issue-body-admission_test.ts`,
+`tests/repair/loop-issue-body-bound_test.ts` and
+`tests/host/matrix-actions-admissions_test.ts`. Core admission cases always run;
+only the two genuine R80 parser substeps are ignored when their pinned history
+is absent. Full history runs both parser substeps. The matrix fixture now uses
+valid 16 KiB bodies and still proves aggregate overflow: waves119+9 preserve
+all128 issues and existing charges. Final checks passed9 tests/2 real parser
+steps in full history and9 tests with2 explicitly ignored parser substeps in
+shallow history, plus scoped statics. Evidence is under
+`ci-admission-fixtures/`. Worker tip `ced1526cf2c1d6f639d103ee4c8e72b39c7d0215`
+is integrated through `99b39210034334be943a2aa8f60b8fb9e9e83fa8` with ancestry
+preserved. Runtime source, workflow, contracts and admission limits are
+unchanged from d127. The exact corrected publication and native CI remain next.
+Module identity is `migration-ci-admission-fixtures-20261018`, aid `2df2f5e960`,
+on its recorded isolated worktree at base d127.
+
+The prior published candidate already passed four integrated consumer cases/five
+steps, all18 changed-path statics, documentation checks, exact committed-source
+cold bootstrap and actual depth-one source reader. All seven earlier accepted
+migration worker tips are ancestors of d127. Those unchanged production-input
+results and source audits remain retained separately; they do not turn its
+failed native CI green. UOS first-fixture terminal handler evidence remains
+unavailable, independently of standing canary/production approval. The full goal
+stays active.
+
+The preceding integrated code checkpoint was
+`1c419e62847ff7d58e863c171f9d3cb8dd91c407`. The primary accepted independent
+recovery source/evidence audit
 `legacy-first-recovery-audit/source-evidence-final-v2.md`, SHA-256
 `0338a67567a68d3a0fd17a46af5b94a719db0845d6b9e6300ddb61404dcd58a4`, and
 committed the seven-file worker tip `5567d1455d6701171c4f27a037df0a9ce4e06d6c`.
@@ -43,13 +77,16 @@ candidate.
 A full filesystem prevented the first Git add/commit before any source commit or
 merge. Root atomically deduplicated 15 task-owned frozen binary copies after
 exact content/mode/owner checks, preserving every path and byte and reclaiming
-1,441,252,880 duplicate bytes. Receipt is `disk-recovery-20261018.json`; no
-source, logs, evidence, credentials or unrelated state were removed. The
-interrupted worker storage follow-ups failed with a quota-ledger503, and no
-broad cleanup was performed. Both accepted source commits were reverified after
-recovery. Protected L81 is unchanged. The missing UOS terminal handler receipt
-remains a separate canary evidence gap; standing canary/production approval is
-active.
+1,441,252,880 duplicate bytes. Receipt is `disk-recovery-20261018.json`; root
+deduplication changed no source, logs, evidence bytes, credentials or unrelated
+state. The upstream worker separately removed its reconstructible 15,059-byte
+diff during ENOSPC; root restored its original SHA-256
+`72d23a32d232b53e2fc3a2dd43cd16bed5b3360ca719f02fa82d7617e08bafd2`, recorded in
+`upstream-1838-reconciliation/root-patch-restoration.json`. The interrupted
+worker storage follow-ups failed with a quota-ledger503, and no broad cleanup
+was performed. Both accepted source commits were reverified after recovery.
+Protected L81 is unchanged. The missing UOS terminal handler receipt remains a
+separate canary evidence gap; standing canary/production approval is active.
 
 Corrected inactive source `674f8cc324946f9577e96a73b2722ca3db16ca7c`, tree
 `76c50bf8faacb3166b622b061baa45b8f6fb338b`, is published and its native CI
