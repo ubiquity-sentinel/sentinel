@@ -32,6 +32,7 @@ export type QueueGuardReason =
   | "capability_missing"
   | "rule_unavailable"
   | "observation_unavailable"
+  | "inactive_observation_unavailable"
   | "custody"
   | "member"
   | "identity_drift"
@@ -54,7 +55,10 @@ export interface QueueEffectRequest {
 export type NativeDeliveryDecision =
   | DeliveryProofResult
   | QueueLegacyDirectGrant
-  | { status: "unavailable"; reason: "rule_unavailable" };
+  | {
+    status: "unavailable";
+    reason: "rule_unavailable" | "inactive_observation_unavailable";
+  };
 export interface NativeQueueGuardV1 {
   inspect(
     input: {
@@ -103,17 +107,15 @@ export function createNativeQueueGuard(
     input: QueueEffectRequest,
     expected?: WorkRecordV1,
   ): Promise<QueueGuardDecision> {
-    if (!isNativeQueueTarget(options.repository)) {
-      return { status: "allow", basis: "self" };
-    }
-    if (
-      !Number.isFinite(input.deadline) || options.clock.now() >= input.deadline
-    ) return queueHold("observation_unavailable");
-    const state = await options.state.readRepair();
-    if (!state.ok || state.value.status !== "found") {
-      return queueHold("observation_unavailable");
-    }
-    const rows = state.value.snapshot.work.filter((row) =>
+    const hasCustody = (record: WorkRecordV1) =>
+      isQueueHeld(record) || hasQueueIntentNamespace(record) ||
+      hasQueueDeliveryProvenance(record);
+    let strict = options.mode !== "off" || options.proofActivated ||
+      (expected !== undefined && hasCustody(expected));
+    const unavailable = (
+      reason: QueueGuardReason = "observation_unavailable",
+    ) => queueHold(strict ? reason : "inactive_observation_unavailable");
+    const matches = (row: WorkRecordV1) =>
       equal(row.repository, options.repository) &&
       (expected !== undefined
         ? row.id === expected.id
@@ -121,94 +123,110 @@ export function createNativeQueueGuard(
         ? row.target.pr === input.pullRequest
         : input.branch !== undefined &&
           (row.target.branch === input.branch ||
-            candidateBranch(row.id) === input.branch))
-    );
-    if (
-      rows.length > 1 ||
-      (expected !== undefined &&
-        (rows.length !== 1 || !equal(rows[0], expected)))
-    ) return queueHold("identity_drift");
-    const record = rows[0];
-    if (
-      record !== undefined &&
-      (isQueueHeld(record) || hasQueueIntentNamespace(record) ||
-        hasQueueDeliveryProvenance(record))
-    ) return queueHold("custody");
-    const rules = await options.client.readBranchRules("development");
-    if (!rules.ok) {
-      return queueHold(
-        options.proofActivated ? "observation_unavailable" : "rule_unavailable",
-      );
-    }
-    if (options.clock.now() >= input.deadline) {
-      return queueHold("observation_unavailable");
-    }
-    const active = rules.value.some((rule) => rule.type === "merge_queue");
-    // An owner cannot enable a queue without its effective rule. This fresh authenticated
-    // negative preserves today's live path before queue permission/canary activation.
-    if (options.mode === "off" && !options.proofActivated && !active) {
-      const fresh = await options.state.readRepair();
-      if (
-        !fresh.ok || fresh.value.status !== "found" ||
-        fresh.value.head !== state.value.head ||
-        options.clock.now() >= input.deadline
-      ) return queueHold("identity_drift");
-      return { status: "allow", basis: "inactive_no_rule" };
-    }
-    if (input.operation === "merge" && active) {
-      return queueHold("queue_required");
-    }
-    let number = input.pullRequest ?? record?.target.pr ?? undefined;
-    const branch = input.branch ?? record?.target.branch ??
-      (record === undefined ? undefined : candidateBranch(record.id));
-    if (number === undefined) {
-      if (branch === undefined) return queueHold("identity_drift");
-      const pulls = await options.client.listPullRequestsByHeadRef(branch);
-      if (!pulls.ok) return queueHold("observation_unavailable");
-      if (pulls.value.length > 1) return queueHold("identity_drift");
-      number = pulls.value[0]?.number;
-      if (number === undefined) {
-        // Complete empty discovery only authorizes this genuinely PR-less branch.
-        const after = await options.state.readRepair();
-        if (
-          !after.ok || after.value.status !== "found" ||
-          after.value.head !== state.value.head ||
-          options.clock.now() >= input.deadline
-        ) return queueHold("identity_drift");
-        return { status: "allow", basis: "native_absent" };
+            candidateBranch(row.id) === input.branch));
+    const readState = async () => {
+      const read = await options.state.readRepair();
+      if (read.ok && read.value.status === "found") {
+        strict ||= read.value.snapshot.work.some((row) =>
+          matches(row) && hasCustody(row)
+        );
       }
+      return read;
+    };
+    try {
+      if (!isNativeQueueTarget(options.repository)) {
+        return { status: "allow", basis: "self" };
+      }
+      if (
+        !Number.isFinite(input.deadline) ||
+        options.clock.now() >= input.deadline
+      ) return unavailable();
+      const state = await readState();
+      if (!state.ok || state.value.status !== "found") {
+        return unavailable();
+      }
+      const rows = state.value.snapshot.work.filter(matches);
+      if (
+        rows.length > 1 ||
+        (expected !== undefined &&
+          (rows.length !== 1 || !equal(rows[0], expected)))
+      ) return unavailable("identity_drift");
+      const record = rows[0];
+      if (
+        record !== undefined &&
+        (isQueueHeld(record) || hasQueueIntentNamespace(record) ||
+          hasQueueDeliveryProvenance(record))
+      ) return queueHold("custody");
+      const rules = await options.client.readBranchRules("development");
+      if (!rules.ok) {
+        return unavailable();
+      }
+      const active = rules.value.some((rule) => rule.type === "merge_queue");
+      strict ||= active;
+      if (options.clock.now() >= input.deadline) {
+        return unavailable();
+      }
+      // An owner cannot enable a queue without its effective rule. This fresh authenticated
+      // negative preserves today's live path before queue permission/canary activation.
+      if (options.mode === "off" && !options.proofActivated && !active) {
+        const fresh = await readState();
+        if (
+          !fresh.ok || fresh.value.status !== "found" ||
+          fresh.value.head !== state.value.head ||
+          options.clock.now() >= input.deadline
+        ) return unavailable("identity_drift");
+        return { status: "allow", basis: "inactive_no_rule" };
+      }
+      if (input.operation === "merge" && active) {
+        return queueHold("queue_required");
+      }
+      let number = input.pullRequest ?? record?.target.pr ?? undefined;
+      const branch = input.branch ?? record?.target.branch ??
+        (record === undefined ? undefined : candidateBranch(record.id));
+      if (number === undefined) {
+        if (branch === undefined) return unavailable("identity_drift");
+        const pulls = await options.client.listPullRequestsByHeadRef(branch);
+        if (!pulls.ok) return unavailable();
+        if (pulls.value.length > 1) return unavailable("identity_drift");
+        number = pulls.value[0]?.number;
+        if (number === undefined) {
+          // Complete empty discovery only authorizes this genuinely PR-less branch.
+          const after = await readState();
+          if (
+            !after.ok || after.value.status !== "found" ||
+            after.value.head !== state.value.head ||
+            options.clock.now() >= input.deadline
+          ) return unavailable("identity_drift");
+          return { status: "allow", basis: "native_absent" };
+        }
+      }
+      const read = await options.client.readQueuePull(number, input.deadline);
+      if (read.status !== "complete") return unavailable();
+      const { pull, entry, mergedRevision } = read.value.membership;
+      if (entry !== null) return queueHold("member", pull);
+      if (mergedRevision !== null) return queueHold("merged_head", pull);
+      const head = input.expectedHead ??
+        record?.target.candidateState?.publishedHead ?? record?.target.head;
+      if (
+        (branch !== undefined && pull.headRef !== branch) ||
+        (head !== undefined && head !== null && pull.head !== head) ||
+        pull.baseRef !== "development"
+      ) return queueHold("identity_drift", pull);
+      const after = await readState();
+      if (
+        !after.ok || after.value.status !== "found" ||
+        after.value.head !== state.value.head ||
+        options.clock.now() >= input.deadline
+      ) return queueHold("identity_drift", pull);
+      return { status: "allow", basis: "native_absent" };
+    } catch {
+      return unavailable();
     }
-    const read = await options.client.readQueuePull(number, input.deadline);
-    if (read.status !== "complete") return queueHold("observation_unavailable");
-    const { pull, entry, mergedRevision } = read.value.membership;
-    if (entry !== null) return queueHold("member", pull);
-    if (mergedRevision !== null) return queueHold("merged_head", pull);
-    const head = input.expectedHead ??
-      record?.target.candidateState?.publishedHead ?? record?.target.head;
-    if (
-      (branch !== undefined && pull.headRef !== branch) ||
-      (head !== undefined && head !== null && pull.head !== head) ||
-      pull.baseRef !== "development"
-    ) return queueHold("identity_drift", pull);
-    const after = await options.state.readRepair();
-    if (
-      !after.ok || after.value.status !== "found" ||
-      after.value.head !== state.value.head ||
-      options.clock.now() >= input.deadline
-    ) return queueHold("identity_drift", pull);
-    return { status: "allow", basis: "native_absent" };
   }
   return {
     inspect: ({ record, operation, expectedHead, deadline }) =>
-      inspect({ operation, expectedHead, deadline }, record).catch(() =>
-        queueHold("observation_unavailable")
-      ),
-    inspectEffect: (input) =>
-      inspect(input).catch(() => queueHold("observation_unavailable")),
-    proveDelivery: (input) =>
-      proveNativeQueueDelivery(options, input).catch(() => ({
-        status: "unavailable",
-        reason: "queue_evidence_unavailable",
-      })),
+      inspect({ operation, expectedHead, deadline }, record),
+    inspectEffect: (input) => inspect(input),
+    proveDelivery: (input) => proveNativeQueueDelivery(options, input),
   };
 }

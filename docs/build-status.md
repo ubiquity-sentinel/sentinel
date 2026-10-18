@@ -133,9 +133,16 @@ correction in this commit uses complete native event reads and fresh membership
 before and after, with actual-client CI/timeout reentry and refusal regressions
 (48 tests, 104 steps plus static gates). Its four source hashes match
 `/workspace/evidence/queue-removal-correction/manifest.json`. The dormant retry
-correction is isolated and pending; final combined correction review and queue
-acceptance remain unproved. No queue runtime is published or installed. The full
-audit and reproducers are under `/workspace/evidence/merge-queue/audit/`.
+correction is also integrated: fresh preactivation failures without observed
+custody receive a finite unavailable wait. Any queue rule, native entry, durable
+intent or provenance retains strict custody. Fresh state and rule checks must
+pass before a retried effect; actual final-port refusals retain their intent and
+charges. Its five source hashes match
+`/workspace/evidence/queue-dormant-retry/manifest.json`; 35 tests and 73 steps,
+including actual R80 parsing, and all scoped static gates pass. Final combined
+correction review and queue acceptance remain unproved. No queue runtime is
+published or installed. The full audit and reproducers are under
+`/workspace/evidence/merge-queue/audit/`.
 
 Two conservative liveness limitations are retained for review as P2 follow-ups:
 a definitely unsent admission can retain its non-expiring hold after a later
@@ -144,14 +151,15 @@ at-most-once marker pending owner reconciliation. Neither ambiguity nor elapsed
 time releases custody or refunds charges. Carried VPS acceptance remains pending
 under the existing release boundary; `sentinel-release` stays disabled.
 
-A separate owner canary packet is prepared; its bounded App-only runner is still
-being implemented. Activation requires an accepted canary, exact historical
-direct witnesses and an installed queue-aware rollback target. No Sentinel
-ruleset or branch protection is authorized. The separate owner steps remain the
-Sentinel App's Merge queues permission, the queue-canary run and the ai.ubq.fi
-ruleset; a production ruleset before installed enqueue support is forbidden.
-Owner cleanup remains the stale `SENTINEL_MODEL_ID` variable and superseded
-ai.ubq.fi PRs #1057, #1060 and #1116.
+A separate owner canary packet is prepared; its bounded App-only runner is
+implemented with empty source grants and under separate independent review.
+Activation requires an accepted canary, exact historical direct witnesses and an
+installed queue-aware rollback target. No Sentinel ruleset or branch protection
+is authorized. The separate owner steps remain the Sentinel App's Merge queues
+permission, the queue-canary run and the ai.ubq.fi ruleset; a production ruleset
+before installed enqueue support is forbidden. Owner cleanup remains the stale
+`SENTINEL_MODEL_ID` variable and superseded ai.ubq.fi PRs #1057, #1060 and
+#1116.
 
 | Current boundary                                                       | Exact evidence and next action                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

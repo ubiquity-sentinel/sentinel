@@ -1,5 +1,7 @@
 import { isVerifiedDeliveryProof } from "../../ops/hosted-autonomy-queue-proof.ts";
 import { CHECK_POLL_MS } from "./loop-bounds.ts";
+import { hasQueueDeliveryProvenance } from "../github/queue-delivery-provenance.ts";
+import { hasQueueIntentNamespace } from "../../ops/hosted-autonomy-queue-policy.ts";
 /** Final queue guards preserve original intent, candidate identity and charged accounting. */
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type { NativeDeliveryDecision } from "../github/native-queue-guard.ts";
@@ -29,6 +31,8 @@ export async function holdQueueRecord(
   if (record.wait?.reason === "backoff" && record.wait.until === null) {
     return { kind: "deferred", detail: "native merge queue custody hold" };
   }
+  transient &&= !hasQueueIntentNamespace(record) &&
+    !hasQueueDeliveryProvenance(record);
   const now = deps.clock.now();
   if (
     transient && record.wait?.reason === "unavailable" &&
@@ -90,7 +94,8 @@ export async function guardQueueOperation(
     deps,
     context,
     record,
-    result.reason === "rule_unavailable",
+    result.reason === "rule_unavailable" ||
+      result.reason === "inactive_observation_unavailable",
   );
 }
 export async function guardQueueDelivery(
@@ -157,7 +162,9 @@ export async function guardQueueDelivery(
     deps,
     context,
     record,
-    proof.status === "unavailable" && proof.reason === "rule_unavailable",
+    proof.status === "unavailable" &&
+      (proof.reason === "rule_unavailable" ||
+        proof.reason === "inactive_observation_unavailable"),
   );
 }
 
@@ -167,5 +174,7 @@ export function queueEffectRefused(error: { detail: string }): boolean {
 }
 
 export function queueRefusalIsTransient(error: { detail: string }): boolean {
-  return error.detail === "native queue custody hold: rule_unavailable";
+  return error.detail === "native queue custody hold: rule_unavailable" ||
+    error.detail ===
+      "native queue custody hold: inactive_observation_unavailable";
 }
