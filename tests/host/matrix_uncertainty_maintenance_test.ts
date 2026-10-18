@@ -1,6 +1,8 @@
 import { SHA1 as ATTEMPT_RUNTIME } from "../state/helpers.ts";
 /** Actual maintenance consumer and charged state transitions over disposable Git. */
 import assert from "node:assert/strict";
+import { darkQueueCoordinatorFixture } from "./hosted-autonomy-dark-queue-fixture.ts";
+import type { HostedAutonomyDepsV1 } from "../../ops/hosted-autonomy-types.ts";
 import type { GitSha, WorkItemId } from "../../src/contracts/brands.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
@@ -382,7 +384,7 @@ Deno.test("uncertainty maintenance retains thirteen charged admissions and reque
       },
       uncertainMatrix: () => runMatrixUncertaintyMaintenance(f.deps),
     };
-    const result = await runHostedAutonomy(deps);
+    const result = await runDarkAutonomy(deps);
     const after = await f.repair.readRepair();
     assert.ok(after.ok && after.value.status === "found");
     assert.equal(
@@ -412,7 +414,7 @@ Deno.test("uncertainty maintenance retains thirteen charged admissions and reque
     assert.deepEqual(await f.release.readRelease(), beforeRelease);
     assert.equal(result.reason, "release_not_terminal");
     const head = after.value.head;
-    await runHostedAutonomy(deps);
+    await runDarkAutonomy(deps);
     const replay = await f.repair.readRepair();
     assert.ok(replay.ok && replay.value.status === "found");
     assert.equal(replay.value.head, head);
@@ -432,7 +434,7 @@ Deno.test("uncertainty maintenance retains thirteen admissions with an advancing
     const advancingClock = { now: () => ++tick };
     let failure: unknown;
     try {
-      await runHostedAutonomy({
+      await runDarkAutonomy({
         state: f.state,
         clock: advancingClock,
         githubFor: () => {
@@ -480,7 +482,7 @@ Deno.test("uncertainty maintenance parks five submitted preservation admissions 
     const before = await f.repair.readRepair();
     const beforeRelease = await f.release.readRelease();
     assert.ok(before.ok && before.value.status === "found");
-    const result = await runHostedAutonomy({
+    const result = await runDarkAutonomy({
       state: f.state,
       clock,
       githubFor: () => {
@@ -566,7 +568,7 @@ Deno.test("uncertainty maintenance parks five submitted preservation admissions 
           ...f.state,
           readRelease: () => Promise.resolve(portOk(successor)),
         };
-        const result = await runHostedAutonomy({
+        const result = await runDarkAutonomy({
           state,
           clock,
           githubFor: () => {
@@ -893,3 +895,11 @@ Deno.test("uncertainty maintenance resumes an ambiguous settlement before its bl
     await f.cleanup();
   }
 });
+
+/** Explicit authenticated no-rule fixture; unexpected native custody still refuses. */
+async function runDarkAutonomy(deps: HostedAutonomyDepsV1) {
+  return await runHostedAutonomy({
+    ...deps,
+    queue: await darkQueueCoordinatorFixture(deps),
+  });
+}

@@ -13,6 +13,10 @@ import {
 } from "../src/contracts/hosted-supervisor.ts";
 import { parseReleaseStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
+import {
+  queueProtectedIds,
+  queueRecordProtected,
+} from "./hosted-autonomy-queue-context.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import {
@@ -140,6 +144,7 @@ export async function readHostedClosedIssues(
   );
   for (const record of snapshot.work) {
     if (record.nextStep === "done") continue;
+    if (queueRecordProtected(record, context.deps.queueCustody)) continue;
     const issueNumber = record.related.issueNumber;
     if (issueNumber === null || seen?.has(record.id)) continue;
     seen?.add(record.id);
@@ -165,6 +170,16 @@ export async function runHostedRetryPass(
   context: HostedAutonomyPassContextV1,
   releaseHead: string,
 ): Promise<HostedAutonomyResultV1 | null> {
+  context = {
+    ...context,
+    settled: new Set([
+      ...context.settled ?? [],
+      ...queueProtectedIds(
+        context.snapshot,
+        context.deps.queueCustody?.protectedRecordIds,
+      ),
+    ]),
+  };
   const { deps, actions, revisions, scopeFor, readTip, readPull } = context;
   let { snapshot, observedHead } = context;
   // ---- candidate-ref revalidation pass ------------------------------------

@@ -376,6 +376,7 @@ Deno.test("hosted runtime: actions environment allowlist", async () => {
     "SENTINEL_MODEL_FALLBACK",
     "SENTINEL_DEEPSEEK_API_KEY",
     "SENTINEL_COOLDOWN_MODE",
+    "SENTINEL_MERGE_QUEUE",
     "SENTINEL_APP_INSTALLATION_ID",
     "NODE_V8_COVERAGE",
     "GITHUB_RUN_ID",

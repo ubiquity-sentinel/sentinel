@@ -43,6 +43,7 @@ export async function runHistoricalMatrixQuarantine(
   const revalidate = deps.revalidateNotStarted === true;
   if (witness) {
     const selected = repair.value.snapshot.work.filter((row) =>
+      !deps.protectedRecordIds?.has(row.id) &&
       row.blocker?.message !== HISTORICAL_MATRIX_QUARANTINE_UNPROVABLE &&
       row.intent?.kind === "implementation" && row.nextStep !== "done" &&
       (row.nextStep === "work" ||
@@ -82,6 +83,7 @@ export async function runHistoricalMatrixQuarantine(
   }
   if (
     !repair.value.snapshot.work.some((row) =>
+      !deps.protectedRecordIds?.has(row.id) &&
       row.blocker?.message !== HISTORICAL_MATRIX_QUARANTINE_UNPROVABLE &&
       (row.nextStep === "work" ||
         (revalidate && isHistoricalQuarantineBlocked(row))) &&
@@ -276,6 +278,8 @@ export async function runHistoricalMatrixQuarantine(
       });
   } catch (error) {
     if (!(error instanceof MatrixMissingCellArtifactError)) throw error;
+    // The transport cannot skip this missing-artifact member of its atomic scan.
+    if (deps.protectedRecordIds?.has(error.captured.work.id)) return 0;
     if (
       canonicalStringify(error.proof) !== canonicalStringify(proof) ||
       (witness &&
@@ -312,6 +316,7 @@ export async function runHistoricalMatrixQuarantine(
       throw new Error("historical matrix rejection identity unavailable");
     }
     for (const captured of wave.affected) {
+      if (deps.protectedRecordIds?.has(captured.work.id)) continue;
       if (
         witness && !witness.reservationIds.includes(captured.reservation.id)
       ) {

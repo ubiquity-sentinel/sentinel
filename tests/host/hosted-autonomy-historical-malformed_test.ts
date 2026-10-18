@@ -299,7 +299,12 @@ Deno.test("historical malformed wave: maintenance leaf diagnostic is secret-free
       ] as const
     ) {
       errors.length = 0;
-      f.rig.state.readRepair = () => Promise.reject(error);
+      // Queue custody reads the healthy main port first; this fault belongs to the
+      // historical recovery port whose original read semantics must be retained.
+      f.historicalMatrix.state = {
+        ...f.rig.state,
+        readRepair: () => Promise.reject(error),
+      };
       assert.equal(await f.runMain(), 1);
       assert.deepEqual(errors.map((value) => JSON.parse(value)), [{
         kind: "sentinel_historical_quarantine_error",
@@ -335,6 +340,7 @@ Deno.test("historical malformed wave: maintenance leaf diagnostic is secret-free
     }
     assert.doesNotMatch(logs.join("\n"), /private-token|private-response-body/);
     f.rig.state.readRepair = readRepair;
+    f.historicalMatrix.state = f.rig.state;
     assert.deepEqual(await f.rig.state.readRepair(), before);
     assert.deepEqual(await f.rig.state.readRelease(), releaseBefore);
     f.setFault(null);
@@ -343,6 +349,7 @@ Deno.test("historical malformed wave: maintenance leaf diagnostic is secret-free
     assert.deepEqual(errors, []);
   } finally {
     f.rig.state.readRepair = readRepair;
+    f.historicalMatrix.state = f.rig.state;
     console.error = originalError;
     console.log = originalLog;
     await Deno.remove(f.rig.tmp, { recursive: true });

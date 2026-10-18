@@ -1,5 +1,6 @@
 /** Phase-local history expiry must leave independent guarded delivery live. */
 import assert from "node:assert/strict";
+import { darkQueueCoordinatorFixture } from "./hosted-autonomy-dark-queue-fixture.ts";
 import { runHostedAutonomy } from "../../ops/hosted-autonomy-runner.ts";
 import { CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE } from "../../ops/hosted-autonomy-policy.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "../../ops/hosted-autonomy-producer-recovery.ts";
@@ -97,6 +98,7 @@ async function deadlineRig() {
   );
   let now = T0 + 5000;
   const deps: HostedAutonomyDepsV1 = {
+    queue: await darkQueueCoordinatorFixture(rig),
     state: rig.state,
     githubFor: rig.githubFor,
     clock: { now: () => now },

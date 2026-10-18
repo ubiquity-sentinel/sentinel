@@ -89,6 +89,8 @@ export function historicalNotStartedProven(
 }
 
 export interface HistoricalMatrixQuarantineDepsV1 {
+  /** Custody owned by another trusted coordinator; never settled or quarantined here. */
+  protectedRecordIds?: ReadonlySet<string>;
   state: StateReadView & RepairStateWriter;
   clock: Clock;
   budget: Pick<BudgetControllerV1, "settleModelStart">;
@@ -188,6 +190,7 @@ export async function quarantineRow(
   currentExecution: HostedExecutionIntentV1 | null,
   historical?: HistoricalProofCustodyV1,
 ) {
+  if (deps.protectedRecordIds?.has(captured.work.id)) return;
   const revalidate = deps.revalidateNotStarted === true;
   const unprovable = wave instanceof MatrixMissingCellArtifactError;
   if (

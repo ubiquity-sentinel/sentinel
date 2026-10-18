@@ -15,14 +15,19 @@ The primary coordinator owns the 2026-10-18 handoff
 `be02faf40c77fe299c2ed7ffa91fedb00fe43c48`: finish the ai.ubq.fi prerequisites,
 ship generation 81 through existing PR #165 and protected installation, then
 roll out the corrected merge queue (#164). Existing referenced PRs are reused;
-no replacement PR is opened. Issues #163 and #164 are assigned to authenticated
-account `0x4007` and carry `sentinel:skip` during manual ownership. Only the
-primary changes this ledger, accepts source, commits, integrates or publishes.
+no replacement PR is opened. Issues #157, #163 and #164 are assigned to
+authenticated account `0x4007` and carry `sentinel:skip` during manual
+ownership. Only the primary changes this ledger, accepts source, commits,
+integrates or publishes.
 
 ### Live boundary
 
-PR #165 merged as `c2177dfdfa563938558caf16b783aaf942af3fb7`; the protected
-launcher remains `87e28fd4a7796078adc4c930dd49d02651f82203`. Runtime R80
+PR #165 merged as `c2177dfdfa563938558caf16b783aaf942af3fb7`. Launcher L81
+`00b6649eeff51a9754bf3748f793137db9bf8605` is published by fast-forward on both
+development and sentinel-supervisor. Its final committed depth-1 checks passed
+57 tests / 38 steps with no failures; merged input checks passed 32 tests / 38
+steps plus static gates. Native launcher CI is 39106152644; protected R81
+installation and own health remain pending. Runtime R80
 `e48e7e110e7cb2ed3385bf1be5165f05d8a4e481` remains installed at generation 80.
 Supervisor 39103444110 completed successfully. Release-state commit
 `30492d9c36b1d5de924f7496b4e290939aca30a1` retains that execution's own settled,
@@ -115,16 +120,26 @@ pending, distinct acceptance gates. Procedure and proof boundaries:
 
 ### Queue: dormant source accepted, native activation remains gated
 
-Canonical queue work is `/workspace/worktrees/merge-queue-consumers`, separate
-from frozen R81. Accepted ancestry includes combined queue, dormant
-transient-read and removal corrections, App-only canary runner, lower-only
-selector, import-cycle fix and exact runtime capability guards. All queue
-mode/proof defaults remain off/false; source canary grants, capability/migration
-pins and historical witness pins remain empty. No queue source is published or
-installed. Queue custody runs first, uses non-expiring holds and cannot fall
-through to the old direct verifier. Every changed state shape remains
-R80-readable; old-runtime execution after activation is separately refused by
-exact capability gates.
+Canonical queue publication work is
+`/workspace/worktrees/merge-queue-publication`, merging accepted queue source
+`8d68a3ca57321dacf4d2caffd402c43d3acaab3e` onto L81 with both ancestries
+preserved. The frozen queue source remains at
+`/workspace/worktrees/merge-queue-consumers`, separate from frozen R81. Only
+this ledger conflicted; all 164 non-ledger queue files equal the accepted queue
+tip, all fourteen launcher files equal audited L81, and owner documents, rubric
+and all four implementation-model bindings are preserved. Combined publication
+checks pass 72 tests / 120 steps through actual installer/capability and queue
+composition boundaries, plus whole-repository formatting, scoped lint/type
+checks and size constraints. The final exact combined-input audit remains
+pending. Evidence: `/workspace/evidence/merge-queue/final-publication/`.
+Accepted ancestry includes combined queue, dormant transient-read and removal
+corrections, App-only canary runner, lower-only selector, import-cycle fix and
+exact runtime capability guards. All queue mode/proof defaults remain off/false;
+source canary grants, capability/migration pins and historical witness pins
+remain empty. No queue source is published or installed. Queue custody runs
+first, uses non-expiring holds and cannot fall through to the old direct
+verifier. Every changed state shape remains R80-readable; old-runtime execution
+after activation is separately refused by exact capability gates.
 
 Fresh independent audit passes `854532e3556c5fa94ecbee050dfa9563efa79bb7`, delta
 SHA-256 `d363e92abd5ab472521bbf02a67537d25086a4be2754af4fb4948061d7854a82`. It
@@ -187,6 +202,18 @@ staged production ruleset. Never enable then rebuild pins. Native canary,
 profile/witness acceptance, future exact runtime/launcher CI, installation and
 live delivery remain separate gates. Owner packet:
 `/workspace/evidence/merge-queue/canary-owner-packet.md`.
+
+Existing PR #160 / issue #157 is additional protected manual work. The R81
+refresh-detach lane preserves its binding but does not include the PR's five
+follow-up-scanning behavior changes. It remains open on original head
+`784e233ec22eae4d29c8eb951c1f42bafc06121f`, with issue #157 assigned to 0x4007
+and manually skipped before any new branch writes. Historical native CI failed
+six stale ordering/depth assertions after 2,711 passing tests. One narrow P2
+listing-boundary duplicate was reproduced through the real HTTP reader and
+planner/pass; no P0/P1 is found. Reuse and refresh this PR once against final
+published source, correct and validate that scope, then exact CI/current-head
+review/normal merge. Evidence:
+`/workspace/evidence/gen81-pr160-reconciliation/`.
 
 General cross-branch runtime PR adoption is only separately prepared work in
 `/workspace/worktrees/existing-pr-integration` and

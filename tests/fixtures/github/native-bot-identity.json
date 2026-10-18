@@ -1,0 +1,12 @@
+{
+  "graphql": {
+    "__typename": "Bot",
+    "login": "ubiquity-sentinel",
+    "id": "BOT_kgDOExBK9Q"
+  },
+  "rest": {
+    "type": "Bot",
+    "login": "ubiquity-sentinel[bot]",
+    "node_id": "BOT_kgDOExBK9Q"
+  }
+}

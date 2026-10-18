@@ -1,3 +1,4 @@
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /** Repair loop internals: review request. */
 import type { ReviewObservationV1 } from "../contracts/ports.ts";
 import { REVIEW_TASK_SHAPE_DETAIL } from "../contracts/review-receipt.ts";
@@ -50,6 +51,8 @@ export async function requestReviewFor(
   record: WorkRecordV1,
   prNumber: number,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueOperation(deps, context, record, "resume");
+  if (queueGuard !== null) return queueGuard;
   // The hard review-round ceiling comes first (owner decision 2026-10-16):
   // with no round left nothing is read, reserved or refreshed, and the record
   // parks. Every request path (publication, PR creation, no verdict, expiry,
@@ -205,6 +208,13 @@ export async function requestReviewFor(
   // identity, so observation/recovery never resubmits or adds a second
   // charge. No budget bypass exists here — requestReview is a GitHubPort
   // method and admission failure simply prevents invocation.
+  const queueBeforeAdmission = await guardQueueOperation(
+    deps,
+    context,
+    record,
+    "resume",
+  );
+  if (queueBeforeAdmission !== null) return queueBeforeAdmission;
   const reservation = await deps.budget.reserveModelStart({
     repository: record.repository,
     taskId: record.id,
@@ -291,6 +301,14 @@ export async function requestReviewFor(
       detail: "work record vanished after review admission",
     };
   }
+  const admittedGuard = await guardQueueOperation(
+    deps,
+    fresh,
+    current,
+    "resume",
+  );
+  if (admittedGuard !== null) return admittedGuard;
+
   const intent = {
     kind: "review_request" as const,
     key: operationKey,
@@ -309,6 +327,13 @@ export async function requestReviewFor(
     replaceWorkMutation(withIntent),
   );
   if (persisted.kind !== "progress") return persisted;
+  const intendedGuard = await guardQueueOperation(
+    deps,
+    fresh,
+    withIntent,
+    "resume",
+  );
+  if (intendedGuard !== null) return intendedGuard;
 
   // Recheck the shared gate immediately before the requestReview call: the
   // reservation and intent writes were awaited wall-clock work. A cooldown
@@ -393,6 +418,14 @@ export async function requestReviewFor(
       detail: "review request crossed the run bounds after admission",
     };
   }
+
+  const submitGuard = await guardQueueOperation(
+    deps,
+    fresh,
+    withIntent,
+    "resume",
+  );
+  if (submitGuard !== null) return submitGuard;
 
   // Invocation happens strictly after the durable intent exists.
   const submitted = await deps.github.requestReview({

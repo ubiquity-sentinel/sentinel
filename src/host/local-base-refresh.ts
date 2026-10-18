@@ -1,3 +1,8 @@
+import {
+  isNativeQueueTarget,
+  type NativeQueueGuardV1,
+} from "../github/native-queue-guard.ts";
+import type { Clock } from "../contracts/ports.ts";
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
 import {
   type GitHubPullRequestV1,
@@ -17,6 +22,7 @@ import { LOCAL_REPOSITORY } from "./local-policy.ts";
 
 /** Narrow read-only observation the base-refresh adapter needs from the port. */
 export interface BaseRefreshObserverV1 {
+  readonly nativeQueue?: NativeQueueGuardV1;
   readPullRequest(
     number: number,
   ): Promise<PortResultV1<GitHubPullRequestV1 | null>>;
@@ -24,6 +30,7 @@ export interface BaseRefreshObserverV1 {
 }
 
 export interface PrepareBaseRefreshAdapterInputV1 {
+  clock?: Clock;
   /** THE same trusted executor instance the port publishes through. */
   git: GitExecutorV1;
   /**
@@ -148,6 +155,33 @@ export function createPrepareBaseRefresh(
     ) {
       return portError("invalid", STATIC_BASE_REFRESH_INPUT);
     }
+    const queueCheck = async (): Promise<PortResultV1<void>> => {
+      if (!isNativeQueueTarget(input.repository ?? LOCAL_REPOSITORY)) {
+        return { ok: true, value: undefined };
+      }
+      const guard = input.observer.nativeQueue;
+      if (guard === undefined) {
+        return portError(
+          "unavailable",
+          "native queue custody capability missing",
+        );
+      }
+      const result = await guard.inspectEffect({
+        operation: "refresh",
+        pullRequest: request.pullRequestNumber,
+        branch: request.branch,
+        expectedHead: request.expectedHead,
+        deadline: (input.clock?.now() ?? Date.now()) + 30_000,
+      });
+      return result.status === "allow"
+        ? { ok: true, value: undefined }
+        : portError(
+          "unavailable",
+          `native queue custody hold: ${result.reason}`,
+        );
+    };
+    const queued = await queueCheck();
+    if (!queued.ok) return queued;
     const observed = await input.observer.readPullRequest(
       request.pullRequestNumber,
     );
@@ -230,6 +264,8 @@ export function createPrepareBaseRefresh(
     if (integrateBase === undefined) {
       return portError("unavailable", STATIC_BASE_REFRESH_UNSUPPORTED);
     }
+    const beforeIntegrate = await queueCheck();
+    if (!beforeIntegrate.ok) return beforeIntegrate;
     const integrated = await integrateBase(
       request.expectedHead,
       request.expectedBase,
@@ -244,6 +280,8 @@ export function createPrepareBaseRefresh(
     ) {
       return portError("invalid", STATIC_BASE_REFRESH_PREPARED);
     }
+    const afterIntegrate = await queueCheck();
+    if (!afterIntegrate.ok) return afterIntegrate;
     return integrated;
   };
 }

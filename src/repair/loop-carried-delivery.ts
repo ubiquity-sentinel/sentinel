@@ -1,3 +1,5 @@
+import { guardQueueDelivery } from "./loop-queue-guard.ts";
+import { guardQueueOperation } from "./loop-queue-guard.ts";
 /**
  * Repair loop internals: spent records on a moved base (owner decision
  * 2026-10-16 (2), "the 3 rounds are spent with no unresolved P0/P1, the PR
@@ -380,6 +382,8 @@ export async function executeCarriedDelivery(
   context: LoopContextV1,
   record: WorkRecordV1,
 ): Promise<StepResultV1 | null> {
+  const queueGuard = await guardQueueOperation(deps, context, record, "resume");
+  if (queueGuard !== null) return queueGuard;
   const { pr, head } = record.target;
   const prove = deps.github.proveCarriedPatch?.bind(deps.github);
   if (
@@ -438,7 +442,7 @@ export async function executeCarriedDelivery(
   }
   if (observed.state === "merged") {
     return observed.head === head && observed.mergeSha !== null
-      ? carriedMerged(deps, context, record, receipt)
+      ? carriedMerged(deps, context, record, receipt, observed.mergeSha)
       : null;
   }
   if (observed.state !== "open") return null;
@@ -651,12 +655,21 @@ async function gateCarriedChecks(
  * it waits, bounded: the launcher adopts its own lost write from the same
  * gates, and a merge outside that path is never booked here.
  */
-function carriedMerged(
+async function carriedMerged(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
   receipt: ReviewReceiptV1,
+  revision: GitSha,
 ): Promise<StepResultV1> {
+  const queueGuard = await guardQueueDelivery(
+    deps,
+    context,
+    record,
+    receipt,
+    revision,
+  );
+  if (queueGuard !== null) return queueGuard;
   const booked = context.snapshot.releaseRequests.some((request) =>
     request.target.environment === "production" &&
     releaseRequestMatchesDelivery(request, record) &&

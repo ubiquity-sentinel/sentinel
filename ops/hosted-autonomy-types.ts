@@ -348,6 +348,13 @@ export type HostedClosedMatrixDepsV1 = ClosedCWaveRecoveryDepsV1 & {
 };
 
 export interface HostedAutonomyDepsV1 {
+  /** Trusted queue composition. Production gateway maintenance refuses when missing. */
+  queue?:
+    import("./hosted-autonomy-queue-contracts.ts").HostedQueueCoordinatorDeps;
+  /** Shared custody for every prephase, retry, delivery and follow-up consumer. */
+  queueCustody?:
+    import("./hosted-autonomy-queue-context.ts").HostedQueueCustodyContext;
+  onQueueCustodyReady?(ready: boolean): void | Promise<void>;
   state: StateReadView & RepairStateWriter;
   /**
    * Resolve the GitHub surface for one exact repository identity. A null (or
@@ -363,7 +370,10 @@ export interface HostedAutonomyDepsV1 {
     state?: StateReadView & RepairStateWriter,
   ) => Promise<HostedClosedMatrixDepsV1>;
   /** Charged uncertainty only; no producer, artifact, health or release authority. */
-  uncertainMatrix?: () => ReturnType<typeof runMatrixUncertaintyMaintenance>;
+  uncertainMatrix?: (
+    state?: StateReadView & RepairStateWriter,
+    protectedRecordIds?: ReadonlySet<string>,
+  ) => ReturnType<typeof runMatrixUncertaintyMaintenance>;
   /**
    * Exact corrected runtime revisions for the refresh re-arm, each with its
    * pinned activation bound. Production never sets it and uses

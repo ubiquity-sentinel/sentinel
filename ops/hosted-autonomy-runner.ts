@@ -36,6 +36,12 @@ import {
   settledSince,
 } from "./hosted-autonomy-continuation.ts";
 import { runHostedFollowUpPass } from "./hosted-autonomy-follow-up-pass.ts";
+import { runHostedQueueCustody } from "./hosted-autonomy-queue-pass.ts";
+import { protectQueueState } from "./hosted-autonomy-queue-state.ts";
+import type {
+  HostedQueueCustodyContext,
+  QueueCustodyResult,
+} from "./hosted-autonomy-queue-context.ts";
 
 export {
   HOSTED_AUTONOMY_PASS_DEADLINE_MS,
@@ -104,21 +110,74 @@ function integrityFault(error: unknown): boolean {
 export async function runHostedAutonomy(
   deps: HostedAutonomyDepsV1,
 ): Promise<HostedAutonomyResultV1> {
+  await deps.onQueueCustodyReady?.(false);
   const startedAt = deps.clock.now();
-  const result = await runHostedAutonomyChain(deps, startedAt);
-  if (result.status === "failed") return result;
-  let followUps: string[];
   try {
-    followUps = await runHostedFollowUpPass(
+    const custody = await runHostedQueueCustody(
       deps,
       startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
     );
-  } catch {
-    followUps = ["followup:unexpected_error"];
+    if (!custody.ready) {
+      return custody.write ??
+        skipped("no_change", custody.observed?.head ?? null, custody.actions);
+    }
+    const context: HostedQueueCustodyContext = {
+      ready: true,
+      proofActivated: deps.queue?.config.proofActivated ?? false,
+      protectedRecordIds: custody.protectedRecordIds,
+      resolveDelivery: deps.queue?.resolveDelivery,
+      verifyProtectedWrite: deps.queue?.verifyProtectedWrite,
+    };
+    const guarded = protectQueueState(deps.state, context);
+    const scoped: HostedAutonomyDepsV1 = {
+      ...deps,
+      state: guarded,
+      queueCustody: context,
+      ...(deps.historicalMatrix
+        ? {
+          historicalMatrix: {
+            ...deps.historicalMatrix,
+            state: protectQueueState(deps.historicalMatrix.state, context),
+            protectedRecordIds: context.protectedRecordIds,
+          },
+        }
+        : {}),
+      ...(deps.closedMatrix
+        ? {
+          closedMatrix: async () => {
+            const ports = await deps.closedMatrix!(guarded);
+            return { ...ports, state: protectQueueState(ports.state, context) };
+          },
+        }
+        : {}),
+      ...(deps.uncertainMatrix
+        ? {
+          uncertainMatrix: () =>
+            deps.uncertainMatrix!(guarded, context.protectedRecordIds),
+        }
+        : {}),
+    };
+    const result = await runHostedAutonomyChain(scoped, startedAt, custody);
+    if (result.status === "failed") return result;
+    let followUps: string[];
+    let followUpComplete = true;
+    try {
+      followUps = await runHostedFollowUpPass(
+        scoped,
+        startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+      );
+    } catch {
+      followUps = ["followup:unexpected_error"];
+      followUpComplete = false;
+    }
+    await deps.onQueueCustodyReady?.(followUpComplete);
+    return followUps.length === 0
+      ? result
+      : { ...result, actions: [...result.actions, ...followUps] };
+  } catch (error) {
+    await deps.onQueueCustodyReady?.(false);
+    throw error;
   }
-  return followUps.length === 0
-    ? result
-    : { ...result, actions: [...result.actions, ...followUps] };
 }
 
 /**
@@ -133,11 +192,13 @@ export async function runHostedAutonomy(
 async function runHostedAutonomyChain(
   deps: HostedAutonomyDepsV1,
   startedAt: number,
+  custody: QueueCustodyResult,
 ): Promise<HostedAutonomyResultV1> {
-  const actions: string[] = [];
+  const actions: string[] = [...custody.actions];
   const revisions: string[] = [];
   const dedicatedReservations = new Set<string>();
   const writes = createPassWrites(actions, revisions);
+  if (custody.write !== null) writes.absorb(custody.write);
   // Offsets from the pass start at which maintenance and each phase ended,
   // read only once the pass has written (calibration of the start limit).
   const ended: (number | null)[] = [null, null, null, null, null];
@@ -176,7 +237,9 @@ async function runHostedAutonomyChain(
   // Only the matrix pre-passes can write before the ordinary phases: the
   // state they started from marks the records they settled.
   const before = deps.closedMatrix ? await readRepairSafely(deps.state) : null;
-  let baseline: RepairStateSnapshotV1 | null = null;
+  let baseline: RepairStateSnapshotV1 | null = custody.write !== null
+    ? custody.observed?.snapshot ?? null
+    : null;
   const maintenance = await runHostedMatrixMaintenance(
     deps,
     actions,

@@ -1,3 +1,4 @@
+import { isNativeQueueTarget } from "../github/native-queue-guard.ts";
 /** Hosted actions-candidates-preserve responsibility. */
 import { isGitSha } from "../contracts/brands.ts";
 import type { GitSha } from "../contracts/brands.ts";
@@ -385,6 +386,28 @@ export function createCandidatePreserver(
     );
     if (!binding.ok) return binding;
     const ref = binding.value;
+    const exactRecord = record;
+    const queueCheck = async (): Promise<PortResultV1<void>> => {
+      if (!isNativeQueueTarget(repository)) return portOk(undefined);
+      if (input.port.nativeQueue === undefined) {
+        return portError(
+          "unavailable",
+          "native queue custody capability missing",
+        );
+      }
+      const guard = await input.port.nativeQueue.inspect({
+        record: exactRecord,
+        operation: "publication",
+        expectedHead: publishedHead,
+        deadline: input.clock.now() + 30_000,
+      });
+      return guard.status === "allow" ? portOk(undefined) : portError(
+        "unavailable",
+        `native queue custody hold: ${guard.reason}`,
+      );
+    };
+    const entryGuard = await queueCheck();
+    if (!entryGuard.ok) return entryGuard;
     // 2. Authenticated exact operation-ref read through the SAME port.
     const before = await input.port.readRef(ref);
     if (!before.ok) return before;
@@ -408,6 +431,8 @@ export function createCandidatePreserver(
         protectedPaths: input.protectedPaths,
       });
       if (!validated.ok) return validated;
+      const finalGuard = await queueCheck();
+      if (!finalGuard.ok) return finalGuard;
       const pushed = await input.port.pushHead(ref, candidate.head, null);
       if (!pushed.ok) return pushed;
       if (pushed.value === "ambiguous") {
@@ -452,6 +477,8 @@ export function createCandidatePreserver(
     if (after.value.sha !== candidate.head) {
       return portError("conflict", STATIC_PRESERVE_CONFLICT);
     }
+    const finalGuard = await queueCheck();
+    if (!finalGuard.ok) return finalGuard;
     return portOk(undefined);
   };
 }

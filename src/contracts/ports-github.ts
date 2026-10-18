@@ -1,3 +1,4 @@
+import type { NativeQueueGuardV1 } from "../github/native-queue-guard.ts";
 import type { GitSha, WorkItemId } from "./brands.ts";
 import type { SelfMergeExecutionV1 } from "./self-merge.ts";
 import type { GitHubRateLimitV1 } from "./github-cooldown.ts";
@@ -29,6 +30,8 @@ import type {
 } from "./ports-github-requests.ts";
 
 export interface GitHubPort {
+  /** Trusted queue custody capability; absent gateway effect authority fails closed. */
+  readonly nativeQueue?: NativeQueueGuardV1;
   /**
    * Exact trusted review publisher identity configured for this port. The
    * repair loop uses this value for every review request and receipt binding;

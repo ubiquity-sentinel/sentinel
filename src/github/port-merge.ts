@@ -51,6 +51,13 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       return portError("invalid", "merge request is malformed");
     }
     const merge = parsed.value;
+    const queueInput = {
+      operation: "merge" as const,
+      pullRequest: merge.pullRequestNumber,
+      expectedHead: merge.expectedHead,
+    };
+    const queued = await this.queueEffect(queueInput);
+    if (!queued.ok) return queued;
     const native = () =>
       executeSelfMerge(
         {
@@ -79,6 +86,8 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       if (pull.value.head !== merge.expectedHead) {
         return blocked("head_mismatch", null);
       }
+      const afterQueue = await this.queueEffect(queueInput);
+      if (!afterQueue.ok) return afterQueue;
       return portOk({
         outcome: "merged",
         head: pull.value.head,
@@ -237,12 +246,16 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     // 8. Expected-head merge. REST has no atomic base CAS: the strict
     // up-to-date protection is what rejects a base movement after this last
     // precheck; a rejection is reconciled against the re-observed PR.
+    const beforeMerge = await this.queueEffect(queueInput);
+    if (!beforeMerge.ok) return beforeMerge;
     const merged = await this.client.mergePull(
       merge.pullRequestNumber,
       merge.expectedHead,
     );
     if (!merged.ok) return merged;
     if (merged.value.status === "merged") {
+      const afterQueue = await this.queueEffect(queueInput);
+      if (!afterQueue.ok) return afterQueue;
       return portOk({
         outcome: "merged",
         head: merge.expectedHead,
@@ -262,6 +275,8 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
         check.value !== null && check.value.state === "merged" &&
         check.value.head === merge.expectedHead
       ) {
+        const afterQueue = await this.queueEffect(queueInput);
+        if (!afterQueue.ok) return afterQueue;
         return portOk({
           outcome: "merged",
           head: check.value.head,
@@ -277,6 +292,8 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       if (after.value.head !== merge.expectedHead) {
         return blocked("head_mismatch", after.value.head);
       }
+      const afterQueue = await this.queueEffect(queueInput);
+      if (!afterQueue.ok) return afterQueue;
       return portOk({
         outcome: "merged",
         head: after.value.head,

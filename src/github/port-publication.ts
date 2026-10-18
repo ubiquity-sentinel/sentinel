@@ -22,6 +22,20 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
     sha: GitSha,
     expectedRef: GitSha | null,
   ): Promise<PortResultV1<WriteOutcomeV1>> {
+    const queueInput = {
+      operation: "publication" as const,
+      branch: ref.replace(/^refs\/heads\//, ""),
+      expectedHead: expectedRef,
+    };
+    const queued = await this.queueEffect(queueInput);
+    if (!queued.ok) return queued;
+    const applied = async (): Promise<PortResultV1<WriteOutcomeV1>> => {
+      const final = await this.queueEffect({
+        ...queueInput,
+        expectedHead: sha,
+      });
+      return final.ok ? portOk("applied") : final;
+    };
     // 1. Exact expected-ref check against the authoritative remote identity.
     const current = await this.gatedRemoteCall(() =>
       this.git.readRemoteRef(ref)
@@ -44,7 +58,7 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
     // the prior publication is proven by that observation alone. No local
     // ancestry check, no push and no model work; a conflicting or absent ref
     // was already rejected above.
-    if (current.value === sha) return portOk("applied");
+    if (current.value === sha) return await applied();
     // 3. Ordinary fast-forward only: the candidate must descend from the
     // current head when the branch exists.
     if (current.value !== null) {
@@ -57,13 +71,15 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
     // 4. Publish through the trusted executor (never forced). The executor
     // atomically guards the exact advertised ref inside the push transaction;
     // a remote movement after this precheck is rejected, never applied.
+    const beforePush = await this.queueEffect(queueInput);
+    if (!beforePush.ok) return beforePush;
     const pushed = await this.gatedRemoteCall(() =>
       this.git.push(ref, sha, expectedRef)
     );
     if (!pushed.ok) return pushed;
     switch (pushed.value.status) {
       case "applied":
-        return portOk("applied");
+        return await applied();
       case "non_fast_forward":
         return portError("conflict", "push rejected as non-fast-forward");
       case "missing_object":
@@ -82,7 +98,7 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
       // The reread itself failed: the effect remains unconfirmed.
       return portOk("ambiguous");
     }
-    if (after.value === sha) return portOk("applied");
+    if (after.value === sha) return await applied();
     return portOk("ambiguous");
   }
 
@@ -115,6 +131,13 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
         "pull request body exceeds the contract bound",
       );
     }
+    const queueInput = {
+      operation: "publication" as const,
+      branch: request.headRef,
+      expectedHead: request.expectedHeadRef,
+    };
+    const queued = await this.queueEffect(queueInput);
+    if (!queued.ok) return queued;
     // A created, reused or reconciled PR must describe the same publication.
     // The response may race an external edit even after the branch precheck.
     const matchesPublication = (pull: GitHubPullRequestV1): boolean =>
@@ -168,6 +191,8 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
           "pull request publication identity mismatch",
         );
       }
+      const queueAfter = await this.queueEffect(queueInput);
+      if (!queueAfter.ok) return queueAfter;
       return portOk({
         outcome: "applied",
         number: owned.number,
@@ -178,6 +203,8 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
     // closing-keyword body for an issue-backed repair. Then reconcile a
     // duplicate response against authoritative state instead of guessing from
     // the HTTP status.
+    const beforeCreate = await this.queueEffect(queueInput);
+    if (!beforeCreate.ok) return beforeCreate;
     const created = await this.client.createPull({
       title: request.title,
       headRef: request.headRef,
@@ -197,6 +224,8 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
           "pull request publication identity mismatch",
         );
       }
+      const queueAfter = await this.queueEffect(queueInput);
+      if (!queueAfter.ok) return queueAfter;
       return portOk({
         outcome: "applied",
         number: created.value.pr.number,
@@ -209,6 +238,8 @@ export abstract class GitHubPortPublication extends GitHubPortEvidence {
     if (rereadOpen.length === 1) {
       const owned = rereadOpen[0];
       if (matchesPublication(owned)) {
+        const queueAfter = await this.queueEffect(queueInput);
+        if (!queueAfter.ok) return queueAfter;
         return portOk({
           outcome: "applied",
           number: owned.number,

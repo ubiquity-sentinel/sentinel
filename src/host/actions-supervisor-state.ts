@@ -19,6 +19,11 @@ import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { ReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { tryParse } from "../contracts/validation.ts";
+import {
+  allowsQueueRuntimeMove,
+  allowsQueueRuntimeTransition,
+  type QueueRuntimeCapability,
+} from "./queue-runtime-capability.ts";
 import type {
   HostedSupervisorInputV1,
   HostedSupervisorOutcomeV1,
@@ -173,6 +178,14 @@ export async function commitHosted(
 ): Promise<"applied" | "pending"> {
   const now = input.clock.now();
   const base = cursor.snapshot;
+  if (
+    !allowsQueueRuntimeTransition(
+      base,
+      runtime,
+      releases,
+      input.queueRuntimeCapability,
+    )
+  ) return "pending";
   const candidate: ReleaseStateSnapshotV1 = base === null
     ? {
       version: "v1",
@@ -323,6 +336,7 @@ function attachReleaseSettlement(
   settlement: HostedExecutionSettlementV1,
   generation: number,
   now: number,
+  capability?: QueueRuntimeCapability,
 ): HostedReleaseRecordV1[] {
   const releaseId = settlement.execution.releaseId;
   if (releaseId === null) return [...releases];
@@ -333,7 +347,12 @@ function attachReleaseSettlement(
   if (purpose === "prior") {
     if (
       record.phase === "requested" && record.priorProof === null &&
-      settlement.outcome === "healthy"
+      settlement.outcome === "healthy" &&
+      allowsQueueRuntimeMove(
+        record.priorRevision,
+        record.request.revision,
+        capability,
+      )
     ) {
       const intent: HostedPointerIntentV1 = {
         action: "promote",
@@ -415,6 +434,7 @@ export function settleRuntime(
     settlement,
     runtime.generation,
     now,
+    input.queueRuntimeCapability,
   );
   return commitHosted(input, cursor, runtimeNext, releasesNext);
 }
@@ -424,6 +444,7 @@ export function planPointerRecovery(
   runtime: HostedRuntimeRecordV1,
   releases: readonly HostedReleaseRecordV1[],
   now: number,
+  capability?: QueueRuntimeCapability,
 ): {
   runtime: HostedRuntimeRecordV1;
   releases: HostedReleaseRecordV1[];
@@ -436,6 +457,16 @@ export function planPointerRecovery(
   if (record === undefined || record.pointerIntent === null) return null;
   const intent = record.pointerIntent;
   if (
+    !allowsQueueRuntimeMove(
+      intent.expectedRevision,
+      intent.nextRevision,
+      capability,
+    ) ||
+    !allowsQueueRuntimeMove(
+      record.priorRevision,
+      record.request.revision,
+      capability,
+    ) ||
     runtime.activeRevision !== intent.expectedRevision ||
     runtime.generation !== intent.expectedGeneration
   ) {

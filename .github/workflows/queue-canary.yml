@@ -1,0 +1,83 @@
+name: sentinel-queue-canary
+run-name: sentinel-queue-canary:${{ inputs.action }}:${{ inputs.binding_digest }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Source-authorized canary operation
+        required: true
+        type: choice
+        options: [preflight, enqueue, observe, dequeue]
+      binding_digest:
+        description: Stable SHA-256 of a reviewed source PR/head grant
+        required: true
+        type: string
+      expected_source_sha:
+        description: Exact reviewed sentinel-supervisor workflow and source SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# A prior dispatch consumes its binding even if cancelled/failed. The API
+# history gate refuses missing/partial history, so a timeout never retries it.
+concurrency:
+  group: sentinel-queue-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    if: github.repository == 'ubiquity/sentinel' && github.ref == 'refs/heads/sentinel-supervisor' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check exact source before minting credentials
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_SOURCE_SHA" = "$GITHUB_SHA"
+          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.7
+      - name: Mint only the runtime App installation token for ai.ubq.fi
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: 4682172
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ubiquity
+          repositories: ai.ubq.fi
+      - name: One bounded canary operation
+        id: canary
+        env:
+          SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CANARY_ACTION: ${{ inputs.action }}
+          CANARY_BINDING_DIGEST: ${{ inputs.binding_digest }}
+          CANARY_EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          CANARY_MINTED_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          CANARY_MINTED_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+        run: |
+          set -euo pipefail
+          timeout --kill-after=5s 290s deno run --frozen \
+            --allow-read=. --allow-write="artifacts/queue-canary,$GITHUB_OUTPUT" \
+            --allow-net=api.github.com \
+            --allow-env=SENTINEL_SUPERVISOR_TOKEN,GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_EVENT_NAME,GITHUB_OUTPUT,CANARY_ACTION,CANARY_BINDING_DIGEST,CANARY_EXPECTED_SOURCE_SHA,CANARY_MINTED_APP_SLUG,CANARY_MINTED_INSTALLATION_ID \
+            ops/queue-canary-main.ts
+      - name: Retain sanitized native evidence, including ambiguous outcomes
+        if: always() && steps.canary.outputs.request_digest != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: queue-canary-${{ github.run_id }}-${{ github.run_attempt }}-${{ steps.canary.outputs.request_digest }}
+          path: artifacts/queue-canary/evidence.json
+          if-no-files-found: error
