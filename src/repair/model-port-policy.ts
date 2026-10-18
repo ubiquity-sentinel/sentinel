@@ -49,7 +49,7 @@ export const CI_SELF_CHECK_INSTRUCTION =
   "under .github/workflows) to learn the exact check commands. Before " +
   "finishing, run the fast checks that apply to the files you changed " +
   "(format, lint, typecheck and focused tests) when they work offline in " +
-  "this checkout, within your time and output allowance, and fix what they " +
+  "this checkout, within your time allowance, and fix what they " +
   "report; there is no network, so do not try to install dependencies.";
 
 /** Added when the trusted host attached CI failure evidence to a correction. */
