@@ -13,6 +13,7 @@ import {
   type RepairStateSnapshotV1,
 } from "../../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
+import { HOSTED_RUNTIME_ROLLOUT } from "../../src/host/hosted-runtime-rollout.ts";
 import { TASK_ACCEPTANCE_OWNER_GATE_DETAIL } from "../../src/repair/acceptance-correction.ts";
 import { TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL } from "../../src/repair/review-gate.ts";
 import {
@@ -391,6 +392,7 @@ Deno.test("B6 live: under a proven acceptance-correction runtime B6a returns to 
 
 Deno.test("B6: every allowlisted acceptance-correction runtime carries the runtime half", async () => {
   assert.deepEqual([...HOSTED_AUTONOMY_ACCEPTANCE_CORRECTION_RUNTIMES], [
+    ...HOSTED_RUNTIME_ROLLOUT.acceptanceCorrection,
     "da98f5f49c45b57cfa97a45fe647c36b1021f302",
   ]);
   const pinned = releaseAt({

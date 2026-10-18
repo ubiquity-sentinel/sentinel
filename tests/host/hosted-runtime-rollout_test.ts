@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { cp } from "node:fs/promises";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import {
   HOSTED_RUNTIME_ROLLOUT,
@@ -27,6 +28,9 @@ import {
   releaseSnapshot,
   runtimeRecord,
 } from "./owner-install-fixture-proofs.ts";
+import { principalHostFixture } from "./hosted-app-principal-fixtures.ts";
+import { readHostedAppSourceEvidence } from "../../src/host/hosted-app-principal-source.ts";
+import { verifyHostedAppPrincipalHandoff } from "../../src/host/hosted-app-principal.ts";
 
 const PRIOR = "da98f5f49c45b57cfa97a45fe647c36b1021f302" as GitSha;
 const NEXT = "f".repeat(40) as GitSha;
@@ -48,6 +52,8 @@ function data() {
     conflictResolution: [{ revision: NEXT, activatedNotBefore: 1 }],
     ciFirst: [NEXT],
     ciFirstFix: [NEXT],
+    acceptanceCorrection: [NEXT],
+    legacyReview: [NEXT],
   };
 }
 
@@ -58,7 +64,158 @@ function rejected(value: unknown) {
   });
 }
 
-Deno.test("runtime rollout: empty source preserves all five historical maintenance lists", () => {
+/** Load the actual defaults in a fresh module graph; only rollout JSON differs. */
+async function defaultSourcePins(acceptance: boolean, legacy: boolean) {
+  await Deno.mkdir(".sentinel-artifacts", { recursive: true });
+  const root = await Deno.makeTempDir({
+    dir: ".sentinel-artifacts",
+    prefix: "rollout-source-",
+  });
+  try {
+    for (const name of ["src", "ops"]) {
+      await cp(new URL(`../../${name}`, import.meta.url), `${root}/${name}`, {
+        recursive: true,
+      });
+    }
+    for (const name of ["deno.json", "deno.lock"]) {
+      await Deno.copyFile(
+        new URL(`../../${name}`, import.meta.url),
+        `${root}/${name}`,
+      );
+    }
+    const source = structuredClone(HOSTED_RUNTIME_ROLLOUT);
+    await Deno.writeTextFile(
+      `${root}/src/host/hosted-runtime-rollout.json`,
+      JSON.stringify({
+        ...source,
+        ciCorrection: [NEXT],
+        ciFirst: [NEXT],
+        ciFirstFix: [NEXT],
+        acceptanceCorrection: acceptance ? [NEXT] : [],
+        legacyReview: legacy ? [NEXT] : [],
+      }),
+    );
+    await Deno.writeTextFile(
+      `${root}/probe.ts`,
+      `import { acceptanceCorrectionRuntimeProven } from "./ops/hosted-autonomy-acceptance.ts";
+import type { HostedRuntimeRecordV1 } from "./src/contracts/hosted-supervisor.ts";
+import { legacyReviewCutoffForExecution } from "./src/host/legacy-review-cutoff-env.ts";
+import { LEGACY_REVIEW_CUTOFF, legacyReviewCutoffFor } from "./src/repair/review-round-cap.ts";
+const revision = ${JSON.stringify(NEXT)};
+const cutoff = LEGACY_REVIEW_CUTOFF.activatedNotBefore!;
+const runtime = { activeRevision: revision, generation: 82, lastHealthyProof: {
+  outcome: "healthy", settled: true, startupReady: true,
+  execution: { revision, generation: 82, createdAt: cutoff + 1 },
+} } as HostedRuntimeRecordV1;
+const health = runtime.lastHealthyProof!;
+console.log(JSON.stringify({
+  acceptance: acceptanceCorrectionRuntimeProven(runtime),
+  missingHealth: acceptanceCorrectionRuntimeProven({ ...runtime, lastHealthyProof: null }),
+  wrongGeneration: acceptanceCorrectionRuntimeProven({ ...runtime, generation: 81 }),
+  foreignHealth: acceptanceCorrectionRuntimeProven({ ...runtime, lastHealthyProof: {
+    ...health, execution: { ...health.execution, revision: ${
+        JSON.stringify(PRIOR)
+      } },
+  } }),
+  cutoff: legacyReviewCutoffForExecution({ revision, createdAt: cutoff + 1 }),
+  early: legacyReviewCutoffForExecution({ revision, createdAt: cutoff - 1 }),
+  contradiction: legacyReviewCutoffFor(revision, [{
+    revision: "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481", createdAt: cutoff - 1,
+  }]),
+}));
+`,
+    );
+    const result = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "--cached-only", "--frozen", "--allow-read=.", "probe.ts"],
+      cwd: root,
+      stdout: "piped",
+      stderr: "piped",
+      signal: AbortSignal.timeout(30_000),
+    }).output();
+    assert.equal(result.success, true, new TextDecoder().decode(result.stderr));
+    return JSON.parse(new TextDecoder().decode(result.stdout));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+}
+
+Deno.test("runtime rollout: default acceptance correction follows only its source JSON list", async (t) => {
+  for (
+    const [acceptance, legacy] of [
+      [true, false],
+      [false, true],
+      [false, false],
+      [true, true],
+    ]
+  ) {
+    await t.step(`${acceptance}/${legacy}`, async () => {
+      const actual = await defaultSourcePins(acceptance, legacy);
+      assert.equal(actual.acceptance, acceptance);
+      assert.equal(actual.missingHealth, false);
+      assert.equal(actual.wrongGeneration, false);
+      assert.equal(actual.foreignHealth, false);
+    });
+  }
+});
+
+Deno.test("runtime rollout: default legacy cutoff follows only its source JSON list", async (t) => {
+  for (
+    const [acceptance, legacy] of [
+      [false, true],
+      [true, false],
+      [false, false],
+      [true, true],
+    ]
+  ) {
+    await t.step(`${acceptance}/${legacy}`, async () => {
+      const actual = await defaultSourcePins(acceptance, legacy);
+      assert.equal(actual.cutoff, legacy ? 1792256700000 : null);
+      assert.equal(actual.early, null);
+      assert.equal(actual.contradiction, null);
+    });
+  }
+});
+
+Deno.test("runtime rollout: authenticated future pin data preserves the frozen principal code profile", async () => {
+  const rig = await principalHostFixture();
+  try {
+    const path = "src/host/hosted-runtime-rollout.json";
+    const original = JSON.parse(
+      await Deno.readTextFile(`${rig.launcher}/${path}`),
+    );
+    const handoff = {
+      ...rig.hostInput,
+      state: { readRelease: rig.state.readRelease.bind(rig.state) },
+    };
+    assert.equal(
+      await verifyHostedAppPrincipalHandoff(handoff, rig.profiles),
+      true,
+    );
+    for (const field of ["acceptanceCorrection", "legacyReview"] as const) {
+      await rig.write(
+        rig.launcher,
+        path,
+        JSON.stringify({ ...original, [field]: [NEXT] }),
+      );
+      await rig.commitLauncher();
+      const source = await readHostedAppSourceEvidence(
+        rig.source,
+        rig.profiles,
+      );
+      assert.ok(source, "the new data retains native source proof");
+      assert.equal(source.codeSha256, rig.profiles[0].codeSha256);
+      assert.equal(
+        await verifyHostedAppPrincipalHandoff(handoff, rig.profiles),
+        true,
+      );
+    }
+    assert.equal(rig.state.repairWrites, 0);
+  } finally {
+    await rig.close();
+  }
+});
+
+Deno.test("runtime rollout: empty source preserves the historical maintenance lists", () => {
   assert.deepEqual(HOSTED_RUNTIME_ROLLOUT, {
     version: 1,
     installs: [],
@@ -67,6 +224,8 @@ Deno.test("runtime rollout: empty source preserves all five historical maintenan
     conflictResolution: [],
     ciFirst: [],
     ciFirstFix: [],
+    acceptanceCorrection: [],
+    legacyReview: [],
   });
   for (
     const rows of [
@@ -100,7 +259,15 @@ Deno.test("runtime rollout: malformed source cannot add a pin or an install", ()
   for (const version of [0, "1", 2, undefined]) {
     rejected({ ...data(), version });
   }
-  for (const key of ["ciCorrection", "ciFirst", "ciFirstFix"] as const) {
+  for (
+    const key of [
+      "ciCorrection",
+      "ciFirst",
+      "ciFirstFix",
+      "acceptanceCorrection",
+      "legacyReview",
+    ] as const
+  ) {
     for (
       const pins of [
         null,
@@ -179,9 +346,15 @@ Deno.test("runtime rollout: copied future data reaches maintenance gates only wi
   input.installs[0].rollbackToPrior = true;
   input.refreshRearm[0].activatedNotBefore = 2;
   input.ciFirst.push(PRIOR);
+  input.acceptanceCorrection.push(PRIOR);
+  input.legacyReview.push(PRIOR);
   assert.equal(parsed.installs[0].rollbackToPrior, false);
   assert.equal(parsed.refreshRearm[0].activatedNotBefore, 1);
   assert.deepEqual(parsed.ciFirst, [NEXT]);
+  assert.deepEqual(parsed.acceptanceCorrection, [NEXT]);
+  assert.deepEqual(parsed.legacyReview, [NEXT]);
+  assert.ok(Object.isFrozen(parsed.acceptanceCorrection));
+  assert.ok(Object.isFrozen(parsed.legacyReview));
   assert.ok(Object.isFrozen(parsed.installs[0]));
   assert.ok(Object.isFrozen(parsed.refreshRearm[0]));
   const proof = healthyProof(NEXT, 82, 501);
