@@ -162,7 +162,11 @@ export async function nativeObservationFixture(mode: string) {
     isInMergeQueue: false,
     mergeQueueEntry: null,
     baseRefOid: SHA1,
-    author: { login: "canary-owner" },
+    author: {
+      __typename: "User",
+      id: "USER_CANARY_OWNER",
+      login: "canary-owner",
+    },
     mergedBy: null,
   };
   const page = {

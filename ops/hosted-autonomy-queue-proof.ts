@@ -442,6 +442,7 @@ export async function resolveQueueAwareDelivery(
     facts.mergedBy.type !== "Bot" ||
     facts.commit!.author?.login !== HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR ||
     facts.commit!.author.type !== "Bot" ||
+    !sameActor(facts.mergedBy, facts.commit!.author) ||
     !DIGEST.test(witness.provenance.witnessDigest)
   ) return reject("direct_provenance_mismatch");
   if (witness.provenance.kind === "historical_exact") {

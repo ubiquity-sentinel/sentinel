@@ -48,7 +48,7 @@ export function entryWire(overrides: Record<string, unknown> = {}) {
     enqueuer: {
       __typename: "Bot",
       id: "BOT_7",
-      login: "ubiquity-sentinel[bot]",
+      login: "ubiquity-sentinel",
     },
     baseCommit: { oid: SHA1 },
     headCommit: { oid: SHA3 },
@@ -117,7 +117,7 @@ export function eventWire(
     __typename: type,
     id,
     createdAt: new Date(T0).toISOString(),
-    actor: { __typename: "Bot", id: "BOT_7", login: "ubiquity-sentinel[bot]" },
+    actor: { __typename: "Bot", id: "BOT_7", login: "ubiquity-sentinel" },
     ...(type === "RemovedFromMergeQueueEvent"
       ? { reason: "synthetic reason", beforeCommit: { oid: SHA2 } }
       : {}),
