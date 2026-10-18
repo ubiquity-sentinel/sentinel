@@ -21,22 +21,14 @@ export const MAX_ID_CHARS = 256;
 
 export const MAX_REROUTES = 16;
 
-export const MAX_AGENT_MESSAGES = 8;
-
 export const MAX_EARLY_EVENTS = 256;
 
 export const MAX_EARLY_BYTES = 256 * 1024;
 
-export const MAX_EVENT_COUNT = 4096;
-
-export const MAX_EVENT_BYTES = 4 * 1024 * 1024;
-
 export const MAX_PROVIDER_CHARS = 256;
 
-/** Finite bound on distinct correlated command items and their shell output. */
+/** Finite retention of exact command identities; overflow cannot end a turn. */
 export const MAX_COMMAND_ITEMS = 256;
-
-export const MAX_COMMAND_OUTPUT_BYTES = 2 * 1024 * 1024;
 
 /** Finite bound on one exact-correlated command string (never parsed). */
 export const MAX_COMMAND_CHARS = 8192;
@@ -104,8 +96,8 @@ export const TURN_SUBMIT_DETAIL =
 export const TURN_RESPONSE_DETAIL =
   "structured review unavailable: the turn submission response had no exact turn id";
 
-export const EVENT_BOUND_DETAIL =
-  "structured review unavailable: the session event bound was exceeded";
+export const COMMAND_RETENTION_DETAIL =
+  "structured review unavailable: exact command identity retention was incomplete";
 
 export const EARLY_BOUND_DETAIL =
   "structured review unavailable: early session buffering exceeded its finite bound";
@@ -136,9 +128,6 @@ export const USER_ECHO_DETAIL =
 
 export const AGENT_MESSAGE_DETAIL =
   "structured review unavailable: an agent message was malformed";
-
-export const AGENT_MESSAGE_BOUND_DETAIL =
-  "structured review unavailable: the agent message bound was exceeded";
 
 export const TERMINAL_DETAIL =
   "structured review unavailable: terminal evidence was malformed";
@@ -207,6 +196,7 @@ export interface AgentMessageV1 {
   itemId: string;
   text: string;
   phase: string | null;
+  truncated: boolean;
 }
 
 export interface TurnTerminalV1 {

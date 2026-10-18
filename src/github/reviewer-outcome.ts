@@ -16,9 +16,7 @@ import {
 } from "../repair/model-port.ts";
 import { PreparedReviewEvents } from "./reviewer-events.ts";
 import {
-  AMBIGUOUS_FINAL_DETAIL,
   COMMAND_UNSETTLED_DETAIL,
-  FINAL_PHASES,
   HOST_CLOSED_DETAIL,
   NO_FINAL_MESSAGE_DETAIL,
   NO_TERMINAL_DETAIL,
@@ -107,18 +105,18 @@ export abstract class PreparedReviewOutcome extends PreparedReviewEvents {
     if (terminal.status !== "completed") {
       return unavailable(TERMINAL_NOT_COMPLETED_DETAIL);
     }
+    if (this.deferredUnavailable !== null) {
+      return unavailable(this.deferredUnavailable);
+    }
     // Every correlated shell command must have settled before a clean or
     // findings review can be reported: an unfinished command leaves exact
     // evidence unknown and can never be folded into a verdict.
     for (const entry of this.commandItems.values()) {
       if (!entry.completed) return unavailable(COMMAND_UNSETTLED_DETAIL);
     }
-    const candidates = this.agentMessages.filter((message) =>
-      message.phase === null || FINAL_PHASES.has(message.phase)
-    );
-    if (candidates.length === 0) return unavailable(NO_FINAL_MESSAGE_DETAIL);
-    if (candidates.length > 1) return unavailable(AMBIGUOUS_FINAL_DETAIL);
-    const message = candidates[0];
+    const message = this.finalMessage;
+    if (message === null) return unavailable(NO_FINAL_MESSAGE_DETAIL);
+    if (message.truncated) return unavailable(RESULT_BOUND_DETAIL);
 
     let result: ReviewResultV1;
     try {

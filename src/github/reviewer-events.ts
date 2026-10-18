@@ -1,31 +1,27 @@
 // reviewer events.
 
 import type { CodexServerNotificationV1 } from "../repair/codex-transport.ts";
+import { MAX_JOURNAL_BYTES } from "./review-journal.ts";
 import { PreparedReviewSessionState } from "./reviewer-session-state.ts";
 import {
-  AGENT_MESSAGE_BOUND_DETAIL,
   AGENT_MESSAGE_DETAIL,
   AMBIGUOUS_FINAL_DETAIL,
   COMMAND_DELTA_DETAIL,
   COMMAND_ITEM_DETAIL,
+  COMMAND_RETENTION_DETAIL,
   COMMAND_TRANSPORT_DETAIL,
   commandItemProvenance,
   COMMENTARY_PHASES,
   COMPACTED_DETAIL,
   DUPLICATE_TERMINAL_DETAIL,
   EARLY_BOUND_DETAIL,
-  EVENT_BOUND_DETAIL,
   FINAL_PHASES,
   isBoundedCommand,
   isForbiddenCommandNotification,
   ITEM_IDENTITY_DETAIL,
-  MAX_AGENT_MESSAGES,
   MAX_COMMAND_ITEMS,
-  MAX_COMMAND_OUTPUT_BYTES,
   MAX_EARLY_BYTES,
   MAX_EARLY_EVENTS,
-  MAX_EVENT_BYTES,
-  MAX_EVENT_COUNT,
   MAX_REROUTES,
   REROUTE_BOUND_DETAIL,
   REROUTE_DETAIL,
@@ -34,21 +30,18 @@ import {
   UNSUPPORTED_ITEM_DETAIL,
   USER_ECHO_DETAIL,
 } from "./reviewer-policy.ts";
-import { asRecord, isBoundedId, utf8Bytes } from "./reviewer-support.ts";
+import { asRecord, isBoundedId } from "./reviewer-support.ts";
+import {
+  addObserved,
+  finalTextTruncated,
+  observedParamsChars,
+  retainEarlyEvent,
+} from "./reviewer-retention.ts";
 
 export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
   protected onNotification(event: CodexServerNotificationV1): void {
-    this.eventCount++;
-    if (this.eventCount > MAX_EVENT_COUNT) {
-      this.failEvidence(EVENT_BOUND_DETAIL);
-      return;
-    }
-    const bytes = JSON.stringify(event.params ?? {}).length;
-    this.eventBytes += bytes;
-    if (this.eventBytes > MAX_EVENT_BYTES) {
-      this.failEvidence(EVENT_BOUND_DETAIL);
-      return;
-    }
+    this.eventCount = addObserved(this.eventCount, 1);
+    this.eventBytes = addObserved(this.eventBytes, observedParamsChars(event));
     // Structural identity validation runs on reception (including events that
     // arrive after a terminal) so a malformed queued backlog is already sticky
     // before any turn/start is submitted.
@@ -58,14 +51,29 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
       return;
     }
     if (this.turnId === null) {
-      if (
-        this.earlyEvents.length >= MAX_EARLY_EVENTS ||
-        this.earlyBytes + bytes > MAX_EARLY_BYTES
+      const retained = retainEarlyEvent(event);
+      if (retained === null) return;
+      const bytes = JSON.stringify(retained.params ?? {}).length;
+      // Eviction never permits acceptance and never ends a live model turn.
+      // Keeping the tail also preserves a terminal delivered before its ack.
+      while (
+        this.earlyEvents.length > 0 &&
+        (this.earlyEvents.length >= MAX_EARLY_EVENTS ||
+          this.earlyBytes + bytes > MAX_EARLY_BYTES)
       ) {
-        this.failEvidence(EARLY_BOUND_DETAIL);
+        const removed = this.earlyEvents.shift()!;
+        this.earlyBytes -= JSON.stringify(removed.params ?? {}).length;
+        this.commandEvidenceIncomplete = true;
+        this.deferEvidence(EARLY_BOUND_DETAIL);
+      }
+      if (
+        bytes > MAX_EARLY_BYTES
+      ) {
+        this.commandEvidenceIncomplete = true;
+        this.deferEvidence(EARLY_BOUND_DETAIL);
         return;
       }
-      this.earlyEvents.push(event);
+      this.earlyEvents.push(retained);
       this.earlyBytes += bytes;
       return;
     }
@@ -76,10 +84,37 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
   protected eventShapeFailure(event: CodexServerNotificationV1): string | null {
     switch (event.method) {
       case "item/started":
-      case "item/completed":
-        return this.itemIdentity(event.params) === null
-          ? ITEM_IDENTITY_DETAIL
-          : null;
+      case "item/completed": {
+        const identity = this.itemIdentity(event.params);
+        if (identity === null) return ITEM_IDENTITY_DETAIL;
+        const item = identity.item;
+        if (
+          item.type !== "agentMessage" && item.type !== "reasoning" &&
+          item.type !== "userMessage" && item.type !== "commandExecution"
+        ) return UNSUPPORTED_ITEM_DETAIL;
+        if (item.type === "userMessage") return this.userEchoFailure(item);
+        if (item.type === "agentMessage" && event.method === "item/completed") {
+          if (!isBoundedId(item.id)) return ITEM_IDENTITY_DETAIL;
+          if (typeof item.text !== "string") return AGENT_MESSAGE_DETAIL;
+          if (
+            item.phase !== undefined && item.phase !== null &&
+            (!isBoundedId(item.phase) ||
+              (!COMMENTARY_PHASES.has(item.phase) &&
+                !FINAL_PHASES.has(item.phase)))
+          ) return AGENT_MESSAGE_DETAIL;
+        }
+        // Validate provenance before any early-buffer eviction. Missing exact
+        // correlation may defer acceptance, but cannot hide forbidden traffic.
+        const started = event.method === "item/started";
+        if (
+          item.type === "commandExecution" &&
+          !this.commandShapeValid(item, started)
+        ) {
+          this.reportRefusedCommandItem(started ? "start" : "completion", item);
+          return COMMAND_ITEM_DETAIL;
+        }
+        return null;
+      }
       case "turn/completed": {
         const record = asRecord(event.params);
         if (record === null || !isBoundedId(record.threadId)) {
@@ -142,7 +177,7 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
         this.onItemStarted(event.params);
         return;
       case "item/completed":
-        this.onItemCompleted(event.params);
+        this.onItemCompleted(event.params, finalTextTruncated(event));
         return;
       case "item/commandExecution/outputDelta":
         this.onCommandOutputDelta(event.params);
@@ -242,7 +277,7 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
     this.failEvidence(UNSUPPORTED_ITEM_DETAIL);
   }
 
-  protected onItemCompleted(params: unknown): void {
+  protected onItemCompleted(params: unknown, truncated = false): void {
     const identity = this.itemIdentity(params);
     if (identity === null) {
       this.failEvidence(ITEM_IDENTITY_DETAIL);
@@ -285,18 +320,34 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
         return;
       }
     }
-    if (this.agentMessages.length >= MAX_AGENT_MESSAGES) {
-      this.failEvidence(AGENT_MESSAGE_BOUND_DETAIL);
+    if (phase !== null && COMMENTARY_PHASES.has(phase)) return;
+    truncated ||= item.text.length > MAX_JOURNAL_BYTES;
+    // Retain one exact result, never commentary or a parseable truncated prefix.
+    // An exact result can replace truncated-only evidence; two exact finals
+    // remain contradictory, including evidence delivered during close.
+    if (!truncated && this.exactFinalSeen) {
+      this.failEvidence(AMBIGUOUS_FINAL_DETAIL);
       return;
     }
-    this.agentMessages.push({ itemId: item.id, text: item.text, phase });
-    // A second final candidate is contradictory output: it is sticky even when
-    // it arrives after the first terminal (during the awaited close).
-    const finalCandidates =
-      this.agentMessages.filter((message) =>
-        message.phase === null || FINAL_PHASES.has(message.phase)
-      ).length;
-    if (finalCandidates > 1) this.failEvidence(AMBIGUOUS_FINAL_DETAIL);
+    this.exactFinalSeen ||= !truncated;
+    this.finalMessage = {
+      itemId: item.id,
+      text: truncated ? "" : item.text,
+      phase,
+      truncated,
+    };
+  }
+
+  protected commandShapeValid(
+    item: Record<string, unknown>,
+    started: boolean,
+  ): boolean {
+    return item.type === "commandExecution" && isBoundedId(item.id) &&
+      isBoundedCommand(item.command) && Array.isArray(item.commandActions) &&
+      (started
+        ? item.status === "inProgress"
+        : item.status === "completed" || item.status === "failed") &&
+      item.cwd === this.sessionCwd && commandItemProvenance(item) !== null;
   }
 
   /**
@@ -327,7 +378,8 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
       return;
     }
     if (this.commandItems.size >= MAX_COMMAND_ITEMS) {
-      this.failEvidence(EVENT_BOUND_DETAIL);
+      this.commandEvidenceIncomplete = true;
+      this.deferEvidence(COMMAND_RETENTION_DETAIL);
       return;
     }
     this.commandItems.set(id, {
@@ -361,6 +413,10 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
       return;
     }
     const active = this.commandItems.get(id);
+    if (active === undefined && this.commandEvidenceIncomplete) {
+      this.deferEvidence(COMMAND_RETENTION_DETAIL);
+      return;
+    }
     if (
       active === undefined || active.completed ||
       active.command !== command || active.cwd !== cwd ||
@@ -376,8 +432,8 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
   /**
    * Accept one correlated shell output delta as bounded evidence only. The
    * exact thread, turn and live command item identity must match; the delta is
-   * never parsed as the structured result, and the aggregate shell output has
-   * its own finite bound.
+   * never retained or parsed as the structured result. Its volume cannot end
+   * the turn; identity/provenance validation still runs for every delta.
    */
   protected onCommandOutputDelta(params: unknown): void {
     const record = asRecord(params);
@@ -397,13 +453,13 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
       return;
     }
     const entry = this.commandItems.get(itemId);
+    if (entry === undefined && this.commandEvidenceIncomplete) {
+      this.deferEvidence(COMMAND_RETENTION_DETAIL);
+      return;
+    }
     if (entry === undefined || entry.completed) {
       this.failEvidence(COMMAND_DELTA_DETAIL);
       return;
-    }
-    this.commandOutputBytes += utf8Bytes(delta);
-    if (this.commandOutputBytes > MAX_COMMAND_OUTPUT_BYTES) {
-      this.failEvidence(EVENT_BOUND_DETAIL);
     }
   }
 

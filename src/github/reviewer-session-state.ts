@@ -68,14 +68,17 @@ export abstract class PreparedReviewSessionState {
   protected terminalOrigin: "runtime" | "host-timeout" = "host-timeout";
   protected unavailable: string | null = null;
   protected readonly reroutes: ModelRerouteV1[] = [];
-  protected readonly agentMessages: AgentMessageV1[] = [];
+  protected finalMessage: AgentMessageV1 | null = null;
+  protected exactFinalSeen = false;
+  /** Missing retained evidence refuses acceptance only after native settlement. */
+  protected deferredUnavailable: string | null = null;
+  protected commandEvidenceIncomplete = false;
   /**
    * Active command items correlated by exact item id: a start records the exact
    * command/cwd/agent-source binding, only a matching terminal completion
    * settles it, and an output delta may only reference a live correlated item.
    */
   protected readonly commandItems = new Map<string, ActiveCommandV1>();
-  protected commandOutputBytes = 0;
   /** First exact-correlated echoed user item id; null without any echo. */
   protected userEchoId: string | null = null;
   protected readonly earlyEvents: CodexServerNotificationV1[] = [];
@@ -210,6 +213,10 @@ export abstract class PreparedReviewSessionState {
   protected failEvidence(detail: string): void {
     if (this.unavailable === null) this.unavailable = detail;
     this.settleNow();
+  }
+
+  protected deferEvidence(detail: string): void {
+    if (this.deferredUnavailable === null) this.deferredUnavailable = detail;
   }
 
   /**
