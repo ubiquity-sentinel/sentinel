@@ -57,9 +57,14 @@ attributed to owner 0x4007, not R81. Evidence:
 
 The next exact L81/R81 run, 39111321102, admitted eight isolated cells. Native
 artifact and plan digests agree; every request retains the thirty-minute session
-bound and uses `Number.MAX_SAFE_INTEGER` for output characters. This proves the
-intended output policy reached live grants, not candidate success. Evidence:
-`/workspace/evidence/gen81-live/run39111321102/root-cell-policy-acceptance.json`.
+bound and uses `Number.MAX_SAFE_INTEGER` for output characters. All eight cells
+completed successfully with native candidates and no interruption. Root verified
+all eight receipt hashes and exact bindings in
+`/workspace/evidence/gen81-live/run39111321102/root-matrix-completion-acceptance.json`.
+The six ai.ubq.fi tasks retain their original open Sentinel-bot PRs, with one
+native linked PR per task; #169 and #170 still have no PR at the observed state.
+Serial repair remains active. Candidate production and existing PR identity are
+not claims of review, merge or issue delivery.
 
 Dormant queue source was published only to development at
 `de496e6d3c71cb4794153e4876e51f1da2acf2df`; sentinel-supervisor stays exact L81.
@@ -100,12 +105,21 @@ wrappers. Prepared source and the freshly merged input passed 16 tests / 197
 assertions plus format, lint and strict types. No matching existing PR was
 found; new PR #1207 uses exact head `6b2d8484b10081fbb4bc1d5609e60149bb2df473`,
 tree `cd3949f24424b9d86ecf6982dfb787bd7308ae88`, with body `Resolves #1206`.
-Issue #1206 is assigned to 0x4007 with manual skip. Native CI 39111433803 is
-running on carrier `488f0677601cdc7b800a2c5b2c51a3be9c00facc` with the same
-tree; all seven real jobs are admitted. Current CI, review and merge remain
-pending. Evidence: `/workspace/evidence/ci-required-checks/`. Earlier four-check
-receipts remain historical proof, not acceptance of the changed workflow. A
-separate deterministic quota-clock fixture correction remains unpublished.
+Issue #1206 is assigned to 0x4007 with manual skip. Native CI 39111433803 passed
+all seven real jobs on carrier `488f0677601cdc7b800a2c5b2c51a3be9c00facc` with
+the same tree. Owner development then advanced to `ee064b0d`; a normal merge
+preserves the owner's selected-test native dependency detection, all owner tests
+and both decision sections. The exact new head
+`8d5e84972e0277c4c48885c96670ae19391806bf`, tree
+`2d6422fe5cdb918e56eb5c4243b845aef7e01490`, is published on the same PR branch.
+Its local 19 tests / 206 assertions, two runner consumer cases and scoped static
+checks pass. Fresh native CI 39113175642 is running on carrier
+`a4ffeafe95d56b439f118d48a7baa1876f99abfe`, whose parents and tree match the
+current base and candidate. Review and merge remain pending; the prior green run
+is historical evidence. Evidence: `/workspace/evidence/ci-required-checks/` and
+`current-base-ee064/` there. Earlier four-check receipts remain historical
+proof, not acceptance of the changed workflow. A separate deterministic
+quota-clock fixture correction remains unpublished.
 
 ### Generation 81: integrated, installed and ordinary run healthy
 
@@ -162,7 +176,7 @@ above. The first ordinary supervisor also passed; autonomous issue delivery
 remains a separate acceptance boundary. Procedure and proof boundaries:
 `/workspace/evidence/gen81-install/README.md`.
 
-### Queue: dormant publication failed native CI; correction in progress
+### Queue: correction independently accepted; exact native CI pending
 
 Development-only publication `de496e6d3c71cb4794153e4876e51f1da2acf2df` failed
 native run 39108047074 attempt 1 / job 117618050671: 3,078 tests / 1,279 steps
@@ -187,20 +201,15 @@ also pass their scoped suites without new known jams.
 
 The native-ingest investigation found real restricted-port composition defects:
 candidate recovery, matrix uncertainty settlement and historical C63 recovery
-lack the new native queue capability; their generic denied proxies can return a
-function where the guard expects an object. The native-ingest worker now owns
-these three source sites and their actual consumer regressions. It must bind
-real trusted read-only custody, retain all effect restrictions and reservation
-accounting, and refuse unavailable/queued custody. A separate read-only search
-checks related restricted ports. No fixture-only acceptance claim applies to
-this source defect. A related real-consumer regression proves held matrix cells
-were falsely counted ingested; its owner is correcting all settlement paths with
-an in-memory hold marker that must not alter persisted or stdout contracts. The
-output-bound consumer receives the same correction. The runner must also
-preserve producer-supplied release/deadline state guards when adding queue
-custody, rather than substitute its outer state view. Original zero-write
-custody/expiry tests bind that correction. Complete corrections and affected
-consumer checks before a development-only correction. All five correction groups
+lacked the new native queue capability; generic denied proxies returned a
+function where the guard expected an object. These sites now bind real trusted
+read-only custody, retain effect restrictions and reservation accounting, and
+refuse unavailable/queued custody. The independent audit also searched related
+restricted ports. Held matrix cells were falsely counted ingested; all three
+settlement paths and the output-bound consumer now recognize a private in-memory
+hold marker without changing persisted or stdout contracts. The runner preserves
+producer-supplied release/deadline state guards when adding queue custody.
+Original zero-write custody/expiry tests bind that correction. All five groups
 are now frozen: launcher fixtures pass 135 tests / 11 steps; delivery/model
 checks pass 47 tests / two steps; startup checks pass 20 in full history and 19
 with one historical-source skip at depth one; native maintenance/preservation
@@ -208,10 +217,19 @@ checks pass 55 tests / nine steps plus cold startup; matrix hold regressions
 pass six tests / nine steps and their existing boundary passes 26 / 61. These
 scopes overlap and their counts are not summed. The exact old-source matrix
 regression reproduces five failures; the same test bytes pass corrected. All
-recorded final source, accounting and custody assertions remain intact. Root is
-accepting the exact file manifests and running the final combined
-static/consumer checks before one fresh independent audit. Source, audit and
-native acceptance remain separate. Evidence:
+recorded final source, accounting and custody assertions remain intact. Root
+verified all forty-two frozen hashes and all six final combined jobs: whole-repo
+formatting, scoped lint/types, size, diff, and 62 consumer tests / 25 steps.
+Fresh independent Sol/max audit passes with no P0/P1 or new confirmed P2/P3; all
+131 original failed cases match passing corrected logs. Its two independent
+tests / two steps additionally prove restricted native authority, fresh-state
+custody and exact R80 serialization. Report SHA-256 is
+`efb209031b1741a786de4f41ade649050dc9fcfe3e6b4e43ddcd74fa9d419f9a`. The exact
+reviewed tree `ac2428f5bd206af630e17daa976538fabb4668f1` is committed as
+`994ffe1bd74379bbfc66210815869a7c048806a2`. This documentation checkpoint
+changes no non-ledger blob. The next gate is its development-only publication
+and exact native CI; sentinel-supervisor remains L81. Source, audit and native
+acceptance remain separate. Evidence:
 `/workspace/evidence/merge-queue/native-ci-correction/`. No queue runtime,
 canary fixture, grant, ruleset or activation is installed or authorized by these
 local corrections.
