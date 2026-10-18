@@ -52,6 +52,7 @@ interface OwnedBrokerSession {
   finalized: boolean;
   faulted: boolean;
   eventTail: Promise<void>;
+  lastEventCounter: number;
 }
 
 interface OwnedBrokerReview extends OwnedBrokerSession {
@@ -143,6 +144,9 @@ export class ReviewOwnerCustodyBroker {
     this.watcher?.close();
     await this.server;
     for (const entry of this.entries.values()) await this.closeEntry(entry);
+    await Promise.allSettled(
+      [...this.entries.values()].map((entry) => entry.eventTail),
+    );
     await Promise.allSettled([...this.tasks]);
     const records: HostedReviewOwnerSettlementV1[] = [];
     if (publisher.settled && !publisher.truncated) {
@@ -194,19 +198,24 @@ export class ReviewOwnerCustodyBroker {
         this.seen.has(file.name)
       ) continue;
       this.seen.add(file.name);
-      const task = this.handle(file.name).finally(() =>
-        this.tasks.delete(task)
-      );
+      const task = this.handle(file.name).finally(async () => {
+        await Deno.remove(this.descriptor().directory + "/" + file.name)
+          .catch(() => {});
+        this.seen.delete(file.name);
+        this.tasks.delete(task);
+      });
       this.tasks.add(task);
     }
   }
 
   private async handle(file: string): Promise<void> {
     const id = file.slice(8, -5);
+    let requestRead = false;
     try {
       const request = await readReviewChannelFile(
         this.descriptor().directory + "/" + file,
       ) as Record<string, unknown>;
+      requestRead = true;
       if (
         request.id !== id ||
         Object.keys(request).sort().join(",") !== "id,method,params" ||
@@ -217,7 +226,10 @@ export class ReviewOwnerCustodyBroker {
         this.descriptor().directory + "/response-" + id + ".json",
         { id, result },
       );
-    } catch {
+    } catch (error) {
+      // A non-atomic listing may still yield a request removed by its completed
+      // handler. It must not overwrite that handler's response with an error.
+      if (!requestRead && error instanceof Deno.errors.NotFound) return;
       await writeReviewChannelFile(
         this.descriptor().directory + "/response-" + id + ".json",
         { id, error: true },
@@ -287,6 +299,7 @@ export class ReviewOwnerCustodyBroker {
           finalized: false,
           faulted: false,
           eventTail: Promise.resolve(),
+          lastEventCounter: 0,
         });
       }
       return null;
@@ -335,7 +348,12 @@ export class ReviewOwnerCustodyBroker {
     }
     if (method === "close") {
       await this.closeEntry(entry);
-      return { settled: entry.processSettled };
+      await entry.eventTail;
+      return {
+        settled: entry.processSettled,
+        eventThrough: entry.lastEventCounter,
+        faulted: entry.faulted,
+      };
     }
     const session = entry.session;
     if (session === null || typeof params.method !== "string") {
@@ -438,6 +456,7 @@ export class ReviewOwnerCustodyBroker {
           finalized: false,
           faulted: false,
           eventTail: Promise.resolve(),
+          lastEventCounter: 0,
         });
       }
       return null;
@@ -469,23 +488,31 @@ export class ReviewOwnerCustodyBroker {
     return null;
   }
 
-  private emit(entry: OwnedBrokerEntry, type: string, event: unknown): void {
+  private async emit(
+    entry: OwnedBrokerEntry,
+    type: string,
+    event: unknown,
+  ): Promise<void> {
     this.eventCount++;
+    entry.lastEventCounter = this.eventCount;
     const name = "event-" + String(this.eventCount).padStart(10, "0") + "-" +
       crypto.randomUUID() + ".json";
-    const task = entry.eventTail.then(() =>
-      writeReviewChannelFile(this.descriptor().directory + "/" + name, {
+    // The transport awaits each consumer before reading the next frame. One
+    // owned write is retained per session; never queue payload-capturing promises.
+    const task = writeReviewChannelFile(
+      this.descriptor().directory + "/" + name,
+      {
         requestId: entry.kind === "base"
           ? entry.registration.requestId
           : entry.registration.journal.requestId,
         type,
         event,
-      })
+      },
     ).catch(() => {
       entry.faulted = true;
-    }).finally(() => this.tasks.delete(task));
+    });
     entry.eventTail = task;
-    this.tasks.add(task);
+    await task;
   }
 
   private async closeEntry(entry: OwnedBrokerEntry): Promise<void> {

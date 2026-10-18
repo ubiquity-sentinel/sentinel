@@ -86,3 +86,130 @@ Deno.test("model volume: production policy completes above the old ceiling with 
   );
   assert.equal(session.closeCalls, 1);
 });
+
+Deno.test("model volume: projected output counts original volume but cannot certify complete item proof", async () => {
+  const { awaitSettlement } = await import(
+    "../../src/repair/model-port-settlement.ts"
+  );
+  const request = runtimeRequest(createLocalRepositoryConfig().sessionBound!);
+  const events = [
+    {
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: { id: "message", type: "agentMessage", text: "prefix" },
+      },
+      outputVolume: {
+        observedParamsChars: 5_000_000,
+        truncatedOutputPaths: ["item.text" as const],
+      },
+    },
+    {
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          id: "change",
+          type: "fileChange",
+          status: "completed",
+          changes: [{
+            path: "app.ts",
+            kind: { type: "update" },
+            diff: "prefix",
+          }],
+        },
+      },
+      outputVolume: {
+        observedParamsChars: 5_000_000,
+        truncatedOutputPaths: ["item.changes[].diff" as const],
+      },
+    },
+    {
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          id: "command",
+          type: "commandExecution",
+          status: "completed",
+          command: "deno check app.ts",
+          cwd: Deno.cwd(),
+          commandActions: [],
+          exitCode: 0,
+          aggregatedOutput: "prefix",
+        },
+      },
+      outputVolume: {
+        observedParamsChars: 5_000_000,
+        truncatedOutputPaths: ["item.aggregatedOutput" as const],
+      },
+    },
+    COMPLETED_TERMINAL,
+  ];
+  const session = new ScriptedSession({}, {}, events, "interrupted");
+  await session.send("turn/start", {});
+  const capture = await awaitSettlement(
+    Deno.cwd(),
+    100,
+    session,
+    request,
+    "thread-1",
+    "turn-1",
+    request.maxOutputChars,
+  );
+  await session.close();
+  const settled = capture();
+  assert.deepEqual(settled.resultItems, []);
+  assert.ok(settled.outputChars >= 15_000_000);
+  assert.equal(settled.terminal?.status, "completed");
+  assert.equal(settled.boundaryDiagnostic.interruptCause, "none");
+  assert.equal(
+    session.sent.some(({ method }) => method === "turn/interrupt"),
+    false,
+  );
+});
+
+Deno.test("model volume: bounded early evidence loss waits for real terminal then refuses proof", async () => {
+  const { awaitSettlement } = await import(
+    "../../src/repair/model-port-settlement.ts"
+  );
+  const request = runtimeRequest(createLocalRepositoryConfig().sessionBound!);
+  const session = new ScriptedSession(
+    {},
+    {},
+    [COMPLETED_TERMINAL],
+    "interrupted",
+  );
+  await session.send("turn/start", {});
+  const getLoss = () => ({
+    observedParamsChars: 40_000_000,
+    criticalEvidenceLost: true,
+  });
+  const capture = await awaitSettlement(
+    Deno.cwd(),
+    100,
+    session,
+    request,
+    "thread-1",
+    "turn-1",
+    request.maxOutputChars,
+    request.maxDurationMs,
+    getLoss,
+  );
+  await session.close();
+  const settled = capture();
+  assert.equal(settled.terminal?.status, "completed");
+  assert.match(
+    settled.unavailable?.detail ?? "",
+    /early notification evidence/,
+  );
+  assert.ok(settled.outputChars >= 40_000_000);
+  assert.equal(settled.boundaryDiagnostic.interruptCause, "none");
+  assert.equal(
+    session.sent.some(({ method }) => method === "turn/interrupt"),
+    false,
+  );
+});
