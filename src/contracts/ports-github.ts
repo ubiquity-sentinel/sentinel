@@ -1,3 +1,4 @@
+import type { ExistingPrTakeoverPort } from "./existing-pr-takeover.ts";
 import type { NativeQueueGuardV1 } from "../github/native-queue-guard.ts";
 import type { GitSha, WorkItemId } from "./brands.ts";
 import type { SelfMergeExecutionV1 } from "./self-merge.ts";
@@ -30,6 +31,8 @@ import type {
 } from "./ports-github-requests.ts";
 
 export interface GitHubPort {
+  /** Trusted issue-bound existing-PR capability; never available to model workers. */
+  readonly existingPrTakeover?: ExistingPrTakeoverPort;
   /** Trusted queue custody capability; absent gateway effect authority fails closed. */
   readonly nativeQueue?: NativeQueueGuardV1;
   /**

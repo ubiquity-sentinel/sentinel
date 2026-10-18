@@ -116,6 +116,18 @@ and only the three owner/integration documents differ. The existing PR history
 and owner development ancestry are retained. No replacement PR is opened.
 Evidence is `/workspace/evidence/gen81-pr165/`.
 
+The seven-file dormant existing-PR custody foundation is accepted separately
+from patch `55c938d89878fa8d96ca041dbd16a3e904d86824bb60bd01b930d63d86066d5e` in
+`/workspace/worktrees/existing-pr-integration`. It defines transient contracts,
+actual authenticated V1 ancestor custody and opaque operation-bound proofs;
+source activation is false. Producer checks pass 10 tests / 48 steps, including
+actual Git ancestry/restart and R80/R81 parsing. Native reciprocal
+issue163/PR165 association was verified read-only. Discovery/preservation,
+actual lifecycle consumers, prepared-refresh recovery and the independent exact
+runtime fence remain unimplemented; this foundation grants no active takeover
+authority. Evidence is
+`/workspace/evidence/open-pr-takeover/shared-seam-manifest.json`.
+
 The first ai.ubq.fi prerequisite is complete: #1159 was merged normally with
 head SHA pinned to `0a7063f994f39d958476d9257c2eef7ce9a7abc9`, yielding
 `4c189c05d78f723fcbf06063f1624e35949332d1`. Its documentation conflict

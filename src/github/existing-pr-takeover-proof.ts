@@ -1,0 +1,236 @@
+/** Opaque operation-scoped authority from authenticated state, native facts and Git custody. */
+import { isGitSha } from "../contracts/brands.ts";
+import { canonicalStringify } from "../contracts/canonical.ts";
+import type {
+  ExistingPrTakeoverPort,
+  NativeTakeoverObservation,
+  TakeoverCandidateObservation,
+  TakeoverCustodyProof,
+  TakeoverProofRequest,
+} from "../contracts/existing-pr-takeover.ts";
+import {
+  type Clock,
+  portError,
+  portOk,
+  type PortResultV1,
+  type StateReadView,
+} from "../contracts/ports.ts";
+import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import { parseRepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  EXISTING_PR_TAKEOVER_POLICY,
+  type ExistingPrTakeoverPolicy,
+} from "./existing-pr-takeover-policy.ts";
+import {
+  readTakeoverAnchor,
+  type TakeoverAnchor,
+  takeoverBindingDigest,
+} from "./existing-pr-takeover-provenance.ts";
+
+const OPERATIONS = new Set([
+  "correct",
+  "publish",
+  "review",
+  "refresh",
+  "merge",
+  "enqueue",
+]);
+const MAX_PROOF_AGE_MS = 30_000;
+const equal = (a: unknown, b: unknown) =>
+  canonicalStringify(a) === canonicalStringify(b);
+const refused = (): PortResultV1<never> =>
+  portError(
+    "unavailable",
+    "existing pull request takeover custody unavailable",
+  );
+
+export interface TakeoverProofDependencies {
+  state: Pick<StateReadView, "readRepair" | "readRepairAt">;
+  clock: Clock;
+  repository: RepositoryIdentityV1;
+  baseBranch: string;
+  policy?: ExistingPrTakeoverPolicy;
+  /** Trusted installed-source fence, independent of queue mode/occupancy. */
+  runtimeCapabilityAccepted(): boolean;
+  readNative(
+    input: TakeoverProofRequest,
+  ): Promise<PortResultV1<NativeTakeoverObservation>>;
+  readCandidate(
+    input: TakeoverProofRequest & { anchor: TakeoverAnchor },
+  ): Promise<PortResultV1<TakeoverCandidateObservation>>;
+}
+
+/** No public mint/structural cast can create a recognized proof. Fact readers are trusted ports. */
+export function createTakeoverProofPort(
+  deps: TakeoverProofDependencies,
+): Pick<ExistingPrTakeoverPort, "resolve" | "authorizeEffect"> {
+  const policy = deps.policy ?? EXISTING_PR_TAKEOVER_POLICY;
+  const proofs = new WeakMap<object, { request: string; expires: number }>();
+  const live = (input: TakeoverProofRequest): boolean =>
+    policy.activated === true && deps.runtimeCapabilityAccepted() === true &&
+    Number.isSafeInteger(input.deadline) && deps.clock.now() < input.deadline;
+
+  const verify = async (input: TakeoverProofRequest): Promise<boolean> => {
+    try {
+      if (
+        !live(input) || !isGitSha(input.expectedStateHead) ||
+        !isGitSha(input.expectedHead) ||
+        !OPERATIONS.has(input.operation) ||
+        input.record.nextStep === "done" || input.record.target.head === null ||
+        input.record.target.pr === null ||
+        input.record.target.branch === null ||
+        (input.operation === "publish"
+          ? !isGitSha(input.nextHead) ||
+            input.nextHead !== input.record.target.head ||
+            input.expectedHead !==
+              input.record.target.candidateState?.publishedHead
+          : input.nextHead !== undefined ||
+            input.expectedHead !== input.record.target.head)
+      ) return false;
+      if (input.operation === "refresh") {
+        // Preparing a refresh retains custody of H/B0 while the native base is B1.
+        // Publication/recovery of the prepared result needs its own produced-head proof.
+        const intent = input.record.intent;
+        if (
+          !isGitSha(input.observedBase) ||
+          input.observedBase === input.record.target.base ||
+          intent?.kind !== "base_refresh" ||
+          intent.branch !== input.record.target.branch ||
+          intent.pr !== input.record.target.pr ||
+          intent.expectedHead !== input.expectedHead ||
+          intent.observedBase !== input.observedBase ||
+          intent.key !==
+            `base_refresh:${intent.pr}:${input.expectedHead}:${input.observedBase}` ||
+          intent.requestId !== null || intent.resultId !== null
+        ) return false;
+      } else if (input.observedBase !== undefined) return false;
+      const before = await deps.state.readRepair();
+      if (
+        !live(input) || !before.ok || before.value.status !== "found" ||
+        before.value.head !== input.expectedStateHead ||
+        !equal(
+          parseRepairStateSnapshotV1(before.value.snapshot),
+          input.snapshot,
+        ) ||
+        !equal(
+          input.snapshot.work.find((row) => row.id === input.record.id) ?? null,
+          input.record,
+        )
+      ) return false;
+      const anchor = await readTakeoverAnchor({ ...input, state: deps.state });
+      if (anchor === null || !live(input)) return false;
+      const observed = await deps.readNative(input);
+      if (!observed.ok || !live(input)) return false;
+      const native = structuredClone(observed.value);
+      const binding = native.binding;
+      if (
+        native.state !== "open" || native.issueOpen !== true ||
+        native.associationComplete !== true ||
+        native.associated !== true || native.reciprocalComplete !== true ||
+        !Array.isArray(native.reciprocalIssues) ||
+        native.reciprocalIssues.filter((issue) =>
+            issue.nodeId === binding.issueNodeId &&
+            issue.number === binding.issueNumber &&
+            equal(issue.repository, binding.headRepository)
+          ).length !== 1 ||
+        native.headRefExists !== true ||
+        native.sameRepository !== true ||
+        native.writableBranch !== true || native.protectedPathsClear !== true ||
+        native.queueCustodyClear !== true ||
+        native.head !== input.expectedHead ||
+        native.base !== (input.observedBase ?? input.record.target.base) ||
+        input.snapshot.work.some((other) =>
+          other.id !== input.record.id &&
+          other.target.pr === input.record.target.pr &&
+          equal(other.repository, input.record.repository)
+        ) ||
+        binding.taskId !== input.record.id ||
+        binding.baseRef !== deps.baseBranch ||
+        !equal(binding.repository, deps.repository) ||
+        binding.issueNumber !== input.record.related.issueNumber ||
+        binding.pullRequest !== input.record.target.pr ||
+        binding.headRef !== input.record.target.branch ||
+        !equal(binding.repository, input.record.repository) ||
+        !Array.isArray(native.openCandidates) ||
+        native.openCandidates.length !== 1 ||
+        native.openCandidates[0].number !== binding.pullRequest ||
+        native.openCandidates[0].nodeId !== binding.pullNodeId ||
+        await takeoverBindingDigest(binding) !== anchor.bindingDigest
+      ) return false;
+      const candidate = await deps.readCandidate({ ...input, anchor });
+      if (!candidate.ok || !live(input)) return false;
+      const facts = structuredClone(candidate.value);
+      const sameNativeHead =
+        input.record.target.head === anchor.record.target.head &&
+        input.record.target.base === anchor.record.target.base;
+      const descriptor = input.record.target.candidateState?.preserved;
+      if (
+        facts.anchorRef !== anchor.nativeRef ||
+        facts.anchorHead !== anchor.record.target.head ||
+        facts.anchorRestored !== true ||
+        facts.currentHead !== input.record.target.head ||
+        facts.currentBase !== input.record.target.base ||
+        facts.currentDescendsFromAnchor !== true ||
+        (!sameNativeHead &&
+          (facts.currentProducerVerified !== true || descriptor === undefined ||
+            descriptor === null ||
+            descriptor.head !== input.record.target.head ||
+            descriptor.base !== input.record.target.base)) ||
+        facts.nextHead !== (input.nextHead ?? null) ||
+        (input.nextHead !== undefined &&
+          facts.nextDescendsFromExpected !== true)
+      ) return false;
+      const after = await deps.state.readRepair();
+      return live(input) && after.ok && after.value.status === "found" &&
+        after.value.head === before.value.head &&
+        equal(after.value.snapshot, before.value.snapshot);
+    } catch {
+      return false;
+    }
+  };
+
+  return {
+    async resolve(input) {
+      // Clone before awaiting: later mutation of caller-owned data cannot widen a proof.
+      let request: TakeoverProofRequest;
+      try {
+        request = structuredClone(input);
+        canonicalStringify(request);
+      } catch {
+        return refused();
+      }
+      if (!await verify(request)) return refused();
+      const proof: TakeoverCustodyProof = Object.freeze({
+        kind: "verified_existing_pr_custody",
+      });
+      proofs.set(proof, {
+        request: canonicalStringify(request),
+        expires: Math.min(
+          request.deadline,
+          deps.clock.now() + MAX_PROOF_AGE_MS,
+        ),
+      });
+      return portOk(proof);
+    },
+    async authorizeEffect(proof, input) {
+      try {
+        const saved = proofs.get(proof);
+        proofs.delete(proof); // A failed/replayed authorization needs a newly resolved proof.
+        if (saved === undefined || deps.clock.now() >= saved.expires) {
+          return refused();
+        }
+        const request = structuredClone(input);
+        if (
+          saved.request !== canonicalStringify(request) ||
+          !await verify(request)
+        ) return refused();
+        if (!live(request) || deps.clock.now() >= saved.expires) {
+          return refused();
+        }
+        return portOk(undefined);
+      } catch {
+        return refused();
+      }
+    },
+  };
+}
