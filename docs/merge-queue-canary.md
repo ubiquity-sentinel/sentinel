@@ -5,6 +5,8 @@ write repair/release state, install runtimes, or produce production delivery
 proof. All target effects are fixed to `ubiquity/ai.ubq.fi` PRs based on
 `queue-canary`; there is no production branch override.
 
+Fixture heads use `queue-canary-fixtures/` to avoid a Git ref conflict.
+
 The source allowlist in `ops/queue-canary-pins.ts` is empty. No workflow input
 can add a PR or raise permissions. Before adding a source grant, the owner
 approves the runtime App's Merge queues permission, the canary ruleset and

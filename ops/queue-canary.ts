@@ -111,7 +111,7 @@ function validGrant(grant: CanaryGrant): boolean {
     pull.baseRef === CANARY_BRANCH && Number.isSafeInteger(pull.number) &&
     pull.number > 0 &&
     /^[A-Za-z0-9_-]{1,256}$/.test(pull.nodeId) &&
-    /^queue-canary\/[A-Za-z0-9_./-]{1,180}$/.test(pull.headRef) &&
+    /^queue-canary-fixtures\/[A-Za-z0-9_./-]{1,180}$/.test(pull.headRef) &&
     !pull.headRef.includes("..") && isGitSha(pull.head) &&
     isGitSha(grant.reviewedBase) &&
     appActor.login === `${CANARY_APP_SLUG}[bot]` && appActor.type === "Bot" &&

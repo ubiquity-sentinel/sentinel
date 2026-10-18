@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { CANARY_GRANTS } from "../../ops/queue-canary-pins.ts";
+import { CANARY_BRANCH, CANARY_GRANTS } from "../../ops/queue-canary-pins.ts";
 import { canaryBindingDigest, runQueueCanary } from "../../ops/queue-canary.ts";
 import { sanitizedCanaryArtifact } from "../../ops/queue-canary-main.ts";
 import {
@@ -11,6 +11,18 @@ import {
   SHA3,
   T0,
 } from "./queue-canary-fixtures.ts";
+
+Deno.test("canary fixture heads coexist with the fixed base and legacy heads refuse effects", async () => {
+  const r = await rig();
+  r.host.action = "preflight";
+  assert.equal(r.grants[0].pull.baseRef, CANARY_BRANCH);
+  assert(!r.grants[0].pull.headRef.startsWith(`${CANARY_BRANCH}/`));
+  assert.equal((await runQueueCanary(r)).status, "observed");
+  r.grants[0].pull.headRef = "queue-canary/no-rule";
+  assert.equal((await runQueueCanary(r)).reason, "invalid_source_grant");
+  assert(!r.events.includes("enqueue"));
+  assert(!r.events.includes("dequeue"));
+});
 
 Deno.test("canary ships without source grants; inputs cannot activate an effect", async () => {
   assert.deepEqual(CANARY_GRANTS, []);
@@ -87,7 +99,7 @@ Deno.test("earlier failed dispatch or unavailable history consumes one-shot auth
   );
   assert(!r.events.includes("enqueue"));
   const renamed = structuredClone(GRANT);
-  renamed.pull.headRef = "queue-canary/renamed";
+  renamed.pull.headRef = "queue-canary-fixtures/renamed";
   assert.equal(
     await canaryBindingDigest(renamed),
     await canaryBindingDigest(GRANT),
