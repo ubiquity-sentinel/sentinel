@@ -15,8 +15,52 @@ import type { GitSha } from "../contracts/brands.ts";
 import { GitHubClientReads } from "./client-reads.ts";
 import type { CreatePullWireV1, MergePutWireV1 } from "./client-contracts.ts";
 import { parseWire, repoPath } from "./client-response.ts";
+import {
+  type BaseReviewCommentV1,
+  parseBaseReviewComment,
+} from "./base-review-comments.ts";
 
 export abstract class GitHubClientWrites extends GitHubClientReads {
+  /** Exact issue-only native evidence; no PR endpoint or mutation is used. */
+  async createBaseReviewComment(
+    issueNumber: number,
+    body: string,
+  ): Promise<PortResultV1<BaseReviewCommentV1>> {
+    const path = `/repos/${repoPath(this.repository)}/issues/${issueNumber}`;
+    const response = await this.send("POST", `${path}/comments`, {}, { body });
+    if (!response.ok) return response;
+    if (response.value.status !== 201) {
+      return portError(...this.mapError(response.value));
+    }
+    return parseWire(
+      response.value,
+      (value) => parseBaseReviewComment(value, `${this.apiBaseUrl}${path}`),
+    );
+  }
+
+  async readBaseReviewComment(
+    issueNumber: number,
+    commentId: number,
+  ): Promise<PortResultV1<BaseReviewCommentV1>> {
+    const response = await this.request(
+      "GET",
+      `/repos/${repoPath(this.repository)}/issues/comments/${commentId}`,
+    );
+    if (!response.ok) return response;
+    if (response.value.status !== 200) {
+      return portError(...this.mapError(response.value));
+    }
+    return parseWire(
+      response.value,
+      (value) =>
+        parseBaseReviewComment(
+          value,
+          `${this.apiBaseUrl}/repos/${
+            repoPath(this.repository)
+          }/issues/${issueNumber}`,
+        ),
+    );
+  }
   // -------------------------------------------------------------------------
   // Writes
   // -------------------------------------------------------------------------

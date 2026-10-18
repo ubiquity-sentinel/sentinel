@@ -93,6 +93,12 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       },
     },
     protectedPaths: [
+      "src/repair/base-satisfaction-marker.ts",
+      "src/repair/loop-base-satisfaction.ts",
+      "src/github/base-review-comments.ts",
+      "src/github/base-review-evidence.ts",
+      "src/github/base-review-service.ts",
+      "src/github/base-review-owner.ts",
       ".github/workflows/",
       "AGENTS.md",
       "MASTER-PLAN.md",

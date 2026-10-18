@@ -2,7 +2,7 @@
  * The installed generation-80 runtime's (R80, e48e7e110) own strict repair
  * state parser, for rollback proofs: generation 81's rollback target must
  * parse and accept every state shape new code writes. The exact `src/contracts`
- * tree (self-contained: it imports nothing outside itself) is extracted
+ * tree and the native review parser dependency closure are extracted
  * read-only from the local object store into a disposable directory under the
  * repository root. A shallow checkout without the pinned commit reports
  * `r80Available() === false` and callers mark the case ignored instead of
@@ -44,6 +44,9 @@ export interface R80ParsersV1 {
   parseMatrixCellResultV1(input: unknown): unknown;
   parseMatrixPlanV1(input: unknown): unknown;
   parseRepositoryConfigV1(input: unknown): unknown;
+  parseReviewExecutionV1(input: unknown): unknown;
+  parseReviewReadyExecutionV1(input: unknown): unknown;
+  parseReviewResultV1(input: unknown): unknown;
 }
 
 /** Run `use` with R80's own parsers over a JSON round trip of each input. */
@@ -63,6 +66,11 @@ export async function withR80Parsers<T>(
         "--format=tar",
         R80_RUNTIME,
         "src/contracts",
+        "src/github/journal-metadata.ts",
+        "src/github/journal-json.ts",
+        "src/github/journal-text.ts",
+        "src/github/review-result-parser.ts",
+        "src/github/review-result-contracts.ts",
       ],
       clearEnv: true,
       env: GIT_ENV,
@@ -88,6 +96,12 @@ export async function withR80Parsers<T>(
     const config = await import(
       new URL(`file://${dir}/src/contracts/repository-config.ts`).href
     );
+    const metadata = await import(
+      new URL(`file://${dir}/src/github/journal-metadata.ts`).href
+    );
+    const result = await import(
+      new URL(`file://${dir}/src/github/review-result-parser.ts`).href
+    );
     const roundTrip = (input: unknown) => JSON.parse(JSON.stringify(input));
     return await use({
       parseRepairStateSnapshotV1: (input) =>
@@ -97,6 +111,12 @@ export async function withR80Parsers<T>(
       parseMatrixPlanV1: (input) => matrix.parseMatrixPlanV1(roundTrip(input)),
       parseRepositoryConfigV1: (input) =>
         config.parseRepositoryConfigV1(roundTrip(input)),
+      parseReviewExecutionV1: (input) =>
+        metadata.parseExecution(roundTrip(input), "$.execution"),
+      parseReviewReadyExecutionV1: (input) =>
+        metadata.parseReadyExecution(roundTrip(input), "$.execution"),
+      parseReviewResultV1: (input) =>
+        result.parseReviewResultV1(roundTrip(input)),
     });
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
