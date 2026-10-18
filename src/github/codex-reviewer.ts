@@ -39,6 +39,7 @@
  */
 
 import {
+  BASE_TASK_INSTRUCTIONS,
   MAX_PROMPT_BYTES,
   renderReviewPrompt,
   type ReviewSnapshotV1,
@@ -304,6 +305,10 @@ export class CodexStructuredReviewer {
       if (!checked.ok) return portError("unavailable", TASK_DETAIL);
       task = checked.statement;
     }
+    // An empty native manifest is only meaningful with an independently
+    // bound source task, never as a clean review of an absent candidate.
+    const baseTask = snapshot.files.length === 0;
+    if (baseTask && task === null) return portError("unavailable", TASK_DETAIL);
     const prompt = renderReviewPrompt(snapshot, task);
     if (utf8Bytes(prompt) > MAX_PROMPT_BYTES) {
       return portError("unavailable", PROMPT_DETAIL);
@@ -344,7 +349,7 @@ export class CodexStructuredReviewer {
         return await failPreparation(owned);
       }
       const threaded = await racePromise(
-        this.startThread(session),
+        this.startThread(session, baseTask),
         startGate,
         this.now,
       );
@@ -415,6 +420,7 @@ export class CodexStructuredReviewer {
 
   private async startThread(
     session: CodexSessionV1,
+    baseTask: boolean,
   ): Promise<ThreadAckV1> {
     // The ordinary agent shell read tool is enabled with the installed one-shot
     // exec handler (`shell_tool` true, `unified_exec` false): no write_stdin,
@@ -434,8 +440,10 @@ export class CodexStructuredReviewer {
         "features.apps": false,
         web_search: "disabled",
       },
-      baseInstructions: BASE_INSTRUCTIONS,
-      developerInstructions: DEVELOPER_INSTRUCTIONS,
+      baseInstructions: BASE_INSTRUCTIONS +
+        (baseTask ? "\n" + BASE_TASK_INSTRUCTIONS : ""),
+      developerInstructions: DEVELOPER_INSTRUCTIONS +
+        (baseTask ? "\n" + BASE_TASK_INSTRUCTIONS : ""),
       // The trusted named profile replaces the legacy read-only sandbox
       // entirely: the installed schema forbids combining the two fields.
       permissions: this.permissionProfile,

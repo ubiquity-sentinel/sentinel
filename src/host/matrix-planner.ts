@@ -313,7 +313,8 @@ export async function planMatrixWave(
   const conflictRouteOpen = conflictResolutionRouteOpen(deps);
   // A pre-review CI fix is granted only where its cell survives a rollback
   // (`preReviewCiFixRouteOpen`): closed in hosted generation-80 runs, whose
-  // rollback target refuses the cell.
+  // rollback target refused the cell, and open from generation 81, whose
+  // rollback target R80 isolates it.
   const preReviewRouteOpen = preReviewCiFixRouteOpen(deps);
 
   while (cells.length < limit) {

@@ -3,6 +3,7 @@ import {
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
 import { attemptEquivalenceRefusalForRecordV1 } from "../src/repair/attempt-policy.ts";
+import { baseReviewOrigin } from "../src/repair/base-satisfaction-marker.ts";
 import {
   CONFLICT_PROTECTED_DETAIL,
   conflictMarkerBase,
@@ -11,7 +12,6 @@ import { type GitSha, isGitSha } from "../src/contracts/brands.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { candidateBranch, reviewOperationKey } from "../src/repair/keys.ts";
 import {
-  HOSTED_AUTONOMY_MAX_RETRIES,
   HOSTED_AUTONOMY_RETRYABLE,
   hostedIssueKey,
   hostedRepositoryKey,
@@ -30,6 +30,7 @@ import {
   ciRedeliveryEligible,
 } from "./hosted-autonomy-ci-retries.ts";
 import {
+  ciFirstFixRuntimeProven,
   ciFirstRuntimeProven,
   HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
   HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
@@ -38,11 +39,18 @@ import {
   legacyFinalRoundAdmissible,
   preReviewCiParked,
   preReviewFixEligible,
+  preReviewGateParked,
 } from "./hosted-autonomy-ci-first.ts";
 import {
   ciFixMarker,
   reviewRoundAvailable,
 } from "../src/repair/ci-first-policy.ts";
+import {
+  type RepeatFailureContextV1,
+  type RepeatFailureParkPlanV1,
+  repeatFailureVerdict,
+  repeatFailureWithheld,
+} from "./hosted-autonomy-repeat-failure.ts";
 
 /**
  * Durable reservations charged to one task, across every purpose and outcome
@@ -312,6 +320,9 @@ export interface RetryPlanV1 {
 /** Detail suffix of a CI re-admission whose head is green again. */
 const CI_GREEN_DETAIL_SUFFIX = ":green";
 
+/** Detail suffix of a pre-review park returned for its moved-base refresh. */
+const CI_BASE_MOVED_DETAIL_SUFFIX = ":base-moved";
+
 /**
  * Denial of the green CI rule for a head whose ordinary review rounds are
  * spent: the delivery pass's spent-round rule merges it (or refuses) itself.
@@ -333,13 +344,27 @@ export function ciCorrectionPlan(plan: RetryPlanV1): boolean {
 
 /**
  * The CI-first re-admission of a head the runtime's pre-review gate parked
- * (`hosted-autonomy-ci-first.ts`): green again on its unchanged base returns
- * it to `work` under any runtime; still red, once its re-run can no longer
- * act, returns it with the CI fix marker only under a fix runtime. Either
- * way the head returns only to be reviewed once green, so a record with no
- * review round left by the ceiling's own count (`reviewRoundAvailable`), or
+ * (`hosted-autonomy-ci-first.ts`), each back at `work` with nothing charged:
+ *
+ * - green: green again on its unchanged base, under any runtime (the
+ *   exhausted park of a never-reviewed head included): the runtime's gate
+ *   then requests the review;
+ * - moved base: a red or pending park (never the exhausted one) whose base
+ *   moved, under a proven CI-first runtime only: the runtime refreshes it
+ *   deterministically and uncharged (its freshness gate reads the tip) and
+ *   gates the refreshed head's CI before any review. Under any other runtime
+ *   (R79 reviews before CI) it stays parked;
+ * - fix: still red, once its re-run can no longer act, with the CI fix marker
+ *   only under a fix runtime (a moved base takes the refresh first, unless
+ *   only a CI fix can open the record's round: a legacy final round).
+ *
+ * The green and moved-base returns lead straight to a review request (or to
+ * the refresh before it), so they need a review round left by the ceiling's
+ * own count (`reviewRoundsLeft`; the runtime's ceiling gate would park the
+ * record before any refresh otherwise, and an open legacy final round is a CI
+ * fix's to arm); a fix needs one available (`reviewRoundAvailable`). A record
  * whose next review is a legacy final round under a runtime not proven
- * CI-first (`legacyFinalRoundAdmissible`), stays parked: R79 would review it
+ * CI-first (`legacyFinalRoundAdmissible`) stays parked: R79 would review it
  * past the cap, or before its CI. Null when no CI-first rule applies.
  */
 function planCiFirstReadmission(
@@ -356,20 +381,21 @@ function planCiFirstReadmission(
   const head = record.target.head;
   if (
     blocker === null || head === null ||
-    !preReviewCiParked(snapshot, record) ||
+    !preReviewGateParked(snapshot, record) ||
     !reviewRoundAvailable(snapshot, record, cutoff) ||
     !legacyFinalRoundAdmissible(snapshot, record, ciFirst)
   ) return null;
   const key = ciGreenHeadKey(record.repository, head);
-  // A green head returns for its review: only with a review round left (an
-  // open legacy final round is a CI fix's to arm, not a review's).
-  const green = baseTips.get(hostedRepositoryKey(record.repository)) ===
-      record.target.base &&
-    ciGreenHeads.has(key) &&
-    reviewRoundsLeft(snapshot, record, cutoff) > 0;
-  const fix = !green && ciFixRuntime && ciRerunSettled.has(key) &&
+  const tip = baseTips.get(hostedRepositoryKey(record.repository)) ?? null;
+  const roundLeft = reviewRoundsLeft(snapshot, record, cutoff) > 0;
+  const green = tip === record.target.base && ciGreenHeads.has(key) &&
+    roundLeft;
+  const moved = !green && ciFirst && tip !== null &&
+    tip !== record.target.base && roundLeft &&
+    preReviewCiParked(snapshot, record);
+  const fix = !green && !moved && ciFixRuntime && ciRerunSettled.has(key) &&
     preReviewFixEligible(snapshot, record, cutoff);
-  if (!green && !fix) return null;
+  if (!green && !moved && !fix) return null;
   const prefix = blocker.message.slice(0, blocker.message.indexOf(":") + 1);
   return {
     id: record.id,
@@ -379,15 +405,17 @@ function planCiFirstReadmission(
     reviewRounds: null,
     advanceBase: false,
     observedBase: null,
-    detail: `${blocker.kind}:${prefix}${green ? CI_GREEN_DETAIL_SUFFIX : ""}`,
+    detail: `${blocker.kind}:${prefix}${
+      green ? CI_GREEN_DETAIL_SUFFIX : moved ? CI_BASE_MOVED_DETAIL_SUFFIX : ""
+    }`,
     ...(fix ? { ciFixMarker: true as const } : {}),
   };
 }
 
 /**
  * Bounded, closed retry planning for one snapshot. Every returned plan has an
- * unused next-attempt identity, respects memory/review limits and stays inside
- * the per-task automatic-retry budget.
+ * unused next-attempt identity and respects memory/review limits. Prior
+ * reservation count never stops a new otherwise-admissible grant.
  *
  * `baseTips` is keyed by `hostedRepositoryKey`: each record is planned against
  * its OWN repository's base tip, so a foreign repository can never advance a
@@ -452,11 +480,27 @@ export function planHostedRetries(
      */
     ciReadHeads?: ReadonlySet<string>;
     /**
+     * `ciGreenHeadKey` values of the heads whose CI listing the caller tried
+     * to read and could not (rate limited, failing, incomplete or holding no
+     * check run: `hasAllChecksGreen` null). That is no evidence of a failure,
+     * so no CI correction and no CI fix is planned for such a head this pass
+     * (it takes no slot); the next pass reads it again.
+     */
+    ciUnreadHeads?: ReadonlySet<string>;
+    /**
      * The legacy review cutoff (`launcherLegacyCutoff`), replaced for tests
      * only; by default the installed runtime's pinned cutoff, under a proven
      * CI-first runtime.
      */
     legacyReviewCutoff?: number | null;
+    /**
+     * Launcher facts of the repeat-failure bound
+     * (`hosted-autonomy-repeat-failure.ts`). Absent, nothing can be verified:
+     * a due record is withheld without a park and a parked one never re-arms.
+     */
+    repeatFailure?: RepeatFailureContextV1;
+    /** Receives each park the bound decided; the caller writes it. */
+    onRepeatFailurePark?: (park: RepeatFailureParkPlanV1) => void;
   } = {},
 ): RetryPlanV1[] {
   if (!isGitSha(runtimeSha)) return [];
@@ -472,11 +516,19 @@ export function planHostedRetries(
     );
   const ciFixRuntime = ciRuntime !== null &&
     ciRuntime.activeRevision === runtimeSha &&
-    ciFirstRuntimeProven(
+    ciFirstFixRuntimeProven(
       ciRuntime,
       options.ciFirstFixAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
+      options.ciFirstAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
     );
-  const ciRerunSettled = options.ciRerunSettled ?? new Set<string>();
+  const ciUnreadHeads = options.ciUnreadHeads ?? new Set<string>();
+  // Every CI correction and CI fix plan needs its head's re-run settled; an
+  // unread head is never settled for this pass (sentinel issue #154).
+  const ciRerunSettled = new Set(
+    [...(options.ciRerunSettled ?? [])].filter((key) =>
+      !ciUnreadHeads.has(key)
+    ),
+  );
   const ciGreenHeads = options.ciGreenHeads ?? new Set<string>();
   const ciReadHeads = options.ciReadHeads ?? ciGreenHeads;
   const cutoff = options.legacyReviewCutoff !== undefined
@@ -485,6 +537,11 @@ export function planHostedRetries(
   const plans: RetryPlanV1[] = [];
   for (const record of snapshot.work) {
     if (record.nextStep !== "blocked") continue;
+    // The runtime reviews a trusted unchanged-base outcome against the issue.
+    // Keep its original charged admission, including a historical repeat park:
+    // an ordinary retry/re-arm would erase that evidence before runtime runs.
+    // This only withholds launcher writes, so it is safe while R80 is installed.
+    if (baseReviewOrigin(record, snapshot) !== null) continue;
     // A task whose source issue is closed or gone is not repairable: retrying
     // it can only spend a model session on work that no longer exists. The
     // identity is the pair (repository, issue number): a closed issue in
@@ -499,15 +556,22 @@ export function planHostedRetries(
     }
     const blocker = record.blocker;
     if (blocker === null) continue;
-    if (
-      taskReservationCount(snapshot, record.id) >= HOSTED_AUTONOMY_MAX_RETRIES
-    ) {
-      continue;
-    }
-    if (!Number.isSafeInteger(now)) continue;
-    const rule = HOSTED_AUTONOMY_RETRYABLE.find((item) =>
-      blocker.message.startsWith(item.prefix)
+    // A repeat-failure park is named every pass; an edited issue or a changed
+    // model route re-arms it once as an ordinary work grant.
+    const repeat = repeatFailureVerdict(
+      snapshot,
+      record,
+      options.repeatFailure,
     );
+    if (repeatFailureWithheld(repeat, record, false, onDenied)) continue;
+    const rearm = repeat.kind === "rearm" ? repeat.trigger : null;
+    const rule: (typeof HOSTED_AUTONOMY_RETRYABLE)[number] | undefined =
+      rearm !== null
+        ? { prefix: `repeat_failure_rearmed:${rearm}`, nextStep: "work" }
+        : HOSTED_AUTONOMY_RETRYABLE.find((item) =>
+          blocker.message.startsWith(item.prefix)
+        );
+    if (!Number.isSafeInteger(now)) continue;
     // A conflict resolution that was charged and did not publish keeps the
     // conflict marker on its retained intent: one charge per (task, base tip).
     const marked = conflictMarkerBase(record.intent);
@@ -706,14 +770,27 @@ export function planHostedRetries(
     if (base === null) continue;
     const baseTip = baseTips.get(hostedRepositoryKey(record.repository)) ??
       null;
+    // The repeat-failure bound: the same failure signature repeated across
+    // bases parks the record for the owner instead of buying another charge.
+    if (
+      rule.nextStep === "work" &&
+      repeatFailureWithheld(
+        repeat,
+        record,
+        true,
+        onDenied,
+        options.onRepeatFailurePark,
+      )
+    ) continue;
     // Durable attempt memory gate: refuse a work-returning grant whose
     // attempt would be equivalent to failures already recorded at this base
     // and runtime revision. A base advance is genuinely changed evidence, so
-    // that path is exempt; a review-returning grant has its own identity
-    // space and is untouched. Refusals are reported, never silent.
+    // that path is exempt, and so is a repeat-failure re-arm (an edited issue
+    // or a changed model route); a review-returning grant has its own
+    // identity space and is untouched. Refusals are reported, never silent.
     if (rule.nextStep === "work") {
       const advancing = baseTip !== null && baseTip !== base;
-      if (!advancing) {
+      if (!advancing && rearm === null) {
         const equivalence = attemptEquivalenceRefusalForRecordV1({
           record,
           snapshot,

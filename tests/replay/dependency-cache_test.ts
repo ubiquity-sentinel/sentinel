@@ -31,7 +31,10 @@ const INPUTS: Record<string, string> = {
 };
 
 async function fixture() {
-  const root = await Deno.makeTempDir({ prefix: "sentinel-dependency-test-" });
+  const root = await Deno.makeTempDir({
+    dir: Deno.cwd(),
+    prefix: "sentinel-dependency-test-",
+  });
   const checkout = `${root}/checkout`;
   for (const [path, text] of Object.entries(INPUTS)) {
     const target = `${checkout}/${path}`;
@@ -73,6 +76,9 @@ async function fixture() {
         };
       },
     },
+  }).catch(async (error) => {
+    await Deno.remove(root, { recursive: true });
+    throw error;
   });
   return { root, checkout, cache };
 }
@@ -112,6 +118,7 @@ Deno.test("trusted dependency cache: scripted public preparation and real isolat
   const { root, checkout, cache } = await fixture();
   const manifestBefore = await Deno.readTextFile(`${cache.root}/manifest.json`);
   try {
+    await Deno.writeTextFile(`${root}/host-only`, "not mounted");
     const isolation = new LinuxReplayIsolation(root, {
       dependencyCache: cache,
     });
@@ -123,6 +130,10 @@ try { await Deno.writeTextFile(${
 catch (error) { result.toolsReadOnly = /[Rr]ead-only file ?system|EROFS/.test(String(error)); }
 await Deno.writeTextFile("/tmp/deno/private-write", "private");
 result.privateCacheWritable = true;
+try { await Deno.readTextFile(${
+      JSON.stringify(`${root}/host-only`)
+    }); result.hostSiblingDenied = false; }
+catch { result.hostSiblingDenied = true; }
 result.hostCredential = Deno.env.get("SENTINEL_CACHE_CANARY") ?? null;
 try { const connection = await Deno.connect({ hostname: "1.1.1.1", port: 80 }); connection.close(); result.networkDenied = false; }
 catch { result.networkDenied = true; }
@@ -155,6 +166,7 @@ console.log(JSON.stringify(result));
     assert.deepEqual(JSON.parse(new TextDecoder().decode(result.stdout)), {
       toolsReadOnly: true,
       privateCacheWritable: true,
+      hostSiblingDenied: true,
       hostCredential: null,
       networkDenied: true,
       pinnedNodeWorks: true,
@@ -209,6 +221,59 @@ Deno.test("trusted dependency cache: source lock runtime platform tamper symlink
     assert.equal(invocations, before);
   }
   try {
+    await test.step("seed root symlink", async () => {
+      const alias = `${root}/seed-alias`;
+      await symlink(cache.root, alias);
+      try {
+        await refuses({ ...cache, root: alias });
+      } finally {
+        await Deno.remove(alias);
+      }
+    });
+    await test.step("run scratch symlink", async () => {
+      const alias = `${root}/scratch-alias`;
+      await symlink(root, alias);
+      try {
+        await refuses({ ...cache, runScratchDir: alias });
+      } finally {
+        await Deno.remove(alias);
+      }
+    });
+    await test.step("preparation requires canonical paths and a real parent", async () => {
+      let downloads = 0;
+      const prepare = (seed: string) =>
+        preparePublicDependencyCache({
+          sourceDir: checkout,
+          sourceSha: SOURCE_SHA,
+          root: seed,
+          entrypoints: ["entry.ts"],
+          runtime: {
+            run: () => {
+              downloads++;
+              throw new Error("unsafe preparation must never run");
+            },
+          },
+        });
+      for (
+        const path of ["relative", "/", `${root}/../seed`, `${root}//seed`]
+      ) {
+        await assert.rejects(prepare(path), /task-owned absolute path/);
+      }
+      const alias = `${root}/parent-alias`;
+      await symlink(checkout, alias);
+      try {
+        await assert.rejects(prepare(`${alias}/seed`), /must not be a symlink/);
+        await assert.rejects(
+          Deno.stat(`${checkout}/seed`),
+          Deno.errors.NotFound,
+        );
+      } finally {
+        await Deno.remove(alias);
+      }
+      await assert.rejects(prepare(cache.root), Deno.errors.AlreadyExists);
+      assert.equal(downloads, 0);
+      assert.equal(await Deno.readTextFile(manifestPath), originalManifest);
+    });
     await test.step("source identity mismatch", () =>
       refuses({ ...cache, sourceSha: "2".repeat(40) }));
     await test.step("lock mismatch", async () => {

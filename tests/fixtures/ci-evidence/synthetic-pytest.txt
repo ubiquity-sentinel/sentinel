@@ -1,0 +1,38 @@
+2026-10-17T10:00:00.0000000Z ﻿Current runner version: '2.337.0'
+2026-10-17T10:00:01.0007919Z ##[group]Runner Image Provisioner
+2026-10-17T10:00:02.0015838Z Hosted Compute Agent
+2026-10-17T10:00:03.0023757Z ##[endgroup]
+2026-10-17T10:00:04.0031676Z ##[group]Run actions/checkout@v4
+2026-10-17T10:00:05.0039595Z with:
+2026-10-17T10:00:06.0047514Z   repository: example/project
+2026-10-17T10:00:07.0055433Z   token: ***
+2026-10-17T10:00:08.0063352Z ##[endgroup]
+2026-10-17T10:00:09.0071271Z Syncing repository: example/project
+2026-10-17T10:00:10.0079190Z [command]/usr/bin/git version
+2026-10-17T10:00:11.0087109Z git version 2.55.0
+2026-10-17T10:00:12.0095028Z ##[group]Run python -m pytest -q
+2026-10-17T10:00:13.0102947Z [36;1mpython -m pytest -q[0m
+2026-10-17T10:00:14.0110866Z shell: /usr/bin/bash -e {0}
+2026-10-17T10:00:15.0118785Z ##[endgroup]
+2026-10-17T10:00:16.0126704Z ============================= test session starts ==============================
+2026-10-17T10:00:17.0134623Z collected 214 items
+2026-10-17T10:00:18.0142542Z 
+2026-10-17T10:00:19.0150461Z tests/test_api.py ............................................................
+2026-10-17T10:00:20.0158380Z tests/test_parser.py ....F.....
+2026-10-17T10:00:21.0166299Z 
+2026-10-17T10:00:22.0174218Z =================================== FAILURES ===================================
+2026-10-17T10:00:23.0182137Z _____________________________ test_parse_header ______________________________
+2026-10-17T10:00:24.0190056Z 
+2026-10-17T10:00:25.0197975Z     def test_parse_header():
+2026-10-17T10:00:26.0205894Z >       assert parse_header(b'\x00\x02') == (0, 2)
+2026-10-17T10:00:27.0213813Z E       AssertionError: assert (0, 3) == (0, 2)
+2026-10-17T10:00:28.0221732Z E         At index 1 diff: 3 != 2
+2026-10-17T10:00:29.0229651Z 
+2026-10-17T10:00:30.0237570Z tests/test_parser.py:57: AssertionError
+2026-10-17T10:00:31.0245489Z =========================== short test summary info ============================
+2026-10-17T10:00:32.0253408Z FAILED tests/test_parser.py::test_parse_header - AssertionError: assert (0, 3) == (0, 2)
+2026-10-17T10:00:33.0261327Z ========================= 1 failed, 213 passed in 4.21s =========================
+2026-10-17T10:00:34.0269246Z ##[error]Process completed with exit code 1.
+2026-10-17T10:00:35.0277165Z Post job cleanup.
+2026-10-17T10:00:36.0285084Z [command]/usr/bin/git version
+2026-10-17T10:00:37.0293003Z git version 2.55.0

@@ -550,7 +550,7 @@ Deno.test("ci re-run: the runtime's unattributed CI block gets the same single r
   assert.deepEqual(reruns, [RUN_ID]);
 });
 
-Deno.test("ci re-run: a timed-out run is re-run, and the pass is bounded", async () => {
+Deno.test("ci re-run: a timed-out run is re-run, and every eligible head is served", async () => {
   const timedOut = fakeSurface({
     runs: [headRun({ conclusion: "timed_out" })],
   });
@@ -558,8 +558,7 @@ Deno.test("ci re-run: a timed-out run is re-run, and the pass is bounded", async
     SENT,
   ]);
   // Five eligible records on five heads, one failed run each: one pass
-  // re-runs at most HOSTED_AUTONOMY_CI_RERUNS_PER_PASS of them; the rest wait
-  // for later passes.
+  // re-runs all of them without an artificial count throttle.
   const heads = [1, 2, 3, 4, 5].map((digit) => String(digit).repeat(40));
   const records = heads.map((head, index) => {
     const issue = 600 + index;
@@ -605,9 +604,9 @@ Deno.test("ci re-run: a timed-out run is re-run, and the pass is bounded", async
       })),
   };
   const actions = await rerunPass(blockedSnapshot(records, reviews), surface);
-  assert.equal(HOSTED_AUTONOMY_CI_RERUNS_PER_PASS, 3);
-  assert.equal(many.reruns.length, HOSTED_AUTONOMY_CI_RERUNS_PER_PASS);
-  assert.equal(actions.length, HOSTED_AUTONOMY_CI_RERUNS_PER_PASS);
+  assert.equal(HOSTED_AUTONOMY_CI_RERUNS_PER_PASS, Number.MAX_SAFE_INTEGER);
+  assert.equal(many.reruns.length, 5);
+  assert.equal(actions.length, 5);
 
   // The first head's failed run is past GitHub's re-run window: GitHub would
   // refuse it on every pass, so it is skipped before it spends the budget and
@@ -625,16 +624,16 @@ Deno.test("ci re-run: a timed-out run is re-run, and the pass is bounded", async
   };
   const snapshot = blockedSnapshot(records, reviews);
   const first = await rerunPass(snapshot, behind);
-  assert.deepEqual(expired.reruns, [501, 502, 503]);
+  assert.deepEqual(expired.reruns, [501, 502, 503, 504]);
   assert.deepEqual(
     first,
-    [1, 2, 3].map((index) =>
+    [1, 2, 3, 4].map((index) =>
       `rerun:${records[index].id}:run=${500 + index}:sent`
     ),
   );
   const second = await rerunPass(snapshot, behind);
   assert.deepEqual(expired.reruns, [501, 502, 503, 504]);
-  assert.deepEqual(second, [`rerun:${records[4].id}:run=504:sent`]);
+  assert.deepEqual(second, [], "every head remains once-only");
 });
 
 Deno.test("ci re-run: run selection is once per exact head", () => {
@@ -805,21 +804,26 @@ Deno.test("ci re-run: a correction waits for the head's once-per-head re-run to 
       ["nothing re-runnable", { runs: [headRun({ conclusion: "cancelled" })] }],
       ["no run on the head", { runs: [] }],
       ["no re-run capability", { capabilities: false }],
-      [
-        "more failed runs than one pass may re-run",
-        {
-          runs: Array.from(
-            { length: HOSTED_AUTONOMY_CI_RERUNS_PER_PASS + 1 },
-            (_, index) => headRun({ id: 900 + index }),
-          ),
-        },
-      ],
     ] as [string, FakeOptions][]
   ) {
     await t.step(`${name} is settled`, async () => {
       assert.deepEqual(await settled(options), new Set([GATEWAY_HEAD]));
     });
   }
+  await t.step(
+    "all failed runs on one head stay eligible for their first rerun",
+    async () => {
+      assert.deepEqual(
+        await settled({
+          runs: Array.from(
+            { length: 5 },
+            (_, index) => headRun({ id: 900 + index }),
+          ),
+        }),
+        new Set(),
+      );
+    },
+  );
   await t.step("a moved base is settled without a listing", async () => {
     const { settled, listings } = await settledFor(
       snapshot,

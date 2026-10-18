@@ -81,17 +81,12 @@ export function conflictResolutionRouteOpen(
 export const CONFLICT_RESOLUTION_REVIEW_ROUNDS = CI_CORRECTION_REVIEW_ROUNDS;
 
 /**
- * Bound on conflict resolutions in flight when a hosted wave grants one. Every
- * cell still unconsumed when a failed generation rolls back is isolated by the
- * rollback target with its admission retained (blocked for the owner, its
- * charge kept), so the planner counts every resolution a rollback could still
- * isolate (`conflictResolutionsInFlight`: earlier waves' cells not yet
- * consumed and receipts `preserveConflictMerge` keeps unconsumed, admitted
- * within `CONFLICT_CELL_EVIDENCE_EXPIRY_MS`) toward the cap before it grants
- * another, and one rollback strands at most this many; a pending resolution
- * past the cap stays pending, uncharged, for a later wave.
+ * Retired four-cell throughput throttle. A never-reached safe integer keeps
+ * the planner's existing numeric diagnostic contract compatible with R80.
+ * GitHub matrix capacity, admission identity, cell retention and execution
+ * deadlines still bound each wave. A rollback keeps every admission charged.
  */
-export const HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE = 4;
+export const HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE = Number.MAX_SAFE_INTEGER;
 
 /**
  * Age of a resolution's admission (its marked implementation intent's

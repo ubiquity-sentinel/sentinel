@@ -7,6 +7,11 @@
  * review exactly as it always did (one charged round, never a model start, a
  * refund or a merge without review). The R79 cases are ignored in a checkout
  * without R79.
+ *
+ * Generation 81 has R80 as its rollback target
+ * (ci-first-rollback-gen80_test.ts) and writes the CI fix marker for a hosted
+ * red head instead of the park; R79 still parses that marker and plans no
+ * model start for it.
  */
 import assert from "node:assert/strict";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
@@ -77,8 +82,10 @@ const SCENARIOS: ScenarioV1[] = [
     name: "hosted red head",
     options: { hosted: true, checks: RED },
     expect: (record) => {
-      assert.equal(record.nextStep, "blocked");
-      assert.match(record.blocker?.message ?? "", /^CI red before review/);
+      // Generation 81 opens the hosted pre-review fix route: the marker.
+      assert.equal(record.nextStep, "work");
+      assert.equal(record.wait?.reason, "backoff");
+      assert.equal(record.wait?.since, record.wait?.until);
     },
   },
   {

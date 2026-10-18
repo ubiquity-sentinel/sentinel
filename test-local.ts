@@ -86,24 +86,11 @@ const steps: { name: string; args: string[] }[] = [
     name: "test",
     args: [
       "test",
-      "--ignore=tests/replay/dependency-cache_test.ts",
       `--allow-read=.,/usr,/bin,${Deno.execPath()}`,
       "--allow-run",
       "--allow-write",
       "--allow-env=PATH,NODE_V8_COVERAGE",
-      // Deno applies the ignore reliably when discovery has one root.
       "tests/",
-    ],
-  },
-  {
-    name: "dependency-cache",
-    args: [
-      "test",
-      `--allow-read=.,/usr,/bin,${Deno.execPath()},/opt/node-lts/bin/node,/tmp`,
-      "--allow-run",
-      "--allow-write=/tmp",
-      "--allow-env=PATH,NODE_V8_COVERAGE",
-      "tests/replay/dependency-cache_test.ts",
     ],
   },
 ];

@@ -69,8 +69,10 @@ Deno.test("spent delivery S8: one merge per pass, then the ordinary already-reco
     // second moved-base merge waits for it.
     const two = await runAt(rig, NOW, MOVED_BASE);
     assert.deepEqual(calls.merges, [1071], JSON.stringify(two.actions));
+    // Merged beside its open request while the release path is disabled:
+    // counted once as a deferred release, with no gate read (JAM B12).
     assert.ok(
-      two.actions.includes(`delivery:${first.id}:release_unavailable`),
+      two.actions.includes("release-deferred:count=1:release_path=disabled"),
       JSON.stringify(two.actions),
     );
     assert.ok(
@@ -94,11 +96,11 @@ Deno.test("spent delivery S8: one merge per pass, then the ordinary already-reco
         four.actions.includes(`delivery:${record.id}:already_recorded`),
         JSON.stringify(four.actions),
       );
-      assert.ok(
-        four.actions.includes(`delivery:${record.id}:release_unavailable`),
-        JSON.stringify(four.actions),
-      );
     }
+    assert.ok(
+      four.actions.includes("release-deferred:count=2:release_path=disabled"),
+      JSON.stringify(four.actions),
+    );
     const after = await readSnapshot(rig);
     assert.equal(after.releaseRequests.length, 2);
     assert.ok(after.work.every((record) => record.nextStep === "delivery"));

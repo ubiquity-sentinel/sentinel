@@ -62,16 +62,27 @@ import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "../src/repair/revie
 import { markBlocked } from "../src/repair/transitions.ts";
 import { runHostedCiRerunPass } from "./hosted-autonomy-ci-rerun.ts";
 import { ciFirstApprovalEligible } from "./hosted-autonomy-ci-first.ts";
+import {
+  acceptanceOwnerGateActions,
+  acceptanceOwnerGated,
+} from "./hosted-autonomy-acceptance.ts";
 
 export async function runHostedDeliveryPass(
   context: HostedAutonomyPassContextV1,
 ): Promise<HostedAutonomyResultV1 | null> {
   const { deps, actions, revisions, scopeFor, readTip, readPull } = context;
   const { snapshot, observedHead } = context;
+  // JAM B6b: a not-fulfilled acceptance no correction can follow is owner
+  // gated. It is named once in the run summary and then neither approved,
+  // read nor delivered (it used to report `spent_not_admissible` per pass).
+  actions.push(
+    ...acceptanceOwnerGateActions(snapshot, context.closedIssues),
+  );
   // A record an earlier write of this pass touched waits for the next pass:
   // it is neither approved nor delivered here (nor re-run, see the module).
   const eligible = (record: (typeof snapshot.work)[number]) =>
     deliveryEligible(record, snapshot) &&
+    !acceptanceOwnerGated(record, snapshot, context.closedIssues) &&
     context.settled?.has(record.id) !== true;
   // ---- check-approval pass ------------------------------------------------
   // A candidate pushed to a pull request by the bot produces a CI run that

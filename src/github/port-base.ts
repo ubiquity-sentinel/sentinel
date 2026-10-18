@@ -7,6 +7,7 @@ import type {
   CandidatePreservationRequestV1,
   Clock,
   GitHubBranchProtectionsV1,
+  GitHubCheckSuitesV1,
   GitHubChecksV1,
   GitHubCooldownGateV1,
   GitHubRefV1,
@@ -141,6 +142,10 @@ export abstract class GitHubPortBase {
 
   readChecks(head: GitSha): Promise<PortResultV1<GitHubChecksV1>> {
     return this.client.readChecks(head);
+  }
+
+  readCheckSuites(head: GitSha): Promise<PortResultV1<GitHubCheckSuitesV1>> {
+    return this.client.readCheckSuites(head);
   }
 
   readProtections(

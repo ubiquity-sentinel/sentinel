@@ -3,6 +3,10 @@ import {
   reviewTaskStatementDigest,
 } from "../src/contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
+import {
+  type CoverageCheckV1,
+  missingExpectedChecks,
+} from "../src/repair/ci-coverage.ts";
 import { isGatewayVpsRepository } from "../src/repair/vps-delivery.ts";
 import { HOSTED_AUTONOMY_REQUIRED_CHECK } from "./hosted-autonomy-policy.ts";
 import { createHostedMismatchDispositionObservations } from "./hosted-autonomy-mismatch-github.ts";
@@ -47,6 +51,34 @@ function runCreatedAt(value: unknown): number | null {
   if (typeof value !== "string" || !RUN_CREATED_AT.test(value)) return null;
   const parsed = Date.parse(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+/**
+ * The base runs of a complete check-run listing with their check suites, for
+ * the coverage rule (`missingExpectedChecks`): a run without a suite expects
+ * nothing; a suite that is present but not a positive safe integer id makes
+ * the listing malformed (null).
+ */
+function suitedChecks(
+  runs: readonly Record<string, unknown>[],
+): CoverageCheckV1[] | null {
+  const checks: CoverageCheckV1[] = [];
+  for (const run of runs) {
+    const name = String(run["name"]);
+    const suite = run["check_suite"];
+    if (suite === undefined || suite === null) {
+      checks.push({ name });
+      continue;
+    }
+    const id = typeof suite === "object"
+      ? (suite as Record<string, unknown>)["id"]
+      : undefined;
+    if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 1) {
+      return null;
+    }
+    checks.push({ name, suite: id });
+  }
+  return checks;
 }
 
 /**
@@ -210,22 +242,34 @@ export function createHostedAutonomyGitHub(
         run["conclusion"] === "success"
       );
     },
-    async hasAllChecksGreen(head: string) {
+    async hasAllChecksGreen(head: string, base?: string) {
       const runs = await readCompleteCheckRuns(head);
-      if (runs === null) return false;
+      // An unreadable, incomplete, drifted or malformed listing is no
+      // evidence either way: unreadable (null), never green and never red.
+      if (runs === null) return null;
       // Only the runs reported on the exact head count, and the listing was
       // already proven complete and bound to this head. Zero runs is not
       // green: a foreign repository's own completed CI is the only
       // deterministic signal it can supply, so a head with no CI at all is
-      // never delivered. Every run on that head must be completed and
-      // successful, which also excludes anything pending, queued or failed —
-      // including a failure that only the last page carries.
-      if (runs.length === 0) return false;
-      return runs.every((run) =>
+      // never delivered, and it is not red either (no CI ran).
+      if (runs.length === 0) return null;
+      // Every run on that head must be completed and successful, which also
+      // excludes anything pending, queued or failed — including a failure
+      // that only the last page carries.
+      const green = runs.every((run) =>
         run["head_sha"] === head &&
         run["status"] === "completed" &&
         run["conclusion"] === "success"
       );
+      if (!green || base === undefined) return green;
+      // The runs that exist are green; a job GitHub creates late (`needs:`)
+      // must exist too, by the base's own check suites (issue #154).
+      const baseRuns = await readCompleteCheckRuns(base);
+      if (baseRuns === null) return null;
+      const expected = suitedChecks(baseRuns);
+      if (expected === null) return null;
+      const reported = runs.map((run) => ({ name: String(run["name"]) }));
+      return missingExpectedChecks(reported, expected).length === 0;
     },
     readPull,
     async listPullsByHeadRef(branch: string) {

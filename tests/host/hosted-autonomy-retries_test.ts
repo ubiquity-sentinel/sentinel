@@ -65,10 +65,10 @@ Deno.test(
 );
 
 Deno.test(
-  "hosted autonomy: the retry budget is closed and non-transient blockers are untouched",
+  "hosted autonomy: reservation history does not throttle retries and non-transient blockers are untouched",
   () => {
-    // The cap's unit is durable reservations (every purpose and outcome,
-    // including one still `reserved`), not the preserved `retries` counter.
+    // Every purpose and outcome remains charged, including reserved rows;
+    // accumulated reservation history is not an admission throttle.
     const capFixture = (count: number) =>
       repairSnapshot(
         [
@@ -88,7 +88,7 @@ Deno.test(
             settledAt: index % 2 === 0 ? null : T0 + 2000,
           })),
       );
-    // One reservation below the cap still permits a grant; the cap is closed.
+    // Both sides of the retired 200-reservation limit permit a grant.
     assert.equal(
       planHostedRetries(
         capFixture(HOSTED_AUTONOMY_MAX_RETRIES - 1),
@@ -104,7 +104,7 @@ Deno.test(
         ATTEMPT_RUNTIME,
       )
         .length,
-      0,
+      1,
     );
 
     const reviewRounds = repairSnapshot([

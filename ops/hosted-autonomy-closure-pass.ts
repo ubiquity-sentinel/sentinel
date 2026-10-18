@@ -35,6 +35,7 @@ import type {
 } from "./hosted-autonomy-types.ts";
 import {
   gatewayClosureIntentBindsRequest,
+  gatewayReleaseDeferred,
   gatewayRequestBindsDelivery,
   isGatewayVpsRepository,
   observeGatewayVpsDelivery,
@@ -143,6 +144,32 @@ function blockGatewayDelivery(
   );
 }
 
+/**
+ * Merged; release deferred while the release path is disabled (JAM B12): a
+ * Gateway delivery with no intent whose one open production request the
+ * release ref does not record. `gatewayClosureGate` could only answer `wait`
+ * for it (`observeGatewayVpsDelivery` finds no VPS release record), so no
+ * source, pull or release read is spent on it. The decision reads only the
+ * repair and release snapshots this pass already holds and never the
+ * record's wait, so it holds for every runtime generation's record shape, and
+ * the full gate runs again on the first pass after the release ref records
+ * the request (accepted, failed or rolled back alike).
+ */
+function gatewayReleaseDeferredIn(
+  context: HostedAutonomyPassContextV1,
+  record: HostedAutonomyRecordV1,
+): boolean {
+  if (
+    !isGatewayVpsRepository(record.repository) ||
+    record.nextStep !== "delivery" || record.intent !== null
+  ) return false;
+  const requests = context.snapshot.releaseRequests.filter((request) =>
+    releaseRequestMatchesDelivery(request, record)
+  );
+  return requests.length === 1 &&
+    gatewayReleaseDeferred(context.releaseSnapshot, requests[0]);
+}
+
 function gatewayIntentClosable(
   context: HostedAutonomyPassContextV1,
   record: HostedAutonomyRecordV1,
@@ -168,6 +195,7 @@ export async function runHostedClosurePass(
   const released = acceptedReleases(context.releaseSnapshot.hostedReleases);
   if (deliveryOnly) {
     let ready = false;
+    let releaseDeferred = 0;
     for (const record of snapshot.work) {
       if (record.nextStep !== "delivery" || settled(record.id)) continue;
       const { pr, head, base } = record.target;
@@ -176,6 +204,10 @@ export async function runHostedClosurePass(
         base === null
       ) continue;
       if (!gatewayIntentClosable(context, record)) continue;
+      if (gatewayReleaseDeferredIn(context, record)) {
+        releaseDeferred++;
+        continue;
+      }
       const scope = await scopeFor(record.repository);
       if (
         authorizingReceipt(
@@ -212,6 +244,18 @@ export async function runHostedClosurePass(
       revisions.push(evidence.revision);
       ready = true;
     }
+    // One counted, owner-visible line per pass instead of one
+    // `release_unavailable` line per merged record: `disabled` while the
+    // release ref holds no VPS release record at all, `queued` once the
+    // enabled release controller has records but not yet these requests.
+    if (releaseDeferred > 0) {
+      const path = (context.releaseSnapshot.vpsReleases ?? []).length === 0
+        ? "disabled"
+        : "queued";
+      actions.push(
+        `release-deferred:count=${releaseDeferred}:release_path=${path}`,
+      );
+    }
     // An open pull still needs the ordinary delivery pass before retirement;
     // only already-proven delivery bookkeeping may preempt unrelated retries.
     if (!ready) return null;
@@ -233,6 +277,9 @@ export async function runHostedClosurePass(
     }
     const pullRequest = record.target.pr;
     if (pullRequest === null) continue;
+    // Its release request was recorded only once its pull request merged, so
+    // a deferred release is never closed unmerged: nothing to read.
+    if (gatewayReleaseDeferredIn(context, record)) continue;
     const scope = await scopeFor(record.repository);
     const pull = await readPull(scope, pullRequest);
     if (pull === null) continue;
@@ -244,7 +291,7 @@ export async function runHostedClosurePass(
     snapshot,
     closedIssues,
     closedUnmerged,
-  ).filter((plan) => !settled(plan.id)).slice(0, 5);
+  ).filter((plan) => !settled(plan.id));
   let retirementResult: HostedAutonomyResultV1 | null = null;
   if (retirements.length > 0) {
     const now = deps.clock.now();
@@ -332,6 +379,8 @@ export async function runHostedClosurePass(
     ) {
       continue;
     }
+    // Counted once by the delivery-only pass; nothing is read for it here.
+    if (gatewayReleaseDeferredIn(context, record)) continue;
     const key = hostedDeliveryKey(record.repository, pullRequest, head, base);
     if (foreignMerged.has(key)) continue;
     const scope = await scopeFor(record.repository);
@@ -446,7 +495,7 @@ export async function runHostedClosurePass(
       closureSnapshot.work.some((record) =>
         record.id === plan.id && record.nextStep === "delivery"
       ),
-  ).slice(0, 5);
+  );
   if (closures.length > 0) {
     for (const plan of closures) {
       const record = closureSnapshot.work.find((item) =>

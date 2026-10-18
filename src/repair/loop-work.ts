@@ -1,7 +1,10 @@
 /** Repair loop internals: work. */
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
-import { ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT } from "./attempt-policy.ts";
+import {
+  ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT,
+  implementationPortFailureDetail,
+} from "./attempt-policy.ts";
 import { candidateBranch } from "./keys.ts";
 import {
   ensureBaseRefreshIntent,
@@ -287,7 +290,10 @@ export async function executeImplementationStep(
       context,
       prepared.record,
       prepared.reservationId,
-      ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT,
+      implementationPortFailureDetail(
+        receipt.error,
+        ATTEMPT_DETAIL_NO_TRUSTED_RECEIPT,
+      ),
     );
   }
   return handleModelReceipt(

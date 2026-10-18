@@ -9,8 +9,11 @@
  * (`loop-carried-delivery.ts`, which decides that and parks every other spent
  * record).
  *
- * The line writes nothing, so it adds no state shape: generation 79, the
- * rollback target, refreshes every such record at once exactly as before.
+ * The line is ordered by delivery readiness, then pull request number: a
+ * spent record is held only by a contender landing on the tip or a
+ * deliverable one ahead of it (`delivery-queue.ts`). The line writes nothing,
+ * so it adds no state shape: generation 80, the rollback target, holds every
+ * other record behind a refresh this line admitted, as it does its own.
  */
 import type { GitSha } from "../contracts/brands.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";

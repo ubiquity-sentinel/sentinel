@@ -26,6 +26,38 @@ export const FOCUSED_TESTS_ALLOWED =
   " Focused repository tests and the necessary source context they need " +
   "remain allowed.";
 
+/**
+ * Max characters of the CI failure evidence section a CI correction may add
+ * after the bounded context (generation 81): the fenced content is at most
+ * `MAX_CI_EVIDENCE_CHARS` (32 KiB, about 8-10K tokens) and the trusted
+ * header, per-check summary and markers stay under 2 KiB, so the whole prompt
+ * stays under 68,000 characters. Codex echoes the turn input in its events
+ * (about twice this against a 4,000,000-character output allowance).
+ */
+export const MAX_CI_EVIDENCE_PROMPT_CHARS = 36_000;
+
+/**
+ * Nonlocal-only CI self-check (generation 81): learn the exact gate commands
+ * from the repository's CI and run the fast ones that apply before
+ * finishing. The model sandbox has no network and no installed dependencies,
+ * so only what works offline in the checkout can run; the trusted host never
+ * runs the repository's toolchain for it (that would execute candidate code
+ * in a credentialed process).
+ */
+export const CI_SELF_CHECK_INSTRUCTION =
+  " Before editing, read the repository's CI workflow files (for example " +
+  "under .github/workflows) to learn the exact check commands. Before " +
+  "finishing, run the fast checks that apply to the files you changed " +
+  "(format, lint, typecheck and focused tests) when they work offline in " +
+  "this checkout, within your time allowance, and fix what they " +
+  "report; there is no network, so do not try to install dependencies.";
+
+/** Added when the trusted host attached CI failure evidence to a correction. */
+export const CI_EVIDENCE_FIX_INSTRUCTION =
+  " For this CI correction, fix the root cause of the earliest failing gate " +
+  "first (as the CI failure evidence shows it when available), then re-run " +
+  "that gate's command where it works offline.";
+
 // Private finite bounds for the observation pipeline (no new config surface).
 export const MAX_ITEM_ID_CHARS = 256;
 export const MAX_COMMAND_CHARS = 4096;

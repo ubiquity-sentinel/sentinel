@@ -75,7 +75,7 @@ Deno.test("test:local failure path removes its temp home before exiting", async 
   }
 });
 
-Deno.test("test:local multi-root discovery keeps dependency cache in its isolated step", async () => {
+Deno.test("test:local discovers dependency cache with canonical permissions and no host temp access", async () => {
   const disposable = await Deno.makeTempDir({
     prefix: "sentinel-harness-failure-discovery-",
     dir: rootDir,
@@ -106,19 +106,19 @@ Deno.test("test:local multi-root discovery keeps dependency cache in its isolate
     );
     await Deno.writeTextFile(
       `${disposable}/tests/replay/dependency-cache_test.ts`,
-      `Deno.test("isolated cache permission boundary", async () => {
+      `Deno.test("cache permission boundary", async () => {
   const temp = await Deno.permissions.query({ name: "read", path: "/tmp" });
   const workspace = await Deno.permissions.query({ name: "write", path: "." });
   const network = await Deno.permissions.query({ name: "net" });
   const credential = await Deno.permissions.query({ name: "env", variable: "GITHUB_TOKEN" });
-  if (temp.state !== "granted") throw new Error("cache entered main step");
-  if (workspace.state === "granted" || network.state === "granted" || credential.state === "granted") {
-    throw new Error("isolated cache boundary widened");
+  if (temp.state === "granted") throw new Error("cache gained host temp access");
+  if (workspace.state !== "granted" || network.state === "granted" || credential.state === "granted") {
+    throw new Error("cache canonical boundary changed");
   }
 });\n`,
     );
-    // Skip unrelated toolchain checks, but execute both actual test commands.
-    // Recording argv also proves the isolated step keeps its narrow grants.
+    // Skip unrelated toolchain checks, but execute the actual test command.
+    // Recording argv proves every case shares the canonical grants.
     const commandsPath = `${disposable}/commands.jsonl`;
     const shimPath = `${disposable}/shim.ts`;
     await Deno.writeTextFile(
@@ -167,25 +167,21 @@ exec ${shellQuote(Deno.execPath())} run --no-config --allow-write=${
     assert.equal(result.code, 0, output);
     const commands: string[][] = (await Deno.readTextFile(commandsPath)).trim()
       .split("\n").map((line) => JSON.parse(line));
-    assert.equal(commands.length, 2, output);
-    assert.equal(
-      commands[0].find((arg) => arg.startsWith("--allow-read=")),
-      `--allow-read=.,/usr,/bin,${Deno.execPath()}`,
-    );
-    assert.deepEqual(commands[1], [
+    assert.equal(commands.length, 1, output);
+    assert.deepEqual(commands[0], [
       "test",
-      `--allow-read=.,/usr,/bin,${Deno.execPath()},/opt/node-lts/bin/node,/tmp`,
+      `--allow-read=.,/usr,/bin,${Deno.execPath()}`,
       "--allow-run",
-      "--allow-write=/tmp",
+      "--allow-write",
       "--allow-env=PATH,NODE_V8_COVERAGE",
-      "tests/replay/dependency-cache_test.ts",
+      "tests/",
     ]);
     assert.equal(
       (output.match(/main permission boundary \.\.\./g) ?? []).length,
       1,
     );
     assert.equal(
-      (output.match(/isolated cache permission boundary \.\.\./g) ?? []).length,
+      (output.match(/cache permission boundary \.\.\./g) ?? []).length,
       1,
     );
   } finally {

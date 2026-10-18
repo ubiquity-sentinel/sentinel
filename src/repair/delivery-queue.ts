@@ -13,24 +13,53 @@
  * since 2026-10-16T00:00Z needed four or more reviewed heads, every one of
  * them clean, each new head a refresh after a base move.
  *
- * The queue serialises those refreshes. A reviewed delivery record whose
- * base moved (with a review round left, or spent with a clean latest review,
- * which refreshes mechanically and carries that review,
- * `loop-carried-delivery.ts`) refreshes only when no other reviewed record of
- * its repository (an issue task with a published pull request and at least
- * one review round spent, not yet merged) is
- * - in flight on the current tip: published there and waiting for its CI or
- *   in a correction at `work` with a round left for its review, a refreshed
- *   head at `work` heading for its carried merge, in review, or reviewed and
- *   waiting to merge in `delivery`;
- * - refreshing (a `base_refresh` intent); or
- * - ahead of it in line: on a moved base too, with a round left or a clean
- *   latest review, and a lower pull request number (then record id).
- * Otherwise the step defers: nothing is written, charged, refreshed, pushed or
- * requested, and the next run asks again. Only the record at the front of the
- * line refreshes, CI runs on its new head before its review, and it merges
- * before the next one refreshes, so a base move caused by the queue's own
- * merges never costs a waiting record a round.
+ * The queue serialises those refreshes, by delivery readiness and then pull
+ * request number (JAM J3, live 2026-10-17/18: ordered by number alone, red
+ * heads awaiting a CI fix and CI-fixed heads on the tip awaiting their CI
+ * held the line for hours ahead of 698 and 879, green, reviewed and spent).
+ * Each reviewed, published, unmerged issue task of the repository with at
+ * least one review round spent (a contender) stands in one of five places
+ * (`lineStanding`):
+ * - `landing`: it moves the tip next with no further review: a carried
+ *   refresh in flight (no round left), reviewed on the tip and waiting to
+ *   merge in `delivery`, or a carried refreshed head on the tip heading for
+ *   the launcher's carried merge;
+ * - `ready`: deliverable now on a moved base: no round left, its latest
+ *   review clean, its next step the one mechanical refresh (its reviewed head
+ *   in `delivery` with no CI wait, which the step that reads it green
+ *   clears once, or a carried refreshed head whose base moved again);
+ * - `re_review`: heading for a review round on the tip: a refresh in flight
+ *   with a round left, a head published on the tip and waiting for its CI or
+ *   its review at `work`, or a review in flight there;
+ * - `reviewed`: reviewed, a round left, in `delivery` on a moved base: its
+ *   refreshed head needs a review round of its own;
+ * - `waiting`: not deliverable now: a reviewed head returned to `work` for
+ *   its CI fix or correction, a reviewed head whose CI is still pending, a
+ *   head waiting for its CI or its review on a moved base (its own review
+ *   request refreshes it first), or a spent record without a clean review
+ *   (it parks instead).
+ *
+ * A record with no round left asking to refresh (deliverable now: its caller
+ * read its reviewed head's CI green and its latest review authorizing it, or
+ * it is a carried refreshed head) waits only while a contender is `landing`
+ * or a `ready` one is ahead of it (lower pull request number, then record
+ * id). Nothing that still needs a review, a CI fix or its CI ever holds it,
+ * so it takes the line as soon as it is deliverable. A record with a round
+ * left (its refreshed head will be reviewed) also waits behind every `ready`
+ * contender, whatever its number (a deliverable head never waits for a
+ * review), behind a `re_review` (a refreshed head racing it for the tip
+ * would cost one of them a round) and behind a `reviewed` one ahead of it;
+ * a `waiting` contender holds nobody. Otherwise the step defers: nothing is
+ * written, charged, refreshed, pushed or requested, and the next run asks
+ * again. Only one record lands at a time, CI runs on its new head before its
+ * review or its carried merge, and it merges before the next one refreshes,
+ * so the launcher's one merge per pass moves the base once and a base move
+ * caused by the queue's own merges never costs a waiting record a round.
+ *
+ * No contender starves: a deliverable record waits only for one landing
+ * (bounded by the stall and idle rules below, the carried waits' six hours
+ * and the launcher's merge) and for the deliverable records ahead of it,
+ * finitely many, each of which lands (or parks) in its turn.
  *
  * A stuck contender holds nobody, so it never blocks the line: one that made
  * no durable progress in its last `DELIVERY_QUEUE_STALL_LIMIT` executions
@@ -42,8 +71,10 @@
  * every poll and stays far inside both.
  *
  * Pure policy over the authenticated snapshot and the freshly observed tip.
- * It persists nothing, so it adds no state shape: generation 79, the rollback
- * target, refreshes every such record at once exactly as before.
+ * It persists nothing, so it adds no state shape, blocker, wait or line: under
+ * generation 80, the rollback target, a refresh this line admitted is a
+ * `landing` contender too (a base-refresh intent, or a carried refreshed head
+ * on the tip), and that runtime's line holds every other record behind it.
  */
 import type { GitSha } from "../contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
@@ -52,7 +83,7 @@ import {
   releaseRequestMatchesDelivery,
   sameRepositoryIdentity,
 } from "./loop-records.ts";
-import { carriedLine } from "./carried-review.ts";
+import { carriedLine, latestPullReview } from "./carried-review.ts";
 import {
   type LegacyCutoff,
   reviewRoundsLeft,
@@ -120,10 +151,69 @@ export function lineBefore(
   return left !== right ? left < right : a.id < b.id;
 }
 
+/** Where a contender stands in its repository's line (see the module). */
+export type DeliveryLineStandingV1 =
+  | "landing"
+  | "ready"
+  | "re_review"
+  | "reviewed"
+  | "waiting";
+
+/**
+ * Where `other` (a contender, `holdsDeliveryLine`) stands against `tip`
+ * under the run's legacy `cutoff` (pure; see the module).
+ */
+export function lineStanding(
+  snapshot: QueueSnapshot,
+  other: WorkRecordV1,
+  tip: GitSha,
+  cutoff?: LegacyCutoff,
+): DeliveryLineStandingV1 {
+  const spent = reviewRoundsLeft(snapshot, other, cutoff) === 0;
+  // The latest completed pull request review (any head) is clean, and
+  // whether it judged the current head (a reviewed head) or an earlier one
+  // (a refreshed or corrected head).
+  const clean = carriedLine(snapshot, other);
+  const ownReview =
+    latestPullReview(snapshot, other)?.pullRequest.head === other.target.head;
+  if (other.intent?.kind === "base_refresh") {
+    return spent ? "landing" : "re_review";
+  }
+  if (other.target.base === tip) {
+    if (other.nextStep === "delivery") return "landing";
+    if (other.nextStep === "review") return "re_review";
+    // At `work`: a refreshed head heading for its carried merge or for its
+    // next review; a reviewed head here awaits its CI fix or correction.
+    if (ownReview) return "waiting";
+    if (spent) return clean ? "landing" : "waiting";
+    return "re_review";
+  }
+  if (!spent) return other.nextStep === "delivery" ? "reviewed" : "waiting";
+  if (!clean) return "waiting";
+  // Its reviewed head's CI still pending is not deliverable now (the step
+  // that reads it green clears the wait before it defers).
+  if (other.nextStep === "delivery") {
+    return ownReview && other.wait?.reason !== "ci_pending"
+      ? "ready"
+      : "waiting";
+  }
+  return other.nextStep === "work" && !ownReview ? "ready" : "waiting";
+}
+
+/** Precedence of the contenders that hold a record, for the deferral. */
+const HOLD_ORDER: readonly DeliveryLineStandingV1[] = [
+  "landing",
+  "ready",
+  "re_review",
+  "reviewed",
+];
+
 /**
  * The record that must go first before `record` (a reviewed delivery record
- * with a review round left whose base moved to `tip`) may refresh at `now`,
- * or null when it is at the front of its repository's line.
+ * whose base moved to `tip`: deliverable now with no round left, or with a
+ * round left for its refreshed head's review) may refresh at `now`, or null
+ * when it is at the front of its repository's line. Of several, the one
+ * nearest to landing, then first in line.
  */
 export function deliveryQueueAhead(
   snapshot: QueueSnapshot,
@@ -133,27 +223,26 @@ export function deliveryQueueAhead(
   /** The legacy review cutoff of the run (`review-round-cap.ts`). */
   cutoff?: LegacyCutoff,
 ): WorkRecordV1 | null {
+  const deliverable = reviewRoundsLeft(snapshot, record, cutoff) === 0;
+  let ahead: { other: WorkRecordV1; rank: number } | null = null;
   for (const other of snapshot.work) {
     if (
       other.id === record.id ||
       !sameRepositoryIdentity(other.repository, record.repository) ||
       !contender(snapshot, other, now)
     ) continue;
-    const left = reviewRoundsLeft(snapshot, other, cutoff);
-    // A spent record whose latest review is clean refreshes and merges under
-    // the carried review instead of parking.
-    const carried = left === 0 && carriedLine(snapshot, other);
-    if (other.target.base === tip) {
-      // In review or reviewed and waiting to merge on the tip, or published
-      // there at `work` with a round left for the review it is heading to (or
-      // a refreshed head heading for its carried merge).
-      if (other.nextStep !== "work" || left > 0 || carried) return other;
-      continue;
-    }
-    if (other.intent?.kind === "base_refresh") return other;
-    // A record with no round left and no clean review parks instead.
-    if (left === 0 && !carried) continue;
-    if (lineBefore(other, record)) return other;
+    const standing = lineStanding(snapshot, other, tip, cutoff);
+    const holds = standing === "landing" ||
+      (standing === "ready" && (!deliverable || lineBefore(other, record))) ||
+      (!deliverable &&
+        (standing === "re_review" ||
+          (standing === "reviewed" && lineBefore(other, record))));
+    if (!holds) continue;
+    const rank = HOLD_ORDER.indexOf(standing);
+    if (
+      ahead === null || rank < ahead.rank ||
+      (rank === ahead.rank && lineBefore(other, ahead.other))
+    ) ahead = { other, rank };
   }
-  return null;
+  return ahead?.other ?? null;
 }
