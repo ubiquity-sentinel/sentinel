@@ -1,3 +1,4 @@
+import { hostedRuntimeBootstrapDisposition } from "./hosted-runtime-bootstrap.ts";
 /** Hosted actions-supervisor-controller responsibility. */
 import { canonicalStringify } from "../contracts/canonical.ts";
 import { HOSTED_RUNTIME_ID } from "../contracts/hosted-supervisor.ts";
@@ -308,6 +309,29 @@ export async function runHostedSupervisorPrepare(
       }
       if (planned !== null) return planned;
       return idle(STATIC_IDLE_WAITING);
+    }
+
+    // The source-pinned newly installed runtime must establish its own health
+    // before an unrelated request can preempt its model-disabled bootstrap.
+    const bootstrap = hostedRuntimeBootstrapDisposition(
+      runtime,
+      input.queueRuntimeCapability,
+      input.existingPrRuntimeCapability,
+      input.runtimeRollout,
+    );
+    if (bootstrap === "hold") {
+      return pending("future runtime own-health is unavailable");
+    }
+    if (bootstrap === "bootstrap") {
+      return await startExecution(
+        input,
+        cursor,
+        runtime,
+        releases,
+        "bootstrap",
+        runtime.activeRevision,
+        null,
+      );
     }
 
     const selected = await selectSourceRequest(input, releases, runtime);

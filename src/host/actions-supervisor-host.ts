@@ -236,6 +236,8 @@ export async function runHostedSupervisorHost(
   if (writeOutput === undefined) throw new Error(STATIC_OUTPUT);
   if (outcome.status !== "run") {
     await writeOutput("run", "false");
+    await writeOutput("executionPurpose", "");
+    await writeOutput("generation", "");
     return {
       job,
       status: outcome.status,
@@ -248,6 +250,8 @@ export async function runHostedSupervisorHost(
   if (!isGitSha(outcome.execution.revision)) throw new Error(STATIC_RESULT);
   await writeOutput("run", "true");
   await writeOutput("revision", outcome.execution.revision);
+  await writeOutput("executionPurpose", outcome.execution.purpose);
+  await writeOutput("generation", String(outcome.execution.generation));
   // Only ordinary work with the exact current healthy pointer may fan out.
   // Verification retains the installed runtime's existing repair entrypoint.
   let modelStartsEnabled = false;
