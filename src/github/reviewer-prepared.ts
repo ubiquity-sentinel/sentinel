@@ -1,10 +1,8 @@
 // reviewer prepared.
 
 import { portError, type PortResultV1 } from "../contracts/ports.ts";
-import {
-  REVIEW_REASONING,
-  REVIEW_RESULT_OUTPUT_SCHEMA,
-} from "./review-journal.ts";
+import { REVIEW_REASONING } from "./review-journal.ts";
+import { reviewResultOutputSchema } from "./review-result-contracts.ts";
 import { PreparedReviewOutcome } from "./reviewer-outcome.ts";
 import type {
   PreparedStructuredReviewV1,
@@ -85,7 +83,7 @@ export class PreparedStructuredReview extends PreparedReviewOutcome
       model: this.model,
       effort: REVIEW_REASONING,
       input: [{ type: "text", text: this.prompt, text_elements: [] }],
-      outputSchema: REVIEW_RESULT_OUTPUT_SCHEMA,
+      outputSchema: reviewResultOutputSchema(this.task),
       approvalPolicy: "never",
     };
     // The acknowledged named profile is carried into the single turn: the

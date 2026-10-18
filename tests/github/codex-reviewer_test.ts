@@ -170,6 +170,82 @@ Deno.test(
 );
 
 Deno.test(
+  "reviewer: task identities are constrained per request without cross-task schema mutation",
+  async () => {
+    const snapshot = await snapshotFixture();
+    const schemas: {
+      properties: {
+        taskAcceptance: {
+          properties: {
+            issueNumber: { enum?: number[] };
+            taskDigest: { enum?: string[] };
+          };
+        };
+      };
+    }[] = [];
+    const tasks = [];
+    for (const issueNumber of [263, 264]) {
+      const text = {
+        issueNumber,
+        title: `Review task ${issueNumber}`,
+        body: "Verify the exact candidate against this source task.",
+      };
+      const task = { ...text, digest: await reviewTaskStatementDigest(text) };
+      tasks.push(task);
+      const session = new ScriptedCodexSession();
+      let now = Date.now();
+      session.live = (scripted) => {
+        now += 1;
+        scripted.emit(
+          "item/started",
+          agentMessage(scripted.turnId, "item-1", ""),
+        );
+        scripted.emit(
+          "item/completed",
+          agentMessage(
+            scripted.turnId,
+            "item-1",
+            JSON.stringify({
+              ...CLEAN_RESULT,
+              taskAcceptance: {
+                issueNumber: task.issueNumber,
+                taskDigest: task.digest,
+                verdict: "fulfilled",
+                evidence: ["The exact candidate implements this task."],
+              },
+            }),
+          ),
+        );
+        scripted.emit("turn/completed", turnCompleted(scripted.turnId));
+      };
+      const reviewer = makeReviewer(session, { now: () => now });
+      const prepared = await reviewer.prepare(
+        prepareRequest(snapshot, { task }),
+      );
+      if (!prepared.ok) assert.fail(prepared.error.detail);
+      try {
+        const outcome = await prepared.value.start();
+        if (!outcome.ok) assert.fail(outcome.error.detail);
+        assert.equal(outcome.value.status, "clean");
+        assertStrictSubmittedSchema(session);
+        const params = session.params[session.sent.indexOf("turn/start")] as {
+          outputSchema: typeof schemas[number];
+        };
+        schemas.push(params.outputSchema);
+      } finally {
+        await prepared.value.close();
+      }
+    }
+    for (const [index, schema] of schemas.entries()) {
+      const identity = schema.properties.taskAcceptance.properties;
+      assert.deepEqual(identity.issueNumber.enum, [tasks[index].issueNumber]);
+      assert.deepEqual(identity.taskDigest.enum, [tasks[index].digest]);
+    }
+    assert.notEqual(schemas[0], schemas[1], "each task owns its schema");
+  },
+);
+
+Deno.test(
   "reviewer: a supplied task statement requires the exact bound acceptance",
   async () => {
     const task = {
