@@ -94,6 +94,13 @@ import {
   APP_TOKEN_NOT_AFTER_ENV,
   parseAppTokenNotAfterV1,
 } from "./hosted-app-token-window.ts";
+import { HOSTED_APP_MINT_GRANT_ENV } from "./hosted-app-grant.ts";
+import {
+  composeHostedAppGitHub,
+  createHostedAppPrincipalContext,
+  type HostedAppGitHubInput,
+} from "./hosted-app-principal.ts";
+import { readHostedSelfDependencyPreparer } from "./hosted-self-dependencies.ts";
 import {
   ensureRepairStateSeed,
   optionalEnv,
@@ -347,6 +354,30 @@ export async function runActionsRepairHost(
 
   const tracker = new LocalSessionTracker();
   const http = deps.http ?? fetchHttpTransport();
+  // The private context binds the actual App token to clean protected source,
+  // native job facts and the already verified saved execution. Metadata alone
+  // never grants takeover authority; cells cannot request this capability.
+  const takeoverContext = identity.job !== "matrix_cell" &&
+      appToken !== undefined
+    ? await createHostedAppPrincipalContext({
+      source: {
+        launcherDir: joinPath(sourceDir, "..", "launcher"),
+        runtimeDir: sourceDir,
+        identity,
+        execution,
+        process: new DenoReplayRuntime(denoExecutable),
+      },
+      state,
+      clock,
+      gate,
+      http,
+      nativeToken: githubToken,
+      appToken,
+      mintGrant: readEnv(HOSTED_APP_MINT_GRANT_ENV),
+      appTokenNotAfter: readEnv(APP_TOKEN_NOT_AFTER_ENV),
+      deadline,
+    }, deps.hostedAppSourceProfiles)
+    : null;
   const gitExecutable = await resolveExecutable("git", trustedPath);
 
   // The committed target setting is the ONLY source of target repositories.
@@ -456,15 +487,9 @@ export async function runActionsRepairHost(
   // handed to every target cycle unchanged; it is never recomputed.
   // The port is composed per target: the REST client, review service, trusted
   // git remote and cooldown scope all address exactly that repository.
-  const composeProductionGithub = (config: RepositoryConfigV1): GitHubPort =>
-    scopeLocalRepairIssues(composeLocalGitHub({
+  const composeProductionGithub = (config: RepositoryConfigV1): GitHubPort => {
+    const common: HostedAppGitHubInput = {
       queueMode,
-      clock,
-      state,
-      gate,
-      http,
-      token: writeToken,
-      login,
       invocationId: nativeReviewOwner ? execution.id : crypto.randomUUID(),
       ...(nativeReviewOwner
         ? { ownerExecution: execution, ownerCustody: custodyFor() }
@@ -491,12 +516,35 @@ export async function runActionsRepairHost(
       reviewModelId,
       repository: config.repository,
       baseBranch: config.baseBranch,
-    }));
-  const composeTargetGithub = (config: RepositoryConfigV1): GitHubPort => {
-    const production = composeProductionGithub(config);
+    };
     return scopeLocalRepairIssues(
+      takeoverContext === null
+        ? composeLocalGitHub({
+          ...common,
+          clock,
+          state,
+          gate,
+          http,
+          token: writeToken,
+          login,
+        })
+        : composeHostedAppGitHub(takeoverContext, common),
+    );
+  };
+  const targetPorts = new Map<string, GitHubPort>();
+  const composeTargetGithub = (config: RepositoryConfigV1): GitHubPort => {
+    const key = canonicalStringify({
+      repository: config.repository,
+      baseBranch: config.baseBranch,
+    });
+    const cached = targetPorts.get(key);
+    if (cached !== undefined) return cached;
+    const production = composeProductionGithub(config);
+    const port = scopeLocalRepairIssues(
       deps.composeGithub?.(config, production) ?? production,
     );
+    targetPorts.set(key, port);
+    return port;
   };
   const model = deps.model ?? new LocalCheckoutModelPort({
     stateRoot,
@@ -512,6 +560,12 @@ export async function runActionsRepairHost(
     modelId: modelRoute.model,
     failoverModelId: modelRoute.failoverModel,
     localIteration: false,
+    prepareCheckoutDependencies: await readHostedSelfDependencyPreparer({
+      runtimeDir: sourceDir,
+      launcherSha: identity.launcherSha,
+      executionLauncherSha: execution.launcherSha,
+      trustedPath,
+    }),
     // Both capabilities resolve from the REQUESTED repository, not from the
     // sentinel self-identity: the checkout and the candidate import must use
     // the target's own mirror, and candidate restoration must read the

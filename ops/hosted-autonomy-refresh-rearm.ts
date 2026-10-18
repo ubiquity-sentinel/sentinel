@@ -44,6 +44,7 @@
  * pull request is closed, no branch deleted, nothing pushed or charged.
  */
 import type { GitSha } from "../src/contracts/brands.ts";
+import { HOSTED_RUNTIME_ROLLOUT } from "../src/host/hosted-runtime-rollout.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import { HOSTED_RUNTIME_ID } from "../src/contracts/hosted-supervisor.ts";
 import type {
@@ -95,6 +96,7 @@ import type {
  */
 export const HOSTED_AUTONOMY_REFRESH_REARM_RUNTIMES:
   readonly HostedRefreshRearmRuntimeV1[] = [
+    ...HOSTED_RUNTIME_ROLLOUT.refreshRearm,
     // Generation 77 (the review-snapshot base-edge bound, a2a0d537e), pinned
     // by its launcher commit at 1792139532000.
     {

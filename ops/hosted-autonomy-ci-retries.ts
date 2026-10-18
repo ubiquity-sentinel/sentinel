@@ -25,6 +25,7 @@
  * runtime's own unattributed block alike.
  */
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import { HOSTED_RUNTIME_ROLLOUT } from "../src/host/hosted-runtime-rollout.ts";
 import type { HostedRuntimeRecordV1 } from "../src/contracts/hosted-supervisor.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { ciCorrectable } from "../src/repair/ci-rejection.ts";
@@ -53,6 +54,7 @@ export const HOSTED_AUTONOMY_CI_CORRECTION_MIN_GENERATION = 78;
  */
 export const HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES: ReadonlySet<string> =
   new Set<string>([
+    ...HOSTED_RUNTIME_ROLLOUT.ciCorrection,
     // Generation 78 (R78), pinned by its launcher commit.
     "474f87eb639f97cd72b9bc4b9e56101488f841aa",
     // Generation 79 (R79), pinned by its launcher commit.

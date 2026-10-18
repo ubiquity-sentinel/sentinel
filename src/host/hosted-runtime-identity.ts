@@ -61,6 +61,7 @@ export const HOSTED_RUNTIME_CHILD_ENV_KEYS = [
   // Repair only, beside the App token: the instant before which that one
   // token is certainly valid (`hosted-app-token-window.ts`).
   "SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER",
+  "SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT",
   "SENTINEL_MODEL_BASE_URL",
   "SENTINEL_MODEL_ID",
   "SENTINEL_MODEL_FALLBACK",
@@ -259,6 +260,12 @@ export interface HostedRuntimeLauncherInputV1 {
   denoExecutable: string;
   /** The one process border: bounded Git identity reads and the child run. */
   process: ReplayRuntimeV1;
+  /** Trusted in-process fixture only; production uses native HTTP and source pins. */
+  principalHandoffFixture?: {
+    readonly http: import("../github/http.ts").HttpTransportV1;
+    readonly sourceProfiles:
+      readonly import("./hosted-app-principal-source.ts").HostedAppSourceProfile[];
+  };
   /**
    * Optional advisory sink for reconstructed child diagnostics. Each summary
    * is delivered as soon as its complete stdout line is retained, before the
