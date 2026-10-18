@@ -136,6 +136,8 @@ export interface JobStepWireV1 {
   name: string;
   status: string;
   conclusion: string | null;
+  startedAt: number | null;
+  completedAt: number | null;
 }
 
 export interface JobWireV1 {
@@ -174,6 +176,8 @@ export function parseJobWire(body: unknown): JobWireV1 {
         name: text(step.name),
         status: text(step.status),
         conclusion: nullableText(step.conclusion),
+        startedAt: instant(step.started_at),
+        completedAt: instant(step.completed_at),
       };
     }),
   };

@@ -9,10 +9,11 @@
  * one), the `STEP_EDGE_CHARS` characters after the step's first strong
  * marker, the last `STEP_EDGE_CHARS` characters for the tail, and the marker
  * positions. A step boundary is a `##[group]Run ...` line or `Post job
- * cleanup.`. A step with a `##[error]` line is a final (failing) step; at
- * most three are kept (the first two and the latest). A log with no
- * `##[error]` falls back to its last three steps before cleanup, so an
- * unrecognized failure is not lost to a later always-run action.
+ * cleanup.`. At most three failed steps are kept: the same-head job API's
+ * failed-step time windows outrank `##[error]` groups. A window stays one
+ * step despite nested groups; later always-run actions cannot evict it.
+ * Without usable timing, the first two and latest error groups are kept;
+ * without error markers, the last three steps remain a best-effort fallback.
  *
  * Selection fits each step into a character share. A step that fits is kept
  * whole. Otherwise the header and the tail always; then windows around the
@@ -125,7 +126,7 @@ export interface CiRetainedStepV1 {
 }
 
 export interface CiScannedLogV1 {
-  /** Failing steps (with `##[error]`), or the last three as a fallback. */
+  /** Marker/API-selected failed steps, or the last three as a fallback. */
   steps: CiRetainedStepV1[];
   runnerLost: boolean;
   totalLines: number;
@@ -307,16 +308,33 @@ class StepState {
   }
 }
 
+/** In-memory same-head job metadata; not a persisted evidence contract. */
+export interface CiFailedStepWindowV1 {
+  name: string;
+  startedAt: number;
+  completedAt: number;
+}
+
 /** Streaming scanner of one job log (bytes of any chunking, or text). */
 export class CiLogScanner {
   private readonly decoder = new TextDecoder("utf-8");
   private partial = "";
   private dropPartial = false;
   private step = new StepState("Set up job", false);
-  private readonly failing: CiRetainedStepV1[] = [];
+  private readonly failing: { step: CiRetainedStepV1; timed: boolean }[] = [];
   private readonly recent: CiRetainedStepV1[] = [];
   private runnerLost = false;
   private totalLines = 0;
+  private readonly failedSteps: readonly CiFailedStepWindowV1[];
+  private failedWindow: number | null = null;
+
+  constructor(failedSteps: readonly CiFailedStepWindowV1[] = []) {
+    // No additional log buffers: timed failures use the existing three slots.
+    this.failedSteps = failedSteps.filter((step) =>
+      Number.isFinite(step.startedAt) && Number.isFinite(step.completedAt) &&
+      step.completedAt >= step.startedAt
+    ).slice(0, MAX_KEPT_STEPS);
+  }
 
   pushBytes(bytes: Uint8Array): void {
     this.pushText(this.decoder.decode(bytes, { stream: true }));
@@ -353,7 +371,7 @@ export class CiLogScanner {
     this.partial = "";
     this.closeStep();
     const steps = this.failing.length > 0
-      ? [...this.failing]
+      ? this.failing.map(({ step }) => step)
       : [...this.recent];
     return { steps, runnerLost: this.runnerLost, totalLines: this.totalLines };
   }
@@ -372,17 +390,36 @@ export class CiLogScanner {
     if (RUNNER_LOST.test(clean) && clean.startsWith("##[error]")) {
       this.runnerLost = true;
     }
+    const stamp = /^\uFEFF?(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z)(?: |$)/
+      .exec(raw);
+    const time = stamp === null ? NaN : Date.parse(stamp[1]);
+    // Job API completion times have second precision. Include that whole
+    // second; the neighboring context is advisory, not an identity assertion.
+    const match = Number.isFinite(time)
+      ? this.failedSteps.findIndex((step) =>
+        time >= step.startedAt && time < step.completedAt + 1_000
+      )
+      : this.failedWindow ?? -1;
+    const failedWindow = match < 0 ? null : match;
+    const run = clean.startsWith("##[group]Run ");
+    const cleanup = clean.startsWith("Post job cleanup");
     if (
-      clean.startsWith("##[group]Run ") || clean.startsWith("Post job cleanup")
+      failedWindow !== this.failedWindow ||
+      (failedWindow === null && (run || cleanup))
     ) {
       this.closeStep();
-      const header = clean.startsWith("Post job cleanup")
+      const header = run
+        ? clean.slice("##[group]".length)
+        : failedWindow !== null
+        ? this.failedSteps[failedWindow].name
+        : cleanup
         ? "Post job cleanup"
-        : capChars(
-          sanitizeEvidenceLine(clean.slice("##[group]".length)),
-          MAX_HEADER_CHARS,
-        );
-      this.step = new StepState(header, clean.startsWith("##[group]"));
+        : "Job output";
+      this.step = new StepState(
+        capChars(sanitizeEvidenceLine(header), MAX_HEADER_CHARS),
+        run,
+      );
+      this.failedWindow = failedWindow;
     }
     this.step.push(clean);
   }
@@ -390,15 +427,25 @@ export class CiLogScanner {
   private closeStep(): void {
     const step = this.step.finish();
     if (step.lineCount === 0) return;
-    if (step.hasError) {
-      // Keep the first two failing steps and the latest one.
-      if (this.failing.length < MAX_KEPT_STEPS) this.failing.push(step);
-      else this.failing[MAX_KEPT_STEPS - 1] = step;
+    if (step.hasError || this.failedWindow !== null) {
+      // API-bound windows outrank raw error groups. Within the remaining
+      // slots, preserve the first errors and the latest as before. Nothing
+      // increases the existing three retained failure buffers.
+      const timed = this.failedWindow !== null;
+      if (this.failing.length < MAX_KEPT_STEPS) {
+        this.failing.push({ step, timed });
+      } else {
+        const unbound = this.failing.findLastIndex((entry) => !entry.timed);
+        if (timed || unbound >= 0) {
+          this.failing.splice(unbound < 0 ? MAX_KEPT_STEPS - 1 : unbound, 1);
+          this.failing.push({ step, timed });
+        }
+      }
     }
     if (step.header !== "Post job cleanup" || this.recent.length === 0) {
       // No runner error marker may be available for an unfamiliar failure.
-      // Keep bounded context before the last action too: an always-run upload
-      // or cleanup must not replace the failed command's only diagnostic.
+      // Best-effort context when timing and error markers are unavailable.
+      // An API-bound window identifies which earlier group should survive.
       if (this.recent.length >= MAX_KEPT_STEPS) this.recent.shift();
       this.recent.push(step);
     }

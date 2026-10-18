@@ -19,6 +19,7 @@ import {
   type HttpTransportV1,
 } from "./http.ts";
 import {
+  type CiFailedStepWindowV1,
   CiLogScanner,
   type CiScannedLogV1,
 } from "../repair/ci-evidence-excerpt.ts";
@@ -61,8 +62,10 @@ export async function readSignedCiLog(input: {
   deadline: DeadlineV1;
   /** Counts one request against the collection's bound; false refuses it. */
   takeRequest: () => boolean;
+  /** Same-head job API timing; advisory selection only, never log identity. */
+  failedSteps?: readonly CiFailedStepWindowV1[];
 }): Promise<SignedLogReadV1> {
-  const scanner = new CiLogScanner();
+  const scanner = new CiLogScanner(input.failedSteps);
   let offset = 0;
   let truncated = false;
   const fetchRange = async (start: number, end: number) => {

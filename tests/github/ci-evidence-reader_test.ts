@@ -230,6 +230,117 @@ Deno.test("reader: an unrecognized failed step survives a later always-run actio
   assert.ok(excerpt.length <= 16 * 1024);
 });
 
+Deno.test("reader: job failure timestamps retain markerless diagnostics beyond three later action groups", async () => {
+  for (const uploads of [3, 20]) {
+    const timestamp = (second: number, text: string) =>
+      `2026-10-17T10:00:${String(second).padStart(2, "0")}.2500000Z ${text}`;
+    const diagnostic =
+      "release gate: bundle size 412 KiB exceeds the 400 KiB budget";
+    const lines = [
+      timestamp(0, "Runner initialization complete"),
+      timestamp(1, "##[group]Run ./scripts/release-gate.sh"),
+      timestamp(1, "shell: /usr/bin/bash -e {0}"),
+      timestamp(1, "##[endgroup]"),
+      timestamp(2, diagnostic),
+      // Commands may create their own Run groups. Their titles are unrelated
+      // to the friendly step name and must not evict the earlier diagnostic.
+      timestamp(2, "##[group]Run nested diagnostic collector"),
+      timestamp(2, "##[endgroup]"),
+      timestamp(3, "Detailed budget report complete"),
+      ...Array.from({ length: uploads }, (_, index) => [
+        timestamp(
+          index + 4,
+          `##[group]Run actions/upload-artifact-${index}@v4`,
+        ),
+        timestamp(index + 4, "##[endgroup]"),
+        timestamp(index + 4, "Artifact upload completed"),
+      ]).flat(),
+      timestamp(uploads + 4, "Post job cleanup."),
+    ];
+    const fake = new FakeGitHub(
+      new TextEncoder().encode(lines.join("\n") + "\n"),
+    );
+    fake.routes.set(`${API}/actions/jobs/${JOB}`, () =>
+      json(200, {
+        ...wire("job-1009.json"),
+        steps: [{
+          number: 2,
+          name: "Budget validation with a friendly display name",
+          status: "completed",
+          conclusion: "failure",
+          started_at: "2026-10-17T10:00:01Z",
+          completed_at: "2026-10-17T10:00:03Z",
+        }],
+      }));
+    const evidence = await read(fake);
+    const excerpt = evidence.checks[0].excerpt ?? "";
+    assert.ok(
+      excerpt.includes(diagnostic),
+      `lost diagnostic after ${uploads} uploads`,
+    );
+    assert.match(excerpt, /Run \.\/scripts\/release-gate\.sh/);
+    assert.match(excerpt, /Detailed budget report complete/);
+    assert.ok(!excerpt.includes("Artifact upload completed"));
+    assert.ok(excerpt.length <= 16 * 1024);
+  }
+});
+
+Deno.test("reader: absent or unparseable job timestamps keep the marker-based fallback", async () => {
+  for (
+    const timing of [
+      {},
+      { started_at: "not a timestamp", completed_at: "also not a timestamp" },
+      {
+        started_at: "2026-10-17T12:16:35Z",
+        completed_at: "2026-10-17T11:56:22Z",
+      },
+    ]
+  ) {
+    const fake = new FakeGitHub(fixtureBytes("real-1009.txt"));
+    const job = wire("job-1009.json");
+    job.steps = (job.steps as Record<string, unknown>[]).map((step) => {
+      const copy = { ...step };
+      delete copy.started_at;
+      delete copy.completed_at;
+      return { ...copy, ...timing };
+    });
+    fake.routes.set(`${API}/actions/jobs/${JOB}`, () => json(200, job));
+    const evidence = await read(fake);
+    assert.equal(evidence.checks[0].unavailable, null);
+    const excerpt = evidence.checks[0].excerpt ?? "";
+    for (const diagnostic of REAL_ERROR_LINES["real-1009.txt"]) {
+      assert.ok(excerpt.includes(diagnostic));
+    }
+  }
+});
+
+Deno.test("reader: a signed-log 429 stops every later collection read", async () => {
+  const fake = new FakeGitHub(fixtureBytes("real-1009.txt"));
+  const validate =
+    (wire("check-runs-1009.json").check_runs as Record<string, unknown>[])
+      .find((run) => run.name === "validate")!;
+  const runs = [validate, { ...validate, id: JOB + 1, name: "validate-2" }];
+  fake.routes.set(
+    `${API}/commits/${HEAD}/check-runs`,
+    () => json(200, { total_count: runs.length, check_runs: runs }),
+  );
+  fake.log = () => json(429, {});
+  const evidence = await read(fake);
+  const limitedAt = fake.requests.findIndex((request) =>
+    request.url === LOG_URL
+  );
+  assert.ok(limitedAt >= 0);
+  assert.equal(
+    fake.requests.length,
+    limitedAt + 1,
+    "no reads after signed-host rate limit",
+  );
+  assert.equal(evidence.unavailable, "rate_limited");
+  assert.equal(evidence.checks.length, 1);
+  assert.equal(evidence.checks[0].unavailable, "rate_limited");
+  assert.equal(evidence.omittedChecks, 1);
+});
+
 Deno.test("reader: an untrusted log redirect is refused without fetching it", async () => {
   const fake = new FakeGitHub(fixtureBytes("real-1009.txt"));
   fake.routes.set(`${API}/actions/jobs/${JOB}/logs`, () => ({
