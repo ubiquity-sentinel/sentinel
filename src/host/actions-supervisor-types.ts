@@ -15,6 +15,8 @@ import type { ReviewTaskStatementV1 } from "../contracts/review-receipt.ts";
 import type { ExistingPrRuntimeCapability } from "./existing-pr-runtime-capability.ts";
 import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
 
+import type { HostedRuntimeRollout } from "./hosted-runtime-rollout.ts";
+
 export interface HostedSupervisorRunIdentityV1 {
   runId: number;
   runAttempt: number;
@@ -59,6 +61,7 @@ export interface HostedSupervisorInputV1 {
   /** Trusted in-process fixture only; production uses immutable source pins. */
   queueRuntimeCapability?: QueueRuntimeCapability;
   existingPrRuntimeCapability?: ExistingPrRuntimeCapability;
+  runtimeRollout?: HostedRuntimeRollout;
 }
 
 export type HostedSupervisorOutcomeV1 =
