@@ -169,17 +169,15 @@ export function buildPrompt(
     "reasoning; do not change it or introduce a fallback. Do not modify " +
     "protected paths, do not write or commit credentials, and do not " +
     "rewrite expected test assertions to force success. Keep the change " +
-    "minimal and do not refactor beyond it. Your total event output " +
-    `allowance is ${request.maxOutputChars} characters, and every tool ` +
-    "notification counts against it; repeated full output is charged " +
-    "again. Keep every command's max_output_tokens at or below 2000 and " +
+    "minimal and do not refactor beyond it. Keep every command's " +
+    "max_output_tokens at or below 2000 and " +
     "keep individual command output bounded: prefer targeted symbol " +
     "searches followed by excerpts of at most 100 lines. Read the " +
     "applicable instructions only once, never repeat a full file read, " +
     "and check the actual failure instead of retrying the same failing " +
     "command unchanged. Stop broad source surveying once the target " +
     "behavior is understood and make the smallest edit; reserve most of " +
-    "the allowance for implementation and focused validation of observed " +
+    "the session for implementation and focused validation of observed " +
     "runtime behavior." +
     (localIteration
       ? " No tests or reviews are allowed in this local pass."

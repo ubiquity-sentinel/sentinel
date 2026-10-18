@@ -60,6 +60,8 @@ import { codexChildEnv, type LocalSessionTracker } from "./local-client.ts";
 import { prepareReviewCheckout } from "./local-review-checkout.ts";
 import { refreshDevelopment } from "./local-git.ts";
 import { trustedGitPath } from "./local-io.ts";
+import { BaseTaskReviewService } from "../github/base-review-service.ts";
+import type { BaseTaskReviewGitHubV1 } from "../repair/loop-base-satisfaction.ts";
 
 // ---------------------------------------------------------------------------
 // GitHub composition (one client, one gate, one actor)
@@ -460,6 +462,21 @@ export function composeLocalGitHub(input: LocalGitHubInputV1): GitHubPort {
       trustedPath: input.trustedPath,
     }),
   });
+  (host.port as BaseTaskReviewGitHubV1).baseTaskReview =
+    new BaseTaskReviewService({
+      client,
+      repository,
+      baseBranch,
+      publisher: input.login,
+      clock: input.clock,
+      state: input.state,
+      ownerRunId: input.invocationId,
+      provider: GATEWAY_PROVIDER,
+      model: input.reviewModelId ?? DEFAULT_REVIEW_MODEL_ID,
+      snapshot: snapshotSource,
+      reviewer,
+      ...(custody instanceof ReviewOwnerChannelClient ? { custody } : {}),
+    });
   return scopeLocalRepairIssues(host.port);
 }
 

@@ -12,8 +12,8 @@
  *
  * A completed run that left its checkout unchanged is a model outcome, never
  * provider unavailability: the cell exports its own closed detail, the
- * ingester records it as a no-progress outcome (still charged ambiguous, never
- * refunded), the launcher may retry it under the repeat-failure bound, and
+ * ingester holds it for exact-base review (still charged ambiguous, never
+ * refunded), the launcher cannot retry it before that review, and
  * every other port error keeps its exact existing settlement.
  */
 import assert from "node:assert/strict";
@@ -137,7 +137,7 @@ Deno.test(
 );
 
 Deno.test(
-  "no-change outcome: a completed run that changed nothing settles as no progress, not provider unavailability",
+  "no-change outcome: authenticated unchanged-base settles charged into an R80-inert base review hold",
   async () => {
     const rig = await makeRig([990301], 1);
     try {
@@ -158,8 +158,12 @@ Deno.test(
       assert.equal(report.ingested, 1, JSON.stringify(report.entries));
       const state = await snapshot(rig);
       const work = state.work[0];
-      assert.equal(work.nextStep, "blocked");
-      assert.equal(work.blocker?.message, NO_CHANGE);
+      assert.equal(work.nextStep, "work");
+      assert.equal(work.blocker, null);
+      assert.equal(work.wait?.reason, "backoff");
+      assert.equal(work.wait?.until, null);
+      assert.equal(work.intent?.kind, "implementation");
+      assert.equal(work.intent?.failure?.detail, NO_CHANGE);
       // The charge stays charged: ambiguous, never refunded.
       assert.deepEqual(state.reservations.map((row) => row.outcome), [
         "ambiguous",
@@ -178,8 +182,14 @@ Deno.test(
           r80.parseMatrixCellResultV1(result);
         });
       }
-      // The launcher's retry table owns the class: it re-admits it once.
-      assert.equal(await readmit(rig, cell.runtimeSha as GitSha), 1);
+      // Maintenance and matrix planning run before repair. Neither can spend
+      // another implementation while the exact-base review remains pending.
+      assert.equal(await readmit(rig, cell.runtimeSha as GitSha), 0);
+      rig.clock.advance(24 * 60 * 60_000);
+      assert.equal(
+        (await planMatrixWave(rig.deps, rig.planOptions())).prepared,
+        0,
+      );
     } finally {
       await rig.cleanup();
     }

@@ -3,6 +3,7 @@ import {
   type RepairStateSnapshotV1,
 } from "../src/contracts/state-snapshots.ts";
 import { attemptEquivalenceRefusalForRecordV1 } from "../src/repair/attempt-policy.ts";
+import { baseReviewOrigin } from "../src/repair/base-satisfaction-marker.ts";
 import {
   CONFLICT_PROTECTED_DETAIL,
   conflictMarkerBase,
@@ -536,6 +537,11 @@ export function planHostedRetries(
   const plans: RetryPlanV1[] = [];
   for (const record of snapshot.work) {
     if (record.nextStep !== "blocked") continue;
+    // The runtime reviews a trusted unchanged-base outcome against the issue.
+    // Keep its original charged admission, including a historical repeat park:
+    // an ordinary retry/re-arm would erase that evidence before runtime runs.
+    // This only withholds launcher writes, so it is safe while R80 is installed.
+    if (baseReviewOrigin(record, snapshot) !== null) continue;
     // A task whose source issue is closed or gone is not repairable: retrying
     // it can only spend a model session on work that no longer exists. The
     // identity is the pair (repository, issue number): a closed issue in

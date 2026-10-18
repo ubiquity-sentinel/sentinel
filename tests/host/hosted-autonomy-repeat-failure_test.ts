@@ -388,7 +388,7 @@ Deno.test("repeat failure: a changed model route re-arms a park once", () => {
 });
 
 Deno.test(
-  "repeat failure: a different signature resets the streak and keeps the ordinary grant",
+  "repeat failure: unchanged-base outcomes keep their admission for native base review",
   async () => {
     const snapshot = liveSnapshot();
     const changed = await settleFailure(
@@ -402,9 +402,14 @@ Deno.test(
     assert.equal(streak?.count, 1);
     const next = pass(changed, { now: NOW + 60_000 });
     assert.equal(next.parks.length, 0);
-    assert.ok(next.plans.some((plan) => plan.id === AI_300));
-    // The no-change class is not transient: three identical outcomes park it
-    // without waiting for the six-hour window.
+    assert.equal(next.plans.some((plan) => plan.id === AI_300), false);
+    assert.deepEqual(
+      workOf(changed, AI_300).intent,
+      workOf(snapshot, AI_300).intent,
+      "the original charged implementation remains available to native review",
+    );
+    // Three historical no-change outcomes also take the base-review route;
+    // the launcher must not replace them with an owner-gated repeat park.
     let state = changed;
     for (const offset of [1, 2]) {
       state = await settleFailure(
@@ -416,12 +421,15 @@ Deno.test(
       );
     }
     const due = pass(state, { now: NOW + HOUR });
-    assert.equal(due.parks.length, 1);
-    assert.equal(due.parks[0].park.count, 3);
-    assert.equal(
-      due.parks[0].park.signature,
-      failureSignature("other", ATTEMPT_DETAIL_NO_CHANGE),
+    assert.equal(repeatFailureStreak(state, workOf(state, AI_300))?.count, 3);
+    assert.equal(due.parks.length, 0);
+    assert.equal(due.plans.some((plan) => plan.id === AI_300), false);
+    assert.equal(due.denials.has(AI_300), false);
+    assert.deepEqual(
+      workOf(state, AI_300).intent,
+      workOf(snapshot, AI_300).intent,
     );
+    assert.deepEqual(state.reservations, snapshot.reservations);
   },
 );
 

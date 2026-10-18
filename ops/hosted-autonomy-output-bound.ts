@@ -1,4 +1,9 @@
 /**
+ * Historical finite-bound plans (including R80) still need this settlement.
+ * Newly planned R81 sessions use Number.MAX_SAFE_INTEGER and cannot reach
+ * their volume ceiling during the duration bound. Never compare an older
+ * receipt against that new policy: the authenticated plan owns its bound.
+ *
  * The one matrix receipt refusal with a closed settlement: an authenticated
  * runtime terminal that completed only AFTER crossing its output bound. The
  * model port counts output first and requests the `output_limit` interrupt,

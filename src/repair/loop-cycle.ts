@@ -2,6 +2,7 @@
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import { createRunBounds, DEFAULT_STEP_LIMIT } from "./loop-bounds.ts";
+import { resumeBaseSatisfaction } from "./loop-base-satisfaction.ts";
 import { declaredOperationFits } from "./loop-eligibility.ts";
 import { pollIntake } from "./loop-intake.ts";
 import { bridgeLegacyLoss } from "./loop-legacy-loss.ts";
@@ -55,6 +56,7 @@ export async function runRepairCycle(
   // bounds are deferred so that lower-ranked deterministic work still runs;
   // the run ends in the existing typed "margin" outcome when nothing remains.
   const deferred = new Set<string>();
+  const baseReviewAttempted = new Set<string>();
 
   // One run-local attempt per task and legacy-loss phase: a phase is never
   // proved twice in the same run, even after a state reload.
@@ -157,6 +159,21 @@ export async function runRepairCycle(
     if (tracking.steps >= stepLimit) {
       return { status: "step_limit", steps: tracking.steps };
     }
+
+    const baseReview = await resumeBaseSatisfaction(
+      deps,
+      context,
+      baseReviewAttempted,
+    );
+    if (baseReview?.kind === "state_error") {
+      return { status: "state_error", detail: baseReview.detail };
+    }
+    if (baseReview?.kind === "progress") {
+      didWork = true;
+      tracking.steps++;
+      continue;
+    }
+    if (baseReview?.kind === "deferred") continue;
 
     // Bounded pre-ranking legacy-loss bridge (optional capability): a proven
     // lost legacy candidate is committed as truthful missing_evidence BEFORE
