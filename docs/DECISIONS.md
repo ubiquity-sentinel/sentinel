@@ -24,18 +24,20 @@ rollback checks before the corresponding effects. The App permission grant is
 already complete. This authorization does not itself establish any execution or
 acceptance result.
 
-### Isolated canary base namespace
+### Isolated canary ref namespace
 
-Use `queue-canary-base` as the isolated canary base while retaining the reviewed
-fixture head prefix `queue-canary/`. The earlier literal base `queue-canary`
-cannot coexist with its slash-prefixed fixture refs in Git. Apply the base-only
-correction consistently to source grant and projection validators, native
-ruleset conditions, prepared PR/ref inputs and their focused tests; preserve the
-nine fixtures, exact fixed baseline and all actor, proof, one-shot and
-production-branch boundaries. Preserve original packet bytes and create a
-versioned corrected packet with provenance. This routine correction is within
-the standing canary approval; local causal and source checks plus the required
-exact native CI remain gates before effects.
+Keep `queue-canary` as the isolated canary base and use `queue-canary-fixtures/`
+as the fixture head prefix. Git cannot store the original base together with
+heads under `queue-canary/`. The initially proposed base rename is rejected
+because the approved AI baseline grants the full PR CI scope only for base
+`queue-canary`; the head-only correction preserves that real consumer and fixed
+baseline. Change only the Sentinel head-prefix validator, directly affected head
+fixtures and versioned prepared head-ref fields. Preserve all
+base/projection/ruleset literals, nine patch/blob bytes and paths, workflow
+hashes, actor/proof/one-shot gates and production branch boundaries. Keep
+rejected local evidence for provenance. Local actual-Git and consumer checks
+plus exact native CI remain required before their corresponding effects;
+standing approval already covers this correction.
 
 ### Future runtime pins before the queue fallback freeze
 
