@@ -21,7 +21,7 @@ authenticated account `0x4007` and carry `sentinel:skip` during manual
 ownership. Only the primary changes this ledger, accepts source, commits,
 integrates or publishes.
 
-### Migration continuation, 2026-10-18 16:31 UTC
+### Migration continuation, 2026-10-18 17:54 UTC
 
 Corrected inactive source `674f8cc324946f9577e96a73b2722ca3db16ca7c`, tree
 `76c50bf8faacb3166b622b061baa45b8f6fb338b`, is published and its native CI
@@ -33,8 +33,12 @@ identity and the unique terminal harness marker; native evidence is under
 local foundation `9b9d74c99eb5bafcf8fe9941fdedd1f940fdef8a` passed four selected
 real consumer/cold cases and 21-path scoped statics; root acceptance is under
 `combined-foundation-final/`. It is now published by normal fast-forward; exact
-native source CI `39145206809:1` / job `117727532518` started at 16:29:09 UTC
-and is pending under the 60-minute bound. Publication receipts are under
+native source CI `39145206809:1` / job `117727532518` passed at 17:19:53 UTC
+with 3,441 tests, 1,719 steps and zero failures. The primary accepted exact
+native checkout/tree/workflow/Actions-App identity, the unique successful
+harness marker and all 15 retained artifact hashes. Handback SHA-256 is
+`0b4f5b3594d2210fbc24911b41ad14708666467465fb6d6405a1ad1da39b668a` under
+`ci-9b9-acceptance/`. This proves source CI only. Publication receipts are under
 `source-publication-9b9/`. L81 and disabled release remain unchanged; no runtime
 installation occurred.
 
@@ -61,6 +65,66 @@ cannot read App hook deliveries; no compatible authenticated browser or Azure
 log reader is available. The owner has been asked only for the delivery ID,
 timestamp and response status from the existing UOS App Recent deliveries page,
 not for renewed canary approval.
+
+Fresh 17:50 UTC stability readback at state head
+`519b9e2d8ba2934adec6fbdc3a6ce5c4954519a3` still installs R81
+`da98f5f49c45b57cfa97a45fe647c36b1021f302` / generation81 under unchanged L81.
+Latest retained ordinary proof is now failed `39149388762:1:repair` / job
+`117741591328`, and ordinary execution `39149894984:1:repair` is active; native
+run/job identities agree. No later healthy settlement exists: `39141849736:1`
+remains historical. Snapshot SHA-256
+`f621d315be0b5945238e2b27749bf05f1e7ab375fad778fbacd4f3fffa6a2134` is under
+`runtime-stability-1748/`; all 16 artifact hashes verified. The prior
+`39145520333` snapshot is superseded for recovery authority. Earlier
+operator-context replay through frozen R81 reproduced AI issue1213 body
+rejection: 23,807 text units exceeds 16,384, while the other nine issues parse.
+This proves a contract defect without direct attribution to the original failed
+App response. No rollback or state rewrite occurred; prior diagnosis remains
+under `runtime-stability-1651/`.
+
+The primary owns module `migration-issue-body-contract-20261018`, aid
+`8fba646528`, with sole implementation writer `migration_issue_contract_fix` in
+`/home/codex/repos/ubiquity/sentinel/.codex-worktrees/master-plan-migration-issue-body-contract-20261018-a8fba646528`,
+branch `codex/master-plan-migration-issue-body-contract-20261018-a8fba646528`,
+exact base `6f1d2f74b7d31b627d8066e507c59fa977c64ead`. Scope is
+`src/github/wire.ts`, `src/repair/loop-task-context.ts`,
+`tests/host/issue-body-admission_test.ts`,
+`tests/repair/loop-issue-body-bound_test.ts` and the existing bounded-read
+regression in `tests/github/reads_test.ts`. Separate raw issue discovery from
+the unchanged 16 KiB full-text review contract and reuse that contract before
+common implementation reservation. Preserve complete bodies/coverage, explicit
+opt-outs, retained bounded waits, every charge and all frozen schema/stdout
+shapes. Prove mixed issue discovery and both ordinary/matrix zero-start refusal
+without dropping other eligible work. Proposal SHA-256
+`be0098dd43277056317b8c82817ec5f1e6a6ea0d3cc21e24b4ae87697c9f21d9`; native
+inputs remain private and only synthetic minimal fixtures may be committed.
+
+The issue-body fix is accepted and integrated as worker tip `3fbe79eaa` in
+canonical merge `29f5676ba7a2a0535353595a70985c71a5e1e774`, with ancestry proved
+and all five frozen file hashes unchanged. Independent audit PASS is
+`issue-body-contract-audit/audit.json`, SHA-256
+`dde5ab2416516119c24c17f1887aeb78a3cdb53cc30650437c41eb04c753626f`; five new
+cases, 29 reader/intake cases and one matrix lifecycle passed, with nine
+archived evidence receipts and the unchanged frozen review contracts verified.
+No additional unchanged-input local boundary test is required. Exact new-source
+native CI and installed/live acceptance remain pending.
+
+The primary assigns disjoint module `migration-legacy-first-recovery-20261018`,
+aid `76c858c8d7`, to sole writer `migration_future_pins` at
+`/home/codex/repos/ubiquity/sentinel/.codex-worktrees/master-plan-migration-legacy-first-recovery-20261018-a76c858c8d7`,
+branch `codex/master-plan-migration-legacy-first-recovery-20261018-a76c858c8d7`,
+exact base `6f1d2f74b7d31b627d8066e507c59fa977c64ead`. Own only
+`src/host/owner-install-future-recovery.ts`, `src/host/owner-install-plan.ts`,
+`src/host/owner-install-snapshot.ts`, new
+`tests/host/owner-install-legacy-first-recovery_test.ts` and minimal
+`tests/host/owner-install-future-recovery-fixtures.ts` changes. Accepted
+contract SHA-256 is
+`42ad593b3a8a0c2bb35746fe978f5ee45b42b82b30769eb8dd0f665582c00b25` at
+`production-cutover-preparation/legacy-first-recovery-contract/proposal.md`; no
+live recovery row, source grant, workflow or runtime policy is changed.
+Integrate this recovery module after its audit, then validate the combined
+candidate before publication. Root retains all ledger, Git integration,
+acceptance and native effects.
 
 The prepared canary base `queue-canary` conflicts with its original fixture head
 prefix `queue-canary/`. The initial base-only proposal is rejected: fixed AI

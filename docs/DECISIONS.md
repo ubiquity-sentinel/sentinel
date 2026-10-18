@@ -24,6 +24,43 @@ rollback checks before the corresponding effects. The App permission grant is
 already complete. This authorization does not itself establish any execution or
 acceptance result.
 
+### Raw issue discovery and model admission bounds
+
+The live R81 issue reader rejects an entire valid response when one issue body
+exceeds the shared 16,384-unit review-statement bound. Reproduction on
+2026-10-18 isolates AI issue1213 at 23,807 units; HTTP and transport-size gates
+pass and the other issues parse. Separate only the raw GitHub issue-read ceiling
+using the existing finite wire-text bound. Preserve full text and complete
+pagination; keep shared `MaxText.body`, pull-request bounds and frozen
+review/receipt/matrix/stdout contracts unchanged. Before any implementation
+reservation, validate the already-read full issue with the existing review-task
+statement validator and digest. Unsupported statements use the existing retained
+bounded unavailable wait, so other work remains selectable and no unsupported
+model start, charge reset, truncation or fabricated statement occurs. This
+source fix needs its own connected local/native and installed evidence; the
+current failure cannot be attributed to the new development base merely by
+timing.
+
+### Failed legacy predecessor recovery
+
+The primary accepts the bounded first-transition recovery contract under
+`production-cutover-preparation/legacy-first-recovery-contract/proposal.md` in
+the migration evidence workspace. Reuse the existing seven-key source-only
+recovery row and private issuer for exact immutable R81/generation81 to one
+accepted capable successor/generation82, requiring both explicit matching
+migration grants, both active custody floors, the exact nonrollback install
+rung, and exclusion of R80/R81 from both accepted lists. Authenticate committed
+capability data and revalidate the privately issued move at planning, snapshot
+and immediately before trusted App CAS. Retain strict future-runtime membership
+for every other recovery, full native failure/earlier own-health/witness
+evidence, chronology, source/CI/ancestry/drain and accounting. Preserve all
+schemas and default empty recovery data. Persist only the monotonic successor
+pointer and actual-prepare-bound model-disabled bootstrap; genuine successor
+health remains required. The newest failure and active execution must be freshly
+reconciled after quiescence before any live row is prepared; older snapshots are
+historical. This decision authorizes isolated implementation and validation, not
+a fabricated health reset or an old-runtime execution/fallback exception.
+
 ### Isolated canary ref namespace
 
 Keep `queue-canary` as the isolated canary base and use `queue-canary-fixtures/`
