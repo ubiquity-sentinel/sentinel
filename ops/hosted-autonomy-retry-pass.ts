@@ -79,31 +79,6 @@ import {
 /** Legacy class drift lines reported per pass (the rest are counted). */
 export const LEGACY_DRIFT_REPORTS_PER_PASS = 12;
 
-/** Spent CI-parked heads whose CI one pass reads (CI-first runtime only). */
-export const HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS = 16;
-
-/**
- * At most `HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS` of `ids`, starting at an
- * offset that advances every five minutes so none is starved.
- */
-export function spentCiReadWindow(
-  ids: readonly string[],
-  now: number,
-): Set<string> {
-  if (ids.length <= HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS) {
-    return new Set(ids);
-  }
-  const offset = Number.isSafeInteger(now) && now >= 0
-    ? Math.floor(now / 300_000) % ids.length
-    : 0;
-  return new Set(
-    [...ids.slice(offset), ...ids.slice(0, offset)].slice(
-      0,
-      HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS,
-    ),
-  );
-}
-
 /**
  * The pass's legacy class report, state-free. The one-time legacy class is a
  * rule over the installed runtime's pinned cutoff: every record of the
@@ -339,8 +314,7 @@ export async function runHostedRetryPass(
   // there can re-admit. A pre-review park on a moved base needs no read: under
   // a proven CI-first runtime it returns for the runtime's refresh. A
   // merge-gate park whose ordinary rounds are spent is read only under a
-  // proven CI-first runtime (at any base, at most
-  // `HOSTED_AUTONOMY_SPENT_CI_READS_PER_PASS` per pass, rotating): green at
+  // proven CI-first runtime (every eligible head, at any base): green at
   // its exact base it is the spent-round rule's, green on a moved base it
   // returns for the carried refresh, and only a read red one may be planned
   // as a (legacy) CI correction, never a green one.
@@ -351,14 +325,13 @@ export async function runHostedRetryPass(
   const ciGreenHeads = new Set<string>();
   const ciReadHeads = new Set<string>();
   const ciUnreadHeads = new Set<string>();
-  const spentReads = spentCiReadWindow(
+  const spentReads = new Set(
     snapshot.work.filter((record) =>
       ciFirst && record.nextStep === "blocked" &&
       record.target.head !== null &&
       ciGreenRedeliveryEligible(snapshot, record) &&
       ordinaryReviewRoundsSpent(snapshot, record)
     ).map((record) => record.id),
-    deps.clock.now(),
   );
   for (const record of snapshot.work) {
     const head = record.target.head;
