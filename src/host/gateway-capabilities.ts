@@ -174,13 +174,13 @@ export async function createTrustedGatewayCapabilities(input: {
       new Set(authority.testIds).size !== authority.testIds.length ||
       authority.testIds.some((id) => !/^[A-Za-z0-9._:-]{1,64}$/.test(id)) ||
       !prepared.sourcePath.startsWith("/") ||
-      !authority.scratchDir.startsWith("/tmp/") ||
+      !trustedScratchPath(authority.scratchDir) ||
       !authority.retained.root.startsWith("/") ||
       !prepared.denoExecutable.startsWith("/") ||
       !prepared.gitExecutable.startsWith("/") ||
       await Deno.realPath(prepared.sourcePath) !== prepared.sourcePath
     ) return portError("invalid", UNAVAILABLE);
-    await Deno.mkdir(authority.scratchDir, { recursive: true, mode: 0o700 });
+    await prepareScratchDirectory(authority.scratchDir);
     const runtime = authority.runtime ??
       new DenoReplayRuntime("/usr/local/bin:/usr/bin:/bin");
     const git = async (args: string[]): Promise<string> => {
@@ -387,4 +387,37 @@ export async function createTrustedGatewayCapabilities(input: {
   } finally {
     key?.fill(0);
   }
+}
+
+function trustedScratchPath(path: string): boolean {
+  return path.startsWith("/") &&
+    path.slice(1).split("/").every((part) =>
+      part !== "" && part !== "." && part !== ".."
+    ) &&
+    !Array.from(path).some((character) =>
+      character === "\\" || character.charCodeAt(0) < 32 ||
+      character.charCodeAt(0) === 127
+    );
+}
+
+/** Preserve recursive task-owned preparation without following symlink ancestors. */
+async function prepareScratchDirectory(path: string): Promise<void> {
+  try {
+    if (
+      await Deno.realPath(path) !== path ||
+      !(await Deno.lstat(path)).isDirectory
+    ) throw new TypeError(UNAVAILABLE);
+    return;
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  await prepareScratchDirectory(path.slice(0, path.lastIndexOf("/")) || "/");
+  try {
+    await Deno.mkdir(path, { mode: 0o700 });
+  } catch (error) {
+    if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
+  }
+  if (
+    await Deno.realPath(path) !== path || !(await Deno.lstat(path)).isDirectory
+  ) throw new TypeError(UNAVAILABLE);
 }

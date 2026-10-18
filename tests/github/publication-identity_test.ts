@@ -182,6 +182,7 @@ Deno.test("closure identity: initial, successful and ambiguous observations bind
 
 Deno.test("publication identity: real Git candidate survives a rejected API identity", async () => {
   const tmp = await Deno.makeTempDir({
+    dir: Deno.cwd(),
     prefix: "sentinel-publication-identity-",
   });
   const work = `${tmp}/work`;

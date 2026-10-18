@@ -7,7 +7,7 @@ export interface ReplayDependencyCacheV1 {
   root: string;
   sourceSha: string;
   manifestDigest: string;
-  /** Optional task-owned /tmp directory for private copies when the checkout is elsewhere. */
+  /** Optional trusted task-owned directory for private copies outside the checkout. */
   runScratchDir?: string;
 }
 
@@ -89,7 +89,8 @@ export async function preparePublicDependencyCache(
     throw new TypeError("invalid cache source identity");
   }
   const source = await realDirectory(options.sourceDir);
-  const root = absoluteTmp(options.root);
+  const root = absoluteOwnedPath(options.root);
+  await realDirectory(root.slice(0, root.lastIndexOf("/")) || "/");
   await rejectPrivateConfiguration(source);
   const inputs = await sourceInputs(source);
   const entrypoints = [...options.entrypoints];
@@ -211,7 +212,7 @@ export async function materializeDependencyCache(
   checkout: string,
   _scratch: string,
 ): Promise<ReplayDependencyRunV1> {
-  const root = await realDirectory(absoluteTmp(cache.root));
+  const root = await realDirectory(absoluteOwnedPath(cache.root));
   if (!SHA.test(cache.sourceSha) || !DIGEST.test(cache.manifestDigest)) {
     throw new TypeError("invalid trusted dependency cache identity");
   }
@@ -262,7 +263,9 @@ export async function materializeDependencyCache(
   await safeDirectoryDestination(checkout, "tools/lint/node_modules");
   await Deno.mkdir(destination, { recursive: true });
   const runScratch = await realDirectory(
-    absoluteTmp(cache.runScratchDir ?? root.slice(0, root.lastIndexOf("/"))),
+    absoluteOwnedPath(
+      cache.runScratchDir ?? root.slice(0, root.lastIndexOf("/")),
+    ),
   );
   const ownedDir = await Deno.makeTempDir({
     dir: runScratch,
@@ -390,7 +393,7 @@ async function stageDeno(
     }
     await Deno.copyFile(Deno.execPath(), target);
   } else {
-    const archivePath = absoluteTmp(options.denoArtifact.path);
+    const archivePath = absoluteOwnedPath(options.denoArtifact.path);
     const archiveParent = await realDirectory(
       archivePath.slice(0, archivePath.lastIndexOf("/")),
     );
@@ -572,9 +575,9 @@ async function realDirectory(path: string): Promise<string> {
   return real;
 }
 
-function absoluteTmp(path: string): string {
-  if (!path.startsWith("/tmp/") || !safePath(path.slice(5))) {
-    throw new TypeError("dependency cache must be a task-owned /tmp path");
+function absoluteOwnedPath(path: string): string {
+  if (!path.startsWith("/") || !safePath(path.slice(1))) {
+    throw new TypeError("dependency cache must be a task-owned absolute path");
   }
   return path;
 }
