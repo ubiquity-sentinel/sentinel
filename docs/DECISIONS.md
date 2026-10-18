@@ -9,6 +9,26 @@ continuation.
 
 ## Runtime and dispatch
 
+### Explicit prepromotion owner supersession
+
+The 2026-10-18 bounded binding-repair approval authorizes a distinct committed,
+source-authenticated owner-supersession intent for the still-wanted requested
+release f437. Issue closure, age, failure and retained-code ancestry supply no
+cancellation authority. Preserve its original request, all proofs and
+accounting, including native `39167387867:1:repair` as failed PRIOR bound to
+that release. The accepted contract in migration evidence at
+`review-task-binding-adoption/owner-supersession/CONTRACT.md` uses one trusted
+expected-head App transaction to persist an immutable disposition and install
+the accepted capable F with a real prepare-bound model-disabled bootstrap, only
+after all source, CI, custody, profile, native-drain and failure-recovery gates
+pass. No unsupported terminal shape may reach an R81 reader. First-F failure
+must hold or use a proved exact capable recovery successor through the existing
+source-authenticated issuer; direct R81 rollback remains fenced. Later healthy
+capable runtimes retain their exact rollback and restoration requirements. The
+old delivery obligation remains pending until genuine successor acceptance.
+Generic recovery refusals, credential routes, runtime model configuration and
+release health rules remain unchanged.
+
 ### Standing approval for the migration rollout
 
 On 2026-10-18 at 13:33–13:34 UTC, the owner explicitly approved the prepared

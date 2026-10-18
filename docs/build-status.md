@@ -13,6 +13,38 @@ identity and runtime routing are reported separately.
 
 ## Active task register
 
+The primary adopts the explicit owner-supersession correction as module
+`binding-owner-supersession-20261018`, aid `b4fdafd9c3`, under the existing
+bounded repair approval. Canonical remains
+`596d1fcc63cf2a883408089e01d6a963f6ce4bf5`; source e16 CI `39164327314:1`, job
+`117783993768`, is independently verified successful with 3,457 tests, 1,760
+steps and zero failures. Reuse its retained native receipt under
+`review-task-binding-adoption/source-publication-e16/native-ci/`; no unchanged
+e16 dispatch or publication is needed. The exact failed execution
+`39167387867:1:repair` is release-linked PRIOR for
+`release:f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5`, not
+ordinary. Earlier contrary audit wording is withdrawn while original artifacts
+remain preserved. Neither e16 nor this documentation checkpoint clears the
+nonterminal release gate or proves installation.
+
+The accepted implementation contract is
+`review-task-binding-adoption/owner-supersession/CONTRACT.md` in the migration
+evidence workspace. One implementation writer,
+`binding_owner_supersession_impl`, owns its enumerated
+types/parser/transition/prepare/installer/consumer tests in isolated worktree
+`<repository root>/.codex-worktrees/master-plan-binding-owner-supersession-20261018-ab4fdafd9c3`,
+branch `codex/master-plan-binding-owner-supersession-20261018-ab4fdafd9c3`,
+exact base `596d1fcc63cf2a883408089e01d6a963f6ce4bf5`. It returns an uncommitted
+scoped diff and registered bounded RED/GREEN evidence; the primary alone
+integrates, materializes live pins, publishes and promotes. The requested atomic
+operation records distinct authenticated owner supersession and installs
+accepted capable F with the actual prepare-bound model-disabled bootstrap in one
+expected-head App transaction. First-F failure recovery and capable-runtime
+rollback must pass their real consumers before activation; old R81 must never
+read unsupported state. Task170 remains wanted and delivery-pending. Read-only
+`binding_nonterminal_gate_audit` owns only the focused first-F failure-route
+assessment. No source activation, live state write or acceptance is claimed.
+
 The primary adopts the necessary UOS first-fixture observability seam as module
 `uos-canary-receipt-20261018`, aid `74e2bebf72`, in repository
 `ubiquity-os-marketplace/command-start-stop`. Read-only audit
@@ -66,10 +98,10 @@ The owner explicitly reaffirmed approval at 20:39 UTC. Exact immutable candidate
 `e16a99d211f2845968e7b6dbf962f48355d68017`, tree
 `d185888b310d675981abe3903b9fb21d092bad4d`, was normally fast-forwarded from b8
 to `development` and read back there. Native source CI `39164327314:1`,
-`test-local` job `117783993768`, is running with exact head/workflow identity
-verified. The recorded attempt expects 45–60 minutes plus queue and requires
-complete successful credential-free harness proof. Authorization/preflight and
-native evidence are under
+`test-local` job `117783993768`, passed at 21:31:21 UTC with exact head/workflow
+identity verified. The retained terminal receipt records 3,457 tests, 1,760
+steps and zero failures; all 55 archived manifest entries verify.
+Authorization/preflight and native evidence are under
 `review-task-binding-adoption/source-publication-e16/`. The pre-existing b8 CI
 `39160464816:1`, job `117772503396`, completed successfully at 20:37:38 UTC.
 Primary accepted its independently verified native proof: 3,456 tests/1,760
