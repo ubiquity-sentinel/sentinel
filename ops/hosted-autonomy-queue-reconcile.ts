@@ -92,8 +92,17 @@ export async function reconcileQueueRecord(
     !hasQueueDeliveryProvenance(record) &&
     hasCompleteQueueAuthorizationFacts(auth.value.facts) &&
     member.value.pull.head === binding.head &&
+    auth.value.facts.membership.status === "complete" &&
+    auth.value.facts.membership.value.entry === null &&
+    auth.value.facts.membership.value.mergedRevision === null &&
+    auth.value.facts.membership.value.pull.head === binding.head &&
+    canonicalStringify(auth.value.facts.membership.value.pull) ===
+      canonicalStringify(pull) &&
+    canonicalStringify(input.native.repository) ===
+      canonicalStringify(queue.repository) &&
+    input.native.baseRef === "development" &&
     input.native.entries.every((item) =>
-      item.pull.number !== record.target.pr
+      item.pull.number !== binding.pullRequest
     ) &&
     canonicalStringify(member.value.pull) === canonicalStringify(pull)
   ) {
