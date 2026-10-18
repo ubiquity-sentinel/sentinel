@@ -20,13 +20,11 @@ import type {
   OwnerMatrixRecoveryEvidenceV1,
 } from "./owner-install-types.ts";
 import { planOwnerDevelopmentInstall } from "./owner-install-plan.ts";
-import {
-  allowsHostedOwnerInstallMove,
-  allowsHostedRuntimeMove,
-} from "./hosted-runtime-compatibility.ts";
+import { allowsHostedOwnerInstallMove } from "./hosted-runtime-compatibility.ts";
 import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
 import type { ExistingPrRuntimeCapability } from "./existing-pr-runtime-capability.ts";
 import {
+  allowsOwnerFutureRecoveryMove,
   type OwnerFutureRecoveryAuthority,
   ownerFutureRecoveryBootstrap,
 } from "./owner-install-future-recovery.ts";
@@ -58,11 +56,13 @@ export function buildOwnerDevelopmentInstallSnapshot(
 ): ReleaseStateSnapshotV1 {
   if (
     !allowsHostedOwnerInstallMove(move, capability, custodyCapability) ||
-    (future !== undefined && !allowsHostedRuntimeMove(
-      move.priorRevision,
-      move.nextRevision,
+    (future !== undefined && !allowsOwnerFutureRecoveryMove(
+      snapshot,
+      move,
+      future,
       capability,
       custodyCapability,
+      rollout,
     ))
   ) {
     throw new Error(STATIC_PLAN);
