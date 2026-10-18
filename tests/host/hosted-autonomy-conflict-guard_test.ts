@@ -10,8 +10,8 @@
  * refresh at the new tip (no marker, PR kept, charges byte-identical), so the
  * installed runtime refreshes there and a renewed conflict costs at most one
  * charge at the NEW tip; a protected-path resolution, or any class the table
- * never retries, stays owner-terminal at every tip. One maintenance pass
- * returns at most `HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS` of them. A charge that is
+ * never retries, stays owner-terminal at every tip. All eligible records may
+ * proceed in one maintenance pass. A charge that is
  * not a settled charge of this task (still `reserved`, missing, or refunded by
  * the runtime's own `confirmed_not_submitted` path) leaves the record's own
  * blocker class in charge, whose settled-intent rule refuses any unsettled
@@ -520,8 +520,11 @@ async function markedTask(i: number) {
   return { id, record, spent };
 }
 
-Deno.test("conflict guard: one maintenance pass re-pends at most the per-pass cap of moved-base records, counting only open pull requests", async () => {
-  assert.equal(HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS, 4);
+Deno.test("conflict guard: one maintenance pass re-pends every moved-base record with an open pull request", async () => {
+  assert.equal(
+    HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS,
+    Number.MAX_SAFE_INTEGER,
+  );
   const tasks = await Promise.all([1, 2, 3, 4, 5, 6].map(markedTask));
   const closedPr = tasks[0].record.target.pr;
   const reads: number[] = [];
@@ -561,17 +564,17 @@ Deno.test("conflict guard: one maintenance pass re-pends at most the per-pass ca
   const capped = result.actions.filter((action) =>
     action.endsWith(":skipped:conflict_resolution_cap")
   );
-  assert.equal(granted.length, 4, JSON.stringify(result.actions));
-  assert.equal(capped.length, 1, JSON.stringify(result.actions));
+  assert.equal(granted.length, 5, JSON.stringify(result.actions));
+  assert.equal(capped.length, 0, JSON.stringify(result.actions));
   assert.ok(
     result.actions.includes(`retry:${tasks[0].id}:skipped:pr_not_open`),
     "a closed pull request holds no slot",
   );
-  assert.equal(reads.length, 5, "a record past the cap is not read");
+  assert.equal(reads.length, 6, "all records are verified");
   const repended = state.snapshot.work.filter((work) =>
     work.nextStep === "work"
   );
-  assert.equal(repended.length, 4);
+  assert.equal(repended.length, 5);
   for (const work of repended) {
     assert.equal(work.intent?.observedBase, TIP);
     assert.equal(conflictMarkerBase(work.intent), null);

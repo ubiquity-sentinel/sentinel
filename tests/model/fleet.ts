@@ -1,16 +1,15 @@
 /**
- * Part C of the checker: fairness of every per-pass cap (J3).
+ * Part C of the checker: fairness across former per-pass caps (J3).
  *
- * Each scenario runs a fleet LARGER than the cap through consecutive REAL
+ * Each scenario runs a fleet larger than the former cap through REAL
  * passes (the full maintenance pass of `launcher.ts`, or the real repair
  * loop through the delivery-queue rig) and checks that every eligible record
  * is selected within a bounded number of passes. A record that keeps its slot
  * forever (refused on every pass) must not take the slot of the others.
  *
- * The retirement cap is also checked through `selectRetirements`, the
- * closure pass's inline selection (`.filter(!settled).slice(0, 5)`, pinned by
- * an anchor) applied to a planner passed in, so the same harness can run the
- * pre-fix planner (`fixtures/closures-pre-01f482529.ts`).
+ * Retirement selection is pinned to the current uncapped closure pass. The
+ * historical positive explicitly supplies its old five-row limit, so its
+ * starvation witness is preserved without limiting the current planner.
  */
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import type { ReviewTaskStatementV1 } from "../../src/contracts/review-receipt.ts";
@@ -22,7 +21,6 @@ import {
 } from "../../ops/hosted-autonomy-closures.ts";
 import { hostedIssueKey } from "../../ops/hosted-autonomy-policy.ts";
 import { spentReadWindow } from "../../ops/hosted-autonomy-spent-delivery.ts";
-import { HOSTED_AUTONOMY_SPENT_READS_PER_PASS } from "../../ops/hosted-autonomy-spent-delivery.ts";
 import { runRepairCycle } from "../../src/repair/loop.ts";
 import {
   DELIVERY_QUEUE_STALL_LIMIT,
@@ -117,7 +115,7 @@ async function drive(
 export const RETIREMENT_CAP = anchor(
   "f.retirementCap",
   "ops/hosted-autonomy-closure-pass.ts",
-  ").filter((plan) => !settled(plan.id)).slice(0, 5);",
+  ").filter((plan) => !settled(plan.id));",
 );
 
 export type RetirementPlanner = (
@@ -126,14 +124,18 @@ export type RetirementPlanner = (
   closedUnmerged?: ReadonlySet<string>,
 ) => HostedClosurePlanV1[];
 
-/** One pass of retirement selection over `planner` (the anchored slice). */
+/** Current selection, or the explicitly requested historical positive. */
 export function selectRetirements(
   planner: RetirementPlanner,
   snapshot: RepairStateSnapshotV1,
   closedIssues: ReadonlySet<string>,
   closedUnmerged: ReadonlySet<string>,
+  historicalLimit = Number.MAX_SAFE_INTEGER,
 ): HostedClosurePlanV1[] {
-  return planner(snapshot, closedIssues, closedUnmerged).slice(0, 5);
+  return planner(snapshot, closedIssues, closedUnmerged).slice(
+    0,
+    historicalLimit,
+  );
 }
 
 /**
@@ -145,6 +147,7 @@ export function selectRetirements(
 export async function retirementFairness(
   planner: RetirementPlanner,
   label: string,
+  historicalLimit = Number.MAX_SAFE_INTEGER,
 ): Promise<FairnessV1> {
   const shapes: RecordShapeV1[] = [];
   for (let index = 0; index < 9; index++) {
@@ -176,7 +179,13 @@ export async function retirementFairness(
   let rewrites = 0;
   const passes = 6;
   for (let pass = 0; pass < passes; pass++) {
-    const plans = selectRetirements(planner, snapshot, closed, unmerged);
+    const plans = selectRetirements(
+      planner,
+      snapshot,
+      closed,
+      unmerged,
+      historicalLimit,
+    );
     for (const plan of plans) {
       if (!needing.includes(plan.id) || retiredAt.has(plan.id)) rewrites++;
       if (!retiredAt.has(plan.id)) retiredAt.set(plan.id, pass);
@@ -192,7 +201,7 @@ export async function retirementFairness(
   const starved = needing.filter((id) => !retiredAt.has(id));
   return {
     id: `retirements:${label}`,
-    cap: "closure pass: 5 retirements per pass, snapshot order",
+    cap: "closure pass: all eligible retirements in snapshot order",
     fleet: parts.length,
     passes,
     starved,
@@ -240,7 +249,7 @@ export async function retirementFairnessLive(): Promise<FairnessV1> {
   );
   return {
     id: "retirements:live",
-    cap: "closure pass: 5 retirements per pass, snapshot order",
+    cap: "closure pass: all eligible retirements in snapshot order",
     fleet: parts.length,
     passes: log.length,
     starved,
@@ -351,7 +360,7 @@ export async function closureSlotFairness(): Promise<FairnessV1> {
     cap: anchor(
       "f.closureCap",
       "ops/hosted-autonomy-closure-pass.ts",
-      "  ).slice(0, 5);",
+      "const closures = closureCandidates.filter((plan) => !settled(plan.id)).filter(",
     ),
     fleet: parts.length,
     passes,
@@ -416,7 +425,7 @@ export async function rerunFairness(): Promise<FairnessV1> {
     cap: anchor(
       "f.rerunCap",
       "ops/hosted-autonomy-ci-rerun.ts",
-      "export const HOSTED_AUTONOMY_CI_RERUNS_PER_PASS = 3;",
+      "export const HOSTED_AUTONOMY_CI_RERUNS_PER_PASS = Number.MAX_SAFE_INTEGER;",
     ),
     fleet: parts.length,
     passes,
@@ -430,9 +439,8 @@ export async function rerunFairness(): Promise<FairnessV1> {
 
 // --------------------------------------------- J3: spent read window
 /**
- * The rotating spent-read window (8 per pass, offset = pass clock / 5 min):
- * every admissible spent record is read within ids.length - 8 + 1 passes at
- * the production 5-minute cadence. Real function, no model.
+ * Every admissible spent record is read in one pass, including fleets larger
+ * than the former eight-row window. Real function, no model.
  */
 export async function spentWindowFairness(
   cadenceMs = PASS_MS,
@@ -459,8 +467,7 @@ export async function spentWindowFairness(
   const { parts } = await fleet(shapes);
   const snapshot = repairSnapshot(parts);
   const seen = new Set<string>();
-  const bound = records - HOSTED_AUTONOMY_SPENT_READS_PER_PASS + 1;
-  const passes = bound * 2;
+  const passes = 1;
   for (let pass = 0; pass < passes; pass++) {
     for (const id of spentReadWindow(snapshot, NOW + pass * cadenceMs)) {
       seen.add(id);
@@ -471,7 +478,7 @@ export async function spentWindowFairness(
   );
   return {
     id: `spent-window:cadence-${cadenceMs / MINUTE}min:n${records}`,
-    cap: "delivery pass: 8 spent reads per pass, rotating",
+    cap: "delivery pass: every eligible spent record",
     fleet: records,
     passes,
     starved,

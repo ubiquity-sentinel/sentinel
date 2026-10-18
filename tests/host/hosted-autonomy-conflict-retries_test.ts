@@ -12,9 +12,8 @@
  * - with an allowlisted runtime, a conflict block written before its pinned
  *   activation returns to `work` with only target.pr restored from the
  *   verified open pull request, charging nothing;
- * - one pass returns at most `HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS`
- *   conflict resolutions (re-admissions and moved-tip re-pends together),
- *   counting only verified open pull requests.
+ * - one pass admits every verified open pull request without an artificial
+ *   count throttle, keeping all task and publication checks.
  *
  * The retry table's conflict-marker guard is pinned in
  * `hosted-autonomy-conflict-guard_test.ts`.
@@ -364,7 +363,7 @@ Deno.test("conflict re-admission: the runtime must be an allowlisted healthy gen
   }
 });
 
-Deno.test("conflict re-admission: local refusals (activation, shape, closed issue, retry budget)", async () => {
+Deno.test("conflict re-admission: local refusals preserve activation, shape and closed-issue gates", async () => {
   const release = installedOpener();
   const plan = (
     record: WorkRecordV1,
@@ -431,7 +430,7 @@ Deno.test("conflict re-admission: local refusals (activation, shape, closed issu
         settledAt: T0,
       }),
   );
-  assert.deepEqual(plan(await conflictBlocked(), budget).candidates, []);
+  assert.equal(plan(await conflictBlocked(), budget).candidates.length, 1);
   for (
     const message of [
       "base refresh has conflicts at abc",
@@ -587,8 +586,11 @@ function manySurface(
   } as HostedAutonomyGitHubV1;
 }
 
-Deno.test("conflict re-admission: one pass re-admits at most the per-pass cap, counting only verified open pull requests", async () => {
-  assert.equal(HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS, 4);
+Deno.test("conflict re-admission: one pass re-admits every verified open pull request", async () => {
+  assert.equal(
+    HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS,
+    Number.MAX_SAFE_INTEGER,
+  );
   const records = await Promise.all([1, 2, 3, 4, 5, 6].map(blockedTask));
   const moved = records[0];
   const reads: string[] = [];
@@ -606,7 +608,7 @@ Deno.test("conflict re-admission: one pass re-admits at most the per-pass cap, c
   const readmitted = result.actions.filter((action) =>
     action.endsWith(`:readmit:${CONFLICT_READMISSION_DETAIL}`)
   );
-  assert.equal(readmitted.length, 4, JSON.stringify(result.actions));
+  assert.equal(readmitted.length, 5, JSON.stringify(result.actions));
   assert.ok(
     result.actions.includes(`retry:${moved.id}:skipped:branch_moved`),
     "a dropped candidate holds no slot",
@@ -614,20 +616,16 @@ Deno.test("conflict re-admission: one pass re-admits at most the per-pass cap, c
   const capped = result.actions.filter((action) =>
     action.endsWith(":skipped:conflict_resolution_cap")
   );
-  assert.equal(capped.length, 1, JSON.stringify(result.actions));
-  const cappedId = capped[0].split(":")[1];
-  assert.ok(
-    !reads.includes(candidateBranch(cappedId as never)),
-    "a candidate past the cap is not read",
-  );
+  assert.equal(capped.length, 0, JSON.stringify(result.actions));
+  assert.equal(reads.length, 6, "every candidate is verified");
   assert.equal(
     state.snapshot.work.filter((work) => work.nextStep === "work").length,
-    4,
+    5,
   );
   assert.deepEqual(state.snapshot.reservations, [], "nothing charged");
 });
 
-Deno.test("conflict re-admission: moved-tip re-pends and re-admissions share one per-pass cap", async () => {
+Deno.test("conflict re-admission: moved-tip re-pends and re-admissions all proceed in one pass", async () => {
   const spent = await Promise.all([1, 2, 3].map(spentTask));
   const blocked = await Promise.all([1, 2, 3].map(blockedTask));
   const state = new TransitionState(
@@ -651,12 +649,12 @@ Deno.test("conflict re-admission: moved-tip re-pends and re-admissions share one
     action.endsWith(`:readmit:${CONFLICT_READMISSION_DETAIL}`)
   );
   assert.equal(repended.length, 3, JSON.stringify(result.actions));
-  assert.equal(readmitted.length, 1, JSON.stringify(result.actions));
+  assert.equal(readmitted.length, 3, JSON.stringify(result.actions));
   assert.equal(
     result.actions.filter((action) =>
       action.endsWith(":skipped:conflict_resolution_cap")
     ).length,
-    2,
+    0,
     JSON.stringify(result.actions),
   );
   assert.deepEqual(

@@ -110,7 +110,11 @@ Deno.test("decision matrix: every park the lifecycle reaches is in the census", 
 
 Deno.test("decision matrix: known positive (a) re-retiring every pass is caught on 01f482529^", async () => {
   assert.equal(await preFixFixtureFaithful(), true);
-  const before = await retirementFairness(preFixRetirements, "pre-01f482529");
+  const before = await retirementFairness(
+    preFixRetirements,
+    "pre-01f482529",
+    5,
+  );
   assert.ok(before.starved.length > 0, "pre-fix starves the records to retire");
   assert.ok(before.holders.length > 0, "pre-fix rewrites retired rows");
   const run = await checker();
@@ -242,4 +246,25 @@ Deno.test("decision matrix: integrated recovery and acceptance routes retain the
       assert.equal(edge.to.pr, state.pr, "acceptance correction keeps its PR");
     }
   }
+});
+
+Deno.test("decision matrix: identical failures park while changing signatures remain an explicit residual", async () => {
+  const { graph } = await checker();
+  const parks = [...graph.edges.values()].flat().filter((edge) =>
+    edge.event === "identical_failure_owner_park"
+  );
+  assert.ok(parks.length > 0, "the repeat-failure guard is modeled");
+  for (const edge of parks) {
+    assert.equal(edge.to.phase, "blocked:impl.repeat_failure");
+    assert.equal(edge.to.sameFailures, 3);
+  }
+  const cycles = nonTerminating(graph, "adv").filter((cycle) =>
+    cycle.cycle.some((step) => step.edge.event === "matrix_grant")
+  );
+  assert.ok(cycles.length > 0, "the changing-signature residual stays visible");
+  assert.ok(
+    cycles.every((cycle) =>
+      cycle.cycle.some((step) => step.edge.event.endsWith("_changed_signature"))
+    ),
+  );
 });

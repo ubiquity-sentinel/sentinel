@@ -34,9 +34,8 @@
  * is one the table retries (a protected-path resolution stays owner-terminal),
  * so no launcher path spends a second charge on the same base tip.
  *
- * One maintenance pass returns at most
- * `HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS` conflict resolutions, these
- * re-admissions and the moved-tip re-pends together (`runHostedRetryPass`).
+ * All eligible re-admissions and moved-tip re-pends may proceed in one pass;
+ * per-task review, same-base charge and execution deadline guards remain.
  */
 import { isGitSha } from "../src/contracts/brands.ts";
 import {
@@ -55,13 +54,8 @@ import {
   type BaseRefreshReadmissionV1,
   verifyBaseRefreshReadmissions,
 } from "./hosted-autonomy-base-refresh-retries.ts";
-import {
-  HOSTED_AUTONOMY_MAX_RETRIES,
-  hostedIssueKey,
-  sameRepository,
-} from "./hosted-autonomy-policy.ts";
+import { hostedIssueKey, sameRepository } from "./hosted-autonomy-policy.ts";
 import { refreshFixActivation } from "./hosted-autonomy-refresh-rearm.ts";
-import { taskReservationCount } from "./hosted-autonomy-retries.ts";
 import {
   ciFirstRuntimeProven,
   LEGACY_ROUND_REQUIRES_CI_FIRST,
@@ -103,17 +97,12 @@ export const HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES:
   ];
 
 /**
- * Bound on conflict resolutions one maintenance pass returns to the installed
- * runtime: conflict re-admissions plus moved-tip re-pends of spent
- * resolutions (`:conflict_resolution:base-advance`). Each one is a record the
- * runtime may charge one resolution cell for, and every such cell still
- * unconsumed when a failed generation rolls back is isolated by the rollback
- * target with its admission retained, so the cap bounds that exposure (and a
- * burst on the model route) per pass. Only records whose pull request the
- * pass verified open count, so a dropped one never holds a slot; one past the
- * cap is not read and waits for a later pass.
+ * Retired four-record throttle. Keep the exported numeric policy compatible
+ * while admitting every remotely verified candidate. Review rounds, unique
+ * charged reservations per base and execution deadlines remain authoritative.
  */
-export const HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS = 4;
+export const HOSTED_AUTONOMY_CONFLICT_RESOLUTIONS_PER_PASS =
+  Number.MAX_SAFE_INTEGER;
 
 /** The exact terminal conflict blocker a refresh writes (legacy bare form too). */
 export const BASE_REFRESH_CONFLICT_BLOCKER =
@@ -195,9 +184,6 @@ export function planConflictReadmissions(
       closedIssues.has(
         hostedIssueKey(record.repository, record.related.issueNumber),
       )
-    ) continue;
-    if (
-      taskReservationCount(snapshot, record.id) >= HOSTED_AUTONOMY_MAX_RETRIES
     ) continue;
     const head = record.target.head;
     // The runtime's OWN shape (a stand-in PR number until the open pull

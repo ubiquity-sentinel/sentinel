@@ -24,13 +24,17 @@
  * Termination is checked by ranking: counters bounded by the owner rules live
  * in the state (review rounds, CI fixes, refresh failures, carried
  * refreshes), and edges carry the effect on the remaining ledger rankings
- * (`A`: the 200-reservation retry budget a model start spends; `rerun`: the
- * once-per-head flake re-run, replenished by a new head). A strongly
+ * (`rerun`: the once-per-head flake re-run, replenished by a new head).
+ * Durable reservations stay charged but impose no lifetime retry ranking. A strongly
  * connected component is safe when some ranking is spent inside it and never
  * replenished there; those edges are removed and the remainder re-checked
  * (lexicographic ranking by SCC decomposition). What remains is a cycle no
  * ranking bounds: J2.
  */
+import {
+  REPEAT_FAILURE_TRANSIENT_SPAN_MS,
+  repeatFailureDue,
+} from "../../ops/hosted-autonomy-repeat-failure.ts";
 import type { GitHubCheckV1 } from "../../src/contracts/ports.ts";
 import {
   attributeFailedChecks,
@@ -75,7 +79,7 @@ import {
 export { indefiniteWaits, initialStates, key } from "./pipeline-states.ts";
 
 export type Fairness = "sys" | "coop" | "adv" | "base" | "human" | "infra";
-export type Rank = "A" | "rerun";
+export type Rank = "rerun";
 
 export type Phase =
   | "work.fresh"
@@ -109,6 +113,9 @@ export interface PStateV1 {
   rounds: number;
   /** CI fixes spent (0..3). */
   fixes: number;
+  /** Last abstract failure signature and its consecutive occurrences. */
+  lastFailure?: string | null;
+  sameFailures?: number;
   /** Consecutive failures of the current refresh intent (0..2). */
   refreshFail: number;
   /** Mechanical refreshes a spent reviewed head was carried through. */
@@ -336,7 +343,7 @@ export function successors(
           at(from, "review.requested", { rounds: from.rounds + 1 }),
           "ci_green:review_requested",
           "coop",
-          { consumes: ["A"], anchor: A.ciFirst },
+          { anchor: A.ciFirst },
         );
       }
     }
@@ -458,7 +465,6 @@ export function successors(
         return edges;
       }
       add(at(state, "work.impl"), "matrix_grant", "sys", {
-        consumes: ["A"],
         anchor: A.grant,
       });
       add(at(state, "work.manual"), "session_bound_absent", "human", {
@@ -466,10 +472,15 @@ export function successors(
       });
       return edges;
     case "work.impl":
-      add(at(state, "work.noted"), "cell_completed", "coop", {
-        replenishes: ["rerun"],
-        anchor: A.ingest,
-      });
+      add(
+        at(state, "work.noted", { lastFailure: null, sameFailures: 0 }),
+        "cell_completed",
+        "coop",
+        {
+          replenishes: ["rerun"],
+          anchor: A.ingest,
+        },
+      );
       add(park(state, "impl.protected_path"), "cell_protected_path", "coop");
       for (
         const failure of [
@@ -485,9 +496,40 @@ export function successors(
           "cell.bundle_failed",
         ]
       ) {
-        add(park(state, failure), `cell_${failure}`, "adv", {
-          anchor: A.ingest,
+        const count = state.lastFailure === failure
+          ? (state.sameFailures ?? 0) + 1
+          : 1;
+        // Collapse the finite six-hour transient span, which the real bound
+        // tests advance explicitly. Beyond it, an identical streak must park;
+        // changing the failure signature starts another streak, not a refund.
+        const due = repeatFailureDue({
+          signature: failure,
+          count,
+          failureClass: "transient_infrastructure",
+          firstAtMs: NOW - REPEAT_FAILURE_TRANSIENT_SPAN_MS,
+          lastAtMs: NOW,
         });
+        add(
+          park(
+            {
+              ...state,
+              lastFailure: failure,
+              sameFailures: Math.min(count, 3),
+            },
+            due ? "impl.repeat_failure" : failure,
+          ),
+          due ? "identical_failure_owner_park" : `cell_${failure}`,
+          "adv",
+          { anchor: A.ingest },
+        );
+        if (count > 1) {
+          add(
+            park({ ...state, lastFailure: failure, sameFailures: 1 }, failure),
+            `cell_${failure}_changed_signature`,
+            "adv",
+            { anchor: A.ingest },
+          );
+        }
       }
       add(
         park(state, "cell.source_changed"),
@@ -590,7 +632,6 @@ export function successors(
           : at(state, "review.requested", { rounds: state.rounds + 1 }),
         "review_acceptance_missing",
         "adv",
-        { consumes: ["A"] },
       );
       add(
         at(state, "review.ctx_wait"),
