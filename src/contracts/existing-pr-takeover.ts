@@ -4,6 +4,13 @@ import type { PortResultV1 } from "./ports.ts";
 import type { RepositoryIdentityV1 } from "./shared.ts";
 import type { RepairStateSnapshotV1 } from "./state-snapshots.ts";
 import type { CandidatePreservationV1, WorkRecordV1 } from "./work-record.ts";
+import type {
+  CandidatePreservationRequestV1,
+  MergeRequestV1,
+  PrepareBaseRefreshRequestV1,
+  PullRequestCreateV1,
+  ReviewSubmissionV1,
+} from "./ports-github-requests.ts";
 
 export type TakeoverParkReason =
   | "association_unproven"
@@ -77,6 +84,7 @@ export type TakeoverDiscovery =
 
 export type TakeoverOperation =
   | "correct"
+  | "preserve_successor"
   | "publish"
   | "review"
   | "refresh"
@@ -123,6 +131,18 @@ export interface TakeoverCustodyProof {
   readonly kind: "verified_existing_pr_custody";
 }
 
+/** Read-only native/producer custody after merge; never a merge/enqueue authority. */
+export interface TakeoverPublicationProof {
+  readonly kind: "verified_existing_pr_publication";
+}
+export interface TakeoverPublicationRequest {
+  record: WorkRecordV1;
+  snapshot: RepairStateSnapshotV1;
+  expectedStateHead: GitSha;
+  revision: GitSha;
+  deadline: number;
+}
+
 export interface TakeoverProofRequest {
   record: WorkRecordV1;
   snapshot: RepairStateSnapshotV1;
@@ -134,8 +154,36 @@ export interface TakeoverProofRequest {
   observedBase?: GitSha;
   /** Mandatory only for a prepared publish; must be a proved FF successor. */
   nextHead?: GitSha;
+  /** Refresh phases are separate authorizations; absence retains preparation compatibility. */
+  phase?: "prepare" | "preserve" | "publish";
+  /** Exact candidate for successor preservation or prepared refresh, never a producer assertion. */
+  candidate?: CandidatePreservationV1;
+  /** Actual review submission task digest; absent for read-only admission checks. */
+  taskDigest?: string;
   deadline: number;
 }
+
+/** Transient only; proof recognition and exact request equality grant authority. */
+export type TakeoverEffectAuthorization =
+  | {
+    kind?: "custody";
+    proof: TakeoverCustodyProof;
+    request: TakeoverProofRequest;
+  }
+  | {
+    kind: "native_preservation";
+    /** Factory-private one-use recognition, issued only inside preserveNativeHead. */
+    proof: { readonly kind: "verified_native_preservation_push" };
+  };
+
+/** Derived at the concrete method boundary from its actual arguments. */
+export type TakeoverEffectBoundary =
+  | { kind: "push"; ref: string; head: GitSha; expectedRef: GitSha | null }
+  | { kind: "review"; request: ReviewSubmissionV1 }
+  | { kind: "merge"; request: MergeRequestV1 }
+  | { kind: "refresh"; request: PrepareBaseRefreshRequestV1 }
+  | { kind: "preserve"; request: CandidatePreservationRequestV1 }
+  | { kind: "create"; request: PullRequestCreateV1 };
 
 export interface TakeoverPreserveRequest {
   binding: TakeoverBinding;
@@ -175,6 +223,14 @@ export interface TakeoverCandidateObservation {
 export interface ExistingPrTakeoverPort {
   /** Source-policy routing metadata only; never principal or effect authority. */
   readonly coordinationActivated: boolean;
+  resolvePublication(
+    input: TakeoverPublicationRequest,
+  ): Promise<PortResultV1<TakeoverPublicationProof>>;
+  /** Authoritative state lookup detects omitted authorization on retained custody. */
+  authorizeBoundary(
+    boundary: TakeoverEffectBoundary,
+    authorization?: TakeoverEffectAuthorization,
+  ): Promise<PortResultV1<void>>;
   discover(
     input: { record: WorkRecordV1; deadline: number },
   ): Promise<TakeoverDiscovery>;

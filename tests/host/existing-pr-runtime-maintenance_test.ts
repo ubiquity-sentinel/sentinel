@@ -107,6 +107,7 @@ Deno.test("existing PR maintenance: migration-only retains queue-first read orde
   assert.equal(f.order[0], "queue");
   assert.deepEqual({ release: f.release, repair: f.repair }, before);
   assert.ok(result.status === "migration_only");
+  assert.ok(result.move !== null);
   assert.equal(result.move.priorRevision, PRIOR);
   assert.equal(result.move.nextRevision, NEXT);
   assert.equal(result.releaseHead, HEAD);
@@ -178,4 +179,14 @@ Deno.test("existing PR maintenance: accepted installed runtime still intersects 
     }, custody)).status,
     "hold",
   );
+});
+
+Deno.test("existing PR maintenance: queue proof activation requires custody floor before any ordinary writer", async () => {
+  const f = fixture(true);
+  const result = await readHostedMaintenanceCompatibility(f.input, {
+    proofActivated: true,
+    revisions: [NEXT],
+  }, { custodyActivated: false, revisions: [] });
+  assert.equal(result.status, "hold");
+  assert.deepEqual(f.order, []);
 });

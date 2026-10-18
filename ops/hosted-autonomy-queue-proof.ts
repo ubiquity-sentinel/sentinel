@@ -1,3 +1,6 @@
+import type { TakeoverPublicationProof } from "../src/contracts/existing-pr-takeover.ts";
+import { hasTakeoverCustody } from "../src/github/existing-pr-takeover-provenance.ts";
+import { takeoverPublicationMatches } from "../src/github/existing-pr-publication-proof.ts";
 /** One queue-first proof constructor. Inputs are authenticated coordinator facts. */
 import { type GitSha, isGitSha } from "../src/contracts/brands.ts";
 import {
@@ -84,6 +87,7 @@ export interface QueueDeliveryFacts {
   optedOut: boolean | null;
   pull: QueuePullIdentity;
   publicationAuthor: string;
+  publicationProof?: TakeoverPublicationProof;
   revision: GitSha | null;
   mergedBy: QueueActor | null;
   commit:
@@ -207,7 +211,17 @@ async function commonProof(
     pull.number !== b.pullRequest || pull.head !== b.head ||
     pull.baseRef !== "development"
   ) return reject("identity_mismatch");
-  if (!HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(facts.publicationAuthor)) {
+  if (
+    hasTakeoverCustody(record)
+      ? revision === null ||
+        !takeoverPublicationMatches(
+          facts.publicationProof,
+          record,
+          revision,
+          facts.publicationAuthor,
+        )
+      : !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(facts.publicationAuthor)
+  ) {
     return reject("untrusted_actor");
   }
   if (!isGitSha(revision) || commit === null || commit.sha !== revision) {
