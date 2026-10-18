@@ -38,6 +38,7 @@
  * per-task review, same-base charge and execution deadline guards remain.
  */
 import { isGitSha } from "../src/contracts/brands.ts";
+import { HOSTED_RUNTIME_ROLLOUT } from "../src/host/hosted-runtime-rollout.ts";
 import {
   HOSTED_RUNTIME_ID,
   type HostedRuntimeRecordV1,
@@ -82,6 +83,7 @@ export const HOSTED_AUTONOMY_CONFLICT_RESOLUTION_MIN_GENERATION = 79;
  */
 export const HOSTED_AUTONOMY_CONFLICT_RESOLUTION_RUNTIMES:
   readonly HostedRefreshRearmRuntimeV1[] = [
+    ...HOSTED_RUNTIME_ROLLOUT.conflictResolution,
     // Generation 79 (R79, which opens the hosted route), pinned by its
     // launcher commit at 1792185359753.
     {
