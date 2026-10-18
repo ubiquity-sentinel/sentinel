@@ -62,15 +62,17 @@ spool storage remain bounded; critical evidence loss refuses proof at natural
 settlement. Duration limits and all reservation charges remain. Missing CI step
 timestamps still use the explicitly advisory bounded fallback.
 
-All R81 writers are frozen at `810712b5361a1e615099bddbb95b81314ff7bab6`.
-Exact-commit formatting (including JSON), lint, size and the canonical check
-list have passed; the full normal/depth-1 test manifest is still running. Queue
-preparation is isolated from this candidate. Hosted exact-R CI, the later L81
-pins, controller installation and live verification remain separate unproved
-gates. The primary alone owns this ledger, canonical integration, final
-validation and publication. Local evidence is under
-`/workspace/evidence/gen81-audit/` (including `correction-addendum.md` and its
-manifest), `/workspace/evidence/gen81-output-volume/`,
+Exact-R81 validation of `810712b5361a1e615099bddbb95b81314ff7bab6` passed
+formatting (including JSON), lint, size and the canonical check list, then
+exposed obsolete listener-order fixtures in three integration files. Two bounded
+timeout receipts and the deterministic reproduction are retained. The isolated
+fixture correction must pass its real consumers before a new frozen R81 identity
+runs the complete normal/depth-1 manifest. Queue preparation remains isolated
+from R81. Hosted exact-R CI, the later L81 pins, controller installation and
+live verification remain separate unproved gates. The primary alone owns this
+ledger, canonical integration, final validation and publication. Local evidence
+is under `/workspace/evidence/gen81-audit/` (including `correction-addendum.md`
+and its manifest), `/workspace/evidence/gen81-output-volume/`,
 `/workspace/evidence/gen81-review-custody/`,
 `/workspace/evidence/gen81-lanes/early-notifications-report.json`,
 `/workspace/evidence/gen81-final-validation/` and
@@ -116,8 +118,18 @@ four canonical merge-group checks must succeed. Predecessor `.github/` edits
 refuse admission. Missing evidence never falls through to direct proof. Source
 mode and immutable proof activation remain off; all canary pins remain empty. A
 fresh no-rule/no-custody REST path preserves the live direct pipeline without
-requiring queue permissions. The combined independent review and final queue
-acceptance remain pending; no queue runtime has been published or installed.
+requiring queue permissions. The fresh independent combined audit of
+`b5c3092830ab8b8341dfcccc4dde940149c228ab` found two reproduced P1 blockers: a
+transient dormant-state read could latch permanent custody, and unmerged removal
+reconciliation called a merged-only evidence reader. The launcher custody scope
+passed, including a 90-day restart with no repeated effect. The removal
+correction in this commit uses complete native event reads and fresh membership
+before and after, with actual-client CI/timeout reentry and refusal regressions
+(48 tests, 104 steps plus static gates). Its four source hashes match
+`/workspace/evidence/queue-removal-correction/manifest.json`. The dormant retry
+correction is isolated and pending; final combined correction review and queue
+acceptance remain unproved. No queue runtime is published or installed. The full
+audit and reproducers are under `/workspace/evidence/merge-queue/audit/`.
 
 Two conservative liveness limitations are retained for review as P2 follow-ups:
 a definitely unsent admission can retain its non-expiring hold after a later

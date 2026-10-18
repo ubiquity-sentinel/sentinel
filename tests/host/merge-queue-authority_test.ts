@@ -6,7 +6,7 @@ import { queueDeliveryProvenanceRef } from "../../src/github/queue-delivery-prov
 import { closureIntentKey } from "../../src/repair/keys.ts";
 import { persistVpsDelivery } from "../repair/vps-delivery-fixtures.ts";
 import { authorityRig } from "./merge-queue-authority-fixtures.ts";
-import { APP, SHA1, SHA3, SHA4 } from "./merge-queue-proof-fixtures.ts";
+import { SHA1, SHA3, SHA4 } from "./merge-queue-proof-fixtures.ts";
 
 Deno.test("queue authority remains dark with absent source pins and uses REST-only legacy proof", async () => {
   const rig = await authorityRig();
@@ -233,55 +233,6 @@ Deno.test("strict queue proof cannot become legacy direct after custody, failed 
       const result = await dark.resolveDelivery(rig.deliveryRequest());
       assert.notEqual(result.status, "verified");
       assert.notEqual(result.status, "legacy_direct");
-    });
-  }
-});
-
-Deno.test("queue removal classification requires exact durable entry, unique native events and pinned reason", async (t) => {
-  for (
-    const change of [
-      "valid",
-      "entry",
-      "unknown",
-      "actor",
-      "duplicate",
-      "unbound",
-      "wrong_head",
-      "missing_pin",
-    ] as const
-  ) {
-    await t.step(change, async () => {
-      const rig = await authorityRig(true);
-      rig.toggles.merged = false;
-      if (change === "missing_pin") rig.pins.removalBeforeCommit = null;
-      const removed = {
-        ...rig.evidence.removed[0],
-        reason: change === "unknown" ? "looks like CI failed" : "CHECKS_FAILED",
-        actor: change === "actor" ? { ...APP, nodeId: "FOREIGN" } : APP,
-        beforeCommit: change === "unbound"
-          ? null
-          : change === "wrong_head"
-          ? SHA3
-          : rig.facts.binding.head,
-      };
-      rig.setEvidence({
-        ...rig.evidence,
-        removed: [removed],
-        added: change === "duplicate"
-          ? [...rig.evidence.added, { ...rig.evidence.added[0], id: "DUP" }]
-          : rig.evidence.added,
-      });
-      const result = await rig.authority.authorization.readRemoval({
-        ...rig.request(),
-        binding: rig.facts.binding,
-        entryId: change === "entry" ? "FOREIGN" : "MQE_7",
-      });
-      if (change === "valid") {
-        assert.deepEqual(result, {
-          status: "complete",
-          value: { classification: "ci_failed", eventId: removed.id },
-        });
-      } else assert.notEqual(result.status, "complete");
     });
   }
 });

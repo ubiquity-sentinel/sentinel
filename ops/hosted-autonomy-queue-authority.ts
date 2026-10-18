@@ -420,7 +420,9 @@ export function createHostedQueueAuthority(
         pull.value.membership.pull.baseRef !== "development" ||
         !equal(pull.value.membership.pull.repository, request.record.repository)
       ) return unavailable();
-      const evidence = await client.readPullEvidence(
+      // Removal is an unmerged lifecycle: the delivery evidence reader requires
+      // a merged revision and cannot classify CI/timeout ejections.
+      const evidence = await client.readPullQueueEvents(
         pull.value.membership.pull,
       );
       if (evidence.status !== "complete") return evidence;
@@ -433,7 +435,6 @@ export function createHostedQueueAuthority(
       );
       if (
         !equal(evidence.value.pull, pull.value.membership.pull) ||
-        !equal(evidence.value.entry, pull.value.membership.entry) ||
         added.length !== 1 || !equal(added[0].actor, policy.appActor) ||
         added[0].at > clock.now() || removed.length > 1 ||
         removed.some((event) =>
@@ -444,15 +445,15 @@ export function createHostedQueueAuthority(
         eventId: string | null;
       if (removed.length === 0) {
         if (
-          evidence.value.entry?.id !== request.entryId ||
-          !equal(evidence.value.entry.enqueuer, policy.appActor)
+          pull.value.membership.entry?.id !== request.entryId ||
+          !equal(pull.value.membership.entry.enqueuer, policy.appActor)
         ) return unavailable();
         classification = "none";
         eventId = null;
       } else {
         const event = removed[0];
         if (
-          evidence.value.entry !== null || event.reason === null ||
+          pull.value.membership.entry !== null || event.reason === null ||
           pins.removalBeforeCommit !== "pull_head" ||
           event.beforeCommit !== request.binding.head ||
           !pins.removalActors.some((actor) => equal(actor, event.actor))
@@ -466,7 +467,9 @@ export function createHostedQueueAuthority(
         classification = matches[0][0];
         eventId = event.id;
       }
-      const after = await client.readPullEvidence(pull.value.membership.pull);
+      const after = await client.readPullQueueEvents(
+        pull.value.membership.pull,
+      );
       const afterPull = await client.readQueuePull(
         request.binding.pullRequest,
         deadline,

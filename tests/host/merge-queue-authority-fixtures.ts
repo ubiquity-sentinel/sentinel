@@ -293,6 +293,11 @@ export async function authorityRig(custody = false) {
   };
   client.readPullEvidence = () => {
     nativeReads++;
+    // Match the real delivery reader: unmerged removals require the native
+    // event reader, exercised with actual HTTP in the removal regression.
+    if (!toggles.merged) {
+      return Promise.resolve({ status: "unavailable", reason: "incomplete" });
+    }
     return Promise.resolve({
       status: "complete",
       value: structuredClone(evidence),
