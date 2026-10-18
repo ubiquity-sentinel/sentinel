@@ -9,8 +9,8 @@
  * Idempotency needs no state. Before any create the repository's created-since
  * listing is read, and an App-authored issue whose first line names the same
  * repository and PR (at any receipt or depth) means it is already filed. A
- * listing proves its prefix down to its oldest item; only candidates older
- * than that horizon are unproven. An unproven create counts against the pass
+ * listing proves absence only strictly newer than its oldest item, including
+ * the request/GitHub clock margin. An unproven create counts against the pass
  * bound and the next listing settles it (passes are serialised by the
  * supervisor's concurrency group).
  */
@@ -118,8 +118,8 @@ export async function runHostedFollowUpPass(
     // A surface without the capability files nothing and reports nothing.
     if (scope.surface === null || port === undefined) continue;
     // 1. Already filed? One listing per repository and pass. A five-page
-    //    prefix proves only down to its oldest item; older candidates remain
-    //    explicitly unproven instead of stopping newer candidates.
+    //    prefix proves only down to its oldest item; candidates whose clock
+    //    margin crosses that horizon remain unproven instead of blocking newer ones.
     let listing = listings.get(scope.key);
     if (listing === undefined) {
       if (!inBudget()) {
@@ -148,22 +148,25 @@ export async function runHostedFollowUpPass(
       actions.push(`${tag}:listing_unproven`);
       continue;
     }
-    const oldestListed = listing.length >=
-        FOLLOW_UP_MAX_LISTING_PAGES * FOLLOW_UP_LISTING_PAGE_SIZE
-      ? listing.at(-1)?.createdAt ?? null
-      : null;
-    if (
-      oldestListed !== null && candidate.request.createdAt < oldestListed
-    ) {
-      actions.push(`${tag}:listing_unproven`);
-      continue;
-    }
     const existing = listing.find((item) =>
       !item.pullRequest && item.author === HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR &&
       markerNamesCandidate(item.firstLine, candidate)
     );
     if (existing !== undefined) {
       actions.push(`${tag}:exists=#${existing.number}`);
+      continue;
+    }
+    const oldestListed = listing.length >=
+        FOLLOW_UP_MAX_LISTING_PAGES * FOLLOW_UP_LISTING_PAGE_SIZE
+      ? listing.at(-1)?.createdAt ?? null
+      : null;
+    // A missing marker is not absence proof at a capped page boundary: an
+    // omitted item may share its timestamp or lie within the clock margin.
+    if (
+      oldestListed !== null &&
+      candidate.request.createdAt - FOLLOW_UP_LISTING_SKEW_MS <= oldestListed
+    ) {
+      actions.push(`${tag}:listing_unproven`);
       continue;
     }
     if (
