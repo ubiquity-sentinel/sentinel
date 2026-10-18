@@ -150,6 +150,7 @@ Deno.test("model volume: projected output counts original volume but cannot cert
     COMPLETED_TERMINAL,
   ];
   const session = new ScriptedSession({}, {}, events, "interrupted");
+  await session.send("turn/start", {});
   const capture = await awaitSettlement(
     Deno.cwd(),
     100,
@@ -182,6 +183,7 @@ Deno.test("model volume: bounded early evidence loss waits for real terminal the
     [COMPLETED_TERMINAL],
     "interrupted",
   );
+  await session.send("turn/start", {});
   const getLoss = () => ({
     observedParamsChars: 40_000_000,
     criticalEvidenceLost: true,
