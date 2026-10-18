@@ -7,6 +7,7 @@ import type {
   WorkRecordV1,
 } from "../contracts/work-record.ts";
 import {
+  conflictMarkerBase,
   conflictResolutionRouteOpen,
   conflictResolutionShape,
   pendingConflictRecord,
@@ -23,7 +24,9 @@ import {
   BASE_REFRESH_PUSH_DETAIL,
   BASE_REFRESH_REF_READ_DETAIL,
   BASE_REFRESH_UNPREPARED_DETAIL,
+  baseRefreshRefusalReason,
   failBaseRefresh,
+  refuseBaseRefresh,
 } from "./loop-base-refresh-failure.ts";
 import { configFor, retireClosedPublication } from "./loop-records.ts";
 import { legacyCutoff } from "./loop-review-round-cap.ts";
@@ -53,8 +56,11 @@ export {
   BASE_REFRESH_PRESERVE_DETAIL,
   BASE_REFRESH_PUSH_DETAIL,
   BASE_REFRESH_REF_READ_DETAIL,
+  BASE_REFRESH_REFUSED_PREFIX,
   BASE_REFRESH_UNPREPARED_DETAIL,
+  baseRefreshRefusedMessage,
   failBaseRefresh,
+  isBaseRefreshRefusedPark,
   MAX_BASE_REFRESH_FAILURES,
 } from "./loop-base-refresh-failure.ts";
 
@@ -293,6 +299,21 @@ export async function executeBaseRefreshIntent(
       publishedHead: candidateState.publishedHead,
     });
     if (!preserved.ok) {
+      // The trusted validator's verdict on the deterministic merge of the
+      // exact candidate and base is final for this intent: re-running it can
+      // only repeat the verdict (sentinel issue 157: a candidate R79 produced
+      // edits paths R80 protects). It parks once for the owner, with the
+      // closed reason and the open PR kept. A marked conflict-resolution
+      // refresh keeps its marker accounting below.
+      const reason = conflictMarkerBase(intent) === null
+        ? baseRefreshRefusalReason(
+          preserved.error.kind,
+          preserved.error.detail,
+        )
+        : null;
+      if (reason !== null) {
+        return refuseBaseRefresh(deps, context, durable, reason);
+      }
       return failBaseRefresh(deps, context, durable, durableIntent, {
         kind: preserved.error.kind,
         detail: BASE_REFRESH_PRESERVE_DETAIL,
