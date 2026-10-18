@@ -13,6 +13,8 @@ import {
 } from "../src/github/http.ts";
 import { DEFAULT_APP_INSTALLATION_ID } from "../src/host/actions-target-cycles.ts";
 import { DurableGitHubCooldownGate } from "../src/repair/github-cooldown.ts";
+import { parseRepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
+import { queueProtectedIds } from "./hosted-autonomy-queue-context.ts";
 
 export async function readHostedMaintenanceQueueObservation(input: {
   state: StateReadView;
@@ -20,6 +22,8 @@ export async function readHostedMaintenanceQueueObservation(input: {
   token: string;
   deadline: number;
   http?: HttpTransportV1;
+  /** Nonordinary runtime passes require complete negative custody evidence. */
+  requireNoCustody?: true;
 }): Promise<boolean> {
   const live = () =>
     Number.isSafeInteger(input.deadline) &&
@@ -60,11 +64,20 @@ export async function readHostedMaintenanceQueueObservation(input: {
     const queue = await client.readQueue("development");
     if (queue.status !== "complete" || !live()) return false;
     const freshRules = await client.readBranchRules("development");
-    return freshRules.ok && live() &&
+    const consistent = freshRules.ok && live() &&
       canonicalStringify(freshRules.value) ===
         canonicalStringify(rules.value) &&
       rules.value.some((rule) => rule.type === "merge_queue") ===
         (queue.value.queueId !== null);
+    if (!consistent || input.requireNoCustody !== true) return consistent;
+    if (
+      queue.value.queueId !== null || queue.value.entries.length !== 0 ||
+      rules.value.some((rule) => rule.type === "merge_queue")
+    ) return false;
+    const fresh = await input.state.readRepair();
+    return fresh.ok && fresh.value.status === "found" && live() &&
+      queueProtectedIds(parseRepairStateSnapshotV1(fresh.value.snapshot))
+          .size === 0;
   } catch {
     return false;
   }
