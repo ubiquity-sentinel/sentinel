@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "queue": {
+    "proofActivated": false,
+    "revisions": [],
+    "ownerInstallMigrations": []
+  },
+  "existingPr": {
+    "custodyActivated": false,
+    "revisions": [],
+    "ownerInstallMigrations": []
+  }
+}

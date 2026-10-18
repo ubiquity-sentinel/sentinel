@@ -53,6 +53,7 @@ import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import { ordinaryReviewRoundsSpent } from "../src/repair/review-round-cap.ts";
 import { ciCorrectionRuntimeProven } from "./hosted-autonomy-ci-retries.ts";
 import { legacyReviewCutoffForRuntime } from "../src/host/legacy-review-cutoff-env.ts";
+import { HOSTED_RUNTIME_ROLLOUT } from "../src/host/hosted-runtime-rollout.ts";
 
 type WorkRow = RepairStateSnapshotV1["work"][number];
 
@@ -69,6 +70,7 @@ export const HOSTED_AUTONOMY_CI_FIRST_MIN_GENERATION = 80;
 export const HOSTED_AUTONOMY_CI_FIRST_RUNTIMES: ReadonlySet<string> = new Set<
   string
 >([
+  ...HOSTED_RUNTIME_ROLLOUT.ciFirst,
   // Generation 80 (R80), pinned by its launcher commit.
   "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481",
   // Generation 81 (R81), pinned by its launcher commit.
@@ -95,6 +97,7 @@ export const HOSTED_AUTONOMY_CI_FIRST_FIX_MIN_GENERATION = 81;
  */
 export const HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES: ReadonlySet<string> =
   new Set<string>([
+    ...HOSTED_RUNTIME_ROLLOUT.ciFirstFix,
     "da98f5f49c45b57cfa97a45fe647c36b1021f302",
   ]);
 

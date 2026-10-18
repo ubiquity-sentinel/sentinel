@@ -17,6 +17,7 @@ import {
 } from "../../src/host/local.ts";
 import { T0 } from "../state/helpers.ts";
 import {
+  APP_TOKEN,
   FIXED_LAUNCHER,
   hostedEnv,
   launch,
@@ -39,6 +40,38 @@ import {
   hostedFixtureRequest,
   validFixtureScript,
 } from "./hosted-runtime-child-fixture.ts";
+
+Deno.test("hosted runtime: actual owned host child keeps its App token but receives no unverified mint evidence", async () => {
+  const grant = "fixture-inert-mint-grant";
+  const rig = await makeRig({
+    runtimeFiles: {
+      "src/host/actions.ts":
+        `if (Deno.env.get("SENTINEL_SUPERVISOR_TOKEN") !== ${
+          JSON.stringify(APP_TOKEN)
+        } || Deno.env.get("SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT") !== undefined || Deno.env.get("SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER") !== ${
+          JSON.stringify(String(T0 + 58 * 60_000))
+        } || Deno.env.get("SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE") !== undefined) throw new Error("fixture handoff refused");\n` +
+        validFixtureScript(""),
+      ".gitignore": ".sentinel/\n",
+    },
+  });
+  try {
+    await seedRelease(rig);
+    rig.process.realChild = true;
+    const result = await launch(rig, {
+      env: {
+        ...rig.env,
+        SENTINEL_SUPERVISOR_TOKEN: APP_TOKEN,
+        SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: grant,
+        SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: String(T0),
+      },
+    });
+    assert.equal(result.status, "healthy");
+    assert.equal(rig.process.childCalls().length, 1);
+  } finally {
+    await rig.cleanup();
+  }
+});
 
 Deno.test("hosted runtime: a real owned-group child cannot forge the wrapper terminal", async () => {
   const forged = await makeRig({

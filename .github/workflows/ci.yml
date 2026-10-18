@@ -38,7 +38,7 @@ jobs:
           deno-version: v2.x
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: 24.19.0
       - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
         with:
           bun-version: 1.4.0
@@ -55,6 +55,13 @@ jobs:
           # CI-only: this disposable Ubuntu runner must allow unprivileged
           # user namespaces for bwrap. Never change this on a shared host.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install locked App action dependencies for offline tests
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
+      - name: Check the local App action source
+        run: |
+          deno fmt --check .github/actions/sentinel-app-token
+          deno lint .github/actions/sentinel-app-token/main.js .github/actions/sentinel-app-token/post.js .github/actions/sentinel-app-token/lib
+          deno check --check-js .github/actions/sentinel-app-token/lib/mint-grant.js
       - name: Credential-free local harness
         run: |
           export PATH="/usr/local/bin:$PATH"

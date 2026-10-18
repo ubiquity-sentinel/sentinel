@@ -114,8 +114,9 @@ export function createHostedFollowUpIssues(
           raw.length < FOLLOW_UP_LISTING_PAGE_SIZE || previous < input.sinceMs
         ) return items;
       }
-      // The page bound ended before the listing reached `sinceMs`.
-      return null;
+      // The prefix is still proven down to its oldest item. The caller uses
+      // that item as the horizon and refuses only candidates older than it.
+      return items;
     },
     async readIssueOrigin(number: number): Promise<HostedIssueOriginV1 | null> {
       if (!Number.isSafeInteger(number) || number <= 0) return null;
@@ -126,17 +127,33 @@ export function createHostedFollowUpIssues(
       }
       return { number, author: item.author, firstLine: item.firstLine };
     },
-    async create(input: { title: string; body: string }) {
+    async create(input: {
+      title: string;
+      body: string;
+      labels?: readonly string[];
+    }) {
       const raw = await request("POST", `/repos/${scope}/issues`, {
         title: input.title,
         body: input.body,
+        ...(input.labels === undefined ? {} : { labels: input.labels }),
       });
       const item = parseIssueItem(raw, repositoryUrl);
       const created = record(raw);
+      const labels = created?.["labels"];
+      const returnedLabels = Array.isArray(labels)
+        ? labels.flatMap((label) =>
+          typeof label === "object" && label !== null &&
+            typeof (label as Record<string, unknown>)["name"] === "string"
+            ? [(label as Record<string, unknown>)["name"] as string]
+            : []
+        )
+        : [];
       if (
         item === null || created === null || item.pullRequest ||
         item.author !== HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR ||
-        created["title"] !== input.title || created["body"] !== input.body
+        created["title"] !== input.title || created["body"] !== input.body ||
+        (input.labels !== undefined &&
+          input.labels.some((label) => !returnedLabels.includes(label)))
       ) return null;
       return item.number;
     },
