@@ -43,7 +43,9 @@
  * base-refresh intent, `ci_pending`/`backoff`/`unavailable` waits at `work`, an
  * `other` blocker, the `delivery` transition beside a release request the
  * launcher wrote). Under R79 a refreshed head at `work` is published and
- * reviewed as R79 does with every refreshed head.
+ * reviewed as R79 does with every refreshed head. Generation 81 adds one
+ * write of an existing shape (R80 writes it too): a deliverable head that
+ * defers in the line clears its stale `ci_pending` wait at `delivery` once.
  */
 import type { GitSha } from "../contracts/brands.ts";
 import {
@@ -101,7 +103,12 @@ import {
   REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX,
   REVIEW_ROUND_CEILING_REVIEWED_CI_PENDING_PREFIX,
 } from "./review-round-cap.ts";
-import { advanceToDelivery, markBlocked, setWait } from "./transitions.ts";
+import {
+  advanceToDelivery,
+  clearWait,
+  markBlocked,
+  setWait,
+} from "./transitions.ts";
 
 /**
  * Bound on every carried-delivery wait (CI, proof, a lagging pull request,
@@ -278,7 +285,14 @@ export async function spentOnMovedBase(
       REVIEW_ROUND_CEILING_BASE_MOVED,
     );
   }
-  return deliveryQueueDeferral(deps, context, record, observedBase);
+  const deferral = deliveryQueueDeferral(deps, context, record, observedBase);
+  // Deliverable now: a `ci_pending` wait left from an earlier poll would read
+  // to the line as a head still waiting for its CI, and every higher number
+  // would go first. It is cleared once (the next deferral writes nothing).
+  if (deferral !== null && record.wait?.reason === "ci_pending") {
+    return persistWork(deps, context, clearWait(record, deps.clock.now()));
+  }
+  return deferral;
 }
 
 /**
