@@ -57,6 +57,7 @@ import {
 import { readHostedWriterQuiescence } from "./hosted-writer-quiescence.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
+import type { HostedRuntimeRollout } from "./hosted-runtime-rollout.ts";
 
 /**
  * Fixed production entry point. Reads only the named native identity and
@@ -77,6 +78,8 @@ export async function runOwnerDevelopmentInstallMain(input?: {
   /** Trusted in-process fixture only; never read from the environment. */
   queueRuntimeCapability?: QueueRuntimeCapability;
   existingPrRuntimeCapability?: ExistingPrRuntimeCapability;
+  /** Trusted fixture only; production uses reviewed source data. */
+  rollout?: HostedRuntimeRollout;
 }): Promise<number> {
   const repository = Deno.env.get("GITHUB_REPOSITORY");
   const ref = Deno.env.get("GITHUB_REF");
@@ -254,6 +257,7 @@ export async function runOwnerDevelopmentInstallMain(input?: {
     startup,
     input?.queueRuntimeCapability,
     input?.existingPrRuntimeCapability,
+    input?.rollout,
   );
   if (plan.status === "waiting" || plan.status === "no_change") {
     return report({
