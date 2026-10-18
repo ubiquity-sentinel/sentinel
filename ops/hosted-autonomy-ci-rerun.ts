@@ -20,7 +20,7 @@
  *
  * The pass charges, refunds and decides nothing about the failure: it only
  * asks GitHub to repeat the repository's own deterministic check on the exact
- * reviewed head, at most `HOSTED_AUTONOMY_CI_RERUNS_PER_PASS` runs per pass.
+ * reviewed head. There is no per-pass count throttle.
  */
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import {
@@ -39,8 +39,8 @@ import {
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import type { HostedAutonomyHeadRunV1 } from "./hosted-autonomy-types.ts";
 
-/** Bound on workflow runs one maintenance pass re-runs. */
-export const HOSTED_AUTONOMY_CI_RERUNS_PER_PASS = 3;
+/** Retired count throttle; keep the numeric policy surface compatible. */
+export const HOSTED_AUTONOMY_CI_RERUNS_PER_PASS = Number.MAX_SAFE_INTEGER;
 
 /** GitHub refuses a re-run more than 30 days after the run's first attempt. */
 export const HOSTED_AUTONOMY_CI_RERUN_WINDOW_MS = 30 * 86_400_000;

@@ -13,7 +13,7 @@
  * Nothing is charged; the runtime's own freshness gate then re-plans the
  * refresh before any review spend. The rule is not part of the prefix table
  * of `HOSTED_AUTONOMY_RETRYABLE` because it needs remote verification and a
- * target-specific transition; it shares that table's retry budget and
+ * target-specific transition; it shares that table's charged identity and
  * closed-issue gates.
  *
  * A deterministic merge conflict ("base refresh has conflicts[ at <base>]")
@@ -48,12 +48,10 @@ import {
   MAX_BASE_REFRESH_FAILURES,
 } from "../src/repair/loop-base-refresh-failure.ts";
 import {
-  HOSTED_AUTONOMY_MAX_RETRIES,
   HOSTED_AUTONOMY_TRUSTED_AUTHORS,
   hostedIssueKey,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
-import { taskReservationCount } from "./hosted-autonomy-retries.ts";
 import {
   LEGACY_ROUND_REQUIRES_CI_FIRST,
   legacyFinalRoundAdmissible,
@@ -166,9 +164,6 @@ export function planBaseRefreshReadmissions(
       closedIssues.has(
         hostedIssueKey(record.repository, record.related.issueNumber),
       )
-    ) continue;
-    if (
-      taskReservationCount(snapshot, record.id) >= HOSTED_AUTONOMY_MAX_RETRIES
     ) continue;
     // The re-admitted refresh publishes a new head that needs a review round
     // of its own; with none left (the hard ceiling) the record stays blocked.
