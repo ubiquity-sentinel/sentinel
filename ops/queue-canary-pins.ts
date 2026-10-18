@@ -5,6 +5,7 @@ import type {
   QueuePullIdentity,
 } from "../src/github/merge-queue-types.ts";
 import { DEFAULT_APP_INSTALLATION_ID } from "../src/host/actions-target-cycles.ts";
+import type { QueueRulesProjectionTarget } from "./queue-rules-projection-read.ts";
 
 export const CANARY_APP_ID = 4682172;
 export const CANARY_APP_SLUG = "ubiquity-sentinel";
@@ -43,6 +44,8 @@ export interface CanaryGrant {
   /** Explicit no-rule negative canary; never implies direct-merge fallback. */
   expectQueueRule: boolean;
   prior: CanaryPriorObservation | null;
+  /** Source-owned GET-only capture scope; never accepted from workflow inputs. */
+  projectionTargets?: readonly QueueRulesProjectionTarget[];
 }
 
 /** Empty ships dark. Populate only after owner App/canary approval and source review. */

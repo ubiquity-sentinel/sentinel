@@ -33,6 +33,10 @@ import {
   type CanaryObservation,
   type CanaryPort,
 } from "./queue-canary.ts";
+import {
+  createQueueProjectionGet,
+  readQueueRulesProjection,
+} from "./queue-rules-projection-read.ts";
 
 const TARGET = "/repos/ubiquity/ai.ubq.fi";
 const HOST = "/repos/ubiquity/sentinel";
@@ -136,6 +140,19 @@ export class CanaryGitHub extends GitHubQueueDeliveryClient
     } catch {
       return null;
     }
+  }
+  collectProjection(
+    host: CanaryHost,
+    identity: CanaryIdentity,
+    grant: CanaryGrant,
+  ) {
+    return readQueueRulesProjection({
+      host,
+      identity,
+      targets: grant.projectionTargets ?? [],
+      now: () => this.canaryOptions.clock.now(),
+      get: createQueueProjectionGet(this.canaryOptions),
+    });
   }
   async observe(grant: CanaryGrant): Promise<CanaryObservation> {
     const deadline = this.canaryOptions.clock.now() + 60_000;
