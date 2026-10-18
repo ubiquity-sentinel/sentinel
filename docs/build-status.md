@@ -62,17 +62,24 @@ spool storage remain bounded; critical evidence loss refuses proof at natural
 settlement. Duration limits and all reservation charges remain. Missing CI step
 timestamps still use the explicitly advisory bounded fallback.
 
-All R81 writers are frozen. This commit records the audited code as the R81
-candidate; full exact-commit formatting (including JSON), lint, size, canonical
-check list, every test at CI permissions, and the depth-1 clone validation are
-next. Hosted exact-R CI, the later L81 pins, controller installation and live
-verification remain separate unproved gates. The primary alone owns this ledger,
-canonical integration, final validation and publication. Local evidence is under
-`/workspace/evidence/gen81-audit/` (including `correction-addendum.md` and its
-manifest), `/workspace/evidence/gen81-output-volume/`,
-`/workspace/evidence/gen81-review-custody/`,
-`/workspace/evidence/gen81-lanes/early-notifications-report.json`,
-`/workspace/evidence/gen81-final-validation/` and
+The exact-R81 run at `810712b5361a1e615099bddbb95b81314ff7bab6` passed all
+static gates and 94 bounded jobs before stopping with two timed-out integration
+fixtures. Those fakes, plus a third affected host fixture found by inspection,
+emitted completion only when listeners registered after turn start; R81 now
+correctly subscribes before starting the turn. This candidate corrects only
+those three test fixtures and preserves all production behavior and assertions.
+All 18 cases across the three affected integration files and 19 adjacent
+loop-guard cases pass; the patch and exact hashes are retained under
+`/workspace/evidence/gen81-integration-fixtures/`. The old receipts,
+deterministic red reproductions and abandoned toy repositories are retained
+under `/workspace/evidence/gen81-final-validation/` and
+`/workspace/evidence/gen81-lanes/`. The complete normal and depth-1 manifest
+must pass on this new exact commit before publication. Hosted exact-R CI, L81
+pins, controller installation and live verification remain separate unproved
+gates. The primary alone owns this ledger, canonical integration and
+publication. The original review/correction evidence remains under
+`/workspace/evidence/gen81-audit/`, `/workspace/evidence/gen81-output-volume/`,
+`/workspace/evidence/gen81-review-custody/` and
 `/workspace/evidence/gen81-install/`.
 
 The first ai.ubq.fi prerequisite is complete: #1159 was merged normally with
@@ -82,16 +89,16 @@ resolution changes only `docs/DECISIONS.md` relative to the automatic remerge
 and retains both G3 facts. Run 39093217871 attempt 2 passed all four checks; the
 one failed-job rerun addressed a proven pre-existing clock race in unchanged
 files. Current-head source review found no new P0/P1. The retained P3 migration
-cleanup finding is filed once as ai.ubq.fi #1182. PR #1180 is refreshed normally
-through new development `670d2b3a` at local head
-`5b080ea0e0947c76230a0d08854e584f4771c9ab`; only the workflow differs from its
-base (seven additions, two deletions). Fourteen focused workflow/deployment
-admission cases pass. The exact-tree full verify attempt, publication, fresh
-four-check native CI, current-head review and SHA-pinned normal merge remain.
-The x64 local host cannot run the repository's ARM64 native fixture; this setup
-boundary must not be represented as a full local pass. Actual local Codex CLI
-review attempts failed authentication and are not completed reviews. A separate
-one-line deterministic quota clock test fix is prepared, not published.
+cleanup finding is filed once as ai.ubq.fi #1182. PR #1180 is also complete:
+head `5b080ea0e0947c76230a0d08854e584f4771c9ab` received current-head approval,
+all four native checks passed on run 39096740114 attempt 1, and the normal
+SHA-pinned merge produced `624466337a9e92e9f36385d8801b29807e41ccb9`. Only
+`.github/workflows/deno-deploy.yml` differed from its base (seven additions, two
+deletions). Its exact-tree local full verify attempt passed static gates but
+could not run ARM64 native fixtures on this x64 host; hosted CI supplied that
+missing platform evidence. Local Codex CLI authentication failures are not
+review receipts. A separate one-line deterministic quota clock test fix remains
+prepared and unpublished.
 
 Merge-queue support remains separate preparation for after healthy R81. The
 pure/API foundation is `7dd7a385f2d4bb209d3bef3aa0486a5f9464cc9a`, with 27
