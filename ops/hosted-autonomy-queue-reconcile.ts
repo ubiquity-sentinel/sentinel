@@ -7,9 +7,11 @@ import type { HostedAutonomyDepsV1 } from "./hosted-autonomy-types.ts";
 import {
   decideQueuePolicy,
   hasQueueIntentNamespace,
+  isProvenQueueDequeueRemoval,
 } from "./hosted-autonomy-queue-policy.ts";
 import {
   parseQueueIntent,
+  queueDequeueComplete,
   queueFailure,
   queueIntentBinding,
 } from "./hosted-autonomy-queue-intent.ts";
@@ -84,13 +86,45 @@ export async function reconcileQueueRecord(
   }
   let state = saved?.state ?? null;
   const entry = member.value.entry;
+  const actor = queue.config.appActor;
   if (state?.stage === "dequeue_pending") {
-    writer.actions.push(`${tag}:dequeue_pending_owner_action`);
-    // Native absence alone cannot prove whether an earlier PR-scoped mutation ran.
-    // Preserve custody even if authorization changes again or another entry appears.
+    // The marker is not cleared by membership absence.  Only the exact
+    // complete timeline read can convert it into a durable completion proof.
+    if (
+      entry !== null || state.intent.resultId === null || actor === null ||
+      member.value.pull.head !== binding.head ||
+      canonicalStringify(member.value.pull) !== canonicalStringify(pull)
+    ) {
+      writer.actions.push(`${tag}:dequeue_pending_owner_action`);
+      return ready();
+    }
+    const removed = await queue.authorization.readRemoval({
+      snapshot: writer.observed.snapshot,
+      observedHead: writer.observed.head,
+      record,
+      binding,
+      entryId: state.intent.resultId,
+    });
+    if (
+      removed.status !== "complete" ||
+      !isProvenQueueDequeueRemoval(removed.value)
+    ) {
+      writer.actions.push(`${tag}:dequeue_pending_owner_action`);
+      return ready();
+    }
+    const intent = queueDequeueComplete(state, deps.clock.now());
+    record = { ...record, intent, updatedAt: deps.clock.now() };
+    if (!await writer.update([record])) return stop();
+    state = parseQueueIntent(record);
+    if (state === null || state.stage !== "dequeue_complete") return stop();
+    writer.actions.push(`${tag}:dequeue_complete`);
+  }
+  if (state?.stage === "dequeue_complete" && entry !== null) {
+    // A new/foreign entry cannot be adopted as the entry whose removal was
+    // just proved.  Leave the durable proof in place for owner reconciliation.
+    writer.actions.push(`${tag}:dequeue_complete_entry_owner_action`);
     return ready();
   }
-  const actor = queue.config.appActor;
   if (state === null && entry === null && queueRecordProtected(record)) {
     writer.actions.push(`${tag}:foreign_hold_absent_owner_action`);
     return ready();
@@ -139,6 +173,7 @@ export async function reconcileQueueRecord(
   }
   if (
     state !== null && entry === null && state.intent.resultId !== null &&
+    state.stage !== "dequeue_complete" &&
     state.stage !== "ejected_ci_failed" && state.stage !== "ejected_timeout"
   ) {
     const removed = await queue.authorization.readRemoval({
@@ -184,8 +219,10 @@ export async function reconcileQueueRecord(
         ? null
         : state?.intent.startedAt ?? null,
     now: deps.clock.now(),
-    admissionAmbiguous: state !== null && !retryable,
-    reentry: (state?.queueFailures ?? 0) > 0,
+    admissionAmbiguous: state !== null && state.stage !== "dequeue_complete" &&
+      !retryable,
+    reentry: state?.stage === "dequeue_complete" ||
+      (state?.queueFailures ?? 0) > 0,
     failedQueueAdmissions: state?.queueFailures ?? 0,
   };
   const decision = decideQueuePolicy(facts);
