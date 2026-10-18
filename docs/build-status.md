@@ -62,20 +62,26 @@ spool storage remain bounded; critical evidence loss refuses proof at natural
 settlement. Duration limits and all reservation charges remain. Missing CI step
 timestamps still use the explicitly advisory bounded fallback.
 
-Exact-R81 validation of `810712b5361a1e615099bddbb95b81314ff7bab6` passed
-formatting (including JSON), lint, size and the canonical check list, then
-exposed obsolete listener-order fixtures in three integration files. Two bounded
-timeout receipts and the deterministic reproduction are retained. The isolated
-fixture correction must pass its real consumers before a new frozen R81 identity
-runs the complete normal/depth-1 manifest. Queue preparation remains isolated
-from R81. Hosted exact-R CI, the later L81 pins, controller installation and
-live verification remain separate unproved gates. The primary alone owns this
-ledger, canonical integration, final validation and publication. Local evidence
-is under `/workspace/evidence/gen81-audit/` (including `correction-addendum.md`
-and its manifest), `/workspace/evidence/gen81-output-volume/`,
-`/workspace/evidence/gen81-review-custody/`,
-`/workspace/evidence/gen81-lanes/early-notifications-report.json`,
-`/workspace/evidence/gen81-final-validation/` and
+The exact-R81 run at `810712b5361a1e615099bddbb95b81314ff7bab6` passed all
+static gates and 94 bounded jobs before stopping with two timed-out integration
+fixtures. Those fakes, plus a third affected host fixture found by inspection,
+emitted completion only when listeners registered after turn start; R81 now
+correctly subscribes before starting the turn. This candidate corrects only
+those three test fixtures and preserves all production behavior and assertions.
+All 18 cases across the three affected integration files and 19 adjacent
+loop-guard cases pass; the patch and exact hashes are retained under
+`/workspace/evidence/gen81-integration-fixtures/`. The old receipts,
+deterministic red reproductions and abandoned toy repositories are retained
+under `/workspace/evidence/gen81-final-validation/` and
+`/workspace/evidence/gen81-lanes/`. The corrected R81 is frozen at
+`da98f5f49c45b57cfa97a45fe647c36b1021f302`; all seven normal static gates pass,
+and its complete normal/depth-1 test manifest is running. Queue source remains
+separate and cannot alter that exact candidate. Hosted exact-R CI, L81 pins,
+controller installation and live verification remain separate unproved gates.
+The primary alone owns this ledger, canonical integration and publication. The
+original review/correction evidence remains under
+`/workspace/evidence/gen81-audit/`, `/workspace/evidence/gen81-output-volume/`,
+`/workspace/evidence/gen81-review-custody/` and
 `/workspace/evidence/gen81-install/`.
 
 The first ai.ubq.fi prerequisite is complete: #1159 was merged normally with

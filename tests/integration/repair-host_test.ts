@@ -267,6 +267,7 @@ class HostAckSession implements CodexSessionV1 {
     | ((event: CodexServerNotificationV1) => void)
     | null = null;
   private turnStarted = false;
+  private emission: ReturnType<typeof setTimeout> | null = null;
 
   open(): void {}
 
@@ -284,6 +285,7 @@ class HostAckSession implements CodexSessionV1 {
         });
       case "turn/start":
         this.turnStarted = true;
+        this.emitTerminal();
         return Promise.resolve({ turn: { id: "turn-1" } });
       case "turn/interrupt":
         return Promise.resolve({});
@@ -298,8 +300,14 @@ class HostAckSession implements CodexSessionV1 {
 
   onNotification(handler: (event: CodexServerNotificationV1) => void): void {
     this.notifications = handler;
-    if (this.turnStarted) {
-      queueMicrotask(() => {
+    this.emitTerminal();
+  }
+
+  private emitTerminal(): void {
+    if (
+      this.turnStarted && this.notifications !== null && this.emission === null
+    ) {
+      this.emission = setTimeout(() => {
         this.notifications?.({
           method: "item/completed",
           params: {
@@ -325,11 +333,12 @@ class HostAckSession implements CodexSessionV1 {
             turn: { id: "turn-1", status: "completed", durationMs: 5 },
           },
         });
-      });
+      }, 0);
     }
   }
 
   close(): Promise<void> {
+    if (this.emission !== null) clearTimeout(this.emission);
     this.closeCalls++;
     return Promise.resolve();
   }
