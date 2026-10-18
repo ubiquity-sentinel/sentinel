@@ -108,7 +108,7 @@ for await (const chunk of Deno.stdin.readable) {
 /**
  * Fake app-server that answers the first request with a large notification
  * burst (no consumer registered) and only then the response line, so the
- * client's notification byte bound must trip before any delivery.
+ * client's notification retained backlog must pause reads until a consumer registers.
  */
 const OVERBOUND_SERVER_CODE = `
 const encoder = new TextEncoder();
@@ -162,7 +162,7 @@ for await (const chunk of Deno.stdin.readable) {
   const frames = [
     { jsonrpc: "2.0", method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } },
     { jsonrpc: "2.0", id: request.id, result: { turn: { id: "turn-1" } } },
-    { jsonrpc: "2.0", method: "item/agentMessage/delta", params: { delta: "x".repeat(600) } },
+    { jsonrpc: "2.0", method: "model/rerouted", params: { reason: "x".repeat(600) } },
     { jsonrpc: "2.0", method: "turn/completed", params: { threadId: "thread-2", turn: { id: "turn-2", status: "completed" } } },
   ];
   Deno.stdout.writeSync(encoder.encode(frames.map((f) => JSON.stringify(f)).join("\\n") + "\\n"));
@@ -366,44 +366,46 @@ Deno.test(
   },
 );
 
-Deno.test(
-  "codex transport: over-bound notifications before registration fail closed",
-  async () => {
-    const dir = await tmpDir("overbound");
-    try {
-      const session = new CodexSubprocessSession({
-        command: [Deno.execPath(), "eval", OVERBOUND_SERVER_CODE],
-        cwd: dir,
-        env: envForTest(),
-        operationDeadlineMs: 30_000,
-        maxNotificationBytes: 4_096,
-      });
-      session.open();
-      // No consumer is registered; the byte bound must fail the operation
-      // closed before the burst (or the trailing response) is delivered.
-      let failure: unknown = null;
-      try {
-        await session.send("req-over", {});
-      } catch (error) {
-        failure = error;
-      }
-      assert.ok(
-        failure instanceof Error,
-        "over-bound startup notifications fail closed before any delivery",
-      );
-      assert.equal(
-        failure?.message,
-        "codex notification byte bound exceeded",
-      );
-      await session.close();
-    } finally {
-      await Deno.remove(dir, { recursive: true }).catch(() => {});
+Deno.test("codex transport: full early backlog pauses reads then resumes in order", async () => {
+  const dir = await tmpDir("backpressure");
+  const session = new CodexSubprocessSession({
+    command: [Deno.execPath(), "eval", OVERBOUND_SERVER_CODE],
+    cwd: dir,
+    env: envForTest(),
+    operationDeadlineMs: 30_000,
+    maxNotificationBytes: 4096,
+  });
+  try {
+    session.open();
+    const response = session.send("req-over", {});
+    for (
+      let attempt = 0;
+      attempt < 100 && Reflect.get(session, "queuedChars") < 4096;
+      attempt++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
     }
-  },
-);
+    const retained = Reflect.get(session, "queuedChars");
+    assert.ok(
+      retained >= 4096 && retained < 4600,
+      `bounded backlog was ${retained}`,
+    );
+    assert.equal(session.getFailure(), null);
+    const seen: number[] = [];
+    session.onNotification((event) => {
+      seen.push((event.params as { n: number }).n);
+    });
+    assert.deepEqual(await response, { saw: true });
+    assert.deepEqual(seen, Array.from({ length: 40 }, (_, i) => i));
+    assert.equal(Reflect.get(session, "queuedChars"), 0);
+  } finally {
+    await session.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
 
 Deno.test(
-  "codex transport: fatal overflow with response ordering discards backlog, blocks registration and stays sticky",
+  "codex transport: fatal control corruption with response ordering discards backlog, blocks registration and stays sticky",
   async () => {
     const dir = await tmpDir("overflow-fatal");
     try {
@@ -412,7 +414,7 @@ Deno.test(
         cwd: dir,
         env: envForTest(),
         operationDeadlineMs: 30_000,
-        maxNotificationBytes: 300,
+        maxLineBytes: 300,
       });
       session.open();
       const delivered: string[] = [];
@@ -423,10 +425,12 @@ Deno.test(
         // frame; the response resolves before the pump reaches the failure.
         await session.send("turn/start", {});
         responseAccepted = true;
-        session.onNotification((event) => delivered.push(event.method));
+        session.onNotification((event) => {
+          delivered.push(event.method);
+        });
       } catch (error) {
         registrationRejected = error instanceof CodexProtocolError &&
-          error.message.includes("codex notification byte bound exceeded");
+          error.message.includes("oversized control field");
       }
       assert.equal(
         responseAccepted,
@@ -436,7 +440,7 @@ Deno.test(
       assert.equal(
         registrationRejected,
         true,
-        "consumer registration after the fatal byte-bound failure fails explicitly",
+        "consumer registration after the fatal control-field failure fails explicitly",
       );
       assert.deepEqual(
         delivered,
@@ -450,7 +454,7 @@ Deno.test(
         await session.send("after-overflow", {});
       } catch (error) {
         laterRejected = error instanceof CodexProtocolError &&
-          error.message === "codex notification byte bound exceeded";
+          error.message === "oversized control field";
       }
       assert.equal(
         laterRejected,
@@ -459,7 +463,7 @@ Deno.test(
       );
       assert.throws(
         () => session.onNotification(() => {}),
-        /codex notification byte bound exceeded/,
+        /oversized control field/,
         "re-registration after fatal failure throws the sticky error",
       );
       // Bounded close still settles the owned child after the fatal failure.

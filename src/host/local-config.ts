@@ -93,6 +93,12 @@ export function createLocalRepositoryConfig(): RepositoryConfigV1 {
       },
     },
     protectedPaths: [
+      "src/repair/model-port-notifications.ts",
+      "src/github/reviewer-retention.ts",
+      "src/host/review-owner-channel-event.ts",
+      "src/repair/codex-json-frame.ts",
+      "src/repair/codex-transport.ts",
+      "src/repair/model-port-settlement.ts",
       "src/repair/base-satisfaction-marker.ts",
       "src/repair/loop-base-satisfaction.ts",
       "src/github/base-review-comments.ts",
