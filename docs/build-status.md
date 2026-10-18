@@ -20,20 +20,20 @@ documentation commit `646eab67a4518a2034785ae708bdd1c7922d7d1e` and
 `e48e7e110e7cb2ed3385bf1be5165f05d8a4e481` installed at generation 80, and
 successful supervisor run 39095553458 with its own settled healthy execution
 proof on that launcher. Run 39097588521 has passed maintenance, preparation,
-matrix planning and its cell; repair remains in progress. `sentinel-release`
-remains disabled. No R81 candidate has been published, installed or accepted.
-The owner authorized normal fast-forward publication, exact-runtime CI,
-controller installation and live verification. The owner unsuspended the GitHub
-connector App; the live Sentinel App is a separate identity whose queue
-permission grant the owner has now confirmed. A fresh read also found the
-pre-existing repository ruleset `23197448` protecting only
-`sentinel-state/release` (created 2026-09-13); it is unchanged, and no new
-Sentinel ruleset or branch protection was added. Owner documentation on
-development separately records the implementation override `gpt-reserve`;
-preserve that owner change and all existing workflow variable expressions. Exact
-R81 CI may run from its frozen `codex/**` branch before L81 integrates these
-unrelated owner documentation commits. The installer still requires exact
-successful R81 CI and ancestry.
+matrix planning and its cell. Its repair job completed successfully at 05:48:34
+UTC; native finalization remains pending. `sentinel-release` remains disabled.
+No R81 candidate has been published, installed or accepted. The owner authorized
+normal fast-forward publication, exact-runtime CI, controller installation and
+live verification. The owner unsuspended the GitHub connector App; the live
+Sentinel App is a separate identity whose queue permission grant the owner has
+now confirmed. A fresh read also found the pre-existing repository ruleset
+`23197448` protecting only `sentinel-state/release` (created 2026-09-13); it is
+unchanged, and no new Sentinel ruleset or branch protection was added. Owner
+documentation on development separately records the implementation override
+`gpt-reserve`; preserve that owner change and all existing workflow variable
+expressions. Exact R81 CI may run from its frozen `codex/**` branch before L81
+integrates these unrelated owner documentation commits. The installer still
+requires exact successful R81 CI and ancestry.
 
 The canonical integration worktree is `/workspace/worktrees/gen81-integration`,
 branch `codex/gen81-integration`. Accepted ancestry includes all eleven rebased
@@ -104,6 +104,17 @@ under `/workspace/evidence/gen81-audit/`,
 `/workspace/evidence/gen81-output-volume/`,
 `/workspace/evidence/gen81-review-custody/` and
 `/workspace/evidence/gen81-install/`.
+
+The primary is reusing existing generation-81 PR #165 and its original branch
+`sentinel/repair/issue-ubiquity-sentinel-163`. Issue #163 has `sentinel:skip`
+during manual ownership, and the PR is temporarily draft until integration is
+ready. Reconciliation of original head
+`848b907c98d6c37da63485cbed8ee5741126be4b` proves its checker behavior is
+already included or superseded in exact R81. A normal merge is prepared in
+`/workspace/worktrees/gen81-pr165-integration`; its executable tree matches R81
+and only the three owner/integration documents differ. The existing PR history
+and owner development ancestry are retained. No replacement PR is opened.
+Evidence is `/workspace/evidence/gen81-pr165/`.
 
 The first ai.ubq.fi prerequisite is complete: #1159 was merged normally with
 head SHA pinned to `0a7063f994f39d958476d9257c2eef7ce9a7abc9`, yielding
@@ -213,12 +224,20 @@ execution or rollback. Production capability pins and migration tuples remain
 empty. Its 70 tests and 59 steps pass, including actual R80 parsing of emitted
 release-state lifecycles. Existing verification-only bootstrap behavior for an
 accepted failed candidate remains unchanged. Only the primary owns shared
-integration and this ledger; fresh combined correction review remains pending.
-The proposed disabled-to-active production ruleset projection still requires
-native canary evidence. Stage the production ruleset disabled and install
-accepted proof-capable fallback/admission revisions before owner activation;
-never enable then rebuild pins. Prospective generation numbers are not
-authority. Detailed evidence is in
+integration and this ledger. The fresh GPT-6.1 Sol/max combined correction
+review passes frozen `3c51706f73bfe793068abccb8de3f92457d1d233` with no P0/P1 or
+new P2/P3. Four independent tests / eight steps, eight fresh entrypoint imports,
+exact size/diff checks and six hash-bound evidence groups pass. The two prior P2
+holds remain. Review evidence is
+`/workspace/evidence/merge-queue/activation-audit/report.md` (SHA-256
+`2fb26f1f018733f267759aa23c9149576ea5dcf6e39f87a79c6b09745ac11ce0`). This
+accepts dormant source preparation only; native canary, projection, historical
+witnesses, exact future runtime/launcher CI, installation, fallback health and
+live delivery remain unproved. The proposed disabled-to-active production
+ruleset projection still requires native canary evidence. Stage the production
+ruleset disabled and install accepted proof-capable fallback/admission revisions
+before owner activation; never enable then rebuild pins. Prospective generation
+numbers are not authority. Detailed evidence is in
 `/workspace/evidence/merge-queue/install-plan.md`. No Sentinel ruleset or branch
 protection is authorized. The owner explicitly confirmed the Sentinel App's
 Merge queues read/write permission was granted and accepted; native
