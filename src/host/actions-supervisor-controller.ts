@@ -36,11 +36,11 @@ import type {
 } from "./actions-supervisor-state.ts";
 import { STATIC_STATE } from "./actions-supervisor-bootstrap.ts";
 import {
-  allowsQueueExecution,
-  allowsQueueRuntime,
-  allowsQueueRuntimeMove,
-  QUEUE_RUNTIME_CAPABILITY_REFUSED,
-} from "./queue-runtime-capability.ts";
+  allowsHostedExecution,
+  allowsHostedRuntime,
+  allowsHostedRuntimeMove,
+  runtimeCompatibilityRefusal,
+} from "./hosted-runtime-compatibility.ts";
 import {
   authenticateSamePointerRecovery,
   authorizePromotionSource,
@@ -110,16 +110,22 @@ export async function runHostedSupervisorPrepare(
         execution.launcherSha === input.run.launcherSha
       ) {
         if (
-          !allowsQueueExecution(
+          !allowsHostedExecution(
             execution,
             releases,
             input.queueRuntimeCapability,
-          ) || !allowsQueueRuntimeMove(
+            input.existingPrRuntimeCapability,
+          ) || !allowsHostedRuntimeMove(
             runtime.activeRevision,
             execution.revision,
             input.queueRuntimeCapability,
+            input.existingPrRuntimeCapability,
           )
-        ) return pending(QUEUE_RUNTIME_CAPABILITY_REFUSED);
+        ) {
+          return pending(
+            runtimeCompatibilityRefusal(input.existingPrRuntimeCapability),
+          );
+        }
         return { status: "run", execution };
       }
       const settlement = await readSettlement(input, execution);
@@ -143,11 +149,16 @@ export async function runHostedSupervisorPrepare(
     if (runtime === null) {
       if (releases.length > 0) return pending(STATIC_BOOTSTRAP_RELEASE);
       if (
-        !allowsQueueRuntime(
+        !allowsHostedRuntime(
           input.run.launcherSha,
           input.queueRuntimeCapability,
+          input.existingPrRuntimeCapability,
         )
-      ) return pending(QUEUE_RUNTIME_CAPABILITY_REFUSED);
+      ) {
+        return pending(
+          runtimeCompatibilityRefusal(input.existingPrRuntimeCapability),
+        );
+      }
       let verified: PortResultV1<boolean>;
       try {
         verified = await input.evidence.verifyRevision(input.run.launcherSha);
@@ -214,22 +225,29 @@ export async function runHostedSupervisorPrepare(
       savedMove?.pointerIntent !== undefined && savedMove.pointerIntent !== null
     ) {
       if (
-        !allowsQueueRuntimeMove(
+        !allowsHostedRuntimeMove(
           savedMove.pointerIntent.expectedRevision,
           savedMove.pointerIntent.nextRevision,
           input.queueRuntimeCapability,
-        ) || !allowsQueueRuntimeMove(
+          input.existingPrRuntimeCapability,
+        ) || !allowsHostedRuntimeMove(
           savedMove.priorRevision,
           savedMove.request.revision,
           input.queueRuntimeCapability,
+          input.existingPrRuntimeCapability,
         )
-      ) return pending(QUEUE_RUNTIME_CAPABILITY_REFUSED);
+      ) {
+        return pending(
+          runtimeCompatibilityRefusal(input.existingPrRuntimeCapability),
+        );
+      }
     }
     const recovery = planPointerRecovery(
       runtime,
       releases,
       input.clock.now(),
       input.queueRuntimeCapability,
+      input.existingPrRuntimeCapability,
     );
     if (recovery !== null) {
       // A persisted promote intent is durable, not self-authorizing: before
@@ -296,12 +314,17 @@ export async function runHostedSupervisorPrepare(
     if (selected.kind === "pending") return pending(selected.detail);
     if (selected.kind === "found") {
       if (
-        !allowsQueueRuntimeMove(
+        !allowsHostedRuntimeMove(
           runtime.activeRevision,
           selected.request.revision,
           input.queueRuntimeCapability,
+          input.existingPrRuntimeCapability,
         )
-      ) return pending(QUEUE_RUNTIME_CAPABILITY_REFUSED);
+      ) {
+        return pending(
+          runtimeCompatibilityRefusal(input.existingPrRuntimeCapability),
+        );
+      }
       const receipt = buildRequestedReceipt(
         selected.request,
         runtime.activeRevision,
