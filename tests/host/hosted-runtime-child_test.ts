@@ -41,16 +41,14 @@ import {
   validFixtureScript,
 } from "./hosted-runtime-child-fixture.ts";
 
-Deno.test("hosted runtime: actual owned host child receives bounded inert mint evidence with its App token", async () => {
+Deno.test("hosted runtime: actual owned host child keeps its App token but receives no unverified mint evidence", async () => {
   const grant = "fixture-inert-mint-grant";
   const rig = await makeRig({
     runtimeFiles: {
       "src/host/actions.ts":
         `if (Deno.env.get("SENTINEL_SUPERVISOR_TOKEN") !== ${
           JSON.stringify(APP_TOKEN)
-        } || Deno.env.get("SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT") !== ${
-          JSON.stringify(grant)
-        } || Deno.env.get("SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER") !== ${
+        } || Deno.env.get("SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT") !== undefined || Deno.env.get("SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER") !== ${
           JSON.stringify(String(T0 + 58 * 60_000))
         } || Deno.env.get("SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE") !== undefined) throw new Error("fixture handoff refused");\n` +
         validFixtureScript(""),

@@ -55,6 +55,7 @@ import type { HostedReviewOwnerSettlementV1 } from "../github/review-owner-evide
 import { allowsHostedExecution } from "./hosted-runtime-compatibility.ts";
 import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
 import type { ExistingPrRuntimeCapability } from "./existing-pr-runtime-capability.ts";
+import { retainVerifiedHostedAppGrant } from "./hosted-runtime-principal-handoff.ts";
 
 /**
  * Verify the launcher and runtime checkouts as clean worktrees at their exact
@@ -149,6 +150,11 @@ async function launchHostedRuntime(
     { home: childHome, tmp: childTmp, denoDir: childDenoDir },
     startedAt,
     legacyReviewCutoffForExecution(execution, release),
+  );
+  await retainVerifiedHostedAppGrant(
+    input,
+    { ...dirs, identity, execution },
+    childEnv,
   );
   // Streaming is attached only here, after the exact execution identity has
   // been verified, and only to the actual child command: the bounded Git
