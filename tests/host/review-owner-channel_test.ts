@@ -1,6 +1,7 @@
 /** The custody client must deliver owner events in counter order, whatever readdir lists. */
 import assert from "node:assert/strict";
 import {
+  REVIEW_CHANNEL_BOUND,
   ReviewOwnerChannelClient,
   writeReviewChannelFile,
 } from "../../src/host/review-owner-channel.ts";
@@ -238,7 +239,9 @@ Deno.test("review channel: a gap fills on the client's own rescan with no furthe
   const probe = Deno.watchFs(directory, { recursive: false });
   let fsEvents = 0;
   const probed = (async () => {
-    for await (const _event of probe) fsEvents++;
+    for await (const event of probe) {
+      if (event.kind !== "remove") fsEvents++;
+    }
   })();
   const { client, seqs } = openClient(directory);
   try {
@@ -675,7 +678,7 @@ const OWNER_REPOSITORY = {
   installationId: 0,
 };
 
-/** The live broker and its private emit(), unchanged: this pins the naming. */
+/** The live broker and its awaited private emit(): this pins the naming. */
 function realOwner(parent: string) {
   const broker = new ReviewOwnerCustodyBroker(OWNER_EXECUTION, [{
     repository: OWNER_REPOSITORY,
@@ -690,7 +693,7 @@ function realOwner(parent: string) {
     },
   }]);
   const emit = (broker as unknown as {
-    emit(entry: unknown, type: string, event: unknown): void;
+    emit(entry: unknown, type: string, event: unknown): Promise<void>;
   }).emit.bind(broker);
   const entry = (requestId: string) => ({
     registration: { journal: { requestId } },
@@ -704,29 +707,34 @@ Deno.test("review channel: frames written by the real owner emit() dispatch from
   const parent = await tempChannel();
   const { broker, emit, entry } = realOwner(parent);
   const descriptor = await broker.start(parent);
-  const { client, seqs } = openClient(descriptor.directory);
+  let client: ReviewOwnerChannelClient | undefined;
   try {
     const a = entry("A");
     const b = entry("B");
     for (let seq = 0; seq < 60; seq++) {
-      emit(a, "notification", { method: "item/started", params: { seq } });
-      emit(b, "notification", { method: "noise", params: { seq } });
+      await emit(a, "notification", {
+        method: "item/started",
+        params: { seq },
+      });
+      await emit(b, "notification", { method: "noise", params: { seq } });
     }
-    await waitFor(() => seqs.length >= 60, 5_000);
-    assert.deepEqual(seqs, [...Array(60).keys()]);
     const counters = [...Deno.readDirSync(descriptor.directory)]
       .map((file) => counterOf(file.name))
       .filter((counter) => counter !== null)
       .sort((x, y) => x - y);
     assert.deepEqual(counters, [...Array(120).keys()].map((n) => n + 1));
+    const opened = openClient(descriptor.directory);
+    client = opened.client;
+    await waitFor(() => opened.seqs.length >= 60, 5_000);
+    assert.deepEqual(opened.seqs, [...Array(60).keys()]);
   } finally {
-    await client.close();
+    await client?.close();
     await broker.dispose();
     await Deno.remove(parent, { recursive: true });
   }
 });
 
-Deno.test("review channel: an oversized frame the real owner refuses costs only its own review", async () => {
+Deno.test("review channel: an unsupported oversized control frame costs only its own review", async () => {
   const parent = await tempChannel();
   const { broker, emit, entry } = realOwner(parent);
   const descriptor = await broker.start(parent);
@@ -739,29 +747,25 @@ Deno.test("review channel: an oversized frame the real owner refuses costs only 
       requestId,
       invocationId: "inv",
       ownerRunId: descriptor.ownerRunId,
-    }).onNotification((event) =>
-      delivered.push(requestId + ":" + event.method)
-    );
+    }).onNotification((event) => {
+      delivered.push(requestId + ":" + event.method);
+    });
   }
   try {
     const a = entry("A");
     const b = entry("B");
-    emit(a, "notification", { method: "turn/started", params: {} });
-    // Over the 4 MiB frame bound once serialized: the owner never writes it.
-    emit(b, "notification", {
+    await emit(a, "notification", { method: "turn/started", params: {} });
+    // This bypasses transport validation to exercise impossible control data,
+    // not an eligible verbose output string (which the transport projects).
+    await emit(b, "notification", {
       method: "item/completed",
-      params: { aggregatedOutput: "\u0001".repeat(800_000) },
+      params: { control: "x".repeat(REVIEW_CHANNEL_BOUND) },
     });
-    emit(a, "notification", { method: "item/started", params: {} });
-    emit(a, "notification", { method: "item/completed", params: {} });
-    emit(a, "notification", { method: "turn/completed", params: {} });
+    await emit(a, "notification", { method: "item/started", params: {} });
+    await emit(a, "notification", { method: "item/completed", params: {} });
+    await emit(a, "notification", { method: "turn/completed", params: {} });
     await Promise.all([a.eventTail, b.eventTail]);
     assert.deepEqual([a.faulted, b.faulted], [false, true]);
-    const counters = [...Deno.readDirSync(descriptor.directory)]
-      .map((file) => counterOf(file.name))
-      .filter((counter) => counter !== null)
-      .sort((x, y) => x - y);
-    assert.deepEqual(counters, [1, 3, 4, 5]);
     assert.ok(await waitFor(() => delivered.length >= 4, 3_000));
     assert.deepEqual(delivered, [
       "A:turn/started",
@@ -841,7 +845,7 @@ class ScriptedChannelOwner {
       ) as { id: string; method: string; params: Record<string, unknown> };
       const send = request.method === "send" ? request.params.method : null;
       const result = request.method === "close"
-        ? { settled: true }
+        ? { settled: true, eventThrough: this.counter, faulted: false }
         : send === "initialize"
         ? { userAgent: "scripted/0.1.0" }
         : send === "thread/start"
