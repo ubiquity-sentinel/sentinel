@@ -1,0 +1,85 @@
+{
+  "total_count": 4,
+  "check_runs": [
+    {
+      "id": 117393817866,
+      "name": "verify-artifact",
+      "head_sha": "4253e659646bda410d1c565e8c0b396c29b4bc76",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-10-17T12:16:36Z",
+      "completed_at": "2026-10-17T12:16:36Z",
+      "output": {
+        "title": null,
+        "summary": null,
+        "text": null,
+        "annotations_count": 0
+      },
+      "app": {
+        "id": 15368,
+        "slug": "github-actions",
+        "name": "GitHub Actions"
+      }
+    },
+    {
+      "id": 117390058671,
+      "name": "mac-containment",
+      "head_sha": "4253e659646bda410d1c565e8c0b396c29b4bc76",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-17T11:13:34Z",
+      "completed_at": "2026-10-17T11:13:49Z",
+      "output": {
+        "title": null,
+        "summary": null,
+        "text": null,
+        "annotations_count": 0
+      },
+      "app": {
+        "id": 15368,
+        "slug": "github-actions",
+        "name": "GitHub Actions"
+      }
+    },
+    {
+      "id": 117390031584,
+      "name": "darwin-native",
+      "head_sha": "4253e659646bda410d1c565e8c0b396c29b4bc76",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-17T11:13:36Z",
+      "completed_at": "2026-10-17T11:16:33Z",
+      "output": {
+        "title": null,
+        "summary": null,
+        "text": null,
+        "annotations_count": 0
+      },
+      "app": {
+        "id": 15368,
+        "slug": "github-actions",
+        "name": "GitHub Actions"
+      }
+    },
+    {
+      "id": 117390030279,
+      "name": "validate",
+      "head_sha": "4253e659646bda410d1c565e8c0b396c29b4bc76",
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-10-17T11:56:21Z",
+      "completed_at": "2026-10-17T12:16:35Z",
+      "output": {
+        "title": null,
+        "summary": null,
+        "text": null,
+        "annotations_count": 2
+      },
+      "app": {
+        "id": 15368,
+        "slug": "github-actions",
+        "name": "GitHub Actions"
+      }
+    }
+  ]
+}

@@ -12,13 +12,14 @@
  * ceiling (`review-round-cap.ts`, which owns the round count and the one
  * legacy rule), so the launcher can ship it before the runtime does.
  *
- * Rollback contract (generation 80, rollback target R79 549c7a691): nothing
- * here adds a field, key or enum value. The CI fix count is the existing
- * `counters.retries` (every R79 row carries it, no R79 runtime path writes or
- * reads it beyond change detection, and `countRetry` keeps the parser's
- * `retries <= attempts` rule). The parks are blockers of the existing `other`
- * kind whose messages match no R79 or L79 re-admission prefix, and the fix
- * marker is an existing `backoff` wait whose `since` equals its `until`.
+ * Rollback contract (generation 80, rollback target R79 549c7a691; kept by
+ * generation 81, rollback target R80 e48e7e110): nothing here adds a field,
+ * key or enum value. The CI fix count is the existing `counters.retries`
+ * (every R79 row carries it, no R79 runtime path writes or reads it beyond
+ * change detection, and `countRetry` keeps the parser's `retries <= attempts`
+ * rule). The parks are blockers of the existing `other` kind whose messages
+ * match no R79 or L79 re-admission prefix, and the fix marker is an existing
+ * `backoff` wait whose `since` equals its `until`.
  */
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
@@ -47,27 +48,30 @@ export const PRE_REVIEW_CI_BOUND_MS = 6 * 60 * 60_000;
 
 /**
  * Whether a HOSTED run may open the pre-review CI fix route (a fix of a red
- * head no review has completed on). A hosted fix runs as a matrix cell, and a
- * cell planned in one run may be consumed by a later run, which after a
- * failed generation runs the rollback target's code. R79 (549c7a691), the
- * rollback target of generation 80, refuses a CI fix cell for a never-reviewed
- * head as a generic provenance refusal that would fail every later repair run
- * (tests/host/matrix-ci-first-gen79_test.ts), so generation 80 keeps this
- * route closed in hosted runs: a red, never-reviewed head parks there with
- * `CI_PRE_REVIEW_RED_PREFIX` until a generation whose rollback target carries
- * generation 80's consumer opens it. In-process runs never plan a cell.
- * Every refreshed head is a head no review has completed on, so a REVIEWED
- * record whose refreshed head is red parks there too (live, most refreshes
- * failed on lint drift). Generation 81 (R80 as its rollback target, this flag
- * true, its runtime in `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`) is therefore a
- * ship condition of generation 80: its fix rule re-admits those parks through
- * the CI fix marker (tests/repair/ci-first-refresh-red_test.ts).
+ * head no review has completed on: a new candidate, and also a REVIEWED
+ * record's refreshed head, since every refreshed head is one no review has
+ * completed on). A hosted fix runs as a matrix cell, and a cell planned in
+ * one run may be consumed by a later run, which after a failed generation
+ * runs the rollback target's code. R79 (549c7a691), the rollback target of
+ * generation 80, refused that cell as a generic provenance refusal that would
+ * fail every later repair run (tests/host/matrix-ci-first-gen79_test.ts), so
+ * generation 80 kept the route closed and parked such a head with
+ * `CI_PRE_REVIEW_RED_PREFIX` (live, most refreshes failed on lint drift).
+ * Generation 81's rollback target is R80 (e48e7e110), whose consumer isolates
+ * every pre-review fix cell generation 81 plans as an authenticated runtime
+ * mismatch with the charge kept reserved (same test), and whose own loop
+ * parks the CI fix marker precisely, uncharged
+ * (tests/repair/ci-first-rollback-gen80_test.ts): generation 81 opens it. A
+ * fix is charged in `counters.retries`, never a review round, at most
+ * `CI_FIX_ATTEMPTS` per record. The launcher's fix rule re-admits a park R80
+ * wrote once this runtime is pinned in `HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES`.
  */
-export const HOSTED_PRE_REVIEW_CI_FIXES = false;
+export const HOSTED_PRE_REVIEW_CI_FIXES = true;
 
 /**
  * The pre-review CI fix route is open for this run: always in process, and in
- * a hosted (matrix) run only once `HOSTED_PRE_REVIEW_CI_FIXES` is set.
+ * a hosted (matrix) run once `HOSTED_PRE_REVIEW_CI_FIXES` is set (generation
+ * 81).
  */
 export function preReviewCiFixRouteOpen(
   deps: { externalImplementations?: boolean },
@@ -75,7 +79,12 @@ export function preReviewCiFixRouteOpen(
   return deps.externalImplementations !== true || HOSTED_PRE_REVIEW_CI_FIXES;
 }
 
-/** Terminal park of a red head whose CI fixes are spent; nothing matches it. */
+/**
+ * Park of a red head whose CI fixes are spent (by the pre-review gate, or by
+ * the merge gate for a reviewed head). No fix and no refresh ever re-admits
+ * it; the launcher's once-per-head re-run and green rule take the pre-review
+ * gate's park of a head no review has completed on (generation 81).
+ */
 export const CI_FIX_EXHAUSTED_PREFIX =
   `CI fix attempts exhausted (${CI_FIX_ATTEMPTS} of ${CI_FIX_ATTEMPTS}): `;
 
@@ -87,7 +96,11 @@ export const CI_PRE_REVIEW_RED_PREFIX =
 export const CI_PRE_REVIEW_PENDING_PREFIX =
   "CI did not finish before review within 6 hours: ";
 
-/** The two pre-review parks the launcher may re-admit (never the exhausted). */
+/**
+ * The two pre-review parks the launcher may re-admit by a CI fix or a
+ * moved-base refresh (never the exhausted one, which only its re-run and
+ * green rules take).
+ */
 export const CI_PRE_REVIEW_PARK_PREFIXES: readonly string[] = [
   CI_PRE_REVIEW_RED_PREFIX,
   CI_PRE_REVIEW_PENDING_PREFIX,

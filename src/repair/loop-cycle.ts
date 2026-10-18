@@ -8,6 +8,10 @@ import { bridgeLegacyLoss } from "./loop-legacy-loss.ts";
 import { createPostDrainContinuation } from "./loop-post-drain.ts";
 import { reconcileOrphanPublication } from "./loop-publication.ts";
 import {
+  type ReleaseResumeRunV1,
+  resumeDeferredRelease,
+} from "./loop-release.ts";
+import {
   recoverBlockedAlreadySatisfied,
   recoverBlockedMissingTaskReview,
 } from "./loop-review-recovery.ts";
@@ -67,6 +71,8 @@ export async function runRepairCycle(
   const missingTaskReviewAttempted = new Set<string>();
   // One run-local re-observation per historical already-satisfied block.
   const alreadySatisfiedAttempted = new Set<string>();
+  // One release read per run, and one look per deferred release record.
+  const releaseResume: ReleaseResumeRunV1 = { attempted: new Set() };
   // Intake is polled exactly once per run. A deferred (cooldown or bound)
   // iteration must never re-poll the sources: subsequent loop iterations reuse
   // the run-local deferral tracking instead of repeating intake reads.
@@ -245,6 +251,18 @@ export async function runRepairCycle(
       return { status: "state_error", detail: alreadySatisfied.detail };
     }
     if (alreadySatisfied?.kind === "progress") {
+      didWork = true;
+      tracking.steps++;
+      continue;
+    }
+
+    // A release deferred while the release path is disabled resumes once the
+    // release ref records its request; otherwise it costs nothing (JAM B12).
+    const resumed = await resumeDeferredRelease(deps, context, releaseResume);
+    if (resumed?.kind === "state_error") {
+      return { status: "state_error", detail: resumed.detail };
+    }
+    if (resumed?.kind === "progress") {
       didWork = true;
       tracking.steps++;
       continue;

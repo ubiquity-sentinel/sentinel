@@ -161,11 +161,18 @@ function finalReview(record: WorkRecordV1, attempt: number) {
   });
 }
 
-/** Plans for one record under no proven runtime, or a proven CI-first one. */
+/**
+ * Plans for one record under no proven runtime, a proven CI-first one, or a
+ * proven generation-81 CI-first fix runtime (whose re-runs are settled).
+ */
 function plan(
   record: WorkRecordV1,
   charges: BudgetReservationV1[],
-  options: { ciFirst?: boolean; tips?: ReadonlyMap<string, string> } = {},
+  options: {
+    ciFirst?: boolean;
+    fix?: boolean;
+    tips?: ReadonlyMap<string, string>;
+  } = {},
 ) {
   const denials: RetryDenialV1[] = [];
   const snapshot: RepairStateSnapshotV1 = repairSnapshot(
@@ -174,6 +181,7 @@ function plan(
     [],
     charges,
   );
+  const key = ciGreenHeadKey(AI, SHA3);
   const plans = planHostedRetries(
     snapshot,
     NOW,
@@ -181,16 +189,18 @@ function plan(
     options.tips ?? TIPS,
     new Set(),
     (denial) => denials.push(denial),
-    options.ciFirst === true
+    options.ciFirst === true || options.fix === true
       ? {
-        ciRuntime: installed(80),
+        ciRuntime: installed(options.fix === true ? 81 : 80),
         ciAllowlist: new Set([RUNTIME]),
         ciFirstAllowlist: new Set([RUNTIME]),
-        ciGreenHeads: new Set([ciGreenHeadKey(AI, SHA3)]),
+        ciFirstFixAllowlist: new Set(options.fix === true ? [RUNTIME] : []),
+        ciGreenHeads: new Set([key]),
+        ciRerunSettled: new Set(options.fix === true ? [key] : []),
         legacyReviewCutoff: CUT,
       }
       : {
-        ciGreenHeads: new Set([ciGreenHeadKey(AI, SHA3)]),
+        ciGreenHeads: new Set([key]),
         legacyReviewCutoff: CUT,
       },
   );
@@ -332,6 +342,42 @@ Deno.test("legacy round gate: a green pre-review park returns for review only wi
   // One with a round left returns under any runtime, as before.
   const open = parked(1583, 1);
   assert.equal(plan(open, reviewCharges(open, 1), { tips }).plans.length, 1);
+});
+
+Deno.test("legacy round gate: a pre-review park on a moved base returns for its refresh only under a CI-first runtime with a review round left", () => {
+  const parked = (issue: number, rounds: number, retries: number) =>
+    aiRecord(issue, rounds, {
+      blocker: { kind: "other", message: RED_PARK, since: T0 + 3000 },
+      counters: { attempts: 3, retries, reviewRounds: rounds },
+    });
+  // The records sit on SHA2; development moved to SHA1 (`TIPS`).
+  // A legacy record whose final round its CI fix armed: refreshed for that
+  // one review only under a proven CI-first runtime.
+  const legacy = parked(668, 4, 1);
+  const armed = [...reviewCharges(legacy, 4), fix(legacy)];
+  assert.deepEqual(plan(legacy, armed).plans, []);
+  const refreshed = plan(legacy, armed, { ciFirst: true }).plans;
+  assert.equal(refreshed.length, 1);
+  assert.equal(refreshed[0]!.nextStep, "work");
+  assert.equal(refreshed[0]!.ciFixMarker, undefined);
+  assert.match(refreshed[0]!.detail, /:base-moved$/);
+  // A legacy record whose final round is still open (no fix charged since
+  // the cutoff) has no review round to refresh for: the runtime's ceiling
+  // gate would park it before any refresh. Its fix arms the round, so only a
+  // fix runtime returns it, with the CI fix marker.
+  const open = parked(673, 4, 0);
+  const unarmed = reviewCharges(open, 4);
+  assert.deepEqual(plan(open, unarmed, { ciFirst: true }).plans, []);
+  const fixed = plan(open, unarmed, { fix: true }).plans;
+  assert.equal(fixed.length, 1);
+  assert.equal(fixed[0]!.ciFixMarker, true);
+  // An ordinary record with a round left: CI-first only, as above.
+  const ordinary = parked(1583, 1, 0);
+  assert.deepEqual(plan(ordinary, reviewCharges(ordinary, 1)).plans, []);
+  assert.equal(
+    plan(ordinary, reviewCharges(ordinary, 1), { ciFirst: true }).plans.length,
+    1,
+  );
 });
 
 Deno.test("legacy round gate: a base-refresh re-admission of a legacy final round waits for a CI-first runtime", () => {

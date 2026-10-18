@@ -58,14 +58,27 @@ function isReviewAttemptWait(record: WorkRecordV1): boolean {
  */
 function reviewAttemptExpired(record: WorkRecordV1, now: number): boolean {
   const wait = record.wait;
-  const since = wait !== null && isReviewAttemptWait(record)
-    // The drain pass releases an expired review_quota wait before this step
-    // runs, so a live wait keeps its preserved start and the bound intent is
-    // the only surviving anchor for an already-released attempt.
+  // The drain pass releases an expired review_quota wait before this step
+  // runs, so a live wait keeps its preserved start and the bound intent is
+  // the only surviving anchor for an already-released attempt.
+  const waitSince = wait !== null && isReviewAttemptWait(record)
     ? wait.since
-    : record.intent !== null && record.intent.kind === "review_request"
-    ? record.intent.startedAt
     : null;
+  const intentStart =
+    record.intent !== null && record.intent.kind === "review_request"
+      ? record.intent.startedAt
+      : null;
+  // A bound intent IS the attempt in flight, and the wait beside it may be an
+  // EARLIER round's: requestReviewFor sets the intent on the freshly loaded
+  // record, which keeps that round's wait (live 604 and 647 carry the
+  // previous round's review_pending since). The bound therefore never starts
+  // before the intent's own start, so a later attempt never inherits an
+  // earlier round's deadline; it can only start later, never earlier.
+  const since = waitSince === null
+    ? intentStart
+    : intentStart === null
+    ? waitSince
+    : Math.max(waitSince, intentStart);
   if (since === null) return false;
   return now >= since + REVIEW_BOUND_MS;
 }
@@ -195,6 +208,15 @@ export async function observeReview(
       isUnboundReviewObservation(value) || value.observedHead !== head ||
       value.observedBase !== record.target.base
     ) {
+      // No exact journal binds the saved submission. It expires after the
+      // same bound and is recovered exactly like every other attempt (live
+      // ai.ubq.fi 630, 604 and 647 deferred here for 15-92 hours): the round
+      // is counted once, its ambiguous charge stays, and the next round goes
+      // through the ceiling, freshness and CI-first gates. Inside the bound
+      // nothing is written.
+      if (reviewAttemptExpired(record, now)) {
+        return recoverExpiredReviewAttempt(deps, context, record, now);
+      }
       return {
         kind: "deferred",
         detail: "review intent has no exact bound journal",

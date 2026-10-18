@@ -105,6 +105,8 @@ export type FetchLikeV1 = (
 export const DEFAULT_HTTP_DEADLINE_MS = 30_000;
 /** Finite default byte bound on a response body. */
 export const DEFAULT_HTTP_MAX_BODY_BYTES = 8 * 1024 * 1024;
+/** Message of the transport's body-bound failure (static, no body text). */
+export const HTTP_BODY_BOUND_ERROR = "response body exceeds the byte bound";
 
 /** Sentinel timeout used internally; never propagated raw to callers. */
 class SentinelOperationTimeout extends Error {
@@ -256,7 +258,7 @@ function startBoundedBodyRead(
         if (step.done) break;
         total += step.value.byteLength;
         if (total > maxBytes) {
-          throw new Error("response body exceeds the byte bound");
+          throw new Error(HTTP_BODY_BOUND_ERROR);
         }
         chunks.push(step.value);
       }

@@ -282,16 +282,22 @@ export function latestAuthorizingReceipt(
     : { kind: "refused" };
 }
 
-/** Required CI on the exact head: self `test-local`, foreign every check. */
+/**
+ * Required CI on the exact head: self `test-local`, foreign every check and,
+ * when `base` names the commit the head is tested against, every check the
+ * base's suites expect (a `needs:` job GitHub creates late, issue #154). An
+ * unreadable read is not green.
+ */
 export async function headIsGreen(
   surface: HostedAutonomyGitHubV1,
   self: boolean,
   head: string,
+  base?: string,
 ): Promise<boolean> {
   try {
     return self
       ? await surface.hasSuccessfulCheck(head)
-      : await surface.hasAllChecksGreen(head);
+      : await surface.hasAllChecksGreen(head, base) === true;
   } catch {
     return false;
   }
@@ -458,8 +464,9 @@ export async function preMergeGate(input: {
   if (!self && pull.baseRef !== scope.baseBranch) {
     return { refusal: "base_mismatch", spent: false };
   }
-  // Red or pending required CI on the exact head never merges.
-  if (!await headIsGreen(surface, self, head)) {
+  // Red, pending or incomplete required CI on the exact head never merges:
+  // every check the reviewed base's suites expect must exist on it.
+  if (!await headIsGreen(surface, self, head, base)) {
     return { refusal: "checks_pending", spent: false };
   }
   if (moved) {
@@ -808,7 +815,8 @@ export async function carriedPatchRefusal(
  * immediately before the merge, in order: the pass's tip is exactly the
  * refreshed head's base T; the spent gates (the source issue open, a Gateway
  * request that will bind the carried receipt); the foreign base ref; green
- * required CI on the refreshed head itself; T a strict ancestor of that head
+ * required CI on the refreshed head itself, with every check T's suites
+ * expect present; T a strict ancestor of that head
  * (so the merge result is the head's own CI-tested tree); and the exact patch
  * proof. Returns the proof (with the head's green workflow runs and the
  * rendered diff digests, read for evidence only) or the refusal. A carried
@@ -839,7 +847,9 @@ export async function carriedMergeGate(input: {
   if (!self && pull.baseRef !== scope.baseBranch) {
     return { refusal: "base_mismatch", proof: null };
   }
-  if (!await headIsGreen(surface, self, head)) {
+  // H1 was tested against T: every check T's suites expect must exist on
+  // it, so a `needs:` job not created yet never merges unrun.
+  if (!await headIsGreen(surface, self, head, base)) {
     return { refusal: "checks_pending", proof: null };
   }
   let contained = false;

@@ -13,13 +13,18 @@ import {
 } from "../contracts/shared.ts";
 import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { parseVpsReleaseRecordV1 } from "../contracts/vps-release.ts";
-import type { StabilityPolicyV1 } from "../contracts/repository-policy.ts";
+import {
+  parseRetentionPolicy,
+  type RetentionPolicyV1,
+  type StabilityPolicyV1,
+} from "../contracts/repository-policy.ts";
 import { validateStabilityPolicy } from "../release/config.ts";
 import {
   canonicalVps,
   isHealthyVps,
   parseVpsIdentity,
   parseVpsReceipt,
+  sameVps,
   sha256,
   type VpsBinding,
   vpsDigest,
@@ -30,49 +35,29 @@ import {
   type VpsSettlement,
 } from "../contracts/vps-release-wire.ts";
 import {
+  assertDenoLoadableVpsGraph,
   composeVpsReleasePort,
   loadPinnedVpsDriver,
   type NativeVpsDriverV1,
+  VpsBunOnlyGraphError,
 } from "../release/vps-port.ts";
+import {
+  type VpsBoundedJournalCommand,
+  type VpsCommand,
+  type VpsJoinCipher,
+  type VpsJoinedMetricsModule,
+  vpsJoinStorageModule,
+  type VpsJournalCoverageReader,
+  type VpsJournalRequest,
+  vpsMetricsInterface,
+  type VpsMetricsScope,
+  type VpsMetricsWork,
+} from "../release/vps-metrics.ts";
 import type { VpsReleaseEntrypointDepsV1 } from "../release-main.ts";
 
-type VpsCommand = (
-  program: string,
-  args: string[],
-  cwd: string,
-) => Promise<string>;
-type VpsCoverage = {
-  complete: true;
-  unit: "ai-ubq-fi.service";
-  windowStart: number;
-  windowEnd: number;
-  bootId: string;
-  firstCursor: string;
-  lastCursor: string;
-  digest: string;
+type VpsSampler = {
+  sample(input: VpsJournalRequest): Promise<VpsMetricsSample>;
 };
-type JournalReader = {
-  read(start: number, end: number): Promise<string>;
-  coverage(start: number, end: number): Promise<VpsCoverage | null>;
-};
-interface MetricsModule {
-  createVpsJournalReader(
-    run: VpsCommand,
-    root: string,
-    coverage: JournalReader["coverage"],
-  ): JournalReader;
-  VpsJournalMetrics: new (
-    reader: JournalReader,
-    now: () => number,
-    lagMs: number,
-    timeoutKinds: readonly string[],
-    upstreamWideKinds: readonly string[],
-  ) => {
-    sample(
-      input: { identity: VpsIdentity; windowStart: number; windowEnd: number },
-    ): Promise<VpsMetricsSample>;
-  };
-}
 
 /** These capabilities belong to the release launcher, never repair/model workers. */
 export interface TrustedVpsReleaseHostOptionsV1 {
@@ -95,11 +80,22 @@ export interface TrustedVpsReleaseHostOptionsV1 {
   /** Authenticated current source/review/task/CI/merge observer supplied by the owner. */
   verifySource(binding: VpsBinding): Promise<boolean>;
   /** Independent completeness readback; journal text alone cannot prove coverage. */
-  journalCoverage: JournalReader["coverage"];
+  journalCoverage: VpsJournalCoverageReader;
+  /**
+   * Owner-approved evidence retention and sealing key for a driver with the
+   * joined VpsJournalMetrics interface (ubiquity/ai.ubq.fi#1027). The pinned
+   * driver tree supplies the join storage; absent custody leaves such a driver
+   * unavailable. A driver with the window interface never reads it.
+   */
+  telemetry?: { retention: RetentionPolicyV1; cipher: VpsJoinCipher };
   /** Existing authenticated direct Mac-to-VPS proof, privately read by the release owner. */
   readInferenceProof(identity: VpsIdentity): Promise<VpsInferenceProof | null>;
   /** Only external system/network boundaries are replaceable in local tests. */
-  platform?: { run: VpsCommand; fetch: typeof fetch };
+  platform?: {
+    run: VpsCommand;
+    fetch: typeof fetch;
+    journal?: VpsBoundedJournalCommand;
+  };
   wait(ms: number): Promise<void>;
   deadline: number;
 }
@@ -215,6 +211,164 @@ export async function verifyCommittedSettlement(
     fresh.value.ref === current.value.ref;
 }
 
+type VpsScopeBinding = {
+  installationId: number;
+  environment: "production" | "isolated";
+  controllerSha: string;
+  driverSha256: string;
+};
+/**
+ * The unique committed monitoring operation of this host's pinned driver that
+ * owns the sampled identity; joins bind to it, never to caller-supplied time.
+ * A saved checkpoint is re-read at its own committed release-state revision.
+ */
+async function readVpsMetricsScope(
+  state: StateReadView,
+  input: VpsJournalRequest,
+  bound: VpsScopeBinding,
+  saved?: { stateHead: string; stateSequence: number },
+): Promise<VpsMetricsScope> {
+  const current = await state.readRelease();
+  if (!current.ok || current.value.status !== "found") {
+    throw new Error("VPS metrics scope is unavailable");
+  }
+  let read = current.value;
+  if (saved !== undefined && saved.stateHead !== read.head) {
+    const historic = await state.readReleaseAt?.({
+      commit: asGitSha(saved.stateHead),
+      expectedHead: read.head,
+    });
+    if (
+      !historic?.ok || historic.value.status !== "found" ||
+      historic.value.head !== saved.stateHead
+    ) throw new Error("VPS metrics scope history is unavailable");
+    read = historic.value;
+  }
+  const snapshot = parseReleaseStateSnapshotV1(read.snapshot);
+  if (saved !== undefined && snapshot.sequence !== saved.stateSequence) {
+    throw new Error("VPS metrics scope history is unavailable");
+  }
+  const records = (snapshot.vpsReleases ?? []).filter((record) =>
+    record.phase === "monitoring" &&
+    record.request.target.repository.owner === "ubiquity" &&
+    record.request.target.repository.name === "ai.ubq.fi" &&
+    record.request.target.repository.installationId === bound.installationId &&
+    record.request.target.environment === bound.environment &&
+    record.driver.controllerSha === bound.controllerSha &&
+    record.driver.driverSha256 === bound.driverSha256 &&
+    (sameVps(input.identity, record.driver.candidate) ||
+      sameVps(input.identity, record.driver.prior.identity))
+  );
+  const startedAt = records.length === 1
+    ? records[0].monitoring.startedAt
+    : null;
+  if (startedAt === null) throw new Error("VPS metrics scope is ambiguous");
+  const [record] = records;
+  // The controller's own baseline slots: the policy window before creation.
+  const baselineEnd = Math.floor(record.driver.createdAt / 30_000) * 30_000;
+  return {
+    operationId: record.driver.operationId,
+    requestDigest: record.requestDigest,
+    controllerSha: bound.controllerSha,
+    driverSha256: bound.driverSha256,
+    candidate: record.driver.candidate,
+    prior: record.driver.prior.identity,
+    monitoringStartedAt: startedAt,
+    baselineStart: baselineEnd - record.policy.baselineWindowMs,
+    baselineEnd,
+    stateHead: read.head,
+    stateSequence: snapshot.sequence,
+  };
+}
+
+/**
+ * ubiquity/ai.ubq.fi#1027 composition: the five metrics options, the bounded
+ * journal runner and the pinned tree's join storage, imported only once its
+ * graph is proven Deno-loadable. The controller drives `beginTick`.
+ */
+async function composeJoinedVpsMetrics(
+  options: TrustedVpsReleaseHostOptionsV1,
+  module: VpsJoinedMetricsModule,
+  stateRead: StateReadView,
+  bound: VpsScopeBinding,
+): Promise<
+  PortResultV1<{ metrics: VpsSampler; metricsWork: VpsMetricsWork }>
+> {
+  const cipher = options.telemetry?.cipher;
+  let retention: RetentionPolicyV1 | null = null;
+  try {
+    retention = parseRetentionPolicy(
+      options.telemetry?.retention,
+      "$.telemetry.retention",
+    );
+  } catch {
+    // Unapproved or absent retention keeps the joined driver unavailable.
+  }
+  if (
+    retention === null || typeof cipher?.seal !== "function" ||
+    typeof cipher.open !== "function"
+  ) {
+    return portError(
+      "unavailable",
+      "trusted VPS telemetry capabilities are unavailable",
+    );
+  }
+  // The #1027 join storage shares the driver's deploy lock (bun:ffi there).
+  await assertDenoLoadableVpsGraph(options.pinnedDriver.releaseRoot, [
+    "ops/vps-metrics-storage.ts",
+  ]);
+  const storageModule = vpsJoinStorageModule(
+    await import(
+      new URL(
+        `file://${options.pinnedDriver.releaseRoot}/ops/vps-metrics-storage.ts`,
+      ).href
+    ),
+  );
+  if (storageModule === null) {
+    return portError(
+      "unavailable",
+      "trusted VPS metrics capability is unavailable",
+    );
+  }
+  const now = () => options.clock.now();
+  const context = (
+    input: VpsJournalRequest,
+    saved?: { stateHead: string; stateSequence: number },
+  ) => readVpsMetricsScope(stateRead, input, bound, saved);
+  const storage = storageModule.createVpsJoinFileStorage(
+    options.targetRoot,
+    retention,
+    cipher,
+    (scope) =>
+      context({
+        identity: scope.candidate,
+        windowStart: scope.monitoringStartedAt,
+        windowEnd: scope.monitoringStartedAt + 30_000,
+      }),
+    now,
+  );
+  const reader = module.createVpsJournalReader(
+    options.platform?.journal ?? module.runVpsJournalCommand,
+    options.targetRoot,
+    options.journalCoverage,
+  );
+  const metrics = new module.VpsJournalMetrics(
+    reader,
+    now,
+    options.logsLagMs,
+    options.timeoutKinds,
+    options.upstreamWideKinds,
+    { retention, context, storage, cipher, deadline: options.deadline },
+  );
+  return portOk({
+    metrics,
+    metricsWork: {
+      beginTick: (observedAt) => metrics.beginTick(observedAt),
+      progress: (input) => metrics.progress(input),
+    },
+  });
+}
+
 /** Missing launcher/writer/policy inputs remain unavailable; no transport is invented. */
 export async function composeTrustedVpsReleaseHost(
   options: TrustedVpsReleaseHostOptionsV1,
@@ -264,15 +418,14 @@ export async function composeTrustedVpsReleaseHost(
       );
     }
     // The full immutable tree was verified by the loader before either module is evaluated.
-    const metricsModule = await import(
-      new URL(
-        `file://${options.pinnedDriver.releaseRoot}/ops/vps-release-metrics.ts`,
-      ).href
-    ) as MetricsModule;
-    if (
-      typeof metricsModule.createVpsJournalReader !== "function" ||
-      typeof metricsModule.VpsJournalMetrics !== "function"
-    ) {
+    const metricsInterface = vpsMetricsInterface(
+      await import(
+        new URL(
+          `file://${options.pinnedDriver.releaseRoot}/ops/vps-release-metrics.ts`,
+        ).href
+      ),
+    );
+    if (metricsInterface === null) {
       return portError(
         "unavailable",
         "trusted VPS metrics capability is unavailable",
@@ -305,18 +458,36 @@ export async function composeTrustedVpsReleaseHost(
           options.clock.now(),
         ),
     });
-    const reader = metricsModule.createVpsJournalReader(
-      run,
-      options.targetRoot,
-      options.journalCoverage,
-    );
-    const metrics = new metricsModule.VpsJournalMetrics(
-      reader,
-      () => options.clock.now(),
-      options.logsLagMs,
-      options.timeoutKinds,
-      options.upstreamWideKinds,
-    );
+    let metrics: VpsSampler, metricsWork: VpsMetricsWork | undefined;
+    if (metricsInterface.kind === "window") {
+      // The driver pinned today (ai.ubq.fi 21e4a2a9): composed exactly as before.
+      const reader = metricsInterface.module.createVpsJournalReader(
+        run,
+        options.targetRoot,
+        options.journalCoverage,
+      );
+      metrics = new metricsInterface.module.VpsJournalMetrics(
+        reader,
+        () => options.clock.now(),
+        options.logsLagMs,
+        options.timeoutKinds,
+        options.upstreamWideKinds,
+      );
+    } else {
+      const joined = await composeJoinedVpsMetrics(
+        options,
+        metricsInterface.module,
+        stateRead,
+        {
+          installationId: repository.installationId,
+          environment: options.environment,
+          controllerSha: options.controllerSha,
+          driverSha256,
+        },
+      );
+      if (!joined.ok) return joined;
+      ({ metrics, metricsWork } = joined.value);
+    }
     return portOk({
       stateRead,
       stateWrite,
@@ -334,11 +505,14 @@ export async function composeTrustedVpsReleaseHost(
       }),
       wait: options.wait,
       deadline: options.deadline,
+      ...(metricsWork === undefined ? {} : { metricsWork }),
     });
-  } catch {
+  } catch (error) {
     return portError(
       "unavailable",
-      "trusted VPS release capabilities are unavailable",
+      error instanceof VpsBunOnlyGraphError
+        ? "trusted VPS driver needs a host that can load Bun-only modules"
+        : "trusted VPS release capabilities are unavailable",
     );
   }
 }

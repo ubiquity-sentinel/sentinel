@@ -186,6 +186,9 @@ export async function runActionsMatrixHost(
               repositoryDir: host.sourcePathFor(config),
               outputDir: host.artifactRoot,
             }),
+            ...(input.composeCiEvidence === undefined
+              ? {}
+              : { ciEvidence: input.composeCiEvidence(config) }),
           },
           grant,
           {

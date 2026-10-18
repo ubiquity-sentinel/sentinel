@@ -3,12 +3,14 @@
  * review, then merge"): a review is requested only for a head whose required
  * CI is green. Every row of the gate runs the real repair loop over real Git
  * state with fake GitHub/model ports: pending CI waits (bounded), a red head
- * routes to a CI fix (or parks precisely where no fix may run), a red base
+ * routes to a CI fix (in process and, from generation 81, in hosted runs; it
+ * parks precisely where no fix may run), a red base
  * backs off uncharged, and no non-green path reserves a review or moves the
  * review-round counter.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
+import { isCiFixMarker } from "../../src/repair/ci-first-policy.ts";
 import { preReviewCiParked } from "../../ops/hosted-autonomy-ci-first.ts";
 import { ciGreenHeadKey } from "../../ops/hosted-autonomy-ci-retries.ts";
 import { hostedRepositoryKey } from "../../ops/hosted-autonomy-policy.ts";
@@ -61,30 +63,31 @@ Deno.test("CI first: a green head is reviewed exactly as before", async () => {
   }
 });
 
-Deno.test("CI first: a hosted red head is never reviewed and parks awaiting a CI fix", async () => {
+Deno.test("CI first: a hosted red head is never reviewed and is marked for its CI fix (generation 81)", async () => {
   const { rig, charges } = await ciFirstRig("cf-red-hosted", {
     hosted: true,
     checks: RED,
   });
   try {
     const outcome = await rig.run();
-    assert.equal(outcome.status, "idle", JSON.stringify(outcome));
+    // The marked fix is matrix work: this hosted run defers it.
+    assert.equal(outcome.status, "margin", JSON.stringify(outcome));
     const after = await rig.snapshot();
     const work = taskRecord(after);
     assert.equal(rig.github.calls.includes("requestReview"), false);
     assert.equal(reviewCharges(after).length, 0, "no review admission");
     assert.deepEqual(after.reservations, charges, "nothing charged");
     assert.equal(work.counters.reviewRounds, 0, "no round counted");
-    assert.equal(work.counters.retries, 0, "no fix charged");
-    assert.equal(work.nextStep, "blocked");
-    assert.equal(work.blocker?.kind, "other");
-    assert.equal(
-      work.blocker?.message,
-      "CI red before review; awaiting a CI fix: validate(failure)",
-    );
+    assert.equal(work.counters.retries, 0, "charged only at its admission");
+    // The hosted pre-review route is open (R80, the rollback target,
+    // isolates the cell): back at `work` with the CI fix marker, which the
+    // matrix planner admits as a charged CI fix cell.
+    assert.equal(work.nextStep, "work");
+    assert.equal(work.blocker, null);
+    assert.ok(isCiFixMarker(work.wait), JSON.stringify(work.wait));
     assert.equal(work.target.pr, 7, "the publication identity is kept");
     assert.equal(work.target.head, SHA3);
-    assert.equal(rig.model.requests.length, 0);
+    assert.equal(rig.model.requests.length, 0, "a hosted fix runs as a cell");
   } finally {
     await rig.ctx.cleanup();
   }
@@ -440,7 +443,8 @@ for (const hosted of [false, true]) {
 
 Deno.test("CI first: an expired review attempt is re-requested only through the gate", async () => {
   // The review step's own recovery (an attempt that outlived its bound) is
-  // one of the gate's callers: the red head parks instead of a new round.
+  // one of the gate's callers: the red head is marked for its CI fix instead
+  // of a new round.
   const { rig, charges } = await ciFirstRig("cf-review-recovery", {
     hosted: true,
     reviewRounds: 1,
@@ -453,11 +457,10 @@ Deno.test("CI first: an expired review attempt is re-requested only through the 
     const after = await rig.snapshot();
     const work = taskRecord(after);
     assert.equal(rig.github.calls.includes("requestReview"), false);
-    assert.equal(work.nextStep, "blocked");
-    assert.equal(
-      work.blocker?.message,
-      "CI red before review; awaiting a CI fix: validate(failure)",
-    );
+    assert.equal(work.nextStep, "work");
+    assert.equal(work.blocker, null);
+    assert.ok(isCiFixMarker(work.wait), JSON.stringify(work.wait));
+    assert.equal(work.counters.reviewRounds, 1, "no round counted");
     assert.deepEqual(
       reviewCharges(after),
       reviewCharges({

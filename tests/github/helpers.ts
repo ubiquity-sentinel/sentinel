@@ -823,6 +823,8 @@ export function errorWire(message: string): Record<string, unknown> {
 
 export interface MakePortOptions {
   script?: ScriptEntry[];
+  /** The port's one repository (default `REPO`). */
+  repository?: RepositoryIdentityV1;
   /** Custom transport override (defaults to the scripted transport). */
   http?: HttpTransportV1;
   auth?: GitHubAuthProviderV1;
@@ -851,7 +853,7 @@ export function makePort(
 } {
   const transport = new ScriptedHttpTransport(options.script ?? []);
   const portOptions: GitHubPortOptionsV1 = {
-    repository: REPO,
+    repository: options.repository ?? REPO,
     apiBaseUrl: options.apiBaseUrl ?? "https://api.github.com",
     http: options.http ?? transport.fetch.bind(transport) as HttpTransportV1,
     auth: options.auth ?? new FakeAuthProvider(),

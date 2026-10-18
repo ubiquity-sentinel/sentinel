@@ -43,8 +43,13 @@ import type {
 import {
   classifyReviewTerminalDisposition,
   TASK_ACCEPTANCE_MISSING_DETAIL,
+  TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL,
   taskAcceptanceRefusal,
 } from "./review-gate.ts";
+import {
+  TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
+  withAcceptanceFinding,
+} from "./acceptance-correction.ts";
 import {
   advanceToCorrection,
   advanceToDelivery,
@@ -260,7 +265,7 @@ export async function applyObservedReview(
       ),
     );
   }
-  const unresolved = hasBlockingFindings(receipt);
+  let unresolved = hasBlockingFindings(receipt);
   // A completed code-quality verdict is still not a delivery. For an
   // issue-backed record the receipt must also carry the reviewer's POSITIVE
   // task acceptance bound to this exact source issue AND to the TRUSTED live
@@ -328,7 +333,27 @@ export async function applyObservedReview(
       });
     }
     const refusal = taskAcceptanceRefusal(receipt, record, task);
-    if (refusal !== null) {
+    if (refusal === TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL) {
+      // JAM B6: the reviewer judged THIS issue's live text and found the
+      // candidate does not satisfy it. That is a P1 (an unaccepted candidate
+      // never merges), so the receipt carries the reviewer's acceptance
+      // statement as its leading P1 finding and the record continues exactly
+      // as a P0/P1 verdict does below: a correction while a round is left
+      // (B6a). With none left, or when the receipt cannot carry the finding,
+      // it parks once on the owner-gated message (B6b), never re-admitted.
+      const corrected = await withAcceptanceFinding(receipt);
+      if (corrected === null || reviewRoundsSpentOut(context, record)) {
+        return parkWithReceipt(
+          deps,
+          context,
+          record,
+          corrected ?? receipt,
+          TASK_ACCEPTANCE_OWNER_GATE_DETAIL,
+        );
+      }
+      receipt = corrected;
+      unresolved = true;
+    } else if (refusal !== null) {
       if (refusal === TASK_ACCEPTANCE_MISSING_DETAIL) {
         // At the hard review-round ceiling a missing acceptance is final: the
         // generation-79 recovery answers its own detail with another review,

@@ -22,6 +22,7 @@ import {
   maintenanceFailureCategory,
 } from "./hosted-autonomy-state.ts";
 import { createHostedAutonomyGitHub } from "./hosted-autonomy-github.ts";
+import { repeatFailureRouteIdentity } from "./hosted-autonomy-repeat-failure.ts";
 import {
   CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE,
   hostedRepositoryKey,
@@ -175,6 +176,13 @@ export async function runHostedAutonomyMain(input?: {
           state,
           githubFor,
           clock: { now: () => Date.now() },
+          // Route selector names only, never a key: a changed model route
+          // re-arms the records the repeat-failure bound parked.
+          modelRoute: repeatFailureRouteIdentity({
+            baseUrl: env("SENTINEL_MODEL_BASE_URL"),
+            model: env("SENTINEL_MODEL_ID"),
+            fallback: env("SENTINEL_MODEL_FALLBACK"),
+          }),
           uncertainMatrix: () =>
             runMatrixUncertaintyMaintenance(createMatrixUncertaintyMaintenance({
               state,

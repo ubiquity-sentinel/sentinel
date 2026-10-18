@@ -23,7 +23,9 @@ export const HISTORICAL_RECOVERY_PROVIDERS: readonly string[] = [
  * is this same pure resolver's result for an absent override (the default).
  * The launcher evaluates that resolver from its own source; it never reads
  * the id from an artifact, a receipt or the maintenance environment (which
- * carries no model route at all). A test pins the no-override invariant.
+ * carries only the non-secret route selector the repeat-failure bound
+ * compares, never `SENTINEL_MODEL_FAILOVER_ID`). A test pins the no-override
+ * invariant.
  */
 export const RECOVERY_ROUTE_FAILOVER_MODEL: string = resolveFailoverModelId(
   {},

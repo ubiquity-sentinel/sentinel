@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import { parseReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
 import type { ReviewReceiptV1 } from "../../src/contracts/review-receipt.ts";
+import { TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL } from "../../src/repair/review-gate.ts";
 import {
   authorizingReceipt,
   BASE,
@@ -492,8 +493,14 @@ Deno.test("spent delivery S5: a record outside the closed spent shape is never m
         options,
         async (rig, calls) => {
           const { actions } = await deliveryOnly(rig);
+          // JAM B6b: a spent not-fulfilled acceptance is owner gated, named
+          // once in the summary instead of the per-pass refusal line.
           assert.ok(
-            actions.includes(`delivery:${record.id}:spent_not_admissible`),
+            actions.includes(
+              record.blocker?.message === TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL
+                ? `owner_gate:task_acceptance_not_fulfilled:n=1:${record.id}`
+                : `delivery:${record.id}:spent_not_admissible`,
+            ),
             actions.join(" "),
           );
           assert.deepEqual(calls.merges, []);
