@@ -23,20 +23,24 @@ integrates or publishes.
 ### Live boundary
 
 PR #165 merged as `c2177dfdfa563938558caf16b783aaf942af3fb7`. Launcher L81
-`00b6649eeff51a9754bf3748f793137db9bf8605` is published by fast-forward on both
-development and sentinel-supervisor. Its final committed depth-1 checks passed
-57 tests / 38 steps with no failures; merged input checks passed 32 tests / 38
-steps plus static gates. Native launcher CI is 39106152644; protected R81
-installation and own health remain pending. Runtime R80
-`e48e7e110e7cb2ed3385bf1be5165f05d8a4e481` remains installed at generation 80.
-Supervisor 39103444110 completed successfully. Release-state commit
-`30492d9c36b1d5de924f7496b4e290939aca30a1` retains that execution's own settled,
-startup-ready healthy proof, bound to repair job 117606151422; the native log
-digest independently matches. A new ordinary R80 execution from 39104968165 is
-in progress as of 06:56:49 UTC. Evidence is
-`/workspace/evidence/live-post-39103444110/`. This proves runtime health, not
-new autonomous delivery. The earlier 39097588521 delivery inventory found no new
-autonomous merge; maintenance observations are not delivered issues.
+`00b6649eeff51a9754bf3748f793137db9bf8605` was published by fast-forward on both
+source refs. Exact runtime R81 `da98f5f49c45b57cfa97a45fe647c36b1021f302` is now
+installed at generation 81 and has its own settled, startup-ready healthy
+bootstrap proof. Protected prepare installed R80/80 to R81/81 at state commit
+`41d96491dbfd6616e9d3f5bc9d1fde43ae0986da`. Supervisor 39106751104 attempt 1
+completed successfully; repair job 117615533627 and the native log digest
+`e1af7c65cbb1efae61801262c222304b33a32c0e67429b625501195c82521ec5` agree with
+the authoritative proof at release state
+`404a11b5a12fb5f430a06f3e763d681eb3921a3b`. All sixteen independent agreement
+checks pass. Evidence: `/workspace/evidence/gen81-live/runtime-proof.json` and
+`installation-receipt.json` in that directory. No manual state change occurred.
+
+The first ordinary R81 supervisor, 39107544246, has started; its completion and
+delivery effects remain pending. Bootstrap health is not an autonomous issue
+delivery claim. L81's committed depth-1 tests passed 57 tests / 38 steps; merged
+input checks passed 32 tests / 38 steps plus static gates. Its exact native CI,
+39106152644, remains separately in progress. Dormant queue source is prepared
+for development-only publication; sentinel-supervisor stays exact L81.
 
 `sentinel-release` remains disabled. The pre-existing Sentinel ruleset 23197448
 protects only `sentinel-state/release`; it was not added or changed by this
@@ -64,7 +68,7 @@ development run 39098081444 also passed all four without cancellation. Evidence:
 `/workspace/evidence/ci-base-runs/final-5b080ea0/`. A separate deterministic
 quota clock fixture correction remains prepared and unpublished.
 
-### Generation 81: merged and launcher prepared; installation pending
+### Generation 81: merged, installed and bootstrap healthy
 
 R81 is frozen at `da98f5f49c45b57cfa97a45fe647c36b1021f302` in
 `/workspace/worktrees/gen81-integration`. It retains all eleven rebased lane
@@ -112,10 +116,11 @@ independent normal/shallow consumer checks pass. The exact reviewed patch is
 applied to the merged development input. All fourteen file hashes match the
 audit; source/workflow/rubric and owner documents remain unchanged outside the
 patch and this ledger. Final merged installer checks pass 32 tests / 38 steps
-plus scoped format, lint, type and size checks. The primary will fast-forward
-development and sentinel-supervisor. Only the protected controller writes
-installation state. Exact installed R81/81 own health and delivery remain
-pending, distinct acceptance gates. Procedure and proof boundaries:
+plus scoped format, lint, type and size checks. The primary published L81 by
+fast-forward to development and sentinel-supervisor. The protected controller
+installed exact R81/81, whose own bootstrap is settled and healthy as recorded
+above. Ordinary supervisor completion and autonomous delivery remain separate
+acceptance gates. Procedure and proof boundaries:
 `/workspace/evidence/gen81-install/README.md`.
 
 ### Queue: dormant source accepted, native activation remains gated
@@ -130,16 +135,22 @@ tip, all fourteen launcher files equal audited L81, and owner documents, rubric
 and all four implementation-model bindings are preserved. Combined publication
 checks pass 72 tests / 120 steps through actual installer/capability and queue
 composition boundaries, plus whole-repository formatting, scoped lint/type
-checks and size constraints. The final exact combined-input audit remains
-pending. Evidence: `/workspace/evidence/merge-queue/final-publication/`.
-Accepted ancestry includes combined queue, dormant transient-read and removal
-corrections, App-only canary runner, lower-only selector, import-cycle fix and
-exact runtime capability guards. All queue mode/proof defaults remain off/false;
-source canary grants, capability/migration pins and historical witness pins
-remain empty. No queue source is published or installed. Queue custody runs
-first, uses non-expiring holds and cannot fall through to the old direct
-verifier. Every changed state shape remains R80-readable; old-runtime execution
-after activation is separately refused by exact capability gates.
+checks and size constraints. The fresh exact combined-input audit passes with no
+source corrections or new confirmed findings. It independently binds 1,287
+tracked files and all accepted ancestry, plus two actual cross-composition tests
+/ five steps. Report SHA-256
+`8b524a7f4fb8fcc8dc8beafc232f9099e98eefb91470c1519f10bac7cc4ba81f`,
+`/workspace/evidence/merge-queue/final-publication-audit/report.md`. Evidence:
+`/workspace/evidence/merge-queue/final-publication/`. Accepted ancestry includes
+combined queue, dormant transient-read and removal corrections, App-only canary
+runner, lower-only selector, import-cycle fix and exact runtime capability
+guards. All queue mode/proof defaults remain off/false; source canary grants,
+capability/migration pins and historical witness pins remain empty. This
+checkpoint authorizes development-only source publication after verified R81
+health; sentinel-supervisor stays exact L81 and no queue runtime is installed.
+Queue custody runs first, uses non-expiring holds and cannot fall through to the
+old direct verifier. Every changed state shape remains R80-readable; old-runtime
+execution after activation is separately refused by exact capability gates.
 
 Fresh independent audit passes `854532e3556c5fa94ecbee050dfa9563efa79bb7`, delta
 SHA-256 `d363e92abd5ab472521bbf02a67537d25086a4be2754af4fb4948061d7854a82`. It
@@ -210,10 +221,15 @@ follow-up-scanning behavior changes. It remains open on original head
 and manually skipped before any new branch writes. Historical native CI failed
 six stale ordering/depth assertions after 2,711 passing tests. One narrow P2
 listing-boundary duplicate was reproduced through the real HTTP reader and
-planner/pass; no P0/P1 is found. Reuse and refresh this PR once against final
-published source, correct and validate that scope, then exact CI/current-head
-review/normal merge. Evidence:
-`/workspace/evidence/gen81-pr160-reconciliation/`.
+planner/pass; no P0/P1 is found. The existing-head continuation is locally
+corrected at `bba1f4971547c1540f0ccb58e579ef4399159194`: incomplete newest-first
+listings cannot prove an unseen marker absent at or beyond the ten-minute
+creation-skew boundary; observed matching markers still settle existing work.
+All 23 affected tests / 60 steps and scoped static checks pass. Refresh once
+against the final published source, then fast-forward the existing branch for
+exact native CI, current-head review and normal SHA-pinned merge. Evidence:
+`/workspace/evidence/gen81-pr160-reconciliation/` and
+`/workspace/evidence/pr160-continuation/root-acceptance.json`.
 
 General cross-branch runtime PR adoption is only separately prepared work in
 `/workspace/worktrees/existing-pr-integration` and
