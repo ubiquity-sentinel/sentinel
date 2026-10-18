@@ -145,7 +145,10 @@ class PostRegistrationSession implements CodexSessionV1 {
 Deno.test(
   "model-port: lazy session open is idempotent and a closed session fails closed at the open boundary",
   async () => {
-    const dir = await Deno.makeTempDir({ prefix: "sentinel-model-open-" });
+    const dir = await Deno.makeTempDir({
+      dir: Deno.cwd(),
+      prefix: "sentinel-model-open-",
+    });
     // The child is an immediate exit only: it proves the owned transport
     // boundary without any JSON-RPC, network or model work.
     const makeSession = () =>
@@ -193,7 +196,10 @@ Deno.test(
 Deno.test(
   "model-port: real transport corruption after notification registration never yields a verified completed or host-timeout receipt",
   async () => {
-    const dir = await Deno.makeTempDir({ prefix: "sentinel-model-corrupt-" });
+    const dir = await Deno.makeTempDir({
+      dir: Deno.cwd(),
+      prefix: "sentinel-model-corrupt-",
+    });
     try {
       for (
         const corrupt of ["malformed", "overflow", "truncated"] as const
@@ -243,6 +249,7 @@ Deno.test(
   "model-port: genuine no-terminal no-fatal transport timeout keeps host-timeout failed accounting with null observed status",
   async () => {
     const dir = await Deno.makeTempDir({
+      dir: Deno.cwd(),
       prefix: "sentinel-model-no-terminal-",
     });
     try {
