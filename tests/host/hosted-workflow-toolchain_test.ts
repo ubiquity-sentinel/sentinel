@@ -164,7 +164,14 @@ Deno.test("hosted workflow: self-test dependencies are prepared without credenti
       steps,
       /- name: Mint the scoped sentinel App token$/m,
     );
-    assert.ok(node < expose && expose < setup && setup < mint, job);
+    const seal = stepIndex(
+      steps,
+      /- name: Seal trusted self-test dependencies$/m,
+    );
+    assert.ok(
+      node < expose && expose < setup && setup < seal && seal < mint,
+      job,
+    );
     assert.ok(steps[setup].includes("working-directory: launcher"));
     assert.ok(
       steps[setup].includes(
@@ -172,6 +179,10 @@ Deno.test("hosted workflow: self-test dependencies are prepared without credenti
       ),
     );
     assert.ok(!/env:|secrets\.|outputs\.token/.test(steps[setup]));
+    assert.ok(steps[seal].includes("working-directory: launcher"));
+    assert.ok(steps[seal].includes("ops/hosted-autonomy-self-dependencies.ts"));
+    assert.ok(steps[seal].includes("--allow-env=PATH,NODE_V8_COVERAGE"));
+    assert.ok(!/secrets\.|outputs\.token|--allow-net/.test(steps[seal]));
     const lines = jobLines(SUPERVISOR, job).join("\n");
     assert.equal(
       lines.includes("SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT"),

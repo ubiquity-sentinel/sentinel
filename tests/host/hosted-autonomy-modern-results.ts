@@ -34,6 +34,7 @@ export async function expectProtectedRefusal(
   assert(before.ok && before.value.status === "found");
   assert(after.ok && after.value.status === "found");
   assert.deepEqual((result as HostedAutonomyResultV1).actions, [
+    "queue:inactive_no_rule",
     "current-matrix:ingested:0",
     "current-matrix:preservation-protected:1",
   ]);

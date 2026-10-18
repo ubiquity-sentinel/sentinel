@@ -272,6 +272,13 @@ jobs:
       - name: Install locked self-test dependencies
         working-directory: launcher
         run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
+      - name: Seal trusted self-test dependencies
+        working-directory: launcher
+        run: >-
+          deno run --no-lock
+          --allow-read --allow-write --allow-run
+          --allow-env=PATH,NODE_V8_COVERAGE
+          ops/hosted-autonomy-self-dependencies.ts
       - name: Install pinned Codex app-server
         run: npm install --global @openai/codex@0.154.0
       # GitHub-hosted Linux runners need unprivileged user namespaces for
@@ -431,6 +438,13 @@ jobs:
       - name: Install locked self-test dependencies
         working-directory: launcher
         run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
+      - name: Seal trusted self-test dependencies
+        working-directory: launcher
+        run: >-
+          deno run --no-lock
+          --allow-read --allow-write --allow-run
+          --allow-env=PATH,NODE_V8_COVERAGE
+          ops/hosted-autonomy-self-dependencies.ts
       - name: Install pinned Codex app-server
         run: npm install --global @openai/codex@0.154.0
       # GitHub-hosted Linux runners need unprivileged user namespaces for
@@ -611,6 +625,13 @@ jobs:
       - name: Install locked self-test dependencies
         working-directory: launcher
         run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
+      - name: Seal trusted self-test dependencies
+        working-directory: launcher
+        run: >-
+          deno run --no-lock
+          --allow-read --allow-write --allow-run
+          --allow-env=PATH,NODE_V8_COVERAGE
+          ops/hosted-autonomy-self-dependencies.ts
       - name: Install pinned Codex app-server
         run: npm install --global @openai/codex@0.154.0
       # GitHub-hosted Linux runners need unprivileged user namespaces for
