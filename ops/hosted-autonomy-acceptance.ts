@@ -37,15 +37,8 @@ import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import { TASK_ACCEPTANCE_NOT_FULFILLED_DETAIL } from "../src/repair/review-gate.ts";
 import { ordinaryReviewRoundsSpent } from "../src/repair/review-round-cap.ts";
 import { ciCorrectionRuntimeProven } from "./hosted-autonomy-ci-retries.ts";
-import {
-  HOSTED_AUTONOMY_MAX_RETRIES,
-  hostedIssueKey,
-} from "./hosted-autonomy-policy.ts";
-import {
-  type RetryDenialV1,
-  type RetryPlanV1,
-  taskReservationCount,
-} from "./hosted-autonomy-retries.ts";
+import { hostedIssueKey } from "./hosted-autonomy-policy.ts";
+import type { RetryDenialV1, RetryPlanV1 } from "./hosted-autonomy-retries.ts";
 
 type WorkRow = RepairStateSnapshotV1["work"][number];
 
@@ -158,8 +151,7 @@ export function planAcceptanceReadmissions(
         hostedIssueKey(record.repository, record.related.issueNumber!),
       ) ||
       ordinaryReviewRoundsSpent(snapshot, record) ||
-      !exactPublication(snapshot, record) ||
-      taskReservationCount(snapshot, record.id) >= HOSTED_AUTONOMY_MAX_RETRIES
+      !exactPublication(snapshot, record)
     ) continue;
     if (!runtimeProven) {
       onDenied?.({
