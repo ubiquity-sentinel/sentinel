@@ -45,6 +45,10 @@ import {
   type LocalSessionTracker,
 } from "./local-client.ts";
 import { joinPath } from "./local-io.ts";
+import {
+  isSentinelSelfTarget,
+  type PrepareCheckoutDependenciesV1,
+} from "./self-dependency-preparation.ts";
 
 // ---------------------------------------------------------------------------
 // Implementation port: one persistent isolated checkout per task
@@ -122,6 +126,8 @@ export interface LocalModelInputV1 {
   ensureBaseObject?: (
     input: { repository: RepositoryIdentityV1; base: GitSha },
   ) => Promise<PortResultV1<void>>;
+  /** Trusted, source-bound offline self dependencies; never executes target code. */
+  prepareCheckoutDependencies?: PrepareCheckoutDependenciesV1;
 }
 
 /**
@@ -278,6 +284,21 @@ export class LocalCheckoutModelPort implements ImplementationPort {
         mergeBase,
         conflictedPaths: merge.conflictedPaths,
       };
+    }
+
+    if (
+      isSentinelSelfTarget(request.repository) &&
+      this.input.prepareCheckoutDependencies !== undefined
+    ) {
+      try {
+        const dependencies = await this.input.prepareCheckoutDependencies({
+          repository: request.repository,
+          checkout: prepared.checkout,
+        });
+        if (!dependencies.ok) return await failCheckout();
+      } catch {
+        return await failCheckout();
+      }
     }
 
     const clientHome = joinPath(this.input.stateRoot, "clients", key);
