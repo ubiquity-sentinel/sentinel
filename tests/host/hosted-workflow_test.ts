@@ -1262,17 +1262,15 @@ Deno.test("hosted workflow: forwards the configured model route and secret to ru
     ["SENTINEL_MODEL_FALLBACK", "vars"],
     ["SENTINEL_DEEPSEEK_API_KEY", "secrets"],
   ];
-  // The owner-chosen implementation model is the default when the var is
-  // unset; a nonempty var still overrides it.
-  const routeDefaults: Readonly<Record<string, string>> = {
-    SENTINEL_MODEL_ID: "gpt-6.1-sol",
+  // The owner-chosen implementation model is the default when the override
+  // var is unset; a nonempty SENTINEL_IMPLEMENTATION_MODEL_ID overrides it.
+  // The older SENTINEL_MODEL_ID var is deliberately no longer read.
+  const routeSources: Readonly<Record<string, string>> = {
+    SENTINEL_MODEL_ID: "vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol'",
   };
   const runtimeEnvLines = envBlock.split("\n").map((line) => line.trim());
   for (const [name, context] of routeBindings) {
-    const fallback = routeDefaults[name];
-    const source = fallback === undefined
-      ? `${context}.${name}`
-      : `${context}.${name} || '${fallback}'`;
+    const source = routeSources[name] ?? `${context}.${name}`;
     assert.ok(
       runtimeEnvLines.includes(`${name}: \${{ ${source} }}`),
       `runtime env block must bind ${name} from ${context}`,
@@ -1287,7 +1285,9 @@ Deno.test("hosted workflow: forwards the configured model route and secret to ru
   );
   assert.deepEqual(
     [...modelBindings],
-    ["SENTINEL_MODEL_ID: ${{ vars.SENTINEL_MODEL_ID || 'gpt-6.1-sol' }}"],
+    [
+      "SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}",
+    ],
   );
 
   // The Deno grant must permit exactly the names the step now binds.

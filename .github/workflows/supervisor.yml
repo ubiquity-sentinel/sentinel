@@ -309,11 +309,13 @@ jobs:
           # launcher forwards only nonempty values, so an unset var keeps the
           # existing resolver behavior. The implementation model defaults to
           # the owner-chosen gateway model `gpt-6.1-sol` (2026-10-17); a
-          # nonempty SENTINEL_MODEL_ID var overrides it. Every job binds the
-          # same expression, so a plan and its cells always name one model.
+          # nonempty SENTINEL_IMPLEMENTATION_MODEL_ID var overrides it. The
+          # older SENTINEL_MODEL_ID var (it held gpt-reserve) is no longer
+          # read. Every job binds the same expression, so a plan and its
+          # cells always name one model.
           # The App private key is never bound here.
           SENTINEL_MODEL_BASE_URL: ${{ vars.SENTINEL_MODEL_BASE_URL }}
-          SENTINEL_MODEL_ID: ${{ vars.SENTINEL_MODEL_ID || 'gpt-6.1-sol' }}
+          SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}
           SENTINEL_REVIEW_MODEL_ID: ${{ vars.SENTINEL_REVIEW_MODEL_ID }}
           SENTINEL_MODEL_FALLBACK: ${{ vars.SENTINEL_MODEL_FALLBACK }}
           SENTINEL_DEEPSEEK_API_KEY: ${{ secrets.SENTINEL_DEEPSEEK_API_KEY }}
@@ -470,11 +472,13 @@ jobs:
           # launcher forwards only nonempty values, so an unset var keeps the
           # existing resolver behavior. The implementation model defaults to
           # the owner-chosen gateway model `gpt-6.1-sol` (2026-10-17); a
-          # nonempty SENTINEL_MODEL_ID var overrides it. Every job binds the
-          # same expression, so a plan and its cells always name one model.
+          # nonempty SENTINEL_IMPLEMENTATION_MODEL_ID var overrides it. The
+          # older SENTINEL_MODEL_ID var (it held gpt-reserve) is no longer
+          # read. Every job binds the same expression, so a plan and its
+          # cells always name one model.
           # The App private key is never bound here.
           SENTINEL_MODEL_BASE_URL: ${{ vars.SENTINEL_MODEL_BASE_URL }}
-          SENTINEL_MODEL_ID: ${{ vars.SENTINEL_MODEL_ID || 'gpt-6.1-sol' }}
+          SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}
           SENTINEL_REVIEW_MODEL_ID: ${{ vars.SENTINEL_REVIEW_MODEL_ID }}
           SENTINEL_MODEL_FALLBACK: ${{ vars.SENTINEL_MODEL_FALLBACK }}
           SENTINEL_DEEPSEEK_API_KEY: ${{ secrets.SENTINEL_DEEPSEEK_API_KEY }}
@@ -638,11 +642,13 @@ jobs:
           # launcher forwards only nonempty values, so an unset var keeps the
           # existing resolver behavior. The implementation model defaults to
           # the owner-chosen gateway model `gpt-6.1-sol` (2026-10-17); a
-          # nonempty SENTINEL_MODEL_ID var overrides it. Every job binds the
-          # same expression, so a plan and its cells always name one model.
+          # nonempty SENTINEL_IMPLEMENTATION_MODEL_ID var overrides it. The
+          # older SENTINEL_MODEL_ID var (it held gpt-reserve) is no longer
+          # read. Every job binds the same expression, so a plan and its
+          # cells always name one model.
           # The App private key is never bound here.
           SENTINEL_MODEL_BASE_URL: ${{ vars.SENTINEL_MODEL_BASE_URL }}
-          SENTINEL_MODEL_ID: ${{ vars.SENTINEL_MODEL_ID || 'gpt-6.1-sol' }}
+          SENTINEL_MODEL_ID: ${{ vars.SENTINEL_IMPLEMENTATION_MODEL_ID || 'gpt-6.1-sol' }}
           SENTINEL_REVIEW_MODEL_ID: ${{ vars.SENTINEL_REVIEW_MODEL_ID }}
           SENTINEL_MODEL_FALLBACK: ${{ vars.SENTINEL_MODEL_FALLBACK }}
           SENTINEL_DEEPSEEK_API_KEY: ${{ secrets.SENTINEL_DEEPSEEK_API_KEY }}
