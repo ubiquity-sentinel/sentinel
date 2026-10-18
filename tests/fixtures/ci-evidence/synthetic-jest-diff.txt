@@ -1,0 +1,355 @@
+2026-10-17T10:00:00.0000000Z ﻿Current runner version: '2.337.0'
+2026-10-17T10:00:01.0007919Z ##[group]Runner Image Provisioner
+2026-10-17T10:00:02.0015838Z Hosted Compute Agent
+2026-10-17T10:00:03.0023757Z ##[endgroup]
+2026-10-17T10:00:04.0031676Z ##[group]Run actions/checkout@v4
+2026-10-17T10:00:05.0039595Z with:
+2026-10-17T10:00:06.0047514Z   repository: example/project
+2026-10-17T10:00:07.0055433Z   token: ***
+2026-10-17T10:00:08.0063352Z ##[endgroup]
+2026-10-17T10:00:09.0071271Z Syncing repository: example/project
+2026-10-17T10:00:10.0079190Z [command]/usr/bin/git version
+2026-10-17T10:00:11.0087109Z git version 2.55.0
+2026-10-17T10:00:12.0095028Z ##[group]Run npx jest --ci
+2026-10-17T10:00:13.0102947Z [36;1mnpx jest --ci[0m
+2026-10-17T10:00:14.0110866Z shell: /usr/bin/bash -e {0}
+2026-10-17T10:00:15.0118785Z ##[endgroup]
+2026-10-17T10:00:16.0126704Z 
+2026-10-17T10:00:17.0134623Z > example-project@1.0.0 test
+2026-10-17T10:00:18.0142542Z > jest --ci
+2026-10-17T10:00:19.0150461Z 
+2026-10-17T10:00:20.0158380Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule000.test.ts[22m
+2026-10-17T10:00:21.0166299Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule001.test.ts[22m
+2026-10-17T10:00:22.0174218Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule002.test.ts[22m
+2026-10-17T10:00:23.0182137Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule003.test.ts[22m
+2026-10-17T10:00:24.0190056Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule004.test.ts[22m
+2026-10-17T10:00:25.0197975Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule005.test.ts[22m
+2026-10-17T10:00:26.0205894Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule006.test.ts[22m
+2026-10-17T10:00:27.0213813Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule007.test.ts[22m
+2026-10-17T10:00:28.0221732Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule008.test.ts[22m
+2026-10-17T10:00:29.0229651Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule009.test.ts[22m
+2026-10-17T10:00:30.0237570Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule010.test.ts[22m
+2026-10-17T10:00:31.0245489Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule011.test.ts[22m
+2026-10-17T10:00:32.0253408Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule012.test.ts[22m
+2026-10-17T10:00:33.0261327Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule013.test.ts[22m
+2026-10-17T10:00:34.0269246Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule014.test.ts[22m
+2026-10-17T10:00:35.0277165Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule015.test.ts[22m
+2026-10-17T10:00:36.0285084Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule016.test.ts[22m
+2026-10-17T10:00:37.0293003Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule017.test.ts[22m
+2026-10-17T10:00:38.0300922Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule018.test.ts[22m
+2026-10-17T10:00:39.0308841Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule019.test.ts[22m
+2026-10-17T10:00:40.0316760Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule020.test.ts[22m
+2026-10-17T10:00:41.0324679Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule021.test.ts[22m
+2026-10-17T10:00:42.0332598Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule022.test.ts[22m
+2026-10-17T10:00:43.0340517Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule023.test.ts[22m
+2026-10-17T10:00:44.0348436Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule024.test.ts[22m
+2026-10-17T10:00:45.0356355Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule025.test.ts[22m
+2026-10-17T10:00:46.0364274Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule026.test.ts[22m
+2026-10-17T10:00:47.0372193Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule027.test.ts[22m
+2026-10-17T10:00:48.0380112Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule028.test.ts[22m
+2026-10-17T10:00:49.0388031Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule029.test.ts[22m
+2026-10-17T10:00:50.0395950Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule030.test.ts[22m
+2026-10-17T10:00:51.0403869Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule031.test.ts[22m
+2026-10-17T10:00:52.0411788Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule032.test.ts[22m
+2026-10-17T10:00:53.0419707Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule033.test.ts[22m
+2026-10-17T10:00:54.0427626Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule034.test.ts[22m
+2026-10-17T10:00:55.0435545Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule035.test.ts[22m
+2026-10-17T10:00:56.0443464Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule036.test.ts[22m
+2026-10-17T10:00:57.0451383Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule037.test.ts[22m
+2026-10-17T10:00:58.0459302Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule038.test.ts[22m
+2026-10-17T10:00:59.0467221Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule039.test.ts[22m
+2026-10-17T10:01:00.0475140Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule040.test.ts[22m
+2026-10-17T10:01:01.0483059Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule041.test.ts[22m
+2026-10-17T10:01:02.0490978Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule042.test.ts[22m
+2026-10-17T10:01:03.0498897Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule043.test.ts[22m
+2026-10-17T10:01:04.0506816Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule044.test.ts[22m
+2026-10-17T10:01:05.0514735Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule045.test.ts[22m
+2026-10-17T10:01:06.0522654Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule046.test.ts[22m
+2026-10-17T10:01:07.0530573Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule047.test.ts[22m
+2026-10-17T10:01:08.0538492Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule048.test.ts[22m
+2026-10-17T10:01:09.0546411Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule049.test.ts[22m
+2026-10-17T10:01:10.0554330Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule050.test.ts[22m
+2026-10-17T10:01:11.0562249Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule051.test.ts[22m
+2026-10-17T10:01:12.0570168Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule052.test.ts[22m
+2026-10-17T10:01:13.0578087Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule053.test.ts[22m
+2026-10-17T10:01:14.0586006Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule054.test.ts[22m
+2026-10-17T10:01:15.0593925Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule055.test.ts[22m
+2026-10-17T10:01:16.0601844Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule056.test.ts[22m
+2026-10-17T10:01:17.0609763Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule057.test.ts[22m
+2026-10-17T10:01:18.0617682Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule058.test.ts[22m
+2026-10-17T10:01:19.0625601Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule059.test.ts[22m
+2026-10-17T10:01:20.0633520Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule060.test.ts[22m
+2026-10-17T10:01:21.0641439Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule061.test.ts[22m
+2026-10-17T10:01:22.0649358Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule062.test.ts[22m
+2026-10-17T10:01:23.0657277Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule063.test.ts[22m
+2026-10-17T10:01:24.0665196Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule064.test.ts[22m
+2026-10-17T10:01:25.0673115Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule065.test.ts[22m
+2026-10-17T10:01:26.0681034Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule066.test.ts[22m
+2026-10-17T10:01:27.0688953Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule067.test.ts[22m
+2026-10-17T10:01:28.0696872Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule068.test.ts[22m
+2026-10-17T10:01:29.0704791Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule069.test.ts[22m
+2026-10-17T10:01:30.0712710Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule070.test.ts[22m
+2026-10-17T10:01:31.0720629Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule071.test.ts[22m
+2026-10-17T10:01:32.0728548Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule072.test.ts[22m
+2026-10-17T10:01:33.0736467Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule073.test.ts[22m
+2026-10-17T10:01:34.0744386Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule074.test.ts[22m
+2026-10-17T10:01:35.0752305Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule075.test.ts[22m
+2026-10-17T10:01:36.0760224Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule076.test.ts[22m
+2026-10-17T10:01:37.0768143Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule077.test.ts[22m
+2026-10-17T10:01:38.0776062Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule078.test.ts[22m
+2026-10-17T10:01:39.0783981Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule079.test.ts[22m
+2026-10-17T10:01:40.0791900Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule080.test.ts[22m
+2026-10-17T10:01:41.0799819Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule081.test.ts[22m
+2026-10-17T10:01:42.0807738Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule082.test.ts[22m
+2026-10-17T10:01:43.0815657Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule083.test.ts[22m
+2026-10-17T10:01:44.0823576Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule084.test.ts[22m
+2026-10-17T10:01:45.0831495Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule085.test.ts[22m
+2026-10-17T10:01:46.0839414Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule086.test.ts[22m
+2026-10-17T10:01:47.0847333Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule087.test.ts[22m
+2026-10-17T10:01:48.0855252Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule088.test.ts[22m
+2026-10-17T10:01:49.0863171Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule089.test.ts[22m
+2026-10-17T10:01:50.0871090Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule090.test.ts[22m
+2026-10-17T10:01:51.0879009Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule091.test.ts[22m
+2026-10-17T10:01:52.0886928Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule092.test.ts[22m
+2026-10-17T10:01:53.0894847Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule093.test.ts[22m
+2026-10-17T10:01:54.0902766Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule094.test.ts[22m
+2026-10-17T10:01:55.0910685Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule095.test.ts[22m
+2026-10-17T10:01:56.0918604Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule096.test.ts[22m
+2026-10-17T10:01:57.0926523Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule097.test.ts[22m
+2026-10-17T10:01:58.0934442Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule098.test.ts[22m
+2026-10-17T10:01:59.0942361Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule099.test.ts[22m
+2026-10-17T10:02:00.0950280Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule100.test.ts[22m
+2026-10-17T10:02:01.0958199Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule101.test.ts[22m
+2026-10-17T10:02:02.0966118Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule102.test.ts[22m
+2026-10-17T10:02:03.0974037Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule103.test.ts[22m
+2026-10-17T10:02:04.0981956Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule104.test.ts[22m
+2026-10-17T10:02:05.0989875Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule105.test.ts[22m
+2026-10-17T10:02:06.0997794Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule106.test.ts[22m
+2026-10-17T10:02:07.1005713Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule107.test.ts[22m
+2026-10-17T10:02:08.1013632Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule108.test.ts[22m
+2026-10-17T10:02:09.1021551Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule109.test.ts[22m
+2026-10-17T10:02:10.1029470Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule110.test.ts[22m
+2026-10-17T10:02:11.1037389Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule111.test.ts[22m
+2026-10-17T10:02:12.1045308Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule112.test.ts[22m
+2026-10-17T10:02:13.1053227Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule113.test.ts[22m
+2026-10-17T10:02:14.1061146Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule114.test.ts[22m
+2026-10-17T10:02:15.1069065Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule115.test.ts[22m
+2026-10-17T10:02:16.1076984Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule116.test.ts[22m
+2026-10-17T10:02:17.1084903Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule117.test.ts[22m
+2026-10-17T10:02:18.1092822Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule118.test.ts[22m
+2026-10-17T10:02:19.1100741Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule119.test.ts[22m
+2026-10-17T10:02:20.1108660Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule120.test.ts[22m
+2026-10-17T10:02:21.1116579Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule121.test.ts[22m
+2026-10-17T10:02:22.1124498Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule122.test.ts[22m
+2026-10-17T10:02:23.1132417Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule123.test.ts[22m
+2026-10-17T10:02:24.1140336Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule124.test.ts[22m
+2026-10-17T10:02:25.1148255Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule125.test.ts[22m
+2026-10-17T10:02:26.1156174Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule126.test.ts[22m
+2026-10-17T10:02:27.1164093Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule127.test.ts[22m
+2026-10-17T10:02:28.1172012Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule128.test.ts[22m
+2026-10-17T10:02:29.1179931Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule129.test.ts[22m
+2026-10-17T10:02:30.1187850Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule130.test.ts[22m
+2026-10-17T10:02:31.1195769Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule131.test.ts[22m
+2026-10-17T10:02:32.1203688Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule132.test.ts[22m
+2026-10-17T10:02:33.1211607Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule133.test.ts[22m
+2026-10-17T10:02:34.1219526Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule134.test.ts[22m
+2026-10-17T10:02:35.1227445Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule135.test.ts[22m
+2026-10-17T10:02:36.1235364Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule136.test.ts[22m
+2026-10-17T10:02:37.1243283Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule137.test.ts[22m
+2026-10-17T10:02:38.1251202Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule138.test.ts[22m
+2026-10-17T10:02:39.1259121Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule139.test.ts[22m
+2026-10-17T10:02:40.1267040Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule140.test.ts[22m
+2026-10-17T10:02:41.1274959Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule141.test.ts[22m
+2026-10-17T10:02:42.1282878Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule142.test.ts[22m
+2026-10-17T10:02:43.1290797Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule143.test.ts[22m
+2026-10-17T10:02:44.1298716Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule144.test.ts[22m
+2026-10-17T10:02:45.1306635Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule145.test.ts[22m
+2026-10-17T10:02:46.1314554Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule146.test.ts[22m
+2026-10-17T10:02:47.1322473Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule147.test.ts[22m
+2026-10-17T10:02:48.1330392Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule148.test.ts[22m
+2026-10-17T10:02:49.1338311Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule149.test.ts[22m
+2026-10-17T10:02:50.1346230Z [0m[7m[1m[31m FAIL [39m[22m[27m[0m [2msrc/[22m[1morder.test.ts[22m
+2026-10-17T10:02:51.1354149Z [1m[31m  [1m● [22m[1morder › totals include tax[39m[22m
+2026-10-17T10:02:52.1362068Z 
+2026-10-17T10:02:53.1369987Z     [2mexpect([22m[31mreceived[39m[2m).[22mtoEqual[2m([22m[32mexpected[39m[2m) // deep equality[22m
+2026-10-17T10:02:54.1377906Z 
+2026-10-17T10:02:55.1385825Z     [32m- Expected  - 2[39m
+2026-10-17T10:02:56.1393744Z     [31m+ Received  + 2[39m
+2026-10-17T10:02:57.1401663Z 
+2026-10-17T10:02:58.1409582Z     [2m  Object {[22m
+2026-10-17T10:02:59.1417501Z     [32m-   "subtotal": 100,[39m
+2026-10-17T10:03:00.1425420Z     [32m-   "tax": 8,[39m
+2026-10-17T10:03:01.1433339Z     [31m+   "subtotal": 100.5,[39m
+2026-10-17T10:03:02.1441258Z     [31m+   "tax": 8.04,[39m
+2026-10-17T10:03:03.1449177Z     [2m    "total": 108,[22m
+2026-10-17T10:03:04.1457096Z     [2m  }[22m
+2026-10-17T10:03:05.1465015Z 
+2026-10-17T10:03:06.1472934Z     [0m [90m 39 |[39m   it([32m"totals include tax"[39m[33m,[39m () [33m=>[39m {
+2026-10-17T10:03:07.1480853Z      [90m 40 |[39m     [36mconst[39m order [33m=[39m build()[33m;[39m
+2026-10-17T10:03:08.1488772Z     [31m[1m>[22m[39m[90m 41 |[39m     expect(totals(order))[33m.[39mtoEqual({ subtotal[33m:[39m [35m100[39m[33m,[39m tax[33m:[39m [35m8[39m[33m,[39m total[33m:[39m [35m108[39m })[33m;[39m
+2026-10-17T10:03:09.1496691Z      [90m    |[39m                           [31m[1m^[22m[39m
+2026-10-17T10:03:10.1504610Z      [90m 42 |[39m   })[33m;[39m[0m
+2026-10-17T10:03:11.1512529Z 
+2026-10-17T10:03:12.1520448Z       [2mat Object.<anonymous> ([22msrc/order.test.ts[2m:41:25)[22m
+2026-10-17T10:03:13.1528367Z 
+2026-10-17T10:03:14.1536286Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule150.test.ts[22m
+2026-10-17T10:03:15.1544205Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule151.test.ts[22m
+2026-10-17T10:03:16.1552124Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule152.test.ts[22m
+2026-10-17T10:03:17.1560043Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule153.test.ts[22m
+2026-10-17T10:03:18.1567962Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule154.test.ts[22m
+2026-10-17T10:03:19.1575881Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule155.test.ts[22m
+2026-10-17T10:03:20.1583800Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule156.test.ts[22m
+2026-10-17T10:03:21.1591719Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule157.test.ts[22m
+2026-10-17T10:03:22.1599638Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule158.test.ts[22m
+2026-10-17T10:03:23.1607557Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule159.test.ts[22m
+2026-10-17T10:03:24.1615476Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule160.test.ts[22m
+2026-10-17T10:03:25.1623395Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule161.test.ts[22m
+2026-10-17T10:03:26.1631314Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule162.test.ts[22m
+2026-10-17T10:03:27.1639233Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule163.test.ts[22m
+2026-10-17T10:03:28.1647152Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule164.test.ts[22m
+2026-10-17T10:03:29.1655071Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule165.test.ts[22m
+2026-10-17T10:03:30.1662990Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule166.test.ts[22m
+2026-10-17T10:03:31.1670909Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule167.test.ts[22m
+2026-10-17T10:03:32.1678828Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule168.test.ts[22m
+2026-10-17T10:03:33.1686747Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule169.test.ts[22m
+2026-10-17T10:03:34.1694666Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule170.test.ts[22m
+2026-10-17T10:03:35.1702585Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule171.test.ts[22m
+2026-10-17T10:03:36.1710504Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule172.test.ts[22m
+2026-10-17T10:03:37.1718423Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule173.test.ts[22m
+2026-10-17T10:03:38.1726342Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule174.test.ts[22m
+2026-10-17T10:03:39.1734261Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule175.test.ts[22m
+2026-10-17T10:03:40.1742180Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule176.test.ts[22m
+2026-10-17T10:03:41.1750099Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule177.test.ts[22m
+2026-10-17T10:03:42.1758018Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule178.test.ts[22m
+2026-10-17T10:03:43.1765937Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule179.test.ts[22m
+2026-10-17T10:03:44.1773856Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule180.test.ts[22m
+2026-10-17T10:03:45.1781775Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule181.test.ts[22m
+2026-10-17T10:03:46.1789694Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule182.test.ts[22m
+2026-10-17T10:03:47.1797613Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule183.test.ts[22m
+2026-10-17T10:03:48.1805532Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule184.test.ts[22m
+2026-10-17T10:03:49.1813451Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule185.test.ts[22m
+2026-10-17T10:03:50.1821370Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule186.test.ts[22m
+2026-10-17T10:03:51.1829289Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule187.test.ts[22m
+2026-10-17T10:03:52.1837208Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule188.test.ts[22m
+2026-10-17T10:03:53.1845127Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule189.test.ts[22m
+2026-10-17T10:03:54.1853046Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule190.test.ts[22m
+2026-10-17T10:03:55.1860965Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule191.test.ts[22m
+2026-10-17T10:03:56.1868884Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule192.test.ts[22m
+2026-10-17T10:03:57.1876803Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule193.test.ts[22m
+2026-10-17T10:03:58.1884722Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule194.test.ts[22m
+2026-10-17T10:03:59.1892641Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule195.test.ts[22m
+2026-10-17T10:04:00.1900560Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule196.test.ts[22m
+2026-10-17T10:04:01.1908479Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule197.test.ts[22m
+2026-10-17T10:04:02.1916398Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule198.test.ts[22m
+2026-10-17T10:04:03.1924317Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule199.test.ts[22m
+2026-10-17T10:04:04.1932236Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule200.test.ts[22m
+2026-10-17T10:04:05.1940155Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule201.test.ts[22m
+2026-10-17T10:04:06.1948074Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule202.test.ts[22m
+2026-10-17T10:04:07.1955993Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule203.test.ts[22m
+2026-10-17T10:04:08.1963912Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule204.test.ts[22m
+2026-10-17T10:04:09.1971831Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule205.test.ts[22m
+2026-10-17T10:04:10.1979750Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule206.test.ts[22m
+2026-10-17T10:04:11.1987669Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule207.test.ts[22m
+2026-10-17T10:04:12.1995588Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule208.test.ts[22m
+2026-10-17T10:04:13.2003507Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule209.test.ts[22m
+2026-10-17T10:04:14.2011426Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule210.test.ts[22m
+2026-10-17T10:04:15.2019345Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule211.test.ts[22m
+2026-10-17T10:04:16.2027264Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule212.test.ts[22m
+2026-10-17T10:04:17.2035183Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule213.test.ts[22m
+2026-10-17T10:04:18.2043102Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule214.test.ts[22m
+2026-10-17T10:04:19.2051021Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule215.test.ts[22m
+2026-10-17T10:04:20.2058940Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule216.test.ts[22m
+2026-10-17T10:04:21.2066859Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule217.test.ts[22m
+2026-10-17T10:04:22.2074778Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule218.test.ts[22m
+2026-10-17T10:04:23.2082697Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule219.test.ts[22m
+2026-10-17T10:04:24.2090616Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule220.test.ts[22m
+2026-10-17T10:04:25.2098535Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule221.test.ts[22m
+2026-10-17T10:04:26.2106454Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule222.test.ts[22m
+2026-10-17T10:04:27.2114373Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule223.test.ts[22m
+2026-10-17T10:04:28.2122292Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule224.test.ts[22m
+2026-10-17T10:04:29.2130211Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule225.test.ts[22m
+2026-10-17T10:04:30.2138130Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule226.test.ts[22m
+2026-10-17T10:04:31.2146049Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule227.test.ts[22m
+2026-10-17T10:04:32.2153968Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule228.test.ts[22m
+2026-10-17T10:04:33.2161887Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule229.test.ts[22m
+2026-10-17T10:04:34.2169806Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule230.test.ts[22m
+2026-10-17T10:04:35.2177725Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule231.test.ts[22m
+2026-10-17T10:04:36.2185644Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule232.test.ts[22m
+2026-10-17T10:04:37.2193563Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule233.test.ts[22m
+2026-10-17T10:04:38.2201482Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule234.test.ts[22m
+2026-10-17T10:04:39.2209401Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule235.test.ts[22m
+2026-10-17T10:04:40.2217320Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule236.test.ts[22m
+2026-10-17T10:04:41.2225239Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule237.test.ts[22m
+2026-10-17T10:04:42.2233158Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule238.test.ts[22m
+2026-10-17T10:04:43.2241077Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule239.test.ts[22m
+2026-10-17T10:04:44.2248996Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule240.test.ts[22m
+2026-10-17T10:04:45.2256915Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule241.test.ts[22m
+2026-10-17T10:04:46.2264834Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule242.test.ts[22m
+2026-10-17T10:04:47.2272753Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule243.test.ts[22m
+2026-10-17T10:04:48.2280672Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule244.test.ts[22m
+2026-10-17T10:04:49.2288591Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule245.test.ts[22m
+2026-10-17T10:04:50.2296510Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule246.test.ts[22m
+2026-10-17T10:04:51.2304429Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule247.test.ts[22m
+2026-10-17T10:04:52.2312348Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule248.test.ts[22m
+2026-10-17T10:04:53.2320267Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule249.test.ts[22m
+2026-10-17T10:04:54.2328186Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule250.test.ts[22m
+2026-10-17T10:04:55.2336105Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule251.test.ts[22m
+2026-10-17T10:04:56.2344024Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule252.test.ts[22m
+2026-10-17T10:04:57.2351943Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule253.test.ts[22m
+2026-10-17T10:04:58.2359862Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule254.test.ts[22m
+2026-10-17T10:04:59.2367781Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule255.test.ts[22m
+2026-10-17T10:05:00.2375700Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule256.test.ts[22m
+2026-10-17T10:05:01.2383619Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule257.test.ts[22m
+2026-10-17T10:05:02.2391538Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule258.test.ts[22m
+2026-10-17T10:05:03.2399457Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule259.test.ts[22m
+2026-10-17T10:05:04.2407376Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule260.test.ts[22m
+2026-10-17T10:05:05.2415295Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule261.test.ts[22m
+2026-10-17T10:05:06.2423214Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule262.test.ts[22m
+2026-10-17T10:05:07.2431133Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule263.test.ts[22m
+2026-10-17T10:05:08.2439052Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule264.test.ts[22m
+2026-10-17T10:05:09.2446971Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule265.test.ts[22m
+2026-10-17T10:05:10.2454890Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule266.test.ts[22m
+2026-10-17T10:05:11.2462809Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule267.test.ts[22m
+2026-10-17T10:05:12.2470728Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule268.test.ts[22m
+2026-10-17T10:05:13.2478647Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule269.test.ts[22m
+2026-10-17T10:05:14.2486566Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule270.test.ts[22m
+2026-10-17T10:05:15.2494485Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule271.test.ts[22m
+2026-10-17T10:05:16.2502404Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule272.test.ts[22m
+2026-10-17T10:05:17.2510323Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule273.test.ts[22m
+2026-10-17T10:05:18.2518242Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule274.test.ts[22m
+2026-10-17T10:05:19.2526161Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule275.test.ts[22m
+2026-10-17T10:05:20.2534080Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule276.test.ts[22m
+2026-10-17T10:05:21.2541999Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule277.test.ts[22m
+2026-10-17T10:05:22.2549918Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule278.test.ts[22m
+2026-10-17T10:05:23.2557837Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule279.test.ts[22m
+2026-10-17T10:05:24.2565756Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule280.test.ts[22m
+2026-10-17T10:05:25.2573675Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule281.test.ts[22m
+2026-10-17T10:05:26.2581594Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule282.test.ts[22m
+2026-10-17T10:05:27.2589513Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule283.test.ts[22m
+2026-10-17T10:05:28.2597432Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule284.test.ts[22m
+2026-10-17T10:05:29.2605351Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule285.test.ts[22m
+2026-10-17T10:05:30.2613270Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule286.test.ts[22m
+2026-10-17T10:05:31.2621189Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule287.test.ts[22m
+2026-10-17T10:05:32.2629108Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule288.test.ts[22m
+2026-10-17T10:05:33.2637027Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule289.test.ts[22m
+2026-10-17T10:05:34.2644946Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule290.test.ts[22m
+2026-10-17T10:05:35.2652865Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule291.test.ts[22m
+2026-10-17T10:05:36.2660784Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule292.test.ts[22m
+2026-10-17T10:05:37.2668703Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule293.test.ts[22m
+2026-10-17T10:05:38.2676622Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule294.test.ts[22m
+2026-10-17T10:05:39.2684541Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule295.test.ts[22m
+2026-10-17T10:05:40.2692460Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule296.test.ts[22m
+2026-10-17T10:05:41.2700379Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule297.test.ts[22m
+2026-10-17T10:05:42.2708298Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule298.test.ts[22m
+2026-10-17T10:05:43.2716217Z [0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mmodule299.test.ts[22m
+2026-10-17T10:05:44.2724136Z 
+2026-10-17T10:05:45.2732055Z [1mTest Suites: [22m[1m[31m1 failed[39m[22m, [1m[32m300 passed[39m[22m, 301 total
+2026-10-17T10:05:46.2739974Z [1mTests:       [22m[1m[31m1 failed[39m[22m, [1m[32m1240 passed[39m[22m, 1241 total
+2026-10-17T10:05:47.2747893Z [1mSnapshots:   [22m0 total
+2026-10-17T10:05:48.2755812Z [1mTime:[22m        48.211 s
+2026-10-17T10:05:49.2763731Z [2mRan all test suites[22m[2m.[22m
+2026-10-17T10:05:50.2771650Z ##[error]Process completed with exit code 1.
+2026-10-17T10:05:51.2779569Z Post job cleanup.
+2026-10-17T10:05:52.2787488Z [command]/usr/bin/git version
+2026-10-17T10:05:53.2795407Z git version 2.55.0
+2026-10-17T10:05:54.2803326Z Cleaning up orphan processes

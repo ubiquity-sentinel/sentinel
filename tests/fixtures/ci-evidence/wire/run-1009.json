@@ -1,0 +1,11 @@
+{
+  "id": 39027871759,
+  "name": "Gateway CI 025239c6643fb3d334d6b5379de6269fa33cc662",
+  "path": ".github/workflows/deno-deploy.yml",
+  "head_sha": "4253e659646bda410d1c565e8c0b396c29b4bc76",
+  "head_branch": "sentinel/repair/issue-ubiquity-ai.ubq.fi-645",
+  "run_attempt": 2,
+  "event": "push",
+  "status": "completed",
+  "conclusion": "failure"
+}

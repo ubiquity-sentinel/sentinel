@@ -449,6 +449,10 @@ jobs:
           permission-issues: read
           permission-pull-requests: read
           permission-checks: read
+          # Generation 81: a CI correction cell reads the failing job's steps
+          # and signed log for the model's CI failure evidence. Read only; an
+          # older runtime ignores it and the newer one degrades without it.
+          permission-actions: read
       - name: Download immutable matrix plan
         uses: actions/download-artifact@v4
         with:

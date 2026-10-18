@@ -272,7 +272,10 @@ export function unattributedDetail(checks: readonly GitHubCheckV1[]): string {
 
 /**
  * The unresolved P1-equivalent finding a correction must resolve. It names
- * only trusted failing check names and the green base; no CI log text exists.
+ * only trusted failing check names and the green base. The failing jobs' log
+ * evidence is never part of it (state and the digest-bound request keep this
+ * short R80-parseable text): the trusted matrix cell attaches that evidence
+ * at start time beside the request (`src/host/matrix-cell-ci-evidence.ts`).
  */
 export function ciCorrectionFinding(
   base: GitSha,
@@ -285,7 +288,7 @@ export function ciCorrectionFinding(
       `${CI_CORRECTION_FINDING_PREFIX}${base.slice(0, 12)}: ${
         labels(checks, (name, conclusion) => `${name} (${conclusion})`)
       }. Reproduce them with the repository's own test and check commands and ` +
-      `fix the candidate so they pass; no CI log text is available.`,
+      `fix the candidate so they pass.`,
   };
 }
 

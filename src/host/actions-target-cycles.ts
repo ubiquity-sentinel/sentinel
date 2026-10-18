@@ -27,6 +27,7 @@ import { OPERATION_MARGIN_MS } from "../repair/loop-bounds.ts";
 import type { ActionsCiApprovalSummaryV1 } from "./actions-ci.ts";
 import type { TargetSlugV1 } from "./targets.ts";
 import type { ModelRouteV1 } from "./model-route.ts";
+import type { CiEvidenceReaderV1 } from "../repair/ci-evidence-types.ts";
 
 export const REMOTE_URL = "https://github.com/ubiquity/sentinel.git";
 
@@ -227,6 +228,11 @@ export interface ActionsTargetCyclesInputV1 {
   prepareTarget?: (config: RepositoryConfigV1) => Promise<void>;
   /** Compose the exact port for one target repository. */
   composeGithub: (config: RepositoryConfigV1) => GitHubPort;
+  /**
+   * A matrix cell's read-only CI failure evidence reader for one target,
+   * on the cell's scoped read token (generation 81). Absent elsewhere.
+   */
+  composeCiEvidence?: (config: RepositoryConfigV1) => CiEvidenceReaderV1;
   /** The production entrypoint; injectable for deterministic tests only. */
   runCycle?: typeof runRepairEntrypoint;
   /** One bounded advisory report of the targets addressed and skipped. */
