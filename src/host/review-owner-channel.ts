@@ -10,6 +10,16 @@ import type {
   ReviewOwnerCustodyV1,
   ReviewOwnerRegistrationV1,
 } from "../github/review-owner-evidence.ts";
+import {
+  parseBaseReviewOwnerArm,
+  parseBaseReviewOwnerRegistration,
+  parseBaseReviewOwnerSettled,
+} from "../github/base-review-owner.ts";
+import type {
+  BaseReviewOwnerArmV1,
+  BaseReviewOwnerCustodyV1,
+  BaseReviewOwnerRegistrationV1,
+} from "../github/base-review-owner.ts";
 
 export interface ReviewOwnerChannelDescriptorV1 {
   version: "v1";
@@ -54,7 +64,8 @@ export async function readReviewChannelFile(path: string): Promise<unknown> {
 }
 
 /** One bounded RPC client; no executable, PID, credentials or model route is sent. */
-export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
+export class ReviewOwnerChannelClient
+  implements ReviewOwnerCustodyV1, BaseReviewOwnerCustodyV1 {
   private readonly watcher: Deno.FsWatcher;
   private readonly pending = new Map<
     string,
@@ -122,6 +133,23 @@ export class ReviewOwnerChannelClient implements ReviewOwnerCustodyV1 {
 
   async settled(input: ReviewOwnerRegistrationV1): Promise<void> {
     await this.call("finalized", parseReviewOwnerRegistration(input));
+  }
+
+  async registerBaseReview(
+    input: BaseReviewOwnerRegistrationV1,
+  ): Promise<void> {
+    await this.call(
+      "registerBaseReview",
+      parseBaseReviewOwnerRegistration(input),
+    );
+  }
+
+  async armBaseReview(input: BaseReviewOwnerArmV1): Promise<void> {
+    await this.call("armBaseReview", parseBaseReviewOwnerArm(input));
+  }
+
+  async settledBaseReview(input: { requestId: string }): Promise<void> {
+    await this.call("settledBaseReview", parseBaseReviewOwnerSettled(input));
   }
 
   openSession(

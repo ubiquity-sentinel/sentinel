@@ -23,6 +23,12 @@ import type {
 } from "../github/review-owner-evidence.ts";
 import type { ReviewJournalExecutionV1 } from "../github/journal-metadata.ts";
 import {
+  parseBaseReviewOwnerArm,
+  parseBaseReviewOwnerRegistration,
+  parseBaseReviewOwnerSettled,
+} from "../github/base-review-owner.ts";
+import type { BaseReviewOwnerRegistrationV1 } from "../github/base-review-owner.ts";
+import {
   readReviewChannelFile,
   writeReviewChannelFile,
 } from "./review-owner-channel.ts";
@@ -36,8 +42,7 @@ export interface LauncherReviewSessionTargetV1 {
   permissionProfile: string;
 }
 
-interface OwnedBrokerReview {
-  registration: ReviewOwnerRegistrationV1;
+interface OwnedBrokerSession {
   target: LauncherReviewSessionTargetV1;
   session: CodexSessionV1 | null;
   prepared: ReviewJournalExecutionV1 | null;
@@ -49,9 +54,23 @@ interface OwnedBrokerReview {
   eventTail: Promise<void>;
 }
 
+interface OwnedBrokerReview extends OwnedBrokerSession {
+  kind: "pull_request";
+  registration: ReviewOwnerRegistrationV1;
+}
+
+interface OwnedBrokerBaseReview extends OwnedBrokerSession {
+  kind: "base";
+  registration: BaseReviewOwnerRegistrationV1;
+  preparationStarted: boolean;
+  armed: boolean;
+}
+
+type OwnedBrokerEntry = OwnedBrokerReview | OwnedBrokerBaseReview;
+
 export class ReviewOwnerCustodyBroker {
   readonly execution: HostedExecutionIntentV1;
-  private readonly entries = new Map<string, OwnedBrokerReview>();
+  private readonly entries = new Map<string, OwnedBrokerEntry>();
   private readonly tasks = new Set<Promise<void>>();
   private readonly seen = new Set<string>();
   private watcher: Deno.FsWatcher | null = null;
@@ -128,6 +147,9 @@ export class ReviewOwnerCustodyBroker {
     const records: HostedReviewOwnerSettlementV1[] = [];
     if (publisher.settled && !publisher.truncated) {
       for (const entry of this.entries.values()) {
+        // Base-review custody is ephemeral. Never emit a carrier R80 cannot parse;
+        // an interrupted base review retains its original charged reservation.
+        if (entry.kind === "base") continue;
         // The publisher and all broker-owned RPC work are dead/settled; no journal finalization can continue.
         if (!entry.processSettled || entry.session !== null || entry.faulted) {
           continue;
@@ -205,6 +227,10 @@ export class ReviewOwnerCustodyBroker {
 
   private async dispatch(method: string, value: unknown): Promise<unknown> {
     if (this.stopping) throw new Error("review custody stopped");
+    if (
+      method === "registerBaseReview" || method === "armBaseReview" ||
+      method === "settledBaseReview"
+    ) return this.dispatchBaseReview(method, value);
     if (method === "register" || method === "finalized") {
       const registration = parseReviewOwnerRegistration(value);
       if (
@@ -219,6 +245,9 @@ export class ReviewOwnerCustodyBroker {
       const key = registration.journal.requestId;
       const prior = this.entries.get(key);
       if (prior) {
+        if (prior.kind !== "pull_request") {
+          throw new Error("review custody operation kind changed");
+        }
         const original = prior.registration;
         const a: Record<string, unknown> = { ...original.journal };
         const b: Record<string, unknown> = { ...registration.journal };
@@ -247,6 +276,7 @@ export class ReviewOwnerCustodyBroker {
           throw new Error("review custody registration unavailable");
         }
         this.entries.set(key, {
+          kind: "pull_request",
           registration,
           target,
           session: null,
@@ -267,6 +297,9 @@ export class ReviewOwnerCustodyBroker {
     }
     const entry = this.entries.get(params.requestId);
     if (!entry) throw new Error("review custody operation unregistered");
+    if (entry.kind === "base" && (entry.faulted || entry.finalized)) {
+      throw new Error("base review custody operation unavailable");
+    }
     const keys = method === "open"
       ? "cwd,invocationId,ownerRunId,requestId"
       : method === "close"
@@ -281,7 +314,8 @@ export class ReviewOwnerCustodyBroker {
         entry.session !== null || entry.prepared !== null ||
         params.ownerRunId !== this.execution.id ||
         params.cwd !== entry.target.session.cwd ||
-        typeof params.invocationId !== "string"
+        typeof params.invocationId !== "string" ||
+        (entry.kind === "base" && entry.invocationId !== null)
       ) {
         entry.faulted = true;
         throw new Error("review custody session identity changed");
@@ -326,9 +360,18 @@ export class ReviewOwnerCustodyBroker {
         input.modelProvider !== entry.target.provider ||
         input.permissions !== entry.target.permissionProfile)
     ) throw new Error("review custody thread policy changed");
+    if (entry.kind === "base" && params.method === "thread/start") {
+      if (entry.preparationStarted) {
+        throw new Error("base review custody already prepared");
+      }
+      entry.preparationStarted = true;
+    }
     if (params.method === "turn/start") {
       if (
-        entry.turnStarted || entry.registration.journal.phase !== "running" ||
+        entry.turnStarted ||
+        (entry.kind === "base"
+          ? !entry.armed
+          : entry.registration.journal.phase !== "running") ||
         input.threadId !== entry.prepared?.threadId ||
         input.model !== entry.target.model ||
         input.permissions !== entry.target.permissionProfile ||
@@ -362,13 +405,79 @@ export class ReviewOwnerCustodyBroker {
     return response;
   }
 
-  private emit(entry: OwnedBrokerReview, type: string, event: unknown): void {
+  private dispatchBaseReview(method: string, value: unknown): null {
+    if (method === "registerBaseReview") {
+      const registration = parseBaseReviewOwnerRegistration(value);
+      if (registration.ownerRunId !== this.execution.id) {
+        throw new Error("base review custody foreign owner");
+      }
+      const target = this.targets.find((item) =>
+        canonicalStringify(item.repository) ===
+          canonicalStringify(registration.repository)
+      );
+      if (!target) throw new Error("base review custody foreign repository");
+      const prior = this.entries.get(registration.requestId);
+      if (prior) {
+        if (
+          prior.kind !== "base" ||
+          canonicalStringify(prior.registration) !==
+            canonicalStringify(registration)
+        ) throw new Error("base review custody changed operation");
+      } else {
+        this.entries.set(registration.requestId, {
+          kind: "base",
+          registration,
+          target,
+          session: null,
+          prepared: null,
+          invocationId: null,
+          turnStarted: false,
+          preparationStarted: false,
+          armed: false,
+          processSettled: true,
+          finalized: false,
+          faulted: false,
+          eventTail: Promise.resolve(),
+        });
+      }
+      return null;
+    }
+    const input = method === "armBaseReview"
+      ? parseBaseReviewOwnerArm(value)
+      : parseBaseReviewOwnerSettled(value);
+    const entry = this.entries.get(input.requestId);
+    if (!entry || entry.kind !== "base" || entry.faulted) {
+      throw new Error("base review custody registration unavailable");
+    }
+    if ("execution" in input) {
+      if (
+        entry.armed || entry.finalized || entry.turnStarted ||
+        entry.session === null || entry.processSettled ||
+        entry.prepared === null ||
+        canonicalStringify(input.execution) !==
+          canonicalStringify(entry.prepared)
+      ) throw new Error("base review custody prepared identity unavailable");
+      // Only the trusted publisher calls this after its durable running
+      // reservation write and exact readback. The broker owns no state writer.
+      entry.armed = true;
+    } else {
+      if (!entry.processSettled || entry.session !== null) {
+        throw new Error("base review custody unproved close");
+      }
+      entry.finalized = true;
+    }
+    return null;
+  }
+
+  private emit(entry: OwnedBrokerEntry, type: string, event: unknown): void {
     this.eventCount++;
     const name = "event-" + String(this.eventCount).padStart(10, "0") + "-" +
       crypto.randomUUID() + ".json";
     const task = entry.eventTail.then(() =>
       writeReviewChannelFile(this.descriptor().directory + "/" + name, {
-        requestId: entry.registration.journal.requestId,
+        requestId: entry.kind === "base"
+          ? entry.registration.requestId
+          : entry.registration.journal.requestId,
         type,
         event,
       })
@@ -379,7 +488,7 @@ export class ReviewOwnerCustodyBroker {
     this.tasks.add(task);
   }
 
-  private async closeEntry(entry: OwnedBrokerReview): Promise<void> {
+  private async closeEntry(entry: OwnedBrokerEntry): Promise<void> {
     const session = entry.session;
     if (session === null) return;
     try {
