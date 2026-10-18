@@ -113,7 +113,7 @@ function boundedSource(
   };
 }
 
-async function freshHost(
+async function freshSourceAndRuntime(
   value: PrincipalPrivate<HostedAppPrincipalHandoffInput>,
   deadline: number,
 ): Promise<boolean> {
@@ -143,7 +143,15 @@ async function freshHost(
     value.capability.queue,
     value.capability.existingPr,
   );
-  if (!compatible.ok || !live(value, deadline)) return false;
+  return compatible.ok && live(value, deadline);
+}
+
+async function freshHost(
+  value: PrincipalPrivate<HostedAppPrincipalHandoffInput>,
+  deadline: number,
+): Promise<boolean> {
+  if (!await freshSourceAndRuntime(value, deadline)) return false;
+  const { host } = value;
   const native = await readHostedAppNativeJob({
     http: host.http,
     token: host.nativeToken,
@@ -152,9 +160,11 @@ async function freshHost(
     deadline: Math.min(deadline, value.notAfter, host.deadline),
     identity: host.source.identity,
     execution: host.source.execution,
-    steps: source.steps,
+    steps: value.source.steps,
   });
-  return native.ok && live(value, deadline);
+  // Native reads can yield while the source or saved health changes. Neither
+  // the parent's boolean nor the child's private context may retain that grant.
+  return native.ok && await freshSourceAndRuntime(value, deadline);
 }
 
 /**

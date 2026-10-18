@@ -3,6 +3,11 @@ import {
   type NativeQueueGuardV1,
   type QueueEffectRequest,
 } from "./native-queue-guard.ts";
+import type {
+  ExistingPrTakeoverPort,
+  TakeoverEffectAuthorization,
+  TakeoverEffectBoundary,
+} from "../contracts/existing-pr-takeover.ts";
 // port base.
 
 import type { GitSha } from "../contracts/brands.ts";
@@ -48,6 +53,7 @@ import {
 } from "./port-contracts.ts";
 
 export abstract class GitHubPortBase {
+  readonly existingPrTakeover?: ExistingPrTakeoverPort;
   readonly nativeQueue?: NativeQueueGuardV1;
   protected readonly selfMergeEnabled: boolean;
   /**
@@ -125,6 +131,20 @@ export abstract class GitHubPortBase {
     return decision.status === "allow" ? portOk(undefined) : portError(
       "unavailable",
       `native queue custody hold: ${decision.reason}`,
+    );
+  }
+
+  protected takeoverEffect(
+    boundary: TakeoverEffectBoundary,
+    authorization?: TakeoverEffectAuthorization,
+  ): Promise<PortResultV1<void>> {
+    if (this.existingPrTakeover !== undefined) {
+      return this.existingPrTakeover.authorizeBoundary(boundary, authorization);
+    }
+    return Promise.resolve(
+      authorization === undefined
+        ? portOk(undefined)
+        : portError("unavailable", "existing PR effect capability missing"),
     );
   }
 

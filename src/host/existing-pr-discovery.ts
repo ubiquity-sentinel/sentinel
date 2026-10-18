@@ -35,6 +35,11 @@ export interface TakeoverDiscoveryDependencies {
     pull: NativeAssociationPull,
     deadline: number,
   ): Promise<PortResultV1<{ protectedPathsClear: boolean }>>;
+  /** Trusted enqueue-only observer: exact owned intent plus complete native absence. */
+  observeQueueAdmission?: (
+    pull: NativeAssociationPull,
+    deadline: number,
+  ) => Promise<boolean>;
 }
 
 const same = (a: unknown, b: unknown) =>
@@ -244,14 +249,16 @@ export function createTakeoverDiscovery(deps: TakeoverDiscoveryDependencies) {
       if (branch.value?.sha !== pull.head || base.value?.sha !== pull.base) {
         return park("head_moved", prs);
       }
-      const queue = await deps.port.nativeQueue?.inspectEffect({
-        operation: "publication",
-        branch: pull.headRef,
-        pullRequest: pull.number,
-        expectedHead: pull.head,
-        deadline: input.deadline,
-      });
-      if (queue?.status !== "allow") return park("queue_custody", prs);
+      const queueClear = deps.observeQueueAdmission === undefined
+        ? (await deps.port.nativeQueue?.inspectEffect({
+          operation: "publication",
+          branch: pull.headRef,
+          pullRequest: pull.number,
+          expectedHead: pull.head,
+          deadline: input.deadline,
+        }))?.status === "allow"
+        : await deps.observeQueueAdmission(pull, input.deadline);
+      if (!queueClear) return park("queue_custody", prs);
       const git = await deps.inspectNativeGit(pull, input.deadline);
       if (!live()) return unavailable("deadline");
       if (!git.ok) return unavailable("identity");

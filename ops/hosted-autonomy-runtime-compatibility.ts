@@ -13,7 +13,12 @@ import {
 } from "../src/host/hosted-runtime-compatibility.ts";
 import { planOwnerDevelopmentInstall } from "../src/host/owner-install-plan.ts";
 import type { OwnerDevelopmentInstallMoveV1 } from "../src/host/owner-install-types.ts";
-import type { QueueRuntimeCapability } from "../src/host/queue-runtime-capability.ts";
+import {
+  QUEUE_RUNTIME_CAPABILITY,
+  type QueueRuntimeCapability,
+} from "../src/host/queue-runtime-capability.ts";
+import { hostedRuntimeBootstrapDisposition } from "../src/host/hosted-runtime-bootstrap.ts";
+import type { HostedRuntimeRollout } from "../src/host/hosted-runtime-rollout.ts";
 import {
   type HostedWriterQuiescenceInput,
   readHostedWriterQuiescence,
@@ -25,7 +30,9 @@ export type HostedMaintenanceCompatibilityDecision =
     status: "migration_only";
     releaseHead: GitSha;
     repairHead: GitSha;
-    move: OwnerDevelopmentInstallMoveV1;
+    revision: GitSha;
+    generation: number;
+    move: OwnerDevelopmentInstallMoveV1 | null;
   }
   | { status: "hold"; reason: string };
 
@@ -37,6 +44,8 @@ export async function readHostedMaintenanceCompatibility(
     native: Omit<HostedWriterQuiescenceInput, "phase" | "clock">;
     /** Native read-only queue observation; never the mutating custody pass. */
     readQueueReady: () => Promise<boolean>;
+    /** Trusted source-data fixture; production defaults to immutable source. */
+    rollout?: HostedRuntimeRollout;
   },
   queue?: QueueRuntimeCapability,
   custody: ExistingPrRuntimeCapability = EXISTING_PR_RUNTIME_CAPABILITY,
@@ -45,7 +54,10 @@ export async function readHostedMaintenanceCompatibility(
     status: "hold",
     reason: "hosted maintenance runtime compatibility unavailable",
   });
-  if (custody?.custodyActivated === false) return { status: "ordinary" };
+  if (
+    custody?.custodyActivated === false &&
+    (queue ?? QUEUE_RUNTIME_CAPABILITY).proofActivated === false
+  ) return { status: "ordinary" };
   try {
     // Queue observation precedes every active maintenance compatibility path.
     if (custody?.custodyActivated !== true || !await input.readQueueReady()) {
@@ -80,6 +92,7 @@ export async function readHostedMaintenanceCompatibility(
       undefined,
       queue,
       custody,
+      input.rollout,
     );
     // The predecessor must finish its genuine normal finalize before migration.
     if (
@@ -105,12 +118,38 @@ export async function readHostedMaintenanceCompatibility(
       canonicalStringify(freshRepair.value.snapshot) !==
         canonicalStringify(repair.value.snapshot)
     ) return hold();
-    if (compatible) return { status: "ordinary" };
+    if (compatible) {
+      const bootstrap = hostedRuntimeBootstrapDisposition(
+        runtime,
+        queue,
+        custody,
+        input.rollout,
+      );
+      if (bootstrap === "hold") return hold();
+      if (bootstrap === "bootstrap") {
+        // An interrupted bootstrap must retain its model-disabled workflow route.
+        if (
+          runtime.execution !== null &&
+          runtime.execution.purpose !== "bootstrap"
+        ) return hold();
+        return {
+          status: "migration_only",
+          releaseHead: release.value.head,
+          repairHead: repair.value.head,
+          revision: runtime.activeRevision,
+          generation: runtime.generation,
+          move: null,
+        };
+      }
+      return { status: "ordinary" };
+    }
     if (plan?.status !== "install") return hold();
     return {
       status: "migration_only",
       releaseHead: release.value.head,
       repairHead: repair.value.head,
+      revision: plan.move.nextRevision,
+      generation: plan.move.nextGeneration,
       move: plan.move,
     };
   } catch {

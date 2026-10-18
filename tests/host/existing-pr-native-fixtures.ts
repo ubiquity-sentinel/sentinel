@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import type { TakeoverPreserveRequest } from "../../src/contracts/existing-pr-takeover.ts";
@@ -38,6 +39,7 @@ import {
 export async function nativeFixture(
   protectedPaths: string[] = [".github/"],
   prepare?: (ctx: CandidateCtxV1) => Promise<void>,
+  repository: RepositoryIdentityV1 = SELF_REPO,
 ) {
   const ctx = await makeCandidateCtx();
   await prepare?.(ctx);
@@ -62,25 +64,31 @@ export async function nativeFixture(
     policy: { activated: true },
     fence: true,
     write: true,
+    head: ctx.head,
+    base: ctx.base,
+    merged: false,
+    mergeSha: null as GitSha | null,
+    issueClosed: false,
+    replies: new Map<string, unknown>(),
   };
   const repo = {
     id: "R_target",
-    name: SELF_REPO.name,
-    owner: { login: SELF_REPO.owner },
+    name: repository.name,
+    owner: { login: repository.owner },
   };
   const restRepo = { ...repo, node_id: repo.id };
   const issue = { id: "I_1", number: 1, repository: repo };
   const graphPull = () => ({
     id: "PR_7",
     number: 7,
-    state: "OPEN",
+    state: controls.merged ? "MERGED" : "OPEN",
     repository: repo,
     headRepository: repo,
     baseRepository: repo,
     headRefName: branch,
     baseRefName: "development",
-    headRefOid: ctx.head,
-    baseRefOid: ctx.base,
+    headRefOid: controls.head,
+    baseRefOid: controls.base,
   });
   const connection = (nodes: unknown[]) => ({
     totalCount: nodes.length,
@@ -104,6 +112,8 @@ export async function nativeFixture(
       bodyText: JSON.stringify(body),
     });
     if (controls.failHttp) return response({}, 503);
+    const key = `${request.method} ${path}`;
+    if (controls.replies.has(key)) return response(controls.replies.get(key));
     if (path === "/graphql") {
       const query = JSON.parse(request.body!).query as string;
       if (query.includes("SentinelIssuePullAssociations")) {
@@ -115,8 +125,10 @@ export async function nativeFixture(
                 ...issue,
                 title: "Repair source",
                 body: controls.body,
-                state: "OPEN",
-                closedByPullRequestsReferences: connection([graphPull()]),
+                state: controls.issueClosed ? "CLOSED" : "OPEN",
+                closedByPullRequestsReferences: connection(
+                  controls.merged ? [] : [graphPull()],
+                ),
               },
             },
           },
@@ -140,11 +152,25 @@ export async function nativeFixture(
       return response({
         node_id: "PR_7",
         number: 7,
-        state: "open",
-        merged: false,
+        title: "Repair source",
+        body: "Resolves #1",
+        state: controls.merged ? "closed" : "open",
+        merged: controls.merged,
+        created_at: new Date(T0).toISOString(),
+        updated_at: new Date(T0).toISOString(),
+        merged_at: controls.merged ? new Date(T0 + 1).toISOString() : null,
+        merge_commit_sha: controls.mergeSha,
+        merged_by: controls.merged
+          ? {
+            node_id: "BOT_sentinel",
+            login: "ubiquity-sentinel[bot]",
+            type: "Bot",
+          }
+          : null,
+        review_decision: null,
         user: { node_id: "U_1", login: controls.author, type: "User" },
-        head: { ref: branch, sha: ctx.head, repo: restRepo },
-        base: { ref: "development", sha: ctx.base, repo: restRepo },
+        head: { ref: branch, sha: controls.head, repo: restRepo },
+        base: { ref: "development", sha: controls.base, repo: restRepo },
       });
     }
     if (path.endsWith("/protection")) return response({}, 404);
@@ -161,7 +187,7 @@ export async function nativeFixture(
   };
   const auth = new FakeAuthProvider();
   const client = new GitHubPrAssociationsClient({
-    repository: SELF_REPO,
+    repository,
     apiBaseUrl: "https://api.github.com",
     http,
     auth,
@@ -171,14 +197,15 @@ export async function nativeFixture(
   const nativeQueue = {
     inspectEffect: () => Promise.resolve({ status: "allow", basis: "self" }),
   } as unknown as NativeQueueGuardV1;
+  const reviewService = new FakeReviewService();
   const host = composeGitHubHost({
-    repository: SELF_REPO,
+    repository,
     http,
     auth,
     cooldownGate: gate,
     clock,
     nativeQueue,
-    reviewService: new FakeReviewService(),
+    reviewService,
     trustedPrAuthor: "sentinel[bot]",
     trustedReviewer: "sentinel[bot]",
     trustedResolutionAuthors: [],
@@ -190,7 +217,7 @@ export async function nativeFixture(
     },
   });
   const binding = {
-    repository: SELF_REPO,
+    repository,
     taskId: workRecord("issue-1").id,
     issueNumber: 1,
     issueNodeId: "I_1",
@@ -202,7 +229,7 @@ export async function nativeFixture(
     pullRequest: 7,
     pullNodeId: "PR_7",
     headRepositoryId: "R_target",
-    headRepository: { owner: SELF_REPO.owner, name: SELF_REPO.name },
+    headRepository: { owner: SELF_REPO.owner, name: repository.name },
     headRef: branch,
     baseRef: "development",
     author: controls.author,
@@ -222,7 +249,7 @@ export async function nativeFixture(
     deadline: T0 + 240_000,
   };
   const record = workRecord("issue-1", {
-    repository: SELF_REPO,
+    repository,
     source: { kind: "issue", id: "1", revision: ctx.base },
     related: { issueNumber: 1, incidentId: null },
     nextStep: "blocked",
@@ -265,12 +292,16 @@ export async function nativeFixture(
   };
   const pushes: { ref: string; head: GitSha; expected: GitSha | null }[] = [];
   const originalPush = host.port.pushHead.bind(host.port);
-  host.port.pushHead = async (ref, head, expected) => {
+  host.port.pushHead = async (ref, head, expected, takeover) => {
     pushes.push({ ref, head, expected });
-    return await originalPush(ref, head, expected);
+    const result = await originalPush(ref, head, expected, takeover);
+    if (
+      result.ok && result.value === "applied" && ref === `refs/heads/${branch}`
+    ) controls.head = head;
+    return result;
   };
   const factoryInput = {
-    repository: SELF_REPO,
+    repository,
     sourcePath,
     scratch: `${ctx.tmp}/home`,
     trustedPath: TRUSTED_PATH,
@@ -290,6 +321,11 @@ export async function nativeFixture(
     contentsWriteAllowed: () => controls.write,
     principal: { revalidate: () => Promise.resolve(portOk(undefined)) },
   };
+  const port = createExistingPrTakeover(factoryInput);
+  Object.defineProperty(host.port, "existingPrTakeover", {
+    configurable: true,
+    value: port,
+  });
   return {
     ctx,
     state,
@@ -299,13 +335,15 @@ export async function nativeFixture(
     reader,
     client,
     host,
+    reviewService,
+    http,
     sourcePath,
     calls,
     requests,
     pushes,
     request,
     factoryInput,
-    port: createExistingPrTakeover(factoryInput),
+    port,
     readHead: async (ref: string) => {
       const result = await reader.readRemoteRef(ref);
       assert.ok(result.ok);
