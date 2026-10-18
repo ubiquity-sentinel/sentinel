@@ -348,6 +348,16 @@ Deno.test("supervisor workflow: ordinary maintenance precedes the existing verif
   );
   assert.match(text, /--allow-run=git/);
   assert.doesNotMatch(text, /--allow-env=[^\n]*OWNER_STARTUP_RECOVERY/);
+  const ownerInstall = text.slice(
+    text.indexOf(
+      "      - name: Install owner-authorized development runtime\n",
+    ),
+    text.indexOf("      - name: Prepare hosted supervisor run\n"),
+  );
+  assert.deepEqual(
+    ownerInstall.match(/^ {10}--allow-net(?:[= ].*)?$/gm),
+    ['          --allow-net="api.github.com,*.blob.core.windows.net"'],
+  );
 });
 
 Deno.test("owner startup recovery: real installer and supervisor verify generation67 then hold terminal without rollback", async (test) => {

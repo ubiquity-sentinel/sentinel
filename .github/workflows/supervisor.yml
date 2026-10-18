@@ -213,7 +213,7 @@ jobs:
           --allow-read
           --allow-write
           --allow-run=git
-          --allow-net=api.github.com
+          --allow-net="api.github.com,*.blob.core.windows.net"
           --allow-env=HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_COOLDOWN_MODE,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT
           src/host/owner-development-install.ts
       - name: Prepare hosted supervisor run
