@@ -260,6 +260,12 @@ export interface HostedRuntimeLauncherInputV1 {
   denoExecutable: string;
   /** The one process border: bounded Git identity reads and the child run. */
   process: ReplayRuntimeV1;
+  /** Trusted in-process fixture only; production uses native HTTP and source pins. */
+  principalHandoffFixture?: {
+    readonly http: import("../github/http.ts").HttpTransportV1;
+    readonly sourceProfiles:
+      readonly import("./hosted-app-principal-source.ts").HostedAppSourceProfile[];
+  };
   /**
    * Optional advisory sink for reconstructed child diagnostics. Each summary
    * is delivered as soon as its complete stdout line is retained, before the
