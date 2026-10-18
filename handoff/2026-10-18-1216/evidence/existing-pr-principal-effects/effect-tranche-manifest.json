@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "baseline": "d3487236770c1a37d734bd28f64d507e4585ef69",
+  "files": [
+    {
+      "path": "src/github/existing-pr-takeover-policy.ts",
+      "sha256": "1175a7eb44155c6970a4f9fec206f00025d955a998277b46f563f432f2945579",
+      "bytes": 765,
+      "lines": 18,
+      "new": false
+    },
+    {
+      "path": "src/host/hosted-app-principal.ts",
+      "sha256": "f9db94c3d74fd8654d9c5ee8eaefbb49f3c1961ed2709d2abc4865502163a2c1",
+      "bytes": 13897,
+      "lines": 404,
+      "new": false
+    },
+    {
+      "path": "src/host/hosted-custody-capability.json",
+      "sha256": "935f27c4d6e5e00f044e5cf71751f689334fa66995197cef7e4157876574832c",
+      "bytes": 266,
+      "lines": 14,
+      "new": false
+    },
+    {
+      "path": "src/host/hosted-custody-capability.ts",
+      "sha256": "c5f7d0c70b5c4618613f4bc4555221b931805ded379ce532413af354f831ec9b",
+      "bytes": 4758,
+      "lines": 136,
+      "new": false
+    },
+    {
+      "path": "tests/host/actions-existing-pr-principal-fixtures.ts",
+      "sha256": "7ae96c00c234a02befc40e1f43c8f5d692ff1722f2c682a81c4dc0dc9cb7db73",
+      "bytes": 11352,
+      "lines": 329,
+      "new": true
+    },
+    {
+      "path": "tests/host/actions-existing-pr-principal_test.ts",
+      "sha256": "334ff2acfbef190a869b44c898e98fd89b997be3bb7ec2ba8dcf459906dbaf78",
+      "bytes": 11376,
+      "lines": 312,
+      "new": true
+    },
+    {
+      "path": "tests/host/hosted-app-principal-fixtures.ts",
+      "sha256": "333eb82a39d6a3af0ea82226e8bd15276fdccc9e54efcc1677caee2cff3cf6f3",
+      "bytes": 14340,
+      "lines": 451,
+      "new": false
+    },
+    {
+      "path": "tests/host/hosted-app-principal_test.ts",
+      "sha256": "68405e66d35bebd8deace80550d17dd80373e7737f9d7ffbd4606f19c12249a6",
+      "bytes": 14553,
+      "lines": 436,
+      "new": false
+    },
+    {
+      "path": "tests/host/hosted-custody-capability_test.ts",
+      "sha256": "b674070f7c5c2341bf33d808f4fd8a23c727f045bf2468f12c68c02ab9e9c6ef",
+      "bytes": 10045,
+      "lines": 304,
+      "new": false
+    }
+  ]
+}

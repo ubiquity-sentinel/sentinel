@@ -1,0 +1,175 @@
+{
+  "recordedAt": "2026-10-18T11:59:42.392654+00:00",
+  "worktree": "/workspace/worktrees/existing-pr-integration",
+  "head": "ee10183c0a72b53893907afbe081e8e02b9a98ba",
+  "indexDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "trackedDiffSha256": "485c397a97c27f2a97619ae493f8c12f4684dcdd4429d032a08fb08a5d6f855d",
+  "patch": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/frozen.patch",
+  "patchSha256": "25514ffe9c4f51cb2f75c0f3cdc81a606584a966616d0401c07bd8b1f0c39928",
+  "changedFiles": [
+    {
+      "path": "ops/hosted-autonomy-compatibility-queue.ts",
+      "sha256": "8bc2a2118edde72202977ec851bf04afbb1613334672809dad0563a9f6a172b4",
+      "lines": 84,
+      "new": false
+    },
+    {
+      "path": "ops/hosted-autonomy-main.ts",
+      "sha256": "ebfaabc065b01417185f9df76fbfdb055ee3bfe6b3e2ffcea5e3c86ea1b90690",
+      "lines": 426,
+      "new": false
+    },
+    {
+      "path": "src/host/actions-queue-custody.ts",
+      "sha256": "fed8eea10a049591ebca080516a5548ee8f200ba7d983a6a1c8e00a417dfc40d",
+      "lines": 116,
+      "new": true
+    },
+    {
+      "path": "src/host/actions-repair-host.ts",
+      "sha256": "c6a30c2068ccf1e4597a544864060516d40e9ebc702b27cdb40e3f182c887272",
+      "lines": 941,
+      "new": false
+    },
+    {
+      "path": "src/host/maintenance-existing-pr-publication.ts",
+      "sha256": "5779119ac5a822580ef489c8ca5c48fda808b18b12854dfa25806db42135e442",
+      "lines": 202,
+      "new": true
+    },
+    {
+      "path": "src/host/matrix-native-host.ts",
+      "sha256": "982df53b8e62e6439b4a0cc8ec15acc2fac8a27ac348e9d3420e8dd21a76f790",
+      "lines": 270,
+      "new": false
+    },
+    {
+      "path": "src/host/matrix.ts",
+      "sha256": "f7088d8048ff5d03f79d4d2300cf83468f35d5a1e4636fa8e881e4bfdfd5eeb3",
+      "lines": 148,
+      "new": false
+    },
+    {
+      "path": "tests/host/actions-queue-custody_test.ts",
+      "sha256": "189c1fab2380b004f9b6551d40433a247de98a1b9fa04dd63b4431828ecc98bc",
+      "lines": 401,
+      "new": true
+    },
+    {
+      "path": "tests/host/actions-self-dependencies_test.ts",
+      "sha256": "351105caeb1838495b04661bbc689d776324e2cd8bcc05260d385b97a3c0d9fd",
+      "lines": 228,
+      "new": false
+    },
+    {
+      "path": "tests/host/hosted-app-token-window_test.ts",
+      "sha256": "6bc40742a92f01478ccb4732d087fc4314faa3c51e744f2eba3cc4a9315a5459",
+      "lines": 382,
+      "new": false
+    },
+    {
+      "path": "tests/host/hosted-runtime-bootstrap_test.ts",
+      "sha256": "8333ac638b580e6e5f6420424c0cd5871b8e518931118d65a3ee01368d8aec03",
+      "lines": 374,
+      "new": false
+    },
+    {
+      "path": "tests/host/hosted-runtime-deadlines_test.ts",
+      "sha256": "8e8c177dddfdd9361d55d4f60404db11cf2cfc97f89a64d18384c98175b14e97",
+      "lines": 480,
+      "new": false
+    },
+    {
+      "path": "tests/host/maintenance-existing-pr-publication_test.ts",
+      "sha256": "ea52ecc5b2bde24a9f53bbc6e1593d6b8cc5c2f8f6e4403a7a2d0c6bb8e5adf3",
+      "lines": 491,
+      "new": true
+    },
+    {
+      "path": "tests/host/matrix-actions-fixtures.ts",
+      "sha256": "9104104079a81a392d5769544b1c681db960bbafa89f3b501f35b3746fe92764",
+      "lines": 488,
+      "new": false
+    }
+  ],
+  "directConsumerHashes": {
+    "src/host/repair-queue-custody.ts": "2bcfe6847324dcb407f74982b12af050d2517d60424840d72d14459bc8d2274f",
+    "ops/hosted-autonomy-queue-host.ts": "66f9c0cc63b522e378569faa8a769e94179e4c44628cd2356a4ed4b26075260e",
+    "ops/hosted-autonomy-queue-pass.ts": "2d6e53ced6769f11ac06a91c0f14094663e31f0d0ba3ff4cea46424c32312b7f",
+    "src/host/hosted-app-principal.ts": "b1e542c0fca09673c770c15e65452afcef76307fa3359669121f33292eb4161c"
+  },
+  "receipts": [
+    {
+      "name": "accepted-behavior",
+      "receipt": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-behavior-receipt.json",
+      "receiptSha256": "db39302f900ea111debe12eb5fe1a872bbeaa490d312b69659b4840d6edf08c2",
+      "log": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-behavior.log",
+      "logSha256": "d77763bd54bc0639f5353214690559d71b5114aadf01808e8e86e01e80ad36ef",
+      "elapsedSeconds": 58.893
+    },
+    {
+      "name": "accepted-fixtures",
+      "receipt": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-fixtures-receipt.json",
+      "receiptSha256": "684181d891d85fe192ee71503e7e864ff7de82a8d57a7b217445b9b8b86958a5",
+      "log": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-fixtures.log",
+      "logSha256": "3c12697f7c77313adfbfd2a611d2d88a2b8b9a815d7aa2c71b64d170ae55a9b6",
+      "elapsedSeconds": 19.64
+    },
+    {
+      "name": "accepted-types",
+      "receipt": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-types-receipt.json",
+      "receiptSha256": "fac297ae6627fad855e0fa8c169b0fe48737e4aa6b3218365821d1f0d409074f",
+      "log": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-types.log",
+      "logSha256": "bd601106ef906e6d95fde606200bf7027f942b4fc6d2eeaaf2a5c5e9c257f8d5",
+      "elapsedSeconds": 5.839
+    },
+    {
+      "name": "accepted-fmt",
+      "receipt": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-fmt-receipt.json",
+      "receiptSha256": "fddbfcf182f35ae5e565c7255739d254dc25251d2f68525d763ce0b46883fb00",
+      "log": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-fmt.log",
+      "logSha256": "e0961cd7aaf81f78bb2a5f0bb6a1834b22169363223e610c930d6e59eba11e4e",
+      "elapsedSeconds": 0.065
+    },
+    {
+      "name": "accepted-lint",
+      "receipt": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-lint-receipt.json",
+      "receiptSha256": "ab35007f4e477b3c949c526bb1f2368e161e962a2317af5aac0773407a693a3a",
+      "log": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-lint.log",
+      "logSha256": "e0961cd7aaf81f78bb2a5f0bb6a1834b22169363223e610c930d6e59eba11e4e",
+      "elapsedSeconds": 0.176
+    },
+    {
+      "name": "accepted-size",
+      "receipt": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-size-receipt.json",
+      "receiptSha256": "e0a06c98b05b4c0dbb3d1a1e7560a88547c52529e3b4e766330cb2ccb0827075",
+      "log": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-size.log",
+      "logSha256": "727434f155e07242ebe056e9a2734fa15d9ad3d49a760749538363d6bc2514cd",
+      "elapsedSeconds": 0.265
+    },
+    {
+      "name": "accepted-whitespace",
+      "receipt": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-whitespace-receipt.json",
+      "receiptSha256": "30ff5ca8435b90664e28aa82d863ba7807ef4d93a5c2b606a939eae7af5dcee8",
+      "log": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/accepted-whitespace.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "elapsedSeconds": 0.023
+    }
+  ],
+  "tests": {
+    "passed": 39,
+    "steps": 33,
+    "failed": 0,
+    "batches": {
+      "accepted-behavior": "30 tests, 33 steps; current cold import included",
+      "accepted-fixtures": "9 tests; bootstrap subprocess uses committed predecessor ee10183 except retained historical aggregate overlay"
+    }
+  },
+  "dependencyRestoration": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/dependency-restoration.json",
+  "limits": [
+    "All activation/profile constants and principal contracts unchanged",
+    "No index, commit, remote, native state or credential writes",
+    "Root must protect new helper source paths and rerun bootstrap cold fixture on committed combined source",
+    "Separate authenticated-L/null-principal routing fallback P1 remains root/principal-worker integration scope"
+  ]
+}

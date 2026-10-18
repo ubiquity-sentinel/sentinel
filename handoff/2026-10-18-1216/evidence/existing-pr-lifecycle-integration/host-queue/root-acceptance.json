@@ -1,0 +1,25 @@
+{
+  "recordedAt": "2026-10-18T12:02:34.271304+00:00",
+  "manifest": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/frozen-manifest.json",
+  "manifestSha256": "613bb6872f717ab7ba93b463fcd25ca001e0dd92b1e3970cf6cd50505f43fee4",
+  "acceptedLocal": true,
+  "tests": {
+    "passed": 39,
+    "steps": 33,
+    "failed": 0,
+    "batches": {
+      "accepted-behavior": "30 tests, 33 steps; current cold import included",
+      "accepted-fixtures": "9 tests; bootstrap subprocess uses committed predecessor ee10183 except retained historical aggregate overlay"
+    }
+  },
+  "verifiedFiles": 14,
+  "verifiedReceipts": 7,
+  "review": "Root source review and independent ongoing combined audit found no P0/P1 in this tranche.",
+  "remaining": [
+    "Separate missing-principal routing P1",
+    "Exact combined cold bootstrap and changed-principal consumer checks",
+    "New authority path/frame labels",
+    "Frozen combined audit",
+    "No hosted/installed/activation acceptance"
+  ]
+}

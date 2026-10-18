@@ -1,0 +1,20 @@
+{
+  "recordedAt": "2026-10-18T11:47:47.897505+00:00",
+  "status": "PASS_READ_ONLY_SOURCE_REVIEW_NO_P0_P1",
+  "scope": "Separate bounded native-CI fixture correction; not combined takeover candidate acceptance",
+  "base": "9b7c3e5cec4d45c4e0985ab28bd524b4bb69237b",
+  "path": "tests/host/hosted-autonomy-historical-fixtures.ts",
+  "sourceSha256": "8f70c1bef159531ddef4d83d29694b54dfd349f4d3058b08505f5e2a4d5c4fdd",
+  "binaryPatchSha256": "dd756ca309f91f2e3bfa8acdd6b13959b66406485cb85d7d6f84dcc834b21799",
+  "change": "Add git clone --no-local and a comment in historicalMalformedRig; branch selection, destination, production code and preservation assertions remain unchanged.",
+  "conclusion": "No P0/P1 found. Git transport object negotiation replaces local loose-object copying; this directly avoids the reproduced local clone/object-repack race without weakening test behavior.",
+  "evidenceBoundary": "Native ENOENT establishes fixture setup failure on the same previously green tree. Native background-GC causation is unproven. Local clone/repack causal reproduction and affected checks are worker/root evidence, not independently rerun by this auditor.",
+  "workerChecksReportedByRoot": [
+    "Exact previously failed case: 1 passing test in 13 seconds",
+    "Historical boundary: 7 passing tests",
+    "In-flight boundary: 15 passing tests in 143 seconds",
+    "C63 recovery boundary: 7 passing tests in 103 seconds"
+  ],
+  "finalAcceptanceDependency": "Root verifies frozen manifest and check receipts before publication.",
+  "writes": "This assessment only; no production, index, commit or remote writes."
+}

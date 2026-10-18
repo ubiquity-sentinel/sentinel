@@ -1,0 +1,62 @@
+{
+  "base": "80e7a3dcede4eea1c9325ba4338098f986b8336e",
+  "status": "paused and unaccepted; restore as dirty files, not accepted commits",
+  "files": [
+    {
+      "path": "src/host/hosted-authority-protected-paths.ts",
+      "snapshot": "snapshots/existing-pr-root-wiring/src/host/hosted-authority-protected-paths.ts.snapshot",
+      "sha256": "1c45b7fb5cde784e35abd4c82f4879b5e21e51bda46d9513ebdd48f6a5fb3d10",
+      "originalHead": "80e7a3dcede4eea1c9325ba4338098f986b8336e",
+      "originalWorktree": "/workspace/worktrees/existing-pr-root-wiring",
+      "existedAtBase": true
+    },
+    {
+      "path": "src/host/hosted-runtime-frame-labels.ts",
+      "snapshot": "snapshots/existing-pr-root-wiring/src/host/hosted-runtime-frame-labels.ts.snapshot",
+      "sha256": "a87eb29302d1e56a0730faf67949d77fd7cdc5fd7d95889f424022cd265b7103",
+      "originalHead": "80e7a3dcede4eea1c9325ba4338098f986b8336e",
+      "originalWorktree": "/workspace/worktrees/existing-pr-root-wiring",
+      "existedAtBase": true
+    },
+    {
+      "path": "tests/host/hosted-authority-protected-paths_test.ts",
+      "snapshot": "snapshots/existing-pr-root-wiring/tests/host/hosted-authority-protected-paths_test.ts.snapshot",
+      "sha256": "1a66ad9b8e3fed18b3e1b993c367be21ded3046cdf97db39b7ab4d0bb05fc9bd",
+      "originalHead": "80e7a3dcede4eea1c9325ba4338098f986b8336e",
+      "originalWorktree": "/workspace/worktrees/existing-pr-root-wiring",
+      "existedAtBase": true
+    },
+    {
+      "path": "src/host/actions-repair-host.ts",
+      "snapshot": "snapshots/existing-pr-integration/src/host/actions-repair-host.ts.snapshot",
+      "sha256": "79eed260239e1004aef9c5ad904537518cf63aec969d85652c38e0a27205ba6f",
+      "originalHead": "80e7a3dcede4eea1c9325ba4338098f986b8336e",
+      "originalWorktree": "/workspace/worktrees/existing-pr-integration",
+      "existedAtBase": true
+    },
+    {
+      "path": "tests/host/actions-existing-pr-principal-fixtures.ts",
+      "snapshot": "snapshots/existing-pr-principal/tests/host/actions-existing-pr-principal-fixtures.ts.snapshot",
+      "sha256": "7eb34ffca7f1f74db774d3a10eba605ab9d1e3ea7c48655e3eaa6ac1517be9f4",
+      "originalHead": "5321a4e682cbcb329ed39e6b9639a793f67f4ca5",
+      "originalWorktree": "/workspace/worktrees/existing-pr-principal",
+      "existedAtBase": true
+    },
+    {
+      "path": "tests/host/actions-existing-pr-principal_test.ts",
+      "snapshot": "snapshots/existing-pr-principal/tests/host/actions-existing-pr-principal_test.ts.snapshot",
+      "sha256": "935e34ded1f75ad80adcb5c8f5174eaac876f19696ce72fcdd35621645649834",
+      "originalHead": "5321a4e682cbcb329ed39e6b9639a793f67f4ca5",
+      "originalWorktree": "/workspace/worktrees/existing-pr-principal",
+      "existedAtBase": true
+    },
+    {
+      "path": "tests/host/actions-existing-pr-routing_test.ts",
+      "snapshot": "snapshots/existing-pr-principal/tests/host/actions-existing-pr-routing_test.ts.snapshot",
+      "sha256": "9b8e212ab8eaa3719b51cd60d5c95565c9c99d7dd2f26abfc9d174165ffc6e60",
+      "originalHead": "5321a4e682cbcb329ed39e6b9639a793f67f4ca5",
+      "originalWorktree": "/workspace/worktrees/existing-pr-principal",
+      "existedAtBase": false
+    }
+  ]
+}

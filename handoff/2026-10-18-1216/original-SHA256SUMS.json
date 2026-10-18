@@ -1,0 +1,15 @@
+{
+  "README.md": "17abd82911fc436ebbff37604d2681c25bad9ce3b4d9c7588e2dd1044dc52a20",
+  "ci-fixture-clone.patch": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "dirty-files/existing-pr-integration/src/host/actions-repair-host.ts": "79eed260239e1004aef9c5ad904537518cf63aec969d85652c38e0a27205ba6f",
+  "dirty-files/existing-pr-principal/tests/host/actions-existing-pr-principal-fixtures.ts": "7eb34ffca7f1f74db774d3a10eba605ab9d1e3ea7c48655e3eaa6ac1517be9f4",
+  "dirty-files/existing-pr-principal/tests/host/actions-existing-pr-principal_test.ts": "935e34ded1f75ad80adcb5c8f5174eaac876f19696ce72fcdd35621645649834",
+  "dirty-files/existing-pr-principal/tests/host/actions-existing-pr-routing_test.ts": "9b8e212ab8eaa3719b51cd60d5c95565c9c99d7dd2f26abfc9d174165ffc6e60",
+  "dirty-files/existing-pr-root-wiring/src/host/hosted-authority-protected-paths.ts": "1c45b7fb5cde784e35abd4c82f4879b5e21e51bda46d9513ebdd48f6a5fb3d10",
+  "dirty-files/existing-pr-root-wiring/src/host/hosted-runtime-frame-labels.ts": "a87eb29302d1e56a0730faf67949d77fd7cdc5fd7d95889f424022cd265b7103",
+  "dirty-files/existing-pr-root-wiring/tests/host/hosted-authority-protected-paths_test.ts": "1a66ad9b8e3fed18b3e1b993c367be21ded3046cdf97db39b7ab4d0bb05fc9bd",
+  "existing-pr-integration.patch": "727aaa92b58faf9de45de18c58908961d47a73fab21ae8201887d19136331b5d",
+  "existing-pr-principal.patch": "17c9a209e39b7a3cb671ce6c2808918acad9f77f70be4dfda0872616c7470592",
+  "existing-pr-root-wiring.patch": "ca489d69b1f81ef24c40c0ea7e65630918e6188e9427869fa7606650d7987260",
+  "workspace-snapshot.json": "60aab061fdbdf3173a69f0e6281c814cb700a875965ecf01500ff19394978e59"
+}

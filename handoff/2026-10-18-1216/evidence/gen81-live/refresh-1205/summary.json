@@ -1,0 +1,82 @@
+{
+  "observedAt": "2026-10-18T12:06:50.729571+00:00",
+  "status": "PASS",
+  "rootAcceptancePending": true,
+  "latestCompletedOrdinaryRun": 39121306436,
+  "attempt": 1,
+  "repairJob": 117659216668,
+  "releaseStateHead": "a61eb72db8ab1f43cd5a88e07469d909612bf7f9",
+  "runtime": "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+  "generation": 81,
+  "launcher": "00b6649eeff51a9754bf3748f793137db9bf8605",
+  "allSixteenProofAgreementGatesPass": true,
+  "nativeJobsSuccessful": 10,
+  "matrixCellsSuccessful": 5,
+  "normalizedNativeLogSha256": "7e13ac42e29224e87dbfb54eae29e8b47076de7464822a1cb0ca48519f187a7d",
+  "currentRun": 39124004191,
+  "currentRunStatus": "in_progress",
+  "currentJobs": [
+    {
+      "id": 117665723269,
+      "name": "maintenance",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 117666325337,
+      "name": "prepare",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 117666467261,
+      "name": "matrix_plan",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 117666859928,
+      "name": "matrix_cell (418116b819a6f45d73198e9388aecf9d1ae3f221b0c2f513cf0031f879372573)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 117666859941,
+      "name": "matrix_cell (ff8e9baf4ceb44a6fccc6ecae8874c4e69add303efa90a34d927f22a2ca9d926)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 117666859962,
+      "name": "matrix_cell (98fdc63793300cf1f5cf0caa54fdc69329b133b89406af9e042797eeaa1ccfe9)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 117666859966,
+      "name": "matrix_cell (2970f524e2572bd7a66f474bc2a02106dbb466457203e6897bbdedc4c5dc6846)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 117666860222,
+      "name": "repair",
+      "status": "in_progress",
+      "conclusion": null
+    }
+  ],
+  "cancelledDispatchCount": 5,
+  "cancelledDispatchesHadNoJobs": true,
+  "releaseDisabled": true,
+  "productionQueueEnabled": false,
+  "stateWrites": false,
+  "dispatches": false,
+  "rawLogsRetained": false,
+  "rawLogsPrinted": false,
+  "autonomousDeliveryClaim": false,
+  "setupCorrections": [
+    "Installed gh lacks --slurp; pagination parsed as JSON stream instead.",
+    "Shell native job-log endpoint read failed with no raw output retained; connector successfully read the exact native log in memory."
+  ],
+  "independentRootAcceptancePending": true
+}

@@ -1,0 +1,73 @@
+diff --git a/src/host/actions-repair-host.ts b/src/host/actions-repair-host.ts
+index b665c330..65166422 100644
+--- a/src/host/actions-repair-host.ts
++++ b/src/host/actions-repair-host.ts
+@@ -104,6 +104,7 @@ import {
+   createHostedAppPrincipalContext,
+   type HostedAppGitHubInput,
+ } from "./hosted-app-principal.ts";
++import { readHostedAppTakeoverRouting } from "./hosted-app-takeover-routing.ts";
+ import { readHostedSelfDependencyPreparer } from "./hosted-self-dependencies.ts";
+ import {
+   ensureRepairStateSeed,
+@@ -361,16 +362,24 @@ export async function runActionsRepairHost(
+   // The private context binds the actual App token to clean protected source,
+   // native job facts and the already verified saved execution. Metadata alone
+   // never grants takeover authority; cells cannot request this capability.
++  const takeoverSource = {
++    launcherDir: joinPath(sourceDir, "..", "launcher"),
++    runtimeDir: sourceDir,
++    identity,
++    execution,
++    process: new DenoReplayRuntime(denoExecutable),
++  };
++  // Source routing is independent of whether a valid App mint is available.
++  // Active or unknown configured admission must discover/hold an existing PR;
++  // this does not grant a principal, Contents access or any effect capability.
++  const takeoverRouting = await readHostedAppTakeoverRouting(
++    takeoverSource,
++    deps.hostedAppSourceProfiles,
++  );
+   const takeoverContext = identity.job !== "matrix_cell" &&
+       appToken !== undefined
+     ? await createHostedAppPrincipalContext({
+-      source: {
+-        launcherDir: joinPath(sourceDir, "..", "launcher"),
+-        runtimeDir: sourceDir,
+-        identity,
+-        execution,
+-        process: new DenoReplayRuntime(denoExecutable),
+-      },
++      source: takeoverSource,
+       state,
+       clock,
+       gate,
+@@ -523,15 +532,19 @@ export async function runActionsRepairHost(
+     };
+     return scopeLocalRepairIssues(
+       takeoverContext === null
+-        ? composeLocalGitHub({
+-          ...common,
+-          clock,
+-          state,
+-          gate,
+-          http,
+-          token: writeToken,
+-          login,
+-        })
++        ? composeLocalGitHub(
++          {
++            ...common,
++            clock,
++            state,
++            gate,
++            http,
++            token: writeToken,
++            login,
++          },
++          undefined,
++          { activated: takeoverRouting.status !== "inactive" },
++        )
+         : composeHostedAppGitHub(takeoverContext, common),
+     );
+   };

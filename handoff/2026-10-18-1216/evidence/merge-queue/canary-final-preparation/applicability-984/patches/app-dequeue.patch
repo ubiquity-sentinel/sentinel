@@ -1,0 +1,11 @@
+diff --git a/docs/queue-canary/app-dequeue.md b/docs/queue-canary/app-dequeue.md
+new file mode 100644
+--- /dev/null
++++ b/docs/queue-canary/app-dequeue.md
+@@ -0,0 +1,6 @@
++# Queue canary: app-dequeue
++
++This document is an isolated merge-queue fixture for the `queue-canary` branch.
++It changes no executable code, workflow, deployment configuration, or production policy.
++
++App-owned dequeue after separate source-reviewed prior enqueue/artifact binding.

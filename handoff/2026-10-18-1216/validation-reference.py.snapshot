@@ -1,0 +1,37 @@
+import datetime, hashlib, json, os, pathlib, signal, subprocess, sys, time
+root=pathlib.Path('/workspace/worktrees/existing-pr-root-wiring')
+out=pathlib.Path('/workspace/evidence/existing-pr-root-wiring')
+action=root/'.github/actions/sentinel-app-token'
+private=root/'.sentinel-artifacts/principal-validation'
+for p in [private/'home',private/'tmp',private/'npm-cache']:p.mkdir(parents=True,exist_ok=True)
+def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def git(*args):return subprocess.check_output(['git',*args],cwd=root)
+def identity():
+ paths=sorted(set(git('ls-files','-z','--cached','--others','--exclude-standard').decode().split('\0'))-{''})
+ files={p:digest(root/p) for p in paths if (root/p).is_file()}
+ deps={str(p.relative_to(action/'node_modules')):digest(p) for p in sorted((action/'node_modules').rglob('*')) if p.is_file()} if (action/'node_modules').exists() else {}
+ return {'head':git('rev-parse','HEAD').decode().strip(),'indexDiffSha256':hashlib.sha256(git('diff','--cached','--binary')).hexdigest(),'workingDiffSha256':hashlib.sha256(git('diff','--binary')).hexdigest(),'files':files,'installedDependencyFiles':deps,'installedDependencyDigest':hashlib.sha256(json.dumps(deps,sort_keys=True).encode()).hexdigest(),'nodeBinarySha256':digest(pathlib.Path('/workspace/toolchain/system-bin/node')),'nodeBinaryVersion':subprocess.check_output(['/workspace/toolchain/system-bin/node','--version'],text=True).strip()}
+name=sys.argv[1]; before=identity()
+env={'PATH':'/usr/local/bin:/usr/bin:/bin','HOME':str(private/'home'),'TMPDIR':str(private/'tmp'),'DENO_DIR':'/home/agent/.cache/deno','DENO_NO_UPDATE_CHECK':'1','NO_COLOR':'1','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null','NODE_V8_COVERAGE':''}
+if sys.argv[2]=='setup':
+ for key in ['HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','NODE_EXTRA_CA_CERTS','SSL_CERT_FILE','SSL_CERT_DIR']:
+  if key in os.environ:env[key]=os.environ[key]
+ env['PATH']=os.environ['PATH'];env['npm_config_cache']=str(private/'npm-cache')
+ cmd=['npm','ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund','--prefix',str(action)]
+else:
+ prefix=['/usr/bin/bwrap','--unshare-pid','--unshare-net','--die-with-parent','--bind','/','/','--dev','/dev','--proc','/proc','--tmpfs','/tmp','--bind','/workspace/toolchain/system-bin','/usr/local/bin','--setenv','PATH',env['PATH']]
+ if sys.argv[2]=='node':cmd=prefix+['/usr/local/bin/node',*sys.argv[3:]]
+ elif sys.argv[2]=='git':cmd=prefix+['/usr/bin/git',*sys.argv[3:]]
+ else:cmd=prefix+['/usr/local/bin/deno',*sys.argv[2:]]
+start=time.monotonic();log=out/(name+'.log');timed=False
+(out/(name+'-started.json')).write_text(json.dumps({'recordedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'command':cmd,'candidate':before},indent=2)+'\n')
+with log.open('w') as stream:
+ child=subprocess.Popen(cmd,cwd=root,env=env,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True)
+ try:code=child.wait(timeout=280)
+ except subprocess.TimeoutExpired:
+  timed=True;os.killpg(child.pid,signal.SIGTERM)
+  try:code=child.wait(timeout=5)
+  except subprocess.TimeoutExpired:os.killpg(child.pid,signal.SIGKILL);code=child.wait(timeout=1)
+result={'name':name,'command':cmd,'exitCode':code,'elapsedSeconds':round(time.monotonic()-start,3),'timedOut':timed,'log':str(log),'logSha256':digest(log)}
+receipt={'recordedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'before':before,'after':identity(),'result':result}
+(out/(name+'-receipt.json')).write_text(json.dumps(receipt,indent=2)+'\n');print(json.dumps(result));sys.exit(code)

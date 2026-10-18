@@ -1,0 +1,91 @@
+{
+  "head": "5c8907ea783b82f9b9d6bb189b3e933a0a0bcecc",
+  "parent": "ee10183c0a72b53893907afbe081e8e02b9a98ba",
+  "files": [
+    {
+      "path": "ops/hosted-autonomy-compatibility-queue.ts",
+      "sha256": "8bc2a2118edde72202977ec851bf04afbb1613334672809dad0563a9f6a172b4",
+      "lines": 84,
+      "new": false
+    },
+    {
+      "path": "ops/hosted-autonomy-main.ts",
+      "sha256": "ebfaabc065b01417185f9df76fbfdb055ee3bfe6b3e2ffcea5e3c86ea1b90690",
+      "lines": 426,
+      "new": false
+    },
+    {
+      "path": "src/host/actions-queue-custody.ts",
+      "sha256": "fed8eea10a049591ebca080516a5548ee8f200ba7d983a6a1c8e00a417dfc40d",
+      "lines": 116,
+      "new": true
+    },
+    {
+      "path": "src/host/actions-repair-host.ts",
+      "sha256": "c6a30c2068ccf1e4597a544864060516d40e9ebc702b27cdb40e3f182c887272",
+      "lines": 941,
+      "new": false
+    },
+    {
+      "path": "src/host/maintenance-existing-pr-publication.ts",
+      "sha256": "5779119ac5a822580ef489c8ca5c48fda808b18b12854dfa25806db42135e442",
+      "lines": 202,
+      "new": true
+    },
+    {
+      "path": "src/host/matrix-native-host.ts",
+      "sha256": "982df53b8e62e6439b4a0cc8ec15acc2fac8a27ac348e9d3420e8dd21a76f790",
+      "lines": 270,
+      "new": false
+    },
+    {
+      "path": "src/host/matrix.ts",
+      "sha256": "f7088d8048ff5d03f79d4d2300cf83468f35d5a1e4636fa8e881e4bfdfd5eeb3",
+      "lines": 148,
+      "new": false
+    },
+    {
+      "path": "tests/host/actions-queue-custody_test.ts",
+      "sha256": "189c1fab2380b004f9b6551d40433a247de98a1b9fa04dd63b4431828ecc98bc",
+      "lines": 401,
+      "new": true
+    },
+    {
+      "path": "tests/host/actions-self-dependencies_test.ts",
+      "sha256": "351105caeb1838495b04661bbc689d776324e2cd8bcc05260d385b97a3c0d9fd",
+      "lines": 228,
+      "new": false
+    },
+    {
+      "path": "tests/host/hosted-app-token-window_test.ts",
+      "sha256": "6bc40742a92f01478ccb4732d087fc4314faa3c51e744f2eba3cc4a9315a5459",
+      "lines": 382,
+      "new": false
+    },
+    {
+      "path": "tests/host/hosted-runtime-bootstrap_test.ts",
+      "sha256": "8333ac638b580e6e5f6420424c0cd5871b8e518931118d65a3ee01368d8aec03",
+      "lines": 374,
+      "new": false
+    },
+    {
+      "path": "tests/host/hosted-runtime-deadlines_test.ts",
+      "sha256": "8e8c177dddfdd9361d55d4f60404db11cf2cfc97f89a64d18384c98175b14e97",
+      "lines": 480,
+      "new": false
+    },
+    {
+      "path": "tests/host/maintenance-existing-pr-publication_test.ts",
+      "sha256": "ea52ecc5b2bde24a9f53bbc6e1593d6b8cc5c2f8f6e4403a7a2d0c6bb8e5adf3",
+      "lines": 491,
+      "new": true
+    },
+    {
+      "path": "tests/host/matrix-actions-fixtures.ts",
+      "sha256": "9104104079a81a392d5769544b1c681db960bbafa89f3b501f35b3746fe92764",
+      "lines": 488,
+      "new": false
+    }
+  ],
+  "activation": false
+}

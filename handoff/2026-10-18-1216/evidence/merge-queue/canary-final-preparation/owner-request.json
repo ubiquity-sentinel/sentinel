@@ -1,0 +1,11 @@
+{
+  "recordedAt": "2026-10-18T11:11:49.540660+00:00",
+  "status": "requested; response pending",
+  "source": "original user: Owner steps (ask the owner)",
+  "scope": "isolated ai.ubq.fi queue-canary nine fixtures plus disabled-first canary ruleset and reviewed App phase execution",
+  "briefSha256": "33b3244416b527080c43c771f7037db5d3c523db7e6da67e641652dd677a2b13",
+  "manifestSha256": "0ee16342e810c165e5d40147115f10e1036a765b4f2842f1dd997056140d63b5",
+  "productionQueueAuthorization": false,
+  "appPermissionAlreadyAccepted": true,
+  "nativeEffectsPerformed": false
+}

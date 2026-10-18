@@ -1,0 +1,33 @@
+{
+  "recordedAt": "2026-10-18T12:06:34.863386+00:00",
+  "kind": "read_only_evidence_integrity_check",
+  "scope": "Retained accepted tranche manifests and logs; no test execution and no hosted acceptance claim.",
+  "checks": [
+    {
+      "label": "/workspace/evidence/existing-pr-maintenance-composition/manifest.json",
+      "verified": 52,
+      "mismatches": []
+    },
+    {
+      "label": "/workspace/evidence/existing-pr-lifecycle-integration/implementation/lifecycle-frozen-manifest.json",
+      "verified": 20,
+      "mismatches": []
+    },
+    {
+      "label": "/workspace/evidence/existing-pr-lifecycle-integration/host-queue/frozen-manifest.json",
+      "verified": 14,
+      "mismatches": []
+    },
+    {
+      "label": "/workspace/evidence/existing-pr-principal-launcher/result.json",
+      "verified": 14,
+      "mismatches": []
+    },
+    {
+      "label": "/workspace/evidence/existing-pr-actions-self-dependencies/manifest.json",
+      "verified": 12,
+      "mismatches": []
+    }
+  ],
+  "passed": true
+}

@@ -1,0 +1,11 @@
+diff --git a/docs/queue-canary/timeout.md b/docs/queue-canary/timeout.md
+new file mode 100644
+--- /dev/null
++++ b/docs/queue-canary/timeout.md
+@@ -0,0 +1,6 @@
++# Queue canary: timeout
++
++This document is an isolated merge-queue fixture for the `queue-canary` branch.
++It changes no executable code, workflow, deployment configuration, or production policy.
++
++Dedicated canary-only one-minute timeout phase with unchanged production workflow bytes.

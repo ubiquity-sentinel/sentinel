@@ -1,0 +1,23 @@
+{
+  "baseline": "a93c30e678f2525c9ca0aba87d7ddf48ca2f5921",
+  "files": [
+    {
+      "path": "src/host/hosted-app-takeover-routing.ts",
+      "sha256": "b6a76e0b596d68ef06e42532b7064fa423366bb16c6d28efbc3990cc69b62833",
+      "bytes": 2159,
+      "lines": 51,
+      "new": true
+    },
+    {
+      "path": "tests/host/hosted-app-takeover-routing_test.ts",
+      "sha256": "667b7bba91d2bf0e21982288eac068bc594b08f3e42898c840be47dc5754359c",
+      "bytes": 3657,
+      "lines": 112,
+      "new": true
+    }
+  ],
+  "remainingDirty": [
+    "tests/host/actions-existing-pr-principal-fixtures.ts",
+    "tests/host/actions-existing-pr-routing_test.ts"
+  ]
+}

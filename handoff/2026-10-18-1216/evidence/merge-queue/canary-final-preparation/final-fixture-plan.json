@@ -1,0 +1,410 @@
+{
+  "kind": "prepared nine-fixture plan; owner authorization and native identities pending",
+  "observedAt": "2026-10-18T10:46:03.228321+00:00",
+  "sourceRevision": "9b7c3e5cec4d45c4e0985ab28bd524b4bb69237b",
+  "targetRepository": "ubiquity/ai.ubq.fi",
+  "repositoryId": 1116191389,
+  "repositoryNodeId": "R_kgDOQoe6nQ",
+  "observedDevelopment": "984aa8a63183d60a15036321d2dc7aefd8e5d1b3",
+  "workflow": {
+    "id": 215764630,
+    "path": ".github/workflows/deno-deploy.yml",
+    "blob": "e0caaac6e8b8710ad21a8814a77ec8a026c2df4d",
+    "sha256": "20754408dfdeb02d36bb050bb132e737f2c1a6a1d53f45796ec3e2d864cae0ac",
+    "checkAppId": 15368,
+    "checkAppSlug": "github-actions",
+    "requiredChecks": [
+      "validate",
+      "verify-artifact",
+      "darwin-native",
+      "mac-containment"
+    ]
+  },
+  "currentFixtures": {
+    "matchingRefs": [],
+    "basePullsAllStates": [],
+    "searchMatches": [],
+    "nativeObservationReceipt": {
+      "path": "/workspace/evidence/merge-queue/canary-final-preparation/final-native/summary.json",
+      "sha256": "629abd7210e83f12052ef14531131f968cb16301601c80f26df7cfc5ad1c073d"
+    },
+    "scope": "finite exact refs, all-state canary-base PRs and all-open head-prefix inventory; recheck before creation"
+  },
+  "grantsWritten": false,
+  "sourceGrantsObserved": [],
+  "nativeWrites": [],
+  "baseBranchProposal": {
+    "ref": "queue-canary",
+    "createFromObservedDevelopment": "984aa8a63183d60a15036321d2dc7aefd8e5d1b3",
+    "needsFreshReadBeforeCreation": true,
+    "nativeCreatedRef": null
+  },
+  "fixtureProposals": [
+    {
+      "key": "success-a",
+      "matrixScenarios": "B/A/K",
+      "headRef": "queue-canary/success-a",
+      "baseRef": "queue-canary",
+      "authorProposal": "0x4007",
+      "nativePullNumber": null,
+      "nativePullNodeId": null,
+      "nativeHead": null,
+      "nativeReviewedBase": null,
+      "initialBranchPoint": "same freshly observed restored queue-canary tip for all three final success PRs",
+      "path": "docs/queue-canary/success-a.md",
+      "patch": "/workspace/evidence/merge-queue/canary-final-preparation/applicability-984/patches/success-a.patch",
+      "patchSha256": "362bb16fdb2f70991ae96fcaad68f9aaf3db293786442bddd7d59069c34a0155",
+      "purpose": "First final success; exact full-tree and native group-CI observation.",
+      "bodyProposal": "Isolated queue canary fixture: success-a.\n\nBase: queue-canary. Tracking: ubiquity/sentinel#164.\nThis PR is a native canary fixture and carries no production repair or delivery authority.",
+      "condition": "owner approval and native fixture creation required"
+    },
+    {
+      "key": "success-b",
+      "matrixScenarios": "B/A/K",
+      "headRef": "queue-canary/success-b",
+      "baseRef": "queue-canary",
+      "authorProposal": "0x4007",
+      "nativePullNumber": null,
+      "nativePullNodeId": null,
+      "nativeHead": null,
+      "nativeReviewedBase": null,
+      "initialBranchPoint": "same freshly observed restored queue-canary tip for all three final success PRs",
+      "path": "docs/queue-canary/success-b.md",
+      "patch": "/workspace/evidence/merge-queue/canary-final-preparation/applicability-984/patches/success-b.patch",
+      "patchSha256": "6f81a3479ff6981214723fb6e8dd8bb32752ac61df8ecd9450ca2cf00897dfee",
+      "purpose": "Second disjoint final success from the same reviewed base; observe whether its parent is the first native merge.",
+      "bodyProposal": "Isolated queue canary fixture: success-b.\n\nBase: queue-canary. Tracking: ubiquity/sentinel#164.\nThis PR is a native canary fixture and carries no production repair or delivery authority.",
+      "condition": "owner approval and native fixture creation required"
+    },
+    {
+      "key": "success-c",
+      "matrixScenarios": "B/K; critique checklist9",
+      "headRef": "queue-canary/success-c",
+      "baseRef": "queue-canary",
+      "authorProposal": "0x4007",
+      "nativePullNumber": null,
+      "nativePullNodeId": null,
+      "nativeHead": null,
+      "nativeReviewedBase": null,
+      "initialBranchPoint": "same freshly observed restored queue-canary tip for all three final success PRs",
+      "path": "docs/queue-canary/success-c.md",
+      "patch": "/workspace/evidence/merge-queue/canary-final-preparation/applicability-984/patches/success-c.patch",
+      "patchSha256": "c6692427dad69477d0d69a1da9da18fd8b0f83e3b5e9ba1470a657ba3e4e7cad",
+      "purpose": "Third disjoint final success from the same B; observe actual three-entry/group-run burst.",
+      "bodyProposal": "Isolated queue canary fixture: success-c.\n\nBase: queue-canary. Tracking: ubiquity/sentinel#164.\nThis PR is a native canary fixture and carries no production repair or delivery authority.",
+      "condition": "owner approval and native fixture creation required"
+    },
+    {
+      "key": "cancel",
+      "matrixScenarios": "C",
+      "headRef": "queue-canary/cancel",
+      "baseRef": "queue-canary",
+      "authorProposal": "0x4007",
+      "nativePullNumber": null,
+      "nativePullNodeId": null,
+      "nativeHead": null,
+      "nativeReviewedBase": null,
+      "initialBranchPoint": "freshly observed queue-canary tip at the approved phase; record exact native B before branch creation",
+      "path": "docs/queue-canary/cancel.md",
+      "patch": "/workspace/evidence/merge-queue/canary-final-preparation/applicability-984/patches/cancel.patch",
+      "patchSha256": "bc9da8e0a5bd10e1c8f5ce72c8598da0c877a717a3e882ae98d7ccefacc74bb4",
+      "purpose": "Owner cancels only the exact observed queue-canary merge_group run; actual reason remains unknown until observed.",
+      "bodyProposal": "Isolated queue canary fixture: cancel.\n\nBase: queue-canary. Tracking: ubiquity/sentinel#164.\nThis PR is a native canary fixture and carries no production repair or delivery authority.",
+      "condition": "owner approval and native fixture creation required"
+    },
+    {
+      "key": "timeout",
+      "matrixScenarios": "D",
+      "headRef": "queue-canary/timeout",
+      "baseRef": "queue-canary",
+      "authorProposal": "0x4007",
+      "nativePullNumber": null,
+      "nativePullNodeId": null,
+      "nativeHead": null,
+      "nativeReviewedBase": null,
+      "initialBranchPoint": "fresh queue-canary tip AFTER native-only base workflow patch is committed by owner; exact native B/H needed",
+      "path": "docs/queue-canary/timeout.md",
+      "patch": "/workspace/evidence/merge-queue/canary-final-preparation/applicability-984/patches/timeout.patch",
+      "patchSha256": "67394991765ed06de0b8391c09ed3b021eb9e2fa4b8c712e0031488a65f73c11",
+      "purpose": "Explicit missing merge_group trigger on isolated canary base and H, retained pull_request trigger and green H CI, separately pinned workflow hash and five-minute rule timeout; capture actual no-run/timeout and no merge.",
+      "bodyProposal": "Isolated queue canary fixture: timeout.\n\nBase: queue-canary. Tracking: ubiquity/sentinel#164.\nThis PR is a native canary fixture and carries no production repair or delivery authority.",
+      "condition": "owner approval and native fixture creation required",
+      "policyPhase": "Separate five-minute check-timeout rule; not baseline projection.",
+      "workflowSha256": "c27de8bf57c612a77214a159a22b854c4dd77afcea1349c68cf5204c18596c9e"
+    },
+    {
+      "key": "app-dequeue",
+      "matrixScenarios": "E",
+      "headRef": "queue-canary/app-dequeue",
+      "baseRef": "queue-canary",
+      "authorProposal": "0x4007",
+      "nativePullNumber": null,
+      "nativePullNodeId": null,
+      "nativeHead": null,
+      "nativeReviewedBase": null,
+      "initialBranchPoint": "freshly observed queue-canary tip at the approved phase; record exact native B before branch creation",
+      "path": "docs/queue-canary/app-dequeue.md",
+      "patch": "/workspace/evidence/merge-queue/canary-final-preparation/applicability-984/patches/app-dequeue.patch",
+      "patchSha256": "2e611bfc956de61c7992f755d7c49e895d91042dcc5f68fabb10cd5638c17a6a",
+      "purpose": "App-owned dequeue after separate source-reviewed prior enqueue/artifact binding.",
+      "bodyProposal": "Isolated queue canary fixture: app-dequeue.\n\nBase: queue-canary. Tracking: ubiquity/sentinel#164.\nThis PR is a native canary fixture and carries no production repair or delivery authority.",
+      "condition": "owner approval and native fixture creation required",
+      "policyPhase": "Separate empty-bypass canary min2/wait360 profile, check timeout60, exactly one entry; native deadline observed; actual prior metadata reviewed/published before dequeue."
+    },
+    {
+      "key": "head-update",
+      "matrixScenarios": "E, then A/E foreign custody",
+      "headRef": "queue-canary/head-update",
+      "baseRef": "queue-canary",
+      "authorProposal": "0x4007",
+      "nativePullNumber": null,
+      "nativePullNodeId": null,
+      "nativeHead": null,
+      "nativeReviewedBase": null,
+      "initialBranchPoint": "freshly observed queue-canary tip at the approved phase; record exact native B before branch creation",
+      "path": "docs/queue-canary/head-update.md",
+      "patch": "/workspace/evidence/merge-queue/canary-final-preparation/applicability-984/patches/head-update.patch",
+      "patchSha256": "cff4f7c1d118ef4033501d014a6bf36bc935dc4dba803b9a72f8a1925f91dc29",
+      "purpose": "Owner fast-forwards this head once while its original entry is observed.",
+      "bodyProposal": "Isolated queue canary fixture: head-update.\n\nBase: queue-canary. Tracking: ubiquity/sentinel#164.\nThis PR is a native canary fixture and carries no production repair or delivery authority.",
+      "condition": "owner approval and native fixture creation required",
+      "postRemovalReuse": {
+        "condition": "The original App entry is conclusively removed or invalidated, the updated head has fresh green CI, and the owner explicitly approves manual enqueue.",
+        "ownerEnqueue": "Reuse this same open PR at its new H; no second App enqueue.",
+        "appActions": "Source-review the new H for observe and a refusal-only dequeue check; retain exact foreign enqueuer and native entry.",
+        "ownerReconciliation": "Owner dequeues its own foreign entry; retain actor/reason and complete absence."
+      }
+    },
+    {
+      "key": "rule-removal",
+      "matrixScenarios": "F",
+      "headRef": "queue-canary/rule-removal",
+      "baseRef": "queue-canary",
+      "authorProposal": "0x4007",
+      "nativePullNumber": null,
+      "nativePullNodeId": null,
+      "nativeHead": null,
+      "nativeReviewedBase": null,
+      "initialBranchPoint": "freshly observed queue-canary tip at the approved phase; record exact native B before branch creation",
+      "path": "docs/queue-canary/rule-removal.md",
+      "patch": "/workspace/evidence/merge-queue/canary-final-preparation/applicability-984/patches/rule-removal.patch",
+      "patchSha256": "c4c281d40bafc24311bc85662ca8ff43c27704153a955fcbbd7c4b15a6c1201f",
+      "purpose": "Owner disables the exact canary rule with this entry observed; retain resulting events and custody.",
+      "bodyProposal": "Isolated queue canary fixture: rule-removal.\n\nBase: queue-canary. Tracking: ubiquity/sentinel#164.\nThis PR is a native canary fixture and carries no production repair or delivery authority.",
+      "condition": "owner approval and native fixture creation required"
+    },
+    {
+      "key": "no-rule",
+      "matrixScenarios": "F",
+      "headRef": "queue-canary/no-rule",
+      "baseRef": "queue-canary",
+      "authorProposal": "0x4007",
+      "nativePullNumber": null,
+      "nativePullNodeId": null,
+      "nativeHead": null,
+      "nativeReviewedBase": null,
+      "initialBranchPoint": "freshly observed queue-canary tip at the approved phase; record exact native B before branch creation",
+      "path": "docs/queue-canary/no-rule.md",
+      "patch": "/workspace/evidence/merge-queue/canary-final-preparation/applicability-984/patches/no-rule.patch",
+      "patchSha256": "c8b400990820ab913a72fab980a65986a8907cc86f2168351c83d6f27931304e",
+      "purpose": "Single explicit no-rule App enqueue attempt; must not merge directly.",
+      "bodyProposal": "Isolated queue canary fixture: no-rule.\n\nBase: queue-canary. Tracking: ubiquity/sentinel#164.\nThis PR is a native canary fixture and carries no production repair or delivery authority.",
+      "condition": "owner approval and native fixture creation required",
+      "priorOwnerProbe": {
+        "method": "PUT",
+        "path": "/repos/ubiquity/ai.ubq.fi/pulls/<observed PR>/merge",
+        "body": {
+          "sha": "<exact observed H>",
+          "merge_method": "merge"
+        },
+        "actor": "0x4007",
+        "requires": "Explicit owner authorization, complete active canary rule metadata, current_user_can_bypass never for that authenticated actor, exact green unmerged event-free H, no owner-bypass variant, fresh before-effect read.",
+        "expected": "native405, then unchanged unmerged PR/H, no entry and no queue events before later reuse",
+        "forbidden": "Do not infer405 from no-rule async rejection, repository admin role, lack of bypass names, or a local port refusal. No fallback/retry after ambiguity."
+      }
+    }
+  ],
+  "minimumPrimaryFixturePulls": 9,
+  "optionalOwnerDriftFixturePulls": 1,
+  "additionalSameHeadRetriesAuthorized": false,
+  "notes": [
+    "Every initial fixture PR is distinct because enqueue rejects any prior added/removed history on the PR, even after H changes.",
+    "Do not create all PRs speculatively; create phase-required fixtures after owner approval and reuse any newly found matching event-free PR.",
+    "Success triple is last, after restoring the exact baseline workflow/rules and reconciling all prior entries.",
+    "A failed one-shot before submission consumes its enqueue action+PR/H. Observe afterward; do not retry that binding.",
+    "No executable source, workflow, production branch, grants, ruleset, commit or PR is modified by these proposals.",
+    "Owner-drift body is a separate unapproved alternate policy, not the empty-bypass projection profile.",
+    "Reuse head-update PR at its new green H for owner-created foreign entry and owner dequeue, after conclusive original-entry removal. Canary observe permits prior events; no second App enqueue is attempted.",
+    "Baseline projection body is unchanged; variant hashes and observations never substitute for its accepted profile.",
+    "Action_required absence is limited to the exact captured runs; actual App approval support remains unproved unless encountered and verified.",
+    "Five-minute missing-trigger timeout replaces old unchanged-workflow one-minute proposal and proves a different required native assertion.",
+    "No operator negative probe is executed by this proposal."
+  ],
+  "contingentForeignFixture": {
+    "key": "foreign-entry",
+    "matrixScenarios": "A/E",
+    "headRef": "queue-canary/foreign-entry",
+    "baseRef": "queue-canary",
+    "authorProposal": "0x4007",
+    "nativePullNumber": null,
+    "nativePullNodeId": null,
+    "nativeHead": null,
+    "nativeReviewedBase": null,
+    "initialBranchPoint": "Not assigned; separate contingency authorization and fresh native baseline required if head-update reuse is unavailable.",
+    "path": "docs/queue-canary/foreign-entry.md",
+    "patch": "/workspace/evidence/merge-queue/canary-fixture-preparation/proposed-diffs/foreign-entry.patch",
+    "patchSha256": "144997b6ec5cd53183a84f5ef271ec45986b8a391ea13aad4b1d58e5712bddf1",
+    "purpose": "Owner enqueues; App observes foreign custody and refuses ownership/dequeue; owner reconciles it.",
+    "bodyProposal": "Isolated queue canary fixture: foreign-entry.\n\nBase: queue-canary. Tracking: ubiquity/sentinel#164.\nThis PR is a native canary fixture and carries no production repair or delivery authority.",
+    "condition": "Only if the planned head-update PR cannot safely be reused and this remaining native case is still needed; never create speculatively."
+  },
+  "phaseSequence": [
+    {
+      "phase": 0,
+      "name": "Prerequisites",
+      "plan": "Healthy R81; reviewed source publication; concrete owner approval. Fresh native branch/PR inventory before fixture creation; preserve all existing eligible PRs."
+    },
+    {
+      "phase": 1,
+      "name": "Baseline projection P",
+      "plan": "Baseline60/min1/wait5 empty-bypass same-ID disabled-active-disabled-active collection with no entries in second cycle; do not project variants."
+    },
+    {
+      "phase": 2,
+      "name": "Owner direct405 and App cancellation",
+      "plan": "With native active baseline and authenticated owner bypass never, one sha-pinned direct PUT probe on event-free no-rule PR; record status and unchanged native state. Separately App enqueue cancel PR and owner-cancel exact group run after capturing entry/group."
+    },
+    {
+      "phase": 3,
+      "name": "App-dequeue publication window",
+      "plan": "On empty canary, stage/activate min2/wait360 variant, read native hash and App bypass, review initial grant. Exactly one App entry; observe actual enqueue time/deadline and all CI. Review/publish successor source with actual prior run/artifact/entry, then dequeue before expiry. Owner reconciles if unavailable; restore baseline only once empty."
+    },
+    {
+      "phase": 4,
+      "name": "Head update and foreign custody",
+      "plan": "Under restored baseline, App enqueue head-update PR, then fast-forward H; observe actual invalidation. If old entry conclusively gone and H2green, reuse same PR for owner merge-async queue-only body with bypass_rules:false; record foreign entry. App observes/refuses owned dequeue; owner dequeues."
+    },
+    {
+      "phase": 5,
+      "name": "Rule removal and no-rule",
+      "plan": "App enqueue rule-removal once; owner disables its exact rule while entry observed, record/reconcile. Reuse no-rule PR only if prior405 left it unmerged, event-free and exact H still green; one App async no-rule probe. Record actual refusal/no direct merge; restore baseline."
+    },
+    {
+      "phase": 6,
+      "name": "Missing-trigger timeout",
+      "plan": "Verify canary empty; disable canary object; owner FF-applies only remove-trigger patch to canary base. Create/reuse timeout PR at that base; same negative workflow at H/base and all4 PR-head checks green. Stage/activate five-minute timeout rule; review distinct hash grant. App enqueue once; retain entry; capture complete group-run absence or actual runs and timeout event/no merge. Reconcile, disable canary object while empty, FF restore exact baseline workflow bytes, then restore baseline60/min1/wait5 rules."
+    },
+    {
+      "phase": 7,
+      "name": "Optional owner drift",
+      "plan": "Only after separate approval of a concrete owner-bypass body and owner-drift fixture; disjoint then overlapping fast-forward base docs updates while the observed entry exists. Reconcile and restore empty-bypass baseline before final success. This approval includes no bypass actor."
+    },
+    {
+      "phase": 8,
+      "name": "Final burst3 and separate push continuity",
+      "plan": "Three disjoint success PRs from same fresh B, all green, native grants reviewed together; sequential one-shot enqueue while all entries remain present. Capture real3-entry burst, all exact-M native group CI and predecessor/tree/event facts. Separate3 ordinary development push revisions must come from normal work; queue-canary push filter does not create them."
+    }
+  ],
+  "supersedes": {
+    "path": "/workspace/evidence/merge-queue/canary-fixture-preparation/fixture-plan.json",
+    "sha256": "3d82d316ee53cdc31e147b4400ad22472f2a3563ce5b3756883ca083082855af",
+    "originalManifestSha256": "e1784d7def21fdf8a7703a7221ef6e5e960bc18cd0afb732a09da39ad4467d87",
+    "scope": "Prior eight-fixture and unchanged-workflow one-minute timeout proposal is retained unchanged; this local correction is the current proposal only, not an authoritative ledger."
+  },
+  "workflowVariants": {
+    "baselineSha256": "20754408dfdeb02d36bb050bb132e737f2c1a6a1d53f45796ec3e2d864cae0ac",
+    "missingTriggerSha256": "c27de8bf57c612a77214a159a22b854c4dd77afcea1349c68cf5204c18596c9e",
+    "negativeScope": "queue-canary base and fixture head only; never development or accepted production pin",
+    "restoration": "exact baseline bytes; stop if unrelated workflow drift prevents exact restoration"
+  },
+  "nativeRefreshPath": "/workspace/evidence/merge-queue/canary-final-preparation/final-native/summary.json",
+  "observedDevelopmentCi": {
+    "commit": "984aa8a63183d60a15036321d2dc7aefd8e5d1b3",
+    "status": "not assessed by this preparation",
+    "accepted": false,
+    "runId": null,
+    "noSuccessClaim": true
+  },
+  "claimsAutonomousDelivery": false,
+  "originalPlanReceipt": {
+    "path": "/workspace/evidence/merge-queue/canary-fixture-preparation/sequencing-addendum/fixture-plan-corrected.json",
+    "sha256": "c7a523df6b1aa0c2ba10eb82ea5ce9a8548edf3c072c9327ad36b385a5ba057f"
+  },
+  "proposedDevelopmentTree": "7218790ddaf4837c5cdc40243883a72402c49f11",
+  "applicabilityReceipt": {
+    "path": "/workspace/evidence/merge-queue/canary-final-preparation/applicability-984/result.json",
+    "sha256": "cb9da832f5c501ec6905bd56483c7a7beede730887b663ae40917f5666b54b12"
+  },
+  "acceptedWorkflowMerge": "730218b0c89d479b141c4a2fa17ad5ee363f161a",
+  "newBaselineNativeCiAccepted": false,
+  "ownerCanaryApproval": null,
+  "optionalOwnerDriftAuthorization": "Separate owner approval required; excluded from the nine initial fixtures.",
+  "historicalSourceObservations": {
+    "priorObservedDevelopment": "624466337a9e92e9f36385d8801b29807e41ccb9",
+    "nativeRefreshPath": "sequencing-addendum/native-refresh/summary.json",
+    "observedDevelopmentCi": {
+      "runId": 39105755662,
+      "attempt": 1,
+      "status": "in_progress",
+      "conclusion": null,
+      "allFourGreen": false,
+      "asOf": "2026-10-18T06:58:33.872621+00:00"
+    },
+    "ownerRecoveryPR": {
+      "number": 1188,
+      "merged": true,
+      "mergedAt": "2026-10-18T06:47:05Z",
+      "mergeCommitSha": "6eea5d81c3abb6b754b2b3af2879f8e0f66ec9a2",
+      "mergedBy": {
+        "id": 4975670,
+        "node_id": "MDQ6VXNlcjQ5NzU2NzA=",
+        "login": "0x4007",
+        "type": "User"
+      }
+    }
+  },
+  "acceptedWorkflowMergeCi": {
+    "commit": "730218b0c89d479b141c4a2fa17ad5ee363f161a",
+    "runId": 39116165207,
+    "rootAcceptance": {
+      "path": "/workspace/evidence/ci-required-checks/postmerge-730218b0/root-acceptance.json",
+      "sha256": "6eaa2836922d47c4c2c8954932e4b352341263e26d59abd135a206fd93626acf"
+    },
+    "allSevenPassed": true
+  },
+  "acceptedQueueSourceRevision": "2b32bdbd449cbc615c239af40474941cefcb0c55",
+  "sourceRevisionPostmergeCiAccepted": false,
+  "sourceCompositionReceipt": {
+    "kind": "normal merge of accepted queue base and CI-then-reviewed existing PR160; exact PR carrier tree retained",
+    "head": "21384b8a9c4b80278f1e613096a7d2e3d3c3eadf",
+    "base": "2b32bdbd449cbc615c239af40474941cefcb0c55",
+    "carrier": "60b80fde43f88a9dafdb09ae3e8f6dd1c8a52659",
+    "tree": "52168e7686dd1a07dcefd8cb354e8a1b3e4d150d",
+    "runId": 39117497198,
+    "nativeCiReceipt": {
+      "path": "/workspace/evidence/pr160-continuation/second-corrected-base-validation/native-ci/root-acceptance.json",
+      "sha256": "5ca4400cf43379bf28f1df7afe1e9d6963e49ca729adc5deb4181fb28f3d9b4f"
+    },
+    "reviewReceipt": {
+      "path": "/workspace/evidence/pr160-continuation/second-corrected-base-validation/review/assessment.json",
+      "sha256": "57ba2bd97d3fb1abe9df6d0b6563aae5dd9a3a2113cad6b3fac57bc5f0d1666f"
+    },
+    "mergeIntent": {
+      "path": "/workspace/evidence/pr160-continuation/second-corrected-base-validation/merge/intent.json",
+      "sha256": "71f37b04ee469c163624ce2ac5a2ee1a49fea4083b02bb7c279c344cb0b44288"
+    },
+    "mergeResponse": {
+      "path": "/workspace/evidence/pr160-continuation/second-corrected-base-validation/merge/merge-response.json",
+      "sha256": "5b4226f82c382f3f5e44aff39886e3151a92e5c587ba7d203b8b31ee7aae2dc2"
+    },
+    "postmergeNative": {
+      "path": "/workspace/evidence/pr160-continuation/second-corrected-base-validation/merge/postmerge-native.json",
+      "sha256": "a4ffad3fe6e1000167efd926d1a8384b49c27eb23c854c1888d62002cd88b97b"
+    },
+    "issue157ClosureClaim": false
+  },
+  "currentRefInventoryRefresh": {
+    "path": "/workspace/evidence/merge-queue/canary-final-preparation/sentinel-9b7-refresh/native/summary.json",
+    "sha256": "b1e40eba91929f1c13474632a35b0f2a725687d9097925d3f67edf88c005973e"
+  }
+}

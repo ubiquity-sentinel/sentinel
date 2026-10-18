@@ -1,0 +1,18 @@
+{
+  "recordedAt": "2026-10-18T11:48:33.605059+00:00",
+  "status": "PASS local correction and independent review",
+  "baseline": "9b7c3e5cec4d45c4e0985ab28bd524b4bb69237b",
+  "files": {
+    "tests/host/hosted-autonomy-historical-fixtures.ts": {
+      "sha256": "8f70c1bef159531ddef4d83d29694b54dfd349f4d3058b08505f5e2a4d5c4fdd",
+      "gitBlob": "5421e9af4a90479dbc895c183b9d907f2a3697f5",
+      "lines": 656,
+      "bytes": 20606
+    }
+  },
+  "checksVerified": 9,
+  "uniqueCases": 29,
+  "review": "/workspace/evidence/existing-pr-combined-audit/ci-fixture-clone-assessment.json",
+  "reviewSha256": "45425343929543f3a1e6baecc8eac6a315b753aca24cc466c6c54229edce97d0",
+  "nativeCorrectedAcceptance": false
+}

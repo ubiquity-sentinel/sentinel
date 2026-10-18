@@ -1,0 +1,11 @@
+diff --git a/docs/queue-canary/success-b.md b/docs/queue-canary/success-b.md
+new file mode 100644
+--- /dev/null
++++ b/docs/queue-canary/success-b.md
+@@ -0,0 +1,6 @@
++# Queue canary: success-b
++
++This document is an isolated merge-queue fixture for the `queue-canary` branch.
++It changes no executable code, workflow, deployment configuration, or production policy.
++
++Second disjoint final success from the same reviewed base; observe whether its parent is the first native merge.

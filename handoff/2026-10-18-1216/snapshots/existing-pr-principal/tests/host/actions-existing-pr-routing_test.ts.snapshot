@@ -1,0 +1,161 @@
+import assert from "node:assert/strict";
+import { routeExistingPr } from "../../src/repair/loop-existing-pr.ts";
+import { prepareImplementationStart } from "../../src/repair/loop-implementation.ts";
+import { actionsExistingPrincipalFixture } from "./actions-existing-pr-principal-fixtures.ts";
+
+Deno.test("Actions existing PR routing: active launcher cannot fall through when the App grant is absent", async () => {
+  const rig = await actionsExistingPrincipalFixture(true, true);
+  try {
+    delete rig.env.SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT;
+    await rig.run(async (port, input) => {
+      const read = await input.state.readRepair();
+      assert(read.ok && read.value.status === "found");
+      const record = read.value.snapshot.work[0];
+      assert.equal(record.target.pr, null);
+      assert.deepEqual(record.evidence, []);
+      const route = await routeExistingPr({ ...input, github: port }, {
+        snapshot: read.value.snapshot,
+        head: read.value.head,
+        bounds: { runDeadline: input.deadline, modelCutoff: input.deadline },
+        executionBaseline: null,
+      }, record);
+      const create = await port.existingPrTakeover!.authorizeBoundary({
+        kind: "create",
+        request: {
+          title: "Repair source",
+          body: "Resolves #1",
+          headRef: record.target.branch!,
+          baseRef: "development",
+          expectedBase: rig.native.ctx.base,
+          expectedHeadRef: rig.native.ctx.head,
+        },
+      });
+      assert.deepEqual(
+        { route: route.status, creationAllowed: create.ok },
+        {
+          route: "step",
+          creationAllowed: false,
+        },
+        "missing authority must retain discovery and block replacement admission",
+      );
+    });
+    assert.equal(
+      rig.gitCalls.filter((call) => call.args.includes("push")).length,
+      0,
+    );
+  } finally {
+    await rig.close();
+  }
+});
+
+Deno.test("Actions existing PR routing: unavailable principal cannot reserve replacement implementation", async (t) => {
+  for (
+    const scenario of [
+      "missing grant",
+      "forged grant",
+      "expired grant",
+      "native fallback",
+      "source drift",
+      "native job drift",
+    ]
+  ) {
+    await t.step(scenario, async () => {
+      const rig = await actionsExistingPrincipalFixture(true, true);
+      try {
+        if (scenario === "missing grant") {
+          delete rig.env.SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT;
+        } else if (scenario === "native fallback") {
+          rig.env.SENTINEL_SUPERVISOR_TOKEN = rig.env.GITHUB_TOKEN;
+        } else if (scenario === "native job drift") {
+          rig.principal.model.jobs[0].status = "completed";
+        } else if (scenario === "source drift") {
+          await rig.principal.write(
+            rig.principal.launcher,
+            "src/host/hosted-runtime-child.ts",
+            "unreviewed launcher source\n",
+          );
+        } else {
+          const metadata = JSON.parse(
+            rig.env.SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT!,
+          );
+          rig.env.SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT = JSON.stringify({
+            ...metadata,
+            ...(scenario === "forged grant" ? { appId: 1 } : {
+              expiresAt: new Date(rig.principal.clock.now()).toISOString(),
+            }),
+          });
+        }
+        await rig.run(async (port, input) => {
+          const read = await input.state.readRepair();
+          assert(read.ok && read.value.status === "found");
+          const record = read.value.snapshot.work[0];
+          const config = input.configs.find((row) =>
+            row.repository.name === "sentinel"
+          );
+          assert(config !== undefined);
+          const prepared = await prepareImplementationStart(
+            { ...input, github: port },
+            {
+              snapshot: read.value.snapshot,
+              head: read.value.head,
+              bounds: {
+                runDeadline: input.deadline,
+                modelCutoff: input.deadline,
+              },
+              executionBaseline: null,
+            },
+            record,
+            config,
+          );
+          const after = await input.state.readRepair();
+          assert(after.ok && after.value.status === "found");
+          assert.deepEqual(
+            {
+              prepared: prepared.kind === "prepared",
+              reservations: after.value.snapshot.reservations.length,
+            },
+            {
+              prepared: false,
+              reservations: read.value.snapshot.reservations.length,
+            },
+            "missing authority cannot prepare or charge a replacement implementation",
+          );
+        });
+        assert.equal(
+          rig.gitCalls.filter((call) => call.args.includes("push")).length,
+          0,
+        );
+      } finally {
+        await rig.close();
+      }
+    });
+  }
+});
+
+Deno.test("Actions existing PR routing: authenticated source-off policy retains ordinary dormant behavior", async () => {
+  const rig = await actionsExistingPrincipalFixture(false, true);
+  try {
+    delete rig.env.SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT;
+    await rig.run(async (port, input) => {
+      const read = await input.state.readRepair();
+      assert(read.ok && read.value.status === "found");
+      const record = read.value.snapshot.work[0];
+      const callsBefore = rig.targetCalls.length;
+      const route = await routeExistingPr({ ...input, github: port }, {
+        snapshot: read.value.snapshot,
+        head: read.value.head,
+        bounds: { runDeadline: input.deadline, modelCutoff: input.deadline },
+        executionBaseline: null,
+      }, record);
+      assert.equal(route.status, "ordinary_new_work_allowed");
+      assert.equal(
+        rig.targetCalls.length,
+        callsBefore,
+        "known dormant routing performs no discovery",
+      );
+      assert.deepEqual(await input.state.readRepair(), read);
+    });
+  } finally {
+    await rig.close();
+  }
+});

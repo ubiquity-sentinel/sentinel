@@ -1,0 +1,20 @@
+{
+  "status": "accepted inactive effect tranche; activation blocked on fallback routing",
+  "baseline": "d3487236770c1a37d734bd28f64d507e4585ef69",
+  "files": {
+    "src/github/existing-pr-takeover-policy.ts": "1175a7eb44155c6970a4f9fec206f00025d955a998277b46f563f432f2945579",
+    "src/host/hosted-app-principal.ts": "f9db94c3d74fd8654d9c5ee8eaefbb49f3c1961ed2709d2abc4865502163a2c1",
+    "src/host/hosted-custody-capability.json": "935f27c4d6e5e00f044e5cf71751f689334fa66995197cef7e4157876574832c",
+    "src/host/hosted-custody-capability.ts": "c5f7d0c70b5c4618613f4bc4555221b931805ded379ce532413af354f831ec9b",
+    "tests/host/actions-existing-pr-principal-fixtures.ts": "7ae96c00c234a02befc40e1f43c8f5d692ff1722f2c682a81c4dc0dc9cb7db73",
+    "tests/host/actions-existing-pr-principal_test.ts": "334ff2acfbef190a869b44c898e98fd89b997be3bb7ec2ba8dcf459906dbaf78",
+    "tests/host/hosted-app-principal-fixtures.ts": "333eb82a39d6a3af0ea82226e8bd15276fdccc9e54efcc1677caee2cff3cf6f3",
+    "tests/host/hosted-app-principal_test.ts": "68405e66d35bebd8deace80550d17dd80373e7737f9d7ffbd4606f19c12249a6",
+    "tests/host/hosted-custody-capability_test.ts": "b674070f7c5c2341bf33d808f4fd8a23c727f045bf2468f12c68c02ab9e9c6ef"
+  },
+  "checks": 6,
+  "tests": 39,
+  "steps": 42,
+  "remaining": "Authenticated launcher admission versus missing-principal unmarked routing fallback; separately reported to root/auditor, not claimed solved by explicit retained-custody preservation tests. Final host queue-prelude integration remains root/lifecycle-owned. No live publication or activation.",
+  "published": false
+}

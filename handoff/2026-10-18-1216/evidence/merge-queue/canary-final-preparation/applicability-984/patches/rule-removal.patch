@@ -1,0 +1,11 @@
+diff --git a/docs/queue-canary/rule-removal.md b/docs/queue-canary/rule-removal.md
+new file mode 100644
+--- /dev/null
++++ b/docs/queue-canary/rule-removal.md
+@@ -0,0 +1,6 @@
++# Queue canary: rule-removal
++
++This document is an isolated merge-queue fixture for the `queue-canary` branch.
++It changes no executable code, workflow, deployment configuration, or production policy.
++
++Owner disables the exact canary rule with this entry observed; retain resulting events and custody.

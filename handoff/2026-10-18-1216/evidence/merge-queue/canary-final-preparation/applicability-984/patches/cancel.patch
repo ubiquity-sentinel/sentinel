@@ -1,0 +1,11 @@
+diff --git a/docs/queue-canary/cancel.md b/docs/queue-canary/cancel.md
+new file mode 100644
+--- /dev/null
++++ b/docs/queue-canary/cancel.md
+@@ -0,0 +1,6 @@
++# Queue canary: cancel
++
++This document is an isolated merge-queue fixture for the `queue-canary` branch.
++It changes no executable code, workflow, deployment configuration, or production policy.
++
++Owner cancels only the exact observed queue-canary merge_group run; actual reason remains unknown until observed.

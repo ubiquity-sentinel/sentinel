@@ -1,0 +1,14 @@
+{
+  "recordedAt": "2026-10-18T12:05:17.637469+00:00",
+  "head": "5321a4e682cbcb329ed39e6b9639a793f67f4ca5",
+  "manifestSha256": "5627a36f78b14a9127a0677aafb95b0fa5966cb5892bbff1f2d04961dc7acafe",
+  "verifiedChecks": 6,
+  "tests": 3,
+  "steps": 6,
+  "review": "Root source read + fresh independent combined auditor, no P0/P1 in helper. Actual host causal GREEN still pending.",
+  "remainingDirty": {
+    "tests/host/actions-existing-pr-principal-fixtures.ts": "7eb34ffca7f1f74db774d3a10eba605ab9d1e3ea7c48655e3eaa6ac1517be9f4",
+    "tests/host/actions-existing-pr-routing_test.ts": "9b8e212ab8eaa3719b51cd60d5c95565c9c99d7dd2f26abfc9d174165ffc6e60"
+  },
+  "activation": false
+}

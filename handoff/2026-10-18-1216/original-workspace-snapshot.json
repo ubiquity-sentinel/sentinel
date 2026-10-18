@@ -1,0 +1,73 @@
+{
+  "recordedAt": "2026-10-18T12:12:25.023226+00:00",
+  "worktrees": [
+    {
+      "worktree": "/workspace/worktrees/existing-pr-root-wiring",
+      "branch": "codex/existing-pr-root-wiring",
+      "head": "80e7a3dcede4eea1c9325ba4338098f986b8336e",
+      "status": " M src/host/hosted-authority-protected-paths.ts\n M src/host/hosted-runtime-frame-labels.ts\n M tests/host/hosted-authority-protected-paths_test.ts\n",
+      "trackedPatch": "/workspace/handoff/2026-10-18-1209/existing-pr-root-wiring.patch",
+      "trackedPatchSha256": "ca489d69b1f81ef24c40c0ea7e65630918e6188e9427869fa7606650d7987260",
+      "dirtyFiles": {
+        "src/host/hosted-authority-protected-paths.ts": {
+          "sha256": "1c45b7fb5cde784e35abd4c82f4879b5e21e51bda46d9513ebdd48f6a5fb3d10",
+          "snapshot": "/workspace/handoff/2026-10-18-1209/dirty-files/existing-pr-root-wiring/src/host/hosted-authority-protected-paths.ts"
+        },
+        "src/host/hosted-runtime-frame-labels.ts": {
+          "sha256": "a87eb29302d1e56a0730faf67949d77fd7cdc5fd7d95889f424022cd265b7103",
+          "snapshot": "/workspace/handoff/2026-10-18-1209/dirty-files/existing-pr-root-wiring/src/host/hosted-runtime-frame-labels.ts"
+        },
+        "tests/host/hosted-authority-protected-paths_test.ts": {
+          "sha256": "1a66ad9b8e3fed18b3e1b993c367be21ded3046cdf97db39b7ab4d0bb05fc9bd",
+          "snapshot": "/workspace/handoff/2026-10-18-1209/dirty-files/existing-pr-root-wiring/tests/host/hosted-authority-protected-paths_test.ts"
+        }
+      }
+    },
+    {
+      "worktree": "/workspace/worktrees/existing-pr-integration",
+      "branch": "codex/existing-pr-integration",
+      "head": "80e7a3dcede4eea1c9325ba4338098f986b8336e",
+      "status": " M src/host/actions-repair-host.ts\n",
+      "trackedPatch": "/workspace/handoff/2026-10-18-1209/existing-pr-integration.patch",
+      "trackedPatchSha256": "727aaa92b58faf9de45de18c58908961d47a73fab21ae8201887d19136331b5d",
+      "dirtyFiles": {
+        "src/host/actions-repair-host.ts": {
+          "sha256": "79eed260239e1004aef9c5ad904537518cf63aec969d85652c38e0a27205ba6f",
+          "snapshot": "/workspace/handoff/2026-10-18-1209/dirty-files/existing-pr-integration/src/host/actions-repair-host.ts"
+        }
+      }
+    },
+    {
+      "worktree": "/workspace/worktrees/existing-pr-principal",
+      "branch": "codex/existing-pr-principal",
+      "head": "5321a4e682cbcb329ed39e6b9639a793f67f4ca5",
+      "status": " M tests/host/actions-existing-pr-principal-fixtures.ts\n M tests/host/actions-existing-pr-principal_test.ts\n?? tests/host/actions-existing-pr-routing_test.ts\n",
+      "trackedPatch": "/workspace/handoff/2026-10-18-1209/existing-pr-principal.patch",
+      "trackedPatchSha256": "17c9a209e39b7a3cb671ce6c2808918acad9f77f70be4dfda0872616c7470592",
+      "dirtyFiles": {
+        "tests/host/actions-existing-pr-principal-fixtures.ts": {
+          "sha256": "7eb34ffca7f1f74db774d3a10eba605ab9d1e3ea7c48655e3eaa6ac1517be9f4",
+          "snapshot": "/workspace/handoff/2026-10-18-1209/dirty-files/existing-pr-principal/tests/host/actions-existing-pr-principal-fixtures.ts"
+        },
+        "tests/host/actions-existing-pr-principal_test.ts": {
+          "sha256": "935e34ded1f75ad80adcb5c8f5174eaac876f19696ce72fcdd35621645649834",
+          "snapshot": "/workspace/handoff/2026-10-18-1209/dirty-files/existing-pr-principal/tests/host/actions-existing-pr-principal_test.ts"
+        },
+        "tests/host/actions-existing-pr-routing_test.ts": {
+          "sha256": "9b8e212ab8eaa3719b51cd60d5c95565c9c99d7dd2f26abfc9d174165ffc6e60",
+          "snapshot": "/workspace/handoff/2026-10-18-1209/dirty-files/existing-pr-principal/tests/host/actions-existing-pr-routing_test.ts"
+        }
+      }
+    },
+    {
+      "worktree": "/workspace/worktrees/ci-fixture-clone",
+      "branch": "codex/ci-fixture-clone",
+      "head": "12bc367852188aa94132b7658d774ec413295c1d",
+      "status": "",
+      "trackedPatch": "/workspace/handoff/2026-10-18-1209/ci-fixture-clone.patch",
+      "trackedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "dirtyFiles": {}
+    }
+  ],
+  "note": "Tracked patches exclude untracked files; dirty-files contains exact copies of every dirty or untracked task file. No Git ref or index mutation occurred."
+}

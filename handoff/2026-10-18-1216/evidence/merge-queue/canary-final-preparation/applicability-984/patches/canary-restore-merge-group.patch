@@ -1,0 +1,12 @@
+diff --git a/.github/workflows/deno-deploy.yml b/.github/workflows/deno-deploy.yml
+--- a/.github/workflows/deno-deploy.yml
++++ b/.github/workflows/deno-deploy.yml
+@@ -5,6 +5,8 @@
+   push:
+     branches: [development]
+   pull_request:
++  merge_group:
++    types: [checks_requested]
+   workflow_dispatch:
+ 
+ concurrency:

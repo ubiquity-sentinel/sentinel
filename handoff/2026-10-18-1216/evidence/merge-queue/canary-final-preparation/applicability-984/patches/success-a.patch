@@ -1,0 +1,11 @@
+diff --git a/docs/queue-canary/success-a.md b/docs/queue-canary/success-a.md
+new file mode 100644
+--- /dev/null
++++ b/docs/queue-canary/success-a.md
+@@ -0,0 +1,6 @@
++# Queue canary: success-a
++
++This document is an isolated merge-queue fixture for the `queue-canary` branch.
++It changes no executable code, workflow, deployment configuration, or production policy.
++
++First final success; exact full-tree and native group-CI observation.
