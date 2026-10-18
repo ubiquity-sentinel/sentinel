@@ -127,3 +127,58 @@ Deno.test("gateway host: missing capability remains unavailable rather than an a
   assert.equal(config.commands.replay, "gateway_replay");
   assert.equal(template.adapter.kind, "github");
 });
+
+Deno.test("gateway host: trusted workspace scratch is recursive and reusable but never a symlink or noncanonical path", async () => {
+  const root = await Deno.makeTempDir({
+    dir: Deno.cwd(),
+    prefix: "sentinel-gateway-scratch-",
+  });
+  let commands = 0;
+  const prepare = (scratchDir: string) =>
+    createTrustedGatewayCapabilities({
+      config,
+      prepared: { ...prepared, sourcePath: root },
+      clock: { now: () => 0 },
+      authority: {
+        ...authority,
+        scratchDir,
+        runtime: {
+          run: () => {
+            commands++;
+            throw new Error("fixture stops at source identity check");
+          },
+        },
+      },
+      authJson: "",
+      replayKeyB64: "",
+    });
+  try {
+    const scratch = `${root}/new-parent/scratch`;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      assert.equal((await prepare(scratch)).ok, false);
+      assert.equal(commands, attempt + 1);
+      assert.equal(await Deno.realPath(scratch), scratch);
+      assert.ok((await Deno.lstat(scratch)).isDirectory);
+    }
+    const before = commands;
+    for (
+      const path of ["relative", "/", `${root}/../scratch`, `${root}//scratch`]
+    ) assert.equal((await prepare(path)).ok, false);
+    const alias = `${root}/alias`;
+    const linked = await new Deno.Command("/bin/ln", {
+      args: ["-s", `${root}/new-parent`, alias],
+      clearEnv: true,
+      env: { PATH: "/usr/bin:/bin" },
+    }).output();
+    assert.equal(linked.code, 0, new TextDecoder().decode(linked.stderr));
+    assert.equal((await prepare(alias)).ok, false);
+    assert.equal((await prepare(`${alias}/nested/scratch`)).ok, false);
+    await assert.rejects(
+      Deno.stat(`${root}/new-parent/nested`),
+      Deno.errors.NotFound,
+    );
+    assert.equal(commands, before, "unsafe roots refuse before any command");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
