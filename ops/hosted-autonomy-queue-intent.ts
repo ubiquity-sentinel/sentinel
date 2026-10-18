@@ -102,7 +102,9 @@ export function parseQueueIntent(
   const admission = key[4] === undefined ? 0 : 1;
   if (
     failure.kind !== "merge_queue_v1" || detail === undefined ||
-    (detail.stage === "dequeue_complete" && key[5] === undefined) ||
+    (detail.stage === "dequeue_complete" &&
+      (key[5] === undefined || intent.requestId !== null ||
+        intent.resultId === null)) ||
     (failure.atMs < intent.startedAt &&
       !(admission === 1 && detail.queueFailures >= 1)) ||
     (admission === 1 && detail.queueFailures < 1) ||
@@ -259,6 +261,7 @@ export function queueDequeueComplete(
 /** Start a new admission only after the d1 completion proof is persisted. */
 export function queueReentryIntent(
   state: QueueIntentState,
+  now: number,
 ): IncompleteOperationV1 {
   if (
     state.stage !== "dequeue_complete" ||
@@ -267,7 +270,8 @@ export function queueReentryIntent(
   const { failure: _failure, ...withoutFailure } = state.intent;
   return parseIntent({
     ...withoutFailure,
-    key: withoutFailure.key.slice(0, -3),
+    key: withoutFailure.key.replace(/(?::a1)?:d1$/, ""),
+    startedAt: now,
     requestId: null,
     resultId: null,
   }, "$queue");

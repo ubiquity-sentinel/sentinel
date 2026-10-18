@@ -29,7 +29,7 @@ export async function submitQueueAdmission(
   let intent = previous === null
     ? await createQueueIntent(input.record, binding, deps.clock.now())
     : previous.stage === "dequeue_complete"
-    ? queueReentryIntent(previous)
+    ? queueReentryIntent(previous, deps.clock.now())
     : { ...previous.intent, requestId: null, resultId: null };
   // A proven ejection permits exactly one new admission, never an age-based retry reset.
   if (
