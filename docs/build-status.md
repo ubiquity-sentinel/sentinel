@@ -89,10 +89,12 @@ tree `f98551268f5d9b2d5260893345ba3f89e788bc8f`. All executable files equal R81;
 only AGENTS, DECISIONS and this ledger differ to preserve owner/current facts.
 Original checker content is included or superseded by the integrated lane.
 Latest current-head PR CI is 39103866242. Both hosted gates remain pending. The
-PR is open and temporarily draft. Its required body is exactly `Resolves #163`;
-the failed bot auto-assignment was diagnosed and the owner authorized assignment
-to the current authenticated account. Evidence:
-`/workspace/evidence/gen81-pr165/`.
+fresh exact-current-head review passes with no P0/P1, confirms all 1,196
+non-document entries equal R81 and verifies all 275 result/log hashes. Receipt:
+`/workspace/evidence/gen81-pr165/final-input-audit/receipt.json`. The PR is open
+and temporarily draft. Its required body is exactly `Resolves #163`; the failed
+bot auto-assignment was diagnosed and the owner authorized assignment to the
+current authenticated account. Evidence: `/workspace/evidence/gen81-pr165/`.
 
 L81's fourteen-file pin patch is prepared and independently audited, SHA-256
 `477728957d4a81d351a03a0c8575b04c152a7cd99f52e0eaf516dba83fd62de1`. It installs
@@ -138,14 +140,26 @@ PR refusal. No production guard changes. Its exact one-file patch SHA-256 is
 eight steps and scoped statics pass. Evidence:
 `/workspace/evidence/queue-review-owner-fixture/`. The trusted read-only raw
 projection collector is separately owned in
-`/workspace/worktrees/queue-projection-collector`; its native capture wiring is
-not yet accepted.
+`/workspace/worktrees/queue-projection-collector`; its eight-file patch is now
+integrated at `d01b326a45064c4ee477ca8745ec3f34efdac668` from patch SHA-256
+`eb71b94c0ee5e199daf87d24460191df5a31708eb19833d9c99529b84effe5db`. Producer
+checks passed 33 tests / 128 steps; root combined actual collector, canary,
+native actor, projection and local-github boundary passed 44 tests / 150 steps,
+with static gates and exact input hashes. Only source-authorized
+preflight/observe can collect the bounded GET-only raw packet; empty grants and
+production workflow/policy/parser/compiler hashes remain unchanged. Independent
+collector correction review remains pending. Evidence:
+`/workspace/evidence/merge-queue/collector-integration/`.
 
 All 27 active historical direct deliveries now have independently verified
 native operation, B/H/M, task/review, tree and reachability evidence. The three
 original failed acknowledgements remain failed; immutable native creation
-commits prove those writes landed. Finite witness entries are safely derivable,
-but none is accepted or installed yet. Refresh live inventory before activation.
+commits prove those writes landed. The primary accepted the independently
+reviewed finite native evidence; its production-canonical manifest digest is
+`4ea84865b5676f00fdad413654007336eab36b0f479239647b3bdf10516bc069`. No source
+witness pin or authoritative state changed. The acceptance artifact is
+`/workspace/evidence/merge-queue/historical-inventory/accepted-evidence/acceptance.json`.
+Refresh live inventory before strict-runtime publication or activation.
 Evidence:
 `/workspace/evidence/merge-queue/historical-inventory/operation-receipts/`. Two
 prior P2 conservative holds remain for follow-up: definitely-unsent admission
