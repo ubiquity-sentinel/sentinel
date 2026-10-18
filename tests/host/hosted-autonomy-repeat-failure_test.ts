@@ -586,7 +586,7 @@ Deno.test("repeat failure: the signature folds identities but keeps the failure 
   );
 });
 
-Deno.test("repeat failure: the per-task reservation cap is named, never skipped silently", () => {
+Deno.test("repeat failure: historical reservations do not impose a lifetime retry cap", () => {
   const snapshot = liveSnapshot();
   const charge = (snapshot.reservations as unknown as { id: string }[])[0];
   const template = snapshot.reservations.find((row) => row.taskId === S155)!;
@@ -608,8 +608,9 @@ Deno.test("repeat failure: the per-task reservation cap is named, never skipped 
   });
   assert.ok(charge !== undefined);
   const next = pass(capped);
-  assert.equal(next.plans.some((plan) => plan.id === S155), false);
-  assert.equal(next.denials.get(S155), "retry_budget_exhausted");
+  assert.equal(next.plans.some((plan) => plan.id === S155), true);
+  assert.equal(next.denials.get(S155), undefined);
+  assert.equal(capped.reservations.length, snapshot.reservations.length + 200);
 });
 
 /** The protected maintenance pass over the live rows (real CAS + readback). */

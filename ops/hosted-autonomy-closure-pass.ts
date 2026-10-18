@@ -291,7 +291,7 @@ export async function runHostedClosurePass(
     snapshot,
     closedIssues,
     closedUnmerged,
-  ).filter((plan) => !settled(plan.id)).slice(0, 5);
+  ).filter((plan) => !settled(plan.id));
   let retirementResult: HostedAutonomyResultV1 | null = null;
   if (retirements.length > 0) {
     const now = deps.clock.now();
@@ -495,7 +495,7 @@ export async function runHostedClosurePass(
       closureSnapshot.work.some((record) =>
         record.id === plan.id && record.nextStep === "delivery"
       ),
-  ).slice(0, 5);
+  );
   if (closures.length > 0) {
     for (const plan of closures) {
       const record = closureSnapshot.work.find((item) =>

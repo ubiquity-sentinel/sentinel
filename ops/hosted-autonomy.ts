@@ -32,10 +32,9 @@
  *     When every identity at the record's current base is already charged, a
  *     work-returning grant uses that same base-refresh path, and a review
  *     intent is cleared only when its exact request reservation is proven
- *     settled. Each task may use at most `HOSTED_AUTONOMY_MAX_RETRIES` such
- *     grants, counted in the task's durable reservations (every purpose,
- *     including one still `reserved`), so no uncharged retry cycle exists and a
- *     task can never loop forever. Nothing is deleted or reset: the preserved
+ *     settled. Reservation history does not cap retry grants; every grant
+ *     still requires an unused charged identity and the task's review and
+ *     correction allowances. Nothing is deleted or reset: the preserved
  *     `retries` counter, every charge, reservation, receipt, review and
  *     candidate stay exactly as they are, and only `attempts` is lowered by a
  *     work-returning grant.

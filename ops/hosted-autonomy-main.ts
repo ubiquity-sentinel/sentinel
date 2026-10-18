@@ -1,3 +1,4 @@
+import { emitHostedParkSummary } from "./hosted-autonomy-summary.ts";
 import {
   createMatrixUncertaintyMaintenance,
   runMatrixUncertaintyMaintenance,
@@ -136,7 +137,14 @@ export async function runHostedAutonomyMain(input?: {
   let result: HostedAutonomyResultV1;
   try {
     if (input) {
-      result = await runHostedAutonomy(input.deps);
+      try {
+        result = await runHostedAutonomy(input.deps);
+      } finally {
+        await emitHostedParkSummary(
+          input.deps.state,
+          env("GITHUB_STEP_SUMMARY"),
+        );
+      }
     } else {
       const scratch = `${Deno.cwd()}/.hosted-autonomy`;
       Deno.mkdirSync(scratch, { recursive: true, mode: 0o700 });
@@ -216,6 +224,7 @@ export async function runHostedAutonomyMain(input?: {
           }),
         });
       } finally {
+        await emitHostedParkSummary(state, env("GITHUB_STEP_SUMMARY"));
         await Deno.remove(artifactRoot, { recursive: true });
       }
     }

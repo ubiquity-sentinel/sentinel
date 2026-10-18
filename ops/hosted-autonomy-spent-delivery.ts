@@ -27,7 +27,6 @@ import {
   latestPullReview,
   reviewedIdentity,
 } from "../src/repair/carried-review.ts";
-import { holdsDeliveryLine, lineBefore } from "../src/repair/delivery-queue.ts";
 import { releaseRequestId } from "../src/repair/keys.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import { reviewAuthorizesMerge } from "../src/repair/review-gate.ts";
@@ -49,7 +48,6 @@ import {
   HOSTED_AUTONOMY_SPENT_DELIVERY_BLOCKERS,
   HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
   hostedIssueKey,
-  hostedRepositoryKey,
   isHostedSelf,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
@@ -88,8 +86,8 @@ import type {
  */
 export const HOSTED_AUTONOMY_SPENT_MOVED_BASE_MERGE = false;
 
-/** Spent-round records that need live reads, per delivery pass. */
-export const HOSTED_AUTONOMY_SPENT_READS_PER_PASS = 8;
+/** Retired count throttle; retained for callers that import the policy. */
+export const HOSTED_AUTONOMY_SPENT_READS_PER_PASS = Number.MAX_SAFE_INTEGER;
 
 /**
  * True once the record's ordinary review rounds are spent, by the runtime's
@@ -484,65 +482,25 @@ export async function preMergeGate(input: {
 }
 
 /**
- * The parked spent-round records this pass may read live: the pure spent
- * shape with at least one bound clean receipt, or a carried merge candidate
- * (`carriedMergeReceipt`), first (no read), then at most
- * `HOSTED_AUTONOMY_SPENT_READS_PER_PASS` of them, starting at an offset that
- * advances every five minutes so no record is starved by the ones ordered
- * before it. A record an earlier write of this pass settled (`settled`, see
- * hosted-autonomy-continuation.ts) is left to the next pass and takes no slot.
- *
- * A carried head the runtime proved and awaits (`carriedRecordAwaited`) is
- * read on EVERY pass while it holds its repository's delivery line (round-2
- * recheck P2: in the rotating window a proven green head waited up to two
- * hours at live sizes, holding the line, and every tip move in that time
- * discarded its green CI and spent one of its refreshes). Bounded: at most
- * the line's front such record per self or Gateway repository, on top of the
- * window and taking none of its slots.
+ * Every eligible spent record may be read on each pass. A record changed by
+ * an earlier phase still waits for the next pass. CI, current-head review,
+ * source identity and the one-merge-per-pass gate remain unchanged.
  */
 export function spentReadWindow(
   snapshot: RepairStateSnapshotV1,
-  now: number,
+  _now: number,
   settled?: ReadonlySet<string>,
 ): Set<string> {
-  const readable = snapshot.work.filter((record) =>
-    settled?.has(record.id) !== true &&
-    deliveryEligible(record, snapshot) && parkedStep(record) &&
-    spentDeliveryAdmissible(record, snapshot) &&
-    (boundReviewReceipts(snapshot, record).length > 0 ||
-      (carriedRecordAwaited(record) &&
-        carriedMergeReceipt(snapshot, record) !== null))
+  return new Set(
+    snapshot.work.filter((record) =>
+      settled?.has(record.id) !== true &&
+      deliveryEligible(record, snapshot) && parkedStep(record) &&
+      spentDeliveryAdmissible(record, snapshot) &&
+      (boundReviewReceipts(snapshot, record).length > 0 ||
+        (carriedRecordAwaited(record) &&
+          carriedMergeReceipt(snapshot, record) !== null))
+    ).map((record) => record.id),
   );
-  const front = new Map<string, HostedAutonomyRecordV1>();
-  for (const record of readable) {
-    if (
-      boundReviewReceipts(snapshot, record).length > 0 ||
-      !carriedRecordAwaited(record) ||
-      (!isHostedSelf(record.repository) &&
-        !isGatewayVpsRepository(record.repository)) ||
-      !holdsDeliveryLine(snapshot, record, now)
-    ) continue;
-    const key = hostedRepositoryKey(record.repository);
-    const held = front.get(key);
-    if (held === undefined || lineBefore(record, held)) front.set(key, record);
-  }
-  const exempt = new Set([...front.values()].map((record) => record.id));
-  const ids = readable.map((record) => record.id).filter((id) =>
-    !exempt.has(id)
-  );
-  if (ids.length <= HOSTED_AUTONOMY_SPENT_READS_PER_PASS) {
-    return new Set([...exempt, ...ids]);
-  }
-  const offset = Number.isSafeInteger(now) && now >= 0
-    ? Math.floor(now / 300_000) % ids.length
-    : 0;
-  return new Set([
-    ...exempt,
-    ...[...ids.slice(offset), ...ids.slice(0, offset)].slice(
-      0,
-      HOSTED_AUTONOMY_SPENT_READS_PER_PASS,
-    ),
-  ]);
 }
 
 // ---- carried merge (owner decision 2026-10-16 (2), option (b)) -----------

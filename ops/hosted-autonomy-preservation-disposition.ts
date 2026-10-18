@@ -25,8 +25,8 @@
  *    grants), at least a day after the refusal, and while the task holds
  *    fewer than PRESERVATION_REFUSED_MAX_RESERVATIONS durable charges: a
  *    refusal re-enters at most once per base and day, and a task the
- *    validator keeps refusing stops after a few runs instead of at the retry
- *    pass's far larger HOSTED_AUTONOMY_MAX_RETRIES.
+ *    validator keeps refusing stops after a few runs. This deterministic
+ *    refusal guard is independent of the removed generic reservation cap.
  *
  * The write is the runtime's own proven-absence transition (the `not_found`
  * branch of executeCandidatePreservation): the intent and the V1 candidate

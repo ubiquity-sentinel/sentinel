@@ -11,7 +11,6 @@ import { type GitSha, isGitSha } from "../src/contracts/brands.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { candidateBranch, reviewOperationKey } from "../src/repair/keys.ts";
 import {
-  HOSTED_AUTONOMY_MAX_RETRIES,
   HOSTED_AUTONOMY_RETRYABLE,
   hostedIssueKey,
   hostedRepositoryKey,
@@ -414,8 +413,8 @@ function planCiFirstReadmission(
 
 /**
  * Bounded, closed retry planning for one snapshot. Every returned plan has an
- * unused next-attempt identity, respects memory/review limits and stays inside
- * the per-task automatic-retry budget.
+ * unused next-attempt identity and respects memory/review limits. Prior
+ * reservation count never stops a new otherwise-admissible grant.
  *
  * `baseTips` is keyed by `hostedRepositoryKey`: each record is planned against
  * its OWN repository's base tip, so a foreign repository can never advance a
@@ -566,16 +565,6 @@ export function planHostedRetries(
         : HOSTED_AUTONOMY_RETRYABLE.find((item) =>
           blocker.message.startsWith(item.prefix)
         );
-    if (
-      taskReservationCount(snapshot, record.id) >= HOSTED_AUTONOMY_MAX_RETRIES
-    ) {
-      // The cap is an owner state: a record this table would re-grant is named.
-      if (rule !== undefined) {
-        const { id, repository } = record;
-        onDenied?.({ id, repository, reason: "retry_budget_exhausted" });
-      }
-      continue;
-    }
     if (!Number.isSafeInteger(now)) continue;
     // A conflict resolution that was charged and did not publish keeps the
     // conflict marker on its retained intent: one charge per (task, base tip).

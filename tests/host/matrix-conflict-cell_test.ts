@@ -5,10 +5,9 @@
  * generation 77 refuses the cell; generation 78's consumer accepts exactly the
  * bound cell (`matrix-conflict-gen78_test.ts` runs its own code), so this tree
  * opens the hosted route (`HOSTED_CONFLICT_RESOLUTIONS`) with generation 78 as
- * its rollback target. At most `HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE`
- * conflict resolutions are in flight (at `work`, charge `reserved`), the most
- * one rollback can isolate; an isolated one frees its slot, and so does one
- * admitted past its cell artifact's retention plus a day.
+ * its rollback target. Conflict count no longer throttles otherwise eligible
+ * cells. Every admission remains charged across rollback isolation and cell
+ * evidence expiry; a later wave never grants the same pending work twice.
  */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -23,13 +22,13 @@ import { MatrixHistoricalRuntimeMismatch } from "../../src/host/matrix-artifact-
 import { markBlocked } from "../../src/repair/transitions.ts";
 import { createActionsMatrixArtifactTransport } from "../../src/host/matrix-artifacts.ts";
 import { planMatrixWave } from "../../src/host/matrix.ts";
-import { CONFLICT_RESOLUTION_CAP_REASON as CONFLICT_CAP_REASON } from "../../src/host/matrix-planner.ts";
 import { HOSTED_AUTONOMY_EVIDENCE_EXPIRY_MS } from "../../ops/hosted-autonomy-policy.ts";
 import {
   CONFLICT_CELL_EVIDENCE_EXPIRY_MS,
   conflictMarker,
   conflictMarkerBase,
   conflictResolutionInFlight,
+  conflictResolutionsInFlight,
   HOSTED_CONFLICT_RESOLUTIONS,
   HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE,
   pendingConflictResolution,
@@ -288,32 +287,30 @@ function inFlight(state: RepairStateSnapshotV1): string[] {
   ).map((work) => work.id);
 }
 
-Deno.test("matrix planner: one wave grants at most the per-wave cap of conflict-resolution cells; the rest stay pending, uncharged", async () => {
-  assert.equal(HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE, 4);
+Deno.test("matrix planner: one wave grants every eligible conflict-resolution cell, preserving one charge each", async () => {
+  assert.equal(HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE, Number.MAX_SAFE_INTEGER);
   const rig = await pendingWaveRig(6);
   try {
     const deps = { ...rig.deps, externalImplementations: true };
     const first = await planMatrixWave(deps, rig.planOptions());
-    assert.equal(first.plan.cells.length, 4, JSON.stringify(first));
+    assert.equal(first.plan.cells.length, 6, JSON.stringify(first));
     assert.ok(
       first.plan.cells.every((cell) => cell.request.mergeBase === rig.base),
     );
     const after = await snapshot(rig);
-    assert.equal(after.reservations.length, 4, "four charged resolutions");
+    assert.equal(after.reservations.length, 6, "all six resolutions charged");
     const waiting = after.work.filter((work) =>
       pendingConflictResolution(work.intent) !== null
     );
-    assert.equal(waiting.length, 2, "the rest stay pending, uncharged");
-    // The first wave's four cells are still in flight: a later wave grants
-    // none, so the in-flight total never exceeds the cap.
+    assert.equal(waiting.length, 0, "no artificial conflict backlog");
+    // No pending task is granted twice while its cell is still in flight.
     const second = await planMatrixWave(deps, {
       ...rig.planOptions(),
       waveId: "wave-conflict-cap-2",
     });
     assert.equal(second.plan.cells.length, 0, JSON.stringify(second));
     assert.deepEqual(await snapshot(rig), after);
-    // Two receipts are consumed (one resolved, one charged failure): two
-    // slots open, and only two.
+    // Consuming two receipts preserves all six original charges.
     const read = await rig.store.readRepair();
     assert.ok(read.ok && read.value.status === "found");
     if (!read.ok || read.value.status !== "found") throw new Error("state");
@@ -360,12 +357,12 @@ Deno.test("matrix planner: one wave grants at most the per-wave cap of conflict-
       ),
     }, read.value.head);
     assert.ok(settled.ok && settled.value.status === "applied");
-    assert.equal(inFlight(await snapshot(rig)).length, 2);
+    assert.equal(inFlight(await snapshot(rig)).length, 4);
     const third = await planMatrixWave(deps, {
       ...rig.planOptions(),
       waveId: "wave-conflict-cap-3",
     });
-    assert.equal(third.plan.cells.length, 2, JSON.stringify(third));
+    assert.equal(third.plan.cells.length, 0, JSON.stringify(third));
     assert.equal((await snapshot(rig)).reservations.length, 6);
     assert.equal(inFlight(await snapshot(rig)).length, 4);
   } finally {
@@ -373,7 +370,7 @@ Deno.test("matrix planner: one wave grants at most the per-wave cap of conflict-
   }
 });
 
-Deno.test("matrix planner: resolutions already in flight count toward the cap before any new grant; an isolated one frees its slot", async () => {
+Deno.test("matrix planner: resolutions already in flight do not throttle new grants or refund old charges", async () => {
   const rig = await pendingWaveRig(6, async (rig) => [
     // Admitted by an earlier wave, receipt not yet consumed.
     await admittedResolution(rig, 431, "reserved"),
@@ -406,17 +403,17 @@ Deno.test("matrix planner: resolutions already in flight count toward the cap be
       "issue-432",
     ]);
     const first = await planMatrixWave(deps, rig.planOptions());
-    assert.equal(first.plan.cells.length, 2, JSON.stringify(first));
+    assert.equal(first.plan.cells.length, 6, JSON.stringify(first));
     const after = await snapshot(rig);
     const holders = inFlight(after);
-    assert.equal(holders.length, HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE);
+    assert.equal(holders.length, 8);
     assert.ok(!holders.includes("issue-433"), "the isolated one holds none");
     assert.equal(
       after.work.filter((work) =>
         pendingConflictResolution(work.intent) !== null
       ).length,
-      4,
-      "the rest stay pending, uncharged",
+      0,
+      "all eligible pending records are charged",
     );
     const second = await planMatrixWave(deps, {
       ...rig.planOptions(),
@@ -424,22 +421,13 @@ Deno.test("matrix planner: resolutions already in flight count toward the cap be
     });
     assert.equal(second.plan.cells.length, 0, JSON.stringify(second));
     assert.deepEqual(await snapshot(rig), after);
-    // The zero-cell diagnostic names the cap and the records holding it.
-    assert.deepEqual(second.diagnostic?.conflictResolutionCap, {
-      cap: HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE,
-      inFlight: holders,
-    }, JSON.stringify(second.diagnostic));
-    assert.equal(
-      second.diagnostic?.notReadyByReason[CONFLICT_CAP_REASON],
-      4,
-      JSON.stringify(second.diagnostic),
-    );
+    assert.equal(second.diagnostic?.conflictResolutionCap, undefined);
   } finally {
     await rig.cleanup();
   }
 });
 
-Deno.test("matrix planner: a resolution whose cell evidence was lost holds its slot only while its cell artifact could still be retained", async () => {
+Deno.test("matrix planner: lost cell evidence remains charged across expiry without throttling new work", async () => {
   // The cell artifacts' `retention-days: 7` plus a day, the same horizon as
   // the launcher's evidence expiry.
   assert.equal(
@@ -477,57 +465,26 @@ Deno.test("matrix planner: a resolution whose cell evidence was lost holds its s
     const before = await snapshot(rig);
     assert.equal(before.reservations.length, 4);
     assert.deepEqual(inFlight(before), lostIds);
-    // Inside the horizon a consumer or a rollback could still authenticate
-    // each cell, so the four hold the cap: nothing granted, nothing written.
+    assert.equal(conflictResolutionsInFlight(before, T0), 4);
     const inside = await planMatrixWave(deps, rig.planOptions());
-    assert.equal(inside.plan.cells.length, 0, JSON.stringify(inside));
-    assert.deepEqual(inside.diagnostic?.conflictResolutionCap, {
-      cap: HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE,
-      inFlight: lostIds,
-    }, JSON.stringify(inside.diagnostic));
+    assert.equal(inside.plan.cells.length, 6, JSON.stringify(inside));
+    assert.equal(inside.diagnostic?.conflictResolutionCap, undefined);
+    const admitted = await snapshot(rig);
     assert.equal(
-      inside.diagnostic?.notReadyByReason[CONFLICT_CAP_REASON],
-      6,
-      JSON.stringify(inside.diagnostic),
+      lost(admitted),
+      lost(before),
+      "lost admissions remain charged",
     );
-    assert.deepEqual(await snapshot(rig), before);
-    // Past it no consumer and no rollback can authenticate or isolate those
-    // cells: they leave the count, and the cap bounds the fresh grants.
+    assert.equal(admitted.reservations.length, 10);
+    assert.equal(conflictResolutionsInFlight(admitted, T0), 10);
     rig.clock.advance(60_000);
+    assert.equal(conflictResolutionsInFlight(admitted, T0 + 60_000), 6);
     const past = await planMatrixWave(deps, {
       ...rig.planOptions(),
       waveId: "wave-conflict-lost-evidence-past",
     });
-    assert.equal(
-      past.plan.cells.length,
-      HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE,
-      JSON.stringify(past),
-    );
-    const after = await snapshot(rig);
-    // Leaving the count is not a retirement: the four records and their
-    // `reserved` charges are byte-identical, never settled or refunded.
-    assert.equal(lost(after), lost(before));
-    assert.equal(after.reservations.length, 8, "one charge per resolution");
-    assert.equal(
-      after.work.filter((work) =>
-        pendingConflictResolution(work.intent) !== null
-      ).length,
-      2,
-      "the rest stay pending, uncharged",
-    );
-    const fresh = inFlight(after).filter((id) => !lostIds.includes(id));
-    assert.equal(fresh.length, HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE);
-    // The fresh four now hold the cap, and only they are named.
-    const full = await planMatrixWave(deps, {
-      ...rig.planOptions(),
-      waveId: "wave-conflict-lost-evidence-full",
-    });
-    assert.equal(full.plan.cells.length, 0, JSON.stringify(full));
-    assert.deepEqual(full.diagnostic?.conflictResolutionCap, {
-      cap: HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE,
-      inFlight: fresh,
-    }, JSON.stringify(full.diagnostic));
-    assert.deepEqual(await snapshot(rig), after);
+    assert.equal(past.plan.cells.length, 0, "no duplicate admissions");
+    assert.deepEqual(await snapshot(rig), admitted);
   } finally {
     await rig.cleanup();
   }
@@ -573,32 +530,15 @@ async function isolateAsR78(
   return await snapshot(rig);
 }
 
-Deno.test("matrix planner: across a rollback and roll-forward, each rollback strands at most the cap and the isolated ones free their slots", async () => {
+Deno.test("matrix planner: rollback isolation retains every admission without imposing a throughput cap", async () => {
   const rig = await pendingWaveRig(7);
   try {
     const deps = { ...rig.deps, externalImplementations: true };
     const first = await planMatrixWave(deps, rig.planOptions());
-    assert.equal(first.plan.cells.length, 4, JSON.stringify(first));
+    assert.equal(first.plan.cells.length, 7, JSON.stringify(first));
     const granted = inFlight(await snapshot(rig));
-    assert.equal(granted.length, HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE);
-    // Full: the next wave grants none, and its zero-cell diagnostic names
-    // the cap and the four resolutions holding it.
-    const held = await planMatrixWave(deps, {
-      ...rig.planOptions(),
-      waveId: "wave-conflict-rollback-held",
-    });
-    assert.equal(held.plan.cells.length, 0, JSON.stringify(held));
-    assert.deepEqual(held.diagnostic?.conflictResolutionCap, {
-      cap: HOSTED_CONFLICT_RESOLUTIONS_PER_WAVE,
-      inFlight: granted,
-    }, JSON.stringify(held.diagnostic));
-    assert.equal(
-      held.diagnostic?.notReadyByReason[CONFLICT_CAP_REASON],
-      3,
-      JSON.stringify(held.diagnostic),
-    );
-    // Generation 79 fails and rolls back: R78 isolates all four unconsumed
-    // cells, the most one rollback can strand.
+    assert.equal(granted.length, 7);
+    // Rolling back isolates every unresolved cell and keeps its charge.
     const isolated = await isolateAsR78(rig, granted);
     if (await gen78Available()) await assertGen78Parses(isolated);
     assert.deepEqual(inFlight(isolated), []);
@@ -610,17 +550,15 @@ Deno.test("matrix planner: across a rollback and roll-forward, each rollback str
       ),
       "the marked admission is retained",
     );
-    // Rolled forward: the isolated four hold no slot, so the remaining three
-    // pending resolutions are granted; the isolated records and their
-    // `reserved` charges stay exactly as R78 left them.
+    // Rolling forward never regenerates or refunds an isolated admission.
     const forward = await planMatrixWave(deps, {
       ...rig.planOptions(),
       waveId: "wave-conflict-roll-forward",
     });
-    assert.equal(forward.plan.cells.length, 3, JSON.stringify(forward));
+    assert.equal(forward.plan.cells.length, 0, JSON.stringify(forward));
     const after = await snapshot(rig);
     const flying = inFlight(after);
-    assert.equal(flying.length, 3);
+    assert.equal(flying.length, 0);
     assert.ok(flying.every((id) => !granted.includes(id)));
     assert.deepEqual(
       after.work.filter((work) => granted.includes(work.id)),
@@ -638,7 +576,7 @@ Deno.test("matrix planner: across a rollback and roll-forward, each rollback str
       ).length,
       0,
     );
-    // A second rollback can strand only those three: at most the cap.
+    // A second rollback has no new cells to isolate.
     const again = await isolateAsR78(rig, flying);
     if (await gen78Available()) await assertGen78Parses(again);
     assert.deepEqual(inFlight(again), []);
