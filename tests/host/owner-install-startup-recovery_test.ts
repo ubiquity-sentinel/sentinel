@@ -1,3 +1,7 @@
+import {
+  DORMANT_HOSTED_SUPERVISOR_POLICY,
+  runHostedSupervisorWithPolicy,
+} from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import startupCompareResponse from "../fixtures/startup-recovery-compare.json" with {
   type: "json",
@@ -11,13 +15,13 @@ import type { HostedRunProofV1 } from "../../src/contracts/hosted-supervisor.ts"
 import { portOk } from "../../src/contracts/ports.ts";
 import {
   runHostedSupervisorFinalize,
-  runHostedSupervisorHost,
   runHostedSupervisorPrepare,
 } from "../../src/host/actions-supervisor.ts";
 import type { ReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import {
-  buildOwnerDevelopmentInstallSnapshot,
-  planOwnerDevelopmentInstall,
+  buildOwnerDevelopmentInstallSnapshot
+    as productionBuildOwnerDevelopmentInstallSnapshot,
+  planOwnerDevelopmentInstall as productionPlanOwnerDevelopmentInstall,
 } from "../../src/host/owner-development-install.ts";
 import {
   LAUNCHER,
@@ -216,6 +220,10 @@ Deno.test("owner startup recovery: real installer and supervisor refuse retired6
       assert.equal(await fixture.run(), 0);
       assert.equal(fixture.reports.at(-1)?.status, "no_change");
       const supervisor = await runHostedSupervisorPrepare({
+        queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+        existingPrRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+        runtimeRollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
+
         clock: { now: () => STARTUP_NOW },
         state: fixture.releaseStore,
         run: fixture.runIdentity(),
@@ -397,6 +405,10 @@ Deno.test("owner startup recovery: real installer and supervisor verify generati
         let time = STARTUP_NOW;
         let observed: HostedRunProofV1 | null = null;
         const core = () => ({
+          queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+          existingPrRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+          runtimeRollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
+
           clock: { now: () => time },
           state: fixture.releaseStore,
           run: fixture.runIdentity(),
@@ -415,51 +427,54 @@ Deno.test("owner startup recovery: real installer and supervisor verify generati
         const outputs = new Map<string, string>();
         const host = () => {
           const identity = fixture.runIdentity();
-          return runHostedSupervisorHost({
-            sourceDir: Deno.cwd(),
-            clock: { now: () => time },
-            state: fixture.releaseStore,
-            ownerStartupRecoveryOnly: true,
-            http: () => {
-              throw new Error(
-                "recovery composition must not query task/release or ordinary capability",
-              );
+          return runHostedSupervisorWithPolicy(
+            DORMANT_HOSTED_SUPERVISOR_POLICY,
+            {
+              sourceDir: Deno.cwd(),
+              clock: { now: () => time },
+              state: fixture.releaseStore,
+              ownerStartupRecoveryOnly: true,
+              http: () => {
+                throw new Error(
+                  "recovery composition must not query task/release or ordinary capability",
+                );
+              },
+              process: {
+                run: (input) =>
+                  Promise.resolve({
+                    outcome: "exited",
+                    exitCode: 0,
+                    signal: null,
+                    stdout: new TextEncoder().encode(
+                      input.args.includes("rev-parse")
+                        ? `${identity.launcherSha}\n`
+                        : "",
+                    ),
+                    stderr: new Uint8Array(),
+                    truncated: false,
+                    settled: true,
+                    durationMs: 0,
+                    detail: "offline source identity",
+                  }),
+              },
+              env: {
+                GITHUB_REPOSITORY: "ubiquity/sentinel",
+                GITHUB_REF: "refs/heads/sentinel-supervisor",
+                GITHUB_JOB: "prepare",
+                GITHUB_RUN_ID: String(identity.runId),
+                GITHUB_RUN_ATTEMPT: "1",
+                GITHUB_SHA: identity.launcherSha,
+                GITHUB_WORKFLOW_SHA: identity.launcherSha,
+                GITHUB_WORKFLOW_REF:
+                  "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+                GITHUB_TOKEN: "offline-native-token-value",
+              },
+              writeOutput: (name, value) => {
+                outputs.set(name, value);
+                return Promise.resolve();
+              },
             },
-            process: {
-              run: (input) =>
-                Promise.resolve({
-                  outcome: "exited",
-                  exitCode: 0,
-                  signal: null,
-                  stdout: new TextEncoder().encode(
-                    input.args.includes("rev-parse")
-                      ? `${identity.launcherSha}\n`
-                      : "",
-                  ),
-                  stderr: new Uint8Array(),
-                  truncated: false,
-                  settled: true,
-                  durationMs: 0,
-                  detail: "offline source identity",
-                }),
-            },
-            env: {
-              GITHUB_REPOSITORY: "ubiquity/sentinel",
-              GITHUB_REF: "refs/heads/sentinel-supervisor",
-              GITHUB_JOB: "prepare",
-              GITHUB_RUN_ID: String(identity.runId),
-              GITHUB_RUN_ATTEMPT: "1",
-              GITHUB_SHA: identity.launcherSha,
-              GITHUB_WORKFLOW_SHA: identity.launcherSha,
-              GITHUB_WORKFLOW_REF:
-                "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
-              GITHUB_TOKEN: "offline-native-token-value",
-            },
-            writeOutput: (name, value) => {
-              outputs.set(name, value);
-              return Promise.resolve();
-            },
-          });
+          );
         };
         assert.equal((await host()).execution?.purpose, "bootstrap");
         assert.equal(outputs.get("modelStartsEnabled"), "false");
@@ -613,3 +628,39 @@ Deno.test("owner startup recovery: changed repair custody refuses while an ambig
     }
   }
 });
+
+/** Keep explicit policy/refusal inputs; only historical omissions use fixture policy. */
+function planOwnerDevelopmentInstall(
+  ...args: Parameters<typeof productionPlanOwnerDevelopmentInstall>
+): ReturnType<typeof productionPlanOwnerDevelopmentInstall> {
+  return productionPlanOwnerDevelopmentInstall(
+    args[0],
+    args[1],
+    args[2],
+    args[3],
+    args[4] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.queue : args[4],
+    args[5] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.custody : args[5],
+    args[6] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.rollout : args[6],
+    args[7],
+    args[8],
+  );
+}
+
+/** Snapshot validation uses the same historical policy as its real planner. */
+function buildOwnerDevelopmentInstallSnapshot(
+  ...args: Parameters<typeof productionBuildOwnerDevelopmentInstallSnapshot>
+): ReturnType<typeof productionBuildOwnerDevelopmentInstallSnapshot> {
+  return productionBuildOwnerDevelopmentInstallSnapshot(
+    args[0],
+    args[1],
+    args[2],
+    args[3],
+    args[4],
+    args[5],
+    args[6] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.queue : args[6],
+    args[7] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.custody : args[7],
+    args[8],
+    args[9] === undefined ? DORMANT_HOSTED_SUPERVISOR_POLICY.rollout : args[9],
+    args[10],
+  );
+}
