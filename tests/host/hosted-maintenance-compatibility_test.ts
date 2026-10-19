@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { portOk } from "../../src/contracts/ports.ts";
-import { runHostedAutonomyMain } from "../../ops/hosted-autonomy-main.ts";
+import {
+  DORMANT_HOSTED_SUPERVISOR_POLICY,
+  withHostedProductionPolicy,
+} from "./hosted-supervisor-policy-fixture.ts";
 import { readHostedMaintenanceQueueObservation } from "../../ops/hosted-autonomy-compatibility-queue.ts";
 import type { HttpTransportV1 } from "../../src/github/http.ts";
 import { HOSTED_RUNTIME_ROLLOUT } from "../../src/host/hosted-runtime-rollout.ts";
@@ -212,145 +215,163 @@ Deno.test("maintenance main: exact migration and interrupted bootstrap skip ever
       ]
     ) {
       await t.step(fault, async () => {
-        const installed = [
-          "installed",
-          "failed_bootstrap",
-          "unproven_ordinary",
-          "healthy",
-        ].includes(fault);
-        const f = fixtures(installed);
-        const native = nativeWriterFixture({
-          runId: 700,
-          runAttempt: 1,
-          launcherSha: head,
-        }, "maintenance");
-        const transport = queueTransport(fault);
-        let effects = 0;
-        let custodyCalls = 0;
-        const output = `${root}/output-${fault}`;
-        const runtime = f.release.hostedRuntimes[0];
-        if (fault === "old_execution") {
-          runtime.execution = healthyProof(PRIOR, 81, 600).execution;
-        }
-        if (fault === "old_peer") {
-          native.peers.push({
-            ...native.nativeRun,
-            id: 701,
-            status: "queued",
-            head_sha: OTHER,
-          });
-        }
-        if (fault === "migration") {
-          native.peers.push({ ...native.nativeRun, id: 701, status: "queued" });
-        }
-        if (fault === "failed_bootstrap") {
-          runtime.lastExecutionProof = failedProof(NEXT, 82);
-        }
-        if (fault === "unproven_ordinary") {
-          runtime.execution = healthyProof(NEXT, 82, 600).execution;
-        }
-        if (fault === "healthy") {
-          runtime.lastHealthyProof = runtime.lastExecutionProof = healthyProof(
-            NEXT,
-            82,
-            600,
-          );
-        }
-        const read = async (path: string) => {
-          const value = await native.read(path);
-          if (fault === "moved_state") f.moveHead();
-          if (fault === "moved_source" && path.includes("git/ref/")) {
-            return { object: { sha: OTHER } };
+        const policy = fault === "dormant"
+          ? DORMANT_HOSTED_SUPERVISOR_POLICY
+          : {
+            queue,
+            custody: fault === "queue_only"
+              ? { custodyActivated: false, revisions: [] }
+              : custody,
+            rollout,
+          };
+        return await withHostedProductionPolicy(policy, async (graph) => {
+          const { runHostedAutonomyMain } = await graph.maintenanceMain();
+          const installed = [
+            "installed",
+            "failed_bootstrap",
+            "unproven_ordinary",
+            "healthy",
+          ].includes(fault);
+          const f = fixtures(installed);
+          const native = nativeWriterFixture({
+            runId: 700,
+            runAttempt: 1,
+            launcherSha: head,
+          }, "maintenance");
+          const transport = queueTransport(fault);
+          let effects = 0;
+          let custodyCalls = 0;
+          const output = `${root}/output-${fault}`;
+          const runtime = f.release.hostedRuntimes[0];
+          if (fault === "old_execution") {
+            runtime.execution = healthyProof(PRIOR, 81, 600).execution;
           }
-          return value;
-        };
-        const before = structuredClone({
-          release: f.release,
-          repair: f.repair,
-        });
-        const githubFor = () => {
-          effects++;
-          throw new Error("unexpected target surface");
-        };
-        const deps = {
-          state: f.state,
-          clock: { now: () => NOW },
-          githubFor,
-          queue: await darkQueueCoordinatorFixture({
-            state: f.state,
-            githubFor,
-          }),
-          onQueueCustodyReady: () => {
-            custodyCalls++;
-          },
-          uncertainMatrix: () => {
-            effects++;
-            throw new Error("unexpected recovery");
-          },
-        };
-        // Ordinary controls use the normal queue prelude and empty maintenance pass.
-        if (["dormant", "healthy"].includes(fault)) {
-          delete (deps as { uncertainMatrix?: unknown }).uncertainMatrix;
-        }
-        let exit: number;
-        Deno.chdir(checkout);
-        try {
-          exit = await runHostedAutonomyMain({
-            env: {
-              GITHUB_REPOSITORY: "ubiquity/sentinel",
-              GITHUB_REF: "refs/heads/sentinel-supervisor",
-              GITHUB_JOB: "maintenance",
-              GITHUB_RUN_ID: "700",
-              GITHUB_RUN_ATTEMPT: "1",
-              GITHUB_WORKFLOW_REF:
-                "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
-              GITHUB_SHA: head,
-              GITHUB_WORKFLOW_SHA: head,
-              GITHUB_TOKEN: "offline-native-token",
-              GITHUB_OUTPUT: output,
-            },
-            deps,
-            ...(fault === "dormant" ? {} : {
-              compatibility: {
-                custody: fault === "queue_only"
-                  ? { custodyActivated: false, revisions: [] }
-                  : custody,
-                queue,
-                rollout,
-                nativeRead: read,
-                http: transport.http,
-              },
-            }),
+          if (fault === "old_peer") {
+            native.peers.push({
+              ...native.nativeRun,
+              id: 701,
+              status: "queued",
+              head_sha: OTHER,
+            });
+          }
+          if (fault === "migration") {
+            native.peers.push({
+              ...native.nativeRun,
+              id: 701,
+              status: "queued",
+            });
+          }
+          if (fault === "failed_bootstrap") {
+            runtime.lastExecutionProof = failedProof(NEXT, 82);
+          }
+          if (fault === "unproven_ordinary") {
+            runtime.execution = healthyProof(NEXT, 82, 600).execution;
+          }
+          if (fault === "healthy") {
+            runtime.lastHealthyProof =
+              runtime.lastExecutionProof =
+                healthyProof(
+                  NEXT,
+                  82,
+                  600,
+                );
+          }
+          const read = async (path: string) => {
+            const value = await native.read(path);
+            if (fault === "moved_state") f.moveHead();
+            if (fault === "moved_source" && path.includes("git/ref/")) {
+              return { object: { sha: OTHER } };
+            }
+            return value;
+          };
+          const before = structuredClone({
+            release: f.release,
+            repair: f.repair,
           });
-        } finally {
-          Deno.chdir(original);
-        }
-        assert.equal(exit, 0);
-        const outputs = new Map(
-          (await Deno.readTextFile(output)).trimEnd().split("\n").map((line) =>
-            line.split("=", 2) as [string, string]
-          ),
-        );
-        const migrationOnly = ["migration", "installed"].includes(fault);
-        assert.equal(
-          outputs.get("runtimeMigrationOnly"),
-          String(migrationOnly),
-        );
-        assert.equal(
-          outputs.get("runtimeMigrationRevision"),
-          migrationOnly ? NEXT : "",
-        );
-        assert.equal(
-          outputs.get("runtimeMigrationGeneration"),
-          migrationOnly ? "82" : "",
-        );
-        const ordinary = ["dormant", "healthy"].includes(fault);
-        assert.equal(outputs.get("queueCustodyReady"), String(ordinary));
-        assert.equal(custodyCalls > 0, ordinary);
-        assert.equal(effects > 0, ordinary);
-        assert.equal(f.writes(), 0);
-        assert.deepEqual({ release: f.release, repair: f.repair }, before);
-        if (fault === "dormant") assert.deepEqual(transport.calls, []);
+          const githubFor = () => {
+            effects++;
+            throw new Error("unexpected target surface");
+          };
+          const deps = {
+            state: f.state,
+            clock: { now: () => NOW },
+            githubFor,
+            queue: await darkQueueCoordinatorFixture({
+              state: f.state,
+              githubFor,
+            }),
+            onQueueCustodyReady: () => {
+              custodyCalls++;
+            },
+            uncertainMatrix: () => {
+              effects++;
+              throw new Error("unexpected recovery");
+            },
+          };
+          // Ordinary controls use the normal queue prelude and empty maintenance pass.
+          if (["dormant", "healthy"].includes(fault)) {
+            delete (deps as { uncertainMatrix?: unknown }).uncertainMatrix;
+          }
+          let exit: number;
+          Deno.chdir(checkout);
+          try {
+            exit = await runHostedAutonomyMain({
+              env: {
+                GITHUB_REPOSITORY: "ubiquity/sentinel",
+                GITHUB_REF: "refs/heads/sentinel-supervisor",
+                GITHUB_JOB: "maintenance",
+                GITHUB_RUN_ID: "700",
+                GITHUB_RUN_ATTEMPT: "1",
+                GITHUB_WORKFLOW_REF:
+                  "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+                GITHUB_SHA: head,
+                GITHUB_WORKFLOW_SHA: head,
+                GITHUB_TOKEN: "offline-native-token",
+                GITHUB_OUTPUT: output,
+              },
+              deps,
+              ...(fault === "dormant" ? {} : {
+                compatibility: {
+                  custody: fault === "queue_only"
+                    ? { custodyActivated: false, revisions: [] }
+                    : custody,
+                  queue,
+                  rollout,
+                  nativeRead: read,
+                  http: transport.http,
+                },
+              }),
+            });
+          } finally {
+            Deno.chdir(original);
+          }
+          assert.equal(exit, 0);
+          const outputs = new Map(
+            (await Deno.readTextFile(output)).trimEnd().split("\n").map((
+              line,
+            ) => line.split("=", 2) as [string, string]),
+          );
+          const migrationOnly = ["migration", "installed"].includes(fault);
+          assert.equal(
+            outputs.get("runtimeMigrationOnly"),
+            String(migrationOnly),
+          );
+          assert.equal(
+            outputs.get("runtimeMigrationRevision"),
+            migrationOnly ? NEXT : "",
+          );
+          assert.equal(
+            outputs.get("runtimeMigrationGeneration"),
+            migrationOnly ? "82" : "",
+          );
+          const ordinary = ["dormant", "healthy"].includes(fault);
+          assert.equal(outputs.get("queueCustodyReady"), String(ordinary));
+          assert.equal(custodyCalls > 0, ordinary);
+          assert.equal(effects > 0, ordinary);
+          assert.equal(f.writes(), 0);
+          assert.deepEqual({ release: f.release, repair: f.repair }, before);
+          if (fault === "dormant") assert.deepEqual(transport.calls, []);
+        });
       });
     }
   } finally {

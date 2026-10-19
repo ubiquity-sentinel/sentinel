@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
+import { createHostedHistoricalMatrixQuarantine } from "../../ops/hosted-autonomy-matrix-adapters.ts";
 import { inactiveNativeQueueFixture } from "../github/native-queue-fixture.ts";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
@@ -27,9 +28,10 @@ import {
   implementationIntentKey,
 } from "../../src/repair/keys.ts";
 import {
-  runHostedAutonomy,
-  runHostedAutonomyMain,
-} from "../../ops/hosted-autonomy.ts";
+  DORMANT_HOSTED_SUPERVISOR_POLICY,
+  type HostedPolicyGraph,
+  withHostedProductionPolicy,
+} from "./hosted-supervisor-policy-fixture.ts";
 import {
   gitRun,
   pushRawTree,
@@ -50,6 +52,33 @@ import {
   releaseSnapshot,
   repairSnapshot,
 } from "./hosted-autonomy-rig.ts";
+
+type HistoricalQuarantineInput = Parameters<
+  typeof createHostedHistoricalMatrixQuarantine
+>[0];
+type HistoricalWitnesses = NonNullable<
+  HistoricalMatrixQuarantineDepsV1["historicalReleaseWitnesses"]
+>;
+interface WitnessFactory {
+  input: HistoricalQuarantineInput;
+  rejects: HistoricalWitnesses[number]["reject"][];
+}
+const witnessInputs = new WeakMap<HistoricalWitnesses, WitnessFactory>();
+
+/** Retain genuine producer inputs for the graph's own artifact error classes. */
+export function historicalMatrixQuarantineFixture(
+  input: HistoricalQuarantineInput,
+) {
+  const result = createHostedHistoricalMatrixQuarantine(input);
+  const witnesses = result.historicalReleaseWitnesses;
+  if (witnesses !== undefined) {
+    witnessInputs.set(witnesses, {
+      input,
+      rejects: witnesses.map((witness) => witness.reject),
+    });
+  }
+  return result;
+}
 
 export async function historicalMalformedRig(
   includeSibling = true,
@@ -564,6 +593,13 @@ export async function historicalMalformedRig(
     },
     cooldownGate: new HostedRepairCooldownGate({ state: rig.state, clock }),
   });
+  const artifactOptions = {
+    state: rig.state,
+    clock,
+    token: "offline-native-token",
+    artifactRoot: `${rig.tmp}/artifacts`,
+    http,
+  };
   // The concrete controller stays visible (the aggregate fixture call uses its
   // full interface) while the quarantine capability keeps the declared
   // mutable revalidation flag.
@@ -580,13 +616,7 @@ export async function historicalMalformedRig(
     budget: new RollingStartBudget({ state: rig.state, clock, configs: [] }),
     readExecution: (saved: typeof execution) =>
       client.readHostedExecution(saved),
-    transport: createActionsMatrixArtifactTransport({
-      state: rig.state,
-      clock,
-      token: "offline-native-token",
-      artifactRoot: `${rig.tmp}/artifacts`,
-      http,
-    }),
+    transport: createActionsMatrixArtifactTransport(artifactOptions),
   };
   const deps = {
     state: rig.state,
@@ -594,6 +624,49 @@ export async function historicalMalformedRig(
     clock,
     historicalMatrix,
   };
+  const transportDefaults = { ...historicalMatrix.transport };
+  async function historicalDeps(graph: HostedPolicyGraph) {
+    const { createActionsMatrixArtifactTransport } = await graph
+      .matrixArtifacts();
+    const transport = createActionsMatrixArtifactTransport(artifactOptions);
+    // Artifact error classes must share the quarantine consumer's graph; keep
+    // explicit fault-injection methods exactly as the scenario installed them.
+    for (const method of Object.keys(transport)) {
+      const current = Reflect.get(historicalMatrix.transport, method);
+      if (current !== Reflect.get(transportDefaults, method)) {
+        Reflect.set(transport, method, current);
+      }
+    }
+    let witnesses = historicalMatrix.historicalReleaseWitnesses;
+    const factory = witnesses === undefined
+      ? undefined
+      : witnessInputs.get(witnesses);
+    if (factory !== undefined && witnesses !== undefined) {
+      const { createHostedHistoricalMatrixQuarantine } = await graph
+        .matrixAdapters();
+      const produced = createHostedHistoricalMatrixQuarantine(factory.input)
+        .historicalReleaseWitnesses;
+      assert(produced);
+      assert.equal(produced.length, witnesses.length);
+      witnesses = produced.map((actual, index) => {
+        const original = witnesses![index];
+        const reject = original.reject === factory.rejects[index]
+          ? actual.reject
+          : original.reject;
+        return Object.assign(actual, original, { reject });
+      });
+    }
+    return await withDarkQueueAuthority({
+      ...deps,
+      historicalMatrix: {
+        ...historicalMatrix,
+        transport,
+        ...(witnesses === undefined
+          ? {}
+          : { historicalReleaseWitnesses: witnesses }),
+      },
+    });
+  }
   const checkoutHead = await gitRun(checkout, ["rev-parse", "HEAD"], ENV);
   assert(checkoutHead.ok);
   const mainEnv = {
@@ -635,10 +708,16 @@ export async function historicalMalformedRig(
       const prior = Deno.cwd();
       Deno.chdir(checkout);
       try {
-        return await runHostedAutonomyMain({
-          env: mainEnv,
-          deps: await withDarkQueueAuthority(deps),
-        });
+        return await withHostedProductionPolicy(
+          DORMANT_HOSTED_SUPERVISOR_POLICY,
+          async (graph) => {
+            const { runHostedAutonomyMain } = await graph.maintenanceMain();
+            return await runHostedAutonomyMain({
+              env: mainEnv,
+              deps: await historicalDeps(graph),
+            });
+          },
+        );
       } finally {
         Deno.chdir(prior);
       }
@@ -647,7 +726,13 @@ export async function historicalMalformedRig(
       const prior = Deno.cwd();
       Deno.chdir(checkout);
       try {
-        return await runHostedAutonomy(await withDarkQueueAuthority(deps));
+        return await withHostedProductionPolicy(
+          DORMANT_HOSTED_SUPERVISOR_POLICY,
+          async (graph) => {
+            const { runHostedAutonomy } = await graph.runner();
+            return await runHostedAutonomy(await historicalDeps(graph));
+          },
+        );
       } finally {
         Deno.chdir(prior);
       }
