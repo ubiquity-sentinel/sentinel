@@ -63,6 +63,9 @@ export interface HostedPolicyGraph {
   producerRecovery(): Promise<
     typeof import("../../ops/hosted-autonomy-producer-recovery.ts")
   >;
+  historicalRecovery(): Promise<
+    typeof import("../../ops/hosted-autonomy-historical-recovery.ts")
+  >;
   matrixArtifacts(): Promise<
     typeof import("../../src/host/matrix-artifacts.ts")
   >;
@@ -184,6 +187,8 @@ export async function withHostedProductionPolicy<T>(
       import(pathToFileURL(root + "/" + path).href);
     return await consume({
       producerRecovery: () => load("ops/hosted-autonomy-producer-recovery.ts"),
+      historicalRecovery: () =>
+        load("ops/hosted-autonomy-historical-recovery.ts"),
       matrixArtifacts: () => load("src/host/matrix-artifacts.ts"),
       matrixAdapters: () => load("ops/hosted-autonomy-matrix-adapters.ts"),
       reviewOwnerHost: () => load("src/host/review-owner-host.ts"),
