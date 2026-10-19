@@ -13,6 +13,19 @@ identity and runtime routing are reported separately.
 
 ## Active task register
 
+At 2026-10-19 02:37 UTC the owner stopped this coordinator and requested pushed
+code plus a GitHub takeover issue. Deployment work is stopped; all local task
+workers and watcher processes are settled. Existing F CI `39188947450:1` / job
+`117857262187` was still in progress at 02:39:26 UTC and is deliberately left
+running. No admission pause, LF freeze/publication, runtime pointer change or
+live successor acceptance occurred. The next agent must reconcile and adopt the
+preserved canonical lane before effects. Takeover contract and hashed
+source-only preparation artifacts are in
+`handoff/2026-10-19-review-binding/README.md`. The collector and materializer
+are unexecuted and untested; collector invocation/registration remains
+unfinished. This stop supersedes prior next-action wording for the outgoing
+coordinator; it does not declare the repair delivered.
+
 At 2026-10-19 02:13 UTC the accepted 48-file owner-supersession source and exact
 runtime profile are committed and published as F
 `341797d6f0c20b96ceffdfab519c1dd37e96954b`, tree
