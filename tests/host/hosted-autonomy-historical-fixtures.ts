@@ -62,6 +62,7 @@ type HistoricalWitnesses = NonNullable<
 interface WitnessFactory {
   input: HistoricalQuarantineInput;
   rejects: HistoricalWitnesses[number]["reject"][];
+  nativeQueueFor: HistoricalMatrixQuarantineDepsV1["nativeQueueFor"];
 }
 const witnessInputs = new WeakMap<HistoricalWitnesses, WitnessFactory>();
 
@@ -75,6 +76,7 @@ export function historicalMatrixQuarantineFixture(
     witnessInputs.set(witnesses, {
       input,
       rejects: witnesses.map((witness) => witness.reject),
+      nativeQueueFor: result.nativeQueueFor,
     });
   }
   return result;
@@ -637,6 +639,7 @@ export async function historicalMalformedRig(
         Reflect.set(transport, method, current);
       }
     }
+    let nativeQueueFor = historicalMatrix.nativeQueueFor;
     let witnesses = historicalMatrix.historicalReleaseWitnesses;
     const factory = witnesses === undefined
       ? undefined
@@ -644,9 +647,12 @@ export async function historicalMalformedRig(
     if (factory !== undefined && witnesses !== undefined) {
       const { createHostedHistoricalMatrixQuarantine } = await graph
         .matrixAdapters();
-      const produced = createHostedHistoricalMatrixQuarantine(factory.input)
-        .historicalReleaseWitnesses;
+      const rebuilt = createHostedHistoricalMatrixQuarantine(factory.input);
+      const produced = rebuilt.historicalReleaseWitnesses;
       assert(produced);
+      if (nativeQueueFor === factory.nativeQueueFor) {
+        nativeQueueFor = rebuilt.nativeQueueFor;
+      }
       assert.equal(produced.length, witnesses.length);
       witnesses = produced.map((actual, index) => {
         const original = witnesses![index];
@@ -661,6 +667,7 @@ export async function historicalMalformedRig(
       historicalMatrix: {
         ...historicalMatrix,
         transport,
+        nativeQueueFor,
         ...(witnesses === undefined
           ? {}
           : { historicalReleaseWitnesses: witnesses }),
@@ -704,6 +711,16 @@ export async function historicalMalformedRig(
       fault = next;
     },
     calls,
+    withHistoricalGraph: <T>(
+      consume: (
+        graph: HostedPolicyGraph,
+        deps: Awaited<ReturnType<typeof historicalDeps>>,
+      ) => Promise<T>,
+    ): Promise<T> =>
+      withHostedProductionPolicy(
+        DORMANT_HOSTED_SUPERVISOR_POLICY,
+        async (graph) => await consume(graph, await historicalDeps(graph)),
+      ),
     runMain: async () => {
       const prior = Deno.cwd();
       Deno.chdir(checkout);
