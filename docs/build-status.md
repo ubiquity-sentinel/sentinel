@@ -13,6 +13,47 @@ identity and runtime routing are reported separately.
 
 ## Active task register
 
+At 2026-10-19 12:30 UTC, the incoming primary integration owner resumes the approved repair on the preserved canonical lane at 744a21bd5296ec2f7e326f37d7ca04a5ae85b1c1. The trusted active hook verifies GPT-6 Astra/ultra; the user explicitly requested subagents. The existing dirty 03:11 checkpoint is preserved byte-for-byte below. Fresh no-history auditor recovery_audit verified actual GPT-6 Astra/max and returned pre-resume PASS: exact lane identities and dirty scopes, original native failure receipt, real custody RED 4e1fc62d-ac96-4788-b525-827e2ca2efcd, prior owner/worker stop records and absent owned processes at 12:30:11. No hosted or runtime effects have occurred in this resume.
+
+Ownership transfers only the recorded custody module to custody_fix for the minimal lazy native-reviewer composition correction and assigned tests; no eligible exact pending obligation must avoid composition, and required review retains custody/accounting guards. fixture_verify independently accepted the unchanged two-test patch 946b655dacdaad35cee824bd6725c9c247f7ffe81560a2ac27875968e22263ac and original module/lifecycle evidence without rerunning. Primary alone owns ledger, commits, ancestry integration, source/profile freeze and publication. rollout_prepare is read-only on the retained rollout helpers and acceptance requirements. All existing lane names, base identities and scope limits below remain in force. Runtime policy is unchanged. The current user-supplied per-attempt hosted E2E/runtime approval boundary governs this turn despite broader stored continuation wording; locally prepare the exact candidate and source CI before that approval step.
+
+At 2026-10-19 03:11 UTC, exact F CI `39188947450:1` / job
+`117857262187` is FAILED: 3,462 passed, 1,778 steps, three failures and
+87 ignored. The native terminal log and unmodified run/jobs/check-run responses
+are retained by Mac root in `receipts/takeover-ci-20261019/`, terminal receipt
+SHA256 `e1a160e2ef5319db2b7781ce89b6f90cae48eb5e6f184c2a1285b355dd9fd0da`.
+No admission pause, protected publication, state change or duplicate CI occurred.
+F remains unaccepted for installation. The previous next-action wording below
+is superseded by these bounded local corrections, then one integrated corrected
+candidate and its exact source CI. Root retains sole integration/ledger/Git and
+hosted authority.
+
+Two isolated correction writers start from exact
+`744a21bd5296ec2f7e326f37d7ca04a5ae85b1c1` under the original plan identity:
+
+- `binding-ci-custody-20261019`, aid `e01f993890`, branch
+  `codex/master-plan-binding-ci-custody-20261019-ae01f993890`, worktree
+  `<repository root>/.codex-worktrees/master-plan-binding-ci-custody-20261019-ae01f993890`:
+  `binding_ci_custody` owns the named self-dependency failure, only
+  `src/host/owner-successor-acceptance.ts`, `src/host/actions-repair-host.ts`,
+  `tests/host/actions-self-dependencies_test.ts` and
+  `tests/host/owner-successor-acceptance_test.ts`. Native custody rejection,
+  truthful registration and fail-closed required review remain mandatory.
+- `binding-ci-fixtures-20261019`, aid `332e677851`, branch
+  `codex/master-plan-binding-ci-fixtures-20261019-a332e677851`, worktree
+  `<repository root>/.codex-worktrees/master-plan-binding-ci-fixtures-20261019-a332e677851`:
+  `binding_ci_fixtures` initially owns only
+  `tests/host/hosted-app-takeover-routing_test.ts` and
+  `tests/host/hosted-autonomy-output-bound_test.ts`. It must preserve inert
+  routing semantics and audit the exact new settler before updating its list;
+  a runtime defect requires a concrete scope amendment before source edits.
+
+Both return uncommitted scoped results with registered local checks bounded at
+300 seconds. They may not edit ledger/shared contracts/workflows/profiles,
+commit, push, invoke real credentials/models or launch hosted work. Existing
+collector/materializer preparation remains retained; its F pins must be
+reconciled against the eventual accepted corrected runtime, never silently reused.
+
 At 2026-10-19 02:52 UTC, incoming integration owner Mac root thread
 `01a14ebc-b685-7d42-952b-577c8f93e17f` adopts the preserved canonical lane
 `continuation/sentinel-migration` at handoff
