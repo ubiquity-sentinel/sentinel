@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import {
+  DORMANT_HOSTED_SUPERVISOR_POLICY,
+  withHostedProductionPolicy,
+} from "./hosted-supervisor-policy-fixture.ts";
 import { darkQueueCoordinatorFixture } from "./hosted-autonomy-dark-queue-fixture.ts";
 import {
   captureHostedAutonomyMain,
@@ -59,10 +63,20 @@ async function captureNativeMain(
   const previous = Deno.cwd();
   try {
     Deno.chdir(checkout);
-    return await captureHostedAutonomyMain({
-      ...deps,
-      queue: await darkQueueCoordinatorFixture(deps),
-    }, head.stdout.trim());
+    return await withHostedProductionPolicy(
+      DORMANT_HOSTED_SUPERVISOR_POLICY,
+      async (graph) => {
+        const { runHostedAutonomyMain } = await graph.maintenanceMain();
+        return await captureHostedAutonomyMain(
+          {
+            ...deps,
+            queue: await darkQueueCoordinatorFixture(deps),
+          },
+          head.stdout.trim(),
+          runHostedAutonomyMain,
+        );
+      },
+    );
   } finally {
     Deno.chdir(previous);
   }

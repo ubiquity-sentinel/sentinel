@@ -15,10 +15,7 @@ import {
   implementationIntentKey,
 } from "../../src/repair/keys.ts";
 import { createReleaseStateStore } from "../../src/state/mod.ts";
-import {
-  createHostedHistoricalMatrixQuarantine,
-  runHostedAutonomy,
-} from "../../ops/hosted-autonomy.ts";
+import { runHostedAutonomy } from "../../ops/hosted-autonomy.ts";
 import { reservation, T0, workRecord } from "../state/helpers.ts";
 import {
   BASE,
@@ -27,7 +24,10 @@ import {
   SELF_REPO,
   TARGET,
 } from "./hosted-autonomy-fixtures.ts";
-import { historicalMalformedRig } from "./hosted-autonomy-historical-fixtures.ts";
+import {
+  historicalMalformedRig,
+  historicalMatrixQuarantineFixture as createHostedHistoricalMatrixQuarantine,
+} from "./hosted-autonomy-historical-fixtures.ts";
 import { historicalWithNewerCurrent } from "./hosted-autonomy-newer-current-fixtures.ts";
 
 Deno.test("historical missing-cell quarantine: strict leaf, retained ambiguous charge and idempotent maintenance", async () => {
