@@ -77,6 +77,15 @@ export interface HostedPolicyGraph {
   queueProof(): Promise<
     typeof import("../../ops/hosted-autonomy-queue-proof.ts")
   >;
+  followUpPass(): Promise<
+    typeof import("../../ops/hosted-autonomy-follow-up-pass.ts")
+  >;
+  deliveryFacts(): Promise<
+    typeof import("../../ops/hosted-autonomy-delivery.ts")
+  >;
+  maintenanceMain(): Promise<
+    typeof import("../../ops/hosted-autonomy-main.ts")
+  >;
   deliveryProof(): Promise<
     typeof import("../../ops/hosted-autonomy-delivery-proof.ts")
   >;
@@ -155,6 +164,9 @@ export async function withHostedProductionPolicy<T>(
       followUps: () => load("ops/hosted-autonomy-follow-ups.ts"),
       queueProof: () => load("ops/hosted-autonomy-queue-proof.ts"),
       deliveryProof: () => load("ops/hosted-autonomy-delivery-proof.ts"),
+      followUpPass: () => load("ops/hosted-autonomy-follow-up-pass.ts"),
+      deliveryFacts: () => load("ops/hosted-autonomy-delivery.ts"),
+      maintenanceMain: () => load("ops/hosted-autonomy-main.ts"),
     });
   } finally {
     await Deno.remove(root, { recursive: true });
