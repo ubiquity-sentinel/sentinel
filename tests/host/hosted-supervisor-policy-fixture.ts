@@ -60,6 +60,21 @@ async function files(root: string, prefix: string): Promise<string[]> {
 }
 /** Every loader resolves within one private graph, including opaque capability owners. */
 export interface HostedPolicyGraph {
+  existingPrTakeover(): Promise<
+    typeof import("../../src/host/existing-pr-takeover.ts")
+  >;
+  publicationProof(): Promise<
+    typeof import("../../src/github/existing-pr-publication-proof.ts")
+  >;
+  queueDeliveryReader(): Promise<
+    typeof import("../../src/github/queue-delivery-reader.ts")
+  >;
+  queueLegacyDirect(): Promise<
+    typeof import("../../src/github/queue-legacy-direct.ts")
+  >;
+  maintenancePublication(): Promise<
+    typeof import("../../src/host/maintenance-existing-pr-publication.ts")
+  >;
   supervisorHost(): Promise<
     typeof import("../../src/host/actions-supervisor-host.ts")
   >;
@@ -156,6 +171,13 @@ export async function withHostedProductionPolicy<T>(
     const load = (path: string) =>
       import(pathToFileURL(root + "/" + path).href);
     return await consume({
+      existingPrTakeover: () => load("src/host/existing-pr-takeover.ts"),
+      publicationProof: () =>
+        load("src/github/existing-pr-publication-proof.ts"),
+      queueDeliveryReader: () => load("src/github/queue-delivery-reader.ts"),
+      queueLegacyDirect: () => load("src/github/queue-legacy-direct.ts"),
+      maintenancePublication: () =>
+        load("src/host/maintenance-existing-pr-publication.ts"),
       supervisorHost: () => load("src/host/actions-supervisor-host.ts"),
       runner: () => load("ops/hosted-autonomy-runner.ts"),
       deliveryPass: () => load("ops/hosted-autonomy-delivery-pass.ts"),
