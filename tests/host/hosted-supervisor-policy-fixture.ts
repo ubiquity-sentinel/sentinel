@@ -60,6 +60,9 @@ async function files(root: string, prefix: string): Promise<string[]> {
 }
 /** Every loader resolves within one private graph, including opaque capability owners. */
 export interface HostedPolicyGraph {
+  producerRecovery(): Promise<
+    typeof import("../../ops/hosted-autonomy-producer-recovery.ts")
+  >;
   existingPrTakeover(): Promise<
     typeof import("../../src/host/existing-pr-takeover.ts")
   >;
@@ -171,6 +174,7 @@ export async function withHostedProductionPolicy<T>(
     const load = (path: string) =>
       import(pathToFileURL(root + "/" + path).href);
     return await consume({
+      producerRecovery: () => load("ops/hosted-autonomy-producer-recovery.ts"),
       existingPrTakeover: () => load("src/host/existing-pr-takeover.ts"),
       publicationProof: () =>
         load("src/github/existing-pr-publication-proof.ts"),
