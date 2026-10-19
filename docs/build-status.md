@@ -13,18 +13,26 @@ identity and runtime routing are reported separately.
 
 ## Active task register
 
-At 2026-10-19 02:37 UTC the owner stopped this coordinator and requested pushed
-code plus a GitHub takeover issue. Deployment work is stopped; all local task
-workers and watcher processes are settled. Existing F CI `39188947450:1` / job
-`117857262187` was still in progress at 02:39:26 UTC and is deliberately left
-running. No admission pause, LF freeze/publication, runtime pointer change or
-live successor acceptance occurred. The next agent must reconcile and adopt the
-preserved canonical lane before effects. Takeover contract and hashed
-source-only preparation artifacts are in
-`handoff/2026-10-19-review-binding/README.md`. The collector and materializer
-are unexecuted and untested; collector invocation/registration remains
-unfinished. This stop supersedes prior next-action wording for the outgoing
-coordinator; it does not declare the repair delivered.
+At 2026-10-19 02:52 UTC, incoming integration owner Mac root thread
+`01a14ebc-b685-7d42-952b-577c8f93e17f` adopts the preserved canonical lane
+`continuation/sentinel-migration` at handoff
+`a9f892da87638e35fc957f5d915edf035abdd5e0` for issue #176 and the existing
+review-binding repair goal. The trusted active-model hook verifies GPT-6 Astra
+with ultra reasoning. The outgoing coordinator completed its owner-requested
+stop and handoff; its relevant children and watcher are settled. Fresh read-only
+reconciliation verified the clean lane, remote handoff, accepted ancestry and
+all 22 archived artifact hashes, with no competing writer. Root alone owns
+ledger, integration and live rollout; bounded workers own isolated preparation
+only. The outgoing session will not be restarted. F CI `39188947450:1` remains
+the existing candidate gate; no duplicate run is authorized by this checkpoint.
+Collector invocation preparation is locally validated in isolated scratch, with
+null manual-cooldown refusal preserved. No live collector, admission pause, LF
+freeze/publication, runtime pointer change or successor delivery is claimed. The
+next action is exact F CI acceptance followed by the retained guarded drain,
+complete-state collection, LF validation/CI and installation sequence. Handoff
+evidence remains in `handoff/2026-10-19-review-binding/`; incoming
+reconciliation is retained by Mac root under
+`receipts/takeover-reconcile-20261019/`.
 
 At 2026-10-19 02:13 UTC the accepted 48-file owner-supersession source and exact
 runtime profile are committed and published as F
