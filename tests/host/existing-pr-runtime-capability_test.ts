@@ -1,4 +1,10 @@
 import assert from "node:assert/strict";
+import { HOSTED_RUNTIME_ROLLOUT } from "../../src/host/hosted-runtime-rollout.ts";
+import {
+  OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+} from "../../src/host/owner-install-runtime-pins.ts";
+
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import type { HostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
@@ -18,6 +24,7 @@ import {
 import { reservation } from "../state/helpers.ts";
 import {
   CANDIDATE,
+  DORMANT_HOSTED_POLICIES,
   LAUNCHER,
   makeRig,
   releaseRequest,
@@ -37,7 +44,12 @@ import { allowsHostedRuntime } from "../../src/host/hosted-runtime-compatibility
 const allowsQueueRuntime = (
   revision: GitSha,
   policy?: ExistingPrRuntimeCapability,
-) => allowsHostedRuntime(revision, undefined, policy);
+) =>
+  allowsHostedRuntime(
+    revision,
+    DORMANT_HOSTED_POLICIES.queueRuntimeCapability,
+    policy,
+  );
 
 // Trusted in-process configuration: no environment, state field or workflow input.
 const activated = (revisions: readonly GitSha[] = [CANDIDATE]) => ({
@@ -47,6 +59,7 @@ const activated = (revisions: readonly GitSha[] = [CANDIDATE]) => ({
 
 function input(rig: RigV1, id: number, policy = activated()) {
   return {
+    ...DORMANT_HOSTED_POLICIES,
     clock: rig.clock,
     state: rig.release,
     run: run(id),
@@ -63,11 +76,49 @@ async function requestedPrior(rig: RigV1) {
   return requireRun(await rig.prepare(run(2)));
 }
 
-Deno.test("existing PR runtime fence: dormant source is unchanged and accepted pins are exact", () => {
-  assert.equal(EXISTING_PR_RUNTIME_CAPABILITY.custodyActivated, false);
-  assert.deepEqual(EXISTING_PR_RUNTIME_CAPABILITY.revisions, []);
-  assert.deepEqual(EXISTING_PR_RUNTIME_CAPABILITY.ownerInstallMigrations, []);
-  assert.equal(allowsQueueRuntime(LAUNCHER), true);
+Deno.test("existing PR runtime fence: committed LF accepts only its exact forward runtime", () => {
+  const intents = HOSTED_RUNTIME_ROLLOUT.ownerSupersessions;
+  assert.ok(
+    intents.length > 0,
+    "committed LF carries explicit owner authority",
+  );
+  assert.equal(EXISTING_PR_RUNTIME_CAPABILITY.custodyActivated, true);
+  assert.deepEqual(
+    EXISTING_PR_RUNTIME_CAPABILITY.revisions,
+    [...new Set(intents.map((intent) => intent.toRevision))],
+  );
+  assert.deepEqual(
+    EXISTING_PR_RUNTIME_CAPABILITY.ownerInstallMigrations,
+    intents.map((
+      { fromRevision, fromGeneration, toRevision, toGeneration },
+    ) => ({
+      fromRevision,
+      fromGeneration,
+      toRevision,
+      toGeneration,
+    })),
+  );
+  for (const intent of intents) {
+    assert.equal(allowsQueueRuntime(intent.toRevision), true);
+    assert.equal(allowsQueueRuntime(intent.fromRevision), false);
+    assert.ok(intent.toGeneration > intent.fromGeneration);
+  }
+  assert.equal(
+    allowsQueueRuntime(OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION),
+    false,
+  );
+  assert.equal(
+    allowsQueueRuntime(OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION),
+    false,
+  );
+});
+
+Deno.test("existing PR runtime fence: explicit dormant fixture and accepted pins are exact", () => {
+  const dormant = DORMANT_HOSTED_POLICIES.existingPrRuntimeCapability;
+  assert.equal(dormant.custodyActivated, false);
+  assert.deepEqual(dormant.revisions, []);
+  assert.deepEqual(dormant.ownerInstallMigrations, []);
+  assert.equal(allowsQueueRuntime(LAUNCHER, dormant), true);
   assert.equal(allowsQueueRuntime(CANDIDATE, activated()), true);
   for (
     const revision of [LAUNCHER, CANDIDATE.slice(0, 10), `${CANDIDATE}0`, "*"]
@@ -236,7 +287,7 @@ Deno.test("existing PR runtime fence: persisted promotion and rollback keep thei
             before.hostedRuntimes[0],
             before.hostedReleases,
             rig.clock.now(),
-            undefined,
+            DORMANT_HOSTED_POLICIES.queueRuntimeCapability,
             pins,
           ),
           null,
@@ -360,6 +411,7 @@ Deno.test("existing PR runtime fence: old healthy ordinary runtime is refused ev
     await bootstrapHealthy(rig);
     const before = await rig.snapshot();
     const input = {
+      ...DORMANT_HOSTED_POLICIES,
       clock: rig.clock,
       state: rig.release,
       run: run(2),
@@ -381,6 +433,7 @@ Deno.test("existing PR runtime fence: queue-off cannot resume an incompatible sa
     const execution = requireRun(await rig.prepare(run(2)));
     const before = await rig.snapshot();
     const input = {
+      ...DORMANT_HOSTED_POLICIES,
       clock: rig.clock,
       state: rig.release,
       run: run(execution.runId),

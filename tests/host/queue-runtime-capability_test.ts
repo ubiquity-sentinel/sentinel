@@ -1,4 +1,10 @@
 import assert from "node:assert/strict";
+import { HOSTED_RUNTIME_ROLLOUT } from "../../src/host/hosted-runtime-rollout.ts";
+import {
+  OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION,
+  OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
+} from "../../src/host/owner-install-runtime-pins.ts";
+
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import type { HostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
@@ -19,6 +25,7 @@ import {
 import { reservation } from "../state/helpers.ts";
 import {
   CANDIDATE,
+  DORMANT_HOSTED_POLICIES,
   LAUNCHER,
   makeRig,
   releaseRequest,
@@ -42,6 +49,7 @@ const activated = (revisions: readonly GitSha[] = [CANDIDATE]) => ({
 
 function input(rig: RigV1, id: number, policy = activated()) {
   return {
+    ...DORMANT_HOSTED_POLICIES,
     clock: rig.clock,
     state: rig.release,
     run: run(id),
@@ -58,11 +66,49 @@ async function requestedPrior(rig: RigV1) {
   return requireRun(await rig.prepare(run(2)));
 }
 
-Deno.test("queue runtime capability: dormant source is unchanged and accepted pins are exact", () => {
-  assert.equal(QUEUE_RUNTIME_CAPABILITY.proofActivated, false);
-  assert.deepEqual(QUEUE_RUNTIME_CAPABILITY.revisions, []);
-  assert.deepEqual(QUEUE_RUNTIME_CAPABILITY.ownerInstallMigrations, []);
-  assert.equal(allowsQueueRuntime(LAUNCHER), true);
+Deno.test("queue runtime capability: committed LF accepts only its exact forward runtime", () => {
+  const intents = HOSTED_RUNTIME_ROLLOUT.ownerSupersessions;
+  assert.ok(
+    intents.length > 0,
+    "committed LF carries explicit owner authority",
+  );
+  assert.equal(QUEUE_RUNTIME_CAPABILITY.proofActivated, true);
+  assert.deepEqual(
+    QUEUE_RUNTIME_CAPABILITY.revisions,
+    [...new Set(intents.map((intent) => intent.toRevision))],
+  );
+  assert.deepEqual(
+    QUEUE_RUNTIME_CAPABILITY.ownerInstallMigrations,
+    intents.map((
+      { fromRevision, fromGeneration, toRevision, toGeneration },
+    ) => ({
+      fromRevision,
+      fromGeneration,
+      toRevision,
+      toGeneration,
+    })),
+  );
+  for (const intent of intents) {
+    assert.equal(allowsQueueRuntime(intent.toRevision), true);
+    assert.equal(allowsQueueRuntime(intent.fromRevision), false);
+    assert.ok(intent.toGeneration > intent.fromGeneration);
+  }
+  assert.equal(
+    allowsQueueRuntime(OWNER_DEVELOPMENT_INSTALL_GEN80_REVISION),
+    false,
+  );
+  assert.equal(
+    allowsQueueRuntime(OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION),
+    false,
+  );
+});
+
+Deno.test("queue runtime capability: explicit dormant fixture and accepted pins are exact", () => {
+  const dormant = DORMANT_HOSTED_POLICIES.queueRuntimeCapability;
+  assert.equal(dormant.proofActivated, false);
+  assert.deepEqual(dormant.revisions, []);
+  assert.deepEqual(dormant.ownerInstallMigrations, []);
+  assert.equal(allowsQueueRuntime(LAUNCHER, dormant), true);
   assert.equal(allowsQueueRuntime(CANDIDATE, activated()), true);
   for (
     const revision of [LAUNCHER, CANDIDATE.slice(0, 10), `${CANDIDATE}0`, "*"]
@@ -229,6 +275,7 @@ Deno.test("queue runtime capability: persisted promotion and rollback keep their
             before.hostedReleases,
             rig.clock.now(),
             pins,
+            DORMANT_HOSTED_POLICIES.existingPrRuntimeCapability,
           ),
           null,
         );
@@ -351,6 +398,7 @@ Deno.test("queue runtime capability: old healthy ordinary runtime is refused eve
     await bootstrapHealthy(rig);
     const before = await rig.snapshot();
     const input = {
+      ...DORMANT_HOSTED_POLICIES,
       clock: rig.clock,
       state: rig.release,
       run: run(2),
