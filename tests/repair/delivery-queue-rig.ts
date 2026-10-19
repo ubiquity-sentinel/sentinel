@@ -42,6 +42,11 @@ import {
   createHostedAutonomyScopes,
   type HostedAutonomyPassContextV1,
 } from "../../ops/hosted-autonomy-scopes.ts";
+import {
+  DORMANT_HOSTED_SUPERVISOR_POLICY,
+  type HostedPolicyGraph,
+  withHostedProductionPolicy,
+} from "../host/hosted-supervisor-policy-fixture.ts";
 import type {
   HostedAutonomyDepsV1,
   HostedAutonomyGitHubV1,
@@ -73,6 +78,14 @@ interface PullV1 {
 
 /** The fixed sentinel App: author, reviewer and merger of every PR here. */
 export const APP = "ubiquity-sentinel[bot]";
+
+/** Keep the private dormant production graph alive for the entire historical scenario. */
+export function historicalDeliveryScenario(
+  check: (graph: HostedPolicyGraph) => Promise<void>,
+): () => Promise<void> {
+  return () =>
+    withHostedProductionPolicy(DORMANT_HOSTED_SUPERVISOR_POLICY, check);
+}
 
 /** One merge the launcher made, with its commit message evidence. */
 export interface LauncherMergeV1 {
@@ -485,6 +498,8 @@ export async function queueRig(
     livePolicy?: boolean;
     /** The one repository (default ai.ubq.fi). */
     repository?: RepositoryIdentityV1;
+    /** Explicit historical direct-delivery policy; absent retains canonical behavior. */
+    historicalLauncher?: HostedPolicyGraph;
   } = {},
 ) {
   const repository = options.repository ?? REPO;
@@ -554,7 +569,27 @@ export async function queueRig(
    * One REAL launcher delivery pass (`runHostedDeliveryPass`) over the same
    * state and repository, as the maintenance job runs it before the runtime.
    */
+  // Each historical scenario owns its graph; all launcher passes share its consumers.
+  let historical:
+    | Promise<
+      readonly [
+        typeof import("../../ops/hosted-autonomy-delivery-pass.ts"),
+        typeof import("../../ops/hosted-autonomy-retry-pass.ts"),
+        typeof import("../../ops/hosted-autonomy-scopes.ts"),
+      ]
+    >
+    | undefined;
   const launcher = async (): Promise<string[]> => {
+    const graph = options.historicalLauncher;
+    const [delivery, closed, scopes] = graph === undefined
+      ? [{ runHostedDeliveryPass }, { readHostedClosedIssues }, {
+        createHostedAutonomyScopes,
+      }]
+      : await (historical ??= Promise.all([
+        graph.deliveryPass(),
+        graph.closedIssues(),
+        graph.scopes(),
+      ]));
     const read = await state.readRepair();
     if (!read.ok || read.value.status !== "found") throw new Error("state");
     const surface = github.launcherSurface();
@@ -575,10 +610,10 @@ export async function queueRig(
       closedIssues: new Set<string>(),
       foreignMerged: new Map(),
       dedicatedReservations: new Set<string>(),
-      ...createHostedAutonomyScopes(hosted),
+      ...scopes.createHostedAutonomyScopes(hosted),
     } as unknown as HostedAutonomyPassContextV1;
-    await readHostedClosedIssues(context);
-    await runHostedDeliveryPass(context);
+    await closed.readHostedClosedIssues(context);
+    await delivery.runHostedDeliveryPass(context);
     launcherActions.push(...context.actions);
     return context.actions;
   };
