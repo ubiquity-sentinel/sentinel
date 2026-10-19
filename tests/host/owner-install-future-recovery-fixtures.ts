@@ -511,7 +511,13 @@ export async function futureRecoveryFixture(
       await source.write(
         source.runtime,
         "src/host/hosted-runtime-rollout.json",
-        JSON.stringify(HOSTED_RUNTIME_ROLLOUT),
+        // Frozen F predates the launcher-owned LF authority.
+        JSON.stringify({
+          ...HOSTED_RUNTIME_ROLLOUT,
+          installs: [],
+          ownerSupersessions: [],
+          ownerSuccessorTaskBindings: [],
+        }),
       );
       await source.git(source.runtime, ["add", "."]);
       await source.git(source.runtime, [
