@@ -20,6 +20,7 @@ import { recoveryRig } from "./actions-supervisor-recovery-fixture.ts";
 import {
   CANDIDATE,
   DIGEST,
+  DORMANT_HOSTED_POLICIES,
   execution,
   LAUNCHER,
   RECOVERY_HEALTH_LAUNCHER,
@@ -35,18 +36,47 @@ import {
 Deno.test("same-pointer recovery: exact canceled71 admits one model-disabled bootstrap and healthy finalization restores installer eligibility", async () => {
   const rig = await recoveryRig();
   try {
-    const planned = requireRun(await rig.prepare());
+    const planned = requireRun(
+      await runHostedSupervisorPrepare({
+        ...DORMANT_HOSTED_POLICIES,
+        state: rig.state,
+        evidence: rig.evidence,
+        clock: rig.clock,
+        run: run(72),
+      }),
+    );
     assert.equal(planned.purpose, "bootstrap");
     assert.equal(planned.revision, RECOVERY_REVISION);
     assert.equal(planned.generation, 59);
     const started = (await rig.read()).snapshot.hostedRuntimes[0];
     assert.deepEqual(started.lastHealthyProof, rig.prior);
     assert.deepEqual(started.lastExecutionProof, rig.skipped);
-    assert.equal(requireRun(await rig.prepare()).id, planned.id);
-    assert.equal((await rig.prepare(run(73))).status, "pending");
+    assert.equal(
+      requireRun(
+        await runHostedSupervisorPrepare({
+          ...DORMANT_HOSTED_POLICIES,
+          state: rig.state,
+          evidence: rig.evidence,
+          clock: rig.clock,
+          run: run(72),
+        }),
+      ).id,
+      planned.id,
+    );
+    assert.equal(
+      (await runHostedSupervisorPrepare({
+        ...DORMANT_HOSTED_POLICIES,
+        state: rig.state,
+        evidence: rig.evidence,
+        clock: rig.clock,
+        run: run(73),
+      })).status,
+      "pending",
+    );
     rig.evidence.settlements.set(planned.id, runProof(planned, "healthy"));
     rig.clock.advance(4000);
     const finalized = await runHostedSupervisorFinalize({
+      ...DORMANT_HOSTED_POLICIES,
       state: rig.state,
       evidence: rig.evidence,
       clock: rig.clock,
@@ -62,7 +92,15 @@ Deno.test("same-pointer recovery: exact canceled71 admits one model-disabled boo
       planned.id,
     );
     assert.equal(
-      planOwnerDevelopmentInstall(healthy, rig.clock.now()).status,
+      planOwnerDevelopmentInstall(
+        healthy,
+        rig.clock.now(),
+        undefined,
+        undefined,
+        DORMANT_HOSTED_POLICIES.queueRuntimeCapability,
+        DORMANT_HOSTED_POLICIES.existingPrRuntimeCapability,
+        DORMANT_HOSTED_POLICIES.runtimeRollout,
+      ).status,
       "install",
     );
   } finally {
@@ -85,7 +123,15 @@ Deno.test("same-pointer recovery: a freshly authenticated newer failed old-contr
   );
   const rig = await recoveryRig({ lastExecutionProof: failed });
   try {
-    const planned = requireRun(await rig.prepare());
+    const planned = requireRun(
+      await runHostedSupervisorPrepare({
+        ...DORMANT_HOSTED_POLICIES,
+        state: rig.state,
+        evidence: rig.evidence,
+        clock: rig.clock,
+        run: run(72),
+      }),
+    );
     assert.equal(planned.purpose, "bootstrap");
     assert.equal(planned.revision, RECOVERY_REVISION);
     assert.equal(planned.generation, 59);
@@ -161,6 +207,7 @@ Deno.test("same-pointer recovery: missing incomplete unavailable or changed nati
         writeRelease: rig.state.writeRelease.bind(rig.state),
       };
       const outcome = await runHostedSupervisorPrepare({
+        ...DORMANT_HOSTED_POLICIES,
         state,
         evidence,
         clock: rig.clock,
@@ -245,7 +292,16 @@ Deno.test("same-pointer recovery: wrong proof identity and failed verification r
   ) {
     const rig = await recoveryRig(mutation);
     try {
-      assert.equal((await rig.prepare(run(73))).status, "pending");
+      assert.equal(
+        (await runHostedSupervisorPrepare({
+          ...DORMANT_HOSTED_POLICIES,
+          state: rig.state,
+          evidence: rig.evidence,
+          clock: rig.clock,
+          run: run(73),
+        })).status,
+        "pending",
+      );
       assert.equal(
         (await rig.read()).snapshot.hostedRuntimes[0].execution,
         null,
@@ -285,19 +341,34 @@ Deno.test("same-pointer recovery: owner release cooldown capability cursor CAS a
         control === "failed" || control === "not_started" ||
         control === "healthy"
       ) {
-        const admitted = requireRun(await rig.prepare());
+        const admitted = requireRun(
+          await runHostedSupervisorPrepare({
+            ...DORMANT_HOSTED_POLICIES,
+            state: rig.state,
+            evidence: rig.evidence,
+            clock: rig.clock,
+            run: run(72),
+          }),
+        );
         const settlement = control === "not_started"
           ? skippedProof(admitted)
           : runProof(admitted, control === "healthy" ? "healthy" : "failed");
         rig.evidence.settlements.set(admitted.id, settlement);
         rig.clock.advance(4000);
         await runHostedSupervisorFinalize({
+          ...DORMANT_HOSTED_POLICIES,
           state: rig.state,
           evidence: rig.evidence,
           clock: rig.clock,
           run: run(72),
         });
-        const next = await rig.prepare(run(73));
+        const next = await runHostedSupervisorPrepare({
+          ...DORMANT_HOSTED_POLICIES,
+          state: rig.state,
+          evidence: rig.evidence,
+          clock: rig.clock,
+          run: run(73),
+        });
         if (control === "healthy") {
           assert.equal(requireRun(next).purpose, "ordinary");
         } else {
@@ -377,6 +448,7 @@ Deno.test("same-pointer recovery: owner release cooldown capability cursor CAS a
           : rig.state.writeRelease.bind(rig.state),
       };
       const result = await runHostedSupervisorPrepare({
+        ...DORMANT_HOSTED_POLICIES,
         state,
         evidence: rig.evidence,
         clock: rig.clock,
