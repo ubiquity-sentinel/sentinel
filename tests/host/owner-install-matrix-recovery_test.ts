@@ -1,3 +1,4 @@
+import { DORMANT_HOSTED_SUPERVISOR_POLICY } from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { parseHostedRunProofV1 } from "../../src/contracts/hosted-supervisor.ts";
@@ -111,6 +112,10 @@ for (const useSourcePin of [false, true]) {
             launcherSha: LAUNCHER,
           };
           const prepared = await runHostedSupervisorPrepare({
+            queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+            existingPrRuntimeCapability:
+              DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+            runtimeRollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
             state: fixture.releaseStore,
             clock: { now: () => NOW + 100 },
             run,
@@ -137,6 +142,10 @@ for (const useSourcePin of [false, true]) {
             terminalAt: failedBootstrap ? null : NOW + 250,
           });
           const finalized = await runHostedSupervisorFinalize({
+            queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+            existingPrRuntimeCapability:
+              DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+            runtimeRollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
             state: fixture.releaseStore,
             clock: { now: () => NOW + 400 },
             run,
@@ -172,6 +181,10 @@ for (const useSourcePin of [false, true]) {
             assert.equal(fixture.patches(), 2);
             const restoredRun = { ...run, runId: run.runId + 1 };
             const restored = await runHostedSupervisorPrepare({
+              queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+              existingPrRuntimeCapability:
+                DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+              runtimeRollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
               state: fixture.releaseStore,
               clock: { now: () => NOW + 600 },
               run: restoredRun,
@@ -196,6 +209,10 @@ for (const useSourcePin of [false, true]) {
               observedAt: NOW + 900,
             });
             const settledRollback = await runHostedSupervisorFinalize({
+              queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+              existingPrRuntimeCapability:
+                DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+              runtimeRollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
               state: fixture.releaseStore,
               clock: { now: () => NOW + 900 },
               run: restoredRun,
@@ -219,6 +236,10 @@ for (const useSourcePin of [false, true]) {
             fixture.expireArchives();
             const ordinaryRun = { ...run, runId: run.runId + 2 };
             const ordinary = await runHostedSupervisorPrepare({
+              queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+              existingPrRuntimeCapability:
+                DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+              runtimeRollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
               state: fixture.releaseStore,
               clock: { now: () => NOW + 600 },
               run: ordinaryRun,
@@ -243,6 +264,10 @@ for (const useSourcePin of [false, true]) {
               observedAt: NOW + 900,
             });
             const failed = await runHostedSupervisorFinalize({
+              queueRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+              existingPrRuntimeCapability:
+                DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+              runtimeRollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
               state: fixture.releaseStore,
               clock: { now: () => NOW + 900 },
               run: ordinaryRun,

@@ -1,3 +1,4 @@
+import { DORMANT_HOSTED_SUPERVISOR_POLICY } from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { runOwnerDevelopmentInstallMain } from "../../src/host/owner-install-run.ts";
@@ -52,6 +53,8 @@ Deno.test("queue runtime migration: exact owner tuple installs without granting 
     const repairBefore = await fixture.readRepair();
     assert.equal(
       await runOwnerDevelopmentInstallMain({
+        existingPrRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+        rollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
         queueRuntimeCapability: capability,
       }),
       0,
@@ -80,6 +83,8 @@ Deno.test("queue runtime migration: exact owner tuple installs without granting 
   try {
     assert.equal(
       await runOwnerDevelopmentInstallMain({
+        existingPrRuntimeCapability: DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+        rollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
         queueRuntimeCapability: capability,
       }),
       0,
@@ -120,6 +125,9 @@ Deno.test("queue runtime migration: every tuple mismatch and unaccepted destinat
       try {
         assert.equal(
           await runOwnerDevelopmentInstallMain({
+            existingPrRuntimeCapability:
+              DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+            rollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
             queueRuntimeCapability: policy,
           }),
           0,
@@ -127,7 +135,15 @@ Deno.test("queue runtime migration: every tuple mismatch and unaccepted destinat
         assert.equal(fixture.reports.at(-1)?.status, "waiting");
         assert.equal(fixture.patches(), 0);
         assert.equal(await fixture.head(), fixture.beforeHead);
-        const plan = planOwnerDevelopmentInstall(before, NOW);
+        const plan = planOwnerDevelopmentInstall(
+          before,
+          NOW,
+          undefined,
+          undefined,
+          DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+          DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+          DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
+        );
         assert.ok(plan.status === "install");
         assert.throws(() =>
           buildOwnerDevelopmentInstallSnapshot(
@@ -138,6 +154,9 @@ Deno.test("queue runtime migration: every tuple mismatch and unaccepted destinat
             undefined,
             undefined,
             policy,
+            DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+            undefined,
+            DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
           )
         );
       } finally {
@@ -158,6 +177,9 @@ Deno.test("queue runtime migration: exact tuple still requires native CI ancestr
       try {
         assert.equal(
           await runOwnerDevelopmentInstallMain({
+            existingPrRuntimeCapability:
+              DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+            rollout: DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
             queueRuntimeCapability: capability,
           }),
           0,
