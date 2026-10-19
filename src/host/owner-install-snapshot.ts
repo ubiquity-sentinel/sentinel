@@ -30,6 +30,10 @@ import {
 } from "./owner-install-future-recovery.ts";
 import type { HostedRuntimeRollout } from "./hosted-runtime-rollout.ts";
 import {
+  type OwnerSupersessionAuthority,
+  ownerSupersessionTransition,
+} from "./owner-install-supersession.ts";
+import {
   MAX_COMMIT_MESSAGE_CHARS,
   sha256HexText,
   STATIC_PLAN,
@@ -53,6 +57,7 @@ export function buildOwnerDevelopmentInstallSnapshot(
   custodyCapability?: ExistingPrRuntimeCapability,
   future?: OwnerFutureRecoveryAuthority,
   rollout?: HostedRuntimeRollout,
+  supersession?: OwnerSupersessionAuthority,
 ): ReleaseStateSnapshotV1 {
   if (
     !allowsHostedOwnerInstallMove(move, capability, custodyCapability) ||
@@ -105,7 +110,9 @@ export function buildOwnerDevelopmentInstallSnapshot(
   ) {
     throw new Error(STATIC_PLAN);
   }
-  if (startup !== undefined || future !== undefined) {
+  if (
+    startup !== undefined || future !== undefined || supersession !== undefined
+  ) {
     const intended = planOwnerDevelopmentInstall(
       state,
       now,
@@ -115,6 +122,7 @@ export function buildOwnerDevelopmentInstallSnapshot(
       custodyCapability,
       rollout,
       future,
+      supersession,
     );
     if (
       (startup !== undefined && startup.releaseHead !== head) ||
@@ -122,7 +130,21 @@ export function buildOwnerDevelopmentInstallSnapshot(
       canonicalStringify(intended.move) !== canonicalStringify(move)
     ) throw new Error(STATIC_PLAN);
   }
-  const execution = future !== undefined
+  const superseded = supersession === undefined
+    ? undefined
+    : ownerSupersessionTransition(
+      state,
+      head,
+      now,
+      supersession,
+      move,
+      capability,
+      custodyCapability,
+      rollout,
+    );
+  const execution = superseded !== undefined
+    ? superseded.execution
+    : future !== undefined
     ? ownerFutureRecoveryBootstrap(future, head, now)
     : startup === undefined
     ? runtime.execution
@@ -150,6 +172,9 @@ export function buildOwnerDevelopmentInstallSnapshot(
     sequence: state.sequence + 1,
     updatedAt: now,
     hostedRuntimes: [nextRuntime.value],
+    ...(superseded === undefined
+      ? {}
+      : { hostedReleases: superseded.hostedReleases }),
   });
   if (!next.ok) throw new Error(STATIC_PLAN);
   return next.value;
@@ -164,6 +189,7 @@ export function buildOwnerDevelopmentInstallSnapshot(
 export async function ownerDevelopmentInstallFiles(
   snapshot: ReleaseStateSnapshotV1,
   head: GitSha,
+  supersededReleaseId?: string,
 ): Promise<OwnerDevelopmentInstallFilesV1> {
   const parsed = tryParse(parseReleaseStateSnapshotV1, snapshot);
   if (!parsed.ok || !isGitSha(head) || parsed.value.stateHead !== head) {
@@ -189,6 +215,20 @@ export async function ownerDevelopmentInstallFiles(
       path: `hostedRuntimes/${await sha256HexText(runtime.id)}.json`,
       text: `${canonicalStringify(runtime)}\n`,
     },
+    ...(supersededReleaseId === undefined ? {} : {
+      releaseRecord: {
+        path: `hostedReleases/${await sha256HexText(supersededReleaseId)}.json`,
+        text: `${
+          canonicalStringify(
+            parsed.value.hostedReleases.find((r) =>
+              r.id === supersededReleaseId
+            ) ?? (() => {
+              throw new Error(STATIC_PLAN);
+            })(),
+          )
+        }\n`,
+      },
+    }),
   };
 }
 

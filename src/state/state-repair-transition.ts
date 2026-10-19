@@ -1,4 +1,5 @@
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import { ownerSuccessorReviewTransition } from "../contracts/owner-successor-review.ts";
 import {
   cooldownTransitionMessage,
   sameCanonical,
@@ -307,6 +308,32 @@ export function validateRepairTransition(
     }
     // pending/unavailable observations may update observed reviewer, result,
     // findings and outcome — including becoming completed.
+  }
+  for (const operation of prior.ownerSuccessorReviews ?? []) {
+    const current = next.ownerSuccessorReviews?.find((r) =>
+      r.id === operation.id
+    );
+    if (!current || !ownerSuccessorReviewTransition(operation, current)) {
+      return "owner successor review identity or monotonic custody changed";
+    }
+  }
+  for (const operation of next.ownerSuccessorReviews ?? []) {
+    if (
+      !(prior.ownerSuccessorReviews ?? []).some((r) => r.id === operation.id) &&
+      (operation.phase !== "intent" ||
+        operation.binding.expectedRepairHead !== next.stateHead ||
+        !prior.reservations.some((r) =>
+          r.outcome === "reserved" && sameCanonical(r, operation.reservation)
+        ))
+    ) {
+      return "a new owner review must start from its exact durable charged intent";
+    }
+    if (
+      (operation.phase === "completed" || operation.phase === "failed") &&
+      !next.reservations.some((r) => sameCanonical(r, operation.reservation))
+    ) {
+      return "terminal owner review must bind its unchanged settled reservation";
+    }
   }
   // Durable GitHub cooldowns are fail-closed preservation state; the same
   // guard protects both refs.

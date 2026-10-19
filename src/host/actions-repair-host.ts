@@ -23,6 +23,10 @@ import type { RepairCycleOutcomeV1 } from "../repair/loop.ts";
 import { DEFAULT_STEP_LIMIT } from "../repair/loop-bounds.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import { RollingStartBudget } from "../budget/mod.ts";
+import {
+  type OwnerSuccessorReviewPorts,
+  runOwnerSuccessorReviewPhase,
+} from "./owner-successor-acceptance.ts";
 import { HostedRepairCooldownGate } from "./hosted-cooldown.ts";
 import {
   LEGACY_REVIEW_CUTOFF_ENV,
@@ -513,6 +517,7 @@ export async function runActionsRepairHost(
   // handed to every target cycle unchanged; it is never recomputed.
   // The port is composed per target: the REST client, review service, trusted
   // git remote and cooldown scope all address exactly that repository.
+  let ownerSuccessorPorts: OwnerSuccessorReviewPorts | undefined;
   const composeProductionGithub = (config: RepositoryConfigV1): GitHubPort => {
     const common: HostedAppGitHubInput = {
       queueMode,
@@ -540,6 +545,9 @@ export async function runActionsRepairHost(
       modelBaseUrl: modelRoute.baseUrl,
       route: modelRoute,
       reviewModelId,
+      onOwnerSuccessorReviewPorts: (ports) => {
+        ownerSuccessorPorts = ports;
+      },
       repository: config.repository,
       baseBranch: config.baseBranch,
     };
@@ -798,6 +806,7 @@ export async function runActionsRepairHost(
 
   let queueReady = deps.job === "matrix_cell";
   let outcome: RepairCycleOutcomeV1 | null = null;
+  let ownerOperationHandled = false;
   let failure: unknown = null;
   try {
     if (!queueReady) {
@@ -817,107 +826,129 @@ export async function runActionsRepairHost(
     if (!queueReady) {
       outcome = { status: "idle", detail: QUEUE_CUSTODY_IDLE_DETAIL };
     } else {
-      const runTargetCycles = deps.runTargetCycles ??
-        (async (input: ActionsTargetCyclesInputV1) => {
-          const { runActionsMatrixAggregateCycles } = await import(
-            "./matrix-actions.ts"
-          );
-          return runActionsMatrixAggregateCycles(input);
-        });
-      const cycles = await runTargetCycles({
-        clock,
-        state,
-        configs: targetConfigs,
-        controllerSha,
-        githubCooldown: gate,
-        // Legacy callers retain a closed pair; each prepared target resolves its own pair below.
-        incidents: unavailableIncidents,
-        replay: unavailableReplay,
-        resolveTargetCapabilities: (config) =>
-          capabilitiesByConfig.get(canonicalStringify(config)) ??
-            unavailableTargetCapabilities(),
-        model,
-        budget,
-        deadline,
-        runOrigin,
-        stepLimit: execution.purpose === "bootstrap"
-          ? DEFAULT_STEP_LIMIT
-          : STEP_LIMIT,
-        // Only an ordinary hosted execution may start a model. Bootstrap, prior,
-        // candidate and rollback runs execute the deterministic entrypoint with
-        // no model starts while keeping every budget, limit and source behavior.
-        modelStartsEnabled: startupReady && healthyOrdinaryExecution,
-        externalImplementations: deps.job !== undefined,
-        // The legacy review class's cutoff, handed over by the launcher that
-        // pinned it for exactly this runtime (`review-round-cap.ts`); a missing
-        // or malformed value grants no legacy round (fails closed).
-        legacyReviewCutoff: parseLegacyReviewCutoffEnv(
-          optionalEnv(readEnv, LEGACY_REVIEW_CUTOFF_ENV),
-        ),
-        host: {
-          execution,
-          run: {
-            runId: identity.runId,
-            runAttempt: identity.runAttempt,
-            launcherSha: identity.launcherSha,
-          },
-          artifactRoot: joinPath(sourceDir, "..", ".sentinel-matrix"),
-          sourcePathFor: mirrorPathFor,
-          expectedProvider: modelRoute.provider,
-          // The failover the port above was constructed with (same resolution).
-          failoverModel: modelRoute.failoverModel,
-          ...(matrixCarrier === undefined ? {} : { matrixCarrier }),
-          readExecution: (execution) =>
-            nativeSelf.readHostedExecution(execution),
-          createArtifactTransport: async (producerState) => {
-            const {
-              createActionsMatrixArtifactTransport,
-              createActionsMatrixArtifactHttpTransport,
-            } = await import("./matrix-artifacts.ts");
-            return createActionsMatrixArtifactTransport({
-              state: producerState ?? {
-                readRepair: () => state.readRepair(),
-                readRelease: () => state.readRelease(),
-              },
-              token: githubToken,
-              http: deps.artifactHttp ??
-                createActionsMatrixArtifactHttpTransport(),
-              clock,
-              artifactRoot: joinPath(sourceDir, "..", ".sentinel-matrix"),
-            });
-          },
+      ownerOperationHandled = await runOwnerSuccessorReviewPhase(
+        {
+          clock,
+          state,
+          budget,
+          nativeOwner: execution,
+          latestStartAt: Math.min(runOrigin + 90 * 60_000, deadline),
+          settleBy: deadline,
         },
+        targetConfigs,
         prepareTarget,
-        composeGithub: composeTargetGithub,
-        // A matrix cell reads its CI correction's failure evidence with its own
-        // scoped read-only App token (`cellCiEvidenceReader`). The reader never
-        // reaches the model worker: only the rendered, fenced text does.
-        ...(deps.job === "matrix_cell"
-          ? {
-            composeCiEvidence: (config: RepositoryConfigV1) =>
-              cellCiEvidenceReader({
-                repository: config.repository,
-                http,
+        composeTargetGithub,
+        () => ownerSuccessorPorts,
+        startupReady && healthyOrdinaryExecution,
+      );
+      if (ownerOperationHandled) {
+        outcome = {
+          status: "idle",
+          detail: "bounded owner successor review operation settled or pending",
+        };
+      } else {
+        const runTargetCycles = deps.runTargetCycles ??
+          (async (input: ActionsTargetCyclesInputV1) => {
+            const { runActionsMatrixAggregateCycles } = await import(
+              "./matrix-actions.ts"
+            );
+            return runActionsMatrixAggregateCycles(input);
+          });
+        const cycles = await runTargetCycles({
+          clock,
+          state,
+          configs: targetConfigs,
+          controllerSha,
+          githubCooldown: gate,
+          // Legacy callers retain a closed pair; each prepared target resolves its own pair below.
+          incidents: unavailableIncidents,
+          replay: unavailableReplay,
+          resolveTargetCapabilities: (config) =>
+            capabilitiesByConfig.get(canonicalStringify(config)) ??
+              unavailableTargetCapabilities(),
+          model,
+          budget,
+          deadline,
+          runOrigin,
+          stepLimit: execution.purpose === "bootstrap"
+            ? DEFAULT_STEP_LIMIT
+            : STEP_LIMIT,
+          // Only an ordinary hosted execution may start a model. Bootstrap, prior,
+          // candidate and rollback runs execute the deterministic entrypoint with
+          // no model starts while keeping every budget, limit and source behavior.
+          modelStartsEnabled: startupReady && healthyOrdinaryExecution,
+          externalImplementations: deps.job !== undefined,
+          // The legacy review class's cutoff, handed over by the launcher that
+          // pinned it for exactly this runtime (`review-round-cap.ts`); a missing
+          // or malformed value grants no legacy round (fails closed).
+          legacyReviewCutoff: parseLegacyReviewCutoffEnv(
+            optionalEnv(readEnv, LEGACY_REVIEW_CUTOFF_ENV),
+          ),
+          host: {
+            execution,
+            run: {
+              runId: identity.runId,
+              runAttempt: identity.runAttempt,
+              launcherSha: identity.launcherSha,
+            },
+            artifactRoot: joinPath(sourceDir, "..", ".sentinel-matrix"),
+            sourcePathFor: mirrorPathFor,
+            expectedProvider: modelRoute.provider,
+            // The failover the port above was constructed with (same resolution).
+            failoverModel: modelRoute.failoverModel,
+            ...(matrixCarrier === undefined ? {} : { matrixCarrier }),
+            readExecution: (execution) =>
+              nativeSelf.readHostedExecution(execution),
+            createArtifactTransport: async (producerState) => {
+              const {
+                createActionsMatrixArtifactTransport,
+                createActionsMatrixArtifactHttpTransport,
+              } = await import("./matrix-artifacts.ts");
+              return createActionsMatrixArtifactTransport({
+                state: producerState ?? {
+                  readRepair: () => state.readRepair(),
+                  readRelease: () => state.readRelease(),
+                },
+                token: githubToken,
+                http: deps.artifactHttp ??
+                  createActionsMatrixArtifactHttpTransport(),
                 clock,
-                token: writeToken,
-                gate,
-              }),
-          }
-          : {}),
-        // The one advisory line reports every committed target as addressed or
-        // skipped (an unavailable default branch, or out of time). It carries no
-        // `status` property, so the launcher can never read it as a child record.
-        report: (result) => {
-          if (targets.targets.length > 1) {
-            console.log(JSON.stringify(targetsDiagnosticV1({
-              addressed: result.addressed,
-              skipped: [...targets.skipped, ...result.skipped],
-              failed: result.failed,
-            })));
-          }
-        },
-      });
-      outcome = cycles.outcome;
+                artifactRoot: joinPath(sourceDir, "..", ".sentinel-matrix"),
+              });
+            },
+          },
+          prepareTarget,
+          composeGithub: composeTargetGithub,
+          // A matrix cell reads its CI correction's failure evidence with its own
+          // scoped read-only App token (`cellCiEvidenceReader`). The reader never
+          // reaches the model worker: only the rendered, fenced text does.
+          ...(deps.job === "matrix_cell"
+            ? {
+              composeCiEvidence: (config: RepositoryConfigV1) =>
+                cellCiEvidenceReader({
+                  repository: config.repository,
+                  http,
+                  clock,
+                  token: writeToken,
+                  gate,
+                }),
+            }
+            : {}),
+          // The one advisory line reports every committed target as addressed or
+          // skipped (an unavailable default branch, or out of time). It carries no
+          // `status` property, so the launcher can never read it as a child record.
+          report: (result) => {
+            if (targets.targets.length > 1) {
+              console.log(JSON.stringify(targetsDiagnosticV1({
+                addressed: result.addressed,
+                skipped: [...targets.skipped, ...result.skipped],
+                failed: result.failed,
+              })));
+            }
+          },
+        });
+        outcome = cycles.outcome;
+      }
     }
   } catch (error) {
     failure = error;
@@ -938,16 +969,17 @@ export async function runActionsRepairHost(
   // the loop and the tracker drain, even when model startup was unavailable.
   // The helper is bounded and never throws, so an approval failure cannot
   // prevent deterministic bookkeeping or change the original error semantics.
-  const ciApproval = deps.job === undefined && queueReady
-    ? await runActionsCiApproval({
-      state,
-      gate,
-      http,
-      token: githubToken,
-      clock,
-      deadline,
-    })
-    : { approved: 0, pending: 0, unavailable: 0 };
+  const ciApproval =
+    deps.job === undefined && queueReady && !ownerOperationHandled
+      ? await runActionsCiApproval({
+        state,
+        gate,
+        http,
+        token: githubToken,
+        clock,
+        deadline,
+      })
+      : { approved: 0, pending: 0, unavailable: 0 };
 
   const result: ActionsRepairHostResultV1 = {
     status: "ran",

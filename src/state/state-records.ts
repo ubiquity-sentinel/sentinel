@@ -16,6 +16,7 @@ import {
 } from "../contracts/release.ts";
 import { parseReplayResultV1 } from "../contracts/replay-result.ts";
 import { parseReviewReceiptV1 } from "../contracts/review-receipt.ts";
+import { parseOwnerSuccessorReviewV1 } from "../contracts/owner-successor-review.ts";
 import {
   expectCount,
   expectExactKeys,
@@ -121,6 +122,12 @@ export const RECORD_COLLECTIONS: Record<StateKind, RecordCollection[]> = {
       directory: "reviews",
       kind: "review_receipt",
       parse: parseReviewReceiptV1,
+      rows: [],
+    },
+    {
+      directory: "ownerSuccessorReviews",
+      kind: "owner_successor_review",
+      parse: parseOwnerSuccessorReviewV1,
       rows: [],
     },
     {

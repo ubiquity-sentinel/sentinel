@@ -4,6 +4,7 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import {
   parseHostedExecutionIntentV1,
+  parseHostedReleaseRecordV1,
   parseHostedRunProofV1,
 } from "../../src/contracts/hosted-supervisor.ts";
 import type {
@@ -25,6 +26,14 @@ import {
   parseHostedRuntimeRollout,
 } from "../../src/host/hosted-runtime-rollout.ts";
 import { sha256HexText } from "../../src/host/owner-install-api.ts";
+import { parseWorkRecordV1 } from "../../src/contracts/work-record.ts";
+import {
+  localDeliveryRecord,
+  referencedDeliveryReceipt,
+} from "../repair/loop-delivery-fixtures.ts";
+import { issueWire } from "../github/helpers.ts";
+import { reviewTaskStatementDigest } from "../../src/contracts/review-task-acceptance.ts";
+import { originalPriorNativeFingerprint } from "../../src/host/owner-install-supersession-original.ts";
 import {
   OWNER_DEVELOPMENT_INSTALL_GEN81_GENERATION,
   OWNER_DEVELOPMENT_INSTALL_GEN81_REVISION,
@@ -36,6 +45,7 @@ import { snapshotWire } from "../github/merge-queue-fixtures.ts";
 import { nativeWriterFixture } from "./existing-pr-runtime-fixtures.ts";
 import { createOwnerInstallTransport } from "./owner-install-fixture-transport.ts";
 import {
+  releaseRequest,
   releaseSnapshot,
   runtimeRecord,
 } from "./owner-install-fixture-proofs.ts";
@@ -182,6 +192,7 @@ export async function futureRecoveryFixture(
     fault?: Fault;
     releaseCas?: boolean;
     legacyFirst?: boolean;
+    ownerSupersession?: boolean;
   } = {},
 ) {
   const source = await principalSourceFixture();
@@ -240,6 +251,24 @@ export async function futureRecoveryFixture(
       scratchDir: `${source.root}/repair-read`,
       runner: new DenoGitRunner(`${source.root}/repair-home`),
     });
+    const supersededId =
+      "release:f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5";
+    const request = {
+      ...releaseRequest(),
+      id: supersededId,
+      revision: "1838df313105bab219d71602695a7f758a65125e" as GitSha,
+      source: { ...releaseRequest().source, pullRequest: 172 },
+    };
+    const work = parseWorkRecordV1({
+      ...localDeliveryRecord(170),
+      id: "issue-ubiquity-sentinel-170",
+      target: {
+        ...localDeliveryRecord(170).target,
+        pr: request.source.pullRequest,
+        head: request.source.head,
+        base: request.source.base,
+      },
+    });
     const repairWrite = await repair.writeRepair(
       parseRepairStateSnapshotV1({
         version: "v1",
@@ -249,11 +278,23 @@ export async function futureRecoveryFixture(
         updatedAt: BASE,
         incidents: [],
         evidence: [],
-        work: [],
+        work: options.ownerSupersession ? [work] : [],
         reservations: [],
-        reviews: [],
+        reviews: options.ownerSupersession
+          ? [
+            referencedDeliveryReceipt(
+              request,
+              work,
+              await reviewTaskStatementDigest({
+                issueNumber: 170,
+                title: "issue 170",
+                body: "still wanted",
+              }),
+            ),
+          ]
+          : [],
         replays: [],
-        releaseRequests: [],
+        releaseRequests: options.ownerSupersession ? [request] : [],
         githubCooldowns: options.fault === "cooldown"
           ? [{
             installationId: 0,
@@ -302,18 +343,68 @@ export async function futureRecoveryFixture(
     const failed = await nativeProof(
       fromRevision,
       fromGeneration,
-      501,
-      BASE + (options.fault === "chronology" ? 1000 : 10_000),
+      options.ownerSupersession ? 39170939335 : 501,
+      BASE +
+        (options.ownerSupersession
+          ? 20_000
+          : options.fault === "chronology"
+          ? 1000
+          : 10_000),
       "failed",
       options.fault === "purpose",
-      undefined,
+      options.ownerSupersession
+        ? parseHostedExecutionIntentV1({
+          id: "39170939335:1:repair",
+          runId: 39170939335,
+          runAttempt: 1,
+          launcherSha: "00b6649eeff51a9754bf3748f793137db9bf8605",
+          revision: fromRevision,
+          generation: fromGeneration,
+          purpose: "prior",
+          releaseId: supersededId,
+          createdAt: BASE + 20_000,
+        })
+        : undefined,
       options.legacyFirst,
     );
+    const originalHistorical = options.ownerSupersession
+      ? await nativeProof(
+        fromRevision,
+        fromGeneration,
+        39167387867,
+        BASE + 10_000,
+        "failed",
+        false,
+        parseHostedExecutionIntentV1({
+          ...failed.proof.execution,
+          id: "39167387867:1:repair",
+          runId: 39167387867,
+          createdAt: BASE + 10_000,
+        }),
+      )
+      : failed;
+    const superseded = parseHostedReleaseRecordV1({
+      version: "v1",
+      kind: "hosted_release",
+      id: supersededId,
+      request,
+      priorRevision: fromRevision,
+      phase: "requested",
+      priorProof: null,
+      candidateProof: null,
+      rollbackProof: null,
+      pointerIntent: null,
+      createdAt: BASE,
+      updatedAt: BASE + 20_000,
+    });
     let sequence = 0;
     const seed = async (runtime: HostedRuntimeRecordV1, parent?: GitSha) => {
       const previous = parent ?? "b".repeat(40) as GitSha;
       const snapshot = parseReleaseStateSnapshotV1({
-        ...releaseSnapshot({ runtime }),
+        ...releaseSnapshot({
+          runtime,
+          hostedReleases: options.ownerSupersession ? [superseded] : [],
+        }),
         stateHead: previous,
         sequence: ++sequence,
         updatedAt: BASE + sequence * 10_000,
@@ -331,7 +422,18 @@ export async function futureRecoveryFixture(
         undefined,
         index,
       );
-      for (const file of [files.manifest, files.record]) {
+      for (
+        const file of [
+          files.manifest,
+          files.record,
+          ...(options.ownerSupersession
+            ? [{
+              path: `hostedReleases/${await sha256HexText(supersededId)}.json`,
+              text: canonicalStringify(superseded) + "\n",
+            }]
+            : []),
+        ]
+      ) {
         const blob = await git(
           [...gitArgs, "hash-object", "-w", "--stdin"],
           file.text,
@@ -376,6 +478,17 @@ export async function futureRecoveryFixture(
         executionProof: healthy.proof,
       }),
     );
+    const originalFailedPriorWitnessHead = options.ownerSupersession
+      ? await seed(
+        runtimeRecord({
+          revision: fromRevision,
+          generation: fromGeneration,
+          healthyProof: healthy.proof,
+          executionProof: originalHistorical.proof,
+        }),
+        witness,
+      )
+      : witness;
     const currentHead = await seed(
       runtimeRecord({
         revision: fromRevision,
@@ -383,8 +496,30 @@ export async function futureRecoveryFixture(
         healthyProof: healthy.proof,
         executionProof: failed.proof,
       }),
-      witness,
+      originalFailedPriorWitnessHead,
     );
+    const ownerAcceptanceBase = await source.git(source.runtime, [
+      "rev-parse",
+      "HEAD",
+    ]) as GitSha;
+    if (options.ownerSupersession) {
+      await source.write(
+        source.runtime,
+        "runtime.ts",
+        "// Newly accepted capable F implementation\n",
+      );
+      await source.write(
+        source.runtime,
+        "src/host/hosted-runtime-rollout.json",
+        JSON.stringify(HOSTED_RUNTIME_ROLLOUT),
+      );
+      await source.git(source.runtime, ["add", "."]);
+      await source.git(source.runtime, [
+        "commit",
+        "-qm",
+        "freeze capable F before LF intent data",
+      ]);
+    }
     const successor = await source.git(source.runtime, [
       "rev-parse",
       "HEAD",
@@ -402,8 +537,59 @@ export async function futureRecoveryFixture(
         ? "0".repeat(40)
         : witness,
     };
-    const rollout = parseHostedRuntimeRollout({
+    const currentSnapshot = await state.readRelease();
+    const repairSnapshot = await repair.readRepair();
+    assert.ok(currentSnapshot.ok && currentSnapshot.value.status === "found");
+    assert.ok(repairSnapshot.ok && repairSnapshot.value.status === "found");
+    const controllerSource = await source.git(source.launcher, [
+      "rev-parse",
+      "HEAD",
+    ]) as GitSha;
+    const ownerIntent = {
+      releaseId: supersededId,
+      requestSha256: await sha256HexText(canonicalStringify(request)),
+      sourceSha256: await sha256HexText(canonicalStringify(request.source)),
+      taskSha256: await reviewTaskStatementDigest({
+        issueNumber: 170,
+        title: "issue 170",
+        body: "still wanted",
+      }),
+      workId: work.id,
+      workSha256: await sha256HexText(canonicalStringify(work)),
+      issueNumber: 170,
+      repairHead,
+      releaseHead: currentHead,
+      repairSnapshotSha256: await sha256HexText(
+        canonicalStringify(repairSnapshot.value.snapshot),
+      ),
+      releaseSnapshotSha256: await sha256HexText(
+        canonicalStringify(currentSnapshot.value.snapshot),
+      ),
+      fromRevision,
+      fromGeneration,
+      authorizedAt: RECOVERY_NOW,
+      toRevision: successor,
+      toGeneration: fromGeneration + 1,
+      controllerSourceRevision: controllerSource,
+      controllerCodeSha256: source.profiles[0].codeSha256,
+      acceptanceBaseRevision: ownerAcceptanceBase,
+      ciRevision: successor,
+      requiredAncestors: [
+        "1838df313105bab219d71602695a7f758a65125e",
+        controllerSource,
+      ],
+      failedProofSha256: row.failedProofSha256,
+      retainedHealthyProofSha256: row.retainedHealthyProofSha256,
+      healthyWitnessHead: witness,
+      originalFailedPriorExecution: originalHistorical.proof.execution,
+      originalFailedPriorJobId: originalHistorical.proof.jobId,
+      originalFailedPriorNativeSha256: await originalPriorNativeFingerprint(
+        originalHistorical.proof,
+      ),
+    };
+    let rollout = parseHostedRuntimeRollout({
       ...HOSTED_RUNTIME_ROLLOUT,
+      ownerSupersessions: options.ownerSupersession ? [ownerIntent] : [],
       recoveries: [row],
       installs: [
         ...(options.legacyFirst
@@ -421,13 +607,13 @@ export async function futureRecoveryFixture(
             toGeneration: 82,
             rollbackToPrior: false,
           }]),
-        {
+        ...(options.ownerSupersession ? [] : [{
           fromRevision: options.legacyFirst ? successor : FUTURE,
           fromGeneration: 82,
           toRevision: NEXT_NORMAL,
           toGeneration: 83,
           rollbackToPrior: true,
-        },
+        }]),
       ],
     });
     const migrations = options.legacyFirst
@@ -441,12 +627,12 @@ export async function futureRecoveryFixture(
     const revisions = options.legacyFirst
       ? [NEXT_NORMAL, successor]
       : [FUTURE, NEXT_NORMAL, successor];
-    const queue = {
+    let queue = {
       proofActivated: true,
       revisions,
       ...(options.legacyFirst ? { ownerInstallMigrations: migrations } : {}),
     };
-    const custody = {
+    let custody = {
       custodyActivated: true,
       revisions,
       ...(options.legacyFirst ? { ownerInstallMigrations: migrations } : {}),
@@ -480,11 +666,12 @@ export async function futureRecoveryFixture(
       "-qm",
       "reviewed synthetic recovery data",
     ]);
-    const controller = await source.git(source.launcher, [
+    let controller = await source.git(source.launcher, [
       "rev-parse",
       "HEAD",
     ]) as GitSha;
     const run = { runId: 9000, runAttempt: 1, launcherSha: controller };
+    const nativeProofs = [healthy, failed, originalHistorical];
     const environment: Record<string, string> = {
       GITHUB_REPOSITORY: "ubiquity/sentinel",
       GITHUB_REF: "refs/heads/sentinel-supervisor",
@@ -535,9 +722,38 @@ export async function futureRecoveryFixture(
           typeof value === "string" ? value : JSON.stringify(value),
           { status },
         );
+      if (url.pathname.endsWith("/issues/170")) {
+        return reply(
+          issueWire({
+            number: 170,
+            title: "issue 170",
+            body: "still wanted",
+            state: "closed",
+          }),
+        );
+      }
+      if (url.pathname.includes("/contents/")) {
+        const path = url.pathname.split("/contents/")[1];
+        const text = await git([
+          ...gitArgs,
+          "show",
+          `${url.searchParams.get("ref")}:${path}`,
+        ]);
+        return reply({
+          type: "file",
+          encoding: "base64",
+          content: btoa(text + "\n"),
+        });
+      }
       if (url.hostname.endsWith(".blob.core.windows.net")) {
         assert.equal(new Headers(init?.headers).has("authorization"), false);
-        const proof = url.pathname.endsWith("500") ? healthy : failed;
+        const proof = nativeProofs.find((p) =>
+          new URL(p.signed).pathname === url.pathname
+        );
+        assert.ok(
+          proof,
+          "every fake signed-log port belongs to an actual native fixture proof",
+        );
         return reply(
           options.fault === "log" ? proof.log + "changed\n" : proof.log,
         );
@@ -568,8 +784,12 @@ export async function futureRecoveryFixture(
           status: options.fault === "ancestry" ? "diverged" : "ahead",
           ahead_by: 1,
           behind_by: 0,
-          base_commit: { sha: successor },
-          merge_base_commit: { sha: successor },
+          base_commit: {
+            sha: url.pathname.split("/compare/")[1].split("...")[0],
+          },
+          merge_base_commit: {
+            sha: url.pathname.split("/compare/")[1].split("...")[0],
+          },
           total_commits: 1,
         });
       }
@@ -623,7 +843,7 @@ export async function futureRecoveryFixture(
           }),
         );
       }
-      for (const proof of [healthy, failed]) {
+      for (const proof of nativeProofs) {
         if (url.pathname === proof.logPath) {
           return new Response(null, {
             status: 302,
@@ -671,15 +891,79 @@ export async function futureRecoveryFixture(
       source,
       state,
       repair,
-      rollout,
+      get rollout() {
+        return rollout;
+      },
       row: rollout.recoveries[0],
-      queue,
-      custody,
+      get queue() {
+        return queue;
+      },
+      get custody() {
+        return custody;
+      },
       run,
       healthy: healthy.proof,
       failed: failed.proof,
+      originalHistorical: originalHistorical.proof,
       successor,
       current,
+      nativeSettlement: async (
+        execution: HostedExecutionIntentV1,
+        outcome: "healthy" | "failed",
+      ) => {
+        const next = await nativeProof(
+          execution.revision,
+          execution.generation,
+          execution.runId,
+          execution.createdAt,
+          outcome,
+          false,
+          execution,
+        );
+        nativeProofs.push(next);
+        return next.proof;
+      },
+      publishRollout: async (
+        next: typeof rollout,
+        nextQueue = queue,
+        nextCustody = custody,
+      ) => {
+        await source.write(
+          source.launcher,
+          "src/host/hosted-runtime-rollout.json",
+          JSON.stringify(next),
+        );
+        await source.write(
+          source.launcher,
+          "src/host/hosted-custody-capability.json",
+          JSON.stringify({
+            version: 1,
+            takeover: { activated: false },
+            queue: nextQueue,
+            existingPr: nextCustody,
+          }),
+        );
+        await source.git(source.launcher, ["add", "."]);
+        await source.git(source.launcher, [
+          "commit",
+          "-qm",
+          "exact synthetic next recovery data",
+        ]);
+        controller = await source.git(source.launcher, [
+          "rev-parse",
+          "HEAD",
+        ]) as GitSha;
+        run.launcherSha = controller;
+        environment.GITHUB_SHA = controller;
+        environment.GITHUB_WORKFLOW_SHA = controller;
+        rollout = next;
+        queue = nextQueue;
+        custody = nextCustody;
+      },
+      nextRun: () => {
+        run.runId++;
+        environment.GITHUB_RUN_ID = String(run.runId);
+      },
       calls,
       ...writer,
       setNow: (value: number) => {

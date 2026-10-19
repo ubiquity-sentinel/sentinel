@@ -97,6 +97,59 @@ export function validateHostedStateTransition(
     const nextExecution = nextRuntime.execution;
     const priorSettlement = priorRuntime.lastExecutionProof;
     const nextSettlement = nextRuntime.lastExecutionProof;
+    const ownerMove = priorReleases.some((r) => {
+      const next = nextReleases.find((n) => n.id === r.id);
+      const d = next?.ownerDisposition;
+      return r.phase === "requested" && next?.phase === "owner_superseded" &&
+        d !== undefined &&
+        r.priorProof === null && r.candidateProof === null &&
+        r.rollbackProof === null && r.pointerIntent === null &&
+        priorRuntime.execution === null &&
+        nextRuntime.execution?.purpose === "bootstrap" &&
+        nextRuntime.execution.releaseId === null &&
+        priorRuntime.activeRevision === d.intent.fromRevision &&
+        priorRuntime.generation === d.intent.fromGeneration &&
+        nextRuntime.activeRevision === d.intent.toRevision &&
+        nextRuntime.generation === d.intent.toGeneration &&
+        nextRuntime.execution.launcherSha === d.controllerRevision &&
+        nextRuntime.execution.createdAt >= d.intent.authorizedAt &&
+        sameCanonical(priorRuntime.lastExecutionProof, d.failedPriorProof) &&
+        sameCanonical(priorRuntime.lastHealthyProof, d.retainedHealthyProof) &&
+        sameCanonical(
+          priorRuntime.lastExecutionProof,
+          nextRuntime.lastExecutionProof,
+        ) &&
+        sameCanonical(
+          priorRuntime.lastHealthyProof,
+          nextRuntime.lastHealthyProof,
+        );
+    }) || priorReleases.some((r) => {
+      const next = nextReleases.find((n) => n.id === r.id),
+        old = r.ownerSuccessorBindings ?? [],
+        bindings = next?.ownerSuccessorBindings ?? [];
+      const added = bindings.length === old.length + 1
+        ? bindings.at(-1)
+        : undefined;
+      return r.phase === "owner_superseded" &&
+        next?.phase === "owner_superseded" && added !== undefined &&
+        priorRuntime.execution === null &&
+        nextRuntime.execution?.purpose === "bootstrap" &&
+        nextRuntime.execution.releaseId === null &&
+        priorRuntime.activeRevision === added.recoveryFromRevision &&
+        priorRuntime.generation === added.recoveryFromGeneration &&
+        nextRuntime.activeRevision === added.binding.successorRevision &&
+        nextRuntime.generation === added.binding.successorGeneration &&
+        nextRuntime.execution.launcherSha === added.controllerRevision &&
+        sameCanonical(priorRuntime.lastExecutionProof, added.movementProof) &&
+        sameCanonical(
+          priorRuntime.lastExecutionProof,
+          nextRuntime.lastExecutionProof,
+        ) &&
+        sameCanonical(
+          priorRuntime.lastHealthyProof,
+          nextRuntime.lastHealthyProof,
+        );
+    });
 
     // Execution lifetime: retained unchanged, cleared atomically with its exact
     // settlement proof, or newly started in a LATER write after a clear. A
@@ -195,7 +248,7 @@ export function validateHostedStateTransition(
       if (nextRuntime.activeRevision === priorRuntime.activeRevision) {
         return "the same hosted runtime revision cannot change generation";
       }
-      if (priorExecution !== null || nextExecution !== null) {
+      if (!ownerMove && (priorExecution !== null || nextExecution !== null)) {
         return "hosted runtime pointer movement requires no active execution";
       }
       const matched = priorReleases.some((release) => {
@@ -221,7 +274,7 @@ export function validateHostedStateTransition(
         return release.phase === "rollback_pending" &&
           advanced.phase === "rollback_verifying";
       });
-      if (!matched) {
+      if (!matched && !ownerMove) {
         return "hosted runtime pointer movement has no exact persisted pointer intent and phase advance";
       }
     }
@@ -274,6 +327,21 @@ export function validateHostedStateTransition(
     if (nextRecord.updatedAt < priorRecord.updatedAt) {
       return "hosted release updatedAt cannot move backward";
     }
+    if (
+      priorRecord.ownerDisposition !== undefined &&
+      !sameCanonical(priorRecord.ownerDisposition, nextRecord.ownerDisposition)
+    ) return "owner disposition is immutable";
+    if (
+      priorRecord.ownerAcceptance !== undefined &&
+      !sameCanonical(priorRecord.ownerAcceptance, nextRecord.ownerAcceptance)
+    ) return "owner acceptance is immutable";
+    const oldBindings = priorRecord.ownerSuccessorBindings ?? [],
+      nextBindings = nextRecord.ownerSuccessorBindings ?? [];
+    if (
+      nextBindings.length < oldBindings.length ||
+      nextBindings.length > oldBindings.length + 1 ||
+      oldBindings.some((b, index) => !sameCanonical(b, nextBindings[index]))
+    ) return "owner successor bindings are append-only and immutable";
     for (
       const key of ["priorProof", "candidateProof", "rollbackProof"] as const
     ) {
@@ -306,22 +374,80 @@ export function validateHostedStateTransition(
       }
     }
     if (
-      priorRecord.phase === "accepted" || priorRecord.phase === "rolled_back"
+      priorRecord.phase === "accepted" || priorRecord.phase === "rolled_back" ||
+      priorRecord.phase === "owner_superseded"
     ) {
-      if (!sameCanonical(priorRecord, nextRecord)) {
+      const ownerAppend = priorRecord.phase === "owner_superseded" &&
+        priorRecord.ownerAcceptance === undefined &&
+        nextRecord.ownerAcceptance !== undefined &&
+        sameCanonical(priorRecord, {
+          ...Object.fromEntries(
+            Object.entries(nextRecord).filter(([key]) =>
+              key !== "ownerAcceptance"
+            ),
+          ),
+          updatedAt: priorRecord.updatedAt,
+        });
+      const added = nextBindings.length === oldBindings.length + 1
+        ? nextBindings.at(-1)
+        : undefined;
+      const before = priorRuntimes[0], after = nextRuntimes[0];
+      const bindingAppend = priorRecord.phase === "owner_superseded" &&
+        priorRecord.ownerAcceptance === undefined && added !== undefined &&
+        before?.execution === null &&
+        before.activeRevision === added.recoveryFromRevision &&
+        before.generation === added.recoveryFromGeneration &&
+        after?.activeRevision === added.binding.successorRevision &&
+        after.generation === added.binding.successorGeneration &&
+        after.execution?.purpose === "bootstrap" &&
+        after.execution.releaseId === null &&
+        after.execution.launcherSha === added.controllerRevision &&
+        sameCanonical(priorRecord, {
+          ...Object.fromEntries(
+            Object.entries(nextRecord).filter(([key]) =>
+              key !== "ownerSuccessorBindings"
+            ),
+          ),
+          ...(priorRecord.ownerSuccessorBindings === undefined
+            ? {}
+            : { ownerSuccessorBindings: priorRecord.ownerSuccessorBindings }),
+          updatedAt: priorRecord.updatedAt,
+        });
+      if (
+        !sameCanonical(priorRecord, nextRecord) && !ownerAppend &&
+        !bindingAppend
+      ) {
         return "a terminal hosted release receipt is immutable";
       }
       continue;
     }
     const allowed: Record<HostedReleasePhaseV1, HostedReleasePhaseV1[]> = {
-      requested: ["requested", "promoting"],
+      requested: ["requested", "promoting", "owner_superseded"],
       promoting: ["promoting", "verifying"],
       verifying: ["verifying", "accepted", "rollback_pending"],
       accepted: ["accepted"],
       rollback_pending: ["rollback_pending", "rollback_verifying"],
       rollback_verifying: ["rollback_verifying", "rolled_back"],
       rolled_back: ["rolled_back"],
+      owner_superseded: ["owner_superseded"],
     };
+    if (nextRecord.phase === "owner_superseded") {
+      const runtime = priorRuntimes[0],
+        nextRuntime = nextRuntimes[0],
+        d = nextRecord.ownerDisposition;
+      if (
+        !runtime || !nextRuntime || !d || runtime.execution !== null ||
+        nextRuntime.execution?.purpose !== "bootstrap" ||
+        nextRuntime.activeRevision !== d.intent.toRevision ||
+        nextRuntime.generation !== d.intent.toGeneration ||
+        runtime.activeRevision !== d.intent.fromRevision ||
+        runtime.generation !== d.intent.fromGeneration ||
+        !sameCanonical(runtime.lastExecutionProof, d.failedPriorProof) ||
+        !sameCanonical(runtime.lastHealthyProof, d.retainedHealthyProof)
+      ) {
+        return "owner supersession requires the exact atomic successor bootstrap";
+      }
+    }
     if (!allowed[priorRecord.phase].includes(nextRecord.phase)) {
       return "hosted release phase transition is not allowed";
     }
@@ -399,6 +525,10 @@ export type {
   HostedExecutionPurposeV1,
   HostedExecutionSettlementV1,
   HostedNotStartedProofV1,
+  HostedOwnerDispositionV1,
+  HostedOwnerSuccessorBindingV1,
+  HostedOwnerSuccessorTaskBindingV1,
+  HostedOwnerSupersessionIntentV1,
   HostedPointerActionV1,
   HostedPointerIntentV1,
   HostedReleasePhaseV1,
@@ -420,4 +550,13 @@ export {
   parseHostedRuntimeRecordV1,
 } from "./hosted-supervisor-runtime.ts";
 
-export { parseHostedReleaseRecordV1 } from "./hosted-supervisor-release.ts";
+export {
+  parseHostedOwnerDispositionV1,
+  parseHostedOwnerSupersessionIntentV1,
+  parseHostedReleaseRecordV1,
+} from "./hosted-supervisor-release.ts";
+
+export function isHostedReleaseTerminal(phase: HostedReleasePhaseV1): boolean {
+  return phase === "accepted" || phase === "rolled_back" ||
+    phase === "owner_superseded";
+}

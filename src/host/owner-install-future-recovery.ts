@@ -73,7 +73,7 @@ type Run = {
   readonly launcherSha: GitSha;
 };
 type Current = Extract<OwnerDevelopmentInstallStateReadV1, { status: "found" }>;
-type ReadInput = {
+export type ReadInput = {
   state: StateReadView;
   token: string;
   current: Current;
@@ -223,7 +223,7 @@ export function ownerFutureRecoveryBootstrap(
   });
 }
 
-async function sourceData(path: string): Promise<string> {
+export async function sourceData(path: string): Promise<string> {
   const root = await Deno.realPath(Deno.cwd());
   const file = `${root}/${path}`;
   const info = await Deno.lstat(file);
@@ -340,7 +340,7 @@ export async function readOwnerLegacyFirstRecoveryTarget(input: {
   }
 }
 
-async function sourceApproved(
+export async function sourceApproved(
   input: ReadInput,
   row: HostedRuntimeRecovery,
   now: number,
@@ -400,7 +400,7 @@ async function sourceApproved(
 }
 
 /** Full generic native proof comparison; observation freshness never changes saved digest identity. */
-async function nativeProof(
+export async function nativeProof(
   client: GitHubApiClient,
   saved: HostedRunProofV1,
 ): Promise<boolean> {

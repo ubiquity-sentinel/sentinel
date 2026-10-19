@@ -69,6 +69,7 @@ export function recordFiles(
     add("work", repair.work);
     add("budget_reservation", repair.reservations);
     add("review_receipt", repair.reviews);
+    add("owner_successor_review", repair.ownerSuccessorReviews ?? []);
     add("replay_result", repair.replays);
     add("release_request", repair.releaseRequests);
     // Durable cooldowns are serialized explicitly: the fragment is
@@ -315,6 +316,9 @@ export async function readCommitTree(
           records.reservations,
         ) as BudgetReservationV1[],
         reviews: orderRecords(records.reviews) as ReviewReceiptV1[],
+        ...(records.ownerSuccessorReviews.length === 0 ? {} : {
+          ownerSuccessorReviews: orderRecords(records.ownerSuccessorReviews),
+        }),
         replays: orderRecords(records.replays) as ReplayResultV1[],
         releaseRequests: orderRecords(
           records.releaseRequests,
