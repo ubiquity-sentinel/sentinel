@@ -1,4 +1,21 @@
-import { installedSupersession } from "./owner-install-supersession-fixtures.ts";
+import { RollingStartBudget } from "../../src/budget/mod.ts";
+import { portOk } from "../../src/contracts/ports.ts";
+import { parseReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
+import { composeLocalGitHub } from "../../src/host/local-github.ts";
+import { LocalSessionTracker } from "../../src/host/local-client.ts";
+import { runOwnerSuccessorReviewPhase } from "../../src/host/owner-successor-acceptance.ts";
+import { FakeClock, MemoryState } from "../repair/helpers.ts";
+import { seededSnapshot } from "../repair/loop-rig.ts";
+import {
+  clock,
+  installedSupersession,
+  runHostedSupervisorPrepare,
+  settle,
+  supervisor,
+} from "./owner-install-supersession-fixtures.ts";
+import { nativeOwnerReviewPorts } from "./owner-install-supersession-native-fixtures.ts";
+import type { OwnerSuccessorReviewPorts } from "../../src/host/owner-successor-acceptance.ts";
 import { driveOwnerTaskAcceptance } from "./owner-install-supersession-acceptance-fixtures.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -132,6 +149,176 @@ Deno.test("owner healthy correction retains failed task review and completes thr
       2,
     );
   } finally {
+    await rig.close();
+  }
+});
+
+Deno.test("owner successor phase leaves native reviewer uncomposed without an exact pending binding", async () => {
+  const clock = new FakeClock(1000), state = new MemoryState();
+  state.repair = seededSnapshot([]);
+  state.setRelease(parseReleaseStateSnapshotV1({
+    version: "v1",
+    kind: "release_state_snapshot",
+    stateHead: null,
+    sequence: 1,
+    updatedAt: clock.now(),
+    releases: [],
+    hostedReleases: [],
+    hostedRuntimes: [],
+    githubCooldowns: [],
+  }));
+  const configs = [createLocalRepositoryConfig()];
+  const nativeOwner = {
+    id: "7:2:repair",
+    runId: 7,
+    runAttempt: 2,
+    launcherSha: "a".repeat(40) as GitSha,
+    revision: "b".repeat(40) as GitSha,
+    generation: 74,
+    purpose: "ordinary" as const,
+    releaseId: null,
+    createdAt: clock.now(),
+  };
+  let prepared = 0, composed = 0;
+  assert.equal(
+    await runOwnerSuccessorReviewPhase(
+      {
+        clock,
+        state,
+        budget: new RollingStartBudget({ state, clock, configs }),
+        nativeOwner,
+        latestStartAt: clock.now() + 60_000,
+        settleBy: clock.now() + 120_000,
+      },
+      configs,
+      () => {
+        prepared++;
+        return Promise.resolve();
+      },
+      () => {
+        composed++;
+        return composeLocalGitHub({
+          clock,
+          state,
+          gate: {
+            beforeRequest: () => Promise.resolve(portOk(undefined)),
+            recordRateLimit: () => Promise.resolve(portOk(undefined)),
+          },
+          http: () => Promise.reject(new Error("no external API expected")),
+          token: "offline-test-token",
+          login: "ubiquity-sentinel[bot]",
+          invocationId: nativeOwner.id,
+          ownerExecution: nativeOwner,
+          stateRoot: "/unopened/state",
+          sourcePath: "/unopened/source",
+          scratch: "/unopened/scratch",
+          reviewCheckout: "/unopened/review",
+          reviewClientHome: "/unopened/client",
+          reviewTmpDir: "/unopened/tmp",
+          reviewDenoDir: "/unopened/deno",
+          trustedPath: Deno.env.get("PATH") ?? "/usr/bin:/bin",
+          codexExecutable: "/usr/bin/false",
+          tracker: new LocalSessionTracker(),
+        });
+      },
+      () => {
+        throw new Error("no owner successor review ports expected");
+      },
+      true,
+    ),
+    false,
+  );
+  assert.equal(prepared, 0);
+  assert.equal(composed, 0);
+  assert.equal(state.repairWrites, 0);
+});
+
+Deno.test("owner successor phase keeps required custody fail closed and lazily completes the exact native review once", async () => {
+  const rig = await installedSupersession();
+  let native: Awaited<ReturnType<typeof nativeOwnerReviewPorts>> | undefined;
+  try {
+    await settle(rig, "healthy");
+    rig.nextRun();
+    const prepared = await runHostedSupervisorPrepare(supervisor(rig));
+    assert.ok(
+      prepared.status === "run" && prepared.execution.purpose === "ordinary",
+    );
+    const configs = [createLocalRepositoryConfig()];
+    const input = {
+      clock,
+      state: rig.repair,
+      budget: new RollingStartBudget({ state: rig.repair, clock, configs }),
+      nativeOwner: prepared.execution,
+      latestStartAt: clock.now() + 60_000,
+      settleBy: clock.now() + 120_000,
+    };
+    let preparations = 0, compositions = 0;
+    let ports: OwnerSuccessorReviewPorts | undefined;
+    const phase = () =>
+      runOwnerSuccessorReviewPhase(
+        input,
+        configs,
+        () => {
+          preparations++;
+          return Promise.resolve();
+        },
+        () => {
+          compositions++;
+        },
+        () => ports,
+        true,
+      );
+    const before = await rig.repair.readRepair();
+    assert.equal(
+      await phase(),
+      true,
+      "an exact pending review holds unrelated work without custody",
+    );
+    assert.equal(preparations, 1);
+    assert.equal(compositions, 1);
+    assert.deepEqual(
+      await rig.repair.readRepair(),
+      before,
+      "missing custody cannot reserve or start a review",
+    );
+    assert.equal(
+      await runOwnerSuccessorReviewPhase(
+        input,
+        configs,
+        async () => {
+          preparations++;
+          native = await nativeOwnerReviewPorts(rig, prepared.execution);
+        },
+        () => {
+          compositions++;
+          ports = native!.ports;
+        },
+        () => ports,
+        true,
+      ),
+      true,
+    );
+    assert.equal(preparations, 2);
+    assert.equal(compositions, 2);
+    assert.ok(native);
+    assert.deepEqual(native.events, ["registered", "armed", "settled"]);
+    assert.equal(native.session.turnStarts(), 1);
+    assert.equal(native.session.closed, 1);
+    const completed = await rig.repair.readRepair();
+    assert.ok(completed.ok && completed.value.status === "found");
+    const journal = completed.value.snapshot.ownerSuccessorReviews!.find((r) =>
+      r.binding.nativeOwner.id === prepared.execution.id
+    )!;
+    assert.equal(journal.phase, "completed");
+    assert.equal(journal.nativeCustody, "settled");
+    assert.equal(journal.reservation.outcome, "submitted");
+    assert.equal(await phase(), true, "the completed review remains handled");
+    assert.equal(preparations, 2, "completed review never prepares again");
+    assert.equal(compositions, 2, "completed review never composes again");
+    assert.equal(native.session.turnStarts(), 1);
+    assert.deepEqual(await rig.repair.readRepair(), completed);
+  } finally {
+    await native?.dispose();
     await rig.close();
   }
 });
