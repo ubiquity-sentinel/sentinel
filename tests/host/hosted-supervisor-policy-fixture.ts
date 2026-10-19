@@ -66,6 +66,12 @@ export interface HostedPolicyGraph {
   matrixArtifacts(): Promise<
     typeof import("../../src/host/matrix-artifacts.ts")
   >;
+  matrixAdapters(): Promise<
+    typeof import("../../ops/hosted-autonomy-matrix-adapters.ts")
+  >;
+  reviewOwnerHost(): Promise<
+    typeof import("../../src/host/review-owner-host.ts")
+  >;
   existingPrTakeover(): Promise<
     typeof import("../../src/host/existing-pr-takeover.ts")
   >;
@@ -179,6 +185,8 @@ export async function withHostedProductionPolicy<T>(
     return await consume({
       producerRecovery: () => load("ops/hosted-autonomy-producer-recovery.ts"),
       matrixArtifacts: () => load("src/host/matrix-artifacts.ts"),
+      matrixAdapters: () => load("ops/hosted-autonomy-matrix-adapters.ts"),
+      reviewOwnerHost: () => load("src/host/review-owner-host.ts"),
       existingPrTakeover: () => load("src/host/existing-pr-takeover.ts"),
       publicationProof: () =>
         load("src/github/existing-pr-publication-proof.ts"),
