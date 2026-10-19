@@ -20,6 +20,8 @@ import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
 import {
   parseReviewReceiptV1,
   type ReviewReceiptV1,
+  reviewTaskStatementDigest,
+  type ReviewTaskStatementV1,
 } from "../../src/contracts/review-receipt.ts";
 import { parseBudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
 import type { BudgetReservationV1 } from "../../src/contracts/budget-reservation.ts";
@@ -47,10 +49,27 @@ const LIVE_0907 = JSON.parse(
   ),
 );
 
+/** Explicit synthetic statements for only the two older historical shapes. */
+const TASKS_0907 = new Map(
+  await Promise.all([583, 629].map(async (issueNumber) => {
+    const text = {
+      issueNumber,
+      title: `Deliver synthetic historical candidate ${issueNumber}`,
+      body:
+        `Deliver the exact reviewed synthetic patch for issue ${issueNumber}.`,
+    };
+    return [issueNumber, {
+      ...text,
+      digest: await reviewTaskStatementDigest(text),
+    }] as const;
+  })),
+);
+
 interface ShapeV1 {
   record: WorkRecordV1;
   receipts: ReviewReceiptV1[];
   reservations: BudgetReservationV1[];
+  task?: ReviewTaskStatementV1;
 }
 
 function shape2321(issue: number, overrides = {}): ShapeV1 {
@@ -59,6 +78,8 @@ function shape2321(issue: number, overrides = {}): ShapeV1 {
 }
 
 function shape0907(issue: number): ShapeV1 {
+  const task = TASKS_0907.get(issue);
+  assert.ok(task !== undefined, "an explicitly named 0907 synthetic task");
   const raw = (LIVE_0907.records as { related: { issueNumber: number } }[])
     .find((row) => row.related.issueNumber === issue);
   assert.ok(raw !== undefined, `live 09:07Z record ${issue}`);
@@ -69,17 +90,24 @@ function shape0907(issue: number): ShapeV1 {
     review.pullRequest.number === record.target.pr &&
     review.pullRequest.head === record.target.head &&
     review.pullRequest.base === record.target.base
+  ).map((review) =>
+    review.taskAcceptance?.issueNumber === issue
+      ? {
+        ...review,
+        taskAcceptance: { ...review.taskAcceptance, taskDigest: task.digest },
+      }
+      : review
   );
   const reservations = (LIVE_0907.reservations as unknown[]).map((row) =>
     parseBudgetReservationV1(row)
   ).filter((row) => row.taskId === record.id);
-  return { record, receipts, reservations };
+  return { record, receipts, reservations, task };
 }
 
 /** One full maintenance pass over one record at its reviewed base, green. */
 async function chain(
   name: string,
-  { record, receipts, reservations }: ShapeV1,
+  { record, receipts, reservations, task }: ShapeV1,
 ) {
   const pr = record.target.pr!;
   const tip = record.target.base!;
@@ -89,7 +117,7 @@ async function chain(
     green: { [record.target.head!]: true, [tip]: true },
     pulls: { [pr]: openPull(record) },
     afterMerge: { [pr]: mergedPull(record, tip) },
-    tasks: { [issue]: liveTask(issue, receipts) },
+    tasks: { [issue]: task ?? liveTask(issue, receipts) },
   });
   const rig = await liveRig(
     name,

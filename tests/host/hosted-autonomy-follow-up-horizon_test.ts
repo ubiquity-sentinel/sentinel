@@ -1,6 +1,5 @@
 /** The real HTTP listing producer and follow-up pass must prove absence. */
 import assert from "node:assert/strict";
-import { runHostedFollowUpPass } from "../../ops/hosted-autonomy-follow-up-pass.ts";
 import { createHostedFollowUpIssues } from "../../ops/hosted-autonomy-github-issues.ts";
 import { createHostedAutonomyRequest } from "../../ops/hosted-autonomy-github-listing.ts";
 import {
@@ -9,7 +8,7 @@ import {
   planFollowUpCandidates,
 } from "../../ops/hosted-autonomy-follow-ups.ts";
 import type { HostedAutonomyDepsV1 } from "../../ops/hosted-autonomy-types.ts";
-import { darkQueueFixture } from "./hosted-autonomy-dark-queue-fixture.ts";
+import { historicalDarkQueueFixture } from "./hosted-autonomy-dark-queue-fixture.ts";
 import {
   allLiveReceipts,
   APP,
@@ -19,7 +18,16 @@ import {
   liveSurface,
   liveTask,
   NOW,
+  withHistoricalAutonomy,
 } from "./hosted-autonomy-spent-fixtures.ts";
+
+/** This suite preserves historical preactivation follow-up semantics. */
+function runHistoricalFollowUps(deps: HostedAutonomyDepsV1): Promise<string[]> {
+  return withHistoricalAutonomy(async (graph) => {
+    const { runHostedFollowUpPass } = await graph.followUpPass();
+    return await runHostedFollowUpPass(deps);
+  });
+}
 
 const HORIZON = NOW - 30 * 60_000;
 const REPOSITORY_URL = "https://api.github.com/repos/ubiquity/ai.ubq.fi";
@@ -159,9 +167,9 @@ for (
         githubFor: () => surface,
         clock: { now: () => NOW },
       } as unknown as HostedAutonomyDepsV1;
-      const actions = await runHostedFollowUpPass({
+      const actions = await runHistoricalFollowUps({
         ...deps,
-        queueCustody: darkQueueFixture(deps),
+        queueCustody: historicalDarkQueueFixture(deps),
       });
       assert.deepEqual(
         pages,

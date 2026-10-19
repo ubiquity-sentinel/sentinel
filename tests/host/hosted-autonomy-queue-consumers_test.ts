@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { withHistoricalAutonomy } from "./hosted-autonomy-spent-fixtures.ts";
 import { runHostedDeliveryPass } from "../../ops/hosted-autonomy-delivery-pass.ts";
 import { verifiedMergedDelivery } from "../../ops/hosted-autonomy-delivery.ts";
 import {
@@ -132,9 +133,12 @@ Deno.test("queue delivery: weak legacy parents cannot book a merge without group
   const f = await fixture(false);
   try {
     // This accepted ancestor-shaped merge was the legacy booking bypass.
-    assert.ok(
-      verifiedMergedDelivery(f.facts.record, f.pull, "development") !== null,
-    );
+    await withHistoricalAutonomy(async (graph) => {
+      const { verifiedMergedDelivery } = await graph.deliveryFacts();
+      assert.ok(
+        verifiedMergedDelivery(f.facts.record, f.pull, "development") !== null,
+      );
+    });
     await runHostedDeliveryPass(f.context);
     const read = await f.rig.state.readRepair();
     assert.ok(read.ok && read.value.status === "found");
@@ -720,5 +724,84 @@ Deno.test("activated direct proof: only the resolver's live capability can book"
         }
       },
     );
+  }
+});
+
+Deno.test("active queue floor: open green spent head never merges; verified direct booking preserves charges once", async () => {
+  const f = await fixture(true);
+  try {
+    const facts = await directProofFacts();
+    const githubFor = f.context.deps.githubFor;
+    f.context.deps.githubFor = (repository) => {
+      const surface = githubFor(repository);
+      return surface === null ? null : {
+        ...surface,
+        readBaseTip: () => Promise.resolve(facts.binding.base),
+        hasSuccessfulCheck: () => Promise.resolve(true),
+        hasAllChecksGreen: () => Promise.resolve(true),
+        readIssueOpen: () => Promise.resolve(true),
+      };
+    };
+    const scope = await f.context.scopeFor(f.facts.record.repository);
+    assert.ok(scope.surface);
+    assert.equal(
+      await scope.surface.readBaseTip("development"),
+      f.facts.record.target.base,
+    );
+    assert.equal(await scope.surface.hasAllChecksGreen?.(SHA2), true);
+
+    f.pull.state = "open";
+    f.pull.merged = false;
+    f.pull.mergeCommitSha = null;
+    f.pull.parents = [];
+    f.context.deps.queueCustody = {
+      ready: true,
+      proofActivated: false,
+      protectedRecordIds: new Set(),
+      resolveDelivery: () => resolveQueueAwareDelivery(facts, POLICY),
+    };
+    assert.equal(f.facts.record.counters.reviewRounds, 3);
+    await runHostedDeliveryPass(f.context);
+    assert.equal(
+      f.rig.merges,
+      0,
+      "compiled active floor never calls the direct merge",
+    );
+    assert.equal(f.rig.writes, 0, "open work cannot be booked");
+    const open = await f.rig.state.readRepair();
+    assert.ok(open.ok && open.value.status === "found");
+    assert.deepEqual(
+      open.value.snapshot.reservations,
+      f.context.snapshot.reservations,
+    );
+    f.pull.state = "closed";
+    f.pull.merged = true;
+    f.pull.mergeCommitSha = SHA4;
+    f.pull.parents = [SHA1, SHA2];
+    f.pull.mergedBy = "ubiquity-sentinel[bot]";
+    const result = await runHostedDeliveryPass(f.context);
+    assert.equal(result?.status, "applied", f.context.actions.join(" "));
+    const booked = await f.rig.state.readRepair();
+    assert.ok(booked.ok && booked.value.status === "found");
+    assert.equal(booked.value.snapshot.releaseRequests.length, 1);
+    assert.deepEqual(
+      booked.value.snapshot.reservations,
+      f.context.snapshot.reservations,
+    );
+    assert.equal(f.rig.merges, 0);
+    assert.equal(f.rig.writes, 1);
+    await runHostedDeliveryPass({
+      ...f.context,
+      snapshot: booked.value.snapshot,
+      observedHead: booked.value.head,
+      initialHead: booked.value.head,
+      actions: [],
+      revisions: [],
+      ...createHostedAutonomyScopes(f.context.deps),
+    });
+    assert.equal(f.rig.merges, 0);
+    assert.equal(f.rig.writes, 1, "exact replay is read-only");
+  } finally {
+    await Deno.remove(f.rig.tmp, { recursive: true });
   }
 });
