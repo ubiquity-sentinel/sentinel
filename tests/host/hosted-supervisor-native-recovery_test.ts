@@ -1,9 +1,13 @@
+import {
+  DORMANT_HOSTED_SUPERVISOR_POLICY as dormant,
+  runHostedSupervisorWithPolicy,
+} from "./hosted-supervisor-policy-fixture.ts";
 /** Native completion recovery cases registered once, outside shared fixtures. */
 import assert from "node:assert/strict";
 import {
   parseHostedNotStartedProofV1,
 } from "../../src/contracts/hosted-supervisor.ts";
-import { runHostedSupervisorHost } from "../../src/host/actions-supervisor.ts";
+import type { runHostedSupervisorHost } from "../../src/host/actions-supervisor.ts";
 import { sha256Hex, T0 } from "../state/helpers.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import { runActionsTargetCycles } from "../../src/host/actions.ts";
@@ -142,7 +146,7 @@ for (const nativeCompletion of [false, true]) {
       let result: Awaited<ReturnType<typeof runHostedSupervisorHost>>;
       try {
         if (nativeCompletion) Deno.chdir(rig.root);
-        result = await runHostedSupervisorHost(hostInput);
+        result = await runHostedSupervisorWithPolicy(dormant, hostInput);
       } finally {
         if (nativeCompletion) Deno.chdir(originalCwd);
       }
@@ -153,13 +157,13 @@ for (const nativeCompletion of [false, true]) {
       assert.equal(outputs.get("revision"), RECOVERY_REVISION);
       assert.equal(result.execution?.generation, 59);
       await assert.rejects(() =>
-        runHostedSupervisorHost({
+        runHostedSupervisorWithPolicy(dormant, {
           ...hostInput,
           env: { ...hostInput.env, GITHUB_WORKFLOW_SHA: CANDIDATE },
         })
       );
       await assert.rejects(() =>
-        runHostedSupervisorHost({
+        runHostedSupervisorWithPolicy(dormant, {
           ...hostInput,
           env: { ...hostInput.env, GITHUB_JOB: "repair" },
         })

@@ -16,6 +16,7 @@ import { parseReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots
 import { runHostedSupervisorPrepare } from "../../src/host/actions-supervisor.ts";
 import { T0 } from "../state/helpers.ts";
 import {
+  DORMANT_HOSTED_POLICIES,
   execution,
   LAUNCHER,
   makeRig,
@@ -415,6 +416,7 @@ Deno.test("hosted supervisor core: a competing CAS write is never overwritten", 
       },
     };
     const result = await runHostedSupervisorPrepare({
+      ...DORMANT_HOSTED_POLICIES,
       clock: rig.clock,
       state,
       run: run(1),
