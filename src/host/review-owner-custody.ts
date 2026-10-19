@@ -33,6 +33,12 @@ import {
   writeReviewChannelFile,
 } from "./review-owner-channel.ts";
 import type { ReviewOwnerChannelDescriptorV1 } from "./review-owner-channel.ts";
+import {
+  type OwnerSuccessorCustodyRegistration,
+  parseOwnerSuccessorCustodyArm,
+  parseOwnerSuccessorCustodyRegistration,
+  parseOwnerSuccessorCustodySettled,
+} from "./owner-successor-acceptance-custody.ts";
 
 export interface LauncherReviewSessionTargetV1 {
   repository: RepositoryIdentityV1;
@@ -67,7 +73,15 @@ interface OwnedBrokerBaseReview extends OwnedBrokerSession {
   armed: boolean;
 }
 
-type OwnedBrokerEntry = OwnedBrokerReview | OwnedBrokerBaseReview;
+interface OwnedBrokerSuccessorReview
+  extends Omit<OwnedBrokerBaseReview, "kind" | "registration"> {
+  kind: "owner_successor";
+  registration: OwnerSuccessorCustodyRegistration;
+}
+type OwnedBrokerEntry =
+  | OwnedBrokerReview
+  | OwnedBrokerBaseReview
+  | OwnedBrokerSuccessorReview;
 
 export class ReviewOwnerCustodyBroker {
   readonly execution: HostedExecutionIntentV1;
@@ -153,7 +167,7 @@ export class ReviewOwnerCustodyBroker {
       for (const entry of this.entries.values()) {
         // Base-review custody is ephemeral. Never emit a carrier R80 cannot parse;
         // an interrupted base review retains its original charged reservation.
-        if (entry.kind === "base") continue;
+        if (entry.kind !== "pull_request") continue;
         // The publisher and all broker-owned RPC work are dead/settled; no journal finalization can continue.
         if (!entry.processSettled || entry.session !== null || entry.faulted) {
           continue;
@@ -240,6 +254,10 @@ export class ReviewOwnerCustodyBroker {
   private async dispatch(method: string, value: unknown): Promise<unknown> {
     if (this.stopping) throw new Error("review custody stopped");
     if (
+      ["registerOwnerSuccessor", "armOwnerSuccessor", "settledOwnerSuccessor"]
+        .includes(method)
+    ) return this.dispatchOwnerSuccessor(method, value);
+    if (
       method === "registerBaseReview" || method === "armBaseReview" ||
       method === "settledBaseReview"
     ) return this.dispatchBaseReview(method, value);
@@ -310,7 +328,7 @@ export class ReviewOwnerCustodyBroker {
     }
     const entry = this.entries.get(params.requestId);
     if (!entry) throw new Error("review custody operation unregistered");
-    if (entry.kind === "base" && (entry.faulted || entry.finalized)) {
+    if (entry.kind !== "pull_request" && (entry.faulted || entry.finalized)) {
       throw new Error("base review custody operation unavailable");
     }
     const keys = method === "open"
@@ -328,7 +346,10 @@ export class ReviewOwnerCustodyBroker {
         params.ownerRunId !== this.execution.id ||
         params.cwd !== entry.target.session.cwd ||
         typeof params.invocationId !== "string" ||
-        (entry.kind === "base" && entry.invocationId !== null)
+        (entry.kind !== "pull_request" && entry.invocationId !== null) ||
+        (entry.kind === "owner_successor" &&
+          params.invocationId !==
+            entry.registration.review.binding.invocationId)
       ) {
         entry.faulted = true;
         throw new Error("review custody session identity changed");
@@ -378,7 +399,7 @@ export class ReviewOwnerCustodyBroker {
         input.modelProvider !== entry.target.provider ||
         input.permissions !== entry.target.permissionProfile)
     ) throw new Error("review custody thread policy changed");
-    if (entry.kind === "base" && params.method === "thread/start") {
+    if (entry.kind !== "pull_request" && params.method === "thread/start") {
       if (entry.preparationStarted) {
         throw new Error("base review custody already prepared");
       }
@@ -387,7 +408,7 @@ export class ReviewOwnerCustodyBroker {
     if (params.method === "turn/start") {
       if (
         entry.turnStarted ||
-        (entry.kind === "base"
+        (entry.kind !== "pull_request"
           ? !entry.armed
           : entry.registration.journal.phase !== "running") ||
         input.threadId !== entry.prepared?.threadId ||
@@ -488,6 +509,75 @@ export class ReviewOwnerCustodyBroker {
     return null;
   }
 
+  private dispatchOwnerSuccessor(method: string, value: unknown): null {
+    if (method === "registerOwnerSuccessor") {
+      const registration = parseOwnerSuccessorCustodyRegistration(value),
+        review = registration.review;
+      if (
+        canonicalStringify(review.binding.nativeOwner) !==
+          canonicalStringify(this.execution)
+      ) throw new Error("owner successor custody foreign native owner");
+      const target = this.targets.find((item) =>
+        canonicalStringify(item.repository) ===
+          canonicalStringify(review.reservation.repository)
+      );
+      if (!target) {
+        throw new Error("owner successor custody foreign repository");
+      }
+      const key = review.binding.requestId, prior = this.entries.get(key);
+      if (prior) {
+        if (
+          prior.kind !== "owner_successor" ||
+          canonicalStringify(prior.registration) !==
+            canonicalStringify(registration)
+        ) throw new Error("owner successor custody changed operation");
+      } else {this.entries.set(key, {
+          kind: "owner_successor",
+          registration,
+          target,
+          session: null,
+          prepared: null,
+          invocationId: null,
+          turnStarted: false,
+          preparationStarted: false,
+          armed: false,
+          processSettled: true,
+          finalized: false,
+          faulted: false,
+          eventTail: Promise.resolve(),
+          lastEventCounter: 0,
+        });}
+      return null;
+    }
+    const input = method === "armOwnerSuccessor"
+      ? parseOwnerSuccessorCustodyArm(value)
+      : parseOwnerSuccessorCustodySettled(value);
+    const entry = this.entries.get(input.requestId);
+    if (!entry || entry.kind !== "owner_successor" || entry.faulted) {
+      throw new Error("owner successor custody registration unavailable");
+    }
+    if ("execution" in input) {
+      if (
+        entry.armed || entry.finalized || entry.turnStarted ||
+        entry.session === null || entry.processSettled ||
+        entry.prepared === null ||
+        canonicalStringify(input.execution) !==
+          canonicalStringify(entry.prepared)
+      ) {
+        throw new Error(
+          "owner successor custody prepared identity unavailable",
+        );
+      }
+      entry.armed = true;
+    } else {
+      if (!entry.processSettled || entry.session !== null) {
+        throw new Error("owner successor custody unproved close");
+      }
+      entry.finalized = true;
+    }
+    return null;
+  }
+
   private async emit(
     entry: OwnedBrokerEntry,
     type: string,
@@ -504,6 +594,8 @@ export class ReviewOwnerCustodyBroker {
       {
         requestId: entry.kind === "base"
           ? entry.registration.requestId
+          : entry.kind === "owner_successor"
+          ? entry.registration.review.binding.requestId
           : entry.registration.journal.requestId,
         type,
         event,

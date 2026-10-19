@@ -216,19 +216,41 @@ Deno.test("runtime rollout: authenticated future pin data preserves the frozen p
   }
 });
 
-Deno.test("runtime rollout: empty source preserves the historical maintenance lists", () => {
-  assert.deepEqual(HOSTED_RUNTIME_ROLLOUT, {
-    version: 1,
-    installs: [],
-    ciCorrection: [],
-    refreshRearm: [],
-    conflictResolution: [],
-    ciFirst: [],
-    ciFirstFix: [],
-    acceptanceCorrection: [],
-    legacyReview: [],
-    recoveries: [],
-  });
+const dormant = {
+  version: 1,
+  installs: [],
+  ciCorrection: [],
+  refreshRearm: [],
+  conflictResolution: [],
+  ciFirst: [],
+  ciFirstFix: [],
+  acceptanceCorrection: [],
+  legacyReview: [],
+  recoveries: [],
+  ownerSupersessions: [],
+  ownerSuccessorTaskBindings: [],
+};
+
+Deno.test("runtime rollout: explicit dormant source has no maintenance or install grants", () => {
+  assert.deepEqual(parseHostedRuntimeRollout(dormant), dormant);
+});
+
+Deno.test("runtime rollout: committed source preserves historical lists and exact owner installs", () => {
+  if (HOSTED_RUNTIME_ROLLOUT.ownerSupersessions.length === 0) {
+    assert.deepEqual(HOSTED_RUNTIME_ROLLOUT, dormant);
+  } else {
+    for (const row of HOSTED_RUNTIME_ROLLOUT.ownerSupersessions) {
+      assert.ok(
+        HOSTED_RUNTIME_ROLLOUT.installs.some((install) =>
+          install.fromRevision === row.fromRevision &&
+          install.fromGeneration === row.fromGeneration &&
+          install.toRevision === row.toRevision &&
+          install.toGeneration === row.toGeneration &&
+          install.rollbackToPrior === false
+        ),
+      );
+    }
+  }
   for (
     const rows of [
       HOSTED_AUTONOMY_CI_CORRECTION_RUNTIMES,

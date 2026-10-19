@@ -38,6 +38,10 @@ import type { ReviewReceiptV1 } from "./review-receipt.ts";
 import { parseWorkRecordV1 } from "./work-record.ts";
 import type { WorkRecordV1 } from "./work-record.ts";
 import {
+  type OwnerSuccessorReviewV1,
+  parseOwnerSuccessorReviewV1,
+} from "./owner-successor-review.ts";
+import {
   expectArray,
   expectCount,
   expectEnum,
@@ -63,6 +67,8 @@ export interface RepairStateSnapshotV1 {
   work: WorkRecordV1[];
   reservations: BudgetReservationV1[];
   reviews: ReviewReceiptV1[];
+  /** Present only after the first distinct owner-successor review admission. */
+  ownerSuccessorReviews?: OwnerSuccessorReviewV1[];
   replays: ReplayResultV1[];
   releaseRequests: ReleaseRequestV1[];
   githubCooldowns: GitHubCooldownV1[];
@@ -140,7 +146,13 @@ export function parseRepairStateSnapshotV1(
   input: unknown,
 ): RepairStateSnapshotV1 {
   const obj = expectRecord(input, "$");
-  expectExactKeys(obj, REPAIR_KEYS, "$");
+  expectExactKeys(
+    obj,
+    Object.hasOwn(obj, "ownerSuccessorReviews")
+      ? [...REPAIR_KEYS, "ownerSuccessorReviews"]
+      : REPAIR_KEYS,
+    "$",
+  );
   expectVersion(obj.version, "$.version");
   expectEnum(obj.kind, ["repair_state_snapshot"], "$.kind");
 
@@ -216,6 +228,24 @@ export function parseRepairStateSnapshotV1(
   expectUniqueIds(work, "$.work");
   expectUniqueIds(reservations, "$.reservations");
   expectUniqueIds(reviews, "$.reviews");
+  const ownerSuccessorReviews = Object.hasOwn(obj, "ownerSuccessorReviews")
+    ? expectArray(
+      obj.ownerSuccessorReviews,
+      "$.ownerSuccessorReviews",
+      MaxItems.snapshotRecords,
+      parseOwnerSuccessorReviewV1,
+    )
+    : undefined;
+  if (ownerSuccessorReviews !== undefined) {
+    if (ownerSuccessorReviews.length === 0) {
+      fail(
+        "$.ownerSuccessorReviews",
+        "invalid_lifecycle",
+        "an owner review collection must retain its first record",
+      );
+    }
+    expectUniqueIds(ownerSuccessorReviews, "$.ownerSuccessorReviews");
+  }
   expectUniqueIds(replays, "$.replays");
   expectUniqueIds(releaseRequests, "$.releaseRequests");
   expectUniqueIds(attemptMemory, "$.attemptMemory");
@@ -234,6 +264,7 @@ export function parseRepairStateSnapshotV1(
     work,
     reservations,
     reviews,
+    ...(ownerSuccessorReviews === undefined ? {} : { ownerSuccessorReviews }),
     replays,
     releaseRequests,
     githubCooldowns,

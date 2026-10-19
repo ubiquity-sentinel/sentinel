@@ -82,6 +82,10 @@ import type { BaseTaskReviewGitHubV1 } from "../repair/loop-base-satisfaction.ts
 // ---------------------------------------------------------------------------
 
 export interface LocalGitHubInputV1 {
+  /** Trusted runtime composition only; produces a durable non-PR owner journal. */
+  onOwnerSuccessorReviewPorts?: (
+    ports: import("./owner-successor-acceptance.ts").OwnerSuccessorReviewPorts,
+  ) => void;
   clock: Clock;
   state: StateReadView & RepairStateWriter;
   gate: GitHubCooldownGateV1;
@@ -347,6 +351,37 @@ export function composeLocalGitHub(
           })
         ),
   });
+  if (
+    repository.owner === "ubiquity" && repository.name === "sentinel" &&
+    repository.installationId === 0
+  ) {
+    input.onOwnerSuccessorReviewPorts?.({
+      capture: snapshotSource.capture,
+      reviewer,
+      ...(custody instanceof ReviewOwnerChannelClient ? { custody } : {}),
+      task: async (issueNumber) => {
+        const read = await client.readIssue(issueNumber);
+        if (!read.ok || !read.value) return;
+        const { reviewTaskStatementDigest } = await import(
+          "../contracts/review-task-acceptance.ts"
+        );
+        const task = {
+          issueNumber,
+          title: read.value.title,
+          body: read.value.body,
+        };
+        return { ...task, digest: await reviewTaskStatementDigest(task) };
+      },
+      verify: async (revision) => {
+        const read = await client.readChecks(revision);
+        return read.ok &&
+          read.value.checks.some((c) =>
+            c.name === "test-local" && c.status === "completed" &&
+            c.conclusion === "success"
+          );
+      },
+    });
+  }
   const reviewService = new GitHubCodexReviewTransport({
     client,
     repository,
