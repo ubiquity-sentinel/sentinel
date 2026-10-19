@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import {
+  DORMANT_HOSTED_SUPERVISOR_POLICY,
+  withHostedProductionPolicy,
+} from "./hosted-supervisor-policy-fixture.ts";
+import {
   createHostedReviewOwnerCustody,
-  runHostedRuntimeWithReviewCustody,
+  type runHostedRuntimeWithReviewCustody,
 } from "../../src/host/review-owner-host.ts";
 import { reviewOwnerChildInput } from "../../src/host/review-owner-child-input.ts";
 import { emitHostedRuntimeCliResult } from "../../src/host/hosted-runtime-main.ts";
@@ -31,6 +35,19 @@ const COMPOSITION =
   new URL("../../src/host/local-github.ts", import.meta.url).href;
 const CLIENT = new URL("../../src/host/local-client.ts", import.meta.url).href;
 const IO = new URL("../../src/host/actions-host-io.ts", import.meta.url).href;
+
+/** This review-owner scenario uses an explicit historical deployment policy. */
+function runFixtureReviewOwnerHost(
+  input: Parameters<typeof runHostedRuntimeWithReviewCustody>[0],
+) {
+  return withHostedProductionPolicy(
+    DORMANT_HOSTED_SUPERVISOR_POLICY,
+    async (graph) => {
+      const host = await graph.reviewOwnerHost();
+      return host.runHostedRuntimeWithReviewCustody(input);
+    },
+  );
+}
 
 function shellQuote(text: string): string {
   return "'" + text.replaceAll("'", "'\\''") + "'";
@@ -113,7 +130,7 @@ Deno.test("review owner host: production construction passes its descriptor only
     rig.env.SENTINEL_DEEPSEEK_API_KEY = "synthetic-implementation-key";
     await seedRelease(rig);
     rig.process.child = exited(childLine(rig.execution));
-    const result = await runHostedRuntimeWithReviewCustody(inputFor(rig));
+    const result = await runFixtureReviewOwnerHost(inputFor(rig));
     assert.equal(result.status, "healthy", JSON.stringify(result));
     const child = rig.process.childCalls()[0]!;
     const decoded = reviewOwnerChildInput(child.stdin, rig.execution);
@@ -258,7 +275,7 @@ Deno.kill(Deno.pid, "SIGKILL");
     );
     await seedRelease(rig);
     rig.process.realChild = true;
-    const result = await runHostedRuntimeWithReviewCustody(inputFor(rig));
+    const result = await runFixtureReviewOwnerHost(inputFor(rig));
     assert.equal(result.status, "failed", JSON.stringify(result));
     assert.equal(
       result.reviewOwnerSettlements?.length,
@@ -407,7 +424,7 @@ Deno.test("review owner host: missing targets, invalid model and exact private p
             assert.equal(linked.success, true);
           }
         }
-        const result = await runHostedRuntimeWithReviewCustody(inputFor(rig));
+        const result = await runFixtureReviewOwnerHost(inputFor(rig));
         assert.equal(result.status, "unavailable");
         assert.equal(result.terminal, null);
         assert.equal(rig.process.childCalls().length, 0);
