@@ -55,6 +55,7 @@ import {
 export async function captureHostedAutonomyMain(
   deps: HostedAutonomyDepsV1,
   head: string,
+  runMain: typeof runHostedAutonomyMain = runHostedAutonomyMain,
 ): Promise<{ exit: number; result: HostedAutonomyResultV1 }> {
   let result: HostedAutonomyResultV1 | null = null;
   const originalLog = console.log;
@@ -66,7 +67,7 @@ export async function captureHostedAutonomyMain(
   };
   let exit: number;
   try {
-    exit = await runHostedAutonomyMain({
+    exit = await runMain({
       env: {
         GITHUB_REPOSITORY: "ubiquity/sentinel",
         GITHUB_REF: "refs/heads/sentinel-supervisor",
