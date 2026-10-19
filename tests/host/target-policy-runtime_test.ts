@@ -8,6 +8,7 @@ import { createTargetConfigV1 } from "../../src/host/targets.ts";
 import { candidatePreservationRef } from "../../src/repair/keys.ts";
 import { FakeClock, MemoryState } from "../repair/helpers.ts";
 import { T0 } from "../state/helpers.ts";
+import { membershipWire } from "../github/merge-queue-fixtures.ts";
 import {
   BRANCH,
   candidateRecord,
@@ -138,6 +139,34 @@ Deno.test("target policy: composed gateway candidate preserver rejects deploymen
       http: (request) => {
         const path = new URL(request.url).pathname;
         reads.push(`${request.method} ${path}`);
+        if (path === "/graphql") {
+          assert.equal(request.method, "POST");
+          const query = JSON.parse(request.body ?? "{}");
+          assert.match(query.query, /^query\(/);
+          assert.match(query.query, /pullRequest\(number:\$number\)/);
+          assert.deepEqual(query.variables, {
+            owner: repository.owner,
+            name: repository.name,
+            number: record.target.pr,
+          });
+          return Promise.resolve({
+            status: 200,
+            headers: new Headers(),
+            bodyText: JSON.stringify(membershipWire(null, {
+              id: "PR_12",
+              number: record.target.pr,
+              headRefName: record.target.branch,
+              headRefOid: head,
+              baseRefOid: ctx.base,
+              author: {
+                __typename: "Bot",
+                id: "BOT_SYNTHETIC_AUTHOR",
+                login: "ubiquity-sentinel[bot]",
+              },
+              mergedBy: null,
+            })),
+          });
+        }
         assert.equal(request.method, "GET");
         if (path === "/repos/ubiquity/ai.ubq.fi/rules/branches/development") {
           return Promise.resolve({
@@ -195,6 +224,7 @@ Deno.test("target policy: composed gateway candidate preserver rejects deploymen
     assert.equal(publicationCalls, 0);
     assert.deepEqual(reads, [
       "GET /repos/ubiquity/ai.ubq.fi/rules/branches/development",
+      "POST /graphql",
       `GET /repos/ubiquity/ai.ubq.fi/git/ref/${ref.slice("refs/".length)}`,
     ]);
     assert.deepEqual(
