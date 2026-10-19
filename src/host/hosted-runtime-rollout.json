@@ -1,6 +1,14 @@
 {
   "version": 1,
-  "installs": [],
+  "installs": [
+    {
+      "fromRevision": "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+      "fromGeneration": 81,
+      "toRevision": "ff8763f901b6d0bb8b47b0e71a76222e124c2206",
+      "toGeneration": 82,
+      "rollbackToPrior": false
+    }
+  ],
   "ciCorrection": [],
   "refreshRearm": [],
   "conflictResolution": [],
@@ -9,6 +17,50 @@
   "acceptanceCorrection": [],
   "legacyReview": [],
   "recoveries": [],
-  "ownerSupersessions": [],
+  "ownerSupersessions": [
+    {
+      "releaseId": "release:f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5",
+      "requestSha256": "f239543d5a7342955ac0e1e7ba3aec985e18f898b4906a32e13948d16cb56efe",
+      "sourceSha256": "3d17854ba23cc989fc2a1e03dd5b1930d378b2b82e5494612fe85626bb570339",
+      "taskSha256": "7e07f53f0e7a7fa9deeaee8709921ee1792ac07a2227fc18ec1d2fd9a56cef4f",
+      "workId": "issue-ubiquity-sentinel-170",
+      "workSha256": "a5fb2a633aa64d2d635718d5007e71f5d89c0f2bb06d03a4b06a8e02c7458b1a",
+      "issueNumber": 170,
+      "repairHead": "6ec27b0a80c9e13e06fdad6227a1c5a87b6e476e",
+      "releaseHead": "e365d779ab6dbbb6b988c719bbdb338722cb4837",
+      "repairSnapshotSha256": "c3efdce387967fbe3ef67194a6a083cdaf4d4ffab448efb83d3e6cafc590e6a6",
+      "releaseSnapshotSha256": "afc3367fa28c72b9985186807b124fdc51536fb71ac898e43a3eb99a8d776866",
+      "fromRevision": "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+      "fromGeneration": 81,
+      "toRevision": "ff8763f901b6d0bb8b47b0e71a76222e124c2206",
+      "toGeneration": 82,
+      "authorizedAt": 1792417838936,
+      "controllerSourceRevision": "ff8763f901b6d0bb8b47b0e71a76222e124c2206",
+      "controllerCodeSha256": "c5c4271b5e8a3edd380e38f182e6acaa035e71d51924fed83db6435a3a9449d2",
+      "acceptanceBaseRevision": "9b9d74c99eb5bafcf8fe9941fdedd1f940fdef8a",
+      "ciRevision": "ff8763f901b6d0bb8b47b0e71a76222e124c2206",
+      "requiredAncestors": [
+        "9f7cdcc0e7d4206730a25c2e51cf216d93d41f29",
+        "e19ff1c4ecb2db292ada491ad7cf60a43c0f58ac",
+        "1838df313105bab219d71602695a7f758a65125e"
+      ],
+      "failedProofSha256": "4606c1d712de86517abda08fb9d657a314ece237bf6a499db2e9782f8770ec0c",
+      "retainedHealthyProofSha256": "832a0e64c1b95ae2502ca915773a8f85b16790971c64071782d51105cc04850b",
+      "healthyWitnessHead": "51ba494355ab2f75065aed50abdd2f5a1c48d641",
+      "originalFailedPriorExecution": {
+        "id": "39167387867:1:repair",
+        "runId": 39167387867,
+        "runAttempt": 1,
+        "launcherSha": "00b6649eeff51a9754bf3748f793137db9bf8605",
+        "purpose": "prior",
+        "revision": "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+        "generation": 81,
+        "releaseId": "release:f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5",
+        "createdAt": 1792358463684
+      },
+      "originalFailedPriorJobId": 117793247481,
+      "originalFailedPriorNativeSha256": "2cf90ef8bf0d7c93e05b0185ca06599751181f833ab4232a208618afaea21b14"
+    }
+  ],
   "ownerSuccessorTaskBindings": []
 }
