@@ -13,6 +13,31 @@ identity and runtime routing are reported separately.
 
 ## Active task register
 
+At 2026-10-19 02:02 UTC the same sole writer completed exact 48-file candidate
+`5a9688f40a0761aa919581cb29a4b8ac269977a75db29d3fe06c34d0ad005c05`, source
+digest `fa9a6a6ef155fd6289a884d77ddbce09020af70865ce24dc7a74bd208058dc2a`. The
+deferred-acceptance hold and canonical journal ordering correction passed the
+actual broker/native-review, unapplied App CAS, prepare/finalize hold, retry,
+original task170 delivery and exact capable recovery/rollback lifecycle
+(`edafe938-14a3-427a-9040-b4bfa6e42e91`, child0,117.811s), affected consumers
+and static checks. Test-only SCOPE-11 assertions preserve independent feature
+lists; final corrected check `fb232f44-367d-493b-94fc-24e53aae1dd6` passed. All
+writer processes are settled; root verified all48 file hashes and retained
+R/W/1838/e16 ancestry. Independent final audit accepted all17 receipts with no
+unresolved P0/P1. Root committed the exact worker result at
+`5fcb8fe8e0abc4332152383aef26db153f2e0104` and normally merged it into canonical
+`68092d1bcaea59c31558fb04f185f8f6d276278c`, preserving every accepted ancestor
+and the owned documentation. Profile F generation is next. Audit acceptance is
+in `owner-supersession/resume-audit-20261019/acceptance.json`. Evidence and17
+full receipts are in
+`owner-supersession/implementation/deferred-acceptance/HANDOFF.md` and
+`checks.json`. Root retains source/state/promotion ownership and standing
+bounded publication/CI/runtime approval. Existing e16 CI39164327314 remains
+accepted only for e16; F and LF need their own exact native CI. No F
+installation or live task delivery is claimed. The same-first-PR UOS receipt
+gates further fixtures and queue activation only; installation still requires
+exact source/CI/profile/custody/drain/App CAS/bootstrap/recovery evidence.
+
 Module `binding-owner-supersession-20261018`, aid `b4fdafd9c3`, has one
 implementation writer, `/root/binding_owner_supersession_impl`, on branch
 `codex/master-plan-binding-owner-supersession-20261018-ab4fdafd9c3` in
@@ -78,6 +103,21 @@ source/evidence for independent auditor
 native CI, installation and live acceptance all remain pending. Task170 remains
 wanted and delivery-pending. No live write, source activation or installed
 binding acceptance is claimed.
+
+UOS exact reviewed two-file change is committed and published to production main
+at `1babe0cbdba25bcc0082c7bb3c161cc6f7e3ac24`, with prior
+`7920d8c558a9fde102ece5954e4cb52f91489c94` retained. Native Deploy39187400872:1
+passed artifact publication to dist/main
+`f893f4bfa34eb885202bd6c21bed448fc64ea8a0`; exact marker and push checks pass.
+Deno job117852629005 failed because resolved deno-deploy
+action305379096b5df54d4268d039f998920f5872e110 places --unstable-kv before the
+deploy subcommand, which CLI2.9.7 rejects. Native failed logs and both
+deployment identities are retained in
+`uos-resume-20261019/deployment/handback.md`; no unchanged retry or PR1235 edit
+occurred. The next UOS action is the minimal existing action argument-order
+correction, then successful Deno/App identity and the single original PR
+receipt/OPEN check. This independent failure does not gate the bounded Sentinel
+repair.
 
 The primary adopts the necessary UOS first-fixture observability seam as module
 `uos-canary-receipt-20261018`, aid `74e2bebf72`, in repository

@@ -11,6 +11,14 @@ continuation.
 
 ### Explicit prepromotion owner supersession
 
+`SEMANTICS-10.md` preserves a genuinely completed and charged successor review
+when the trusted acceptance append is deferred. Prepare holds read-only while
+that exact review's native settlement proof is needed; it cannot start an
+ordinary run that overwrites the proof. Finalization may retry the authenticated
+append, and normal preparation resumes after independent readback of acceptance.
+Initial bootstrap/review and authenticated capable correction/recovery remain on
+their existing paths; no forged review, health proof or delivery is admitted.
+
 `SEMANTICS-8.md` requires truthful owner_successor registration, durable
 running-readback, arm and settlement through the existing native review-owner
 channel and custody broker. Normal PR and base-task semantics stay unchanged; a
