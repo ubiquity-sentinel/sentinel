@@ -1,1 +1,20 @@
-[]
+[
+  {
+    "version": 1,
+    "codeSha256": "6cfded8f11638910fd1607949cac43a6f6f45ab5146a12845e6bd06869857a8e",
+    "targetsSha256": "51a6aaf9f8d1580392459af57227f1783ded92502036436fe2aabeaf0deaff06",
+    "appClientId": "Iv23liHUJNXds9mU3j7Q",
+    "jobs": {
+      "repair": {
+        "dependencyStep": "Install locked self-test dependencies",
+        "mintStep": "Mint the scoped sentinel App token",
+        "runtimeStep": "Run selected Sentinel runtime"
+      },
+      "matrix_plan": {
+        "dependencyStep": "Install locked self-test dependencies",
+        "mintStep": "Mint the scoped sentinel App token",
+        "runtimeStep": "Plan isolated issue matrix"
+      }
+    }
+  }
+]
