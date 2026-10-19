@@ -13,6 +13,7 @@ import { runHostedSupervisorPrepare } from "../../src/host/actions-supervisor.ts
 import { sha256Hex } from "../state/helpers.ts";
 import {
   CANDIDATE,
+  DORMANT_HOSTED_POLICIES,
   LAUNCHER,
   makeRig,
   releaseRequest,
@@ -294,6 +295,7 @@ Deno.test("hosted supervisor core: a lost write response is reconciled by exact 
       },
     };
     const result = await runHostedSupervisorPrepare({
+      ...DORMANT_HOSTED_POLICIES,
       clock: rig.clock,
       state,
       run: run(1),
