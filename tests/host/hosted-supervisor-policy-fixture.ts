@@ -40,7 +40,7 @@ export const DORMANT_HOSTED_SUPERVISOR_POLICY = {
     ownerSuccessorTaskBindings: [],
   }),
 };
-interface FixturePolicy {
+export interface FixturePolicy {
   queue: QueueRuntimeCapability;
   custody: ExistingPrRuntimeCapability;
   rollout: HostedRuntimeRollout;
@@ -58,11 +58,35 @@ async function files(root: string, prefix: string): Promise<string[]> {
   }
   return found.sort();
 }
-/** Actual host composition in a fresh graph; only its two policy JSON files differ. */
-export async function runHostedSupervisorWithPolicy(
+/** Every loader resolves within one private graph, including opaque capability owners. */
+export interface HostedPolicyGraph {
+  supervisorHost(): Promise<
+    typeof import("../../src/host/actions-supervisor-host.ts")
+  >;
+  runner(): Promise<typeof import("../../ops/hosted-autonomy-runner.ts")>;
+  deliveryPass(): Promise<
+    typeof import("../../ops/hosted-autonomy-delivery-pass.ts")
+  >;
+  scopes(): Promise<typeof import("../../ops/hosted-autonomy-scopes.ts")>;
+  closedIssues(): Promise<
+    typeof import("../../ops/hosted-autonomy-retry-pass.ts")
+  >;
+  followUps(): Promise<
+    typeof import("../../ops/hosted-autonomy-follow-ups.ts")
+  >;
+  queueProof(): Promise<
+    typeof import("../../ops/hosted-autonomy-queue-proof.ts")
+  >;
+  deliveryProof(): Promise<
+    typeof import("../../ops/hosted-autonomy-delivery-proof.ts")
+  >;
+}
+
+/** Historical/configuration fixture graph; only its two policy JSON files differ. */
+export async function withHostedProductionPolicy<T>(
   policy: FixturePolicy,
-  input: HostedSupervisorHostInputV1,
-): Promise<HostedSupervisorHostResultV1> {
+  consume: (graph: HostedPolicyGraph) => Promise<T>,
+): Promise<T> {
   const source = fileURLToPath(new URL("../../", import.meta.url)).replace(
     /\/$/,
     "",
@@ -120,9 +144,31 @@ export async function runHostedSupervisorWithPolicy(
         );
       }
     }
-    const host = await import(
-      pathToFileURL(root + "/src/host/actions-supervisor-host.ts").href
-    );
+    const load = (path: string) =>
+      import(pathToFileURL(root + "/" + path).href);
+    return await consume({
+      supervisorHost: () => load("src/host/actions-supervisor-host.ts"),
+      runner: () => load("ops/hosted-autonomy-runner.ts"),
+      deliveryPass: () => load("ops/hosted-autonomy-delivery-pass.ts"),
+      scopes: () => load("ops/hosted-autonomy-scopes.ts"),
+      closedIssues: () => load("ops/hosted-autonomy-retry-pass.ts"),
+      followUps: () => load("ops/hosted-autonomy-follow-ups.ts"),
+      queueProof: () => load("ops/hosted-autonomy-queue-proof.ts"),
+      deliveryProof: () => load("ops/hosted-autonomy-delivery-proof.ts"),
+    });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+    await assert.rejects(() => Deno.lstat(root), Deno.errors.NotFound);
+  }
+}
+
+/** Actual host composition retains native job/source guards and fixture cleanup. */
+export function runHostedSupervisorWithPolicy(
+  policy: FixturePolicy,
+  input: HostedSupervisorHostInputV1,
+): Promise<HostedSupervisorHostResultV1> {
+  return withHostedProductionPolicy(policy, async (graph) => {
+    const host = await graph.supervisorHost();
     await assert.rejects(
       () =>
         host.runHostedSupervisorHost({
@@ -144,8 +190,5 @@ export async function runHostedSupervisorWithPolicy(
       { message: host.STATIC_SOURCE_CHECKOUT },
     );
     return await host.runHostedSupervisorHost(input);
-  } finally {
-    await Deno.remove(root, { recursive: true });
-    await assert.rejects(() => Deno.lstat(root), Deno.errors.NotFound);
-  }
+  });
 }
