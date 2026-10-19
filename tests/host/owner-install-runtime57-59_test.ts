@@ -1,3 +1,4 @@
+import { DORMANT_HOSTED_SUPERVISOR_POLICY } from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import { parseHostedRunProofV1 } from "../../src/contracts/hosted-supervisor.ts";
 import type { ReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
@@ -133,14 +134,22 @@ Deno.test(
       assert.equal(fixture.patches(), 1);
       const proven58 = healthyProof(CONCURRENCY_PRIOR_REVISION, 58, 903);
       assert.equal(
-        planOwnerDevelopmentInstall({
-          ...restored,
-          hostedRuntimes: [{
-            ...restored.hostedRuntimes[0],
-            lastHealthyProof: proven58,
-            lastExecutionProof: proven58,
-          }],
-        }, NOW).status,
+        planOwnerDevelopmentInstall(
+          {
+            ...restored,
+            hostedRuntimes: [{
+              ...restored.hostedRuntimes[0],
+              lastHealthyProof: proven58,
+              lastExecutionProof: proven58,
+            }],
+          },
+          NOW,
+          undefined,
+          undefined,
+          DORMANT_HOSTED_SUPERVISOR_POLICY.queue,
+          DORMANT_HOSTED_SUPERVISOR_POLICY.custody,
+          DORMANT_HOSTED_SUPERVISOR_POLICY.rollout,
+        ).status,
         "install",
       );
     } finally {
