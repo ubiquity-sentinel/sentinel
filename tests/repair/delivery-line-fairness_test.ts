@@ -49,7 +49,12 @@ import {
   T0,
   workRecord,
 } from "../state/helpers.ts";
-import { APP, queueRig } from "./delivery-queue-rig.ts";
+import {
+  APP,
+  historicalDeliveryScenario,
+  queueRig,
+} from "./delivery-queue-rig.ts";
+import type { HostedPolicyGraph } from "../host/hosted-supervisor-policy-fixture.ts";
 import { completedReceipt } from "./loop-review-fixtures.ts";
 import { sha } from "./review-round-cap-rig.ts";
 
@@ -484,7 +489,7 @@ const ON_TIP = [101, 102];
 const CI_PENDING = [103, 107];
 
 /** Ten records of one repository, one line. */
-async function fleet() {
+async function fleet(historicalLauncher?: HostedPolicyGraph) {
   const base = await queueRig(10);
   const shaped: WorkRecordV1[] = [];
   const reservations: BudgetReservationV1[] = [];
@@ -514,6 +519,7 @@ async function fleet() {
     reviews.push(await clean(record, head));
   }
   const rig = await queueRig(10, {
+    historicalLauncher,
     tip: SHA2,
     shape: () => shaped,
     reservations,
@@ -559,74 +565,80 @@ async function driveFleet(rig: Awaited<ReturnType<typeof fleet>>) {
   return mergedAt;
 }
 
-Deno.test("delivery line fairness: over a fleet larger than the line every deliverable head takes the line as soon as it is deliverable, one merge per pass", async () => {
-  const rig = await fleet();
-  const before = await rig.snapshot();
-  const mergedAt = await driveFleet(rig);
-  const order = [...mergedAt.entries()].sort((a, b) => a[1] - b[1]).map((
-    [pr],
-  ) => pr);
-  const trace = JSON.stringify([...mergedAt]);
-  // Every head that was or became deliverable merged; 107, whose CI never
-  // finished, did not.
-  assert.deepEqual(
-    [...order].sort(),
-    [...DELIVERABLE, ...ON_TIP, 103].sort(),
-    trace,
-  );
-  // The line never idles while a deliverable head waits: the first lands on
-  // the second pass and every pass after it merges one, so ten records merge
-  // in nine passes with nothing held behind a head that could not deliver.
-  assert.equal(mergedAt.get(order[0]), 1, trace);
-  for (let index = 1; index < order.length; index++) {
-    assert.equal(
-      mergedAt.get(order[index]),
-      mergedAt.get(order[index - 1])! + 1,
+Deno.test(
+  "delivery line fairness: over a fleet larger than the line every deliverable head takes the line as soon as it is deliverable, one merge per pass",
+  historicalDeliveryScenario(async (graph) => {
+    const rig = await fleet(graph);
+    const before = await rig.snapshot();
+    const mergedAt = await driveFleet(rig);
+    const order = [...mergedAt.entries()].sort((a, b) => a[1] - b[1]).map((
+      [pr],
+    ) => pr);
+    const trace = JSON.stringify([...mergedAt]);
+    // Every head that was or became deliverable merged; 107, whose CI never
+    // finished, did not.
+    assert.deepEqual(
+      [...order].sort(),
+      [...DELIVERABLE, ...ON_TIP, 103].sort(),
       trace,
     );
-  }
-  // Deliverable heads go in pull request order. 103 takes the line once its
-  // CI is green: behind the landing it found and the lower numbers that
-  // became deliverable with it (101, 102), ahead of every higher number
-  // still waiting.
-  assert.deepEqual(order.filter((pr) => DELIVERABLE.includes(pr)), DELIVERABLE);
-  assert.ok(order.indexOf(101) < order.indexOf(102), trace);
-  assert.ok(order.indexOf(102) < order.indexOf(103), trace);
-  for (const pr of [108, 109, 110]) {
-    assert.ok(order.indexOf(103) < order.indexOf(pr), `${pr}: ${trace}`);
-  }
-  // Nothing was charged or refreshed for a head that could not deliver, and
-  // no round past the ceiling: only 101's and 102's own last rounds.
-  const after = await rig.snapshot();
-  assert.equal(
-    after.reservations.length,
-    before.reservations.length + ON_TIP.length,
-  );
-  for (const record of after.work) {
-    assert.ok(record.counters.reviewRounds <= MAX_REVIEW_ROUNDS, record.id);
-  }
-  assert.deepEqual(
-    rig.github.reviewed.map((review) => review.pr).sort(),
-    ON_TIP,
-  );
-  assert.equal(
-    rig.github.preparedKeys.some((key) => key.startsWith("107:")),
-    false,
-  );
-  assert.equal(rig.github.calls.filter((call) => call === "merge").length, 0);
-  // 103 waited its turn with one write: the clear of its stale CI wait once
-  // its head read green, then nothing until its refresh (no per-pass write).
-  const versions = rig.writes.map((written) =>
-    JSON.stringify(written.work.find((row) => row.id === "issue-3"))
-  );
-  const green = versions.findIndex((row) =>
-    !row.includes('"ci_pending"') && !row.includes('"base_refresh"')
-  );
-  const refresh = versions.findIndex((row) => row.includes('"base_refresh"'));
-  assert.ok(green > 0 && refresh > green, `${green} ${refresh}`);
-  assert.equal(new Set(versions.slice(green, refresh)).size, 1);
-  assert.equal(JSON.parse(versions[green]).wait, null);
-});
+    // The line never idles while a deliverable head waits: the first lands on
+    // the second pass and every pass after it merges one, so ten records merge
+    // in nine passes with nothing held behind a head that could not deliver.
+    assert.equal(mergedAt.get(order[0]), 1, trace);
+    for (let index = 1; index < order.length; index++) {
+      assert.equal(
+        mergedAt.get(order[index]),
+        mergedAt.get(order[index - 1])! + 1,
+        trace,
+      );
+    }
+    // Deliverable heads go in pull request order. 103 takes the line once its
+    // CI is green: behind the landing it found and the lower numbers that
+    // became deliverable with it (101, 102), ahead of every higher number
+    // still waiting.
+    assert.deepEqual(
+      order.filter((pr) => DELIVERABLE.includes(pr)),
+      DELIVERABLE,
+    );
+    assert.ok(order.indexOf(101) < order.indexOf(102), trace);
+    assert.ok(order.indexOf(102) < order.indexOf(103), trace);
+    for (const pr of [108, 109, 110]) {
+      assert.ok(order.indexOf(103) < order.indexOf(pr), `${pr}: ${trace}`);
+    }
+    // Nothing was charged or refreshed for a head that could not deliver, and
+    // no round past the ceiling: only 101's and 102's own last rounds.
+    const after = await rig.snapshot();
+    assert.equal(
+      after.reservations.length,
+      before.reservations.length + ON_TIP.length,
+    );
+    for (const record of after.work) {
+      assert.ok(record.counters.reviewRounds <= MAX_REVIEW_ROUNDS, record.id);
+    }
+    assert.deepEqual(
+      rig.github.reviewed.map((review) => review.pr).sort(),
+      ON_TIP,
+    );
+    assert.equal(
+      rig.github.preparedKeys.some((key) => key.startsWith("107:")),
+      false,
+    );
+    assert.equal(rig.github.calls.filter((call) => call === "merge").length, 0);
+    // 103 waited its turn with one write: the clear of its stale CI wait once
+    // its head read green, then nothing until its refresh (no per-pass write).
+    const versions = rig.writes.map((written) =>
+      JSON.stringify(written.work.find((row) => row.id === "issue-3"))
+    );
+    const green = versions.findIndex((row) =>
+      !row.includes('"ci_pending"') && !row.includes('"base_refresh"')
+    );
+    const refresh = versions.findIndex((row) => row.includes('"base_refresh"'));
+    assert.ok(green > 0 && refresh > green, `${green} ${refresh}`);
+    assert.equal(new Set(versions.slice(green, refresh)).size, 1);
+    assert.equal(JSON.parse(versions[green]).wait, null);
+  }),
+);
 
 // ---- rollback: generation 80 ---------------------------------------------
 
@@ -691,7 +703,7 @@ Deno.test({
   name:
     "delivery line rollback: R80 parses every state the fleet wrote and holds every other record behind a refresh this line admitted",
   ignore: !await r80Available(),
-  fn: async () => {
+  fn: historicalDeliveryScenario(async (graph) => {
     const { modules, dispose } = await loadR80([
       "src/contracts/state-snapshots.ts",
       "src/repair/delivery-queue.ts",
@@ -701,7 +713,7 @@ Deno.test({
         value: unknown,
       ) => RepairStateSnapshotV1;
       const r80Ahead = modules[1].deliveryQueueAhead as Ahead;
-      const rig = await fleet();
+      const rig = await fleet(graph);
       await driveFleet(rig);
       assert.ok(rig.writes.length > 0);
       for (const written of rig.writes) {
@@ -724,5 +736,5 @@ Deno.test({
     } finally {
       await dispose();
     }
-  },
+  }),
 });
