@@ -63,6 +63,9 @@ export interface HostedPolicyGraph {
   producerRecovery(): Promise<
     typeof import("../../ops/hosted-autonomy-producer-recovery.ts")
   >;
+  matrixArtifacts(): Promise<
+    typeof import("../../src/host/matrix-artifacts.ts")
+  >;
   existingPrTakeover(): Promise<
     typeof import("../../src/host/existing-pr-takeover.ts")
   >;
@@ -175,6 +178,7 @@ export async function withHostedProductionPolicy<T>(
       import(pathToFileURL(root + "/" + path).href);
     return await consume({
       producerRecovery: () => load("ops/hosted-autonomy-producer-recovery.ts"),
+      matrixArtifacts: () => load("src/host/matrix-artifacts.ts"),
       existingPrTakeover: () => load("src/host/existing-pr-takeover.ts"),
       publicationProof: () =>
         load("src/github/existing-pr-publication-proof.ts"),
