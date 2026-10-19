@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DORMANT_HOSTED_POLICIES } from "./actions-supervisor-fixture.ts";
 import { matrixDigestV1 } from "../../src/contracts/matrix.ts";
 import {
   HISTORICAL_MATRIX_QUARANTINE,
@@ -56,6 +57,7 @@ Deno.test("historical missing-cell quarantine: strict leaf, retained ambiguous c
     });
     assert.equal(
       (await runHostedSupervisorFinalize({
+        ...DORMANT_HOSTED_POLICIES,
         state: release,
         clock: f.clock,
         run: f.nativeRun,
