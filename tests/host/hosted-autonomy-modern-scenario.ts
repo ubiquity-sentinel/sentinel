@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { DORMANT_HOSTED_POLICIES } from "./actions-supervisor-fixture.ts";
+import {
+  DORMANT_HOSTED_SUPERVISOR_POLICY,
+  type HostedPolicyGraph,
+  withHostedProductionPolicy,
+} from "./hosted-supervisor-policy-fixture.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
-import { createActionsMatrixArtifactTransport } from "../../src/host/matrix-artifacts.ts";
 import { GitHubApiClient } from "../../src/github/client.ts";
 import { RollingStartBudget } from "../../src/budget/mod.ts";
 import { HostedRepairCooldownGate } from "../../src/host/hosted-cooldown.ts";
@@ -22,9 +26,7 @@ import {
 } from "../../src/contracts/ports.ts";
 import { createReleaseStateStore } from "../../src/state/mod.ts";
 import {
-  createHostedClosedMatrixRecovery,
   isDeferredCurrentMatrixHistoryBudget,
-  runHostedAutonomy,
 } from "../../ops/hosted-autonomy.ts";
 import type {
   HostedAutonomyDepsV1,
@@ -61,6 +63,31 @@ export async function modernRecoveryScenario(
   blockedCandidate?: BlockedCandidateCase,
   inflight?: InflightCaseV1,
 ) {
+  return await withHostedProductionPolicy(
+    DORMANT_HOSTED_SUPERVISOR_POLICY,
+    (graph) =>
+      modernRecoveryScenarioInGraph(
+        graph,
+        history,
+        throughMain,
+        blockedCandidate,
+        inflight,
+      ),
+  );
+}
+
+async function modernRecoveryScenarioInGraph(
+  graph: HostedPolicyGraph,
+  history: boolean,
+  throughMain: boolean,
+  blockedCandidate?: BlockedCandidateCase,
+  inflight?: InflightCaseV1,
+) {
+  const runner = await graph.runner();
+  const graphmain = await graph.maintenanceMain();
+  const { createActionsMatrixArtifactTransport } = await graph
+    .matrixArtifacts();
+  const { createHostedClosedMatrixRecovery } = await graph.matrixAdapters();
   const targetRoot = await Deno.makeTempDir({
     prefix: "sentinel-modern-target-",
     dir: decodeURIComponent(new URL("../../", import.meta.url).pathname),
@@ -393,9 +420,13 @@ export async function modernRecoveryScenario(
           },
         };
         const authorized = await withDarkQueueAuthority(deps);
-        if (!main) return await runHostedAutonomy(authorized);
+        if (!main) return await runner.runHostedAutonomy(authorized);
         const head = await checked(f.checkout, ["rev-parse", "HEAD"]);
-        const captured = await captureHostedAutonomyMain(authorized, head);
+        const captured = await captureHostedAutonomyMain(
+          authorized,
+          head,
+          graphmain.runHostedAutonomyMain,
+        );
         mainExit = captured.exit;
         return captured.result;
       } finally {
