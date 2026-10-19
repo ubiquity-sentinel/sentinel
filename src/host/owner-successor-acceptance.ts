@@ -78,15 +78,15 @@ export async function runOwnerSuccessorReviewPhase(
     c.repository.installationId === 0
   );
   if (!self) return false;
-  await prepare(self);
-  compose(self);
-  const ports = readPorts();
-  return ports !== undefined &&
-    await produceOwnerSuccessorAcceptance({
-        ...input,
-        ports,
-        modelStartsEnabled: true,
-      }) !== "none";
+  return await produceOwnerSuccessorAcceptance({
+    ...input,
+    ports: async () => {
+      await prepare(self);
+      compose(self);
+      return readPorts();
+    },
+    modelStartsEnabled: true,
+  }) !== "none";
 }
 
 /** One pending source-intent operation precedes unrelated work; replay never starts it again. */
@@ -94,13 +94,15 @@ export async function produceOwnerSuccessorAcceptance(input: {
   clock: Clock;
   state: State;
   budget: BudgetControllerV1;
-  ports: OwnerSuccessorReviewPorts;
+  ports:
+    | OwnerSuccessorReviewPorts
+    | (() => Promise<OwnerSuccessorReviewPorts | undefined>);
   nativeOwner: HostedExecutionIntentV1;
   latestStartAt: number;
   settleBy: number;
   modelStartsEnabled: boolean;
 }): Promise<OwnerSuccessorProduction> {
-  const { state, clock, ports, nativeOwner } = input;
+  const { state, clock, nativeOwner } = input;
   if (
     !input.modelStartsEnabled || nativeOwner.purpose !== "ordinary" ||
     clock.now() >= input.latestStartAt || clock.now() >= input.settleBy
@@ -128,7 +130,6 @@ export async function produceOwnerSuccessorAcceptance(input: {
     return candidates.length === 0 ? "none" : "pending";
   }
   const { receipt, selected } = candidates[0];
-  if (ports.custody === undefined) return "pending";
   if (!receipt?.ownerDisposition) return "none";
   const intent = selected.binding;
   const work = repair.value.snapshot.work.find((w) => w.id === intent.workId);
@@ -166,6 +167,15 @@ export async function produceOwnerSuccessorAcceptance(input: {
       : "pending";
   }
   if (reviewRoundsLeft(repair.value.snapshot, work) < 1) return "pending";
+  if (typeof input.ports === "function") {
+    const ports = await input.ports();
+    // Preparation may take time; admit only against freshly read state.
+    return ports === undefined
+      ? "pending"
+      : produceOwnerSuccessorAcceptance({ ...input, ports });
+  }
+  const ports = input.ports;
+  if (ports.custody === undefined) return "pending";
   const task = await ports.task(intent.issueNumber);
   if (
     !task || !(await checkReviewTaskStatement(task)).ok ||
