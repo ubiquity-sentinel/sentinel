@@ -1,14 +1,34 @@
 {
   "version": 1,
-  "takeover": { "activated": false },
+  "takeover": {
+    "activated": false
+  },
   "queue": {
-    "proofActivated": false,
-    "revisions": [],
-    "ownerInstallMigrations": []
+    "proofActivated": true,
+    "revisions": [
+      "ff8763f901b6d0bb8b47b0e71a76222e124c2206"
+    ],
+    "ownerInstallMigrations": [
+      {
+        "fromRevision": "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+        "fromGeneration": 81,
+        "toRevision": "ff8763f901b6d0bb8b47b0e71a76222e124c2206",
+        "toGeneration": 82
+      }
+    ]
   },
   "existingPr": {
-    "custodyActivated": false,
-    "revisions": [],
-    "ownerInstallMigrations": []
+    "custodyActivated": true,
+    "revisions": [
+      "ff8763f901b6d0bb8b47b0e71a76222e124c2206"
+    ],
+    "ownerInstallMigrations": [
+      {
+        "fromRevision": "da98f5f49c45b57cfa97a45fe647c36b1021f302",
+        "fromGeneration": 81,
+        "toRevision": "ff8763f901b6d0bb8b47b0e71a76222e124c2206",
+        "toGeneration": 82
+      }
+    ]
   }
 }
