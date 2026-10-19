@@ -13,30 +13,31 @@ identity and runtime routing are reported separately.
 
 ## Active task register
 
-At 2026-10-19 02:02 UTC the same sole writer completed exact 48-file candidate
-`5a9688f40a0761aa919581cb29a4b8ac269977a75db29d3fe06c34d0ad005c05`, source
-digest `fa9a6a6ef155fd6289a884d77ddbce09020af70865ce24dc7a74bd208058dc2a`. The
-deferred-acceptance hold and canonical journal ordering correction passed the
-actual broker/native-review, unapplied App CAS, prepare/finalize hold, retry,
-original task170 delivery and exact capable recovery/rollback lifecycle
-(`edafe938-14a3-427a-9040-b4bfa6e42e91`, child0,117.811s), affected consumers
-and static checks. Test-only SCOPE-11 assertions preserve independent feature
-lists; final corrected check `fb232f44-367d-493b-94fc-24e53aae1dd6` passed. All
-writer processes are settled; root verified all48 file hashes and retained
-R/W/1838/e16 ancestry. Independent final audit accepted all17 receipts with no
-unresolved P0/P1. Root committed the exact worker result at
-`5fcb8fe8e0abc4332152383aef26db153f2e0104` and normally merged it into canonical
-`68092d1bcaea59c31558fb04f185f8f6d276278c`, preserving every accepted ancestor
-and the owned documentation. Profile F generation is next. Audit acceptance is
-in `owner-supersession/resume-audit-20261019/acceptance.json`. Evidence and17
-full receipts are in
-`owner-supersession/implementation/deferred-acceptance/HANDOFF.md` and
-`checks.json`. Root retains source/state/promotion ownership and standing
-bounded publication/CI/runtime approval. Existing e16 CI39164327314 remains
-accepted only for e16; F and LF need their own exact native CI. No F
-installation or live task delivery is claimed. The same-first-PR UOS receipt
-gates further fixtures and queue activation only; installation still requires
-exact source/CI/profile/custody/drain/App CAS/bootstrap/recovery evidence.
+At 2026-10-19 02:13 UTC the accepted 48-file owner-supersession source and exact
+runtime profile are committed and published as F
+`341797d6f0c20b96ceffdfab519c1dd37e96954b`, tree
+`9493a0b425dc8da105d0a2d30f79f9f6de5b9d77`, on `development`. Included-code
+digest is `6cfded8f11638910fd1607949cac43a6f6f45ab5146a12845e6bd06869857a8e`;
+profile SHA256 is
+`3b7c1ac5929077e2d21341456f1b72bfc85659fecf3c8621211cc47b49fec4fd`. Exact native
+source CI `39188947450:1` is in progress, workflow `353613034` /
+`.github/workflows/ci.yml`, required job `test-local`, expected 45–60 minutes
+plus queue with a 60-minute job bound. This is inactive source publication;
+protected source remains L81 `00b6649eeff51a9754bf3748f793137db9bf8605` and no F
+installation or live task delivery is claimed. All affected local checks,
+connected recovery/acceptance/delivery/rollback lifecycle, exact profile checks
+and cheap prepush constraints passed; independent audits verified the 48-file
+candidate, 17 retained source receipts, complete profile manifest and retained
+R/W/1838/e16 ancestry. Evidence is under
+`review-task-binding-adoption/owner-supersession/F-publication/`,
+`resume-audit-20261019/F-profile-acceptance.json`, and
+`resume-rollout-20261019/f-profile-checks-e4e8029/`. The next lifecycle action
+is to accept F native CI, drain existing native writers, bind exact LF data and
+its own CI, then perform the trusted atomic App installation and genuine
+successor review/task acceptance. Root retains sole source/state/promotion
+ownership and standing bounded approval. The UOS same-first-PR receipt gates
+further canary fixtures and queue activation only; enqueue remains off and
+canary grants empty. The unchanged e16 CI remains valid only for e16.
 
 Module `binding-owner-supersession-20261018`, aid `b4fdafd9c3`, has one
 implementation writer, `/root/binding_owner_supersession_impl`, on branch
@@ -96,13 +97,10 @@ Earlier reviewer-class GREEN receipts remain lower-boundary evidence; full
 installed composition is not accepted. The original PR/base-task contracts,
 model configuration and custody controls remain unchanged.
 
-Final changed-boundary checks, including `SEMANTICS-7`, healthy pending-task
-correction, negatives and statics, remain pending. The writer must freeze exact
-source/evidence for independent auditor
-`/root/binding_supersession_milestone_audit`; final audit, changed-candidate
-native CI, installation and live acceptance all remain pending. Task170 remains
-wanted and delivery-pending. No live write, source activation or installed
-binding acceptance is claimed.
+The previously pending source and custody-composition checks are now accepted by
+the exact final audit recorded above. Installation, exact F/LF native CI and
+live delivery remain distinct acceptance surfaces; task170 remains wanted and
+delivery-pending.
 
 UOS exact reviewed two-file change is committed and published to production main
 at `1babe0cbdba25bcc0082c7bb3c161cc6f7e3ac24`, with prior
