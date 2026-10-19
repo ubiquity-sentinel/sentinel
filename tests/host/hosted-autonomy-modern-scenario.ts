@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DORMANT_HOSTED_POLICIES } from "./actions-supervisor-fixture.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import { createActionsMatrixArtifactTransport } from "../../src/host/matrix-artifacts.ts";
 import { GitHubApiClient } from "../../src/github/client.ts";
@@ -140,6 +141,7 @@ export async function modernRecoveryScenario(
     });
     assert.equal(
       (await runHostedSupervisorFinalize({
+        ...DORMANT_HOSTED_POLICIES,
         state: release,
         clock: f.clock,
         run: f.nativeRun,

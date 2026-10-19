@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DORMANT_HOSTED_POLICIES } from "./actions-supervisor-fixture.ts";
 import { runHistoricalMatrixQuarantine } from "../../src/host/matrix-actions.ts";
 import {
   runHostedSupervisorFinalize,
@@ -67,6 +68,7 @@ Deno.test("historical multiwave: first maintenance drains old seventeen and newe
     };
     f.clock.now = () => T0 + 70_000;
     const prepared = await runHostedSupervisorPrepare({
+      ...DORMANT_HOSTED_POLICIES,
       state: f.release,
       clock: f.clock,
       run: successor,
@@ -77,6 +79,7 @@ Deno.test("historical multiwave: first maintenance drains old seventeen and newe
     f.setBootstrap({ execution: prepared.execution, run: successor });
     assert.equal(
       (await runHostedSupervisorFinalize({
+        ...DORMANT_HOSTED_POLICIES,
         state: f.release,
         clock: f.clock,
         run: successor,
@@ -188,6 +191,7 @@ Deno.test("historical newer current: settled cancellation protects separately sa
       }, f.charges[i]);
     }
     const prepared = await runHostedSupervisorPrepare({
+      ...DORMANT_HOSTED_POLICIES,
       state: f.release,
       clock: f.clock,
       run: { runId: 74, runAttempt: 1, launcherSha: f.current.launcherSha },
