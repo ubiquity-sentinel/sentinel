@@ -10,6 +10,7 @@
  */
 
 import assert from "node:assert/strict";
+import { DORMANT_HOSTED_POLICIES } from "./actions-supervisor-fixture.ts";
 
 import type { GitSha } from "../../src/contracts/brands.ts";
 import {
@@ -115,6 +116,7 @@ export async function persistHostedReceipt(
     input.clock.advance(STEP_CLOCK_MS);
     const outcome: HostedSupervisorOutcomeV1 = await runHostedSupervisorPrepare(
       {
+        ...DORMANT_HOSTED_POLICIES,
         clock: input.clock,
         state,
         run: {
