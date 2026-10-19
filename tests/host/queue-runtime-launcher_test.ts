@@ -1,3 +1,4 @@
+import { DORMANT_HOSTED_SUPERVISOR_POLICY as dormant } from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { parseHostedExecutionIntentV1 } from "../../src/contracts/hosted-supervisor.ts";
@@ -26,6 +27,11 @@ import {
 
 // Existing exact rungs are reused only to test policy enforcement. No production
 // capability pin is inferred from their healthy proofs or these fixture grants.
+const historicalPolicy = {
+  queueRuntimeCapability: dormant.queue,
+  existingPrRuntimeCapability: dormant.custody,
+  rollout: dormant.rollout,
+};
 const P79 = "549c7a69186b3d2070aa4e69c92ee846d183ce8f" as GitSha;
 const R80 = "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481" as GitSha;
 const policy = (revisions: readonly GitSha[]) => ({
@@ -61,6 +67,7 @@ Deno.test("queue runtime capability: production owner install and rollback rejec
             const beforeRepair = await fixture.readRepair();
             assert.equal(
               await runOwnerDevelopmentInstallMain({
+                ...historicalPolicy,
                 queueRuntimeCapability: policy(revisions),
               }),
               0,
@@ -96,6 +103,7 @@ Deno.test("queue runtime capability: production owner install retains existing e
       try {
         assert.equal(
           await runOwnerDevelopmentInstallMain({
+            ...historicalPolicy,
             queueRuntimeCapability: policy([P79, R80]),
           }),
           0,
@@ -126,7 +134,15 @@ Deno.test("queue runtime capability: production owner install retains existing e
 
 Deno.test("queue runtime capability: owner snapshot builder cannot bypass the planner or turn a migration into an old-runtime grant", () => {
   const source = ownerSnapshot(false);
-  const plan = planOwnerDevelopmentInstall(source, NOW);
+  const plan = planOwnerDevelopmentInstall(
+    source,
+    NOW,
+    undefined,
+    undefined,
+    dormant.queue,
+    dormant.custody,
+    dormant.rollout,
+  );
   assert.equal(plan.status, "install");
   assert.ok(plan.status === "install");
   const head = "a".repeat(40) as GitSha;
@@ -139,6 +155,9 @@ Deno.test("queue runtime capability: owner snapshot builder cannot bypass the pl
       undefined,
       undefined,
       policy([R80]),
+      dormant.custody,
+      undefined,
+      dormant.rollout,
     )
   );
   assert.equal(
@@ -148,6 +167,8 @@ Deno.test("queue runtime capability: owner snapshot builder cannot bypass the pl
       undefined,
       undefined,
       policy([R80]),
+      dormant.custody,
+      dormant.rollout,
     ).status,
     "waiting",
   );
@@ -159,6 +180,9 @@ Deno.test("queue runtime capability: owner snapshot builder cannot bypass the pl
     undefined,
     undefined,
     policy([P79, R80]),
+    dormant.custody,
+    undefined,
+    dormant.rollout,
   );
   assert.equal(allowed.hostedRuntimes[0].activeRevision, R80);
   assert.deepEqual(
@@ -232,7 +256,7 @@ Deno.test("queue runtime capability: actual launcher blocks all purposes and mat
             toRevision: OTHER_REVISION,
             toGeneration: 2,
           }],
-        });
+        }, dormant.custody);
         assert.equal(result.status, "unavailable");
         assert.equal(result.terminal, null);
         assert.equal(
@@ -257,15 +281,19 @@ Deno.test("queue runtime capability: exact accepted runtime runs from a differen
     await seedRelease(rig);
     assert.notEqual(rig.identity.launcherSha, rig.execution.revision);
     rig.process.child = exited(childLine(rig.execution));
-    const result = await runHostedRuntimeLauncher({
-      state: rig.release,
-      clock: rig.clock,
-      env: rig.env,
-      launcherDir: rig.launcherDir,
-      runtimeDir: rig.runtimeDir,
-      denoExecutable: Deno.execPath(),
-      process: rig.process,
-    }, policy([rig.execution.revision]));
+    const result = await runHostedRuntimeLauncher(
+      {
+        state: rig.release,
+        clock: rig.clock,
+        env: rig.env,
+        launcherDir: rig.launcherDir,
+        runtimeDir: rig.runtimeDir,
+        denoExecutable: Deno.execPath(),
+        process: rig.process,
+      },
+      policy([rig.execution.revision]),
+      dormant.custody,
+    );
     assert.equal(result.status, "healthy");
     assert.equal(rig.process.childCalls().length, 1);
     assert.equal(result.terminal?.execution.revision, rig.execution.revision);

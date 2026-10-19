@@ -1,3 +1,4 @@
+import { DORMANT_HOSTED_SUPERVISOR_POLICY as dormant } from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { runOwnerDevelopmentInstallMain } from "../../src/host/owner-install-run.ts";
@@ -15,6 +16,11 @@ import {
   installNativeWriterFixture,
   retainedRepairHistory,
 } from "./existing-pr-runtime-fixtures.ts";
+const historicalPolicy = {
+  queueRuntimeCapability: dormant.queue,
+  existingPrRuntimeCapability: dormant.custody,
+  rollout: dormant.rollout,
+};
 const PRIOR = "549c7a69186b3d2070aa4e69c92ee846d183ce8f" as GitSha;
 const NEXT = "e48e7e110e7cb2ed3385bf1be5165f05d8a4e481" as GitSha;
 const OTHER = "f".repeat(40) as GitSha;
@@ -58,12 +64,14 @@ Deno.test("existing PR runtime migration: old queued writer blocks, same-source 
       head_sha: OTHER,
     });
     await runOwnerDevelopmentInstallMain({
+      ...historicalPolicy,
       existingPrRuntimeCapability: capability,
     });
     assert.equal(fixture.reports.at(-1)?.status, "waiting");
     assert.equal(fixture.patches(), 0);
     native.peers[0].head_sha = native.run.launcherSha;
     await runOwnerDevelopmentInstallMain({
+      ...historicalPolicy,
       existingPrRuntimeCapability: capability,
     });
     assert.equal(
@@ -81,6 +89,7 @@ Deno.test("existing PR runtime migration: old queued writer blocks, same-source 
     );
     assert.deepEqual(await fixture.readRepair(), beforeRepair);
     await runOwnerDevelopmentInstallMain({
+      ...historicalPolicy,
       existingPrRuntimeCapability: capability,
     });
     assert.equal(
@@ -106,6 +115,7 @@ Deno.test("existing PR runtime migration: actual installer preserves CI ancestry
       const native = await installNativeWriterFixture();
       try {
         await runOwnerDevelopmentInstallMain({
+          ...historicalPolicy,
           existingPrRuntimeCapability: capability,
         });
         assert.notEqual(fixture.reports.at(-1)?.status, "installed");
@@ -133,7 +143,15 @@ Deno.test("existing PR runtime migration: actual installer preserves CI ancestry
 
 Deno.test("existing PR runtime migration: direct builder and rollback cannot turn migration into old-runtime authority", () => {
   const before = source();
-  const plan = planOwnerDevelopmentInstall(before, NOW);
+  const plan = planOwnerDevelopmentInstall(
+    before,
+    NOW,
+    undefined,
+    undefined,
+    dormant.queue,
+    dormant.custody,
+    dormant.rollout,
+  );
   assert.ok(plan.status === "install");
   for (
     const bad of [
@@ -151,8 +169,9 @@ Deno.test("existing PR runtime migration: direct builder and rollback cannot tur
         NOW,
         undefined,
         undefined,
-        undefined,
+        dormant.queue,
         bad,
+        dormant.rollout,
       ).status,
       "waiting",
     );
@@ -164,8 +183,10 @@ Deno.test("existing PR runtime migration: direct builder and rollback cannot tur
         NOW,
         undefined,
         undefined,
-        undefined,
+        dormant.queue,
         bad,
+        undefined,
+        dormant.rollout,
       )
     );
   }
@@ -175,16 +196,25 @@ Deno.test("existing PR runtime migration: direct builder and rollback cannot tur
       NOW,
       undefined,
       undefined,
-      undefined,
+      dormant.queue,
       capability,
+      dormant.rollout,
     ).status,
     "waiting",
   );
   assert.equal(
-    planOwnerDevelopmentInstall(before, NOW, undefined, undefined, {
-      proofActivated: true,
-      revisions: [],
-    }, capability).status,
+    planOwnerDevelopmentInstall(
+      before,
+      NOW,
+      undefined,
+      undefined,
+      {
+        proofActivated: true,
+        revisions: [],
+      },
+      capability,
+      dormant.rollout,
+    ).status,
     "waiting",
   );
 });
@@ -216,6 +246,7 @@ Deno.test("existing PR runtime migration: writer appearing after CI is refused a
       return response;
     };
     await runOwnerDevelopmentInstallMain({
+      ...historicalPolicy,
       existingPrRuntimeCapability: capability,
     });
     assert.equal(fixture.patches(), 0);

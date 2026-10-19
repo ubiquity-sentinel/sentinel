@@ -1,3 +1,4 @@
+import { DORMANT_HOSTED_SUPERVISOR_POLICY as dormant } from "./hosted-supervisor-policy-fixture.ts";
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { portOk } from "../../src/contracts/ports.ts";
@@ -69,6 +70,7 @@ function fixture(compatible = false) {
     },
   };
   const input = {
+    rollout: dormant.rollout,
     state,
     clock: { now: () => NOW },
     native: {
@@ -100,7 +102,7 @@ Deno.test("existing PR maintenance: migration-only retains queue-first read orde
   f.native.peers.push({ ...f.native.nativeRun, id: 701, status: "queued" });
   const result = await readHostedMaintenanceCompatibility(
     f.input,
-    undefined,
+    dormant.queue,
     custody,
   );
   assert.equal(result.status, "migration_only");
@@ -155,7 +157,7 @@ Deno.test("existing PR maintenance: incompatible execution, old queued source an
       }
       const result = await readHostedMaintenanceCompatibility(
         f.input,
-        undefined,
+        dormant.queue,
         fault === "no_migration"
           ? { ...custody, ownerInstallMigrations: [] }
           : custody,
@@ -168,7 +170,7 @@ Deno.test("existing PR maintenance: incompatible execution, old queued source an
 Deno.test("existing PR maintenance: accepted installed runtime still intersects queue capability", async () => {
   const f = fixture(true);
   assert.equal(
-    (await readHostedMaintenanceCompatibility(f.input, undefined, custody))
+    (await readHostedMaintenanceCompatibility(f.input, dormant.queue, custody))
       .status,
     "ordinary",
   );

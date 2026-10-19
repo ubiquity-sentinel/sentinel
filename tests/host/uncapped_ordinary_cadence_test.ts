@@ -1,3 +1,4 @@
+import { DORMANT_HOSTED_POLICIES } from "./actions-supervisor-fixture.ts";
 /**
  * Uncapped ordinary-work cadence (owner update 2026-10-02T22:05:51Z: "lift all
  * the limits"). This lane ports the validated m19 cadence change onto the
@@ -212,6 +213,7 @@ function makeRig(): RigV1 {
   evidence.revisions.add(LAUNCHER);
   evidence.matrixRevisions.add(LAUNCHER);
   const input = (runId: number): HostedSupervisorInputV1 => ({
+    ...DORMANT_HOSTED_POLICIES,
     clock,
     state,
     run: { runId, runAttempt: 1, launcherSha: LAUNCHER },

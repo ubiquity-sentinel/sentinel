@@ -1,3 +1,4 @@
+import { runHostedSupervisorWithPolicy } from "./hosted-supervisor-policy-fixture.ts";
 /** Exercise the actual job predicates with the controller's migration outputs. */
 import assert from "node:assert/strict";
 import { runOwnerDevelopmentInstallMain } from "../../src/host/owner-install-run.ts";
@@ -5,7 +6,6 @@ import { runHostedRuntimeLauncher } from "../../src/host/hosted-runtime-launcher
 import { hostedRuntimeBootstrapDisposition } from "../../src/host/hosted-runtime-bootstrap.ts";
 import {
   runHostedSupervisorFinalize,
-  runHostedSupervisorHost,
   runHostedSupervisorPrepare,
 } from "../../src/host/actions-supervisor.ts";
 import { DenoReplayRuntime } from "../../src/replay/runtime.ts";
@@ -230,7 +230,11 @@ Deno.test("hosted migration workflow: actual failed-legacy maintenance App CAS s
           GITHUB_TOKEN: "offline-native-token-value",
           SENTINEL_MERGE_QUEUE: "off",
         };
-        await runHostedSupervisorHost({
+        await runHostedSupervisorWithPolicy({
+          queue: rig.queue,
+          custody: rig.custody,
+          rollout: rig.rollout,
+        }, {
           sourceDir: rig.source.launcher,
           state: rig.state,
           clock: core.clock,
@@ -431,7 +435,11 @@ Deno.test("hosted migration workflow: routing without full native issuance publi
     });
     assert.equal(prepared.status, "pending");
     const outputs = new Map<string, string>();
-    await runHostedSupervisorHost({
+    await runHostedSupervisorWithPolicy({
+      queue: rig.queue,
+      custody: rig.custody,
+      rollout: rig.rollout,
+    }, {
       sourceDir: rig.source.launcher,
       state: rig.state,
       clock: { now: () => RECOVERY_NOW },
