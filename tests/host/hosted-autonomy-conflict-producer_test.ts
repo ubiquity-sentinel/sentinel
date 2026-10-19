@@ -45,7 +45,9 @@ import {
 import { createReleaseStateStore, DenoGitRunner } from "../../src/state/mod.ts";
 import { REPO, T0 } from "../state/helpers.ts";
 import { assertGen78Parses } from "../state/gen77-contracts.ts";
-import { PR, TASK } from "../repair/conflict-resolution-rig.ts";
+import { BRANCH, PR, TASK } from "../repair/conflict-resolution-rig.ts";
+import type { HttpTransportV1 } from "../../src/github/http.ts";
+import { membershipWire, response } from "../github/merge-queue-fixtures.ts";
 import { FakeGate } from "./actions-candidates-fixture.ts";
 import { RealRefHttp } from "./actions-candidates-preservation-fixture.ts";
 import { gen78Available, loadGen78Modules } from "./gen77-runtime-source.ts";
@@ -147,6 +149,61 @@ async function conflictWalk() {
       gitPath: "git",
     }),
   );
+  const nativeReads: string[] = [];
+  const nativeErrors: string[] = [];
+  const nativeTransport: HttpTransportV1 = (request) => {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    if (path === "/repos/ubiquity/ai.ubq.fi/rules/branches/development") {
+      nativeReads.push(`${request.method} ${path}`);
+      assert.equal(request.method, "GET");
+      return Promise.resolve(response([]));
+    }
+    if (path === "/graphql") {
+      nativeReads.push(`${request.method} ${path}`);
+      assert.equal(request.method, "POST");
+      const query = JSON.parse(request.body ?? "{}");
+      assert.match(query.query, /^query\(/);
+      assert.match(query.query, /pullRequest\(number:\$number\)/);
+      assert.deepEqual(query.variables, {
+        owner: REPO.owner,
+        name: REPO.name,
+        number: PR,
+      });
+      return Promise.resolve(response(membershipWire(null, {
+        id: "PR_7",
+        number: PR,
+        headRefName: BRANCH,
+        headRefOid: ctx.head,
+        baseRefOid: ctx.base,
+        author: {
+          __typename: "Bot",
+          id: "BOT_SYNTHETIC_AUTHOR",
+          login: "ubiquity-sentinel[bot]",
+        },
+        mergedBy: null,
+      })));
+    }
+    if (path === "/repos/ubiquity/ai.ubq.fi/pulls") {
+      nativeReads.push(`${request.method} ${path}`);
+      assert.equal(request.method, "GET");
+      assert.equal(
+        url.searchParams.get("head"),
+        `${REPO.owner}:${ref.slice("refs/heads/".length)}`,
+      );
+      // The preservation operation ref is not a pull-request head.
+      return Promise.resolve(response([]));
+    }
+    return http.transport(request);
+  };
+  const nativeHttp: HttpTransportV1 = async (request) => {
+    try {
+      return await nativeTransport(request);
+    } catch (error) {
+      nativeErrors.push(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  };
   const port = (passState: StateReadView) =>
     createHostedCandidateRecoveryPort({
       state: passState,
@@ -154,7 +211,7 @@ async function conflictWalk() {
       gate: new FakeGate(),
       config: hosted.configs[0]!,
       token: "offline-token",
-      http: http.transport,
+      http: nativeHttp,
       sourcePath: mirror,
       scratch: `${root}/scratch`,
       remoteUrl: `file://${ctx.repo}`,
@@ -218,6 +275,9 @@ async function conflictWalk() {
     ref,
     writes,
     http,
+    nativeReads,
+    nativeErrors,
+    nativeHttp,
     port,
     walk,
     refs,
@@ -283,6 +343,7 @@ for (
       // Three writes (the charge settlement, the resolved intent, the streak
       // reset), and nothing else pushed.
       assert.equal(w.writes.length, 3);
+      assert.ok(w.nativeReads.includes("POST /graphql"));
       assert.deepEqual(
         await w.refs(),
         [...refsBefore, `${w.ref} ${w.merge}`].sort(),
@@ -373,6 +434,7 @@ Deno.test("conflict producer: the launcher's candidate port opens exactly the in
       );
     }
     assert.deepEqual(w.http.paths, [], "no remote read for a near miss");
+    assert.equal(w.nativeReads.length, 0, "no native read for a near miss");
     // Another repository's port never opens this binding.
     rig.hosted.state.repair = structuredClone(admitted);
     const foreign = createHostedCandidateRecoveryPort({
@@ -384,13 +446,18 @@ Deno.test("conflict producer: the launcher's candidate port opens exactly the in
         repository: { ...REPO, name: "other" },
       },
       token: "offline-token",
-      http: w.http.transport,
+      http: w.nativeHttp,
       sourcePath: w.mirror,
       scratch: `${rig.ctx.tmp}/walk/scratch`,
       remoteUrl: `file://${rig.ctx.repo}`,
     });
     assert.deepEqual(await foreign.readRef(w.ref), refused);
     assert.deepEqual(w.http.paths, []);
+    assert.equal(
+      w.nativeReads.length,
+      0,
+      "no native read for a foreign binding",
+    );
 
     // The exact binding reaches the real preserver: once the consumer's
     // import brings M into the launcher's mirror, M is preserved.
@@ -414,7 +481,16 @@ Deno.test("conflict producer: the launcher's candidate port opens exactly the in
       candidate: exact,
       publishedHead: rig.ctx.head,
     });
-    assert.ok(preserved.ok, JSON.stringify(preserved));
+    assert.ok(
+      preserved.ok,
+      JSON.stringify({
+        preserved,
+        nativeErrors: w.nativeErrors,
+        nativeReads: w.nativeReads,
+        refReads: w.http.paths,
+      }),
+    );
+    assert.ok(w.nativeReads.includes("POST /graphql"));
     assert.equal(await remoteRef(rig, w.ref), w.merge);
     assert.deepEqual(await rig.hosted.snapshot(), admitted, "no state write");
   } finally {
