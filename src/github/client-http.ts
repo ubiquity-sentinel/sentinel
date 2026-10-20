@@ -9,6 +9,7 @@ import type {
   GitHubPullRequestV1,
   GitHubRefV1,
   GitHubReviewDecisionV1,
+  IssueSourceErrorContextV1,
   PortErrorV1,
   PortResultV1,
 } from "../contracts/ports.ts";
@@ -57,6 +58,7 @@ import {
   parseWire,
   parseWith,
   sameOrigin,
+  sanitizeIssueSourceContext,
   unavailable,
 } from "./client-response.ts";
 
@@ -101,7 +103,21 @@ export abstract class GitHubClientHttp {
       // decide whether that means null or not_found.
       return sent;
     }
-    return portError(...this.mapError(sent.value));
+    const [kind, detail] = this.mapError(sent.value);
+    return portError(
+      kind,
+      detail,
+      undefined,
+      method === "GET"
+        ? this.issueSourceContext(
+          path,
+          1,
+          sent.value.status,
+          "http",
+          "http_error",
+        )
+        : undefined,
+    );
   }
 
   protected send(
@@ -118,9 +134,24 @@ export abstract class GitHubClientHttp {
     return this.sendCore(method, url, body, undefined, parent).then((raw) => {
       if (raw.status === "response") return portOk(raw.response);
       if (raw.status === "lost") {
-        return portError("unavailable", "GitHub API request failed");
+        return portError(
+          "unavailable",
+          "GitHub API request failed",
+          undefined,
+          method === "GET"
+            ? this.issueSourceContext(path, 1, null, "request", "unavailable")
+            : undefined,
+        );
       }
-      return portError(raw.error.kind, raw.error.detail, raw.error.rateLimit);
+      return portError(
+        raw.error.kind,
+        raw.error.detail,
+        raw.error.rateLimit,
+        raw.error.issueSource ??
+          (method === "GET"
+            ? this.issueSourceContext(path, 1, null, "request", raw.error.kind)
+            : undefined),
+      );
     });
   }
 
@@ -216,6 +247,29 @@ export abstract class GitHubClientHttp {
       // leaves this method, and no request starts while persistence is
       // unsettled. A thrown classifier (or recordRateLimit) never escapes;
       // it becomes the sanitized static unavailable failure.
+      let responseSource: IssueSourceErrorContextV1 | undefined;
+      try {
+        const endpoint = new URL(url);
+        responseSource = method === "GET"
+          ? this.issueSourceContext(
+            endpoint.pathname,
+            Number(endpoint.searchParams.get("page") ?? 1),
+            response.status,
+            "http",
+            "unavailable",
+          )
+          : undefined;
+      } catch { /* Advisory context cannot change transport semantics. */ }
+      const responseUnavailable = (): RawSendResult => ({
+        status: "error",
+        error: {
+          kind: "unavailable",
+          detail: "GitHub API request failed",
+          ...(responseSource === undefined
+            ? {}
+            : { issueSource: responseSource }),
+        },
+      });
       let rateLimit: GitHubRateLimitV1 | null;
       try {
         rateLimit = await classifyGitHubRateLimit(
@@ -223,17 +277,20 @@ export abstract class GitHubClientHttp {
           this.options.clock.now(),
         );
       } catch {
-        return unavailable();
+        return responseUnavailable();
       }
       if (rateLimit !== null) {
         const recorded = await this.recordGateRateLimit(deadline, rateLimit);
-        if (recorded !== null) return recorded;
+        if (recorded !== null) return responseUnavailable();
         return {
           status: "error",
           error: {
             kind: "rate_limited",
             detail: "GitHub API rate limit exceeded",
             rateLimit,
+            ...(responseSource === undefined
+              ? {}
+              : { issueSource: { ...responseSource, code: "rate_limited" } }),
           },
         };
       }
@@ -322,47 +379,77 @@ export abstract class GitHubClientHttp {
   protected async collectPages<T>(
     path: string,
     query: Record<string, string>,
-    extract: (body: unknown) => unknown[],
+    extract: (body: unknown, source?: IssueSourceErrorContextV1) => unknown[],
   ): Promise<PortResultV1<T[]>> {
     const queryText = new URLSearchParams({ ...query, page: "1" }).toString();
     let url = `${this.apiBaseUrl}${path}?${queryText}`;
     const seen = new Set<string>([url]);
     const items: T[] = [];
     for (let page = 1; page <= this.maxPages; page++) {
+      const source = (
+        status: number | null,
+        stage: IssueSourceErrorContextV1["stage"],
+        code: IssueSourceErrorContextV1["code"],
+      ) => this.issueSourceContext(path, page, status, stage, code);
       const sent = await this.sendCore("GET", url, null);
       if (sent.status === "lost") {
-        return portError("unavailable", "GitHub API request failed");
+        return portError(
+          "unavailable",
+          "GitHub API request failed",
+          undefined,
+          source(null, "request", "unavailable"),
+        );
       }
       if (sent.status === "error") {
         return portError(
           sent.error.kind,
           sent.error.detail,
           sent.error.rateLimit,
+          sent.error.issueSource ?? source(null, "request", sent.error.kind),
         );
       }
       const response = sent.response;
       if (response.status !== 200) {
-        return portError(...this.mapError(response));
+        const [kind, detail] = this.mapError(response);
+        return portError(
+          kind,
+          detail,
+          undefined,
+          source(response.status, "http", "http_error"),
+        );
       }
-      const body = parseWire(response, (v) => v);
+      const context = source(response.status, "validation", "invalid");
+      const body = parseWire(response, (v) => v, context);
       if (!body.ok) return body;
-      const parsed = parseWith(body.value, extract);
+      const parsed = parseWith(body.value, (v) => extract(v, context), context);
       if (!parsed.ok) return parsed;
       items.push(...(parsed.value as T[]));
       if (items.length > this.maxItems) {
         return portError(
           "unavailable",
           "GitHub API pagination size bound exceeded",
+          undefined,
+          source(response.status, "pagination", "item_limit"),
         );
       }
       const next = nextLinkUrl(response.headers);
       if (next === null) return portOk(items);
       if (!sameOrigin(url, next)) {
         // The bearer token must never follow a Link outside the API origin.
-        return portError("invalid", "GitHub API response is malformed");
+        return portError(
+          "invalid",
+          "GitHub API response is malformed",
+          undefined,
+          source(response.status, "pagination", "invalid"),
+        );
       }
       if (seen.has(next)) {
-        return portError("unavailable", "GitHub API pagination cycle detected");
+        return portError(
+          "unavailable",
+          "GitHub API pagination cycle detected",
+          undefined,
+          source(response.status, "pagination", "pagination_cycle"),
+        );
       }
       seen.add(next);
       url = next;
@@ -370,7 +457,37 @@ export abstract class GitHubClientHttp {
     return portError(
       "unavailable",
       "GitHub API pagination page bound exceeded",
+      undefined,
+      this.issueSourceContext(
+        path,
+        this.maxPages,
+        200,
+        "pagination",
+        "page_limit",
+      ),
     );
+  }
+
+  /** Only our repository's issue endpoints can carry issue-source diagnostics. */
+  protected issueSourceContext(
+    path: string,
+    page: number,
+    httpStatus: number | null,
+    stage: IssueSourceErrorContextV1["stage"],
+    code: IssueSourceErrorContextV1["code"],
+  ): IssueSourceErrorContextV1 | undefined {
+    return sanitizeIssueSourceContext({
+      target: `${this.repository.owner}/${this.repository.name}`,
+      method: "GET",
+      endpointPath: path,
+      httpStatus,
+      page,
+      stage,
+      code,
+      ...(/\/issues\/(\d+)$/.test(path)
+        ? { issueNumber: Number(path.slice(path.lastIndexOf("/") + 1)) }
+        : {}),
+    });
   }
   abstract listOpenIssues(): Promise<PortResultV1<GitHubIssueV1[]>>;
 

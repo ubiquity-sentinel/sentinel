@@ -1,6 +1,7 @@
 import { parseGitHubRateLimitV1 } from "./github-cooldown.ts";
 import type { GitHubRateLimitV1 } from "./github-cooldown.ts";
 import type { DeploymentIdentityV1, MetricsSampleV1 } from "./shared.ts";
+import type { ParseIssueCode } from "./validation.ts";
 
 /**
  * Typed operational ports. Every port returns explicit results: unavailable,
@@ -19,9 +20,41 @@ export type PortErrorKindV1 =
   | "conflict"
   | "invalid";
 
+/** Advisory issue-read context. No response text, URL, header or credential. */
+export interface IssueSourceErrorContextV1 {
+  target: string;
+  method: "GET";
+  endpointPath: string;
+  httpStatus: number | null;
+  page: number;
+  stage: "request" | "http" | "json" | "validation" | "pagination";
+  code:
+    | ParseIssueCode
+    | PortErrorKindV1
+    | "http_error"
+    | "malformed_json"
+    | "pagination_cycle"
+    | "page_limit"
+    | "item_limit";
+  validationPath?: string;
+  limit?: number;
+  observedLength?: number;
+  issueNumber?: number;
+}
+
+/** One positively identified issue excluded by a finite wire-contract bound. */
+export interface SkippedIssueV1 {
+  number: number;
+  code: "bound_exceeded";
+  validationPath: string;
+  limit: number | null;
+  observedLength: number | null;
+}
+
 export interface PortErrorV1 {
   kind: PortErrorKindV1;
   detail: string;
+  issueSource?: IssueSourceErrorContextV1;
   /**
    * Structured rate-limit metadata, present only on rate_limited errors.
    * Rate limiting is never encoded inside `detail` strings.
@@ -42,6 +75,7 @@ export function portError(
   kind: PortErrorKindV1,
   detail: string,
   rateLimit?: GitHubRateLimitV1,
+  issueSource?: IssueSourceErrorContextV1,
 ): PortResultV1<never> {
   if (rateLimit !== undefined) {
     if (kind !== "rate_limited") {
@@ -55,9 +89,12 @@ export function portError(
   }
   return {
     ok: false,
-    error: rateLimit === undefined
-      ? { kind, detail }
-      : { kind, detail, rateLimit },
+    error: {
+      kind,
+      detail,
+      ...(rateLimit === undefined ? {} : { rateLimit }),
+      ...(issueSource === undefined ? {} : { issueSource }),
+    },
   };
 }
 

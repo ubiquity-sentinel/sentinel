@@ -3,6 +3,15 @@ import { reconcileExistingPrs } from "./loop-existing-pr.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import type {
+  IssueSourceErrorContextV1,
+  SkippedIssueV1,
+} from "../contracts/ports.ts";
+import {
+  issueSourceFailureDetail,
+  sanitizeIssueSourceContext,
+  sanitizeSkippedIssue,
+} from "../github/client-response.ts";
 import { candidateBranch } from "./keys.ts";
 import {
   checkGithubCooldown,
@@ -135,6 +144,7 @@ export interface IntakeResultV1 {
   result: StepResultV1;
   changed: boolean;
   error: string | null;
+  issueSource?: IssueSourceErrorContextV1;
 }
 
 /** A cooldown gate fault during intake is a state trust failure: run-terminal. */
@@ -154,6 +164,20 @@ export async function pollIntake(
   let cursor: string | null = null;
   let error: string | null = null;
   let changed = false;
+  let issueSource: IssueSourceErrorContextV1 | undefined;
+  let issueListing: {
+    repository: string;
+    openIssues: number | null;
+    skippedIssues: SkippedIssueV1[] | null;
+  } | undefined;
+  const reportIssues = () => {
+    if (issueListing === undefined) return;
+    console.log(JSON.stringify({
+      kind: "sentinel_issue_intake",
+      ...issueListing,
+      ...(issueSource === undefined ? {} : { error: issueSource }),
+    }));
+  };
 
   const updatedWork = new Map<string, WorkRecordV1>();
   const newWork: WorkRecordV1[] = [];
@@ -319,9 +343,30 @@ export async function pollIntake(
     }
     if (issueCooled.kind === "ok") {
       const issues = await deps.github.listOpenIssues();
+      const repository = `${issueRepository.owner}/${issueRepository.name}`;
+      const skippedRows = "skippedIssues" in issues ? issues.skippedIssues : [];
+      const skipped = issues.ok && Array.isArray(skippedRows)
+        ? skippedRows.map((row: unknown) =>
+          sanitizeSkippedIssue(row, repository)
+        )
+        : null;
+      issueListing = {
+        repository,
+        openIssues: issues.ok && skipped !== null
+          ? issues.value.filter((issue) => issue.state === "open").length +
+            skipped.length
+          : null,
+        skippedIssues: skipped !== null && skipped.every((row) => row !== null)
+          ? skipped as SkippedIssueV1[]
+          : null,
+      };
       if (!issues.ok) {
-        error = `issue source unavailable: ${issues.error.kind}`;
+        issueSource = sanitizeIssueSourceContext(issues.error.issueSource);
+        if (issueSource?.target !== repository) issueSource = undefined;
+        error = issueSourceFailureDetail({ ...issues.error, issueSource });
+        reportIssues();
       } else {
+        reportIssues();
         const seenIssues = new Set<string>();
         const baseByRepository = new Map<string, GitSha | null>();
         for (const issue of issues.value) {
@@ -402,7 +447,12 @@ export async function pollIntake(
   }
 
   if (!changed && updatedWork.size === 0 && newSummaries.size === 0) {
-    return { result: { kind: "progress" }, changed: false, error };
+    return {
+      result: { kind: "progress" },
+      changed: false,
+      error,
+      ...(issueSource === undefined ? {} : { issueSource }),
+    };
   }
 
   const persisted = await persistTransition(
@@ -427,5 +477,10 @@ export async function pollIntake(
       }
     },
   );
-  return { result: persisted, changed: changed || updatedWork.size > 0, error };
+  return {
+    result: persisted,
+    changed: changed || updatedWork.size > 0,
+    error,
+    ...(issueSource === undefined ? {} : { issueSource }),
+  };
 }
