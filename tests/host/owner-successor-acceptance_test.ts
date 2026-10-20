@@ -32,14 +32,10 @@ Deno.test("owner successor genuine structured review produces charged durable ac
   }
 });
 
-Deno.test("owner successor deferred acceptance preserves native proof through prepare finalize and delivers on retry", async () => {
-  const rig = await installedSupersession();
-  try {
-    await driveOwnerTaskAcceptance(rig, { deferredAcceptance: true });
-  } finally {
-    await rig.close();
-  }
-});
+// The deferred owner-acceptance hold was retired on 2026-10-20: prepare no longer
+// parks on owner successor acceptance (bounded verification and launcher
+// self-install replaced the supersession ceremony), so the "deferred acceptance
+// preserves native proof" case asserted a scheduling hold that no longer exists.
 
 Deno.test("owner healthy correction retains failed task review and completes through its exact new capable binding", async () => {
   const rig = await installedSupersession();
