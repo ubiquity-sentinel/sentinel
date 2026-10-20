@@ -83,7 +83,7 @@ Deno.test("queue runner: native gate file starts closed and changes only after c
   }
 });
 
-Deno.test("queue workflow: matrix workers require ordinary custody readiness", async () => {
+Deno.test("queue workflow: matrix workers require successful authenticated prepare without retired migration outputs", async () => {
   const source = await Deno.readTextFile(".github/workflows/supervisor.yml");
   const jobs = new Map(
     [...source.matchAll(
@@ -104,14 +104,31 @@ Deno.test("queue workflow: matrix workers require ordinary custody readiness", a
     assert.ok(condition);
     assert.ok(
       condition.includes(
-        "needs.maintenance.result == 'success' && needs.maintenance.outputs.queueCustodyReady == 'true'",
+        "needs.maintenance.result == 'success' && needs.prepare.result == 'success'",
       ),
       name,
     );
     assert.equal(
-      condition.includes("|| needs.maintenance.outputs.queueCustodyReady"),
+      /queueCustodyReady|runtimeMigrationOnly/.test(condition),
       false,
     );
+    assert.ok(condition.includes("needs.prepare.outputs.run == 'true'"), name);
+    assert.ok(
+      condition.includes("github.ref == 'refs/heads/sentinel-supervisor'"),
+      name,
+    );
   }
+  assert.match(
+    jobs.get("matrix_plan")!,
+    /needs\.prepare\.outputs\.modelStartsEnabled == 'true'/,
+  );
+  assert.match(
+    jobs.get("matrix_cell")!,
+    /needs\.matrix_plan\.result == 'success'/,
+  );
+  assert.match(
+    jobs.get("matrix_cell")!,
+    /needs\.matrix_plan\.outputs\.hasCells == 'true'/,
+  );
   assert.match(jobs.get("finalize")!, /if:.*always\(\)/);
 });
