@@ -223,7 +223,6 @@ export async function runHostedAutonomyMain(input?: {
         return created;
       };
       const artifactRoot = await Deno.makeTempDir({
-        dir: scratch,
         prefix: "sentinel-maintenance-matrix-",
       });
       try {
