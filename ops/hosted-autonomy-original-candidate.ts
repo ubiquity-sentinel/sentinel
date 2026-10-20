@@ -4,6 +4,7 @@ import type { GitSha } from "../src/contracts/brands.ts";
 import type { StateReadView } from "../src/contracts/ports.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
+import { blockedImplementationBinding } from "../src/host/matrix-blocked-candidate.ts";
 import {
   candidateBranch,
   candidatePreservationRef,
@@ -65,7 +66,8 @@ async function matchTransition(
     current.target.branch !== prior.target.branch ||
     !same(current.counters, prior.counters) ||
     !same(current.evidence, prior.evidence) ||
-    prior.nextStep !== "work" ||
+    (prior.nextStep !== "work" &&
+      blockedImplementationBinding(prior) === null) ||
     prior.target.head !== current.target.candidateState!.publishedHead ||
     prior.target.candidateState!.publishedHead !== prior.target.head ||
     preserved.head !== prior.target.head ||
