@@ -52,6 +52,8 @@ export function validateSnapshotTransition(
         [],
         firstRelease.hostedRuntimes,
         firstRelease.hostedReleases,
+        [],
+        firstRelease.hostedInstallations ?? [],
       );
     }
   } else {
@@ -180,5 +182,7 @@ export function validateReleaseTransition(
     prior.hostedReleases,
     next.hostedRuntimes,
     next.hostedReleases,
+    prior.hostedInstallations ?? [],
+    next.hostedInstallations ?? [],
   );
 }

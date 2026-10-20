@@ -33,6 +33,10 @@ import {
 import { parseHostedPointerIntentV1 } from "./hosted-supervisor-runtime.ts";
 import { parseOwnerSuccessorTaskAcceptanceV1 } from "./owner-successor-review.ts";
 import { canonicalStringify } from "./canonical.ts";
+import {
+  parseHostedAbandonment,
+  parseHostedVerification,
+} from "./hosted-supervisor-verification.ts";
 
 export const HOSTED_RELEASE_KEYS = [
   "version",
@@ -56,7 +60,13 @@ export function parseHostedReleaseRecordV1(
   const obj = expectRecord(input, path);
   expectExactKeys(obj, [
     ...HOSTED_RELEASE_KEYS,
-    ...["ownerDisposition", "ownerAcceptance", "ownerSuccessorBindings"].filter(
+    ...[
+      "ownerDisposition",
+      "ownerAcceptance",
+      "ownerSuccessorBindings",
+      "verification",
+      "abandonment",
+    ].filter(
       (key) => Object.hasOwn(obj, key),
     ),
   ], path);
@@ -128,6 +138,7 @@ export function parseHostedReleaseRecordV1(
       "rollback_verifying",
       "rolled_back",
       "owner_superseded",
+      "abandoned",
     ],
     `${path}.phase`,
   );
@@ -220,7 +231,76 @@ export function parseHostedReleaseRecordV1(
     }
   }
 
-  if (phase !== "requested" && phase !== "owner_superseded") {
+  const verification = Object.hasOwn(obj, "verification")
+    ? parseHostedVerification(obj.verification, `${path}.verification`)
+    : undefined;
+  const abandonment = Object.hasOwn(obj, "abandonment")
+    ? parseHostedAbandonment(obj.abandonment, `${path}.abandonment`)
+    : undefined;
+  for (const purpose of ["prior", "candidate"] as const) {
+    const proof = verification?.[purpose].lastFailure?.proof;
+    if (
+      proof &&
+      (proof.execution.releaseId !== id ||
+        proof.execution.purpose !== purpose ||
+        proof.execution.revision !==
+          (purpose === "prior" ? priorRevision : request.revision))
+    ) {
+      fail(
+        path,
+        "invalid_lifecycle",
+        "failure journal must bind its exact release and phase",
+      );
+    }
+  }
+  if (
+    (phase === "abandoned") !== (abandonment !== undefined) ||
+    abandonment &&
+      (pointerIntent !== null || abandonment.recordedAt > updatedAt ||
+        abandonment.recordedAt < createdAt)
+  ) {
+    fail(
+      path,
+      "invalid_lifecycle",
+      "abandonment requires a terminal receipt with no unresolved pointer intent",
+    );
+  }
+  if (
+    abandonment?.reason === "prior_verification_exhausted" &&
+    (verification?.prior.failures !== 2 || priorProof !== null)
+  ) {
+    fail(
+      path,
+      "invalid_lifecycle",
+      "PRIOR abandonment requires two settled unsuccessful verifications",
+    );
+  }
+  if (
+    abandonment?.reason === "candidate_verification_failed" &&
+    (candidateProof?.outcome !== "failed" ||
+      rollbackProof?.outcome !== "healthy")
+  ) {
+    fail(
+      path,
+      "invalid_lifecycle",
+      "candidate failure abandonment requires verified restoration",
+    );
+  }
+  if (
+    abandonment?.reason === "candidate_verification_exhausted" &&
+    (verification?.candidate.failures !== 2 ||
+      rollbackProof?.outcome !== "healthy")
+  ) {
+    fail(
+      path,
+      "invalid_lifecycle",
+      "candidate exhaustion requires verified restoration",
+    );
+  }
+  if (
+    phase !== "requested" && phase !== "owner_superseded" &&
+    phase !== "abandoned"
+  ) {
     // promoting and every later phase depend on an attested prior proof.
     if (priorProof === null) {
       fail(
@@ -268,7 +348,10 @@ export function parseHostedReleaseRecordV1(
     phase === "rollback_pending" || phase === "rollback_verifying" ||
     phase === "rolled_back"
   ) {
-    if (candidateProof === null || candidateProof.outcome !== "failed") {
+    if (
+      (candidateProof === null || candidateProof.outcome !== "failed") &&
+      verification?.candidate.failures !== 2
+    ) {
       fail(
         `${path}.candidateProof`,
         "invalid_lifecycle",
@@ -408,6 +491,8 @@ export function parseHostedReleaseRecordV1(
     candidateProof,
     rollbackProof,
     pointerIntent,
+    ...(verification === undefined ? {} : { verification }),
+    ...(abandonment === undefined ? {} : { abandonment }),
     ...(ownerDisposition === undefined ? {} : { ownerDisposition }),
     ...(ownerAcceptance === undefined ? {} : { ownerAcceptance }),
     ...(ownerSuccessorBindings === undefined ? {} : { ownerSuccessorBindings }),

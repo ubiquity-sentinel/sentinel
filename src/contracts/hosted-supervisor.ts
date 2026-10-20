@@ -3,11 +3,20 @@ import { parseReleaseRequestV1 } from "./release.ts";
 import type { ReleaseRequestV1 } from "./release.ts";
 import { tryParse } from "./validation.ts";
 import type {
+  HostedInstallationRecordV1,
   HostedReleasePhaseV1,
   HostedReleaseRecordV1,
   HostedRuntimeRecordV1,
 } from "./hosted-supervisor-types.ts";
 import { parseHostedReleaseRecordV1 } from "./hosted-supervisor-release.ts";
+import {
+  matchesInstallationMovement,
+  validateHostedInstallationTransition,
+} from "./hosted-supervisor-installation.ts";
+import {
+  validateHostedSchedulingTransition,
+  validateHostedVerificationTransition,
+} from "./hosted-supervisor-verification.ts";
 
 /**
  * Hosted supervisor storage contracts (records only, no behavior).
@@ -78,7 +87,16 @@ export function validateHostedStateTransition(
   priorReleases: readonly HostedReleaseRecordV1[],
   nextRuntimes: readonly HostedRuntimeRecordV1[],
   nextReleases: readonly HostedReleaseRecordV1[],
+  priorInstallations: readonly HostedInstallationRecordV1[] = [],
+  nextInstallations: readonly HostedInstallationRecordV1[] = [],
 ): string | null {
+  const installationError = validateHostedInstallationTransition(
+    priorInstallations,
+    nextInstallations,
+    priorRuntimes[0],
+    nextRuntimes[0],
+  );
+  if (installationError) return installationError;
   for (const priorRuntime of priorRuntimes) {
     const nextRuntime = nextRuntimes.find(
       (runtime) => runtime.id === priorRuntime.id,
@@ -92,12 +110,22 @@ export function validateHostedStateTransition(
     if (nextRuntime.updatedAt < priorRuntime.updatedAt) {
       return "hosted runtime updatedAt cannot move backward";
     }
+    const schedulingError = validateHostedSchedulingTransition(
+      priorRuntime,
+      nextRuntime,
+    );
+    if (schedulingError) return schedulingError;
 
     const priorExecution = priorRuntime.execution;
     const nextExecution = nextRuntime.execution;
     const priorSettlement = priorRuntime.lastExecutionProof;
     const nextSettlement = nextRuntime.lastExecutionProof;
-    const ownerMove = priorReleases.some((r) => {
+    const ownerMove = matchesInstallationMovement(
+      priorRuntime,
+      nextRuntime,
+      priorInstallations,
+      nextInstallations,
+    ) || priorReleases.some((r) => {
       const next = nextReleases.find((n) => n.id === r.id);
       const d = next?.ownerDisposition;
       return r.phase === "requested" && next?.phase === "owner_superseded" &&
@@ -114,7 +142,10 @@ export function validateHostedStateTransition(
         nextRuntime.execution.launcherSha === d.controllerRevision &&
         nextRuntime.execution.createdAt >= d.intent.authorizedAt &&
         sameCanonical(priorRuntime.lastExecutionProof, d.failedPriorProof) &&
-        sameCanonical(priorRuntime.lastHealthyProof, d.retainedHealthyProof) &&
+        sameCanonical(
+          priorRuntime.lastHealthyProof,
+          d.retainedHealthyProof,
+        ) &&
         sameCanonical(
           priorRuntime.lastExecutionProof,
           nextRuntime.lastExecutionProof,
@@ -295,6 +326,14 @@ export function validateHostedStateTransition(
     if (nextRuntime.lastExecutionProof !== null) {
       return "the first hosted runtime cannot claim historical proof";
     }
+    if (
+      (nextRuntime.verificationFailures ?? 0) !== 0 ||
+      (nextRuntime.failedVerificationIds?.length ?? 0) !== 0 ||
+      nextRuntime.lastVerificationId != null ||
+      nextRuntime.ordinaryAdmission !== undefined ||
+      nextRuntime.lastTurn !== undefined ||
+      nextRuntime.verificationBlocked === true
+    ) return "the first hosted runtime cannot claim scheduling history";
   }
 
   const priorRuntimeRecord = priorRuntimes[0] ?? null;
@@ -315,6 +354,13 @@ export function validateHostedStateTransition(
     if (nextRecord === undefined) {
       return "existing hosted release cannot disappear";
     }
+    const verificationError = validateHostedVerificationTransition(
+      priorRecord,
+      nextRecord,
+      priorRuntimes[0],
+      nextRuntimes[0],
+    );
+    if (verificationError) return verificationError;
     if (!sameCanonical(priorRecord.request, nextRecord.request)) {
       return "hosted release request is immutable";
     }
@@ -375,7 +421,8 @@ export function validateHostedStateTransition(
     }
     if (
       priorRecord.phase === "accepted" || priorRecord.phase === "rolled_back" ||
-      priorRecord.phase === "owner_superseded"
+      priorRecord.phase === "owner_superseded" ||
+      priorRecord.phase === "abandoned"
     ) {
       const ownerAppend = priorRecord.phase === "owner_superseded" &&
         priorRecord.ownerAcceptance === undefined &&
@@ -422,15 +469,53 @@ export function validateHostedStateTransition(
       continue;
     }
     const allowed: Record<HostedReleasePhaseV1, HostedReleasePhaseV1[]> = {
-      requested: ["requested", "promoting", "owner_superseded"],
-      promoting: ["promoting", "verifying"],
-      verifying: ["verifying", "accepted", "rollback_pending"],
+      requested: ["requested", "promoting", "owner_superseded", "abandoned"],
+      promoting: ["promoting", "verifying", "abandoned"],
+      verifying: ["verifying", "accepted", "rollback_pending", "abandoned"],
       accepted: ["accepted"],
-      rollback_pending: ["rollback_pending", "rollback_verifying"],
-      rollback_verifying: ["rollback_verifying", "rolled_back"],
+      rollback_pending: ["rollback_pending", "rollback_verifying", "abandoned"],
+      rollback_verifying: ["rollback_verifying", "rolled_back", "abandoned"],
       rolled_back: ["rolled_back"],
       owner_superseded: ["owner_superseded"],
+      abandoned: ["abandoned"],
     };
+    if (nextRecord.phase === "abandoned") {
+      const a = nextRecord.abandonment;
+      if (a?.fromPhase !== priorRecord.phase) {
+        return "abandonment preserves the actual originating phase";
+      }
+      if (
+        !a || priorRecord.pointerIntent !== null ||
+        nextRecord.pointerIntent !== null
+      ) return "abandonment cannot discard a pointer intent";
+      if (a.reason === "included_in_successor") {
+        const installation = nextInstallations.find((i) =>
+          i.candidateRevision === a.successorRevision &&
+          i.phase === "bootstrapping"
+        );
+        if (
+          !installation || !priorRuntimes[0] || !nextRuntimes[0] ||
+          !matchesInstallationMovement(
+            priorRuntimes[0],
+            nextRuntimes[0],
+            priorInstallations,
+            [installation],
+          )
+        ) return "successor abandonment requires the atomic installation";
+      } else if (a.reason === "prior_verification_exhausted") {
+        if (
+          nextRecord.verification?.prior.failures !== 2 ||
+          nextRuntimes[0]?.execution !== null ||
+          priorRuntimes[0]?.activeRevision !== nextRuntimes[0]?.activeRevision
+        ) {
+          return "PRIOR abandonment requires settled exhaustion without pointer movement";
+        }
+      } else if (
+        nextRecord.rollbackProof?.outcome !== "healthy" ||
+        nextRuntimes[0]?.activeRevision !== nextRecord.priorRevision ||
+        nextRuntimes[0]?.execution !== null
+      ) return "candidate abandonment requires exact healthy restoration";
+    }
     if (nextRecord.phase === "owner_superseded") {
       const runtime = priorRuntimes[0],
         nextRuntime = nextRuntimes[0],
@@ -503,7 +588,9 @@ export function validateHostedStateTransition(
     if (
       nextRecord.phase !== "requested" || nextRecord.priorProof !== null ||
       nextRecord.candidateProof !== null ||
-      nextRecord.rollbackProof !== null || nextRecord.pointerIntent !== null
+      nextRecord.rollbackProof !== null || nextRecord.pointerIntent !== null ||
+      nextRecord.verification !== undefined ||
+      nextRecord.abandonment !== undefined
     ) {
       return "a new hosted release must start at requested with no proofs or pointer intent";
     }
@@ -521,9 +608,11 @@ export {
 } from "./hosted-supervisor-types.ts";
 
 export type {
+  HostedAbandonmentV1,
   HostedExecutionIntentV1,
   HostedExecutionPurposeV1,
   HostedExecutionSettlementV1,
+  HostedInstallationRecordV1,
   HostedNotStartedProofV1,
   HostedOwnerDispositionV1,
   HostedOwnerSuccessorBindingV1,
@@ -536,6 +625,7 @@ export type {
   HostedRunOutcomeV1,
   HostedRunProofV1,
   HostedRuntimeRecordV1,
+  HostedVerificationJournalV1,
 } from "./hosted-supervisor-types.ts";
 
 export {
@@ -558,5 +648,7 @@ export {
 
 export function isHostedReleaseTerminal(phase: HostedReleasePhaseV1): boolean {
   return phase === "accepted" || phase === "rolled_back" ||
-    phase === "owner_superseded";
+    phase === "owner_superseded" || phase === "abandoned";
 }
+
+export { parseHostedInstallationRecordV1 } from "./hosted-supervisor-installation.ts";

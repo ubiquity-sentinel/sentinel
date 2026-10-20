@@ -3,6 +3,7 @@ import { parseMemoryLessonsRecordV1 } from "../contracts/memory-lessons.ts";
 import { parseBudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import { parseGitHubCooldownV1 } from "../contracts/github-cooldown.ts";
 import {
+  parseHostedInstallationRecordV1,
   parseHostedReleaseRecordV1,
   parseHostedRuntimeRecordV1,
 } from "../contracts/hosted-supervisor.ts";
@@ -162,6 +163,12 @@ export const RECORD_COLLECTIONS: Record<StateKind, RecordCollection[]> = {
     },
   ],
   release: [
+    {
+      directory: "hostedInstallations",
+      kind: "hosted_installation",
+      parse: parseHostedInstallationRecordV1,
+      rows: [],
+    },
     {
       directory: "vpsReleases",
       kind: "vps_release_record",

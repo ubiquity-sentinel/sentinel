@@ -95,6 +95,7 @@ export function recordFiles(
     add("vps_release_record", release.vpsReleases ?? []);
     add("hosted_runtime", release.hostedRuntimes);
     add("hosted_release", release.hostedReleases);
+    add("hosted_installation", release.hostedInstallations ?? []);
     // Release-role cooldowns use the same kind-less fragment convention as
     // the repair role; both are addressed by installation id.
     add("github_cooldown", release.githubCooldowns);
@@ -350,6 +351,9 @@ export async function readCommitTree(
         hostedRuntimes: orderRecords(
           records.hostedRuntimes,
         ) as HostedRuntimeRecordV1[],
+        ...(records.hostedInstallations.length === 0
+          ? {}
+          : { hostedInstallations: orderRecords(records.hostedInstallations) }),
         hostedReleases: orderRecords(
           records.hostedReleases,
         ) as HostedReleaseRecordV1[],

@@ -1,4 +1,6 @@
 import {
+  expectBoolean,
+  expectCount,
   expectEnum,
   expectExactKeys,
   expectGitSha,
@@ -21,6 +23,7 @@ import {
   parseHostedExecutionSettlementV1,
   parseHostedRunProofV1,
 } from "./hosted-supervisor-execution.ts";
+import { parseExecutionIds } from "./hosted-supervisor-verification.ts";
 
 export const RUNTIME_KEYS = [
   "version",
@@ -48,7 +51,18 @@ export function parseHostedRuntimeRecordV1(
   path = "$",
 ): HostedRuntimeRecordV1 {
   const obj = expectRecord(input, path);
-  expectExactKeys(obj, RUNTIME_KEYS, path);
+  const optionalKeys = [
+    "verificationFailures",
+    "failedVerificationIds",
+    "lastVerificationId",
+    "lastTurn",
+    "ordinaryAdmission",
+    "verificationBlocked",
+  ];
+  expectExactKeys(obj, [
+    ...RUNTIME_KEYS,
+    ...optionalKeys.filter((key) => Object.hasOwn(obj, key)),
+  ], path);
   expectVersion(obj.version, `${path}.version`);
   expectEnum(obj.kind, ["hosted_runtime"], `${path}.kind`);
 
@@ -147,6 +161,80 @@ export function parseHostedRuntimeRecordV1(
       "nextOrdinaryAt cannot precede createdAt",
     );
   }
+  const scheduling: Partial<HostedRuntimeRecordV1> = {};
+  if (Object.hasOwn(obj, "verificationFailures")) {
+    scheduling.verificationFailures = expectCount(
+      obj.verificationFailures,
+      `${path}.verificationFailures`,
+    );
+  }
+  if (Object.hasOwn(obj, "failedVerificationIds")) {
+    scheduling.failedVerificationIds = parseExecutionIds(
+      obj.failedVerificationIds,
+      `${path}.failedVerificationIds`,
+    );
+  }
+  if (Object.hasOwn(obj, "lastVerificationId")) {
+    scheduling.lastVerificationId = expectNullable(
+      obj.lastVerificationId,
+      `${path}.lastVerificationId`,
+      (v, p) => expectNonEmptyString(v, p, MaxText.recordId),
+    );
+  }
+  if (Object.hasOwn(obj, "lastTurn")) {
+    scheduling.lastTurn = expectEnum(
+      obj.lastTurn,
+      ["ordinary", "verification"] as const,
+      `${path}.lastTurn`,
+    );
+  }
+  if (Object.hasOwn(obj, "verificationBlocked")) {
+    scheduling.verificationBlocked = expectBoolean(
+      obj.verificationBlocked,
+      `${path}.verificationBlocked`,
+    );
+  }
+  if (
+    (scheduling.verificationFailures ?? 0) !==
+      (scheduling.failedVerificationIds?.length ?? 0)
+  ) {
+    fail(
+      path,
+      "invalid_lifecycle",
+      "runtime failure count requires exact execution ids",
+    );
+  }
+  if (Object.hasOwn(obj, "ordinaryAdmission")) {
+    const a = expectRecord(obj.ordinaryAdmission, `${path}.ordinaryAdmission`);
+    expectExactKeys(a, [
+      "mode",
+      "executionId",
+      "revision",
+      "generation",
+      "failedVerificationIds",
+    ], `${path}.ordinaryAdmission`);
+    scheduling.ordinaryAdmission = {
+      mode: expectEnum(
+        a.mode,
+        ["healthy", "degraded"],
+        `${path}.ordinaryAdmission.mode`,
+      ),
+      executionId: expectNonEmptyString(
+        a.executionId,
+        `${path}.ordinaryAdmission.executionId`,
+        MaxText.recordId,
+      ),
+      revision: expectGitSha(a.revision, `${path}.ordinaryAdmission.revision`),
+      generation: expectPositiveInt(
+        a.generation,
+        `${path}.ordinaryAdmission.generation`,
+      ),
+      failedVerificationIds: parseExecutionIds(
+        a.failedVerificationIds,
+        `${path}.ordinaryAdmission.failedVerificationIds`,
+      ),
+    };
+  }
   return {
     version: "v1",
     kind: "hosted_runtime",
@@ -159,6 +247,7 @@ export function parseHostedRuntimeRecordV1(
     execution,
     createdAt,
     updatedAt,
+    ...scheduling,
   };
 }
 
