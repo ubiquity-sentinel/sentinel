@@ -298,8 +298,8 @@ export async function observeHostedReleaseAcceptance(
   if (receipt.phase === "accepted") {
     return await acceptRelease(deps, context, record, request, now);
   }
-  if (receipt.phase === "rolled_back") {
-    return blockRelease(deps, context, record, "rolled_back", now);
+  if (receipt.phase === "rolled_back" || receipt.phase === "abandoned") {
+    return blockRelease(deps, context, record, receipt.phase, now);
   }
   // requested/promoting/verifying/rollback_pending/rollback_verifying carry no
   // final delivery proof and always wait.
@@ -372,13 +372,17 @@ export function blockRelease(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
-  phase: "failed" | "rolled_back",
+  phase: "failed" | "rolled_back" | "abandoned",
   now: number,
 ): Promise<StepResultV1> {
+  const blocked = markTerminalBlocked(record, "other", `release ${phase}`, now);
+  // An abandoned hosted release was superseded or exhausted its bounded
+  // verification after its PR already merged: park the record but keep its
+  // exact target (PR, head, base) for provenance instead of clearing the PR.
   return persistWork(
     deps,
     context,
-    markTerminalBlocked(record, "other", `release ${phase}`, now),
+    phase === "abandoned" ? { ...blocked, target: record.target } : blocked,
   );
 }
 
