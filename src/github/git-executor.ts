@@ -707,116 +707,120 @@ export class DenoGitExecutor implements GitExecutorV1 {
     const stdout = child.stdout.getReader();
     const stderr = child.stderr.getReader();
     const deadline = createDeadline(this.timeoutMs);
-    const streams = (async (): Promise<{
-      stdout: string;
-      stdoutBytes: Uint8Array;
-      stderr: string;
-      overflow: boolean;
-    }> => {
-      const out = await readStreamBounded(stdout, maxOutputBytes, deadline);
-      const err = await readStreamBounded(stderr, maxOutputBytes, deadline);
-      return {
-        stdout: out.text,
-        stdoutBytes: out.bytes,
-        stderr: err.text,
-        overflow: out.overflow || err.overflow,
-      };
-    })();
-    // The streams may settle after the deadline fired or the readers were
-    // canceled; they must never surface as an unhandled rejection.
-    streams.catch(() => {});
-    const status: Promise<Deno.CommandStatus> = child.status;
-    status.catch(() => {});
-    const never = new Promise<never>(() => {});
-    let outcome:
-      | {
-        kind: "streams";
-        value: {
-          stdout: string;
-          stdoutBytes: Uint8Array;
-          stderr: string;
-          overflow: boolean;
-        };
-      }
-      | { kind: "timeout" }
-      | { kind: "status-error" };
     try {
-      outcome = await Promise.race([
-        streams.then((value) => ({ kind: "streams" as const, value })),
-        deadline.race(never).then(() => ({ kind: "timeout" as const })),
-      ]);
-    } catch {
-      outcome = { kind: "status-error" };
-    }
-    const cancelReaders = (): void => {
-      void stdout.cancel().catch(() => {});
-      void stderr.cancel().catch(() => {});
-    };
-    const settle: Promise<Deno.CommandStatus | null> = (async () => {
-      try {
-        return await status;
-      } catch {
-        return null;
-      }
-    })();
-    const partial = outcome.kind === "streams" ? outcome.value : {
-      stdout: "",
-      stdoutBytes: new Uint8Array(0),
-      stderr: "",
-      overflow: false,
-    };
-    if (outcome.kind === "streams" && !outcome.value.overflow) {
-      // Streams closed normally; the child must exit. The deadline still
-      // bounds the wait (a run that never exits after closing its streams
-      // would otherwise hang the caller).
-      let childStatus: Deno.CommandStatus | null;
-      try {
-        childStatus = await deadline.race(
-          settle as Promise<Deno.CommandStatus>,
-        );
-      } catch {
-        cancelReaders();
-        await terminateChild(child);
+      const streams = (async (): Promise<{
+        stdout: string;
+        stdoutBytes: Uint8Array;
+        stderr: string;
+        overflow: boolean;
+      }> => {
+        const out = await readStreamBounded(stdout, maxOutputBytes, deadline);
+        const err = await readStreamBounded(stderr, maxOutputBytes, deadline);
         return {
-          ok: false,
-          code: -1,
-          stdout: partial.stdout,
-          stderr: partial.stderr,
-          timeout: true,
+          stdout: out.text,
+          stdoutBytes: out.bytes,
+          stderr: err.text,
+          overflow: out.overflow || err.overflow,
         };
+      })();
+      // The streams may settle after the deadline fired or the readers were
+      // canceled; they must never surface as an unhandled rejection.
+      streams.catch(() => {});
+      const status: Promise<Deno.CommandStatus> = child.status;
+      status.catch(() => {});
+      const never = new Promise<never>(() => {});
+      let outcome:
+        | {
+          kind: "streams";
+          value: {
+            stdout: string;
+            stdoutBytes: Uint8Array;
+            stderr: string;
+            overflow: boolean;
+          };
+        }
+        | { kind: "timeout" }
+        | { kind: "status-error" };
+      try {
+        outcome = await Promise.race([
+          streams.then((value) => ({ kind: "streams" as const, value })),
+          deadline.race(never).then(() => ({ kind: "timeout" as const })),
+        ]);
+      } catch {
+        outcome = { kind: "status-error" };
       }
-      if (childStatus === null) {
-        return {
-          ok: false,
-          code: -1,
-          stdout: partial.stdout,
-          stderr: partial.stderr,
-          timeout: true,
-        };
-      }
-      return {
-        ok: childStatus.success,
-        code: childStatus.code,
-        stdout: partial.stdout,
-        stdoutBytes: partial.stdoutBytes,
-        stderr: partial.stderr,
+      const cancelReaders = (): void => {
+        void stdout.cancel().catch(() => {});
+        void stderr.cancel().catch(() => {});
       };
+      const settle: Promise<Deno.CommandStatus | null> = (async () => {
+        try {
+          return await status;
+        } catch {
+          return null;
+        }
+      })();
+      const partial = outcome.kind === "streams" ? outcome.value : {
+        stdout: "",
+        stdoutBytes: new Uint8Array(0),
+        stderr: "",
+        overflow: false,
+      };
+      if (outcome.kind === "streams" && !outcome.value.overflow) {
+        // Streams closed normally; the child must exit. The deadline still
+        // bounds the wait (a run that never exits after closing its streams
+        // would otherwise hang the caller).
+        let childStatus: Deno.CommandStatus | null;
+        try {
+          childStatus = await deadline.race(
+            settle as Promise<Deno.CommandStatus>,
+          );
+        } catch {
+          cancelReaders();
+          await terminateChild(child);
+          return {
+            ok: false,
+            code: -1,
+            stdout: partial.stdout,
+            stderr: partial.stderr,
+            timeout: true,
+          };
+        }
+        if (childStatus === null) {
+          return {
+            ok: false,
+            code: -1,
+            stdout: partial.stdout,
+            stderr: partial.stderr,
+            timeout: true,
+          };
+        }
+        return {
+          ok: childStatus.success,
+          code: childStatus.code,
+          stdout: partial.stdout,
+          stdoutBytes: partial.stdoutBytes,
+          stderr: partial.stderr,
+        };
+      }
+      // Deadline expired, output over-limit or a stream failed: settle the child
+      // (TERM then KILL, bounded status wait), cancel the pipes so descendants
+      // that keep them open cannot hang the caller, and report a bounded
+      // failure. The effect of a push at this point is unknown.
+      cancelReaders();
+      await terminateChild(child);
+      return {
+        ok: false,
+        code: -1,
+        stdout: partial.stdout,
+        stderr: partial.stderr,
+        ...(outcome.kind === "streams" && outcome.value.overflow
+          ? { overflow: true }
+          : { timeout: true }),
+      };
+    } finally {
+      deadline.dispose();
     }
-    // Deadline expired, output over-limit or a stream failed: settle the child
-    // (TERM then KILL, bounded status wait), cancel the pipes so descendants
-    // that keep them open cannot hang the caller, and report a bounded
-    // failure. The effect of a push at this point is unknown.
-    cancelReaders();
-    await terminateChild(child);
-    return {
-      ok: false,
-      code: -1,
-      stdout: partial.stdout,
-      stderr: partial.stderr,
-      ...(outcome.kind === "streams" && outcome.value.overflow
-        ? { overflow: true }
-        : { timeout: true }),
-    };
   }
 }
 
