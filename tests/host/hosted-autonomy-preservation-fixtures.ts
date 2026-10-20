@@ -23,6 +23,7 @@ import type { HostedAutonomyDepsV1 } from "../../ops/hosted-autonomy-types.ts";
 import {
   darkQueueCoordinatorFixture,
   darkQueueFixture,
+  historicalDarkQueueFixture,
 } from "./hosted-autonomy-dark-queue-fixture.ts";
 
 /** Explicit offline no-rule authority; unexpected native queue effects still fail. */
@@ -33,6 +34,18 @@ export async function withDarkQueueAuthority(
     ...deps,
     queueCustody: darkQueueFixture(deps),
     queue: await darkQueueCoordinatorFixture(deps),
+  };
+}
+
+/** Historical direct grants are valid only in an explicitly dormant policy graph. */
+export async function withHistoricalQueueAuthority(
+  deps: HostedAutonomyDepsV1,
+): Promise<HostedAutonomyDepsV1> {
+  const custody = historicalDarkQueueFixture(deps);
+  return {
+    ...deps,
+    queueCustody: custody,
+    queue: await darkQueueCoordinatorFixture(deps, custody),
   };
 }
 

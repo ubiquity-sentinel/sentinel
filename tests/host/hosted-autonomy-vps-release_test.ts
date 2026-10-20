@@ -3,7 +3,7 @@ import {
   DORMANT_HOSTED_SUPERVISOR_POLICY,
   withHostedProductionPolicy,
 } from "./hosted-supervisor-policy-fixture.ts";
-import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
+import { withHistoricalQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 
 import {
   authorizingReceipt,
@@ -54,7 +54,7 @@ function historicalTest(
           const { runHostedAutonomy } = await graph.runner();
           await check(async (rig, github) =>
             runHostedAutonomy(
-              await withDarkQueueAuthority({
+              await withHistoricalQueueAuthority({
                 state: rig.state,
                 githubFor: github === undefined ? rig.githubFor : () => github,
                 clock: { now: () => T0 + 5_000_000 },
@@ -111,6 +111,7 @@ async function acceptedMaintenance(
     settledAt: T0 + 1000,
   });
   const { rig, github } = await makeRig(`vps-maintenance-${phase}`, {
+    releaseReadThrough: true,
     repair: repairSnapshot([record], [review], [request], [charge]),
     pull: foreignPullFacts(),
     issueOpen: false,

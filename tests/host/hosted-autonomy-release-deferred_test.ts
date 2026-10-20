@@ -12,7 +12,7 @@ import {
   DORMANT_HOSTED_SUPERVISOR_POLICY,
   withHostedProductionPolicy,
 } from "./hosted-supervisor-policy-fixture.ts";
-import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
+import { withHistoricalQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
 import assert from "node:assert/strict";
 import { makeRig } from "./hosted-autonomy-rig.ts";
 import {
@@ -143,7 +143,7 @@ async function deferredPasses(
     const before = await sequence(rig.state);
     for (let pass = 0; pass < 3; pass++) {
       const result = await runHostedAutonomy(
-        await withDarkQueueAuthority({
+        await withHistoricalQueueAuthority({
           state: rig.state,
           githubFor: () => surface,
           clock: { now: () => NOW + pass * 300_000 },
@@ -184,7 +184,7 @@ historicalTest(
     try {
       const { surface, reads } = countingSurface(github);
       const result = await runHostedAutonomy(
-        await withDarkQueueAuthority({
+        await withHistoricalQueueAuthority({
           state: rig.state,
           githubFor: () => surface,
           clock: { now: () => now + 300_000 },
@@ -224,7 +224,7 @@ historicalTest(
       const resumed = recordFor(request);
       const pass = async (offset: number) =>
         runHostedAutonomy(
-          await withDarkQueueAuthority({
+          await withHistoricalQueueAuthority({
             state: rig.state,
             githubFor: () => surface,
             clock: { now: () => now + offset },
@@ -278,6 +278,7 @@ async function recordedRig(
   work: readonly WorkRecordV1[] = LIVE_RECORDS,
 ) {
   const { rig, github } = await makeRig(`b12-launcher-${phase}`, {
+    releaseReadThrough: true,
     repair: liveRepair(work),
     issueOpen: false,
     defaultBranch: "development",

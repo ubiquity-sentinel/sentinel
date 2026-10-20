@@ -5,6 +5,7 @@ import {
 } from "../../src/host/actions-supervisor.ts";
 import {
   CANDIDATE,
+  DORMANT_HOSTED_POLICIES,
   LAUNCHER,
   makeRig,
   releaseRequest,
@@ -64,6 +65,7 @@ Deno.test({
       );
       let writes = 0;
       const input = (id: number) => ({
+        ...DORMANT_HOSTED_POLICIES,
         clock: rig.clock,
         run: run(id),
         evidence: rig.evidence,
