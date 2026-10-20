@@ -1,11 +1,8 @@
 # Sentinel deterministic CI gate (Wave C wiring).
 #
-# Runs the canonical credential-free harness: formatting, lint, type/build
-# check across every module plus the entrypoints, then the complete local
-# suite (contracts, state, budget, modules and Wave C integration) in
-# credential-free child environments. This is the deterministic branch gate
-# required before any aggregate Sentinel PR review/merge; it never calls
-# external services.
+# The unchanged full local gate is partitioned into quality checks and five
+# credential-free test shards. test-local remains the single required native
+# carrier and fails unless every prerequisite succeeds. No external test service.
 name: sentinel-ci
 
 on:
@@ -20,12 +17,34 @@ permissions:
   contents: read
 
 jobs:
-  test-local:
+  quality:
     runs-on: ubuntu-latest
-    # On 2026-10-18 the full harness was still completing tests at its
-    # 45-minute job limit. Allow the expanded suite up to 60 minutes while
-    # retaining a finite CI job bound.
-    timeout-minutes: 60
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Install locked App action dependencies for offline tests
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
+      - name: Check the local App action source
+        run: |
+          deno fmt --check .github/actions/sentinel-app-token
+          deno lint .github/actions/sentinel-app-token/main.js .github/actions/sentinel-app-token/post.js .github/actions/sentinel-app-token/lib
+          deno check --check-js .github/actions/sentinel-app-token/lib/mint-grant.js
+      - name: Credential-free static checks
+        run: deno run --frozen --allow-env=PATH --allow-run=git,deno --allow-write test-local.ts --checks
+
+  test-shards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [modules, integration, host-1, host-2, host-3]
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
@@ -52,12 +71,23 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Install locked App action dependencies for offline tests
         run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix .github/actions/sentinel-app-token
-      - name: Check the local App action source
-        run: |
-          deno fmt --check .github/actions/sentinel-app-token
-          deno lint .github/actions/sentinel-app-token/main.js .github/actions/sentinel-app-token/post.js .github/actions/sentinel-app-token/lib
-          deno check --check-js .github/actions/sentinel-app-token/lib/mint-grant.js
-      - name: Credential-free local harness
+      - name: Credential-free test shard
         run: |
           export PATH="/usr/local/bin:$PATH"
-          /usr/local/bin/deno run --frozen --allow-read=.,"$GITHUB_EVENT_PATH" --allow-run=git,deno --allow-env=PATH,GITHUB_EVENT_NAME,GITHUB_EVENT_PATH,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_WORKFLOW_SHA ops/native-ci-proof.ts
+          /usr/local/bin/deno run --frozen --allow-read=tests --allow-run=deno --allow-env=PATH ops/ci-shards.ts "${{ matrix.shard }}"
+
+  test-local:
+    if: ${{ always() }}
+    needs: [quality, test-shards]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Credential-free local harness
+        env:
+          SENTINEL_CI_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          deno run --frozen --allow-read=.,"$GITHUB_EVENT_PATH" --allow-run=git,deno --allow-env=PATH,GITHUB_EVENT_NAME,GITHUB_EVENT_PATH,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_WORKFLOW_SHA,SENTINEL_CI_RESULTS ops/native-ci-proof.ts --aggregate

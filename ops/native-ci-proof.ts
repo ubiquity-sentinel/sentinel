@@ -9,6 +9,19 @@ export interface NativeCiWrapperV1 {
   harness(): Promise<number>;
   emit(line: string): void;
 }
+
+/** A skipped, cancelled, missing or failed matrix never authorizes the carrier. */
+export function nativeCiAggregateStatus(value: unknown): number {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return 1;
+  }
+  const jobs = value as Record<string, { result?: unknown } | null>;
+  const names = Object.keys(jobs).sort();
+  return names.join(",") === "quality,test-shards" &&
+      names.every((name) => jobs[name]?.result === "success")
+    ? 0
+    : 1;
+}
 export async function runNativeCiWrapper(
   io: NativeCiWrapperV1,
 ): Promise<number> {
@@ -50,11 +63,15 @@ export async function runNativeCiWrapper(
     ) as NativeCiProofV1["workflowSource"],
     sources: sources as NativeCiProofV1["sources"],
   };
-  // This line is emitted after the protected full harness and immutable checkout checks.
+  // Only the full harness or its complete successful CI partition can emit this carrier.
   io.emit(`${NATIVE_CI_MARKER}${JSON.stringify(proof)}`);
   return 0;
 }
 if (import.meta.main) {
+  const aggregate = Deno.args.length === 1 && Deno.args[0] === "--aggregate";
+  if (Deno.args.length > 0 && !aggregate) {
+    throw new Error("unknown native CI wrapper arguments");
+  }
   const git = async (args: string[]) => {
     const r = await new Deno.Command("git", {
       args: ["--no-replace-objects", "-c", "core.hooksPath=/dev/null", ...args],
@@ -70,8 +87,13 @@ if (import.meta.main) {
     env: (name) => Deno.env.get(name),
     readEvent: (path) => Deno.readTextFile(path),
     git,
-    harness: async () =>
-      (await new Deno.Command(Deno.execPath(), {
+    harness: async () => {
+      if (aggregate) {
+        return nativeCiAggregateStatus(
+          JSON.parse(Deno.env.get("SENTINEL_CI_RESULTS") ?? "null"),
+        );
+      }
+      return (await new Deno.Command(Deno.execPath(), {
         args: [
           "run",
           "--allow-env=PATH",
@@ -81,7 +103,8 @@ if (import.meta.main) {
         ],
         stdout: "inherit",
         stderr: "inherit",
-      }).spawn().status).code,
+      }).spawn().status).code;
+    },
     emit: (line) => console.log(line),
   });
   Deno.exit(code);

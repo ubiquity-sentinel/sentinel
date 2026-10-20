@@ -28,6 +28,20 @@
  */
 const root = Deno.cwd();
 const path = Deno.env.get("PATH") ?? "/usr/bin:/bin";
+// No arguments retain the complete local gate; CI partitions only its test step.
+const checksOnly = Deno.args.length === 1 && Deno.args[0] === "--checks";
+const testFiles = Deno.args[0] === "--tests" ? Deno.args.slice(1) : null;
+if (
+  Deno.args.length > 0 && !checksOnly &&
+  (testFiles === null || testFiles.length === 0 ||
+    new Set(testFiles).size !== testFiles.length ||
+    testFiles.some((file) =>
+      !/^tests\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.[cm]?[jt]sx?$/.test(
+        file,
+      ) ||
+      file.split("/").some((part) => part === "." || part === "..")
+    ))
+) throw new Error("expected --checks or --tests followed by CI test files");
 // The temporary HOME is created inside the workspace: the OS temp directory
 // is not writable in every local harness context, and the temp tree never
 // enters the fmt/lint/test scopes.
@@ -90,7 +104,7 @@ const steps: { name: string; args: string[] }[] = [
       "--allow-run",
       "--allow-write",
       "--allow-env=PATH,NODE_V8_COVERAGE",
-      "tests/",
+      ...(testFiles ?? ["tests/"]),
     ],
   },
 ];
@@ -110,6 +124,8 @@ async function cleanup(): Promise<void> {
 let failed = false;
 try {
   for (const step of steps) {
+    if (checksOnly && step.name === "test") continue;
+    if (testFiles !== null && step.name !== "test") continue;
     const child = new Deno.Command("deno", {
       args: step.args,
       cwd: root,
