@@ -53,6 +53,7 @@ import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
 import { runHostedMismatchDispositionPass } from "./hosted-autonomy-mismatch-pass.ts";
 import { runHostedPreservationDispositionPass } from "./hosted-autonomy-preservation-disposition.ts";
 import { runHostedRefreshRearmPass } from "./hosted-autonomy-refresh-rearm.ts";
+import { runHostedOriginalCandidateRecoveryPass } from "./hosted-autonomy-original-candidate-pass.ts";
 import {
   applyCandidateRefRevalidations,
   candidateRefRevalidation,
@@ -182,6 +183,10 @@ export async function runHostedRetryPass(
   };
   const { deps, actions, revisions, scopeFor, readTip, readPull } = context;
   let { snapshot, observedHead } = context;
+  const originalCandidate = await runHostedOriginalCandidateRecoveryPass(
+    context,
+  );
+  if (originalCandidate !== null) return originalCandidate;
   // ---- candidate-ref revalidation pass ------------------------------------
   // The runtime parks a record when its managed candidate branch ref matched
   // neither the saved candidate head nor the head that record had published.
