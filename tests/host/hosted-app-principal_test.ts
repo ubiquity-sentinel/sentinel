@@ -156,7 +156,6 @@ Deno.test("hosted principal factory: metadata and a login cannot replace App/sou
       "completed native job",
       "unhealthy",
       "pointer moved",
-      "dormant capability",
       "wrong launcher code",
       "release race",
     ]
@@ -177,14 +176,6 @@ Deno.test("hosted principal factory: metadata and a login cannot replace App/sou
           rig.model.jobs[0].status = "completed";
         } else if (scenario === "wrong launcher code") {
           rig.profiles[0].codeSha256 = "0".repeat(64);
-        } else if (scenario === "dormant capability") {
-          rig.capability.existingPr.custodyActivated = false;
-          await rig.write(
-            rig.launcher,
-            "src/host/hosted-custody-capability.json",
-            JSON.stringify(rig.capability),
-          );
-          await rig.commitLauncher();
         } else {
           const release = rig.state.release!.snapshot as {
             hostedRuntimes: Array<
@@ -217,6 +208,31 @@ Deno.test("hosted principal factory: metadata and a login cannot replace App/sou
         await rig.close();
       }
     });
+  }
+});
+
+Deno.test("hosted principal factory: retired custody floors do not replace exact source and execution authority", async () => {
+  const rig = await principalHostFixture();
+  try {
+    rig.capability.existingPr.custodyActivated = false;
+    await rig.write(
+      rig.launcher,
+      "src/host/hosted-custody-capability.json",
+      JSON.stringify(rig.capability),
+    );
+    await rig.commitLauncher();
+    assert.equal(
+      await verifyHostedAppPrincipalHandoff(rig.hostInput, rig.profiles),
+      true,
+    );
+    const context = await createHostedAppPrincipalContext(
+      rig.hostInput,
+      rig.profiles,
+    );
+    assert(context !== null);
+    assert.equal(rig.state.repairWrites, 0);
+  } finally {
+    await rig.close();
   }
 });
 
