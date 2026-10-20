@@ -1,14 +1,30 @@
 # Build status
 
-This is the single current task, ownership and acceptance ledger. The current
-primary coordinator maintains it under the owner's 2026-10-13 takeover
-directive; Muse ownership is retired. Keep present state, remaining work and
-exact evidence references here; replace stale checkpoints instead of appending a
-session transcript. Current design decisions belong in
-[MASTER-PLAN.md](../MASTER-PLAN.md) and [DECISIONS.md](DECISIONS.md). The
-current primary continues the existing integration role. The 2026-10-18 hook recorded gpt-6-astra/ultra for that earlier session; current actual model and effort metadata are unavailable. Worker identity and runtime routing are reported separately.
+This is the single current task, ownership and acceptance ledger, maintained by the primary integration owner under the 2026-10-13 takeover and 2026-10-20 owner grant. Muse ownership is retired. Current policy belongs in [MASTER-PLAN.md](../MASTER-PLAN.md) and [DECISIONS.md](DECISIONS.md). Historical checkpoints below retain their original text and do not establish current ownership, authority or acceptance.
 
 ## Active task register
+
+Snapshot: 2026-10-20 UTC; supplied orchestrator receipts and worker handbacks, not a fresh live read by W15. This register supersedes earlier checkpoints; installation and two-target acceptance remain pending.
+
+- Owner/scope: current primary orchestrator integrates and accepts; the 2026-10-20 blanket grant covers hosted workflow control, direct development pushes, launcher/runtime/state updates and gated autonomous merges. ai.ubq.fi is issue repairs only; `sentinel-release` stays disabled.
+- Live launcher L81: `00b6649eeff51a9754bf3748f793137db9bf8605` on `sentinel-supervisor`.
+- Installed runtime: generation 82 = `1838df313105bab219d71602695a7f758a65125e` (merged Sentinel PR #172), after the #1213 body-to-comment unblock. R81 `da98f5f49c45b57cfa97a45fe647c36b1021f302` is the historical failing predecessor.
+- Pending candidate: `codex/integration-20261020`; W15 cloned the integrated checkout at `210d0ef659a3a05f8422363c831c97fe380b9bb5`. This is a source snapshot, not an installed or accepted SHA; the primary must record the final reconciled development/CI SHA before publication.
+- Running/reported: dispatcher re-enabled at 08:41; ordinary run `39399339935` planned nine matrix cells at 09:15; autonomous ai.ubq.fi PRs #1254/#1255 opened. Cell settlement, their exact reviewed heads/CI/merge and subsequent scheduled outcomes still need receipts. W7 returned its CI fixes; W13 integrated verification/rollback reconciliation and W15 documentation are the reported remaining lanes.
+- Incident: all 151 supervisor runs from 2026-10-18 15:51 to 2026-10-20 08:41 failed `issue source unavailable`: #1213 had 23,807 body characters against R81's 16,384 ceiling. Release `f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5` retried failed PRIOR indefinitely, starving ordinary work and installation.
+- Recovery receipts: `39396626543` PRIOR healthy; `39397013439` candidate healthy → generation 82 installed; `39399339935` ordinary matrix admission. Opened PRs and bootstrap health do not prove the required deliveries.
+- Integrated W12: `7a85ad3cfe05d574bb31c3e2d6d2e12137023be3` issue isolation/context; `9b340dae07b97dca1b6c423f7c0830d36e6e07b8` advisory `hosted_runtime_summary`.
+- Integrated W11: `4f7b698d073219dd3dc3453d68b56769cf1bc901` exact-SHA CI/ancestry auto-follow, default off.
+- Integrated W10: `7221720dad72b432d01cc03739f020b6ea872a65`, `a2fc5b181c0edd00b0241f41726cfe22f656c85b`, `e1ede7966b0ea214eac4c2832267f8bf86f5e31e`: bounded N=2 verification, reasoned abandonment/degraded admission, installation journal, self-install/bootstrap and exact-prior restoration path.
+- Integrated W7: nine commits from `aa3a036a9081c3a55f23cb04f28971d68b723553` through `210d0ef659a3a05f8422363c831c97fe380b9bb5`, including protected-entry validation deadline and retained Git-timer fixes; CI sharding is `b19882bb8cb26cd55cf951925719663353bbc26f`. Five test jobs have 30-minute timeouts behind required `test-local`; local worker passes are not complete Linux CI proof.
+- CI evidence: `39401090430` was launched for the earlier W10–W12 integration; it is not proof for later W7/W13/docs bytes. Obtain green CI on the exact final development SHA.
+- Remaining safety/wiring: prove actual prior-reader compatibility before new journal/`abandoned` writes and exact rollback; W11 has no separate immutable U control anchor; W12 emits per child invocation, with workflow-wide finalizer aggregation still unwired. Retained owner-install modules are unreferenced from prepare and not yet deleted.
+- Next actions, primary owner: reconcile W13 and these docs → publish exact development candidate → CI green → fast-forward `sentinel-supervisor` to that SHA → self-install generation 83 with model-disabled bootstrap → verify exact health/settlement → enable `SENTINEL_AUTO_FOLLOW` and verify advancement → delete ceremony in DESIGN.md §4 order after replacing consumers.
+- Acceptance still open: green scheduled cycles plus ≥1 autonomous issue → PR → completed internal gateway `codex-auto-review` → merge per target; bind current CI, exact head/base, no unresolved P0/P1 and durable admission/settlement. No gateway deployment or release activation is included.
+- Evidence root (local, outside Git): `/private/tmp/claude-501/-Users-nv-repos-ubiquity-sentinel/6fec4968-1e6c-4836-a897-d75f9cc3e1f3/scratchpad/`.
+- Evidence files under that root: `PLAN.md`; `w3/report.md` (root cause); `w6/report.md` (old installer no-go, not the executed unblock); `w8/DESIGN.md` §4 (deletion order); `w10/W10-REPORT.md`; `w11/report.md`; `w12/report.md` and `w12/VALIDATION.md`; `w7/report.md` and `w7/W7-evidence.md`.
+
+## Earlier checkpoints (historical)
 
 At 2026-10-19 18:54 UTC, root accepted fresh LF data after bounded admission pause and complete drain. Dispatcher then supervisor were disabled with readbacks at18:48:15; other8workflows remain unchanged, CI/repair active and release disabled. V2guard4147212 settled with zero effects after stale-ref refusal; accepted pin-only V3guard4156421 is pre_strict with unchanged21:09 trigger/21:15 hard limit. Exact protected00b6649e,release0a45f92a,repair1cb3fe9a stayed stable through two complete native inventories at18:49:30/35, all76GETs successful, zero nonterminal runs. Native reference e534773b99d798d1250fa46785db8717a1d8a1b17c432945831a7e746e0ff690 retains the initial object-key-order classification error and saved-data correction without API rerun. Collector0abc09bc succeeded in13.803s; root authorization1792435909134 and materializerbf0815e2 succeeded in2.713s before the18:55:37 drain deadline. Independent fresh proposal audit db58d0f7ffef79c460889a82444004353849548807a97dd86a3b45f3832f4e73 accepts exact current R81/81, still-wanted f437/task170, preserved history/1508reservations, both active F-only floors and exact migration grants. Only two source data files are installed locally from proposal b6634432: custodyd8927ebe and rolloutc19a2440; profile/code/F and accepted fixtures remain unchanged. Evidence is under fresh-lf-20261019T1807Z. This is an unpublished LF candidate; focused data/lifecycle checks and its own native source CI remain required. Protected publication, runtime dispatch, F installation and live delivery remain unperformed; per-attempt runtime approval still applies.
 
@@ -25,8 +41,6 @@ All repository fixture writers have returned frozen scoped handbacks and settled
 Live boundary: admission was restored at 15:35:58 and the obsolete guard is stopped. The latest independent 16:01:37 read still showed protected L81 00b6649eeff51a9754bf3748f793137db9bf8605 and installed R81 da98f5f49c45b57cfa97a45fe647c36b1021f302/generation81 with failed settled PRIOR, not healthy F. All prior LF/drain freshness is invalid. After local acceptance, prepare a clean F-descendant with only the two data files restored to exact F baseline, collect a new bounded native/state drain, materialize fresh LF, validate its data and require its own successful source CI. Reuse immutable F CI39255082743 rather than duplicate it. The current user-supplied per-attempt hosted runtime approval boundary controls over older standing wording; obtain the exact runtime attempt approval after the concrete candidate and checks are ready.
 
 Offline preparation only: fresh-lf-preparation-1730/operator-packet.md (d5f55d5a8ed6c0979bd945753c6e33ac58c3865567f95f587fbec6f4471964c9) retains verified helper/schema/command templates. Fresh pins, authorization event, exact preparation SHA and a newly bound finite restore guard are not yet populated. The old 16:38/16:44 guard must never be relaunched. No model, GitHub write or deployment occurs inside local checks.
-
-### Earlier checkpoints (historical)
 
 These entries retain provenance; they do not override the current register or create fresh execution authority.
 
