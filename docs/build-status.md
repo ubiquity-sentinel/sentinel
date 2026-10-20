@@ -1,101 +1,643 @@
 # Build status
 
-This is the single current task, ownership and acceptance ledger, maintained by the primary integration owner under the 2026-10-13 takeover and 2026-10-20 owner grant. Muse ownership is retired. Current policy belongs in [MASTER-PLAN.md](../MASTER-PLAN.md) and [DECISIONS.md](DECISIONS.md). Historical checkpoints below retain their original text and do not establish current ownership, authority or acceptance.
+This is the single current task, ownership and acceptance ledger, maintained by
+the primary integration owner under the 2026-10-13 takeover and 2026-10-20 owner
+grant. Muse ownership is retired. Current policy belongs in
+[MASTER-PLAN.md](../MASTER-PLAN.md) and [DECISIONS.md](DECISIONS.md). Historical
+checkpoints below retain their original text and do not establish current
+ownership, authority or acceptance.
 
 ## Active task register
 
-Snapshot: 2026-10-20 UTC; supplied orchestrator receipts and worker handbacks, not a fresh live read by W15. This register supersedes earlier checkpoints; installation and two-target acceptance remain pending.
+Snapshot: 2026-10-20 19:19 UTC; current Codex coordinator resumed native Claude
+session `6fec4968-1e6c-4836-a897-d75f9cc3e1f3` after its quota interruption. The
+fresh observations below supersede the older W15 source snapshot retained in Git
+history. Two-target acceptance remains pending.
 
-- Owner/scope: current primary orchestrator integrates and accepts; the 2026-10-20 blanket grant covers hosted workflow control, direct development pushes, launcher/runtime/state updates and gated autonomous merges. ai.ubq.fi is issue repairs only; `sentinel-release` stays disabled.
-- Live launcher L81: `00b6649eeff51a9754bf3748f793137db9bf8605` on `sentinel-supervisor`.
-- Installed runtime: generation 82 = `1838df313105bab219d71602695a7f758a65125e` (merged Sentinel PR #172), after the #1213 body-to-comment unblock. R81 `da98f5f49c45b57cfa97a45fe647c36b1021f302` is the historical failing predecessor.
-- Pending candidate: `codex/integration-20261020`; W15 cloned the integrated checkout at `210d0ef659a3a05f8422363c831c97fe380b9bb5`. This is a source snapshot, not an installed or accepted SHA; the primary must record the final reconciled development/CI SHA before publication.
-- Running/reported: dispatcher re-enabled at 08:41; ordinary run `39399339935` planned nine matrix cells at 09:15; autonomous ai.ubq.fi PRs #1254/#1255 opened. Cell settlement, their exact reviewed heads/CI/merge and subsequent scheduled outcomes still need receipts. W7 returned its CI fixes; W13 integrated verification/rollback reconciliation and W15 documentation are the reported remaining lanes.
-- Incident: all 151 supervisor runs from 2026-10-18 15:51 to 2026-10-20 08:41 failed `issue source unavailable`: #1213 had 23,807 body characters against R81's 16,384 ceiling. Release `f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5` retried failed PRIOR indefinitely, starving ordinary work and installation.
-- Recovery receipts: `39396626543` PRIOR healthy; `39397013439` candidate healthy → generation 82 installed; `39399339935` ordinary matrix admission. Opened PRs and bootstrap health do not prove the required deliveries.
-- Integrated W12: `7a85ad3cfe05d574bb31c3e2d6d2e12137023be3` issue isolation/context; `9b340dae07b97dca1b6c423f7c0830d36e6e07b8` advisory `hosted_runtime_summary`.
-- Integrated W11: `4f7b698d073219dd3dc3453d68b56769cf1bc901` exact-SHA CI/ancestry auto-follow, default off.
-- Integrated W10: `7221720dad72b432d01cc03739f020b6ea872a65`, `a2fc5b181c0edd00b0241f41726cfe22f656c85b`, `e1ede7966b0ea214eac4c2832267f8bf86f5e31e`: bounded N=2 verification, reasoned abandonment/degraded admission, installation journal, self-install/bootstrap and exact-prior restoration path.
-- Integrated W7: nine commits from `aa3a036a9081c3a55f23cb04f28971d68b723553` through `210d0ef659a3a05f8422363c831c97fe380b9bb5`, including protected-entry validation deadline and retained Git-timer fixes; CI sharding is `b19882bb8cb26cd55cf951925719663353bbc26f`. Five test jobs have 30-minute timeouts behind required `test-local`; local worker passes are not complete Linux CI proof.
-- CI evidence: `39401090430` was launched for the earlier W10–W12 integration; it is not proof for later W7/W13/docs bytes. Obtain green CI on the exact final development SHA.
-- Remaining safety/wiring: prove actual prior-reader compatibility before new journal/`abandoned` writes and exact rollback; W11 has no separate immutable U control anchor; W12 emits per child invocation, with workflow-wide finalizer aggregation still unwired. Retained owner-install modules are unreferenced from prepare and not yet deleted.
-- Next actions, primary owner: reconcile W13 and these docs → publish exact development candidate → CI green → fast-forward `sentinel-supervisor` to that SHA → self-install generation 83 with model-disabled bootstrap → verify exact health/settlement → enable `SENTINEL_AUTO_FOLLOW` and verify advancement → delete ceremony in DESIGN.md §4 order after replacing consumers.
-- Acceptance still open: green scheduled cycles plus ≥1 autonomous issue → PR → completed internal gateway `codex-auto-review` → merge per target; bind current CI, exact head/base, no unresolved P0/P1 and durable admission/settlement. No gateway deployment or release activation is included.
-- Evidence root (local, outside Git): `/private/tmp/claude-501/-Users-nv-repos-ubiquity-sentinel/6fec4968-1e6c-4836-a897-d75f9cc3e1f3/scratchpad/`.
-- Evidence files under that root: `PLAN.md`; `w3/report.md` (root cause); `w6/report.md` (old installer no-go, not the executed unblock); `w8/DESIGN.md` §4 (deletion order); `w10/W10-REPORT.md`; `w11/report.md`; `w12/report.md` and `w12/VALIDATION.md`; `w7/report.md` and `w7/W7-evidence.md`.
+- Continuation ownership: `/Users/nv/repos/ubiquity/sentinel`, branch
+  `development`, exact base `e05ba64f1142710e4a902a9ae088593a1ca411f5`; preserve
+  the pre-existing untracked `.codex-evidence-pr-backlog-20261018/` and all
+  historical lanes. The prior Claude session was observed idle with an unchanged
+  transcript; no session was stopped or resumed.
+- Current launcher and installed runtime: `sentinel-supervisor` and generation
+  83 both name `e05ba64f1142710e4a902a9ae088593a1ca411f5`. Installation run
+  `39414567493` emitted a healthy terminal for exact bootstrap execution
+  `39414567493:1:repair`, but the installation remains `bootstrapping`,
+  `bootstrapProof` is null and the saved execution remains in flight.
+- Current blocker: scheduled run `39480626930` succeeded as a workflow while
+  prepare reported unavailable evidence for the saved bootstrap. Its later
+  finalize mismatch is the expected guard against settling another run's intent,
+  not a terminal-identity mismatch. Native job log `118602123750` contains one
+  healthy terminal matching the saved bootstrap execution; the GitHub evidence
+  consumer needs a reproduced, fail-closed correction. Green no-op cycles do not
+  prove ordinary work or delivery.
+- Current controls: dispatcher `39480590785` reports effective auto-follow off
+  and `deferred/execution_in_flight`; `sentinel-release` remains disabled.
+  Preserve the saved intent and exact terminal evidence; do not manually clear
+  the pointer or invent settlement. Continue fix-forward after the generation-83
+  state write.
+- Review recovery: prior workflow `wluie4np0` / `wf_3925021e-e72` finished with
+  incomplete quota-limited coverage. Its verified P2 reports that
+  `src/host/local-github.ts` drops `skippedIssues` while filtering successful
+  issue listings. This is not a complete review verdict for the inherited
+  candidate.
+- Isolated writer: module `recovery-issue-diagnostics-20261020`, branch
+  `codex/master-plan-recovery-issue-diagnostics-20261020-a2d0b9a79b0`, worktree
+  `.codex-worktrees/master-plan-recovery-issue-diagnostics-20261020-a2d0b9a79b0`,
+  base `e05ba64f1142710e4a902a9ae088593a1ca411f5`; owns only
+  `src/host/local-github.ts` and
+  `tests/host/local-github-issue-diagnostics.test.ts`.
+- Isolated bootstrap writer: module `recovery-bootstrap-20261020`, branch
+  `codex/master-plan-recovery-bootstrap-20261020-a845ae616ff`, worktree
+  `.codex-worktrees/master-plan-recovery-bootstrap-20261020-a845ae616ff`, same
+  exact base; owns `src/github/client-hosted-log-wire.ts`,
+  `tests/github/hosted-execution-log-delay_test.ts` and
+  `tests/host/hosted-bootstrap-log-delay_test.ts`. The actual client replay
+  reproduced a 1,227 ms authenticated log-emission delay against the 999 ms
+  terminal-finish bound; the correction must retain exact identity and
+  authenticated step/job/observation windows without increasing the global clock
+  tolerance.
+- Current delivery evidence: ai.ubq.fi PRs #1254–#1258 remain open. Last
+  retrieved settled ordinary execution is generation-82 run `39412338037`;
+  generation-83 workflow success has not established issue work. Acceptance
+  still requires green scheduled cycles and at least one autonomous issue → PR →
+  completed internal review → merge per target.
+- Recovery evidence:
+  `/Users/nv/Documents/Codex/2026-10-20/can-x20/work/runtime/`, `work/state/`
+  and `work/bootstrap-repro/`; native Claude evidence root remains recorded
+  below. Next: reproduce and repair the evidence reader, finish inherited review
+  coverage, publish the checked fix-forward candidate, let the trusted
+  controller settle/bootstrap, prove ordinary delivery, then verify automatic
+  advancement before ceremony deletion.
+- Recovery checkpoint, 19:43 UTC: diagnostics tip
+  `6dc8b2bb30ae1e7a5b72320cadae6415de831068` is integrated by merge
+  `5792e7580fd9502cf780ce0bfc190bbebbc0ebe0`; bootstrap tip
+  `2110f0a113ded447a6db08a3769101f88e0458bd` passed its red/green client and
+  finalizer checks, with later-prepare and next-launcher acceptance coverage
+  being added. No Sentinel changes have been pushed during this continuation.
+- Completed inherited review: guarded actual Codex review over exact
+  `a1ba60d67b1599a8def2ba2aa3026e172d14c78e..e05ba64f1142710e4a902a9ae088593a1ca411f5`,
+  exit 0, verdict incorrect, reviewer gpt-6-astra/ultra; six findings retained
+  in `work/inherited-review/review-output.json`. Source triage confirms
+  remaining maintenance revision gate, unprotected extracted authority modules,
+  unprojected legacy fallback, stale degraded admission during rollback,
+  obsolete App source profile, and CI rerun identity deadlock. Four disjoint
+  correction lanes are recorded in `work/state/task-lanes.json`, all based on
+  `5792e7580fd9502cf780ce0bfc190bbebbc0ebe0`; only the primary edits this
+  ledger.
+- Gateway prerequisite: CI author propagation fix
+  `3d1eb386c307523f8eba33825e2a8be62533991b` is published as ai.ubq.fi PR #1259;
+  36 scoped tests and 15 event/job checks passed locally. Hosted run
+  `39485185000` is pending. It preserves workflow triggers and permissions and
+  changes no runtime source; acceptance requires its actual CI and subsequent
+  autonomous target processing.
+- Pending target reconciliation: self issues #177/#178 can use the existing
+  transient retry path once maintenance resumes. Four AI PRs remain
+  owner-terminal after protected correction refusals, and #1249 retains a
+  reserved retry with an authentic historical result; neither state may be
+  cleared by hand. Exact candidate history, producer and custody evidence is
+  retained in `work/state/protected-recovery-analysis/` and
+  `work/runtime/target-readiness/1249-producer/` for bounded trusted recovery
+  work.
+- Bootstrap recovery is locally integrated by
+  `135e3fe37b02b9bb8e3ca069425dd08fceca957e`, preserving worker tip
+  `f68009cd8f06befcd7422878ad897285b2aa1f83`. The fresh audit closed its
+  later-prepare gap from saved receipt
+  `cc48556d9d6816f2605c36c352452867e2de5be694f7aa26c8a9330e9268c576/e43baf7a-9e6b-4eaf-b38b-d801b50517bd`:
+  original bootstrap settlement, new launcher installation at generation 84 and
+  exact prior proof are covered. Native generation-84 settlement and ordinary
+  issue delivery remain hosted assertions, not inferred local acceptance.
+- Trusted recovery writers are now assigned in separate lanes based on
+  `135e3fe37b02b9bb8e3ca069425dd08fceca957e`: `recovery-original-pr-20261020`
+  restores only an authenticated historical original candidate after the
+  protected correction, and `recovery-historical-retry-20261020` ingests the
+  exact historical retry through ordinary bundle validation and settlement. Both
+  preserve charges, custody and rejected provenance; neither gains live state or
+  outbound authority. Exact paths are in `work/state/task-lanes.json`. The
+  protection writer owns the two new original-candidate modules and four
+  existing evidence-recovery modules as additions to the central protected-path
+  policy.
+- Review correction results are locally integrated: CI receipt revalidation
+  `f92a5b8ef4d2da400fdfd4e04e2f8a54cd8bf296`; 21 protected authority paths
+  `a58270b50afb71f49420a8708bb4c11d647a7d1a`; exact healthy legacy fallback and
+  rollback admission `0ec484f797aee5cb46b89fdfeb7410e1abb58979`; authenticated
+  historical retry `16d22547fe4bb2eb79285353fd9fba47332d060f`; maintenance and
+  installed App identity `997c4c30a36259566752c75761bf7be5eda32252`. Each has
+  semantic red/green consumer evidence and scoped static checks in its
+  task-local handback; no broad local suite was run. Legacy worker recorded one
+  extra scoped formatting pass and preserved its receipts; no unrelated bytes
+  changed.
+- Gateway prerequisite delivered: PR #1259 merged as
+  `1a45c12b050cb7d721a883793f288256af6a4d4d` after all nine Gateway CI jobs in
+  run `39485185000` passed. Actual local Codex review of its exact two-file
+  candidate returned no findings. Local gateway development was fast-forwarded,
+  accepted tip ancestry proved, and only its clean task-created worktree/local
+  branch removed; the remote branch and pre-existing untracked files were
+  preserved. This is a CI prerequisite, not an autonomous issue-delivery
+  receipt.
+- Original-candidate recovery tip `f10d378e5f72f21b76c9cbb96f68fd924d79a7f2` is
+  locally integrated. Its real maintenance/base-refresh/CI/review scenario and
+  existing refusal boundaries passed; immutable reads independently confirmed
+  both submitted charges in all four actual adjacent pre-block snapshots match
+  the current records. The combined candidate now requires the two named
+  integration checks, second actual Codex review, exact-SHA hosted CI,
+  controlled installation and both targets' live delivery receipts before
+  acceptance. Auto-follow remains off and `sentinel-release` disabled.
+
+The following receipts describe the earlier generation-82 recovery and inherited
+implementation; they do not override the current observations above.
+
+- Owner/scope: current primary orchestrator integrates and accepts; the
+  2026-10-20 blanket grant covers hosted workflow control, direct development
+  pushes, launcher/runtime/state updates and gated autonomous merges. ai.ubq.fi
+  is issue repairs only; `sentinel-release` stays disabled.
+- Live launcher L81: `00b6649eeff51a9754bf3748f793137db9bf8605` on
+  `sentinel-supervisor`.
+- Installed runtime: generation 82 = `1838df313105bab219d71602695a7f758a65125e`
+  (merged Sentinel PR #172), after the #1213 body-to-comment unblock. R81
+  `da98f5f49c45b57cfa97a45fe647c36b1021f302` is the historical failing
+  predecessor.
+- Pending candidate: `codex/integration-20261020`; W15 cloned the integrated
+  checkout at `210d0ef659a3a05f8422363c831c97fe380b9bb5`. This is a source
+  snapshot, not an installed or accepted SHA; the primary must record the final
+  reconciled development/CI SHA before publication.
+- Running/reported: dispatcher re-enabled at 08:41; ordinary run `39399339935`
+  planned nine matrix cells at 09:15; autonomous ai.ubq.fi PRs #1254/#1255
+  opened. Cell settlement, their exact reviewed heads/CI/merge and subsequent
+  scheduled outcomes still need receipts. W7 returned its CI fixes; W13
+  integrated verification/rollback reconciliation and W15 documentation are the
+  reported remaining lanes.
+- Incident: all 151 supervisor runs from 2026-10-18 15:51 to 2026-10-20 08:41
+  failed `issue source unavailable`: #1213 had 23,807 body characters against
+  R81's 16,384 ceiling. Release
+  `f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5` retried
+  failed PRIOR indefinitely, starving ordinary work and installation.
+- Recovery receipts: `39396626543` PRIOR healthy; `39397013439` candidate
+  healthy → generation 82 installed; `39399339935` ordinary matrix admission.
+  Opened PRs and bootstrap health do not prove the required deliveries.
+- Integrated W12: `7a85ad3cfe05d574bb31c3e2d6d2e12137023be3` issue
+  isolation/context; `9b340dae07b97dca1b6c423f7c0830d36e6e07b8` advisory
+  `hosted_runtime_summary`.
+- Integrated W11: `4f7b698d073219dd3dc3453d68b56769cf1bc901` exact-SHA
+  CI/ancestry auto-follow, default off.
+- Integrated W10: `7221720dad72b432d01cc03739f020b6ea872a65`,
+  `a2fc5b181c0edd00b0241f41726cfe22f656c85b`,
+  `e1ede7966b0ea214eac4c2832267f8bf86f5e31e`: bounded N=2 verification, reasoned
+  abandonment/degraded admission, installation journal, self-install/bootstrap
+  and exact-prior restoration path.
+- Integrated W7: nine commits from `aa3a036a9081c3a55f23cb04f28971d68b723553`
+  through `210d0ef659a3a05f8422363c831c97fe380b9bb5`, including protected-entry
+  validation deadline and retained Git-timer fixes; CI sharding is
+  `b19882bb8cb26cd55cf951925719663353bbc26f`. Five test jobs have 30-minute
+  timeouts behind required `test-local`; local worker passes are not complete
+  Linux CI proof.
+- CI evidence: `39401090430` was launched for the earlier W10–W12 integration;
+  it is not proof for later W7/W13/docs bytes. Obtain green CI on the exact
+  final development SHA.
+- Remaining safety/wiring: prove actual prior-reader compatibility before new
+  journal/`abandoned` writes and exact rollback; W11 has no separate immutable U
+  control anchor; W12 emits per child invocation, with workflow-wide finalizer
+  aggregation still unwired. Retained owner-install modules are unreferenced
+  from prepare and not yet deleted.
+- Next actions, primary owner: reconcile W13 and these docs → publish exact
+  development candidate → CI green → fast-forward `sentinel-supervisor` to that
+  SHA → self-install generation 83 with model-disabled bootstrap → verify exact
+  health/settlement → enable `SENTINEL_AUTO_FOLLOW` and verify advancement →
+  delete ceremony in DESIGN.md §4 order after replacing consumers.
+- Acceptance still open: green scheduled cycles plus ≥1 autonomous issue → PR →
+  completed internal gateway `codex-auto-review` → merge per target; bind
+  current CI, exact head/base, no unresolved P0/P1 and durable
+  admission/settlement. No gateway deployment or release activation is included.
+- Evidence root (local, outside Git):
+  `/private/tmp/claude-501/-Users-nv-repos-ubiquity-sentinel/6fec4968-1e6c-4836-a897-d75f9cc3e1f3/scratchpad/`.
+- Evidence files under that root: `PLAN.md`; `w3/report.md` (root cause);
+  `w6/report.md` (old installer no-go, not the executed unblock); `w8/DESIGN.md`
+  §4 (deletion order); `w10/W10-REPORT.md`; `w11/report.md`; `w12/report.md` and
+  `w12/VALIDATION.md`; `w7/report.md` and `w7/W7-evidence.md`.
 
 ## Earlier checkpoints (historical)
 
-At 2026-10-19 18:54 UTC, root accepted fresh LF data after bounded admission pause and complete drain. Dispatcher then supervisor were disabled with readbacks at18:48:15; other8workflows remain unchanged, CI/repair active and release disabled. V2guard4147212 settled with zero effects after stale-ref refusal; accepted pin-only V3guard4156421 is pre_strict with unchanged21:09 trigger/21:15 hard limit. Exact protected00b6649e,release0a45f92a,repair1cb3fe9a stayed stable through two complete native inventories at18:49:30/35, all76GETs successful, zero nonterminal runs. Native reference e534773b99d798d1250fa46785db8717a1d8a1b17c432945831a7e746e0ff690 retains the initial object-key-order classification error and saved-data correction without API rerun. Collector0abc09bc succeeded in13.803s; root authorization1792435909134 and materializerbf0815e2 succeeded in2.713s before the18:55:37 drain deadline. Independent fresh proposal audit db58d0f7ffef79c460889a82444004353849548807a97dd86a3b45f3832f4e73 accepts exact current R81/81, still-wanted f437/task170, preserved history/1508reservations, both active F-only floors and exact migration grants. Only two source data files are installed locally from proposal b6634432: custodyd8927ebe and rolloutc19a2440; profile/code/F and accepted fixtures remain unchanged. Evidence is under fresh-lf-20261019T1807Z. This is an unpublished LF candidate; focused data/lifecycle checks and its own native source CI remain required. Protected publication, runtime dispatch, F installation and live delivery remain unperformed; per-attempt runtime approval still applies.
+At 2026-10-19 18:54 UTC, root accepted fresh LF data after bounded admission
+pause and complete drain. Dispatcher then supervisor were disabled with
+readbacks at18:48:15; other8workflows remain unchanged, CI/repair active and
+release disabled. V2guard4147212 settled with zero effects after stale-ref
+refusal; accepted pin-only V3guard4156421 is pre_strict with unchanged21:09
+trigger/21:15 hard limit. Exact protected00b6649e,release0a45f92a,repair1cb3fe9a
+stayed stable through two complete native inventories at18:49:30/35, all76GETs
+successful, zero nonterminal runs. Native reference
+e534773b99d798d1250fa46785db8717a1d8a1b17c432945831a7e746e0ff690 retains the
+initial object-key-order classification error and saved-data correction without
+API rerun. Collector0abc09bc succeeded in13.803s; root
+authorization1792435909134 and materializerbf0815e2 succeeded in2.713s before
+the18:55:37 drain deadline. Independent fresh proposal audit
+db58d0f7ffef79c460889a82444004353849548807a97dd86a3b45f3832f4e73 accepts exact
+current R81/81, still-wanted f437/task170, preserved history/1508reservations,
+both active F-only floors and exact migration grants. Only two source data files
+are installed locally from proposal b6634432: custodyd8927ebe and
+rolloutc19a2440; profile/code/F and accepted fixtures remain unchanged. Evidence
+is under fresh-lf-20261019T1807Z. This is an unpublished LF candidate; focused
+data/lifecycle checks and its own native source CI remain required. Protected
+publication, runtime dispatch, F installation and live delivery remain
+unperformed; per-attempt runtime approval still applies.
 
-At 2026-10-19 18:34 UTC, root prepares a bounded pre-strict admission hold, not a runtime attempt. The V2 guard under fresh-lf-20261019T1807Z/abort-restore-prepause-v2 is independently accepted as a pin-only descendant of the reviewed guard; main7b926eb7fbcdb85f31c4107abd5cd125e2d692b2f766d24040623cfeb8471937 and restore99f690a9e6108ae2ff2ee427eaae728302e539c543c630dd45890fb37276d9e6, complete10-workflow capture898e0e67e07fd70f6727b7ae9602f681a4f4459a13a80cdad683790a7d9e07fd, fixed trigger21:09 and hard restore limit21:15 UTC. Both previous prepared versions are unstarted. Current expected protected00b6649e/released81c6830/repairf80d574f were checked to retain failedR81/81, no execution, original wantedf437 and unchanged1508charges. Root must immediately revalidate exact refs/map/zero native activity, record actual owner/start/deadline, then arm the exact owned guard and pause dispatcher before supervisor with readbacks. Drain deadline is15minutes from the recorded live start; no active run may be canceled by this step. If identities drift or the window cannot be met, preserve custody and restore only captured admission under the same reviewed safeguards. CI/repair and unrelated workflows stay unchanged; release stays disabled. Strict publication/runtime remain unapproved and unperformed. Guard identity/PID/group/control and exact API effects will be retained outside source under this fresh evidence directory; later state/drain facts are not invented by this planned checkpoint.
+At 2026-10-19 18:34 UTC, root prepares a bounded pre-strict admission hold, not
+a runtime attempt. The V2 guard under
+fresh-lf-20261019T1807Z/abort-restore-prepause-v2 is independently accepted as a
+pin-only descendant of the reviewed guard;
+main7b926eb7fbcdb85f31c4107abd5cd125e2d692b2f766d24040623cfeb8471937 and
+restore99f690a9e6108ae2ff2ee427eaae728302e539c543c630dd45890fb37276d9e6,
+complete10-workflow
+capture898e0e67e07fd70f6727b7ae9602f681a4f4459a13a80cdad683790a7d9e07fd, fixed
+trigger21:09 and hard restore limit21:15 UTC. Both previous prepared versions
+are unstarted. Current expected protected00b6649e/released81c6830/repairf80d574f
+were checked to retain failedR81/81, no execution, original wantedf437 and
+unchanged1508charges. Root must immediately revalidate exact refs/map/zero
+native activity, record actual owner/start/deadline, then arm the exact owned
+guard and pause dispatcher before supervisor with readbacks. Drain deadline
+is15minutes from the recorded live start; no active run may be canceled by this
+step. If identities drift or the window cannot be met, preserve custody and
+restore only captured admission under the same reviewed safeguards. CI/repair
+and unrelated workflows stay unchanged; release stays disabled. Strict
+publication/runtime remain unapproved and unperformed. Guard
+identity/PID/group/control and exact API effects will be retained outside source
+under this fresh evidence directory; later state/drain facts are not invented by
+this planned checkpoint.
 
-At 2026-10-19 18:08 UTC, exact clean ea34bfb4885bba580d64b6081cf3852d7fe63cae/tree280d08e56507cd6cef16bb622b5ad3a9172cb491 passed final integrated acceptance:71-file fmt/lint/frozen types, size1286/0over, and exactly2 connected strict-leaf/active-queue booking cases. Independent local-phase report470810eca667b59fbd4c3c73428764a4f461015f5fd9b29312064f383b2417c6 verifies357/357parents,261/261steps,36/36directrisks,25accepted-tip ancestors and current clean hashes. This is local acceptance only. Root now prepares an UNPUBLISHED clean F-descendant for the existing materializer by restoring only hosted-custody-capability.json and hosted-runtime-rollout.json to exact F bytes935f27c4d6e5e00f044e5cf71751f689334fa66995197cef7e4157876574832c and09697f1596676fd12dd71cf472dcd0b60133feb872c491d11b7a4da46f0b0803; all fixture corrections/code/profile are preserved. This inactive source baseline is not a runtime candidate or live floor change; fresh LF data must reactivate the exact guards before publication/CI. Source preparation evidence is under fresh-lf-20261019T1807Z. No workflow pause, state write, source push or runtime action has occurred in this preparation step. New live observation17:59:21 shows stateheads71d783bd/562da39f and failed PRIOR39298146558, stillR81/81/f437wanted; it is not a stable drain proof. Fresh complete native/state collection and a newly bound finite restore arrangement remain mandatory.
+At 2026-10-19 18:08 UTC, exact clean
+ea34bfb4885bba580d64b6081cf3852d7fe63cae/tree280d08e56507cd6cef16bb622b5ad3a9172cb491
+passed final integrated acceptance:71-file fmt/lint/frozen types,
+size1286/0over, and exactly2 connected strict-leaf/active-queue booking cases.
+Independent local-phase
+report470810eca667b59fbd4c3c73428764a4f461015f5fd9b29312064f383b2417c6
+verifies357/357parents,261/261steps,36/36directrisks,25accepted-tip ancestors
+and current clean hashes. This is local acceptance only. Root now prepares an
+UNPUBLISHED clean F-descendant for the existing materializer by restoring only
+hosted-custody-capability.json and hosted-runtime-rollout.json to exact F
+bytes935f27c4d6e5e00f044e5cf71751f689334fa66995197cef7e4157876574832c
+and09697f1596676fd12dd71cf472dcd0b60133feb872c491d11b7a4da46f0b0803; all fixture
+corrections/code/profile are preserved. This inactive source baseline is not a
+runtime candidate or live floor change; fresh LF data must reactivate the exact
+guards before publication/CI. Source preparation evidence is under
+fresh-lf-20261019T1807Z. No workflow pause, state write, source push or runtime
+action has occurred in this preparation step. New live observation17:59:21 shows
+stateheads71d783bd/562da39f and failed PRIOR39298146558, stillR81/81/f437wanted;
+it is not a stable drain proof. Fresh complete native/state collection and a
+newly bound finite restore arrangement remain mandatory.
 
-At 2026-10-19 17:46 UTC, the complete fixture correction is ancestry-integrated at code snapshot 330fccaff47a4a7d3ad35cab7b83e5d63ce528a1, including final C63 worker 850d9f756. All 357 original failed parents, 261 original failed steps and 36 direct-call risks now have passing local evidence; independent source/evidence audits accept each corrected slice. The final integrated candidate still needs its recorded cheap checks and narrow connected acceptance before whole-phase acceptance. No source CI retry, protected publication, runtime installation or live delivery is claimed.
+At 2026-10-19 17:46 UTC, the complete fixture correction is ancestry-integrated
+at code snapshot 330fccaff47a4a7d3ad35cab7b83e5d63ce528a1, including final C63
+worker 850d9f756. All 357 original failed parents, 261 original failed steps and
+36 direct-call risks now have passing local evidence; independent
+source/evidence audits accept each corrected slice. The final integrated
+candidate still needs its recorded cheap checks and narrow connected acceptance
+before whole-phase acceptance. No source CI retry, protected publication,
+runtime installation or live delivery is claimed.
 
-The phase changes only tests and this ledger relative to 4578b653fdcd03f52155c1c0aa3aa3a707e83ddf. Accepted F ff8763f901b6d0bb8b47b0e71a76222e124c2206, included-code digest c5c4271b5e8a3edd380e38f182e6acaa035e71d51924fed83db6435a3a9449d2, source profile 9b2159616515c5d283a91dcf94b90ad3fa5fcb673d1a65e8da59ebcedbcb9a62 and actual LF data remain unchanged. Raw issue intake accepts the finite 1,000,000-unit wire bound while shared model-task MaxText.body stays 16,384; unsupported statements defer before admission. Required native reviewer preparation remains lazy after exact obligation eligibility with custody and reread guards intact.
+The phase changes only tests and this ledger relative to
+4578b653fdcd03f52155c1c0aa3aa3a707e83ddf. Accepted F
+ff8763f901b6d0bb8b47b0e71a76222e124c2206, included-code digest
+c5c4271b5e8a3edd380e38f182e6acaa035e71d51924fed83db6435a3a9449d2, source profile
+9b2159616515c5d283a91dcf94b90ad3fa5fcb673d1a65e8da59ebcedbcb9a62 and actual LF
+data remain unchanged. Raw issue intake accepts the finite 1,000,000-unit wire
+bound while shared model-task MaxText.body stays 16,384; unsupported statements
+defer before admission. Required native reviewer preparation remains lazy after
+exact obligation eligibility with custody and reread guards intact.
 
-All repository fixture writers have returned frozen scoped handbacks and settled their task-owned validation groups. Primary alone owns canonical integration, ledger, local baseline/data preparation, publication and any live action. Fresh auditor reports and exact raw receipts are under recovery-20261019-1226/final-fixture-audit; C63 handback is c63-fixture-correction-1016/handback.json (993f542aecde1ce1bbb715e6c5e3d325dc0ccc9bfa0e6594138b83bf7f3fec24). Earlier four pruned PASS outputs were recovered verbatim from existing root/worker tool records, manifest 1ef2255cb6124b079938d37bef4b85732d456e07b072d7b1c2109f765853b3e3, without reconstructed output or reruns. Static candidate 1016b794 passed 70-file formatting/lint/frozen types and 1,286-file size checks with zero over ceiling; final C63 changes require the corresponding final-candidate verification.
+All repository fixture writers have returned frozen scoped handbacks and settled
+their task-owned validation groups. Primary alone owns canonical integration,
+ledger, local baseline/data preparation, publication and any live action. Fresh
+auditor reports and exact raw receipts are under
+recovery-20261019-1226/final-fixture-audit; C63 handback is
+c63-fixture-correction-1016/handback.json
+(993f542aecde1ce1bbb715e6c5e3d325dc0ccc9bfa0e6594138b83bf7f3fec24). Earlier four
+pruned PASS outputs were recovered verbatim from existing root/worker tool
+records, manifest
+1ef2255cb6124b079938d37bef4b85732d456e07b072d7b1c2109f765853b3e3, without
+reconstructed output or reruns. Static candidate 1016b794 passed 70-file
+formatting/lint/frozen types and 1,286-file size checks with zero over ceiling;
+final C63 changes require the corresponding final-candidate verification.
 
-Live boundary: admission was restored at 15:35:58 and the obsolete guard is stopped. The latest independent 16:01:37 read still showed protected L81 00b6649eeff51a9754bf3748f793137db9bf8605 and installed R81 da98f5f49c45b57cfa97a45fe647c36b1021f302/generation81 with failed settled PRIOR, not healthy F. All prior LF/drain freshness is invalid. After local acceptance, prepare a clean F-descendant with only the two data files restored to exact F baseline, collect a new bounded native/state drain, materialize fresh LF, validate its data and require its own successful source CI. Reuse immutable F CI39255082743 rather than duplicate it. The current user-supplied per-attempt hosted runtime approval boundary controls over older standing wording; obtain the exact runtime attempt approval after the concrete candidate and checks are ready.
+Live boundary: admission was restored at 15:35:58 and the obsolete guard is
+stopped. The latest independent 16:01:37 read still showed protected L81
+00b6649eeff51a9754bf3748f793137db9bf8605 and installed R81
+da98f5f49c45b57cfa97a45fe647c36b1021f302/generation81 with failed settled PRIOR,
+not healthy F. All prior LF/drain freshness is invalid. After local acceptance,
+prepare a clean F-descendant with only the two data files restored to exact F
+baseline, collect a new bounded native/state drain, materialize fresh LF,
+validate its data and require its own successful source CI. Reuse immutable F
+CI39255082743 rather than duplicate it. The current user-supplied per-attempt
+hosted runtime approval boundary controls over older standing wording; obtain
+the exact runtime attempt approval after the concrete candidate and checks are
+ready.
 
-Offline preparation only: fresh-lf-preparation-1730/operator-packet.md (d5f55d5a8ed6c0979bd945753c6e33ac58c3865567f95f587fbec6f4471964c9) retains verified helper/schema/command templates. Fresh pins, authorization event, exact preparation SHA and a newly bound finite restore guard are not yet populated. The old 16:38/16:44 guard must never be relaunched. No model, GitHub write or deployment occurs inside local checks.
+Offline preparation only: fresh-lf-preparation-1730/operator-packet.md
+(d5f55d5a8ed6c0979bd945753c6e33ac58c3865567f95f587fbec6f4471964c9) retains
+verified helper/schema/command templates. Fresh pins, authorization event, exact
+preparation SHA and a newly bound finite restore guard are not yet populated.
+The old 16:38/16:44 guard must never be relaunched. No model, GitHub write or
+deployment occurs inside local checks.
 
-These entries retain provenance; they do not override the current register or create fresh execution authority.
+These entries retain provenance; they do not override the current register or
+create fresh execution authority.
 
-At 2026-10-19T15:43:18.698Z, the pre-strict hold is fully aborted: task guard 3199250 received stopped-stage control and SIGTERM, its full SID/process family is absent, running.lock is removed, and its result records hold/stage_hold with zero attempted or confirmed workflow effects. Root independently rechecked original protected/state heads, then restored supervisor first and dispatcher last; readback at 15:35:58 UTC proves both active, CI/repair active and release disabled. No protected or runtime pointer publication occurred, and no R81 health is claimed. All prior LF/state-drain freshness is invalidated. Continue offline fixture work; a fresh state/native drain and newly bound LF with its own accepted CI are required before any runtime approval packet.
+At 2026-10-19T15:43:18.698Z, the pre-strict hold is fully aborted: task guard
+3199250 received stopped-stage control and SIGTERM, its full SID/process family
+is absent, running.lock is removed, and its result records hold/stage_hold with
+zero attempted or confirmed workflow effects. Root independently rechecked
+original protected/state heads, then restored supervisor first and dispatcher
+last; readback at 15:35:58 UTC proves both active, CI/repair active and release
+disabled. No protected or runtime pointer publication occurred, and no R81
+health is claimed. All prior LF/state-drain freshness is invalidated. Continue
+offline fixture work; a fresh state/native drain and newly bound LF with its own
+accepted CI are required before any runtime approval packet.
 
-Ready fixture slices are accepted for ancestry integration: binding-ci-custody two-file patch d20047dd15ba4c3c1c502d80fa7a7f15f83ddb3faa9482d08555beda588c4715 with 47 affected tests/20 steps plus actual-child/forged-terminal proofs; binding-ci-fixtures five-file patch 0fd5a4b1be2f47fc94b81a889349e9241009dd162bfd8912e03f2d14d07fbf3b with full floor modules 22 passed/18 steps, receipt consumers 11 passed/two steps and repaired promotion controls; lf-installer-fixtures six-file patch 46e894e5a3130c3fa5384c142250a7a30ed270df47e12809a62690bd5c8b5dc9 with explicit historic policy ports, unchanged private source graph and real host refusal/bootstrap/cleanup assertions, 15 registered checks passed. All groups settled; code/profile/F and actual LF data remain unchanged. The opaque-proof helper slice is preserved but unaccepted as a whole: authentic proof controls pass, while legacy Gateway spent scenarios require explicit historical module context because active strictGateway intentionally bypasses fresh direct merges. The remaining 357-case coverage map still governs outstanding fixture work; do not claim complete or run unchanged hosted CI.
+Ready fixture slices are accepted for ancestry integration: binding-ci-custody
+two-file patch d20047dd15ba4c3c1c502d80fa7a7f15f83ddb3faa9482d08555beda588c4715
+with 47 affected tests/20 steps plus actual-child/forged-terminal proofs;
+binding-ci-fixtures five-file patch
+0fd5a4b1be2f47fc94b81a889349e9241009dd162bfd8912e03f2d14d07fbf3b with full floor
+modules 22 passed/18 steps, receipt consumers 11 passed/two steps and repaired
+promotion controls; lf-installer-fixtures six-file patch
+46e894e5a3130c3fa5384c142250a7a30ed270df47e12809a62690bd5c8b5dc9 with explicit
+historic policy ports, unchanged private source graph and real host
+refusal/bootstrap/cleanup assertions, 15 registered checks passed. All groups
+settled; code/profile/F and actual LF data remain unchanged. The opaque-proof
+helper slice is preserved but unaccepted as a whole: authentic proof controls
+pass, while legacy Gateway spent scenarios require explicit historical module
+context because active strictGateway intentionally bypasses fresh direct merges.
+The remaining 357-case coverage map still governs outstanding fixture work; do
+not claim complete or run unchanged hosted CI.
 
-At 2026-10-19T15:34:55.597Z, root is aborting the pre-strict maintenance hold rather than extending it: the LF failure audit maps 357 parent failures, with 125 cases still needing direct fixture scope/cause reconciliation and legacy Gateway scenarios requiring honest policy-isolated consumers. Accepted F/source/profile and production guards remain unchanged; no protected publication or installation occurred. Root will stop and verify the task guard, restore only captured supervisor then dispatcher states, and invalidate LF freshness before continuing offline fixture corrections. A new drain and current state-bound LF will be required once the locally accepted fixture candidate is ready; do not retry the old LF or reuse its stale state pins.
+At 2026-10-19T15:34:55.597Z, root is aborting the pre-strict maintenance hold
+rather than extending it: the LF failure audit maps 357 parent failures, with
+125 cases still needing direct fixture scope/cause reconciliation and legacy
+Gateway scenarios requiring honest policy-isolated consumers. Accepted
+F/source/profile and production guards remain unchanged; no protected
+publication or installation occurred. Root will stop and verify the task guard,
+restore only captured supervisor then dispatcher states, and invalidate LF
+freshness before continuing offline fixture corrections. A new drain and current
+state-bound LF will be required once the locally accepted fixture candidate is
+ready; do not retry the old LF or reuse its stale state pins.
 
-Scope amendments for the current checkpoint: binding-ci-fixtures-20261019 additionally owns tests/host/actions-supervisor-lifecycle-fixture.ts only for the same explicit coherent fixture-policy injection at its direct core call. lf-installer-fixtures-20261019 additionally owns tests/host/owner-install-plan-rollout_test.ts only for the already diagnosed direct historical policy inputs. No other scope changes, production edits or assertion weakening are authorized. Writers preserve partial work and report remaining cases; source/code/profile F remains frozen.
+Scope amendments for the current checkpoint: binding-ci-fixtures-20261019
+additionally owns tests/host/actions-supervisor-lifecycle-fixture.ts only for
+the same explicit coherent fixture-policy injection at its direct core call.
+lf-installer-fixtures-20261019 additionally owns
+tests/host/owner-install-plan-rollout_test.ts only for the already diagnosed
+direct historical policy inputs. No other scope changes, production edits or
+assertion weakening are authorized. Writers preserve partial work and report
+remaining cases; source/code/profile F remains frozen.
 
-At 2026-10-19 15:18 UTC, LF native CI 39267379277:1 failed on exact 1c2fb394: 3,110 passed, 357 failed, 87 ignored. Full terminal evidence SHA256 c62bb3a93a427b56ea42872e0b8585c6e451d6509ae280a97316327611f15bb2 is retained under recovery-20261019-1226/ci-39267379277/. The corrected owner-supersession lifecycle, genuine successor-review lifecycle and strict settler passed. The active LF floors exposed additional synthetic fixtures that inherit production defaults. Fresh independent lf_failure_audit returned required tests-only corrections at the proved seams, report SHA256 8048ce1397f76b283deab1e18bd11f45532f849012bf7ec3eb0956ce5f9d2d85. Frozen SCOPE-11 permits explicit dormant fixtures and actual committed-mode checks; opaque direct proof must come from the real production constructor and truthful modeled operation/witness facts. Full failure attribution remains open. No unchanged hosted retry, production guard relaxation, source/profile/F change, protected publication or runtime dispatch is authorized by this diagnosis.
+At 2026-10-19 15:18 UTC, LF native CI 39267379277:1 failed on exact 1c2fb394:
+3,110 passed, 357 failed, 87 ignored. Full terminal evidence SHA256
+c62bb3a93a427b56ea42872e0b8585c6e451d6509ae280a97316327611f15bb2 is retained
+under recovery-20261019-1226/ci-39267379277/. The corrected owner-supersession
+lifecycle, genuine successor-review lifecycle and strict settler passed. The
+active LF floors exposed additional synthetic fixtures that inherit production
+defaults. Fresh independent lf_failure_audit returned required tests-only
+corrections at the proved seams, report SHA256
+8048ce1397f76b283deab1e18bd11f45532f849012bf7ec3eb0956ce5f9d2d85. Frozen
+SCOPE-11 permits explicit dormant fixtures and actual committed-mode checks;
+opaque direct proof must come from the real production constructor and truthful
+modeled operation/witness facts. Full failure attribution remains open. No
+unchanged hosted retry, production guard relaxation, source/profile/F change,
+protected publication or runtime dispatch is authorized by this diagnosis.
 
-Primary assigns four disjoint fixture writers from this exact checkpoint, preserving original goal ID /Users/nv/repos/ubiquity/sentinel/MASTER-PLAN.md and runtime F ff8763f9. Existing binding-ci-fixtures-20261019 lane is advanced by ancestry and owns only actions-supervisor-fixture.ts, hosted-receipt-fixture.ts, existing-pr-runtime-capability_test.ts and queue-runtime-capability_test.ts under tests/host. Existing binding-ci-custody-20261019 lane is advanced by ancestry and owns only hosted-runtime-fixture.ts and hosted-runtime-principal-fixtures.ts. New module lf-installer-fixtures-20261019 uses lane master-plan-lf-installer-fixtures-20261019-a84de169f10 / branch codex/master-plan-lf-installer-fixtures-20261019-a84de169f10; it owns only tests/host/owner-install-fixture.ts, hosted-autonomy-refresh-rearm_test.ts, owner-install-future-recovery_test.ts, hosted-runtime-future-bootstrap_test.ts and a new bounded hosted-supervisor-policy-fixture.ts if necessary for the existing isolated unchanged-source/config pattern. New module lf-proof-fixtures-20261019 uses lane master-plan-lf-proof-fixtures-20261019-ab658a54f4d / matching codex branch; it owns only tests/host/hosted-autonomy-dark-queue-fixture.ts, hosted-autonomy-spent-fixtures.ts and merge-queue-proof_test.ts. All worktrees stay beneath the recorded repository root .codex-worktrees directory. Shared helpers outside these lists require primary scope reconciliation before writes.
+Primary assigns four disjoint fixture writers from this exact checkpoint,
+preserving original goal ID /Users/nv/repos/ubiquity/sentinel/MASTER-PLAN.md and
+runtime F ff8763f9. Existing binding-ci-fixtures-20261019 lane is advanced by
+ancestry and owns only actions-supervisor-fixture.ts, hosted-receipt-fixture.ts,
+existing-pr-runtime-capability_test.ts and queue-runtime-capability_test.ts
+under tests/host. Existing binding-ci-custody-20261019 lane is advanced by
+ancestry and owns only hosted-runtime-fixture.ts and
+hosted-runtime-principal-fixtures.ts. New module lf-installer-fixtures-20261019
+uses lane master-plan-lf-installer-fixtures-20261019-a84de169f10 / branch
+codex/master-plan-lf-installer-fixtures-20261019-a84de169f10; it owns only
+tests/host/owner-install-fixture.ts, hosted-autonomy-refresh-rearm_test.ts,
+owner-install-future-recovery_test.ts, hosted-runtime-future-bootstrap_test.ts
+and a new bounded hosted-supervisor-policy-fixture.ts if necessary for the
+existing isolated unchanged-source/config pattern. New module
+lf-proof-fixtures-20261019 uses lane
+master-plan-lf-proof-fixtures-20261019-ab658a54f4d / matching codex branch; it
+owns only tests/host/hosted-autonomy-dark-queue-fixture.ts,
+hosted-autonomy-spent-fixtures.ts and merge-queue-proof_test.ts. All worktrees
+stay beneath the recorded repository root .codex-worktrees directory. Shared
+helpers outside these lists require primary scope reconciliation before writes.
 
-Each worker preserves production bytes, real LF JSON, source profiles, assertions and active-floor refusal cases; no blanket flag override or fabricated opaque proof is allowed. Existing injected policy ports and the established private module-graph configuration fixture are the accepted seams. Named existing native failures supply RED evidence; require actual consumer GREEN/refusal controls and only affected module checks, each at most 300 seconds. Workers return uncommitted scoped evidence, no Git/ledger/source/runtime writes. Root retains integration and the hard pre-strict hold: timer trigger 16:38, restore limit 16:44 UTC. If corrections cannot complete the required gates within that window, restore captured admission safely and preserve partial work; do not extend the bound or install unaccepted LF.
+Each worker preserves production bytes, real LF JSON, source profiles,
+assertions and active-floor refusal cases; no blanket flag override or
+fabricated opaque proof is allowed. Existing injected policy ports and the
+established private module-graph configuration fixture are the accepted seams.
+Named existing native failures supply RED evidence; require actual consumer
+GREEN/refusal controls and only affected module checks, each at most 300
+seconds. Workers return uncommitted scoped evidence, no
+Git/ledger/source/runtime writes. Root retains integration and the hard
+pre-strict hold: timer trigger 16:38, restore limit 16:44 UTC. If corrections
+cannot complete the required gates within that window, restore captured
+admission safely and preserve partial work; do not extend the bound or install
+unaccepted LF.
 
-At 2026-10-19 14:22 UTC, exact corrected LF 1c2fb394c2404874627acc09b0b54d8546ecafeb, tree fa7e1e1fe7b488217ac9d2fc00185ccba11e9744, is normally published to development with accepted worker ancestry. Its own native source CI 39267379277:1 / job 118110381452 is running; setup passed and the credential-free harness began 14:16:20. Independent LF audit plus fixture addendum passed, and all affected local checks passed. Protected source remains L81, runtime remains R81/81, both state heads remain the collected values and admission is paused. Do not dispatch or claim installed acceptance from this pending CI.
+At 2026-10-19 14:22 UTC, exact corrected LF
+1c2fb394c2404874627acc09b0b54d8546ecafeb, tree
+fa7e1e1fe7b488217ac9d2fc00185ccba11e9744, is normally published to development
+with accepted worker ancestry. Its own native source CI 39267379277:1 / job
+118110381452 is running; setup passed and the credential-free harness began
+14:16:20. Independent LF audit plus fixture addendum passed, and all affected
+local checks passed. Protected source remains L81, runtime remains R81/81, both
+state heads remain the collected values and admission is paused. Do not dispatch
+or claim installed acceptance from this pending CI.
 
-The independently accepted task-owned pre-strict abort/restore helper is now armed and running as codex PID/PGID/SID 3199250, started 14:19:35 UTC and verified through a separate SSH session at 14:19:49 with matching running.lock, exact main command, pre_strict control and no result file. Entrypoint is owner-supersession/recovery-20261019-1226/abort-restore/main.ts, SHA256 d4bde1498a8cdd43dcc33637a9b5d379a1dce05d7c1ff300d7411897c4446977. It starts guarded restore checks at 16:38 UTC and refuses calls beyond 16:44, restoring only captured supervisor then dispatcher states if exact old protected/state/workflow identities still match. It has performed no workflow effect. API ambiguity or drift holds; any attempted restoration invalidates LF freshness and never proves health. BEFORE any strict publication, root must atomically set control stage strict_install, stop the verified owned main group and prove all separately grouped timeout/gh descendants settled; do not act on the PID alone. Full launch receipt, eight fake safety cases, actual native timeout-argument smoke and independent acceptance are retained in that directory. No source/runtime/promotion authority is delegated to this helper.
+The independently accepted task-owned pre-strict abort/restore helper is now
+armed and running as codex PID/PGID/SID 3199250, started 14:19:35 UTC and
+verified through a separate SSH session at 14:19:49 with matching running.lock,
+exact main command, pre_strict control and no result file. Entrypoint is
+owner-supersession/recovery-20261019-1226/abort-restore/main.ts, SHA256
+d4bde1498a8cdd43dcc33637a9b5d379a1dce05d7c1ff300d7411897c4446977. It starts
+guarded restore checks at 16:38 UTC and refuses calls beyond 16:44, restoring
+only captured supervisor then dispatcher states if exact old
+protected/state/workflow identities still match. It has performed no workflow
+effect. API ambiguity or drift holds; any attempted restoration invalidates LF
+freshness and never proves health. BEFORE any strict publication, root must
+atomically set control stage strict_install, stop the verified owned main group
+and prove all separately grouped timeout/gh descendants settled; do not act on
+the PID alone. Full launch receipt, eight fake safety cases, actual native
+timeout-argument smoke and independent acceptance are retained in that
+directory. No source/runtime/promotion authority is delegated to this helper.
 
-At 2026-10-19 14:11 UTC, the one-file synthetic-runtime fixture correction is committed at 398fb8a10b93891eb0abba354a6fdbe03495e1dc and ancestry-integrated at 15368790be2977734e4bea84b1c491ffb2e9be50. It explicitly clears only installs, ownerSupersessions and ownerSuccessorTaskBindings when seeding the synthetic pre-LF runtime; the original pre-LF assertion and separately injected LF authority remain unchanged. Actual semantic RED c6f5ab21-d532-4740-bba3-7790801c52f0 is followed by GREEN c773351b-3d52-4675-9a0d-fe707b3cd9f4 (one complete named owner-supersession lifecycle, 47.150 seconds, actual consumer typecheck). Scoped formatting/lint passed and all owned groups settled; helper SHA256 25cd4cecc01fa4506b41ffba7fbc438a5b0aa38b377cd5032c2704743ab0fade. Unchanged LF JSON/static, 15 compiled-data cases/10 steps and native-drain/floor installer scenario retain their earlier passing receipts under recovery-20261019-1226/lf-gates-d41312b1/. No runtime code, profile, selected LF data or state pin changed; source F and its successful native CI remain valid.
+At 2026-10-19 14:11 UTC, the one-file synthetic-runtime fixture correction is
+committed at 398fb8a10b93891eb0abba354a6fdbe03495e1dc and ancestry-integrated at
+15368790be2977734e4bea84b1c491ffb2e9be50. It explicitly clears only installs,
+ownerSupersessions and ownerSuccessorTaskBindings when seeding the synthetic
+pre-LF runtime; the original pre-LF assertion and separately injected LF
+authority remain unchanged. Actual semantic RED
+c6f5ab21-d532-4740-bba3-7790801c52f0 is followed by GREEN
+c773351b-3d52-4675-9a0d-fe707b3cd9f4 (one complete named owner-supersession
+lifecycle, 47.150 seconds, actual consumer typecheck). Scoped formatting/lint
+passed and all owned groups settled; helper SHA256
+25cd4cecc01fa4506b41ffba7fbc438a5b0aa38b377cd5032c2704743ab0fade. Unchanged LF
+JSON/static, 15 compiled-data cases/10 steps and native-drain/floor installer
+scenario retain their earlier passing receipts under
+recovery-20261019-1226/lf-gates-d41312b1/. No runtime code, profile, selected LF
+data or state pin changed; source F and its successful native CI remain valid.
 
-The corrected LF now contains the exact two guarded data files, this test-only fixture correction and primary ledger updates above F. Its own native CI is the remaining source gate before the exact runtime approval packet. Runtime F/code/profile and both real state heads remain unchanged; protected publication and model-disabled bootstrap have not occurred. The task-owned pre-strict restore helper is being independently checked and remains unstarted; any automatic restoration must preserve exact original source/state/workflow identity and invalidate LF freshness. Current user per-attempt runtime approval still applies.
+The corrected LF now contains the exact two guarded data files, this test-only
+fixture correction and primary ledger updates above F. Its own native CI is the
+remaining source gate before the exact runtime approval packet. Runtime
+F/code/profile and both real state heads remain unchanged; protected publication
+and model-disabled bootstrap have not occurred. The task-owned pre-strict
+restore helper is being independently checked and remains unstarted; any
+automatic restoration must preserve exact original source/state/workflow
+identity and invalidate LF freshness. Current user per-attempt runtime approval
+still applies.
 
-At 2026-10-19 14:01 UTC, exact LF d41312b1a36563132dc6c0d4144fe6ca7242e1f3 passed independent data acceptance (report recovery-20261019-1226/lf-acceptance-audit.md, SHA256 854fe078f3f48e9f0c580b666ec5ee6f7a10f20ba90ac791cc14ffff8e90e80f), JSON formatting/static checks, actual committed custody/rollout modules and the named native-drain/migration-floor installer case. The connected lifecycle failed locally in receipt c6f5ab21-d532-4740-bba3-7790801c52f0: the synthetic pre-LF runtime seed serialized current HOSTED_RUNTIME_ROLLOUT, leaking the new ownerSupersessions row into a fixture that correctly asserts no LF authority. This is an offline fixture failure, not installed behavior; no LF CI or runtime dispatch was launched.
+At 2026-10-19 14:01 UTC, exact LF d41312b1a36563132dc6c0d4144fe6ca7242e1f3
+passed independent data acceptance (report
+recovery-20261019-1226/lf-acceptance-audit.md, SHA256
+854fe078f3f48e9f0c580b666ec5ee6f7a10f20ba90ac791cc14ffff8e90e80f), JSON
+formatting/static checks, actual committed custody/rollout modules and the named
+native-drain/migration-floor installer case. The connected lifecycle failed
+locally in receipt c6f5ab21-d532-4740-bba3-7790801c52f0: the synthetic pre-LF
+runtime seed serialized current HOSTED_RUNTIME_ROLLOUT, leaking the new
+ownerSupersessions row into a fixture that correctly asserts no LF authority.
+This is an offline fixture failure, not installed behavior; no LF CI or runtime
+dispatch was launched.
 
-Primary extends the existing binding-ci-fixtures-20261019 module only to tests/host/owner-install-future-recovery-fixtures.ts for an explicit dormant synthetic runtime seed. Preserve the pre-LF assertion, separately injected LF authority, source/runtime/profile/data pins and all production guards. Reuse its recorded branch/worktree and advance it by ancestry to this checkpoint before one writer resumes; no replacement lane. The writer returns a test-only diff and focused repaired lifecycle/affected fixture consumer evidence, each bounded to 300 seconds. Production code/profile/F identity are unchanged; do not rerun F native CI or alter actual LF authority to hide the fixture failure. Corrected LF still requires its own local gates and native CI. Admission stays in the recorded bounded pre-strict hold; root owns ledger, source data, Git and all live effects.
+Primary extends the existing binding-ci-fixtures-20261019 module only to
+tests/host/owner-install-future-recovery-fixtures.ts for an explicit dormant
+synthetic runtime seed. Preserve the pre-LF assertion, separately injected LF
+authority, source/runtime/profile/data pins and all production guards. Reuse its
+recorded branch/worktree and advance it by ancestry to this checkpoint before
+one writer resumes; no replacement lane. The writer returns a test-only diff and
+focused repaired lifecycle/affected fixture consumer evidence, each bounded to
+300 seconds. Production code/profile/F identity are unchanged; do not rerun F
+native CI or alter actual LF authority to hide the fixture failure. Corrected LF
+still requires its own local gates and native CI. Admission stays in the
+recorded bounded pre-strict hold; root owns ledger, source data, Git and all
+live effects.
 
-At 2026-10-19 13:53 UTC, runtime F ff8763f901b6d0bb8b47b0e71a76222e124c2206 has successful exact native source CI 39255082743:1, job 118068227613: 3,467 passed, 1,778 steps, zero failed, 87 ignored and four ignored steps. All workflow/job gates passed, native checkout/tree matched F, and the complete credential-free terminal marker was independently read. Terminal receipt SHA256 bbb7d9dbb2e70573e2ad1a0305f959f7e301a6cb132b62e86577b3c5692ba355 is retained under owner-supersession/recovery-20261019-1226/ci-39255082743/. F remains uninstalled; protected source remains L81 00b6649eeff51a9754bf3748f793137db9bf8605 and runtime remains R81 da98f5f49c45b57cfa97a45fe647c36b1021f302/generation 81.
+At 2026-10-19 13:53 UTC, runtime F ff8763f901b6d0bb8b47b0e71a76222e124c2206 has
+successful exact native source CI 39255082743:1, job 118068227613: 3,467 passed,
+1,778 steps, zero failed, 87 ignored and four ignored steps. All workflow/job
+gates passed, native checkout/tree matched F, and the complete credential-free
+terminal marker was independently read. Terminal receipt SHA256
+bbb7d9dbb2e70573e2ad1a0305f959f7e301a6cb132b62e86577b3c5692ba355 is retained
+under owner-supersession/recovery-20261019-1226/ci-39255082743/. F remains
+uninstalled; protected source remains L81
+00b6649eeff51a9754bf3748f793137db9bf8605 and runtime remains R81
+da98f5f49c45b57cfa97a45fe647c36b1021f302/generation 81.
 
-Root paused dispatcher then supervisor at 13:35 UTC, preserving the captured restore map, CI/repair active and release disabled. The ancient never-materialized supervisor run 34874909140:1 blocked the unchanged native drain guard: normal cancel returned 409, and an actual 13:24 dispatcher had already recorded force-cancel refused_not_queued. Two immediate reads proved the same September 14 identity with zero jobs, deployments and artifacts; root archived all metadata and removed only that empty dead run record (DELETE exit 0, GET 404). No guard, charge, source, runtime pointer or production state was changed by this cleanup. Two complete post-pause inventories at 13:42:30–39 then proved zero nonterminal runs and unchanged protected source. Raw evidence is restricted under admission-pause-20261019T1335Z/ and postdrain-native-20261019T134230Z/.
+Root paused dispatcher then supervisor at 13:35 UTC, preserving the captured
+restore map, CI/repair active and release disabled. The ancient
+never-materialized supervisor run 34874909140:1 blocked the unchanged native
+drain guard: normal cancel returned 409, and an actual 13:24 dispatcher had
+already recorded force-cancel refused_not_queued. Two immediate reads proved the
+same September 14 identity with zero jobs, deployments and artifacts; root
+archived all metadata and removed only that empty dead run record (DELETE exit
+0, GET 404). No guard, charge, source, runtime pointer or production state was
+changed by this cleanup. Two complete post-pause inventories at 13:42:30–39 then
+proved zero nonterminal runs and unchanged protected source. Raw evidence is
+restricted under admission-pause-20261019T1335Z/ and
+postdrain-native-20261019T134230Z/.
 
-Genuine read-only collector receipt 4cefe43a-7599-4e4e-8d80-f589244ee6ee completed at 13:43:50, enforcing finite elapsed cooldowns and stable state rereads. Primary observed current execution null and only wanted f437 nonterminal at 13:44:33, before the 13:45 drain deadline; an extra remote-head readback at 13:45:11 confirmed unchanged release e365d779ab6dbbb6b988c719bbdb338722cb4837 and repair 6ec27b0a80c9e13e06fdad6227a1c5a87b6e476e. Historical healthy witness is 51ba494355ab2f75065aed50abdd2f5a1c48d641. Admission remains paused for LF preparation; reassess at 16:14 UTC and abort pre-strict publication by 16:44 UTC by restoring only captured supervisor then dispatcher states. After strict publication, never restore L81/R81 or weaken a custody floor.
+Genuine read-only collector receipt 4cefe43a-7599-4e4e-8d80-f589244ee6ee
+completed at 13:43:50, enforcing finite elapsed cooldowns and stable state
+rereads. Primary observed current execution null and only wanted f437
+nonterminal at 13:44:33, before the 13:45 drain deadline; an extra remote-head
+readback at 13:45:11 confirmed unchanged release
+e365d779ab6dbbb6b988c719bbdb338722cb4837 and repair
+6ec27b0a80c9e13e06fdad6227a1c5a87b6e476e. Historical healthy witness is
+51ba494355ab2f75065aed50abdd2f5a1c48d641. Admission remains paused for LF
+preparation; reassess at 16:14 UTC and abort pre-strict publication by 16:44 UTC
+by restoring only captured supervisor then dispatcher states. After strict
+publication, never restore L81/R81 or weaken a custody floor.
 
-Root accepted the exact original request/task review base 9b9d74c99eb5bafcf8fe9941fdedd1f940fdef8a and retained R/W/request ancestors, with truthful authorization timestamp 1792417838936. Materializer receipt 3192ec65-c221-4746-8860-e5afd1e1dde9 passed and generated only local data proposals, receipt SHA256 7afe65c2d5c97f7d12eda2a952061290797357c45de3c1ef308cc6b93d588440. This LF candidate changes only custody/rollout data plus this ledger; included-code digest c5c4271b5e8a3edd380e38f182e6acaa035e71d51924fed83db6435a3a9449d2 and profile SHA256 9b2159616515c5d283a91dcf94b90ad3fa5fcb673d1a65e8da59ebcedbcb9a62 remain exact F. Both floors and migration grants bind real R81/81 to F/82 with explicit owner supersession of still-wanted f437, preserving original failed PRIOR, current failed proof, historical health, original task and every charge. No future execution, health or acceptance is invented. Fresh independent LF audit, narrow actual-data checks and LF's own native CI remain pending before an exact approval packet. No protected publication, runtime dispatch, installation or live delivery is claimed.
+Root accepted the exact original request/task review base
+9b9d74c99eb5bafcf8fe9941fdedd1f940fdef8a and retained R/W/request ancestors,
+with truthful authorization timestamp 1792417838936. Materializer receipt
+3192ec65-c221-4746-8860-e5afd1e1dde9 passed and generated only local data
+proposals, receipt SHA256
+7afe65c2d5c97f7d12eda2a952061290797357c45de3c1ef308cc6b93d588440. This LF
+candidate changes only custody/rollout data plus this ledger; included-code
+digest c5c4271b5e8a3edd380e38f182e6acaa035e71d51924fed83db6435a3a9449d2 and
+profile SHA256 9b2159616515c5d283a91dcf94b90ad3fa5fcb673d1a65e8da59ebcedbcb9a62
+remain exact F. Both floors and migration grants bind real R81/81 to F/82 with
+explicit owner supersession of still-wanted f437, preserving original failed
+PRIOR, current failed proof, historical health, original task and every charge.
+No future execution, health or acceptance is invented. Fresh independent LF
+audit, narrow actual-data checks and LF's own native CI remain pending before an
+exact approval packet. No protected publication, runtime dispatch, installation
+or live delivery is claimed.
 
-At 2026-10-19 12:44 UTC, both scoped corrections are ancestry-integrated at clean CODE 4bb2e620942fa1a0c31b25dcfac71f0a9c8ae067: fixture tip 438b2de4f9a4fdc7c7de519b620aa412a5edb59c and custody tip 2213d75f10176291a3556378f7a4d8d9f4127a54. The original native custody failure is repaired. Registered final-source evidence in repository namespace 2d87ac69bd4c42a54e71ddb23ad7c7eb2f61050854bb8f646ebf976be35dbdcf includes repaired regression 4c0076da-bccd-482d-8da6-f90e45e4e5f7, real native custody phase be0988d1-ae9b-4263-bbdd-f6c16a79e24a, affected module e26fd1ba-c06c-4fb6-89db-5fcb228eecd6 (5 passed), final lint/type/fmt/size receipts, and integrated Actions self-dependency e6a11027-c9fa-43ac-953e-327cb8e56682 (1 passed, 46.410 seconds, network-isolated private regular-Node view, no system/source guard changes). All owned test groups settled. Earlier fixture and intake evidence was independently read and reused against matching hashes.
+At 2026-10-19 12:44 UTC, both scoped corrections are ancestry-integrated at
+clean CODE 4bb2e620942fa1a0c31b25dcfac71f0a9c8ae067: fixture tip
+438b2de4f9a4fdc7c7de519b620aa412a5edb59c and custody tip
+2213d75f10176291a3556378f7a4d8d9f4127a54. The original native custody failure is
+repaired. Registered final-source evidence in repository namespace
+2d87ac69bd4c42a54e71ddb23ad7c7eb2f61050854bb8f646ebf976be35dbdcf includes
+repaired regression 4c0076da-bccd-482d-8da6-f90e45e4e5f7, real native custody
+phase be0988d1-ae9b-4263-bbdd-f6c16a79e24a, affected module
+e26fd1ba-c06c-4fb6-89db-5fcb228eecd6 (5 passed), final lint/type/fmt/size
+receipts, and integrated Actions self-dependency
+e6a11027-c9fa-43ac-953e-327cb8e56682 (1 passed, 46.410 seconds, network-isolated
+private regular-Node view, no system/source guard changes). All owned test
+groups settled. Earlier fixture and intake evidence was independently read and
+reused against matching hashes.
 
-Fresh independent integrated_audit returned PASS with no required correction on exact CODE; report under owner-supersession/recovery-20261019-1226/integrated-audit.md SHA256 484db744635dfc4282f86cecc04aef1897d19c0c19f2e5025dce021c91e921f4. Requested inherited Astra route is recorded separately from that auditor's unavailable actual metadata. Source remains lazy only after exact state eligibility, then rereads state after preparation; required native custody, reservations, registration, arm and settlement stay intact.
+Fresh independent integrated_audit returned PASS with no required correction on
+exact CODE; report under
+owner-supersession/recovery-20261019-1226/integrated-audit.md SHA256
+484db744635dfc4282f86cecc04aef1897d19c0c19f2e5025dce021c91e921f4. Requested
+inherited Astra route is recorded separately from that auditor's unavailable
+actual metadata. Source remains lazy only after exact state eligibility, then
+rereads state after preparation; required native custody, reservations,
+registration, arm and settlement stay intact.
 
-The existing profile helper executed successfully in receipt 8119e0a4-89b0-4b07-9f92-7fa2cee316d6 against exact CODE, tree b56ba9b20c3298f458324e153a9a0fd247799559. All 1,422 manifest entries and 594 included code blobs match; exactly three data exclusions remain. Primary installs only its one-row proposed profile, SHA256 9b2159616515c5d283a91dcf94b90ad3fa5fcb673d1a65e8da59ebcedbcb9a62, included-code digest c5c4271b5e8a3edd380e38f182e6acaa035e71d51924fed83db6435a3a9449d2. Profile-specific checks, independent profile acceptance and exact corrected F source CI follow before any installation. Protected source, runtime pointer, production state and admission workflows are unchanged. No hosted runtime attempt is authorized or claimed by these local results.
+The existing profile helper executed successfully in receipt
+8119e0a4-89b0-4b07-9f92-7fa2cee316d6 against exact CODE, tree
+b56ba9b20c3298f458324e153a9a0fd247799559. All 1,422 manifest entries and 594
+included code blobs match; exactly three data exclusions remain. Primary
+installs only its one-row proposed profile, SHA256
+9b2159616515c5d283a91dcf94b90ad3fa5fcb673d1a65e8da59ebcedbcb9a62, included-code
+digest c5c4271b5e8a3edd380e38f182e6acaa035e71d51924fed83db6435a3a9449d2.
+Profile-specific checks, independent profile acceptance and exact corrected F
+source CI follow before any installation. Protected source, runtime pointer,
+production state and admission workflows are unchanged. No hosted runtime
+attempt is authorized or claimed by these local results.
 
-At 2026-10-19 12:30 UTC, the incoming primary integration owner resumes the approved repair on the preserved canonical lane at 744a21bd5296ec2f7e326f37d7ca04a5ae85b1c1. The trusted active hook verifies GPT-6 Astra/ultra; the user explicitly requested subagents. The existing dirty 03:11 checkpoint is preserved byte-for-byte below. Fresh no-history auditor recovery_audit verified actual GPT-6 Astra/max and returned pre-resume PASS: exact lane identities and dirty scopes, original native failure receipt, real custody RED 4e1fc62d-ac96-4788-b525-827e2ca2efcd, prior owner/worker stop records and absent owned processes at 12:30:11. No hosted or runtime effects have occurred in this resume.
+At 2026-10-19 12:30 UTC, the incoming primary integration owner resumes the
+approved repair on the preserved canonical lane at
+744a21bd5296ec2f7e326f37d7ca04a5ae85b1c1. The trusted active hook verifies GPT-6
+Astra/ultra; the user explicitly requested subagents. The existing dirty 03:11
+checkpoint is preserved byte-for-byte below. Fresh no-history auditor
+recovery_audit verified actual GPT-6 Astra/max and returned pre-resume PASS:
+exact lane identities and dirty scopes, original native failure receipt, real
+custody RED 4e1fc62d-ac96-4788-b525-827e2ca2efcd, prior owner/worker stop
+records and absent owned processes at 12:30:11. No hosted or runtime effects
+have occurred in this resume.
 
-Ownership transfers only the recorded custody module to custody_fix for the minimal lazy native-reviewer composition correction and assigned tests; no eligible exact pending obligation must avoid composition, and required review retains custody/accounting guards. fixture_verify independently accepted the unchanged two-test patch 946b655dacdaad35cee824bd6725c9c247f7ffe81560a2ac27875968e22263ac and original module/lifecycle evidence without rerunning. Primary alone owns ledger, commits, ancestry integration, source/profile freeze and publication. rollout_prepare is read-only on the retained rollout helpers and acceptance requirements. All existing lane names, base identities and scope limits below remain in force. Runtime policy is unchanged. The current user-supplied per-attempt hosted E2E/runtime approval boundary governs this turn despite broader stored continuation wording; locally prepare the exact candidate and source CI before that approval step.
+Ownership transfers only the recorded custody module to custody_fix for the
+minimal lazy native-reviewer composition correction and assigned tests; no
+eligible exact pending obligation must avoid composition, and required review
+retains custody/accounting guards. fixture_verify independently accepted the
+unchanged two-test patch
+946b655dacdaad35cee824bd6725c9c247f7ffe81560a2ac27875968e22263ac and original
+module/lifecycle evidence without rerunning. Primary alone owns ledger, commits,
+ancestry integration, source/profile freeze and publication. rollout_prepare is
+read-only on the retained rollout helpers and acceptance requirements. All
+existing lane names, base identities and scope limits below remain in force.
+Runtime policy is unchanged. The current user-supplied per-attempt hosted
+E2E/runtime approval boundary governs this turn despite broader stored
+continuation wording; locally prepare the exact candidate and source CI before
+that approval step.
 
-At 2026-10-19 03:11 UTC, exact F CI `39188947450:1` / job
-`117857262187` is FAILED: 3,462 passed, 1,778 steps, three failures and
-87 ignored. The native terminal log and unmodified run/jobs/check-run responses
-are retained by Mac root in `receipts/takeover-ci-20261019/`, terminal receipt
-SHA256 `e1a160e2ef5319db2b7781ce89b6f90cae48eb5e6f184c2a1285b355dd9fd0da`.
-No admission pause, protected publication, state change or duplicate CI occurred.
-F remains unaccepted for installation. The previous next-action wording below
-is superseded by these bounded local corrections, then one integrated corrected
+At 2026-10-19 03:11 UTC, exact F CI `39188947450:1` / job `117857262187` is
+FAILED: 3,462 passed, 1,778 steps, three failures and 87 ignored. The native
+terminal log and unmodified run/jobs/check-run responses are retained by Mac
+root in `receipts/takeover-ci-20261019/`, terminal receipt SHA256
+`e1a160e2ef5319db2b7781ce89b6f90cae48eb5e6f184c2a1285b355dd9fd0da`. No admission
+pause, protected publication, state change or duplicate CI occurred. F remains
+unaccepted for installation. The previous next-action wording below is
+superseded by these bounded local corrections, then one integrated corrected
 candidate and its exact source CI. Root retains sole integration/ledger/Git and
 hosted authority.
 
@@ -116,14 +658,15 @@ Two isolated correction writers start from exact
   `binding_ci_fixtures` initially owns only
   `tests/host/hosted-app-takeover-routing_test.ts` and
   `tests/host/hosted-autonomy-output-bound_test.ts`. It must preserve inert
-  routing semantics and audit the exact new settler before updating its list;
-  a runtime defect requires a concrete scope amendment before source edits.
+  routing semantics and audit the exact new settler before updating its list; a
+  runtime defect requires a concrete scope amendment before source edits.
 
 Both return uncommitted scoped results with registered local checks bounded at
 300 seconds. They may not edit ledger/shared contracts/workflows/profiles,
 commit, push, invoke real credentials/models or launch hosted work. Existing
 collector/materializer preparation remains retained; its F pins must be
-reconciled against the eventual accepted corrected runtime, never silently reused.
+reconciled against the eventual accepted corrected runtime, never silently
+reused.
 
 At 2026-10-19 02:52 UTC, incoming integration owner Mac root thread
 `01a14ebc-b685-7d42-952b-577c8f93e17f` adopts the preserved canonical lane

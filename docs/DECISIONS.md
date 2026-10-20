@@ -11,39 +11,178 @@ continuation.
 
 ### Owner grant, scope and acceptance (2026-10-20 UTC)
 
-For this Sentinel autonomy effort, the owner grants the orchestrator blanket authority to dispatch, rerun, cancel, enable and disable hosted Sentinel workflows; push directly to `development`; update launcher pins and runtime pointers; write state branches; and merge autonomous PRs after their gates pass. This dated grant supersedes the per-attempt hosted-run approval boundary for this effort, including corrected candidates and retries. Keep that default boundary for future efforts without equivalent authorization. The existing 0x4007 PAT may set secrets as a stopgap; no credential reaches a model worker.
+For this Sentinel autonomy effort, the owner grants the orchestrator blanket
+authority to dispatch, rerun, cancel, enable and disable hosted Sentinel
+workflows; push directly to `development`; update launcher pins and runtime
+pointers; write state branches; and merge autonomous PRs after their gates pass.
+This dated grant supersedes the per-attempt hosted-run approval boundary for
+this effort, including corrected candidates and retries. Keep that default
+boundary for future efforts without equivalent authorization. The existing
+0x4007 PAT may set secrets as a stopgap; no credential reaches a model worker.
 
-Simplify aggressively while preserving five invariants: (1) credentials, authoritative state writes and promotion authority never reach model workers; (2) record exact revision SHAs and never select by time or list order; (3) durable admission/reservation precedes every model start and settlement follows it; (4) autonomous merge requires current CI and a completed internal structured review through gateway `codex-auto-review`, with no unresolved P0/P1; (5) the deterministic Deno controller exclusively owns promotion and `sentinel-release` stays disabled.
+Simplify aggressively while preserving five invariants: (1) credentials,
+authoritative state writes and promotion authority never reach model workers;
+(2) record exact revision SHAs and never select by time or list order; (3)
+durable admission/reservation precedes every model start and settlement follows
+it; (4) autonomous merge requires current CI and a completed internal structured
+review through gateway `codex-auto-review`, with no unresolved P0/P1; (5) the
+deterministic Deno controller exclusively owns promotion and `sentinel-release`
+stays disabled.
 
-Runtime implementation uses `gpt-reserve` with the existing HTTP 429 fallback to `gpt-6-luna`, both at max reasoning; this supersedes the former `gpt-5.6-luna` runtime text and reaffirms the 2026-10-18 policy. Development/orchestration workers use `gpt-6.1-sol`; worker selection does not change runtime routing. For development review, the owner prefers GitHub `@codex review` first, with local `codex review` / `codex-u review` as fallback. That preference is separate from the mandatory internal runtime PR reviewer; it does not require a development PR for every edit.
+Runtime implementation uses `gpt-reserve` with the existing HTTP 429 fallback to
+`gpt-6-luna`, both at max reasoning; this supersedes the former `gpt-5.6-luna`
+runtime text and reaffirms the 2026-10-18 policy. Development/orchestration
+workers use `gpt-6.1-sol`; worker selection does not change runtime routing. For
+development review, the owner prefers GitHub `@codex review` first, with local
+`codex review` / `codex-u review` as fallback. That preference is separate from
+the mandatory internal runtime PR reviewer; it does not require a development PR
+for every edit.
 
-Acceptance for this effort is green scheduled supervisor cycles plus at least one autonomous issue → PR → completed review → merge in each of `ubiquity/sentinel` and `ubiquity/ai.ubq.fi`. The ai.ubq.fi scope is issue repairs only for now. Gateway capture, VPS deployment, release activation and the original broader gateway observation gates remain separate work. Bootstrap health and opened PRs alone do not satisfy this acceptance.
+Acceptance for this effort is green scheduled supervisor cycles plus at least
+one autonomous issue → PR → completed review → merge in each of
+`ubiquity/sentinel` and `ubiquity/ai.ubq.fi`. The ai.ubq.fi scope is issue
+repairs only for now. Gateway capture, VPS deployment, release activation and
+the original broader gateway observation gates remain separate work. Bootstrap
+health and opened PRs alone do not satisfy this acceptance.
 
 ### Incident and operational unblock (2026-10-20 UTC)
 
-From 2026-10-18 15:51 to 2026-10-20 08:41 UTC, all 151 supervisor runs failed with `issue source unavailable`. L81 was `00b6649eeff51a9754bf3748f793137db9bf8605`; runtime generation 81 was `da98f5f49c45b57cfa97a45fe647c36b1021f302`. Its 16,384-character issue-body ceiling rejected ai.ubq.fi issue #1213's 23,807-character body and thereby rejected the whole issue listing. Pending self-release `f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5`, candidate `1838df313105bab219d71602695a7f758a65125e` (merged Sentinel PR #172), retried failed PRIOR verification indefinitely, blocking ordinary work and installation.
+From 2026-10-18 15:51 to 2026-10-20 08:41 UTC, all 151 supervisor runs failed
+with `issue source unavailable`. L81 was
+`00b6649eeff51a9754bf3748f793137db9bf8605`; runtime generation 81 was
+`da98f5f49c45b57cfa97a45fe647c36b1021f302`. Its 16,384-character issue-body
+ceiling rejected ai.ubq.fi issue #1213's 23,807-character body and thereby
+rejected the whole issue listing. Pending self-release
+`f4374801275ca250d0df1d1b4c798e792b0608bf68f81711fa0139adeeaff6f5`, candidate
+`1838df313105bab219d71602695a7f758a65125e` (merged Sentinel PR #172), retried
+failed PRIOR verification indefinitely, blocking ordinary work and installation.
 
-At 08:41 UTC, the owner-approved unblock moved #1213's body verbatim to a comment and re-enabled dispatch. Run `39396626543` proved PRIOR healthy; run `39397013439` proved candidate `1838df313105bab219d71602695a7f758a65125e` healthy and installed it at generation 82. Ordinary run `39399339935` planned nine matrix cells; autonomous ai.ubq.fi PRs #1254 and #1255 opened. These receipts establish recovery and resumed issue work, not completed two-target acceptance. The earlier W6 proposal to install `ff8763f901b6d0bb8b47b0e71a76222e124c2206` was not the transition executed.
+At 08:41 UTC, the owner-approved unblock moved #1213's body verbatim to a
+comment and re-enabled dispatch. Run `39396626543` proved PRIOR healthy; run
+`39397013439` proved candidate `1838df313105bab219d71602695a7f758a65125e`
+healthy and installed it at generation 82. Ordinary run `39399339935` planned
+nine matrix cells; autonomous ai.ubq.fi PRs #1254 and #1255 opened. These
+receipts establish recovery and resumed issue work, not completed two-target
+acceptance. The earlier W6 proposal to install
+`ff8763f901b6d0bb8b47b0e71a76222e124c2206` was not the transition executed.
 
-Investigation and implementation evidence is in the orchestrator scratchpad: `PLAN.md`, `w3/report.md`, `w6/report.md`, `w8/DESIGN.md`, `w10/W10-REPORT.md`, `w11/report.md`, `w12/report.md` and `w7/report.md`. Current identities and remaining acceptance belong in the ledger; worker-local original commit SHAs differ from the integrated cherry-picks recorded there.
+Investigation and implementation evidence is in the orchestrator scratchpad:
+`PLAN.md`, `w3/report.md`, `w6/report.md`, `w8/DESIGN.md`, `w10/W10-REPORT.md`,
+`w11/report.md`, `w12/report.md` and `w7/report.md`. Current identities and
+remaining acceptance belong in the ledger; worker-local original commit SHAs
+differ from the integrated cherry-picks recorded there.
 
 ### Bounded hosted verification and launcher installation (2026-10-20)
 
-Hosted PRIOR and candidate verification each admit at most N=2 exact executions. Unsuccessful settlement consumes the release budget, including `not_started`. Exhausted PRIOR is abandoned; a failed candidate preserves its proof and restores the recorded prior before terminal abandonment. Abandonment preserves accounting and never claims task delivery. Ordinary work interleaves with verification and may use durable degraded admission after two settled failed verifications of its installed generation; degraded admission never fabricates healthy evidence.
+Hosted PRIOR and candidate verification each admit at most N=2 exact executions.
+Unsuccessful settlement consumes the release budget, including `not_started`.
+Exhausted PRIOR is abandoned; a failed candidate preserves its proof and
+restores the recorded prior before terminal abandonment. Abandonment preserves
+accounting and never claims task delivery. Ordinary work interleaves with
+verification and may use durable degraded admission after two settled failed
+verifications of its installed generation; degraded admission never fabricates
+healthy evidence.
 
-The terminal `abandoned` phase records a reason: `prior_verification_exhausted`, `candidate_verification_exhausted`, `candidate_verification_failed` or `included_in_successor`. Preserve the request, exact proof identities and charges; unknown settlement or an unresolved pointer effect remains pending. A pending self-release no longer globally blocks ordinary work. A fresh installation cannot use degraded admission to bypass bootstrap.
+The terminal `abandoned` phase records a reason: `prior_verification_exhausted`,
+`candidate_verification_exhausted`, `candidate_verification_failed` or
+`included_in_successor`. Preserve the request, exact proof identities and
+charges; unknown settlement or an unresolved pointer effect remains pending. A
+pending self-release no longer globally blocks ordinary work. A fresh
+installation cannot use degraded admission to bypass bootstrap.
 
-For ordinary hosted updates, CI-verified fast-forward launcher self-install replaces the owner-install ceremony: rollout rows, owner supersessions, custody revision floors and LF materialization. The launcher and installed runtime become the same exact CI-green development SHA at generation+1. An idle pointer and exact successful `test-local` check are required; intent, generation movement, model-disabled bootstrap and included-release abandonment use expected-head CAS. Failed bootstrap restores only the recorded previous revision at the next generation, with restoration verification; generations never decrease. Failed SHAs remain journaled and cannot reinstall. Actual task custody, reservations, current-head internal structured review and CI before autonomous PR merge remain required. `sentinel-release` stays disabled.
+For ordinary hosted updates, CI-verified fast-forward launcher self-install
+replaces the owner-install ceremony: rollout rows, owner supersessions, custody
+revision floors and LF materialization. The launcher and installed runtime
+become the same exact CI-green development SHA at generation+1. An idle pointer
+and exact successful `test-local` check are required; intent, generation
+movement, model-disabled bootstrap and included-release abandonment use
+expected-head CAS. Failed bootstrap restores only the recorded previous revision
+at the next generation, with restoration verification; generations never
+decrease. Failed SHAs remain journaled and cannot reinstall. Actual task
+custody, reservations, current-head internal structured review and CI before
+autonomous PR merge remain required. `sentinel-release` stays disabled.
 
-The dispatcher's auto-follow controller walks the captured development first-parent ancestry and fast-forwards `sentinel-supervisor` to the newest eligible CI-green ancestor by exact SHA, never by timestamp or API list order. It verifies complete CI run/attempt/job evidence, expected-old ref, non-force update and readback before exact-ref dispatch. `SENTINEL_AUTO_FOLLOW` defaults off; keep it off until the first controlled advance and self-install are verified, then enable it and verify automatic advancement. W11 uses the dispatcher's exact checked-out workflow SHA; DESIGN.md's separate immutable U control anchor is not implemented and must not be claimed as installed.
+The dispatcher's auto-follow controller walks the captured development
+first-parent ancestry and fast-forwards `sentinel-supervisor` to the newest
+eligible CI-green ancestor by exact SHA, never by timestamp or API list order.
+It verifies complete CI run/attempt/job evidence, expected-old ref, non-force
+update and readback before exact-ref dispatch. `SENTINEL_AUTO_FOLLOW` defaults
+off; keep it off until the first controlled advance and self-install are
+verified, then enable it and verify automatic advancement. W11 uses the
+dispatcher's exact checked-out workflow SHA; DESIGN.md's separate immutable U
+control anchor is not implemented and must not be claimed as installed.
 
-The integrated source is pending native CI and hosted installation. New journals and `abandoned` records require compatible rollback readers before new writes; old R81 exact-key parsers cannot read them. Preserve historical state readability and prove the actual prior runtime's compatibility before claiming exact rollback safety. Owner-install modules remain in the tree, unreferenced from prepare, pending deletion in DESIGN.md §4 order: owner-install; owner-successor acceptance; rollout/authority/floor machinery; then historical recovery only after its accounting obligations are settled or supported by the generic consumer.
+The integrated source is pending native CI and hosted installation. New journals
+and `abandoned` records require compatible rollback readers before new writes;
+old R81 exact-key parsers cannot read them. Preserve historical state
+readability and prove the actual prior runtime's compatibility before claiming
+exact rollback safety. Owner-install modules remain in the tree, unreferenced
+from prepare, pending deletion in DESIGN.md §4 order: owner-install;
+owner-successor acceptance; rollout/authority/floor machinery; then historical
+recovery only after its accounting obligations are settled or supported by the
+generic consumer.
 
-Diagnostics isolate malformed/over-bound issue entries while retaining structured, sanitized error context. The advisory `hosted_runtime_summary` is the per-run summary line; existing authenticated terminal proof remains separate. W12 currently emits once per child invocation, so workflow-wide finalizer aggregation remains unwired. Unknown counts stay null and summaries grant no health, accounting or merge authority. CI now has five test jobs behind the always-running `test-local` aggregate, with 30-minute test-job timeouts; all shard and quality prerequisites must succeed. Two production defects are fixed in source: protected-entry validation exhausted its deadline by rereading shared ancestors, and settled Git commands retained deadline timers that kept workers alive. Worker checks do not establish a complete green Linux CI run.
+Diagnostics isolate malformed/over-bound issue entries while retaining
+structured, sanitized error context. The advisory `hosted_runtime_summary` is
+the per-run summary line; existing authenticated terminal proof remains
+separate. W12 currently emits once per child invocation, so workflow-wide
+finalizer aggregation remains unwired. Unknown counts stay null and summaries
+grant no health, accounting or merge authority. CI now has five test jobs behind
+the always-running `test-local` aggregate, with 30-minute test-job timeouts; all
+shard and quality prerequisites must succeed. Two production defects are fixed
+in source: protected-entry validation exhausted its deadline by rereading shared
+ancestors, and settled Git commands retained deadline timers that kept workers
+alive. Worker checks do not establish a complete green Linux CI run.
+
+### Recovery of the generation-83 continuation (2026-10-20)
+
+The resumed continuation found the generation-83 bootstrap had emitted one exact
+healthy native terminal, but its authenticated log line arrived 1,227 ms after
+the terminal's own finish. Log emission is not clock skew: accept delayed
+emission only inside the authenticated step, job and observation windows,
+retaining the existing 999 ms timestamp-precision tolerance, exact
+execution/controller identity and unique-terminal requirement. A later prepare
+must settle that saved bootstrap through the normal trusted consumer before
+installing a successor; never clear its execution or fabricate a healthy proof
+manually.
+
+Launcher self-install must work without the retired runtime and source-profile
+allowlists. Maintenance retains native writer and state custody checks. The
+default App-source path binds the installed execution to the exact trusted
+launcher revision, clean checkouts and matching source manifests; native mint
+metadata, repository scope and per-effect authority checks remain mandatory.
+Every extracted installation, verification, admission, rollback and recovery
+authority module belongs in the protected-path policy, including the trusted
+local dispatcher action.
+
+Legacy execution compatibility uses the existing restricted state projection for
+an exact healthy ordinary fallback as well as a journaled rollback. Healthy
+ordinary admission must identify the current execution, revision and generation;
+historical degraded admission cannot veto a different model-disabled rollback
+bootstrap. The authoritative state and accounting are preserved. A requested
+installation retains its original immutable CI receipt while revalidating
+complete current successful CI for the same exact candidate SHA; a new check-run
+ID alone cannot permanently strand it.
+
+An authenticated historical retry carrying an existing published candidate may
+be consumed only through its exact producer, artifact, plan, planner, result,
+intent and reserved charge. Use normal bundle validation and accounting
+settlement; a protected correction stays refused. A separate trusted maintenance
+pre-pass may recover the original published candidate only from the adjacent
+authoritative historical transition and verified immutable preservation, managed
+branch, owned open PR, issue and current publication policy. Preserve every
+charge, counter, review and rejected-candidate provenance. Require green
+current-head CI when the base is unchanged; when the base strictly advanced,
+restore only bookkeeping and let normal base refresh precede the new head's CI
+and internal review. This grants no forbidden-candidate retry, model start,
+push, refund or merge authority to recovery itself.
 
 ### Explicit prepromotion owner supersession (historical; superseded 2026-10-20)
 
-The following ceremony records historical contracts and receipt semantics. The 2026-10-20 launcher self-install decision supersedes its requirements for ordinary hosted updates; retain old state readers and actual task-acceptance/accounting evidence until their consumers are safely replaced.
+The following ceremony records historical contracts and receipt semantics. The
+2026-10-20 launcher self-install decision supersedes its requirements for
+ordinary hosted updates; retain old state readers and actual
+task-acceptance/accounting evidence until their consumers are safely replaced.
 
 `SEMANTICS-10.md` preserves a genuinely completed and charged successor review
 when the trusted acceptance append is deferred. Prepare holds read-only while
@@ -546,7 +685,14 @@ the 429 failover stays `gpt-6-luna` and reviews stay on `codex-auto-review`.
 
 ## Review and development delivery
 
-Development changes require no development PR for every edit: make the scoped change, immediately run applicable local checks and deliver directly. The 2026-10-20 owner preference for development review is GitHub `@codex review` first, falling back to local `codex review` / `codex-u review`; it supersedes the former blanket development-review prohibition. Autonomous runtime target repairs retain their PR, completed current-head review, CI and merge gates. Mandatory runtime review scope excludes changes limited to tests, fixtures, boot scripts, development tooling, documentation or other non-runtime files.
+Development changes require no development PR for every edit: make the scoped
+change, immediately run applicable local checks and deliver directly. The
+2026-10-20 owner preference for development review is GitHub `@codex review`
+first, falling back to local `codex review` / `codex-u review`; it supersedes
+the former blanket development-review prohibition. Autonomous runtime target
+repairs retain their PR, completed current-head review, CI and merge gates.
+Mandatory runtime review scope excludes changes limited to tests, fixtures, boot
+scripts, development tooling, documentation or other non-runtime files.
 
 A qualified `already_satisfied_at_base` review permits a distinct guarded
 terminal-satisfaction path, not fulfilled acceptance, a new repair, merge
@@ -566,7 +712,12 @@ Already-blocked historical records do not become eligible merely because this
 forward path is installed; they require a separately verified native recovery
 transition, not a manual state rewrite.
 
-GitHub `@codex review` reviewer statements are retired for autonomous runtime target PRs. Those PRs use only the internal structured reviewer through gateway `codex-auto-review`. Silence, a reaction or absence of comments does not establish a completed review. No unresolved P0/P1 may pass the gate; changed candidate bytes need matching evidence. The separate development-review preference above does not satisfy this runtime gate.
+GitHub `@codex review` reviewer statements are retired for autonomous runtime
+target PRs. Those PRs use only the internal structured reviewer through gateway
+`codex-auto-review`. Silence, a reaction or absence of comments does not
+establish a completed review. No unresolved P0/P1 may pass the gate; changed
+candidate bytes need matching evidence. The separate development-review
+preference above does not satisfy this runtime gate.
 
 Review rounds are capped at three per task, hard, everywhere (owner decision
 2026-10-16, after ai.ubq.fi issue 684 / PR 1059 reached 44 rounds). A task's
@@ -1962,7 +2113,15 @@ Unchanged replays of a recorded failure are refused with a precise reason, and
 the implementer prompt carries verified prior attempts, cross-task repository
 lessons and regression facts.
 
-The system is version-controlled and regression-aware: a recorded success stores the exact runtime revision that produced it, and a failure mode that previously succeeded at an older revision is reported as a regression (worked before, broken now) in the lesson digest and the implementer prompt, which must prefer restoring the older working behavior over re-implementing. Under the 2026-10-20 decision, rollback authority stays with trusted launcher self-install and its exact installation journal: a failed candidate restores only the recorded proven predecessor at a higher generation and verifies restoration. No model worker may pin, roll back or promote a runtime revision.
+The system is version-controlled and regression-aware: a recorded success stores
+the exact runtime revision that produced it, and a failure mode that previously
+succeeded at an older revision is reported as a regression (worked before,
+broken now) in the lesson digest and the implementer prompt, which must prefer
+restoring the older working behavior over re-implementing. Under the 2026-10-20
+decision, rollback authority stays with trusted launcher self-install and its
+exact installation journal: a failed candidate restores only the recorded proven
+predecessor at a higher generation and verifies restoration. No model worker may
+pin, roll back or promote a runtime revision.
 
 Bounded self-upkeep passes defer instead of failing the run: exhausting a
 recovery pass's budget, absent custody or an unavailable producer is reported
