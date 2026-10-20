@@ -23,6 +23,23 @@ Deno.test("hosted authority: actual repair keeps forbidden candidates charged an
       "src/host/self-dependency-preparation.ts",
       "src/github/existing-pr-publication-proof.ts",
       "src/host/hosted-authority-protected-paths.ts",
+      "src/contracts/hosted-supervisor-installation.ts",
+      "src/contracts/hosted-supervisor-verification.ts",
+      "src/host/actions-supervisor-install-api.ts",
+      "src/host/actions-supervisor-installation-state.ts",
+      "src/host/actions-supervisor-installation.ts",
+      "src/host/actions-supervisor-ordinary.ts",
+      "src/host/hosted-runtime-follow-api.ts",
+      "src/host/hosted-runtime-follow-ci.ts",
+      "src/host/hosted-runtime-follow-dispatch.ts",
+      "src/host/hosted-runtime-follow-main.ts",
+      "src/host/hosted-runtime-follow-state.ts",
+      "src/host/hosted-runtime-follow.ts",
+      "src/host/hosted-runtime-rollback-state.ts",
+      "src/host/hosted-runtime-rollback.ts",
+      ".github/actions/hosted-runtime-control/action.yml",
+      "ops/hosted-autonomy-original-candidate.ts",
+      "ops/hosted-autonomy-original-candidate-pass.ts",
     ]
   ) {
     await t.step(path, async () => {
