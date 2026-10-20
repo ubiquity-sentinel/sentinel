@@ -7,6 +7,7 @@
  */
 
 import type { GitSha } from "./brands.ts";
+import type { SkippedIssueV1 } from "./ports.ts";
 import { parseHostedExecutionIntentV1 } from "./hosted-supervisor.ts";
 import type { HostedExecutionIntentV1 } from "./hosted-supervisor.ts";
 import {
@@ -23,6 +24,37 @@ import {
 
 /** Exact fixed runtime step carrying the selected child execution. */
 export const HOSTED_RUNTIME_STEP_NAME = "Run selected Sentinel runtime";
+
+/** Advisory only: never an execution proof or admission/accounting authority. */
+export interface HostedRuntimeSummaryV1 {
+  version: "v1";
+  kind: "hosted_runtime_summary";
+  runId: number | null;
+  attempt: number | null;
+  launcherSha: GitSha | null;
+  runtimeSha: GitSha | null;
+  generation: number | null;
+  purpose: HostedExecutionIntentV1["purpose"] | null;
+  targets: {
+    repository: string;
+    openIssues: number | null;
+    admitted: number | null;
+    skippedIssues: SkippedIssueV1[] | null;
+  }[];
+  admittedWorkCount: number | null;
+  modelStarts: number | null;
+  /** Exact heads recorded by the durable publication consumer during this run. */
+  prsTouched: {
+    repository: string;
+    number: number;
+    head: GitSha;
+    action: "recorded" | "updated";
+  }[];
+  outcome: "healthy" | "failed" | "unavailable";
+  reasonCode: string;
+  explanation: string;
+  nextAction: string;
+}
 
 export interface HostedRuntimeTerminalV1 {
   version: "v1";

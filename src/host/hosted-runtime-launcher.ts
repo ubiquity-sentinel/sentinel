@@ -2,6 +2,20 @@
 import { isGitSha } from "../contracts/brands.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import { parseHostedRuntimeTerminalV1 } from "../contracts/hosted-execution.ts";
+import type { HostedRuntimeSummaryV1 } from "../contracts/hosted-execution.ts";
+import type {
+  IssueSourceErrorContextV1,
+  SkippedIssueV1,
+  StateReadView,
+} from "../contracts/ports.ts";
+import { parseRepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
+import {
+  sanitizeIssueSourceContext,
+  sanitizeSkippedIssue,
+} from "../github/client-response.ts";
+import { createDeadline } from "../github/http.ts";
+import { readTargetSlugsV1 } from "./targets.ts";
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 import { tryParse } from "../contracts/validation.ts";
 import type { ReplayCommandResultV1 } from "../replay/runtime.ts";
@@ -22,6 +36,7 @@ import {
   unavailableResult,
 } from "./hosted-runtime-identity.ts";
 import type {
+  HostedRuntimeIdentityV1,
   HostedRuntimeLauncherInputV1,
   HostedRuntimeLauncherResultV1,
   ReviewCommandItemRefusalsV1,
@@ -69,25 +84,37 @@ export async function runHostedRuntimeLauncher(
   /** Trusted in-process fixture only; production uses launcher source pins. */
   capability?: QueueRuntimeCapability,
   custodyCapability?: ExistingPrRuntimeCapability,
-): Promise<HostedRuntimeLauncherResultV1> {
+): Promise<
+  HostedRuntimeLauncherResultV1 & { summary: HostedRuntimeSummaryV1 }
+> {
   let result = unavailableResult();
+  const observation: SummaryObservationV1 = {};
   try {
-    result = await launchHostedRuntime(input, capability, custodyCapability);
+    result = await launchHostedRuntime(
+      input,
+      capability,
+      custodyCapability,
+      observation,
+    );
   } catch {
     result = unavailableResult();
   }
   try {
     await input.reviewCustody?.dispose();
   } catch {
-    return unavailableResult();
+    result = unavailableResult();
   }
-  return result;
+  return {
+    ...result,
+    summary: await summarizeHostedRuntime(input, result, observation),
+  };
 }
 
 async function launchHostedRuntime(
   input: HostedRuntimeLauncherInputV1,
   capability?: QueueRuntimeCapability,
   custodyCapability?: ExistingPrRuntimeCapability,
+  observation: SummaryObservationV1 = {},
 ): Promise<HostedRuntimeLauncherResultV1> {
   const identity = parseHostedEnvironment(
     input.env,
@@ -163,6 +190,14 @@ async function launchHostedRuntime(
     ? undefined
     : createHostedDiagnosticStream(execution, input.onDiagnostic);
 
+  // Read-only observations for the advisory. They never reserve work or gate execution.
+  observation.identity = identity;
+  observation.execution = execution;
+  observation.targets = (await readTargetSlugsV1({ root: dirs.runtime })).map((
+    target,
+  ) => target.slug);
+  observation.before = await readSummaryState(input.state);
+
   const custody = input.reviewCustody;
   let childStdin = stdin;
   if (custody !== undefined) {
@@ -206,6 +241,7 @@ async function launchHostedRuntime(
     run = owned.run;
     reviewOwnerSettlements = owned.settlements;
   }
+  observation.run = run;
   const finishedAt = input.clock.now();
   // A backward or invalid clock is a refusal: no terminal instant is ever
   // fabricated to hide it.
@@ -381,4 +417,297 @@ function reviewCommandRefusals(
   } catch {
     return null;
   }
+}
+
+interface SummaryObservationV1 {
+  identity?: HostedRuntimeIdentityV1;
+  execution?: HostedExecutionIntentV1;
+  targets?: string[];
+  /** null is a positively absent state; undefined is an unavailable read. */
+  before?: RepairStateSnapshotV1 | null;
+  run?: ReplayCommandResultV1;
+}
+
+interface SummaryIntakeV1 {
+  repository: string;
+  openIssues: number | null;
+  skippedIssues: SkippedIssueV1[] | null;
+  error?: IssueSourceErrorContextV1;
+}
+
+/** An advisory read has its own finite bound and cannot fail the child run. */
+async function readSummaryState(
+  state: StateReadView,
+): Promise<RepairStateSnapshotV1 | null | undefined> {
+  const deadline = createDeadline(5_000);
+  try {
+    const read = await deadline.race(
+      Promise.resolve().then(() => state.readRepair()),
+    );
+    if (!read.ok) return undefined;
+    return read.value.status === "absent"
+      ? null
+      : parseRepairStateSnapshotV1(read.value.snapshot);
+  } catch {
+    return undefined;
+  } finally {
+    deadline.dispose();
+  }
+}
+
+/** Unknown is explicit, including an entrypoint failure before a child exists. */
+export function fallbackHostedRuntimeSummary(
+  result: HostedRuntimeLauncherResultV1,
+  identity?: HostedRuntimeIdentityV1,
+  observedExecution?: HostedExecutionIntentV1,
+): HostedRuntimeSummaryV1 {
+  const execution = observedExecution ?? result.terminal?.execution;
+  const summary: HostedRuntimeSummaryV1 = {
+    version: "v1",
+    kind: "hosted_runtime_summary",
+    runId: execution?.runId ?? identity?.runId ?? null,
+    attempt: execution?.runAttempt ?? identity?.runAttempt ?? null,
+    launcherSha: execution?.launcherSha ?? identity?.launcherSha ?? null,
+    runtimeSha: execution?.revision ?? null,
+    generation: execution?.generation ?? null,
+    purpose: execution?.purpose ?? null,
+    targets: [],
+    admittedWorkCount: null,
+    modelStarts: null,
+    prsTouched: [],
+    outcome: result.status,
+    reasonCode: result.childFailure?.status ??
+      (result.status === "healthy"
+        ? "healthy"
+        : result.status === "failed"
+        ? "child_failed"
+        : "runtime_unavailable"),
+    explanation: "",
+    nextAction: "",
+  };
+  explainHostedSummary(summary);
+  return summary;
+}
+
+async function summarizeHostedRuntime(
+  input: HostedRuntimeLauncherInputV1,
+  result: HostedRuntimeLauncherResultV1,
+  observation: SummaryObservationV1,
+): Promise<HostedRuntimeSummaryV1> {
+  const summary = fallbackHostedRuntimeSummary(
+    result,
+    observation.identity,
+    observation.execution,
+  );
+  try {
+    const intake = scanSummaryIntake(observation.run);
+    const targets = observation.targets?.length
+      ? observation.targets
+      : [...intake.keys()];
+    const after = observation.execution === undefined
+      ? undefined
+      : await readSummaryState(input.state);
+    const before = observation.before;
+    const retainedAdmissions = new Set(
+      (after?.reservations ?? []).map((row) => row.id),
+    );
+    // Missing history, a regressing snapshot or removed admissions cannot prove zero.
+    const comparable = observation.run?.settled === true &&
+      before !== undefined && after !== undefined &&
+      (before === null ||
+        (after !== null && after.sequence >= before.sequence &&
+          before.reservations.every((row) => retainedAdmissions.has(row.id))));
+    const prior = new Map(
+      (before?.reservations ?? []).map((row) => [row.id, row]),
+    );
+    const admitted = comparable
+      ? (after?.reservations ?? []).filter((row) => !prior.has(row.id))
+      : null;
+    summary.targets = targets.map((repository) => ({
+      repository,
+      openIssues: intake.get(repository)?.openIssues ?? null,
+      admitted: admitted === null ? null : new Set(
+        admitted.filter((row) =>
+          repository === `${row.repository.owner}/${row.repository.name}`
+        ).map((row) => row.taskId),
+      ).size,
+      skippedIssues: intake.get(repository)?.skippedIssues ?? null,
+    }));
+    if (admitted !== null) {
+      summary.admittedWorkCount = new Set(admitted.map((row) =>
+        `${row.repository.owner}/${row.repository.name}:${row.taskId}`
+      )).size;
+      const pendingBefore = (before?.reservations ?? []).some((row) =>
+        row.outcome === "reserved"
+      );
+      // Ambiguous and pending starts remain unknown, never refunded or assumed started.
+      summary.modelStarts = pendingBefore || admitted.some((row) =>
+          row.outcome === "reserved" || row.outcome === "ambiguous"
+        )
+        ? null
+        : admitted.filter((row) =>
+          row.outcome === "submitted"
+        ).length;
+      const previous = new Map(
+        (before?.work ?? []).map((row) => [row.id, row]),
+      );
+      const publications = new Map<
+        string,
+        HostedRuntimeSummaryV1["prsTouched"][number]
+      >();
+      for (const row of after?.work ?? []) {
+        const old = previous.get(row.id);
+        if (
+          row.target.pr === null || row.target.head === null ||
+          (old?.target.pr === row.target.pr &&
+            old.target.head === row.target.head)
+        ) {
+          continue;
+        }
+        const repository = `${row.repository.owner}/${row.repository.name}`;
+        publications.set(`${repository}#${row.target.pr}`, {
+          repository,
+          number: row.target.pr,
+          head: row.target.head,
+          action: old?.target.pr === row.target.pr ? "updated" : "recorded",
+        });
+      }
+      summary.prsTouched = [...publications.values()];
+    }
+    const sourceError = [...intake.values()].find((row) =>
+      row.error !== undefined
+    )?.error;
+    explainHostedSummary(summary, sourceError);
+  } catch {
+    // Counts and diagnostics are advisory; terminal evidence and exit status stay fixed.
+  }
+  return summary;
+}
+
+/** Rebuild source observations only; never accept a child-authored summary. */
+function scanSummaryIntake(
+  run?: ReplayCommandResultV1,
+): Map<string, SummaryIntakeV1> {
+  const result = new Map<string, SummaryIntakeV1>();
+  if (
+    run === undefined || run.truncated || !run.settled ||
+    (run.outcome !== "exited" && run.outcome !== "timed_out")
+  ) return result;
+  for (const line of new TextDecoder().decode(run.stdout).split("\n")) {
+    if (!line.includes('"sentinel_issue_intake"')) continue;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (
+      row === null || typeof row !== "object" ||
+      row.kind !== "sentinel_issue_intake" ||
+      typeof row.repository !== "string" ||
+      !/^[A-Za-z0-9._-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(row.repository) ||
+      !(row.openIssues === null || nonnegativeSummaryCount(row.openIssues))
+    ) continue;
+    let skippedIssues: SkippedIssueV1[] | null = null;
+    if (
+      Array.isArray(row.skippedIssues) && row.skippedIssues.length <= 10_000
+    ) {
+      const parsed = row.skippedIssues.map((skip: unknown) =>
+        sanitizeSkippedIssue(skip, row.repository)
+      );
+      if (parsed.some((skip: SkippedIssueV1 | null) => skip === null)) continue;
+      skippedIssues = parsed as SkippedIssueV1[];
+    } else if (row.skippedIssues !== null) continue;
+    const previous = result.get(row.repository)?.skippedIssues;
+    if (previous !== undefined && previous !== null && skippedIssues !== null) {
+      skippedIssues = [
+        ...new Map(
+          [...previous, ...skippedIssues].map((skip) => [skip.number, skip]),
+        ).values(),
+      ];
+    }
+    const error = sanitizeIssueSourceContext(row.error);
+    result.set(row.repository, {
+      repository: row.repository,
+      openIssues: row.openIssues,
+      skippedIssues,
+      ...(error?.target === row.repository ? { error } : {}),
+    });
+  }
+  return result;
+}
+
+function nonnegativeSummaryCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function explainHostedSummary(
+  summary: HostedRuntimeSummaryV1,
+  source?: IssueSourceErrorContextV1,
+): void {
+  const label = summary.purpose === "ordinary"
+    ? "Ordinary run"
+    : "Verification run";
+  const generation = summary.generation === null
+    ? "an unknown generation"
+    : `generation ${summary.generation}`;
+  const outcome = summary.outcome === "healthy"
+    ? "settled healthy"
+    : summary.outcome === "failed"
+    ? "failed"
+    : "could not be verified";
+  const skipped = summary.targets.reduce(
+    (count, target) => count + (target.skippedIssues?.length ?? 0),
+    0,
+  );
+  let detail = summary.admittedWorkCount === null
+    ? "work counts are unavailable"
+    : `admitted ${summary.admittedWorkCount} work item${
+      summary.admittedWorkCount === 1 ? "" : "s"
+    }`;
+  summary.nextAction = summary.outcome === "healthy"
+    ? "Wait for the next scheduled run"
+    : "Inspect the runtime failure diagnostics";
+  if (source !== undefined) {
+    const http = source.httpStatus === null
+      ? "received no HTTP response"
+      : `returned HTTP ${source.httpStatus}`;
+    detail = `GitHub issue listing for ${source.target} ${http}`;
+    summary.reasonCode = `issue_source_${source.stage}_error`;
+    if (source.code === "malformed_json") {
+      detail += " but its JSON was malformed";
+    } else if (source.code === "bound_exceeded") {
+      detail += ` but ${
+        source.issueNumber === undefined
+          ? "the response"
+          : `issue #${source.issueNumber}`
+      } exceeded ${
+        source.limit === undefined
+          ? "a contract"
+          : `the ${source.limit}-character`
+      } bound`;
+    } else if (source.stage === "validation") {
+      detail += ` but failed validation (${source.code})`;
+    }
+    summary.nextAction = source.code === "bound_exceeded"
+      ? "Correct the unsupported issue fields or install a runtime with the appropriate bound"
+      : "Check GitHub issue-source access and response diagnostics";
+  } else if (summary.reasonCode === "source_error") {
+    detail = "an intake source was unavailable";
+    summary.nextAction = "Inspect the issue and incident source diagnostics";
+  } else if (summary.reasonCode === "state_error") {
+    detail = "the repair state could not be trusted";
+  }
+  if (skipped > 0) {
+    detail += `; skipped ${skipped} issue${
+      skipped === 1 ? "" : "s"
+    } exceeding contract bounds`;
+    if (summary.outcome === "healthy") {
+      summary.nextAction = "Correct the skipped issue fields";
+    }
+  }
+  summary.explanation =
+    `${label} on ${generation} ${outcome}: ${detail}; next: ${
+      summary.nextAction.charAt(0).toLowerCase()
+    }${summary.nextAction.slice(1)}.`;
 }
