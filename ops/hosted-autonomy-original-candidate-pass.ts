@@ -74,7 +74,6 @@ export async function runHostedOriginalCandidateRecoveryPass(
         !pull || pull.number !== record.target.pr || pull.state !== "open" ||
         pull.merged ||
         pull.headSha !== head || pull.baseRef !== scope.baseBranch ||
-        pull.baseSha !== baseTip ||
         !HOSTED_AUTONOMY_TRUSTED_AUTHORS.includes(pull.author ?? "") ||
         pulls === null || pulls.length !== 1 ||
         pulls[0].number !== record.target.pr ||
