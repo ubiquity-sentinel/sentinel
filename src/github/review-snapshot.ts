@@ -105,16 +105,17 @@ export class GitReviewSnapshot extends GitSnapshotCapture {
    *
    * Protected paths are the repository config's exact relative path or
    * trailing-slash subtree entries. For each newly exposed commit, each
-   * protected path and each of its ancestors is read as one exact literal
-   * `ls-tree -z --full-tree` entry from the trusted local object repository
+   * protected path and its ancestors are proved by exact literal
+   * `ls-tree -z --full-tree` entries from the trusted local object repository
    * (empty exit-0 output proves absence; malformed, multiple or over-bound
    * output fails closed). A protected entry's existence, mode, type and object
    * SHA — the subtree SHA for a directory — must equal the trusted `base`
    * entry exactly, so an explicit empty tree entry is never hidden by an empty
    * leaf diff. Ancestors compare existence, mode and type only and must be
-   * directories when present: ancestor tree SHAs are deliberately not compared
-   * because they legitimately change for allowed siblings, while a blocked or
-   * replaced ancestor makes the protected entry unprovable.
+   * directories when present: differences in ancestor tree SHAs are permitted
+   * for allowed siblings; equality can prove descendants unchanged. A blocked
+   * or replaced ancestor makes the protected entry unprovable. Equal ancestor
+   * absence also proves every descendant absent without separate reads.
    *
    * Success is only this negative publication check. It is never a complete
    * sanitization claim and never a durability receipt: textual, structurally
@@ -250,14 +251,33 @@ export class GitReviewSnapshot extends GitSnapshotCapture {
     const candidateBlobs = new Set<string>();
 
     // Exact protected-entry identity: for every newly exposed commit, each
-    // configured protected path and each of its ancestors is read as one
-    // literal `ls-tree` entry instead of inferring identity from a diff.
+    // configured protected path is proved by literal `ls-tree` entries or an
+    // identical ancestor tree object, never inferred from a diff.
     // Entries are immutable within each commit: shared ancestors and entries
-    // are read at most once per commit in this invocation. Absence is proven
-    // only by exit-0 empty output; malformed,
-    // multiple or over-bound output fails closed.
+    // are read at most once per commit in this invocation. Explicit absence
+    // reads require complete exit-0 output; malformed, duplicate, foreign or
+    // over-bound output fails closed.
     const trustedProtectedEntries = new Map<string, ProtectedTreeEntryV1>();
     const protectedEntries = new Map<string, ProtectedTreeEntryV1>();
+    // Only siblings share a literal-path batch: no parent can hide a child.
+    const siblings = new Map<string, Set<string>>();
+    for (const path of protectedPaths) {
+      for (const entry of [...protectedAncestorPaths(path), path]) {
+        const parent = entry.slice(0, entry.lastIndexOf("/") + 1);
+        const paths = siblings.get(parent) ?? new Set<string>();
+        paths.add(entry);
+        siblings.set(parent, paths);
+      }
+    }
+    const protectedPathBatches = new Map<string, readonly string[]>();
+    const protectedBatchSize = 32;
+    for (const paths of siblings.values()) {
+      const entries = [...paths];
+      for (let start = 0; start < entries.length; start += protectedBatchSize) {
+        const batch = entries.slice(start, start + protectedBatchSize);
+        for (const path of batch) protectedPathBatches.set(path, batch);
+      }
+    }
     const readProtectedEntry = async (
       commit: string,
       path: string,
@@ -265,10 +285,11 @@ export class GitReviewSnapshot extends GitSnapshotCapture {
       const key = `${commit}:${path}`;
       const cached = protectedEntries.get(key);
       if (cached !== undefined) return portOk(cached);
+      const paths = protectedPathBatches.get(path) ?? [path];
       const read = await readTracked(
-        ["ls-tree", "-z", "--full-tree", commit, "--", path],
+        ["ls-tree", "-z", "--full-tree", commit, "--", ...paths],
         [0],
-        MAX_TREE_ENTRY_BYTES,
+        MAX_TREE_ENTRY_BYTES * paths.length,
       );
       if (!read.ok) {
         return fail(
@@ -278,15 +299,30 @@ export class GitReviewSnapshot extends GitSnapshotCapture {
         );
       }
       const text = this.text(read.bytes);
-      if (text === null) {
+      if (text === null || (text !== "" && !text.endsWith("\u0000"))) {
         return fail(PUBLICATION_PROTECTED_DETAIL);
       }
-      const entry = parseProtectedTreeEntry(text, path);
-      if (entry === null) {
-        return fail(PUBLICATION_PROTECTED_DETAIL);
+      const entries = new Map<string, ProtectedTreeEntryV1>();
+      for (
+        const record of text === "" ? [] : text.slice(0, -1).split("\u0000")
+      ) {
+        const tab = record.indexOf("\t");
+        const entryPath = record.slice(tab + 1);
+        if (tab < 0 || !paths.includes(entryPath) || entries.has(entryPath)) {
+          return fail(PUBLICATION_PROTECTED_DETAIL);
+        }
+        const entry = parseProtectedTreeEntry(`${record}\u0000`, entryPath);
+        if (entry === null) return fail(PUBLICATION_PROTECTED_DETAIL);
+        entries.set(entryPath, entry);
       }
-      protectedEntries.set(key, entry);
-      return portOk(entry);
+      // A successful, complete bounded batch proves every omitted path absent.
+      for (const batchedPath of paths) {
+        protectedEntries.set(
+          `${commit}:${batchedPath}`,
+          entries.get(batchedPath) ?? { absent: true },
+        );
+      }
+      return portOk(entries.get(path) ?? { absent: true });
     };
     const readTrustedProtectedEntry = async (
       path: string,
@@ -328,7 +364,8 @@ export class GitReviewSnapshot extends GitSnapshotCapture {
       }
 
       if (protectedPaths.length > 0) {
-        for (const protectedPath of protectedPaths) {
+        protectedPathLoop: for (const protectedPath of protectedPaths) {
+          let unchangedTree = false;
           for (const ancestor of protectedAncestorPaths(protectedPath)) {
             const candidateAncestor = await readProtectedEntry(
               commit,
@@ -349,7 +386,16 @@ export class GitReviewSnapshot extends GitSnapshotCapture {
             ) {
               return fail(PUBLICATION_PROTECTED_DETAIL);
             }
+            // Equal absence also proves all remaining ancestors absent. Equal
+            // trees still require nested ancestors to be directory entries.
+            if (
+              sameProtectedEntry(candidateAncestor.value, trustedAncestor.value)
+            ) {
+              if (candidateAncestor.value.absent) continue protectedPathLoop;
+              unchangedTree = true;
+            }
           }
+          if (unchangedTree) continue;
           const candidateEntry = await readProtectedEntry(
             commit,
             protectedPath,
