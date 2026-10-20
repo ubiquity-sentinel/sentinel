@@ -177,6 +177,14 @@ restore only bookkeeping and let normal base refresh precede the new head's CI
 and internal review. This grants no forbidden-candidate retry, model start,
 push, refund or merge authority to recovery itself.
 
+GitHub PR base snapshots can lag the live branch: recovery checks the exact base
+branch name and independently reads and revalidates the live tip and ancestry.
+It must not require the recorded PR base SHA to equal that tip before allowing
+normal base refresh. Historical result recovery may also resume after its exact
+retry charge is already submitted, but only through the same authenticated
+result and ordinary idempotent settlement; it preserves the existing charge and
+timestamp.
+
 ### Explicit prepromotion owner supersession (historical; superseded 2026-10-20)
 
 The following ceremony records historical contracts and receipt semantics. The

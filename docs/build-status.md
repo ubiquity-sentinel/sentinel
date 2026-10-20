@@ -143,6 +143,36 @@ history. Two-target acceptance remains pending.
   integration checks, second actual Codex review, exact-SHA hosted CI,
   controlled installation and both targets' live delivery receipts before
   acceptance. Auto-follow remains off and `sentinel-release` disabled.
+- Round-two review of `9b0fa73dd2ff2a90c55e91f44a21e359f5108af6` resolved all
+  six inherited findings and identified an interrupted-submitted retry refusal
+  plus an overly narrow historical predecessor shape. Corrections
+  `f68b435af42619eca7eed3ebb80097969481d246` and
+  `a34b54a5b82c03c6c37523c5024acde54a5471a9` are integrated with actual
+  interruption/composition red-green evidence; submitted charges and timestamps
+  remain unchanged, and the forbidden correction stays refused. One final actual
+  review round remains after CI corrections integrate.
+- Hosted CI `39491163015` for `9b0fa73d` passed quality, modules, integration
+  and host-1; host-2 and host-3 failed. Exact green baseline `e05ba64f` passed
+  the same unchanged cases. Host-2's legacy fixture mistook
+  `onQueueCustodyReady(false)` for a mutation; test-only correction
+  `6b5341d3909809b34e2b206aa0037a9af3d758fe` is integrated and verifies current
+  maintenance with unchanged durable state and zero installation CAS. Host-3
+  exhausted the unchanged 30-second publication deadline; correction
+  `4c4999beda9ef6d3004f5f11ca4c2338864cd5fe` preserves that deadline and policy
+  while using bounded literal sibling reads and exact ancestor proofs. The final
+  identical fixture fell from 688 Git reads / 19.52 seconds to 16 reads / 446
+  ms; strict parser, positive-publication and nested-directory-mode controls
+  passed. Candidate `9b0fa73d` was never installed; the live launcher remains
+  `e05ba64f`, auto-follow off.
+- Live REST and GraphQL evidence showed PR base snapshots lagging the current
+  branch in Sentinel #174 and ai.ubq.fi #1254. Correction
+  `334104f31a99f77559c5bc81b2f3bd8b7f44bf50` removes only the stale snapshot
+  equality requirement; exact base names, independently read live tips, strict
+  ancestry, repeated custody checks, CAS and normal refresh/CI/internal review
+  remain mandatory. Its actual REST-parser red/green case and refusal controls
+  passed. All source writers are settled; the corrected integrated candidate
+  awaits one focused final consumer capture, final review round three, new
+  exact-SHA CI and controlled hosted acceptance.
 
 The following receipts describe the earlier generation-82 recovery and inherited
 implementation; they do not override the current observations above.
