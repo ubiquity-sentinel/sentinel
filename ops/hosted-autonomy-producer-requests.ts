@@ -12,8 +12,9 @@ import type { HostedExecutionIntentV1 } from "../src/contracts/hosted-supervisor
 import type { WorkRecordV1 } from "../src/contracts/work-record.ts";
 import type { MatrixArtifactRequestV1 } from "../src/host/matrix-artifact-port.ts";
 import {
-  blockedCandidateBinding,
-  blockedCandidateMatchesProducer,
+  blockedImplementationBinding,
+  blockedRecoveryBinding,
+  blockedRecoveryMatchesProducer,
 } from "../src/host/matrix-blocked-candidate.ts";
 import { implementationIntentKey } from "../src/repair/keys.ts";
 import type { HostedAutonomyResultV1 } from "./hosted-autonomy-types.ts";
@@ -51,7 +52,7 @@ export function producerWanted(
   return pending.some((record) =>
     !excluded.has(record.intent?.requestId ?? "") &&
     (record.nextStep === "work" ||
-      blockedCandidateMatchesProducer(record, execution))
+      blockedRecoveryMatchesProducer(record, execution))
   );
 }
 
@@ -76,7 +77,7 @@ export function producerRequests(
     const intent = record.intent;
     if (
       (record.nextStep !== "work" &&
-        !blockedCandidateMatchesProducer(record, execution)) ||
+        !blockedRecoveryMatchesProducer(record, execution)) ||
       !intent ||
       !["implementation", "candidate_preservation"].includes(intent.kind) ||
       dedicated.has(intent.requestId ?? "")
@@ -92,13 +93,16 @@ export function producerRequests(
       charge.attempt !== record.counters.attempts ||
       !["implementation", "retry"].includes(charge.purpose) ||
       charge.outcome === "confirmed_not_submitted" ||
+      (blockedImplementationBinding(record) !== null &&
+        (charge.purpose !== "retry" || charge.outcome !== "reserved" ||
+          charge.settledAt !== null)) ||
       intent.key !== implementationIntentKey(charge.id) ||
       intent.observedBase !== record.target.base || intent.resultId !== null
     ) {
       throw fault("current matrix request binding unavailable");
     }
     if (
-      scope === "blocked" && !blockedCandidateMatchesProducer(record, execution)
+      scope === "blocked" && !blockedRecoveryMatchesProducer(record, execution)
     ) return [];
     return [{
       taskId: record.id,
@@ -158,7 +162,7 @@ export async function unrecoverablePlan(
       canonicalStringify(row.repository) ===
         canonicalStringify(request.repository)
     );
-    const binding = record ? blockedCandidateBinding(record) : null;
+    const binding = record ? blockedRecoveryBinding(record) : null;
     return binding === null ? [] : [binding];
   });
   if (bindings.length === 0) return null;

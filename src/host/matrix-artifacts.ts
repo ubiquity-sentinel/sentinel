@@ -47,8 +47,9 @@ import {
 } from "./matrix-artifact-native.ts";
 import { recoverMatrixArtifactWaves } from "./matrix-artifact-wave.ts";
 import {
-  blockedCandidateBinding,
-  blockedCandidateMatchesProducer,
+  blockedImplementationBinding,
+  blockedRecoveryBinding,
+  blockedRecoveryMatchesProducer,
 } from "./matrix-blocked-candidate.ts";
 
 export function createActionsMatrixArtifactHttpTransport(
@@ -213,7 +214,7 @@ export function createActionsMatrixArtifactTransport(
           // authenticated not-started revalidation; every other blocked class
           // refuses here exactly as before.
           const recoverable = task.nextStep === "work" ||
-            blockedCandidateMatchesProducer(
+            blockedRecoveryMatchesProducer(
               task,
               input.currentRun &&
                 { ...input.currentRun, revision: input.runtimeSha },
@@ -243,6 +244,10 @@ export function createActionsMatrixArtifactTransport(
             reservation.head !== request.expectedBase ||
             reservation.purpose === "review_request" ||
             reservation.outcome === "confirmed_not_submitted" ||
+            (blockedImplementationBinding(task) !== null &&
+              (reservation.purpose !== "retry" ||
+                reservation.outcome !== "reserved" ||
+                reservation.settledAt !== null)) ||
             !recoverable ||
             task.target.base !== request.expectedBase ||
             (!implementing && !preserving) ||
@@ -343,7 +348,7 @@ export function createActionsMatrixArtifactTransport(
         }
         for (const request of requested.values()) {
           const task = snapshot.work.find((row) => row.id === request.taskId)!;
-          const binding = blockedCandidateBinding(task);
+          const binding = blockedRecoveryBinding(task);
           if (!binding) continue;
           const artifact = plans.find((row) =>
             row.name ===
