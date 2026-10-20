@@ -71,6 +71,8 @@ import { allowsHostedExecution } from "./hosted-runtime-compatibility.ts";
 import type { QueueRuntimeCapability } from "./queue-runtime-capability.ts";
 import type { ExistingPrRuntimeCapability } from "./existing-pr-runtime-capability.ts";
 import { retainVerifiedHostedAppGrant } from "./hosted-runtime-principal-handoff.ts";
+import { isHostedInstallationRollback } from "./hosted-runtime-rollback-state.ts";
+import { HOSTED_RUNTIME_ROLLBACK_ENTRYPOINT } from "./hosted-runtime-rollback.ts";
 
 /**
  * Verify the launcher and runtime checkouts as clean worktrees at their exact
@@ -216,7 +218,9 @@ async function launchHostedRuntime(
     args: [
       "run",
       "-A",
-      identity.job === "repair"
+      isHostedInstallationRollback(release, execution)
+        ? joinPath(dirs.launcher, HOSTED_RUNTIME_ROLLBACK_ENTRYPOINT)
+        : identity.job === "repair"
         ? HOSTED_RUNTIME_CHILD_ENTRYPOINT
         : "src/host/matrix-actions.ts",
     ],
