@@ -42,8 +42,8 @@
  *    holds, whatever recovery did. The process exit code reports the dispatch
  *    outcome (0 accepted, 1 not accepted).
  *
- * Capability boundary: no new environment variable, secret, CLI flag,
- * dependency, model call, state write or external service. Every read and
+ * Capability boundary: the follow step supplies only its SHA/readiness outputs;
+ * no App secret, model call, state write or external service. Every read and
  * write goes through the injected `HttpTransportV1`, time comes from the
  * injected `Clock`, and output is concise structured JSON log lines that never
  * echo a response body, credential or `ok` field.
@@ -58,6 +58,7 @@ import {
   type HttpResponseV1,
   type HttpTransportV1,
 } from "../github/http.ts";
+import { dispatchFollowedSupervisor } from "./hosted-runtime-follow-dispatch.ts";
 
 /** Exact repository the scheduled dispatcher owns. */
 export const SUPERVISOR_REPOSITORY = "ubiquity/sentinel";
@@ -107,6 +108,8 @@ export interface SupervisorDispatchDepsV1 {
   clock: Clock;
   /** Optional structured log sink; defaults to one JSON line per event. */
   log?: SupervisorLogV1;
+  /** Exact readback from the preceding trusted follow step. */
+  follow?: { expectedSha: string; ready: boolean; pause?: () => Promise<void> };
 }
 
 /** Bounded recovery outcome of one pass. */
@@ -173,9 +176,8 @@ const refused = (reason: string): DecodedV1<never> => ({
 /**
  * Run one bounded recovery pass and then the existing fixed-ref dispatch.
  *
- * The dispatch always runs when a token exists, even when recovery was
- * skipped, refused or incomplete: a stale-run repair never replaces the
- * ordinary scheduling path.
+ * Recovery refusal never replaces ordinary scheduling. When the trusted follow
+ * step supplies a readback, its dispatch guard also rejects drift and duplicates.
  */
 export async function runSupervisorDispatch(
   deps: SupervisorDispatchDepsV1,
@@ -254,20 +256,27 @@ export async function runSupervisorDispatch(
     ? "incomplete"
     : "none";
 
-  const dispatched = await dispatchSupervisor(deps);
+  const dispatched = deps.follow === undefined
+    ? await dispatchSupervisor(deps)
+    : await dispatchFollowedSupervisor(
+      { ...deps, ...deps.follow },
+      () => dispatchSupervisor(deps),
+    );
+  const didDispatch = dispatched.valid &&
+    !("skipped" in dispatched && dispatched.skipped);
   const exitCode = dispatched.valid ? 0 : 1;
   log({
     event: "dispatch_pass",
     recovery,
     cancelledRunId,
     scannedRuns: scan.scannedRuns,
-    dispatches: dispatched.valid,
+    dispatches: didDispatch,
     exitCode,
     ...(dispatched.valid ? {} : { dispatchError: dispatched.reason }),
   });
   return {
     exitCode,
-    dispatched: dispatched.valid,
+    dispatched: didDispatch,
     recovery,
     cancelledRunId,
   };
@@ -862,6 +871,10 @@ if (import.meta.main) {
     http: fetchHttpTransport(),
     token: Deno.env.get("GH_TOKEN") ?? "",
     clock: new SystemClock(),
+    follow: {
+      expectedSha: Deno.env.get("SENTINEL_FOLLOW_SHA") ?? "",
+      ready: Deno.env.get("SENTINEL_FOLLOW_READY") === "true",
+    },
   });
   Deno.exit(result.exitCode);
 }

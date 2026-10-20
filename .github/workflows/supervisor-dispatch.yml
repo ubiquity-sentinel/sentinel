@@ -23,9 +23,9 @@ on:
 
 permissions:
   # actions: write covers both the fixed-ref dispatch and the bounded
-  # force-cancel; contents: read is required only to check out the dispatcher.
+  # force-cancel; contents: write permits the expected-head launcher advance.
   actions: write
-  contents: read
+  contents: write
 
 concurrency:
   group: sentinel-supervisor-dispatch
@@ -38,14 +38,25 @@ jobs:
     steps:
       - name: Check out the dispatcher source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: v2.x
+          deno-version: v2.9.7
+      - name: Follow the newest CI-green development ancestor
+        id: follow
+        uses: ./.github/actions/hosted-runtime-control
+        with:
+          token: ${{ github.token }}
+          auto-follow: ${{ vars.SENTINEL_AUTO_FOLLOW || 'off' }}
       - name: Recover one bounded stale run, then dispatch the exact protected ref
         env:
           GH_TOKEN: ${{ github.token }}
+          SENTINEL_FOLLOW_SHA: ${{ steps.follow.outputs.launcher-sha }}
+          SENTINEL_FOLLOW_READY: ${{ steps.follow.outputs.follow-ready }}
         run: >-
           deno run
           --allow-net=api.github.com
-          --allow-env=GH_TOKEN
+          --allow-env=GH_TOKEN,SENTINEL_FOLLOW_SHA,SENTINEL_FOLLOW_READY
           src/host/supervisor-dispatch.ts
