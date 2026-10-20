@@ -94,8 +94,11 @@ export function producerRequests(
       !["implementation", "retry"].includes(charge.purpose) ||
       charge.outcome === "confirmed_not_submitted" ||
       (blockedImplementationBinding(record) !== null &&
-        (charge.purpose !== "retry" || charge.outcome !== "reserved" ||
-          charge.settledAt !== null)) ||
+        (charge.purpose !== "retry" ||
+          !((charge.outcome === "reserved" && charge.settledAt === null) ||
+            (charge.outcome === "submitted" && charge.settledAt !== null &&
+              Number.isSafeInteger(charge.settledAt) &&
+              charge.settledAt >= charge.createdAt)))) ||
       intent.key !== implementationIntentKey(charge.id) ||
       intent.observedBase !== record.target.base || intent.resultId !== null
     ) {

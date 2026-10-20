@@ -210,9 +210,9 @@ export function createActionsMatrixArtifactTransport(
             intent = task.intent;
           const implementing = intent?.kind === "implementation" &&
             intent.expectedHead === null && intent.resultId === null;
-          // The exact original quarantine class is bound only under explicit
-          // authenticated not-started revalidation; every other blocked class
-          // refuses here exactly as before.
+          // Descriptor-bound producer recovery also admits an interrupted
+          // submitted retry; its exact receipt must still verify before ingest.
+          // The original quarantine requires explicit not-started revalidation.
           const recoverable = task.nextStep === "work" ||
             blockedRecoveryMatchesProducer(
               task,
@@ -246,8 +246,12 @@ export function createActionsMatrixArtifactTransport(
             reservation.outcome === "confirmed_not_submitted" ||
             (blockedImplementationBinding(task) !== null &&
               (reservation.purpose !== "retry" ||
-                reservation.outcome !== "reserved" ||
-                reservation.settledAt !== null)) ||
+                !((reservation.outcome === "reserved" &&
+                  reservation.settledAt === null) ||
+                  (reservation.outcome === "submitted" &&
+                    reservation.settledAt !== null &&
+                    Number.isSafeInteger(reservation.settledAt) &&
+                    reservation.settledAt >= reservation.createdAt)))) ||
             !recoverable ||
             task.target.base !== request.expectedBase ||
             (!implementing && !preserving) ||

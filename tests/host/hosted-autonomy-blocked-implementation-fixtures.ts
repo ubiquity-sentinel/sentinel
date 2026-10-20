@@ -5,6 +5,7 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import { parseHostedRunProofV1 } from "../../src/contracts/hosted-supervisor.ts";
 import { matrixDigestV1 } from "../../src/contracts/matrix.ts";
 import {
+  portError,
   portOk,
   type RepairStateWriter,
   type StateReadView,
@@ -190,6 +191,7 @@ export async function blockedRetryRig() {
   const history = [structuredClone(state.snapshot)];
   let moved = false;
   let releaseReads = 0;
+  let interruptCandidate = false;
   const shared = {
     readRepair: state.readRepair.bind(state),
     readRelease: () =>
@@ -202,6 +204,14 @@ export async function blockedRetryRig() {
     writeRepair: async (
       ...args: Parameters<TransitionState["writeRepair"]>
     ) => {
+      if (
+        interruptCandidate &&
+        args[0].work.some((row) =>
+          row.id === work.id && row.target.head === candidate
+        )
+      ) {
+        return portError("unavailable", "fixture interrupted candidate write");
+      }
       const result = await state.writeRepair(...args);
       history.push(structuredClone(state.snapshot));
       return result;
@@ -220,7 +230,8 @@ export async function blockedRetryRig() {
   const config = repositoryConfig(REPO, { perHour: 100, perSevenDays: null }, {
     protectedPaths: [".github/workflows"],
   });
-  const clock = { now: () => T0 + 10_000 };
+  let now = T0 + 10_000;
+  const clock = { now: () => now };
   let imports = 0;
   const deps: HostedAutonomyDepsV1 = {
     state: shared,
@@ -289,6 +300,15 @@ export async function blockedRetryRig() {
     original,
     github,
     imports: () => imports,
+    advanceClock: (ms: number) => {
+      now += ms;
+    },
+    interruptCandidateWrites: () => {
+      interruptCandidate = true;
+    },
+    resumeCandidateWrites: () => {
+      interruptCandidate = false;
+    },
     moveCustody: () => {
       moved = true;
     },
