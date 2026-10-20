@@ -16,6 +16,73 @@ import {
 import { LocalSessionTracker } from "../../src/host/local-client.ts";
 import { OBSERVED } from "../github/hosted-execution-helpers.ts";
 import { makeCandidateCtx } from "./actions-candidates-fixture.ts";
+import { parseReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+
+Deno.test("hosted principal source: installed successor authenticates without a fixed profile", async () => {
+  const rig = await principalHostFixture(true);
+  try {
+    assert(await readHostedAppSourceEvidence(rig.source) !== null);
+    assert(await verifyHostedAppPrincipalHandoff(rig.hostInput));
+    assert(await createHostedAppPrincipalContext(rig.hostInput) !== null);
+    assert(rig.model.calls.length > 0, "actual native job proof is required");
+    assert.equal(rig.state.repairWrites, 0);
+  } finally {
+    await rig.close();
+  }
+});
+
+Deno.test("hosted principal source: installed successor still needs native mint and exact saved clean custody", async (t) => {
+  for (
+    const fault of [
+      "saved pointer",
+      "native head",
+      "native mint",
+      "hidden runtime",
+      "different launcher",
+    ]
+  ) {
+    await t.step(fault, async () => {
+      const rig = await principalHostFixture(true);
+      try {
+        if (fault === "saved pointer") {
+          const release = parseReleaseStateSnapshotV1(
+            rig.state.release!.snapshot,
+          );
+          release.hostedRuntimes[0].lastHealthyProof = null;
+          rig.state.setRelease(release);
+        } else if (fault === "native head") {
+          rig.model.attempt.head_sha = "f".repeat(40);
+        } else if (fault === "native mint") {
+          const steps = rig.model.jobs[0].steps as Array<{ name: string }>;
+          steps[1].name = "untrusted mint name";
+        } else if (fault === "different launcher") {
+          rig.source.identity.launcherSha = "f".repeat(
+            40,
+          ) as typeof rig.identity.launcherSha;
+        } else {
+          const path = "src/host/hosted-custody-capability.json";
+          await rig.git(rig.runtime, [
+            "update-index",
+            "--assume-unchanged",
+            path,
+          ]);
+          await rig.write(rig.runtime, path, "{}\n");
+        }
+        assert.equal(
+          await verifyHostedAppPrincipalHandoff(rig.hostInput),
+          false,
+        );
+        assert.equal(
+          await createHostedAppPrincipalContext(rig.hostInput),
+          null,
+        );
+        assert.equal(rig.state.repairWrites, 0);
+      } finally {
+        await rig.close();
+      }
+    });
+  }
+});
 
 Deno.test("hosted principal source: actual clean launcher/runtime and full reviewed code profile are required", async () => {
   const rig = await principalSourceFixture();

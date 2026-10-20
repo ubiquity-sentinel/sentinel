@@ -2,9 +2,36 @@ import assert from "node:assert/strict";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import { portError } from "../../src/contracts/ports.ts";
 import { parseReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
-import { principalGrant } from "./hosted-app-principal-fixtures.ts";
+import {
+  principalGrant,
+  selfInstallPrincipalFixture,
+} from "./hosted-app-principal-fixtures.ts";
 import { principalLauncherFixture } from "./hosted-runtime-principal-fixtures.ts";
 import { OBSERVED } from "../github/hosted-execution-helpers.ts";
+
+Deno.test("hosted principal launcher: installed successor grant reaches actual child without a profile", async () => {
+  const rig = await principalLauncherFixture(true);
+  try {
+    await selfInstallPrincipalFixture(rig);
+    rig.input.env = {
+      ...rig.input.env,
+      GITHUB_SHA: rig.identity.launcherSha,
+      GITHUB_WORKFLOW_SHA: rig.identity.launcherSha,
+    };
+    // Keep synthetic native HTTP while exercising the production source default.
+    Reflect.deleteProperty(
+      rig.input.principalHandoffFixture!,
+      "sourceProfiles",
+    );
+    const result = await rig.launch();
+    assert.equal(result.status, "healthy", JSON.stringify(result));
+    assert.equal(rig.childCalls().length, 1);
+    assert(rig.model.calls.length > 0);
+    assert.equal(rig.state.repairWrites, 0);
+  } finally {
+    await rig.close();
+  }
+});
 
 Deno.test("hosted principal launcher: verified repair/planner grants reach actual owned children, while cells get none", async (t) => {
   for (const job of ["repair", "matrix_plan", "matrix_cell"] as const) {

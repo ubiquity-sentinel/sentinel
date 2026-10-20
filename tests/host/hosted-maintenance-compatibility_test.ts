@@ -171,7 +171,7 @@ Deno.test("maintenance queue observation: complete dark or busy queue is read on
   }
 });
 
-Deno.test("maintenance main: exact migration and interrupted bootstrap skip every writer and never grant ordinary queue readiness", async (t) => {
+Deno.test("maintenance main: installed successor and bootstrap preserve admission and writer custody", async (t) => {
   const original = Deno.cwd();
   const root = await Deno.makeTempDir({
     dir: original,
@@ -212,6 +212,7 @@ Deno.test("maintenance main: exact migration and interrupted bootstrap skip ever
         "queue_only",
         "dormant",
         "healthy",
+        "installed_successor",
       ]
     ) {
       await t.step(fault, async () => {
@@ -231,6 +232,7 @@ Deno.test("maintenance main: exact migration and interrupted bootstrap skip ever
             "failed_bootstrap",
             "unproven_ordinary",
             "healthy",
+            "installed_successor",
           ].includes(fault);
           const f = fixtures(installed);
           const native = nativeWriterFixture({
@@ -267,7 +269,7 @@ Deno.test("maintenance main: exact migration and interrupted bootstrap skip ever
           if (fault === "unproven_ordinary") {
             runtime.execution = healthyProof(NEXT, 82, 600).execution;
           }
-          if (fault === "healthy") {
+          if (["healthy", "installed_successor"].includes(fault)) {
             runtime.lastHealthyProof =
               runtime.lastExecutionProof =
                 healthyProof(
@@ -309,7 +311,11 @@ Deno.test("maintenance main: exact migration and interrupted bootstrap skip ever
             },
           };
           // Ordinary controls use the normal queue prelude and empty maintenance pass.
-          if (["dormant", "healthy"].includes(fault)) {
+          if (
+            ["migration", "dormant", "healthy", "installed_successor"].includes(
+              fault,
+            )
+          ) {
             delete (deps as { uncertainMatrix?: unknown }).uncertainMatrix;
           }
           let exit: number;
@@ -335,8 +341,16 @@ Deno.test("maintenance main: exact migration and interrupted bootstrap skip ever
                   custody: fault === "queue_only"
                     ? { custodyActivated: false, revisions: [] }
                     : custody,
-                  queue,
-                  rollout,
+                  queue: fault === "installed_successor"
+                    ? {
+                      ...queue,
+                      revisions: [OTHER],
+                      ownerInstallMigrations: [],
+                    }
+                    : queue,
+                  rollout: fault === "installed_successor"
+                    ? { ...rollout, installs: [] }
+                    : rollout,
                   nativeRead: read,
                   http: transport.http,
                 },
@@ -353,7 +367,7 @@ Deno.test("maintenance main: exact migration and interrupted bootstrap skip ever
           );
           // Historical pointers without an installation journal re-bootstrap
           // model-disabled; fresh journaled installation failures roll back.
-          const migrationOnly = ["migration", "installed", "failed_bootstrap"]
+          const migrationOnly = ["installed", "failed_bootstrap"]
             .includes(fault);
           assert.equal(
             outputs.get("runtimeMigrationOnly"),
@@ -367,7 +381,12 @@ Deno.test("maintenance main: exact migration and interrupted bootstrap skip ever
             outputs.get("runtimeMigrationGeneration"),
             migrationOnly ? "82" : "",
           );
-          const ordinary = ["dormant", "healthy"].includes(fault);
+          const ordinary = [
+            "migration",
+            "dormant",
+            "healthy",
+            "installed_successor",
+          ].includes(fault);
           assert.equal(outputs.get("queueCustodyReady"), String(ordinary));
           assert.equal(custodyCalls > 0, ordinary);
           assert.equal(effects > 0, ordinary);

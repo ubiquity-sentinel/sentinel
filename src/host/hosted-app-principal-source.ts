@@ -10,7 +10,6 @@ import {
 } from "./hosted-runtime-child.ts";
 import type { HostedRuntimeIdentityV1 } from "./hosted-runtime-identity.ts";
 import type { HostedAppJobSteps } from "./hosted-app-principal-native.ts";
-import profiles from "./hosted-app-source-profiles.json" with { type: "json" };
 
 export const HOSTED_APP_CAPABILITY_DATA =
   "src/host/hosted-custody-capability.json";
@@ -24,6 +23,19 @@ const digestPattern = /^[0-9a-f]{64}$/;
 const maximumFileBytes = 1024 * 1024;
 const maximumTreeBytes = 64 * 1024 * 1024;
 const appClientId = "Iv23liHUJNXds9mU3j7Q";
+// These names belong to the trusted workflow consumer, never source data or env.
+const installedJobSteps = {
+  repair: {
+    dependencyStep: "Install locked self-test dependencies",
+    mintStep: "Mint the scoped sentinel App token",
+    runtimeStep: "Run selected Sentinel runtime",
+  },
+  matrix_plan: {
+    dependencyStep: "Install locked self-test dependencies",
+    mintStep: "Mint the scoped sentinel App token",
+    runtimeStep: "Plan isolated issue matrix",
+  },
+};
 
 /** Trusted runtime-owned reviewed profile; never accepted from environment. */
 export interface HostedAppSourceProfile {
@@ -245,20 +257,25 @@ export async function readHostedAppSourceManifest(
   };
 }
 
-/** Repeats actual clean source checks; profile data alone can never pass. */
+/** Exact installed source is inert until the private host proves saved/native custody. */
 export async function readHostedAppSourceEvidence(
   input: HostedAppSourceInput,
-  accepted: unknown = profiles,
+  accepted?: unknown,
 ): Promise<HostedAppSourceEvidence | null> {
   try {
-    const approved = parseHostedAppSourceProfiles(accepted);
+    // Explicit profiles are a trusted in-process historical fixture seam only.
+    const approved = accepted === undefined
+      ? null
+      : parseHostedAppSourceProfiles(accepted);
     if (
-      approved.length === 0 ||
+      approved?.length === 0 ||
       (input.identity.job !== "repair" &&
         input.identity.job !== "matrix_plan") ||
       input.execution.purpose !== "ordinary" ||
       input.execution.launcherSha !== input.identity.launcherSha ||
-      !isGitSha(input.execution.revision)
+      !isGitSha(input.execution.revision) ||
+      (approved === null &&
+        input.execution.revision !== input.identity.launcherSha)
     ) return null;
     const dirs = await resolveRuntimeDirectories(
       input.launcherDir,
@@ -271,8 +288,25 @@ export async function readHostedAppSourceEvidence(
         input.execution.revision
     ) return null;
     const source = await readHostedAppSourceManifest(input, dirs.launcher);
-    const profile = approved.find((row) => row.codeSha256 === source.digest);
-    if (profile === undefined) return null;
+    const profile = approved?.find((row) => row.codeSha256 === source.digest);
+    if (approved !== null && profile === undefined) return null;
+    if (approved === null) {
+      const installed = await readHostedAppSourceManifest(input, dirs.runtime);
+      if (installed.digest !== source.digest) return null;
+      // The three excluded data files are still exact native Git blobs in both
+      // checkouts, including hidden tracked changes that status can miss.
+      for (
+        const path of [
+          HOSTED_APP_CAPABILITY_DATA,
+          HOSTED_APP_SOURCE_PROFILES,
+          HOSTED_RUNTIME_ROLLOUT_DATA,
+        ]
+      ) {
+        const entry = installed.entries.find((row) => row.path === path);
+        if (entry === undefined) return null;
+        await checkedFile(dirs.runtime, entry);
+      }
+    }
     const dataEntry = source.entries.find((entry) =>
       entry.path === HOSTED_APP_CAPABILITY_DATA
     );
@@ -294,7 +328,9 @@ export async function readHostedAppSourceEvidence(
     const profileBytes = await checkedFile(dirs.launcher, profilesEntry);
     if (profileBytes.length > 32_768) return null;
     const targetBytes = await checkedFile(dirs.launcher, targetEntry);
-    if (await hash(targetBytes) !== profile.targetsSha256) return null;
+    if (
+      profile !== undefined && await hash(targetBytes) !== profile.targetsSha256
+    ) return null;
     const decode = new TextDecoder("utf-8", { fatal: true });
     parseHostedAppSourceProfiles(JSON.parse(decode.decode(profileBytes)));
     const launcherTargets = parseTargetSlugsV1(
@@ -321,7 +357,7 @@ export async function readHostedAppSourceEvidence(
       targets: launcherTargets.map((row) => row.slug).filter((slug) =>
         runtimeTargets.some((row) => row.slug === slug)
       ),
-      steps: { ...profile.jobs[input.identity.job] },
+      steps: { ...(profile?.jobs ?? installedJobSteps)[input.identity.job] },
     };
   } catch {
     return null;

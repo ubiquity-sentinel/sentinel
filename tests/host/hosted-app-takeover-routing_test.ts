@@ -2,6 +2,19 @@ import assert from "node:assert/strict";
 import { readHostedAppTakeoverRouting } from "../../src/host/hosted-app-takeover-routing.ts";
 import { principalHostFixture } from "./hosted-app-principal-fixtures.ts";
 
+Deno.test("hosted takeover routing: installed successor uses authenticated admission without a profile", async () => {
+  const rig = await principalHostFixture(true);
+  try {
+    assert.deepEqual(await readHostedAppTakeoverRouting(rig.source), {
+      status: "inactive",
+    });
+    assert.equal(rig.model.calls.length, 0);
+    assert.equal(rig.state.repairWrites, 0);
+  } finally {
+    await rig.close();
+  }
+});
+
 Deno.test("hosted takeover routing: intentional unconfigured runtime stays inert without source or native requests", async () => {
   const rig = await principalHostFixture();
   try {
