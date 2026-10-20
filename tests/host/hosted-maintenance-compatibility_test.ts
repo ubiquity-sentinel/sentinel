@@ -351,7 +351,10 @@ Deno.test("maintenance main: exact migration and interrupted bootstrap skip ever
               line,
             ) => line.split("=", 2) as [string, string]),
           );
-          const migrationOnly = ["migration", "installed"].includes(fault);
+          // Historical pointers without an installation journal re-bootstrap
+          // model-disabled; fresh journaled installation failures roll back.
+          const migrationOnly = ["migration", "installed", "failed_bootstrap"]
+            .includes(fault);
           assert.equal(
             outputs.get("runtimeMigrationOnly"),
             String(migrationOnly),
