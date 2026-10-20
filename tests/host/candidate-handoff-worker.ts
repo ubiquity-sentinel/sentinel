@@ -53,7 +53,6 @@ import {
 } from "../../src/host/actions-candidates.ts";
 import { composeGitHubHost } from "../../src/host/github.ts";
 import {
-  createLocalRepositoryConfig,
   createPrepareBaseRefresh,
   unavailableIncidents,
   unavailableReplay,
@@ -69,6 +68,8 @@ import {
   refWire,
   statusesPageWire,
 } from "../github/helpers.ts";
+import { handoffRepositoryConfig } from "./candidate-handoff-fixture.ts";
+import { repairReadThrough } from "./hosted-autonomy-rig.ts";
 
 /** Exact fixture identity/counter description passed on stdin. */
 export interface CandidateHandoffScenarioV1 {
@@ -489,8 +490,12 @@ export async function runCandidateHandoffWorker(
     scratchDir: `${scenario.childScratch}/state`,
     remoteUrl: scenario.stateRemoteUrl,
   });
+  state.readRepair = repairReadThrough(
+    state.readRepair.bind(state),
+    scenario.stateRemoteUrl,
+  );
   const gate = new DurableGitHubCooldownGate({ state, clock });
-  const config = createLocalRepositoryConfig();
+  const config = handoffRepositoryConfig();
   const configs = [config];
   const budget = new RollingStartBudget({ clock, state, configs });
   const review = new PublishedHeadReviewService(() =>

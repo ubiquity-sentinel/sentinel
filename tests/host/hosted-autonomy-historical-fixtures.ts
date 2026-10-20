@@ -257,6 +257,7 @@ export async function historicalMalformedRig(
     // CAS rules) so they fit the bounded window; the small real-Git recovery
     // proof passes realRepair to keep the real state transport.
     repairState: realRepair ? undefined : new CopyingRepairState(),
+    repairReadThrough: realRepair && cacheRelease,
     release: c63 ? { ...release, hostedRuntimes: [] } : release,
     pull: null,
     issueOpen: null,

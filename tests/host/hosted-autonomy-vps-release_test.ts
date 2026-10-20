@@ -112,6 +112,7 @@ async function acceptedMaintenance(
   });
   const { rig, github } = await makeRig(`vps-maintenance-${phase}`, {
     releaseReadThrough: true,
+    repairReadThrough: true,
     repair: repairSnapshot([record], [review], [request], [charge]),
     pull: foreignPullFacts(),
     issueOpen: false,

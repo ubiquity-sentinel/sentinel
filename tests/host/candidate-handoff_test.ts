@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import {
-  createLocalRepositoryConfig,
   createPrepareBaseRefresh,
   unavailableIncidents,
   unavailableReplay,
@@ -20,6 +19,7 @@ import { candidateBranch, workItemIdForIssue } from "../../src/repair/keys.ts";
 import { createRepairStateStore } from "../../src/state/mod.ts";
 import { FakeAuthProvider, FakeReviewService } from "../github/helpers.ts";
 import { FakeClock } from "../repair/helpers.ts";
+import { repairReadThrough } from "./hosted-autonomy-rig.ts";
 import {
   gitRun,
   reservation,
@@ -38,6 +38,7 @@ import {
   BASE_BRANCH,
   expectOk,
   gitEnv,
+  handoffRepositoryConfig,
   hasObject,
   head,
   ISSUE_NUMBER,
@@ -212,6 +213,10 @@ Deno.test(
         scratchDir: `${tmp}/state-scratch`,
         remoteUrl: `${tmp}/state.git`,
       });
+      state.readRepair = repairReadThrough(
+        state.readRepair.bind(state),
+        `${tmp}/state.git`,
+      );
       const seeded = parseRepairStateSnapshotV1({
         version: "v1",
         kind: "repair_state_snapshot",
@@ -320,7 +325,7 @@ Deno.test(
       // ---------------------------------------------------------------------
       const clock = new FakeClock(NOW);
       const gate = new DurableGitHubCooldownGate({ state, clock });
-      const config = createLocalRepositoryConfig();
+      const config = handoffRepositoryConfig();
       const producerHttp = makeRefReadingTransport({
         repository: REPOSITORY,
         pullRequestNumber: PR_NUMBER,
