@@ -245,6 +245,29 @@ implementation; they do not override the current observations above.
   §4 (deletion order); `w10/W10-REPORT.md`; `w11/report.md`; `w12/report.md` and
   `w12/VALIDATION.md`; `w7/report.md` and `w7/W7-evidence.md`.
 
+- Live controlled installation is verified: launcher CAS and run `39500033477:1`
+  at `25b24cdc7a09c2f871ff2d37093e6ea8d7f6e701` settled the original
+  generation-83 bootstrap, installed generation 84, and accepted its
+  model-disabled healthy bootstrap. Exact state
+  `288b1ddbfc2df4833e4bfea838402b15ddf0efd7` has no saved execution and matching
+  healthy/bootstrap proofs; the prepared proof file records nine passed
+  assertions. Scheduled run `39500468389:1` admitted ordinary generation 84. Its
+  maintenance then deferred with native frames `7:9 → 102:67 → 416:15`:
+  production staging was inside the source checkout while the artifact transport
+  correctly forbids that location. Source correction
+  `f27db314ebf1e9432dc4af8f17814225c46bbbcf` removes only the checkout directory
+  argument from secure host-temporary allocation; real main-composition,
+  success/error cleanup and containment regressions passed. The guard remains
+  intact. No fourth review round was run; the one-line hosted correction
+  requires fresh CI and actual maintenance acceptance before completion.
+- Ordinary matrix planning completed with zero isolated implementation cells,
+  which alone is not a failure or delivery proof. Self issue #173 / PR #174 is
+  eligible for the serial existing-PR refresh/CI/internal-review path;
+  authoritative work is not blocked and its exact published head is preserved.
+  AI PR #1260 for issue #1249 is human-owned and excluded from autonomous
+  acceptance. Both target deliveries and automatic advancement remain pending;
+  auto-follow stays off and `sentinel-release` disabled.
+
 ## Earlier checkpoints (historical)
 
 At 2026-10-19 18:54 UTC, root accepted fresh LF data after bounded admission
