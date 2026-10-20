@@ -127,12 +127,18 @@ Deno.test("hosted supervisor core: unreviewed or unverified requests never move 
     );
     // A completed review exists but the source verifier refuses.
     await rig.seedRepair([request], [reviewReceipt(request)]);
-    assert.equal((await rig.prepare(run(3))).status, "pending");
+    const unverified = requireRun(await rig.prepare(run(3)));
+    assert.equal(unverified.purpose, "ordinary");
+    rig.evidence.settlements.set(
+      unverified.id,
+      runProof(unverified, "healthy"),
+    );
+    assert.equal((await rig.finalize(run(3))).status, "idle");
     state = await rig.snapshot();
     assert.equal(state.hostedReleases.length, 0);
-    // Verifier transport failure is pending too.
+    // A release-local transport failure also leaves ordinary work eligible.
     rig.evidence.requestFail = true;
-    assert.equal((await rig.prepare(run(4))).status, "pending");
+    assert.equal(requireRun(await rig.prepare(run(4))).purpose, "ordinary");
     state = await rig.snapshot();
     assert.equal(state.hostedReleases.length, 0);
     assert.equal(state.hostedRuntimes[0].activeRevision, LAUNCHER);
@@ -240,10 +246,7 @@ Deno.test("hosted supervisor PR110: trusted stale-base maintenance permits ordin
     });
     rig.evidence.verifyRequest = (value) =>
       client.verifyHostedReleaseRequest(value);
-    assert.deepEqual(await rig.prepare(run(2)), {
-      status: "pending",
-      detail: "hosted supervisor release request is not verified",
-    });
+    assert.deepEqual(await rig.evidence.verifyRequest(request), portOk(false));
     const state = {
       readRepair: () => rig.repair.readRepair(),
       readRelease: () => rig.release.readRelease(),

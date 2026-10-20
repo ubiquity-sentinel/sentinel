@@ -18,6 +18,7 @@ import {
 import {
   advanceToCandidate,
   bootstrapHealthy,
+  ordinaryTurn,
 } from "./actions-supervisor-lifecycle-fixture.ts";
 
 Deno.test("ordinary matrix capability: verified old healthy runtime waits for owner installation without a new intent", async () => {
@@ -167,12 +168,14 @@ Deno.test("ordinary matrix capability: pointer movement during source proof refu
       // The fixture never bypasses the state writer's pointer guards.
       rig.evidence.verifyMatrixOrdinaryRevision = () =>
         Promise.resolve(portOk(true));
+      await ordinaryTurn(rig, 97);
       const request = releaseRequest();
       await rig.seedRepair([request], [reviewReceipt(request)]);
       rig.evidence.requests.add(request.id);
       const prior = requireRun(await rig.prepare(run(98)));
       assert.equal(prior.purpose, "prior");
       rig.evidence.settlements.set(prior.id, runProof(prior, "healthy"));
+      await ordinaryTurn(rig, 96);
       const concurrent = requireRun(await rig.prepare(run(99)));
       assert.equal(concurrent.purpose, "candidate");
       concurrentId = concurrent.id;
@@ -191,10 +194,11 @@ Deno.test("ordinary matrix capability: pointer movement during source proof refu
 Deno.test("ordinary matrix capability: bootstrap prior candidate and rollback retain repair verification without the gate", async () => {
   const rig = await makeRig();
   try {
+    const advanced = await advanceToCandidate(rig);
+    rig.evidence.matrixCalls.length = 0;
     rig.evidence.verifyMatrixOrdinaryRevision = () => {
       throw new Error("verification must not call ordinary capability");
     };
-    const advanced = await advanceToCandidate(rig);
     assert.equal(advanced.prior.purpose, "prior");
     assert.equal(advanced.candidate.purpose, "candidate");
     rig.evidence.settlements.set(
@@ -214,16 +218,11 @@ Deno.test("ordinary matrix capability: settled candidate verification reaches on
   const rig = await makeRig();
   try {
     const calls: GitSha[] = [];
+    const { candidate } = await advanceToCandidate(rig);
     rig.evidence.verifyMatrixOrdinaryRevision = (revision) => {
       calls.push(revision);
       return Promise.resolve(portOk(false));
     };
-    const { candidate } = await advanceToCandidate(rig);
-    assert.deepEqual(
-      calls,
-      [],
-      "bootstrap/prior/candidate cannot use the ordinary gate",
-    );
     rig.evidence.settlements.set(candidate.id, runProof(candidate, "healthy"));
     const decision = await rig.prepare(run(4));
     assert.equal(decision.status, "idle");

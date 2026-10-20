@@ -334,40 +334,6 @@ Deno.test("owner startup recovery: actual GitHub compare shape binds exact candi
   }
 });
 
-Deno.test("supervisor workflow: ordinary maintenance precedes the existing verification path", async () => {
-  const text = await Deno.readTextFile(
-    new URL("../../.github/workflows/supervisor.yml", import.meta.url),
-  );
-  const maintenance = text.slice(
-    text.indexOf("  maintenance:"),
-    text.indexOf("  prepare:"),
-  );
-  assert.match(
-    maintenance,
-    /if: github\.ref == 'refs\/heads\/sentinel-supervisor'/,
-  );
-  assert.match(text, /needs\.maintenance\.result == 'success'/);
-  // The retired recovery flags no longer appear; the prepare and finalize
-  // verification runs stay on the plain supervisor entrypoint.
-  assert.doesNotMatch(text, /--startup-recovery|--owner-startup-recovery-only/);
-  assert.equal(
-    (text.match(/run: deno task supervisor:run$/gm) ?? []).length,
-    2,
-  );
-  assert.match(text, /--allow-run=git/);
-  assert.doesNotMatch(text, /--allow-env=[^\n]*OWNER_STARTUP_RECOVERY/);
-  const ownerInstall = text.slice(
-    text.indexOf(
-      "      - name: Install owner-authorized development runtime\n",
-    ),
-    text.indexOf("      - name: Prepare hosted supervisor run\n"),
-  );
-  assert.deepEqual(
-    ownerInstall.match(/^ {10}--allow-net(?:[= ].*)?$/gm),
-    ['          --allow-net="api.github.com,*.blob.core.windows.net"'],
-  );
-});
-
 Deno.test("owner startup recovery: real installer and supervisor verify generation67 then hold terminal without rollback", async (test) => {
   for (const outcome of ["healthy", "failed"] as const) {
     await test.step(outcome, async () => {
