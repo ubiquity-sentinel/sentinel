@@ -9,6 +9,12 @@ continuation.
 
 ## Runtime and dispatch
 
+### Bounded hosted verification and launcher installation (2026-10-20)
+
+Hosted PRIOR and candidate verification each admit at most N=2 exact executions. Unsuccessful settlement consumes the release budget, including `not_started`. Exhausted PRIOR is abandoned; a failed candidate preserves its proof and restores the recorded prior before terminal abandonment. Abandonment preserves accounting and never claims task delivery. Ordinary work interleaves with verification and may use durable degraded admission after two settled failed verifications of its installed generation; degraded admission never fabricates healthy evidence.
+
+For ordinary hosted updates, CI-verified fast-forward launcher self-install replaces the owner-install ceremony, rollout rows and custody revision floors. An idle pointer and exact successful `test-local` check are required; intent, generation movement, bootstrap and included-release abandonment use expected-head CAS. Fresh installations must bootstrap healthily or restore the exact prior at the next generation. Failed SHAs remain journaled and cannot reinstall. Actual task custody, reservations, current-head internal structured review and CI before autonomous PR merge remain required. `sentinel-release` stays disabled.
+
 ### Explicit prepromotion owner supersession
 
 `SEMANTICS-10.md` preserves a genuinely completed and charged successor review

@@ -1,5 +1,6 @@
 /** Hosted actions-repair-host responsibility. */
 import { canonicalStringify } from "../contracts/canonical.ts";
+import { hostedOrdinaryAdmitted } from "../contracts/hosted-supervisor-verification.ts";
 import { asGitSha } from "../contracts/brands.ts";
 import { DenoReplayRuntime, type ReplayRuntimeV1 } from "../replay/runtime.ts";
 import { ReviewOwnerChannelClient } from "./review-owner-channel.ts";
@@ -796,13 +797,11 @@ export async function runActionsRepairHost(
   }
   const runtime =
     parseReleaseStateSnapshotV1(releaseRead.value.snapshot).hostedRuntimes[0];
-  const healthy = runtime?.lastHealthyProof;
   const healthyOrdinaryExecution = execution.purpose === "ordinary" &&
     runtime?.activeRevision === execution.revision &&
     runtime.generation === execution.generation &&
     canonicalStringify(runtime.execution) === canonicalStringify(execution) &&
-    healthy?.execution.revision === execution.revision &&
-    healthy.execution.generation === execution.generation;
+    hostedOrdinaryAdmitted(runtime);
 
   let queueReady = deps.job === "matrix_cell";
   let outcome: RepairCycleOutcomeV1 | null = null;

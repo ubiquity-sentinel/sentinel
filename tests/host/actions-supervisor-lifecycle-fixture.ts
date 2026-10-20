@@ -31,6 +31,7 @@ import {
   reviewReceipt,
   run,
   runProof,
+  skippedProof,
   TASK_TITLE,
 } from "./actions-supervisor-fixture.ts";
 import type { RigV1 } from "./actions-supervisor-fixture.ts";
@@ -57,15 +58,25 @@ export async function advanceToCandidate(
   { candidate: HostedExecutionIntentV1; prior: HostedExecutionIntentV1 }
 > {
   await bootstrapHealthy(rig);
+  await ordinaryTurn(rig, 9001);
   const request = releaseRequest();
   await rig.seedRepair([request], [reviewReceipt(request)]);
   rig.evidence.requests.add(request.id);
   const prior = requireRun(await rig.prepare(run(2)));
   assert.equal(prior.purpose, "prior");
   rig.evidence.settlements.set(prior.id, runProof(prior, "healthy"));
+  await ordinaryTurn(rig, 9002);
   const candidate = requireRun(await rig.prepare(run(3)));
   assert.equal(candidate.purpose, "candidate");
   return { candidate, prior };
+}
+
+/** An explicit interleaved admission preserves the preceding healthy proof. */
+export async function ordinaryTurn(rig: RigV1, runId: number): Promise<void> {
+  const intent = requireRun(await rig.prepare(run(runId)));
+  assert.equal(intent.purpose, "ordinary");
+  rig.evidence.settlements.set(intent.id, skippedProof(intent));
+  assert.equal((await rig.finalize(run(runId))).status, "idle");
 }
 
 /** A self-consistent statement whose text drifted from the reviewed task. */

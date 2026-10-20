@@ -1,5 +1,7 @@
 /** Every independently active custody floor must accept the same exact move. */
 import type { GitSha } from "../contracts/brands.ts";
+import { parseHostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
+import { tryParse } from "../contracts/validation.ts";
 import type {
   HostedExecutionIntentV1,
   HostedReleaseRecordV1,
@@ -8,7 +10,6 @@ import type {
 import type { ReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { OwnerDevelopmentInstallMoveV1 } from "./owner-install-types.ts";
 import {
-  allowsQueueExecution,
   allowsQueueOwnerInstallMove,
   allowsQueueRuntime,
   allowsQueueRuntimeMove,
@@ -62,11 +63,25 @@ export function allowsHostedOwnerInstallMove(
 export function allowsHostedExecution(
   execution: HostedExecutionIntentV1,
   releases: readonly HostedReleaseRecordV1[],
-  queue?: QueueRuntimeCapability,
-  custody?: ExistingPrRuntimeCapability,
+  _queue?: QueueRuntimeCapability,
+  _custody?: ExistingPrRuntimeCapability,
 ): boolean {
-  return allowsQueueExecution(execution, releases, queue) &&
-    allowsQueueExecution(execution, releases, existingPrRuntimePolicy(custody));
+  if (!tryParse(parseHostedExecutionIntentV1, execution).ok) return false;
+  if (execution.purpose === "ordinary" || execution.purpose === "bootstrap") {
+    return true;
+  }
+  const release = releases.find((r) => r.id === execution.releaseId);
+  if (!release) return false;
+  if (execution.purpose === "prior") {
+    return release.phase === "requested" &&
+      release.priorRevision === execution.revision;
+  }
+  if (execution.purpose === "candidate") {
+    return release.phase === "verifying" &&
+      release.request.revision === execution.revision;
+  }
+  return release.phase === "rollback_verifying" &&
+    release.priorRevision === execution.revision;
 }
 
 export function allowsHostedRuntimeTransition(

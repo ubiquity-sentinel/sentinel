@@ -12,10 +12,7 @@ import {
   EXISTING_PR_RUNTIME_CAPABILITY_REFUSED,
   type ExistingPrRuntimeCapability,
 } from "./existing-pr-runtime-capability.ts";
-import {
-  allowsHostedExecution,
-  allowsHostedRuntimeMove,
-} from "./hosted-runtime-compatibility.ts";
+import { hostedOrdinaryAdmitted } from "../contracts/hosted-supervisor-verification.ts";
 
 export interface HostedRuntimeCompatibilityBinding {
   state: Pick<StateReadView, "readRelease">;
@@ -33,8 +30,8 @@ export interface HostedRuntimeCompatibilityBinding {
  */
 export async function revalidateHostedRuntimeCompatibility(
   input: HostedRuntimeCompatibilityBinding,
-  queue?: QueueRuntimeCapability,
-  custody: ExistingPrRuntimeCapability = EXISTING_PR_RUNTIME_CAPABILITY,
+  _queue?: QueueRuntimeCapability,
+  _custody: ExistingPrRuntimeCapability = EXISTING_PR_RUNTIME_CAPABILITY,
 ): Promise<PortResultV1<void>> {
   const refused = () =>
     portError("unavailable", EXISTING_PR_RUNTIME_CAPABILITY_REFUSED);
@@ -43,7 +40,7 @@ export async function revalidateHostedRuntimeCompatibility(
     Number.isSafeInteger(input.clock.now()) &&
     input.clock.now() < input.deadline;
   try {
-    if (custody?.custodyActivated !== true || !live()) return refused();
+    if (!live()) return refused();
     const { execution, identity } = input;
     if (
       execution.runId !== identity.runId ||
@@ -64,16 +61,7 @@ export async function revalidateHostedRuntimeCompatibility(
       runtime === null || runtime.generation !== execution.generation ||
       canonicalStringify(runtime.execution) !== canonicalStringify(execution) ||
       runtime.activeRevision !== input.controllerSha ||
-      runtime.lastHealthyProof?.startupReady !== true ||
-      runtime.lastHealthyProof?.execution.revision !== execution.revision ||
-      runtime.lastHealthyProof?.execution.generation !== execution.generation ||
-      !allowsHostedRuntimeMove(
-        runtime.activeRevision,
-        execution.revision,
-        queue,
-        custody,
-      ) ||
-      !allowsHostedExecution(execution, snapshot.hostedReleases, queue, custody)
+      !hostedOrdinaryAdmitted(runtime)
     ) return refused();
     const after = await input.state.readRelease();
     return live() && after.ok && after.value.status === "found" &&

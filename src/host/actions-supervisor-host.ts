@@ -19,7 +19,8 @@ import {
   reviewTaskStatementDigest,
 } from "../contracts/review-receipt.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
-import { GitHubApiClient } from "../github/client.ts";
+import { HostedSupervisorGitHubClient } from "./actions-supervisor-install-api.ts";
+import { hostedOrdinaryAdmitted } from "../contracts/hosted-supervisor-verification.ts";
 import { fetchHttpTransport } from "../github/http.ts";
 import type { HttpTransportV1 } from "../github/http.ts";
 import { DenoReplayRuntime } from "../replay/runtime.ts";
@@ -145,7 +146,7 @@ export async function runHostedSupervisorHost(
     clock: input.clock,
     mode: cooldownMode,
   });
-  const client = new GitHubApiClient({
+  const client = new HostedSupervisorGitHubClient({
     repository: { ...SUPERVISOR_REPOSITORY },
     apiBaseUrl: "https://api.github.com",
     http: input.http,
@@ -183,6 +184,9 @@ export async function runHostedSupervisorHost(
       }
     },
     verifyRevision: (revision) => client.verifyHostedRevision(revision),
+    verifyAncestor: (ancestor, descendant) =>
+      client.verifyAncestor(ancestor, descendant),
+    verifyLauncherCi: (revision) => client.verifyLauncherCi(revision),
     verifyMatrixOrdinaryRevision: (revision) =>
       client.verifyMatrixOrdinaryRevision(revision),
     verifyRequest: (request) => client.verifyHostedReleaseRequest(request),
@@ -271,10 +275,7 @@ export async function runHostedSupervisorHost(
     ) {
       throw new Error(STATIC_RESULT);
     }
-    const healthy = runtime.lastHealthyProof;
-    modelStartsEnabled = healthy !== null &&
-      healthy.execution.revision === runtime.activeRevision &&
-      healthy.execution.generation === runtime.generation;
+    modelStartsEnabled = hostedOrdinaryAdmitted(runtime);
   }
   await writeOutput("modelStartsEnabled", String(modelStartsEnabled));
   return {
