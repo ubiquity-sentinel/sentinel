@@ -12,6 +12,7 @@ import type { GitSha } from "../contracts/brands.ts";
 import type { StateKind } from "./state-records.ts";
 import { readCommitTree } from "./state-codec.ts";
 import { openReleaseHistoryView } from "./state-history.ts";
+import type { StateTreeMemo } from "./state-repair-history-cache.ts";
 
 /** The two fixed state refs; roles read both, each role writes only its own. */
 export const REPAIR_STATE_REF = "refs/heads/sentinel-state/repair";
@@ -148,6 +149,7 @@ export const RELEASE_REF = RELEASE_STATE_REF;
 
 export interface OpContext {
   directory: string;
+  treeMemo?: StateTreeMemo;
 }
 
 /** Local plumbing failure while forming the candidate state commit. */
@@ -285,6 +287,7 @@ export class StateGitTransport {
     ref: string,
     kind: StateKind,
     history: "latest" | "complete" = "latest",
+    expectedHead?: GitSha,
   ): Promise<PortResultV1<LoadedState>> {
     const init = await this.git(op, ["init", "-q"]);
     if (!init.ok) return this.gitFailure("unavailable", "init", init);
@@ -315,6 +318,12 @@ export class StateGitTransport {
       );
     }
     const head = lookupParsed.head;
+    if (expectedHead !== undefined && head !== expectedHead) {
+      return portError(
+        "conflict",
+        "historical repair head changed or is absent",
+      );
+    }
     if (!/^[0-9a-f]{40}$/.test(head)) {
       return portError("invalid", "remote state ref has a malformed commit id");
     }
