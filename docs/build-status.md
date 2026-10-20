@@ -9,10 +9,46 @@ ownership, authority or acceptance.
 
 ## Active task register
 
-Snapshot: 2026-10-20 19:19 UTC; current Codex coordinator resumed native Claude
-session `6fec4968-1e6c-4836-a897-d75f9cc3e1f3` after its quota interruption. The
-fresh observations below supersede the older W15 source snapshot retained in Git
-history. Two-target acceptance remains pending.
+Snapshot: 2026-10-20 22:57 UTC; the current Codex coordinator continues native
+Claude session `6fec4968-1e6c-4836-a897-d75f9cc3e1f3`. This checkpoint
+supersedes the earlier observations retained below. Two-target autonomous
+delivery acceptance remains pending.
+
+- Canonical development and launcher name
+  `f0d3a8410c672a03a614a333568704ad568cf38c`, with passing CI `39504650114:1`.
+  Generation 84 remains installed at `25b24cdc7a09c2f871ff2d37093e6ea8d7f6e701`;
+  release `95233ab893da51db0b846aa845b79ac4bb3d7538` retains the healthy
+  scheduled ordinary proof and cleared execution. Auto-follow is on;
+  `sentinel-release` remains disabled.
+- Automatic launcher advancement is verified. Supervisor `39506623439:1` settled
+  the historical AI retry but timed out in maintenance before generation-85
+  prepare. Successor `39509826829:1` also exceeded the native maintenance limit.
+  New run `39511914411:1` was active at 22:59 UTC and is preserved. The primary
+  paused `supervisor-dispatch.yml` at that time to prevent further repeated
+  admissions while the measured history correction is validated; restoration is
+  required after the corrected candidate is ready. Auto-follow stays on. An
+  empty runtime slot does not establish an idle workflow boundary.
+- Current implementation owner: `sentinel_state`, module
+  `recovery-state-history-20261020`, worktree
+  `.codex-worktrees/master-plan-recovery-state-history-20261020-a1ef197afa7`,
+  branch `codex/master-plan-recovery-state-history-20261020-a1ef197afa7`, exact
+  base `f0d3a8410c672a03a614a333568704ad568cf38c`. Owned paths are
+  `src/state/mod.ts`, `src/state/state-git.ts`, `src/state/state-codec.ts`, new
+  `src/state/state-repair-history-cache.ts`, and new
+  `tests/state/git-state-repair-history-cache_test.ts`. The measured 120-second
+  recovery walk reached only 32 of the required 194 ancestors, returning no
+  proofs; repeated complete fetches dominated cost. The bounded internal cache
+  must retain fresh expected-head checks, full integrity validation, accounting
+  and existing public interfaces. Its five-record probe, local integration, CI
+  and live maintenance acceptance are pending.
+- State-history worker acceptance: the unchanged captured 194-ancestor fixture
+  returned all five exact original/rejected bindings in 72.173 seconds with no
+  120-second expiry, receipt `56e43107-4da2-4e93-a3d4-23f36bbd13d9`. The prior
+  147- and 169-ancestor attempts remain failed measurements. Current/history
+  read concurrency preserves complete fresh byte validation, deterministic
+  failure precedence and settlement of all child operations. Canonical
+  integration capture, exact-SHA hosted CI, installation, maintenance completion
+  and both target deliveries remain pending.
 
 - Continuation ownership: `/Users/nv/repos/ubiquity/sentinel`, branch
   `development`, exact base `e05ba64f1142710e4a902a9ae088593a1ca411f5`; preserve

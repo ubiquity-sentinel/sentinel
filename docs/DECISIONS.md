@@ -185,6 +185,20 @@ retry charge is already submitted, but only through the same authenticated
 result and ordinary idempotent settlement; it preserves the existing charge and
 timestamp.
 
+Repair-history reads may reuse one private, bounded fetched repository per
+state-store instance. Every read still requires fresh entry and exit checks of
+the exact expected remote head, ancestry proof, and complete current and
+historical state validation. Validated decoding may be reused only after exact
+fresh byte equality; returned state must remain independently cloned. Expiry,
+corruption, ref movement and failed initialization invalidate retained state,
+and cleanup is limited to the owned cache directory.
+
+Independent read-only state proofs may run concurrently when all operations
+settle before return and the original error precedence is preserved. This
+optimization changes neither the public state port nor the recovery walk's
+120-second and 256-ancestor limits. Local throughput evidence does not establish
+live maintenance or autonomous delivery acceptance.
+
 ### Explicit prepromotion owner supersession (historical; superseded 2026-10-20)
 
 The following ceremony records historical contracts and receipt semantics. The
