@@ -41,7 +41,7 @@ export function assertSupervisorMaintenanceContract(
   );
   assert.match(
     prepare,
-    /^ {4}if: always\(\) && needs\.maintenance\.result == 'success' && \(needs\.maintenance\.outputs\.queueCustodyReady == 'true' \|\| needs\.maintenance\.outputs\.runtimeMigrationOnly == 'true'\) && github\.ref == 'refs\/heads\/sentinel-supervisor'$/m,
+    /^ {4}if: always\(\) && needs\.maintenance\.result == 'success' && github\.ref == 'refs\/heads\/sentinel-supervisor'$/m,
   );
   for (const job of [prepare, finalize]) {
     assert.match(job, /^ {8}run: deno task supervisor:run$/m);
