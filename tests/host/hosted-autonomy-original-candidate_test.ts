@@ -58,6 +58,9 @@ Deno.test("original candidate: unproven remote identity, policy and CI leave cus
       ["closed PR", () => {
         f.observations.prOpen = false;
       }],
+      ["foreign PR base ref", () => {
+        f.observations.baseRef = "another-branch";
+      }],
       ["unreadable issue", () => {
         f.observations.issueOpen = null;
       }],
@@ -74,11 +77,18 @@ Deno.test("original candidate: unproven remote identity, policy and CI leave cus
         f.observations.base = SHA2;
         f.observations.ancestry = false;
       }],
+      ["base custody moves after observation", () => {
+        f.observations.moveBaseOnRecheck = true;
+      }],
     ] as const;
     for (const [name, control] of controls) {
       await t.step(name, async () => {
         Object.assign(f.observations, {
           base: SHA1,
+          prBase: SHA1,
+          baseRef: "development",
+          baseReads: 0,
+          moveBaseOnRecheck: false,
           originalGreen: true,
           liveHead: ORIGINAL,
           preserved: ORIGINAL,
@@ -175,6 +185,17 @@ Deno.test("original candidate: a state race cannot overwrite the other writer", 
 Deno.test("original candidate: moved-base recovery refreshes before green CI and internal review", async () => {
   const f = await originalCandidateRig(true);
   try {
+    const observedPull = await f.github.readPull(7, "development");
+    assert.equal(
+      observedPull?.baseSha,
+      SHA1,
+      "observed REST PR snapshot remains on the old base",
+    );
+    assert.equal(
+      f.observations.base,
+      SHA2,
+      "live development target has independently advanced",
+    );
     f.observations.originalGreen = false;
     assert.equal((await f.runMaintenance()).status, "applied");
     f.rig.github.readChecks = (head) =>

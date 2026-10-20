@@ -26,6 +26,7 @@ import {
 } from "../state/helpers.ts";
 import { releaseSnapshot, repairSnapshot } from "./hosted-autonomy-rig.ts";
 import { withDarkQueueAuthority } from "./hosted-autonomy-preservation-fixtures.ts";
+import { parseHostedAutonomyPull } from "../../ops/hosted-autonomy-github-pull.ts";
 
 export const ORIGINAL = SHA3;
 export const REJECTED = "cccccccccccccccccccccccccccccccccccccccc" as GitSha;
@@ -143,6 +144,10 @@ export async function originalCandidateRig(advanced = false) {
   rig.clock.advance(60_000);
   const observations = {
     base: advanced ? SHA2 : SHA1,
+    prBase: SHA1,
+    baseRef: "development",
+    baseReads: 0,
+    moveBaseOnRecheck: false,
     originalGreen: true as boolean | null,
     liveHead: ORIGINAL,
     preserved: ORIGINAL,
@@ -156,7 +161,9 @@ export async function originalCandidateRig(advanced = false) {
     readBaseTip: (branch) =>
       Promise.resolve(
         branch === "development"
-          ? observations.base
+          ? (++observations.baseReads > 1 && observations.moveBaseOnRecheck
+            ? SHA2
+            : observations.base)
           : branch === BRANCH
           ? observations.liveHead
           : observations.preserved,
@@ -164,19 +171,15 @@ export async function originalCandidateRig(advanced = false) {
     hasSuccessfulCheck: () => Promise.resolve(true),
     hasAllChecksGreen: () => Promise.resolve(observations.originalGreen),
     readPull: () =>
-      Promise.resolve({
+      Promise.resolve(parseHostedAutonomyPull({
         number: 7,
         state: observations.prOpen ? "open" : "closed",
         merged: false,
-        headSha: observations.liveHead,
-        baseRef: "development",
-        baseSha: observations.base,
-        author: "ubiquity-sentinel[bot]",
-        mergeCommitSha: null,
-        parents: [],
-        revisionOnBaseBranch: false,
-        baseAncestorOfRevision: false,
-      }),
+        head: { sha: observations.liveHead },
+        // REST base.sha / GraphQL baseRefOid can lag the independently read branch target.
+        base: { ref: observations.baseRef, sha: observations.prBase },
+        user: { login: "ubiquity-sentinel[bot]" },
+      })),
     listPullsByHeadRef: () =>
       Promise.resolve([{
         number: 7,
@@ -184,7 +187,7 @@ export async function originalCandidateRig(advanced = false) {
         merged: false,
         headSha: observations.liveHead,
         headRef: BRANCH,
-        baseRef: "development",
+        baseRef: observations.baseRef,
         author: "ubiquity-sentinel[bot]",
       }]),
     readIssueOpen: () => Promise.resolve(observations.issueOpen),
