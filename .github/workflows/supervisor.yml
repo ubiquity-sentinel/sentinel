@@ -147,7 +147,7 @@ jobs:
 
   prepare:
     needs: maintenance
-    if: always() && needs.maintenance.result == 'success' && (needs.maintenance.outputs.queueCustodyReady == 'true' || needs.maintenance.outputs.runtimeMigrationOnly == 'true') && github.ref == 'refs/heads/sentinel-supervisor'
+    if: always() && needs.maintenance.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Prepare verifies the exact launcher's ancestry and successful test-local
@@ -208,7 +208,7 @@ jobs:
   matrix_plan:
     name: matrix_plan
     needs: [maintenance, prepare]
-    if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.maintenance.outputs.queueCustodyReady == 'true' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && needs.prepare.outputs.modelStartsEnabled == 'true' }}
+    if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && needs.prepare.outputs.modelStartsEnabled == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment:
@@ -359,7 +359,7 @@ jobs:
   matrix_cell:
     name: matrix_cell (${{ matrix.cellId }})
     needs: [maintenance, prepare, matrix_plan]
-    if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.maintenance.outputs.queueCustodyReady == 'true' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && needs.matrix_plan.result == 'success' && needs.matrix_plan.outputs.hasCells == 'true' }}
+    if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && needs.matrix_plan.result == 'success' && needs.matrix_plan.outputs.hasCells == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 300
     environment:
@@ -548,7 +548,7 @@ jobs:
     # missing producers charged and unresolved. finalize still waits for every
     # cell and this consumer, so no producer is settled before its own job ends.
     needs: [maintenance, prepare, matrix_plan]
-    if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && ((needs.maintenance.outputs.queueCustodyReady == 'true' && (needs.prepare.outputs.modelStartsEnabled != 'true' || needs.matrix_plan.result == 'success')) || (needs.maintenance.outputs.runtimeMigrationOnly == 'true' && needs.prepare.outputs.modelStartsEnabled == 'false' && needs.prepare.outputs.executionPurpose == 'bootstrap' && needs.prepare.outputs.revision == needs.maintenance.outputs.runtimeMigrationRevision && needs.prepare.outputs.generation == needs.maintenance.outputs.runtimeMigrationGeneration)) }}
+    if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && (needs.prepare.outputs.modelStartsEnabled != 'true' || needs.matrix_plan.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment:
