@@ -17,8 +17,6 @@ Deno.test("workflow maintenance contract: rejects mixed recovery and ordinary ad
   );
   const skippedIf = "    if: $" + "{{ false }}";
   const protectedIf = "    if: github.ref == 'refs/heads/sentinel-supervisor'";
-  const custodyReady =
-    " && (needs.maintenance.outputs.queueCustodyReady == 'true' || needs.maintenance.outputs.runtimeMigrationOnly == 'true')";
   const ordinary = text
     .replace(skippedIf, protectedIf)
     .replace(
@@ -35,10 +33,7 @@ Deno.test("workflow maintenance contract: rejects mixed recovery and ordinary ad
     .replace(
       "needs.maintenance.result == 'success'",
       "needs.maintenance.result == 'skipped'",
-    )
-    // The historical recovery-only fixture suppresses maintenance entirely;
-    // ordinary admission must still require its successful custody output.
-    .replace(custodyReady, "");
+    );
   assert.equal(assertSupervisorMaintenanceContract(ordinary), "ordinary");
   assert.equal(assertSupervisorMaintenanceContract(recovery), "recovery");
   for (
@@ -54,8 +49,6 @@ Deno.test("workflow maintenance contract: rejects mixed recovery and ordinary ad
       ),
       recovery.replace("needs: maintenance\n", ""),
       ordinary.replace(" && needs.maintenance.result == 'success'", ""),
-      ordinary.replace(custodyReady, ""),
-      ordinary.replace(custodyReady, custodyReady.replace("'true'", "'false'")),
     ]
   ) assert.throws(() => assertSupervisorMaintenanceContract(malformed));
 });
@@ -1219,7 +1212,8 @@ Deno.test("issue48 recovery: supervisor workflow dependency and locking contract
     "the maintenance job mounts the protected environment",
   );
 
-  // Ordinary prepare requires successful maintenance and its custody proof.
+  // Ordinary prepare requires successful maintenance; exact runtime admission
+  // replaces the retired custody-floor workflow predicates.
   // The pinned recovery-only controller may skip maintenance only with the
   // complete mutually exclusive contract. Repair retains every prior gate.
   const prepare = text.slice(prepareAt, repairAt);
@@ -1228,18 +1222,14 @@ Deno.test("issue48 recovery: supervisor workflow dependency and locking contract
     prepare.includes(
       `if: always() && needs.maintenance.result == '${
         mode === "ordinary" ? "success" : "skipped"
-      }'${
-        mode === "ordinary"
-          ? " && (needs.maintenance.outputs.queueCustodyReady == 'true' || needs.maintenance.outputs.runtimeMigrationOnly == 'true')"
-          : ""
-      } && github.ref == 'refs/heads/sentinel-supervisor'`,
+      }' && github.ref == 'refs/heads/sentinel-supervisor'`,
     ),
   );
   const repair = text.slice(repairAt, finalizeAt);
   assert.ok(repair.includes("needs: [maintenance, prepare, matrix_plan]"));
   assert.ok(
     repair.includes(
-      "if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && ((needs.maintenance.outputs.queueCustodyReady == 'true' && (needs.prepare.outputs.modelStartsEnabled != 'true' || needs.matrix_plan.result == 'success')) || (needs.maintenance.outputs.runtimeMigrationOnly == 'true' && needs.prepare.outputs.modelStartsEnabled == 'false' && needs.prepare.outputs.executionPurpose == 'bootstrap' && needs.prepare.outputs.revision == needs.maintenance.outputs.runtimeMigrationRevision && needs.prepare.outputs.generation == needs.maintenance.outputs.runtimeMigrationGeneration)) }}",
+      "if: ${{ !cancelled() && needs.maintenance.result == 'success' && needs.prepare.result == 'success' && github.ref == 'refs/heads/sentinel-supervisor' && needs.prepare.outputs.run == 'true' && (needs.prepare.outputs.modelStartsEnabled != 'true' || needs.matrix_plan.result == 'success') }}",
     ),
   );
   const finalize = text.slice(finalizeAt);
