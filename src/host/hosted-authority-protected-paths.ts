@@ -107,6 +107,9 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "ops/hosted-autonomy-compatibility-queue.ts",
     "ops/hosted-autonomy-compatibility.ts",
     "ops/hosted-autonomy-main.ts",
+    "ops/hosted-autonomy-runner.ts",
+    "ops/hosted-autonomy-maintenance.ts",
+    "ops/hosted-autonomy-state.ts",
     "src/host/hosted-runtime-bootstrap.ts",
     // Parent verification before optional mint-metadata handoff to the trusted child.
     "src/host/hosted-runtime-principal-handoff.ts",
