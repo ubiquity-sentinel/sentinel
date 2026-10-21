@@ -9,6 +9,50 @@ ownership, authority or acceptance.
 
 ## Active task register
 
+Snapshot: 2026-10-21 04:19 UTC. Generation 85 and the five original-candidate
+restorations remain verified on `2081f978`; current ordinary delivery is still
+blocked. New dispatcher admissions remain paused after the ordinary timeout,
+with restoration required after the locally prepared correction passes its
+gates.
+
+- Local tips `1faffea793481cf4099531c6f0c71536396b562e` and
+  `786685f46f325e8f2fb4e5cb57dc7caa20d99fef` implement ordinary repair-read
+  object/validated-decoding reuse, then remove redundant warm acquisition. Warm
+  reads retain exactly two fresh ref observations, complete byte validation,
+  clones and all cooldown/authority/CAS calls, with no repeated setup/fetch.
+  Focused consumer/safety/history/CAS controls and scoped static checks passed;
+  independent receipt/input verification passed. Canonical profiling
+  demonstrated material data reuse but did not complete the full historical
+  delivery scan within the 300-second diagnostic process bound. Both timeouts
+  remain failed full-scan acceptance, not live delivery proof.
+- The final saved-context profile completed eleven of twelve started resolutions
+  and then timed out, with no effects. The two oldest slow candidates, AI issues
+  117 and 263, already lack required task acceptance; issue 120 also lacks it,
+  and issue 421 records nonfulfillment. Tip
+  `62552c59bd1227b13d18a44558b47d42eab31bda` moves exactly these existing
+  necessary refusals before expensive reads. Five variants reproduced
+  unnecessary reads before the fix; the repaired and
+  positive/current-head/carried-review consumers passed. Later live authority,
+  carried identities and digest checks are unchanged.
+- Control-flow diagnosis found the existing maintenance cutoff was gated by
+  `writes.applied`, and delivery had no cutoff in its context. This contradicts
+  the recorded bounded-upkeep deferral intent and permits no-write historical
+  scans to prevent prepare/repair indefinitely. Isolated module
+  `recovery-delivery-deadline-20261021`, owner `bootstrap_repro`, now enforces
+  the existing absolute pass-deadline-minus-reserve admission cutoff across
+  no-write passes and delivery/rerun loops. It introduces no numeric limit,
+  model cap or cursor. Focused regressions reproduced post-cutoff reads/effects
+  and now pass; final consumer/readback/error-propagation and existing
+  continuation-fixture checks remain pending.
+- The final candidate must demonstrate supported safe deferral, retained prior
+  writes, unchanged unvisited work/accounting and ordinary prepare eligibility.
+  Scanning the entire historical table inside a five-minute diagnostic profile
+  is not a product requirement. Failed profile receipts remain diagnostic
+  evidence; exact combined local checks, independent evidence audit, native CI
+  and real ordinary reviewed delivery on both targets are still required.
+
+### Prior checkpoint at 03:25 UTC
+
 Snapshot: 2026-10-21 03:25 UTC. The same Claude continuation remains active.
 Generation 85 installation and original-candidate restoration are verified;
 ordinary delivery on both targets remains unproved. This checkpoint supersedes

@@ -230,6 +230,23 @@ positive check never authorizes delivery. All later
 current-head/full-snapshot/row checks, review/task/CI proofs and CAS guards
 remain required, and a refreshed pass considers newly valid reviews normally.
 
+The existing maintenance admission cutoff applies to no-write passes as well as
+continuation after a write. Delivery and CI-rerun loops must check the same
+absolute cutoff before admitting another record, read batch or effect. An
+admitted operation and its mandatory verification/readback finish before
+deferral; no whole-phase promise race or abandoned effects are permitted. A
+no-write deadline exit is the existing no-change/deferred outcome so protected
+prepare and repair can continue; prior applied state writes retain their
+aggregate result. Unvisited records and charges remain untouched and eligible
+next pass. The existing pass deadline and phase reserve are unchanged; checks
+are cooperative and do not claim cancellation of unbounded Git operations.
+
+Queue booking may also refuse an issue-backed receipt before expensive reads
+when its task acceptance is absent, names another issue, or is not fulfilled.
+These are necessary failures of the existing later authorization predicate.
+Carried head/base identity and live task-digest verification remain unchanged; a
+positive early check never authorizes a merge.
+
 Maintenance progress diagnostics use a closed set of fixed phase names,
 start/finish events and observational monotonic elapsed time, bounded to 50
 records per invocation. They expose no state, identifiers, errors, URLs or
