@@ -37,9 +37,15 @@ instructions and their routed procedures still apply.
 
 ## Development and runtime review
 
+### Native Codex review mode is mandatory
+
+Owner clarification, 2026-10-21: Codex review is a dedicated mode, not a normal Codex session with a selected reviewer model. Invoke `codex review`, `codex exec review`, or the supported app-server `review/start` entrypoint and let Codex resolve its reviewer. Do not select an implementation/general model or override reviewer model/effort to work around a review failure. A `codex-auto-review` model alias, copied review rubric, JSON output schema, or a prompt asking a normal `turn/start` to review does not enter review mode and does not satisfy this requirement.
+
+For app-server integration, preserve the native `enteredReviewMode` and `exitedReviewMode` lifecycle and bind the actual review thread, turn, target and result. An unavailable native review path must be diagnosed; it must not be replaced with a model-selected normal turn. Keep existing current-head/base/task acceptance, CI, accounting and merge gates. This clarification does not authorize extra charged attempts, refunds or a changed review-round ceiling. Routine reviewer selection is owned by Codex review mode and is not an owner model-selection decision.
+
 Development changes require no development PR for every edit. Make the scoped change, immediately test it and deliver directly. The 2026-10-20 owner preference for development review is GitHub `@codex review` first, with local `codex review` / `codex-u review` as fallback; this supersedes the earlier blanket development-review prohibition. It does not waive autonomous runtime target PR review, CI or merge gates.
 
-GitHub `@codex review` reviewer statements are retired for autonomous runtime target PRs. The internal structured reviewer (gateway `codex-auto-review` through the runtime review service) is the only runtime target review path. Runtime code changes require a completed current-head receipt with no unresolved P0/P1, passing current CI and applicable target branch protections before autonomous merge. Missing/stale/unavailable evidence cannot pass. Development reviews follow the separate owner preference above.
+GitHub `@codex review` reviewer statements are retired for autonomous runtime target PRs. The internal runtime review service must invoke native Codex review mode and validate its structured result; selecting a gateway model named `codex-auto-review` is not a substitute. Runtime code changes require a completed current-head receipt with no unresolved P0/P1, passing current CI and applicable target branch protections before autonomous merge. Missing/stale/unavailable evidence cannot pass. Development reviews follow the separate owner preference above.
 
 Do not edit the vendored upstream rubric constant in
 `src/github/codex-review-rubric.ts`. The attached harness schema overrides its
