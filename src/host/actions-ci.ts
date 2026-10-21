@@ -4,7 +4,7 @@
  * GitHub can park a `pull_request` CI run created by `github-actions[bot]` in
  * `action_required` until a trusted actor approves it. This helper reads the
  * current repair state, selects all eligible nonterminal
- * scope-0 `ubiquity/sentinel` records that carry a durable PR/head/branch
+ * scope-0 `Ubiquity-Sentinel/sentinel` records that carry a durable PR/head/branch
  * candidate, and asks the real `GitHubApiClient` to approve the ONE exact
  * matching run for each through the existing token, HTTP transport, clock and
  * durable cooldown gate. It writes no work/budget state, starts no model,
@@ -29,7 +29,7 @@ import type { HttpTransportV1 } from "../github/http.ts";
 export const ACTIONS_CI_API_BASE_URL = "https://api.github.com";
 
 const SELF_REPOSITORY: RepositoryIdentityV1 = {
-  owner: "ubiquity",
+  owner: "Ubiquity-Sentinel",
   name: "sentinel",
   installationId: 0,
 };

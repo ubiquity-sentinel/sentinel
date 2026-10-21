@@ -116,7 +116,7 @@ export async function ownerSupersessionSourceApproved(
     const compared = await ownerDevelopmentInstallApi(
       input.token,
       "GET",
-      `/repos/ubiquity/sentinel/compare/${ancestor}...${target}?per_page=1&page=2`,
+      `/repos/Ubiquity-Sentinel/sentinel/compare/${ancestor}...${target}?per_page=1&page=2`,
     );
     if (
       !compared.ok || compared.value.status !== 200 ||

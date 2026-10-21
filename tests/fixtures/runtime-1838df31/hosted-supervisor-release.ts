@@ -60,8 +60,9 @@ export function parseHostedReleaseRecordV1(
   // installation, environment, status or review-less request is representable.
   const repository = request.target.repository;
   if (
-    repository.owner !== "ubiquity" || repository.name !== "sentinel" ||
-    repository.installationId !== 0
+    (repository.owner !== "ubiquity" &&
+      repository.owner !== "Ubiquity-Sentinel") ||
+    repository.name !== "sentinel" || repository.installationId !== 0
   ) {
     fail(
       `${path}.request.target.repository`,

@@ -114,7 +114,7 @@ const ROOT = decodeURIComponent(HERE.pathname).replace(
 );
 
 const TARGET_ID = "issue-ubiquity-sentinel-48" as WorkItemId;
-const REPOSITORY = "ubiquity/sentinel";
+const REPOSITORY = "Ubiquity-Sentinel/sentinel";
 const PR_NUMBER = 51;
 const PR_HEAD = "1a".repeat(20) as GitSha;
 const PR_BASE = "2b".repeat(20) as GitSha;
@@ -244,7 +244,7 @@ function runtimeRecord(
   return parseHostedRuntimeRecordV1({
     version: "v1",
     kind: "hosted_runtime",
-    id: "ubiquity/sentinel:0:production",
+    id: "Ubiquity-Sentinel/sentinel:0:production",
     activeRevision: RUNTIME_REVISION,
     generation: 1,
     lastHealthyProof: null,
@@ -692,7 +692,7 @@ Deno.test("issue48 recovery: bounded preflight rejections write nothing", async 
     await expectRejected(
       rig,
       await runRig(rig, {
-        binding: { runtimeId: "ubiquity/sentinel:0:staging" },
+        binding: { runtimeId: "Ubiquity-Sentinel/sentinel:0:staging" },
       }),
       "runtime_mismatch",
     );
@@ -1253,7 +1253,7 @@ Deno.test("issue48 recovery: hosted identity rejection is pure and exact", () =>
     runId: "34874909140",
     runAttempt: "1",
     workflowRef:
-      "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+      "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
     sha,
     workflowSha: sha,
     checkoutHead: sha,
@@ -1272,7 +1272,7 @@ Deno.test("issue48 recovery: hosted identity rejection is pure and exact", () =>
       [
         {
           workflowRef:
-            "ubiquity/sentinel/.github/workflows/dispatch.yml@refs/heads/sentinel-supervisor",
+            "Ubiquity-Sentinel/sentinel/.github/workflows/dispatch.yml@refs/heads/sentinel-supervisor",
         },
         "workflow_ref",
       ],

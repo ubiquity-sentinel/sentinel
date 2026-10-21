@@ -45,8 +45,8 @@ for (const nativeCompletion of [false, true]) {
       event: "workflow_dispatch",
       head_branch: "sentinel-supervisor",
       head_sha: RECOVERY_OLD_LAUNCHER,
-      repository: { id: 1, full_name: "ubiquity/sentinel" },
-      head_repository: { id: 1, full_name: "ubiquity/sentinel" },
+      repository: { id: 1, full_name: "Ubiquity-Sentinel/sentinel" },
+      head_repository: { id: 1, full_name: "Ubiquity-Sentinel/sentinel" },
       status: "completed",
       run_started_at: new Date(T0 + 4000).toISOString(),
       updated_at: new Date(T0 + 4500).toISOString(),
@@ -126,7 +126,7 @@ for (const nativeCompletion of [false, true]) {
           },
         }),
         env: {
-          GITHUB_REPOSITORY: "ubiquity/sentinel",
+          GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
           GITHUB_REF: "refs/heads/sentinel-supervisor",
           GITHUB_JOB: "prepare",
           GITHUB_RUN_ID: "72",
@@ -134,7 +134,7 @@ for (const nativeCompletion of [false, true]) {
           GITHUB_SHA: LAUNCHER,
           GITHUB_WORKFLOW_SHA: LAUNCHER,
           GITHUB_WORKFLOW_REF:
-            "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+            "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
           GITHUB_TOKEN: "offline-native-token-value",
         },
         writeOutput: (name, value) => {

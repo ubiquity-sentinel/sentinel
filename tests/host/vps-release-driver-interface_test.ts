@@ -1,6 +1,6 @@
 /**
  * Pins the bridge to the owner-pinned driver's bridge-facing VpsJournalMetrics
- * interface (ubiquity/sentinel#150). Each composition runs the exact upstream
+ * interface (Ubiquity-Sentinel/sentinel#150). Each composition runs the exact upstream
  * metrics bytes of ai.ubq.fi 21e4a2a9 (pinned today) or e50c298b
  * (ubiquity/ai.ubq.fi#1027) through the real loader, so a mismatch with the
  * driver fails here instead of refusing every VPS release at release time.

@@ -63,7 +63,7 @@ export function observation(): CanaryObservation {
 }
 export async function rig() {
   const host: CanaryHost = {
-    repository: "ubiquity/sentinel",
+    repository: "Ubiquity-Sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     sha: SHA3,
     workflowSha: SHA3,

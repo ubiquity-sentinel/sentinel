@@ -215,7 +215,7 @@ Deno.test("hosted principal: actual App token scope binds native repository ID/n
     name: "ai.ubq.fi",
   });
   rig.scopeInput.repository = {
-    owner: "ubiquity",
+    owner: "Ubiquity-Sentinel",
     name: "sentinel",
     installationId: 0,
   };

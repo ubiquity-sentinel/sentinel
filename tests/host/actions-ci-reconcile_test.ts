@@ -237,7 +237,7 @@ Deno.test(
       const headRef = record.target.branch as string;
       rig.http.on(
         "GET",
-        `/repos/ubiquity/sentinel/pulls/${pr}`,
+        `/repos/Ubiquity-Sentinel/sentinel/pulls/${pr}`,
         () => {
           incompletePrReads++;
           return response(

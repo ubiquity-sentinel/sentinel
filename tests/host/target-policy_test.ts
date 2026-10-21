@@ -81,9 +81,10 @@ Deno.test("target policy: the gateway's Bun configuration keeps the Deno-era pro
 
 Deno.test("target policy: Sentinel policy and non-gateway trusted templates stay unchanged", () => {
   for (const name of ["sentinel", "another-repo"]) {
+    const owner = name === "sentinel" ? "Ubiquity-Sentinel" : "ubiquity";
     const config = createTargetConfigV1(template, {
-      slug: `ubiquity/${name}`,
-      owner: "ubiquity",
+      slug: `${owner}/${name}`,
+      owner,
       name,
     }, "main");
     assert.deepEqual(config.commands, template.commands);

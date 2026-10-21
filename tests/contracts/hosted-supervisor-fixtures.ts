@@ -23,7 +23,11 @@ export const SHA_A = "a".repeat(40) as GitSha;
 export const SHA_B = "b".repeat(40) as GitSha;
 export const SHA_C = "c".repeat(40) as GitSha;
 export const DIGEST = "d".repeat(64);
-export const SELF = { owner: "ubiquity", name: "sentinel", installationId: 0 };
+export const SELF = {
+  owner: "Ubiquity-Sentinel",
+  name: "sentinel",
+  installationId: 0,
+};
 
 export function execution(
   overrides: Record<string, unknown> = {},
@@ -49,7 +53,7 @@ export function proof(
     execution: execution(),
     workflowId: 357012162,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "ubiquity/sentinel",
+    repository: "Ubiquity-Sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: 9,
     startedAt: T + 1000,
@@ -85,7 +89,7 @@ export function notStarted(
     execution: executionIntent,
     workflowId: 357012162,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "ubiquity/sentinel",
+    repository: "Ubiquity-Sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: null,
     finishedAt: T + 500,

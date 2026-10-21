@@ -186,7 +186,7 @@ Deno.test("matrix consumer: live cells in an App-token-bounded run still leave t
   assert.ok(run.notAfter !== undefined);
   assert.equal(run.supplied, run.notAfter, "the token window is the deadline");
   assert.deepEqual(run.cycles.map((cycle) => cycle.slug), [
-    "ubiquity/sentinel",
+    "Ubiquity-Sentinel/sentinel",
     "ubiquity/ai.ubq.fi",
   ]);
   for (const cycle of run.cycles) {
@@ -284,7 +284,7 @@ Deno.test("matrix consumer: a review cutoff seconds after the mandatory initial 
     started! + MATRIX_ARTIFACT_RECOVERY_MAX_MS,
   ]);
   assert.deepEqual(run.cycles.map((cycle) => cycle.slug), [
-    "ubiquity/sentinel",
+    "Ubiquity-Sentinel/sentinel",
     "ubiquity/ai.ubq.fi",
   ]);
   // Its live cells stay charged and unresolved for a later recovery.
@@ -332,7 +332,7 @@ Deno.test("matrix consumer: a later scan starts only with its whole scan budget 
       assert.equal(run.scanDeadlines[index], cutoff);
     }
     assert.deepEqual(run.cycles.map((cycle) => cycle.slug), [
-      "ubiquity/sentinel",
+      "Ubiquity-Sentinel/sentinel",
       "ubiquity/ai.ubq.fi",
     ]);
     // The live cells stay charged and unresolved for a later recovery.

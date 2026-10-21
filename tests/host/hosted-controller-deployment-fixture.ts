@@ -7,7 +7,8 @@ import {
 } from "../../src/contracts/hosted-controller-deployment.ts";
 import { gitRun, makeRemoteCtx, testGitEnv } from "../state/helpers.ts";
 
-export const PRIVATE_REPOSITORY = "ubiquity/sentinel-controller-fixture";
+export const PRIVATE_REPOSITORY =
+  "Ubiquity-Sentinel/sentinel-controller-fixture";
 export const PRIVATE_SUPERVISOR_ID = 791001;
 export const PRIVATE_CI_ID = 791002;
 

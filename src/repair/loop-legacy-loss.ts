@@ -45,10 +45,10 @@ export type LegacyLossBridgeResultV1 =
   | { kind: "none" }
   | { kind: "state_error"; detail: string };
 
-/** Exact self scope-0 identity: `ubiquity/sentinel` under the no-App scope. */
+/** Exact self scope-0 identity: `Ubiquity-Sentinel/sentinel` under the no-App scope. */
 export function isSelfScopeZero(repository: RepositoryIdentityV1): boolean {
   return repository.installationId === 0 &&
-    repository.owner === "ubiquity" &&
+    repository.owner === "Ubiquity-Sentinel" &&
     repository.name === "sentinel";
 }
 

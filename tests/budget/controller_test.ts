@@ -300,7 +300,7 @@ Deno.test("budget: missing, null, mismatched or unowned policies disable admissi
         cfg(REPO_2, { perHour: 2, perSevenDays: 3 }),
         cfg(
           {
-            owner: "ubiquity",
+            owner: "Ubiquity-Sentinel",
             name: "sentinel",
             installationId: 9,
           } as typeof REPO_2,

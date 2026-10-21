@@ -307,7 +307,7 @@ Deno.test("carried coverage: a spent reviewed head whose expected check never ap
 
 /** The sentinel self scope (the no-App owner identity). */
 const SELF: RepositoryIdentityV1 = {
-  owner: "ubiquity",
+  owner: "Ubiquity-Sentinel",
   name: "sentinel",
   installationId: 0,
 };

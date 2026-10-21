@@ -38,7 +38,7 @@ Deno.test("current matrix: a producer pass past the walk deadline defers instead
     execution,
     workflowId: 357012162,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "ubiquity/sentinel",
+    repository: "Ubiquity-Sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: RUN,
     startedAt: T0 + 100,

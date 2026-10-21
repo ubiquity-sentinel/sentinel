@@ -51,7 +51,7 @@ import {
 
 /**
  * The explicit local Sentinel scope: the no-App owner credential identity for
- * exactly `ubiquity/sentinel` (`installationId` 0). Another repository that
+ * exactly `Ubiquity-Sentinel/sentinel` (`installationId` 0). Another repository that
  * happens to share scope 0 is NOT the local Sentinel scope, so it can never
  * read or consume the Sentinel local receipt. A local request never falls back
  * to the hosted Deno release path, even when the local receipt capability is
@@ -60,7 +60,7 @@ import {
 export function isLocalReleaseScope(request: ReleaseRequestV1): boolean {
   const repository = request.target.repository;
   return repository.installationId === 0 &&
-    repository.owner === "ubiquity" &&
+    repository.owner === "Ubiquity-Sentinel" &&
     repository.name === "sentinel";
 }
 

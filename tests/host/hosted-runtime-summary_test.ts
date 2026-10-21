@@ -27,7 +27,7 @@ import {
   seedRelease,
 } from "./hosted-runtime-fixture.ts";
 
-const TARGETS = ["ubiquity/sentinel", "ubiquity/ai.ubq.fi"];
+const TARGETS = ["Ubiquity-Sentinel/sentinel", "ubiquity/ai.ubq.fi"];
 const SKIP = {
   number: 1213,
   code: "bound_exceeded" as const,

@@ -383,7 +383,11 @@ function routeEvidence(
 function routeRequest(model: string): ModelRunRequestV1 {
   return {
     taskId: asWorkItemId("issue-route"),
-    repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+    repository: {
+      owner: "Ubiquity-Sentinel",
+      name: "sentinel",
+      installationId: 0,
+    },
     base: asGitSha("a".repeat(40)),
     issue: null,
     evidence: [],

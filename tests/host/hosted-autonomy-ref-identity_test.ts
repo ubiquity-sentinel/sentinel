@@ -102,15 +102,15 @@ Deno.test("hosted autonomy: ref revalidation, mismatch disposition and retry pre
     requests.push(url.pathname);
     if (
       url.pathname ===
-        `/repos/ubiquity/sentinel/git/ref/heads/${mismatchBranch}`
+        `/repos/Ubiquity-Sentinel/sentinel/git/ref/heads/${mismatchBranch}`
     ) {
       return Promise.resolve(new Response("null", { status: 404 }));
     }
-    if (url.pathname === "/repos/ubiquity/sentinel/pulls") {
+    if (url.pathname === "/repos/Ubiquity-Sentinel/sentinel/pulls") {
       assert.equal(url.searchParams.get("head"), `ubiquity:${mismatchBranch}`);
       return Promise.resolve(jsonResponse([]));
     }
-    if (url.pathname === "/repos/ubiquity/sentinel/actions/runs/900") {
+    if (url.pathname === "/repos/Ubiquity-Sentinel/sentinel/actions/runs/900") {
       return Promise.resolve(jsonResponse({ status: "completed" }));
     }
     return Promise.reject(new Error("offline unexpected mismatch API path"));
@@ -144,9 +144,9 @@ Deno.test("hosted autonomy: ref revalidation, mismatch disposition and retry pre
 
     const second = await run(rig, github);
     assert.deepEqual(requests, [
-      `/repos/ubiquity/sentinel/git/ref/heads/${mismatchBranch}`,
-      "/repos/ubiquity/sentinel/pulls",
-      "/repos/ubiquity/sentinel/actions/runs/900",
+      `/repos/Ubiquity-Sentinel/sentinel/git/ref/heads/${mismatchBranch}`,
+      "/repos/Ubiquity-Sentinel/sentinel/pulls",
+      "/repos/Ubiquity-Sentinel/sentinel/actions/runs/900",
     ]);
     assert.equal(second.reason, "dispositioned", JSON.stringify(second));
     assert.equal(second.beforeHead, afterRevalidation.head);

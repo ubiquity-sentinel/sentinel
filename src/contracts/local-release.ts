@@ -21,7 +21,7 @@
  * revision.
  *
  * The stored target is fixed to the local Sentinel scope: repository
- * `ubiquity/sentinel` with `installationId` 0 (the explicit no-App owner
+ * `Ubiquity-Sentinel/sentinel` with `installationId` 0 (the explicit no-App owner
  * credential scope) and the `production` environment.
  */
 
@@ -159,11 +159,12 @@ export function isLocalReleasePendingPhase(
   return !isLocalReleaseTerminalPhase(phase);
 }
 
-/** The exact local Sentinel scope: ubiquity/sentinel, installationId 0. */
+/** The exact local Sentinel scope: Ubiquity-Sentinel/sentinel, installationId 0. */
 export function isLocalSentinelRepository(
   repository: ReleaseRequestV1["target"]["repository"],
 ): boolean {
-  return repository.owner === "ubiquity" && repository.name === "sentinel" &&
+  return repository.owner === "Ubiquity-Sentinel" &&
+    repository.name === "sentinel" &&
     repository.installationId === 0;
 }
 

@@ -142,7 +142,7 @@ Deno.test("hosted execution: release requests require the merged two-parent PR p
       requestFixture({
         target: {
           repository: {
-            owner: "ubiquity",
+            owner: "Ubiquity-Sentinel",
             name: "sentinel",
             installationId: 7,
           },

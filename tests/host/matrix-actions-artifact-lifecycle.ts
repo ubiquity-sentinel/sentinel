@@ -242,7 +242,7 @@ export async function freshMatrixArtifacts(
         "unrelated authenticated wave publishes through the real aggregate lifecycle",
       );
       assert.ok(
-        r.github.get("ubiquity/sentinel")!.calls.some((call) =>
+        r.github.get("Ubiquity-Sentinel/sentinel")!.calls.some((call) =>
           call.startsWith("push:")
         ),
       );
@@ -516,12 +516,13 @@ export async function freshMatrixArtifacts(
       assert.ok(
         artifactCalls.some((url) =>
           new URL(url).pathname ===
-            "/repos/ubiquity/sentinel/actions/runs/71/artifacts"
+            "/repos/Ubiquity-Sentinel/sentinel/actions/runs/71/artifacts"
         ),
       );
       assert.ok(
         !artifactCalls.some((url) =>
-          new URL(url).pathname === "/repos/ubiquity/sentinel/actions/artifacts"
+          new URL(url).pathname ===
+            "/repos/Ubiquity-Sentinel/sentinel/actions/artifacts"
         ),
       );
       const imported = await r.store.readRepair();
@@ -731,7 +732,8 @@ export async function freshMatrixArtifacts(
     );
     assert.ok(
       artifactCalls.some((url) =>
-        new URL(url).pathname === "/repos/ubiquity/sentinel/actions/artifacts"
+        new URL(url).pathname ===
+          "/repos/Ubiquity-Sentinel/sentinel/actions/artifacts"
       ),
       "actual consumer must enumerate authenticated prior waves",
     );

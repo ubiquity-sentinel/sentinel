@@ -154,9 +154,9 @@ export async function prepareModernHistory(input: {
         headers: new Headers(),
         bodyText: JSON.stringify(value),
       });
-    if (path === "/repos/ubiquity/sentinel") {
+    if (path === "/repos/Ubiquity-Sentinel/sentinel") {
       return reply({
-        full_name: "ubiquity/sentinel",
+        full_name: "Ubiquity-Sentinel/sentinel",
         default_branch: "development",
       });
     }
@@ -173,8 +173,8 @@ export async function prepareModernHistory(input: {
         event: "workflow_dispatch",
         head_branch: "sentinel-supervisor",
         head_sha: execution.launcherSha,
-        repository: { id: 123, full_name: "ubiquity/sentinel" },
-        head_repository: { id: 123, full_name: "ubiquity/sentinel" },
+        repository: { id: 123, full_name: "Ubiquity-Sentinel/sentinel" },
+        head_repository: { id: 123, full_name: "Ubiquity-Sentinel/sentinel" },
         status: "completed",
         conclusion: "success",
         run_started_at: iso(execution.createdAt),
@@ -363,7 +363,7 @@ export async function prepareModernHistory(input: {
   );
   await Deno.writeTextFile(
     target.work + "/sentinel.targets.json",
-    '["ubiquity/sentinel"]\n',
+    '["Ubiquity-Sentinel/sentinel"]\n',
   );
 
   return { releaseBefore, recoveryHttp };

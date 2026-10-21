@@ -57,7 +57,7 @@ async function verifyComparison(
     if (url.pathname.includes("/compare/")) {
       assert.equal(
         url.pathname,
-        `/repos/ubiquity/sentinel/compare/${CANDIDATE}...development`,
+        `/repos/Ubiquity-Sentinel/sentinel/compare/${CANDIDATE}...development`,
       );
       queries.push(url.search);
       const metadataPage = url.search === "?per_page=1&page=2";

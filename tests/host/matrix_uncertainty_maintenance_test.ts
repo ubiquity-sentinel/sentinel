@@ -205,7 +205,11 @@ async function fixture(submittedPreservation = false) {
   assert.ok(saved.ok && saved.value.status === "applied");
   const request = releaseRequest("release:uncertainty", {
     target: {
-      repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+      repository: {
+        owner: "Ubiquity-Sentinel",
+        name: "sentinel",
+        installationId: 0,
+      },
       environment: "production",
     },
     revision: SHA2,
@@ -232,7 +236,7 @@ async function fixture(submittedPreservation = false) {
     execution,
     workflowId: HOSTED_SUPERVISOR_WORKFLOW_ID,
     workflowPath: HOSTED_SUPERVISOR_WORKFLOW_PATH,
-    repository: "ubiquity/sentinel",
+    repository: "Ubiquity-Sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: 101,
     startedAt: T0 + 5000,
@@ -838,8 +842,8 @@ Deno.test("uncertainty maintenance authenticates native completion with fake HTT
             created_at: iso(proof.execution.createdAt),
             run_started_at: iso(proof.startedAt),
             updated_at: iso(proof.finishedAt),
-            repository: { id: 9, full_name: "ubiquity/sentinel" },
-            head_repository: { id: 9, full_name: "ubiquity/sentinel" },
+            repository: { id: 9, full_name: "Ubiquity-Sentinel/sentinel" },
+            head_repository: { id: 9, full_name: "Ubiquity-Sentinel/sentinel" },
           };}
         return Promise.resolve({
           status: 200,

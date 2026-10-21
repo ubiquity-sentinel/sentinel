@@ -31,7 +31,7 @@ Deno.test("self merge contracts: legacy absence round-trips without injecting pr
 Deno.test("native CI contracts: complete bounded facts and unknown-key refusal", () => {
   const proof = {
     version: "v1",
-    repository: "ubiquity/sentinel",
+    repository: "Ubiquity-Sentinel/sentinel",
     repositoryId: 17,
     runId: 500,
     attempt: 1,

@@ -240,7 +240,7 @@ export async function historicalMalformedRig(
   release.hostedRuntimes = [{
     version: "v1",
     kind: "hosted_runtime",
-    id: "ubiquity/sentinel:0:production",
+    id: "Ubiquity-Sentinel/sentinel:0:production",
     activeRevision: revision,
     generation,
     lastHealthyProof: null,
@@ -538,8 +538,8 @@ export async function historicalMalformedRig(
         event: "workflow_dispatch",
         head_branch: "sentinel-supervisor",
         head_sha: fault === "auth" ? BASE : launcher,
-        repository: { id: 123, full_name: "ubiquity/sentinel" },
-        head_repository: { id: 123, full_name: "ubiquity/sentinel" },
+        repository: { id: 123, full_name: "Ubiquity-Sentinel/sentinel" },
+        head_repository: { id: 123, full_name: "Ubiquity-Sentinel/sentinel" },
         status: "completed",
         conclusion: "failure",
         run_started_at: iso(T0),
@@ -678,13 +678,13 @@ export async function historicalMalformedRig(
   const checkoutHead = await gitRun(checkout, ["rev-parse", "HEAD"], ENV);
   assert(checkoutHead.ok);
   const mainEnv = {
-    GITHUB_REPOSITORY: "ubiquity/sentinel",
+    GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
     GITHUB_REF: "refs/heads/sentinel-supervisor",
     GITHUB_JOB: "maintenance",
     GITHUB_RUN_ID: "900",
     GITHUB_RUN_ATTEMPT: "1",
     GITHUB_WORKFLOW_REF:
-      "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+      "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
     GITHUB_SHA: checkoutHead.stdout.trim(),
     GITHUB_WORKFLOW_SHA: checkoutHead.stdout.trim(),
     GITHUB_TOKEN: "offline-native-token",

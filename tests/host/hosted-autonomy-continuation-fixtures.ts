@@ -422,13 +422,13 @@ export async function captureMain(
     const sha = head.stdout.trim();
     const exit = await runMain({
       env: {
-        GITHUB_REPOSITORY: "ubiquity/sentinel",
+        GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
         GITHUB_REF: "refs/heads/sentinel-supervisor",
         GITHUB_JOB: "maintenance",
         GITHUB_RUN_ID: "900",
         GITHUB_RUN_ATTEMPT: "1",
         GITHUB_WORKFLOW_REF:
-          "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+          "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
         GITHUB_SHA: sha,
         GITHUB_WORKFLOW_SHA: sha,
         GITHUB_TOKEN: "offline-native-token",

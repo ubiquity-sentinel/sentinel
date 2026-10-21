@@ -17,13 +17,13 @@ import type { ApproveExactCiRunInputV1 } from "./client-contracts.ts";
 
 /**
  * Exact self-target CI approval identity. The approval endpoint is exercised
- * only for the scope-0 `ubiquity/sentinel` repository (explicit no-App local
+ * only for the scope-0 `Ubiquity-Sentinel/sentinel` repository (explicit no-App local
  * credential scope); every identity below is revalidated before any POST.
  */
-export const CI_REPOSITORY_FULL_NAME = "ubiquity/sentinel";
+export const CI_REPOSITORY_FULL_NAME = "Ubiquity-Sentinel/sentinel";
 
 export const CI_REPOSITORY_API_URL =
-  "https://api.github.com/repos/ubiquity/sentinel";
+  "https://api.github.com/repos/Ubiquity-Sentinel/sentinel";
 
 export const CI_WORKFLOW_FILE = "ci.yml";
 

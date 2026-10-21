@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import {
   HOSTED_RUNTIME_ID,
+  HOSTED_SUPERVISOR_REPOSITORY,
   hostedReceiptBindsRequest,
   parseHostedExecutionIntentV1,
   parseHostedReleaseRecordV1,
@@ -9,6 +10,7 @@ import {
   parseHostedRuntimeRecordV1,
 } from "../../src/contracts/hosted-supervisor.ts";
 import { parseReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import { parseRepositoryIdentity } from "../../src/contracts/shared.ts";
 import {
   BOOT_EXECUTION,
   execution,
@@ -64,6 +66,35 @@ Deno.test("hosted supervisor: exact valid records parse and the request binds ca
       }),
     ),
     false,
+  );
+});
+
+Deno.test("hosted supervisor: retired self identity normalizes from pre-migration state", () => {
+  assert.deepEqual(
+    parseRepositoryIdentity({
+      owner: "ubiquity",
+      name: "sentinel",
+      installationId: 0,
+    }, "$.repository"),
+    SELF,
+  );
+  const legacyProof = parseHostedRunProofV1({
+    ...proof(),
+    repository: "ubiquity/sentinel",
+  });
+  assert.equal(legacyProof.repository, HOSTED_SUPERVISOR_REPOSITORY);
+  const legacyRuntime = runtime({
+    id: "ubiquity/sentinel:0:production",
+    execution: null,
+    lastExecutionProof: {
+      ...failedProof(BOOT_EXECUTION),
+      repository: "ubiquity/sentinel",
+    },
+  });
+  assert.equal(legacyRuntime.id, HOSTED_RUNTIME_ID);
+  assert.equal(
+    legacyRuntime.lastExecutionProof?.repository,
+    HOSTED_SUPERVISOR_REPOSITORY,
   );
 });
 
@@ -209,7 +240,7 @@ Deno.test("hosted supervisor: release record rejects foreign requests, wrong or 
       request: releaseRequest({
         target: {
           repository: {
-            owner: "ubiquity",
+            owner: "Ubiquity-Sentinel",
             name: "sentinel",
             installationId: 7,
           },

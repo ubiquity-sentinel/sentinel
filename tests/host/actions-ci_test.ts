@@ -163,7 +163,7 @@ Deno.test(
     for (const [index, record] of work.entries()) {
       rig.http.on(
         "GET",
-        `/repos/ubiquity/sentinel/pulls/${record.target.pr}`,
+        `/repos/Ubiquity-Sentinel/sentinel/pulls/${record.target.pr}`,
         () =>
           response(
             200,
@@ -176,12 +176,14 @@ Deno.test(
       );
       rig.http.on(
         "GET",
-        `/repos/ubiquity/sentinel/actions/runs/${RUN_ID + index}`,
+        `/repos/Ubiquity-Sentinel/sentinel/actions/runs/${RUN_ID + index}`,
         () => response(200, runFor(index)),
       );
       rig.http.on(
         "POST",
-        `/repos/ubiquity/sentinel/actions/runs/${RUN_ID + index}/approve`,
+        `/repos/Ubiquity-Sentinel/sentinel/actions/runs/${
+          RUN_ID + index
+        }/approve`,
         () => {
           approvedRuns.add(RUN_ID + index);
           return response(201, {});

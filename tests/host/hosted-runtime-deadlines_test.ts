@@ -107,14 +107,14 @@ Deno.test("hosted runtime: source preparation is charged against the one absolut
       prepared.push(slug);
       // The self mirror is prepared before the loop; a foreign target's own
       // mirror seed and base refresh consume clock time here.
-      if (slug !== "ubiquity/sentinel") clock.advance(6 * 60_000);
+      if (slug !== "Ubiquity-Sentinel/sentinel") clock.advance(6 * 60_000);
       return Promise.resolve();
     },
     runCycle: (deps, options) => {
       const slug = slugOf(deps.configs[0]!);
       cycles.push(slug);
       assert.equal(options.deadline, deadline);
-      if (slug === "ubiquity/sentinel") {
+      if (slug === "Ubiquity-Sentinel/sentinel") {
         // The self cycle consumes the budget up to the operation margin
         // before the ONE absolute deadline, the latest instant a later
         // target's preparation still begins.
@@ -125,12 +125,15 @@ Deno.test("hosted runtime: source preparation is charged against the one absolut
     },
   });
 
-  assert.deepEqual(prepared, ["ubiquity/sentinel", "ubiquity/foreign-target"]);
+  assert.deepEqual(prepared, [
+    "Ubiquity-Sentinel/sentinel",
+    "ubiquity/foreign-target",
+  ]);
   // The third target's cycle never starts either: the one absolute deadline
   // stops the run instead of spending remaining budget on doomed work.
-  assert.deepEqual(composed, ["ubiquity/sentinel"]);
-  assert.deepEqual(cycles, ["ubiquity/sentinel"]);
-  assert.deepEqual(result.addressed, ["ubiquity/sentinel"]);
+  assert.deepEqual(composed, ["Ubiquity-Sentinel/sentinel"]);
+  assert.deepEqual(cycles, ["Ubiquity-Sentinel/sentinel"]);
+  assert.deepEqual(result.addressed, ["Ubiquity-Sentinel/sentinel"]);
   assert.deepEqual(result.skipped, [
     "ubiquity/foreign-target",
     "ubiquity/third-target",
@@ -293,7 +296,7 @@ Deno.test("hosted runtime: the real host hands its origin-anchored deadline to t
     // committed target setting from, plus the executable-resolution stub.
     const checkoutDir = `${root}/checkout`;
     const checkoutSha = await makeCheckout(checkoutDir, env, {
-      "sentinel.targets.json": JSON.stringify(["ubiquity/sentinel"]),
+      "sentinel.targets.json": JSON.stringify(["Ubiquity-Sentinel/sentinel"]),
       ".gitignore": ".sentinel-actions-state/\n",
     });
     const bin = `${root}/bin`;

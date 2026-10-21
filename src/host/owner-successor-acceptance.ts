@@ -74,7 +74,8 @@ export async function runOwnerSuccessorReviewPhase(
 ): Promise<boolean> {
   if (!enabled) return false;
   const self = configs.find((c) =>
-    c.repository.owner === "ubiquity" && c.repository.name === "sentinel" &&
+    c.repository.owner === "Ubiquity-Sentinel" &&
+    c.repository.name === "sentinel" &&
     c.repository.installationId === 0
   );
   if (!self) return false;

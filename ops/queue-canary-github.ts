@@ -39,7 +39,7 @@ import {
 } from "./queue-rules-projection-read.ts";
 
 const TARGET = "/repos/ubiquity/ai.ubq.fi";
-const HOST = "/repos/ubiquity/sentinel";
+const HOST = "/repos/Ubiquity-Sentinel/sentinel";
 const CHECKS = [
   "validate",
   "verify-artifact",
@@ -357,7 +357,7 @@ export class CanaryGitHub extends GitHubQueueDeliveryClient
       const bindingDigest = await canaryBindingDigest(grant);
       const expectedRequest = await canonicalStringifySha256({
         domain: "sentinel.queue-canary-request.v1",
-        repository: "ubiquity/sentinel",
+        repository: "Ubiquity-Sentinel/sentinel",
         ref: "refs/heads/sentinel-supervisor",
         sha: prior.sourceSha,
         workflowSha: prior.sourceSha,

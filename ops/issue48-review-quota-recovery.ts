@@ -69,15 +69,15 @@ import { githubGitAuthEnv } from "../src/host/local.ts";
 import { createRepairStateStore, DenoGitRunner } from "../src/state/mod.ts";
 
 /** The only repository identity this helper accepts. */
-export const ISSUE48_QUOTA_REPOSITORY = "ubiquity/sentinel";
+export const ISSUE48_QUOTA_REPOSITORY = "Ubiquity-Sentinel/sentinel";
 
 /** The only remote this helper talks to; fixed, never configurable. */
 export const ISSUE48_QUOTA_REMOTE_URL =
-  "https://github.com/ubiquity/sentinel.git";
+  "https://github.com/Ubiquity-Sentinel/sentinel.git";
 
 /** Exact hosted workflow identity that may run the maintenance job. */
 export const ISSUE48_QUOTA_WORKFLOW_REF =
-  "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor";
+  "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor";
 
 /**
  * Exact prefix of the blocker this one-shot may clear. The runtime writes the
@@ -170,7 +170,7 @@ export const ISSUE48_QUOTA_PRODUCTION_BINDING: Issue48QuotaRecoveryBindingV1 = {
   pullRequestHead: "fa97f292052f9d883123c52f24f021249d617bd7" as GitSha,
   pullRequestBase: "2b6a25b7d9992c6a027448e43d5ce104d8f1a93e" as GitSha,
   repository: ISSUE48_QUOTA_REPOSITORY,
-  runtimeId: "ubiquity/sentinel:0:production",
+  runtimeId: "Ubiquity-Sentinel/sentinel:0:production",
   runtimeRevision: "2b6a25b7d9992c6a027448e43d5ce104d8f1a93e" as GitSha,
   runtimeGeneration: 16,
 };

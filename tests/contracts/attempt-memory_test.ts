@@ -15,7 +15,11 @@ import { asWorkItemId } from "../../src/contracts/brands.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { tryParse } from "../../src/contracts/validation.ts";
 
-const REPO = { owner: "ubiquity", name: "sentinel", installationId: 0 };
+const REPO = {
+  owner: "Ubiquity-Sentinel",
+  name: "sentinel",
+  installationId: 0,
+};
 const BASE = "aafb7ee0598699bb7fb8a72ea133693ed64462da" as GitSha;
 const OTHER_BASE = "6dc35d06e757107b91eb58232bd15e5f671d79b4" as GitSha;
 const CONTROLLER = "4a21c96d46e6f98c3c04125cafce34e255e710e3" as GitSha;

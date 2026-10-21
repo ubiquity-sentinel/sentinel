@@ -175,7 +175,7 @@ function runProof(intent: HostedExecutionIntentV1) {
     execution: intent,
     workflowId: 357012162,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "ubiquity/sentinel",
+    repository: "Ubiquity-Sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: 7,
     startedAt: intent.createdAt + 1000,

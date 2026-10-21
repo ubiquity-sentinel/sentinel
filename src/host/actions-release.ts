@@ -29,7 +29,8 @@ const STATIC_SCOPE = "hosted supervisor receipt requires the self scope";
 /** Exact hosted self scope: the no-App owner credential identity. */
 function isHostedSelfRequest(request: ReleaseRequestV1): boolean {
   const repository = request.target.repository;
-  return repository.installationId === 0 && repository.owner === "ubiquity" &&
+  return repository.installationId === 0 &&
+    repository.owner === "Ubiquity-Sentinel" &&
     repository.name === "sentinel" &&
     request.target.environment === "production";
 }

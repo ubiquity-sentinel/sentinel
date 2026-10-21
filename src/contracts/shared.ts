@@ -56,6 +56,37 @@ export interface RepositoryIdentityV1 {
 
 const REPOSITORY_IDENTITY_KEYS = ["owner", "name", "installationId"] as const;
 
+/** Current canonical Sentinel self identity. */
+export const SENTINEL_SELF_REPOSITORY: Readonly<RepositoryIdentityV1> = Object
+  .freeze({
+    owner: "Ubiquity-Sentinel",
+    name: "sentinel",
+    installationId: 0,
+  });
+
+/** Retired pre-migration self identity; accepted only for existing state reads. */
+export const RETIRED_SENTINEL_SELF_REPOSITORY: Readonly<RepositoryIdentityV1> =
+  Object.freeze({
+    owner: "ubiquity",
+    name: "sentinel",
+    installationId: 0,
+  });
+
+/**
+ * Normalize the permanently retired pre-migration self identity into the
+ * current organization. Other identities are returned unchanged.
+ */
+export function normalizeRepositoryIdentity(
+  repository: RepositoryIdentityV1,
+): RepositoryIdentityV1 {
+  return repository.owner === RETIRED_SENTINEL_SELF_REPOSITORY.owner &&
+      repository.name === RETIRED_SENTINEL_SELF_REPOSITORY.name &&
+      repository.installationId ===
+        RETIRED_SENTINEL_SELF_REPOSITORY.installationId
+    ? { ...SENTINEL_SELF_REPOSITORY }
+    : repository;
+}
+
 export function parseRepositoryIdentity(
   input: unknown,
   path: string,
@@ -82,7 +113,7 @@ export function parseRepositoryIdentity(
     obj.installationId,
     `${path}.installationId`,
   );
-  return { owner, name, installationId };
+  return normalizeRepositoryIdentity({ owner, name, installationId });
 }
 
 /**

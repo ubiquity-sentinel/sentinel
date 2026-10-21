@@ -89,7 +89,7 @@ async function launch(
   await Deno.mkdir(runtimeDir, { recursive: true });
   await Deno.writeTextFile(
     `${runtimeDir}/sentinel.targets.json`,
-    JSON.stringify(["ubiquity/sentinel", "ubiquity/ai.ubq.fi"]),
+    JSON.stringify(["Ubiquity-Sentinel/sentinel", "ubiquity/ai.ubq.fi"]),
   );
   let children = 0;
   const result = await runHostedRuntimeLauncher({

@@ -6,7 +6,7 @@ import { Buffer } from "node:buffer";
 const source = fileURLToPath(
   new URL("../../ops/sentinel-cli.ts", import.meta.url),
 );
-const repository = "ubiquity/sentinel";
+const repository = "Ubiquity-Sentinel/sentinel";
 const workflowId = 357012162;
 const sha = "a".repeat(40);
 const run = {
@@ -349,7 +349,7 @@ Deno.test("operator receipts bind exact run, workflow, ref, source and native at
   assert.equal(receipt, "hosted_runtime_terminal exact-bound-test-receipt");
   assert.match(
     result.calls,
-    /run view 9001 -R ubiquity\/sentinel --attempt 2 --log/,
+    /run view 9001 -R Ubiquity-Sentinel\/sentinel --attempt 2 --log/,
   );
 });
 
@@ -412,7 +412,7 @@ Deno.test("operator status JSON remains read-only across all three targets", asy
     createdAt: "2026-10-13T00:00:00Z",
     event: "workflow_dispatch",
     headSha: sha,
-    url: "https://github.com/ubiquity/sentinel/actions/runs/9001",
+    url: "https://github.com/Ubiquity-Sentinel/sentinel/actions/runs/9001",
   };
   const replies = [
     ...["observe.yml", "supervisor.yml", "repair.yml"].map((workflow) => ({

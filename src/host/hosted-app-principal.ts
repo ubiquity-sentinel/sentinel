@@ -368,11 +368,16 @@ export function composeHostedAppGitHub(
     throw new Error("hosted App principal context unavailable");
   }
   const repository = Object.freeze({ ...input.repository });
+  const selfController = repository.installationId === 0 &&
+    repository.owner === "Ubiquity-Sentinel" &&
+    repository.name === "sentinel";
   if (
-    repository.owner !== "ubiquity" ||
-    !value.source.targets.includes(`${repository.owner}/${repository.name}`) ||
-    (repository.installationId !== value.grant.installationId &&
-      !(repository.name === "sentinel" && repository.installationId === 0))
+    !selfController &&
+    (repository.owner !== "ubiquity" ||
+      !value.source.targets.includes(
+        `${repository.owner}/${repository.name}`,
+      ) ||
+      repository.installationId !== value.grant.installationId)
   ) throw new Error("hosted App principal target unavailable");
   const { host } = value;
   // Explicit final assignments defeat even a JavaScript caller that bypasses

@@ -342,7 +342,7 @@ Deno.test("historical verification: missing proof ordinary pending mismatch and 
             execution: active,
             workflowId: 357012162,
             workflowPath: ".github/workflows/supervisor.yml",
-            repository: "ubiquity/sentinel",
+            repository: "Ubiquity-Sentinel/sentinel",
             ref: "refs/heads/sentinel-supervisor",
             jobId: null,
             outcome: "not_started",

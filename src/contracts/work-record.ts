@@ -222,7 +222,8 @@ export function parseWorkRecordV1(input: unknown): WorkRecordV1 {
   for (const proof of [intent?.selfMerge, target.selfMerge]) {
     if (
       proof !== undefined &&
-      (repository.owner !== "ubiquity" || repository.name !== "sentinel" ||
+      (repository.owner !== "Ubiquity-Sentinel" ||
+        repository.name !== "sentinel" ||
         repository.installationId !== 0 || proof.taskId !== id ||
         proof.issueNumber !== issueNumber)
     ) {

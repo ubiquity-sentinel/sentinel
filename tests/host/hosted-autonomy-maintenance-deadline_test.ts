@@ -56,7 +56,7 @@ async function deadlineRig() {
   release.hostedRuntimes = [{
     version: "v1",
     kind: "hosted_runtime",
-    id: "ubiquity/sentinel:0:production",
+    id: "Ubiquity-Sentinel/sentinel:0:production",
     activeRevision: BASE,
     generation: 1,
     lastHealthyProof: null,

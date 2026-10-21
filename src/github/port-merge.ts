@@ -61,7 +61,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     const queued = await this.queueEffect(queueInput);
     if (!queued.ok) return queued;
     if (
-      takeover !== undefined && this.repository.owner === "ubiquity" &&
+      takeover !== undefined && this.repository.owner === "Ubiquity-Sentinel" &&
       this.repository.name === "sentinel"
     ) {
       return portError("unavailable", "existing PR self merge requires owner");

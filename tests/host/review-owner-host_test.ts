@@ -113,7 +113,8 @@ function inputFor(rig: Awaited<ReturnType<typeof makeRig>>) {
 function runtimeFiles(extra: Record<string, string> = {}) {
   return {
     ".gitignore": ".sentinel-actions-state/\n.sentinel/\n",
-    "sentinel.targets.json": '["ubiquity/sentinel","ubiquity/ai.ubq.fi"]\n',
+    "sentinel.targets.json":
+      '["Ubiquity-Sentinel/sentinel","ubiquity/ai.ubq.fi"]\n',
     ...extra,
   };
 }

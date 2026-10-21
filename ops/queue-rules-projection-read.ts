@@ -222,7 +222,8 @@ export async function readQueueRulesProjection(input: {
     const targets = captureCopy(input.targets) as QueueRulesProjectionTarget[];
     requireProjection(validProjectionTargets(targets), "invalid_targets");
     requireProjection(
-      source.repository === "ubiquity/sentinel" && source.ref === CANARY_REF &&
+      source.repository === "Ubiquity-Sentinel/sentinel" &&
+        source.ref === CANARY_REF &&
         isGitSha(source.sha) && source.sha === source.workflowSha &&
         source.sha === source.expectedSha &&
         source.event === "workflow_dispatch" &&

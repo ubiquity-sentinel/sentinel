@@ -1,10 +1,10 @@
 # Sentinel
 
-Sentinel repairs eligible GitHub issues with isolated concurrent workers, durable candidate/accounting state, current-head structured review and trusted integration/release controllers. Current targets are `ubiquity/sentinel` and `ubiquity/ai.ubq.fi`; ai.ubq.fi is limited to issue repairs for now. Captured-incident and deployment activation remain separate scope. The implementation uses Deno and TypeScript; runtime workers cannot access credential, state or promotion authority.
+Sentinel repairs eligible GitHub issues with isolated concurrent workers, durable candidate/accounting state, current-head structured review and trusted integration/release controllers. Current targets are `Ubiquity-Sentinel/sentinel` and `ubiquity/ai.ubq.fi`; ai.ubq.fi is limited to issue repairs for now. Captured-incident and deployment activation remain separate scope. The implementation uses Deno and TypeScript; runtime workers cannot access credential, state or promotion authority.
 
 Start with [the current master plan](MASTER-PLAN.md), [project instructions](AGENTS.md) and [owner decisions](docs/DECISIONS.md). [The build ledger](docs/build-status.md) is the sole source of current task ownership and acceptance; [the active memory plan](docs/sentinel-memory-plan.md) covers durable attempt memory and self-healing. Historical plans and receipts remain available in Git history.
 
-The public repository is [ubiquity/sentinel](https://github.com/ubiquity/sentinel). A five-minute scheduled dispatcher invokes the protected supervisor; explicit trusted-host dispatch and receipt inspection remain available through the installed `sentinel` CLI:
+The public repository is [Ubiquity-Sentinel/sentinel](https://github.com/Ubiquity-Sentinel/sentinel). A five-minute scheduled dispatcher invokes the protected supervisor; explicit trusted-host dispatch and receipt inspection remain available through the installed `sentinel` CLI:
 
 ```sh
 sentinel status

@@ -72,7 +72,11 @@ for await (const part of Deno.stdin.readable) {
 }
 `,
   );
-  const repository = { owner: "ubiquity", name: "sentinel", installationId: 0 };
+  const repository = {
+    owner: "Ubiquity-Sentinel",
+    name: "sentinel",
+    installationId: 0,
+  };
   const broker = new ReviewOwnerCustodyBroker(nativeOwner, [{
     repository,
     provider: GATEWAY_PROVIDER,

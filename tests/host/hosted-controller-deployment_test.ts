@@ -78,7 +78,7 @@ Deno.test("controller deployment: private committed source owns bootstrap, nativ
         assert.throws(() =>
           identity.parseHostedEnvironment({
             ...env,
-            GITHUB_REPOSITORY: "ubiquity/sentinel",
+            GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
           }, "prepare")
         );
         assert.throws(() =>
@@ -86,7 +86,7 @@ Deno.test("controller deployment: private committed source owns bootstrap, nativ
             ...env,
             GITHUB_WORKFLOW_REF: workflowRef.replace(
               PRIVATE_REPOSITORY,
-              "ubiquity/sentinel",
+              "Ubiquity-Sentinel/sentinel",
             ),
           }, "prepare")
         );
@@ -96,7 +96,7 @@ Deno.test("controller deployment: private committed source owns bootstrap, nativ
         const paths: string[] = [];
         const client = new HostedSupervisorGitHubClient({
           repository: {
-            owner: "ubiquity",
+            owner: "Ubiquity-Sentinel",
             name: "sentinel-controller-fixture",
             installationId: 0,
           },
@@ -155,7 +155,7 @@ Deno.test("controller deployment: private committed source owns bootstrap, nativ
           execution: result.execution,
           workflowId: 357012162,
           workflowPath: ".github/workflows/supervisor.yml",
-          repository: "ubiquity/sentinel",
+          repository: "Ubiquity-Sentinel/sentinel",
           ref: env.GITHUB_REF,
           jobId: 7,
           startedAt: OBSERVED + 1,
@@ -224,7 +224,7 @@ Deno.test("controller deployment: private committed source owns bootstrap, nativ
         assert(
           !binding.isHostedControllerMaintenanceIdentity({
             ...maintenance,
-            repository: "ubiquity/sentinel",
+            repository: "Ubiquity-Sentinel/sentinel",
           }),
         );
         assert(
@@ -328,7 +328,7 @@ Deno.test("controller deployment: private committed source owns bootstrap, nativ
         );
         for (
           const patch of [{
-            repo: "ubiquity/sentinel",
+            repo: "Ubiquity-Sentinel/sentinel",
             workflowId: PRIVATE_SUPERVISOR_ID,
           }, { repo: PRIVATE_REPOSITORY, workflowId: 357012162 }]
         ) {
@@ -361,7 +361,7 @@ Deno.test("controller deployment: private committed source owns bootstrap, nativ
         let reads = 0;
         const options = {
           repository: {
-            owner: "ubiquity",
+            owner: "Ubiquity-Sentinel",
             name: "sentinel-controller-fixture",
             installationId: 0,
           },
@@ -481,7 +481,7 @@ Deno.test("controller deployment: private committed source owns bootstrap, nativ
           workflowId = 353613034;
           assert.equal(await readFollowCi(api, fixture.head, 17), null);
           workflowId = PRIVATE_CI_ID;
-          repository = "ubiquity/sentinel";
+          repository = "Ubiquity-Sentinel/sentinel";
           assert.equal(await readFollowCi(api, fixture.head, 17), null);
           assert(
             paths.some((path) =>

@@ -386,7 +386,7 @@ export async function sourceApproved(
   const controller = await ownerDevelopmentInstallApi(
     input.token,
     "GET",
-    `/repos/ubiquity/sentinel/commits/${input.run.launcherSha}/check-runs?per_page=100`,
+    `/repos/Ubiquity-Sentinel/sentinel/commits/${input.run.launcherSha}/check-runs?per_page=100`,
   );
   if (
     !controller.ok || controller.value.status !== 200 ||
@@ -505,7 +505,11 @@ export async function readOwnerFutureRecoveryAuthority(
         );
     };
     const client = new GitHubApiClient({
-      repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+      repository: {
+        owner: "Ubiquity-Sentinel",
+        name: "sentinel",
+        installationId: 0,
+      },
       apiBaseUrl: "https://api.github.com",
       http: fetchHttpTransport(),
       auth: {

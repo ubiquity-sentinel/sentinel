@@ -173,7 +173,7 @@ Deno.test(
       assert.equal(h.store.creates, 1);
       assert.equal(
         h.store.requests.filter((entry) =>
-          entry === "POST /repos/ubiquity/sentinel/pulls/1/reviews"
+          entry === "POST /repos/Ubiquity-Sentinel/sentinel/pulls/1/reviews"
         ).length,
         1,
         "exactly one review object is created",

@@ -27,7 +27,7 @@ const clock = { now: () => T0 + 10_000 };
 const idle = {
   version: "v1" as const,
   kind: "hosted_runtime" as const,
-  id: "ubiquity/sentinel:0:production",
+  id: "Ubiquity-Sentinel/sentinel:0:production",
   activeRevision: SHA1,
   generation: 1,
   lastHealthyProof: null,
@@ -170,7 +170,11 @@ Deno.test("current matrix integrity: wrong-sequence ancestry fails protected mai
 });
 
 Deno.test("modern closed C integrity: changed native proof fails protected main before any write", async () => {
-  const repository = { owner: "ubiquity", name: "sentinel", installationId: 0 };
+  const repository = {
+    owner: "Ubiquity-Sentinel",
+    name: "sentinel",
+    installationId: 0,
+  };
   const id = "modern-integrity-probe";
   const chargeId = "modern-integrity-charge";
   const record = workRecord(id, {
@@ -216,7 +220,7 @@ Deno.test("modern closed C integrity: changed native proof fails protected main 
     },
     workflowId: 357012162,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "ubiquity/sentinel",
+    repository: "Ubiquity-Sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: 1,
     startedAt: T0 + 1100,

@@ -47,7 +47,7 @@ export abstract class GitHubClientCi extends GitHubClientWrites {
     input: ApproveExactCiRunInputV1,
   ): Promise<PortResultV1<CiApprovalOutcomeV1>> {
     if (
-      this.repository.owner !== "ubiquity" ||
+      this.repository.owner !== "Ubiquity-Sentinel" ||
       this.repository.name !== "sentinel" ||
       this.repository.installationId !== 0
     ) {

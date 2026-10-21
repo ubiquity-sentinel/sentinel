@@ -114,7 +114,11 @@ export function createMatrixUncertaintyMaintenance(input: {
 }): MatrixUncertaintyMaintenanceDepsV1 {
   const http = input.http ?? fetchHttpTransport();
   const options = {
-    repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+    repository: {
+      owner: "Ubiquity-Sentinel",
+      name: "sentinel",
+      installationId: 0,
+    },
     apiBaseUrl: "https://api.github.com",
     http,
     clock: input.clock,
@@ -161,11 +165,11 @@ export function createMatrixUncertaintyMaintenance(input: {
           if (wire.method === "GET") {
             if (
               wire.url ===
-                "https://api.github.com/repos/ubiquity/sentinel/pulls/110"
+                "https://api.github.com/repos/Ubiquity-Sentinel/sentinel/pulls/110"
             ) pull = response;
             if (
               wire.url ===
-                `https://api.github.com/repos/ubiquity/sentinel/commits/${STALE_BASE_REQUEST.revision}`
+                `https://api.github.com/repos/Ubiquity-Sentinel/sentinel/commits/${STALE_BASE_REQUEST.revision}`
             ) commit = response;
           }
           return response;
@@ -188,9 +192,9 @@ export function createMatrixUncertaintyMaintenance(input: {
           pr.merged === true &&
           pr.merge_commit_sha === STALE_BASE_REQUEST.revision &&
           pr.head?.sha === STALE_BASE_REQUEST.source.head &&
-          pr.head?.repo?.full_name === "ubiquity/sentinel" &&
+          pr.head?.repo?.full_name === "Ubiquity-Sentinel/sentinel" &&
           pr.base?.ref === "development" &&
-          pr.base?.repo?.full_name === "ubiquity/sentinel" &&
+          pr.base?.repo?.full_name === "Ubiquity-Sentinel/sentinel" &&
           merged.sha === STALE_BASE_REQUEST.revision &&
           Array.isArray(merged.parents) && merged.parents.length === 2 &&
           merged.parents[0]?.sha === STALE_BASE_RUNTIME &&
@@ -215,7 +219,11 @@ const STALE_BASE_REQUEST = parseReleaseRequestV1({
   id:
     "release:5e6390da3991207f7fb7cdd8f0fa5268c0e9daf0fe12c04d3e8e44245f09a5da",
   target: {
-    repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+    repository: {
+      owner: "Ubiquity-Sentinel",
+      name: "sentinel",
+      installationId: 0,
+    },
     environment: "production",
   },
   revision: "accc96c8e8eeb5cca71e9641f674a96bf75c77d1",

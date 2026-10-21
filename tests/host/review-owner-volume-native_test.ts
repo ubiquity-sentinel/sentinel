@@ -58,7 +58,11 @@ for await (const part of Deno.stdin.readable) {
     releaseId: null,
     createdAt: 1,
   };
-  const repository = { owner: "ubiquity", name: "sentinel", installationId: 0 };
+  const repository = {
+    owner: "Ubiquity-Sentinel",
+    name: "sentinel",
+    installationId: 0,
+  };
   const requestId = "base-review-" + "e".repeat(64);
   const target = {
     type: "custom",

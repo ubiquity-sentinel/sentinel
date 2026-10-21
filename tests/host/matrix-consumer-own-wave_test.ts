@@ -58,7 +58,7 @@ async function runLaterWave(ownProducer: boolean) {
     r.clock.advance(60 * MINUTE);
     await r.advanceRun(72);
     if (ownProducer) {
-      const sentinel = r.github.get("ubiquity/sentinel")!;
+      const sentinel = r.github.get("Ubiquity-Sentinel/sentinel")!;
       const rows = [issue(1), issue(2)];
       sentinel.listOpenIssues = () => {
         sentinel.calls.push("listOpenIssues");
@@ -162,7 +162,7 @@ Deno.test("matrix consumer: an earlier wave's still-reserved producer holds no p
   // ...but never holds the consumer's polling: target work starts at once.
   assert.deepEqual(run.waits, []);
   assert.deepEqual(run.cycles.map((cycle) => cycle.slug), [
-    "ubiquity/sentinel",
+    "Ubiquity-Sentinel/sentinel",
     "ubiquity/ai.ubq.fi",
   ]);
   assert.equal(run.cycles[0]!.at, run.origin);

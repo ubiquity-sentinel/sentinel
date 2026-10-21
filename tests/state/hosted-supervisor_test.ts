@@ -39,7 +39,11 @@ const SHA_A = "a".repeat(40) as GitSha;
 const SHA_B = "b".repeat(40) as GitSha;
 const SHA_C = "c".repeat(40) as GitSha;
 const DIGEST = "d".repeat(64);
-const SELF = { owner: "ubiquity", name: "sentinel", installationId: 0 };
+const SELF = {
+  owner: "Ubiquity-Sentinel",
+  name: "sentinel",
+  installationId: 0,
+};
 
 function execution(
   overrides: Record<string, unknown> = {},
@@ -63,7 +67,7 @@ function proof(overrides: Record<string, unknown> = {}): HostedRunProofV1 {
     execution: execution(),
     workflowId: 357012162,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "ubiquity/sentinel",
+    repository: "Ubiquity-Sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: 9,
     startedAt: T0 + 1000,

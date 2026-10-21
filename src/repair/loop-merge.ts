@@ -80,7 +80,8 @@ async function holdAdoptedSelfMerge(
   record: WorkRecordV1,
 ): Promise<StepResultV1 | null> {
   if (
-    !hasTakeoverCustody(record) || record.repository.owner !== "ubiquity" ||
+    !hasTakeoverCustody(record) ||
+    record.repository.owner !== "Ubiquity-Sentinel" ||
     record.repository.name !== "sentinel"
   ) return null;
   const detail = "existing PR hold: self_merge_requires_owner";

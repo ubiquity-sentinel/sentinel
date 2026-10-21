@@ -417,7 +417,7 @@ export function seededSnapshot(
 }
 
 export const LOCAL_SENTINEL_REPO = {
-  owner: "ubiquity",
+  owner: "Ubiquity-Sentinel",
   name: "sentinel",
   installationId: 0,
 } as const;

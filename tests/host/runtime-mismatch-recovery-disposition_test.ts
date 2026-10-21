@@ -540,7 +540,11 @@ Deno.test("disposition pass reports no candidates without any write", async () =
 Deno.test("disposition pass preserves unrelated rows byte-identical", async () => {
   const f = await fixture();
   const other = workRecord("issue-ubiquity-sentinel-8", {
-    repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+    repository: {
+      owner: "Ubiquity-Sentinel",
+      name: "sentinel",
+      installationId: 0,
+    },
     nextStep: "work",
   });
   const snapshot = parseRepairStateSnapshotV1({

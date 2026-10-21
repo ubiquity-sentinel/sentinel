@@ -23,7 +23,7 @@ import {
 } from "../src/host/matrix-artifacts.ts";
 import { closedCWaveHandledReservations } from "../src/host/modern-matrix-recovery.ts";
 
-const REPO_URL = "https://github.com/ubiquity/sentinel.git";
+const REPO_URL = "https://github.com/Ubiquity-Sentinel/sentinel.git";
 
 function sh(
   command: string,

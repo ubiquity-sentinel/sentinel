@@ -54,7 +54,7 @@ const checkRunId = 789;
 const workflow = encoder.encode(
   "name: sentinel-release\njobs:\n  release:\n    runs-on: ubuntu-latest\n",
 );
-const api = "https://api.github.com/repos/ubiquity/sentinel";
+const api = "https://api.github.com/repos/Ubiquity-Sentinel/sentinel";
 const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 const url64 = (bytes: Uint8Array) =>
   b64(bytes).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
@@ -95,7 +95,8 @@ async function authRig() {
       workflowSha256: await bridgeSha256(workflow),
       repositoryId: 17,
       ownerId: 18,
-      subject: "repo:ubiquity/sentinel:environment:sentinel-release-bridge",
+      subject:
+        "repo:Ubiquity-Sentinel/sentinel:environment:sentinel-release-bridge",
       environment: "sentinel-release-bridge",
     },
     targetInstallationId: 7,
@@ -112,16 +113,16 @@ async function authRig() {
     iat: Math.floor(now / 1000),
     nbf: Math.floor(now / 1000),
     jti: "synthetic-unique-jwt-id",
-    repository: "ubiquity/sentinel",
+    repository: "Ubiquity-Sentinel/sentinel",
     repository_id: "17",
-    repository_owner: "ubiquity",
+    repository_owner: "Ubiquity-Sentinel",
     repository_owner_id: "18",
     ref: "refs/heads/sentinel-supervisor",
     ref_type: "branch",
     sha: pin.source.revision,
     workflow_sha: pin.source.revision,
     workflow_ref:
-      "ubiquity/sentinel/.github/workflows/release.yml@refs/heads/sentinel-supervisor",
+      "Ubiquity-Sentinel/sentinel/.github/workflows/release.yml@refs/heads/sentinel-supervisor",
     workflow: "sentinel-release",
     environment: "sentinel-release-bridge",
     event_name: "workflow_dispatch",
@@ -144,7 +145,7 @@ async function authRig() {
     head_branch: "sentinel-supervisor",
     event: "workflow_dispatch",
     status: "in_progress",
-    repository: { id: 17, full_name: "ubiquity/sentinel" },
+    repository: { id: 17, full_name: "Ubiquity-Sentinel/sentinel" },
   };
   const nativeJob: Record<string, unknown> = {
     id: 456,
@@ -352,7 +353,7 @@ Deno.test("release bridge: installed target/state/controller/driver scope is fix
   }
   assert.equal(
     RELEASE_BRIDGE_STATE_REPOSITORY,
-    "https://github.com/ubiquity/sentinel.git",
+    "https://github.com/Ubiquity-Sentinel/sentinel.git",
   );
   assert.equal(RELEASE_BRIDGE_STATE_REF, "refs/heads/sentinel-state/release");
 });
@@ -389,14 +390,16 @@ Deno.test("release bridge: wrong audience/time/owner/ref/workflow/run/attempt/ch
     { workflow_ref: "attacker/path" },
     {
       workflow_ref:
-        "ubiquity/sentinel/.github/workflows/release.yml@refs/heads/sentinel-release",
+        "Ubiquity-Sentinel/sentinel/.github/workflows/release.yml@refs/heads/sentinel-release",
     },
     { run_id: "124" },
     { run_attempt: "3" },
     { check_run_id: "790" },
     { environment: "sentinel-supervisor" },
     { environment: undefined },
-    { sub: "repo:ubiquity/sentinel:ref:refs/heads/sentinel-supervisor" },
+    {
+      sub: "repo:Ubiquity-Sentinel/sentinel:ref:refs/heads/sentinel-supervisor",
+    },
     { event_name: "pull_request" },
     { runner_environment: "self-hosted" },
   ];

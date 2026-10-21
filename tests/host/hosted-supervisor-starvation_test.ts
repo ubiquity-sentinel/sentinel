@@ -521,7 +521,11 @@ Deno.test("starvation: authenticated compare and exact latest test-local matcher
     await t.step(scenario, async () => {
       const paths: string[] = [];
       const client = new HostedSupervisorGitHubClient({
-        repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+        repository: {
+          owner: "Ubiquity-Sentinel",
+          name: "sentinel",
+          installationId: 0,
+        },
         apiBaseUrl: "https://api.github.com",
         auth: {
           authorizationHeader: () =>
@@ -581,7 +585,9 @@ Deno.test("starvation: authenticated compare and exact latest test-local matcher
         );
       }
       assert.ok(
-        paths.includes(`/repos/ubiquity/sentinel/commits/${CANDIDATE}`),
+        paths.includes(
+          `/repos/Ubiquity-Sentinel/sentinel/commits/${CANDIDATE}`,
+        ),
       );
     });
   }

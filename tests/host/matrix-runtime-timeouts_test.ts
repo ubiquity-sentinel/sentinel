@@ -139,7 +139,11 @@ Deno.test(
     const prior = "ee5e6518a4333c20d8bc6a4c3c577a2536ec6b9b" as GitSha;
     const request = {
       taskId: "issue-parser-1",
-      repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+      repository: {
+        owner: "Ubiquity-Sentinel",
+        name: "sentinel",
+        installationId: 0,
+      },
       base,
       issue: null,
       evidence: [],

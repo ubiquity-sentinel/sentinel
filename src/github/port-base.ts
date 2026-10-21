@@ -77,7 +77,7 @@ export abstract class GitHubPortBase {
   constructor(options: GitHubPortOptionsV1) {
     this.nativeQueue = options.nativeQueue;
     this.selfMergeEnabled = options.selfMergeEnabled === true &&
-      options.repository.owner === "ubiquity" &&
+      options.repository.owner === "Ubiquity-Sentinel" &&
       options.repository.name === "sentinel" &&
       options.repository.installationId === 0;
     this.repository = options.repository;

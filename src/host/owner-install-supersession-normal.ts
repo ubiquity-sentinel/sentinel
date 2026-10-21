@@ -148,7 +148,11 @@ export async function readOwnerSupersededNormalEvidence(input: ReadInput) {
         );
     };
     const client = new GitHubApiClient({
-      repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+      repository: {
+        owner: "Ubiquity-Sentinel",
+        name: "sentinel",
+        installationId: 0,
+      },
       apiBaseUrl: "https://api.github.com",
       http: fetchHttpTransport(),
       auth: {

@@ -380,7 +380,11 @@ Deno.test(
       assert.deepEqual(ensured, [{
         base: ctx.oldBase,
         head: ctx.candidate,
-        repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+        repository: {
+          owner: "Ubiquity-Sentinel",
+          name: "sentinel",
+          installationId: 0,
+        },
       }]);
       assert.deepEqual(observer.refReads, [`refs/heads/${BASE_BRANCH}`]);
       // Recovery: the PR head may already be the exact persisted prepared

@@ -91,7 +91,7 @@ Deno.test(
           issue: portOk(legacyIssue({
             relations: {
               openBlockers: [{
-                owner: "ubiquity",
+                owner: "Ubiquity-Sentinel",
                 name: "sentinel",
                 number: 9,
               }],

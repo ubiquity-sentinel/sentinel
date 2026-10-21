@@ -18,7 +18,7 @@ import { FakeClock, MemoryState } from "../repair/helpers.ts";
 import { SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
 
 const SELF_REPO = {
-  owner: "ubiquity",
+  owner: "Ubiquity-Sentinel",
   name: "sentinel",
   installationId: 0,
 } as const;
@@ -40,17 +40,18 @@ const WORKFLOW_PATH = ".github/workflows/ci.yml";
 
 export const API_BASE = "https://api.github.com";
 
-/** Real raw PR repository id and minimal API URL for ubiquity/sentinel. */
+/** Real raw PR repository id and minimal API URL for Ubiquity-Sentinel/sentinel. */
 export const REPO_ID = 1_362_069_392;
 
-const REPO_API_URL = "https://api.github.com/repos/ubiquity/sentinel";
+const REPO_API_URL = "https://api.github.com/repos/Ubiquity-Sentinel/sentinel";
 
-export const PULL_PATH = `/repos/ubiquity/sentinel/pulls/${PR_NUMBER}`;
+export const PULL_PATH = `/repos/Ubiquity-Sentinel/sentinel/pulls/${PR_NUMBER}`;
 
 export const LIST_PATH =
-  "/repos/ubiquity/sentinel/actions/workflows/ci.yml/runs";
+  "/repos/Ubiquity-Sentinel/sentinel/actions/workflows/ci.yml/runs";
 
-export const RUN_PATH = `/repos/ubiquity/sentinel/actions/runs/${RUN_ID}`;
+export const RUN_PATH =
+  `/repos/Ubiquity-Sentinel/sentinel/actions/runs/${RUN_ID}`;
 
 export const APPROVE_PATH = `${RUN_PATH}/approve`;
 
@@ -137,7 +138,7 @@ export function pullBody(
       repo: {
         id: overrides.headRepoId ?? REPO_ID,
         name: "sentinel",
-        full_name: overrides.headRepo ?? "ubiquity/sentinel",
+        full_name: overrides.headRepo ?? "Ubiquity-Sentinel/sentinel",
         url: REPO_API_URL,
       },
     },
@@ -146,7 +147,7 @@ export function pullBody(
       repo: {
         id: overrides.baseRepoId ?? REPO_ID,
         name: "sentinel",
-        full_name: "ubiquity/sentinel",
+        full_name: "Ubiquity-Sentinel/sentinel",
         url: REPO_API_URL,
       },
     },
@@ -190,7 +191,9 @@ export function runBody(
     path: overrides.path ?? WORKFLOW_PATH,
     head_sha: overrides.headSha ?? HEAD,
     head_branch: overrides.headRef ?? HEAD_REF,
-    head_repository: { full_name: overrides.headRepo ?? "ubiquity/sentinel" },
+    head_repository: {
+      full_name: overrides.headRepo ?? "Ubiquity-Sentinel/sentinel",
+    },
     actor: { login: overrides.actor ?? PUBLISHER },
     triggering_actor: { login: overrides.triggeringActor ?? PUBLISHER },
     status: overrides.status ?? "completed",

@@ -60,7 +60,7 @@ Deno.test("mergePullRequest: exact-head merge after full authoritative verificat
     extra: [
       httpRespond(
         "PUT",
-        "/repos/ubiquity/sentinel/pulls/1/merge",
+        "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
         200,
         mergeResponseWire(SHA3),
       ),
@@ -123,7 +123,7 @@ Deno.test("mergePullRequest: a published closing link requires the exact bound t
       ? [
         httpRespond(
           "PUT",
-          "/repos/ubiquity/sentinel/pulls/1/merge",
+          "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
           200,
           mergeResponseWire(SHA3),
         ),
@@ -267,7 +267,7 @@ Deno.test("mergePullRequest: head/base/author/closed checks fail closed with zer
   assert.equal(putCount(closedPort.transport), 0);
 
   const missingPort = mergedPort([
-    httpRespond("GET", "/repos/ubiquity/sentinel/pulls/404", 404, {}),
+    httpRespond("GET", "/repos/Ubiquity-Sentinel/sentinel/pulls/404", 404, {}),
   ]);
   const missing = await missingPort.port.mergePullRequest(mergeRequest({
     pullRequestNumber: 404,
@@ -448,7 +448,7 @@ Deno.test("mergePullRequest: the opaque canonical receipt id is not the operatio
     extra: [
       httpRespond(
         "PUT",
-        "/repos/ubiquity/sentinel/pulls/1/merge",
+        "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
         200,
         mergeResponseWire(SHA3),
       ),
@@ -515,7 +515,7 @@ Deno.test(
         },
         httpRespond(
           "PUT",
-          "/repos/ubiquity/sentinel/pulls/1/merge",
+          "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
           200,
           mergeResponseWire(SHA3),
         ),

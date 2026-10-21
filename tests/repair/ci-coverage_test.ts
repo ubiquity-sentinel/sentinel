@@ -121,7 +121,7 @@ Deno.test("readChecks: the strict CI read stays R80's: it reads no check suite, 
     script: [
       httpRespond(
         "GET",
-        `/repos/ubiquity/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`,
+        `/repos/Ubiquity-Sentinel/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`,
         200,
         checksPageWire([
           checkRunWire({ name: "validate", check_suite: { id: 105739629025 } }),
@@ -130,7 +130,7 @@ Deno.test("readChecks: the strict CI read stays R80's: it reads no check suite, 
       ),
       httpRespond(
         "GET",
-        `/repos/ubiquity/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`,
+        `/repos/Ubiquity-Sentinel/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`,
         200,
         statusesPageWire([commitStatusWire({ context: "deploy" })]),
       ),
@@ -150,7 +150,11 @@ Deno.test("readChecks: the strict CI read stays R80's: it reads no check suite, 
 });
 
 /** The sentinel self scope (the no-App owner identity). */
-const SELF = { owner: "ubiquity", name: "sentinel", installationId: 0 };
+const SELF = {
+  owner: "Ubiquity-Sentinel",
+  name: "sentinel",
+  installationId: 0,
+};
 
 for (
   const [live, runs, long] of [[LIVE_L80, 22, 7], [LIVE_TIP, 75, 33]] as const
@@ -198,7 +202,7 @@ for (
 
 Deno.test("readCheckSuites: exact head, exact suite, bounded items; a run without a suite expects nothing", async () => {
   const path =
-    `/repos/ubiquity/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`;
+    `/repos/Ubiquity-Sentinel/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`;
   const read = (runs: unknown[], maxItems?: number) =>
     makePort({
       script: [httpRespond("GET", path, 200, checksPageWire(runs))],

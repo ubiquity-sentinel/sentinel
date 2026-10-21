@@ -19,7 +19,7 @@ export const NATIVE_CI_SOURCES = [
 ] as const;
 export interface NativeCiProofV1 {
   version: "v1";
-  repository: "ubiquity/sentinel";
+  repository: "Ubiquity-Sentinel/sentinel";
   repositoryId: number;
   runId: number;
   attempt: number;
@@ -60,14 +60,14 @@ export function parseNativeCiProof(
     "sources",
   ], path);
   expectVersion(o.version, `${path}.version`);
-  if (o.repository !== "ubiquity/sentinel" || o.job !== "test-local") {
+  if (o.repository !== "Ubiquity-Sentinel/sentinel" || o.job !== "test-local") {
     fail(path, "invalid_value", "native CI scope mismatch");
   }
   const s = expectRecord(o.sources, `${path}.sources`);
   expectExactKeys(s, ["workflow", "harness", "emitter"], `${path}.sources`);
   return {
     version: "v1",
-    repository: "ubiquity/sentinel",
+    repository: "Ubiquity-Sentinel/sentinel",
     repositoryId: expectPositiveInt(o.repositoryId, `${path}.repositoryId`),
     runId: expectPositiveInt(o.runId, `${path}.runId`),
     attempt: expectPositiveInt(o.attempt, `${path}.attempt`),

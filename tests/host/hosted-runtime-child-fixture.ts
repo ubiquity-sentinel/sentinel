@@ -41,7 +41,11 @@ const HOSTED_FIXTURE_REASONING = "hosted-fixture-observed-reasoning-marker";
 export function hostedFixtureRequest(): ModelRunRequestV1 {
   return {
     taskId: asWorkItemId(HOSTED_FIXTURE_TASK_ID),
-    repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+    repository: {
+      owner: "Ubiquity-Sentinel",
+      name: "sentinel",
+      installationId: 0,
+    },
     base: OBSERVED_BASE,
     issue: { number: 53, title: "fixture", body: HOSTED_FIXTURE_ISSUE_BODY },
     evidence: [{ kind: "replay_result", ref: HOSTED_FIXTURE_EVIDENCE_REF }],

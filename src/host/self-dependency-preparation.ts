@@ -27,7 +27,8 @@ export type PrepareCheckoutDependenciesV1 = (
 export function isSentinelSelfTarget(
   repository: RepositoryIdentityV1,
 ): boolean {
-  return repository.owner === "ubiquity" && repository.name === "sentinel";
+  return repository.owner === "Ubiquity-Sentinel" &&
+    repository.name === "sentinel";
 }
 /**
  * expectedSealSha256/sourceCommit and seedRoot must come from the protected,

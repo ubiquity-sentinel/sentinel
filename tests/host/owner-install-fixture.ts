@@ -78,7 +78,7 @@ export async function concurrencyInstallerFixture(
   const originalCwd = Deno.cwd();
   const originalEnvironmentGet = Deno.env.get;
   const environment: Record<string, string> = {
-    GITHUB_REPOSITORY: "ubiquity/sentinel",
+    GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
     GITHUB_REF: "refs/heads/sentinel-supervisor",
     GITHUB_JOB: "prepare",
     GITHUB_SHA: LAUNCHER,
@@ -89,7 +89,7 @@ export async function concurrencyInstallerFixture(
       GITHUB_RUN_ID: "999999",
       GITHUB_RUN_ATTEMPT: "1",
       GITHUB_WORKFLOW_REF:
-        "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+        "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
     }),
   };
   const gitEnvironment = {

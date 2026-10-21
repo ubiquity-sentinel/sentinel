@@ -276,7 +276,11 @@ export async function readOwnerSupersessionAuthority(
         );
     };
     const client = new GitHubApiClient({
-      repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+      repository: {
+        owner: "Ubiquity-Sentinel",
+        name: "sentinel",
+        installationId: 0,
+      },
       apiBaseUrl: "https://api.github.com",
       http: fetchHttpTransport(),
       auth: {
@@ -575,7 +579,11 @@ export async function readOwnerSupersededRecoveryAuthority(
         );
     };
     const client = new GitHubApiClient({
-      repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+      repository: {
+        owner: "Ubiquity-Sentinel",
+        name: "sentinel",
+        installationId: 0,
+      },
       apiBaseUrl: "https://api.github.com",
       http: fetchHttpTransport(),
       auth: {

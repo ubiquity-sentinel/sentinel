@@ -69,8 +69,11 @@ export interface BaseTaskReviewOptionsV1 {
 
 /** Fixed trusted CI names for the two owner-authorized targets. */
 function requiredChecks(repository: RepositoryIdentityV1): readonly string[] {
+  if (
+    repository.owner === "Ubiquity-Sentinel" &&
+    repository.name === "sentinel"
+  ) return ["test-local"];
   if (repository.owner !== "ubiquity") return [];
-  if (repository.name === "sentinel") return ["test-local"];
   if (repository.name === "ai.ubq.fi") {
     return ["validate", "verify-artifact", "darwin-native", "mac-containment"];
   }

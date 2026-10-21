@@ -609,7 +609,7 @@ Deno.test(
 Deno.test(
   "local release: another scope-0 repository cannot consume the Sentinel local receipt",
   async () => {
-    // The explicit local Sentinel scope is exactly ubiquity/sentinel at
+    // The explicit local Sentinel scope is exactly Ubiquity-Sentinel/sentinel at
     // installation 0. A different repository that also uses scope 0 is not
     // local: its delivery record must take the hosted path and never even
     // consult the Sentinel local receipt capability, let alone consume an

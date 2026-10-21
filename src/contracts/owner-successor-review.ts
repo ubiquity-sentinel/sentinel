@@ -357,7 +357,7 @@ export function parseOwnerSuccessorReviewV1(
     createdAt > updatedAt || reservation.taskId !== binding.workId ||
     reservation.head !== binding.successorRevision ||
     reservation.purpose !== "review_request" ||
-    reservation.repository.owner !== "ubiquity" ||
+    reservation.repository.owner !== "Ubiquity-Sentinel" ||
     reservation.repository.name !== "sentinel" ||
     reservation.repository.installationId !== 0 ||
     (execution !== null &&

@@ -521,7 +521,7 @@ export async function runActionsRepairHost(
       ownerSettlement: {
         read: (input) => nativeSelf.readReviewOwnerSettlement(input),
       },
-      selfMergeEnabled: config.repository.owner === "ubiquity" &&
+      selfMergeEnabled: config.repository.owner === "Ubiquity-Sentinel" &&
         config.repository.name === "sentinel" &&
         config.repository.installationId === 0,
       stateRoot,

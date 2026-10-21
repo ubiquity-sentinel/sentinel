@@ -138,7 +138,7 @@ Deno.test("ordinary matrix capability: actual client immutable source proof gate
         assert.equal(decision.status, capable ? "run" : "idle");
         assert.equal(
           requests[0],
-          "/repos/ubiquity/sentinel/git/commits/" +
+          "/repos/Ubiquity-Sentinel/sentinel/git/commits/" +
             before.hostedRuntimes[0].activeRevision,
         );
         assert.ok(requests.every((path) => !path.includes("development")));

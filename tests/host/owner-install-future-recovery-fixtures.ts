@@ -145,8 +145,11 @@ async function nativeProof(
       baseSha: healthy ? revision : null,
     }),
   ], at + 1500);
-  const path = `/repos/ubiquity/sentinel/actions/runs/${runId}/attempts/1`;
-  const logPath = `/repos/ubiquity/sentinel/actions/jobs/${runId * 10}/logs`;
+  const path =
+    `/repos/Ubiquity-Sentinel/sentinel/actions/runs/${runId}/attempts/1`;
+  const logPath = `/repos/Ubiquity-Sentinel/sentinel/actions/jobs/${
+    runId * 10
+  }/logs`;
   const signed =
     `https://productionresultssa17.blob.core.windows.net/logs/${runId}?sig=fixture`;
   const rig = nativeRig(at + 4000);
@@ -679,7 +682,7 @@ export async function futureRecoveryFixture(
     const run = { runId: 9000, runAttempt: 1, launcherSha: controller };
     const nativeProofs = [healthy, failed, originalHistorical];
     const environment: Record<string, string> = {
-      GITHUB_REPOSITORY: "ubiquity/sentinel",
+      GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
       GITHUB_REF: "refs/heads/sentinel-supervisor",
       GITHUB_JOB: "prepare",
       GITHUB_RUN_ID: String(run.runId),
@@ -687,7 +690,7 @@ export async function futureRecoveryFixture(
       GITHUB_SHA: controller,
       GITHUB_WORKFLOW_SHA: controller,
       GITHUB_WORKFLOW_REF:
-        "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+        "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
       GITHUB_TOKEN: "offline-native-token-value",
       SENTINEL_SUPERVISOR_TOKEN: "offline-app-token-value",
     };

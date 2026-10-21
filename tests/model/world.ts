@@ -64,7 +64,7 @@ export const GATEWAY: RepositoryIdentityV1 = {
 };
 /** The sentinel self scope. */
 export const SELF: RepositoryIdentityV1 = {
-  owner: "ubiquity",
+  owner: "Ubiquity-Sentinel",
   name: "sentinel",
   installationId: 0,
 };
@@ -117,7 +117,7 @@ export function runtimeRecord(
       },
       workflowId: 357012162,
       workflowPath: ".github/workflows/supervisor.yml",
-      repository: "ubiquity/sentinel",
+      repository: "Ubiquity-Sentinel/sentinel",
       ref: "refs/heads/sentinel-supervisor",
       jobId: 1,
       startedAt: CUTOFF + 61_000,

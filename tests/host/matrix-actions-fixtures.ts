@@ -147,7 +147,7 @@ export async function rig(
   const env = testGitEnv(root + "/home");
   const sha = await checkout(root + "/seed", env, {
     "sentinel.targets.json": JSON.stringify([
-      "ubiquity/sentinel",
+      "Ubiquity-Sentinel/sentinel",
       "ubiquity/ai.ubq.fi",
     ]),
     ".gitignore": ".sentinel-actions-state/\n",
@@ -183,7 +183,7 @@ export async function rig(
     execution: prior,
     workflowId: HOSTED_SUPERVISOR_WORKFLOW_ID,
     workflowPath: HOSTED_SUPERVISOR_WORKFLOW_PATH,
-    repository: "ubiquity/sentinel",
+    repository: "Ubiquity-Sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: 101,
     startedAt: T0,
@@ -299,7 +299,7 @@ export async function rig(
     );
   const github = new Map<string, TargetGithub>();
   for (
-    const [slug, base] of [["ubiquity/sentinel", sha], [
+    const [slug, base] of [["Ubiquity-Sentinel/sentinel", sha], [
       "ubiquity/ai.ubq.fi",
       foreignSha,
     ]] as const
@@ -399,12 +399,12 @@ export async function rig(
       env: {
         GITHUB_RUN_ID: String(currentRun),
         GITHUB_RUN_ATTEMPT: "1",
-        GITHUB_REPOSITORY: "ubiquity/sentinel",
+        GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
         GITHUB_REF: "refs/heads/sentinel-supervisor",
         GITHUB_SHA: sha,
         GITHUB_WORKFLOW_SHA: sha,
         GITHUB_WORKFLOW_REF:
-          "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+          "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
         GITHUB_JOB: role,
         GITHUB_TOKEN: "fake-read-token",
         SENTINEL_SUPERVISOR_TOKEN: "fake-app-token",

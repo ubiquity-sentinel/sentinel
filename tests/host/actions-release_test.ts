@@ -40,7 +40,11 @@ const ROOT = decodeURIComponent(HERE.pathname).replace(
   "",
 );
 
-const SELF = { owner: "ubiquity", name: "sentinel", installationId: 0 };
+const SELF = {
+  owner: "Ubiquity-Sentinel",
+  name: "sentinel",
+  installationId: 0,
+};
 const REQUEST_ID = "release-hosted-1";
 const REVISION = SHA3;
 const PRIOR = SHA2;

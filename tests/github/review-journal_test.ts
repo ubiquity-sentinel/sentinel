@@ -37,7 +37,7 @@ const T0 = 1786000000000;
 
 const BASELINE = {
   version: "v1",
-  repository: { owner: "ubiquity", name: "sentinel" },
+  repository: { owner: "Ubiquity-Sentinel", name: "sentinel" },
   prNumber: 7,
   expectedHead: SHA_A,
   expectedBase: SHA_B,

@@ -50,7 +50,7 @@ Deno.test("hosted runtime: native identity parsing is exact and rejects every fo
     {
       ...env,
       GITHUB_WORKFLOW_REF:
-        "ubiquity/sentinel/.github/workflows/other.yml@refs/heads/sentinel-supervisor",
+        "Ubiquity-Sentinel/sentinel/.github/workflows/other.yml@refs/heads/sentinel-supervisor",
     },
     { ...env, GITHUB_WORKFLOW_SHA: "c".repeat(40) },
     { ...env, GITHUB_SHA: "not-a-sha" },

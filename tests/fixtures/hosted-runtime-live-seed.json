@@ -4,7 +4,7 @@
     "createdAt": 1789358128122,
     "execution": null,
     "generation": 81,
-    "id": "ubiquity/sentinel:0:production",
+    "id": "Ubiquity-Sentinel/sentinel:0:production",
     "kind": "hosted_runtime",
     "lastExecutionProof": {
       "baseSha": "a1ba60d67b1599a8def2ba2aa3026e172d14c78e",
@@ -25,7 +25,7 @@
       "observedAt": 1792482214865,
       "outcome": "failed",
       "ref": "refs/heads/sentinel-supervisor",
-      "repository": "ubiquity/sentinel",
+      "repository": "Ubiquity-Sentinel/sentinel",
       "settled": true,
       "startedAt": 1792482131000,
       "startupReady": true,
@@ -52,7 +52,7 @@
       "observedAt": 1792338900172,
       "outcome": "healthy",
       "ref": "refs/heads/sentinel-supervisor",
-      "repository": "ubiquity/sentinel",
+      "repository": "Ubiquity-Sentinel/sentinel",
       "settled": true,
       "startedAt": 1792338785000,
       "startupReady": true,
@@ -92,7 +92,7 @@
         "repository": {
           "installationId": 0,
           "name": "sentinel",
-          "owner": "ubiquity"
+          "owner": "Ubiquity-Sentinel"
         }
       },
       "version": "v1"

@@ -131,7 +131,7 @@ Deno.test("complete Actions history binds stable PR/H claim across earlier sourc
       assert(
         requests.every((request) =>
           request.method === "GET" &&
-          request.url.includes("/repos/ubiquity/sentinel/actions/")
+          request.url.includes("/repos/Ubiquity-Sentinel/sentinel/actions/")
         ),
       );
     });

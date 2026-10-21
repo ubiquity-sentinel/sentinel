@@ -136,7 +136,7 @@ export function hostedEnv(launcherSha: GitSha): Record<string, string> {
   return {
     GITHUB_RUN_ID: String(RUN_ID),
     GITHUB_RUN_ATTEMPT: String(RUN_ATTEMPT),
-    GITHUB_REPOSITORY: "ubiquity/sentinel",
+    GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
     GITHUB_REF: "refs/heads/sentinel-supervisor",
     GITHUB_SHA: launcherSha,
     GITHUB_WORKFLOW_SHA: launcherSha,

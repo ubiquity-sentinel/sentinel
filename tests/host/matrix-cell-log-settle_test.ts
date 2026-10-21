@@ -31,7 +31,7 @@ const REFUSAL = (error: unknown) =>
   error instanceof Error &&
   Object.getPrototypeOf(error) === Error.prototype &&
   error.message === "matrix artifact provenance unavailable or conflicting";
-const API = "/repos/ubiquity/sentinel/actions";
+const API = "/repos/Ubiquity-Sentinel/sentinel/actions";
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 type Unserved = "api" | "storage" | "empty" | "partial";
@@ -268,7 +268,7 @@ async function replay(options: {
 }) {
   const r = await rig();
   try {
-    const self = r.github.get("ubiquity/sentinel")!;
+    const self = r.github.get("Ubiquity-Sentinel/sentinel")!;
     self.listOpenIssues = () => Promise.resolve(portOk([issue(93)]));
     self.readIssue = (number) => Promise.resolve(portOk(issue(number)));
     const foreign = r.github.get("ubiquity/ai.ubq.fi")!;

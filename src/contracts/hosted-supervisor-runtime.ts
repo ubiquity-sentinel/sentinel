@@ -13,7 +13,10 @@ import {
   fail,
   MaxText,
 } from "./validation.ts";
-import { HOSTED_RUNTIME_ID } from "./hosted-supervisor-types.ts";
+import {
+  HOSTED_RUNTIME_ID,
+  RETIRED_HOSTED_RUNTIME_ID,
+} from "./hosted-supervisor-types.ts";
 import type {
   HostedPointerIntentV1,
   HostedRuntimeRecordV1,
@@ -66,14 +69,15 @@ export function parseHostedRuntimeRecordV1(
   expectVersion(obj.version, `${path}.version`);
   expectEnum(obj.kind, ["hosted_runtime"], `${path}.kind`);
 
-  const id = expectNonEmptyString(obj.id, `${path}.id`, MaxText.recordId);
-  if (id !== HOSTED_RUNTIME_ID) {
+  const rawId = expectNonEmptyString(obj.id, `${path}.id`, MaxText.recordId);
+  if (rawId !== HOSTED_RUNTIME_ID && rawId !== RETIRED_HOSTED_RUNTIME_ID) {
     fail(
       `${path}.id`,
       "invalid_lifecycle",
       "hosted runtime id is not the fixed self production runtime",
     );
   }
+  const id = HOSTED_RUNTIME_ID;
   const activeRevision = expectGitSha(
     obj.activeRevision,
     `${path}.activeRevision`,

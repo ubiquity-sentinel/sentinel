@@ -84,7 +84,7 @@ export function createOwnerInstallTransport(input: OwnerInstallTransportInput) {
           ...options,
           args: [
             "-c",
-            `url.${remote}.insteadOf=https://github.com/ubiquity/sentinel.git`,
+            `url.${remote}.insteadOf=https://github.com/Ubiquity-Sentinel/sentinel.git`,
             ...(options.args ?? []),
           ],
         };
@@ -95,7 +95,7 @@ export function createOwnerInstallTransport(input: OwnerInstallTransportInput) {
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     assert.equal(url.origin, "https://api.github.com");
-    assert.ok(url.pathname.startsWith("/repos/ubiquity/sentinel/"));
+    assert.ok(url.pathname.startsWith("/repos/Ubiquity-Sentinel/sentinel/"));
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : {};
     requests.push({ method, path: url.pathname, body });
@@ -397,7 +397,7 @@ export function createOwnerInstallTransport(input: OwnerInstallTransportInput) {
     if (method === "PATCH" && url.pathname.includes("/git/refs/")) {
       assert.equal(
         url.pathname,
-        "/repos/ubiquity/sentinel/git/refs/heads/sentinel-state/release",
+        "/repos/Ubiquity-Sentinel/sentinel/git/refs/heads/sentinel-state/release",
       );
       assert.ok(createdCommit !== null);
       assert.deepEqual(body, { sha: createdCommit, force: false });

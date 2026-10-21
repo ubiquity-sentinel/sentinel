@@ -1,5 +1,8 @@
 /** Trusted controller placement. Change only in reviewed deployment source. */
-import type { RepositoryIdentityV1 } from "./shared.ts";
+import {
+  type RepositoryIdentityV1,
+  SENTINEL_SELF_REPOSITORY,
+} from "./shared.ts";
 import {
   expectNonEmptyString,
   expectRecord,
@@ -11,7 +14,7 @@ import {
 // environment variables nor target configuration may choose the controller.
 export const HOSTED_CONTROLLER_DEPLOYMENT = Object.freeze(
   {
-    owner: "ubiquity",
+    owner: "Ubiquity-Sentinel",
     name: "sentinel",
     sourceBranch: "development",
     supervisorBranch: "sentinel-supervisor",
@@ -24,12 +27,8 @@ export const HOSTED_CONTROLLER_DEPLOYMENT = Object.freeze(
 
 export const HOSTED_CONTROLLER_REPOSITORY =
   `${HOSTED_CONTROLLER_DEPLOYMENT.owner}/${HOSTED_CONTROLLER_DEPLOYMENT.name}` as const;
-export const HOSTED_CONTROLLER_SELF: Readonly<RepositoryIdentityV1> = Object
-  .freeze({
-    owner: HOSTED_CONTROLLER_DEPLOYMENT.owner,
-    name: HOSTED_CONTROLLER_DEPLOYMENT.name,
-    installationId: 0,
-  });
+export const HOSTED_CONTROLLER_SELF: Readonly<RepositoryIdentityV1> =
+  SENTINEL_SELF_REPOSITORY;
 export const HOSTED_CONTROLLER_API_PATH =
   `/repos/${HOSTED_CONTROLLER_REPOSITORY}`;
 export const HOSTED_CONTROLLER_REMOTE =

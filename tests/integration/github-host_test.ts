@@ -127,13 +127,13 @@ function composeCapabilityRig(): CapabilityRigV1 {
   const transport = new ScriptedHttpTransport([
     httpRespond(
       "GET",
-      "/repos/ubiquity/sentinel/issues?state=open&per_page=100&page=1",
+      "/repos/Ubiquity-Sentinel/sentinel/issues?state=open&per_page=100&page=1",
       200,
       [issueWire({ number: 7 })],
     ),
     httpRespond(
       "GET",
-      "/repos/ubiquity/sentinel/pulls/1",
+      "/repos/Ubiquity-Sentinel/sentinel/pulls/1",
       200,
       pullWire(),
     ),
@@ -182,7 +182,7 @@ Deno.test(
     assert.equal(issues.value[0].number, 7);
     assert.equal(
       rig.transport.requests[0].url,
-      "https://api.github.com/repos/ubiquity/sentinel/issues" +
+      "https://api.github.com/repos/Ubiquity-Sentinel/sentinel/issues" +
         "?state=open&per_page=100&page=1",
     );
     assert.equal(
@@ -330,10 +330,10 @@ Deno.test(
   () => {
     const cases: RepositoryIdentityV1[] = [
       // Zero is the explicit no-App scope, but negative ids are not valid.
-      { owner: "ubiquity", name: "sentinel", installationId: -2 },
+      { owner: "Ubiquity-Sentinel", name: "sentinel", installationId: -2 },
       // Exact frozen pattern: an owner cannot contain a slash.
       { owner: "ubiquity!", name: "sentinel", installationId: 42 },
-      { owner: "ubiquity", name: "sentinel", installationId: -1 },
+      { owner: "Ubiquity-Sentinel", name: "sentinel", installationId: -1 },
     ];
     for (const repository of cases) {
       assert.throws(
@@ -350,7 +350,7 @@ Deno.test(
         composeGitHubHost({
           ...baseOptions(),
           repository: {
-            owner: "ubiquity",
+            owner: "Ubiquity-Sentinel",
             name: "sentinel",
             installationId: 42,
             extra: true,
