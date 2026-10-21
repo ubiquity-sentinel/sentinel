@@ -91,8 +91,16 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
         const item = identity.item;
         if (
           item.type !== "agentMessage" && item.type !== "reasoning" &&
-          item.type !== "userMessage" && item.type !== "commandExecution"
+          item.type !== "userMessage" && item.type !== "commandExecution" &&
+          item.type !== "enteredReviewMode" && item.type !== "exitedReviewMode"
         ) return UNSUPPORTED_ITEM_DETAIL;
+        if (
+          item.type === "enteredReviewMode" || item.type === "exitedReviewMode"
+        ) {
+          return isBoundedId(item.id) && typeof item.review === "string"
+            ? null
+            : ITEM_IDENTITY_DETAIL;
+        }
         if (item.type === "userMessage") return this.userEchoFailure(item);
         if (item.type === "agentMessage" && event.method === "item/completed") {
           if (!isBoundedId(item.id)) return ITEM_IDENTITY_DETAIL;
@@ -266,6 +274,10 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
     }
     if (!identity.exact) return;
     const type = identity.item.type;
+    if (type === "enteredReviewMode" || type === "exitedReviewMode") {
+      this.onNativeReviewItem(identity.item, false);
+      return;
+    }
     if (type === "agentMessage" || type === "reasoning") return;
     if (type === "userMessage") {
       this.onUserEcho(identity.item);
@@ -287,6 +299,10 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
     if (!identity.exact) return;
     const item = identity.item;
     const type = item.type;
+    if (type === "enteredReviewMode" || type === "exitedReviewMode") {
+      this.onNativeReviewItem(item, true, truncated);
+      return;
+    }
     if (type === "reasoning") return;
     if (type === "userMessage") {
       this.onUserEcho(item);
@@ -308,33 +324,63 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
       this.failEvidence(AGENT_MESSAGE_DETAIL);
       return;
     }
-    let phase: string | null = null;
-    const rawPhase = item.phase;
-    if (rawPhase !== undefined && rawPhase !== null) {
-      if (!isBoundedId(rawPhase)) {
-        this.failEvidence(AGENT_MESSAGE_DETAIL);
-        return;
-      }
-      phase = rawPhase;
-      if (!COMMENTARY_PHASES.has(phase) && !FINAL_PHASES.has(phase)) {
-        this.failEvidence(AGENT_MESSAGE_DETAIL);
-        return;
-      }
-    }
-    if (phase !== null && COMMENTARY_PHASES.has(phase)) return;
-    truncated ||= item.text.length > MAX_JOURNAL_BYTES;
-    // Retain one exact result, never commentary or a parseable truncated prefix.
-    // An exact result can replace truncated-only evidence; two exact finals
-    // remain contradictory, including evidence delivered during close.
-    if (!truncated && this.exactFinalSeen) {
+    // Native review completion is exclusively the exitedReviewMode item.
+    // Ordinary assistant messages may be telemetry, never a review result.
+  }
+
+  private onNativeReviewItem(
+    item: Record<string, unknown>,
+    completed: boolean,
+    truncated = false,
+  ): void {
+    const id = item.id;
+    if (this.terminal !== null) {
       this.failEvidence(AMBIGUOUS_FINAL_DETAIL);
       return;
     }
-    this.exactFinalSeen ||= !truncated;
+    if (!isBoundedId(id) || typeof item.review !== "string") {
+      this.failEvidence(ITEM_IDENTITY_DETAIL);
+      return;
+    }
+    if (item.type === "enteredReviewMode") {
+      if (!completed) {
+        if (this.enteredReviewItemId !== null) {
+          this.failEvidence(AMBIGUOUS_FINAL_DETAIL);
+        } else this.enteredReviewItemId = id;
+      } else if (
+        this.enteredReviewItemId !== id || this.enteredReviewCompleted
+      ) {
+        this.failEvidence(ITEM_IDENTITY_DETAIL);
+      } else this.enteredReviewCompleted = true;
+      return;
+    }
+    if (!this.enteredReviewCompleted) {
+      if (this.commandEvidenceIncomplete) {
+        this.deferEvidence(EARLY_BOUND_DETAIL);
+        return;
+      }
+      this.failEvidence(ITEM_IDENTITY_DETAIL);
+      return;
+    }
+    if (!completed) {
+      if (this.nativeExitStartedId !== null) {
+        this.failEvidence(AMBIGUOUS_FINAL_DETAIL);
+      } else this.nativeExitStartedId = id;
+      return;
+    }
+    if (
+      this.nativeExitStartedId !== id || this.exitedReviewItemId !== null ||
+      id === this.enteredReviewItemId
+    ) {
+      this.failEvidence(AMBIGUOUS_FINAL_DETAIL);
+      return;
+    }
+    this.exitedReviewItemId = id;
+    truncated ||= item.review.length > MAX_JOURNAL_BYTES;
     this.finalMessage = {
-      itemId: item.id,
-      text: truncated ? "" : item.text,
-      phase,
+      itemId: id,
+      text: truncated ? "" : item.review,
+      phase: null,
       truncated,
     };
   }
@@ -552,7 +598,7 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
       to,
       reason,
     });
-    if (from === to || from !== this.model || to !== this.model) {
+    if (from === to) {
       this.failEvidence(REROUTE_OFF_POLICY_DETAIL);
     }
   }

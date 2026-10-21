@@ -12,6 +12,7 @@ import {
   staticUnavailableSummary,
 } from "../../src/github/codex-review-transport.ts";
 import { portOk } from "../../src/contracts/ports.ts";
+import { reviewTaskStatementDigest } from "../../src/contracts/review-receipt.ts";
 import {
   BASE,
   CLEAN_RESULT,
@@ -28,6 +29,7 @@ import {
   settle,
   snapshotFixture,
   submission,
+  withRealGitRange,
 } from "./codex-review-transport-helpers.ts";
 
 // ---------------------------------------------------------------------------
@@ -468,3 +470,126 @@ Deno.test(
     assert.equal(gated.sessions.length, 0);
   },
 );
+
+Deno.test("transport: native review mode is the only journaled model start", async () => {
+  const h = makeHarness();
+  const submitted = await h.transport.submitReview(submission());
+  assert.equal(submitted.ok, true);
+  await settle(h.transport);
+  const session = h.sessions[0];
+  assert.equal(session.sent.includes("turn/start"), false);
+  assert.equal(
+    session.sent.filter((method) => method === "review/start").length,
+    1,
+  );
+  const thread = session.params[session.sent.indexOf("thread/start")] as Record<
+    string,
+    unknown
+  >;
+  for (const key of ["model", "modelProvider", "effort", "outputSchema"]) {
+    assert.equal(Object.hasOwn(thread, key), false, key);
+  }
+  const params = session.params[session.sent.indexOf("review/start")] as Record<
+    string,
+    unknown
+  >;
+  assert.deepEqual(Object.keys(params).sort(), [
+    "delivery",
+    "target",
+    "threadId",
+  ]);
+});
+
+Deno.test("transport: real Git native lifecycle retains exact issue acceptance and refuses its absence", async () => {
+  await withRealGitRange(async ({ base, head, snapshot }) => {
+    const statement = {
+      issueNumber: 41,
+      title: "Add deposits",
+      body: "deposit must add the supplied amount.",
+    };
+    const task = {
+      ...statement,
+      digest: await reviewTaskStatementDigest(statement),
+    };
+    for (const fulfilled of [true, false]) {
+      const session = new RecordingSession();
+      session.result = {
+        ...CLEAN_RESULT,
+        taskAcceptance: fulfilled
+          ? {
+            issueNumber: task.issueNumber,
+            taskDigest: task.digest,
+            verdict: "fulfilled",
+            evidence: [
+              "account.ts adds the supplied amount at the exact head.",
+            ],
+          }
+          : null,
+      };
+      const h = makeHarness({ session, snapshot });
+      const result = await h.transport.submitReview(
+        submission({ expectedBase: base, expectedHead: head, task }),
+      );
+      assert.equal(result.ok, true);
+      await settle(h.transport);
+      const body = onlyReview(h.store).body!;
+      const journal = await parseReviewJournalBody(body);
+      assert.equal(journal.phase, "ready");
+      if (journal.phase !== "ready") {
+        assert.fail("native review did not settle");
+      }
+      assert.equal(journal.result.verdict, fulfilled ? "clean" : "unavailable");
+      assert.equal(journal.expectedHead, head);
+      assert.equal(journal.expectedBase, base);
+      if (fulfilled) {
+        assert.equal(journal.execution?.nativeReview?.mode, "review/start");
+        assert.equal(
+          journal.execution?.actual.nativeReview?.enteredItemId,
+          "entered-1",
+        );
+        assert.equal(
+          journal.execution?.actual.nativeReview?.exitedItemId,
+          "item-1",
+        );
+        assert.equal(journal.result.taskAcceptance?.taskDigest, task.digest);
+      } else assert.equal(journal.execution, null);
+      assert.equal(session.turnStarts(), 1);
+      assert.equal(session.sent.includes("turn/start"), false);
+      assert.equal(session.closed, 1);
+    }
+  });
+});
+
+Deno.test("transport: historical generic journals stay byte-readable but cannot satisfy native completion", async () => {
+  const h = makeHarness();
+  const native = readyExecution();
+  const { nativeReview: _native, ...legacy } = native;
+  const { nativeReview: _actual, ...actual } = native.actual;
+  const execution = {
+    ...legacy,
+    model: "historical-reviewer",
+    reasoning: "max" as const,
+    actual: {
+      ...actual,
+      evidenceKind: "request-runtime" as const,
+      observedModel: "historical-reviewer",
+      observedReasoning: "max" as const,
+    },
+  };
+  const journal = await readyJournal(CLEAN_RESULT, { execution });
+  const body = renderReviewJournalBody(journal);
+  assert.equal(
+    renderReviewJournalBody(await parseReviewJournalBody(body)),
+    body,
+  );
+  seed(h.store, body, "commented");
+  const read = await h.freshTransport().readReview({
+    operationKey: OP_KEY,
+    requestId: null,
+    prNumber: PR,
+  });
+  assert.ok(read.ok);
+  if (read.ok) assert.equal(read.value.status, "unavailable");
+  assert.equal(onlyReview(h.store).body, body);
+  assert.equal(h.sessions.length, 0);
+});

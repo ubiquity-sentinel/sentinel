@@ -12,7 +12,6 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import type { CodexServerNotificationV1 } from "../../src/repair/codex-transport.ts";
 import { CodexStructuredReviewer } from "../../src/github/codex-reviewer.ts";
 import {
-  agentMessage,
   CLEAN_RESULT,
   commandItem,
   prepareRequest,
@@ -829,7 +828,10 @@ class ScriptedChannelOwner {
 
   private emit(method: string, params: unknown): void {
     const frame = ++this.counter;
-    if (method === "item/started") this.startedFrame = frame;
+    if (
+      method === "item/started" &&
+      (params as { item?: { type?: string } }).item?.type === "commandExecution"
+    ) this.startedFrame = frame;
     this.tail = this.tail.then(() =>
       writeEvent(this.directory, frame, "request-1", method, params)
     );
@@ -856,16 +858,29 @@ class ScriptedChannelOwner {
           reasoningEffort: "max",
           activePermissionProfile: { id: REVIEW_PROFILE },
         }
-        : send === "turn/start"
-        ? { turn: { id: "turn-1", status: "inProgress" } }
+        : send === "review/start"
+        ? {
+          turn: { id: "turn-1", status: "inProgress" },
+          reviewThreadId: "thread-1",
+        }
         : null;
       await writeReviewChannelFile(
         this.directory + "/response-" + request.id + ".json",
         { id: request.id, result },
       );
-      if (send !== "turn/start") continue;
+      if (send !== "review/start") continue;
       // A fast command: no output delta between its start and completion.
       const scope = { threadId: "thread-1", turnId: "turn-1" };
+      const entry = {
+        ...scope,
+        item: {
+          type: "enteredReviewMode",
+          id: "native-entry",
+          review: "custom review",
+        },
+      };
+      this.emit("item/started", entry);
+      this.emit("item/completed", entry);
       this.emit("item/started", {
         ...scope,
         item: commandItem("cmd-1", "inProgress"),
@@ -874,10 +889,23 @@ class ScriptedChannelOwner {
         ...scope,
         item: commandItem("cmd-1", "completed"),
       });
-      this.emit(
-        "item/completed",
-        agentMessage("turn-1", "item-final", JSON.stringify(CLEAN_RESULT)),
-      );
+      const params = request.params.params as {
+        target: { instructions: string };
+      };
+      const bindingMatch = /<SENTINEL_NATIVE_REVIEW_V1>\{"binding":(\{[^}]+\})/
+        .exec(params.target.instructions);
+      assert.ok(bindingMatch);
+      const review = "<SENTINEL_NATIVE_REVIEW_V1>" +
+        JSON.stringify({
+          binding: JSON.parse(bindingMatch[1]),
+          result: CLEAN_RESULT,
+        }) + "</SENTINEL_NATIVE_REVIEW_V1>";
+      const exit = {
+        ...scope,
+        item: { type: "exitedReviewMode", id: "item-final", review },
+      };
+      this.emit("item/started", exit);
+      this.emit("item/completed", exit);
       this.emit("turn/completed", turnCompleted("turn-1"));
     }
   }
@@ -922,6 +950,9 @@ Deno.test("review channel: a fast command delivered through custody with complet
     assert.deepEqual(delivered, [
       "item/started",
       "item/completed",
+      "item/started",
+      "item/completed",
+      "item/started",
       "item/completed",
       "turn/completed",
     ]);

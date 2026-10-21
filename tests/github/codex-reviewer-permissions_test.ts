@@ -85,13 +85,13 @@ Deno.test(
     if (!outcome.ok) assert.fail(outcome.error.detail);
     assert.equal(outcome.value.status, "clean");
     const turnParams = session.params[2] as Record<string, unknown>;
-    assert.equal(turnParams.permissions, "sentinel-review");
+    assert.equal(turnParams.permissions, undefined);
     assert.equal(
       "sandboxPolicy" in turnParams,
       false,
       "the trusted profile replaces the legacy readOnly override",
     );
-    assert.equal(turnParams.approvalPolicy, "never");
+    assert.equal(turnParams.approvalPolicy, undefined);
     assert.equal(session.turnStarts(), 1);
   },
 );
@@ -200,10 +200,10 @@ Deno.test(
     assert.equal(outcome.execution?.turnId, "turn-1");
     assert.equal(outcome.actual?.terminalOrigin, "runtime");
     assert.equal(outcome.actual?.observedTerminalStatus, "completed");
-    assert.equal(outcome.actual?.observedModel, "gpt-reserve");
-    assert.equal(outcome.actual?.observedReasoning, "max");
+    assert.equal(outcome.actual?.observedModel, null);
+    assert.equal(outcome.actual?.observedReasoning, null);
     assert.equal(outcome.actual?.provider, PROVIDER);
-    assert.equal(outcome.actual?.evidenceKind, "request-runtime");
+    assert.equal(outcome.actual?.evidenceKind, "native-review");
     assert.equal(outcome.detail, null);
     assert.equal(session.turnStarts(), 1);
   },
@@ -449,7 +449,7 @@ Deno.test(
         threadId: "thread-1",
         turnId: scripted.turnId,
         fromModel: "gpt-reserve",
-        toModel: "gpt-5.4",
+        toModel: "gpt-reserve",
         reason: "capacity",
       });
       scripted.emit(
@@ -460,7 +460,7 @@ Deno.test(
     };
     const routing = await startReview(rerouted, await snapshotFixture());
     assert.equal(routing.status, "unavailable");
-    contains(routing.detail ?? "", "routed off");
+    contains(routing.detail ?? "", "routing evidence");
 
     const tool = new ScriptedCodexSession();
     tool.plan = (scripted) => {

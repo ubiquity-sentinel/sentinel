@@ -3,17 +3,12 @@
 import {
   classifyReviewResultRejection,
   isJournalBoundExceeded,
-  parseReviewResultJson,
-  REVIEW_REASONING,
   type ReviewJournalReadyExecutionV1,
   type ReviewJournalRuntimeActualV1,
   type ReviewResultV1,
 } from "./review-journal.ts";
 import { portOk, type PortResultV1 } from "../contracts/ports.ts";
-import {
-  type ActualSessionEvidenceV1,
-  createRequestRuntimeReceiptVerifier,
-} from "../repair/model-port.ts";
+import { parseNativeReviewResult } from "./native-review-result.ts";
 import { PreparedReviewEvents } from "./reviewer-events.ts";
 import {
   COMMAND_UNSETTLED_DETAIL,
@@ -39,14 +34,20 @@ export abstract class PreparedReviewOutcome extends PreparedReviewEvents {
     if (turnId === null) return null;
     const terminal = this.terminal;
     return {
-      evidenceKind: "request-runtime",
+      evidenceKind: "native-review",
       provider: this.provider,
       threadId: this.threadId,
       turnId,
       terminalOrigin: terminal === null ? "host-timeout" : "runtime",
       observedTerminalStatus: terminal === null ? null : terminal.status,
-      observedModel: this.model,
-      observedReasoning: REVIEW_REASONING,
+      observedModel: null,
+      observedReasoning: null,
+      nativeReview: {
+        targetDigest: this.targetDigest,
+        reviewThreadId: this.threadId,
+        enteredItemId: this.enteredReviewItemId,
+        exitedItemId: this.exitedReviewItemId,
+      },
       durationMs: terminal?.durationMs ??
         Math.max(0, this.now() - this.turnStartedAt),
       outputChars: this.eventBytes,
@@ -115,12 +116,20 @@ export abstract class PreparedReviewOutcome extends PreparedReviewEvents {
       if (!entry.completed) return unavailable(COMMAND_UNSETTLED_DETAIL);
     }
     const message = this.finalMessage;
-    if (message === null) return unavailable(NO_FINAL_MESSAGE_DETAIL);
+    if (
+      message === null || !this.enteredReviewCompleted ||
+      this.enteredReviewItemId === null || this.exitedReviewItemId === null
+    ) return unavailable(NO_FINAL_MESSAGE_DETAIL);
     if (message.truncated) return unavailable(RESULT_BOUND_DETAIL);
 
     let result: ReviewResultV1;
     try {
-      result = parseReviewResultJson(message.text);
+      result = parseNativeReviewResult(
+        message.text,
+        this.snapshot,
+        this.task,
+        this.sessionCwd,
+      );
     } catch (error) {
       if (isJournalBoundExceeded(error)) {
         return unavailable(RESULT_BOUND_DETAIL);
@@ -152,35 +161,6 @@ export abstract class PreparedReviewOutcome extends PreparedReviewEvents {
     }
     if (sessionFailed) return unavailable(SESSION_FAILURE_DETAIL);
 
-    const evidence: ActualSessionEvidenceV1 = {
-      invocationId: this.invocationId,
-      requestedModel: this.model,
-      requestedProvider: this.provider,
-      requestedEffort: REVIEW_REASONING,
-      threadId: this.threadId,
-      turnId,
-      threadModel: this.threadModel,
-      threadModelProvider: this.threadModelProvider,
-      threadEffort: this.threadEffort,
-      reroutes: [...this.reroutes],
-      terminal: {
-        status: terminal.status,
-        error: null,
-        durationMs: terminal.durationMs,
-      },
-      terminalOrigin: "runtime",
-      loopStopped: false,
-      resultItems: [{ itemId: message.itemId, type: "agentMessage" }],
-      outputChars: this.eventBytes,
-    };
-    if (
-      createRequestRuntimeReceiptVerifier(this.provider, this.model)(
-        evidence,
-      ) ===
-        null
-    ) {
-      return unavailable(RECEIPT_DETAIL, result, message.itemId);
-    }
     if (result.verdict === "unavailable") {
       return unavailable(RESULT_UNAVAILABLE_DETAIL, result, message.itemId);
     }
@@ -192,8 +172,9 @@ export abstract class PreparedReviewOutcome extends PreparedReviewEvents {
       invocationId: this.invocationId,
       threadId: this.threadId,
       submittedProvider: this.provider,
-      model: this.model,
-      reasoning: REVIEW_REASONING,
+      model: null,
+      reasoning: null,
+      nativeReview: { mode: "review/start", targetDigest: this.targetDigest },
       startMayOccur: true,
       turnId,
       resultId: message.itemId,

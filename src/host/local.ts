@@ -29,7 +29,6 @@ import {
 } from "./targets.ts";
 import { createRepairStateStore } from "../state/mod.ts";
 import { composeLocalReleaseReader } from "./local-release.ts";
-import { resolveReviewModelId } from "./model-route.ts";
 import { RollingStartBudget } from "../budget/mod.ts";
 import { unavailableTargetCapabilities } from "./gateway-capabilities.ts";
 import { fetchHttpTransport } from "../github/http.ts";
@@ -293,7 +292,6 @@ export async function runLocalRepairHost(
       trustedPath: input.trustedPath,
       codexExecutable: input.codexExecutable,
       tracker,
-      reviewModelId: input.reviewModelId,
       selfMergeEnabled: appliedConfig.repository.owner === "ubiquity" &&
         appliedConfig.repository.name === "sentinel" &&
         appliedConfig.repository.installationId === 0,
@@ -432,8 +430,5 @@ export async function startLocalRepairHostFromEnv(): Promise<
     trustedPath,
     // Named read only: an unrestricted `Deno.env.toObject()` is denied under
     // the launcher's `--allow-env` allowlist (issue89 regression).
-    reviewModelId: resolveReviewModelId({
-      SENTINEL_REVIEW_MODEL_ID: Deno.env.get("SENTINEL_REVIEW_MODEL_ID"),
-    }),
   });
 }

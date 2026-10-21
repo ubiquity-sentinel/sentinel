@@ -141,7 +141,7 @@ Deno.test("base task: native reviewer assesses exact-base acceptance without a c
     /Never claim a repair was delivered or authorize a merge/,
   );
   assert.match(submittedGuidance(session), /BASE TASK ASSESSMENT/);
-  assert.equal(prompt, renderReviewPrompt(snapshot, task));
+  assert.ok(prompt.startsWith(renderReviewPrompt(snapshot, task)));
   const closed = await prepared.value.close();
   assert.equal(closed.settled, true);
 });

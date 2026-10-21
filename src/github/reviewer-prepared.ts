@@ -1,8 +1,6 @@
 // reviewer prepared.
 
 import { portError, type PortResultV1 } from "../contracts/ports.ts";
-import { REVIEW_REASONING } from "./review-journal.ts";
-import { reviewResultOutputSchema } from "./review-result-contracts.ts";
 import { PreparedReviewOutcome } from "./reviewer-outcome.ts";
 import type {
   PreparedStructuredReviewV1,
@@ -28,7 +26,7 @@ export class PreparedStructuredReview extends PreparedReviewOutcome
       return portError("unavailable", START_REJECTED_DETAIL);
     }
     // Atomic single-attempt marker BEFORE any recheck or send: a repeated
-    // start can never reach a second turn/start request.
+    // start can never reach a second review/start request.
     this.phase = "started";
     this.attempted = true;
 
@@ -44,7 +42,7 @@ export class PreparedStructuredReview extends PreparedReviewOutcome
     this.turnStartedAt = now;
 
     // Register the bounded early-event buffering BEFORE the single send: a
-    // terminal/output arriving before the turn/start response is buffered and
+    // terminal/output arriving before the review/start response is buffered and
     // consumed exactly once after the exact returned turn id is known.
     try {
       this.session.onNotification((event) => this.onNotification(event));
@@ -80,18 +78,13 @@ export class PreparedStructuredReview extends PreparedReviewOutcome
     let sendPromise: Promise<unknown>;
     const turnParams: Record<string, unknown> = {
       threadId: this.threadId,
-      model: this.model,
-      effort: REVIEW_REASONING,
-      input: [{ type: "text", text: this.prompt, text_elements: [] }],
-      outputSchema: reviewResultOutputSchema(this.task),
-      approvalPolicy: "never",
+      delivery: "inline",
+      target: { type: "custom", instructions: this.prompt },
     };
-    // The acknowledged named profile is carried into the single turn: the
-    // installed schema forbids combining `permissions` with `sandboxPolicy`,
-    // and there is no profile-less read-only fallback.
-    turnParams.permissions = this.permissionProfile;
+    // Native review inherits the acknowledged restricted thread profile.
+    // review/start supports no model, effort, schema or permission overrides.
     try {
-      sendPromise = this.session.send("turn/start", turnParams);
+      sendPromise = this.session.send("review/start", turnParams);
     } catch {
       this.clearTimers();
       this.settleNow();
@@ -109,7 +102,11 @@ export class PreparedStructuredReview extends PreparedReviewOutcome
       return portError("unavailable", TURN_SUBMIT_DETAIL);
     }
     const turnId = this.extractTurnId(submitted.value);
-    if (turnId === null) {
+    if (
+      turnId === null ||
+      (submitted.value as Record<string, unknown>)?.reviewThreadId !==
+        this.threadId
+    ) {
       this.clearTimers();
       this.settleNow();
       return portError("unavailable", TURN_RESPONSE_DETAIL);

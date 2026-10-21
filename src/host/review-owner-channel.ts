@@ -200,6 +200,7 @@ export class ReviewOwnerChannelClient
       requestId?: string;
       invocationId?: string;
       ownerRunId?: string;
+      nativeReviewTargetDigest?: string;
     },
   ): CodexSessionV1 {
     if (
