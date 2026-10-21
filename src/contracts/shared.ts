@@ -87,6 +87,35 @@ export function normalizeRepositoryIdentity(
     : repository;
 }
 
+/** The stable internal identity used for derived ids and refs. */
+export function stableRepositoryIdentity(
+  repository: RepositoryIdentityV1,
+): RepositoryIdentityV1 {
+  return repository.owner === SENTINEL_SELF_REPOSITORY.owner &&
+      repository.name === SENTINEL_SELF_REPOSITORY.name &&
+      repository.installationId === SENTINEL_SELF_REPOSITORY.installationId
+    ? { ...RETIRED_SENTINEL_SELF_REPOSITORY }
+    : repository;
+}
+
+/** Recursively replace the current self identity in a digest input. */
+export function stableIdentityValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableIdentityValue);
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.owner === "string" && typeof record.name === "string" &&
+    typeof record.installationId === "number"
+  ) {
+    return stableRepositoryIdentity(record as unknown as RepositoryIdentityV1);
+  }
+  return Object.fromEntries(
+    Object.entries(record).map((
+      [key, item],
+    ) => [key, stableIdentityValue(item)]),
+  );
+}
+
 export function parseRepositoryIdentity(
   input: unknown,
   path: string,

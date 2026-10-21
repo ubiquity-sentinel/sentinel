@@ -11,7 +11,7 @@ Deno.test("hosted App mint: actual main emits same-mint metadata and post revoke
   assert.deepEqual(result.output["installation-id"], "155687488");
   assert.deepEqual(result.output["app-slug"], "ubiquity-sentinel");
   const mint = result.trace.find((row) => row.kind === "mint");
-  assert.deepEqual(mint.body, { repositories: ["sentinel", "ai.ubq.fi"] });
+  assert.deepEqual(mint.body, { repositories: ["ai.ubq.fi"] });
   assert.deepEqual(
     result.trace.filter((row) => row.kind === "installation").length,
     1,
@@ -27,8 +27,8 @@ Deno.test("hosted App mint: actual main emits same-mint metadata and post revoke
   assert.deepEqual(grant.expiresAt, result.expiresAt);
   assert.deepEqual(grant.permissions.contents, "write");
   assert.deepEqual(grant.permissions.merge_queues, "write");
-  assert.deepEqual(grant.repositoryIds, [101, 102]);
-  assert.deepEqual(grant.repositoryNames, ["sentinel", "ai.ubq.fi"]);
+  assert.deepEqual(grant.repositoryIds, [102]);
+  assert.deepEqual(grant.repositoryNames, ["ai.ubq.fi"]);
   assert(!result.output["mint-grant"].includes(syntheticToken));
   assert(!("deployments" in grant.permissions));
 });

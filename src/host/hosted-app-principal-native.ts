@@ -335,7 +335,8 @@ export async function readHostedAppRepositoryScope(
     !Number.isSafeInteger(input.deadline) ||
     !Number.isSafeInteger(remaining) || remaining <= 0 ||
     grant.expiresAt <= input.clock.now() ||
-    repository.owner !== "ubiquity" ||
+    (!isHostedControllerRepository(repository) &&
+      repository.owner !== "ubiquity") ||
     (repository.installationId !== grant.installationId &&
       !isHostedControllerRepository(repository))
   ) return refused();

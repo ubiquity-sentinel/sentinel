@@ -142,3 +142,6 @@ export function hostedAppPrincipalNotAfter(
     return null;
   }
 }
+
+export const SELF_TOKEN_ENV = "SENTINEL_SELF_TOKEN";
+export const SELF_MINT_GRANT_ENV = "SENTINEL_SELF_TOKEN_MINT_GRANT";

@@ -87,13 +87,16 @@ export function principalNativeFixture(
       step(names.runtimeStep, 6, JOB_STARTED + 50, null),
     ],
   };
-  const repository = (id: number, name: string) => ({
-    id,
-    node_id: `R_${id}`,
-    name,
-    full_name: `ubiquity/${name}`,
-    owner: { login: "ubiquity" },
-  });
+  const repository = (id: number, name: string) => {
+    const owner = name === "sentinel" ? "ubiquity-sentinel" : "ubiquity";
+    return {
+      id,
+      node_id: `R_${id}`,
+      name,
+      full_name: `${owner}/${name}`,
+      owner: { login: owner },
+    };
+  };
   const model = {
     attempt: attemptBody({ status: "in_progress", conclusion: null }),
     jobs: [activeJob] as Array<Record<string, unknown>>,

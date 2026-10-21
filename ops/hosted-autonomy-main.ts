@@ -39,6 +39,7 @@ import {
   CURRENT_MATRIX_HISTORY_DEADLINE_MESSAGE,
   hostedRepositoryKey,
   isDeferredCurrentMatrixHistoryBudget,
+  isHostedSelf,
 } from "./hosted-autonomy-policy.ts";
 import type {
   HostedAutonomyDepsV1,
@@ -147,9 +148,11 @@ export async function runHostedAutonomyMain(input?: {
   // the native Actions token keeps owning the state refs it has always owned.
   const stateToken = env("GITHUB_TOKEN");
   const apiToken = env("SENTINEL_SUPERVISOR_TOKEN") ?? stateToken;
+  const selfToken = env("SENTINEL_SELF_TOKEN") ?? apiToken;
   if (
     stateToken === null || stateToken.length === 0 ||
-    apiToken === null || apiToken.length === 0
+    apiToken === null || apiToken.length === 0 ||
+    selfToken === null || selfToken.length === 0
   ) {
     return report(failed("identity_rejected", null));
   }
@@ -235,7 +238,10 @@ export async function runHostedAutonomyMain(input?: {
         const key = hostedRepositoryKey(repository);
         const cached = surfaces.get(key);
         if (cached !== undefined) return cached;
-        const created = createHostedAutonomyGitHub(apiToken, repository);
+        const created = createHostedAutonomyGitHub(
+          isHostedSelf(repository) ? selfToken : apiToken,
+          repository,
+        );
         surfaces.set(key, created);
         return created;
       };
@@ -288,7 +294,7 @@ export async function runHostedAutonomyMain(input?: {
             createHostedClosedMatrixRecovery({
               state: guardedState,
               clock: { now: () => Date.now() },
-              token: stateToken,
+              token: selfToken,
               apiToken,
               sourceDir: Deno.cwd(),
               scratch,
@@ -300,7 +306,7 @@ export async function runHostedAutonomyMain(input?: {
           historicalMatrix: createHostedHistoricalMatrixQuarantine({
             state,
             clock: { now: () => Date.now() },
-            token: stateToken,
+            token: selfToken,
             apiToken,
             artifactRoot,
             cooldownMode: env("SENTINEL_COOLDOWN_MODE") ?? undefined,

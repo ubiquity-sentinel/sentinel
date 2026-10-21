@@ -714,7 +714,7 @@ Deno.test(
         (await gitRun(mirror, [
           "config",
           `url.file://${foreign.bare}.insteadOf`,
-          "https://github.com/ubiquity/other.git",
+          "https://github.com/ubiquity-sentinel/other.git",
         ], env)).ok,
         true,
       );

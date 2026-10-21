@@ -150,7 +150,8 @@ export async function runOwnerDevelopmentInstallMain(input?: {
     if (input?.startupRecovery === true) startupRun = fenceRun;
   }
   const nativeToken = Deno.env.get("GITHUB_TOKEN");
-  const appToken = Deno.env.get("SENTINEL_SUPERVISOR_TOKEN");
+  const appToken = Deno.env.get("SENTINEL_SELF_TOKEN") ??
+    Deno.env.get("SENTINEL_SUPERVISOR_TOKEN");
   if (!isToken(nativeToken) || !isToken(appToken)) {
     return report(failedResult("credentials_unavailable"), 1);
   }

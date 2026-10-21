@@ -21,11 +21,15 @@ preserved. Current self identity is the new organization. The permanently
 retired `ubiquity/sentinel` identity is accepted only while reading
 pre-migration state and is normalized to the current identity in memory; no
 protected state ref is rewritten by this migration. The existing Sentinel App
-installation must cover the new organization before runtime effects, and the
-release-state ruleset's App bypass is restored with that installation.
+is installed on both organizations; self writes use a token minted from the
+new self installation, while `ubiquity/ai.ubq.fi` retains the original
+installation token. No installation token is shared across owners. The
+release-state ruleset's App bypass is restored with the self installation.
 `ubiquity/ai.ubq.fi` remains a target under its original owner. The
 five-minute dispatcher and the disabled `sentinel-release` workflow retain
-their existing states.
+their existing states. Derived repair ids and candidate refs retain the
+retired identity as their stable internal namespace, so existing work remains
+addressable after the external rename.
 
 ### Private Passport controller isolation (2026-10-21)
 

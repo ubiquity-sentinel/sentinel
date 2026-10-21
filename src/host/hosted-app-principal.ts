@@ -185,6 +185,21 @@ export async function createHostedAppPrincipalContext(
   return context;
 }
 
+/** Optional context construction for one already-bound App token and grant. */
+export async function createOptionalHostedAppPrincipalContext(
+  input: HostedAppPrincipalHostInput,
+  appToken: string | undefined,
+  mintGrant: string | undefined,
+  sourceProfiles?: unknown,
+): Promise<HostedAppPrincipalContext | null> {
+  if (appToken === undefined || mintGrant === undefined) return null;
+  return await createHostedAppPrincipalContext({
+    ...input,
+    appToken,
+    mintGrant,
+  }, sourceProfiles);
+}
+
 /** Parent-side read-only check. No context, principal or credential is returned. */
 export async function verifyHostedAppPrincipalHandoff(
   input: HostedAppPrincipalHandoffInput,

@@ -160,7 +160,9 @@ export async function actionsExistingPrincipalFixture(
     GITHUB_JOB: "matrix_plan",
     GITHUB_TOKEN: principal.jobInput.token,
     SENTINEL_SUPERVISOR_TOKEN: principal.scopeInput.token,
+    SENTINEL_SELF_TOKEN: principal.scopeInput.token,
     SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: principal.hostInput.mintGrant,
+    SENTINEL_SELF_TOKEN_MINT_GRANT: principal.hostInput.mintGrant,
     SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER: principal.hostInput.appTokenNotAfter,
     SENTINEL_APP_INSTALLATION_ID: "155687488",
     SENTINEL_MODEL_ID: "gpt-6.1-sol",
@@ -251,7 +253,8 @@ export async function actionsExistingPrincipalFixture(
       const expected = "Authorization: Basic " +
         btoa(
           "x-access-token:" +
-            (env.SENTINEL_SUPERVISOR_TOKEN ?? env.GITHUB_TOKEN),
+            (env.SENTINEL_SELF_TOKEN ?? env.SENTINEL_SUPERVISOR_TOKEN ??
+              env.GITHUB_TOKEN),
         );
       assert.equal(
         input.env.GIT_CONFIG_KEY_0,
@@ -281,7 +284,8 @@ export async function actionsExistingPrincipalFixture(
         const expected = "Authorization: Basic " +
           btoa(
             "x-access-token:" +
-              (env.SENTINEL_SUPERVISOR_TOKEN ?? env.GITHUB_TOKEN),
+              (env.SENTINEL_SELF_TOKEN ?? env.SENTINEL_SUPERVISOR_TOKEN ??
+                env.GITHUB_TOKEN),
           );
         assert.equal(
           options.env?.GIT_CONFIG_KEY_0,

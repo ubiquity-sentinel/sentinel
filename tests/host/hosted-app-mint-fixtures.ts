@@ -92,12 +92,12 @@ export async function runMintFixture(options: MintFixtureOptions = {}) {
       TMP: dir,
       TEMP: dir,
       GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel",
-      GITHUB_REPOSITORY_OWNER: "ubiquity",
+      GITHUB_REPOSITORY_OWNER: "ubiquity-sentinel",
       GITHUB_OUTPUT: paths.output,
       GITHUB_STATE: paths.state,
       "INPUT_CLIENT-ID": "Iv23liHUJNXds9mU3j7Q",
       INPUT_OWNER: "ubiquity",
-      INPUT_REPOSITORIES: "ubiquity-sentinel/sentinel,ubiquity/ai.ubq.fi",
+      INPUT_REPOSITORIES: "ai.ubq.fi",
       "INPUT_SKIP-TOKEN-REVOKE": "false",
       "INPUT_GITHUB-API-URL": "https://api.github.com",
       SENTINEL_MINT_FIXTURE_CONFIG: paths.config,
@@ -183,7 +183,7 @@ globalThis.fetch = async (url, init = {}) => {
     return new Response(JSON.stringify({message:"sensitive-fixture-api-error-must-not-be-logged"}),{status:401,headers:{"content-type":"application/json"}});
   }
   let data;
-  if(method === "GET" && target.pathname === "/repos/ubiquity-sentinel/sentinel/installation") {
+  if(method === "GET" && target.pathname === "/repos/ubiquity/ai.ubq.fi/installation") {
     const jwt = authorization.replace(/^bearer /i, "").split(".");
     const valid = jwt.length === 3 && verify("RSA-SHA256", Buffer.from(jwt[0] + "." + jwt[1]), publicKey, Buffer.from(jwt[2], "base64url"));
     if(!valid) throw new Error("Fixture expected actual App-signed authentication");
@@ -195,7 +195,7 @@ globalThis.fetch = async (url, init = {}) => {
     data = {
       token:config.token,expires_at:config.expiresAt,
       permissions:{contents:"write",metadata:"read",actions:"write",pull_requests:"write",issues:"write",checks:"write",statuses:"write",merge_queues:"write",workflows:"write",deployments:"write"},
-      repositories:[{id:101,name:"sentinel"},{id:102,name:"ai.ubq.fi"}],
+      repositories:[{id:102,name:"ai.ubq.fi"}],
       repository_selection:"selected",
       ...config.response
     };

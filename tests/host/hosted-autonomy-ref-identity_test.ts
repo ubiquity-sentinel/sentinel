@@ -106,12 +106,15 @@ Deno.test("hosted autonomy: ref revalidation, mismatch disposition and retry pre
     ) {
       return Promise.resolve(new Response("null", { status: 404 }));
     }
-    if (url.pathname === "/repos/ubiquity-sentinel/sentinel/pulls") {
-      assert.equal(url.searchParams.get("head"), `ubiquity:${mismatchBranch}`);
-      return Promise.resolve(jsonResponse([]));
-    }
     if (url.pathname === "/repos/ubiquity-sentinel/sentinel/actions/runs/900") {
       return Promise.resolve(jsonResponse({ status: "completed" }));
+    }
+    if (url.pathname === "/repos/ubiquity-sentinel/sentinel/pulls") {
+      assert.equal(
+        url.searchParams.get("head"),
+        `ubiquity-sentinel:${mismatchBranch}`,
+      );
+      return Promise.resolve(jsonResponse([]));
     }
     return Promise.reject(new Error("offline unexpected mismatch API path"));
   };

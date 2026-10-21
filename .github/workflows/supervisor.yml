@@ -107,9 +107,9 @@ jobs:
         id: targets
         run: |
           set -euo pipefail
-          repositories=$(jq -r 'join(",")' sentinel.targets.json)
+          repositories=$(jq -r --arg self 'ubiquity-sentinel/sentinel' 'map(select(. != $self)) | join(",")' sentinel.targets.json)
           if [ -z "$repositories" ]; then
-            echo "sentinel.targets.json names no repository" >&2
+            echo "sentinel.targets.json names no foreign repository" >&2
             exit 1
           fi
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
@@ -125,11 +125,21 @@ jobs:
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
           owner: ubiquity
           repositories: ${{ steps.targets.outputs.repositories }}
+      - name: Mint the scoped self installation token
+        id: self-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ubiquity-sentinel
+          repositories: sentinel
       - name: Run hosted autonomy (retry transient failures, deliver reviewed heads)
         id: autonomy
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          SENTINEL_SELF_TOKEN: ${{ steps.self-token.outputs.token }}
+          SENTINEL_SELF_TOKEN_MINT_GRANT: ${{ steps.self-token.outputs.mint-grant }}
           # The non-secret model-route selector only (never a key and never a
           # failover override): a changed route re-arms the records the
           # repeat-failure bound parked for the owner.
@@ -142,7 +152,7 @@ jobs:
           --allow-write
           --allow-run
           --allow-net="api.github.com,*.blob.core.windows.net"
-          --allow-env=GITHUB_OUTPUT,GITHUB_STEP_SUMMARY,HOME,PATH,NODE_V8_COVERAGE,GITHUB_TOKEN,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_MODEL_FALLBACK
+          --allow-env=GITHUB_OUTPUT,GITHUB_STEP_SUMMARY,HOME,PATH,NODE_V8_COVERAGE,GITHUB_TOKEN,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SELF_TOKEN,SENTINEL_SELF_TOKEN_MINT_GRANT,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_MODEL_FALLBACK
           ops/hosted-autonomy.ts
 
   prepare:
@@ -174,18 +184,18 @@ jobs:
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.x
-      # The App installation token is scoped to exactly the repositories the
-      # committed target setting names. The array is the single source of
-      # truth, so a target can never be repaired under a token that does not
-      # include it, and an empty or missing setting fails here instead of
-      # minting a pointlessly narrow token.
+      # The App installation token is scoped to exactly the FOREIGN repositories
+      # the committed target setting names; the self target uses github.token.
+      # The array is the single source of truth, so a target can never be
+      # repaired under a token that does not include it, and an empty foreign
+      # setting fails here instead of minting a pointlessly narrow token.
       - name: Resolve the committed target repositories
         id: targets
         run: |
           set -euo pipefail
-          repositories=$(jq -r 'join(",")' sentinel.targets.json)
+          repositories=$(jq -r --arg self 'ubiquity-sentinel/sentinel' 'map(select(. != $self)) | join(",")' sentinel.targets.json)
           if [ -z "$repositories" ]; then
-            echo "sentinel.targets.json names no repository" >&2
+            echo "sentinel.targets.json names no foreign repository" >&2
             exit 1
           fi
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
@@ -198,11 +208,21 @@ jobs:
           owner: ubiquity
           repositories: ${{ steps.targets.outputs.repositories }}
           permission-contents: write
+      - name: Mint the scoped self installation token
+        id: self-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ubiquity-sentinel
+          repositories: sentinel
       - name: Prepare hosted supervisor run
         id: prepare
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          SENTINEL_SELF_TOKEN: ${{ steps.self-token.outputs.token }}
+          SENTINEL_SELF_TOKEN_MINT_GRANT: ${{ steps.self-token.outputs.mint-grant }}
         run: deno task supervisor:run
 
   matrix_plan:
@@ -290,9 +310,9 @@ jobs:
         working-directory: launcher
         run: |
           set -euo pipefail
-          repositories=$(jq -r 'join(",")' sentinel.targets.json)
+          repositories=$(jq -r --arg self 'ubiquity-sentinel/sentinel' 'map(select(. != $self)) | join(",")' sentinel.targets.json)
           if [ -z "$repositories" ]; then
-            echo "sentinel.targets.json names no repository" >&2
+            echo "sentinel.targets.json names no foreign repository" >&2
             exit 1
           fi
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
@@ -307,12 +327,22 @@ jobs:
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
           owner: ubiquity
           repositories: ${{ steps.targets.outputs.repositories }}
+      - name: Mint the scoped self installation token
+        id: self-token
+        uses: ./launcher/.github/actions/sentinel-app-token
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ubiquity-sentinel
+          repositories: sentinel
       - name: Plan isolated issue matrix
         id: matrix_plan
         working-directory: launcher
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          SENTINEL_SELF_TOKEN: ${{ steps.self-token.outputs.token }}
+          SENTINEL_SELF_TOKEN_MINT_GRANT: ${{ steps.self-token.outputs.mint-grant }}
           SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: ${{ steps.token-window.outputs.mintedNotBefore }}
           SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: ${{ steps.app-token.outputs.mint-grant }}
           UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN }}
@@ -343,7 +373,7 @@ jobs:
           --allow-write
           --allow-run
           --allow-net="api.github.com,*.blob.core.windows.net"
-          --allow-env=GITHUB_OUTPUT,HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE,SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB
+          --allow-env=GITHUB_OUTPUT,HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SELF_TOKEN,SENTINEL_SELF_TOKEN_MINT_GRANT,SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE,SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB
           src/host/hosted-runtime.ts
 
       - name: Upload immutable matrix plan
@@ -456,9 +486,9 @@ jobs:
         working-directory: launcher
         run: |
           set -euo pipefail
-          repositories=$(jq -r 'join(",")' sentinel.targets.json)
+          repositories=$(jq -r --arg self 'ubiquity-sentinel/sentinel' 'map(select(. != $self)) | join(",")' sentinel.targets.json)
           if [ -z "$repositories" ]; then
-            echo "sentinel.targets.json names no repository" >&2
+            echo "sentinel.targets.json names no foreign repository" >&2
             exit 1
           fi
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
@@ -486,6 +516,14 @@ jobs:
           # and signed log for the model's CI failure evidence. Read only; an
           # older runtime ignores it and the newer one degrades without it.
           permission-actions: read
+      - name: Mint the scoped self installation token
+        id: self-token
+        uses: ./launcher/.github/actions/sentinel-app-token
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ubiquity-sentinel
+          repositories: sentinel
       - name: Download immutable matrix plan
         uses: actions/download-artifact@v4
         with:
@@ -497,6 +535,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          SENTINEL_SELF_TOKEN: ${{ steps.self-token.outputs.token }}
+          SENTINEL_SELF_TOKEN_MINT_GRANT: ${{ steps.self-token.outputs.mint-grant }}
           UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN }}
           # Installation scope of the `ubiquity-sentinel` App. A scope key, not
           # a secret: every committed target except the sentinel self-repository
@@ -526,7 +566,7 @@ jobs:
           --allow-write \
           --allow-run \
           --allow-net="api.github.com,*.blob.core.windows.net" \
-          --allow-env=HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB \
+          --allow-env=HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SELF_TOKEN,SENTINEL_SELF_TOKEN_MINT_GRANT,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB \
           src/host/hosted-runtime.ts
 
       - name: Upload settled matrix cell
@@ -638,20 +678,20 @@ jobs:
           if [ -n "$current_apparmor" ] && [ "$current_apparmor" != "0" ]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
-      # The App installation token is scoped to exactly the repositories the
-      # committed target setting names. The array is the single source of
-      # truth, so a target can never be repaired under a token that does not
-      # include it, and an empty or missing setting fails here instead of
-      # minting a pointlessly narrow token. The protected source lives in the
+      # The App installation token is scoped to exactly the FOREIGN repositories
+      # the committed target setting names; the self target uses github.token.
+      # The array is the single source of truth, so a target can never be
+      # repaired under a token that does not include it, and an empty foreign
+      # setting fails here instead of minting a pointlessly narrow token. The protected source lives in the
       # `launcher` checkout, so the committed setting is read from there.
       - name: Resolve the committed target repositories
         id: targets
         working-directory: launcher
         run: |
           set -euo pipefail
-          repositories=$(jq -r 'join(",")' sentinel.targets.json)
+          repositories=$(jq -r --arg self 'ubiquity-sentinel/sentinel' 'map(select(. != $self)) | join(",")' sentinel.targets.json)
           if [ -z "$repositories" ]; then
-            echo "sentinel.targets.json names no repository" >&2
+            echo "sentinel.targets.json names no foreign repository" >&2
             exit 1
           fi
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
@@ -676,11 +716,21 @@ jobs:
           private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
           owner: ubiquity
           repositories: ${{ steps.targets.outputs.repositories }}
+      - name: Mint the scoped self installation token
+        id: self-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ubiquity-sentinel
+          repositories: sentinel
       - name: Run selected Sentinel runtime
         working-directory: launcher
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          SENTINEL_SELF_TOKEN: ${{ steps.self-token.outputs.token }}
+          SENTINEL_SELF_TOKEN_MINT_GRANT: ${{ steps.self-token.outputs.mint-grant }}
           SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: ${{ steps.token-window.outputs.mintedNotBefore }}
           SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: ${{ steps.app-token.outputs.mint-grant }}
           UOS_AI_TOKEN: ${{ secrets.UOS_AI_TOKEN }}
@@ -713,7 +763,7 @@ jobs:
           --allow-write \
           --allow-run \
           --allow-net="api.github.com,*.blob.core.windows.net" \
-          --allow-env=HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE,SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB \
+          --allow-env=HOME,PATH,GITHUB_TOKEN,SENTINEL_SUPERVISOR_TOKEN,SENTINEL_SELF_TOKEN,SENTINEL_SELF_TOKEN_MINT_GRANT,SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE,SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT,SENTINEL_COOLDOWN_MODE,SENTINEL_MERGE_QUEUE,SENTINEL_MODEL_BASE_URL,SENTINEL_MODEL_ID,SENTINEL_REVIEW_MODEL_ID,SENTINEL_MODEL_FALLBACK,SENTINEL_DEEPSEEK_API_KEY,SENTINEL_APP_INSTALLATION_ID,UOS_AI_TOKEN,NODE_V8_COVERAGE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKFLOW_SHA,GITHUB_WORKFLOW_REF,GITHUB_JOB \
           src/host/hosted-runtime.ts
 
   finalize:
@@ -733,18 +783,18 @@ jobs:
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.x
-      # The App installation token is scoped to exactly the repositories the
-      # committed target setting names. The array is the single source of
-      # truth, so a target can never be repaired under a token that does not
-      # include it, and an empty or missing setting fails here instead of
-      # minting a pointlessly narrow token.
+      # The App installation token is scoped to exactly the FOREIGN repositories
+      # the committed target setting names; the self target uses github.token.
+      # The array is the single source of truth, so a target can never be
+      # repaired under a token that does not include it, and an empty foreign
+      # setting fails here instead of minting a pointlessly narrow token.
       - name: Resolve the committed target repositories
         id: targets
         run: |
           set -euo pipefail
-          repositories=$(jq -r 'join(",")' sentinel.targets.json)
+          repositories=$(jq -r --arg self 'ubiquity-sentinel/sentinel' 'map(select(. != $self)) | join(",")' sentinel.targets.json)
           if [ -z "$repositories" ]; then
-            echo "sentinel.targets.json names no repository" >&2
+            echo "sentinel.targets.json names no foreign repository" >&2
             exit 1
           fi
           echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
@@ -757,8 +807,18 @@ jobs:
           owner: ubiquity
           repositories: ${{ steps.targets.outputs.repositories }}
           permission-contents: write
+      - name: Mint the scoped self installation token
+        id: self-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23liHUJNXds9mU3j7Q
+          private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}
+          owner: ubiquity-sentinel
+          repositories: sentinel
       - name: Finalize hosted supervisor run
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SENTINEL_SUPERVISOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          SENTINEL_SELF_TOKEN: ${{ steps.self-token.outputs.token }}
+          SENTINEL_SELF_TOKEN_MINT_GRANT: ${{ steps.self-token.outputs.mint-grant }}
         run: deno task supervisor:run

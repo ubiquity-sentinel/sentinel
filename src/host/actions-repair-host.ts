@@ -99,12 +99,16 @@ import {
   APP_TOKEN_NOT_AFTER_ENV,
   parseAppTokenNotAfterV1,
 } from "./hosted-app-token-window.ts";
-import { HOSTED_APP_MINT_GRANT_ENV } from "./hosted-app-grant.ts";
+import {
+  HOSTED_APP_MINT_GRANT_ENV,
+  SELF_MINT_GRANT_ENV,
+  SELF_TOKEN_ENV,
+} from "./hosted-app-grant.ts";
 import {
   composeHostedAppGitHub,
-  createHostedAppPrincipalContext,
   type HostedAppGitHubInput,
 } from "./hosted-app-principal.ts";
+import { createActionsTargetBindings } from "./actions-target-bindings.ts";
 import { readHostedAppTakeoverRouting } from "./hosted-app-takeover-routing.ts";
 import { readHostedSelfDependencyPreparer } from "./hosted-self-dependencies.ts";
 import { createPassportDependencyPreparer } from "./passport-dependencies.ts";
@@ -192,6 +196,9 @@ export async function runActionsRepairHost(
 
   const githubToken = requireEnv(readEnv, "GITHUB_TOKEN");
   const appToken = optionalEnv(readEnv, "SENTINEL_SUPERVISOR_TOKEN");
+  const selfToken = optionalEnv(readEnv, SELF_TOKEN_ENV) ?? appToken;
+  const selfGrant = optionalEnv(readEnv, SELF_MINT_GRANT_ENV) ??
+    readEnv(HOSTED_APP_MINT_GRANT_ENV);
   // The model token is the route's key when the route names a key environment
   // (read through the existing --allow-env mechanism), else the existing
   // gateway token. The review client ALWAYS uses the gateway token: it is
@@ -207,6 +214,7 @@ export async function runActionsRepairHost(
   // minted one; the native token keeps the state store and Actions metadata.
   // An older installed revision has no App credential at all and still runs.
   const writeToken = appToken ?? githubToken;
+  const selfWriteToken = selfToken ?? githubToken;
   const login = appToken === undefined ? ACTIONS_LOGIN : APP_LOGIN;
   const sourceDir = deps.workDir ?? Deno.cwd();
   const denoExecutable = Deno.execPath();
@@ -386,29 +394,36 @@ export async function runActionsRepairHost(
     takeoverSource,
     deps.hostedAppSourceProfiles,
   );
-  const takeoverContext = identity.job !== "matrix_cell" &&
-      appToken !== undefined
-    ? await createHostedAppPrincipalContext({
+  const bindings = await createActionsTargetBindings({
+    selfRepository: createLocalRepositoryConfig().repository,
+    selfToken,
+    selfWriteToken,
+    targetToken: writeToken,
+    targetLogin: login,
+    actionsLogin: ACTIONS_LOGIN,
+    appLogin: APP_LOGIN,
+    auth: {
       source: takeoverSource,
       state,
       clock,
       gate,
       http,
       nativeToken: githubToken,
-      appToken,
-      mintGrant: readEnv(HOSTED_APP_MINT_GRANT_ENV),
       appTokenNotAfter: readEnv(APP_TOKEN_NOT_AFTER_ENV),
       deadline,
-    }, deps.hostedAppSourceProfiles)
-    : null;
+    },
+    targetMintGrant: readEnv(HOSTED_APP_MINT_GRANT_ENV),
+    selfMintGrant: selfGrant,
+    contextsAllowed: identity.job !== "matrix_cell",
+    sourceProfiles: deps.hostedAppSourceProfiles,
+  });
+  const { isSelfTarget, tokenFor, loginFor, selfContext } = bindings;
+  const takeoverContext = bindings.targetContext;
+
   const gitExecutable = await resolveExecutable("git", trustedPath);
 
-  // The committed target setting is the ONLY source of target repositories.
-  // It is read before any port is composed, so an unusable setting refuses the
-  // run instead of quietly repairing nothing and instead of falling back to a
-  // built-in repository. `createLocalRepositoryConfig()` is the trusted
-  // per-repository template (commands, protected paths, limits) and names the
-  // sentinel self-identity; it is not a target list.
+  // The committed setting is the only target source; the local template only
+  // supplies trusted per-repository defaults and the self identity.
   const templateConfig = createLocalRepositoryConfig();
   const targets = await loadTargetConfigsV1({
     template: templateConfig,
@@ -421,10 +436,7 @@ export async function runActionsRepairHost(
       }),
   });
   if (targets.configs.length === 0) throw new Error(STATIC_TARGETS_EMPTY);
-  // EVERY usable target is addressed, one separately targeted cycle each. The
-  // sentinel self-repository keeps the reserved no-App owner scope; every other
-  // committed target runs under the App installation scope that can write to
-  // it, read once from the one allowlisted environment entry.
+  // Each usable target is addressed in its own cycle and installation scope.
   const selfRepository = templateConfig.repository;
   const needsAppScope = targets.configs.some((candidate) =>
     candidate.repository.owner !== selfRepository.owner ||
@@ -436,15 +448,7 @@ export async function runActionsRepairHost(
   const targetConfigs = targets.configs.map((candidate) =>
     scopeTargetConfigV1(candidate, selfRepository, appInstallationId)
   );
-  /**
-   * ONE lazy candidate restorer per target, each bound to that target's own
-   * mirror, remote and repository identity. Candidate objects live in the
-   * remote of the repository that owns them, so a shared restorer pointed at
-   * the sentinel remote could never restore a foreign target's candidate, and
-   * a shared mirror could never hold it either. Restoration stays lazy: the
-   * exact durable objects are fetched only when a review snapshot, an ancestry
-   * check or a correction checkout actually needs them, never before the loop.
-   */
+  // One lazy restorer per target, bound to that target's own remote and mirror.
   const candidatesBySlug = new Map<string, ActionsCandidateRestorerV1>();
   const candidatesFor = (
     config: RepositoryConfigV1,
@@ -455,7 +459,7 @@ export async function runActionsRepairHost(
       restorer = createActionsCandidateRestorer({
         state,
         gate,
-        token: writeToken,
+        token: tokenFor(config),
         http,
         clock,
         sourcePath: mirrorPathFor(config),
@@ -543,23 +547,25 @@ export async function runActionsRepairHost(
       repository: config.repository,
       baseBranch: config.baseBranch,
     };
-    return scopeLocalRepairIssues(
-      takeoverContext === null
-        ? composeLocalGitHub(
-          {
-            ...common,
-            clock,
-            state,
-            gate,
-            http,
-            token: writeToken,
-            login,
-          },
-          undefined,
-          { activated: takeoverRouting.status !== "inactive" },
-        )
-        : composeHostedAppGitHub(takeoverContext, common),
-    );
+    const local = () =>
+      composeLocalGitHub(
+        {
+          ...common,
+          clock,
+          state,
+          gate,
+          http,
+          token: tokenFor(config),
+          login: loginFor(config),
+        },
+        undefined,
+        { activated: takeoverRouting.status !== "inactive" },
+      );
+    const context = isSelfTarget(config) ? selfContext : takeoverContext;
+    if (context !== null) {
+      return scopeLocalRepairIssues(composeHostedAppGitHub(context, common));
+    }
+    return scopeLocalRepairIssues(local());
   };
   const targetPorts = new Map<string, GitHubPort>();
   const composeTargetGithub = (config: RepositoryConfigV1): GitHubPort => {
@@ -651,7 +657,7 @@ export async function runActionsRepairHost(
       try {
         await refreshDevelopment(
           mirrorPathFor(config),
-          { ...hostInput, githubToken: writeToken },
+          { ...hostInput, githubToken: tokenFor(config) },
           scratch,
           gate,
           config.repository.installationId,
@@ -716,7 +722,7 @@ export async function runActionsRepairHost(
       // with "could not read Username" instead of falling back to anonymous
       // access. That is why a public foreign repository still could not be
       // cloned or fetched while the same operation succeeds with the App token.
-      const targetInput = { ...hostInput, githubToken: writeToken };
+      const targetInput = { ...hostInput, githubToken: tokenFor(config) };
       await prepareSourceRepository(
         mirrorPathFor(config),
         targetInput,
@@ -923,7 +929,7 @@ export async function runActionsRepairHost(
                   repository: config.repository,
                   http,
                   clock,
-                  token: writeToken,
+                  token: tokenFor(config),
                   gate,
                 }),
             }
@@ -969,7 +975,7 @@ export async function runActionsRepairHost(
         state,
         gate,
         http,
-        token: githubToken,
+        token: selfWriteToken,
         clock,
         deadline,
       })

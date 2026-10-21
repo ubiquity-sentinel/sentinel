@@ -324,7 +324,7 @@ Deno.test("hosted app token window: a later target is never prepared inside the 
   ]);
   assert.deepEqual(late.cycles, ["ubiquity-sentinel/sentinel"]);
   assert.deepEqual(late.result.addressed, ["ubiquity-sentinel/sentinel"]);
-  assert.deepEqual(late.result.skipped, ["ubiquity/foreign-target"]);
+  assert.deepEqual(late.result.skipped, ["ubiquity-sentinel/foreign-target"]);
   assert.deepEqual(late.result.failed, []);
   assert.deepEqual(late.result.outcome, {
     status: "idle",
@@ -336,14 +336,14 @@ Deno.test("hosted app token window: a later target is never prepared inside the 
   const inside = await runLaterTarget(deadline, OPERATION_MARGIN_MS);
   assert.deepEqual(inside.prepared.map((entry) => entry.slug), [
     "ubiquity-sentinel/sentinel",
-    "ubiquity/foreign-target",
+    "ubiquity-sentinel/foreign-target",
   ]);
   for (const entry of inside.prepared) {
     assert.ok(entry.until <= deadline - (OPERATION_MARGIN_MS - GIT_TIMEOUT_MS));
   }
   assert.deepEqual(inside.cycles, [
     "ubiquity-sentinel/sentinel",
-    "ubiquity/foreign-target",
+    "ubiquity-sentinel/foreign-target",
   ]);
   assert.deepEqual(inside.result.skipped, []);
 });
