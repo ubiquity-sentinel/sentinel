@@ -51,6 +51,7 @@ import type {
 } from "./hosted-autonomy-scopes.ts";
 import {
   deliveryEligible,
+  HOSTED_AUTONOMY_RETIRED,
   HOSTED_AUTONOMY_SELF_SCOPE,
   HOSTED_AUTONOMY_TRUSTED_AUTHORS,
   hostedDeliveryKey,
@@ -110,6 +111,17 @@ export async function runHostedDeliveryPass(
   // (or parked by the pre-review gate) is approved too.
   for (const record of snapshot.work) {
     if (protectedRecord(record)) continue;
+    // Terminal source retirement and rejected unpublished candidates cannot
+    // acquire approval authority. Ambiguous preservation intents stay eligible.
+    const candidate = record.target.candidateState;
+    if (
+      record.nextStep === "blocked" && record.intent === null &&
+      record.blocker?.kind === "other" &&
+      (record.blocker.message === HOSTED_AUTONOMY_RETIRED ||
+        (record.blocker.message === "candidate touches a protected path" &&
+          candidate?.preserved === null &&
+          record.target.head !== candidate.publishedHead))
+    ) continue;
     if (
       !eligible(record) &&
       !(ciFirstApprovalEligible(snapshot, record) &&
