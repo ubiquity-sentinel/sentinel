@@ -32,6 +32,7 @@ import {
   continuationLate,
   createPassWrites,
   HOSTED_AUTONOMY_PASS_DEADLINE_MS,
+  HOSTED_AUTONOMY_PHASE_RESERVE_MS,
   type HostedAutonomyContinuationStopV1,
   type HostedAutonomyPhaseV1,
   settledSince,
@@ -245,7 +246,9 @@ async function runHostedAutonomyChain(
     failure: HostedAutonomyResultV1 | null = null,
   ) => {
     actions.push(`continuation:${phase}:${outcome}`);
-    return finish(`${phase}:${outcome}`, failure);
+    return outcome === "deferred_deadline" && !writes.applied
+      ? skipped("no_change", custody.observed?.head ?? null, actions)
+      : finish(`${phase}:${outcome}`, failure);
   };
   // Only the matrix pre-passes can write before the ordinary phases: the
   // state they started from marks the records they settled.
@@ -317,6 +320,9 @@ async function runHostedAutonomyChain(
     if (!writes.applied) baseline = found.snapshot;
     const context: HostedAutonomyPassContextV1 = {
       deps,
+      passStartedAt: startedAt,
+      deadlineAt: startedAt + HOSTED_AUTONOMY_PASS_DEADLINE_MS -
+        HOSTED_AUTONOMY_PHASE_RESERVE_MS,
       actions,
       revisions,
       snapshot: found.snapshot,
@@ -343,7 +349,7 @@ async function runHostedAutonomyChain(
     const continued = writes.applied;
     let result: HostedAutonomyResultV1 | null;
     try {
-      if (continued && continuationLate(startedAt, deps.clock.now())) {
+      if (continuationLate(startedAt, deps.clock.now())) {
         return stop(phase.name, "deferred_deadline");
       }
       if (stale) {
@@ -366,6 +372,9 @@ async function runHostedAutonomyChain(
         context = built.context;
         releaseHead = built.releaseHead;
         stale = false;
+      }
+      if (continuationLate(startedAt, deps.clock.now())) {
+        return stop(phase.name, "deferred_deadline");
       }
       const finishPhase = beginMaintenanceProgress(
         phase.name === "closure-delivery" ? "closure_delivery" : phase.name,
