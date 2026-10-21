@@ -29,6 +29,7 @@ import {
   onlyReview,
   OP_KEY,
   oversizedFindingsResult,
+  OWNER_RUN_ID,
   PR,
   PROVIDER,
   readyJournal,
@@ -39,6 +40,116 @@ import {
   submission,
   withRealGitRange,
 } from "./codex-review-transport-helpers.ts";
+
+Deno.test(
+  "transport: failed review terminals retain only exact sanitized diagnostics after unavailable publication",
+  async () => {
+    const rawDetail = "Bearer diagnostic-secret https://private.invalid/raw";
+    const cases = [
+      {
+        error: {
+          message: rawDetail,
+          additionalDetails: rawDetail,
+          codexErrorInfo: {
+            responseTooManyFailedAttempts: { httpStatusCode: 200 },
+          },
+        },
+        errorCode: "model_response_too_many_failed_attempts",
+        httpStatusCode: 200,
+        duplicate: false,
+      },
+      {
+        error: { message: `${rawDetail} HTTP 429` },
+        errorCode: "model_unknown",
+        httpStatusCode: null,
+        duplicate: true,
+      },
+    ];
+    await withRealGitRange(async ({ base, head, snapshot }) => {
+      for (const item of cases) {
+        const session = new RecordingSession();
+        const register = session.onNotification.bind(session);
+        session.onNotification = (handler) =>
+          register((event) => {
+            if (event.method !== "turn/completed") {
+              handler(event);
+              return;
+            }
+            const terminal = {
+              id: session.turnId,
+              status: "failed",
+              durationMs: 12.9,
+              error: item.error,
+            };
+            // These events all precede the turn/start acknowledgement. Foreign
+            // terminals cannot supply diagnostics for this review.
+            handler({
+              method: "turn/completed",
+              params: { threadId: "foreign-thread", turn: terminal },
+            });
+            handler({
+              method: "turn/completed",
+              params: {
+                threadId: session.threadId,
+                turn: { ...terminal, id: "foreign-turn" },
+              },
+            });
+            const exact = {
+              method: "turn/completed",
+              params: { threadId: session.threadId, turn: terminal },
+            };
+            handler(exact);
+            if (item.duplicate) handler(exact);
+          });
+        const h = makeHarness({ session, snapshot });
+        const lines: unknown[][] = [];
+        const originalLog = console.log;
+        console.log = (...args: unknown[]) => lines.push(args);
+        try {
+          const submitted = await h.transport.submitReview(
+            submission({ expectedBase: base, expectedHead: head }),
+          );
+          assert.equal(submitted.ok, true);
+          await settle(h.transport);
+        } finally {
+          console.log = originalLog;
+        }
+        const journal = await parseReviewJournalBody(onlyReview(h.store).body!);
+        assert.equal(journal.phase, "ready");
+        if (journal.phase !== "ready") assert.fail("expected ready journal");
+        assert.equal(journal.result.verdict, "unavailable");
+        assert.equal(journal.execution, null);
+        assert.equal(session.turnStarts(), 1);
+        assert.equal(session.closed, 1);
+        assert.equal(h.store.submits, 1);
+        assert.equal(lines.length, 1, "one exact terminal advisory survives");
+        assert.deepEqual(JSON.parse(lines[0][0] as string), {
+          event: "sentinel_review_terminal",
+          ownerRunId: OWNER_RUN_ID,
+          requestId: REQUEST_ID,
+          invocationId: `review-invocation-${OP_KEY}`,
+          threadId: session.threadId,
+          turnId: session.turnId,
+          status: "failed",
+          durationMs: 12,
+          errorPresent: true,
+          errorCode: item.errorCode,
+          httpStatusCode: item.httpStatusCode,
+        });
+        assert.equal(JSON.stringify(lines).includes(rawDetail), false);
+        assert.equal(JSON.stringify(journal).includes(rawDetail), false);
+        const observed = await h.freshTransport().readReview({
+          operationKey: OP_KEY,
+          requestId: REQUEST_ID,
+          prNumber: PR,
+        });
+        assert.equal(observed.ok, true);
+        if (observed.ok) assert.equal(observed.value.status, "unavailable");
+        assert.equal(session.turnStarts(), 1, "observation starts no new turn");
+      }
+    });
+  },
+);
 
 Deno.test(
   "transport: real Git snapshot and recording session publish one exact clean COMMENT",
