@@ -360,6 +360,20 @@ export async function actionsExistingPrincipalFixture(
         input: ActionsTargetCyclesInputV1,
       ) => Promise<void>,
     ) {
+      // The routing scenarios mutate the target grant/token. Mirror that state
+      // onto the self installation so the same missing/forged/expired authority
+      // is exercised under the dual-token composition.
+      if (env.SENTINEL_SUPERVISOR_TOKEN === undefined) {
+        delete env.SENTINEL_SELF_TOKEN;
+      } else {
+        env.SENTINEL_SELF_TOKEN = env.SENTINEL_SUPERVISOR_TOKEN;
+      }
+      if (env.SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT === undefined) {
+        delete env.SENTINEL_SELF_TOKEN_MINT_GRANT;
+      } else {
+        env.SENTINEL_SELF_TOKEN_MINT_GRANT =
+          env.SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT;
+      }
       const result = await runActionsRepairHost({
         ...deps,
         runTargetCycles: async (input) => {

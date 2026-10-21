@@ -399,7 +399,11 @@ export async function concurrencyInstallerFixture(
     Date.now = () => fixtureNow;
     Deno.env.get = (name) => {
       if (Object.hasOwn(environment, name)) return environment[name];
-      assert.ok(name === "PATH" || name === "NODE_V8_COVERAGE");
+      assert.ok(
+        name === "PATH" || name === "NODE_V8_COVERAGE" ||
+          name === "SENTINEL_SELF_TOKEN",
+      );
+      if (name === "SENTINEL_SELF_TOKEN") return undefined;
       return originalEnvironmentGet(name);
     };
     Deno.chdir(directory);

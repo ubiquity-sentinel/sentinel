@@ -889,8 +889,11 @@ export async function futureRecoveryFixture(
     let now = RECOVERY_NOW;
     Date.now = () => now;
     Deno.cwd = () => source.launcher;
-    Deno.env.get = (key) =>
-      Object.hasOwn(environment, key) ? environment[key] : original.env(key);
+    Deno.env.get = (key) => {
+      if (Object.hasOwn(environment, key)) return environment[key];
+      if (key === "SENTINEL_SELF_TOKEN") return undefined;
+      return original.env(key);
+    };
     const current = async () => {
       const read = await state.readRelease();
       assert.ok(read.ok && read.value.status === "found");

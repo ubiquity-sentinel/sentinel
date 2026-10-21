@@ -54,6 +54,67 @@ Deno.test("hosted principal: actual wrong-App/read-only mint output is refused b
   );
 });
 
+Deno.test("hosted principal: current credential installations parse while the durable foreign scope stays legacy", () => {
+  const self = parseHostedAppMintGrant(
+    principalGrant({
+      installationId: 173834540,
+      repositoryIds: [101],
+      repositoryNames: ["sentinel"],
+    }),
+    OBSERVED,
+    173834540,
+  );
+  assert.equal(self?.installationId, 173834540);
+
+  const foreign = parseHostedAppMintGrant(
+    principalGrant({
+      installationId: 173913802,
+      repositoryIds: [102],
+      repositoryNames: ["ai.ubq.fi"],
+    }),
+    OBSERVED,
+    173913802,
+  );
+  assert.equal(foreign?.installationId, 173913802);
+  assert.equal(
+    parseHostedAppMintGrant(
+      principalGrant({ installationId: 173913802 }),
+      OBSERVED,
+      155687488,
+    ),
+    null,
+  );
+});
+
+Deno.test("hosted principal: live foreign and self credential installations preserve logical scopes", async () => {
+  const foreignRig = principalNativeFixture();
+  foreignRig.scopeInput.grant = {
+    ...foreignRig.grant,
+    installationId: 173913802,
+  };
+  const foreign = await readHostedAppRepositoryScope(foreignRig.scopeInput);
+  assert(foreign.ok);
+  assert.equal(foreign.value.owner, "ubiquity");
+  assert.equal(foreign.value.name, "ai.ubq.fi");
+
+  const selfRig = principalNativeFixture();
+  selfRig.scopeInput.repository = {
+    owner: "ubiquity-sentinel",
+    name: "sentinel",
+    installationId: 0,
+  };
+  selfRig.scopeInput.grant = {
+    ...selfRig.grant,
+    installationId: 173834540,
+    repositoryIds: [101],
+    repositoryNames: ["sentinel"],
+  };
+  const self = await readHostedAppRepositoryScope(selfRig.scopeInput);
+  assert(self.ok);
+  assert.equal(self.value.owner, "ubiquity-sentinel");
+  assert.equal(self.value.name, "sentinel");
+});
+
 Deno.test("hosted principal: forged, malformed, overbroad and expired metadata is not accepted", () => {
   for (
     const patch of [

@@ -67,10 +67,14 @@ const OPTIONAL_CHILD_ENV_KEYS = [
   "SENTINEL_REVIEW_MODEL_ID",
   "SENTINEL_DEEPSEEK_API_KEY",
   "SENTINEL_APP_INSTALLATION_ID",
+  "SENTINEL_TARGET_INSTALLATION_ID",
+  "SENTINEL_SELF_INSTALLATION_ID",
   "SENTINEL_COOLDOWN_MODE",
   "SENTINEL_MERGE_QUEUE",
   // Set by the launcher itself, only for a revision it pinned a cutoff for.
   "SENTINEL_LEGACY_REVIEW_CUTOFF",
+  "SENTINEL_SELF_TOKEN",
+  "SENTINEL_SELF_TOKEN_MINT_GRANT",
 ] as const;
 
 /** The exact child key set for a run that supplies no optional value. */

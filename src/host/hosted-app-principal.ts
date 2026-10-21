@@ -52,6 +52,7 @@ export interface HostedAppPrincipalHandoffInput {
   nativeToken: string;
   appToken: string | undefined;
   mintGrant: string | undefined;
+  expectedInstallationId?: number;
   appTokenNotAfter: string | undefined;
   deadline: number;
 }
@@ -219,7 +220,11 @@ async function readHandoff<T extends HostedAppPrincipalHandoffInput>(
       input.nativeToken.trim() === "" || input.appToken === input.nativeToken ||
       !Number.isSafeInteger(input.deadline) || input.deadline <= now
     ) return null;
-    const grant = parseHostedAppMintGrant(input.mintGrant, now);
+    const grant = parseHostedAppMintGrant(
+      input.mintGrant,
+      now,
+      input.expectedInstallationId,
+    );
     if (grant === null) return null;
     const conservative = parseAppTokenNotAfterV1(input.appTokenNotAfter);
     if (conservative === undefined) return null;

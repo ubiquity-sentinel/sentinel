@@ -18,6 +18,8 @@ export interface ActionsTargetBindingsInputV1 {
   auth: Omit<HostedAppPrincipalHostInput, "appToken" | "mintGrant">;
   targetMintGrant: string | undefined;
   selfMintGrant: string | undefined;
+  targetInstallationId?: number;
+  selfInstallationId?: number;
   contextsAllowed: boolean;
   sourceProfiles: unknown;
 }
@@ -39,6 +41,7 @@ export async function createActionsTargetBindings(
   const context = (
     token: string | undefined,
     mintGrant: string | undefined,
+    expectedInstallationId: number | undefined,
   ): Promise<HostedAppPrincipalContext | null> =>
     input.contextsAllowed
       ? createOptionalHostedAppPrincipalContext(
@@ -46,6 +49,7 @@ export async function createActionsTargetBindings(
           ...input.auth,
           appToken: token,
           mintGrant,
+          expectedInstallationId,
         },
         token,
         mintGrant,
@@ -60,7 +64,15 @@ export async function createActionsTargetBindings(
       isSelfTarget(config)
         ? (input.selfToken === undefined ? input.actionsLogin : input.appLogin)
         : input.targetLogin,
-    targetContext: await context(input.targetToken, input.targetMintGrant),
-    selfContext: await context(input.selfToken, input.selfMintGrant),
+    targetContext: await context(
+      input.targetToken,
+      input.targetMintGrant,
+      input.targetInstallationId,
+    ),
+    selfContext: await context(
+      input.selfToken,
+      input.selfMintGrant,
+      input.selfInstallationId,
+    ),
   };
 }

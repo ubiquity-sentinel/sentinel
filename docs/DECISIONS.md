@@ -11,8 +11,8 @@ continuation.
 
 ### Dedicated organization migration (2026-10-21)
 
-The owner moved Sentinel into the dedicated `ubiquity-sentinel` organization
-to isolate its GitHub Actions allowance. The public controller moved from
+The owner moved Sentinel into the dedicated `ubiquity-sentinel` organization to
+isolate its GitHub Actions allowance. The public controller moved from
 `ubiquity/sentinel` to `ubiquity-sentinel/sentinel`, and the private Passport
 controller moved from `ubiquity/sentinel-passport` to
 `ubiquity-sentinel/sentinel-passport`. Repository ids, issues, pull requests,
@@ -20,31 +20,39 @@ refs, secrets, variables, visibility and environment branch policies were
 preserved. Current self identity is the new organization. The permanently
 retired `ubiquity/sentinel` identity is accepted only while reading
 pre-migration state and is normalized to the current identity in memory; no
-protected state ref is rewritten by this migration. The existing Sentinel App
-is installed on both organizations; self writes use a token minted from the
-new self installation, while `ubiquity/ai.ubq.fi` retains the original
-installation token. No installation token is shared across owners. The
-release-state ruleset's App bypass is restored with the self installation.
-`ubiquity/ai.ubq.fi` remains a target under its original owner. The
-five-minute dispatcher and the disabled `sentinel-release` workflow retain
-their existing states. Derived repair ids and candidate refs retain the
-retired identity as their stable internal namespace, so existing work remains
-addressable after the external rename.
+protected state ref is rewritten by this migration. Derived repair ids and
+candidate refs retain the retired identity as their stable internal namespace,
+so existing work remains addressable after the external rename.
+
+The owner made the `ubiquity-sentinel` GitHub App public so one App can be
+installed on both organizations. The new-org self installation is `173834540`;
+the original-owner installation is `173913802` and is enabled for all `ubiquity`
+repositories, though every dispatched token is still narrowed to the committed
+target repositories. Self writes use the self installation; foreign targets use
+the `ubiquity` installation. No installation token is shared across owners. The
+old installation id `155687488` remains the durable logical foreign-target scope
+for existing state and refs, while the workflows pass the live credential
+installation ids separately as `SENTINEL_TARGET_INSTALLATION_ID` and
+`SENTINEL_SELF_INSTALLATION_ID`. Do not rewrite historical state to the new
+installation ids. The release-state ruleset's App bypass is restored with the
+self installation. `ubiquity/ai.ubq.fi` remains a target under its original
+owner. The five-minute dispatcher and the disabled `sentinel-release` workflow
+retain their existing states.
 
 ### Private Passport controller isolation (2026-10-21)
 
 The owner's request to add `ubiquity/passport.ubq.fi`, followed by the explicit
 completion goal, authorizes completing its private execution path. The dedicated
-private `ubiquity-sentinel/sentinel-passport` controller owns only Passport; the public
-controller retains Sentinel and AI. Private target code, artifacts, runtime
-state, review evidence and logs must remain private. Seed source ancestry only,
-never public runtime state or accounting. Provision the existing App/model
-credentials exclusively in the private controller's `sentinel-supervisor`
-environment restricted to that branch; no credential replacement, audience
-expansion, branch ruleset or product-release activation is authorized. The
-private dispatcher and product release remain disabled during preparation;
-native private CI, controller-bound bootstrap, target authorization and real
-reviewed delivery precede activation claims.
+private `ubiquity-sentinel/sentinel-passport` controller owns only Passport; the
+public controller retains Sentinel and AI. Private target code, artifacts,
+runtime state, review evidence and logs must remain private. Seed source
+ancestry only, never public runtime state or accounting. Provision the existing
+App/model credentials exclusively in the private controller's
+`sentinel-supervisor` environment restricted to that branch; no credential
+replacement, audience expansion, branch ruleset or product-release activation is
+authorized. The private dispatcher and product release remain disabled during
+preparation; native private CI, controller-bound bootstrap, target authorization
+and real reviewed delivery precede activation claims.
 
 ### Native review mode owns reviewer selection (2026-10-21)
 
@@ -109,10 +117,10 @@ for every edit.
 
 Acceptance for this effort is green scheduled supervisor cycles plus at least
 one autonomous issue → PR → completed review → merge in each of
-`ubiquity-sentinel/sentinel` and `ubiquity/ai.ubq.fi`. The ai.ubq.fi scope is issue
-repairs only for now. Gateway capture, VPS deployment, release activation and
-the original broader gateway observation gates remain separate work. Bootstrap
-health and opened PRs alone do not satisfy this acceptance.
+`ubiquity-sentinel/sentinel` and `ubiquity/ai.ubq.fi`. The ai.ubq.fi scope is
+issue repairs only for now. Gateway capture, VPS deployment, release activation
+and the original broader gateway observation gates remain separate work.
+Bootstrap health and opened PRs alone do not satisfy this acceptance.
 
 ### Incident and operational unblock (2026-10-20 UTC)
 

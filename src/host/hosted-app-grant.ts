@@ -3,9 +3,16 @@ import { deriveAppTokenNotAfterV1 } from "./hosted-app-token-window.ts";
 
 export const HOSTED_APP_MINT_GRANT_ENV = "SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT";
 export const SENTINEL_APP_ID = 4682172;
+/**
+ * Stable foreign-target state scope. This is not necessarily the live
+ * credential installation after an App transfer; the credential installation
+ * is supplied separately and kept out of the durable repository identity.
+ */
 export const SENTINEL_APP_INSTALLATION_ID = 155687488;
 export const SENTINEL_APP_SLUG = "ubiquity-sentinel";
 export const HOSTED_APP_GRANT_MAX_BYTES = 16_384;
+export const TARGET_INSTALLATION_ID_ENV = "SENTINEL_TARGET_INSTALLATION_ID";
+export const SELF_INSTALLATION_ID_ENV = "SENTINEL_SELF_INSTALLATION_ID";
 
 const permissions = new Set([
   "contents",
@@ -31,7 +38,7 @@ const fields = new Set([
 
 export interface HostedAppMintGrant {
   readonly appId: typeof SENTINEL_APP_ID;
-  readonly installationId: typeof SENTINEL_APP_INSTALLATION_ID;
+  readonly installationId: number;
   readonly appSlug: typeof SENTINEL_APP_SLUG;
   readonly expiresAt: number;
   readonly permissions: Readonly<Record<string, "read" | "write">>;
@@ -61,18 +68,20 @@ function names(value: unknown): value is string[] {
 export function parseHostedAppMintGrant(
   text: string | undefined,
   now: number,
+  installationId: number = SENTINEL_APP_INSTALLATION_ID,
 ): HostedAppMintGrant | null {
   try {
     if (
       typeof text !== "string" || text.length > HOSTED_APP_GRANT_MAX_BYTES ||
       new TextEncoder().encode(text).length > HOSTED_APP_GRANT_MAX_BYTES ||
-      !Number.isSafeInteger(now) || now < 0
+      !Number.isSafeInteger(now) || now < 0 ||
+      !Number.isSafeInteger(installationId) || installationId <= 0
     ) return null;
     const value: unknown = JSON.parse(text);
     if (
       !record(value) || Object.keys(value).some((key) => !fields.has(key)) ||
       value.version !== 1 || value.appId !== SENTINEL_APP_ID ||
-      value.installationId !== SENTINEL_APP_INSTALLATION_ID ||
+      value.installationId !== installationId ||
       value.appSlug !== SENTINEL_APP_SLUG ||
       typeof value.expiresAt !== "string" ||
       !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(
@@ -111,7 +120,7 @@ export function parseHostedAppMintGrant(
     ) return null;
     return Object.freeze({
       appId: SENTINEL_APP_ID,
-      installationId: SENTINEL_APP_INSTALLATION_ID,
+      installationId,
       appSlug: SENTINEL_APP_SLUG,
       expiresAt,
       permissions: Object.freeze(selected),

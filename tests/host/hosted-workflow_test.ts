@@ -1076,8 +1076,8 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
       workflow.split("uses: ./launcher/.github/actions/sentinel-app-token")
         .length -
       1,
-    6,
-    "the coordinators and isolated cells mint scoped installation tokens",
+    12,
+    "the coordinators and isolated cells mint target and self installation tokens",
   );
 
   for (
@@ -1111,6 +1111,26 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
       mint.includes("repositories: ${{ steps.targets.outputs.repositories }}"),
       `${job} scopes the token to the committed target repositories`,
     );
+    assert.ok(
+      mint.includes("owner: ubiquity"),
+      `${job} mints the foreign token`,
+    );
+    const selfMint = blockText(
+      lines,
+      namedStepRange(lines, "Mint the scoped self installation token"),
+    );
+    assert.ok(
+      selfMint.includes("owner: ubiquity-sentinel") &&
+        selfMint.includes("repositories: sentinel"),
+      `${job} mints the self token from the new organization`,
+    );
+    assert.ok(
+      selfMint.includes("client-id: Iv23liHUJNXds9mU3j7Q") &&
+        selfMint.includes(
+          "private-key: ${{ secrets.SENTINEL_SUPERVISOR_APP_PRIVATE_KEY }}",
+        ),
+      `${job} uses the same protected App identity for the self token`,
+    );
   }
 
   for (const job of ["maintenance", "matrix_plan", "matrix_cell", "repair"]) {
@@ -1127,9 +1147,9 @@ Deno.test("hosted workflow: every code-writing job mints the ubiquity-sentinel A
     const targetsText = blockText(lines, targets);
     assert.ok(
       targetsText.includes(
-        `repositories=$(jq -r 'join(",")' sentinel.targets.json)`,
+        `repositories=$(jq -r --arg self 'ubiquity-sentinel/sentinel' 'map(select(. != $self)) | join(",")' sentinel.targets.json)`,
       ),
-      `${job} resolves the committed target repositories with the jq join`,
+      `${job} resolves only the committed foreign target repositories`,
     );
     if (job !== "maintenance") {
       assert.ok(

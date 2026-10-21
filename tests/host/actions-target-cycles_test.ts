@@ -32,6 +32,35 @@ import {
   unique,
 } from "./actions-target-fixture.ts";
 import { APP_PUBLISHER } from "./actions-ci-fixture.ts";
+import { readHostedAppCredentials } from "../../src/host/hosted-app-credentials.ts";
+
+Deno.test("actions host: live App installation ids are explicit while old runs retain the legacy scope", () => {
+  const legacy = readHostedAppCredentials((name) =>
+    ({
+      SENTINEL_SUPERVISOR_TOKEN: "legacy-app",
+      SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: "legacy-grant",
+    })[name]
+  );
+  assert.equal(legacy.appToken, "legacy-app");
+  assert.equal(legacy.selfToken, "legacy-app");
+  assert.equal(legacy.selfGrant, "legacy-grant");
+  assert.equal(legacy.targetInstallationId, 155687488);
+  assert.equal(legacy.selfInstallationId, 155687488);
+
+  const current = readHostedAppCredentials((name) =>
+    ({
+      SENTINEL_SUPERVISOR_TOKEN: "foreign-app",
+      SENTINEL_SELF_TOKEN: "self-app",
+      SENTINEL_SELF_TOKEN_MINT_GRANT: "self-grant",
+      SENTINEL_TARGET_INSTALLATION_ID: "173913802",
+      SENTINEL_SELF_INSTALLATION_ID: "173834540",
+    })[name]
+  );
+  assert.equal(current.selfToken, "self-app");
+  assert.equal(current.selfGrant, "self-grant");
+  assert.equal(current.targetInstallationId, 173913802);
+  assert.equal(current.selfInstallationId, 173834540);
+});
 
 Deno.test("actions host: prepared target capabilities reach the actual target cycle", async () => {
   const rig = makeTargetHostRig(["sentinel", FOREIGN_REPO, THIRD_REPO]);
@@ -286,14 +315,42 @@ Deno.test(
       /--allow-env=\S*SENTINEL_APP_INSTALLATION_ID/.test(repairJob),
       "the repair launcher may read the App installation scope",
     );
+    assert.ok(
+      repairJob.includes(
+        "SENTINEL_TARGET_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}",
+      ),
+      "the repair launcher binds the live foreign credential installation",
+    );
+    assert.ok(
+      repairJob.includes(
+        "SENTINEL_SELF_INSTALLATION_ID: ${{ steps.self-token.outputs.installation-id }}",
+      ),
+      "the repair launcher binds the live self credential installation",
+    );
+    assert.ok(
+      /--allow-env=\S*SENTINEL_TARGET_INSTALLATION_ID/.test(repairJob),
+      "the repair launcher may read the live foreign installation",
+    );
+    assert.ok(
+      /--allow-env=\S*SENTINEL_SELF_INSTALLATION_ID/.test(repairJob),
+      "the repair launcher may read the live self installation",
+    );
     const manifest = JSON.parse(
       await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
     ) as { tasks: Record<string, string> };
     for (const task of ["repair:actions", "supervisor:run"]) {
-      assert.ok(
-        manifest.tasks[task].includes("SENTINEL_APP_INSTALLATION_ID"),
-        `${task} may read the App installation scope`,
-      );
+      for (
+        const key of [
+          "SENTINEL_APP_INSTALLATION_ID",
+          "SENTINEL_TARGET_INSTALLATION_ID",
+          "SENTINEL_SELF_INSTALLATION_ID",
+        ]
+      ) {
+        assert.ok(
+          manifest.tasks[task].includes(key),
+          `${task} may read ${key}`,
+        );
+      }
     }
   },
 );

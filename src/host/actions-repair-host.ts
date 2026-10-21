@@ -99,11 +99,8 @@ import {
   APP_TOKEN_NOT_AFTER_ENV,
   parseAppTokenNotAfterV1,
 } from "./hosted-app-token-window.ts";
-import {
-  HOSTED_APP_MINT_GRANT_ENV,
-  SELF_MINT_GRANT_ENV,
-  SELF_TOKEN_ENV,
-} from "./hosted-app-grant.ts";
+import { HOSTED_APP_MINT_GRANT_ENV } from "./hosted-app-grant.ts";
+import { readHostedAppCredentials } from "./hosted-app-credentials.ts";
 import {
   composeHostedAppGitHub,
   type HostedAppGitHubInput,
@@ -193,12 +190,14 @@ export async function runActionsRepairHost(
     baseUrl: modelRoute.baseUrl,
     reviewMode: "native",
   }));
-
   const githubToken = requireEnv(readEnv, "GITHUB_TOKEN");
-  const appToken = optionalEnv(readEnv, "SENTINEL_SUPERVISOR_TOKEN");
-  const selfToken = optionalEnv(readEnv, SELF_TOKEN_ENV) ?? appToken;
-  const selfGrant = optionalEnv(readEnv, SELF_MINT_GRANT_ENV) ??
-    readEnv(HOSTED_APP_MINT_GRANT_ENV);
+  const {
+    appToken,
+    selfToken,
+    selfGrant,
+    targetInstallationId,
+    selfInstallationId,
+  } = readHostedAppCredentials(readEnv);
   // The model token is the route's key when the route names a key environment
   // (read through the existing --allow-env mechanism), else the existing
   // gateway token. The review client ALWAYS uses the gateway token: it is
@@ -414,6 +413,8 @@ export async function runActionsRepairHost(
     },
     targetMintGrant: readEnv(HOSTED_APP_MINT_GRANT_ENV),
     selfMintGrant: selfGrant,
+    targetInstallationId,
+    selfInstallationId,
     contextsAllowed: identity.job !== "matrix_cell",
     sourceProfiles: deps.hostedAppSourceProfiles,
   });

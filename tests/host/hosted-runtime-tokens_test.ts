@@ -178,6 +178,29 @@ Deno.test("hosted runtime: the optional sentinel App token crosses only when it 
   }
 });
 
+Deno.test("hosted runtime: target and self installation identities cross only when supplied", async () => {
+  const rig = await makeRig();
+  try {
+    await seedRelease(rig);
+    rig.process.child = exited(childLine(rig.execution));
+    const result = await launch(rig, {
+      env: {
+        ...rig.env,
+        SENTINEL_SUPERVISOR_TOKEN: APP_TOKEN,
+        SENTINEL_TARGET_INSTALLATION_ID: "173913802",
+        SENTINEL_SELF_INSTALLATION_ID: "173834540",
+      },
+    });
+    assert.equal(result.status, "healthy", JSON.stringify(result));
+    const child = rig.process.childCalls().at(-1);
+    assert.ok(child !== undefined);
+    assert.equal(child.env.SENTINEL_TARGET_INSTALLATION_ID, "173913802");
+    assert.equal(child.env.SENTINEL_SELF_INSTALLATION_ID, "173834540");
+  } finally {
+    await rig.cleanup();
+  }
+});
+
 Deno.test("hosted runtime: a child settled as the sentinel App login is accepted during the transition", async () => {
   const rig = await makeRig();
   try {

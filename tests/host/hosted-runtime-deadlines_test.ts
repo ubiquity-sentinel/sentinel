@@ -127,7 +127,7 @@ Deno.test("hosted runtime: source preparation is charged against the one absolut
 
   assert.deepEqual(prepared, [
     "ubiquity-sentinel/sentinel",
-    "ubiquity/foreign-target",
+    "ubiquity-sentinel/foreign-target",
   ]);
   // The third target's cycle never starts either: the one absolute deadline
   // stops the run instead of spending remaining budget on doomed work.
@@ -135,8 +135,8 @@ Deno.test("hosted runtime: source preparation is charged against the one absolut
   assert.deepEqual(cycles, ["ubiquity-sentinel/sentinel"]);
   assert.deepEqual(result.addressed, ["ubiquity-sentinel/sentinel"]);
   assert.deepEqual(result.skipped, [
-    "ubiquity/foreign-target",
-    "ubiquity/third-target",
+    "ubiquity-sentinel/foreign-target",
+    "ubiquity-sentinel/third-target",
   ]);
   assert.deepEqual(result.failed, []);
   assert.deepEqual(result.outcome, selfOutcome);
@@ -172,9 +172,9 @@ Deno.test("hosted runtime: source preparation is charged against the one absolut
       return Promise.resolve(foreignOutcome);
     },
   });
-  assert.deepEqual(controlComposed, ["ubiquity/foreign-target"]);
+  assert.deepEqual(controlComposed, ["ubiquity-sentinel/foreign-target"]);
   assert.deepEqual(controlDeadlines, [deadline]);
-  assert.deepEqual(control.addressed, ["ubiquity/foreign-target"]);
+  assert.deepEqual(control.addressed, ["ubiquity-sentinel/foreign-target"]);
   assert.deepEqual(control.skipped, []);
   assert.deepEqual(control.outcome, foreignOutcome);
 });
