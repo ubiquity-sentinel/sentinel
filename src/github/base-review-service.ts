@@ -61,7 +61,7 @@ export interface BaseTaskReviewOptionsV1 {
   state: StateReadView;
   ownerRunId: string;
   provider: string;
-  model: string;
+  model?: string;
   snapshot: GitReviewSnapshotCaptureV1;
   reviewer: CodexReviewPrepareCapabilityV1;
   custody?: BaseReviewOwnerCustodyV1;
@@ -301,8 +301,7 @@ export class BaseTaskReviewService implements BaseTaskReviewPortV1 {
       if (
         execution.invocationId !== requestId ||
         execution.ownerRunId !== this.options.ownerRunId ||
-        execution.model !== this.options.model ||
-        execution.submittedProvider !== this.options.provider
+        execution.nativeReview?.mode !== "review/start"
       ) {
         return portError(
           "unavailable",
@@ -350,8 +349,7 @@ export class BaseTaskReviewService implements BaseTaskReviewPortV1 {
         ready.invocationId !== requestId ||
         ready.threadId !== execution.threadId ||
         ready.ownerRunId !== this.options.ownerRunId ||
-        ready.model !== this.options.model ||
-        ready.submittedProvider !== this.options.provider ||
+        ready.nativeReview?.mode !== "review/start" ||
         ready.actual.terminalOrigin !== "runtime" ||
         ready.actual.observedTerminalStatus !== "completed" ||
         canonicalStringify(ready.actual) !==
@@ -444,8 +442,7 @@ export class BaseTaskReviewService implements BaseTaskReviewPortV1 {
         await canonicalStringifySha256(execution) !== binding.executionDigest ||
         !baseResultSatisfied(result, binding) ||
         execution.invocationId !== baseReviewRequestId(binding.admission) ||
-        execution.model !== this.options.model ||
-        execution.submittedProvider !== this.options.provider ||
+        execution.nativeReview?.mode !== "review/start" ||
         execution.actual.terminalOrigin !== "runtime" ||
         execution.actual.observedTerminalStatus !== "completed"
       ) return portError("invalid", "base closure native evidence mismatch");

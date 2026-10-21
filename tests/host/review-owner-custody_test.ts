@@ -210,7 +210,7 @@ const session = client.openSession({ cwd: ${JSON.stringify(root)}, requestId: ${
         JSON.stringify(journal.requestId)
       }, invocationId: "review-invocation-review:task:round1", ownerRunId: ${
         JSON.stringify(execution.id)
-      } });
+      }, nativeReviewTargetDigest: "d".repeat(64) });
 session.open(); await session.send("initialize", {}); console.log("reviewer opened");
 await new Promise(() => {});
 `,
@@ -267,7 +267,7 @@ for await (const part of Deno.stdin.readable) {
     const frame = JSON.parse(text.slice(0, end)); text = text.slice(end + 1);
     if (frame.id === undefined) continue;
     const p = frame.params ?? {};
-    const result = frame.method === "thread/start" ? { thread: { id: "real-fake-review-thread" }, model: p.model, modelProvider: p.modelProvider, reasoningEffort: "max", activePermissionProfile: { id: p.permissions } } : frame.method === "turn/start" ? { turn: { id: "real-fake-review-turn", status: "inProgress" } } : { userAgent: "fake-reviewer" };
+    const result = frame.method === "thread/start" ? { thread: { id: "real-fake-review-thread" }, model: "codex-resolved", modelProvider: "uos", reasoningEffort: null, activePermissionProfile: { id: p.permissions } } : frame.method === "review/start" ? { turn: { id: "real-fake-review-turn", status: "inProgress" }, reviewThreadId: "real-fake-review-thread" } : { userAgent: "fake-reviewer" };
     console.log(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result }));
   }
 }
@@ -656,7 +656,7 @@ const session = client.openSession({ cwd: ${JSON.stringify(root)}, requestId: ${
         JSON.stringify(journal.requestId)
       }, invocationId: "review-invocation-review:escaped-owner:1", ownerRunId: ${
         JSON.stringify(execution.id)
-      } });
+      }, nativeReviewTargetDigest: "d".repeat(64) });
 session.open(); await session.send("initialize", {});
 const escaped = new Deno.Command(Deno.execPath(), { args: ["run", ${
         JSON.stringify(escapedFile)

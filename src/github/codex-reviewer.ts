@@ -1,45 +1,13 @@
-/**
- * T03 checkpoint: concrete structured Codex reviewer (prepare / start / close).
- *
- * One bounded, task-owned structured review session over the accepted
- * `CodexSessionV1` app-server transport. The producer owns the session and its
- * absolute deadlines:
- *
- * - `prepare(request)` initializes the app-server, opens one acknowledged
- *   thread with the fixed read-only Luna/max configuration and returns the
- *   running execution identity WITHOUT any `turn/start`. A durable transport
- *   can therefore persist/read back its running journal before a model start
- *   is possible; the caller may abandon the preparation and `close()` with
- *   zero starts.
- * - `start()` rechecks the absolute `latestStartAt`/`settleBy` deadlines,
- *   atomically consumes the single attempt, registers bounded early-event
- *   buffering BEFORE the one `turn/start` and consumes the buffered events
- *   exactly once after the exact returned turn id is known. A repeated start
- *   is rejected without a second request.
- * - `close()` is bounded and idempotent and settles the owned transport while
- *   still validating evidence that arrives during the close window; a
- *   non-settled, corrupt or sticky-evidence-failed close invalidates
- *   completion (`finalizeReviewCompletion`).
- *
- * Exactly one final `agentMessage` is the result; commentary is not. The
- * submitted prompt's own `userMessage` echo is accepted as input evidence only
- * — exactly one text content part equal to the submitted prompt with empty
- * text elements, correlated to the first echoed user item id — and it never
- * proves completion or substitutes for the final result. Under the trusted
- * named restricted profile, correlated read-only `commandExecution` items and
- * their exact `item/commandExecution/outputDelta` evidence are accepted (and
- * must settle before completion); every other write/MCP/web/multi-agent item
- * and every server request is still refused. The structured result is parsed
- * only through the accepted strict result parser, every finding location is
- * validated against the exact candidate manifest candidate line counts, and
- * completion additionally requires the accepted request/runtime receipt
- * verifier, an exact runtime `completed` terminal, full routing verification
- * and no forbidden item or server request. Nothing is retried, continued or
- * fallen back; failure returns `unavailable` and never invents terminal ids.
+/** One task-owned native Codex review over the existing durable transport.
+ * Preparation opens a restricted thread without inference. The caller persists
+ * and reads back its running journal before exactly one review/start may run.
+ * Completion requires the correlated native entry/exit lifecycle, strict bound
+ * result, runtime terminal and settled read-only commands/owned process.
+ * Codex selects its reviewer; no caller model, provider, effort or output-schema
+ * override is sent. Failures remain unavailable without retry or substitution.
  */
 
 import {
-  BASE_TASK_INSTRUCTIONS,
   MAX_PROMPT_BYTES,
   renderReviewPrompt,
   type ReviewSnapshotV1,
@@ -51,13 +19,11 @@ import {
   checkReviewTaskStatement,
   type ReviewTaskStatementV1,
 } from "../contracts/review-receipt.ts";
-import {
-  REVIEW_MODEL,
-  REVIEW_REASONING,
-  type ReviewJournalExecutionV1,
-  type ReviewJournalReadyExecutionV1,
-  type ReviewJournalRuntimeActualV1,
-  type ReviewResultV1,
+import type {
+  ReviewJournalExecutionV1,
+  ReviewJournalReadyExecutionV1,
+  ReviewJournalRuntimeActualV1,
+  ReviewResultV1,
 } from "./review-journal.ts";
 import { portError, portOk, type PortResultV1 } from "../contracts/ports.ts";
 import {
@@ -70,28 +36,24 @@ import {
   isAbsoluteMs,
   isBoundedId,
   isValidPermissionProfile,
-  isValidProvider,
-  isValidReviewModel,
   racePromise,
   utf8Bytes,
 } from "./reviewer-support.ts";
 import {
-  BASE_INSTRUCTIONS,
   CLOSE_RESERVE_MS,
   DEADLINE_DETAIL,
-  DEVELOPER_INSTRUCTIONS,
   MAX_REVIEW_TOTAL_MS,
-  MODEL_DETAIL,
   PERMISSION_PROFILE_DETAIL,
   PREPARE_DETAIL,
   PREPARE_UNSETTLED_DETAIL,
   PROMPT_DETAIL,
-  PROVIDER_DETAIL,
   REQUEST_DETAIL,
   TASK_DETAIL,
   type ThreadAckV1,
 } from "./reviewer-policy.ts";
 import { PreparedStructuredReview } from "./reviewer-prepared.ts";
+import { canonicalStringifySha256 } from "../contracts/canonical.ts";
+import { nativeReviewInstructions } from "./native-review-result.ts";
 
 /** One immutable prepare request for exactly one structured review. */
 export interface StructuredReviewPrepareV1 {
@@ -159,15 +121,9 @@ export interface PreparedStructuredReviewV1 {
 }
 
 export interface CodexStructuredReviewerOptionsV1 {
-  /** Selected provider; acknowledged by thread/start and receipt verification. */
+  /** Deprecated compatibility input; trusted client config owns routing. Ignored. */
   provider: string;
-  /**
-   * Trusted dedicated review model id. Omitted callers keep the frozen
-   * `REVIEW_MODEL`; when supplied it must be a bounded nonempty trimmed
-   * control-free id (validated before any session opens) and every submitted,
-   * acknowledged and recorded runtime identity uses this exact value. It is
-   * never the shared implementation route's model.
-   */
+  /** Deprecated compatibility input; native mode owns reviewer selection. Ignored. */
   model?: string;
   /** Trusted host capability opening the app-server session for one cwd. */
   openSession: (
@@ -176,6 +132,7 @@ export interface CodexStructuredReviewerOptionsV1 {
       requestId?: string;
       invocationId?: string;
       ownerRunId?: string;
+      nativeReviewTargetDigest?: string;
     },
   ) => CodexSessionV1;
   /** Trusted absolute isolated session directory (read-only review cwd). */
@@ -191,27 +148,13 @@ export interface CodexStructuredReviewerOptionsV1 {
    * instead of the legacy `sandbox`, enables the ordinary shell read tool
    * (`features.shell_tool` with `features.unified_exec` disabled), requires
    * the exact `activePermissionProfile.id` acknowledgement before any turn and
-   * carries the profile into the single turn/start.
+   * leaves that acknowledged restriction active for native review/start.
    */
   permissionProfile: string;
 }
 
-/**
- * Concrete structured Codex reviewer. Provider, model, session-open capability
- * and the trusted isolated session cwd come from the constructor; the model is
- * the trusted configured id (frozen `REVIEW_MODEL` only when omitted) and the
- * reasoning effort is the frozen max policy with no fallback.
- */
+/** Native reviewer; configuration and credential custody remain with its host. */
 export class CodexStructuredReviewer {
-  private readonly provider: string;
-  /**
-   * Trusted configured review model id: the caller's dedicated review-model
-   * value (resolved from `SENTINEL_REVIEW_MODEL_ID`, never the shared
-   * implementation route's model), else the frozen `REVIEW_MODEL` default.
-   * Every submitted, acknowledged and recorded identity binds this exact
-   * value.
-   */
-  private readonly model: string;
   private readonly sessionCwd: string;
   private readonly openSession: CodexStructuredReviewerOptionsV1["openSession"];
   private readonly now: () => number;
@@ -219,11 +162,6 @@ export class CodexStructuredReviewer {
   private readonly permissionProfile: string;
 
   constructor(options: CodexStructuredReviewerOptionsV1) {
-    this.provider = options.provider;
-    // ONLY an omitted model keeps the frozen default: an explicit runtime null
-    // (or any other malformed value) is carried into the bounded validator and
-    // refuses at prepare instead of being silently replaced.
-    this.model = options.model === undefined ? REVIEW_MODEL : options.model;
     this.sessionCwd = options.sessionCwd;
     this.openSession = options.openSession;
     this.now = options.now ?? (() => Date.now());
@@ -238,15 +176,6 @@ export class CodexStructuredReviewer {
   async prepare(
     request: StructuredReviewPrepareV1,
   ): Promise<PortResultV1<PreparedStructuredReviewV1>> {
-    if (!isValidProvider(this.provider)) {
-      return portError("unavailable", PROVIDER_DETAIL);
-    }
-    // The trusted configured review model is validated with the same bounded
-    // shape contract BEFORE any session opens: it is never silently trimmed,
-    // substituted or defaulted once the caller supplied it.
-    if (!isValidReviewModel(this.model)) {
-      return portError("unavailable", MODEL_DETAIL);
-    }
     // The trusted named permission profile is REQUIRED and must be a valid
     // host-defined name BEFORE any session opens; built-in full-access ids are
     // never permitted and there is no profile-less read fallback.
@@ -309,7 +238,12 @@ export class CodexStructuredReviewer {
     // bound source task, never as a clean review of an absent candidate.
     const baseTask = snapshot.files.length === 0;
     if (baseTask && task === null) return portError("unavailable", TASK_DETAIL);
-    const prompt = renderReviewPrompt(snapshot, task);
+    const prompt = renderReviewPrompt(snapshot, task) + "\n\n" +
+      nativeReviewInstructions(snapshot, task, this.sessionCwd);
+    const targetDigest = await canonicalStringifySha256({
+      type: "custom",
+      instructions: prompt,
+    });
     if (utf8Bytes(prompt) > MAX_PROMPT_BYTES) {
       return portError("unavailable", PROMPT_DETAIL);
     }
@@ -336,6 +270,7 @@ export class CodexStructuredReviewer {
         requestId,
         invocationId,
         ownerRunId,
+        nativeReviewTargetDigest: targetDigest,
       });
       session.open?.();
       const initialized = await racePromise(
@@ -349,7 +284,7 @@ export class CodexStructuredReviewer {
         return await failPreparation(owned);
       }
       const threaded = await racePromise(
-        this.startThread(session, baseTask),
+        this.startThread(session),
         startGate,
         this.now,
       );
@@ -360,8 +295,6 @@ export class CodexStructuredReviewer {
       }
       const prepared = new PreparedStructuredReview({
         session,
-        provider: this.provider,
-        model: this.model,
         prompt,
         snapshot,
         task,
@@ -380,6 +313,7 @@ export class CodexStructuredReviewer {
         turnDeadline,
         permissionProfile: this.permissionProfile,
         sessionCwd: this.sessionCwd,
+        targetDigest,
       });
       session = null;
       return portOk(prepared);
@@ -420,30 +354,21 @@ export class CodexStructuredReviewer {
 
   private async startThread(
     session: CodexSessionV1,
-    baseTask: boolean,
   ): Promise<ThreadAckV1> {
     // The ordinary agent shell read tool is enabled with the installed one-shot
     // exec handler (`shell_tool` true, `unified_exec` false): no write_stdin,
     // TTY or resumable authority is granted for the named restricted profile.
     const threadParams: Record<string, unknown> = {
-      model: this.model,
-      modelProvider: this.provider,
       cwd: this.sessionCwd,
       approvalPolicy: "never",
       ephemeral: true,
       config: {
-        model_reasoning_effort: REVIEW_REASONING,
-        review_model: this.model,
         "features.shell_tool": true,
         "features.unified_exec": false,
         "features.multi_agent": false,
         "features.apps": false,
         web_search: "disabled",
       },
-      baseInstructions: BASE_INSTRUCTIONS +
-        (baseTask ? "\n" + BASE_TASK_INSTRUCTIONS : ""),
-      developerInstructions: DEVELOPER_INSTRUCTIONS +
-        (baseTask ? "\n" + BASE_TASK_INSTRUCTIONS : ""),
       // The trusted named profile replaces the legacy read-only sandbox
       // entirely: the installed schema forbids combining the two fields.
       permissions: this.permissionProfile,
@@ -462,12 +387,12 @@ export class CodexStructuredReviewer {
     const modelProvider = record?.modelProvider;
     const reasoningEffort = record?.reasoningEffort;
     if (
-      model !== this.model || modelProvider !== this.provider ||
-      reasoningEffort !== REVIEW_REASONING
+      !isBoundedId(model) || !isBoundedId(modelProvider) ||
+      (reasoningEffort !== null && !isBoundedId(reasoningEffort))
     ) {
       throw new CodexProtocolError(
         "malformed_line",
-        "thread/start response does not acknowledge the requested provider/model/effort",
+        "thread/start response has malformed default selection metadata",
       );
     }
     // The required named profile must be acknowledged exactly BEFORE any turn

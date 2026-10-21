@@ -23,6 +23,7 @@ import {
   snapshotFixture,
   startReview,
   submittedPrompt,
+  submittedResultContract,
   turnCompleted,
 } from "./codex-reviewer-helpers.ts";
 
@@ -56,14 +57,14 @@ Deno.test(
     assert.equal(review.execution.invocationId, "invocation-1");
     assert.equal(review.execution.ownerRunId, "run-1");
     assert.equal(review.execution.submittedProvider, PROVIDER);
-    assert.equal(review.execution.model, "gpt-reserve");
-    assert.equal(review.execution.reasoning, "max");
+    assert.equal(review.execution.model, null);
+    assert.equal(review.execution.reasoning, null);
     assert.equal(review.execution.startMayOccur, true);
     assert.equal("turnId" in review.execution, false);
 
     const threadParams = session.params[1] as Record<string, unknown>;
-    assert.equal(threadParams.model, "gpt-reserve");
-    assert.equal(threadParams.modelProvider, PROVIDER);
+    assert.equal(threadParams.model, undefined);
+    assert.equal(threadParams.modelProvider, undefined);
     assert.equal(threadParams.permissions, REVIEW_PROFILE);
     assert.equal(
       "sandbox" in threadParams,
@@ -72,8 +73,6 @@ Deno.test(
     );
     assert.equal(threadParams.approvalPolicy, "never");
     assert.deepEqual(threadParams.config, {
-      model_reasoning_effort: "max",
-      review_model: "gpt-reserve",
       "features.shell_tool": true,
       "features.unified_exec": false,
       "features.multi_agent": false,
@@ -137,11 +136,11 @@ Deno.test(
       model: unknown;
       effort: unknown;
     };
-    assert.equal(turnParams.model, "gpt-reserve");
-    assert.equal(turnParams.effort, "max");
-    assert.equal(turnParams.permissions, REVIEW_PROFILE);
+    assert.equal(turnParams.model, undefined);
+    assert.equal(turnParams.effort, undefined);
+    assert.equal(turnParams.permissions, undefined);
     assertStrictSubmittedSchema(session);
-    const prompt = turnParams.input[0].text;
+    const prompt = submittedPrompt(session);
     contains(prompt, `Base ${BASE}; head ${HEAD};`);
     contains(prompt, snapshot.digest);
     contains(prompt, 'path "account.ts"; kind modified');
@@ -228,10 +227,9 @@ Deno.test(
         if (!outcome.ok) assert.fail(outcome.error.detail);
         assert.equal(outcome.value.status, "clean");
         assertStrictSubmittedSchema(session);
-        const params = session.params[session.sent.indexOf("turn/start")] as {
-          outputSchema: typeof schemas[number];
-        };
-        schemas.push(params.outputSchema);
+        schemas.push(
+          submittedResultContract(session) as unknown as typeof schemas[number],
+        );
       } finally {
         await prepared.value.close();
       }
@@ -326,8 +324,7 @@ Deno.test(
       if (!outcome.ok) assert.fail(outcome.error.detail);
       assertStrictSubmittedSchema(session);
       // The single turn/start carries the bound task statement as data.
-      const prompt = (session.params[2] as { input: { text: string }[] })
-        .input[0].text;
+      const prompt = submittedPrompt(session);
       contains(prompt, "TASK STATEMENT");
       contains(prompt, `Source issue: #${task.issueNumber}`);
       contains(prompt, `Task digest: ${task.digest}`);
@@ -483,168 +480,43 @@ Deno.test(
   },
 );
 
-Deno.test(
-  "reviewer: configured review model binds thread, turn, running, ready and actual identity",
-  async () => {
-    const configured = "route-selected-review-model";
-    const session = new ScriptedCodexSession();
-    session.threadAck = {
-      ...(session.threadAck as Record<string, unknown>),
-      model: configured,
-    };
-    session.live = (scripted) => {
-      scripted.emit(
-        "item/completed",
-        agentMessage(scripted.turnId, "item-1", JSON.stringify(CLEAN_RESULT)),
-      );
-      scripted.emit("turn/completed", turnCompleted(scripted.turnId));
-    };
-    const reviewer = makeReviewer(session, { model: configured });
-    const prepared = await reviewer.prepare(
-      prepareRequest(await snapshotFixture()),
+Deno.test("reviewer: native mode owns selection and never guesses actual identity", async () => {
+  const session = new ScriptedCodexSession();
+  session.threadAck = {
+    ...(session.threadAck as Record<string, unknown>),
+    model: "codex-selected-default",
+    reasoningEffort: null,
+  };
+  session.plan = (scripted) => {
+    scripted.emit(
+      "item/completed",
+      agentMessage(
+        scripted.turnId,
+        "native-exit",
+        JSON.stringify(CLEAN_RESULT),
+      ),
     );
-    if (!prepared.ok) assert.fail(prepared.error.detail);
-    const review = prepared.value;
-    // The running execution already carries the configured identity.
-    assert.equal(review.execution.model, configured);
-    assert.equal(review.execution.submittedProvider, PROVIDER);
-    assert.equal(review.execution.reasoning, "max");
-
-    // thread/start submits and requires exactly the configured model.
-    const threadParams = session.params[1] as Record<string, unknown>;
-    assert.equal(threadParams.model, configured);
-    assert.equal(threadParams.modelProvider, PROVIDER);
-    const threadConfig = threadParams.config as Record<string, unknown>;
-    assert.equal(threadConfig.model_reasoning_effort, "max");
-    assert.equal(threadConfig.review_model, configured);
-
-    const outcome = await review.start();
-    if (!outcome.ok) assert.fail(outcome.error.detail);
-    assert.equal(outcome.value.status, "clean");
-    assert.equal(outcome.value.resultId, "item-1");
-    // The single turn submits the configured model with max reasoning.
-    const turnParams = session.params[2] as Record<string, unknown>;
-    assert.equal(turnParams.model, configured);
-    assert.equal(turnParams.effort, "max");
-    // The ready execution and the runtime actual bind the same identity.
-    assert.equal(outcome.value.execution?.model, configured);
-    assert.equal(outcome.value.execution?.actual.observedModel, configured);
-    assert.equal(outcome.value.actual?.observedModel, configured);
-    assert.equal(outcome.value.actual?.observedReasoning, "max");
-    assert.equal(outcome.value.actual?.provider, PROVIDER);
-
-    const closed = await review.close();
-    assert.equal(closed.settled, true);
-  },
-);
-
-Deno.test(
-  "reviewer: configured review model wrong acknowledgement and off-policy reroute are refused",
-  async () => {
-    const configured = "route-selected-review-model";
-    const configuredAck = (session: ScriptedCodexSession) => {
-      session.threadAck = {
-        ...(session.threadAck as Record<string, unknown>),
-        model: configured,
-      };
-    };
-
-    // An acknowledged default literal is a wrong identity, not a relabel: the
-    // preparation fails closed before any turn is submitted.
-    const wrongAck = new ScriptedCodexSession();
-    const refused = await makeReviewer(wrongAck, { model: configured })
-      .prepare(prepareRequest(await snapshotFixture()));
-    assert.equal(refused.ok, false);
-    if (!refused.ok) {
-      assert.equal(refused.error.kind, "unavailable");
+    scripted.emit("turn/completed", turnCompleted(scripted.turnId));
+  };
+  const prepared = await makeReviewer(session, {
+    model: "ignored-caller-override",
+  }).prepare(prepareRequest(await snapshotFixture()));
+  if (!prepared.ok) assert.fail(prepared.error.detail);
+  const result = await prepared.value.start();
+  if (!result.ok) assert.fail(result.error.detail);
+  assert.equal(result.value.status, "clean");
+  assert.equal(result.value.execution?.nativeReview?.mode, "review/start");
+  assert.equal(result.value.execution?.model, null);
+  assert.equal(result.value.actual?.observedModel, null);
+  assert.equal(result.value.actual?.observedReasoning, null);
+  for (const raw of session.params) {
+    const params = raw as Record<string, unknown>;
+    for (const key of ["model", "modelProvider", "effort", "outputSchema"]) {
+      assert.equal(Object.hasOwn(params, key), false);
     }
-    assert.equal(wrongAck.turnStarts(), 0);
-    assert.equal(wrongAck.closed, 1, "the owned session settles");
-
-    // A reroute away from the configured model — including to the default
-    // literal — is off-policy and never yields a clean review.
-    for (const to of ["gpt-reserve", "other-review-model"]) {
-      const rerouted = new ScriptedCodexSession();
-      configuredAck(rerouted);
-      rerouted.plan = (scripted) => {
-        scripted.emit("model/rerouted", {
-          threadId: "thread-1",
-          turnId: scripted.turnId,
-          fromModel: configured,
-          toModel: to,
-          reason: "capacity",
-        });
-        scripted.emit(
-          "item/completed",
-          agentMessage(
-            scripted.turnId,
-            "item-1",
-            JSON.stringify(CLEAN_RESULT),
-          ),
-        );
-        scripted.emit("turn/completed", turnCompleted(scripted.turnId));
-      };
-      const routing = await startReview(
-        rerouted,
-        await snapshotFixture(),
-        configured,
-      );
-      assert.equal(routing.status, "unavailable");
-      contains(routing.detail ?? "", "routed off");
-    }
-
-    // A failed runtime terminal still reports the configured model in the
-    // actual block; the default literal is never substituted.
-    const failed = new ScriptedCodexSession();
-    configuredAck(failed);
-    failed.plan = (scripted) => {
-      scripted.emit("turn/completed", turnCompleted(scripted.turnId, "failed"));
-    };
-    const failedOutcome = await startReview(
-      failed,
-      await snapshotFixture(),
-      configured,
-    );
-    assert.equal(failedOutcome.status, "unavailable");
-    assert.equal(failedOutcome.actual?.observedModel, configured);
-    assert.notEqual(
-      failedOutcome.actual?.observedModel,
-      "gpt-reserve",
-      "the actual identity is never relabeled to the default literal",
-    );
-  },
-);
-
-Deno.test(
-  "reviewer: configured review model invalid values refuse before opening any session",
-  async (t) => {
-    // Explicit runtime null is not the omitted-caller default: it reaches the
-    // bounded validator and refuses (typed through unknown to stay
-    // baseline-compatible with the optional model option).
-    const invalid: unknown[] = [
-      "",
-      " ",
-      " model",
-      "model ",
-      "bad\nmodel",
-      "x".repeat(257),
-      null,
-    ];
-    for (const model of invalid) {
-      await t.step(JSON.stringify(model), async () => {
-        const session = new ScriptedCodexSession();
-        const prepared = await makeReviewer(session, { model })
-          .prepare(prepareRequest(await snapshotFixture()));
-        assert.equal(prepared.ok, false);
-        if (prepared.ok) return;
-        assert.equal(prepared.error.kind, "unavailable");
-        contains(prepared.error.detail, "review model");
-        assert.equal(session.opened, 0, "no app-server session is opened");
-        assert.deepEqual(session.sent, [], "no handshake request is sent");
-      });
-    }
-  },
-);
+  }
+  await prepared.value.close();
+});
 
 Deno.test(
   "reviewer: bad thread acknowledgement fails preparation and closes the session",

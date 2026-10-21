@@ -4,11 +4,10 @@ import type {
   CodexServerNotificationV1,
   CodexSessionV1,
 } from "../repair/codex-transport.ts";
-import {
-  REVIEW_REASONING,
-  type ReviewJournalExecutionV1,
-  type ReviewJournalRuntimeActualV1,
-  type ReviewResultV1,
+import type {
+  ReviewJournalExecutionV1,
+  ReviewJournalRuntimeActualV1,
+  ReviewResultV1,
 } from "./review-journal.ts";
 import type { PortResultV1 } from "../contracts/ports.ts";
 import type { ReviewSnapshotV1 } from "./review-snapshot.ts";
@@ -41,8 +40,6 @@ export abstract class PreparedReviewSessionState {
 
   protected readonly session: CodexSessionV1;
   protected readonly provider: string;
-  /** Trusted configured review model id; never a built-in substitution. */
-  protected readonly model: string;
   protected readonly prompt: string;
   protected readonly snapshot: ReviewSnapshotV1;
   /** Exact task statement this review was prepared with, or null. */
@@ -50,13 +47,15 @@ export abstract class PreparedReviewSessionState {
   protected readonly now: () => number;
   protected readonly hardSettleBy: number;
   protected readonly turnDeadline: number;
-  protected readonly threadModel: string;
-  protected readonly threadModelProvider: string;
-  protected readonly threadEffort: string;
   /** Required trusted configured named permission profile. */
   protected readonly permissionProfile: string;
   /** Trusted exact session cwd every correlated command must report. */
   protected readonly sessionCwd: string;
+  protected readonly targetDigest: string;
+  protected enteredReviewItemId: string | null = null;
+  protected exitedReviewItemId: string | null = null;
+  protected enteredReviewCompleted = false;
+  protected nativeExitStartedId: string | null = null;
 
   protected phase: "prepared" | "started" | "closed" = "prepared";
   protected attempted = false;
@@ -94,8 +93,6 @@ export abstract class PreparedReviewSessionState {
 
   constructor(input: {
     session: CodexSessionV1;
-    provider: string;
-    model: string;
     prompt: string;
     snapshot: ReviewSnapshotV1;
     task: ReviewTaskStatementV1 | null;
@@ -106,10 +103,10 @@ export abstract class PreparedReviewSessionState {
     turnDeadline: number;
     permissionProfile: string;
     sessionCwd: string;
+    targetDigest: string;
   }) {
     this.session = input.session;
-    this.provider = input.provider;
-    this.model = input.model;
+    this.provider = input.thread.modelProvider;
     this.prompt = input.prompt;
     this.snapshot = input.snapshot;
     this.task = input.task;
@@ -122,18 +119,17 @@ export abstract class PreparedReviewSessionState {
     this.hardSettleBy = input.hardSettleBy;
     this.turnDeadline = input.turnDeadline;
     this.threadId = input.thread.threadId;
-    this.threadModel = input.thread.model;
-    this.threadModelProvider = input.thread.modelProvider;
-    this.threadEffort = input.thread.reasoningEffort;
     this.permissionProfile = input.permissionProfile;
     this.sessionCwd = input.sessionCwd;
+    this.targetDigest = input.targetDigest;
     this.execution = {
       ownerRunId: this.ownerRunId,
       invocationId: this.invocationId,
       threadId: this.threadId,
       submittedProvider: this.provider,
-      model: this.model,
-      reasoning: REVIEW_REASONING,
+      model: null,
+      reasoning: null,
+      nativeReview: { mode: "review/start", targetDigest: this.targetDigest },
       startMayOccur: true,
     };
     this.settlement = new Promise<void>((resolve) => {

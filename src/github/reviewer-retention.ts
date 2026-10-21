@@ -22,7 +22,8 @@ export function observedParamsChars(event: CodexServerNotificationV1): number {
 export function finalTextTruncated(event: CodexServerNotificationV1): boolean {
   const volume = asRecord(asRecord(event)?.outputVolume);
   return Array.isArray(volume?.truncatedOutputPaths) &&
-    volume.truncatedOutputPaths.includes("item.text");
+    (volume.truncatedOutputPaths.includes("item.text") ||
+      volume.truncatedOutputPaths.includes("item.review"));
 }
 
 /**
@@ -47,6 +48,19 @@ export function retainEarlyEvent(
   if (item === null) return event;
   if (item.type === "reasoning") return null;
   let retained = item;
+  if (
+    (item.type === "enteredReviewMode" || item.type === "exitedReviewMode") &&
+    typeof item.review === "string" && item.review.length > MAX_JOURNAL_BYTES
+  ) {
+    return {
+      ...event,
+      params: { ...params, item: { ...item, review: "" } },
+      outputVolume: {
+        observedParamsChars: observedParamsChars(event),
+        truncatedOutputPaths: ["item.review"],
+      },
+    };
+  }
   if (item.type === "commandExecution") {
     retained = { ...item, aggregatedOutput: "" };
   } else if (item.type === "agentMessage" && typeof item.text === "string") {

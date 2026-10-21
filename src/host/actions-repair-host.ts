@@ -57,11 +57,7 @@ import {
   STATIC_TARGETS_EMPTY,
 } from "./targets.ts";
 import { createRepairStateStore, DenoGitRunner } from "../state/mod.ts";
-import {
-  GATEWAY_BASE_URL,
-  resolveModelRoute,
-  resolveReviewModelId,
-} from "./model-route.ts";
+import { GATEWAY_BASE_URL, resolveModelRoute } from "./model-route.ts";
 import {
   composeLocalGitHub,
   createLocalRepositoryConfig,
@@ -185,17 +181,12 @@ export async function runActionsRepairHost(
   };
   const modelRoute = resolveModelRoute(routeEnv);
   const queueMode = readEnv("SENTINEL_MERGE_QUEUE");
-  // The dedicated structured-review model override is resolved EXACTLY ONCE
-  // here alongside the route: an unset or blank value yields the owner's
-  // preferred default (`codex-auto-review`); a declared-but-invalid value
-  // yields the invalid empty sentinel, which the reviewer refuses at prepare.
-  const reviewModelId = resolveReviewModelId(routeEnv);
   console.log(JSON.stringify({
     kind: "sentinel_model_route",
     provider: modelRoute.provider,
     model: modelRoute.model,
     baseUrl: modelRoute.baseUrl,
-    reviewModel: reviewModelId,
+    reviewMode: "native",
   }));
 
   const githubToken = requireEnv(readEnv, "GITHUB_TOKEN");
@@ -545,7 +536,6 @@ export async function runActionsRepairHost(
       ensureCandidateObjects: candidatesFor(config).ensure,
       modelBaseUrl: modelRoute.baseUrl,
       route: modelRoute,
-      reviewModelId,
       onOwnerSuccessorReviewPorts: (ports) => {
         ownerSuccessorPorts = ports;
       },

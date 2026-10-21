@@ -22,11 +22,7 @@ import {
   parseRepositoryIdentity,
   type RepositoryIdentityV1,
 } from "../contracts/shared.ts";
-import {
-  DEFAULT_REVIEW_MODEL_ID,
-  GATEWAY_PROVIDER,
-  type ModelRouteV1,
-} from "./model-route.ts";
+import { GATEWAY_PROVIDER, type ModelRouteV1 } from "./model-route.ts";
 import type { GitHubAuthProviderV1 } from "../github/auth.ts";
 import { GitHubPrAssociationsClient } from "../github/client-pr-associations.ts";
 import {
@@ -321,17 +317,9 @@ export function composeLocalGitHub(
     },
   };
   const reviewer = new CodexStructuredReviewer({
-    // The reviewer ALWAYS submits through the gateway provider, where the
-    // dedicated review model lives: it never follows the implementation
-    // route's provider, so a DeepSeek-direct implementation route cannot
-    // pair a gateway-only review model with the DeepSeek endpoint.
+    // Trusted isolated client config retains gateway auth/routing; native mode
+    // owns reviewer selection and sends no caller selection overrides.
     provider: GATEWAY_PROVIDER,
-    // The dedicated review-model override selects the review model; it is
-    // never the shared implementation route's model. An omitted override
-    // falls back to the owner's preferred default; an explicitly invalid
-    // value is the invalid empty sentinel the reviewer refuses at prepare,
-    // never silently replaced by the route model or the frozen default.
-    model: input.reviewModelId ?? DEFAULT_REVIEW_MODEL_ID,
     sessionCwd: input.reviewCheckout,
     permissionProfile: "sentinel-review",
     openSession: (value) =>
@@ -609,7 +597,6 @@ export function composeLocalGitHub(
       state: input.state,
       ownerRunId: input.invocationId,
       provider: GATEWAY_PROVIDER,
-      model: input.reviewModelId ?? DEFAULT_REVIEW_MODEL_ID,
       snapshot: snapshotSource,
       reviewer,
       ...(custody instanceof ReviewOwnerChannelClient ? { custody } : {}),

@@ -38,6 +38,11 @@ import { GitHubApiClient } from "../../src/github/client.ts";
 import { CodexStructuredReviewer } from "../../src/github/codex-reviewer.ts";
 import type { CodexStructuredReviewerOptionsV1 } from "../../src/github/codex-reviewer.ts";
 import { portOk } from "../../src/contracts/ports.ts";
+import {
+  NATIVE_REVIEW_CLOSE,
+  NATIVE_REVIEW_OPEN,
+  nativeFindingSuffix,
+} from "../../src/github/native-review-result.ts";
 
 export const API = "https://api.github.com";
 
@@ -314,7 +319,7 @@ export class RecordingSession implements CodexSessionV1 {
         activePermissionProfile: { id: "sentinel-review" },
       });
     }
-    if (method === "turn/start") {
+    if (method === "review/start") {
       if (this.hangStart) {
         return new Promise<unknown>((_resolve, reject) => {
           this.closeWaiters.push(reject);
@@ -324,10 +329,36 @@ export class RecordingSession implements CodexSessionV1 {
         return Promise.reject(new Error("scripted submission failure"));
       }
       const emit = () => {
+        const target = (params as { target: { instructions: string } }).target;
+        const match = /<SENTINEL_NATIVE_REVIEW_V1>\{"binding":(\{[^}]+\})/.exec(
+          target.instructions,
+        );
+        if (!match) throw new Error("native target binding missing");
+        const binding = JSON.parse(match[1]);
+        const entry = {
+          threadId: this.threadId,
+          turnId: this.turnId,
+          item: {
+            type: "enteredReviewMode",
+            id: "entered-1",
+            review: "custom review",
+          },
+        };
+        this.emit("item/started", entry);
+        this.emit("item/completed", entry);
         this.emit("item/started", this.item("item-1", ""));
         this.emit(
           "item/completed",
-          this.item("item-1", JSON.stringify(this.result)),
+          this.item(
+            "item-1",
+            NATIVE_REVIEW_OPEN +
+              JSON.stringify({ binding, result: this.result }) +
+              NATIVE_REVIEW_CLOSE +
+              nativeFindingSuffix(
+                this.result,
+                (this.params[1] as { cwd: string }).cwd,
+              ),
+          ),
         );
         this.emit("turn/completed", {
           threadId: this.threadId,
@@ -338,6 +369,7 @@ export class RecordingSession implements CodexSessionV1 {
       else emit();
       return Promise.resolve({
         turn: { id: this.turnId, status: "inProgress" },
+        reviewThreadId: this.threadId,
       });
     }
     return Promise.resolve({});
@@ -373,14 +405,14 @@ export class RecordingSession implements CodexSessionV1 {
   }
 
   turnStarts(): number {
-    return this.sent.filter((method) => method === "turn/start").length;
+    return this.sent.filter((method) => method === "review/start").length;
   }
 
   private item(id: string, text: string): unknown {
     return {
       threadId: this.threadId,
       turnId: this.turnId,
-      item: { type: "agentMessage", id, text },
+      item: { type: "exitedReviewMode", id, review: text },
     };
   }
 
@@ -537,20 +569,27 @@ export function readyExecution(
     invocationId: `review-invocation-${OP_KEY}`.slice(0, 256),
     threadId: "thread-1",
     submittedProvider: PROVIDER,
-    model: REVIEW_MODEL,
-    reasoning: REVIEW_REASONING,
+    model: null,
+    reasoning: null,
+    nativeReview: { mode: "review/start", targetDigest: "d".repeat(64) },
     startMayOccur: true,
     turnId: "turn-1",
     resultId: "result-1",
     actual: {
-      evidenceKind: "request-runtime",
+      evidenceKind: "native-review",
       provider: PROVIDER,
       threadId: "thread-1",
       turnId: "turn-1",
       terminalOrigin: "runtime",
       observedTerminalStatus: "completed",
-      observedModel: REVIEW_MODEL,
-      observedReasoning: REVIEW_REASONING,
+      observedModel: null,
+      observedReasoning: null,
+      nativeReview: {
+        targetDigest: "d".repeat(64),
+        reviewThreadId: "thread-1",
+        enteredItemId: "entered-1",
+        exitedItemId: "result-1",
+      },
       durationMs: 5,
       outputChars: 10,
     },

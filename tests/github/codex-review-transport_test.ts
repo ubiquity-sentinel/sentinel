@@ -211,7 +211,7 @@ Deno.test(
 );
 
 Deno.test(
-  "transport: configured review model identity is durable across the review handoff",
+  "transport: native review lifecycle is durable without caller model selection",
   async () => {
     const configured = "route-selected-review-model";
     await withRealGitRange(async ({ base, head, snapshot }) => {
@@ -229,25 +229,25 @@ Deno.test(
       // The submitted thread and turn bind the configured model, never the
       // omitted-caller default literal.
       const threadParams = session.params[1] as Record<string, unknown>;
-      assert.equal(threadParams.model, configured);
-      assert.equal(threadParams.modelProvider, PROVIDER);
+      assert.equal(threadParams.model, undefined);
+      assert.equal(threadParams.modelProvider, undefined);
       assert.equal(
         (threadParams.config as Record<string, unknown>).review_model,
-        configured,
+        undefined,
       );
       const turnParams = session.params[2] as Record<string, unknown>;
-      assert.equal(turnParams.model, configured);
-      assert.equal(turnParams.effort, "max");
+      assert.equal(turnParams.model, undefined);
+      assert.equal(turnParams.effort, undefined);
 
-      // The durable journal round-trips the exact configured identity.
+      // Thread defaults never claim actual native reviewer identity.
       const journal = await parseReviewJournalBody(review.body ?? "");
       assert.equal(journal.phase, "ready");
       if (journal.phase === "ready") {
-        assert.equal(journal.execution?.model, configured);
+        assert.equal(journal.execution?.model, null);
         assert.equal(journal.execution?.submittedProvider, PROVIDER);
-        assert.equal(journal.execution?.reasoning, "max");
-        assert.equal(journal.execution?.actual.observedModel, configured);
-        assert.equal(journal.execution?.actual.observedReasoning, "max");
+        assert.equal(journal.execution?.reasoning, null);
+        assert.equal(journal.execution?.actual.observedModel, null);
+        assert.equal(journal.execution?.actual.observedReasoning, null);
       }
 
       // A fresh transport instance still observes the durable completion.

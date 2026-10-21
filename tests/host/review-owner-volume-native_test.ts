@@ -1,3 +1,4 @@
+import { canonicalStringifySha256 } from "../../src/contracts/canonical.ts";
 /** Native app-server -> parent custody -> private IPC -> slow trusted consumer. */
 import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
@@ -31,11 +32,11 @@ for await (const part of Deno.stdin.readable) {
     if (frame.id === undefined) continue;
     const p = frame.params ?? {};
     const result = frame.method === "thread/start"
-      ? { thread: { id: "thread" }, model: p.model, modelProvider: p.modelProvider, reasoningEffort: "max" }
-      : frame.method === "turn/start" ? { turn: { id: "turn", status: "inProgress" } }
+      ? { thread: { id: "thread" }, model: "codex-resolved", modelProvider: "uos", reasoningEffort: null }
+      : frame.method === "review/start" ? { turn: { id: "turn", status: "inProgress" } }
       : { userAgent: "native-volume-fixture" };
     await emit({ jsonrpc: "2.0", id: frame.id, result });
-    if (frame.method === "turn/start") {
+    if (frame.method === "review/start") {
       for (let index = 0; index < 530; index++) {
         await emit({ jsonrpc: "2.0", method: "item/commandExecution/outputDelta", params: { threadId: "thread", turnId: "turn", itemId: "command", index, delta: "x".repeat(65536) } });
       }
@@ -59,19 +60,25 @@ for await (const part of Deno.stdin.readable) {
   };
   const repository = { owner: "ubiquity", name: "sentinel", installationId: 0 };
   const requestId = "base-review-" + "e".repeat(64);
+  const target = {
+    type: "custom",
+    instructions: "Review exact volume fixture.",
+  };
+  const targetDigest = await canonicalStringifySha256(target);
   const prepared = {
     ownerRunId: owner.id,
     invocationId: "volume",
     threadId: "thread",
     submittedProvider: "uos",
-    model: "codex-auto-review",
-    reasoning: "max" as const,
+    model: null,
+    reasoning: null,
+    nativeReview: { mode: "review/start" as const, targetDigest },
     startMayOccur: true as const,
   };
   const broker = new ReviewOwnerCustodyBroker(owner, [{
     repository,
     provider: "uos",
-    model: prepared.model,
+    model: "ignored-legacy-selector",
     permissionProfile: "sentinel-review",
     session: {
       command: [
@@ -103,6 +110,7 @@ for await (const part of Deno.stdin.readable) {
       requestId,
       invocationId: prepared.invocationId,
       ownerRunId: owner.id,
+      nativeReviewTargetDigest: targetDigest,
     });
     let active = 0;
     let peak = 0;
@@ -135,16 +143,13 @@ for await (const part of Deno.stdin.readable) {
     await session.send("initialize", {});
     await session.send("thread/start", {
       cwd: root,
-      model: prepared.model,
-      modelProvider: "uos",
       permissions: "sentinel-review",
     });
     await client.armBaseReview({ requestId, execution: prepared });
-    await session.send("turn/start", {
+    await session.send("review/start", {
       threadId: "thread",
-      model: prepared.model,
-      permissions: "sentinel-review",
-      effort: "max",
+      delivery: "inline",
+      target,
     });
     const deadline = Date.now() + 45_000;
     while (!terminal && Date.now() < deadline) await delay(5);

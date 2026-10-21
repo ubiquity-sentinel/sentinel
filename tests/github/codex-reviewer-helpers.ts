@@ -18,6 +18,11 @@ import {
   type StructuredReviewOutcomeV1,
   type StructuredReviewPrepareV1,
 } from "../../src/github/codex-reviewer.ts";
+import {
+  NATIVE_REVIEW_CLOSE,
+  NATIVE_REVIEW_OPEN,
+  nativeFindingSuffix,
+} from "../../src/github/native-review-result.ts";
 import { MAX_RESULT_SUMMARY } from "../../src/github/review-journal.ts";
 import {
   MAX_UNAVAILABLE_REASON_CHARS,
@@ -81,6 +86,9 @@ export class ScriptedCodexSession implements CodexSessionV1 {
     activePermissionProfile: { id: REVIEW_PROFILE },
   };
   turnId = "turn-1";
+  nativeEntry = true;
+  nativeBinding: unknown = null;
+  private readonly nativeStarts = new Set<string>();
   turnResponse: unknown = null;
   turnFailure = false;
   /** Methods whose response never arrives (bounded handshake regression). */
@@ -117,15 +125,37 @@ export class ScriptedCodexSession implements CodexSessionV1 {
       return { userAgent: "scripted/0.1.0" };
     }
     if (method === "thread/start") return this.threadAck;
-    if (method === "turn/start") {
+    if (method === "review/start") {
       if (this.turnFailure) {
         throw new Error("scripted submission failure");
+      }
+      const prompt =
+        (params as { target: { instructions: string } }).target.instructions;
+      const match = /<SENTINEL_NATIVE_REVIEW_V1>\{"binding":(\{[^}]+\})/.exec(
+        prompt,
+      );
+      this.nativeBinding = match ? JSON.parse(match[1]) : null;
+      if (this.nativeEntry) {
+        const entry = {
+          threadId: "thread-1",
+          turnId: this.turnId,
+          item: {
+            type: "enteredReviewMode",
+            id: "entered-1",
+            review: "custom review",
+          },
+        };
+        this.emit("item/started", entry);
+        this.emit("item/completed", entry);
       }
       this.plan(this);
       const live = this.live;
       if (live !== null) setTimeout(() => live(this), 0);
       return this.turnResponse ??
-        { turn: { id: this.turnId, status: "inProgress" } };
+        {
+          turn: { id: this.turnId, status: "inProgress" },
+          reviewThreadId: "thread-1",
+        };
     }
     return {};
   }
@@ -157,6 +187,39 @@ export class ScriptedCodexSession implements CodexSessionV1 {
   }
 
   emit(method: string, params: unknown): void {
+    const data = params as {
+      threadId?: string;
+      turnId?: string;
+      item?: { type?: string; id: string; review?: string };
+    };
+    if (data?.item?.type === "exitedReviewMode") {
+      const item = data.item;
+      if (method === "item/completed" && !this.nativeStarts.has(item.id)) {
+        this.emit("item/started", { ...data, item: { ...item, review: "" } });
+      }
+      if (method === "item/started") this.nativeStarts.add(item.id);
+      if (
+        method === "item/completed" && typeof item.review === "string" &&
+        !item.review.startsWith(NATIVE_REVIEW_OPEN)
+      ) {
+        let suffix = "";
+        try {
+          suffix = nativeFindingSuffix(
+            JSON.parse(item.review),
+            (this.params[1] as { cwd: string }).cwd,
+          );
+        } catch { /* malformed results remain malformed */ }
+        params = {
+          ...data,
+          item: {
+            ...item,
+            review: NATIVE_REVIEW_OPEN + '{"binding":' +
+              JSON.stringify(this.nativeBinding) + ',"result":' + item.review +
+              "}" + NATIVE_REVIEW_CLOSE + suffix,
+          },
+        };
+      }
+    }
     const event = { method, params };
     if (this.notificationHandler === null) {
       this.backlog.push(event);
@@ -170,7 +233,7 @@ export class ScriptedCodexSession implements CodexSessionV1 {
   }
 
   turnStarts(): number {
-    return this.sent.filter((method) => method === "turn/start").length;
+    return this.sent.filter((method) => method === "review/start").length;
   }
 }
 
@@ -259,9 +322,13 @@ export function agentMessage(
   phase?: string | null,
 ): unknown {
   const item: Record<string, unknown> = {
-    type: "agentMessage",
+    type: phase === "commentary" || phase === "analysis" || phase === "interim"
+      ? "agentMessage"
+      : "exitedReviewMode",
     id: itemId,
-    text,
+    ...(phase === "commentary" || phase === "analysis" || phase === "interim"
+      ? { text }
+      : { review: text }),
   };
   if (phase !== undefined) item.phase = phase;
   return { threadId: "thread-1", turnId, item };
@@ -309,8 +376,8 @@ export function reasoningItem(turnId: string, itemId: string): unknown {
 
 /** Exact prompt the reviewer submitted in its single turn/start request. */
 export function submittedPrompt(session: ScriptedCodexSession): string {
-  const params = session.params[2] as { input: { text: string }[] };
-  return params.input[0].text;
+  const params = session.params[2] as { target: { instructions: string } };
+  return params.target.instructions;
 }
 
 export function assertStrictObjectFields(schema: unknown): void {
@@ -334,22 +401,32 @@ export function assertStrictObjectFields(schema: unknown): void {
   for (const child of Object.values(node)) assertStrictObjectFields(child);
 }
 
+export function submittedResultContract(
+  session: ScriptedCodexSession,
+): Record<string, unknown> & {
+  type: string;
+  properties: { taskAcceptance: { type: string[] } };
+} {
+  const prompt = submittedPrompt(session);
+  const marker =
+    "RESULT must satisfy the following descriptive contract; it is not a protocol-enforced output schema:\n";
+  return JSON.parse(
+    prompt.slice(prompt.indexOf(marker) + marker.length).split("\n")[0],
+  );
+}
+
 export function assertStrictSubmittedSchema(
   session: ScriptedCodexSession,
 ): void {
-  const params = session.params[session.sent.indexOf("turn/start")] as {
-    outputSchema: {
-      type: unknown;
-      properties: { taskAcceptance: { type: unknown } };
-    };
-  };
-  assert.equal(params.outputSchema.type, "object");
-  assertStrictObjectFields(params.outputSchema);
-  assert.deepEqual(
-    params.outputSchema.properties.taskAcceptance.type,
-    ["object", "null"],
-    "no assessment must be expressible as explicit null",
-  );
+  const params = session.params[session.sent.indexOf("review/start")] as Record<
+    string,
+    unknown
+  >;
+  assert.equal(Object.hasOwn(params, "outputSchema"), false);
+  const schema = submittedResultContract(session);
+  assert.equal(schema.type, "object");
+  assertStrictObjectFields(schema);
+  assert.deepEqual(schema.properties.taskAcceptance.type, ["object", "null"]);
 }
 
 export async function startReview(
@@ -411,9 +488,13 @@ export function submittedGuidance(session: ScriptedCodexSession): string {
   for (const raw of session.params) {
     const params = raw as {
       input?: unknown;
+      target?: { instructions?: unknown };
       baseInstructions?: unknown;
       developerInstructions?: unknown;
     };
+    if (typeof params.target?.instructions === "string") {
+      parts.push(params.target.instructions);
+    }
     if (Array.isArray(params.input)) {
       for (const item of params.input) {
         const text = (item as { text?: unknown }).text;
