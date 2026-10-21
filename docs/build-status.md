@@ -9,6 +9,52 @@ ownership, authority or acceptance.
 
 ## Active task register
 
+Snapshot: 2026-10-21 15:29 UTC. The original chat owns the active completion
+goal. Canonical `development` contains native review `77a41943`, held-refresh
+reconciliation `bf7b7510`, Passport policy `47a76afe`, and default-public
+committed controller binding `f741d937`, integrated at
+`01871fcedb05c2bb093c4c3d169c919b55aacd6e`. These changes are locally
+integrated, not yet published or installed. The pre-existing backlog evidence is
+preserved.
+
+- Actual development `codex review -` completed on frozen `8f0206d7..a2f040ad`
+  without caller model or effort overrides. Native review entry/exit and
+  isolated review-subthread metadata are captured in
+  `work/goal-native-review-20261021/development-review/`. One P1 found retained
+  predicates accepting legacy review evidence; no scheduled-promotion bypass was
+  established. `native_review_contract` owns the narrow authorizer correction
+  and historical roundtrip/refusal tests in its existing lane.
+- Private repository `ubiquity/sentinel-passport` is created and private. Its
+  branch-restricted `sentinel-supervisor` environment holds only the existing
+  authorized App and model credentials; no values are recorded. Source seed
+  `1040600f` contains no imported runtime/state/reservations. Dispatcher and
+  product release remain disabled; schedules were removed.
+  `passport_private_execution` owns local deployment assembly in the recorded
+  task-workspace seed clone with private workflow IDs391803042/391803030 and
+  Passport-only target. Final public correction must integrate before private
+  CI/bootstrap.
+- `native_review_candidates` owns preparation of four exact combined consumer
+  checks, waiting for final frozen public SHA. `final_native_acceptance` owns
+  the independent read-only original-receipt audit. Runtime preflight is a dated
+  snapshot: public installed generation87/776df5c0, execution clear, no active
+  owner, supervisor active, dispatcher/release disabled, auto-follow on. Refresh
+  these facts immediately before publication.
+- Self173/PR174 exhausted three charged generic review attempts. The primary
+  asked for an explicit one-attempt native exception; until granted, no extra
+  attempt, counter reset or ceiling change is authorized. AI and Passport work
+  continue under existing allowances. Native runtime output conformance,
+  public/private exact-head CI, installation, scheduled operation and autonomous
+  reviewed merges remain unproved.
+
+- Authorizer correction `58393949391fde624d8933b43d374754527528bc` is integrated
+  at `4d16ac6fc46fa1d2a384f8c4eb7c53c397d446f9`. The real legacy-authorizer
+  regression failed on the original source and passed with the guard; native
+  acceptance, historical byte roundtrip, producer no-new-start, journal
+  immutability and scoped static checks passed. Historical parser blobs remain
+  unchanged. Final combined acceptance and actual native review are pending.
+
+### Prior implementation checkpoint at 14:25 UTC
+
 Snapshot: 2026-10-21 14:25 UTC. The owner explicitly requested a goal and
 completion. The original chat owns the active goal to repair native review
 invocation, safely onboard private Passport, and prove reviewed autonomous
