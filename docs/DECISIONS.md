@@ -1213,6 +1213,8 @@ step recovers it — a surviving review_request intent is counted once and
 cleared, a plain observation wait only clears — and requests a fresh uniquely
 admitted round instead of re-arming the transient wait forever.
 
+Native review terminal diagnostics (2026-10-21): retain only exact matched request/invocation/owner/thread/turn identities, `terminalStatus`, bounded duration and closed typed error fields. Never emit provider prose, output or additional details. The hosted launcher accepts only a strict exact-key, owner-bound, capped advisory projection and forwards it through captured-result CLI output; malformed or foreign advisories cannot affect the authoritative child result. Advisory fields must not use top-level `status`, which is reserved by child-result detection. These diagnostics do not complete an unavailable review, change its null execution receipt, select a route, admit a model start, restore a spent round or authorize a merge.
+
 ## Blocked-work recovery and decomposition (2026-10-15)
 
 Only unresolved P0/P1 findings reject a reviewed head, send it to correction,
