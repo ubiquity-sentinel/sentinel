@@ -88,6 +88,7 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "ops/hosted-autonomy-delivery-proof.ts",
     "ops/hosted-autonomy-delivery.ts",
     "ops/hosted-autonomy-queue-authority.ts",
+    "ops/hosted-autonomy-queue-booking.ts",
     "ops/hosted-autonomy-queue-context.ts",
     "ops/hosted-autonomy-queue-contracts.ts",
     "ops/hosted-autonomy-queue-host.ts",
