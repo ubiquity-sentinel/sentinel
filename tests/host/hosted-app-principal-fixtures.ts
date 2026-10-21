@@ -258,7 +258,7 @@ export async function principalSourceFixture(selfInstalled = false) {
     });
     await Deno.writeTextFile(destination, text);
   };
-  const targetText = '["Ubiquity-Sentinel/sentinel","ubiquity/ai.ubq.fi"]\n';
+  const targetText = '["ubiquity-sentinel/sentinel","ubiquity/ai.ubq.fi"]\n';
   await Deno.mkdir(runtime);
   await git(runtime, ["init", "-q"]);
   await write(runtime, "sentinel.targets.json", targetText);
@@ -415,7 +415,7 @@ export async function principalHostFixture(selfInstalled = false) {
   }));
   const task = workRecord("principal-task", {
     repository: {
-      owner: "Ubiquity-Sentinel",
+      owner: "ubiquity-sentinel",
       name: "sentinel",
       installationId: 0,
     },

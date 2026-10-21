@@ -61,7 +61,7 @@ export function parseHostedReleaseRecordV1(
   const repository = request.target.repository;
   if (
     (repository.owner !== "ubiquity" &&
-      repository.owner !== "Ubiquity-Sentinel") ||
+      repository.owner !== "ubiquity-sentinel") ||
     repository.name !== "sentinel" || repository.installationId !== 0
   ) {
     fail(

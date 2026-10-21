@@ -27,7 +27,7 @@ function proof(purpose: string, revision: string, generation: number) {
     observedAt: 1,
     outcome: "healthy",
     ref: "refs/heads/sentinel-supervisor",
-    repository: "Ubiquity-Sentinel/sentinel",
+    repository: "ubiquity-sentinel/sentinel",
     settled: true,
     startedAt: 1,
     startupReady: true,

@@ -182,7 +182,7 @@ Deno.test("CI first: a head is not held for base suites it shares no name with (
 
 /** The sentinel self scope (the no-App owner identity). */
 const SELF: RepositoryIdentityV1 = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 0,
 };

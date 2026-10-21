@@ -41,7 +41,7 @@ for (const scenario of ["bootstrap", "ordinary", "failed preflight"] as const) {
     try {
       const count = DEFAULT_STEP_LIMIT + 8;
       const repository = {
-        owner: "Ubiquity-Sentinel",
+        owner: "ubiquity-sentinel",
         name: "sentinel",
         installationId: 0,
       };
@@ -109,7 +109,7 @@ for (const scenario of ["bootstrap", "ordinary", "failed preflight"] as const) {
         null,
       );
       assert.ok(seeded.ok && seeded.value.status === "applied");
-      const github = r.github.get("Ubiquity-Sentinel/sentinel")!;
+      const github = r.github.get("ubiquity-sentinel/sentinel")!;
       github.listOpenIssues = () => Promise.resolve(portOk([]));
       let preserved = 0;
       github.preserveCandidate = () => {
@@ -278,7 +278,7 @@ Deno.test("preservation maintenance: real repair startup skips five blocked cand
     );
     const control = workRecord("issue-ubiquity-sentinel-1", {
       repository: {
-        owner: "Ubiquity-Sentinel",
+        owner: "ubiquity-sentinel",
         name: "sentinel",
         installationId: 0,
       },
@@ -354,7 +354,7 @@ Deno.test("preservation maintenance: real repair startup skips five blocked cand
     const request = releaseRequest("release:test", {
       target: {
         repository: {
-          owner: "Ubiquity-Sentinel",
+          owner: "ubiquity-sentinel",
           name: "sentinel",
           installationId: 0,
         },

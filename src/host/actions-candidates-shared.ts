@@ -17,10 +17,10 @@ import type { ReplayRuntimeV1 } from "../replay/runtime.ts";
  * target's own repository, so its remote is derived from that identity instead.
  */
 export const ACTIONS_CANDIDATES_REMOTE_URL =
-  "https://github.com/Ubiquity-Sentinel/sentinel.git";
+  "https://github.com/ubiquity-sentinel/sentinel.git";
 
 export const SELF_REPOSITORY: RepositoryIdentityV1 = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 0,
 };

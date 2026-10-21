@@ -58,7 +58,7 @@ async function runWiring(extraEnv: Record<string, string>): Promise<WiringV1> {
   try {
     const checkoutDir = `${root}/checkout`;
     const checkoutSha = await makeCheckout(checkoutDir, env, {
-      "sentinel.targets.json": JSON.stringify(["Ubiquity-Sentinel/sentinel"]),
+      "sentinel.targets.json": JSON.stringify(["ubiquity-sentinel/sentinel"]),
       ".gitignore": ".sentinel-actions-state/\n",
     });
     const bin = `${root}/bin`;
@@ -291,7 +291,7 @@ async function runLaterTarget(deadline: number, remaining: number) {
     composeGithub: () => capability,
     prepareTarget: (config) => {
       const at = clock.now();
-      if (slugOf(config) !== "Ubiquity-Sentinel/sentinel") {
+      if (slugOf(config) !== "ubiquity-sentinel/sentinel") {
         clock.advance(GIT_TIMEOUT_MS);
       }
       prepared.push({ slug: slugOf(config), at, until: clock.now() });
@@ -300,7 +300,7 @@ async function runLaterTarget(deadline: number, remaining: number) {
     runCycle: (deps) => {
       const slug = slugOf(deps.configs[0]!);
       cycles.push(slug);
-      if (slug === "Ubiquity-Sentinel/sentinel") {
+      if (slug === "ubiquity-sentinel/sentinel") {
         clock.advance(deadline - clock.now() - remaining);
       }
       return Promise.resolve({ status: "idle", detail: slug });
@@ -320,29 +320,29 @@ Deno.test("hosted app token window: a later target is never prepared inside the 
 
   const late = await runLaterTarget(deadline, OPERATION_MARGIN_MS - 1_000);
   assert.deepEqual(late.prepared.map((entry) => entry.slug), [
-    "Ubiquity-Sentinel/sentinel",
+    "ubiquity-sentinel/sentinel",
   ]);
-  assert.deepEqual(late.cycles, ["Ubiquity-Sentinel/sentinel"]);
-  assert.deepEqual(late.result.addressed, ["Ubiquity-Sentinel/sentinel"]);
+  assert.deepEqual(late.cycles, ["ubiquity-sentinel/sentinel"]);
+  assert.deepEqual(late.result.addressed, ["ubiquity-sentinel/sentinel"]);
   assert.deepEqual(late.result.skipped, ["ubiquity/foreign-target"]);
   assert.deepEqual(late.result.failed, []);
   assert.deepEqual(late.result.outcome, {
     status: "idle",
-    detail: "Ubiquity-Sentinel/sentinel",
+    detail: "ubiquity-sentinel/sentinel",
   });
 
   // Control: with the whole margin left the later target is still prepared,
   // and even a full Git timeout ends minutes before the deadline.
   const inside = await runLaterTarget(deadline, OPERATION_MARGIN_MS);
   assert.deepEqual(inside.prepared.map((entry) => entry.slug), [
-    "Ubiquity-Sentinel/sentinel",
+    "ubiquity-sentinel/sentinel",
     "ubiquity/foreign-target",
   ]);
   for (const entry of inside.prepared) {
     assert.ok(entry.until <= deadline - (OPERATION_MARGIN_MS - GIT_TIMEOUT_MS));
   }
   assert.deepEqual(inside.cycles, [
-    "Ubiquity-Sentinel/sentinel",
+    "ubiquity-sentinel/sentinel",
     "ubiquity/foreign-target",
   ]);
   assert.deepEqual(inside.result.skipped, []);
@@ -378,7 +378,7 @@ Deno.test("hosted app token window: the first target is still addressed when set
     runCycle: () => Promise.resolve({ status: "idle", detail: "first" }),
   });
   assert.deepEqual(prepared, ["sentinel"]);
-  assert.deepEqual(result.addressed, ["Ubiquity-Sentinel/sentinel"]);
+  assert.deepEqual(result.addressed, ["ubiquity-sentinel/sentinel"]);
   assert.deepEqual(result.skipped, []);
   assert.deepEqual(result.outcome, { status: "idle", detail: "first" });
 });

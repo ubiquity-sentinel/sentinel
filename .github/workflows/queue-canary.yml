@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   canary:
-    if: github.repository == 'Ubiquity-Sentinel/sentinel' && github.ref == 'refs/heads/sentinel-supervisor' && github.event_name == 'workflow_dispatch'
+    if: github.repository == 'ubiquity-sentinel/sentinel' && github.ref == 'refs/heads/sentinel-supervisor' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

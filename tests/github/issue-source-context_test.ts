@@ -81,7 +81,7 @@ for (const name of ["sentinel", "ai.ubq.fi"]) {
 
 Deno.test("issue-source context: a lost response has null HTTP status", async () => {
   const { port } = makePort({
-    script: [httpThrow("GET", "/repos/Ubiquity-Sentinel/sentinel/issues")],
+    script: [httpThrow("GET", "/repos/ubiquity-sentinel/sentinel/issues")],
   });
   const result = await port.listOpenIssues();
   assert.equal(result.ok, false);
@@ -96,7 +96,7 @@ Deno.test("issue-source context: HTTP 200 oversized body reports the current wir
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/1213",
+        "/repos/ubiquity-sentinel/sentinel/issues/1213",
         200,
         issueWire({ number: 1213, body: "x".repeat(MAX_ISSUE_BODY + 1) }),
       ),
@@ -106,9 +106,9 @@ Deno.test("issue-source context: HTTP 200 oversized body reports the current wir
   assert.equal(result.ok, false);
   if (result.ok) return;
   assert.deepEqual(result.error.issueSource, {
-    target: "Ubiquity-Sentinel/sentinel",
+    target: "ubiquity-sentinel/sentinel",
     method: "GET",
-    endpointPath: "/repos/Ubiquity-Sentinel/sentinel/issues/1213",
+    endpointPath: "/repos/ubiquity-sentinel/sentinel/issues/1213",
     httpStatus: 200,
     page: 1,
     stage: "validation",
@@ -123,7 +123,7 @@ Deno.test("issue-source context: HTTP 200 oversized body reports the current wir
 Deno.test("issue-source isolation: one bounded issue among three returns two complete issues and one skip", async () => {
   const { port } = makePort({
     script: [
-      httpRespond("GET", "/repos/Ubiquity-Sentinel/sentinel/issues", 200, [
+      httpRespond("GET", "/repos/ubiquity-sentinel/sentinel/issues", 200, [
         issueWire({ number: 1, body: "x".repeat(MAX_ISSUE_BODY) }),
         issueWire({ number: 1213, body: "x".repeat(MAX_ISSUE_BODY + 1) }),
         issueWire({ number: 3, body: "third" }),
@@ -148,7 +148,7 @@ Deno.test("issue-source isolation: one bounded issue among three returns two com
 Deno.test("issue-source isolation: malformed issue identity still fails the page and keeps its validation path", async () => {
   const { port } = makePort({
     script: [
-      httpRespond("GET", "/repos/Ubiquity-Sentinel/sentinel/issues", 200, [
+      httpRespond("GET", "/repos/ubiquity-sentinel/sentinel/issues", 200, [
         issueWire({ number: 1 }),
         issueWire({ number: "secret-invalid-number" }),
       ]),
@@ -164,9 +164,9 @@ Deno.test("issue-source isolation: malformed issue identity still fails the page
 
 Deno.test("issue-source context: diagnostic projection strips arbitrary fields, paths and raw port detail", () => {
   const valid = {
-    target: "Ubiquity-Sentinel/sentinel",
+    target: "ubiquity-sentinel/sentinel",
     method: "GET",
-    endpointPath: "/repos/Ubiquity-Sentinel/sentinel/issues",
+    endpointPath: "/repos/ubiquity-sentinel/sentinel/issues",
     httpStatus: 200,
     page: 1,
     stage: "validation",

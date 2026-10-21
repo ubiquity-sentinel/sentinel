@@ -22,7 +22,7 @@ export async function runFreshMatrixCells(
 ) {
   if (noStart17) {
     for (
-      const [slug, count] of [["Ubiquity-Sentinel/sentinel", 9], [
+      const [slug, count] of [["ubiquity-sentinel/sentinel", 9], [
         "ubiquity/ai.ubq.fi",
         8,
       ]] as const

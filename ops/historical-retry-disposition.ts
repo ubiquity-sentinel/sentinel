@@ -291,7 +291,7 @@ export async function runHistoricalRetryDispositionMain(
   await Deno.mkdir(scratch, { recursive: true });
   const state = createRepairStateStore({
     scratchDir: scratch,
-    remoteUrl: "https://github.com/Ubiquity-Sentinel/sentinel.git",
+    remoteUrl: "https://github.com/ubiquity-sentinel/sentinel.git",
     runner: new DenoGitRunner(
       scratch + "/state-git-home",
       githubGitAuthEnv(token),

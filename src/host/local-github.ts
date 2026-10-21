@@ -340,7 +340,7 @@ export function composeLocalGitHub(
         ),
   });
   if (
-    repository.owner === "Ubiquity-Sentinel" &&
+    repository.owner === "ubiquity-sentinel" &&
     repository.name === "sentinel" &&
     repository.installationId === 0
   ) {

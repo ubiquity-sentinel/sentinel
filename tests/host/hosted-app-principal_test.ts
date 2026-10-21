@@ -96,7 +96,7 @@ Deno.test("hosted principal source: actual clean launcher/runtime and full revie
     assert(result !== null);
     assert.equal(result.codeSha256, rig.profiles[0].codeSha256);
     assert.deepEqual(result.targets, [
-      "Ubiquity-Sentinel/sentinel",
+      "ubiquity-sentinel/sentinel",
       "ubiquity/ai.ubq.fi",
     ]);
     assert.deepEqual(JSON.parse(result.capabilityText), rig.capability);
@@ -428,7 +428,7 @@ Deno.test("hosted principal factory: real REST and Git composition capture the s
     let credentialedGit = 0;
     Deno.Command = class extends OriginalCommand {
       constructor(command: string | URL, options: Deno.CommandOptions = {}) {
-        const remote = "https://github.com/Ubiquity-Sentinel/sentinel.git";
+        const remote = "https://github.com/ubiquity-sentinel/sentinel.git";
         let actual = options;
         if (command === "/usr/bin/git" && options.args?.includes(remote)) {
           assert.equal(

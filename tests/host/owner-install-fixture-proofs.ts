@@ -55,7 +55,7 @@ export function hostedProof(input: {
     }),
     workflowId: 357012162,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "Ubiquity-Sentinel/sentinel",
+    repository: "ubiquity-sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: 9,
     startedAt: T0 + 1000,
@@ -118,7 +118,7 @@ export function notStartedProof(
     }),
     workflowId: 357012162,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "Ubiquity-Sentinel/sentinel",
+    repository: "ubiquity-sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: 9,
     finishedAt: T0 + 2000,
@@ -205,7 +205,7 @@ export function releaseRequest() {
     id: "release-1",
     target: {
       repository: {
-        owner: "Ubiquity-Sentinel",
+        owner: "ubiquity-sentinel",
         name: "sentinel",
         installationId: 0,
       },

@@ -25,7 +25,7 @@ Deno.test("matrix artifacts: numeric repository pagination recovers native 100 p
     );
     assert.equal(
       rig.calls.filter((call) =>
-        new URL(call.url).pathname === "/repos/Ubiquity-Sentinel/sentinel"
+        new URL(call.url).pathname === "/repos/ubiquity-sentinel/sentinel"
       ).length,
       1,
     );
@@ -65,7 +65,7 @@ Deno.test("matrix artifacts: numeric repository pagination also binds current-ru
     );
     assert.equal(
       rig.calls.filter((call) =>
-        new URL(call.url).pathname === "/repos/Ubiquity-Sentinel/sentinel"
+        new URL(call.url).pathname === "/repos/ubiquity-sentinel/sentinel"
       ).length,
       1,
     );

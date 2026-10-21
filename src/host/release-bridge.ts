@@ -33,7 +33,7 @@ export const RELEASE_BRIDGE_CONFIG_DIGEST =
 export const RELEASE_BRIDGE_CAPABILITIES =
   `${RELEASE_BRIDGE_ROOT}/capabilities.ts`;
 export const RELEASE_BRIDGE_STATE_REPOSITORY =
-  "https://github.com/Ubiquity-Sentinel/sentinel.git";
+  "https://github.com/ubiquity-sentinel/sentinel.git";
 export const RELEASE_BRIDGE_STATE_REF = "refs/heads/sentinel-state/release";
 export const RELEASE_BRIDGE_INPUT_LIMIT = 32_768;
 export const RELEASE_BRIDGE_ISSUER =
@@ -41,7 +41,7 @@ export const RELEASE_BRIDGE_ISSUER =
 export const RELEASE_BRIDGE_JWKS = `${RELEASE_BRIDGE_ISSUER}/.well-known/jwks`;
 export const RELEASE_BRIDGE_AUDIENCE = "urn:uos:sentinel:vps-release-bridge:v1";
 export const RELEASE_BRIDGE_PRIVATE_ROOT = "/var/lib/sentinel-release-bridge";
-const API = "https://api.github.com/repos/Ubiquity-Sentinel/sentinel";
+const API = "https://api.github.com/repos/ubiquity-sentinel/sentinel";
 const REF = "refs/heads/sentinel-supervisor";
 const ENVIRONMENT = "sentinel-release-bridge";
 const WORKFLOW = ".github/workflows/release.yml";
@@ -255,7 +255,7 @@ export function parseReleaseBridgeInstallation(
     const suffix = `environment:${ENVIRONMENT}`;
     if (
       ![
-        `repo:Ubiquity-Sentinel/sentinel:${suffix}`,
+        `repo:ubiquity-sentinel/sentinel:${suffix}`,
         `repo:ubiquity@${ownerId}/sentinel@${repositoryId}:${suffix}`,
       ].includes(subject)
     ) refuse("installation_rejected");
@@ -526,14 +526,14 @@ export async function authenticateReleaseBridgeJob(
     if (
       claims.iss !== RELEASE_BRIDGE_ISSUER ||
       claims.aud !== RELEASE_BRIDGE_AUDIENCE || claims.sub !== source.subject ||
-      claims.repository !== "Ubiquity-Sentinel/sentinel" ||
-      claims.repository_owner !== "Ubiquity-Sentinel" ||
+      claims.repository !== "ubiquity-sentinel/sentinel" ||
+      claims.repository_owner !== "ubiquity-sentinel" ||
       claims.repository_id !== String(source.repositoryId) ||
       claims.repository_owner_id !== String(source.ownerId) ||
       claims.ref !== REF || claims.ref_type !== "branch" ||
       claims.sha !== source.revision ||
       claims.workflow_sha !== source.revision ||
-      claims.workflow_ref !== `Ubiquity-Sentinel/sentinel/${WORKFLOW}@${REF}` ||
+      claims.workflow_ref !== `ubiquity-sentinel/sentinel/${WORKFLOW}@${REF}` ||
       claims.workflow !== "sentinel-release" ||
       claims.job_workflow_ref !== undefined ||
       claims.job_workflow_sha !== undefined ||
@@ -617,7 +617,7 @@ export async function assertReleaseBridgeJobAlive(
     run.head_branch !== "sentinel-supervisor" ||
     run.event !== "workflow_dispatch" || run.status !== "in_progress" ||
     repository.id !== pin.source.repositoryId ||
-    repository.full_name !== "Ubiquity-Sentinel/sentinel"
+    repository.full_name !== "ubiquity-sentinel/sentinel"
   ) refuse("authentication_rejected");
   const nativeJob = await read(`/actions/jobs/${job.jobId}`);
   if (

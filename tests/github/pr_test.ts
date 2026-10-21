@@ -43,7 +43,7 @@ Deno.test("createPullRequest: publishes the requested body byte-for-byte", async
       httpRespond("GET", "/pulls?head=", 200, []),
       httpRespond(
         "POST",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls",
+        "/repos/ubiquity-sentinel/sentinel/pulls",
         201,
         pullWire({
           number: 21,
@@ -66,7 +66,7 @@ Deno.test("createPullRequest: publishes the requested body byte-for-byte", async
   const post = transport.requests.find((request) => request.method === "POST");
   assert.ok(post !== undefined);
   const body = JSON.parse(post.body ?? "{}") as Record<string, unknown>;
-  assert.equal(body.head, "Ubiquity-Sentinel:sentinel/fix-1");
+  assert.equal(body.head, "ubiquity-sentinel:sentinel/fix-1");
   assert.equal(body.base, "development");
   assert.equal(body.title, "fix the bug");
   assert.equal(body.body, sourceBody, "body published byte-for-byte");
@@ -151,7 +151,7 @@ Deno.test("createPullRequest: duplicate/ambiguous publication is reconciled by d
     script: [
       httpRespond("GET", "/git/ref/heads/sentinel/fix-1", 200, refWire(SHA1)),
       httpRespond("GET", "/pulls?head=", 200, []),
-      httpRespond("POST", "/repos/Ubiquity-Sentinel/sentinel/pulls", 422, {}),
+      httpRespond("POST", "/repos/ubiquity-sentinel/sentinel/pulls", 422, {}),
       httpRespond("GET", "/pulls?head=", 200, [pullWire({
         number: 24,
         body: createRequest().body,
@@ -176,7 +176,7 @@ Deno.test("createPullRequest: duplicate/ambiguous publication is reconciled by d
       {
         kind: "throw",
         method: "POST",
-        urlPart: "/repos/Ubiquity-Sentinel/sentinel/pulls",
+        urlPart: "/repos/ubiquity-sentinel/sentinel/pulls",
       },
       httpRespond("GET", "/pulls?head=", 200, []),
     ],
@@ -198,7 +198,7 @@ Deno.test("createPullRequest: duplicate/ambiguous publication is reconciled by d
       {
         kind: "throw",
         method: "POST",
-        urlPart: "/repos/Ubiquity-Sentinel/sentinel/pulls",
+        urlPart: "/repos/ubiquity-sentinel/sentinel/pulls",
       },
       httpRespond("GET", "/pulls?head=", 200, [pullWire({
         number: 25,
@@ -241,7 +241,7 @@ Deno.test("createPullRequest: a moved base after publication fails closed", asyn
       httpRespond("GET", "/pulls?head=", 200, []),
       httpRespond(
         "POST",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls",
+        "/repos/ubiquity-sentinel/sentinel/pulls",
         201,
         pullWire({
           number: 21,
@@ -264,13 +264,13 @@ Deno.test("closeIssue: idempotent closure with lost-response reconciliation", as
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/7",
+        "/repos/ubiquity-sentinel/sentinel/issues/7",
         200,
         issueWire({ number: 7, state: "open" }),
       ),
       httpRespond(
         "PATCH",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/7",
+        "/repos/ubiquity-sentinel/sentinel/issues/7",
         200,
         issueWire({
           number: 7,
@@ -290,7 +290,7 @@ Deno.test("closeIssue: idempotent closure with lost-response reconciliation", as
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/7",
+        "/repos/ubiquity-sentinel/sentinel/issues/7",
         200,
         issueWire({
           number: 7,
@@ -314,18 +314,18 @@ Deno.test("closeIssue: idempotent closure with lost-response reconciliation", as
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/7",
+        "/repos/ubiquity-sentinel/sentinel/issues/7",
         200,
         issueWire({ number: 7, state: "open" }),
       ),
       {
         kind: "throw",
         method: "PATCH",
-        urlPart: "/repos/Ubiquity-Sentinel/sentinel/issues/7",
+        urlPart: "/repos/ubiquity-sentinel/sentinel/issues/7",
       },
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/7",
+        "/repos/ubiquity-sentinel/sentinel/issues/7",
         200,
         issueWire({
           number: 7,
@@ -345,18 +345,18 @@ Deno.test("closeIssue: idempotent closure with lost-response reconciliation", as
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/7",
+        "/repos/ubiquity-sentinel/sentinel/issues/7",
         200,
         issueWire({ number: 7, state: "open" }),
       ),
       {
         kind: "throw",
         method: "PATCH",
-        urlPart: "/repos/Ubiquity-Sentinel/sentinel/issues/7",
+        urlPart: "/repos/ubiquity-sentinel/sentinel/issues/7",
       },
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/7",
+        "/repos/ubiquity-sentinel/sentinel/issues/7",
         200,
         issueWire({ number: 7, state: "open" }),
       ),
@@ -371,7 +371,7 @@ Deno.test("closeIssue: idempotent closure with lost-response reconciliation", as
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/99",
+        "/repos/ubiquity-sentinel/sentinel/issues/99",
         404,
         {},
       ),

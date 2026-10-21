@@ -24,7 +24,7 @@ export const SHA_B = "b".repeat(40) as GitSha;
 export const SHA_C = "c".repeat(40) as GitSha;
 export const DIGEST = "d".repeat(64);
 export const SELF = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 0,
 };
@@ -53,7 +53,7 @@ export function proof(
     execution: execution(),
     workflowId: 357012162,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "Ubiquity-Sentinel/sentinel",
+    repository: "ubiquity-sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: 9,
     startedAt: T + 1000,
@@ -89,7 +89,7 @@ export function notStarted(
     execution: executionIntent,
     workflowId: 357012162,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "Ubiquity-Sentinel/sentinel",
+    repository: "ubiquity-sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: null,
     finishedAt: T + 500,

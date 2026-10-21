@@ -323,13 +323,13 @@ Deno.test("maintenance main: installed successor and bootstrap preserve admissio
           try {
             exit = await runHostedAutonomyMain({
               env: {
-                GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
+                GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel",
                 GITHUB_REF: "refs/heads/sentinel-supervisor",
                 GITHUB_JOB: "maintenance",
                 GITHUB_RUN_ID: "700",
                 GITHUB_RUN_ATTEMPT: "1",
                 GITHUB_WORKFLOW_REF:
-                  "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+                  "ubiquity-sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
                 GITHUB_SHA: head,
                 GITHUB_WORKFLOW_SHA: head,
                 GITHUB_TOKEN: "offline-native-token",

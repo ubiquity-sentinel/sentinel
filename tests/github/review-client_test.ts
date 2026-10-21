@@ -91,7 +91,7 @@ Deno.test("client review: create pending review sends commit_id+body and never a
   assert.equal(sent.method, "POST");
   assert.equal(
     sent.url,
-    "https://api.github.com/repos/Ubiquity-Sentinel/sentinel/pulls/1/reviews",
+    "https://api.github.com/repos/ubiquity-sentinel/sentinel/pulls/1/reviews",
   );
   const payload = JSON.parse(sent.body ?? "null") as Record<string, unknown>;
   assert.deepEqual(payload, { commit_id: SHA1, body: BODY });
@@ -124,7 +124,7 @@ Deno.test("client review: update pending review PUTs the exact id and body", asy
   assert.equal(sent.method, "PUT");
   assert.equal(
     sent.url,
-    "https://api.github.com/repos/Ubiquity-Sentinel/sentinel/pulls/1/reviews/100",
+    "https://api.github.com/repos/ubiquity-sentinel/sentinel/pulls/1/reviews/100",
   );
   assert.deepEqual(JSON.parse(sent.body ?? "null"), { body: BODY });
 });
@@ -150,7 +150,7 @@ Deno.test("client review: submit sends event COMMENT only and never APPROVE", as
   assert.equal(sent.method, "POST");
   assert.equal(
     sent.url,
-    "https://api.github.com/repos/Ubiquity-Sentinel/sentinel/pulls/1/reviews/100/events",
+    "https://api.github.com/repos/ubiquity-sentinel/sentinel/pulls/1/reviews/100/events",
   );
   assert.deepEqual(JSON.parse(sent.body ?? "null"), {
     event: "COMMENT",

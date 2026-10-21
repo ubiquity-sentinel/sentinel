@@ -70,7 +70,7 @@ export interface BaseTaskReviewOptionsV1 {
 /** Fixed trusted CI names for the two owner-authorized targets. */
 function requiredChecks(repository: RepositoryIdentityV1): readonly string[] {
   if (
-    repository.owner === "Ubiquity-Sentinel" &&
+    repository.owner === "ubiquity-sentinel" &&
     repository.name === "sentinel"
   ) return ["test-local"];
   if (repository.owner !== "ubiquity") return [];

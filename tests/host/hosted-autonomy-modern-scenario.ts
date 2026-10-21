@@ -117,7 +117,7 @@ async function modernRecoveryScenarioInGraph(
     await checked(mirror, [
       "config",
       `url.file://${target.work}.insteadOf`,
-      "https://github.com/Ubiquity-Sentinel/sentinel.git",
+      "https://github.com/ubiquity-sentinel/sentinel.git",
     ]);
     await checked(mirror, ["config", "protocol.https.allow", "never"]);
   }

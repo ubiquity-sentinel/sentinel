@@ -38,7 +38,7 @@ Deno.test("native CI wrapper: emits immutable tested checkout only after a succe
       let ran = false;
       const env: Record<string, string> = {
         GITHUB_EVENT_NAME: mode === "push" ? "push" : "pull_request",
-        GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
+        GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel",
         GITHUB_EVENT_PATH: "/synthetic/event.json",
         GITHUB_RUN_ID: "500",
         GITHUB_RUN_ATTEMPT: "1",

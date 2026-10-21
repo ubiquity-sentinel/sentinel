@@ -85,7 +85,7 @@ function observeScript(
 const PR_READ: ScriptEntry = {
   ...httpRespond(
     "GET",
-    "/repos/Ubiquity-Sentinel/sentinel/pulls/1",
+    "/repos/ubiquity-sentinel/sentinel/pulls/1",
     200,
     pullWire({
       number: 1,
@@ -100,7 +100,7 @@ function reviewsRead(reviews: unknown[]): ScriptEntry {
   return {
     ...httpRespond(
       "GET",
-      "/repos/Ubiquity-Sentinel/sentinel/pulls/1/reviews?per_page=100&page=1",
+      "/repos/ubiquity-sentinel/sentinel/pulls/1/reviews?per_page=100&page=1",
       200,
       reviews,
     ),
@@ -112,7 +112,7 @@ function commentsRead(comments: unknown[]): ScriptEntry {
   return {
     ...httpRespond(
       "GET",
-      "/repos/Ubiquity-Sentinel/sentinel/pulls/1/comments?per_page=100&page=1",
+      "/repos/ubiquity-sentinel/sentinel/pulls/1/comments?per_page=100&page=1",
       200,
       comments,
     ),
@@ -329,7 +329,7 @@ Deno.test("requestReview: identity mismatches and non-open PRs fail before submi
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls/1",
+        "/repos/ubiquity-sentinel/sentinel/pulls/1",
         200,
         pullWire({
           state: "closed",
@@ -345,7 +345,7 @@ Deno.test("requestReview: identity mismatches and non-open PRs fail before submi
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls/404",
+        "/repos/ubiquity-sentinel/sentinel/pulls/404",
         404,
         {},
       ),
@@ -451,7 +451,7 @@ Deno.test("observeReview: completed requires terminal provenance, review author 
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls/1",
+        "/repos/ubiquity-sentinel/sentinel/pulls/1",
         200,
         pullWire({
           head: { ref: "sentinel/fix-1", sha: SHA2 },
@@ -1059,7 +1059,7 @@ Deno.test("observeReview: reviewed base comes from the service record, never the
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls/1",
+        "/repos/ubiquity-sentinel/sentinel/pulls/1",
         200,
         pullWire({ base: { ref: "development", sha: SHA4 } }),
       ),

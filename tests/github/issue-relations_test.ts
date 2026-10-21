@@ -73,7 +73,7 @@ function relationsWire(
 function blocker(
   number: number,
   state: string,
-  nameWithOwner = "Ubiquity-Sentinel/sentinel",
+  nameWithOwner = "ubiquity-sentinel/sentinel",
 ): Record<string, unknown> {
   return { number, state, repository: { nameWithOwner } };
 }
@@ -115,7 +115,7 @@ Deno.test(
     // open blockers are retained even across repositories; duplicates collapse.
     assert.deepEqual(result.value?.relations, {
       openBlockers: [
-        { owner: "Ubiquity-Sentinel", name: "sentinel", number: 101 },
+        { owner: "ubiquity-sentinel", name: "sentinel", number: 101 },
         { owner: "other-org", name: "other-repo", number: 55 },
       ],
       subIssueCount: 2,

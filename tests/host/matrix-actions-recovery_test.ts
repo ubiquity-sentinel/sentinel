@@ -36,7 +36,7 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
   const r = await rig();
   try {
     for (
-      const [slug, count] of [["Ubiquity-Sentinel/sentinel", 1], [
+      const [slug, count] of [["ubiquity-sentinel/sentinel", 1], [
         "ubiquity/ai.ubq.fi",
         4,
       ]] as const
@@ -535,7 +535,7 @@ Deno.test("closed C recovery: real mixed ingestion preserves charges and rehydra
       ["rev-parse", "HEAD"],
       r.env,
     ) as GitSha;
-    const selfGithub = r.github.get("Ubiquity-Sentinel/sentinel")!;
+    const selfGithub = r.github.get("ubiquity-sentinel/sentinel")!;
     selfGithub.prepareBaseRefresh = () =>
       Promise.resolve(portOk(refreshedHead));
     const refresh = await r.store.writeRepair(

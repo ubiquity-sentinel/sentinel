@@ -75,7 +75,7 @@ Deno.test("actions host: prepared target capabilities reach the actual target cy
     `prepare:${THIRD_REPO}`,
   ]);
   assert.deepEqual(result.addressed, [
-    "Ubiquity-Sentinel/sentinel",
+    "ubiquity-sentinel/sentinel",
     `ubiquity/${FOREIGN_REPO}`,
   ]);
   assert.equal(result.failed.length, 1);
@@ -112,18 +112,18 @@ Deno.test(
     // EVERY committed target is addressed exactly once, and each cycle is
     // injected the SOLE configuration its port was composed for.
     assert.deepEqual(result.addressed, [
-      "Ubiquity-Sentinel/sentinel",
+      "ubiquity-sentinel/sentinel",
       `ubiquity/${FOREIGN_REPO}`,
     ]);
     assert.deepEqual(result.skipped, []);
     assert.deepEqual(configsPerCycle, [
-      ["Ubiquity-Sentinel/sentinel"],
+      ["ubiquity-sentinel/sentinel"],
       [`ubiquity/${FOREIGN_REPO}`],
     ]);
     // The REAL entrypoint read one issue list per target, in setting order,
     // through the port the host composed for that exact repository.
     assert.deepEqual(issueReadPaths(rig.http), [
-      "/repos/Ubiquity-Sentinel/sentinel/issues",
+      "/repos/ubiquity-sentinel/sentinel/issues",
       `/repos/ubiquity/${FOREIGN_REPO}/issues`,
     ]);
     // The sentinel self-target keeps the reserved no-App scope 0; the foreign
@@ -154,7 +154,7 @@ Deno.test(
     assert.deepEqual(line, {
       version: "v1",
       kind: "sentinel_targets_diagnostic",
-      addressed: ["Ubiquity-Sentinel/sentinel", `ubiquity/${FOREIGN_REPO}`],
+      addressed: ["ubiquity-sentinel/sentinel", `ubiquity/${FOREIGN_REPO}`],
       skipped: [],
       failed: [],
     });
@@ -221,14 +221,14 @@ Deno.test(
     }));
 
     assert.equal(cycles, 1, "only the first target was attempted");
-    assert.deepEqual(result.addressed, ["Ubiquity-Sentinel/sentinel"]);
+    assert.deepEqual(result.addressed, ["ubiquity-sentinel/sentinel"]);
     assert.deepEqual(result.skipped, [
       `ubiquity/${FOREIGN_REPO}`,
       `ubiquity/${THIRD_REPO}`,
     ]);
-    assert.deepEqual(composed, ["Ubiquity-Sentinel/sentinel"]);
+    assert.deepEqual(composed, ["ubiquity-sentinel/sentinel"]);
     assert.deepEqual(issueReadPaths(rig.http), [
-      "/repos/Ubiquity-Sentinel/sentinel/issues",
+      "/repos/ubiquity-sentinel/sentinel/issues",
     ]);
     assert.ok(result.outcome !== null);
   },
@@ -349,11 +349,11 @@ Deno.test(
     }));
 
     assert.deepEqual(prepared, [
-      "Ubiquity-Sentinel/sentinel",
+      "ubiquity-sentinel/sentinel",
       `ubiquity/${FOREIGN_REPO}`,
     ]);
-    assert.deepEqual(addressed, [["Ubiquity-Sentinel/sentinel"]]);
-    assert.deepEqual(result.addressed, ["Ubiquity-Sentinel/sentinel"]);
+    assert.deepEqual(addressed, [["ubiquity-sentinel/sentinel"]]);
+    assert.deepEqual(result.addressed, ["ubiquity-sentinel/sentinel"]);
     assert.deepEqual(result.skipped, []);
     assert.deepEqual(result.failed, [
       `ubiquity/${FOREIGN_REPO}: target mirror fetch failed`,

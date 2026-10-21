@@ -672,7 +672,7 @@ const OWNER_EXECUTION = {
   createdAt: Date.now() - 1000,
 };
 const OWNER_REPOSITORY = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 0,
 };
@@ -777,7 +777,7 @@ Deno.test("review channel: an unsupported oversized control frame costs only its
     const journal = {
       version: "v1" as const,
       phase: "intent" as const,
-      repository: { owner: "Ubiquity-Sentinel", name: "sentinel" },
+      repository: { owner: "ubiquity-sentinel", name: "sentinel" },
       prNumber: 1,
       expectedHead: "c".repeat(40) as GitSha,
       expectedBase: "d".repeat(40) as GitSha,

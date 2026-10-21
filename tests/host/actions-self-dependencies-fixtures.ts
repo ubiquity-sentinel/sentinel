@@ -34,7 +34,7 @@ export async function actionsSelfSeedRig() {
   );
   await Deno.writeTextFile(
     `${rig.launcher}/sentinel.targets.json`,
-    JSON.stringify(["Ubiquity-Sentinel/sentinel"]) + "\n",
+    JSON.stringify(["ubiquity-sentinel/sentinel"]) + "\n",
   );
   await rig.git(["add", ".gitignore", "sentinel.targets.json"], rig.launcher);
   await rig.git(["commit", "-qm", "host fixture self target"], rig.launcher);
@@ -98,7 +98,7 @@ export async function actionsSelfSeedRig() {
     execution: prior,
     workflowId: HOSTED_SUPERVISOR_WORKFLOW_ID,
     workflowPath: HOSTED_SUPERVISOR_WORKFLOW_PATH,
-    repository: "Ubiquity-Sentinel/sentinel",
+    repository: "ubiquity-sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: 101,
     startedAt: T0,

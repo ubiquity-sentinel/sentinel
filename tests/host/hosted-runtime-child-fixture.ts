@@ -42,7 +42,7 @@ export function hostedFixtureRequest(): ModelRunRequestV1 {
   return {
     taskId: asWorkItemId(HOSTED_FIXTURE_TASK_ID),
     repository: {
-      owner: "Ubiquity-Sentinel",
+      owner: "ubiquity-sentinel",
       name: "sentinel",
       installationId: 0,
     },

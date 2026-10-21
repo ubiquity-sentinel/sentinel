@@ -1,5 +1,5 @@
 /**
- * Concrete local repair host for the authorized Ubiquity-Sentinel/sentinel target.
+ * Concrete local repair host for the authorized ubiquity-sentinel/sentinel target.
  *
  * One bounded hourly pass over real trusted capabilities: a private state
  * root with an exclusive writer lock and crash marker, a persistent local
@@ -293,7 +293,7 @@ export async function runLocalRepairHost(
       codexExecutable: input.codexExecutable,
       tracker,
       selfMergeEnabled:
-        appliedConfig.repository.owner === "Ubiquity-Sentinel" &&
+        appliedConfig.repository.owner === "ubiquity-sentinel" &&
         appliedConfig.repository.name === "sentinel" &&
         appliedConfig.repository.installationId === 0,
     });

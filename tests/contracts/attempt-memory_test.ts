@@ -16,7 +16,7 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import { tryParse } from "../../src/contracts/validation.ts";
 
 const REPO = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 0,
 };

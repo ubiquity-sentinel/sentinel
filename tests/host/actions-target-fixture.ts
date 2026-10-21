@@ -72,7 +72,7 @@ export function makeTargetHostRig(names: readonly string[]): TargetHostRigV1 {
   const self = createLocalRepositoryConfig();
   const configs = names.map((name) => {
     const isSelf = name === "sentinel";
-    const owner = isSelf ? "Ubiquity-Sentinel" : "ubiquity";
+    const owner = isSelf ? "ubiquity-sentinel" : "ubiquity";
     const config = createTargetConfigV1(
       self,
       { slug: `${owner}/${name}`, owner, name },
@@ -85,7 +85,7 @@ export function makeTargetHostRig(names: readonly string[]): TargetHostRigV1 {
   const gate = new FakeGate();
   const http = new ScriptedHttp();
   for (const name of names) {
-    const owner = name === "sentinel" ? "Ubiquity-Sentinel" : "ubiquity";
+    const owner = name === "sentinel" ? "ubiquity-sentinel" : "ubiquity";
     http.on("GET", `/repos/${owner}/${name}/issues`, () => response(200, []));
   }
   const tracker = new LocalSessionTracker();

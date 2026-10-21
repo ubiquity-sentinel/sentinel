@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run --allow-run=gh
 /**
- * sentinel - explicit operator access to Ubiquity-Sentinel/sentinel GitHub Actions.
+ * sentinel - explicit operator access to ubiquity-sentinel/sentinel GitHub Actions.
  *
  * The protected supervisor also has a five-minute autonomous dispatcher.
  * Observe and repair remain manual. The runtime supervisor uses the protected
@@ -15,7 +15,7 @@
  *   sentinel receipts <run-id> [--grep <pattern>]
  */
 
-const REPO = "Ubiquity-Sentinel/sentinel";
+const REPO = "ubiquity-sentinel/sentinel";
 
 type Target = "observe" | "supervisor" | "repair";
 interface TargetSpec {

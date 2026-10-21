@@ -140,7 +140,7 @@ Deno.test(
     const request = {
       taskId: "issue-parser-1",
       repository: {
-        owner: "Ubiquity-Sentinel",
+        owner: "ubiquity-sentinel",
         name: "sentinel",
         installationId: 0,
       },

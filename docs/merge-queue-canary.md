@@ -74,7 +74,7 @@ Prepare a JSON file after source approval, with `action`, `binding_digest`, and
 
 ```bash
 timeout -k 5 295 gh workflow run queue-canary.yml \
-  --repo Ubiquity-Sentinel/sentinel --ref sentinel-supervisor --json \
+  --repo ubiquity-sentinel/sentinel --ref sentinel-supervisor --json \
   < /workspace/evidence/merge-queue/accepted-canary-dispatch.json
 ```
 

@@ -144,7 +144,7 @@ Deno.test(
       assert.equal(unmerged?.author, "github-actions[bot]");
       assert.equal(requests.length, 1);
       assert.ok(
-        requests[0].includes("/repos/Ubiquity-Sentinel/sentinel/pulls/63"),
+        requests[0].includes("/repos/ubiquity-sentinel/sentinel/pulls/63"),
       );
 
       const afterMerge = await github.readPull(51, "development");
@@ -165,11 +165,11 @@ Deno.test(
       assert.equal(afterMerge.baseAncestorOfRevision, true);
       assert.equal(requests.length, 5);
       assert.ok(
-        requests[3].includes("/repos/Ubiquity-Sentinel/sentinel/compare/"),
+        requests[3].includes("/repos/ubiquity-sentinel/sentinel/compare/"),
       );
       assert.ok(
         requests[4].includes(
-          `/repos/Ubiquity-Sentinel/sentinel/compare/${BASE}...`,
+          `/repos/ubiquity-sentinel/sentinel/compare/${BASE}...`,
         ),
       );
     } finally {

@@ -326,7 +326,7 @@ Deno.test("owner startup recovery: actual GitHub compare shape binds exact candi
       assert.deepEqual(
         fixture.requests.filter((request) => request.path.includes("/compare/"))
           .map((request) => request.path),
-        [`/repos/Ubiquity-Sentinel/sentinel/compare/${STARTUP_CANDIDATE}...${fixture.runIdentity().launcherSha}`],
+        [`/repos/ubiquity-sentinel/sentinel/compare/${STARTUP_CANDIDATE}...${fixture.runIdentity().launcherSha}`],
       );
     } finally {
       await fixture.close();
@@ -424,7 +424,7 @@ Deno.test("owner startup recovery: real installer and supervisor verify generati
                   }),
               },
               env: {
-                GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
+                GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel",
                 GITHUB_REF: "refs/heads/sentinel-supervisor",
                 GITHUB_JOB: "prepare",
                 GITHUB_RUN_ID: String(identity.runId),
@@ -432,7 +432,7 @@ Deno.test("owner startup recovery: real installer and supervisor verify generati
                 GITHUB_SHA: identity.launcherSha,
                 GITHUB_WORKFLOW_SHA: identity.launcherSha,
                 GITHUB_WORKFLOW_REF:
-                  "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+                  "ubiquity-sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
                 GITHUB_TOKEN: "offline-native-token-value",
               },
               writeOutput: (name, value) => {
@@ -455,7 +455,7 @@ Deno.test("owner startup recovery: real installer and supervisor verify generati
           execution: prepared.execution,
           workflowId: 357012162,
           workflowPath: ".github/workflows/supervisor.yml",
-          repository: "Ubiquity-Sentinel/sentinel",
+          repository: "ubiquity-sentinel/sentinel",
           ref: "refs/heads/sentinel-supervisor",
           jobId: 999001,
           startedAt: time + 100,

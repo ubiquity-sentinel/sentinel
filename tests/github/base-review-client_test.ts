@@ -34,7 +34,7 @@ function fixture(script: ScriptEntry[]) {
 const CHECKS = `/commits/${SHA1}/check-runs`;
 const APP = { id: 15368, slug: "github-actions" };
 const ISSUE =
-  "https://api.github.com/repos/Ubiquity-Sentinel/sentinel/issues/163";
+  "https://api.github.com/repos/ubiquity-sentinel/sentinel/issues/163";
 const BODY = baseReviewCommentBody({
   verdict: "clean",
   findings: [],

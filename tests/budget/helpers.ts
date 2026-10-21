@@ -28,7 +28,7 @@ import type { ReserveModelStartRequestV1 } from "../../src/budget/mod.ts";
 
 /** A second repository for cross-repo global-budget tests. */
 export const REPO_2 = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 9,
 } as const;

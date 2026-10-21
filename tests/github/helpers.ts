@@ -49,7 +49,7 @@ import type {
 } from "../../src/github/review-service.ts";
 
 export const REPO: RepositoryIdentityV1 = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 42,
 };

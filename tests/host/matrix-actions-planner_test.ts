@@ -31,7 +31,7 @@ for (const mode of [false, true, "expensive_reads", "fresh_drift"] as const) {
         assert.ok(release.ok && release.value.status === "found");
         memory.setRelease(release.value.snapshot);
         const repository = {
-          owner: "Ubiquity-Sentinel",
+          owner: "ubiquity-sentinel",
           name: "sentinel",
           installationId: 0,
         };
@@ -140,7 +140,7 @@ for (const mode of [false, true, "expensive_reads", "fresh_drift"] as const) {
           null,
         );
         assert.ok(seeded.ok && seeded.value.status === "applied");
-        const source = r.github.get("Ubiquity-Sentinel/sentinel")!;
+        const source = r.github.get("ubiquity-sentinel/sentinel")!;
         let fullReads = 0, measureReads = expensiveReads;
         if (freshDrift) {
           const write = memory.writeRepair.bind(memory);
@@ -338,7 +338,7 @@ for (
       memory.setRelease(release.value.snapshot);
       r.github.get("ubiquity/ai.ubq.fi")!.listOpenIssues = () =>
         Promise.resolve(portOk([]));
-      const source = r.github.get("Ubiquity-Sentinel/sentinel")!;
+      const source = r.github.get("ubiquity-sentinel/sentinel")!;
       const row = source.row;
       if (scenario === "cas_conflict") {
         source.listOpenIssues = () => {
@@ -358,7 +358,7 @@ for (
               relations: {
                 subIssueCount: 0,
                 openBlockers: [{
-                  owner: "Ubiquity-Sentinel",
+                  owner: "ubiquity-sentinel",
                   name: "sentinel",
                   number: 2,
                 }],
@@ -450,7 +450,7 @@ Deno.test("matrix actions: planner preserves native handoff time for prepared ce
   const r = await rig();
   try {
     const rows = Array.from({ length: 3 }, (_, index) => issue(index + 1));
-    const source = r.github.get("Ubiquity-Sentinel/sentinel")!;
+    const source = r.github.get("ubiquity-sentinel/sentinel")!;
     source.listOpenIssues = () => Promise.resolve(portOk(rows));
     let sourceReads = 0;
     source.readIssue = async (number) => {

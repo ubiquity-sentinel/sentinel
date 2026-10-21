@@ -40,14 +40,14 @@ export async function runNativeCiWrapper(
   ) throw new Error("native CI checkout changed");
   if (
     io.env("GITHUB_EVENT_NAME") !== "pull_request" ||
-    io.env("GITHUB_REPOSITORY") !== "Ubiquity-Sentinel/sentinel"
+    io.env("GITHUB_REPOSITORY") !== "ubiquity-sentinel/sentinel"
   ) return 0;
   const event = JSON.parse(
     await io.readEvent(io.env("GITHUB_EVENT_PATH") ?? ""),
   );
   const proof: NativeCiProofV1 = {
     version: "v1",
-    repository: "Ubiquity-Sentinel/sentinel",
+    repository: "ubiquity-sentinel/sentinel",
     repositoryId: event.repository.id,
     runId: Number(io.env("GITHUB_RUN_ID")),
     attempt: Number(io.env("GITHUB_RUN_ATTEMPT")),

@@ -47,16 +47,16 @@ export const CLEAN_COMPLETION = await structuredCompletedFixture({
 });
 
 export const RULES_PATH =
-  "/repos/Ubiquity-Sentinel/sentinel/rules/branches/development?per_page=100&page=1";
+  "/repos/ubiquity-sentinel/sentinel/rules/branches/development?per_page=100&page=1";
 
 export const RULESETS_PATH =
-  "/repos/Ubiquity-Sentinel/sentinel/rulesets?includes_parents=true&per_page=100&page=1";
+  "/repos/ubiquity-sentinel/sentinel/rulesets?includes_parents=true&per_page=100&page=1";
 
 export const CHECKS_PATH =
-  `/repos/Ubiquity-Sentinel/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`;
+  `/repos/ubiquity-sentinel/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`;
 
 export const STATUSES_PATH =
-  `/repos/Ubiquity-Sentinel/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`;
+  `/repos/ubiquity-sentinel/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`;
 
 export function completedCleanReceipt(
   overrides: Record<string, unknown> = {},
@@ -103,7 +103,7 @@ export function pullEntry(
   return {
     ...httpRespond(
       "GET",
-      "/repos/Ubiquity-Sentinel/sentinel/pulls/1",
+      "/repos/ubiquity-sentinel/sentinel/pulls/1",
       200,
       pullWire({
         number: 1,
@@ -120,7 +120,7 @@ export function reviewsRead(reviews: unknown[]): ScriptEntry {
   return {
     ...httpRespond(
       "GET",
-      "/repos/Ubiquity-Sentinel/sentinel/pulls/1/reviews?per_page=100&page=1",
+      "/repos/ubiquity-sentinel/sentinel/pulls/1/reviews?per_page=100&page=1",
       200,
       reviews,
     ),
@@ -132,7 +132,7 @@ export function commentsRead(comments: unknown[]): ScriptEntry {
   return {
     ...httpRespond(
       "GET",
-      "/repos/Ubiquity-Sentinel/sentinel/pulls/1/comments?per_page=100&page=1",
+      "/repos/ubiquity-sentinel/sentinel/pulls/1/comments?per_page=100&page=1",
       200,
       comments,
     ),

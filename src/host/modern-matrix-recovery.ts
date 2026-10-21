@@ -279,7 +279,7 @@ export const CLOSED_C_WAVE = {
         "0247707c3891e4250fc09dcf3c5daf91b40f6a57e15411c687804d86b503fa85",
       "taskId": "issue-ubiquity-sentinel-97",
       "repository": {
-        "owner": "Ubiquity-Sentinel",
+        "owner": "ubiquity-sentinel",
         "name": "sentinel",
         "installationId": 0,
       },
@@ -292,7 +292,7 @@ export const CLOSED_C_WAVE = {
         "b5beb946648e01ab72621fcbd97864c15e379d9f065b926957be330bbc6d02e5",
       "taskId": "issue-ubiquity-sentinel-98",
       "repository": {
-        "owner": "Ubiquity-Sentinel",
+        "owner": "ubiquity-sentinel",
         "name": "sentinel",
         "installationId": 0,
       },
@@ -305,7 +305,7 @@ export const CLOSED_C_WAVE = {
         "1964c0d862df209fc27567aea1a28ab599216316037ed750fb9b0369bbe376b8",
       "taskId": "issue-ubiquity-sentinel-106",
       "repository": {
-        "owner": "Ubiquity-Sentinel",
+        "owner": "ubiquity-sentinel",
         "name": "sentinel",
         "installationId": 0,
       },

@@ -30,7 +30,7 @@ const STATIC_SCOPE = "hosted supervisor receipt requires the self scope";
 function isHostedSelfRequest(request: ReleaseRequestV1): boolean {
   const repository = request.target.repository;
   return repository.installationId === 0 &&
-    repository.owner === "Ubiquity-Sentinel" &&
+    repository.owner === "ubiquity-sentinel" &&
     repository.name === "sentinel" &&
     request.target.environment === "production";
 }

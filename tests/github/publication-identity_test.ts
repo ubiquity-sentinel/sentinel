@@ -57,7 +57,7 @@ Deno.test("publication identity: create, reuse and ambiguous discovery bind the 
           script.push(
             httpRespond(
               "POST",
-              "/repos/Ubiquity-Sentinel/sentinel/pulls",
+              "/repos/ubiquity-sentinel/sentinel/pulls",
               201,
               observed,
             ),
@@ -66,7 +66,7 @@ Deno.test("publication identity: create, reuse and ambiguous discovery bind the 
           script.push({
             kind: "throw",
             method: "POST",
-            urlPart: "/repos/Ubiquity-Sentinel/sentinel/pulls",
+            urlPart: "/repos/ubiquity-sentinel/sentinel/pulls",
           });
           script.push(httpRespond("GET", "/pulls?head=", 200, [observed]));
         }
@@ -108,7 +108,7 @@ Deno.test("publication identity: create, reuse and ambiguous discovery bind the 
           httpRespond("GET", "/pulls?head=", 200, []),
           httpRespond(
             "POST",
-            "/repos/Ubiquity-Sentinel/sentinel/pulls",
+            "/repos/ubiquity-sentinel/sentinel/pulls",
             201,
             pullWire({ body: request.body, ...overrides }),
           ),
@@ -233,7 +233,7 @@ Deno.test("publication identity: real Git candidate survives a rejected API iden
       httpRespond("GET", "/pulls?head=", 200, []),
       httpRespond(
         "POST",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls",
+        "/repos/ubiquity-sentinel/sentinel/pulls",
         201,
         pullWire({ ...observed, body }),
       ),

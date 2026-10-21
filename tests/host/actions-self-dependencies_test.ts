@@ -151,7 +151,7 @@ Deno.test("Actions self dependencies: real host refuses absent producer then run
         modelResults.push(await input.model.runModel(rig.request));
         return {
           outcome: { status: "idle", detail: "fixture boundary observed" },
-          addressed: ["Ubiquity-Sentinel/sentinel"],
+          addressed: ["ubiquity-sentinel/sentinel"],
           skipped: [],
           failed: [],
         };

@@ -59,7 +59,7 @@ for await (const part of Deno.stdin.readable) {
     createdAt: 1,
   };
   const repository = {
-    owner: "Ubiquity-Sentinel",
+    owner: "ubiquity-sentinel",
     name: "sentinel",
     installationId: 0,
   };

@@ -35,5 +35,5 @@ jobs:
         run: >-
           gh api
           --method POST
-          repos/Ubiquity-Sentinel/sentinel/actions/workflows/supervisor.yml/dispatches
+          repos/ubiquity-sentinel/sentinel/actions/workflows/supervisor.yml/dispatches
           -f ref=sentinel-supervisor

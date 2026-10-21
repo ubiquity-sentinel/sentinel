@@ -43,7 +43,7 @@ const ROOT = decodeURIComponent(HERE.pathname).replace(
 );
 
 const LOCAL_REPO = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 0,
 } as const;

@@ -384,7 +384,7 @@ function routeRequest(model: string): ModelRunRequestV1 {
   return {
     taskId: asWorkItemId("issue-route"),
     repository: {
-      owner: "Ubiquity-Sentinel",
+      owner: "ubiquity-sentinel",
       name: "sentinel",
       installationId: 0,
     },

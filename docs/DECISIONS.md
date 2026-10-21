@@ -11,11 +11,11 @@ continuation.
 
 ### Dedicated organization migration (2026-10-21)
 
-The owner moved Sentinel into the dedicated `Ubiquity-Sentinel` organization
+The owner moved Sentinel into the dedicated `ubiquity-sentinel` organization
 to isolate its GitHub Actions allowance. The public controller moved from
-`ubiquity/sentinel` to `Ubiquity-Sentinel/sentinel`, and the private Passport
+`ubiquity/sentinel` to `ubiquity-sentinel/sentinel`, and the private Passport
 controller moved from `ubiquity/sentinel-passport` to
-`Ubiquity-Sentinel/sentinel-passport`. Repository ids, issues, pull requests,
+`ubiquity-sentinel/sentinel-passport`. Repository ids, issues, pull requests,
 refs, secrets, variables, visibility and environment branch policies were
 preserved. Current self identity is the new organization. The permanently
 retired `ubiquity/sentinel` identity is accepted only while reading
@@ -31,7 +31,7 @@ their existing states.
 
 The owner's request to add `ubiquity/passport.ubq.fi`, followed by the explicit
 completion goal, authorizes completing its private execution path. The dedicated
-private `Ubiquity-Sentinel/sentinel-passport` controller owns only Passport; the public
+private `ubiquity-sentinel/sentinel-passport` controller owns only Passport; the public
 controller retains Sentinel and AI. Private target code, artifacts, runtime
 state, review evidence and logs must remain private. Seed source ancestry only,
 never public runtime state or accounting. Provision the existing App/model
@@ -105,7 +105,7 @@ for every edit.
 
 Acceptance for this effort is green scheduled supervisor cycles plus at least
 one autonomous issue → PR → completed review → merge in each of
-`Ubiquity-Sentinel/sentinel` and `ubiquity/ai.ubq.fi`. The ai.ubq.fi scope is issue
+`ubiquity-sentinel/sentinel` and `ubiquity/ai.ubq.fi`. The ai.ubq.fi scope is issue
 repairs only for now. Gateway capture, VPS deployment, release activation and
 the original broader gateway observation gates remain separate work. Bootstrap
 health and opened PRs alone do not satisfy this acceptance.

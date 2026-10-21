@@ -369,7 +369,7 @@ export function composeHostedAppGitHub(
   }
   const repository = Object.freeze({ ...input.repository });
   const selfController = repository.installationId === 0 &&
-    repository.owner === "Ubiquity-Sentinel" &&
+    repository.owner === "ubiquity-sentinel" &&
     repository.name === "sentinel";
   if (
     !selfController &&

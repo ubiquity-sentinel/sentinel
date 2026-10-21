@@ -59,7 +59,7 @@ const REPOSITORY_IDENTITY_KEYS = ["owner", "name", "installationId"] as const;
 /** Current canonical Sentinel self identity. */
 export const SENTINEL_SELF_REPOSITORY: Readonly<RepositoryIdentityV1> = Object
   .freeze({
-    owner: "Ubiquity-Sentinel",
+    owner: "ubiquity-sentinel",
     name: "sentinel",
     installationId: 0,
   });

@@ -317,8 +317,8 @@ export async function createFreshMatrixArchives(
           event: "workflow_dispatch",
           head_branch: "sentinel-supervisor",
           head_sha: r.sha,
-          repository: { id: 123, full_name: "Ubiquity-Sentinel/sentinel" },
-          head_repository: { id: 123, full_name: "Ubiquity-Sentinel/sentinel" },
+          repository: { id: 123, full_name: "ubiquity-sentinel/sentinel" },
+          head_repository: { id: 123, full_name: "ubiquity-sentinel/sentinel" },
           status: "in_progress",
           run_started_at: iso,
           updated_at: iso,
@@ -328,7 +328,7 @@ export async function createFreshMatrixArchives(
         if (
           nativeScopedOnly &&
           parsed.pathname ===
-            "/repos/Ubiquity-Sentinel/sentinel/actions/artifacts"
+            "/repos/ubiquity-sentinel/sentinel/actions/artifacts"
         ) {
           return Promise.resolve(
             new Response(

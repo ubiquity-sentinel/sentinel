@@ -115,7 +115,7 @@ export async function selfMergeFixture() {
   const service = new FakeReviewService();
   service.readResult = structured.service;
   const repository = {
-    owner: "Ubiquity-Sentinel",
+    owner: "ubiquity-sentinel",
     name: "sentinel",
     installationId: 0,
   };
@@ -127,7 +127,7 @@ export async function selfMergeFixture() {
   });
   const ci: NativeCiProofV1 = {
     version: "v1",
-    repository: "Ubiquity-Sentinel/sentinel",
+    repository: "ubiquity-sentinel/sentinel",
     repositoryId: 17,
     runId: 500,
     attempt: 1,
@@ -246,7 +246,7 @@ export async function selfMergeFixture() {
             slug: state.foreignCi ? "foreign-app" : "github-actions",
           },
           details_url:
-            "https://github.com/Ubiquity-Sentinel/sentinel/actions/runs/500/job/600",
+            "https://github.com/ubiquity-sentinel/sentinel/actions/runs/500/job/600",
         }],
       };
     } else if (path.endsWith("/statuses")) body = [];
@@ -260,7 +260,7 @@ export async function selfMergeFixture() {
         status: "completed",
         conclusion: "success",
         path: ".github/workflows/ci.yml@refs/pull/1/merge",
-        repository: { id: 17, full_name: "Ubiquity-Sentinel/sentinel" },
+        repository: { id: 17, full_name: "ubiquity-sentinel/sentinel" },
         pull_requests: [{
           number: 1,
           head: { sha: head, ref: "sentinel/fix-1", repo: { id: 17 } },
@@ -280,7 +280,7 @@ export async function selfMergeFixture() {
           status: "completed",
           conclusion: "success",
           check_run_url:
-            "https://api.github.com/repos/Ubiquity-Sentinel/sentinel/check-runs/700",
+            "https://api.github.com/repos/ubiquity-sentinel/sentinel/check-runs/700",
           steps: [{
             name: "Credential-free local harness",
             status: "completed",

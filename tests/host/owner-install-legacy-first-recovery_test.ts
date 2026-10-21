@@ -98,13 +98,13 @@ Deno.test("legacy first recovery actual maintenance: retained R81 health permits
     // The retired migration-only helper deliberately throws on all four alike.
     const code = await runHostedAutonomyMain({
       env: {
-        GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
+        GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel",
         GITHUB_REF: "refs/heads/sentinel-supervisor",
         GITHUB_JOB: "maintenance",
         GITHUB_RUN_ID: String(rig.run.runId),
         GITHUB_RUN_ATTEMPT: String(rig.run.runAttempt),
         GITHUB_WORKFLOW_REF:
-          "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+          "ubiquity-sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
         GITHUB_SHA: rig.run.launcherSha,
         GITHUB_WORKFLOW_SHA: rig.run.launcherSha,
         GITHUB_TOKEN: "offline-native-token",

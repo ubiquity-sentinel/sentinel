@@ -46,7 +46,7 @@ export abstract class GitHubClientNativeCi extends GitHubClientReviewOwner {
     input: NativeCiReadV1,
   ): Promise<PortResultV1<NativeCiEvidenceV1>> {
     if (
-      this.repository.owner !== "Ubiquity-Sentinel" ||
+      this.repository.owner !== "ubiquity-sentinel" ||
       this.repository.name !== "sentinel" ||
       this.repository.installationId !== 0
     ) return portError("invalid", "native CI self scope mismatch");
@@ -54,7 +54,7 @@ export abstract class GitHubClientNativeCi extends GitHubClientReviewOwner {
     const get = async (path: string): Promise<Row> => {
       const result = await this.sendCore(
         "GET",
-        `${this.apiBaseUrl}/repos/Ubiquity-Sentinel/sentinel${path}`,
+        `${this.apiBaseUrl}/repos/ubiquity-sentinel/sentinel${path}`,
         null,
         undefined,
         deadline,
@@ -104,7 +104,7 @@ export abstract class GitHubClientNativeCi extends GitHubClientReviewOwner {
       const checkId = count(check.id);
       const details = new URL(String(check.details_url));
       const matched =
-        /^\/Ubiquity-Sentinel\/sentinel\/actions\/runs\/([1-9][0-9]*)\/job\/([1-9][0-9]*)$/
+        /^\/ubiquity-sentinel\/sentinel\/actions\/runs\/([1-9][0-9]*)\/job\/([1-9][0-9]*)$/
           .exec(details.pathname);
       if (
         details.protocol !== "https:" || details.hostname !== "github.com" ||
@@ -120,7 +120,7 @@ export abstract class GitHubClientNativeCi extends GitHubClientReviewOwner {
         run.event !== "pull_request" || run.status !== "completed" ||
         run.conclusion !== "success" || typeof run.path !== "string" ||
         run.path.split("@")[0] !== ".github/workflows/ci.yml" ||
-        repository.full_name !== "Ubiquity-Sentinel/sentinel"
+        repository.full_name !== "ubiquity-sentinel/sentinel"
       ) throw new Error();
       const repositoryId = count(repository.id);
       const attempt = count(run.run_attempt);
@@ -156,7 +156,7 @@ export abstract class GitHubClientNativeCi extends GitHubClientReviewOwner {
         job.name !== "test-local" || job.status !== "completed" ||
         job.conclusion !== "success" ||
         job.check_run_url !==
-          `${this.apiBaseUrl}/repos/Ubiquity-Sentinel/sentinel/check-runs/${checkId}`
+          `${this.apiBaseUrl}/repos/ubiquity-sentinel/sentinel/check-runs/${checkId}`
       ) throw new Error();
       if (!Array.isArray(job.steps)) throw new Error();
       const carriers = job.steps.map(row).filter((s) =>

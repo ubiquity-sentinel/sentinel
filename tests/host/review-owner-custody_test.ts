@@ -155,7 +155,7 @@ Deno.test("review custody: interrupted repair owner settles its separately spawn
       createdAt: Date.now() - 1000,
     };
     const repository = {
-      owner: "Ubiquity-Sentinel",
+      owner: "ubiquity-sentinel",
       name: "sentinel",
       installationId: 0,
     };

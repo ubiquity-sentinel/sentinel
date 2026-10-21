@@ -244,7 +244,7 @@ Deno.test(
       issueRecord(15, {
         relations: {
           openBlockers: [{
-            owner: "Ubiquity-Sentinel",
+            owner: "ubiquity-sentinel",
             name: "sentinel",
             number: 99,
           }],

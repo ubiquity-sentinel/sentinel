@@ -17,7 +17,7 @@ import { DenoReplayRuntime } from "../../src/replay/runtime.ts";
 
 const ROOT = new URL("../../", import.meta.url).pathname;
 const REPOSITORY = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 0,
 };

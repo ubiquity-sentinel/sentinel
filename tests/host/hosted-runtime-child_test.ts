@@ -370,7 +370,7 @@ Deno.test("hosted runtime: the real repair entrypoint refuses a malformed identi
       GITHUB_JOB: "prepare",
       GITHUB_RUN_ID: "1",
       GITHUB_RUN_ATTEMPT: "1",
-      GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
+      GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel",
       GITHUB_REF: "refs/heads/sentinel-supervisor",
       GITHUB_SHA: FIXED_LAUNCHER,
       GITHUB_WORKFLOW_SHA: FIXED_LAUNCHER,

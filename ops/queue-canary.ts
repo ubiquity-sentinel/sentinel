@@ -175,7 +175,7 @@ export async function runQueueCanary(input: {
     return evidence;
   };
   if (
-    host.repository !== "Ubiquity-Sentinel/sentinel" ||
+    host.repository !== "ubiquity-sentinel/sentinel" ||
     host.ref !== CANARY_REF ||
     !isGitSha(host.sha) || host.sha !== host.workflowSha ||
     host.sha !== host.expectedSha ||

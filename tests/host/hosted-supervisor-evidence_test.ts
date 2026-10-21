@@ -156,7 +156,7 @@ Deno.test("hosted supervisor PR110: trusted stale-base maintenance permits ordin
       const repairBefore = await rig.repair.readRepair();
       assert.throws(() =>
         runProof(execution({ generation: 63 }), "healthy", {
-          repository: "Ubiquity-Sentinel/sentinel",
+          repository: "ubiquity-sentinel/sentinel",
           workflowId: 357012162,
         })
       );
@@ -195,7 +195,7 @@ Deno.test("hosted supervisor PR110: trusted stale-base maintenance permits ordin
       hostedRuntimes: [{
         version: "v1",
         kind: "hosted_runtime",
-        id: "Ubiquity-Sentinel/sentinel:0:production",
+        id: "ubiquity-sentinel/sentinel:0:production",
         activeRevision: active,
         generation: 63,
         lastHealthyProof: proof,
@@ -232,11 +232,11 @@ Deno.test("hosted supervisor PR110: trusted stale-base maintenance permits ordin
               head: {
                 sha: request.source.head,
                 ref: "sentinel/repair/issue-98",
-                repo: { full_name: "Ubiquity-Sentinel/sentinel" },
+                repo: { full_name: "ubiquity-sentinel/sentinel" },
               },
               base: {
                 ref: "development",
-                repo: { full_name: "Ubiquity-Sentinel/sentinel" },
+                repo: { full_name: "ubiquity-sentinel/sentinel" },
               },
             }
             : {

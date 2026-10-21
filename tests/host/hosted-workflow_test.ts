@@ -51,7 +51,7 @@ const ROOT = decodeURIComponent(HERE.pathname).replace(
   "",
 );
 
-const REPO = "Ubiquity-Sentinel/sentinel";
+const REPO = "ubiquity-sentinel/sentinel";
 const RUN_ID = 1;
 const JOB_ID = 901;
 const NATIVE_TOKEN = "native-token-0123456789";
@@ -485,7 +485,7 @@ async function seedCancellationRig(): Promise<{
       version: "v1",
       kind: "budget_reservation",
       repository: {
-        owner: "Ubiquity-Sentinel",
+        owner: "ubiquity-sentinel",
         name: "sentinel",
         installationId: 0,
       },

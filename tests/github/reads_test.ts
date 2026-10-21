@@ -27,7 +27,7 @@ import {
 import { httpRespond } from "./helpers.ts";
 
 const BASE = "https://api.github.com";
-const ISSUES_PATH = "/repos/Ubiquity-Sentinel/sentinel/issues";
+const ISSUES_PATH = "/repos/ubiquity-sentinel/sentinel/issues";
 const BASE_URL = `${BASE}${ISSUES_PATH}`;
 
 function linkNext(url: string): Record<string, string> {
@@ -149,7 +149,7 @@ Deno.test("readIssue: oversized body is unavailable (incomplete), never truncate
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/1",
+        "/repos/ubiquity-sentinel/sentinel/issues/1",
         200,
         issueWire({ body: bigBody }),
       ),
@@ -168,7 +168,7 @@ Deno.test("readIssue: 404 is null, a PR resource is not an issue, malformed is i
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/404",
+        "/repos/ubiquity-sentinel/sentinel/issues/404",
         404,
         {},
       ),
@@ -182,7 +182,7 @@ Deno.test("readIssue: 404 is null, a PR resource is not an issue, malformed is i
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/9",
+        "/repos/ubiquity-sentinel/sentinel/issues/9",
         200,
         pullWire({ number: 9, pull_request: {} }),
       ),
@@ -196,7 +196,7 @@ Deno.test("readIssue: 404 is null, a PR resource is not an issue, malformed is i
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/1",
+        "/repos/ubiquity-sentinel/sentinel/issues/1",
         200,
         issueWire({ number: "1" }),
       ),
@@ -211,7 +211,7 @@ Deno.test("readIssue: 404 is null, a PR resource is not an issue, malformed is i
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/1",
+        "/repos/ubiquity-sentinel/sentinel/issues/1",
         200,
         issueWire({ number: 1, user: { login: "octocat" } }),
       ),
@@ -227,7 +227,7 @@ Deno.test("readPullRequest: merged identity derived exactly from merge fields", 
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls/12",
+        "/repos/ubiquity-sentinel/sentinel/pulls/12",
         200,
         pullWire({
           number: 12,
@@ -260,7 +260,7 @@ Deno.test("readPullRequest: missing merge sha on a merged PR is invalid", async 
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls/12",
+        "/repos/ubiquity-sentinel/sentinel/pulls/12",
         200,
         pullWire({
           state: "closed",
@@ -282,7 +282,7 @@ Deno.test(
       script: [
         httpRespond(
           "GET",
-          "/repos/Ubiquity-Sentinel/sentinel/pulls/12",
+          "/repos/ubiquity-sentinel/sentinel/pulls/12",
           200,
           pullWire({
             state: "open",
@@ -314,7 +314,7 @@ Deno.test("readPullRequest: short SHA, bad timestamp and wrong enum fail closed"
       script: [
         httpRespond(
           "GET",
-          "/repos/Ubiquity-Sentinel/sentinel/pulls/1",
+          "/repos/ubiquity-sentinel/sentinel/pulls/1",
           200,
           pullWire(override),
         ),
@@ -343,7 +343,7 @@ Deno.test("readPullRequestReviewDecision: uses the authoritative GraphQL field",
   assert.equal(transport.requests[0]?.method, "POST");
   assert.equal(transport.requests[0]?.url, `${BASE}/graphql`);
   const body = JSON.parse(transport.requests[0]?.body ?? "{}");
-  assert.equal(body.variables.owner, "Ubiquity-Sentinel");
+  assert.equal(body.variables.owner, "ubiquity-sentinel");
   assert.equal(body.variables.name, "sentinel");
   assert.equal(body.variables.number, 12);
 });
@@ -387,13 +387,13 @@ Deno.test("readChecks: a run bound to a different head is not evidence for this 
     script: [
       httpRespond(
         "GET",
-        `/repos/Ubiquity-Sentinel/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`,
+        `/repos/ubiquity-sentinel/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`,
         200,
         checksPageWire([checkRunWire({ head_sha: SHA2 })]),
       ),
       httpRespond(
         "GET",
-        `/repos/Ubiquity-Sentinel/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`,
+        `/repos/ubiquity-sentinel/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`,
         200,
         statusesPageWire([]),
       ),
@@ -453,7 +453,7 @@ Deno.test("readChecks: conclusions parsed exactly; empty checks is a real value"
     script: [
       httpRespond(
         "GET",
-        `/repos/Ubiquity-Sentinel/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`,
+        `/repos/ubiquity-sentinel/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`,
         200,
         checksPageWire([
           checkRunWire({ name: "ci" }),
@@ -472,7 +472,7 @@ Deno.test("readChecks: conclusions parsed exactly; empty checks is a real value"
       ),
       httpRespond(
         "GET",
-        `/repos/Ubiquity-Sentinel/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`,
+        `/repos/ubiquity-sentinel/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`,
         200,
         statusesPageWire([commitStatusWire({ context: "legacy-ci" })]),
       ),
@@ -494,13 +494,13 @@ Deno.test("readChecks: conclusions parsed exactly; empty checks is a real value"
     script: [
       httpRespond(
         "GET",
-        `/repos/Ubiquity-Sentinel/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`,
+        `/repos/ubiquity-sentinel/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`,
         200,
         checksPageWire([]),
       ),
       httpRespond(
         "GET",
-        `/repos/Ubiquity-Sentinel/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`,
+        `/repos/ubiquity-sentinel/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`,
         200,
         statusesPageWire([]),
       ),
@@ -519,7 +519,7 @@ Deno.test("readProtections: 404 means genuinely unprotected; strict rules parsed
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/branches/development/protection",
+        "/repos/ubiquity-sentinel/sentinel/branches/development/protection",
         404,
         {},
       ),
@@ -536,7 +536,7 @@ Deno.test("readProtections: 404 means genuinely unprotected; strict rules parsed
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/branches/development/protection",
+        "/repos/ubiquity-sentinel/sentinel/branches/development/protection",
         200,
         {
           required_status_checks: {
@@ -565,7 +565,7 @@ Deno.test("readRef: exact identity or null; ref mismatch is invalid", async () =
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/git/ref/heads/sentinel/fix-1",
+        "/repos/ubiquity-sentinel/sentinel/git/ref/heads/sentinel/fix-1",
         200,
         refWire(SHA1),
       ),
@@ -579,7 +579,7 @@ Deno.test("readRef: exact identity or null; ref mismatch is invalid", async () =
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/git/ref/heads/other",
+        "/repos/ubiquity-sentinel/sentinel/git/ref/heads/other",
         404,
         {},
       ),
@@ -593,7 +593,7 @@ Deno.test("readRef: exact identity or null; ref mismatch is invalid", async () =
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/git/ref/heads/other",
+        "/repos/ubiquity-sentinel/sentinel/git/ref/heads/other",
         200,
         refWire(SHA1, "refs/heads/not-other"),
       ),
@@ -621,7 +621,7 @@ Deno.test("reads: auth failure and rate limit are typed, sanitized, no URL echo"
     script: [
       httpRespond(
         "GET",
-        "/repos/Ubiquity-Sentinel/sentinel/issues/1",
+        "/repos/ubiquity-sentinel/sentinel/issues/1",
         403,
         {},
         {
@@ -639,7 +639,7 @@ Deno.test("reads: auth failure and rate limit are typed, sanitized, no URL echo"
 });
 
 Deno.test("readEffectiveProtections: branch rules paginate exhaustively and parse exact shapes", async () => {
-  const base = `${BASE}/repos/Ubiquity-Sentinel/sentinel`;
+  const base = `${BASE}/repos/ubiquity-sentinel/sentinel`;
   const page1 = `${base}/rules/branches/development?per_page=100&page=1`;
   const page2 = `${base}/rules/branches/development?per_page=100&page=2`;
   const script = [
@@ -674,7 +674,7 @@ Deno.test("readEffectiveProtections: branch rules paginate exhaustively and pars
 });
 
 Deno.test("readEffectiveProtections: malformed or unsupported rules are retained, never guessed", async () => {
-  const base = `${BASE}/repos/Ubiquity-Sentinel/sentinel`;
+  const base = `${BASE}/repos/ubiquity-sentinel/sentinel`;
   // Malformed rule shape (type is a number) fails the wire parse.
   const malformed = makePort({
     script: [
@@ -729,7 +729,7 @@ Deno.test("readEffectiveProtections: malformed or unsupported rules are retained
 });
 
 Deno.test("readEffectiveProtections: omitted bypass policy is unknown and detail is fetched", async () => {
-  const base = `${BASE}/repos/Ubiquity-Sentinel/sentinel`;
+  const base = `${BASE}/repos/ubiquity-sentinel/sentinel`;
   // The list omits bypass_actors/current_user_can_bypass: the exact ruleset
   // detail is fetched; if the detail still omits the policy → unknown.
   const { port, transport } = makePort({
@@ -816,7 +816,7 @@ Deno.test("readEffectiveProtections: omitted bypass policy is unknown and detail
 });
 
 Deno.test("readEffectiveProtections: rules pagination cycle is unavailable", async () => {
-  const base = `${BASE}/repos/Ubiquity-Sentinel/sentinel`;
+  const base = `${BASE}/repos/ubiquity-sentinel/sentinel`;
   const page1 = `${base}/rules/branches/development?per_page=100&page=1`;
   const { port } = makePort({
     script: [

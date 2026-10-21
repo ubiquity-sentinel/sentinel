@@ -41,7 +41,7 @@ const ROOT = decodeURIComponent(HERE.pathname).replace(
 );
 
 const SELF = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 0,
 };

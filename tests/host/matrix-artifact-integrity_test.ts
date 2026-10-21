@@ -259,7 +259,7 @@ Deno.test("matrix artifacts: historical missing cell refuses directly with exact
       execution,
       workflowId: HOSTED_SUPERVISOR_WORKFLOW_ID,
       workflowPath: HOSTED_SUPERVISOR_WORKFLOW_PATH,
-      repository: "Ubiquity-Sentinel/sentinel",
+      repository: "ubiquity-sentinel/sentinel",
       ref: "refs/heads/sentinel-supervisor",
       jobId: 401,
       startedAt: T0,

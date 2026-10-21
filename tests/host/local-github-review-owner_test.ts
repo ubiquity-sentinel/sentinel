@@ -69,7 +69,7 @@ Deno.test("local GitHub review owner: separate supplied native resolver reaches 
     const journal = {
       version: "v1" as const,
       phase: "intent" as const,
-      repository: { owner: "Ubiquity-Sentinel", name: "sentinel" },
+      repository: { owner: "ubiquity-sentinel", name: "sentinel" },
       prNumber: 1,
       expectedHead: "c".repeat(40) as GitSha,
       expectedBase: "d".repeat(40) as GitSha,

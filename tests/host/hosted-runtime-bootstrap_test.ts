@@ -238,7 +238,7 @@ try { result = await runActionsRepairHost({
   clock: { now: () => T0 },
   workDir: checkout,
   stateRemoteUrl: remote.remoteUrl,
-  env: { GITHUB_RUN_ID: "37126414865", GITHUB_RUN_ATTEMPT: "1", GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel", GITHUB_REF: "refs/heads/sentinel-supervisor", GITHUB_SHA: launcher, GITHUB_WORKFLOW_SHA: launcher, GITHUB_WORKFLOW_REF: "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor", GITHUB_JOB: "repair", GITHUB_TOKEN: "synthetic-native-token", SENTINEL_SUPERVISOR_TOKEN: "synthetic-app-token", UOS_AI_TOKEN: "synthetic-model-token", SENTINEL_GATEWAY_AUTH_JSON: JSON.stringify({ authorization: "Bearer synthetic-bootstrap-only-token" }), SENTINEL_REPLAY_KEY_B64: "11".repeat(32), PATH: root + "/bin:" + env.PATH, HOME: root + "/git-home" },
+  env: { GITHUB_RUN_ID: "37126414865", GITHUB_RUN_ATTEMPT: "1", GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel", GITHUB_REF: "refs/heads/sentinel-supervisor", GITHUB_SHA: launcher, GITHUB_WORKFLOW_SHA: launcher, GITHUB_WORKFLOW_REF: "ubiquity-sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor", GITHUB_JOB: "repair", GITHUB_TOKEN: "synthetic-native-token", SENTINEL_SUPERVISOR_TOKEN: "synthetic-app-token", UOS_AI_TOKEN: "synthetic-model-token", SENTINEL_GATEWAY_AUTH_JSON: JSON.stringify({ authorization: "Bearer synthetic-bootstrap-only-token" }), SENTINEL_REPLAY_KEY_B64: "11".repeat(32), PATH: root + "/bin:" + env.PATH, HOME: root + "/git-home" },
   refreshSelf: () => Promise.resolve(revision),
   resolveDefaultBranch: () => Promise.resolve("development"),
   preflight: () => { preflightCalls++; return Promise.resolve(); },
@@ -306,7 +306,7 @@ assert.equal(artifactHttpCalls, 0);
 if (queueReads.length > 0) assert.deepEqual(queueReads, ["rules", "queue", "queue", "rules"]);
 assert.ok(github.calls.includes("listOpenIssues"));
 assert.ok(gatewayGithub.calls.includes("listOpenIssues"));
-assert.deepEqual(preparedTargets, ["Ubiquity-Sentinel/sentinel", "ubiquity/ai.ubq.fi"]);
+assert.deepEqual(preparedTargets, ["ubiquity-sentinel/sentinel", "ubiquity/ai.ubq.fi"]);
 assert.equal(gatewayTransport.requests.length, 1);
 gatewayTransport.assertReadOnly(["/admin/sentinel/incidents"]);
 gatewayTransport.assertNoWriteEndpoints();

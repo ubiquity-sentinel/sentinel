@@ -263,7 +263,7 @@ Deno.test("follow-up port: one issue's origin and the create answer are bound to
   const refusals: [string, Record<string, unknown>][] = [
     ["another creator", { user: { login: "github-actions[bot]" } }],
     ["another repository", {
-      repository_url: "https://api.github.com/repos/Ubiquity-Sentinel/sentinel",
+      repository_url: "https://api.github.com/repos/ubiquity-sentinel/sentinel",
     }],
     ["a pull request", { pull_request: {} }],
     ["a changed title", { title: "other" }],

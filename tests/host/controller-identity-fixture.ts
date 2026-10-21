@@ -22,5 +22,5 @@ export const CONTROLLER = Object.freeze({
 
 /** Only dated public-history scenarios select this branch. */
 export const PUBLIC_CONTROLLER =
-  CONTROLLER.repository.owner === "Ubiquity-Sentinel" &&
+  CONTROLLER.repository.owner === "ubiquity-sentinel" &&
   CONTROLLER.repository.name === "sentinel";

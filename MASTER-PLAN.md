@@ -12,7 +12,7 @@ The implementation is Deno and TypeScript. Model workers receive credential-free
 
 The 2026-10-20 owner decision sets runtime implementation to `gpt-reserve` with the existing HTTP 429 fallback to `gpt-6-luna`, both at max reasoning, superseding the former `gpt-5.6-luna` runtime text. Development/orchestration workers use `gpt-6.1-sol`.
 
-This effort's acceptance is green scheduled supervisor cycles plus at least one autonomous issue → PR → completed internal review → merge in each of `Ubiquity-Sentinel/sentinel` and `ubiquity/ai.ubq.fi`. The ai.ubq.fi scope is issue repairs only for now. The original gateway capture/deployment and extended observation requirements below remain separate scope, with `sentinel-release` disabled.
+This effort's acceptance is green scheduled supervisor cycles plus at least one autonomous issue → PR → completed internal review → merge in each of `ubiquity-sentinel/sentinel` and `ubiquity/ai.ubq.fi`. The ai.ubq.fi scope is issue repairs only for now. The original gateway capture/deployment and extended observation requirements below remain separate scope, with `sentinel-release` disabled.
 
 Current work, readiness and hosted receipts belong in the ledger. The separately owned [memory and self-healing plan](docs/sentinel-memory-plan.md) retains its active implementation contract; this cleanup does not transfer that ownership or establish new live proof.
 
@@ -22,12 +22,12 @@ The original goal identifier remains stable after development moved to the VPS. 
 
 | Field                   | Recorded value                                                                                |
 | ----------------------- | --------------------------------------------------------------------------------------------- |
-| Original goal ID        | `/Users/nv/repos/Ubiquity-Sentinel/sentinel/MASTER-PLAN.md`                                            |
-| Canonical plan          | `/home/codex/repos/Ubiquity-Sentinel/sentinel/.codex-worktrees/master-plan-gfa795549e5/MASTER-PLAN.md` |
-| Repository root         | `/home/codex/repos/Ubiquity-Sentinel/sentinel`                                                         |
+| Original goal ID        | `/Users/nv/repos/ubiquity-sentinel/sentinel/MASTER-PLAN.md`                                            |
+| Canonical plan          | `/home/codex/repos/ubiquity-sentinel/sentinel/.codex-worktrees/master-plan-gfa795549e5/MASTER-PLAN.md` |
+| Repository root         | `/home/codex/repos/ubiquity-sentinel/sentinel`                                                         |
 | Goal slug / suffix      | `master-plan` / `gfa795549e5`                                                                 |
 | Canonical worktree      | `master-plan-gfa795549e5`                                                                     |
-| Canonical worktree path | `/home/codex/repos/Ubiquity-Sentinel/sentinel/.codex-worktrees/master-plan-gfa795549e5`                |
+| Canonical worktree path | `/home/codex/repos/ubiquity-sentinel/sentinel/.codex-worktrees/master-plan-gfa795549e5`                |
 | Canonical branch        | `codex/master-plan-gfa795549e5`                                                               |
 | Initialization base     | `development` / `ec4bd82df4adfdb962e10332607ee4fbf539cdeb`                                    |
 | Integration ownership   | Current primary integration owner, recorded in `docs/build-status.md`                         |
@@ -36,11 +36,11 @@ Preserve the recorded module identities below. Sentinel worktree paths use `<rep
 
 | Module       | Repository           | Recorded lane                          | Surface                                                        |
 | ------------ | -------------------- | -------------------------------------- | -------------------------------------------------------------- |
-| m01-github   | `Ubiquity-Sentinel/sentinel`  | `master-plan-m01-github-a86bd3790da`   | `src/github/**`, `tests/github/**`                             |
-| m02-evidence | `Ubiquity-Sentinel/sentinel`  | `master-plan-m02-evidence-afb9652dea8` | `src/adapters/gateway/**`, corresponding tests                 |
-| m03-replay   | `Ubiquity-Sentinel/sentinel`  | `master-plan-m03-replay-ac17fc34d9a`   | `src/replay/**`, `tests/replay/**`                             |
-| m04-repair   | `Ubiquity-Sentinel/sentinel`  | `master-plan-m04-repair-ac50ee9a0a3`   | `src/repair/**`, `tests/repair/**`                             |
-| m05-release  | `Ubiquity-Sentinel/sentinel`  | `master-plan-m05-release-a2ebf3089f9`  | `src/release/**`, `tests/release/**`                           |
+| m01-github   | `ubiquity-sentinel/sentinel`  | `master-plan-m01-github-a86bd3790da`   | `src/github/**`, `tests/github/**`                             |
+| m02-evidence | `ubiquity-sentinel/sentinel`  | `master-plan-m02-evidence-afb9652dea8` | `src/adapters/gateway/**`, corresponding tests                 |
+| m03-replay   | `ubiquity-sentinel/sentinel`  | `master-plan-m03-replay-ac17fc34d9a`   | `src/replay/**`, `tests/replay/**`                             |
+| m04-repair   | `ubiquity-sentinel/sentinel`  | `master-plan-m04-repair-ac50ee9a0a3`   | `src/repair/**`, `tests/repair/**`                             |
+| m05-release  | `ubiquity-sentinel/sentinel`  | `master-plan-m05-release-a2ebf3089f9`  | `src/release/**`, `tests/release/**`                           |
 | m06-gateway  | `ubiquity/ai.ubq.fi` | `master-plan-m06-gateway-ad0aef5cd31`  | Incident/capture/replay producer and exact build/receipt seams |
 
 ## Architecture and runtime order

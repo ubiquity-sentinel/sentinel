@@ -133,7 +133,7 @@ Deno.test("budget: one global cap across repositories survives a restart", async
         repos,
         [
           "ubiquity/ai.ubq.fi",
-          "Ubiquity-Sentinel/sentinel",
+          "ubiquity-sentinel/sentinel",
         ].sort(),
       );
     }

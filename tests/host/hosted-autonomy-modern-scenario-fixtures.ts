@@ -377,7 +377,7 @@ export function serveTargetRefs(
 ): HttpTransportV1 {
   return async (request) => {
     const path = new URL(request.url).pathname;
-    const prefix = "/repos/Ubiquity-Sentinel/sentinel/git/ref/";
+    const prefix = "/repos/ubiquity-sentinel/sentinel/git/ref/";
     if (path.startsWith(prefix)) {
       const ref = "refs/" + decodeURIComponent(path.slice(prefix.length));
       const observed = await gitRun(targetWork, [

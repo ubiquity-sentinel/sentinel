@@ -16,7 +16,7 @@ import { FakeClock, MemoryState, repairConfigs } from "./helpers.ts";
 
 /** A local no-App scope for a repository that is not the configured target. */
 const LOCAL = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 0,
 } as const;

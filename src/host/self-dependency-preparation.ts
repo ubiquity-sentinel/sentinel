@@ -27,7 +27,7 @@ export type PrepareCheckoutDependenciesV1 = (
 export function isSentinelSelfTarget(
   repository: RepositoryIdentityV1,
 ): boolean {
-  return repository.owner === "Ubiquity-Sentinel" &&
+  return repository.owner === "ubiquity-sentinel" &&
     repository.name === "sentinel";
 }
 /**

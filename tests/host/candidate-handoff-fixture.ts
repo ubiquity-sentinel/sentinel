@@ -26,7 +26,7 @@ export const WORKER_PATH = `${ROOT}/tests/host/candidate-handoff-worker.ts`;
 export const TRUSTED_PATH = Deno.env.get("PATH") ?? "/usr/bin:/bin";
 
 export const REPOSITORY: RepositoryIdentityV1 = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 0,
 };

@@ -592,7 +592,7 @@ Deno.test("hosted execution: duplicate, malformed or key-extended terminals are 
       execution: intent(),
       workflowId: 357012162,
       workflowPath: ".github/workflows/supervisor.yml",
-      repository: "Ubiquity-Sentinel/sentinel",
+      repository: "ubiquity-sentinel/sentinel",
       ref: "refs/heads/sentinel-supervisor",
       jobId: 1,
       startedAt: TERM_STARTED,

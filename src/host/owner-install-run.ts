@@ -134,7 +134,7 @@ export async function runOwnerDevelopmentInstallMain(input?: {
       !Number.isSafeInteger(runId) || runId < 1 ||
       !Number.isSafeInteger(runAttempt) || runAttempt < 1 ||
       Deno.env.get("GITHUB_WORKFLOW_REF") !==
-        "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor"
+        "ubiquity-sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor"
     ) {
       return report(failedResult("startup_identity_rejected"), 1);
     }

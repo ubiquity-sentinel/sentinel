@@ -61,7 +61,7 @@ export async function matrixRecoveryState() {
     const id = "older-unrelated-" + index;
     const branch = "sentinel/" + id;
     const repository = {
-      owner: "Ubiquity-Sentinel",
+      owner: "ubiquity-sentinel",
       name: "sentinel",
       installationId: 0,
     };

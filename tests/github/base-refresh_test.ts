@@ -381,7 +381,7 @@ Deno.test(
         base: ctx.oldBase,
         head: ctx.candidate,
         repository: {
-          owner: "Ubiquity-Sentinel",
+          owner: "ubiquity-sentinel",
           name: "sentinel",
           installationId: 0,
         },

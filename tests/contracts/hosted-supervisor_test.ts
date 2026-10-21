@@ -240,7 +240,7 @@ Deno.test("hosted supervisor: release record rejects foreign requests, wrong or 
       request: releaseRequest({
         target: {
           repository: {
-            owner: "Ubiquity-Sentinel",
+            owner: "ubiquity-sentinel",
             name: "sentinel",
             installationId: 7,
           },

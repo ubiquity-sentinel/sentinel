@@ -19,7 +19,7 @@ import { LOCAL_SENTINEL_REPO } from "./loop-rig.ts";
 
 /**
  * Another repository that also uses the explicit no-App credential scope
- * (installationId 0) but is not `Ubiquity-Sentinel/sentinel`. It is not the local
+ * (installationId 0) but is not `ubiquity-sentinel/sentinel`. It is not the local
  * Sentinel scope, so it must never consult or consume the Sentinel local
  * receipt.
  */

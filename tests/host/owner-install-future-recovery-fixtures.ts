@@ -146,8 +146,8 @@ async function nativeProof(
     }),
   ], at + 1500);
   const path =
-    `/repos/Ubiquity-Sentinel/sentinel/actions/runs/${runId}/attempts/1`;
-  const logPath = `/repos/Ubiquity-Sentinel/sentinel/actions/jobs/${
+    `/repos/ubiquity-sentinel/sentinel/actions/runs/${runId}/attempts/1`;
+  const logPath = `/repos/ubiquity-sentinel/sentinel/actions/jobs/${
     runId * 10
   }/logs`;
   const signed =
@@ -682,7 +682,7 @@ export async function futureRecoveryFixture(
     const run = { runId: 9000, runAttempt: 1, launcherSha: controller };
     const nativeProofs = [healthy, failed, originalHistorical];
     const environment: Record<string, string> = {
-      GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
+      GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel",
       GITHUB_REF: "refs/heads/sentinel-supervisor",
       GITHUB_JOB: "prepare",
       GITHUB_RUN_ID: String(run.runId),
@@ -690,7 +690,7 @@ export async function futureRecoveryFixture(
       GITHUB_SHA: controller,
       GITHUB_WORKFLOW_SHA: controller,
       GITHUB_WORKFLOW_REF:
-        "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+        "ubiquity-sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
       GITHUB_TOKEN: "offline-native-token-value",
       SENTINEL_SUPERVISOR_TOKEN: "offline-app-token-value",
     };

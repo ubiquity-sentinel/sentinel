@@ -44,7 +44,7 @@ Deno.test("cooldown entrypoint: restart and fault modes keep zero further HTTP/a
       seeded.work = [
         workRecord("w:cooldown", {
           repository: {
-            owner: "Ubiquity-Sentinel",
+            owner: "ubiquity-sentinel",
             name: "sentinel",
             installationId: 42,
           },
@@ -97,7 +97,7 @@ Deno.test("cooldown entrypoint: restart and fault modes keep zero further HTTP/a
       const port = makePort({ ...options, cooldownGate: gate }).port;
       const configs = repairConfigs({
         repository: {
-          owner: "Ubiquity-Sentinel",
+          owner: "ubiquity-sentinel",
           name: "sentinel",
           installationId: 42,
         },

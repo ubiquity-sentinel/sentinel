@@ -28,7 +28,7 @@ const ROOT = decodeURIComponent(new URL("../..", import.meta.url).pathname)
 export const TRUSTED_PATH = Deno.env.get("PATH") ?? "/usr/bin:/bin";
 
 export const SELF_REPO = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 0,
 } as const;

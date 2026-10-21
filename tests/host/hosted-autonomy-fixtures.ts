@@ -19,7 +19,7 @@ export const MERGE = "9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60718293" as GitSha;
 export const TARGET = "issue-ubiquity-sentinel-48" as WorkItemId;
 export const RECEIPT_ID = `review-receipt:${"a".repeat(64)}`;
 export const SELF_REPO = {
-  owner: "Ubiquity-Sentinel",
+  owner: "ubiquity-sentinel",
   name: "sentinel",
   installationId: 0,
 } as const;
@@ -447,7 +447,7 @@ export function isForeignPath(url: string): boolean {
 
 /** True when a request URL addresses the sentinel self repository. */
 export function isSelfPath(url: string): boolean {
-  return url.includes("/repos/Ubiquity-Sentinel/sentinel");
+  return url.includes("/repos/ubiquity-sentinel/sentinel");
 }
 
 /** True for the sentinel self repository identity. */

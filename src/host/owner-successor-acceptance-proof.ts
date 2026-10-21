@@ -263,7 +263,7 @@ export async function readOwnerSuccessorAcceptanceAuthority(
     };
     const client = new GitHubApiClient({
       repository: {
-        owner: "Ubiquity-Sentinel",
+        owner: "ubiquity-sentinel",
         name: "sentinel",
         installationId: 0,
       },

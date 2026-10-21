@@ -22,7 +22,7 @@ import { issue, PROVIDER, rig } from "./matrix-actions-fixtures.ts";
 Deno.test("failover host: the repair host settles a failover-named failed cell through the aggregate", async () => {
   const r = await rig();
   try {
-    const self = r.github.get("Ubiquity-Sentinel/sentinel")!;
+    const self = r.github.get("ubiquity-sentinel/sentinel")!;
     self.listOpenIssues = () => Promise.resolve(portOk([issue(93)]));
     self.readIssue = (number) => Promise.resolve(portOk(issue(number)));
     const foreign = r.github.get("ubiquity/ai.ubq.fi")!;

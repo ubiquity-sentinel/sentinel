@@ -71,7 +71,7 @@ export function proof(runId: number) {
     execution: intent,
     workflowId: 357012162,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "Ubiquity-Sentinel/sentinel",
+    repository: "ubiquity-sentinel/sentinel",
     ref: "refs/heads/sentinel-supervisor",
     jobId: runId,
     startedAt: intent.createdAt + 100,

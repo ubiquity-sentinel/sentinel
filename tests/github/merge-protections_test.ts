@@ -139,7 +139,7 @@ Deno.test("mergePullRequest: effective protections require active strict non-byp
 });
 
 Deno.test("mergePullRequest: unidentified or contradicting ruleset evidence blocks with zero merge writes", async () => {
-  const detailUrl = `/repos/Ubiquity-Sentinel/sentinel/rulesets/${RULESET_ID}`;
+  const detailUrl = `/repos/ubiquity-sentinel/sentinel/rulesets/${RULESET_ID}`;
   const withoutKeys = (keys: string[]) =>
     defaultRules().map((rule) => {
       const copy = { ...(rule as Record<string, unknown>) };
@@ -337,7 +337,7 @@ Deno.test("mergePullRequest: unidentified or contradicting ruleset evidence bloc
       httpRespond("GET", detailUrl, 200, rulesetWire()),
       httpRespond(
         "PUT",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
+        "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
         200,
         mergeResponseWire(SHA3),
       ),
@@ -370,7 +370,7 @@ Deno.test("mergePullRequest: unidentified or contradicting ruleset evidence bloc
       ),
       httpRespond(
         "PUT",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
+        "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
         200,
         mergeResponseWire(SHA3),
       ),
@@ -433,7 +433,7 @@ Deno.test("mergePullRequest: required checks must pass on the exact head", async
     extra: [
       httpRespond(
         "PUT",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
+        "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
         200,
         mergeResponseWire(SHA3),
       ),
@@ -452,7 +452,7 @@ Deno.test("mergePullRequest: required checks must pass on the exact head", async
     extra: [
       httpRespond(
         "PUT",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
+        "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
         200,
         mergeResponseWire(SHA3),
       ),
@@ -492,7 +492,7 @@ Deno.test("mergePullRequest: required approvals must be present", async () => {
     extra: [
       httpRespond(
         "PUT",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
+        "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
         200,
         mergeResponseWire(SHA3),
       ),
@@ -534,7 +534,7 @@ Deno.test("mergePullRequest: base movement after the last precheck is reconciled
     // The base moved between the precheck and the merge PUT.
     httpRespond(
       "PUT",
-      "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
+      "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
       409,
       {},
     ),
@@ -552,7 +552,7 @@ Deno.test("mergePullRequest: lost merge response reconciles exactly", async () =
       {
         kind: "throw",
         method: "PUT",
-        urlPart: "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
+        urlPart: "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
       },
       pullEntry({
         state: "closed",
@@ -576,7 +576,7 @@ Deno.test("mergePullRequest: lost merge response reconciles exactly", async () =
       {
         kind: "throw",
         method: "PUT",
-        urlPart: "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
+        urlPart: "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
       },
       pullEntry(),
     ],
@@ -602,12 +602,12 @@ Deno.test("mergePullRequest: lost merge response reconciles exactly", async () =
     {
       kind: "throw",
       method: "PUT",
-      urlPart: "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
+      urlPart: "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
     },
     {
       kind: "throw",
       method: "GET",
-      urlPart: "/repos/Ubiquity-Sentinel/sentinel/pulls/1",
+      urlPart: "/repos/ubiquity-sentinel/sentinel/pulls/1",
     },
   ]);
   const unobserved = await noObservation.port.mergePullRequest(mergeRequest());
@@ -625,7 +625,7 @@ Deno.test("mergePullRequest: malformed merge response is invalid, rejected maps 
     extra: [
       httpRespond(
         "PUT",
-        "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
+        "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
         200,
         {
           merged: true,
@@ -649,7 +649,7 @@ Deno.test("mergePullRequest: malformed merge response is invalid, rejected maps 
     ...checksRead(),
     httpRespond(
       "PUT",
-      "/repos/Ubiquity-Sentinel/sentinel/pulls/1/merge",
+      "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
       405,
       {},
     ),

@@ -8,7 +8,7 @@ export const OWNER_DEVELOPMENT_INSTALL_REPOSITORY =
   HOSTED_SUPERVISOR_REPOSITORY;
 /** The only remote the release-state store may read; fixed. */
 export const OWNER_DEVELOPMENT_INSTALL_REMOTE_URL =
-  "https://github.com/Ubiquity-Sentinel/sentinel.git";
+  "https://github.com/ubiquity-sentinel/sentinel.git";
 /** Moving development ref the installed revisions must remain ancestors of. */
 export const OWNER_DEVELOPMENT_INSTALL_DEVELOPMENT_BRANCH = "development";
 /** The fixed release-state branch; only its ref is ever updated. */

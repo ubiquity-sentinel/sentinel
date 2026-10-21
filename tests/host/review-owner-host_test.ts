@@ -114,7 +114,7 @@ function runtimeFiles(extra: Record<string, string> = {}) {
   return {
     ".gitignore": ".sentinel-actions-state/\n.sentinel/\n",
     "sentinel.targets.json":
-      '["Ubiquity-Sentinel/sentinel","ubiquity/ai.ubq.fi"]\n',
+      '["ubiquity-sentinel/sentinel","ubiquity/ai.ubq.fi"]\n',
     ...extra,
   };
 }

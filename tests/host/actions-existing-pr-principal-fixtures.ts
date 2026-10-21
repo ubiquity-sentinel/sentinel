@@ -152,7 +152,7 @@ export async function actionsExistingPrincipalFixture(
   const env: Record<string, string | undefined> = {
     GITHUB_RUN_ID: String(principal.identity.runId),
     GITHUB_RUN_ATTEMPT: String(principal.identity.runAttempt),
-    GITHUB_REPOSITORY: "Ubiquity-Sentinel/sentinel",
+    GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel",
     GITHUB_REF: "refs/heads/sentinel-supervisor",
     GITHUB_SHA: principal.identity.launcherSha,
     GITHUB_WORKFLOW_SHA: principal.identity.launcherSha,
@@ -185,7 +185,7 @@ export async function actionsExistingPrincipalFixture(
       "actual host REST port uses its captured target credential",
     );
     targetCalls.push({ method: input.method, path });
-    if (path === "/repos/Ubiquity-Sentinel/sentinel/issues/1") {
+    if (path === "/repos/ubiquity-sentinel/sentinel/issues/1") {
       return {
         status: 200,
         headers: new Headers(),
@@ -225,10 +225,10 @@ export async function actionsExistingPrincipalFixture(
     }
     if (
       path === "/installation/repositories" ||
-      path === "/repos/Ubiquity-Sentinel/sentinel"
+      path === "/repos/ubiquity-sentinel/sentinel"
     ) {
       const reply = await principal.scopeInput.http(input);
-      if (path === "/repos/Ubiquity-Sentinel/sentinel") {
+      if (path === "/repos/ubiquity-sentinel/sentinel") {
         await controls.afterScopeRead?.(++controls.scopeReads);
       }
       return reply;
@@ -246,7 +246,7 @@ export async function actionsExistingPrincipalFixture(
   const originalRun = DenoReplayRuntime.prototype.run;
   const gitCalls: Array<{ args: string[]; credential: string }> = [];
   DenoReplayRuntime.prototype.run = function (input) {
-    const remoteUrl = "https://github.com/Ubiquity-Sentinel/sentinel.git";
+    const remoteUrl = "https://github.com/ubiquity-sentinel/sentinel.git";
     if (input.executable === "/usr/bin/git" && input.args.includes(remoteUrl)) {
       const expected = "Authorization: Basic " +
         btoa(
@@ -275,7 +275,7 @@ export async function actionsExistingPrincipalFixture(
   };
   Deno.Command = class extends originalCommand {
     constructor(command: string | URL, options: Deno.CommandOptions = {}) {
-      const remoteUrl = "https://github.com/Ubiquity-Sentinel/sentinel.git";
+      const remoteUrl = "https://github.com/ubiquity-sentinel/sentinel.git";
       let actual = options;
       if (command === "/usr/bin/git" && options.args?.includes(remoteUrl)) {
         const expected = "Authorization: Basic " +
@@ -370,7 +370,7 @@ export async function actionsExistingPrincipalFixture(
           await effect(port, input);
           return {
             outcome: { status: "idle", detail: "fixture native boundary" },
-            addressed: ["Ubiquity-Sentinel/sentinel"],
+            addressed: ["ubiquity-sentinel/sentinel"],
             skipped: [],
             failed: [],
           };

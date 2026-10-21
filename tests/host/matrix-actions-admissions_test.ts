@@ -154,7 +154,7 @@ Deno.test("matrix actions: one wave durably admits 128 fresh issues through real
     const deps = await r.job("high-count", "matrix_plan");
     const client = new GitHubApiClient({
       repository: {
-        owner: "Ubiquity-Sentinel",
+        owner: "ubiquity-sentinel",
         name: "sentinel",
         installationId: 0,
       },
@@ -186,7 +186,7 @@ Deno.test("matrix actions: one wave durably admits 128 fresh issues through real
             },
           };
         } else if (
-          url.pathname === "/repos/Ubiquity-Sentinel/sentinel/issues"
+          url.pathname === "/repos/ubiquity-sentinel/sentinel/issues"
         ) {
           const page = Number(url.searchParams.get("page"));
           pages.push(page);
@@ -194,7 +194,7 @@ Deno.test("matrix actions: one wave durably admits 128 fresh issues through real
           if (page === 1) {
             headers.set(
               "link",
-              '<https://api.github.com/repos/Ubiquity-Sentinel/sentinel/issues?state=open&per_page=100&page=2>; rel="next"',
+              '<https://api.github.com/repos/ubiquity-sentinel/sentinel/issues?state=open&per_page=100&page=2>; rel="next"',
             );
           }
         } else {
@@ -209,7 +209,7 @@ Deno.test("matrix actions: one wave durably admits 128 fresh issues through real
         });
       },
     });
-    const port = r.github.get("Ubiquity-Sentinel/sentinel")!;
+    const port = r.github.get("ubiquity-sentinel/sentinel")!;
     port.listOpenIssues = () => client.listOpenIssues();
     port.readIssue = (number) => client.readIssue(number);
     r.github.get("ubiquity/ai.ubq.fi")!.listOpenIssues = () =>
@@ -265,7 +265,7 @@ Deno.test("matrix actions: manifest byte budget leaves overflow issues unreserve
       // Each statement is admissible; their combined manifest exceeds its bound.
       body: "X".repeat(16 * 1024),
     }));
-    const source = r.github.get("Ubiquity-Sentinel/sentinel")!;
+    const source = r.github.get("ubiquity-sentinel/sentinel")!;
     source.listOpenIssues = () => Promise.resolve(portOk(rows));
     source.readIssue = (number) =>
       Promise.resolve(portOk(rows[number - 1] ?? null));

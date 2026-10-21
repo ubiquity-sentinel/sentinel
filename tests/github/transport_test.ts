@@ -100,7 +100,7 @@ function pullEntry(
 ): ScriptEntry {
   return httpRespond(
     "GET",
-    "/repos/Ubiquity-Sentinel/sentinel/pulls/1",
+    "/repos/ubiquity-sentinel/sentinel/pulls/1",
     200,
     pullWire({
       number: 1,
@@ -150,37 +150,37 @@ function mergeHappyScript(
     pullEntry(),
     httpRespond(
       "GET",
-      "/repos/Ubiquity-Sentinel/sentinel/pulls/1/reviews?per_page=100&page=1",
+      "/repos/ubiquity-sentinel/sentinel/pulls/1/reviews?per_page=100&page=1",
       200,
       [fixture.review],
     ),
     httpRespond(
       "GET",
-      "/repos/Ubiquity-Sentinel/sentinel/pulls/1/comments?per_page=100&page=1",
+      "/repos/ubiquity-sentinel/sentinel/pulls/1/comments?per_page=100&page=1",
       200,
       [],
     ),
     httpRespond(
       "GET",
-      "/repos/Ubiquity-Sentinel/sentinel/rules/branches/development?per_page=100&page=1",
+      "/repos/ubiquity-sentinel/sentinel/rules/branches/development?per_page=100&page=1",
       200,
       [statusChecksRuleWire(), pullRequestRuleWire()],
     ),
     httpRespond(
       "GET",
-      "/repos/Ubiquity-Sentinel/sentinel/rulesets?includes_parents=true&per_page=100&page=1",
+      "/repos/ubiquity-sentinel/sentinel/rulesets?includes_parents=true&per_page=100&page=1",
       200,
       [rulesetWire()],
     ),
     httpRespond(
       "GET",
-      `/repos/Ubiquity-Sentinel/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`,
+      `/repos/ubiquity-sentinel/sentinel/commits/${SHA1}/check-runs?per_page=100&page=1`,
       200,
       { check_runs: [checkRunWire()], total_count: 1 },
     ),
     httpRespond(
       "GET",
-      `/repos/Ubiquity-Sentinel/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`,
+      `/repos/ubiquity-sentinel/sentinel/commits/${SHA1}/statuses?per_page=100&page=1`,
       200,
       statusesPageWire([]),
     ),

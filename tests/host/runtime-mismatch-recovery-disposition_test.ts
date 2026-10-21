@@ -541,7 +541,7 @@ Deno.test("disposition pass preserves unrelated rows byte-identical", async () =
   const f = await fixture();
   const other = workRecord("issue-ubiquity-sentinel-8", {
     repository: {
-      owner: "Ubiquity-Sentinel",
+      owner: "ubiquity-sentinel",
       name: "sentinel",
       installationId: 0,
     },

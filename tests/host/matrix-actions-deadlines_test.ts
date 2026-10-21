@@ -69,7 +69,7 @@ for (
         artifactRoot + "/plan.json",
         JSON.stringify(planned.plan),
       );
-      const github = r.github.get("Ubiquity-Sentinel/sentinel")!;
+      const github = r.github.get("ubiquity-sentinel/sentinel")!;
       const readIssue = github.readIssue.bind(github);
       let armed = false, advanced = false, modelCalls = 0;
       const advance = () => {
@@ -268,7 +268,7 @@ Deno.test("matrix timing: queued cells keep their own bounded start window", asy
         "timing-exhausted",
       );
       try {
-        const github = r.github.get("Ubiquity-Sentinel/sentinel")!;
+        const github = r.github.get("ubiquity-sentinel/sentinel")!;
         const readIssue = github.readIssue.bind(github);
         const origin = r.clock.now();
         let armed = false;

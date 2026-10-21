@@ -57,14 +57,14 @@ import { createRepairStateStore, DenoGitRunner } from "../src/state/mod.ts";
 
 /** The only remote this helper talks to; fixed, never configurable. */
 export const ISSUE48_REMOTE_URL =
-  "https://github.com/Ubiquity-Sentinel/sentinel.git";
+  "https://github.com/ubiquity-sentinel/sentinel.git";
 
 /** The only repository identity this helper accepts. */
-export const ISSUE48_REPOSITORY = "Ubiquity-Sentinel/sentinel";
+export const ISSUE48_REPOSITORY = "ubiquity-sentinel/sentinel";
 
 /** Exact hosted workflow identity that may run the maintenance job. */
 export const ISSUE48_WORKFLOW_REF =
-  "Ubiquity-Sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor";
+  "ubiquity-sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor";
 
 /** Fixed production binding of the reviewed one-shot recovery. */
 export interface Issue48RecoveryBindingV1 {
@@ -100,7 +100,7 @@ export const ISSUE48_PRODUCTION_BINDING: Issue48RecoveryBindingV1 = {
   repairDigest:
     "726f662b7c46308f11de94dae469c8ab3b19eeb86746f3cc6f13d12a6b7482a4",
   releaseHead: "9d5bf76fa1f36952caebb6e2cb992b71b33802f2" as GitSha,
-  runtimeId: "Ubiquity-Sentinel/sentinel:0:production",
+  runtimeId: "ubiquity-sentinel/sentinel:0:production",
   runtimeRevision: "20aae115b44ed740c37e2452de4d5530b66430ec" as GitSha,
   runtimeGeneration: 5,
   pullRequestNumber: 51,
