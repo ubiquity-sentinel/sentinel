@@ -1,6 +1,7 @@
 // reviewer events.
 
 import type { CodexServerNotificationV1 } from "../repair/codex-transport.ts";
+import { closedModelErrorInfo } from "../repair/model-port-diagnostics.ts";
 import { MAX_JOURNAL_BYTES } from "./review-journal.ts";
 import { PreparedReviewSessionState } from "./reviewer-session-state.ts";
 import {
@@ -493,6 +494,28 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
       : null;
     this.terminal = { status, error: null, durationMs };
     this.terminalOrigin = "runtime";
+    // The unavailable journal intentionally has no execution receipt. Retain
+    // only the exact native terminal identity and closed typed error here;
+    // provider prose, output and additionalDetails never reach the run log.
+    const errorPresent = turn.error !== undefined && turn.error !== null;
+    const errorInfo = errorPresent ? closedModelErrorInfo(turn.error) : null;
+    try {
+      console.log(JSON.stringify({
+        event: "sentinel_review_terminal",
+        ownerRunId: this.ownerRunId,
+        requestId: this.requestId,
+        invocationId: this.invocationId,
+        threadId: this.threadId,
+        turnId: this.turnId,
+        status,
+        durationMs,
+        errorPresent,
+        errorCode: errorInfo?.errorCode ?? null,
+        httpStatusCode: errorInfo?.httpStatusCode ?? null,
+      }));
+    } catch {
+      // An advisory sink cannot change terminal acceptance or settlement.
+    }
     this.settleNow();
   }
 
