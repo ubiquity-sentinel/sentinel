@@ -277,10 +277,11 @@ historicalTest(
 );
 
 historicalTest(
-  "continuation: a late clock never gates a pass that has not written",
+  "continuation: a late no-write pass defers safely and a fresh pass remains eligible",
   async ({ runHostedAutonomy }) => {
     const state = new RecordingState(snapshotWith([deliveryRecord()]));
     const github = surfaces(state, { checkGreen: false });
+    const before = await state.readRepair();
     let calls = 0;
     const result = await runHostedAutonomy(
       await passDeps(
@@ -290,12 +291,18 @@ historicalTest(
       ),
     );
     assert.equal(result.status, "skipped", JSON.stringify(result));
-    assert.equal(result.reason, "checks_pending");
-    assert.ok(result.actions.includes(`delivery:${SELF_ID}:checks_pending`));
+    assert.equal(result.reason, "no_change");
     assert.ok(
-      !result.actions.some((action) => action.startsWith("continuation:")),
+      result.actions.some((action) => action.endsWith(":deferred_deadline")),
     );
+    assert.deepEqual(await state.readRepair(), before);
     assert.equal(state.log.length, 0);
+    const fresh = await runHostedAutonomy(
+      await passDeps(state, github, () => NOW + 10 * LIMIT_MS + 1),
+    );
+    assert.equal(fresh.reason, "checks_pending");
+    assert.ok(fresh.actions.includes(`delivery:${SELF_ID}:checks_pending`));
+    assert.deepEqual(await state.readRepair(), before);
   },
 );
 

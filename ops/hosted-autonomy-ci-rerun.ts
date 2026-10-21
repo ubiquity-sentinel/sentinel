@@ -38,7 +38,10 @@ import {
   preReviewFixEligible,
   preReviewGateParked,
 } from "./hosted-autonomy-ci-first.ts";
-import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
+import {
+  type HostedAutonomyPassContextV1,
+  hostedPassDeadlineReached,
+} from "./hosted-autonomy-scopes.ts";
 import type { HostedAutonomyHeadRunV1 } from "./hosted-autonomy-types.ts";
 
 /** Retired count throttle; keep the numeric policy surface compatible. */
@@ -206,12 +209,14 @@ export async function runHostedCiRerunPass(
   let budget = HOSTED_AUTONOMY_CI_RERUNS_PER_PASS;
   const tips = new Map<string, string | null>();
   for (const record of snapshot.work) {
+    if (hostedPassDeadlineReached(context)) return;
     if (budget <= 0) break;
     // A record an earlier write of this pass touched waits for the next pass.
     if (context.settled?.has(record.id)) continue;
     if (!rerunShape(snapshot, record, context.closedIssues)) continue;
     const head = record.target.head!;
     const scope = await scopeFor(record.repository);
+    if (hostedPassDeadlineReached(context)) return;
     const surface = scope.surface;
     if (
       surface === null || scope.baseBranch === null ||
@@ -227,6 +232,7 @@ export async function runHostedCiRerunPass(
       runs = null;
     }
     const ids = ciRerunRuns(runs, head, now);
+    if (hostedPassDeadlineReached(context)) return;
     // A head is re-run whole or not at all: a partial re-run would end the
     // once-per-head path with a failed run never repeated. A head GitHub would
     // refuse (a failed run past its re-run window) has no ids, so it is
@@ -239,7 +245,9 @@ export async function runHostedCiRerunPass(
       open = null;
     }
     if (open !== true) continue;
+    if (hostedPassDeadlineReached(context)) return;
     const pull = await readPull(scope, record.target.pr!);
+    if (hostedPassDeadlineReached(context)) return;
     if (
       pull === null || pull.state !== "open" || pull.merged !== false ||
       pull.headSha !== head || pull.baseRef !== scope.baseBranch ||
@@ -252,6 +260,7 @@ export async function runHostedCiRerunPass(
       tips.set(scope.key, tip);
     }
     if (tip === null || tip !== record.target.base) continue;
+    if (hostedPassDeadlineReached(context)) return;
     // A red base can fail the head on its own; only a green base makes the
     // head's own failure worth one more attempt.
     let baseGreen: boolean;
@@ -261,6 +270,9 @@ export async function runHostedCiRerunPass(
       baseGreen = false;
     }
     if (!baseGreen) continue;
+    if (hostedPassDeadlineReached(context)) return;
+    // One admitted head is re-run whole and read back even across the cutoff.
+    // Never leave a partial batch or detached effect behind.
     const accepted = new Map<number, boolean>();
     for (const id of ids) {
       let sent: boolean;

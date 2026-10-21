@@ -45,9 +45,10 @@ import {
   spentDeliveryAdmissible,
   spentReadWindow,
 } from "./hosted-autonomy-spent-delivery.ts";
-import type {
-  HostedAutonomyPassContextV1,
-  HostedAutonomyScopeV1,
+import {
+  type HostedAutonomyPassContextV1,
+  type HostedAutonomyScopeV1,
+  hostedPassDeadlineReached,
 } from "./hosted-autonomy-scopes.ts";
 import {
   deliveryEligible,
@@ -82,6 +83,11 @@ export async function runHostedDeliveryPass(
   const { deps, actions, revisions, scopeFor, readTip, readPull } = context;
   const { snapshot, observedHead } = context;
   if (deps.queueCustody?.ready === false) return null;
+  const defer = () => {
+    actions.push("continuation:delivery:deferred_deadline");
+    return skipped("no_change", observedHead, actions);
+  };
+  if (hostedPassDeadlineReached(context)) return defer();
   const protectedRecord = (record: HostedAutonomyRecordV1) =>
     queueRecordProtected(record, deps.queueCustody);
   const strictGateway = (record: HostedAutonomyRecordV1) =>
@@ -110,6 +116,7 @@ export async function runHostedDeliveryPass(
   // must be green BEFORE its review, so a published head waiting at `work`
   // (or parked by the pre-review gate) is approved too.
   for (const record of snapshot.work) {
+    if (hostedPassDeadlineReached(context)) return defer();
     if (protectedRecord(record)) continue;
     // Terminal source retirement and rejected unpublished candidates cannot
     // acquire approval authority. Ambiguous preservation intents stay eligible.
@@ -132,6 +139,7 @@ export async function runHostedDeliveryPass(
     const head = record.target.head;
     if (head === null || record.target.pr === null) continue;
     const scope = await scopeFor(record.repository);
+    if (hostedPassDeadlineReached(context)) return defer();
     if (scope.surface === null) {
       actions.push(`approve:${record.id}:surface_unreadable`);
       continue;
@@ -143,6 +151,7 @@ export async function runHostedDeliveryPass(
       parked = [];
     }
     for (const id of parked.slice(0, 3)) {
+      if (hostedPassDeadlineReached(context)) return defer();
       let approved = false;
       try {
         approved = await scope.surface.approveRun(id);
@@ -154,6 +163,7 @@ export async function runHostedDeliveryPass(
       );
     }
   }
+  if (hostedPassDeadlineReached(context)) return defer();
   // A clean-reviewed head parked on a failed CI run against its green,
   // current base gets that run re-run once (state-free; see the module).
   await runHostedCiRerunPass({
@@ -164,6 +174,7 @@ export async function runHostedDeliveryPass(
     ]),
   });
 
+  if (hostedPassDeadlineReached(context)) return defer();
   // ---- delivery pass ------------------------------------------------------
   // Each repository's base tip is read once in this pass from that repository's
   // OWN surface. A missing tip or a missing default branch is an explicit skip,
@@ -172,6 +183,7 @@ export async function runHostedDeliveryPass(
   const deliveryTip = async (
     scope: HostedAutonomyScopeV1,
   ): Promise<string | null> => {
+    if (hostedPassDeadlineReached(context)) return null;
     const cached = deliveryTips.get(scope.key);
     if (cached !== undefined) return cached;
     const tip = await readTip(scope);
@@ -195,6 +207,7 @@ export async function runHostedDeliveryPass(
     const selfTip = await deliveryTip(
       await scopeFor(HOSTED_AUTONOMY_SELF_SCOPE),
     );
+    if (hostedPassDeadlineReached(context)) return defer();
     if (selfTip === null) {
       return actions.length > 0
         ? skipped("retried", observedHead, actions)
@@ -222,13 +235,16 @@ export async function runHostedDeliveryPass(
   let mergeCalled = false;
 
   for (const record of snapshot.work) {
+    if (hostedPassDeadlineReached(context)) return defer();
     if (!eligible(record)) continue;
     const pullRequest = record.target.pr;
     const head = record.target.head;
     const base = record.target.base;
+    let mergedThisRecord = false;
     if (pullRequest === null || head === null || base === null) continue;
     if (strictGateway(record)) {
       const booking = await queueBookingDraft(context, record);
+      if (hostedPassDeadlineReached(context)) return defer();
       if (booking !== null) {
         return await writeDeliveryState(
           context,
@@ -273,6 +289,7 @@ export async function runHostedDeliveryPass(
       continue;
     }
     const scope = await scopeFor(record.repository);
+    if (hostedPassDeadlineReached(context)) return defer();
     // The trusted live source-issue statement is read over the record's OWN
     // authenticated surface immediately before the merge and the release
     // request; the shared predicate then binds the LATEST completed review's
@@ -287,6 +304,7 @@ export async function runHostedDeliveryPass(
       record,
       await readTrustedTask(scope.surface, record),
     );
+    if (hostedPassDeadlineReached(context)) return defer();
     if (verdict.kind !== "authorized") {
       actions.push(
         `delivery:${record.id}:${
@@ -321,6 +339,7 @@ export async function runHostedDeliveryPass(
       continue;
     }
     let pull = await readPull(scope, pullRequest);
+    if (hostedPassDeadlineReached(context)) return defer();
     if (pull === null || pull.headSha !== head) continue;
     if (
       typeof pull.author !== "string" ||
@@ -341,6 +360,7 @@ export async function runHostedDeliveryPass(
         pull,
         parked ? "adoption" : "delivery",
       );
+      if (hostedPassDeadlineReached(context)) return defer();
     }
     // True when this record is merged (or adopted) under the spent rule: a
     // parked record always, a review/delivery record only onto a moved base.
@@ -371,6 +391,7 @@ export async function runHostedDeliveryPass(
       // tip its refreshed head contains, that head's own green CI and the
       // patch proof (`carriedMergeGate`).
       const baseTip = await deliveryTip(scope);
+      if (hostedPassDeadlineReached(context)) return defer();
       if (baseTip === null) {
         actions.push(`delivery:${record.id}:base_unreadable`);
         continue;
@@ -415,6 +436,7 @@ export async function runHostedDeliveryPass(
         }
         spentMerge = gate.spent;
       }
+      if (hostedPassDeadlineReached(context)) return defer();
       // One more trusted source-issue read immediately before the external
       // merge: issue text that drifted while the other gates were read is a
       // different task and never authorizes this merge.
@@ -423,6 +445,7 @@ export async function runHostedDeliveryPass(
         record,
         await readTrustedTask(scope.surface, record),
       );
+      if (hostedPassDeadlineReached(context)) return defer();
       if (reread.kind !== "authorized" || reread.receipt.id !== receipt.id) {
         actions.push(`delivery:${record.id}:task_acceptance_refused`);
         continue;
@@ -439,6 +462,7 @@ export async function runHostedDeliveryPass(
           continue;
         }
       }
+      if (hostedPassDeadlineReached(context)) return defer();
       // The tip is re-read UNCACHED as the last read before the merge (round-2
       // recheck P3): the gates above read it once, before up to a dozen
       // reads, and GitHub's merge API guards only the head, so a tip that
@@ -446,6 +470,7 @@ export async function runHostedDeliveryPass(
       // exactly its refreshed head's base; any other merge the tip its gates
       // admitted. A moved tip refreshes this pass's view and merges nothing.
       const tipNow = await readTip(scope);
+      if (hostedPassDeadlineReached(context)) return defer();
       if (tipNow !== (carried ? base : baseTip)) {
         deliveryTips.set(scope.key, tipNow);
         tipGreen.delete(scope.key);
@@ -463,6 +488,9 @@ export async function runHostedDeliveryPass(
       if (proofLine !== null) actions.push(proofLine);
       let merged: { merged: boolean; sha: string | null } | null;
       mergeCalled = true;
+      // Once admitted, preserve the existing merge verification/bookkeeping
+      // settlement even if the cutoff is crossed inside the effect.
+      mergedThisRecord = true;
       try {
         merged = evidence === undefined
           ? await scope.surface.merge(pullRequest, head)
@@ -508,6 +536,7 @@ export async function runHostedDeliveryPass(
       actions.push(`delivery:${record.id}:carried_unsupported`);
       continue;
     }
+    if (!mergedThisRecord && hostedPassDeadlineReached(context)) return defer();
     if (pull.merged !== true || pull.mergeCommitSha === null) continue;
     if (!self) {
       foreignProof ??= await resolveHostedDelivery(
@@ -621,6 +650,7 @@ export async function runHostedDeliveryPass(
       receipt,
       now,
     );
+    if (!mergedThisRecord && hostedPassDeadlineReached(context)) return defer();
     if (request === null) {
       return skipped("snapshot_invalid", observedHead, actions);
     }
@@ -636,6 +666,7 @@ export async function runHostedDeliveryPass(
         continue;
       }
     }
+    if (!mergedThisRecord && hostedPassDeadlineReached(context)) return defer();
     // A spent Gateway record moves to `delivery` with the runtime's own
     // transition (blocker and wait cleared; counters, evidence, intent and
     // target unchanged); a record merged from review/delivery at its exact
@@ -674,6 +705,7 @@ export async function runHostedDeliveryPass(
       actions.push(`delivery:${record.id}:already_recorded`);
       continue;
     }
+    if (!mergedThisRecord && hostedPassDeadlineReached(context)) return defer();
     return await writeDeliveryState(
       context,
       {
