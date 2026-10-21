@@ -199,15 +199,18 @@ optimization changes neither the public state port nor the recovery walk's
 120-second and 256-ancestor limits. Local throughput evidence does not establish
 live maintenance or autonomous delivery acceptance.
 
-Ordinary latest repair reads may reuse a separate private bounded object store
-and validated decoding, but each read must remain a fresh observation. Acquire
-the live remote head, reread and validate complete parent/tree/blob bytes, and
-confirm the remote head again before returning an independently cloned result.
-Movement, deletion, corruption or any failed acquisition invalidates reuse.
-Never memoize cooldown, custody or delivery authorization decisions, omit a
-consumer state observation, share mutable Git directories with writers or
-history views, or relax final CAS. The exact native consumer profile must
-demonstrate the data-read cost before this optimization is credited.
+The ordinary latest-repair cache experiment (`1faffea` and `786685f4`) remains
+preserved in Git history but is not accepted for shipping. Candidate `d60aa9c8`
+introduced one candidate-publication state-read failure and four
+matrix-uncertainty custody failures in native CI; the same unchanged cases
+passed on `2081f978`, and the exact local publication reproduction passed
+without exposing an underlying error. Return ordinary state reading to the
+byte-exact known-green `2081f978` implementation instead of adding an unproved
+patch or relaxing guards. This does not revert the accepted repair-history cache
+or anchored history view. Retain the necessary task-acceptance prefilters and
+the documented bounded-upkeep deadline fix. Reintroducing ordinary reuse would
+require separate demonstrated lifecycle/custody compatibility and native
+acceptance; the failed profiles are not delivery proof.
 
 Bulk original-candidate recovery may use a separately named optional anchored
 repair-history view. Its anchor is the authoritative read result's head, never

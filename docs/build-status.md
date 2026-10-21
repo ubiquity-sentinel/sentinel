@@ -9,6 +9,37 @@ ownership, authority or acceptance.
 
 ## Active task register
 
+Snapshot: 2026-10-21 04:47 UTC. Candidate
+`d60aa9c875968be4bf2737548b97f4adbec15950` passed six connected local cases and
+independent evidence review, but native CI `39544252863:1` failed modules and
+host-2; it was not installed. The healthy generation-85 runtime at `2081f978`,
+restored repair `ab2d93`, and all reservation evidence remain preserved. New
+dispatcher admissions remain paused; restoration is required after the corrected
+candidate is ready.
+
+- The unchanged missing-candidate lifecycle case returned `state_error` instead
+  of `idle`; four unchanged matrix-uncertainty cases rejected custody. Their
+  exact counterparts passed on green `2081f978`. The single local publication
+  reproduction passed, disproving the proposed missing-parent/readiness
+  explanation; the constructor initializes both directories synchronously. The
+  underlying native state error remains unidentified, so no speculative
+  initialization or fixture patch is authorized.
+- The ordinary latest-read cache experiment is being backed out of the shipping
+  candidate while retaining its commits and branches. Module
+  `recovery-latest-repair-backout-20261021`, owner `bootstrap_repro`, owns
+  exactly the three state files and ordinary-cache-specific tests/hunks. The
+  three source files must match `2081f978` exactly; accepted historical
+  caching/anchored views, task-acceptance filters and deadline behavior are
+  retained. Existing failed cases and positive deadline/booking consumers will
+  validate the corrected candidate.
+- Quality, integration, host-1 and host-3 passed on `d60aa9c8`; required
+  aggregate `test-local` failed. All original logs and green comparisons are
+  retained. Native CI, installation, ordinary current-head reviews, scheduled
+  operation and autonomous merges on both targets remain pending; neither the
+  backout nor local checks alone establish those outcomes.
+
+### Prior checkpoint at 04:19 UTC
+
 Snapshot: 2026-10-21 04:19 UTC. Generation 85 and the five original-candidate
 restorations remain verified on `2081f978`; current ordinary delivery is still
 blocked. New dispatcher admissions remain paused after the ordinary timeout,
