@@ -31,7 +31,16 @@ import {
   QUEUE_PROOF_ACTIVATED,
   QUEUE_PROOF_POLICY,
 } from "../src/github/queue-runtime-policy.ts";
-import { closureIntentKey } from "../src/repair/keys.ts";
+import {
+  baseRefreshIntentKey,
+  candidateBranch,
+  candidatePreservationRef,
+  closureIntentKey,
+  workItemIdForIssue,
+} from "../src/repair/keys.ts";
+import { resolveCandidatePreservationBinding } from "../src/host/actions-candidates-preserve.ts";
+import type { PublishedRefreshValidationInput } from "../src/host/published-refresh-validator.ts";
+import { APP_LOGIN } from "../src/host/actions-target-cycles.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
 import {
   gatewayClosureIntentBindsRequest,
@@ -54,6 +63,7 @@ import {
 import { queueIntentBinding } from "./hosted-autonomy-queue-intent.ts";
 import {
   hasQueueIntentNamespace,
+  isQueueHeld,
   type QueueMode,
 } from "./hosted-autonomy-queue-policy.ts";
 import {
@@ -68,6 +78,10 @@ export interface HostedQueueAuthorityOptions {
   clock: Clock;
   githubFor: HostedAutonomyDepsV1["githubFor"];
   clientFor(repository: RepositoryIdentityV1): GitHubQueueDeliveryClient | null;
+  /** Read-only exact Git/publication and unfiltered native-history proof; missing refuses recovery. */
+  validatePublishedRefresh?(
+    request: PublishedRefreshValidationInput,
+  ): Promise<boolean>;
   /** Actual same-App host port; absent authority refuses retained native PR effects. */
   existingPrFor?(
     repository: RepositoryIdentityV1,
@@ -754,8 +768,165 @@ export function createHostedQueueAuthority(
       () => portError("unavailable", "existing PR enqueue custody unavailable"),
       request.deadline,
     );
+  const readPublishedRefreshRecovery: NonNullable<
+    HostedQueueAuthorizationPort["readPublishedRefreshRecovery"]
+  > = (request) =>
+    bounded(
+      async (deadline) => {
+        const { record, snapshot, observedHead } = request;
+        const intent = record.intent, issue = record.related.issueNumber;
+        const client = options.clientFor(record.repository);
+        if (
+          client === null || options.validatePublishedRefresh === undefined ||
+          state.openRepairHistory === undefined || config.mode !== "off" ||
+          !isQueueHeld(record) || record.nextStep !== "work" ||
+          record.blocker !== null ||
+          hasQueueIntentNamespace(record) ||
+          hasQueueDeliveryProvenance(record) || hasTakeoverCustody(record) ||
+          record.source.kind !== "issue" || issue === null ||
+          record.source.id !== String(issue) ||
+          record.id !== workItemIdForIssue(record.repository, issue) ||
+          record.target.branch !== candidateBranch(record.id) ||
+          record.target.pr === null ||
+          record.target.head === null || intent?.kind !== "base_refresh" ||
+          intent.failure !== undefined ||
+          intent.requestId !== null || !isGitSha(intent.resultId) ||
+          !isGitSha(intent.observedBase) ||
+          intent.expectedHead !== record.target.head ||
+          intent.branch !== record.target.branch ||
+          intent.pr !== record.target.pr ||
+          intent.key !==
+            baseRefreshIntentKey(
+              intent.pr,
+              intent.expectedHead,
+              intent.observedBase,
+            ) ||
+          request.queue.queueId !== null ||
+          request.queue.entries.length !== 0 ||
+          request.queue.baseTip !== intent.observedBase ||
+          snapshot.reservations.some((entry) =>
+            entry.taskId === record.id &&
+            (entry.outcome === "reserved" || entry.outcome === "ambiguous" ||
+              entry.settledAt === null)
+          ) ||
+          !await current(snapshot, observedHead, record)
+        ) return unavailable();
+        const candidate = {
+          operationKey: intent.key,
+          base: intent.observedBase,
+          head: intent.resultId,
+          ref: await candidatePreservationRef(
+            record.repository,
+            record.id,
+            intent.key,
+          ),
+        };
+        if (
+          !(await resolveCandidatePreservationBinding(
+            record,
+            snapshot.reservations,
+            candidate,
+            record.target.head,
+          )).ok
+        ) return unavailable();
+        // Authenticate the adjacent hold-only CAS, not merely a matching ref or old timestamp.
+        const opened = await state.openRepairHistory({
+          expectedHead: observedHead,
+        });
+        if (!opened.ok) return unavailable();
+        let adjacent = false;
+        try {
+          let held = snapshot;
+          for (let count = 0; count < 1024 && clock.now() < deadline; count++) {
+            const parent = held.stateHead;
+            if (parent === null) break;
+            const read = await opened.value.readAt(parent);
+            if (
+              !read.ok || read.value.status !== "found" ||
+              read.value.head !== parent
+            ) break;
+            const previous = read.value.snapshot;
+            if (previous.sequence + 1 !== held.sequence) break;
+            const before = previous.work.find((row) => row.id === record.id);
+            if (before === undefined) break;
+            if (equal(before, record)) {
+              held = previous;
+              continue;
+            }
+            adjacent = before.wait === null &&
+              record.updatedAt === record.wait!.since &&
+              equal({
+                ...before,
+                wait: record.wait,
+                updatedAt: record.updatedAt,
+              }, record) &&
+              equal(held, {
+                ...previous,
+                stateHead: parent,
+                sequence: previous.sequence + 1,
+                updatedAt: held.updatedAt,
+                work: previous.work.map((row) =>
+                  row.id === record.id ? record : row
+                ),
+              });
+            break;
+          }
+        } finally {
+          await opened.value.close();
+        }
+        if (!adjacent || !await current(snapshot, observedHead, record)) {
+          return unavailable();
+        }
+        const observe = async () => {
+          const [rules, queue, pull] = await Promise.all([
+            client.readBranchRules("development"),
+            client.readQueue("development"),
+            client.readQueuePull(record.target.pr!, deadline),
+          ]);
+          if (
+            !rules.ok ||
+            rules.value.some((rule) => rule.type === "merge_queue") ||
+            queue.status !== "complete" ||
+            !queueEqual(queue.value, request.queue) ||
+            pull.status !== "complete" || pull.value.author !== APP_LOGIN ||
+            pull.value.base !== candidate.base ||
+            pull.value.membership.entry !== null ||
+            pull.value.membership.mergedRevision !== null ||
+            pull.value.membership.pull.head !== candidate.head ||
+            pull.value.membership.pull.headRef !== record.target.branch ||
+            pull.value.membership.pull.baseRef !== "development" ||
+            !equal(pull.value.membership.pull.repository, record.repository)
+          ) return null;
+          return { rules: rules.value, pull: pull.value };
+        };
+        const first = await observe();
+        if (
+          first === null ||
+          !await options.validatePublishedRefresh({
+            record,
+            candidate,
+            deadline,
+          })
+        ) return unavailable();
+        const last = await observe();
+        return last !== null && equal(first, last) && clock.now() < deadline &&
+            await current(snapshot, observedHead, record)
+          ? {
+            status: "complete" as const,
+            value: { candidate, at: clock.now() },
+          }
+          : unavailable();
+      },
+      unavailable,
+      request.deadline,
+    );
   return {
-    authorization: { readAuthorization, readRemoval, authorizeEnqueue },
+    authorization: {
+      readAuthorization,
+      readRemoval,
+      authorizeEnqueue,
+      readPublishedRefreshRecovery,
+    },
     resolveDelivery,
     verifyProtectedWrite,
   };
