@@ -26,7 +26,11 @@ import {
   StateGitTransport,
   StatePushError,
 } from "./state-git.ts";
-import type { GitStateStoreOptions, OpContext } from "./state-git.ts";
+import type {
+  GitStateStoreOptions,
+  LoadedState,
+  OpContext,
+} from "./state-git.ts";
 import { MANIFEST_KIND } from "./state-records.ts";
 import type { StateKind, StateManifestV1 } from "./state-records.ts";
 import { recordFiles } from "./state-codec.ts";
@@ -68,32 +72,94 @@ import { RepairHistoryCache } from "./state-repair-history-cache.ts";
 
 export class GitStateStore extends StateGitTransport implements StateStore {
   private readonly repairHistory = new RepairHistoryCache(this.scratchDir);
+  private readonly latestRepair = new RepairHistoryCache(this.scratchDir);
   // -------------------------------------------------------------------------
   // Reads: both roles read both fixed refs.
   // -------------------------------------------------------------------------
 
-  readRepair(): Promise<
+  async readRepair(): Promise<
     PortResultV1<StateReadResultV1<RepairStateSnapshotV1>>
   > {
-    return this.withOpDir<StateReadResultV1<RepairStateSnapshotV1>>(
-      async (op) => {
-        const loaded = await this.loadRemote(op, REPAIR_REF, "repair");
-        if (!loaded.ok) return loaded;
-        if (loaded.value.status === "absent") {
-          return portOk({
-            status: "absent",
-            currentHead: null,
-            ref: REPAIR_REF,
-          });
-        }
-        return portOk({
-          status: "found",
-          snapshot: loaded.value.snapshot as RepairStateSnapshotV1,
-          head: loaded.value.head,
-          ref: REPAIR_REF,
-        });
-      },
+    // Retention inspects its owned directory. A constrained caller that only
+    // permits Git subprocess reads keeps the original nonretained path.
+    if (
+      (await Deno.permissions.query({ name: "read", path: this.scratchDir }))
+        .state !== "granted"
+    ) {
+      return this.withOpDir<StateReadResultV1<RepairStateSnapshotV1>>(
+        async (op) => {
+          const loaded = await this.loadRemote(op, REPAIR_REF, "repair");
+          if (!loaded.ok) return loaded;
+          return loaded.value.status === "absent"
+            ? portOk({ status: "absent", currentHead: null, ref: REPAIR_REF })
+            : portOk({
+              status: "found",
+              head: loaded.value.head,
+              snapshot: loaded.value.snapshot as RepairStateSnapshotV1,
+              ref: REPAIR_REF,
+            });
+        },
+      );
+    }
+    // Never cache a current-state observation or an authorization decision.
+    const observed = await this.withOpDir((op) =>
+      this.observeRemote(op, REPAIR_REF, true)
     );
+    if (!observed.ok || observed.value.status === "absent") {
+      await this.latestRepair.clear();
+      if (!observed.ok) return observed;
+      const after = await this.withOpDir((op) =>
+        this.observeRemote(op, REPAIR_REF, true)
+      );
+      if (!after.ok) return after;
+      return after.value.status === "absent"
+        ? portOk({ status: "absent", currentHead: null, ref: REPAIR_REF })
+        : portError("unavailable", "repair state changed during read");
+    }
+    const head = observed.value.head;
+    let initialized: LoadedState | null = null;
+    return this.latestRepair.use(head, async (op) => {
+      const loaded = await this.loadRemote(
+        op,
+        REPAIR_REF,
+        "repair",
+        "latest",
+        head,
+      );
+      if (!loaded.ok) return loaded;
+      if (loaded.value.status !== "found") {
+        return portError("unavailable", "repair state changed during read");
+      }
+      initialized = loaded.value;
+      return portOk(undefined);
+    }, async (op, cold) => {
+      let snapshot: RepairStateSnapshotV1;
+      if (cold && initialized?.status === "found") {
+        snapshot = initialized.snapshot as RepairStateSnapshotV1;
+      } else {
+        const entry = await this.observeRemote(op, REPAIR_REF);
+        if (!entry.ok) return entry;
+        if (entry.value.status !== "found" || entry.value.head !== head) {
+          return portError("unavailable", "repair state changed during read");
+        }
+        // Fresh parent/tree/blob bytes still validate every retained object;
+        // StateTreeMemo only reuses parsing after complete byte equality.
+        const read = await this.readCommitTree(op, head, "repair");
+        if (!read.ok) return read;
+        snapshot = read.value as RepairStateSnapshotV1;
+      }
+      const after = await this.observeRemote(op, REPAIR_REF);
+      if (!after.ok) return after;
+      if (after.value.status !== "found" || after.value.head !== head) {
+        return portError("unavailable", "repair state changed during read");
+      }
+      return portOk({
+        status: "found",
+        snapshot: structuredClone(snapshot),
+        head,
+        ref: REPAIR_REF,
+      });
+    });
   }
 
   readRelease(): Promise<

@@ -112,6 +112,13 @@ export class RepairHistoryCache {
 
   constructor(private readonly scratchDir: string) {}
 
+  /** Invalidate only this private entry after a failed fresh acquisition. */
+  clear(): Promise<void> {
+    return this.serial(async () => {
+      if (this.entry) await this.discard(this.entry);
+    });
+  }
+
   private async serial<T>(run: () => Promise<T>): Promise<T> {
     const before = this.queue;
     let release!: () => void;
