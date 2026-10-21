@@ -1,5 +1,9 @@
 /** Minimal public live-state records, disposable Git stores and fake read-only GitHub. */
 import assert from "node:assert/strict";
+import {
+  CONTROLLER,
+  PUBLIC_CONTROLLER,
+} from "./controller-identity-fixture.ts";
 import seed from "../fixtures/hosted-runtime-live-seed.json" with {
   type: "json",
 };
@@ -31,10 +35,16 @@ import {
 } from "./actions-supervisor-fixture.ts";
 import { FakeClock } from "./hosted-runtime-fixture.ts";
 
+// The public case retains its captured prior. Private installation uses a new
+// synthetic prior, never a relabelled public runtime, release or reservation.
 export const LEGACY_RUNTIME =
-  "1838df313105bab219d71602695a7f758a65125e" as GitSha;
+  (PUBLIC_CONTROLLER
+    ? "1838df313105bab219d71602695a7f758a65125e"
+    : "e".repeat(40)) as GitSha;
 export const SUCCESSOR = "f".repeat(40) as GitSha;
-export const INSTALL_NOW = seed.runtime.updatedAt + 100_000;
+export const INSTALL_NOW = PUBLIC_CONTROLLER
+  ? seed.runtime.updatedAt + 100_000
+  : 1_790_000_000_000;
 
 export async function liveInstallRig() {
   const root = await Deno.makeTempDir({
@@ -54,7 +64,10 @@ export async function liveInstallRig() {
   });
   const clock = new FakeClock(INSTALL_NOW);
   const historical = parseHostedExecutionIntentV1({
-    ...seed.runtime.lastHealthyProof.execution,
+    ...(PUBLIC_CONTROLLER ? seed.runtime.lastHealthyProof.execution : {
+      launcherSha: LEGACY_RUNTIME,
+      runAttempt: 1,
+    }),
     id: "4000:1:repair",
     runId: 4000,
     purpose: "bootstrap",
@@ -71,10 +84,16 @@ export async function liveInstallRig() {
     sequence: 1,
     updatedAt: INSTALL_NOW,
     releases: [],
-    hostedReleases: [seed.release],
+    hostedReleases: PUBLIC_CONTROLLER ? [seed.release] : [],
     githubCooldowns: [],
     hostedRuntimes: [{
-      ...seed.runtime,
+      ...(PUBLIC_CONTROLLER ? seed.runtime : {
+        version: "v1",
+        kind: "hosted_runtime",
+        id: CONTROLLER.runtimeId,
+        createdAt: INSTALL_NOW - 20_000,
+        nextOrdinaryAt: INSTALL_NOW,
+      }),
       activeRevision: LEGACY_RUNTIME,
       generation: 82,
       execution: null,
@@ -128,7 +147,7 @@ export async function liveInstallRig() {
     (await recordFiles(
       parseRepairStateSnapshotV1({
         ...repairSnapshot,
-        reservations: [seed.reservation],
+        reservations: PUBLIC_CONTROLLER ? [seed.reservation] : [],
       }),
       "repair",
     )).map((r) => [r.path, r.text]),
@@ -152,7 +171,7 @@ export async function liveInstallRig() {
 
   const calls: string[] = [];
   const client = new HostedSupervisorGitHubClient({
-    repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+    repository: CONTROLLER.repository,
     apiBaseUrl: "https://api.github.com",
     clock,
     auth: {
@@ -169,7 +188,7 @@ export async function liveInstallRig() {
       let body: unknown;
       if (
         url.pathname ===
-          `/repos/ubiquity/sentinel/commits/${SUCCESSOR}/check-runs`
+          `${CONTROLLER.apiPath}/commits/${SUCCESSOR}/check-runs`
       ) {
         body = {
           total_count: 1,
@@ -183,12 +202,12 @@ export async function liveInstallRig() {
           }],
         };
       } else if (
-        url.pathname === `/repos/ubiquity/sentinel/commits/${SUCCESSOR}`
+        url.pathname === `${CONTROLLER.apiPath}/commits/${SUCCESSOR}`
       ) {
         body = { sha: SUCCESSOR };
       } else if (
         url.pathname ===
-          `/repos/ubiquity/sentinel/compare/${LEGACY_RUNTIME}...${SUCCESSOR}`
+          `${CONTROLLER.apiPath}/compare/${LEGACY_RUNTIME}...${SUCCESSOR}`
       ) {
         body = {
           status: "ahead",

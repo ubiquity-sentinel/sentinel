@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { CONTROLLER } from "./controller-identity-fixture.ts";
 import { portOk } from "../../src/contracts/ports.ts";
 import { HostedSupervisorGitHubClient } from "../../src/host/actions-supervisor-install-api.ts";
 import { requireRun, runProof } from "./actions-supervisor-fixture.ts";
@@ -26,7 +27,7 @@ const pendingCheck = { ...greenCheck(), status: "queued", conclusion: null };
 function useLatestCi(rig: Rig, response: (read: number) => unknown) {
   let reads = 0;
   const client = new HostedSupervisorGitHubClient({
-    repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+    repository: CONTROLLER.repository,
     apiBaseUrl: "https://api.github.com",
     clock: rig.clock,
     auth: {
@@ -41,7 +42,7 @@ function useLatestCi(rig: Rig, response: (read: number) => unknown) {
       assert.equal(request.method, "GET");
       assert.equal(
         url.pathname,
-        `/repos/ubiquity/sentinel/commits/${SUCCESSOR}/check-runs`,
+        `${CONTROLLER.apiPath}/commits/${SUCCESSOR}/check-runs`,
       );
       assert.equal(url.searchParams.get("filter"), "latest");
       assert.equal(url.searchParams.get("page"), "1");

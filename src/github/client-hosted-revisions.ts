@@ -1,6 +1,7 @@
 // client hosted revisions.
 
 import { createDeadline, type DeadlineV1 } from "./http.ts";
+import { isHostedControllerRepository } from "../contracts/hosted-controller-deployment.ts";
 import type { PortResultV1 } from "../contracts/ports.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import type { GitSha } from "../contracts/brands.ts";
@@ -54,9 +55,7 @@ export abstract class GitHubClientHostedRevisions extends GitHubClientCi {
   // -------------------------------------------------------------------------
 
   protected isHostedSelfScope(): boolean {
-    const repository = this.repository;
-    return repository.installationId === 0 && repository.owner === "ubiquity" &&
-      repository.name === "sentinel";
+    return isHostedControllerRepository(this.repository);
   }
 
   protected hostedExecutionTimeout(): PortResultV1<never> {

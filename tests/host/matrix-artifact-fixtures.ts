@@ -1,5 +1,6 @@
 /** Authenticated Actions HTTP/archive/state fixtures; no test registrations. */
 import assert from "node:assert/strict";
+import { CONTROLLER } from "./controller-identity-fixture.ts";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { canonicalStringify } from "../../src/contracts/canonical.ts";
@@ -272,7 +273,7 @@ export async function fixture(paginated = false, partialMismatch = false) {
     hostedRuntimes: [{
       version: "v1",
       kind: "hosted_runtime",
-      id: "ubiquity/sentinel:0:production",
+      id: CONTROLLER.runtimeId,
       activeRevision: RUNTIME,
       generation: 3,
       lastHealthyProof: null,
@@ -412,8 +413,8 @@ export async function fixture(paginated = false, partialMismatch = false) {
     event: "workflow_dispatch",
     head_branch: "sentinel-supervisor",
     head_sha: LAUNCHER,
-    repository: { id: 123, full_name: "ubiquity/sentinel" },
-    head_repository: { id: 123, full_name: "ubiquity/sentinel" },
+    repository: { id: 123, full_name: CONTROLLER.fullName },
+    head_repository: { id: 123, full_name: CONTROLLER.fullName },
     status: "in_progress",
     run_started_at: ISO,
     updated_at: ISO,
@@ -422,7 +423,7 @@ export async function fixture(paginated = false, partialMismatch = false) {
   const pagination = {
     numeric: false,
     next: null as string | null,
-    repository: { id: 123, full_name: "ubiquity/sentinel" },
+    repository: { id: 123, full_name: CONTROLLER.fullName },
     truncate: false,
     duplicate: false,
   };
@@ -447,7 +448,7 @@ export async function fixture(paginated = false, partialMismatch = false) {
     }
     assert.equal(init?.headers?.authorization, "Bearer fake-local-token");
     assert.equal(init?.redirect, "manual");
-    if (parsed.pathname === "/repos/ubiquity/sentinel") {
+    if (parsed.pathname === CONTROLLER.apiPath) {
       return reply(pagination.repository);
     }
     if (parsed.pathname.endsWith("/attempts/2")) return reply(attempt);
@@ -460,7 +461,7 @@ export async function fixture(paginated = false, partialMismatch = false) {
       const page = Number(parsed.searchParams.get("page"));
       const nextPath = pagination.numeric
         ? parsed.pathname.replace(
-          "/repos/ubiquity/sentinel",
+          CONTROLLER.apiPath,
           "/repositories/123",
         )
         : parsed.pathname;

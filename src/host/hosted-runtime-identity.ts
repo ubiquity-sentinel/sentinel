@@ -1,5 +1,6 @@
 /** Hosted hosted-runtime-identity responsibility. */
 import { isGitSha } from "../contracts/brands.ts";
+import { HOSTED_CONTROLLER_REMOTE } from "../contracts/hosted-controller-deployment.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import type { HostedRuntimeTerminalV1 } from "../contracts/hosted-execution.ts";
 import {
@@ -125,7 +126,7 @@ export const ACCEPTED_CHILD_LOGINS: readonly string[] = [
   APP_LOGIN,
 ];
 
-export const REMOTE_URL = "https://github.com/ubiquity/sentinel.git";
+export const REMOTE_URL = HOSTED_CONTROLLER_REMOTE;
 
 export const GIT_EXECUTABLE = "/usr/bin/git";
 

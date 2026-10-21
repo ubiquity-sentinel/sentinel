@@ -1,11 +1,12 @@
 /** Read-only installation evidence through the existing authenticated GitHub client. */
 import { type GitSha, isGitSha } from "../contracts/brands.ts";
+import { HOSTED_CONTROLLER_API_PATH } from "../contracts/hosted-controller-deployment.ts";
 import { portError, portOk, type PortResultV1 } from "../contracts/ports.ts";
 import { GitHubApiClient } from "../github/client.ts";
 import { parseHostedCompare } from "../github/client-hosted-revision-wire.ts";
 import { createDeadline } from "../github/http.ts";
 
-const ROOT = "/repos/ubiquity/sentinel";
+const ROOT = HOSTED_CONTROLLER_API_PATH;
 const record = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 export class HostedSupervisorGitHubClient extends GitHubApiClient {

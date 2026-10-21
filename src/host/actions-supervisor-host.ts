@@ -1,5 +1,6 @@
 /** Hosted actions-supervisor-host responsibility. */
 import { isGitSha } from "../contracts/brands.ts";
+import { HOSTED_CONTROLLER_SELF } from "../contracts/hosted-controller-deployment.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
@@ -60,11 +61,7 @@ export function isToken(value: unknown): value is string {
 // Production composition: prepare/finalize over the existing core.
 // ---------------------------------------------------------------------------
 
-const SUPERVISOR_REPOSITORY: RepositoryIdentityV1 = {
-  owner: "ubiquity",
-  name: "sentinel",
-  installationId: 0,
-};
+const SUPERVISOR_REPOSITORY: RepositoryIdentityV1 = HOSTED_CONTROLLER_SELF;
 
 const NATIVE_TOKEN_ENV = "GITHUB_TOKEN";
 

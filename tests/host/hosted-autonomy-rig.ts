@@ -1,4 +1,5 @@
 import { MemoryState } from "../repair/helpers.ts";
+import { CONTROLLER } from "./controller-identity-fixture.ts";
 import { HOSTED_RUNTIME_ID } from "../../src/contracts/hosted-supervisor.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type {
@@ -69,13 +70,12 @@ export async function captureHostedAutonomyMain(
   try {
     exit = await runMain({
       env: {
-        GITHUB_REPOSITORY: "ubiquity/sentinel",
+        GITHUB_REPOSITORY: CONTROLLER.fullName,
         GITHUB_REF: "refs/heads/sentinel-supervisor",
         GITHUB_JOB: "maintenance",
         GITHUB_RUN_ID: "900",
         GITHUB_RUN_ATTEMPT: "1",
-        GITHUB_WORKFLOW_REF:
-          "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor",
+        GITHUB_WORKFLOW_REF: CONTROLLER.workflowRef,
         GITHUB_SHA: head,
         GITHUB_WORKFLOW_SHA: head,
         GITHUB_TOKEN: "offline-native-token",
@@ -179,9 +179,9 @@ export function healthyProof(
       releaseId,
       createdAt: T0 + 3000,
     },
-    workflowId: 357012162,
+    workflowId: CONTROLLER.workflowId,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "ubiquity/sentinel",
+    repository: CONTROLLER.fullName,
     ref: "refs/heads/sentinel-supervisor",
     jobId: 1,
     startedAt: T0 + 3100,

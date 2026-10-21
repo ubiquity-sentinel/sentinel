@@ -2,6 +2,7 @@ import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.
 import { CLOSED_C_WAVE } from "../../src/host/modern-matrix-recovery.ts";
 import { reservation, T0, workRecord } from "../state/helpers.ts";
 import assert from "node:assert/strict";
+import { CONTROLLER } from "./controller-identity-fixture.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type { HostedSupervisorRunIdentityV1 } from "../../src/host/actions-supervisor-types.ts";
 
@@ -9,13 +10,13 @@ export function nativeWriterFixture(
   run: HostedSupervisorRunIdentityV1,
   phase = "prepare",
 ) {
-  const root = "/repos/ubiquity/sentinel";
+  const root = CONTROLLER.apiPath;
   const nativeRun = {
     id: run.runId,
     run_attempt: run.runAttempt,
     head_sha: run.launcherSha,
     head_branch: "sentinel-supervisor",
-    workflow_id: 357012162,
+    workflow_id: CONTROLLER.workflowId,
     path: ".github/workflows/supervisor.yml",
     status: "in_progress",
   };
@@ -122,7 +123,7 @@ export async function installNativeWriterFixture() {
     if (name === "GITHUB_RUN_ID") return "700";
     if (name === "GITHUB_RUN_ATTEMPT") return "1";
     if (name === "GITHUB_WORKFLOW_REF") {
-      return "ubiquity/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor";
+      return CONTROLLER.workflowRef;
     }
     return get(name);
   };

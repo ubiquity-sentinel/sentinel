@@ -5,8 +5,9 @@ import {
   positive,
   record,
 } from "./hosted-runtime-follow-api.ts";
+import { HOSTED_CONTROLLER_DEPLOYMENT } from "../contracts/hosted-controller-deployment.ts";
 
-export const FOLLOW_CI_WORKFLOW_ID = 353613034;
+export const FOLLOW_CI_WORKFLOW_ID = HOSTED_CONTROLLER_DEPLOYMENT.ciWorkflowId;
 /** W7's aggregate job must retain this stable required check name. */
 export const FOLLOW_REQUIRED_CHECK = "test-local";
 
@@ -29,8 +30,9 @@ function eligibleRun(
   positive(row.id);
   positive(row.run_attempt);
   return row.workflow_id === FOLLOW_CI_WORKFLOW_ID &&
-    row.path === ".github/workflows/ci.yml" &&
-    row.event === "push" && row.head_branch === "development" &&
+    row.path === HOSTED_CONTROLLER_DEPLOYMENT.ciWorkflowPath &&
+    row.event === "push" &&
+    row.head_branch === HOSTED_CONTROLLER_DEPLOYMENT.sourceBranch &&
     row.head_sha === revision && row.status === "completed" &&
     row.conclusion === "success" &&
     sameRepository(row.repository, repositoryId) &&
@@ -86,7 +88,7 @@ export async function readFollowCi(
     {
       head_sha: revision,
       event: "push",
-      branch: "development",
+      branch: HOSTED_CONTROLLER_DEPLOYMENT.sourceBranch,
     },
   );
   // The chain selects revisions. For multiple proofs of the SAME revision,

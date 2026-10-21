@@ -12,6 +12,10 @@ import {
 } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import {
+  HOSTED_CONTROLLER_API_PATH,
+  isHostedControllerRepository,
+} from "../contracts/hosted-controller-deployment.ts";
+import {
   parseHostedAttempt,
   parseHostedJobs,
   parseHostedJobsPage,
@@ -238,7 +242,7 @@ export async function readHostedAppNativeJob(
   const timer = createDeadline(Math.min(30_000, remaining));
   try {
     const attemptPath =
-      `/repos/ubiquity/sentinel/actions/runs/${input.identity.runId}/attempts/${input.identity.runAttempt}`;
+      `${HOSTED_CONTROLLER_API_PATH}/actions/runs/${input.identity.runId}/attempts/${input.identity.runAttempt}`;
     const before = await read(input, attemptPath, 0, timer);
     if (
       before === null ||
@@ -333,7 +337,7 @@ export async function readHostedAppRepositoryScope(
     grant.expiresAt <= input.clock.now() ||
     repository.owner !== "ubiquity" ||
     (repository.installationId !== grant.installationId &&
-      !(repository.installationId === 0 && repository.name === "sentinel"))
+      !isHostedControllerRepository(repository))
   ) return refused();
   const timer = createDeadline(Math.min(30_000, remaining));
   try {
