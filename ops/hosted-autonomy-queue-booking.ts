@@ -48,6 +48,18 @@ export async function queueBookingDraft(
     context.actions.push(`delivery:${record.id}:merge_proof_unavailable`);
     return null;
   }
+  // These receipt-only failures cannot authorize any live task statement.
+  // Fulfilled carried reviews still require all later live proof checks.
+  const issueNumber = record.related.issueNumber;
+  const acceptance = latest.taskAcceptance;
+  if (
+    issueNumber !== null &&
+    (acceptance == null || acceptance.issueNumber !== issueNumber ||
+      acceptance.verdict !== "fulfilled")
+  ) {
+    context.actions.push(`delivery:${record.id}:merge_proof_unavailable`);
+    return null;
+  }
   const scope = await context.scopeFor(record.repository);
   const pull = record.target.pr === null
     ? null

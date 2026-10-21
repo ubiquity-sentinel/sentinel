@@ -24,12 +24,30 @@ async function fixture(options: {
   fixtureDir?: string;
   approval?: boolean;
   review?: "missing" | "dirty";
+  acceptance?:
+    | "missing"
+    | "wrong-issue"
+    | "not_fulfilled"
+    | "uncertain"
+    | "already_satisfied_at_base";
   duplicate?: "exact" | "wrong-base";
   change?: (record: WorkRecordV1) => WorkRecordV1;
 } = {}) {
   const authority = await authorityRig(options.approval !== true);
   const record = options.change?.(authority.record) ?? authority.record;
   const clean = authority.facts.receipt;
+  if (options.acceptance !== undefined) {
+    assert.ok(clean.taskAcceptance);
+    clean.taskAcceptance = options.acceptance === "missing" ? null : {
+      ...clean.taskAcceptance,
+      issueNumber: options.acceptance === "wrong-issue"
+        ? record.related.issueNumber! + 1
+        : clean.taskAcceptance.issueNumber,
+      verdict: options.acceptance === "wrong-issue"
+        ? "fulfilled"
+        : options.acceptance,
+    };
+  }
   const dirty = {
     ...clean,
     id: `review-receipt:${"f".repeat(64)}`,
@@ -230,6 +248,37 @@ Deno.test("delivery prefilter: exact booking no-ops avoid PR and authority reads
         assert.equal(f.calls.pull, 0);
         assert.equal(f.calls.resolve, 0);
         assert.equal(f.calls.merge, 0);
+        assert.deepEqual(await f.saved(), before);
+      } finally {
+        await Deno.remove(f.rig.tmp, { recursive: true });
+      }
+    });
+  }
+});
+
+Deno.test("delivery prefilter: impossible task acceptance avoids booking proof reads", async (t) => {
+  for (
+    const acceptance of [
+      "missing",
+      "wrong-issue",
+      "not_fulfilled",
+      "uncertain",
+      "already_satisfied_at_base",
+    ] as const
+  ) {
+    await t.step(acceptance, async () => {
+      const f = await fixture({ acceptance });
+      try {
+        const before = await f.saved();
+        const context = await f.context();
+        assert.equal(await runHostedDeliveryPass(context), null);
+        assert.equal(f.calls.scope, 0);
+        assert.equal(f.calls.pull, 0);
+        assert.equal(f.calls.resolve, 0);
+        assert.equal(f.calls.merge, 0);
+        assert.deepEqual(context.actions, [
+          `delivery:${f.authority.record.id}:merge_proof_unavailable`,
+        ]);
         assert.deepEqual(await f.saved(), before);
       } finally {
         await Deno.remove(f.rig.tmp, { recursive: true });
