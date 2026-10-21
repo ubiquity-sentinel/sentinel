@@ -9,38 +9,54 @@ ownership, authority or acceptance.
 
 ## Active task register
 
-Snapshot: 2026-10-21 00:05 UTC. The same Claude continuation remains active;
-autonomous delivery on both targets is unproved. The following current
-checkpoint supersedes the earlier dated observations.
+Snapshot: 2026-10-21 01:44 UTC. The Claude continuation remains active. Native
+maintenance completion, generation-85 installation and autonomous delivery on
+both targets are still unproved. This checkpoint supersedes the dated
+observations below.
 
-- Development and launcher reached `3fc0755dff6bfb726c9965afbb6b75aab1bb9635`
-  after all seven CI jobs passed in `39514173519:1`. Canonical five-record
-  recovery returned 194 ancestors and five exact proofs in 39.391 seconds with
-  all accounting unchanged, receipt `72596fa3-9410-451b-978b-0d87820e2d5e`.
-- Auto-follow dispatcher `39515687207:1` verified successor `39515722908:1`, but
-  its maintenance again hit the native 15-minute limit before prepare. Release
-  `95233ab893da51db0b846aa845b79ac4bb3d7538` and repair
-  `2772fc5f8fd7c050ec894b74f3dc5a058399d885` remained unchanged: healthy
-  generation 84 at `25b24cdc7a09c2f871ff2d37093e6ea8d7f6e701`, cleared
-  execution, no generation-85 installation. New dispatcher admissions were
-  paused at 23:49 UTC; restoration is required after diagnostic publication is
-  ready. Auto-follow remains on and `sentinel-release` remains disabled.
-- The sole native maintenance event reported an unlisted artifact for producer
-  `37996641586:1` at 23:33:54 UTC. A real factory/queue-proxy trace of exact
-  release snapshot `95233ab8` opened the cached history view and read 20
-  adjacent snapshots in 1.051 seconds without fallback or refetch; it does not
-  identify the native wait. PR #174 still lacks a current-base fulfilled review;
-  AI PRs #1254–#1258 remain blocked, with all ten submitted charges preserved.
-  Human-owned #1260 is excluded from acceptance.
-- Primary integrated diagnostic tip `7469060bffb8578b70a6fd53786a16fa24f1c809`
-  after protection tip `f78c48f363ce77042d4ac75c6150071b43cf4e15`, reaching
-  source checkpoint `521c76ff163067d34c252cbd92c1daebd56f690b`. Both lanes are
-  clean and their focused checks passed. Diagnostics add 25 fixed, payload-free
-  start/finish boundaries, at most 50 records, without business-clock or
-  functional changes; finish means boundary exit, not health or delivery. The
-  exact runner, maintenance and state helper files are now centrally protected.
-  Final integrated smoke, exact-SHA CI and a native diagnostic run remain
-  pending.
+- Remote development and launcher are
+  `b5125b37141478aabd2e15a9e3ae20520d362068`, with all seven CI jobs passed in
+  `39521873440:1`. Diagnostic successor `39523409148:1` timed out at the native
+  15-minute maintenance boundary. Its trace proves current-matrix scanning
+  finished in 11.386 seconds, context construction in 64.481 seconds, retry in
+  121.249 seconds, and delivery remained active for over ten minutes. The trace
+  identifies delivery as the unresolved phase, not an exact inner await.
+- Release `95233ab893da51db0b846aa845b79ac4bb3d7538` and repair
+  `2772fc5f8fd7c050ec894b74f3dc5a058399d885` stayed unchanged. Generation 84
+  remains healthy at `25b24cdc7a09c2f871ff2d37093e6ea8d7f6e701` with execution
+  clear and no candidate installation journal. The primary paused new
+  `supervisor-dispatch.yml` admissions at 01:03 UTC; restoration is required
+  after the corrected candidate is ready. Auto-follow remains on and
+  `sentinel-release` remains disabled. No manual target merge can count as
+  autonomous acceptance.
+- An anonymous remote-read diagnostic reproduced the retry throughput limit: 140
+  successful ancestors, zero proofs and 121.021 seconds; 282 fresh-ref calls
+  consumed 93.467 seconds. Foundation tip
+  `7d1bf934bc0d652dfdc32af51a3ecbde6dc7897d` now provides an optional anchored
+  read-only repair-history view, preserving individual `readRepairAt` semantics.
+  It validates immutable history, closes on every exit, then rechecks exact live
+  head and full snapshot before returning proofs; restoration CAS is unchanged.
+  The exact remote 2772 fixture returned all five bindings across 195 ancestors
+  in 44.982 seconds, using two ref checks and preserving all 321 work records
+  and 1,526 reservations. Receipt: `a8c35f4c-d0b9-4fbb-beb2-1bd4b63f70f0`. Local
+  controls passed 14 tests and 24 steps. Tip
+  `4620fdcdafd90f08586a2ec183eef360f9ae22b3` only clarifies the view comments.
+- Delivery tip `eb0015325483e5cba320560703fb5a560feddfa7` moves proven no-op
+  refusals before expensive reads: exact approval candidates reduce from 72 to
+  45, and strict Gateway booking candidates from 103 to 39. These are
+  necessary-guard counts, not successful effects. It preserves unresolved
+  preservation work, all positive authority/CI/review/task checks, diagnostics
+  and final CAS. Ten actual consumer cases/eight steps plus scoped statics
+  passed, receipt `778f21e2-78bc-4c9d-8256-abaadd822168`. Protection tip
+  `4fb6425dd3edcfb097599a08a6086c49647870df` adds exactly the queue-booking
+  helper to self-policy. All three changes are locally integrated with ancestry
+  preserved; no source writer remains active.
+- Final combined consumer validation, independent evidence acceptance,
+  exact-candidate CI, automatic launcher advancement, native maintenance and
+  both target deliveries remain pending. The snapshot's embedded `stateHead` is
+  its parent `aad7887c5260f13d44ffc255823e43443b3d33d5`; the live head anchor is
+  the read result's `2772fc5f8fd7c050ec894b74f3dc5a058399d885`. Never substitute
+  the parent as the live anchor or relax the 120-second/256-ancestor bounds.
 
 ### Earlier continuation checkpoints
 

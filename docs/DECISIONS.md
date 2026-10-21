@@ -185,19 +185,40 @@ retry charge is already submitted, but only through the same authenticated
 result and ordinary idempotent settlement; it preserves the existing charge and
 timestamp.
 
-Repair-history reads may reuse one private, bounded fetched repository per
-state-store instance. Every read still requires fresh entry and exit checks of
-the exact expected remote head, ancestry proof, and complete current and
-historical state validation. Validated decoding may be reused only after exact
-fresh byte equality; returned state must remain independently cloned. Expiry,
-corruption, ref movement and failed initialization invalidate retained state,
-and cleanup is limited to the owned cache directory.
+Individual `readRepairAt` calls may reuse one private, bounded fetched
+repository per state-store instance. Every such call still requires fresh entry
+and exit checks of the exact expected remote head, ancestry proof, and complete
+current and historical state validation. Validated decoding may be reused only
+after exact fresh byte equality; returned state must remain independently
+cloned. Expiry, corruption, ref movement and failed initialization invalidate
+retained state, and cleanup is limited to the owned cache directory.
 
 Independent read-only state proofs may run concurrently when all operations
 settle before return and the original error precedence is preserved. This
 optimization changes neither the public state port nor the recovery walk's
 120-second and 256-ancestor limits. Local throughput evidence does not establish
 live maintenance or autonomous delivery acceptance.
+
+Bulk original-candidate recovery may use a separately named optional anchored
+repair-history view. Its anchor is the authoritative read result's head, never
+the payload's parent `snapshot.stateHead`. The view validates one complete fetch
+and strict immutable ancestor records locally; all reads settle and the view
+closes on every exit. Before returning any proof, a fresh complete repair read
+must match both the original observed head and full snapshot within the
+unchanged 120-second/256-ancestor budget. Existing `readRepairAt` semantics
+remain intact. Only an absent view capability uses the old method; a supported
+view's failure is not bypassed. Final restoration still requires fresh
+ownership/ref checks and expected-head CAS/readback.
+
+Delivery may reject proven no-op work before expensive reads. CI approval
+excludes only exact terminal retired-source records and exact rejected,
+unpublished protected-path candidates; a blocked state or head mismatch alone is
+insufficient. Strict Gateway booking may return null early for an exactly
+matching release request or a missing/dirty latest completed App review, using
+the same immutable input snapshot as the eventual authority predicate. A cheap
+positive check never authorizes delivery. All later
+current-head/full-snapshot/row checks, review/task/CI proofs and CAS guards
+remain required, and a refreshed pass considers newly valid reviews normally.
 
 Maintenance progress diagnostics use a closed set of fixed phase names,
 start/finish events and observational monotonic elapsed time, bounded to 50
