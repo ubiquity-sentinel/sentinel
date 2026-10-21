@@ -32,3 +32,13 @@ Deno.test("hosted supervisor: release state refuses an absent or malformed self 
     assert.throws(() => releaseStateToken(env), { message: STATIC_TOKEN });
   }
 });
+
+Deno.test("hosted supervisor: main forwards the self token before release-state selection", async () => {
+  const source = await Deno.readTextFile(
+    new URL("../../src/host/actions-supervisor-host.ts", import.meta.url),
+  );
+  assert.match(
+    source,
+    /\[SELF_TOKEN_ENV\]: Deno\.env\.get\(SELF_TOKEN_ENV\)/,
+  );
+});

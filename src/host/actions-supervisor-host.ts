@@ -313,6 +313,7 @@ export async function main(): Promise<void> {
     [PATH_ENV]: Deno.env.get(PATH_ENV),
     [NATIVE_TOKEN_ENV]: Deno.env.get(NATIVE_TOKEN_ENV),
     [SUPERVISOR_TOKEN_ENV]: Deno.env.get(SUPERVISOR_TOKEN_ENV),
+    [SELF_TOKEN_ENV]: Deno.env.get(SELF_TOKEN_ENV),
     [OUTPUT_ENV]: Deno.env.get(OUTPUT_ENV),
     [COOLDOWN_MODE_ENV]: Deno.env.get(COOLDOWN_MODE_ENV),
   };
