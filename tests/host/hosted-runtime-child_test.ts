@@ -528,8 +528,8 @@ Deno.test("hosted runtime: actions environment allowlist", async () => {
     return JSON.parse(line) as Record<string, unknown>;
   };
 
-  // 1. Without a route input the gateway primary and the preferred review
-  //    model are the resolved values; nothing is fabricated from a missing key.
+  // 1. Without a route input the implementation uses the gateway primary and
+  //    review selection remains owned by native mode.
   const plainRoute = routeOf(
     assertCrossedBoundary(await runEntrypoint({ ...identityEnv })),
   );
@@ -538,13 +538,12 @@ Deno.test("hosted runtime: actions environment allowlist", async () => {
     provider: "uos",
     model: "gpt-reserve",
     baseUrl: ACTIONS_UOS_BASE_URL,
-    reviewModel: "codex-auto-review",
+    reviewMode: "native",
   });
 
-  // 2. The explicit DeepSeek fallback and the dedicated review-model override
-  //    are still read from the real environment under the same named
-  //    allowlist: the owner's selections reach the resolved route instead of
-  //    hardcoded defaults. The fallback key is a synthetic marker, and the
+  // 2. The explicit implementation fallback uses the same named allowlist;
+  //    a legacy review-model selector cannot override native review mode.
+  //    The fallback key is a synthetic marker, and the
   //    empty GitHub credential still stops the run before any budget, state or
   //    transport work.
   const fallbackRoute = routeOf(
@@ -562,6 +561,6 @@ Deno.test("hosted runtime: actions environment allowlist", async () => {
     provider: "deepseek",
     model: "deepseek-flash",
     baseUrl: "https://api.deepseek.com/v1",
-    reviewModel: "codex-auto-review-canary",
+    reviewMode: "native",
   });
 });
