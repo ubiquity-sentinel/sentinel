@@ -160,11 +160,13 @@ export async function produceOwnerSuccessorAcceptance(input: {
     r.binding.successorGeneration === nativeOwner.generation
   );
   if (existing) {
-    return existing.phase === "completed"
-      ? "completed"
-      : existing.phase === "failed"
-      ? "failed"
-      : "pending";
+    if (existing.phase === "completed") {
+      return existing.readyExecution?.nativeReview?.mode === "review/start" &&
+          existing.readyExecution.actual.evidenceKind === "native-review"
+        ? "completed"
+        : "pending";
+    }
+    return existing.phase === "failed" ? "failed" : "pending";
   }
   if (reviewRoundsLeft(repair.value.snapshot, work) < 1) return "pending";
   if (typeof input.ports === "function") {
@@ -370,6 +372,8 @@ export async function produceOwnerSuccessorAcceptance(input: {
   const readyExecution = outcome?.ok ? outcome.value.execution : null;
   const accepted = custodySettled && result !== null &&
     readyExecution !== null && close?.settled === true && !close.timedOut &&
+    readyExecution.nativeReview?.mode === "review/start" &&
+    readyExecution.actual.evidenceKind === "native-review" &&
     close.failure === null &&
     result.taskAcceptance?.verdict === "fulfilled" &&
     result.taskAcceptance.issueNumber === intent.issueNumber &&

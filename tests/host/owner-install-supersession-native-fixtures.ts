@@ -52,13 +52,20 @@ for await (const part of Deno.stdin.readable) {
   while ((end = text.indexOf("\\n")) >= 0) {
     const frame = JSON.parse(text.slice(0, end)); text = text.slice(end + 1);
     const p = frame.params ?? {};
-    await Deno.writeTextFile(Deno.args[0], JSON.stringify({ method: frame.method, schema: p.outputSchema ?? null }) + "\\n", { append: true });
+    await Deno.writeTextFile(Deno.args[0], JSON.stringify({ method: frame.method, schema: p.outputSchema ?? null, target: p.target ?? null, overrides: Object.keys(p).filter(key => ["model", "modelProvider", "effort", "outputSchema"].includes(key)) }) + "\\n", { append: true });
     if (frame.id === undefined) continue;
-    const answer = frame.method === "thread/start" ? { thread: { id: "owner-thread" }, model: p.model, modelProvider: p.modelProvider, reasoningEffort: "max", activePermissionProfile: { id: p.permissions } }
-      : frame.method === "turn/start" ? { turn: { id: "owner-turn", status: "inProgress" } } : { userAgent: "synthetic-external-app-server" };
+    const answer = frame.method === "thread/start" ? { thread: { id: "owner-thread" }, model: "codex-selected-default", modelProvider: "uos", reasoningEffort: null, activePermissionProfile: { id: p.permissions } }
+      : frame.method === "review/start" ? { turn: { id: "owner-turn", status: "inProgress" }, reviewThreadId: "owner-thread" } : { userAgent: "synthetic-external-app-server" };
     console.log(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: answer }));
-    if (frame.method === "turn/start") {
-      console.log(JSON.stringify({ jsonrpc: "2.0", method: "item/completed", params: { threadId: "owner-thread", turnId: "owner-turn", item: { type: "agentMessage", id: "owner-result", text: JSON.stringify(result), phase: "final_answer" } } }));
+    if (frame.method === "review/start") {
+      const scope = { threadId: "owner-thread", turnId: "owner-turn" };
+      const entry = { ...scope, item: { type: "enteredReviewMode", id: "owner-entry", review: "custom review" } };
+      for (const method of ["item/started", "item/completed"]) console.log(JSON.stringify({ jsonrpc: "2.0", method, params: entry }));
+      const marker = '<SENTINEL_NATIVE_REVIEW_V1>{"binding":';
+      const binding = JSON.parse(p.target.instructions.split(marker)[1].split(',"result":<RESULT>}')[0]);
+      const review = '<SENTINEL_NATIVE_REVIEW_V1>' + JSON.stringify({ binding, result }) + '</SENTINEL_NATIVE_REVIEW_V1>';
+      const exit = { ...scope, item: { type: "exitedReviewMode", id: "owner-result", review } };
+      for (const method of ["item/started", "item/completed"]) console.log(JSON.stringify({ jsonrpc: "2.0", method, params: exit }));
       console.log(JSON.stringify({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: "owner-thread", turn: { id: "owner-turn", status: "completed", durationMs: 1234 } } }));
     }
   }
@@ -202,7 +209,8 @@ for await (const part of Deno.stdin.readable) {
     }
   };
   const session = {
-    turnStarts: () => records().filter((r) => r.method === "turn/start").length,
+    turnStarts: () =>
+      records().filter((r) => r.method === "review/start").length,
     get closed() {
       return events.filter((e) => e === "settled").length;
     },
@@ -319,7 +327,16 @@ for await (const part of Deno.stdin.readable) {
       assert.equal(session.turnStarts(), starts);
     },
     assertSchema: () => {
-      const schema = records().find((r) => r.method === "turn/start")?.schema;
+      const request = records().find((r) => r.method === "review/start");
+      assert.ok(request);
+      assert.equal(request.schema, null);
+      assert.equal(records().some((r) => r.method === "turn/start"), false);
+      for (const record of records()) assert.deepEqual(record.overrides, []);
+      const marker =
+        "RESULT must satisfy the following descriptive contract; it is not a protocol-enforced output schema:\n";
+      const schema = JSON.parse(
+        request.target.instructions.split(marker)[1].split("\n")[0],
+      );
       assert.deepEqual(
         schema?.properties.taskAcceptance.properties.issueNumber.enum,
         [170],
