@@ -27,6 +27,7 @@ import { runHostedAutonomy } from "./hosted-autonomy-runner.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 import { ClosedCWaveRecoveryIntegrityFailure } from "../src/host/modern-matrix-recovery.ts";
 import {
+  beginMaintenanceProgress,
   failed,
   HistoricalQuarantineIncomplete,
   isHardAutonomyFailure,
@@ -152,23 +153,29 @@ export async function runHostedAutonomyMain(input?: {
   ) {
     return report(failed("identity_rejected", null));
   }
-  const compatibility = (
+  const compatibility = async (
     state: StateReadView,
     clock: HostedAutonomyDepsV1["clock"],
-  ) =>
-    preflightHostedMaintenance({
-      state,
-      clock,
-      nativeToken: stateToken,
-      queueToken: apiToken,
-      run: {
-        runId: Number(env("GITHUB_RUN_ID")),
-        runAttempt: Number(env("GITHUB_RUN_ATTEMPT")),
-        launcherSha: facts.head as GitSha,
-      },
-      output: env("GITHUB_OUTPUT"),
-      fixture: input?.compatibility,
-    });
+  ) => {
+    const finish = beginMaintenanceProgress("preflight");
+    try {
+      return await preflightHostedMaintenance({
+        state,
+        clock,
+        nativeToken: stateToken,
+        queueToken: apiToken,
+        run: {
+          runId: Number(env("GITHUB_RUN_ID")),
+          runAttempt: Number(env("GITHUB_RUN_ATTEMPT")),
+          launcherSha: facts.head as GitSha,
+        },
+        output: env("GITHUB_OUTPUT"),
+        fixture: input?.compatibility,
+      });
+    } finally {
+      finish();
+    }
+  };
   let result: HostedAutonomyResultV1;
   let summaryActions: readonly string[] = [];
   try {
@@ -181,11 +188,16 @@ export async function runHostedAutonomyMain(input?: {
           });
         summaryActions = result.actions;
       } finally {
-        await emitHostedParkSummary(
-          input.deps.state,
-          env("GITHUB_STEP_SUMMARY"),
-          summaryActions,
-        );
+        const finish = beginMaintenanceProgress("summary_park");
+        try {
+          await emitHostedParkSummary(
+            input.deps.state,
+            env("GITHUB_STEP_SUMMARY"),
+            summaryActions,
+          );
+        } finally {
+          finish();
+        }
       }
     } else {
       const scratch = `${Deno.cwd()}/.hosted-autonomy`;
@@ -201,11 +213,16 @@ export async function runHostedAutonomyMain(input?: {
       });
       const disposition = await compatibility(state, { now: () => Date.now() });
       if (disposition !== null) {
-        await emitHostedParkSummary(
-          state,
-          env("GITHUB_STEP_SUMMARY"),
-          disposition.actions,
-        );
+        const finish = beginMaintenanceProgress("summary_park");
+        try {
+          await emitHostedParkSummary(
+            state,
+            env("GITHUB_STEP_SUMMARY"),
+            disposition.actions,
+          );
+        } finally {
+          finish();
+        }
         return report(disposition);
       }
       // One surface per exact repository identity: the durable snapshot may
@@ -296,13 +313,28 @@ export async function runHostedAutonomyMain(input?: {
         summaryActions = result.actions;
       } finally {
         // Advisory visibility follows the unconditional queue custody prelude.
-        await emitMemoryDigest(state);
-        await emitHostedParkSummary(
-          state,
-          env("GITHUB_STEP_SUMMARY"),
-          summaryActions,
-        );
-        await Deno.remove(artifactRoot, { recursive: true });
+        const finishMemory = beginMaintenanceProgress("summary_memory");
+        try {
+          await emitMemoryDigest(state);
+        } finally {
+          finishMemory();
+        }
+        const finishPark = beginMaintenanceProgress("summary_park");
+        try {
+          await emitHostedParkSummary(
+            state,
+            env("GITHUB_STEP_SUMMARY"),
+            summaryActions,
+          );
+        } finally {
+          finishPark();
+        }
+        const finishCleanup = beginMaintenanceProgress("artifact_cleanup");
+        try {
+          await Deno.remove(artifactRoot, { recursive: true });
+        } finally {
+          finishCleanup();
+        }
       }
     }
   } catch (error) {
