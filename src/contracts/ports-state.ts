@@ -32,6 +32,10 @@ export interface StateReadView {
     commit: GitSha;
     expectedHead: GitSha;
   }): Promise<PortResultV1<StateReadResultV1<RepairStateSnapshotV1>>>;
+  /** Pinned read-only history; callers must revalidate live repair state before using proofs. */
+  openRepairHistory?(input: {
+    expectedHead: GitSha;
+  }): Promise<PortResultV1<RepairHistoryViewV1>>;
   readRelease(): Promise<
     PortResultV1<StateReadResultV1<ReleaseStateSnapshotV1>>
   >;
@@ -80,6 +84,14 @@ export interface StateReadView {
  * read proves the commit is an ancestor of that head in the fetched object
  * store and decodes it with the same validated tree reader as readReleaseAt.
  */
+export interface RepairHistoryViewV1 {
+  readAt(
+    commit: GitSha,
+  ): Promise<PortResultV1<StateReadResultV1<RepairStateSnapshotV1>>>;
+  /** Settles active reads and removes only the owned directory; later reads refuse. */
+  close(): Promise<void>;
+}
+
 export interface ReleaseHistoryViewV1 {
   readAt(
     commit: GitSha,

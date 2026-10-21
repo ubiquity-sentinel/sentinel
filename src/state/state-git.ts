@@ -2,6 +2,7 @@ import type {
   PortErrorV1,
   PortResultV1,
   ReleaseHistoryViewV1,
+  RepairHistoryViewV1,
 } from "../contracts/ports.ts";
 import { portError, portOk } from "../contracts/ports.ts";
 import type {
@@ -11,7 +12,10 @@ import type {
 import type { GitSha } from "../contracts/brands.ts";
 import type { StateKind } from "./state-records.ts";
 import { readCommitTree } from "./state-codec.ts";
-import { openReleaseHistoryView } from "./state-history.ts";
+import {
+  openReleaseHistoryView,
+  openRepairHistoryView,
+} from "./state-history.ts";
 import type { StateTreeMemo } from "./state-repair-history-cache.ts";
 
 /** The two fixed state refs; roles read both, each role writes only its own. */
@@ -357,6 +361,26 @@ export class StateGitTransport {
       head: fetched as GitSha,
       snapshot: snapshot.value,
     });
+  }
+
+  /** Pinned repair history; the consumer revalidates live state after closing. */
+  openRepairHistory(
+    input: { expectedHead: GitSha },
+  ): Promise<PortResultV1<RepairHistoryViewV1>> {
+    return openRepairHistoryView({
+      scratchDir: this.scratchDir,
+      ref: REPAIR_REF,
+      loadComplete: (op) =>
+        this.loadRemote(
+          op,
+          REPAIR_REF,
+          "repair",
+          "complete",
+          input.expectedHead,
+        ),
+      git: (op, args) => this.git(op, args),
+      readTree: (op, commit) => this.readCommitTree(op, commit, "repair"),
+    }, input.expectedHead);
   }
 
   /** One bounded local view of the fixed release history (state-history.ts). */
