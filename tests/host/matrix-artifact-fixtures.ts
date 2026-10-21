@@ -420,10 +420,14 @@ export async function fixture(paginated = false, partialMismatch = false) {
     updated_at: ISO,
   };
   const calls: { url: string; auth: boolean }[] = [];
+  const paginationRepository: { id: number; full_name: string } = {
+    id: 123,
+    full_name: CONTROLLER.fullName,
+  };
   const pagination = {
     numeric: false,
     next: null as string | null,
-    repository: { id: 123, full_name: CONTROLLER.fullName },
+    repository: paginationRepository,
     truncate: false,
     duplicate: false,
   };
