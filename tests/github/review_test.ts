@@ -20,6 +20,7 @@ import {
   parseReviewReceiptV1,
 } from "../../src/contracts/review-receipt.ts";
 import {
+  parseReviewJournalBody,
   renderReviewJournalBody,
   REVIEW_MODEL,
   REVIEW_REASONING,
@@ -153,6 +154,7 @@ const STRUCTURED_FINDINGS: ReviewResultV1 = {
 };
 
 interface StructuredFixtureOptionsV1 {
+  native?: boolean;
   result?: ReviewResultV1;
   reviewId?: number;
   expectedBase?: GitSha;
@@ -170,6 +172,7 @@ async function readyJournalFor(
   const reviewId = options.reviewId ?? 100;
   const requestedAt = options.requestedAt ?? T0 + 1000;
   const completedAt = options.completedAt ?? T0 + 120_000;
+  const native = options.native !== false;
   return {
     version: "v1",
     phase: "ready",
@@ -190,20 +193,38 @@ async function readyJournalFor(
       invocationId: "review-invocation-review:work-1",
       threadId: "thread-1",
       submittedProvider: "openai",
-      model: REVIEW_MODEL,
-      reasoning: REVIEW_REASONING,
+      model: native ? null : REVIEW_MODEL,
+      reasoning: native ? null : REVIEW_REASONING,
+      ...(native
+        ? {
+          nativeReview: {
+            mode: "review/start" as const,
+            targetDigest: "a".repeat(64),
+          },
+        }
+        : {}),
       startMayOccur: true,
       turnId: "turn-1",
       resultId: "result-9",
       actual: {
-        evidenceKind: "request-runtime",
+        evidenceKind: native ? "native-review" : "request-runtime",
         provider: "openai",
         threadId: "thread-1",
         turnId: "turn-1",
         terminalOrigin: "runtime",
         observedTerminalStatus: "completed",
-        observedModel: REVIEW_MODEL,
-        observedReasoning: REVIEW_REASONING,
+        observedModel: native ? null : REVIEW_MODEL,
+        observedReasoning: native ? null : REVIEW_REASONING,
+        ...(native
+          ? {
+            nativeReview: {
+              targetDigest: "a".repeat(64),
+              reviewThreadId: "thread-1",
+              enteredItemId: "entered-1",
+              exitedItemId: "result-9",
+            },
+          }
+          : {}),
         durationMs: 5,
         outputChars: 10,
       },
@@ -489,6 +510,48 @@ Deno.test("observeReview: completed requires terminal provenance, review author 
   assert.ok(future.ok);
   if (!future.ok) return;
   assert.equal(future.value.status, "unavailable");
+});
+
+Deno.test("observeReview: native evidence is required for a new completed receipt", async (t) => {
+  for (const native of [true, false]) {
+    await t.step(
+      native ? "native lifecycle" : "retained generic lifecycle",
+      async () => {
+        const fixture = await completedFixture({ native });
+        assert.equal(
+          renderReviewJournalBody(await parseReviewJournalBody(fixture.body)),
+          fixture.body,
+        );
+        const service = new FakeReviewService();
+        service.readResult = fixture.service;
+        const { port } = makePort({
+          clock: new FakeClock(T0 + 200_000),
+          script: observeScript([
+            [PR_READ],
+            reviewsRead([fixture.review]),
+            commentsRead([]),
+          ]),
+          review: service,
+        });
+        const observed = await port.observeReview(observeRequest());
+        assert.ok(observed.ok);
+        if (!observed.ok) return;
+        const receipt = deriveReviewReceiptV1(observed.value, {
+          operationKey: "review:work-1",
+          submittedAt: T0 + 1000,
+          prNumber: 1,
+          expectedHead: SHA1,
+          expectedBase: SHA2,
+          expectedReviewer: REVIEWER,
+        }, REPO);
+        assert.equal(
+          observed.value.status,
+          native ? "completed" : "unavailable",
+        );
+        assert.equal(receipt.outcome, native ? "completed" : "unavailable");
+      },
+    );
+  }
 });
 
 Deno.test("observeReview: completed clean requires the exact reviewer review on the exact head", async () => {
