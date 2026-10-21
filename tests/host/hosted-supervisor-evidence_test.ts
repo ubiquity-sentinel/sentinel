@@ -1,5 +1,6 @@
 /** Hosted hosted-supervisor-evidence_test responsibility. */
 import assert from "node:assert/strict";
+import { PUBLIC_CONTROLLER } from "./controller-identity-fixture.ts";
 import { GitHubApiClient } from "../../src/github/client.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import type {
@@ -150,6 +151,19 @@ Deno.test("hosted supervisor core: unreviewed or unverified requests never move 
 Deno.test("hosted supervisor PR110: trusted stale-base maintenance permits ordinary work without promotion", async () => {
   const rig = await makeRig();
   try {
+    if (!PUBLIC_CONTROLLER) {
+      const before = await rig.release.readRelease();
+      const repairBefore = await rig.repair.readRepair();
+      assert.throws(() =>
+        runProof(execution({ generation: 63 }), "healthy", {
+          repository: "ubiquity/sentinel",
+          workflowId: 357012162,
+        })
+      );
+      assert.deepEqual(await rig.release.readRelease(), before);
+      assert.deepEqual(await rig.repair.readRepair(), repairBefore);
+      return;
+    }
     const active = "e4cef46332cf124a8c283d798a963cf5f66e45c2" as GitSha;
     const request = releaseRequest({
       id:

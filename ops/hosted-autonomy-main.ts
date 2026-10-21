@@ -20,9 +20,9 @@ import { githubGitAuthEnv } from "../src/host/local.ts";
 import { createRepairStateStore, DenoGitRunner } from "../src/state/mod.ts";
 import type { StateReadView } from "../src/contracts/ports.ts";
 import {
-  ISSUE48_QUOTA_REMOTE_URL,
-  validateIssue48QuotaHostedIdentity,
-} from "./issue48-review-quota-recovery.ts";
+  HOSTED_CONTROLLER_REMOTE,
+  isHostedControllerMaintenanceIdentity,
+} from "../src/contracts/hosted-controller-deployment.ts";
 import { runHostedAutonomy } from "./hosted-autonomy-runner.ts";
 import { CurrentMatrixRecoveryIntegrityFailure } from "./hosted-autonomy-producer-recovery.ts";
 import { ClosedCWaveRecoveryIntegrityFailure } from "../src/host/modern-matrix-recovery.ts";
@@ -128,7 +128,7 @@ export async function runHostedAutonomyMain(input?: {
     await input?.deps.onQueueCustodyReady?.(ready);
   };
   const facts = await readCheckoutFacts();
-  const validated = validateIssue48QuotaHostedIdentity({
+  const validated = isHostedControllerMaintenanceIdentity({
     repository: env("GITHUB_REPOSITORY"),
     ref: env("GITHUB_REF"),
     job: env("GITHUB_JOB"),
@@ -140,7 +140,7 @@ export async function runHostedAutonomyMain(input?: {
     checkoutHead: facts.head,
     checkoutClean: facts.clean,
   });
-  if (!validated.ok) return report(failed("identity_rejected", null));
+  if (!validated) return report(failed("identity_rejected", null));
   // Split by purpose, mirroring the hosted runtime: the scoped sentinel App
   // token authenticates every repository-visible code-change op (merge, issue
   // closure, CI approval) so it is attributed to ubiquity-sentinel[bot], while
@@ -208,7 +208,7 @@ export async function runHostedAutonomyMain(input?: {
       );
       const state = createRepairStateStore({
         scratchDir: `${scratch}/state`,
-        remoteUrl: ISSUE48_QUOTA_REMOTE_URL,
+        remoteUrl: HOSTED_CONTROLLER_REMOTE,
         runner,
       });
       const disposition = await compatibility(state, { now: () => Date.now() });

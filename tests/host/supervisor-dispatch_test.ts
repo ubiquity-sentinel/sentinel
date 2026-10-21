@@ -22,6 +22,7 @@
  *   closed before any request.
  */
 import assert from "node:assert/strict";
+import { CONTROLLER } from "./controller-identity-fixture.ts";
 
 import type {
   HttpRequestV1,
@@ -37,7 +38,7 @@ import {
   type SupervisorDispatchResultV1,
 } from "../../src/host/supervisor-dispatch.ts";
 
-const REPO = "/repos/ubiquity/sentinel";
+const REPO = CONTROLLER.apiPath;
 const RUNS_PATH = `${REPO}/actions/workflows/supervisor.yml/runs`;
 const DISPATCH_PATH = `${REPO}/actions/workflows/supervisor.yml/dispatches`;
 const NOW_MS = Date.parse("2026-10-02T09:00:00Z");

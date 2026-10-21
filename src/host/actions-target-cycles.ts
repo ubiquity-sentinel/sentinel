@@ -1,5 +1,6 @@
 /** Hosted actions-target-cycles responsibility. */
 import type { GitSha } from "../contracts/brands.ts";
+import { HOSTED_CONTROLLER_REMOTE } from "../contracts/hosted-controller-deployment.ts";
 import type {
   Clock,
   GitHubCooldownGateV1,
@@ -29,7 +30,7 @@ import type { TargetSlugV1 } from "./targets.ts";
 import type { ModelRouteV1 } from "./model-route.ts";
 import type { CiEvidenceReaderV1 } from "../repair/ci-evidence-types.ts";
 
-export const REMOTE_URL = "https://github.com/ubiquity/sentinel.git";
+export const REMOTE_URL = HOSTED_CONTROLLER_REMOTE;
 
 /**
  * Public base URL of the primary gateway route. The trusted route resolver

@@ -1,5 +1,9 @@
 /** Complete bounded native exclusion of pre-existing hosted writers. Read only. */
 import { isGitSha } from "../contracts/brands.ts";
+import {
+  HOSTED_CONTROLLER_API_PATH,
+  HOSTED_CONTROLLER_DEPLOYMENT,
+} from "../contracts/hosted-controller-deployment.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
 import type { Clock } from "../contracts/ports.ts";
 import type { HostedSupervisorRunIdentityV1 } from "./actions-supervisor-types.ts";
@@ -9,7 +13,7 @@ import {
 } from "./existing-pr-runtime-capability.ts";
 import { isRecord, ownerDevelopmentInstallApi } from "./owner-install-api.ts";
 
-const ROOT = "/repos/ubiquity/sentinel";
+const ROOT = HOSTED_CONTROLLER_API_PATH;
 const WORKFLOWS = ["supervisor.yml", "repair.yml", "release.yml"] as const;
 const NONTERMINAL = [
   "queued",
@@ -208,6 +212,6 @@ function sameRun(
   return row.id === run.runId && row.run_attempt === run.runAttempt &&
     row.head_sha === run.launcherSha &&
     row.head_branch === "sentinel-supervisor" &&
-    row.workflow_id === 357012162 &&
-    row.path === ".github/workflows/supervisor.yml";
+    row.workflow_id === HOSTED_CONTROLLER_DEPLOYMENT.supervisorWorkflowId &&
+    row.path === HOSTED_CONTROLLER_DEPLOYMENT.supervisorWorkflowPath;
 }

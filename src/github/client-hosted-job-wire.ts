@@ -1,6 +1,7 @@
 // client hosted job wire.
 
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
+import { expectHostedControllerRepository } from "../contracts/hosted-controller-deployment.ts";
 import {
   expectArray,
   expectCount,
@@ -31,7 +32,6 @@ import {
   HOSTED_EXECUTION_MAX_JOB_STEPS,
   HOSTED_EXECUTION_MAX_JOBS,
 } from "./client-hosted-policy.ts";
-import { expectSelfRepository } from "./client-ci-wire.ts";
 
 /** Exact attempt identity; completion instant required only when completed. */
 export function parseHostedAttempt(
@@ -72,8 +72,8 @@ export function parseHostedAttempt(
   ) {
     fail("$.head_sha", "invalid_value", "attempt launcher mismatch");
   }
-  expectSelfRepository(obj.repository, "$.repository");
-  expectSelfRepository(obj.head_repository, "$.head_repository");
+  expectHostedControllerRepository(obj.repository, "$.repository");
+  expectHostedControllerRepository(obj.head_repository, "$.head_repository");
   const status = expectEnum(
     obj.status,
     ["queued", "in_progress", "completed", "requested", "waiting", "pending"],

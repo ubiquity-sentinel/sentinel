@@ -1,5 +1,6 @@
 /** Real launcher/runtime Git and owned children with synthetic native HTTP. */
 import assert from "node:assert/strict";
+import { CONTROLLER } from "./controller-identity-fixture.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { parseReleaseStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { parseHostedAppSourceProfiles } from "../../src/host/hosted-app-principal-source.ts";
@@ -94,7 +95,7 @@ export async function principalLauncherFixture(
     env: {
       GITHUB_RUN_ID: String(rig.identity.runId),
       GITHUB_RUN_ATTEMPT: String(rig.identity.runAttempt),
-      GITHUB_REPOSITORY: "ubiquity/sentinel",
+      GITHUB_REPOSITORY: CONTROLLER.fullName,
       GITHUB_REF: "refs/heads/sentinel-supervisor",
       GITHUB_SHA: rig.identity.launcherSha,
       GITHUB_WORKFLOW_SHA: rig.identity.launcherSha,

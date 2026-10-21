@@ -16,6 +16,7 @@ import type {
   StateWriteResultV1,
 } from "../contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import { HOSTED_CONTROLLER_SELF } from "../contracts/hosted-controller-deployment.ts";
 import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { ReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { tryParse } from "../contracts/validation.ts";
@@ -47,11 +48,7 @@ export type {
 
 export const MAX_TRANSITIONS = 8;
 
-export const SELF_REPOSITORY: RepositoryIdentityV1 = {
-  owner: "ubiquity",
-  name: "sentinel",
-  installationId: 0,
-};
+export const SELF_REPOSITORY: RepositoryIdentityV1 = HOSTED_CONTROLLER_SELF;
 
 export const STATIC_RUN = "hosted supervisor run identity is invalid";
 

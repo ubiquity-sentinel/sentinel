@@ -1,15 +1,22 @@
 import type { GitSha } from "./brands.ts";
 import type { ReleaseRequestV1 } from "./release.ts";
 import type { OwnerSuccessorTaskAcceptanceV1 } from "./owner-successor-review.ts";
+import {
+  HOSTED_CONTROLLER_DEPLOYMENT,
+  HOSTED_CONTROLLER_REPOSITORY,
+  HOSTED_CONTROLLER_RUNTIME_ID,
+  HOSTED_CONTROLLER_SUPERVISOR_REF,
+} from "./hosted-controller-deployment.ts";
 
 /** Fixed runtime record id of the one hosted self production runtime. */
-export const HOSTED_RUNTIME_ID = "ubiquity/sentinel:0:production";
+export const HOSTED_RUNTIME_ID = HOSTED_CONTROLLER_RUNTIME_ID;
 /** Fixed supervisor workflow identity. */
-export const HOSTED_SUPERVISOR_WORKFLOW_ID = 357012162;
+export const HOSTED_SUPERVISOR_WORKFLOW_ID =
+  HOSTED_CONTROLLER_DEPLOYMENT.supervisorWorkflowId;
 export const HOSTED_SUPERVISOR_WORKFLOW_PATH =
-  ".github/workflows/supervisor.yml";
-export const HOSTED_SUPERVISOR_REF = "refs/heads/sentinel-supervisor";
-export const HOSTED_SUPERVISOR_REPOSITORY = "ubiquity/sentinel";
+  HOSTED_CONTROLLER_DEPLOYMENT.supervisorWorkflowPath;
+export const HOSTED_SUPERVISOR_REF = HOSTED_CONTROLLER_SUPERVISOR_REF;
+export const HOSTED_SUPERVISOR_REPOSITORY = HOSTED_CONTROLLER_REPOSITORY;
 /**
  * Actions run metadata has one-second/whole-second clock precision: adjacent
  * timestamps written by the platform may differ by up to 999 ms in either

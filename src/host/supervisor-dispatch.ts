@@ -51,6 +51,10 @@
 
 import { type Clock, SystemClock } from "../contracts/ports.ts";
 import {
+  HOSTED_CONTROLLER_DEPLOYMENT,
+  HOSTED_CONTROLLER_REPOSITORY,
+} from "../contracts/hosted-controller-deployment.ts";
+import {
   DEFAULT_HTTP_DEADLINE_MS,
   fetchHttpTransport,
   headerMap,
@@ -61,13 +65,14 @@ import {
 import { dispatchFollowedSupervisor } from "./hosted-runtime-follow-dispatch.ts";
 
 /** Exact repository the scheduled dispatcher owns. */
-export const SUPERVISOR_REPOSITORY = "ubiquity/sentinel";
+export const SUPERVISOR_REPOSITORY = HOSTED_CONTROLLER_REPOSITORY;
 /** Exact supervisor workflow file name used by the Actions endpoints. */
 export const SUPERVISOR_WORKFLOW_FILE = "supervisor.yml";
 /** Exact supervisor workflow path every candidate run must match. */
-export const SUPERVISOR_WORKFLOW_PATH = ".github/workflows/supervisor.yml";
+export const SUPERVISOR_WORKFLOW_PATH =
+  HOSTED_CONTROLLER_DEPLOYMENT.supervisorWorkflowPath;
 /** Exact protected ref every candidate run must match. */
-export const SUPERVISOR_REF = "sentinel-supervisor";
+export const SUPERVISOR_REF = HOSTED_CONTROLLER_DEPLOYMENT.supervisorBranch;
 /** Minimum quiet period with no useful transition before a run is stale. */
 export const STALE_OWNER_MS = 30 * 60 * 1000;
 /** Per-page bound used for every workflow-run and job listing page. */

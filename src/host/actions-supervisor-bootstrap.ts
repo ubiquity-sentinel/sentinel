@@ -1,12 +1,13 @@
 /** Hosted actions-supervisor-bootstrap responsibility. */
 import type { ReleaseStateWriter, StateReadView } from "../contracts/ports.ts";
+import { HOSTED_CONTROLLER_REMOTE } from "../contracts/hosted-controller-deployment.ts";
 import { parseReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import type { ReleaseStateSnapshotV1 } from "../contracts/state-snapshots.ts";
 import { createReleaseStateStore, DenoGitRunner } from "../state/mod.ts";
 import { githubGitAuthEnv, joinPath } from "./local.ts";
 import { isToken } from "./actions-supervisor-host.ts";
 
-export const REMOTE_URL = "https://github.com/ubiquity/sentinel.git";
+export const REMOTE_URL = HOSTED_CONTROLLER_REMOTE;
 
 export const SUPERVISOR_TOKEN_ENV = "SENTINEL_SUPERVISOR_TOKEN";
 

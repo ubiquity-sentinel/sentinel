@@ -18,6 +18,7 @@ import {
 } from "../src/host/actions.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import { RollingStartBudget } from "../src/budget/mod.ts";
+import { HOSTED_CONTROLLER_SELF } from "../src/contracts/hosted-controller-deployment.ts";
 import { GitHubApiClient } from "../src/github/client.ts";
 import {
   createDeadline,
@@ -261,7 +262,7 @@ export function createHostedHistoricalMatrixQuarantine(input: {
   const witnesses = input.historicalReleaseWitnesses ??
     HOSTED_HISTORICAL_RELEASE_WITNESSES;
   const client = new GitHubApiClient({
-    repository: { owner: "ubiquity", name: "sentinel", installationId: 0 },
+    repository: HOSTED_CONTROLLER_SELF,
     apiBaseUrl: "https://api.github.com",
     http: input.http ?? fetchHttpTransport(),
     clock: input.clock,

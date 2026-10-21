@@ -1,5 +1,9 @@
 /** Hosted actions-target-cycles_test responsibility. */
 import assert from "node:assert/strict";
+import {
+  CONTROLLER,
+  PUBLIC_CONTROLLER,
+} from "./controller-identity-fixture.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import {
   parseAppInstallationId,
@@ -126,7 +130,10 @@ Deno.test(
     // target is gated under the one App installation scope.
     assert.deepEqual(
       admissionsPerCycle.map(unique),
-      [[0], [APP_INSTALLATION]],
+      [
+        [PUBLIC_CONTROLLER ? 0 : APP_INSTALLATION],
+        [APP_INSTALLATION],
+      ],
       "each cycle is gated under its own target's installation scope",
     );
     // The aggregate uses the LAST addressed cycle's outcome.
@@ -155,7 +162,7 @@ Deno.test(
 );
 
 Deno.test(
-  "actions host: a non-sentinel target uses the App installation scope while sentinel keeps 0",
+  "actions host: a foreign target uses the App installation scope while the controller keeps 0",
   () => {
     assert.equal(APP_INSTALLATION, 155_687_488);
     assert.equal(parseAppInstallationId("4242"), 4242);
@@ -165,9 +172,9 @@ Deno.test(
 
     const self = createLocalRepositoryConfig();
     const sentinel = createTargetConfigV1(self, {
-      slug: "ubiquity/sentinel",
-      owner: "ubiquity",
-      name: "sentinel",
+      slug: CONTROLLER.fullName,
+      owner: self.repository.owner,
+      name: self.repository.name,
     }, "development");
     const foreign = createTargetConfigV1(self, {
       slug: `ubiquity/${FOREIGN_REPO}`,

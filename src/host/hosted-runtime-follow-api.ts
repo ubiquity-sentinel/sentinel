@@ -1,5 +1,11 @@
 import { isGitSha } from "../contracts/brands.ts";
 import {
+  HOSTED_CONTROLLER_DEPLOYMENT,
+  HOSTED_CONTROLLER_REPOSITORY,
+  HOSTED_CONTROLLER_SOURCE_REF,
+  HOSTED_CONTROLLER_SUPERVISOR_REF,
+} from "../contracts/hosted-controller-deployment.ts";
+import {
   createDeadline,
   type DeadlineV1,
   headerMap,
@@ -7,10 +13,10 @@ import {
 } from "../github/http.ts";
 import { nextLinkUrl } from "../github/client-response.ts";
 
-export const FOLLOW_REPOSITORY = "ubiquity/sentinel";
+export const FOLLOW_REPOSITORY = HOSTED_CONTROLLER_REPOSITORY;
 export const FOLLOW_REPO_PATH = `/repos/${FOLLOW_REPOSITORY}`;
-export const FOLLOW_LAUNCHER_REF = "refs/heads/sentinel-supervisor";
-export const FOLLOW_DEVELOPMENT_REF = "refs/heads/development";
+export const FOLLOW_LAUNCHER_REF = HOSTED_CONTROLLER_SUPERVISOR_REF;
+export const FOLLOW_DEVELOPMENT_REF = HOSTED_CONTROLLER_SOURCE_REF;
 export const FOLLOW_STATE_REF = "refs/heads/sentinel-state/release";
 export const FOLLOW_SUPERVISOR = "supervisor.yml";
 export const FOLLOW_ACTIVE_STATUSES = [
@@ -258,16 +264,16 @@ export async function activeSupervisorRuns(
       `/actions/workflows/${FOLLOW_SUPERVISOR}/runs`,
       "workflow_runs",
       {
-        branch: "sentinel-supervisor",
+        branch: HOSTED_CONTROLLER_DEPLOYMENT.supervisorBranch,
         event: "workflow_dispatch",
         status,
       },
     );
     for (const run of listed) {
       if (
-        run.head_branch !== "sentinel-supervisor" ||
+        run.head_branch !== HOSTED_CONTROLLER_DEPLOYMENT.supervisorBranch ||
         run.event !== "workflow_dispatch" ||
-        run.path !== ".github/workflows/supervisor.yml" ||
+        run.path !== HOSTED_CONTROLLER_DEPLOYMENT.supervisorWorkflowPath ||
         !FOLLOW_ACTIVE_STATUSES.includes(run.status as typeof status)
       ) {
         throw new FollowError("supervisor_identity_mismatch");

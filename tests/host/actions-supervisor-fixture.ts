@@ -1,5 +1,6 @@
 /** Shared credential-free hosted test fixtures; this module registers no tests. */
 import assert from "node:assert/strict";
+import { CONTROLLER } from "./controller-identity-fixture.ts";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import {
   parseHostedExecutionIntentV1,
@@ -108,7 +109,7 @@ export const RECOVERY_HEALTH_LAUNCHER =
 export const RECOVERY_HEALTH_DIGEST =
   "c031f4a39f3eac1ff64c8f6bce28eb733ff4dfe1ea5d813dcfb31d08ffce1cf3";
 
-export const SELF = { owner: "ubiquity", name: "sentinel", installationId: 0 };
+export const SELF = CONTROLLER.repository;
 
 /** The exact source issue the fixture release request delivers. */
 export const ISSUE = 48;
@@ -230,9 +231,9 @@ export function runProof(
   const healthy = outcome === "healthy";
   return parseHostedRunProofV1({
     execution: intent,
-    workflowId: 357012162,
+    workflowId: CONTROLLER.workflowId,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "ubiquity/sentinel",
+    repository: CONTROLLER.fullName,
     ref: "refs/heads/sentinel-supervisor",
     jobId: 7,
     startedAt: intent.createdAt + 1000,
@@ -251,9 +252,9 @@ export function runProof(
 export function skippedProof(intent: HostedExecutionIntentV1) {
   return parseHostedNotStartedProofV1({
     execution: intent,
-    workflowId: 357012162,
+    workflowId: CONTROLLER.workflowId,
     workflowPath: ".github/workflows/supervisor.yml",
-    repository: "ubiquity/sentinel",
+    repository: CONTROLLER.fullName,
     ref: "refs/heads/sentinel-supervisor",
     jobId: null,
     finishedAt: intent.createdAt + 500,

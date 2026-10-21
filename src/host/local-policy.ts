@@ -10,22 +10,23 @@ import {
 } from "../contracts/ports.ts";
 import type { IncidentEvidenceV1 } from "../contracts/incident.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
+import {
+  HOSTED_CONTROLLER_DEPLOYMENT,
+  HOSTED_CONTROLLER_REMOTE,
+  HOSTED_CONTROLLER_SELF,
+} from "../contracts/hosted-controller-deployment.ts";
 
 /** Fixed local target identity (explicit no-App owner credential scope). */
-export const LOCAL_REPOSITORY: RepositoryIdentityV1 = {
-  owner: "ubiquity",
-  name: "sentinel",
-  installationId: 0,
-};
+export const LOCAL_REPOSITORY: RepositoryIdentityV1 = HOSTED_CONTROLLER_SELF;
 
-export const REMOTE_URL = "https://github.com/ubiquity/sentinel.git";
+export const REMOTE_URL = HOSTED_CONTROLLER_REMOTE;
 
 export const API_BASE_URL = "https://api.github.com";
 
 export const API_USER_URL = "https://api.github.com/user";
 
 /** The one fixed base branch of the local repository configuration. */
-export const LOCAL_BASE_BRANCH = "development";
+export const LOCAL_BASE_BRANCH = HOSTED_CONTROLLER_DEPLOYMENT.sourceBranch;
 
 /** Local default; hosted Actions supplies the public UOS gateway explicitly. */
 export const DEFAULT_UOS_BASE_URL = "http://127.0.0.1:8000/v1";
