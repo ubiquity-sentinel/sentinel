@@ -80,9 +80,9 @@ export interface StateReadView {
 }
 
 /**
- * One opened local view of the release history under a verified head. Each
- * read proves the commit is an ancestor of that head in the fetched object
- * store and decodes it with the same validated tree reader as readReleaseAt.
+ * One pinned repair-history view with strict immutable ancestor validation.
+ * Before using its proofs, consumers revalidate the live repair head and the
+ * entire captured snapshot; the view itself does not recheck remote freshness.
  */
 export interface RepairHistoryViewV1 {
   readAt(
@@ -92,6 +92,11 @@ export interface RepairHistoryViewV1 {
   close(): Promise<void>;
 }
 
+/**
+ * One opened local view of the release history under a verified head. Each
+ * read proves the commit is an ancestor of that head in the fetched object
+ * store and decodes it with the same validated tree reader as readReleaseAt.
+ */
 export interface ReleaseHistoryViewV1 {
   readAt(
     commit: GitSha,
