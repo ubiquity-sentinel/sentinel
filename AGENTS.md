@@ -25,8 +25,19 @@ instructions and their routed procedures still apply.
   HTTP 429 failover to `gpt-6-luna`, both with max reasoning. Supported trusted
   route aliases/configuration are documented in DECISIONS.md; local worker
   selection cannot change production policy or claim a live route.
-- The 2026-10-20 owner decision supersedes the former `gpt-5.6-luna` runtime policy. Development/orchestration workers use `gpt-6.1-sol`; runtime routing remains separate.
-- Ordinary hosted runtime updates use launcher self-install: launcher and runtime equal the exact CI-green development SHA, with a model-disabled bootstrap at generation+1 and exact recorded-prior rollback at a higher generation. Failed SHAs cannot reinstall. Dispatcher auto-follow fast-forwards `sentinel-supervisor` by verified CI and ancestry; `SENTINEL_AUTO_FOLLOW` defaults off until the first controlled advance and installation are verified. Rollout rows, owner supersessions, custody revision floors and LF materialization are retired for these updates; actual custody, accounting and compatible historical readers remain required. Retained ceremony modules await deletion in DESIGN.md §4 order.
+- The 2026-10-20 owner decision supersedes the former `gpt-5.6-luna` runtime
+  policy. Development/orchestration workers use `gpt-6.1-sol`; runtime routing
+  remains separate.
+- Ordinary hosted runtime updates use launcher self-install: launcher and
+  runtime equal the exact CI-green development SHA, with a model-disabled
+  bootstrap at generation+1 and exact recorded-prior rollback at a higher
+  generation. Failed SHAs cannot reinstall. Dispatcher auto-follow fast-forwards
+  `sentinel-supervisor` by verified CI and ancestry; `SENTINEL_AUTO_FOLLOW`
+  defaults off until the first controlled advance and installation are verified.
+  Rollout rows, owner supersessions, custody revision floors and LF
+  materialization are retired for these updates; actual custody, accounting and
+  compatible historical readers remain required. Retained ceremony modules await
+  deletion in DESIGN.md §4 order.
 - Keep credentials, authoritative state writes, live admission changes and
   promotion authority out of model workers. Use the existing trusted supervisor
   and exact execution/pointer proofs.
@@ -39,18 +50,45 @@ instructions and their routed procedures still apply.
 
 ### Native Codex review mode is mandatory
 
-Owner clarification, 2026-10-21: Codex review is a dedicated mode, not a normal Codex session with a selected reviewer model. Invoke `codex review`, `codex exec review`, or the supported app-server `review/start` entrypoint and let Codex resolve its reviewer. Do not select an implementation/general model or override reviewer model/effort to work around a review failure. A `codex-auto-review` model alias, copied review rubric, JSON output schema, or a prompt asking a normal `turn/start` to review does not enter review mode and does not satisfy this requirement.
+Owner clarification, 2026-10-21: Codex review is a dedicated mode, not a normal
+Codex session with a selected reviewer model. Invoke `codex review`,
+`codex exec review`, or the supported app-server `review/start` entrypoint and
+let Codex resolve its reviewer. Do not select an implementation/general model or
+override reviewer model/effort to work around a review failure. A
+`codex-auto-review` model alias, copied review rubric, JSON output schema, or a
+prompt asking a normal `turn/start` to review does not enter review mode and
+does not satisfy this requirement.
 
-For app-server integration, preserve the native `enteredReviewMode` and `exitedReviewMode` lifecycle and bind the actual review thread, turn, target and result. An unavailable native review path must be diagnosed; it must not be replaced with a model-selected normal turn. Keep existing current-head/base/task acceptance, CI, accounting and merge gates. This clarification does not authorize extra charged attempts, refunds or a changed review-round ceiling. Routine reviewer selection is owned by Codex review mode and is not an owner model-selection decision.
+For app-server integration, preserve the native `enteredReviewMode` and
+`exitedReviewMode` lifecycle and bind the actual review thread, turn, target and
+result. An unavailable native review path must be diagnosed; it must not be
+replaced with a model-selected normal turn. Keep existing current-head/base/task
+acceptance, CI, accounting and merge gates. This clarification does not
+authorize extra charged attempts, refunds or a changed review-round ceiling.
+Routine reviewer selection is owned by Codex review mode and is not an owner
+model-selection decision.
 
-Development changes require no development PR for every edit. Make the scoped change, immediately test it and deliver directly. The 2026-10-20 owner preference for development review is GitHub `@codex review` first, with local `codex review` / `codex-u review` as fallback; this supersedes the earlier blanket development-review prohibition. It does not waive autonomous runtime target PR review, CI or merge gates.
+Development changes require no development PR for every edit. Make the scoped
+change, immediately test it and deliver directly. The 2026-10-20 owner
+preference for development review is GitHub `@codex review` first, with local
+`codex review` / `codex-u review` as fallback; this supersedes the earlier
+blanket development-review prohibition. It does not waive autonomous runtime
+target PR review, CI or merge gates.
 
-GitHub `@codex review` reviewer statements are retired for autonomous runtime target PRs. The internal runtime review service must invoke native Codex review mode and validate its structured result; selecting a gateway model named `codex-auto-review` is not a substitute. Runtime code changes require a completed current-head receipt with no unresolved P0/P1, passing current CI and applicable target branch protections before autonomous merge. Missing/stale/unavailable evidence cannot pass. Development reviews follow the separate owner preference above.
+GitHub `@codex review` reviewer statements are retired for autonomous runtime
+target PRs. The internal runtime review service must invoke native Codex review
+mode and validate its structured result; selecting a gateway model named
+`codex-auto-review` is not a substitute. Runtime code changes require a
+completed current-head receipt with no unresolved P0/P1, passing current CI and
+applicable target branch protections before autonomous merge.
+Missing/stale/unavailable evidence cannot pass. Development reviews follow the
+separate owner preference above.
 
 Do not edit the vendored upstream rubric constant in
-`src/github/codex-review-rubric.ts`. The attached harness schema overrides its
-output-format section; retain its upstream pin/hash and Sentinel read-only
-boundary. See
+`src/github/codex-review-rubric.ts`. Its former harness output-schema override
+belongs to the superseded ordinary-turn adapter; native review mode owns its
+rubric and output protocol. Retain the historical pin/hash and Sentinel
+read-only boundary. See
 [the alignment note](docs/codex-review-rubric-alignment-2026-10-08.md).
 
 ## Fast local development
@@ -112,9 +150,18 @@ function each.
 
 ### Hosted approval boundary
 
-Default for future efforts without equivalent owner authorization: after local preparation, obtain approval for each development-triggered hosted attempt, identifying workflow, target, exact SHA, expected duration and remaining hosted-only assertion.
+Default for future efforts without equivalent owner authorization: after local
+preparation, obtain approval for each development-triggered hosted attempt,
+identifying workflow, target, exact SHA, expected duration and remaining
+hosted-only assertion.
 
-Exception for this effort (owner grant, 2026-10-20 UTC): the orchestrator has blanket authority for hosted dispatch/rerun/cancel/enable/disable, direct pushes to `development`, launcher pin and runtime pointer updates, state-branch writes and gated autonomous PR merges. This supersedes the default per-attempt boundary for this effort and includes corrected candidates and retries; do not request approval again for those authorized actions. Workers retain their narrower assignment permissions. The 0x4007 PAT may set secrets as a stopgap.
+Exception for this effort (owner grant, 2026-10-20 UTC): the orchestrator has
+blanket authority for hosted dispatch/rerun/cancel/enable/disable, direct pushes
+to `development`, launcher pin and runtime pointer updates, state-branch writes
+and gated autonomous PR merges. This supersedes the default per-attempt boundary
+for this effort and includes corrected candidates and retries; do not request
+approval again for those authorized actions. Workers retain their narrower
+assignment permissions. The 0x4007 PAT may set secrets as a stopgap.
 
 Within an authorized Sentinel task, continue through protected publication,
 hosted end-to-end verification and runtime/supervisor dispatch, including
@@ -126,7 +173,15 @@ each hosted execution, record the exact workflow, target, SHA, expected duration
 and remaining hosted-only assertion; retain the resulting evidence. Keep local,
 hosted, installed and live acceptance separate.
 
-After a failure, retain its logs, diagnose and reproduce/fix locally, and repeat only affected validation before the next attempt. When reproduction requires the hosted environment, identify the exact gap and use the smallest proving probe within the authorized task. Preserve integrity, custody, durable accounting, current-head review and CI, target ownership and exclusive promotion authority. Independent credential/security actions outside the dated grant and numeric retention approvals remain required, and whole-repository local sweeps still require explicit authorization. Include these boundaries in worker assignments and continuations.
+After a failure, retain its logs, diagnose and reproduce/fix locally, and repeat
+only affected validation before the next attempt. When reproduction requires the
+hosted environment, identify the exact gap and use the smallest proving probe
+within the authorized task. Preserve integrity, custody, durable accounting,
+current-head review and CI, target ownership and exclusive promotion authority.
+Independent credential/security actions outside the dated grant and numeric
+retention approvals remain required, and whole-repository local sweeps still
+require explicit authorization. Include these boundaries in worker assignments
+and continuations.
 
 ## Ownership and acceptance
 
@@ -167,4 +222,7 @@ delivery proof. Health/bootstrap/workflow success alone is not issue delivery.
 Report genuine unresolved boundaries and one concrete next action, with concise
 checkpoints rather than unchanged polling or full historical dumps.
 
-Acceptance for the 2026-10-20 effort is green scheduled supervisor cycles and at least one autonomous issue → PR → completed internal review → merge per target (`ubiquity/sentinel`, `ubiquity/ai.ubq.fi`). The ai.ubq.fi scope is issue repairs only for now; `sentinel-release` stays disabled.
+Acceptance for the 2026-10-20 effort is green scheduled supervisor cycles and at
+least one autonomous issue → PR → completed internal review → merge per target
+(`ubiquity/sentinel`, `ubiquity/ai.ubq.fi`). The ai.ubq.fi scope is issue
+repairs only for now; `sentinel-release` stays disabled.

@@ -2,6 +2,10 @@
 export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
   .freeze([
     "src/host/hosted-authority-protected-paths.ts",
+    "src/contracts/hosted-controller-deployment.ts",
+    "src/github/native-review-result.ts",
+    "src/host/published-refresh-validator.ts",
+    "src/host/passport-dependencies.ts",
     // Extracted installation, settlement, verification and ordinary admission authority.
     "src/contracts/hosted-supervisor-installation.ts",
     "src/contracts/hosted-supervisor-verification.ts",

@@ -9,15 +9,52 @@ continuation.
 
 ## Runtime and dispatch
 
+### Private Passport controller isolation (2026-10-21)
+
+The owner's request to add `ubiquity/passport.ubq.fi`, followed by the explicit
+completion goal, authorizes completing its private execution path. The dedicated
+private `ubiquity/sentinel-passport` controller owns only Passport; the public
+controller retains Sentinel and AI. Private target code, artifacts, runtime
+state, review evidence and logs must remain private. Seed source ancestry only,
+never public runtime state or accounting. Provision the existing App/model
+credentials exclusively in the private controller's `sentinel-supervisor`
+environment restricted to that branch; no credential replacement, audience
+expansion, branch ruleset or product-release activation is authorized. The
+private dispatcher and product release remain disabled during preparation;
+native private CI, controller-bound bootstrap, target authorization and real
+reviewed delivery precede activation claims.
+
 ### Native review mode owns reviewer selection (2026-10-21)
 
-The owner explicitly clarified: "CODEX REVIEW IS NOT A NORNAL CODEX SESSION THAT YOU SELECT THE MODEL". This corrects the continuation's proposed switch to `gpt-6.1-sol/max`. That proposal is withdrawn; reviewer selection is not a pending owner choice for fixing the current failure.
+The owner explicitly clarified: "CODEX REVIEW IS NOT A NORNAL CODEX SESSION THAT
+YOU SELECT THE MODEL". This corrects the continuation's proposed switch to
+`gpt-6.1-sol/max`. That proposal is withdrawn; reviewer selection is not a
+pending owner choice for fixing the current failure.
 
-Sentinel must enter native Codex review mode through `codex review`, `codex exec review`, or the supported app-server `review/start` request. Codex resolves the reviewer. Do not override reviewer model or effort, inherit an implementation model as a substitute, or use a normal `turn/start` with review instructions. A gateway alias named `codex-auto-review`, the review rubric, and a structured output schema do not establish native review mode. Existing text naming that alias is not authority to replace the mode with a generic model invocation.
+Sentinel must enter native Codex review mode through `codex review`,
+`codex exec review`, or the supported app-server `review/start` request. Codex
+resolves the reviewer. Do not override reviewer model or effort, inherit an
+implementation model as a substitute, or use a normal `turn/start` with review
+instructions. A gateway alias named `codex-auto-review`, the review rubric, and
+a structured output schema do not establish native review mode. Existing text
+naming that alias is not authority to replace the mode with a generic model
+invocation.
 
-The app-server integration must support and correlate the native `enteredReviewMode` and `exitedReviewMode` events, actual review-thread/turn identity, target and structured result. Keep trusted read-only execution, exact head/base/task binding, current CI, durable reservations/settlement and normal merge gates. An unavailable review remains unavailable. This correction changes neither the hard review-round ceiling nor past charges and does not authorize an additional paid attempt. Diagnose and repair the invocation before considering any further run.
+The app-server integration must support and correlate the native
+`enteredReviewMode` and `exitedReviewMode` events, actual review-thread/turn
+identity, target and structured result. Keep trusted read-only execution, exact
+head/base/task binding, current CI, durable reservations/settlement and normal
+merge gates. An unavailable review remains unavailable. This correction changes
+neither the hard review-round ceiling nor past charges and does not authorize an
+additional paid attempt. Diagnose and repair the invocation before considering
+any further run.
 
-At source `e0c4cd07c643c9828d811e61c48e5b9c136e6182`, the runtime reviewer uses `turn/start` with explicit model/effort/output schema; its custody RPC allowlist omits `review/start`, and its reviewer event filter rejects native review-mode items. Those are concrete implementation mismatches. Documentation clarification does not itself fix or validate the runtime path. Official protocol reference: https://learn.chatgpt.com/docs/app-server#review.
+At source `e0c4cd07c643c9828d811e61c48e5b9c136e6182`, the runtime reviewer uses
+`turn/start` with explicit model/effort/output schema; its custody RPC allowlist
+omits `review/start`, and its reviewer event filter rejects native review-mode
+items. Those are concrete implementation mismatches. Documentation clarification
+does not itself fix or validate the runtime path. Official protocol reference:
+https://learn.chatgpt.com/docs/app-server#review.
 
 ### Owner grant, scope and acceptance (2026-10-20 UTC)
 
@@ -804,10 +841,11 @@ transition, not a manual state rewrite.
 GitHub `@codex review` reviewer statements are retired for autonomous runtime
 target PRs. Those PRs use native Codex review mode through the internal review
 service, with reviewer selection delegated to Codex as clarified above. A model
-alias and a normal review-prompted turn do not meet that contract. Silence, a reaction or absence of comments does not
-establish a completed review. No unresolved P0/P1 may pass the gate; changed
-candidate bytes need matching evidence. The separate development-review
-preference above does not satisfy this runtime gate.
+alias and a normal review-prompted turn do not meet that contract. Silence, a
+reaction or absence of comments does not establish a completed review. No
+unresolved P0/P1 may pass the gate; changed candidate bytes need matching
+evidence. The separate development-review preference above does not satisfy this
+runtime gate.
 
 Review rounds are capped at three per task, hard, everywhere (owner decision
 2026-10-16, after ai.ubq.fi issue 684 / PR 1059 reached 44 rounds). A task's
@@ -1224,7 +1262,16 @@ step recovers it — a surviving review_request intent is counted once and
 cleared, a plain observation wait only clears — and requests a fresh uniquely
 admitted round instead of re-arming the transient wait forever.
 
-Native review terminal diagnostics (2026-10-21): retain only exact matched request/invocation/owner/thread/turn identities, `terminalStatus`, bounded duration and closed typed error fields. Never emit provider prose, output or additional details. The hosted launcher accepts only a strict exact-key, owner-bound, capped advisory projection and forwards it through captured-result CLI output; malformed or foreign advisories cannot affect the authoritative child result. Advisory fields must not use top-level `status`, which is reserved by child-result detection. These diagnostics do not complete an unavailable review, change its null execution receipt, select a route, admit a model start, restore a spent round or authorize a merge.
+Native review terminal diagnostics (2026-10-21): retain only exact matched
+request/invocation/owner/thread/turn identities, `terminalStatus`, bounded
+duration and closed typed error fields. Never emit provider prose, output or
+additional details. The hosted launcher accepts only a strict exact-key,
+owner-bound, capped advisory projection and forwards it through captured-result
+CLI output; malformed or foreign advisories cannot affect the authoritative
+child result. Advisory fields must not use top-level `status`, which is reserved
+by child-result detection. These diagnostics do not complete an unavailable
+review, change its null execution receipt, select a route, admit a model start,
+restore a spent round or authorize a merge.
 
 ## Blocked-work recovery and decomposition (2026-10-15)
 

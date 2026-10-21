@@ -9,51 +9,332 @@ ownership, authority or acceptance.
 
 ## Active task register
 
-Snapshot: 2026-10-21 13:43 UTC. The owner corrected the reviewer contract: native Codex review mode owns reviewer selection. The prior proposal to switch runtime reviews to `gpt-6.1-sol/max` is withdrawn. Current primary in the original handoff chat owns this documentation-only correction after confirming continuation thread `01a15d9a-c632-79b1-9081-4d4cb68a94bc` completed and its CLI process exited. Canonical source remains `e0c4cd07c643c9828d811e61c48e5b9c136e6182` before this documentation commit; runtime remains the accepted generation87 revision recorded below. No new review/model start, deployment, counter reset, extra-round grant, secret change or scheduler change is made by this correction.
+Snapshot: 2026-10-21 14:25 UTC. The owner explicitly requested a goal and
+completion. The original chat owns the active goal to repair native review
+invocation, safely onboard private Passport, and prove reviewed autonomous
+delivery. Canonical is `8f0206d7762d21aa6d33795b83b6b7c902e2b743` before
+implementation; all historical charges and product-release disablement remain
+mandatory. Public targets remain Sentinel and AI. The newly created private
+`ubiquity/sentinel-passport` repository is reserved exclusively for Passport and
+has Actions disabled during setup; it contains no target source, imported state,
+or credentials yet.
 
-- Source tracing confirms the invocation bug: `src/github/reviewer-prepared.ts:81-94` starts a normal `turn/start` with selected model/effort/output schema; `src/github/codex-reviewer.ts:428-451` supplies explicit thread model and review-model configuration; `src/host/review-owner-custody.ts:390-393` omits `review/start` from its RPC allowlist; `src/github/reviewer-events.ts:92-95` rejects native review-mode events. Use current symbol locations before editing. The next source correction must invoke and preserve actual Codex review mode, not substitute a model or weaken result/merge validation.
-- AGENTS.md, MASTER-PLAN.md and DECISIONS.md now make the distinction explicit. The earlier model-choice proposal is not an outstanding approval request. Passport's private-execution boundary and the existing spent-round/accounting constraints remain separate unresolved matters; this owner clarification does not silently approve either.
-- Full delivery is still incomplete. Documentation and source-path attribution are not a runtime fix; do not report that reviews or autonomous merges now work.
+- `native-review-mode-20261021`: sole writer `native_review_contract`, worktree
+  `.codex-worktrees/master-plan-native-review-mode-20261021-acdb9c6b46b`, branch
+  `codex/master-plan-native-review-mode-20261021-acdb9c6b46b`, exact base
+  `8f0206d7762d21aa6d33795b83b6b7c902e2b743`. Owns native
+  reviewer/custody/journal correction and its affected tests. No normal-turn
+  substitute or caller reviewer override is permitted.
+- `private-controller-binding-20261021`: writer `passport_private_execution`,
+  worktree
+  `.codex-worktrees/master-plan-private-controller-binding-20261021-a5d9e3f3c47`,
+  branch `codex/master-plan-private-controller-binding-20261021-a5d9e3f3c47`,
+  same exact base. Owns immutable committed controller identity and necessary
+  direct identity consumers with default public behavior; private deployment and
+  credentials remain primary-owned. Integrate native review first, then this
+  separate identity foundation.
+- `native-review-queue-recovery-20261021`: writer `native_review_candidates`,
+  worktree
+  `.codex-worktrees/master-plan-native-review-queue-recovery-20261021-a05a605ad17`,
+  branch `codex/master-plan-native-review-queue-recovery-20261021-a05a605ad17`,
+  same exact base. Owns exact acknowledgment of already-published held base
+  refreshes through queue authority and CAS/readback; no generic hold-clear or
+  accounting reset. Candidate selection/provenance is retained in the current
+  task's `queue-hold-recovery.json`.
+- `passport-target-policy-20261021`: writer `passport_target_readiness`,
+  worktree
+  `.codex-worktrees/master-plan-passport-target-policy-20261021-a756019b85c`,
+  branch `codex/master-plan-passport-target-policy-20261021-a756019b85c`, same
+  exact base. Owns fixed Passport verification/dependency policy and its focused
+  consumers. The hosted preparation hook in `actions-repair-host.ts` waits until
+  the native-review writer has committed and integrated; that shared source will
+  have one integration owner.
+- Prepared contracts and acceptance candidates are in the current task workspace
+  `work/goal-native-review-20261021/`. AI PR1254/1255/1258 retain review
+  allowance, subject to exact custody and base reconciliation. Self PR171/174
+  have exhausted three prior generic attempts. No refunds, historical rewriting
+  or extra charged round is granted by these implementation assignments. The
+  user need not choose a reviewer model; native Codex review owns that choice.
+
+### Prior documentation checkpoint at 13:43 UTC
+
+Snapshot: 2026-10-21 13:43 UTC. The owner corrected the reviewer contract:
+native Codex review mode owns reviewer selection. The prior proposal to switch
+runtime reviews to `gpt-6.1-sol/max` is withdrawn. Current primary in the
+original handoff chat owns this documentation-only correction after confirming
+continuation thread `01a15d9a-c632-79b1-9081-4d4cb68a94bc` completed and its CLI
+process exited. Canonical source remains
+`e0c4cd07c643c9828d811e61c48e5b9c136e6182` before this documentation commit;
+runtime remains the accepted generation87 revision recorded below. No new
+review/model start, deployment, counter reset, extra-round grant, secret change
+or scheduler change is made by this correction.
+
+- Source tracing confirms the invocation bug:
+  `src/github/reviewer-prepared.ts:81-94` starts a normal `turn/start` with
+  selected model/effort/output schema; `src/github/codex-reviewer.ts:428-451`
+  supplies explicit thread model and review-model configuration;
+  `src/host/review-owner-custody.ts:390-393` omits `review/start` from its RPC
+  allowlist; `src/github/reviewer-events.ts:92-95` rejects native review-mode
+  events. Use current symbol locations before editing. The next source
+  correction must invoke and preserve actual Codex review mode, not substitute a
+  model or weaken result/merge validation.
+- AGENTS.md, MASTER-PLAN.md and DECISIONS.md now make the distinction explicit.
+  The earlier model-choice proposal is not an outstanding approval request.
+  Passport's private-execution boundary and the existing spent-round/accounting
+  constraints remain separate unresolved matters; this owner clarification does
+  not silently approve either.
+- Full delivery is still incomplete. Documentation and source-path attribution
+  are not a runtime fix; do not report that reviews or autonomous merges now
+  work.
 
 ### Prior checkpoint at 11:19 UTC
 
-Snapshot: 2026-10-21 11:19 UTC. The current primary orchestrator remains the sole integration/ledger owner in `/Users/nv/repos/ubiquity/sentinel` on `development` (thread `01a15d9a-c632-79b1-9081-4d4cb68a94bc`, actual GPT-6 Astra/ultra). Accepted code-bearing revision, protected launcher and installed runtime are `776df5c0fc6bf9a8dc362935e0cdc8aa69932c6f`, generation87; canonical preserves that ancestry and is receiving this ledger-only continuation update. The pre-existing untracked backlog evidence remains preserved. Source writers and hosted observers have settled. Further model starts and private activation are held for the owner decisions below; the full delivery goal is not complete.
+Snapshot: 2026-10-21 11:19 UTC. The current primary orchestrator remains the
+sole integration/ledger owner in `/Users/nv/repos/ubiquity/sentinel` on
+`development` (thread `01a15d9a-c632-79b1-9081-4d4cb68a94bc`, actual GPT-6
+Astra/ultra). Accepted code-bearing revision, protected launcher and installed
+runtime are `776df5c0fc6bf9a8dc362935e0cdc8aa69932c6f`, generation87; canonical
+preserves that ancestry and is receiving this ledger-only continuation update.
+The pre-existing untracked backlog evidence remains preserved. Source writers
+and hosted observers have settled. Further model starts and private activation
+are held for the owner decisions below; the full delivery goal is not complete.
 
-- The seven-file review-terminal diagnostic correction is integrated with both worker tips preserved in ancestry. Focused checks passed 120 tests and 17 steps; independent actual reviewer-to-hosted-launcher-to-CLI acceptance passed. Native CI39575728974:1 passed all seven jobs, including required `test-local` check119146040662. This adds exact, sanitized terminal visibility; it is not a claim that the upstream review failure is fixed.
-- Controlled installation39579617129:1 passed and release `5efc4de2624b79690d9b93252df68f2cea24abf3` accepted generation87/C with execution cleared. Prepare and repair prove bootstrap purpose and modelStartsEnabled=false; matrix jobs were skipped. Exact healthy bootstrap proof binds job119158843322 and log digest `7b29774ed8c938f3e569051e76215214a15dd655ff3bee47a7af6d096134f055`. The actual prior9ca/generation86 proof is preserved; no manual runtime-state write or rollback occurred.
-- Repair `6451e74a41bae519261517146b9201897ba06927`, sequence47230, preserves all 1,534 reservation identities and immutable fields. Exactly three trusted settlements changed: self177 reserved→submitted, self178 and AI1213 reserved→ambiguous; 1,531 records remain unchanged. There was no addition, deletion or refund. Self177 is protected-path blocked with its produced head retained and no PR; the two failed cells retain their failure/intents. Native cell job success is not issue delivery.
-- Controlled ordinary run39582417597:1 completed after one admission through exact request `2862499a-1bff-486a-8a1c-f020abb75eba` at C. Release `95af02693f23c81cba48e13a1527ded2c4039f41` stores its healthy ordinary proof and cleared execution; repair `b673976b38e90debc365da476def44a0feda2271`, sequence47236, is stable. All 1,534 prior charges remain unchanged; exactly one new submitted AI1249 review request brings the count to 1,535, with no refund or deletion. That review is the failed result below, not delivery. All six target PRs remain open; there is no qualifying autonomous reviewed merge.
-- Fresh AI PR1257 review5598602583 binds head `8a85dbea3dd646e2d62343015dab90527379d2fb` and base `1a45c12b050cb7d721a883793f288256af6a4d4d`; all nine exact-head checks are successful. The new native advisory binds request `review-review:1257:8a85dbea3dd646e2d62343015dab90527379d2fb:attempt-3`, thread `01a15e1a-23d4-7951-bda5-208b64cbce3e`, turn `01a15e1a-2887-7e12-b551-e53caacfb9bc` and owner39582417597:1:repair, with terminalStatus=failed, durationMs=17078, errorPresent=true, errorCode=model_other and httpStatusCode=null. Its App journal is ready/unavailable with null execution and no fulfilled task acceptance. This proves native diagnostic forwarding, not review success or a quota/context cause. Self173 and AI1249 now both have three submitted reviews, counter3 and zero rounds left; self173 is ceiling-parked. No fourth review is authorized under the existing policy.
-- Existing gateway records for both earlier time-correlated reviewer requests report HTTP200/response.incomplete with failure_kind=max_output_tokens and explicitly reported zero usage. The fresh review's App-journal window also contains six same-route incomplete/zero-usage terminals; a primary-only bounded read verifies that the final request `57d7e33e-0d64-4469-ba75-aa4c565d46c2` again has failure_kind=max_output_tokens. This is a temporal batch match, not a retained direct thread-to-gateway request binding. Other Codex models completed in the first incident window, so this is not evidence of a universal transport outage. The client supplies no numeric output cap; current task-bound schemas are satisfiable and the prior fulfilled self result passes the current schema. No cause-specific cap, schema, route, effort, quota reset or timeout change is established. Another unchanged attempt is not warranted.
-- Two explicit owner decisions are pending. Passport can use a dedicated private `ubiquity/sentinel-passport` controller with protected placement of existing App/model secrets, or the owner can choose a visibility change for the existing host; neither is approved or performed. The existing trusted reviewer selector mechanically supports `gpt-6.1-sol`/max through the same internal service, but selecting it changes the mandated review policy. There is no existing task-specific extra-round interface: one additional charged review for self173 and AI1249 would require an owner-approved scoped policy and implementation, preserving all prior charges/counters and every current-head/task/CI gate. No substitute model, additional round, refund, global ceiling change or new private credential boundary has been applied.
-- Passport remains unactivated and absent from the published target array. Its JSON-only candidate `c7e059bff90993cbc238ffa4916fc8f60e509000` is tested and preserved in its clean assigned lane, not integrated. App-scoped access was verified privately with the temporary read token revoked. Public artifacts/plaintext state prevent safe activation on the current public host. A concrete private-controller option and restricted access/deployment-trigger preflight are prepared; the owner's privacy/security choice remains pending. Do not publish private material or place credentials into a new host before that boundary is approved.
-- Dispatcher357012160 remains disabled after the failed controlled observation; release353743353 remains disabled by scope. All five nonterminal supervisor status listings are empty. The earlier ten successful actual schedule events remain historical scheduling evidence, not proof of reviewed delivery on C. Resume only after resolving the review-policy boundary and reconciling exact ownership. No AI/Passport product deployment, branch rule, global setting or unrelated cleanup occurred.
+- The seven-file review-terminal diagnostic correction is integrated with both
+  worker tips preserved in ancestry. Focused checks passed 120 tests and 17
+  steps; independent actual reviewer-to-hosted-launcher-to-CLI acceptance
+  passed. Native CI39575728974:1 passed all seven jobs, including required
+  `test-local` check119146040662. This adds exact, sanitized terminal
+  visibility; it is not a claim that the upstream review failure is fixed.
+- Controlled installation39579617129:1 passed and release
+  `5efc4de2624b79690d9b93252df68f2cea24abf3` accepted generation87/C with
+  execution cleared. Prepare and repair prove bootstrap purpose and
+  modelStartsEnabled=false; matrix jobs were skipped. Exact healthy bootstrap
+  proof binds job119158843322 and log digest
+  `7b29774ed8c938f3e569051e76215214a15dd655ff3bee47a7af6d096134f055`. The actual
+  prior9ca/generation86 proof is preserved; no manual runtime-state write or
+  rollback occurred.
+- Repair `6451e74a41bae519261517146b9201897ba06927`, sequence47230, preserves
+  all 1,534 reservation identities and immutable fields. Exactly three trusted
+  settlements changed: self177 reserved→submitted, self178 and AI1213
+  reserved→ambiguous; 1,531 records remain unchanged. There was no addition,
+  deletion or refund. Self177 is protected-path blocked with its produced head
+  retained and no PR; the two failed cells retain their failure/intents. Native
+  cell job success is not issue delivery.
+- Controlled ordinary run39582417597:1 completed after one admission through
+  exact request `2862499a-1bff-486a-8a1c-f020abb75eba` at C. Release
+  `95af02693f23c81cba48e13a1527ded2c4039f41` stores its healthy ordinary proof
+  and cleared execution; repair `b673976b38e90debc365da476def44a0feda2271`,
+  sequence47236, is stable. All 1,534 prior charges remain unchanged; exactly
+  one new submitted AI1249 review request brings the count to 1,535, with no
+  refund or deletion. That review is the failed result below, not delivery. All
+  six target PRs remain open; there is no qualifying autonomous reviewed merge.
+- Fresh AI PR1257 review5598602583 binds head
+  `8a85dbea3dd646e2d62343015dab90527379d2fb` and base
+  `1a45c12b050cb7d721a883793f288256af6a4d4d`; all nine exact-head checks are
+  successful. The new native advisory binds request
+  `review-review:1257:8a85dbea3dd646e2d62343015dab90527379d2fb:attempt-3`,
+  thread `01a15e1a-23d4-7951-bda5-208b64cbce3e`, turn
+  `01a15e1a-2887-7e12-b551-e53caacfb9bc` and owner39582417597:1:repair, with
+  terminalStatus=failed, durationMs=17078, errorPresent=true,
+  errorCode=model_other and httpStatusCode=null. Its App journal is
+  ready/unavailable with null execution and no fulfilled task acceptance. This
+  proves native diagnostic forwarding, not review success or a quota/context
+  cause. Self173 and AI1249 now both have three submitted reviews, counter3 and
+  zero rounds left; self173 is ceiling-parked. No fourth review is authorized
+  under the existing policy.
+- Existing gateway records for both earlier time-correlated reviewer requests
+  report HTTP200/response.incomplete with failure_kind=max_output_tokens and
+  explicitly reported zero usage. The fresh review's App-journal window also
+  contains six same-route incomplete/zero-usage terminals; a primary-only
+  bounded read verifies that the final request
+  `57d7e33e-0d64-4469-ba75-aa4c565d46c2` again has
+  failure_kind=max_output_tokens. This is a temporal batch match, not a retained
+  direct thread-to-gateway request binding. Other Codex models completed in the
+  first incident window, so this is not evidence of a universal transport
+  outage. The client supplies no numeric output cap; current task-bound schemas
+  are satisfiable and the prior fulfilled self result passes the current schema.
+  No cause-specific cap, schema, route, effort, quota reset or timeout change is
+  established. Another unchanged attempt is not warranted.
+- Two explicit owner decisions are pending. Passport can use a dedicated private
+  `ubiquity/sentinel-passport` controller with protected placement of existing
+  App/model secrets, or the owner can choose a visibility change for the
+  existing host; neither is approved or performed. The existing trusted reviewer
+  selector mechanically supports `gpt-6.1-sol`/max through the same internal
+  service, but selecting it changes the mandated review policy. There is no
+  existing task-specific extra-round interface: one additional charged review
+  for self173 and AI1249 would require an owner-approved scoped policy and
+  implementation, preserving all prior charges/counters and every
+  current-head/task/CI gate. No substitute model, additional round, refund,
+  global ceiling change or new private credential boundary has been applied.
+- Passport remains unactivated and absent from the published target array. Its
+  JSON-only candidate `c7e059bff90993cbc238ffa4916fc8f60e509000` is tested and
+  preserved in its clean assigned lane, not integrated. App-scoped access was
+  verified privately with the temporary read token revoked. Public
+  artifacts/plaintext state prevent safe activation on the current public host.
+  A concrete private-controller option and restricted access/deployment-trigger
+  preflight are prepared; the owner's privacy/security choice remains pending.
+  Do not publish private material or place credentials into a new host before
+  that boundary is approved.
+- Dispatcher357012160 remains disabled after the failed controlled observation;
+  release353743353 remains disabled by scope. All five nonterminal supervisor
+  status listings are empty. The earlier ten successful actual schedule events
+  remain historical scheduling evidence, not proof of reviewed delivery on C.
+  Resume only after resolving the review-policy boundary and reconciling exact
+  ownership. No AI/Passport product deployment, branch rule, global setting or
+  unrelated cleanup occurred.
 
 ### Prior checkpoint at 08:40 UTC
 
-Snapshot: 2026-10-21 08:40 UTC. The user-selected continuation in the existing `/Users/nv/repos/ubiquity/sentinel` checkout on `development` is the sole execution and integration owner (thread `01a15d9a-c632-79b1-9081-4d4cb68a94bc`; actual model GPT-6 Astra, ultra). The prior session is read-only. Local HEAD, observed remote development and protected launcher remain `9ca42481e44944999994c0a92b85def01af5cfbc`, tree `4b98184bde1ecda6d2c07792e3856d726a5a13ab`; tracked files were clean before this ledger update, and the pre-existing untracked backlog evidence is preserved.
+Snapshot: 2026-10-21 08:40 UTC. The user-selected continuation in the existing
+`/Users/nv/repos/ubiquity/sentinel` checkout on `development` is the sole
+execution and integration owner (thread `01a15d9a-c632-79b1-9081-4d4cb68a94bc`;
+actual model GPT-6 Astra, ultra). The prior session is read-only. Local HEAD,
+observed remote development and protected launcher remain
+`9ca42481e44944999994c0a92b85def01af5cfbc`, tree
+`4b98184bde1ecda6d2c07792e3856d726a5a13ab`; tracked files were clean before this
+ledger update, and the pre-existing untracked backlog evidence is preserved.
 
-- Generation 86 is installed at that revision. The handoff records accepted model-disabled bootstrap `39550724936:1` and healthy ordinary executions `39552032846:1` and `39558720894:1`; fresh run `39565099977:1` is still active, with maintenance, prepare and matrix planning successful and repair/cells admitted. Preserve its ownership and reconcile its effects before any new dispatch. Fresh observed release ref is `b2d3ea2dc609468031f522fb7d2645ecc8a44fcd`; repair has advanced to `7d9f36297837a61ac24252fe00efb9c6a268bafd`. These observations supersede the paused/uninstalled snapshot below; they do not establish autonomous delivery.
-- Pending authorized scope is private Passport onboarding, the demonstrated structured-review terminal failure, then autonomous current-head reviewed delivery on each authorized target. Passport is not committed or activated. A JSON-only addition is refused because the public host currently carries implementation request text, Git bundles and plaintext review/work state; the read-only `passport_privacy` worker owns a narrow containment/access assessment and supported transport proposal. No private material has been published for this addition.
-- The read-only `review_terminal` worker owns exact failure attribution for Sentinel PR174 review5596333942 and AI PR1257 review5596428479. Existing journals are unavailable with null execution, and native settlement alone is not a completed review. The read-only `live_reconcile` worker owns current refs, admitted runs, target heads/CI, accounting and proposed ledger evidence. All three workers were requested as GPT-6.1 Sol/max; review and live-reconciliation workers have verified that identity, while Passport identity verification is pending. Only the primary may edit this ledger, integrate, publish or accept. No source write lane has yet been activated.
-- Canonical source changes must pass affected local evidence and exact native CI before auto-follow/self-install. Preserve all prior charges and reservations, current-head internal review and CI gates, protected-path refusals, exact CAS/rollback identities and the disabled `sentinel-release` boundary. No fourth development review, whole-repository local sweep, new cache/history refactor or product deployment is authorized by this continuation.
+- Generation 86 is installed at that revision. The handoff records accepted
+  model-disabled bootstrap `39550724936:1` and healthy ordinary executions
+  `39552032846:1` and `39558720894:1`; fresh run `39565099977:1` is still
+  active, with maintenance, prepare and matrix planning successful and
+  repair/cells admitted. Preserve its ownership and reconcile its effects before
+  any new dispatch. Fresh observed release ref is
+  `b2d3ea2dc609468031f522fb7d2645ecc8a44fcd`; repair has advanced to
+  `7d9f36297837a61ac24252fe00efb9c6a268bafd`. These observations supersede the
+  paused/uninstalled snapshot below; they do not establish autonomous delivery.
+- Pending authorized scope is private Passport onboarding, the demonstrated
+  structured-review terminal failure, then autonomous current-head reviewed
+  delivery on each authorized target. Passport is not committed or activated. A
+  JSON-only addition is refused because the public host currently carries
+  implementation request text, Git bundles and plaintext review/work state; the
+  read-only `passport_privacy` worker owns a narrow containment/access
+  assessment and supported transport proposal. No private material has been
+  published for this addition.
+- The read-only `review_terminal` worker owns exact failure attribution for
+  Sentinel PR174 review5596333942 and AI PR1257 review5596428479. Existing
+  journals are unavailable with null execution, and native settlement alone is
+  not a completed review. The read-only `live_reconcile` worker owns current
+  refs, admitted runs, target heads/CI, accounting and proposed ledger evidence.
+  All three workers were requested as GPT-6.1 Sol/max; review and
+  live-reconciliation workers have verified that identity, while Passport
+  identity verification is pending. Only the primary may edit this ledger,
+  integrate, publish or accept. No source write lane has yet been activated.
+- Canonical source changes must pass affected local evidence and exact native CI
+  before auto-follow/self-install. Preserve all prior charges and reservations,
+  current-head internal review and CI gates, protected-path refusals, exact
+  CAS/rollback identities and the disabled `sentinel-release` boundary. No
+  fourth development review, whole-repository local sweep, new cache/history
+  refactor or product deployment is authorized by this continuation.
 
-Checkpoint: 2026-10-21 08:44 UTC. Fresh repair `7d9f36297837a61ac24252fe00efb9c6a268bafd`, sequence 47224, records a third submitted unavailable review for self173 (review5596930889; no rounds left) and a second for AI1249 (review5597035889; one left). All 1,528 prior reservation records are unchanged; six legitimate new reservations bring the count to 1,534. At 08:43:32 the primary disabled only dispatcher workflow357012160 (`supervisor-dispatch.yml`) to prevent another identical failure from spending the remaining review round; readback is `disabled_manually`. Already-admitted run39565099977 remains active and untouched. Restore scheduling after the reviewer correction is proved; no counter reset or refund is authorized.
+Checkpoint: 2026-10-21 08:44 UTC. Fresh repair
+`7d9f36297837a61ac24252fe00efb9c6a268bafd`, sequence 47224, records a third
+submitted unavailable review for self173 (review5596930889; no rounds left) and
+a second for AI1249 (review5597035889; one left). All 1,528 prior reservation
+records are unchanged; six legitimate new reservations bring the count to 1,534.
+At 08:43:32 the primary disabled only dispatcher workflow357012160
+(`supervisor-dispatch.yml`) to prevent another identical failure from spending
+the remaining review round; readback is `disabled_manually`. Already-admitted
+run39565099977 remains active and untouched. Restore scheduling after the
+reviewer correction is proved; no counter reset or refund is authorized.
 
-- Module `review-terminal-recovery-20261021` now owns lane `.codex-worktrees/master-plan-review-terminal-recovery-20261021-a9421be8604`, branch `codex/master-plan-review-terminal-recovery-20261021-a9421be8604`, exact base `9ca42481e44944999994c0a92b85def01af5cfbc`, owner `review_terminal`. Owned source is `src/github/reviewer-events.ts`, with `tests/github/codex-review-transport_test.ts` and its existing helpers only as needed. Preserve a sanitized, exactly correlated terminal advisory through the actual review consumer; no schema, route, admission or receipt-acceptance change. Gateway evidence investigation remains read-only and independent.
-- Module `passport-target-20261021` now owns lane `.codex-worktrees/master-plan-passport-target-20261021-aa9e32ae620`, branch `codex/master-plan-passport-target-20261021-aa9e32ae620`, same exact base, owner `passport_privacy`. Owned source is only `sentinel.targets.json`; reuse affected existing target checks. Prepare this candidate locally, but do not integrate, publish or activate it while public-host confidentiality remains unresolved. Changing the existing repository visibility is a separate owner security decision; no such change has been made.
+- Module `review-terminal-recovery-20261021` now owns lane
+  `.codex-worktrees/master-plan-review-terminal-recovery-20261021-a9421be8604`,
+  branch `codex/master-plan-review-terminal-recovery-20261021-a9421be8604`,
+  exact base `9ca42481e44944999994c0a92b85def01af5cfbc`, owner
+  `review_terminal`. Owned source is `src/github/reviewer-events.ts`, with
+  `tests/github/codex-review-transport_test.ts` and its existing helpers only as
+  needed. Preserve a sanitized, exactly correlated terminal advisory through the
+  actual review consumer; no schema, route, admission or receipt-acceptance
+  change. Gateway evidence investigation remains read-only and independent.
+- Module `passport-target-20261021` now owns lane
+  `.codex-worktrees/master-plan-passport-target-20261021-aa9e32ae620`, branch
+  `codex/master-plan-passport-target-20261021-aa9e32ae620`, same exact base,
+  owner `passport_privacy`. Owned source is only `sentinel.targets.json`; reuse
+  affected existing target checks. Prepare this candidate locally, but do not
+  integrate, publish or activate it while public-host confidentiality remains
+  unresolved. Changing the existing repository visibility is a separate owner
+  security decision; no such change has been made.
 
-Checkpoint: 2026-10-21 08:51 UTC. Passport candidate `c7e059bff90993cbc238ffa4916fc8f60e509000` changes only the target array, preserves both existing entries and passes 16 existing target/default-branch/mirror/cycle tests plus scoped format and diff checks. It is preserved in its clean assigned lane and deliberately unintegrated/unpublished pending the private execution boundary. The primary asked the owner whether to retain the public Sentinel host with a private execution path or prepare a visibility change; private-host design proceeds read-only while that preference is pending. App-access script validation is separate and has not minted a token. Existing tests prove configuration consumers, not installed access or private containment.
+Checkpoint: 2026-10-21 08:51 UTC. Passport candidate
+`c7e059bff90993cbc238ffa4916fc8f60e509000` changes only the target array,
+preserves both existing entries and passes 16 existing
+target/default-branch/mirror/cycle tests plus scoped format and diff checks. It
+is preserved in its clean assigned lane and deliberately
+unintegrated/unpublished pending the private execution boundary. The primary
+asked the owner whether to retain the public Sentinel host with a private
+execution path or prepare a visibility change; private-host design proceeds
+read-only while that preference is pending. App-access script validation is
+separate and has not minted a token. Existing tests prove configuration
+consumers, not installed access or private containment.
 
-Checkpoint: 2026-10-21 08:56 UTC. Reviewer diagnostic worker tip `4e1d774c158288f47b76ee77ff19f95deb21ac19` was ancestry-integrated locally as `d1a3d5b82f4930080fb6488f9e57e9ff649e61ac`, with no publication or installation. Its actual review-consumer regression fails before the fix and passes afterwards; 84 affected tests and 17 steps pass. Independent milestone audit found the hosted launcher filters out the new advisory, so this candidate does not yet satisfy native diagnostic acceptance. The same writer is frozen pending an explicit minimal forwarding/consumer-test scope; raw stdout passthrough and any weakened receipt or merge gate remain forbidden. The original two unavailable review threads have time-correlated native upstream `response.incomplete` terminals with zero output, but no exact thread-to-request link or raw terminal error has yet established a cause.
+Checkpoint: 2026-10-21 08:56 UTC. Reviewer diagnostic worker tip
+`4e1d774c158288f47b76ee77ff19f95deb21ac19` was ancestry-integrated locally as
+`d1a3d5b82f4930080fb6488f9e57e9ff649e61ac`, with no publication or installation.
+Its actual review-consumer regression fails before the fix and passes
+afterwards; 84 affected tests and 17 steps pass. Independent milestone audit
+found the hosted launcher filters out the new advisory, so this candidate does
+not yet satisfy native diagnostic acceptance. The same writer is frozen pending
+an explicit minimal forwarding/consumer-test scope; raw stdout passthrough and
+any weakened receipt or merge gate remain forbidden. The original two
+unavailable review threads have time-correlated native upstream
+`response.incomplete` terminals with zero output, but no exact thread-to-request
+link or raw terminal error has yet established a cause.
 
-Checkpoint: 2026-10-21 08:58 UTC. The independently checked primary-only App probe passed in 2.898 seconds using a newly minted Passport-only read token, then revoked that token. App identity, scoped repository access, default-ref readability and complete opt-out discovery are verified in restricted evidence; repository activity metadata is omitted here. No private text, source or credential was emitted or persisted. Evidence `5cbc5125-868b-4134-a4f5-746bec4570f1` is retained under task `work/passport-20261021/app-access-evidence.json`. This establishes App read access and opt-out discovery only; installed target summary, authenticated checkout, safe private host and autonomous reviewed delivery remain pending.
+Checkpoint: 2026-10-21 08:58 UTC. The independently checked primary-only App
+probe passed in 2.898 seconds using a newly minted Passport-only read token,
+then revoked that token. App identity, scoped repository access, default-ref
+readability and complete opt-out discovery are verified in restricted evidence;
+repository activity metadata is omitted here. No private text, source or
+credential was emitted or persisted. Evidence
+`5cbc5125-868b-4134-a4f5-746bec4570f1` is retained under task
+`work/passport-20261021/app-access-evidence.json`. This establishes App read
+access and opt-out discovery only; installed target summary, authenticated
+checkout, safe private host and autonomous reviewed delivery remain pending.
 
-Checkpoint: 2026-10-21 08:59 UTC. The independent audit also found the advisory's top-level `status` collides with child-result detection. The original local candidate remains unpublished. The primary extends the same review-terminal module from canonical predecessor `d1a3d5b82f4930080fb6488f9e57e9ff649e61ac` to own `src/host/hosted-runtime-status.ts`, `hosted-runtime-identity.ts`, `hosted-runtime-launcher.ts`, `hosted-runtime-main.ts` and `tests/host/hosted-runtime-review-advisory_test.ts`, in addition to its original two files. Rename the observational field `terminalStatus`, add a strict exact-key capped advisory parser, and use the existing captured-result attachment/CLI-print route. The real reviewer-to-hosted-status/launcher/CLI consumer must prove one authoritative child result, visible sanitized terminal and rejection of malformed extra data. No generic raw-output forwarding, stream union, receipt schema, routing or admission change is authorized.
+Checkpoint: 2026-10-21 08:59 UTC. The independent audit also found the
+advisory's top-level `status` collides with child-result detection. The original
+local candidate remains unpublished. The primary extends the same
+review-terminal module from canonical predecessor
+`d1a3d5b82f4930080fb6488f9e57e9ff649e61ac` to own
+`src/host/hosted-runtime-status.ts`, `hosted-runtime-identity.ts`,
+`hosted-runtime-launcher.ts`, `hosted-runtime-main.ts` and
+`tests/host/hosted-runtime-review-advisory_test.ts`, in addition to its original
+two files. Rename the observational field `terminalStatus`, add a strict
+exact-key capped advisory parser, and use the existing captured-result
+attachment/CLI-print route. The real reviewer-to-hosted-status/launcher/CLI
+consumer must prove one authoritative child result, visible sanitized terminal
+and rejection of malformed extra data. No generic raw-output forwarding, stream
+union, receipt schema, routing or admission change is authorized.
 
-Checkpoint: 2026-10-21 09:11 UTC. Corrected worker `f89e3838dbda7634ec727d7e1add6ea8d6e9e8a3` is ancestry-integrated as `236de4f5683a10ad2d623f339d64e9a50048ab76`, still unpublished and uninstalled. The real reviewer-to-launcher-to-CLI lifecycle and malformed/foreign/cap controls pass; 120 affected tests and 17 steps plus scoped statics pass. Independent corrected-candidate acceptance is pending; source writers are frozen. Native run39565099977 completed successfully including all four cells and finalization at 08:52:32, without cancellation. The metadata-only capture probe returned HTTP200 with `no_capture_record` for both exact gateway request IDs; no inference, capture retention or database mutation occurred. A bounded read-only error-history projection is being prepared; `/admin/errors` remains unused because it can reclaim unrelated stored captures.
+Checkpoint: 2026-10-21 09:11 UTC. Corrected worker
+`f89e3838dbda7634ec727d7e1add6ea8d6e9e8a3` is ancestry-integrated as
+`236de4f5683a10ad2d623f339d64e9a50048ab76`, still unpublished and uninstalled.
+The real reviewer-to-launcher-to-CLI lifecycle and malformed/foreign/cap
+controls pass; 120 affected tests and 17 steps plus scoped statics pass.
+Independent corrected-candidate acceptance is pending; source writers are
+frozen. Native run39565099977 completed successfully including all four cells
+and finalization at 08:52:32, without cancellation. The metadata-only capture
+probe returned HTTP200 with `no_capture_record` for both exact gateway request
+IDs; no inference, capture retention or database mutation occurred. A bounded
+read-only error-history projection is being prepared; `/admin/errors` remains
+unused because it can reclaim unrelated stored captures.
 
-Checkpoint: 2026-10-21 09:14 UTC. The primary accepts the independent corrected-candidate PASS on exact integrated source `236de4f5683a10ad2d623f339d64e9a50048ab76`, receipt `740ac0d1-070c-4650-9dfa-d4dccf47e415`: actual emitter, hosted status/launcher and CLI preserve the healthy trusted terminal and forward exactly one sanitized owner-bound advisory. Native CI and installation remain pending; this diagnostic does not itself fix or complete the failed upstream reviews. Fresh release `96ee456acd602fd3da651bad93693183e4058ef4` records generation86/9ca healthy run39565099977 with execution cleared; zero running or queued supervisors remain. Repair is still `7d9f36297837a61ac24252fe00efb9c6a268bafd`, sequence47224. Native cell job success is not candidate success: self178 and AI1213 hit `codex_operation_deadline` with no candidate, self177 produced a completed preserved bundle awaiting ingestion, and AI1214 published its already-recorded head. Preserve all reservations and ingest through the trusted path.
+Checkpoint: 2026-10-21 09:14 UTC. The primary accepts the independent
+corrected-candidate PASS on exact integrated source
+`236de4f5683a10ad2d623f339d64e9a50048ab76`, receipt
+`740ac0d1-070c-4650-9dfa-d4dccf47e415`: actual emitter, hosted status/launcher
+and CLI preserve the healthy trusted terminal and forward exactly one sanitized
+owner-bound advisory. Native CI and installation remain pending; this diagnostic
+does not itself fix or complete the failed upstream reviews. Fresh release
+`96ee456acd602fd3da651bad93693183e4058ef4` records generation86/9ca healthy
+run39565099977 with execution cleared; zero running or queued supervisors
+remain. Repair is still `7d9f36297837a61ac24252fe00efb9c6a268bafd`,
+sequence47224. Native cell job success is not candidate success: self178 and
+AI1213 hit `codex_operation_deadline` with no candidate, self177 produced a
+completed preserved bundle awaiting ingestion, and AI1214 published its
+already-recorded head. Preserve all reservations and ingest through the trusted
+path.
 
 ### Prior checkpoint at 04:47 UTC
 
