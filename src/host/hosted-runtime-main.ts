@@ -19,7 +19,10 @@ import type {
 import { readNativeMatrixStdin, runtimeJob } from "./hosted-runtime-matrix.ts";
 import { APP_TOKEN_MINTED_NOT_BEFORE_ENV } from "./hosted-app-token-window.ts";
 import { HOSTED_APP_MINT_GRANT_ENV } from "./hosted-app-grant.ts";
-import { reviewCommandItemRefusalLines } from "./hosted-runtime-status.ts";
+import {
+  reviewCommandItemRefusalLines,
+  reviewTerminalAdvisoryLines,
+} from "./hosted-runtime-status.ts";
 import { runHostedRuntimeWithReviewCustody } from "./review-owner-host.ts";
 import { fallbackHostedRuntimeSummary } from "./hosted-runtime-launcher.ts";
 import type { HostedRuntimeSummaryV1 } from "../contracts/hosted-execution.ts";
@@ -173,6 +176,15 @@ export function emitHostedRuntimeCliResult(
     console.log(JSON.stringify(result.launcherRejection));
   }
   printReviewCommandRefusals(result);
+  if (result.reviewTerminals !== undefined) {
+    try {
+      for (const line of reviewTerminalAdvisoryLines(result.reviewTerminals)) {
+        console.log(line);
+      }
+    } catch {
+      // Advisory printing cannot change the resolved child result or exit.
+    }
+  }
   // Exactly one advisory summary, after all child evidence; terminal readers are unchanged.
   console.log(
     JSON.stringify(result.summary ?? fallbackHostedRuntimeSummary(result)),

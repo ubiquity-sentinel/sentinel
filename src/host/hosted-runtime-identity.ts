@@ -23,6 +23,7 @@ import type {
 } from "../replay/runtime.ts";
 import { joinPath } from "./local.ts";
 import type { LocalModelDiagnosticV1 } from "./local.ts";
+import type { ModelBoundaryErrorCodeV1 } from "../repair/model-port-diagnostics.ts";
 
 /** Exact fixed workflow ref the protected supervisor runs from. */
 export const HOSTED_RUNTIME_WORKFLOW_REF =
@@ -390,6 +391,29 @@ export interface ReviewCommandItemRefusalsV1 {
   dropped: number;
 }
 
+/** Advisory-only exact native review terminal, never a child result. */
+export interface ReviewTerminalAdvisoryV1 {
+  event: "sentinel_review_terminal";
+  ownerRunId: string;
+  requestId: string;
+  invocationId: string;
+  threadId: string;
+  turnId: string;
+  terminalStatus: "completed" | "failed" | "interrupted";
+  durationMs: number | null;
+  errorPresent: boolean;
+  errorCode: ModelBoundaryErrorCodeV1 | null;
+  httpStatusCode: number | null;
+}
+
+/** Log volume bound only; no model admission or review limit. */
+export const MAX_REVIEW_TERMINAL_ADVISORIES = 50;
+
+export interface ReviewTerminalAdvisoriesV1 {
+  terminals: ReviewTerminalAdvisoryV1[];
+  dropped: number;
+}
+
 export interface HostedRuntimeLauncherResultV1 {
   status: HostedRuntimeLauncherStatusV1;
   /** The trusted terminal, or null when no honest proof exists. */
@@ -430,6 +454,8 @@ export interface HostedRuntimeLauncherResultV1 {
    * change the resolved status or exit.
    */
   reviewCommandRefusals?: ReviewCommandItemRefusalsV1;
+  /** Strictly re-parsed observational terminals; never health or authority. */
+  reviewTerminals?: ReviewTerminalAdvisoriesV1;
   /** Authenticated native matrix log carrier; never aggregate terminal proof. */
   matrixCarrier?: Record<string, unknown>;
   /**

@@ -130,7 +130,7 @@ Deno.test(
           invocationId: `review-invocation-${OP_KEY}`,
           threadId: session.threadId,
           turnId: session.turnId,
-          status: "failed",
+          terminalStatus: "failed",
           durationMs: 12,
           errorPresent: true,
           errorCode: item.errorCode,
