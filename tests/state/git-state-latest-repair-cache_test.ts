@@ -23,11 +23,12 @@ Deno.test("latest repair cache: concurrent fresh reads reuse objects and clone r
   const { ctx, writer, snapshot, head } = await fixture("reuse");
   try {
     const real = new DenoGitRunner(ctx.tmp + "/git-home");
-    let fetches = 0, lookups = 0;
+    let fetches = 0, lookups = 0, setups = 0;
     const reader = storeAt(ctx, "reader", "repair", {
       runGit: async (args, options) => {
         if (args[0] === "fetch") fetches++;
         if (args[0] === "ls-remote") lookups++;
+        if (args[0] === "init" || args[0] === "remote") setups++;
         return await real.runGit(args, options);
       },
     });
@@ -48,9 +49,20 @@ Deno.test("latest repair cache: concurrent fresh reads reuse objects and clone r
       since: T0,
     };
     assert.equal(b.value.snapshot.work[0].blocker, null);
+    const priorLookups = lookups, priorSetups = setups;
     const c = await reader.readRepair();
     assert(c.ok && c.value.status === "found");
     assert.equal(c.value.snapshot.work[0].blocker, null);
+    assert.equal(
+      lookups - priorLookups,
+      2,
+      "warm observations remain fresh at entry and exit",
+    );
+    assert.equal(
+      setups,
+      priorSetups,
+      "warm reads retain their prepared private cwd",
+    );
     const next = repairSnapshot({
       ...snapshot,
       stateHead: head,
@@ -109,8 +121,8 @@ Deno.test("latest repair cache: moved missing malformed and corrupt observations
           if (args[0] === "ls-remote") {
             remoteReads++;
             if (
-              (scenario === "entry" && remoteReads === 2) ||
-              (scenario === "exit" && remoteReads === 3)
+              (scenario === "entry" && remoteReads === 1) ||
+              (scenario === "exit" && remoteReads === 2)
             ) {
               return {
                 ...result,
@@ -162,11 +174,12 @@ Deno.test("latest repair cache: moved missing malformed and corrupt observations
             scenario,
           );
         }
+        const beforeRecovery = fetches;
         armed = false;
         assert((await reader.readRepair()).ok);
         assert.equal(
           fetches,
-          2,
+          beforeRecovery + 1,
           "recovery initializes a new private repository after eviction",
         );
       } finally {

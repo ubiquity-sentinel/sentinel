@@ -282,6 +282,20 @@ export class StateGitTransport {
   }
 
   /** Fresh exact ref observation; preparation is limited to a private cwd. */
+  protected async prepareRemote(op: OpContext): Promise<PortResultV1<void>> {
+    const init = await this.git(op, ["init", "-q"]);
+    if (!init.ok) return this.gitFailure("unavailable", "init", init);
+    const remote = await this.git(op, [
+      "remote",
+      "add",
+      "origin",
+      this.remoteUrl,
+    ]);
+    return remote.ok
+      ? portOk(undefined)
+      : this.gitFailure("unavailable", "remote add", remote);
+  }
+
   protected async observeRemote(
     op: OpContext,
     ref: string,
@@ -290,17 +304,8 @@ export class StateGitTransport {
     PortResultV1<{ status: "absent" } | { status: "found"; head: GitSha }>
   > {
     if (prepare) {
-      const init = await this.git(op, ["init", "-q"]);
-      if (!init.ok) return this.gitFailure("unavailable", "init", init);
-      const remote = await this.git(op, [
-        "remote",
-        "add",
-        "origin",
-        this.remoteUrl,
-      ]);
-      if (!remote.ok) {
-        return this.gitFailure("unavailable", "remote add", remote);
-      }
+      const prepared = await this.prepareRemote(op);
+      if (!prepared.ok) return prepared;
     }
     const lookup = await this.git(op, ["ls-remote", "origin", ref]);
     if (!lookup.ok) {
@@ -344,7 +349,17 @@ export class StateGitTransport {
     if (!/^[0-9a-f]{40}$/.test(head)) {
       return portError("invalid", "remote state ref has a malformed commit id");
     }
+    return await this.fetchRemote(op, ref, kind, history, expectedHead);
+  }
 
+  /** Consume an already observed head; callers retain their final ref check. */
+  protected async fetchRemote(
+    op: OpContext,
+    ref: string,
+    kind: StateKind,
+    history: "latest" | "complete",
+    expectedHead?: GitSha,
+  ): Promise<PortResultV1<LoadedState>> {
     const fetch = await this.git(op, [
       "fetch",
       "-q",
