@@ -37,6 +37,12 @@ import {
   modelRequest,
   receipt,
 } from "./local-test-helpers.ts";
+import type { CodexStructuredReviewer } from "../../src/github/codex-reviewer.ts";
+import {
+  prepareRequest,
+  ScriptedCodexSession,
+  snapshotFixture,
+} from "../github/codex-reviewer-helpers.ts";
 
 Deno.test(
   "local receipt finalization: a trusted completed receipt survives a failed import",
@@ -451,7 +457,7 @@ Deno.test(
 );
 
 Deno.test(
-  "local composition forwards the dedicated review model (never the route model) to the reviewer",
+  "local composition leaves native reviewer selection to Codex for every implementation route",
   async () => {
     const configuredRoute: ModelRouteV1 = {
       provider: "deepseek",
@@ -506,63 +512,65 @@ Deno.test(
           route,
           reviewModelId,
         });
-      // The composed review service owns exactly the reviewer this composition
-      // built; its trusted binding proves which provider/model were forwarded.
-      // The port is widened through unknown BEFORE the private fields are
-      // read, so the accessor itself never names an undeclared port property.
+      // Replace only the transport of the actual composed reviewer. No model
+      // call or credential is needed to inspect its native protocol request.
       const reviewerOf = (port: ReturnType<typeof composeLocalGitHub>) =>
         (port as unknown as {
           reviewService: {
             reviewer: {
-              provider: string;
-              model: string;
-              prepare: (request: unknown) => Promise<PortResultV1<unknown>>;
+              openSession: () => ScriptedCodexSession;
+              prepare: CodexStructuredReviewer["prepare"];
             };
           };
         }).reviewService.reviewer;
 
-      // The dedicated review model is forwarded, never the route's
-      // implementation model: pointing reviews at codex-auto-review cannot
-      // hijack the implementation worker's model. The reviewer always
-      // submits through the gateway provider, never the route's provider,
-      // so a DeepSeek-direct implementation route cannot pair the
-      // gateway-only review model with the DeepSeek endpoint.
-      const configured = reviewerOf(
+      const ports = [
         compose(configuredRoute, "codex-auto-review"),
-      );
-      assert.equal(configured.provider, "uos");
-      assert.equal(
-        configured.model,
-        "codex-auto-review",
-        "the dedicated review model is forwarded, not the route model",
-      );
-
-      // An unset review model falls back to the owner's preferred default,
-      // never the route model: production configurations that never set the
-      // variable still review on the preferred model instead of refusing.
-      const unset = reviewerOf(compose(configuredRoute));
-      assert.equal(unset.provider, "uos");
-      assert.equal(
-        unset.model,
-        "codex-auto-review",
-        "an unset review model uses the preferred default, not the route model",
-      );
-
-      // An invalid review model is refused the same way.
-      const invalid = reviewerOf(compose(configuredRoute, " bad "));
-      assert.equal(invalid.model, " bad ");
-      const invalidRefused = await invalid.prepare({});
-      assert.equal(invalidRefused.ok, false);
-      if (!invalidRefused.ok) {
-        assert.match(String(invalidRefused.error.detail), /review model/);
+        compose(configuredRoute),
+        compose(configuredRoute, " bad "),
+        compose(),
+      ];
+      const snapshot = await snapshotFixture();
+      for (const port of ports) {
+        const reviewer = reviewerOf(port);
+        const session = new ScriptedCodexSession();
+        session.turnFailure = true;
+        reviewer.openSession = () => session;
+        const prepared = await reviewer.prepare(prepareRequest(snapshot));
+        assert(prepared.ok, JSON.stringify(prepared));
+        try {
+          const result = await prepared.value.start();
+          assert(!result.ok, "synthetic transport refuses paid execution");
+          assert.equal(session.turnStarts(), 1);
+          assert(!session.sent.includes("turn/start"));
+          const thread = session.params[session.sent.indexOf("thread/start")];
+          const native = session.params[session.sent.indexOf("review/start")];
+          for (const params of [thread, native] as Record<string, unknown>[]) {
+            for (
+              const key of [
+                "model",
+                "modelProvider",
+                "provider",
+                "effort",
+                "reasoningEffort",
+                "review_model",
+              ]
+            ) assert(!Object.hasOwn(params, key), key);
+            assert(
+              !Object.hasOwn(
+                (params.config ?? {}) as Record<string, unknown>,
+                "review_model",
+              ),
+            );
+          }
+          assert.equal(
+            (thread as Record<string, unknown>).permissions,
+            "sentinel-review",
+          );
+        } finally {
+          assert((await prepared.value.close()).settled);
+        }
       }
-
-      // Omitted callers keep the gateway provider and the owner's preferred
-      // review default: the reviewer never runs on the implementation model
-      // and never refuses for lack of an explicit review model.
-      const fallback = reviewerOf(compose());
-      assert.equal(fallback.provider, "uos");
-      assert.equal(fallback.model, "codex-auto-review");
     } finally {
       await Deno.remove(root, { recursive: true }).catch(() => {});
     }
