@@ -79,6 +79,7 @@ for (
     "ops/hosted-autonomy-runner.ts",
     "ops/hosted-autonomy-maintenance.ts",
     "ops/hosted-autonomy-state.ts",
+    "ops/hosted-autonomy-queue-booking.ts",
   ]
 ) {
   Deno.test(`hosted authority: maintenance refuses ${path}`, () =>
