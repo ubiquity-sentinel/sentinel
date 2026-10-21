@@ -538,7 +538,36 @@ export async function executeBaseRefreshIntent(
     },
   );
   if (acknowledgedCustody !== null) return acknowledgedCustody;
-  const refreshed: WorkRecordV1 = {
+  const refreshed = acknowledgeBaseRefresh(
+    durable,
+    durableIntent,
+    preservationRef,
+    doneAt,
+  );
+  return persistWork(
+    deps,
+    context,
+    refreshed,
+    hasTakeoverCustody(durable) ? context.head! : undefined,
+  );
+}
+
+/** Shared exact acknowledgment; callers must first prove publication and custody. */
+export function acknowledgeBaseRefresh(
+  durable: WorkRecordV1,
+  intent: IncompleteOperationV1,
+  preservationRef: string | null,
+  doneAt: number,
+): WorkRecordV1 {
+  const preparedHead = intent.resultId;
+  const expectedBase = intent.observedBase;
+  if (
+    intent.kind !== "base_refresh" || !isGitSha(preparedHead) ||
+    !isGitSha(expectedBase) || intent.expectedHead !== durable.target.head ||
+    intent.branch !== durable.target.branch || intent.pr !== durable.target.pr
+  ) throw new TypeError("base refresh acknowledgment identity mismatch");
+  const candidateState = durable.target.candidateState;
+  return {
     ...durable,
     target: candidateState === undefined || preservationRef === null
       ? { ...durable.target, base: expectedBase, head: preparedHead }
@@ -562,12 +591,6 @@ export async function executeBaseRefreshIntent(
     intent: null,
     updatedAt: doneAt,
   };
-  return persistWork(
-    deps,
-    context,
-    refreshed,
-    hasTakeoverCustody(durable) ? context.head! : undefined,
-  );
 }
 
 /**
