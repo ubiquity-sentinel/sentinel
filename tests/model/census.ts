@@ -112,7 +112,12 @@ const RECOVERIES: {
     id: anchor(
       "r.restoreExistingCandidateRefs",
       "ops/hosted-autonomy-maintenance.ts",
-      "const restored = await restoreExistingCandidateRefs({",
+      `restored = await restoreExistingCandidateRefs({
+        deps,
+        ports: closed,
+        dedicated,
+        actions,
+      });`,
     ),
     takes: (record) =>
       record.blocker?.message === MATRIX_PRESERVATION_UNCERTAINTY_DETAIL &&
