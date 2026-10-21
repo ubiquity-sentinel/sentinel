@@ -5,6 +5,7 @@ import type { NativeQueueGuardV1 } from "../../src/github/native-queue-guard.ts"
 // return canned values — no product logic lives in the fakes, every check
 // asserts on the real adapter methods and the recorded requests.
 import type { GitSha } from "../../src/contracts/brands.ts";
+import { canonicalStringifySha256 } from "../../src/contracts/canonical.ts";
 import type { GitHubRateLimitV1 } from "../../src/contracts/github-cooldown.ts";
 import type {
   Clock,
@@ -33,8 +34,6 @@ import type { GitHubPortOptionsV1 } from "../../src/github/impl.ts";
 import { GitHubApiClient } from "../../src/github/client.ts";
 import {
   renderReviewJournalBody,
-  REVIEW_MODEL,
-  REVIEW_REASONING,
   type ReviewJournalReadyV1,
   reviewResultDigest,
   type ReviewResultV1,
@@ -470,6 +469,17 @@ export async function structuredCompletedFixture(
   const reviewId = options.reviewId ?? 100;
   const operationKey = options.operationKey ?? "review:work-1";
   const requestId = options.requestId ?? "req-1";
+  const targetDigest = await canonicalStringifySha256({
+    type: "custom",
+    instructions: JSON.stringify({
+      repository: REPO,
+      prNumber: 1,
+      head: options.head ?? SHA1,
+      base: options.base ?? SHA2,
+      operationKey,
+      requestId,
+    }),
+  });
   const journal: ReviewJournalReadyV1 = {
     version: "v1",
     phase: "ready",
@@ -490,20 +500,27 @@ export async function structuredCompletedFixture(
       invocationId: `review-invocation-${operationKey}`,
       threadId: "thread-1",
       submittedProvider: "openai",
-      model: REVIEW_MODEL,
-      reasoning: REVIEW_REASONING,
+      model: null,
+      reasoning: null,
+      nativeReview: { mode: "review/start", targetDigest },
       startMayOccur: true,
       turnId: "turn-1",
       resultId: "result-9",
       actual: {
-        evidenceKind: "request-runtime",
+        evidenceKind: "native-review",
         provider: "openai",
         threadId: "thread-1",
         turnId: "turn-1",
         terminalOrigin: "runtime",
         observedTerminalStatus: "completed",
-        observedModel: REVIEW_MODEL,
-        observedReasoning: REVIEW_REASONING,
+        observedModel: null,
+        observedReasoning: null,
+        nativeReview: {
+          targetDigest,
+          reviewThreadId: "thread-1",
+          enteredItemId: "entered-review-1",
+          exitedItemId: "result-9",
+        },
         durationMs: 5,
         outputChars: 10,
       },
