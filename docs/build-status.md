@@ -9,6 +9,41 @@ ownership, authority or acceptance.
 
 ## Active task register
 
+Snapshot: 2026-10-21 00:05 UTC. The same Claude continuation remains active;
+autonomous delivery on both targets is unproved. The following current
+checkpoint supersedes the earlier dated observations.
+
+- Development and launcher reached `3fc0755dff6bfb726c9965afbb6b75aab1bb9635`
+  after all seven CI jobs passed in `39514173519:1`. Canonical five-record
+  recovery returned 194 ancestors and five exact proofs in 39.391 seconds with
+  all accounting unchanged, receipt `72596fa3-9410-451b-978b-0d87820e2d5e`.
+- Auto-follow dispatcher `39515687207:1` verified successor `39515722908:1`, but
+  its maintenance again hit the native 15-minute limit before prepare. Release
+  `95233ab893da51db0b846aa845b79ac4bb3d7538` and repair
+  `2772fc5f8fd7c050ec894b74f3dc5a058399d885` remained unchanged: healthy
+  generation 84 at `25b24cdc7a09c2f871ff2d37093e6ea8d7f6e701`, cleared
+  execution, no generation-85 installation. New dispatcher admissions were
+  paused at 23:49 UTC; restoration is required after diagnostic publication is
+  ready. Auto-follow remains on and `sentinel-release` remains disabled.
+- The sole native maintenance event reported an unlisted artifact for producer
+  `37996641586:1` at 23:33:54 UTC. A real factory/queue-proxy trace of exact
+  release snapshot `95233ab8` opened the cached history view and read 20
+  adjacent snapshots in 1.051 seconds without fallback or refetch; it does not
+  identify the native wait. PR #174 still lacks a current-base fulfilled review;
+  AI PRs #1254–#1258 remain blocked, with all ten submitted charges preserved.
+  Human-owned #1260 is excluded from acceptance.
+- Primary integrated diagnostic tip `7469060bffb8578b70a6fd53786a16fa24f1c809`
+  after protection tip `f78c48f363ce77042d4ac75c6150071b43cf4e15`, reaching
+  source checkpoint `521c76ff163067d34c252cbd92c1daebd56f690b`. Both lanes are
+  clean and their focused checks passed. Diagnostics add 25 fixed, payload-free
+  start/finish boundaries, at most 50 records, without business-clock or
+  functional changes; finish means boundary exit, not health or delivery. The
+  exact runner, maintenance and state helper files are now centrally protected.
+  Final integrated smoke, exact-SHA CI and a native diagnostic run remain
+  pending.
+
+### Earlier continuation checkpoints
+
 Snapshot: 2026-10-20 22:57 UTC; the current Codex coordinator continues native
 Claude session `6fec4968-1e6c-4836-a897-d75f9cc3e1f3`. This checkpoint
 supersedes the earlier observations retained below. Two-target autonomous
