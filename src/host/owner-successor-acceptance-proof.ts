@@ -77,6 +77,13 @@ export async function ownerSuccessorAcceptanceBinds(
     const a = receipt.ownerAcceptance, d = receipt.ownerDisposition;
     if (receipt.phase !== "owner_superseded" || !a || !d) return false;
     const parsed = parseOwnerSuccessorTaskAcceptanceV1(a);
+    // Historical generic-turn records remain readable, but cannot grant new
+    // acceptance authority. The strict native execution parser correlates
+    // target, thread, turn and entered/exited items before this predicate.
+    if (
+      parsed.review.readyExecution?.nativeReview?.mode !== "review/start" ||
+      parsed.review.readyExecution.actual.evidenceKind !== "native-review"
+    ) return false;
     const b = parsed.review.binding, i = d.intent;
     const selected = await ownerSuccessorBindingFor(
       receipt,
@@ -317,6 +324,8 @@ export async function readOwnerSuccessorAcceptanceAuthority(
       controllerRun: { ...input.run },
       createdAt: review.updatedAt,
     });
+    // This same predicate gates issuance as well as delivery reuse, so a
+    // readable historical review cannot be wrapped into new authority.
     if (
       !await ownerSuccessorAcceptanceBinds({
         ...receipt,
