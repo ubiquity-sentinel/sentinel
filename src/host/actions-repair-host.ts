@@ -107,6 +107,7 @@ import {
 } from "./hosted-app-principal.ts";
 import { readHostedAppTakeoverRouting } from "./hosted-app-takeover-routing.ts";
 import { readHostedSelfDependencyPreparer } from "./hosted-self-dependencies.ts";
+import { createPassportDependencyPreparer } from "./passport-dependencies.ts";
 import {
   ensureRepairStateSeed,
   optionalEnv,
@@ -589,6 +590,10 @@ export async function runActionsRepairHost(
     modelId: modelRoute.model,
     failoverModelId: modelRoute.failoverModel,
     localIteration: false,
+    preparePassportDependencies: createPassportDependencyPreparer({
+      scratch,
+      trustedPath,
+    }),
     prepareCheckoutDependencies: await readHostedSelfDependencyPreparer({
       runtimeDir: sourceDir,
       launcherSha: identity.launcherSha,
