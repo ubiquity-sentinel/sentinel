@@ -1,5 +1,6 @@
 /** Hosted actions-supervisor-host responsibility. */
 import { isGitSha } from "../contracts/brands.ts";
+import { SELF_TOKEN_ENV } from "./hosted-app-grant.ts";
 import { HOSTED_CONTROLLER_SELF } from "../contracts/hosted-controller-deployment.ts";
 import type { GitSha } from "../contracts/brands.ts";
 import { canonicalStringify } from "../contracts/canonical.ts";
@@ -55,6 +56,15 @@ import {
 export function isToken(value: unknown): value is string {
   return typeof value === "string" && value.length >= 20 &&
     !/[\p{Cc}]/u.test(value);
+}
+
+/** The self installation owns release state; the foreign target token cannot. */
+export function releaseStateToken(
+  env: Readonly<Record<string, string | undefined>>,
+): string {
+  const token = env[SELF_TOKEN_ENV];
+  if (!isToken(token)) throw new Error(STATIC_TOKEN);
+  return token;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,6 +327,7 @@ export async function main(): Promise<void> {
   const path = env[PATH_ENV];
   const nativeToken = env[NATIVE_TOKEN_ENV];
   const appToken = env[SUPERVISOR_TOKEN_ENV];
+  const selfToken = releaseStateToken(env);
   if (
     !isToken(nativeToken) || !isToken(appToken) ||
     typeof path !== "string" || path.length === 0
@@ -343,10 +354,12 @@ export async function main(): Promise<void> {
   const gitHome = joinPath(sentinelDir, "state-git-home");
   await ensurePrivateDir(scratch);
   await ensurePrivateDir(gitHome);
+  // Release state lives in the self repository after the org migration; the
+  // target-token scope intentionally excludes that repository.
   const state = createReleaseStateStore({
     scratchDir: scratch,
     remoteUrl: REMOTE_URL,
-    runner: new DenoGitRunner(gitHome, githubGitAuthEnv(appToken)),
+    runner: new DenoGitRunner(gitHome, githubGitAuthEnv(selfToken)),
   });
   const clock = new SystemClock();
   await ensureHostedReleaseState(state, clock.now());
