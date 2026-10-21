@@ -199,6 +199,16 @@ optimization changes neither the public state port nor the recovery walk's
 120-second and 256-ancestor limits. Local throughput evidence does not establish
 live maintenance or autonomous delivery acceptance.
 
+Ordinary latest repair reads may reuse a separate private bounded object store
+and validated decoding, but each read must remain a fresh observation. Acquire
+the live remote head, reread and validate complete parent/tree/blob bytes, and
+confirm the remote head again before returning an independently cloned result.
+Movement, deletion, corruption or any failed acquisition invalidates reuse.
+Never memoize cooldown, custody or delivery authorization decisions, omit a
+consumer state observation, share mutable Git directories with writers or
+history views, or relax final CAS. The exact native consumer profile must
+demonstrate the data-read cost before this optimization is credited.
+
 Bulk original-candidate recovery may use a separately named optional anchored
 repair-history view. Its anchor is the authoritative read result's head, never
 the payload's parent `snapshot.stateHead`. The view validates one complete fetch

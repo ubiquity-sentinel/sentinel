@@ -9,6 +9,62 @@ ownership, authority or acceptance.
 
 ## Active task register
 
+Snapshot: 2026-10-21 03:25 UTC. The same Claude continuation remains active.
+Generation 85 installation and original-candidate restoration are verified;
+ordinary delivery on both targets remains unproved. This checkpoint supersedes
+dated snapshots below.
+
+- Canonical and remote development are
+  `2081f9784184864bf09601d2c939e45d789db37f`; all seven CI jobs passed in
+  `39529875171:1`, including required `test-local` check `118997634824`.
+  Auto-follow advanced the launcher and authenticated supervisor
+  `39531530288:1`; maintenance succeeded in 3m21s. Release
+  `36be2bef4863729d30c3a5c90aeaca9752402cc6` records accepted generation 85 with
+  the exact model-disabled bootstrap proof and cleared execution. Repair
+  `ab2d93fac87f827dad3e92567ad1a06ebd0bf752` restores the five original AI PR
+  candidates. Independent immutable tree/blob comparisons prove all 1,526
+  reservation blobs and unrelated work fields unchanged.
+- Controlled ordinary tick `39533128859:1` dispatched supervisor `39533153236:1`
+  on the installed revision. It hit the existing 15-minute maintenance limit
+  before prepare/repair. Complete native logs correct the partial browser
+  attribution: `existing_candidate_refs` finished in 1,914ms; the sole unmatched
+  phase was `delivery` from 02:30:13.737 UTC until cancellation. The primary
+  paused new dispatcher admissions at 02:43:59 UTC; restoration remains required
+  after the correction is ready. Auto-follow remains on; `sentinel-release`
+  remains disabled.
+- The scheduler configuration is active on default branch `development` with
+  `*/5 * * * *`, but no schedule event after 23:46:46 UTC was found in the
+  bounded audit. Manual dispatch works. No repository-side cause or provider
+  incident was established; do not claim scheduled acceptance from manual ticks.
+- Read-only profiling uses complete hash-verified ab2d93/36be2bef fixtures, all
+  321 work rows and 1,526 reservations, actual delivery/queue/cooldown/state
+  consumers and a strict GET/read-only-query GitHub bridge. Initial
+  evidence-capture auth isolation caused a setup failure; no conclusions rely on
+  it. The corrected profile reached delivery after 113.115s, completed 50
+  approval listings in 21.829s, then made 98 ordinary full repair reads with
+  131.238s union wall time. Two queue resolvers hit their existing approximately
+  60s deadline; the third remained active at the 300s process limit. All 391
+  HTTP responses were successful; no effects or model starts were attempted.
+  This identifies repeated ordinary state reads as material cost, not a fix or
+  native-delivery proof.
+- Current isolated writer: `authority_protection_triage`, module
+  `recovery-latest-repair-cache-20261020`, base `2081f978`, lane
+  `.codex-worktrees/master-plan-recovery-latest-repair-cache-20261020-a8474d54c6b`.
+  Owns three state source files and two focused test files under the approved
+  latest-read cache contract. Cache only Git objects and validated decoding;
+  retain every fresh cooldown/authority read, complete raw-byte validation,
+  cloned returns, strict ref checks, independent writer/history directories and
+  final CAS. Implementation/local checks, canonical profile, independent
+  evidence audit, exact CI and corrected native delivery remain pending.
+- Nine clean task-created integrated worktrees were removed without force after
+  fresh identity/dirt/ownership and local/live-remote ancestry checks. Local
+  branches and all evidence were retained; four lanes with ignored
+  `.sentinel-artifacts/` and all unrelated/preexisting worktrees were excluded.
+  Removal manifest: task workspace
+  `work/final-cleanup/20261021T023406Z-removal/manifest.json`.
+
+### Prior checkpoint at 01:44 UTC
+
 Snapshot: 2026-10-21 01:44 UTC. The Claude continuation remains active. Native
 maintenance completion, generation-85 installation and autonomous delivery on
 both targets are still unproved. This checkpoint supersedes the dated
