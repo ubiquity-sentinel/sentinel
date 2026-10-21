@@ -6,17 +6,22 @@ import { parseHostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts"
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 import { tryParse } from "../contracts/validation.ts";
 import type { ReplayCommandResultV1 } from "../replay/runtime.ts";
+import { isModelBoundaryReasonCode } from "../repair/model-port-diagnostics.ts";
 import type { ChildStatusScanV1 } from "./hosted-runtime-diagnostics.ts";
 import {
   ACCEPTED_CHILD_LOGINS,
   HOSTED_TERMINAL_LOOKING,
   isNonNegativeSafeInteger,
   MAX_DETAIL_CHARS,
+  MAX_DIAGNOSTIC_LINE_CHARS,
   MAX_REVIEW_COMMAND_REFUSALS,
+  MAX_REVIEW_TERMINAL_ADVISORIES,
 } from "./hosted-runtime-identity.ts";
 import type {
   ReviewCommandItemRefusalsV1,
   ReviewCommandItemRefusalV1,
+  ReviewTerminalAdvisoriesV1,
+  ReviewTerminalAdvisoryV1,
 } from "./hosted-runtime-identity.ts";
 
 /**
@@ -241,6 +246,124 @@ export function reviewCommandItemRefusalLines(
   if (dropped > 0) {
     lines.push(JSON.stringify({
       event: "sentinel_review_command_item_refusals_dropped",
+      printed: lines.length,
+      dropped,
+    }));
+  }
+  return lines;
+}
+
+const REVIEW_TERMINAL_KEYS = [
+  "event",
+  "ownerRunId",
+  "requestId",
+  "invocationId",
+  "threadId",
+  "turnId",
+  "terminalStatus",
+  "durationMs",
+  "errorPresent",
+  "errorCode",
+  "httpStatusCode",
+] as const;
+const REVIEW_TERMINAL_IDS = [
+  "ownerRunId",
+  "requestId",
+  "invocationId",
+  "threadId",
+  "turnId",
+] as const;
+
+/** Exact closed observational fields only; never echo a child-authored object. */
+export function parseReviewTerminalAdvisory(
+  value: unknown,
+): ReviewTerminalAdvisoryV1 | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.event !== "sentinel_review_terminal" ||
+    !hasExactKeys(record, REVIEW_TERMINAL_KEYS) ||
+    !REVIEW_TERMINAL_IDS.every((key) =>
+      typeof record[key] === "string" &&
+      /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(record[key] as string)
+    )
+  ) return null;
+  const {
+    terminalStatus,
+    durationMs,
+    errorPresent,
+    errorCode,
+    httpStatusCode,
+  } = record;
+  if (
+    terminalStatus !== "completed" && terminalStatus !== "failed" &&
+    terminalStatus !== "interrupted"
+  ) return null;
+  if (durationMs !== null && !isNonNegativeSafeInteger(durationMs)) return null;
+  if (typeof errorPresent !== "boolean") return null;
+  if (
+    errorPresent ? !isModelBoundaryReasonCode(errorCode) : errorCode !== null
+  ) {
+    return null;
+  }
+  if (
+    httpStatusCode !== null &&
+    (!errorPresent || !isNonNegativeSafeInteger(httpStatusCode) ||
+      httpStatusCode > 65_535)
+  ) return null;
+  return Object.fromEntries(
+    REVIEW_TERMINAL_KEYS.map((key) => [key, record[key]]),
+  ) as unknown as ReviewTerminalAdvisoryV1;
+}
+
+/** Only complete settled captures can supply capped run-bound terminal advisories. */
+export function scanReviewTerminalAdvisories(
+  run: ReplayCommandResultV1,
+  execution: HostedExecutionIntentV1,
+): ReviewTerminalAdvisoriesV1 | null {
+  if (run.truncated || !run.settled) return null;
+  if (run.outcome !== "exited" && run.outcome !== "timed_out") return null;
+  const terminals: ReviewTerminalAdvisoryV1[] = [];
+  let dropped = 0;
+  for (const line of new TextDecoder().decode(run.stdout).split("\n")) {
+    if (
+      line.length > MAX_DIAGNOSTIC_LINE_CHARS || !line.trim().startsWith("{")
+    ) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const terminal = parseReviewTerminalAdvisory(value);
+    if (terminal === null || terminal.ownerRunId !== execution.id) continue;
+    if (terminals.length < MAX_REVIEW_TERMINAL_ADVISORIES) {
+      terminals.push(terminal);
+    } else dropped += 1;
+  }
+  return terminals.length === 0 ? null : { terminals, dropped };
+}
+
+/** Revalidate every field at the final printer; no arbitrary stdout pass-through. */
+export function reviewTerminalAdvisoryLines(
+  advisories: ReviewTerminalAdvisoriesV1,
+): string[] {
+  const lines: string[] = [];
+  let dropped = isNonNegativeSafeInteger(advisories.dropped)
+    ? advisories.dropped
+    : 0;
+  for (const candidate of advisories.terminals) {
+    const terminal = parseReviewTerminalAdvisory(candidate);
+    if (terminal === null) continue;
+    if (lines.length < MAX_REVIEW_TERMINAL_ADVISORIES) {
+      lines.push(JSON.stringify(terminal));
+    } else dropped += 1;
+  }
+  if (dropped > 0) {
+    lines.push(JSON.stringify({
+      event: "sentinel_review_terminals_dropped",
       printed: lines.length,
       dropped,
     }));

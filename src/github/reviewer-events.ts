@@ -507,7 +507,7 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
         invocationId: this.invocationId,
         threadId: this.threadId,
         turnId: this.turnId,
-        status,
+        terminalStatus: status,
         durationMs,
         errorPresent,
         errorCode: errorInfo?.errorCode ?? null,
