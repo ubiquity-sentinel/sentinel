@@ -281,28 +281,27 @@ export class StateGitTransport {
     return { status: "found", head: matches[0] };
   }
 
-  /**
-   * Reads the exact remote ref and, when present, the full validated state
-   * tree underneath it. Absent means the ref does not exist (ls-remote exit
-   * 0 with no match); every other transport outcome is a typed error.
-   */
-  protected async loadRemote(
+  /** Fresh exact ref observation; preparation is limited to a private cwd. */
+  protected async observeRemote(
     op: OpContext,
     ref: string,
-    kind: StateKind,
-    history: "latest" | "complete" = "latest",
-    expectedHead?: GitSha,
-  ): Promise<PortResultV1<LoadedState>> {
-    const init = await this.git(op, ["init", "-q"]);
-    if (!init.ok) return this.gitFailure("unavailable", "init", init);
-    const remote = await this.git(op, [
-      "remote",
-      "add",
-      "origin",
-      this.remoteUrl,
-    ]);
-    if (!remote.ok) return this.gitFailure("unavailable", "remote add", remote);
-
+    prepare = false,
+  ): Promise<
+    PortResultV1<{ status: "absent" } | { status: "found"; head: GitSha }>
+  > {
+    if (prepare) {
+      const init = await this.git(op, ["init", "-q"]);
+      if (!init.ok) return this.gitFailure("unavailable", "init", init);
+      const remote = await this.git(op, [
+        "remote",
+        "add",
+        "origin",
+        this.remoteUrl,
+      ]);
+      if (!remote.ok) {
+        return this.gitFailure("unavailable", "remote add", remote);
+      }
+    }
     const lookup = await this.git(op, ["ls-remote", "origin", ref]);
     if (!lookup.ok) {
       return this.gitFailure(
@@ -321,7 +320,21 @@ export class StateGitTransport {
         "remote state ref ls-remote response is malformed or duplicate",
       );
     }
-    const head = lookupParsed.head;
+    return portOk({ status: "found", head: lookupParsed.head as GitSha });
+  }
+
+  /** Read the live ref and its complete validated tree in a private repository. */
+  protected async loadRemote(
+    op: OpContext,
+    ref: string,
+    kind: StateKind,
+    history: "latest" | "complete" = "latest",
+    expectedHead?: GitSha,
+  ): Promise<PortResultV1<LoadedState>> {
+    const lookup = await this.observeRemote(op, ref, true);
+    if (!lookup.ok) return lookup;
+    if (lookup.value.status === "absent") return portOk({ status: "absent" });
+    const head = lookup.value.head;
     if (expectedHead !== undefined && head !== expectedHead) {
       return portError(
         "conflict",
@@ -352,6 +365,12 @@ export class StateGitTransport {
     const fetched = fetchHead.stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(fetched)) {
       return portError("invalid", "remote state ref has a malformed commit id");
+    }
+    if (expectedHead !== undefined && fetched !== expectedHead) {
+      return portError(
+        "conflict",
+        "historical repair head changed or is absent",
+      );
     }
 
     const snapshot = await this.readCommitTree(op, fetched, kind);
