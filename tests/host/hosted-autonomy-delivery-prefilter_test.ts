@@ -15,13 +15,8 @@ import { makeRig } from "./hosted-autonomy-rig.ts";
 import { authorityRig } from "./merge-queue-authority-fixtures.ts";
 import { finding } from "./hosted-autonomy-fixtures.ts";
 import { SHA1, SHA2, SHA3, SHA4, T0 } from "./merge-queue-proof-fixtures.ts";
-import { DenoGitRunner, GitStateStore } from "../../src/state/mod.ts";
-import { DurableGitHubCooldownGate } from "../../src/repair/github-cooldown.ts";
-import { GitHubQueueDeliveryClient } from "../../src/github/client-queue-delivery.ts";
-import { FakeAuthProvider } from "../github/helpers.ts";
 
 async function fixture(options: {
-  fixtureDir?: string;
   approval?: boolean;
   review?: "missing" | "dirty";
   acceptance?:
@@ -87,10 +82,7 @@ async function fixture(options: {
     reviews,
     releaseRequests: requests,
   });
-  const { rig } = await makeRig("delivery-prefilter", {
-    repair: initial,
-    fixtureDir: options.fixtureDir,
-  });
+  const { rig } = await makeRig("delivery-prefilter", { repair: initial });
   const calls = {
     scope: 0,
     pull: 0,
@@ -328,105 +320,6 @@ Deno.test("delivery prefilter: current-head drift still refuses clean booking", 
     assert.equal(await runHostedDeliveryPass(context), null);
     assert.ok(f.calls.resolve > 0);
     assert.deepEqual(await f.saved(), before);
-  } finally {
-    await Deno.remove(f.rig.tmp, { recursive: true });
-  }
-});
-
-Deno.test("delivery latest repair cache: actual cooldown and authority fit the unchanged proof deadline", async () => {
-  const f = await fixture({ fixtureDir: Deno.cwd() });
-  try {
-    const real = new DenoGitRunner(`${f.rig.tmp}/measured-git-home`);
-    let fetches = 0, reads = 0, requests = 0;
-    const reader = new GitStateStore({
-      role: "repair",
-      scratchDir: `${f.rig.tmp}/measured-repair`,
-      remoteUrl: `${f.rig.tmp}/remote.git`,
-      runner: {
-        runGit: async (args, options) => {
-          const result = await real.runGit(args, options);
-          if (args[0] === "fetch") {
-            fetches++;
-            // Model transfer/decode cost without sleeping or raising the
-            // production queue authority's existing 60-second proof deadline.
-            f.authority.clock.advance(20_000);
-          }
-          return result;
-        },
-      },
-    });
-    f.state.readRepair = () => {
-      reads++;
-      return reader.readRepair();
-    };
-    const gate = new DurableGitHubCooldownGate({
-      state: f.state,
-      clock: f.authority.clock,
-      mode: "enforce",
-    });
-    const native = new GitHubQueueDeliveryClient({
-      repository: f.authority.record.repository,
-      clock: f.authority.clock,
-      apiBaseUrl: "https://api.github.com",
-      auth: new FakeAuthProvider(),
-      cooldownGate: gate,
-      http: (request) => {
-        assert.equal(request.method, "GET");
-        assert.equal(
-          new URL(request.url).pathname,
-          "/repos/ubiquity/ai.ubq.fi/pulls/7",
-        );
-        requests++;
-        return Promise.resolve({
-          status: 200,
-          headers: new Headers(),
-          bodyText: JSON.stringify({
-            number: 7,
-            title: "Repair",
-            body: "Resolves #1",
-            state: "closed",
-            head: { sha: SHA2, ref: f.authority.record.target.branch },
-            base: { sha: SHA1, ref: "development" },
-            user: { login: f.authority.facts.publicationAuthor },
-            created_at: new Date(T0).toISOString(),
-            updated_at: new Date(T0).toISOString(),
-            merged_at: new Date(T0 + 3000).toISOString(),
-            merge_commit_sha: SHA4,
-            merged_by: {
-              login: f.authority.facts.mergedBy!.login,
-              node_id: f.authority.facts.mergedBy!.nodeId,
-              type: f.authority.facts.mergedBy!.type,
-            },
-            review_decision: "approved",
-          }),
-        });
-      },
-    }, 84);
-    f.authority.client.readQueueLegacyPull = native.readQueueLegacyPull.bind(
-      native,
-    );
-    const context = await f.context();
-    const result = await runHostedDeliveryPass(context);
-    assert.equal(
-      result?.status,
-      "applied",
-      JSON.stringify({ result, reads, fetches, requests }),
-    );
-    assert.ok(
-      reads > 3,
-      "fresh authority and cooldown observations still execute",
-    );
-    assert.ok(
-      requests > 0,
-      "the real cooldown gate permits the fake native read",
-    );
-    assert.equal(f.calls.merge, 0);
-    const saved = await f.saved();
-    assert.equal(saved.snapshot.releaseRequests.length, 1);
-    assert.deepEqual(
-      saved.snapshot.reservations,
-      context.snapshot.reservations,
-    );
   } finally {
     await Deno.remove(f.rig.tmp, { recursive: true });
   }

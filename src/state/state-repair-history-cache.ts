@@ -112,13 +112,6 @@ export class RepairHistoryCache {
 
   constructor(private readonly scratchDir: string) {}
 
-  /** Invalidate only this private entry after a failed fresh acquisition. */
-  clear(): Promise<void> {
-    return this.serial(async () => {
-      if (this.entry) await this.discard(this.entry);
-    });
-  }
-
   private async serial<T>(run: () => Promise<T>): Promise<T> {
     const before = this.queue;
     let release!: () => void;
@@ -142,117 +135,6 @@ export class RepairHistoryCache {
     } catch {
       /* Remove only our own mktemp directory; caller scratch is unrelated. */
     }
-  }
-
-  /** Latest reads discover their head inside the same private-directory lock. */
-  async useLatest<T>(
-    prepare: (op: OpContext) => Promise<PortResultV1<unknown>>,
-    observe: (op: OpContext) => Promise<PortResultV1<string | null>>,
-    read: (
-      op: OpContext,
-      head: string,
-      cold: boolean,
-    ) => Promise<PortResultV1<T>>,
-  ): Promise<PortResultV1<T | null>> {
-    return await this.serial(async () => {
-      let entry = this.entry;
-      const allocate = async () => {
-        const directory = await Deno.makeTempDir({
-          prefix: "repair-latest-",
-          dir: this.scratchDir,
-        });
-        const created: HistoryEntry = {
-          op: { directory, treeMemo: new StateTreeMemo() },
-          head: "",
-          expiresAt: Date.now() + VALID_MS,
-          timer: null,
-          unload: () => {
-            try {
-              Deno.removeSync(directory, { recursive: true });
-            } catch { /* Owned cwd only. */ }
-          },
-        };
-        entry = this.entry = created;
-        globalThis.addEventListener("unload", created.unload);
-        await Deno.chmod(directory, 0o700);
-        return await prepare(created.op);
-      };
-      try {
-        if (entry && Date.now() >= entry.expiresAt) {
-          await this.discard(entry);
-          entry = null;
-        }
-        if (!entry) {
-          const prepared = await allocate();
-          if (!prepared.ok) {
-            await this.discard(entry!);
-            return prepared;
-          }
-        }
-        const initial = await observe(entry!.op);
-        if (!initial.ok) {
-          await this.discard(entry!);
-          return initial;
-        }
-        if (initial.value === null) {
-          const after = await observe(entry!.op);
-          await this.discard(entry!);
-          if (!after.ok) return after;
-          return after.value === null
-            ? { ok: true, value: null }
-            : portError("unavailable", "repair state changed during read");
-        }
-        const head = initial.value;
-        if (entry!.head !== "" && entry!.head !== head) {
-          await this.discard(entry!);
-          const prepared = await allocate();
-          if (!prepared.ok) {
-            await this.discard(entry!);
-            return prepared;
-          }
-        }
-        const cold = entry!.head === "";
-        entry!.head = head;
-        const result = await read(entry!.op, head, cold);
-        if (!result.ok) {
-          await this.discard(entry!);
-          return result;
-        }
-        const after = await observe(entry!.op);
-        if (!after.ok) {
-          await this.discard(entry!);
-          return after;
-        }
-        if (after.value !== head || Date.now() >= entry!.expiresAt) {
-          await this.discard(entry!);
-          return portError(
-            "unavailable",
-            "repair state changed or expired during read",
-          );
-        }
-        if (cold) {
-          if (await diskBytes(entry!.op.directory) > RETAIN_BYTES) {
-            await this.discard(entry!);
-          } else {
-            const owned = entry!;
-            owned.timer = setTimeout(() => {
-              void this.serial(async () => {
-                if (this.entry === owned) await this.discard(owned);
-              });
-            }, Math.max(0, owned.expiresAt - Date.now()));
-            Deno.unrefTimer(owned.timer);
-          }
-        }
-        if (Date.now() >= entry!.expiresAt) {
-          await this.discard(entry!);
-          return portError("unavailable", "latest repair cache expired");
-        }
-        return result;
-      } catch {
-        if (entry) await this.discard(entry);
-        return portError("unavailable", "latest repair cache unavailable");
-      }
-    });
   }
 
   async use<T>(

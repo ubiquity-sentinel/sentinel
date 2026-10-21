@@ -68,83 +68,32 @@ import { RepairHistoryCache } from "./state-repair-history-cache.ts";
 
 export class GitStateStore extends StateGitTransport implements StateStore {
   private readonly repairHistory = new RepairHistoryCache(this.scratchDir);
-  private readonly latestRepair = new RepairHistoryCache(this.scratchDir);
   // -------------------------------------------------------------------------
   // Reads: both roles read both fixed refs.
   // -------------------------------------------------------------------------
 
-  async readRepair(): Promise<
+  readRepair(): Promise<
     PortResultV1<StateReadResultV1<RepairStateSnapshotV1>>
   > {
-    // Retention inspects its owned directory. A constrained caller that only
-    // permits Git subprocess reads keeps the original nonretained path.
-    if (
-      (await Deno.permissions.query({ name: "read", path: this.scratchDir }))
-        .state !== "granted"
-    ) {
-      return this.withOpDir<StateReadResultV1<RepairStateSnapshotV1>>(
-        async (op) => {
-          const loaded = await this.loadRemote(op, REPAIR_REF, "repair");
-          if (!loaded.ok) return loaded;
-          return loaded.value.status === "absent"
-            ? portOk({ status: "absent", currentHead: null, ref: REPAIR_REF })
-            : portOk({
-              status: "found",
-              head: loaded.value.head,
-              snapshot: loaded.value.snapshot as RepairStateSnapshotV1,
-              ref: REPAIR_REF,
-            });
-        },
-      );
-    }
-    // Every observation stays fresh, but discovery and validation share one
-    // serialized prepared cwd instead of acquiring an outside temporary one.
-    const result = await this.latestRepair.useLatest<
-      StateReadResultV1<RepairStateSnapshotV1>
-    >(
-      (op) => this.prepareRemote(op),
+    return this.withOpDir<StateReadResultV1<RepairStateSnapshotV1>>(
       async (op) => {
-        const observed = await this.observeRemote(op, REPAIR_REF);
-        if (!observed.ok) return observed;
-        return portOk(
-          observed.value.status === "found" ? observed.value.head : null,
-        );
-      },
-      async (op, observedHead, cold) => {
-        const head = observedHead as GitSha;
-        let snapshot: RepairStateSnapshotV1;
-        if (cold) {
-          const loaded = await this.fetchRemote(
-            op,
-            REPAIR_REF,
-            "repair",
-            "latest",
-            head,
-          );
-          if (!loaded.ok) return loaded;
-          if (loaded.value.status !== "found") {
-            return portError("unavailable", "repair state changed during read");
-          }
-          snapshot = loaded.value.snapshot as RepairStateSnapshotV1;
-        } else {
-          // Fresh parent/tree/blob bytes still validate every retained object;
-          // StateTreeMemo only reuses parsing after complete byte equality.
-          const read = await this.readCommitTree(op, head, "repair");
-          if (!read.ok) return read;
-          snapshot = read.value as RepairStateSnapshotV1;
+        const loaded = await this.loadRemote(op, REPAIR_REF, "repair");
+        if (!loaded.ok) return loaded;
+        if (loaded.value.status === "absent") {
+          return portOk({
+            status: "absent",
+            currentHead: null,
+            ref: REPAIR_REF,
+          });
         }
         return portOk({
           status: "found",
-          snapshot: structuredClone(snapshot),
-          head,
+          snapshot: loaded.value.snapshot as RepairStateSnapshotV1,
+          head: loaded.value.head,
           ref: REPAIR_REF,
         });
       },
     );
-    if (!result.ok) return result;
-    return result.value === null
-      ? portOk({ status: "absent", currentHead: null, ref: REPAIR_REF })
-      : portOk(result.value);
   }
 
   readRelease(): Promise<
