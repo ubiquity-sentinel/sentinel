@@ -5,6 +5,8 @@ import { parseRepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts"
 import { orderRecords } from "../src/state/state-records.ts";
 import { gatewayRequestBindsDelivery } from "../src/repair/vps-delivery.ts";
 import { releaseRequestMatchesDelivery } from "../src/repair/loop-records.ts";
+import { cleanReview, latestPullReview } from "../src/repair/carried-review.ts";
+import { HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR } from "./hosted-autonomy-policy.ts";
 import { buildHostedReleaseRequest } from "./hosted-autonomy-delivery.ts";
 import {
   resolveHostedDelivery,
@@ -16,6 +18,36 @@ export async function queueBookingDraft(
   context: HostedAutonomyPassContextV1,
   record: HostedAutonomyRecordV1,
 ) {
+  if (
+    context.snapshot.releaseRequests.some((request) =>
+      releaseRequestMatchesDelivery(request, record)
+    )
+  ) {
+    const receipt = latestPullReview(
+      context.snapshot,
+      record,
+      HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
+    );
+    context.actions.push(
+      `delivery:${record.id}:${
+        receipt !== null && receipt.pullRequest.head !== record.target.head
+          ? "carried_release_pending"
+          : "already_recorded"
+      }`,
+    );
+    return null;
+  }
+  // These are necessary refusals only. A clean receipt still passes through
+  // the fresh queue authority, full snapshot checks and expected-head write.
+  const latest = latestPullReview(
+    context.snapshot,
+    record,
+    HOSTED_AUTONOMY_TRUSTED_APP_AUTHOR,
+  );
+  if (latest === null || !cleanReview(latest)) {
+    context.actions.push(`delivery:${record.id}:merge_proof_unavailable`);
+    return null;
+  }
   const scope = await context.scopeFor(record.repository);
   const pull = record.target.pr === null
     ? null
@@ -29,20 +61,6 @@ export async function queueBookingDraft(
   );
   if (proof === null) {
     context.actions.push(`delivery:${record.id}:merge_proof_unavailable`);
-    return null;
-  }
-  if (
-    context.snapshot.releaseRequests.some((request) =>
-      releaseRequestMatchesDelivery(request, record)
-    )
-  ) {
-    context.actions.push(
-      `delivery:${record.id}:${
-        proof.receipt.pullRequest.head !== proof.head
-          ? "carried_release_pending"
-          : "already_recorded"
-      }`,
-    );
     return null;
   }
   const now = context.deps.clock.now();
