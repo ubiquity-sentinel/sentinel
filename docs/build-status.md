@@ -53,6 +53,30 @@ preserved.
   immutability and scoped static checks passed. Historical parser blobs remain
   unchanged. Final combined acceptance and actual native review are pending.
 
+- Round2 native review completed normally on `9bad98d9` with three P1 and one
+  P2. The private-identity P1 is rejected for the supported Passport-only path:
+  `actions-ci.ts` intentionally scopes public repair-target CI; the retired
+  owner-install issuer rejects a private workflow before credential/state
+  access; current installation derives the committed controller API. Source
+  reachability evidence is recorded in the current task. The other findings are
+  corrected: native producer/completion protection and normalization in
+  `eb402d66`, and integration native fixtures in `80cfc255`.
+- Native CI39628349491 failed on `9bad98d9`: a raw fixture literal type, twelve
+  stale native-review integration expectations, and one legacy runtime
+  review-selector expectation. Corrections `19dd19ae`, `80cfc255` and `67c797f7`
+  retain negative/semantic assertions and passed their exact affected cases.
+  They are integrated with `eb402d66` at
+  `3093cbd5b6894981cddec66ae8366a476d7f7685`; revised exact-head CI and the
+  final native review remain required. No installed runtime or accounting
+  changed during this correction.
+- The private source clone preserves captured public startup fixture bytes and
+  defers parsing, asserting private refusal before historical callbacks.
+  Candidate `93f037be` includes that test-only correction and the private
+  bindings; final public corrections must merge before private native CI. The
+  independent audience check confirms twelve effective readers each, no extras,
+  reusable workflow access none, and unchanged manual product-deploy
+  definitions.
+
 ### Prior implementation checkpoint at 14:25 UTC
 
 Snapshot: 2026-10-21 14:25 UTC. The owner explicitly requested a goal and
