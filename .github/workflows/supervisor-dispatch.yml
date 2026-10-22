@@ -1,4 +1,7 @@
 # Deterministic dispatcher for the protected hosted supervisor.
+# The 2026-10-21 transfer to ubiquity-sentinel preserved this workflow but not
+# GitHub's cron registration, so a fresh file revision re-registers the
+# five-minute autonomous entrypoint.
 #
 # Scheduled runs execute from the default branch, so they dispatch the fixed
 # supervisor workflow explicitly at its protected source ref. Before that
