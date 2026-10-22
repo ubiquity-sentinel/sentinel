@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { releaseStateToken } from "../../src/host/actions-supervisor-host.ts";
-import { STATIC_TOKEN } from "../../src/host/actions-supervisor-bootstrap.ts";
+import {
+  STATIC_SEED,
+  STATIC_STATE,
+  STATIC_TOKEN,
+} from "../../src/host/actions-supervisor-bootstrap.ts";
+import { STATIC_RESULT } from "../../src/host/actions-supervisor-host.ts";
+import { supervisorErrorDiagnostic } from "../../src/host/actions-supervisor.ts";
 
 const TARGET_TOKEN = "target-installation-token-0123456789";
 const SELF_TOKEN = "self-installation-token-0123456789";
@@ -40,5 +46,20 @@ Deno.test("hosted supervisor: main forwards the self token before release-state 
   assert.match(
     source,
     /\[SELF_TOKEN_ENV\]: Deno\.env\.get\(SELF_TOKEN_ENV\)/,
+  );
+});
+
+Deno.test("hosted supervisor: safe static diagnostics stay visible and raw errors stay collapsed", () => {
+  assert.equal(
+    supervisorErrorDiagnostic(new Error(STATIC_STATE)),
+    STATIC_STATE,
+  );
+  assert.equal(
+    supervisorErrorDiagnostic(new Error(`${STATIC_SEED} (conflict)`)),
+    `${STATIC_SEED} (conflict)`,
+  );
+  assert.equal(
+    supervisorErrorDiagnostic(new Error("raw/internal/failure")),
+    STATIC_RESULT,
   );
 });

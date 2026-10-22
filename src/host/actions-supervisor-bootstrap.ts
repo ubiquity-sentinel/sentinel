@@ -15,7 +15,8 @@ export const STATIC_TOKEN = "hosted supervisor credentials are unavailable";
 
 export const STATIC_STATE = "hosted supervisor release state is unavailable";
 
-const STATIC_SEED = "hosted supervisor release state could not be seeded";
+export const STATIC_SEED =
+  "hosted supervisor release state could not be seeded";
 
 /**
  * The one fixed GitHub App reviewer identity that may authorize an
