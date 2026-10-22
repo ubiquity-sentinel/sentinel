@@ -7,25 +7,42 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-22 19:44 UTC)
+## Latest checkpoint (2026-10-22 21:25 UTC)
 
-Canonical `development` was `16f82c9d9f3ff4ac0949efb803e864d1659b6f06` when the
-migration handoff batch completed with 35 passed and 0 failed. The protected
-supervisor at generation 89 is `c019bcd5833eff5551201d1b46039a0996841b8b`, and
-run `39834202668` completed successfully with a settled healthy execution. Its
-matrix plan contained zero cells: self issue 178 was parked on its protected
-path, and the AI pre-review records remained blocked because the healthy
-self-installed runtime was absent from the historical CI-first allowlist.
+`development` and `sentinel-supervisor` are both
+`7d4fc4c1c78287ea470868f0a98f44b80843d8b2`. CI run `39842734929` completed
+successfully, including `test-local` at 19:58:41Z. The controlled protected-ref
+advance installed that exact revision at generation 90 with a settled healthy
+proof in run `39845118292`.
 
-The dispatcher race fix is effective: at 18:46 the second dispatcher observed
-the active supervisor and skipped. No `workflow_run` dispatcher followed the
-19:39 completion; GitHub's three-level `workflow_run` chain limit is the
-remaining handoff defect. The scoped correction now uses a post-finalize
-`workflow_dispatch` handoff with a parent-run wait, plus exact self-installed
-CI-first recognition for generation 82+ with the R76-R79 exclusions. Local
-focused evidence: 10/10 CI-first tests and 6/6 workflow tests passed;
-changed-file typecheck, lint, formatting and the full size check passed. Hosted
-CI, protected-ref advance, installation and live acceptance remain pending.
+The autonomous handoff is live. Run `39845118292` finalize dispatched
+`39847055910`; the dispatcher waited for its parent and dispatched
+`39847107790`, whose finalize dispatched `39855590996` and the next active
+supervisor `39855643710`. This is the durable `workflow_dispatch` chain, not the
+limited `workflow_run` chain.
+
+Maintenance in `39845118292` re-admitted AI records `1212`, `1229` and `1250`
+from blocked to work after recognizing the healthy self-installed runtime. Run
+`39847107790` then refreshed all three candidates onto AI `development`
+`f4729df00c743b6454605b971233c0903b0ca770`:
+
+- PR 1254: `6057112c678f86e2c95114b064b284f8d9ac1c57`
+- PR 1255: `82a47f5114a668b845b8e2c59685bba437ad6f67`
+- PR 1258: `31756f748fafabe10d7eb5319bad705a87816f87`
+
+Their records are at `work` with `ci_pending` waits and no current-head check
+runs. The AI repository's 2026-10-21 decision makes `pull_request: closed` and
+manual dispatch the only Gateway CI triggers and explicitly supersedes
+Sentinel-authored PR triggers under its Actions quota policy; the `Gateway CI`
+workflow is also currently `disabled_manually`. Sentinel correctly refuses to
+review or merge without current-head CI. The self target remains blocked by the
+review-round ceiling on PR 174 and by protected-path refusals on issues
+175/177/178. No autonomous reviewed merge is claimed.
+
+Next action: the owner must choose either a pre-merge CI/merge-queue path for
+Sentinel-authored AI PRs under the quota policy, or a revised AI acceptance
+scope; and authorize a non-protected self repair or recover the spent self
+record. No target policy, review cap, charge or state was rewritten.
 
 ## Active task register
 
