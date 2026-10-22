@@ -11,6 +11,23 @@ import {
   supervisorRun,
 } from "./hosted-runtime-follow-fixtures.ts";
 
+const ACTIVE_ISO = new Date(NOW).toISOString();
+const STALE_ISO = new Date(NOW - 31 * 60_000).toISOString();
+
+function job(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 1,
+    status: "queued",
+    conclusion: null,
+    created_at: STALE_ISO,
+    started_at: STALE_ISO,
+    completed_at: null,
+    runner_id: null,
+    runner_name: null,
+    ...overrides,
+  };
+}
+
 const dispatch = async (api: FollowFake, expectedSha = L, ready = true) => {
   const logs: Record<string, unknown>[] = [];
   const result = await runSupervisorDispatch({
@@ -61,6 +78,117 @@ Deno.test("follow dispatcher prevents a duplicate when the previous dispatch is 
   api.supervisorRuns[0].status = "in_progress";
   assert.equal((await dispatch(api)).result.dispatched, false);
   assert.equal(api.dispatches, 1);
+});
+
+Deno.test("follow dispatcher keeps a scan-positive active run when the later filtered listing is empty", async () => {
+  const api = new FollowFake();
+  const activeId = 80;
+  api.supervisorRuns = [supervisorRun(L, activeId, {
+    status: "in_progress",
+    created_at: ACTIVE_ISO,
+    updated_at: ACTIVE_ISO,
+  })];
+  let filteredActiveChecks = 0;
+  api.intercept = (request, url) => {
+    if (
+      request.method === "GET" &&
+      url.pathname.endsWith(`/actions/runs/${activeId}/jobs`)
+    ) {
+      return response({
+        total_count: 1,
+        jobs: [job({
+          status: "in_progress",
+          started_at: ACTIVE_ISO,
+          runner_id: 1,
+          runner_name: "runner-1",
+        })],
+      });
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname.endsWith("/actions/workflows/supervisor.yml/runs") &&
+      url.searchParams.get("event") === "workflow_dispatch" &&
+      url.searchParams.has("status")
+    ) {
+      filteredActiveChecks += 1;
+      return response({ total_count: 0, workflow_runs: [] });
+    }
+    return undefined;
+  };
+
+  const { result, logs } = await dispatch(api);
+  assert.equal(filteredActiveChecks, 5);
+  assert.equal(result.dispatched, false);
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.cancelledRunId, null);
+  assert.equal(api.dispatches, 0);
+  assert.ok(
+    logs.some((line) =>
+      line.event === "follow_dispatch" && line.decision === "skipped" &&
+      line.reason === "supervisor_in_flight"
+    ),
+  );
+});
+
+Deno.test("follow dispatcher dispatches when the same pass observed no active run", async () => {
+  const api = new FollowFake();
+  const { result } = await dispatch(api);
+  assert.equal(result.dispatched, true);
+  assert.equal(result.exitCode, 0);
+  assert.equal(api.dispatches, 1);
+});
+
+Deno.test("follow dispatcher allows dispatch after the pass cancels its only observed stale run", async () => {
+  const api = new FollowFake();
+  const staleId = 81;
+  api.supervisorRuns = [supervisorRun(L, staleId, {
+    created_at: STALE_ISO,
+    updated_at: STALE_ISO,
+  })];
+  api.intercept = (request, url) => {
+    if (
+      request.method === "GET" &&
+      url.pathname.endsWith(`/actions/runs/${staleId}/jobs`)
+    ) {
+      return response({ total_count: 1, jobs: [job()] });
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname.endsWith(`/actions/runs/${staleId}/pending_deployments`)
+    ) {
+      return response([]);
+    }
+    if (
+      request.method === "POST" &&
+      url.pathname.endsWith(`/actions/runs/${staleId}/force-cancel`)
+    ) {
+      return response({}, 202);
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname.endsWith("/actions/workflows/supervisor.yml/runs") &&
+      url.searchParams.get("event") === "workflow_dispatch" &&
+      url.searchParams.has("status")
+    ) {
+      return response({ total_count: 0, workflow_runs: [] });
+    }
+    return undefined;
+  };
+
+  const { result } = await dispatch(api);
+  assert.equal(result.recovery, "recovered");
+  assert.equal(result.cancelledRunId, staleId);
+  assert.equal(result.dispatched, true);
+  assert.equal(api.dispatches, 1);
+  assert.equal(
+    api.requests.filter((request) =>
+      request.method === "POST" &&
+      new URL(request.url).pathname.endsWith(
+        `/actions/runs/${staleId}/force-cancel`,
+      )
+    ).length,
+    1,
+  );
 });
 
 Deno.test("follow dispatcher refuses ref drift and a failed follow readback before POST", async () => {
