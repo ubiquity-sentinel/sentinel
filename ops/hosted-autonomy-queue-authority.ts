@@ -803,13 +803,29 @@ export function createHostedQueueAuthority(
             ) ||
           request.queue.queueId !== null ||
           request.queue.entries.length !== 0 ||
-          request.queue.baseTip !== intent.observedBase ||
           snapshot.reservations.some((entry) =>
             entry.taskId === record.id &&
             (entry.outcome === "reserved" || entry.outcome === "ambiguous" ||
               entry.settledAt === null)
           ) ||
           !await current(snapshot, observedHead, record)
+        ) return unavailable();
+        // A later queue tip is valid only when the published refresh's base
+        // remains in its history. A rewrite or an unavailable ancestry proof
+        // keeps the hold rather than acknowledging a stale publication.
+        const queueTip = request.queue.baseTip;
+        const ancestry = queueTip === intent.observedBase
+          ? null
+          : await client.readQueueAncestry(
+            intent.observedBase,
+            queueTip,
+            deadline,
+          );
+        if (
+          ancestry !== null && (ancestry.status !== "complete" ||
+            ancestry.value.ancestor !== intent.observedBase ||
+            ancestry.value.descendant !== queueTip ||
+            !ancestry.value.isAncestor)
         ) return unavailable();
         const candidate = {
           operationKey: intent.key,

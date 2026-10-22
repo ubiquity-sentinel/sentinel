@@ -35,7 +35,7 @@ import { canonicalStringify } from "../../src/contracts/canonical.ts";
 import { APP_LOGIN } from "../../src/host/actions-target-cycles.ts";
 import { FakeCooldownGate } from "../github/helpers.ts";
 import type { HttpTransportV1 } from "../../src/github/http.ts";
-import { asWorkItemId } from "../../src/contracts/brands.ts";
+import { asWorkItemId, type GitSha } from "../../src/contracts/brands.ts";
 import {
   FakeGithub,
   type FakeGithubOptionsV1,
@@ -183,6 +183,18 @@ Deno.test("queue prelude acknowledges an exact published refresh once, preserves
       )).ok,
     );
     const nextBase = await commitIn(rig.ctx.work, rig.ctx.env, "new-base");
+    const tree = (await gitRun(
+      rig.ctx.work,
+      ["rev-parse", `${nextBase}^{tree}`],
+      rig.ctx.env,
+    )).stdout.trim();
+    // Development advances again after the refresh was published. The
+    // refresh remains exact; the later tip is not a reason to retain custody.
+    const laterBase = (await gitRun(
+      rig.ctx.work,
+      ["commit-tree", tree, "-p", nextBase, "-m", "later-base"],
+      rig.ctx.env,
+    )).stdout.trim() as GitSha;
     const executor = new DenoGitExecutor({
       localDir: rig.ctx.work,
       remoteUrl: `file://${rig.ctx.bare}`,
@@ -201,7 +213,7 @@ Deno.test("queue prelude acknowledges an exact published refresh once, preserves
       "push",
       "-q",
       "origin",
-      `${nextBase}:refs/heads/development`,
+      `${laterBase}:refs/heads/development`,
       `${prepared}:refs/heads/${branch}`,
       `${prepared}:${preservedRef}`,
       `${head}:${originalRef}`,
@@ -277,6 +289,7 @@ Deno.test("queue prelude acknowledges an exact published refresh once, preserves
       human: false,
       noHistory: false,
       stateDrift: false,
+      ancestry: false,
       ambiguous: false,
     };
     const shape = { name: "ai.ubq.fi", owner: { login: "ubiquity" } };
@@ -331,6 +344,14 @@ Deno.test("queue prelude acknowledges an exact published refresh once, preserves
         }),
       });
     const native = await authorityRig();
+    const nativeAncestry = native.client.readQueueAncestry.bind(native.client);
+    native.client.readQueueAncestry = (ancestor, descendant, until) =>
+      controls.ancestry
+        ? Promise.resolve({
+          status: "complete" as const,
+          value: { ancestor, descendant, isAncestor: false },
+        })
+        : nativeAncestry(ancestor, descendant, until);
     const pull = {
       repository: REPO,
       number: 7,
@@ -342,7 +363,7 @@ Deno.test("queue prelude acknowledges an exact published refresh once, preserves
     const queue = {
       repository: REPO,
       baseRef: "development",
-      baseTip: nextBase,
+      baseTip: laterBase,
       queueId: null,
       entries: [],
       observedAt: rig.clock.now(),
@@ -445,6 +466,7 @@ Deno.test("queue prelude acknowledges an exact published refresh once, preserves
             "human",
             "noHistory",
             "stateDrift",
+            "ancestry",
           ] as const
         ) {
           controls[key] = true;
