@@ -8,7 +8,6 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import {
   parseAppInstallationId,
   runActionsTargetCycles,
-  scopeRepairTargetConfigV1,
   scopeTargetConfigV1,
   targetsDiagnosticV1,
 } from "../../src/host/actions.ts";
@@ -43,19 +42,19 @@ Deno.test("actions host: issue-only repair scopes a gateway target to GitHub", (
     "development",
   );
   assert.equal(gateway.adapter.kind, "gateway");
-  const scoped = scopeRepairTargetConfigV1(
+  const scoped = scopeTargetConfigV1(
     gateway,
     self.repository,
     APP_INSTALLATION,
-    true,
+    { issueOnly: true },
   );
   assert.equal(scoped.adapter.kind, "github");
   assert.equal(scoped.repository.installationId, APP_INSTALLATION);
-  const matrix = scopeRepairTargetConfigV1(
+  const matrix = scopeTargetConfigV1(
     gateway,
     self.repository,
     APP_INSTALLATION,
-    false,
+    { issueOnly: false },
   );
   assert.equal(matrix.adapter.kind, "gateway");
 });

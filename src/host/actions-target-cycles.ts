@@ -113,35 +113,22 @@ export function scopeTargetConfigV1(
   config: RepositoryConfigV1,
   selfRepository: RepositoryIdentityV1,
   appInstallationId: number,
+  options: { issueOnly?: boolean } = {},
 ): RepositoryConfigV1 {
   const installationId = config.repository.owner === selfRepository.owner &&
       config.repository.name === selfRepository.name
     ? selfRepository.installationId
     : appInstallationId;
-  if (config.repository.installationId === installationId) return config;
-  return {
-    ...config,
-    repository: { ...config.repository, installationId },
-  };
-}
-
-/**
- * Scope one repair target. An issue-only host reads every target through the
- * GitHub adapter; the gateway adapter belongs to the plan/cell path, which
- * composes its own incident source.
- */
-export function scopeRepairTargetConfigV1(
-  config: RepositoryConfigV1,
-  selfRepository: RepositoryIdentityV1,
-  appInstallationId: number,
-  issueOnly: boolean,
-): RepositoryConfigV1 {
-  const scoped = scopeTargetConfigV1(
-    config,
-    selfRepository,
-    appInstallationId,
-  );
-  return issueOnly && scoped.adapter.kind === "gateway"
+  const scoped = config.repository.installationId === installationId
+    ? config
+    : {
+      ...config,
+      repository: { ...config.repository, installationId },
+    };
+  // An issue-only repair host reads every target through the GitHub adapter;
+  // the gateway adapter belongs to the plan/cell path, which composes its own
+  // incident source.
+  return options.issueOnly === true && scoped.adapter.kind === "gateway"
     ? { ...scoped, adapter: { kind: "github" } }
     : scoped;
 }

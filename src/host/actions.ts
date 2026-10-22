@@ -6,7 +6,6 @@ export {
   childRunDeadlineV1,
   parseAppInstallationId,
   runActionsTargetCycles,
-  scopeRepairTargetConfigV1,
   scopeTargetConfigV1,
   targetsDiagnosticV1,
 } from "./actions-target-cycles.ts";
