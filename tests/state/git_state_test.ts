@@ -20,11 +20,44 @@ import {
   appliedHead,
   gitRunAt,
   makeCtx,
+  pushRawStateTree,
+  rawManifestText,
   releaseSnapshot,
   remoteHead,
   repairSnapshot,
   storeAt,
 } from "./git-state-fixtures.ts";
+
+Deno.test("state: pre-migration controller identity reads as the current identity", async () => {
+  const ctx = await makeCtx("legacy-controller-identity");
+  try {
+    const record = workRecord("legacy-controller-identity");
+    const raw = {
+      ...record,
+      repository: {
+        owner: "ubiquity",
+        name: "sentinel",
+        installationId: 0,
+      },
+    };
+    await pushRawStateTree(ctx, null, REPAIR_STATE_REF, [
+      { path: "manifest.json", text: rawManifestText(1, T0 + 1000, null) },
+      {
+        path: `work/${await sha256Hex(record.id)}.json`,
+        text: `${canonicalStringify(raw)}\n`,
+      },
+    ]);
+    const read = await storeAt(ctx, "legacy-reader", "repair").readRepair();
+    assert(read.ok && read.value.status === "found");
+    assert.equal(read.value.snapshot.sequence, 1);
+    assert.equal(
+      read.value.snapshot.work[0]?.repository.owner,
+      "ubiquity-sentinel",
+    );
+  } finally {
+    await ctx.cleanup();
+  }
+});
 
 Deno.test("state history: strict fixed-ref ancestor read refuses stale missing foreign and malformed witnesses", async () => {
   const ctx = await makeCtx("release-history");

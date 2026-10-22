@@ -33,6 +33,10 @@ import type { OpContext, StateGitOps } from "./state-git.ts";
 import type { ValidatedMemoRecord } from "./state-repair-history-cache.ts";
 import { parseBlobBatch } from "./state-batch.ts";
 import {
+  legacyIdentityRecordId,
+  legacyIdentityRecordMatches,
+} from "./state-legacy-identity.ts";
+import {
   collectionDirectory,
   orderRecords,
   parseStateManifest,
@@ -292,9 +296,11 @@ export async function readCommitTree(
         });
         continue;
       }
+      let raw: unknown;
       let record: RecordIdentitySource;
       try {
-        record = collection.parse(JSON.parse(text));
+        raw = JSON.parse(text);
+        record = collection.parse(raw);
       } catch {
         return portError(
           "invalid",
@@ -304,23 +310,34 @@ export async function readCommitTree(
       // Exact canonical bytes, exactly as this store writes them. Duplicate
       // JSON keys re-parse to one last-wins value, so their original bytes
       // never match the canonical form of the parsed record and are
-      // rejected instead of silently accepted.
+      // rejected instead of silently accepted. The one exception is the
+      // documented pre-migration controller identity: its raw canonical bytes
+      // are accepted only when every difference from the parsed record is that
+      // retired identity, and consumers still receive the current identity.
       if (`${canonicalStringify(record)}\n` !== text) {
-        return portError(
-          "invalid",
-          `state record in ${collection.directory} is not canonical JSON`,
-        );
+        if (
+          `${canonicalStringify(raw)}\n` !== text ||
+          !legacyIdentityRecordMatches(collection.directory, raw, record)
+        ) {
+          return portError(
+            "invalid",
+            `state record in ${collection.directory} is not canonical JSON`,
+          );
+        }
       }
       // The digest filename must equal sha256 of the record's storage
-      // identity: the record id for existing records, the positive
-      // installation id string for kind-less GitHub cooldowns.
+      // identity. The retired runtime id retains its pre-migration file name;
+      // the normalized record still exposes the current runtime id.
       const identity = recordIdentity(record);
       const actualHex = await sha256Hex(identity);
       if (actualHex !== expectedHex) {
-        return portError(
-          "invalid",
-          "state record file name does not match the record id",
-        );
+        const legacyId = legacyIdentityRecordId(collection.directory, raw);
+        if (legacyId === null || await sha256Hex(legacyId) !== expectedHex) {
+          return portError(
+            "invalid",
+            "state record file name does not match the record id",
+          );
+        }
       }
       records[collection.directory].push({ id: identity, value: record });
       memoRecords[path] = { text, id: identity, value: record };
