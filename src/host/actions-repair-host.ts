@@ -81,7 +81,7 @@ import {
   DEFAULT_APP_INSTALLATION_ID,
   parseAppInstallationId,
   REMOTE_URL,
-  scopeTargetConfigV1,
+  scopeRepairTargetConfigV1,
   STATIC_BASE_REFRESH,
   STATIC_DEADLINE,
   STATIC_PREFLIGHT,
@@ -447,7 +447,12 @@ export async function runActionsRepairHost(
     ? parseAppInstallationId(optionalEnv(readEnv, APP_INSTALLATION_ENV))
     : DEFAULT_APP_INSTALLATION_ID;
   const targetConfigs = targets.configs.map((candidate) =>
-    scopeTargetConfigV1(candidate, selfRepository, appInstallationId)
+    scopeRepairTargetConfigV1(
+      candidate,
+      selfRepository,
+      appInstallationId,
+      deps.issueOnly === true,
+    )
   );
   // One lazy restorer per target, bound to that target's own remote and mirror.
   const candidatesBySlug = new Map<string, ActionsCandidateRestorerV1>();

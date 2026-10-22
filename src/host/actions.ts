@@ -6,6 +6,7 @@ export {
   childRunDeadlineV1,
   parseAppInstallationId,
   runActionsTargetCycles,
+  scopeRepairTargetConfigV1,
   scopeTargetConfigV1,
   targetsDiagnosticV1,
 } from "./actions-target-cycles.ts";
@@ -36,6 +37,7 @@ if (import.meta.main) {
     : new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   await runActionsRepairHost({
     trustedStdin,
+    issueOnly: true,
     runTargetCycles: (input) =>
       runActionsMatrixAggregateCycles(
         input,

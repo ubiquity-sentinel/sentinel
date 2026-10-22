@@ -126,6 +126,27 @@ export function scopeTargetConfigV1(
 }
 
 /**
+ * Scope one repair target. An issue-only host reads every target through the
+ * GitHub adapter; the gateway adapter belongs to the plan/cell path, which
+ * composes its own incident source.
+ */
+export function scopeRepairTargetConfigV1(
+  config: RepositoryConfigV1,
+  selfRepository: RepositoryIdentityV1,
+  appInstallationId: number,
+  issueOnly: boolean,
+): RepositoryConfigV1 {
+  const scoped = scopeTargetConfigV1(
+    config,
+    selfRepository,
+    appInstallationId,
+  );
+  return issueOnly && scoped.adapter.kind === "gateway"
+    ? { ...scoped, adapter: { kind: "github" } }
+    : scoped;
+}
+
+/**
  * The one advisory multi-target diagnostic line. It reports the targets that
  * were addressed and the ones that were skipped (an unavailable default
  * branch, or the absolute run deadline). It carries no `status` property, so
@@ -397,6 +418,8 @@ export function childRunDeadlineV1(
 export interface ActionsRepairHostDepsV1 {
   /** Raw private publisher stdin; decoded only after the saved native execution matches. */
   trustedStdin?: string;
+  /** Ordinary hosted repair reads GitHub issues only; gateway adapters are scoped to GitHub. */
+  issueOnly?: boolean;
   /** Approved private persistence/cache/replay policy; absence keeps capture unavailable. */
   gateway?: import("./gateway-capabilities.ts").TrustedGatewayRuntimeV1;
   /** Native job role selected by the fixed matrix executable, never a product flag. */

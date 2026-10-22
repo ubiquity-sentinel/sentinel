@@ -8,6 +8,7 @@ import type { GitSha } from "../../src/contracts/brands.ts";
 import {
   parseAppInstallationId,
   runActionsTargetCycles,
+  scopeRepairTargetConfigV1,
   scopeTargetConfigV1,
   targetsDiagnosticV1,
 } from "../../src/host/actions.ts";
@@ -33,6 +34,31 @@ import {
 } from "./actions-target-fixture.ts";
 import { APP_PUBLISHER } from "./actions-ci-fixture.ts";
 import { readHostedAppCredentials } from "../../src/host/hosted-app-credentials.ts";
+
+Deno.test("actions host: issue-only repair scopes a gateway target to GitHub", () => {
+  const self = createLocalRepositoryConfig();
+  const gateway = createTargetConfigV1(
+    self,
+    { owner: "ubiquity", name: "ai.ubq.fi", slug: "ubiquity/ai.ubq.fi" },
+    "development",
+  );
+  assert.equal(gateway.adapter.kind, "gateway");
+  const scoped = scopeRepairTargetConfigV1(
+    gateway,
+    self.repository,
+    APP_INSTALLATION,
+    true,
+  );
+  assert.equal(scoped.adapter.kind, "github");
+  assert.equal(scoped.repository.installationId, APP_INSTALLATION);
+  const matrix = scopeRepairTargetConfigV1(
+    gateway,
+    self.repository,
+    APP_INSTALLATION,
+    false,
+  );
+  assert.equal(matrix.adapter.kind, "gateway");
+});
 
 Deno.test("actions host: live App installation ids are explicit while old runs retain the legacy scope", () => {
   const legacy = readHostedAppCredentials((name) =>
