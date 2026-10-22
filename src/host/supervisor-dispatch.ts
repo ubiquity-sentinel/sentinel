@@ -39,8 +39,10 @@
  *    five-minute job for the ordinary dispatch.
  * 6. It then performs the existing dispatch of `supervisor.yml` at
  *    `sentinel-supervisor` with the same `GH_TOKEN` the dispatcher already
- *    holds, whatever recovery did. The process exit code reports the dispatch
- *    outcome (0 accepted, 1 not accepted).
+ *    holds. A queued or in-progress run observed by this pass blocks dispatch
+ *    unless this pass canceled that exact run; an incomplete filtered read can
+ *    never erase the positive observation. The process exit code reports the
+ *    dispatch outcome (0 accepted, 1 not accepted).
  *
  * Capability boundary: the follow step supplies only its SHA/readiness outputs;
  * no App secret, model call, state write or external service. Every read and
@@ -261,10 +263,13 @@ export async function runSupervisorDispatch(
     ? "incomplete"
     : "none";
 
+  const observedActiveRunIds = scan.observedActiveRunIds.filter((runId) =>
+    runId !== cancelledRunId
+  );
   const dispatched = deps.follow === undefined
     ? await dispatchSupervisor(deps)
     : await dispatchFollowedSupervisor(
-      { ...deps, ...deps.follow },
+      { ...deps, ...deps.follow, observedActiveRunIds },
       () => dispatchSupervisor(deps),
     );
   const didDispatch = dispatched.valid &&
@@ -293,6 +298,8 @@ interface ScanV1 {
   /** The fixed recovery budget stopped the scan; nothing is authorized. */
   budgetExhausted: boolean;
   scannedRuns: number;
+  /** Every queued/in-progress run positively observed by this scan. */
+  observedActiveRunIds: number[];
 }
 
 /**
@@ -308,13 +315,15 @@ async function scanStaleOwners(
   recoveryDeadlineMs: number,
   log: SupervisorLogV1,
 ): Promise<ScanV1> {
+  const runs: SupervisorRunV1[] = [];
+  const observedActiveRunIds = (): number[] => runs.map((run) => run.id);
   const exhausted = (): ScanV1 => ({
     candidates: [],
     incomplete: true,
     budgetExhausted: true,
     scannedRuns: 0,
+    observedActiveRunIds: observedActiveRunIds(),
   });
-  const runs: SupervisorRunV1[] = [];
   for (const status of ["queued", "in_progress"]) {
     const listed = await listAllPages(
       deps,
@@ -332,6 +341,7 @@ async function scanStaleOwners(
         incomplete: true,
         budgetExhausted: false,
         scannedRuns: 0,
+        observedActiveRunIds: observedActiveRunIds(),
       };
     }
     runs.push(...listed.value.items);
@@ -400,6 +410,7 @@ async function scanStaleOwners(
     incomplete,
     budgetExhausted: false,
     scannedRuns: runs.length,
+    observedActiveRunIds: observedActiveRunIds(),
   };
 }
 
