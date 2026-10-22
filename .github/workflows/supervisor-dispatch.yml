@@ -1,7 +1,8 @@
 # Deterministic dispatcher for the protected hosted supervisor.
 # The post-transfer scheduler workflow (`sentinel-scheduler.yml`) invokes this
-# dispatcher every five minutes because GitHub did not preserve this file's
-# cron registration across the 2026-10-21 organization move.
+# dispatcher on its cron fallback, and every completed supervisor run invokes
+# it directly through `workflow_run`. The event chain keeps work moving when
+# GitHub's cron scheduler is delayed, without an external host.
 #
 # Scheduled runs execute from the default branch, so they dispatch the fixed
 # supervisor workflow explicitly at its protected source ref. Before that
@@ -22,6 +23,9 @@ name: sentinel-supervisor-dispatch
 on:
   schedule:
     - cron: "*/5 * * * *"
+  workflow_run:
+    workflows: ["sentinel-supervisor"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -36,6 +40,10 @@ concurrency:
 
 jobs:
   dispatch:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.head_branch == 'sentinel-supervisor' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
