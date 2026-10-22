@@ -45,7 +45,9 @@ import {
 } from "../src/repair/review-round-cap.ts";
 import {
   ciFirstFixRuntimeProven,
+  ciFirstFixSelfInstalledRuntimeProven,
   ciFirstRuntimeProven,
+  ciFirstSelfInstalledRuntimeProven,
   launcherLegacyCutoff,
   preReviewGateParked,
 } from "./hosted-autonomy-ci-first.ts";
@@ -338,7 +340,8 @@ export async function runHostedRetryPass(
   // its exact base it is the spent-round rule's, green on a moved base it
   // returns for the carried refresh, and only a read red one may be planned
   // as a (legacy) CI correction, never a green one.
-  const ciFirst = ciFirstRuntimeProven(installedRuntime);
+  const ciFirst = ciFirstRuntimeProven(installedRuntime) ||
+    ciFirstSelfInstalledRuntimeProven(installedRuntime);
   const legacyCutoff = deps.legacyReviewCutoff !== undefined
     ? deps.legacyReviewCutoff
     : launcherLegacyCutoff(installedRuntime, ciFirst, release);
@@ -400,7 +403,8 @@ export async function runHostedRetryPass(
   // A pre-review CI fix is re-admitted only under a fix runtime (generation
   // 81+, pinned by its own launcher commit), so only that runtime reads those
   // heads' re-runs.
-  const ciFixRuntime = ciFirstFixRuntimeProven(installedRuntime);
+  const ciFixRuntime = ciFirstFixRuntimeProven(installedRuntime) ||
+    ciFirstFixSelfInstalledRuntimeProven(installedRuntime);
   const ciRerunSettled = ciCorrectionRuntimeProven(installedRuntime)
     ? await readCiRerunSettled(
       { ...context, snapshot },

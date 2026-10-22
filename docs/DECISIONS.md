@@ -41,16 +41,36 @@ retain their existing states.
 
 ### Post-transfer scheduler recovery (2026-10-22)
 
-The 2026-10-21 organization transfer did not preserve GitHub's cron
-registration for `supervisor-dispatch.yml`. Changing the cron line and
-re-enabling the workflow did not restore scheduled runs. A minimal
-`sentinel-scheduler.yml` now invokes the existing dispatcher every five
-minutes; the dispatcher remains the sole owner of stale-run recovery and the
-protected-ref dispatch. `SENTINEL_AUTO_FOLLOW` is temporarily off because the
-native dispatcher token cannot fast-forward a ref to a commit that changes a
-workflow file. Runtime advances are manual until the follow path has a
-workflow-capable trusted token. This does not change model, review, merge,
-release or promotion authority.
+The 2026-10-21 organization transfer did not preserve GitHub's cron registration
+for `supervisor-dispatch.yml`. Changing the cron line and re-enabling the
+workflow did not restore scheduled runs. A minimal `sentinel-scheduler.yml` now
+invokes the existing dispatcher every five minutes; the dispatcher remains the
+sole owner of stale-run recovery and the protected-ref dispatch.
+`SENTINEL_AUTO_FOLLOW` is temporarily off because the native dispatcher token
+cannot fast-forward a ref to a commit that changes a workflow file. Runtime
+advances are manual until the follow path has a workflow-capable trusted token.
+This does not change model, review, merge, release or promotion authority.
+
+### Self-installed runtime handoff and CI-first recognition (2026-10-22)
+
+GitHub stops a `workflow_run` chain after three levels. The completed supervisor
+run `39834202668` produced no dispatcher run even though the dispatcher trigger
+existed on the default branch. The supervisor finalize job now sends one
+`workflow_dispatch` handoff to `supervisor-dispatch.yml` with its own run ID;
+the dispatcher waits for that parent run to complete, then runs the existing
+active-run, stale-recovery and fixed-protected-ref guards. This is not another
+`workflow_run` level, and it preserves the scheduler as a fallback. A dispatcher
+handoff is chained even when finalization or an earlier job fails, so recovery
+remains live.
+
+The installed runtime `c019bcd5833eff5551201d1b46039a0996841b8b` is a
+self-installed generation-89 runtime with a settled healthy proof but no
+historical rollout row. The launcher now recognizes an exact healthy
+self-installed runtime at generation 82 or later as CI-first, while retaining
+the exact allowlists for generation 80/81 and excluding the known pre-CI-first
+R76-R79 revisions. This restores moved-base pre-review re-admission for the
+existing AI parks. It changes no review-round, charge, CI, review, merge,
+promotion or model policy, and it does not rewrite state or accounting.
 
 ### Private Passport controller isolation (2026-10-21)
 

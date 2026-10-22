@@ -23,10 +23,19 @@ name: sentinel-supervisor-dispatch
 on:
   schedule:
     - cron: "*/5 * * * *"
+  # Completion-triggered dispatch is a fallback only. GitHub stops a
+  # workflow_run chain after three levels; the supervisor's finalize job sends
+  # the durable workflow_dispatch handoff below instead.
   workflow_run:
     workflows: ["sentinel-supervisor"]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      sentinel_parent_run_id:
+        description: Completed supervisor run that requested this handoff
+        required: false
+        type: string
+        default: ""
 
 permissions:
   # actions: write covers both the fixed-ref dispatch and the bounded
@@ -47,6 +56,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Wait for the completed parent supervisor
+        if: github.event_name == 'workflow_dispatch' && inputs.sentinel_parent_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PARENT_RUN_ID: ${{ inputs.sentinel_parent_run_id }}
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 240))
+          while (( SECONDS < deadline )); do
+            status=$(gh run view "$PARENT_RUN_ID" --repo "$GH_REPO" --json status --jq .status)
+            if [ "$status" = completed ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "parent supervisor did not complete within 4 minutes" >&2
+          exit 1
       - name: Check out the dispatcher source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

@@ -31,7 +31,9 @@ import {
 } from "./hosted-autonomy-ci-retries.ts";
 import {
   ciFirstFixRuntimeProven,
+  ciFirstFixSelfInstalledRuntimeProven,
   ciFirstRuntimeProven,
+  ciFirstSelfInstalledRuntimeProven,
   HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
   HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
   launcherLegacyCutoff,
@@ -510,17 +512,17 @@ export function planHostedRetries(
     ciCorrectionRuntimeProven(ciRuntime, options.ciAllowlist);
   const ciFirst = ciRuntime !== null &&
     ciRuntime.activeRevision === runtimeSha &&
-    ciFirstRuntimeProven(
+    (ciFirstRuntimeProven(
       ciRuntime,
       options.ciFirstAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
-    );
+    ) || ciFirstSelfInstalledRuntimeProven(ciRuntime));
   const ciFixRuntime = ciRuntime !== null &&
     ciRuntime.activeRevision === runtimeSha &&
-    ciFirstFixRuntimeProven(
+    (ciFirstFixRuntimeProven(
       ciRuntime,
       options.ciFirstFixAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_FIX_RUNTIMES,
       options.ciFirstAllowlist ?? HOSTED_AUTONOMY_CI_FIRST_RUNTIMES,
-    );
+    ) || ciFirstFixSelfInstalledRuntimeProven(ciRuntime));
   const ciUnreadHeads = options.ciUnreadHeads ?? new Set<string>();
   // Every CI correction and CI fix plan needs its head's re-run settled; an
   // unread head is never settled for this pass (sentinel issue #154).

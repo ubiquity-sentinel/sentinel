@@ -779,6 +779,9 @@ jobs:
     timeout-minutes: 10
     environment:
       name: sentinel-supervisor
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Checkout protected supervisor source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -828,3 +831,12 @@ jobs:
           SENTINEL_SELF_TOKEN: ${{ steps.self-token.outputs.token }}
           SENTINEL_SELF_TOKEN_MINT_GRANT: ${{ steps.self-token.outputs.mint-grant }}
         run: deno task supervisor:run
+      - name: Chain the next dispatcher run
+        if: always() && github.ref == 'refs/heads/sentinel-supervisor'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          gh workflow run supervisor-dispatch.yml
+          --ref "${{ github.event.repository.default_branch }}"
+          -f sentinel_parent_run_id="${{ github.run_id }}"

@@ -75,6 +75,7 @@ import {
 import type { HostedAutonomyPassContextV1 } from "./hosted-autonomy-scopes.ts";
 import {
   ciFirstRuntimeProven,
+  ciFirstSelfInstalledRuntimeProven,
   launcherLegacyCutoff,
   LEGACY_ROUND_REQUIRES_CI_FIRST,
   legacyFinalRoundAdmissible,
@@ -425,12 +426,14 @@ export async function runHostedRefreshRearmPass(
     fixed: installed !== undefined &&
       pinned.some((row) => row.revision === installed.activeRevision),
     activation: release === null ? null : refreshFixActivation(release, pinned),
-    ciFirst: ciFirstRuntimeProven(installed),
+    ciFirst: ciFirstRuntimeProven(installed) ||
+      ciFirstSelfInstalledRuntimeProven(installed),
     legacyCutoff: context.deps.legacyReviewCutoff !== undefined
       ? context.deps.legacyReviewCutoff
       : launcherLegacyCutoff(
         installed,
-        ciFirstRuntimeProven(installed),
+        ciFirstRuntimeProven(installed) ||
+          ciFirstSelfInstalledRuntimeProven(installed),
         release,
       ),
   };

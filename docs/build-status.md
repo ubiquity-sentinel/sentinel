@@ -7,6 +7,26 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
+## Latest checkpoint (2026-10-22 19:44 UTC)
+
+Canonical `development` was `16f82c9d9f3ff4ac0949efb803e864d1659b6f06` when the
+migration handoff batch completed with 35 passed and 0 failed. The protected
+supervisor at generation 89 is `c019bcd5833eff5551201d1b46039a0996841b8b`, and
+run `39834202668` completed successfully with a settled healthy execution. Its
+matrix plan contained zero cells: self issue 178 was parked on its protected
+path, and the AI pre-review records remained blocked because the healthy
+self-installed runtime was absent from the historical CI-first allowlist.
+
+The dispatcher race fix is effective: at 18:46 the second dispatcher observed
+the active supervisor and skipped. No `workflow_run` dispatcher followed the
+19:39 completion; GitHub's three-level `workflow_run` chain limit is the
+remaining handoff defect. The scoped correction now uses a post-finalize
+`workflow_dispatch` handoff with a parent-run wait, plus exact self-installed
+CI-first recognition for generation 82+ with the R76-R79 exclusions. Local
+focused evidence: 10/10 CI-first tests and 6/6 workflow tests passed;
+changed-file typecheck, lint, formatting and the full size check passed. Hosted
+CI, protected-ref advance, installation and live acceptance remain pending.
+
 ## Active task register
 
 Snapshot: 2026-10-21 15:29 UTC. The original chat owns the active completion

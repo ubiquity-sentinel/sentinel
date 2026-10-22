@@ -61,6 +61,22 @@ type WorkRow = RepairStateSnapshotV1["work"][number];
 export const HOSTED_AUTONOMY_CI_FIRST_MIN_GENERATION = 80;
 
 /**
+ * First generation installed by the self-install path.  A runtime at this
+ * generation or later is not represented by a historical rollout row; its
+ * exact revision and healthy proof are the identity.  The known pre-CI-first
+ * revisions remain excluded so a manual or accidental old-runtime restore can
+ * never open the gate.
+ */
+export const HOSTED_AUTONOMY_CI_FIRST_SELF_INSTALLED_MIN_GENERATION = 82;
+
+const PRE_CI_FIRST_REVISIONS: ReadonlySet<string> = new Set([
+  "41bb853a1bedfc0422bf903dfabbe23bf714b44f", // R76
+  "ab3613e0224ff92266bed21dde6f40e6b0aab54a", // R77
+  "474f87eb639f97cd72b9bc4b9e56101488f841aa", // R78
+  "549c7a69186b3d2070aa4e69c92ee846d183ce8f", // R79
+]);
+
+/**
  * Exact reviewed runtime revisions that carry the CI-first gate (generation
  * 80+), each named by the launcher commit that pins its install. A listed
  * revision counts only once it holds its own healthy proof at its installed
@@ -112,6 +128,33 @@ export function ciFirstRuntimeProven(
   return runtime !== null && runtime !== undefined &&
     runtime.generation >= HOSTED_AUTONOMY_CI_FIRST_MIN_GENERATION &&
     ciCorrectionRuntimeProven(runtime, allowlist);
+}
+
+/**
+ * True for the exact self-installed runtime at generation 82+ when its own
+ * settled healthy proof binds that exact revision and generation.  Historical
+ * exact allowlists remain the source of truth for generation 80/81 and for
+ * any rollback target; this predicate only covers the post-R81 self-install
+ * era, whose runtime identity is necessarily newer than the committed data
+ * that reads it.
+ */
+export function ciFirstSelfInstalledRuntimeProven(
+  runtime: HostedRuntimeRecordV1 | null | undefined,
+): boolean {
+  return runtime !== null && runtime !== undefined &&
+    runtime.generation >=
+      HOSTED_AUTONOMY_CI_FIRST_SELF_INSTALLED_MIN_GENERATION &&
+    !PRE_CI_FIRST_REVISIONS.has(runtime.activeRevision) &&
+    ciCorrectionRuntimeProven(runtime, new Set([runtime.activeRevision]));
+}
+
+/** Self-install counterpart of `ciFirstFixRuntimeProven`. */
+export function ciFirstFixSelfInstalledRuntimeProven(
+  runtime: HostedRuntimeRecordV1 | null | undefined,
+): boolean {
+  return runtime !== null && runtime !== undefined &&
+    runtime.generation >= HOSTED_AUTONOMY_CI_FIRST_FIX_MIN_GENERATION &&
+    ciFirstSelfInstalledRuntimeProven(runtime);
 }
 
 /**
