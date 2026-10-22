@@ -39,6 +39,19 @@ self installation. `ubiquity/ai.ubq.fi` remains a target under its original
 owner. The five-minute dispatcher and the disabled `sentinel-release` workflow
 retain their existing states.
 
+### Post-transfer scheduler recovery (2026-10-22)
+
+The 2026-10-21 organization transfer did not preserve GitHub's cron
+registration for `supervisor-dispatch.yml`. Changing the cron line and
+re-enabling the workflow did not restore scheduled runs. A minimal
+`sentinel-scheduler.yml` now invokes the existing dispatcher every five
+minutes; the dispatcher remains the sole owner of stale-run recovery and the
+protected-ref dispatch. `SENTINEL_AUTO_FOLLOW` is temporarily off because the
+native dispatcher token cannot fast-forward a ref to a commit that changes a
+workflow file. Runtime advances are manual until the follow path has a
+workflow-capable trusted token. This does not change model, review, merge,
+release or promotion authority.
+
 ### Private Passport controller isolation (2026-10-21)
 
 The owner's request to add `ubiquity/passport.ubq.fi`, followed by the explicit

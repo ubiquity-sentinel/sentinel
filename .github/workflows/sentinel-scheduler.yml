@@ -1,0 +1,30 @@
+# Post-transfer five-minute scheduler for the protected supervisor dispatcher.
+#
+# The 2026-10-21 move to ubiquity-sentinel did not preserve the cron
+# registration of supervisor-dispatch.yml. This minimal workflow re-establishes
+# the cadence without duplicating the dispatcher's recovery or runtime logic.
+name: sentinel-scheduler
+
+on:
+  schedule:
+    - cron: "3-59/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: sentinel-scheduler
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch the trusted supervisor dispatcher
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run supervisor-dispatch.yml --ref development
