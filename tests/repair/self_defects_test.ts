@@ -32,6 +32,20 @@ Deno.test("self defects: a runner shutdown is its own stable signature", () => {
   assert.match(first.summary, /runner was shut down/);
 });
 
+Deno.test("self defects: an Actions cancellation is its own stable signature", () => {
+  const signature = extractSelfFailureSignature(
+    "nothing useful here\n",
+    { ...RUN, conclusion: "cancelled" },
+  );
+  const fromLog = extractSelfFailureSignature(
+    "##[error]The operation was canceled.\n",
+    RUN,
+  );
+  assert.deepEqual(fromLog, signature);
+  assert.match(signature.key, /:test-local:cancelled:/);
+  assert.equal(signature.summary, "the job was cancelled before it completed");
+});
+
 Deno.test("self defects: normalization makes one class out of shifting values", () => {
   const a = extractSelfFailureSignature(
     "TS2304 [ERROR]: Cannot find name 'X' at ./src/a.ts:12:3\n",
