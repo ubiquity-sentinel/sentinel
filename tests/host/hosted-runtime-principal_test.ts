@@ -247,10 +247,11 @@ Deno.test("hosted principal launcher: the grant binds to the live target install
         id: undefined,
       },
       {
-        name: "malformed live id strips the grant",
+        name: "malformed live id strips the grant and the child refuses it",
         expected: false,
         grant: principalGrant(),
         id: "17391380x",
+        status: "failed",
       },
     ]
   ) {
@@ -266,9 +267,15 @@ Deno.test("hosted principal launcher: the grant binds to the live target install
       );
       try {
         const result = await rig.launch();
-        assert.equal(result.status, "healthy", JSON.stringify(result));
+        assert.equal(
+          result.status,
+          scenario.status ?? "healthy",
+          JSON.stringify(result),
+        );
         assert.equal(rig.childCalls().length, 1);
         assert.equal(rig.state.repairWrites, 0);
+        // A grant refused before verification never issues a native read.
+        if (!scenario.expected) assert.equal(rig.model.calls.length, 0);
       } finally {
         await rig.close();
       }
