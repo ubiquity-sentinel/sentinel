@@ -75,10 +75,26 @@ issue-only; `ciFirstSelfInstalledRuntimeProven` is a denylist; the native
 findings-rendering parity is checked only tautologically; dead review-model
 selector plumbing (`resolveReviewModelId`, `SENTINEL_REVIEW_MODEL_ID`).
 
-Next action: owner decides the Passport gate; publish this candidate to
-`development`, verify CI on the exact SHA, advance `sentinel-supervisor`, and
-observe the first gateway pre-merge dispatch and the resulting review on the
-installed runtime.
+Publication (2026-10-23 21:40 UTC): `development` is
+`77437d8921c315e7d67a4a5971aa628438892b4c` (`b7562c3742` dispatcher and
+authority inventory, `1dda5f0a1c` history-cache validity after the fetch,
+`77437d8921` issue-only matrix scoping). CI `40024444005` passed on
+`b7562c3742`; CI `40025261428` on `77437d8921` failed once only in
+`tests/repair/model-port-early-notifications_test.ts` (heap growth 33876544
+against a 32 MiB bound, code this candidate does not touch) and passed on its
+single rerun (attempt 2). `sentinel-supervisor` still points at `395f54637e`:
+this session's permission classifier refused the protected-ref fast-forward, so
+the controlled advance to `77437d8921` is the owner's (manual push or
+`SENTINEL_AUTO_FOLLOW`; no workflow file changed). Run `40018567715`
+(generation 92) refreshed AI PRs `1254`/`1255`/`1258` onto the moved AI base
+`31ba5a15` (heads `55f8b095`/`ba12c64e`/`5cc0948f`, still `ci_pending`), which
+is exactly the head movement the dispatcher re-verifies at dispatch time.
+
+Next action: owner decides the Passport gate and advances `sentinel-supervisor`
+to `77437d8921`; then observe the model-disabled bootstrap at generation 93 and
+the first gateway pre-merge dispatch (`sentinel_premerge_ci` lines in the
+matrix_plan/repair job logs) and the resulting native review on the installed
+runtime. Self issue `#179` awaits its first admission.
 
 ## Prior checkpoint (2026-10-23 02:15 UTC)
 
