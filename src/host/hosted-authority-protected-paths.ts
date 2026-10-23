@@ -30,6 +30,13 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     // Per-run credential selection and per-target token binding.
     "src/host/hosted-app-credentials.ts",
     "src/host/actions-target-bindings.ts",
+    // Merge guarantees the launcher and runtime share (issue #158): the
+    // uncached tip read, the shared review-authorization predicate, every park
+    // transition and the gateway delivery binding.
+    "ops/hosted-autonomy-scopes.ts",
+    "src/repair/review-gate.ts",
+    "src/repair/transitions.ts",
+    "src/repair/vps-delivery.ts",
     // Vendored upstream review rubric (read-only boundary).
     "src/github/codex-review-rubric.ts",
     // Native review invocation, lifecycle evidence and completion authority.

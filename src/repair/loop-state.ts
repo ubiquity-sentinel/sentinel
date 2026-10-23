@@ -157,12 +157,47 @@ export async function seedSnapshot(
   };
 }
 
+/**
+ * Bounded recomputation of one checkpoint after a lost compare-and-swap. The
+ * shared cooldown gate writes `githubCooldowns` through the same store from
+ * concurrent GitHub requests (a reviewer's HTTP calls run beside the loop), so
+ * the loop's own write can lose its CAS to a cooldown-only movement between
+ * its synchronized read and its push. Each retry re-synchronizes first, which
+ * admits only cooldown-only movement, and recomputes the whole draft on the
+ * fresh base; any other movement, ambiguity or rejection still fails closed.
+ */
+const CHECKPOINT_CAS_ATTEMPTS = 3;
+
 export async function persistTransition(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   mutate: (draft: RepairStateSnapshotV1) => void,
   proofHead?: GitSha,
 ): Promise<StepResultV1> {
+  for (let attempt = 1; attempt <= CHECKPOINT_CAS_ATTEMPTS; attempt++) {
+    const written = await persistTransitionOnce(
+      deps,
+      context,
+      mutate,
+      proofHead,
+    );
+    if (written.kind !== "lost_cas" || attempt === CHECKPOINT_CAS_ATTEMPTS) {
+      return written.kind === "lost_cas"
+        ? { kind: "state_error", detail: CHECKPOINT_CAS_DETAIL }
+        : written;
+    }
+  }
+  return { kind: "state_error", detail: CHECKPOINT_CAS_DETAIL };
+}
+
+const CHECKPOINT_CAS_DETAIL = "checkpoint CAS conflict or ambiguity";
+
+async function persistTransitionOnce(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  mutate: (draft: RepairStateSnapshotV1) => void,
+  proofHead?: GitSha,
+): Promise<StepResultV1 | { kind: "lost_cas" }> {
   // Safe snapshot synchronization: the durable cooldown gate writes
   // githubCooldowns through the SAME repair state store, so the authoritative
   // head may have moved since this context was loaded (also covering the
@@ -237,17 +272,24 @@ export async function persistTransition(
     context.head = written.value.head;
     return { kind: "progress" };
   }
-  // Expected-head compare-and-swap lost, ambiguous or rejected: the mutation
-  // was computed against a now-stale base, so it is never blindly replayed
+  // A lost compare-and-swap whose authoritative head provably moved is
+  // recomputed by the caller: the next synchronization admits the movement
+  // only when it is cooldown-only and rebuilds the draft on that fresh base.
+  if (
+    written.ok && written.value.status === "conflict" &&
+    written.value.currentHead !== null &&
+    written.value.currentHead !== synchronized.head
+  ) {
+    return { kind: "lost_cas" };
+  }
+  // Ambiguous or rejected without a proven movement: the mutation was
+  // computed against a possibly stale base, so it is never blindly replayed
   // over newer authoritative state (that could overwrite a newer conflicting
   // record with a captured stale mutation). Stop safely and explicitly; the
   // next run rereads the exact authoritative state and reconciles, and every
   // mutation here is keyed by deterministic identity so an already-applied
   // effect is absorbed instead of duplicated.
-  return {
-    kind: "state_error",
-    detail: "checkpoint CAS conflict or ambiguity",
-  };
+  return { kind: "state_error", detail: CHECKPOINT_CAS_DETAIL };
 }
 
 /**
