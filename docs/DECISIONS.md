@@ -81,6 +81,21 @@ autonomous ai.ubq.fi merge can complete until the owner either deactivates the
 proof until the canary lands or finishes the queue rollout. Sentinel does not
 change that custody boundary on its own.
 
+Self-path corrections (2026-10-23 23:55 UTC, review round 1): `ci.yml`'s
+`test-local` has been a `needs: [quality, test-shards]` aggregate since
+`b19882bb8c` (2026-10-20), so GitHub creates its check run only once those jobs
+finish; the self CI-first gate used to read no expectation for the self scope
+and could admit a review in that gap. It now expects `test-local` on the head
+(`absentExpectedChecks`, still no base read) and waits like running CI until the
+aggregate reports. The self merge port's pre-write refusals (CI pipeline
+identity, preserved CI binding, tested tree or trusted source mismatch) used to
+re-arm a five-minute `unavailable` wait on every cycle for the life of the base;
+they now park the record for the owner with the port's own detail and clear the
+merge intent, since only a new base or candidate can clear them. Transport
+failures keep the bounded wait and the durable intent. The earlier "one named
+`test-local` job (ci.yml, no `needs:`)" wording in this document is superseded
+by the aggregate description above.
+
 Passport cannot merge under the existing gate: its private repository on the
 current GitHub plan cannot carry branch rules (`/rules/branches/main` answers
 403 "Upgrade to GitHub Pro or make this repository public"), so every reviewed,

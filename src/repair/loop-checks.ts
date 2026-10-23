@@ -14,6 +14,9 @@ import type {
 } from "./loop-types.ts";
 import { markBlocked, setWait } from "./transitions.ts";
 
+/** The self scope's one aggregate CI job (`ci.yml`), created only after its `needs:` finish. */
+const SELF_AGGREGATE_CHECK = "test-local";
+
 /**
  * Pure CI gate decision. Returns "proceed" only when every (deduped by name)
  * check is completed with `success` conclusion. Returns "wait" when any check
@@ -64,7 +67,10 @@ export function decideCiGate(
  * only), not the strict `readChecks`: a base may carry runs no pull request
  * head runs whose names exceed the strict label bound. The sentinel self
  * scope reads no base at all, like the launcher: its gate is the one named
- * `test-local` job (ci.yml, no `needs:`), and its `development` tip also
+ * `test-local` job (ci.yml), a `needs: [quality, test-shards]` aggregate that
+ * GitHub creates only once those jobs finish, so an otherwise green head
+ * listing that does not carry it yet is awaited like running CI instead of
+ * admitting a review before the aggregate ran; its `development` tip also
  * carries a `dispatch` run per five-minute schedule and the supervisor.yml
  * runs of `sentinel-supervisor`, which is fast-forwarded with it.
  */
@@ -73,7 +79,11 @@ export async function absentExpectedChecks(
   record: WorkRecordV1,
   head: readonly GitHubCheckV1[],
 ): Promise<string[] | null> {
-  if (isSelfScopeZero(record.repository)) return [];
+  if (isSelfScopeZero(record.repository)) {
+    return head.some((check) => check.name === SELF_AGGREGATE_CHECK)
+      ? []
+      : [SELF_AGGREGATE_CHECK];
+  }
   const observed = await deps.github.readCheckSuites(record.target.base);
   if (!observed.ok) return null;
   return missingExpectedChecks(head, observed.value.checks);
