@@ -238,6 +238,12 @@ export interface ActionsTargetCyclesInputV1 {
   /** Compose the exact port for one target repository. */
   composeGithub: (config: RepositoryConfigV1) => GitHubPort;
   /**
+   * One bounded pre-merge CI dispatch before a target's cycle, for a target
+   * whose CI runs on a Sentinel pull request only when asked. It requests
+   * evidence and never writes state; a failure is reported, never fatal.
+   */
+  premergeCi?: (config: RepositoryConfigV1) => Promise<unknown>;
+  /**
    * A matrix cell's read-only CI failure evidence reader for one target,
    * on the cell's scoped read token (generation 81). Absent elsewhere.
    */
@@ -341,6 +347,20 @@ export async function runActionsTargetCycles(
         }
       }
       addressed.push(slug);
+      if (input.premergeCi !== undefined) {
+        try {
+          await input.premergeCi(config);
+        } catch (error) {
+          console.log(JSON.stringify({
+            kind: "sentinel_premerge_ci",
+            repository: slug,
+            decision: "failed",
+            detail: error instanceof Error
+              ? error.message
+              : "pre-merge CI dispatch failed",
+          }));
+        }
+      }
       const capabilities = input.resolveTargetCapabilities?.(config) ?? input;
       outcome = await runCycle({
         clock: input.clock,

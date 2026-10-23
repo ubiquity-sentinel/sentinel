@@ -460,7 +460,28 @@ Deno.test(
     };
     const routing = await startReview(rerouted, await snapshotFixture());
     assert.equal(routing.status, "unavailable");
-    contains(routing.detail ?? "", "routing evidence");
+    contains(routing.detail ?? "", "rerouted off the model Codex resolved");
+
+    // A genuine reroute (gateway failover onto an implementation route) is
+    // the substitution the policy forbids: never a verdict.
+    const failover = new ScriptedCodexSession();
+    failover.plan = (scripted) => {
+      scripted.emit("model/rerouted", {
+        threadId: "thread-1",
+        turnId: scripted.turnId,
+        fromModel: "gpt-reserve",
+        toModel: "gpt-6-luna",
+        reason: "capacity",
+      });
+      scripted.emit(
+        "item/completed",
+        agentMessage(scripted.turnId, "item-1", JSON.stringify(CLEAN_RESULT)),
+      );
+      scripted.emit("turn/completed", turnCompleted(scripted.turnId));
+    };
+    const substituted = await startReview(failover, await snapshotFixture());
+    assert.equal(substituted.status, "unavailable");
+    contains(substituted.detail ?? "", "rerouted off the model Codex resolved");
 
     const tool = new ScriptedCodexSession();
     tool.plan = (scripted) => {

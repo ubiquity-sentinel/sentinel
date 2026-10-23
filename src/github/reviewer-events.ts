@@ -598,8 +598,11 @@ export abstract class PreparedReviewEvents extends PreparedReviewSessionState {
       to,
       reason,
     });
-    if (from === to) {
-      this.failEvidence(REROUTE_OFF_POLICY_DETAIL);
-    }
+    // Native review mode owns reviewer selection. A reroute notification is
+    // direct evidence that the turn no longer runs on the reviewer Codex
+    // resolved (a gateway failover onto an implementation route included),
+    // and a reroute onto the same model is contradictory evidence: either
+    // way the review is unavailable, never a verdict on a substituted model.
+    this.failEvidence(REROUTE_OFF_POLICY_DETAIL);
   }
 }

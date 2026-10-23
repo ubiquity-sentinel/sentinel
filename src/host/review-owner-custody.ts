@@ -403,9 +403,16 @@ export class ReviewOwnerCustodyBroker {
     if (
       params.method === "thread/start" &&
       (input.cwd !== entry.target.session.cwd ||
-        ["model", "modelProvider", "effort", "outputSchema"].some((key) =>
-          Object.hasOwn(input, key)
-        ) ||
+        // Reviewer selection and every instruction override belong to native
+        // review mode; a copied rubric never enters review mode.
+        [
+          "model",
+          "modelProvider",
+          "effort",
+          "outputSchema",
+          "baseInstructions",
+          "developerInstructions",
+        ].some((key) => Object.hasOwn(input, key)) ||
         (typeof input.config === "object" && input.config !== null &&
           ["model", "model_provider", "model_reasoning_effort", "review_model"]
             .some((key) => Object.hasOwn(input.config!, key))) ||

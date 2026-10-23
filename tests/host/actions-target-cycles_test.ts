@@ -67,8 +67,10 @@ Deno.test("actions host: live App installation ids are explicit while old runs r
     })[name]
   );
   assert.equal(legacy.appToken, "legacy-app");
-  assert.equal(legacy.selfToken, "legacy-app");
-  assert.equal(legacy.selfGrant, "legacy-grant");
+  // The `ubiquity` installation token never stands in for the self token:
+  // an absent self token leaves the self repository on the native token.
+  assert.equal(legacy.selfToken, undefined);
+  assert.equal(legacy.selfGrant, undefined);
   assert.equal(legacy.targetInstallationId, 155687488);
   assert.equal(legacy.selfInstallationId, 155687488);
 

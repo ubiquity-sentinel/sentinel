@@ -1,0 +1,377 @@
+/** Pre-merge CI dispatch: exact binding, one request per pass, no evidence. */
+import assert from "node:assert/strict";
+import { parseRepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
+import type { RepositoryConfigV1 } from "../../src/contracts/repository-config.ts";
+import type { WorkRecordV1 } from "../../src/contracts/work-record.ts";
+import type { HttpRequestV1 } from "../../src/github/http.ts";
+import {
+  dispatchPremergeCi,
+  pendingPremergeRecords,
+  PREMERGE_CI_MARGIN_MS,
+} from "../../src/host/actions-premerge-ci.ts";
+import { createLocalRepositoryConfig } from "../../src/host/local-config.ts";
+import { premergeCiPolicyV1 } from "../../src/host/target-policy.ts";
+import { createTargetConfigV1 } from "../../src/host/targets.ts";
+import { FakeClock, MemoryState } from "../repair/helpers.ts";
+import { SHA1, SHA2, SHA3, T0, workRecord } from "../state/helpers.ts";
+import { FakeGate, response, ScriptedHttp } from "./actions-ci-fixture.ts";
+
+const APP_LOGIN = "ubiquity-sentinel[bot]";
+const INSTALLATION = 173_913_802;
+const GATEWAY = {
+  owner: "ubiquity",
+  name: "ai.ubq.fi",
+  installationId: 155_687_488,
+};
+const BRANCH = "sentinel/repair/issue-ubiquity-ai.ubq.fi-1212";
+const REPO_PATH = "/repos/ubiquity/ai.ubq.fi";
+const RUNS_PATH = `${REPO_PATH}/actions/workflows/deno-deploy.yml/runs`;
+const DISPATCH_PATH =
+  `${REPO_PATH}/actions/workflows/deno-deploy.yml/dispatches`;
+
+function gatewayConfig(): RepositoryConfigV1 {
+  const config = createTargetConfigV1(
+    createLocalRepositoryConfig(),
+    { owner: "ubiquity", name: "ai.ubq.fi", slug: "ubiquity/ai.ubq.fi" },
+    "development",
+  );
+  return { ...config, repository: { ...GATEWAY } };
+}
+
+function grant(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    version: 1,
+    appId: 4682172,
+    installationId: INSTALLATION,
+    appSlug: "ubiquity-sentinel",
+    expiresAt: new Date(T0 + 3_600_000).toISOString().replace(".000Z", "Z"),
+    permissions: {
+      contents: "write",
+      metadata: "read",
+      actions: "write",
+      pull_requests: "write",
+    },
+    repositoryIds: [1116191389, 1254699258],
+    repositoryNames: ["ai.ubq.fi", "passport.ubq.fi"],
+    ...overrides,
+  });
+}
+
+function pendingRecord(
+  pr: number,
+  overrides: Record<string, unknown> = {},
+): WorkRecordV1 {
+  return workRecord(`issue-ubiquity-ai.ubq.fi-${pr}`, {
+    repository: { ...GATEWAY },
+    source: { kind: "issue", id: String(pr), revision: SHA1 },
+    related: { incidentId: null, issueNumber: pr },
+    target: { base: SHA1, branch: BRANCH, checkpoint: null, head: SHA2, pr },
+    nextStep: "work",
+    wait: { reason: "ci_pending", since: T0, until: T0 + 300_000 },
+    ...overrides,
+  });
+}
+
+function pullBody(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    number: 1254,
+    state: "open",
+    merged: false,
+    user: { login: APP_LOGIN },
+    head: {
+      sha: SHA2,
+      ref: BRANCH,
+      repo: { full_name: "ubiquity/ai.ubq.fi" },
+    },
+    base: { sha: SHA1, ref: "development" },
+    ...overrides,
+  };
+}
+
+function runsBody(runs: unknown[]): unknown {
+  return { total_count: runs.length, workflow_runs: runs };
+}
+
+interface RigOptions {
+  work?: WorkRecordV1[];
+  pull?: unknown;
+  runsOnHead?: unknown[];
+  runsAfterDispatch?: unknown[];
+  dispatchStatus?: number;
+  mintGrant?: string | undefined;
+  deadline?: number;
+}
+
+function makeRig(options: RigOptions = {}) {
+  const clock = new FakeClock(T0);
+  const state = new MemoryState();
+  state.repair = parseRepairStateSnapshotV1({
+    version: "v1",
+    kind: "repair_state_snapshot",
+    stateHead: null,
+    sequence: 1,
+    updatedAt: T0,
+    incidents: [],
+    evidence: [],
+    work: options.work ?? [pendingRecord(1254)],
+    reservations: [],
+    reviews: [],
+    replays: [],
+    releaseRequests: [],
+    githubCooldowns: [],
+    attemptMemory: [],
+    lessons: [],
+  });
+  const http = new ScriptedHttp();
+  const gate = new FakeGate();
+  let dispatched = false;
+  http.on(
+    "GET",
+    `${REPO_PATH}/pulls/1254`,
+    () => response(200, options.pull ?? pullBody()),
+  );
+  http.on("GET", RUNS_PATH, (request: HttpRequestV1) => {
+    const query = new URL(request.url).searchParams;
+    assert.equal(query.get("head_sha"), SHA2);
+    return response(
+      200,
+      runsBody(
+        dispatched
+          ? options.runsAfterDispatch ?? options.runsOnHead ?? []
+          : options.runsOnHead ?? [],
+      ),
+    );
+  });
+  http.on("POST", DISPATCH_PATH, () => {
+    dispatched = true;
+    return response(options.dispatchStatus ?? 204, "");
+  });
+  const logs: Record<string, unknown>[] = [];
+  const run = (config = gatewayConfig()) =>
+    dispatchPremergeCi({
+      http: http.transport,
+      clock,
+      state,
+      gate,
+      token: "target-token",
+      mintGrant: "mintGrant" in options ? options.mintGrant : grant(),
+      installationId: INSTALLATION,
+      trustedAuthor: APP_LOGIN,
+      deadline: options.deadline ?? T0 + 60 * 60_000,
+      log: (line) => logs.push(line),
+    }, config);
+  return { clock, state, http, gate, logs, run };
+}
+
+Deno.test("premerge CI: policy exists for the gateway only", () => {
+  assert.deepEqual(premergeCiPolicyV1(GATEWAY), {
+    workflowFile: "deno-deploy.yml",
+    baseRefInput: "base_ref",
+    authorInput: "sentinel_pr_author",
+    scopeBaseInput: "scope_base",
+  });
+  assert.equal(
+    premergeCiPolicyV1({ owner: "ubiquity", name: "passport.ubq.fi" }),
+    null,
+  );
+  assert.equal(
+    premergeCiPolicyV1({ owner: "ubiquity-sentinel", name: "sentinel" }),
+    null,
+  );
+});
+
+Deno.test("premerge CI: pending records are the gateway's ci_pending published heads", () => {
+  const config = gatewayConfig();
+  const work = [
+    pendingRecord(1258),
+    pendingRecord(1254),
+    pendingRecord(1255, {
+      nextStep: "blocked",
+      wait: null,
+      blocker: { kind: "other", message: "x", since: T0 },
+    }),
+    pendingRecord(1256, { nextStep: "review" }),
+    pendingRecord(1257, { wait: null }),
+    pendingRecord(1259, {
+      intent: {
+        kind: "merge",
+        key: `merge:1259:${SHA2}`,
+        startedAt: T0,
+        branch: BRANCH,
+        expectedHead: SHA2,
+        observedBase: SHA1,
+        pr: 1259,
+        requestId: `review-review:1259:${SHA2}`,
+        resultId: "result-1259",
+      },
+    }),
+    workRecord("issue-9", {
+      nextStep: "work",
+      wait: { reason: "ci_pending", since: T0, until: null },
+    }),
+  ];
+  assert.deepEqual(
+    pendingPremergeRecords(work, config).map((record) => record.target.pr),
+    [1254, 1258],
+  );
+});
+
+Deno.test("premerge CI: one exact dispatch per pass with the workflow's inputs", async () => {
+  const rig = makeRig({
+    work: [
+      pendingRecord(1254),
+      pendingRecord(1258, {
+        target: {
+          base: SHA1,
+          branch: `${BRANCH}x`,
+          checkpoint: null,
+          head: SHA3,
+          pr: 1258,
+        },
+      }),
+    ],
+    runsAfterDispatch: [{ id: 1, head_sha: SHA2, status: "queued" }],
+  });
+  const report = await rig.run();
+  assert.equal(report.decision, "dispatched");
+  assert.equal(report.pr, 1254);
+  assert.deepEqual(report.decisions, ["1254:dispatched:confirmed"]);
+  const posts = rig.http.posts();
+  assert.equal(posts.length, 1);
+  assert.deepEqual(JSON.parse(posts[0].body ?? "null"), {
+    ref: BRANCH,
+    inputs: {
+      base_ref: "development",
+      sentinel_pr_author: APP_LOGIN,
+      scope_base: SHA1,
+    },
+  });
+  assert.equal(posts[0].headers.get("authorization"), "Bearer target-token");
+  // The second pending record is never read in the same pass.
+  assert.equal(
+    rig.http.calls.filter((call) => call.url.endsWith("/pulls/1258")).length,
+    0,
+  );
+  // Every request passed the shared cooldown gate under the target scope.
+  assert.ok(rig.gate.admissions.length >= 3);
+  assert.ok(rig.gate.admissions.every((id) => id === GATEWAY.installationId));
+  // Nothing was written to state: a dispatch is a request, not evidence.
+  assert.equal(rig.state.repairWrites, 0);
+});
+
+Deno.test("premerge CI: an existing run on the exact head is never duplicated", async () => {
+  const rig = makeRig({
+    runsOnHead: [{
+      id: 7,
+      head_sha: SHA2,
+      status: "completed",
+      conclusion: "failure",
+    }],
+  });
+  const report = await rig.run();
+  assert.equal(report.decision, "nothing_pending");
+  assert.deepEqual(report.decisions, ["1254:run_exists"]);
+  assert.equal(rig.http.posts().length, 0);
+});
+
+Deno.test("premerge CI: the live pull request must bind author, head, ref, base and repository", async () => {
+  for (
+    const [name, pull] of Object.entries({
+      author: pullBody({ user: { login: "someone-else" } }),
+      head: pullBody({
+        head: {
+          sha: SHA3,
+          ref: BRANCH,
+          repo: { full_name: "ubiquity/ai.ubq.fi" },
+        },
+      }),
+      ref: pullBody({
+        head: {
+          sha: SHA2,
+          ref: "other",
+          repo: { full_name: "ubiquity/ai.ubq.fi" },
+        },
+      }),
+      fork: pullBody({
+        head: { sha: SHA2, ref: BRANCH, repo: { full_name: "fork/ai.ubq.fi" } },
+      }),
+      base: pullBody({ base: { sha: SHA1, ref: "main" } }),
+      closed: pullBody({ state: "closed" }),
+      merged: pullBody({ merged: true }),
+    })
+  ) {
+    const rig = makeRig({ pull });
+    const report = await rig.run();
+    assert.equal(report.decision, "nothing_pending", name);
+    assert.deepEqual(report.decisions, ["1254:pull_mismatch"], name);
+    assert.equal(rig.http.posts().length, 0, name);
+  }
+});
+
+Deno.test("premerge CI: the dispatching token must be granted for the exact repository with actions write", async () => {
+  for (
+    const [name, mintGrant] of Object.entries({
+      absent: undefined,
+      wrongInstallation: grant({ installationId: 1 }),
+      noActions: grant({
+        permissions: {
+          contents: "write",
+          metadata: "read",
+          pull_requests: "write",
+        },
+      }),
+      otherRepository: grant({
+        repositoryIds: [1],
+        repositoryNames: ["passport.ubq.fi"],
+      }),
+      unknownScope: grant({
+        repositoryIds: undefined,
+        repositoryNames: undefined,
+      }),
+    })
+  ) {
+    const rig = makeRig({ mintGrant });
+    const report = await rig.run();
+    assert.equal(report.decision, "grant_refused", name);
+    assert.equal(rig.http.calls.length, 0, name);
+  }
+});
+
+Deno.test("premerge CI: a refused dispatch ends the pass and a moved ref is reported", async () => {
+  const refused = makeRig({ dispatchStatus: 422 });
+  const report = await refused.run();
+  assert.equal(report.decision, "dispatch_refused");
+  assert.deepEqual(report.decisions, ["1254:dispatch_refused:http_422"]);
+  assert.equal(refused.http.posts().length, 1);
+
+  const moved = makeRig({ runsAfterDispatch: [] });
+  const movedReport = await moved.run();
+  assert.equal(movedReport.decision, "dispatched");
+  assert.deepEqual(movedReport.decisions, [
+    "1254:dispatched:pending_visibility",
+  ]);
+});
+
+Deno.test("premerge CI: the deadline, cooldown and absent policy refuse before any request", async () => {
+  const late = makeRig({ deadline: T0 + PREMERGE_CI_MARGIN_MS });
+  assert.equal((await late.run()).decision, "deadline");
+  assert.equal(late.http.calls.length, 0);
+
+  const cooling = makeRig();
+  cooling.gate.deny = true;
+  assert.equal((await cooling.run()).decision, "cooldown");
+  assert.equal(cooling.http.calls.length, 0);
+
+  const passport = makeRig();
+  const config = gatewayConfig();
+  const other = {
+    ...config,
+    repository: {
+      owner: "ubiquity",
+      name: "passport.ubq.fi",
+      installationId: 155_687_488,
+    },
+  };
+  assert.equal((await passport.run(other)).decision, "no_policy");
+  assert.equal(passport.http.calls.length, 0);
+});

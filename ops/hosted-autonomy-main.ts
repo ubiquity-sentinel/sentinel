@@ -148,7 +148,9 @@ export async function runHostedAutonomyMain(input?: {
   // the native Actions token keeps owning the state refs it has always owned.
   const stateToken = env("GITHUB_TOKEN");
   const apiToken = env("SENTINEL_SUPERVISOR_TOKEN") ?? stateToken;
-  const selfToken = env("SENTINEL_SELF_TOKEN") ?? apiToken;
+  // The self repository never falls back to the `ubiquity` installation token
+  // (it cannot reach `ubiquity-sentinel`); the native token is the fallback.
+  const selfToken = env("SENTINEL_SELF_TOKEN") ?? stateToken;
   if (
     stateToken === null || stateToken.length === 0 ||
     apiToken === null || apiToken.length === 0 ||

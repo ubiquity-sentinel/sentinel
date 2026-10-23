@@ -7,16 +7,89 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-23 02:15 UTC)
+## Latest checkpoint (2026-10-23 21:10 UTC)
+
+Audit of the 124 untrusted commits after the trusted baseline
+`e05ba64f1142710e4a902a9ae088593a1ca411f5` (current head
+`395f54637ebba12e7faf8675028d094e63838a3e`), five read-only subsystem audits and
+a live re-read of every target. Scheduled supervisor cycles are green and
+chained (`40010074951` healthy; `39985707960` failed with a repair-child
+`state_error` "checkpoint CAS conflict or ambiguity" after admitting seven
+Passport issues). Native review mode is live: Passport reviews ran through
+`review/start` with entered/exited item ids journaled. No autonomous reviewed
+merge exists yet on any target; the three targets block for three different
+reasons, recorded here with their dispositions.
+
+- Passport: 30 Sentinel PRs (`#140`-`#169`) on `main` `7194280c`, CI job `deno`
+  green on each head, native reviews completed; 23 records at `delivery` with a
+  durable merge intent and `backoff` waits (`stalled` 4..24). The merge gate
+  reads `/rules/branches/main`, which answers 403 "Upgrade to GitHub Pro or make
+  this repository public": a private repository on the current plan cannot carry
+  branch rules, so every merge blocks at `protection_required` and parks
+  silently. Owner decision required (plan/visibility change with rulesets, or a
+  trusted-policy gate for plan-limited private repositories); no merge-authority
+  change was made. The prepared alternative is described in DECISIONS.md and was
+  not applied.
+- AI: records `1212`/`1229`/`1250` (PRs `1254`/`1255`/`1258`) at `work` with
+  `ci_pending` on base `7223352`. `Gateway CI` runs only on closed PRs or
+  `workflow_dispatch`; the owner's uncommitted pre-merge dispatcher was never in
+  any ref. Rebuilt as `src/host/actions-premerge-ci.ts` (exact PR
+  author/head/ref/base/repository binding, one dispatch per target per pass,
+  duplicate-run skip on the exact head, mint-grant repository and
+  `actions: write` binding, cooldown gate, deadline, dispatch is never evidence)
+  with eight consumer tests on a scripted transport and memory state. Wired
+  through `createActionsTargetBindings` and `runActionsTargetCycles` before each
+  target's cycle. Live proof requires the next installed runtime.
+- Self: every open non-skip issue's candidate is
+  `blocked: candidate touches a
+  protected path`; PR 171 (issue 169) is
+  conflicted and owner-gated. Issue `#179` (release-bridge subject still names
+  the retired owner; non-protected `src/host/release-bridge.ts`) is filed as a
+  real self repair candidate.
+
+Authority corrections in the same candidate: `src/host/supervisor-dispatch.ts`
+(scheduled from the default branch with `actions: write` and `contents: write`
+on `github.token`) and the merge/queue authority modules the audit found
+unprotected are now host-owned protected paths; the self token no longer falls
+back to the `ubiquity` installation token (native token fallback, host and
+maintenance); any native reviewer reroute makes a review unavailable; custody
+refuses `baseInstructions`/`developerInstructions` on `thread/start`. Local
+checks on the candidate: `deno check` of the entrypoints, `deno lint`,
+`deno fmt --check`, `size:check` (0 over ceiling), and the named tests for the
+dispatcher, target policy, target cycles, protected-path inventory and refusal
+rigs, reviewer routing, review custody and the principal/maintenance boundary.
+`hosted-runtime-bootstrap_test.ts` "real child empty stdin aggregate" fails in
+this container only because no trusted dependency binary exists (setup failure,
+unchanged code path).
+
+Remaining audit findings not changed here, for the owner's disposition:
+plan-limited Passport gate (above); `composeHostedAppGitHub` still requires
+`repository.installationId === grant.installationId` for foreign targets while
+records keep the durable `155687488` (latent whole-run abort if an App principal
+context is ever composed; live runs take the local composition); the self mint
+grant never exists in the repair job (upstream token action has no `mint-grant`
+output); historical repair cache stamps `expiresAt` before the cold fetch
+(`state-repair-history-cache.ts`, a >120 s fetch fails every later read);
+`matrix_plan`/cells keep the gateway adapter for AI while `repair` scopes it
+issue-only; `ciFirstSelfInstalledRuntimeProven` is a denylist; the native
+findings-rendering parity is checked only tautologically; dead review-model
+selector plumbing (`resolveReviewModelId`, `SENTINEL_REVIEW_MODEL_ID`).
+
+Next action: owner decides the Passport gate; publish this candidate to
+`development`, verify CI on the exact SHA, advance `sentinel-supervisor`, and
+observe the first gateway pre-merge dispatch and the resulting review on the
+installed runtime.
+
+## Prior checkpoint (2026-10-23 02:15 UTC)
 
 The owner directed the active public controller to target all three
-repositories. `sentinel.targets.json` now names
-`ubiquity-sentinel/sentinel`, `ubiquity/ai.ubq.fi`, and the private
-`ubiquity/passport.ubq.fi`. The split self/target App installations already
-support the two owners. Passport is private, so its target state and logs are
-subject to this public controller's visibility. The separate private controller
-is not the active three-target controller. Publication, hosted CI, installation
-and live delivery remain separate gates; no three-target delivery is claimed.
+repositories. `sentinel.targets.json` now names `ubiquity-sentinel/sentinel`,
+`ubiquity/ai.ubq.fi`, and the private `ubiquity/passport.ubq.fi`. The split
+self/target App installations already support the two owners. Passport is
+private, so its target state and logs are subject to this public controller's
+visibility. The separate private controller is not the active three-target
+controller. Publication, hosted CI, installation and live delivery remain
+separate gates; no three-target delivery is claimed.
 
 ## Prior checkpoint (2026-10-22 21:25 UTC)
 

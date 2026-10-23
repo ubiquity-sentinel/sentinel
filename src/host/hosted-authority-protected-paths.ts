@@ -4,6 +4,34 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/host/hosted-authority-protected-paths.ts",
     "src/contracts/hosted-controller-deployment.ts",
     "src/github/native-review-result.ts",
+    // Token-bearing scheduled entrypoint (`supervisor-dispatch.yml` runs the
+    // default branch every five minutes with `actions: write` and
+    // `contents: write`) and the pre-merge CI dispatch on the target token.
+    "src/host/supervisor-dispatch.ts",
+    "src/host/actions-premerge-ci.ts",
+    // Expected-head merge gate: effective protections, their evaluation and
+    // the exact-head check verdict.
+    "src/github/port-evidence.ts",
+    "src/github/port-merge-policy.ts",
+    // Queue policy decision, reconciliation, intent and writer, and the live
+    // pull/queue facts the authority trusts.
+    "ops/hosted-autonomy-queue-policy.ts",
+    "ops/hosted-autonomy-queue-reconcile.ts",
+    "ops/hosted-autonomy-queue-pass.ts",
+    "ops/hosted-autonomy-queue-writer.ts",
+    "ops/hosted-autonomy-queue-intent.ts",
+    "src/github/client-queue-delivery.ts",
+    "src/github/native-queue-guard.ts",
+    // Protected-tree publication proof, the deterministic base integration
+    // the validator regenerates against, and every authority identity key.
+    "src/github/review-snapshot.ts",
+    "src/github/git-executor.ts",
+    "src/repair/keys.ts",
+    // Per-run credential selection and per-target token binding.
+    "src/host/hosted-app-credentials.ts",
+    "src/host/actions-target-bindings.ts",
+    // Vendored upstream review rubric (read-only boundary).
+    "src/github/codex-review-rubric.ts",
     // Native review invocation, lifecycle evidence and completion authority.
     "src/github/codex-reviewer.ts",
     "src/github/reviewer-prepared.ts",

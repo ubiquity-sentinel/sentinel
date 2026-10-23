@@ -142,7 +142,7 @@ export const REROUTE_BOUND_DETAIL =
   "structured review unavailable: routing evidence exceeded its bound";
 
 export const REROUTE_OFF_POLICY_DETAIL =
-  "structured review unavailable: native reviewer routing evidence was contradictory";
+  "structured review unavailable: the native reviewer was rerouted off the model Codex resolved";
 
 export const HOST_CLOSED_DETAIL =
   "structured review unavailable: the owned session was closed before completion";

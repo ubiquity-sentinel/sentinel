@@ -6,6 +6,11 @@ import {
   type HostedAppPrincipalContext,
   type HostedAppPrincipalHostInput,
 } from "./hosted-app-principal.ts";
+import {
+  dispatchPremergeCi,
+  type PremergeCiReportV1,
+} from "./actions-premerge-ci.ts";
+import { SENTINEL_APP_INSTALLATION_ID } from "./hosted-app-grant.ts";
 
 export interface ActionsTargetBindingsInputV1 {
   selfRepository: RepositoryIdentityV1;
@@ -30,6 +35,11 @@ export interface ActionsTargetBindingsV1 {
   loginFor(config: RepositoryConfigV1): string;
   targetContext: HostedAppPrincipalContext | null;
   selfContext: HostedAppPrincipalContext | null;
+  /**
+   * One bounded pre-merge CI dispatch for a target whose CI never runs on a
+   * Sentinel pull request itself, on the target token and its mint grant.
+   */
+  premergeCi(config: RepositoryConfigV1): Promise<PremergeCiReportV1>;
 }
 
 export async function createActionsTargetBindings(
@@ -74,5 +84,18 @@ export async function createActionsTargetBindings(
       input.selfMintGrant,
       input.selfInstallationId,
     ),
+    premergeCi: (config) =>
+      dispatchPremergeCi({
+        http: input.auth.http,
+        clock: input.auth.clock,
+        state: input.auth.state,
+        gate: input.auth.gate,
+        token: input.targetToken,
+        mintGrant: input.targetMintGrant,
+        installationId: input.targetInstallationId ??
+          SENTINEL_APP_INSTALLATION_ID,
+        trustedAuthor: input.targetLogin,
+        deadline: input.auth.deadline,
+      }, config),
   };
 }

@@ -88,6 +88,39 @@ export function isPassportTarget(
     repository.name.toLowerCase() === "passport.ubq.fi";
 }
 
+/** How a target's own CI workflow is asked to test a Sentinel pull request. */
+export interface PremergeCiPolicyV1 {
+  /** Workflow file name under `.github/workflows/` of the target. */
+  readonly workflowFile: string;
+  /** `workflow_dispatch` input naming the base branch of the change scope. */
+  readonly baseRefInput: string;
+  /** Input carrying the Sentinel App login that selects the complete set. */
+  readonly authorInput: string;
+  /** Input carrying the exact base SHA the change scope is computed from. */
+  readonly scopeBaseInput: string;
+}
+
+/**
+ * Only the gateway needs a pre-merge dispatch: its `Gateway CI`
+ * (`deno-deploy.yml`) runs on closed pull requests and manual dispatch alone
+ * (2026-10-21 quota decision) and exposes exactly these inputs for a Sentinel
+ * App pull request. Every other target's CI runs on its pull requests itself.
+ */
+export function premergeCiPolicyV1(
+  repository: Pick<RepositoryIdentityV1, "owner" | "name">,
+): PremergeCiPolicyV1 | null {
+  if (
+    repository.owner.toLowerCase() !== "ubiquity" ||
+    repository.name.toLowerCase() !== "ai.ubq.fi"
+  ) return null;
+  return {
+    workflowFile: "deno-deploy.yml",
+    baseRefInput: "base_ref",
+    authorInput: "sentinel_pr_author",
+    scopeBaseInput: "scope_base",
+  };
+}
+
 /**
  * Select only a host-authored policy for the exact repository identity. The
  * existing trusted deployment template remains authoritative for Sentinel and

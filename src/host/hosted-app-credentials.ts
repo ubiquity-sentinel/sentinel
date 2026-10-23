@@ -5,7 +5,6 @@ import {
   parseAppInstallationId,
 } from "./actions-target-cycles.ts";
 import {
-  HOSTED_APP_MINT_GRANT_ENV,
   SELF_INSTALLATION_ID_ENV,
   SELF_MINT_GRANT_ENV,
   SELF_TOKEN_ENV,
@@ -20,14 +19,20 @@ export interface HostedAppCredentialsV1 {
   readonly selfInstallationId: number;
 }
 
-/** Missing live ids retain the pre-migration single-installation behavior. */
+/**
+ * Missing live ids retain the pre-migration single-installation behavior.
+ * The tokens never cross owners: an absent self token leaves the self
+ * repository on the native token (its caller's fallback) rather than on the
+ * `ubiquity` installation token, which cannot reach `ubiquity-sentinel`.
+ */
 export function readHostedAppCredentials(
   readEnv: (name: string) => string | undefined,
 ): HostedAppCredentialsV1 {
   const appToken = optionalEnv(readEnv, "SENTINEL_SUPERVISOR_TOKEN");
-  const selfToken = optionalEnv(readEnv, SELF_TOKEN_ENV) ?? appToken;
-  const selfGrant = optionalEnv(readEnv, SELF_MINT_GRANT_ENV) ??
-    readEnv(HOSTED_APP_MINT_GRANT_ENV);
+  const selfToken = optionalEnv(readEnv, SELF_TOKEN_ENV);
+  const selfGrant = selfToken === undefined
+    ? undefined
+    : optionalEnv(readEnv, SELF_MINT_GRANT_ENV);
   const targetEnv = optionalEnv(readEnv, TARGET_INSTALLATION_ID_ENV);
   const targetInstallationId = targetEnv === undefined
     ? DEFAULT_APP_INSTALLATION_ID

@@ -437,7 +437,6 @@ export async function runActionsRepairHost(
       }),
   });
   if (targets.configs.length === 0) throw new Error(STATIC_TARGETS_EMPTY);
-  // Each usable target is addressed in its own cycle and installation scope.
   const selfRepository = templateConfig.repository;
   const needsAppScope = targets.configs.some((candidate) =>
     candidate.repository.owner !== selfRepository.owner ||
@@ -861,6 +860,7 @@ export async function runActionsRepairHost(
           configs: targetConfigs,
           controllerSha,
           githubCooldown: gate,
+          premergeCi: bindings.premergeCi,
           // Legacy callers retain a closed pair; each prepared target resolves its own pair below.
           incidents: unavailableIncidents,
           replay: unavailableReplay,

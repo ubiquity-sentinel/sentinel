@@ -104,6 +104,33 @@ Deno.test("hosted authority: native review authority inventory is protected", ()
   ) assert.equal(touchesProtected(protectedPaths, path), true, path);
 });
 
+Deno.test("hosted authority: token-bearing entrypoints and merge-authority modules are protected", () => {
+  const protectedPaths = createLocalRepositoryConfig().protectedPaths;
+  for (
+    const path of [
+      "src/host/supervisor-dispatch.ts",
+      "src/host/actions-premerge-ci.ts",
+      "src/github/port-merge.ts",
+      "src/github/port-evidence.ts",
+      "src/github/port-merge-policy.ts",
+      "ops/hosted-autonomy-queue-policy.ts",
+      "ops/hosted-autonomy-queue-reconcile.ts",
+      "ops/hosted-autonomy-queue-pass.ts",
+      "ops/hosted-autonomy-queue-writer.ts",
+      "ops/hosted-autonomy-queue-intent.ts",
+      "src/github/client-queue-delivery.ts",
+      "src/github/native-queue-guard.ts",
+      "src/github/review-snapshot.ts",
+      "src/github/git-executor.ts",
+      "src/repair/keys.ts",
+      "src/host/hosted-app-credentials.ts",
+      "src/host/actions-target-bindings.ts",
+      "src/host/target-policy.ts",
+      "src/github/codex-review-rubric.ts",
+    ]
+  ) assert.equal(touchesProtected(protectedPaths, path), true, path);
+});
+
 Deno.test("hosted authority: native review refuses src/github/codex-reviewer.ts", () =>
   assertForbiddenCandidate("src/github/codex-reviewer.ts"));
 

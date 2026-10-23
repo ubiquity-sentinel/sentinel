@@ -9,6 +9,50 @@ continuation.
 
 ## Runtime and dispatch
 
+### Gateway pre-merge CI dispatch and authority inventory (2026-10-23)
+
+`ubiquity/ai.ubq.fi` runs `Gateway CI` (`.github/workflows/deno-deploy.yml`)
+only on a closed pull request or a manual `workflow_dispatch` (its 2026-10-21
+Actions-quota decision), and the workflow exposes `base_ref`,
+`sentinel_pr_author` and `scope_base` inputs that select the complete check set
+for a Sentinel App pull request. Sentinel refuses to review or merge without
+current-head CI, so the trusted repair host now sends at most one
+`workflow_dispatch` per target per pass for a published head whose record waits
+on `ci_pending` (`src/host/actions-premerge-ci.ts`): the live pull request must
+be open, authored by the App login, on the target's own repository, at the
+recorded head SHA, head ref and configured base; any existing run of the
+workflow on that exact head (any event or status) skips it; the dispatching
+token's mint grant must name the repository with `actions: write`; every request
+passes the shared cooldown gate and the absolute run deadline. A dispatch is a
+request for evidence, never evidence: it writes no record, wait, counter or
+receipt, and the delivery gate keeps reading the check runs of the exact head.
+`workflow_dispatch` takes a ref, so a head that moves before GitHub resolves it
+yields a run on another SHA, which the exact-head gate ignores and the next pass
+re-dispatches. Only the gateway carries this policy; Passport's CI runs on its
+pull requests itself.
+
+The same change protects the token-bearing scheduled entrypoint
+(`src/host/supervisor-dispatch.ts`, run every five minutes from the default
+branch with `actions: write` and `contents: write`), the new dispatcher, the
+merge-gate evaluation modules, the queue policy/reconcile/intent/writer modules
+and their trusted read facts, the protected-tree proof, the base integration
+executor, the authority identity keys, the per-run credential and binding
+modules and the vendored rubric as host-owned authority. The self repository no
+longer falls back to the `ubiquity` installation token when its own token is
+absent (the native token is the fallback), a reviewer reroute notification of
+any kind makes a native review unavailable (Codex owns reviewer selection; a
+gateway failover onto an implementation route is the forbidden substitution),
+and review custody refuses `baseInstructions`/`developerInstructions` on
+`thread/start`.
+
+Passport cannot merge under the existing gate: its private repository on the
+current GitHub plan cannot carry branch rules (`/rules/branches/main` answers
+403 "Upgrade to GitHub Pro or make this repository public"), so every reviewed,
+CI-green Passport candidate blocks at `protection_required` and parks in
+`backoff`. The owner decides between a plan/visibility change with rulesets on
+`main` and a trusted-policy gate for plan-limited private repositories; no
+merge-authority change was made for it here.
+
 ### Three-target scope including private Passport (2026-10-23)
 
 The owner directed this public controller to target all three repositories:
