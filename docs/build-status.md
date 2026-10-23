@@ -86,6 +86,17 @@ change). Run `40026556144` (generation 92) settled healthy; its cell for self
 `#179` completed a candidate in 140 s (ingested by the next maintenance pass); a
 Passport cell (`#76`) hit `codex_operation_deadline`.
 
+Third blocker (23:10 UTC, owner decision, `#180` widened): under the activated
+queue proof (`hosted-custody-capability.json`, 2026-10-18) with empty authority
+pins and no `merge_queue` rule, the launcher's delivery pass routes every
+ai.ubq.fi record into the queue booking draft and never calls the merge, and a
+direct merge cannot be booked (`direct_provenance_missing`). No autonomous
+ai.ubq.fi merge can complete until the owner deactivates the proof or finishes
+the queue rollout; the self path (`#179`) is unaffected. Generation 93 bootstrap
+on `d32daa1910` (`40036136812`) settled healthy and its maintenance pass
+ingested the `#179` candidate (head `d79f63bc`, publication pending); the first
+ordinary run on `d32daa1910` is `40037450557`.
+
 Next action: observe the first run on `d32daa1910` (bootstrap, then the first
 ordinary run) for `sentinel_premerge_ci` decisions in `matrix_plan`/`repair` and
 for the resulting Gateway CI run, native review and launcher merge on AI

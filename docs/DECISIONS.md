@@ -66,6 +66,21 @@ The launcher now binds the handoff to the same live installation the child reads
 `SENTINEL_APP_INSTALLATION_ID`, as the native membership proof already does,
 instead of with the grant's live installation.
 
+Gateway delivery under activated queue proof (finding 2026-10-23 23:10 UTC,
+owner decision open, Sentinel issue #180):
+`src/host/hosted-custody-capability.json` ships `queue.proofActivated: true`
+since the 2026-10-18 standing approval for the queue canary and production
+cutover, but the canary was never accepted, the queue authority pins are empty,
+`QUEUE_MODE_CEILING` is `off` and `ai.ubq.fi` `development` carries no
+`merge_queue` rule. Under activated proof every gateway record is strict: the
+launcher's delivery pass routes it into the queue booking draft and never
+reaches `preMergeGate` or the merge; a direct merge by any actor cannot be
+booked (`direct_provenance_missing`) and the runtime turns it into a permanent
+custody hold; a strict observation failure parks a record permanently. No
+autonomous ai.ubq.fi merge can complete until the owner either deactivates the
+proof until the canary lands or finishes the queue rollout. Sentinel does not
+change that custody boundary on its own.
+
 Passport cannot merge under the existing gate: its private repository on the
 current GitHub plan cannot carry branch rules (`/rules/branches/main` answers
 403 "Upgrade to GitHub Pro or make this repository public"), so every reviewed,
