@@ -52,6 +52,11 @@ export async function runActionsMatrixHost(
   const hosted = await runActionsRepairHost({
     ...deps,
     job,
+    // The plan and its cells repair issues only, like the ordinary repair
+    // job: no hosted gateway capability is ever composed here, so a gateway
+    // adapter would only run an unavailable incident scan per plan and skip
+    // the GitHub-only dependency gates before a cell's model start.
+    issueOnly: deps.issueOnly ?? true,
     runTargetCycles: async (input) => {
       const host = hostOf(input);
       if (job === "matrix_plan") {
