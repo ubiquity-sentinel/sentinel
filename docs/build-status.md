@@ -7,7 +7,76 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-23 21:10 UTC)
+## Latest checkpoint (2026-10-23 22:10 UTC)
+
+Publication: `development` is `d32daa191033cd3e2dbbe9d3778df9c98f6fcc93`
+(`d32daa1910` on top of `324ab60cc0`), CI `40030055455` passed on the first
+attempt. The commit recomputes a loop checkpoint whose compare-and-swap was lost
+to a cooldown-only write (`src/repair/loop-state.ts`, bounded to three attempts;
+`tests/repair/loop-checkpoint-retry_test.ts`): the durable GitHub cooldown gate
+writes `githubCooldowns` from concurrent reviewer requests, so a checkpoint
+written in the same window lost its CAS and the repair child failed the whole
+cycle closed (`39985707960`, "checkpoint CAS conflict or ambiguity") although
+the synchronizer already admits cooldown-only movement. The same commit protects
+the merge guarantees the launcher and runtime share (issue `#158` item 1:
+`ops/hosted-autonomy-scopes.ts`, `src/repair/review-gate.ts`,
+`src/repair/transitions.ts`, `src/repair/vps-delivery.ts`). Issues `#175`,
+`#153` and `#154` were closed with their evidence; `#158` carries the item-1
+disposition; `#179` is the filed self repair candidate.
+
+Launcher: `sentinel-supervisor` was fast-forwarded `395f54637e..d32daa1910`
+(2026-10-23 22:08 UTC, owner-authorized launcher pin update, exact CI-green
+development ancestor, no workflow file changed). `SENTINEL_AUTO_FOLLOW` stays
+off. The run in flight at the advance (`40026556144`, generation 92 on
+`395f54637e`) finishes on the old launcher; the next dispatcher cycle starts the
+first run on `d32daa1910` (expect the model-disabled bootstrap at generation 93,
+then ordinary runs).
+
+Live evidence read for the gateway pre-merge dispatcher: the repair job's
+foreign mint grant (`40018567715`, logged nonsecret output) is installation
+`173913802` = `SENTINEL_TARGET_INSTALLATION_ID`, `actions: write`,
+`repositoryNames` `ai.ubq.fi` and `passport.ubq.fi`; the trusted author is
+`ubiquity-sentinel[bot]`; the AI PR heads on GitHub equal the records
+(`1254`=`55f8b095`, `1255`=`ba12c64e`, `1258`=`5cc0948f`, base `31ba5a15`).
+Every dispatcher precondition therefore holds on the installed runtime;
+`matrix_cell` tokens carry no grant and refuse (`grant_refused`) by design.
+
+Live state (`sentinel-state/repair` `c2a31d9d88`, 399 records) during
+`40026556144`: self `#179` admitted (implementation on base `d32daa19`), AI
+`#1281`/`#1282`/`#1283` admitted, self `#164` parked `unavailable` after three
+attempts, self `#173` at `delivery` re-arming a five-minute `unavailable` wait
+(`stalled` 17) although PR `174` was merged by the owner at 01:38 UTC; the self
+`development` branch has no branch rules (`/rules/branches/development` is
+empty, classic protection 404), so a self merge takes the conditional self path
+(`selfMergeEnabled` plus an execution proof). AI: the 33 records at `delivery`
+are merged pull requests waiting on the disabled release path
+(`release-deferred:count=33:release_path=disabled`), not pending merges; the
+launcher's queue custody reports `authorization_unavailable` for all 34 held
+records every pass.
+
+Root cause of the AI custody wedge (not changed here): the shipped custody
+capability has `queue.proofActivated: true` while the queue authority pins
+(accepted App-identity canary) are absent and `QUEUE_MODE_CEILING` is `off`.
+Under activated proof the native queue guard is strict, so any observation
+failure (deadline, state or rules read, queue pull read, exception) returns
+`observation_unavailable`, which `holdQueueRecord` writes as a permanent
+`backoff`/`until: null` hold; every later inspection answers `custody` from the
+wait shape alone, and the launcher's `readAuthorization` needs the pins, so no
+path releases the record. AI `#1214` (PR `1256`, stale `push` intent since
+2026-10-21 08:38 UTC) is wedged this way and any AI record can be on a transient
+failure. Options for the owner: treat `observation_unavailable` as transient in
+the runtime (five-minute `unavailable`, no effect authorized, custody facts
+`member`/`merged_head`/`identity_drift`/`queue_required`/`custody` unchanged),
+deactivate queue proof in the capability, or populate the pins through the
+canary; `#1214` additionally needs a one-time release of its hold.
+
+Next action: observe the first run on `d32daa1910` (bootstrap, then the first
+ordinary run) for `sentinel_premerge_ci` decisions in `matrix_plan`/`repair` and
+for the resulting Gateway CI run, native review and launcher merge on AI
+`1254`/`1255`/`1258`; read `40026556144`'s repair log for the `#173`/`#164`
+waits; owner decisions on the Passport gate and the queue custody wedge.
+
+## Prior checkpoint (2026-10-23 21:10 UTC)
 
 Audit of the 124 untrusted commits after the trusted baseline
 `e05ba64f1142710e4a902a9ae088593a1ca411f5` (current head
