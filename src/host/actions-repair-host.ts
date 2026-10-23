@@ -433,7 +433,10 @@ export async function runActionsRepairHost(
     resolveDefaultBranch: deps.resolveDefaultBranch ??
       createDefaultBranchResolver({
         http,
-        token: githubToken,
+        // A private foreign target is not readable by the native Actions
+        // token. Resolve every target's default branch through the same
+        // target App credential used for its authenticated checkout.
+        token: writeToken,
       }),
   });
   if (targets.configs.length === 0) throw new Error(STATIC_TARGETS_EMPTY);

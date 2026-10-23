@@ -241,7 +241,6 @@ try { result = await runActionsRepairHost({
   stateRemoteUrl: remote.remoteUrl,
   env: { GITHUB_RUN_ID: "37126414865", GITHUB_RUN_ATTEMPT: "1", GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel", GITHUB_REF: "refs/heads/sentinel-supervisor", GITHUB_SHA: launcher, GITHUB_WORKFLOW_SHA: launcher, GITHUB_WORKFLOW_REF: "ubiquity-sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor", GITHUB_JOB: "repair", GITHUB_TOKEN: "synthetic-native-token", SENTINEL_SUPERVISOR_TOKEN: "synthetic-app-token", UOS_AI_TOKEN: "synthetic-model-token", SENTINEL_GATEWAY_AUTH_JSON: JSON.stringify({ authorization: "Bearer synthetic-bootstrap-only-token" }), SENTINEL_REPLAY_KEY_B64: "11".repeat(32), PATH: root + "/bin:" + env.PATH, HOME: root + "/git-home" },
   refreshSelf: () => Promise.resolve(revision),
-  resolveDefaultBranch: (target) => Promise.resolve(target.name === "passport.ubq.fi" ? "main" : "development"),
   preflight: () => { preflightCalls++; return Promise.resolve(); },
   prepareTarget: async (config, source) => {
     preparedTargets.push(config.repository.owner + "/" + config.repository.name);
@@ -263,6 +262,15 @@ try { result = await runActionsRepairHost({
   http: (request) => {
     const url = new URL(request.url);
     if (url.origin === "https://api.github.com") {
+      const defaultBranches = new Map([["ubiquity-sentinel/sentinel", "development"], ["ubiquity/ai.ubq.fi", "development"], ["ubiquity/passport.ubq.fi", "main"]]);
+      if (request.method === "GET") {
+        for (const [repository, branch] of defaultBranches) {
+          if (url.pathname === "/repos/" + repository) {
+            assert.equal(request.headers.get("authorization"), "Bearer synthetic-app-token");
+            return Promise.resolve({ status: 200, headers: new Headers(), bodyText: JSON.stringify({ default_branch: branch }) });
+          }
+        }
+      }
       const queueBranches = new Map([["ai.ubq.fi", "development"], ["passport.ubq.fi", "main"]]);
       for (const [name, branch] of queueBranches) {
         if (request.method === "GET" && url.pathname === "/repos/ubiquity/" + name + "/rules/branches/" + branch) {
