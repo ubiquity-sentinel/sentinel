@@ -175,6 +175,13 @@ export class RepairHistoryCache {
             await this.discard(entry);
             return initialized;
           }
+          // The validity window starts once the complete history is fetched:
+          // a cold fetch longer than the window must not expire the entry
+          // before its first read, which would fail every later read of a
+          // large or slowly fetched history deterministically. Freshness
+          // against the live ref is proven by the caller's `ls-remote`
+          // checks, not by this bound.
+          entry.expiresAt = Date.now() + VALID_MS;
           const retained = await diskBytes(directory) <= RETAIN_BYTES;
           if (retained) {
             const owned = entry;

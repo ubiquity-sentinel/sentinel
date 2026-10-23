@@ -442,6 +442,44 @@ Deno.test("repair history cache: failed initialization, absolute expiry and over
   }
 });
 
+Deno.test("repair history cache: a cold fetch longer than the validity window still serves its first reads", async () => {
+  const { ctx } = await fixture("history-cache-slow-fetch");
+  const savedNow = Date.now;
+  let now = savedNow();
+  Date.now = () => now;
+  try {
+    const cache = new RepairHistoryCache(ctx.tmp);
+    let initializations = 0;
+    const initialize = () => {
+      initializations += 1;
+      // The complete-history fetch itself outlasts the validity window.
+      now += 120_001;
+      return Promise.resolve(portOk(null));
+    };
+    const reads: boolean[] = [];
+    const read = (_op: unknown, cold: boolean) => {
+      reads.push(cold);
+      return Promise.resolve(portOk("value"));
+    };
+    const first = await cache.use("a", initialize, read);
+    assert(first.ok, JSON.stringify(first));
+    // The window starts after the fetch: the warm read reuses the entry.
+    now += 60_000;
+    const second = await cache.use("a", initialize, read);
+    assert(second.ok, JSON.stringify(second));
+    assert.equal(initializations, 1);
+    assert.deepEqual(reads, [true, false]);
+    // The window still bounds the entry from the fetch's completion.
+    now += 60_001;
+    const third = await cache.use("a", initialize, read);
+    assert(third.ok, JSON.stringify(third));
+    assert.equal(initializations, 2);
+  } finally {
+    Date.now = savedNow;
+    await ctx.cleanup();
+  }
+});
+
 Deno.test("state tree memo: exact bytes, two-entry bound, oversized bypass and cloned storage", () => {
   const memo = new StateTreeMemo();
   const proof = {
