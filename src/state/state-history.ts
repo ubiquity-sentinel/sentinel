@@ -18,6 +18,29 @@ import type {
 import type { GitRunResultV1, LoadedState, OpContext } from "./state-git.ts";
 import { StateTreeMemo } from "./state-repair-history-cache.ts";
 
+const REMOVE_RETRY_DELAYS_MS = [0, 10, 25, 50, 100] as const;
+
+/**
+ * Git may still be releasing its scratch tree when the final read settles.
+ * A recursive unlink can then observe ENOTEMPTY mid-removal; retry the same
+ * owned directory without weakening close, and treat an already-absent
+ * directory as success.
+ */
+async function removeScratchDirectory(path: string): Promise<void> {
+  let last: unknown;
+  for (const delay of REMOVE_RETRY_DELAYS_MS) {
+    if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+    try {
+      await Deno.remove(path, { recursive: true });
+      return;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return;
+      last = error;
+    }
+  }
+  throw last;
+}
+
 /** The store's own bound transport operations for its fixed release ref. */
 export interface ReleaseHistoryOpsV1 {
   scratchDir: string;
@@ -55,7 +78,7 @@ export async function openRepairHistoryView(
     closed = true;
     return closing ??= (async () => {
       await Promise.allSettled([...active]);
-      await Deno.remove(directory, { recursive: true });
+      await removeScratchDirectory(directory);
     })();
   };
   try {
@@ -163,7 +186,7 @@ export async function openReleaseHistoryView(
     if (closed) return;
     closed = true;
     try {
-      await Deno.remove(directory, { recursive: true });
+      await removeScratchDirectory(directory);
     } catch {
       // Best-effort scratch cleanup; results are unaffected.
     }
