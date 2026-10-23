@@ -37,6 +37,18 @@ Deno.test("targets: the shipped setting is a plain array", async () => {
   assert.ok(Array.isArray(parsed), "the setting is a plain array");
 });
 
+Deno.test("targets: the shipped setting names all three targets", async () => {
+  const text = await Deno.readTextFile(`./${TARGETS_FILE_NAME}`);
+  assert.deepEqual(
+    parseTargetSlugsV1(JSON.parse(text)).map((entry) => entry.slug),
+    [
+      "ubiquity-sentinel/sentinel",
+      "ubiquity/ai.ubq.fi",
+      "ubiquity/passport.ubq.fi",
+    ],
+  );
+});
+
 Deno.test("targets: the setting file is a protected path", () => {
   assert.ok(
     TEMPLATE.protectedPaths.includes(TARGETS_FILE_NAME),

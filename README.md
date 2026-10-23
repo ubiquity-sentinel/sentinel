@@ -1,6 +1,6 @@
 # Sentinel
 
-Sentinel repairs eligible GitHub issues with isolated concurrent workers, durable candidate/accounting state, current-head structured review and trusted integration/release controllers. Current targets are `ubiquity-sentinel/sentinel` and `ubiquity/ai.ubq.fi`; ai.ubq.fi is limited to issue repairs for now. Captured-incident and deployment activation remain separate scope. The implementation uses Deno and TypeScript; runtime workers cannot access credential, state or promotion authority.
+Sentinel repairs eligible GitHub issues with isolated concurrent workers, durable candidate/accounting state, current-head structured review and trusted integration/release controllers. Current targets are `ubiquity-sentinel/sentinel`, `ubiquity/ai.ubq.fi` and `ubiquity/passport.ubq.fi`; AI and Passport are limited to issue repairs for now. Passport is a private target, so its target state, evidence and logs are subject to this public controller's visibility. Captured-incident and deployment activation remain separate scope. The implementation uses Deno and TypeScript; runtime workers cannot access credential, state or promotion authority.
 
 Start with [the current master plan](MASTER-PLAN.md), [project instructions](AGENTS.md) and [owner decisions](docs/DECISIONS.md). [The build ledger](docs/build-status.md) is the sole source of current task ownership and acceptance; [the active memory plan](docs/sentinel-memory-plan.md) covers durable attempt memory and self-healing. Historical plans and receipts remain available in Git history.
 

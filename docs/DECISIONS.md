@@ -9,6 +9,18 @@ continuation.
 
 ## Runtime and dispatch
 
+### Three-target scope including private Passport (2026-10-23)
+
+The owner directed this public controller to target all three repositories:
+`ubiquity-sentinel/sentinel`, `ubiquity/ai.ubq.fi`, and the private
+`ubiquity/passport.ubq.fi`. The committed `sentinel.targets.json` is
+authoritative. The existing split self/target App installations provide access.
+Passport remains a private repository, but this selection makes its target
+source, runtime state, review evidence and logs subject to this public
+controller's visibility. The separate `ubiquity-sentinel/sentinel-passport`
+controller is not the active three-target controller. Target selection is not a
+delivery claim; current CI, native review and merge gates still apply.
+
 ### Dedicated organization migration (2026-10-21)
 
 The owner moved Sentinel into the dedicated `ubiquity-sentinel` organization to

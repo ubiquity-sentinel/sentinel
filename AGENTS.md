@@ -224,5 +224,6 @@ checkpoints rather than unchanged polling or full historical dumps.
 
 Acceptance for the 2026-10-20 effort is green scheduled supervisor cycles and at
 least one autonomous issue → PR → completed internal review → merge per target
-(`ubiquity-sentinel/sentinel`, `ubiquity/ai.ubq.fi`). The ai.ubq.fi scope is issue
-repairs only for now; `sentinel-release` stays disabled.
+(`ubiquity-sentinel/sentinel`, `ubiquity/ai.ubq.fi`, `ubiquity/passport.ubq.fi`).
+The AI and Passport scopes are issue repairs only for now; `sentinel-release`
+stays disabled.

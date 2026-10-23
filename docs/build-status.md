@@ -7,7 +7,18 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-22 21:25 UTC)
+## Latest checkpoint (2026-10-23 02:15 UTC)
+
+The owner directed the active public controller to target all three
+repositories. `sentinel.targets.json` now names
+`ubiquity-sentinel/sentinel`, `ubiquity/ai.ubq.fi`, and the private
+`ubiquity/passport.ubq.fi`. The split self/target App installations already
+support the two owners. Passport is private, so its target state and logs are
+subject to this public controller's visibility. The separate private controller
+is not the active three-target controller. Publication, hosted CI, installation
+and live delivery remain separate gates; no three-target delivery is claimed.
+
+## Prior checkpoint (2026-10-22 21:25 UTC)
 
 `development` and `sentinel-supervisor` are both
 `7d4fc4c1c78287ea470868f0a98f44b80843d8b2`. CI run `39842734929` completed

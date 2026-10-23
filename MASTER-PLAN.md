@@ -12,7 +12,7 @@ The implementation is Deno and TypeScript. Model workers receive credential-free
 
 The 2026-10-20 owner decision sets runtime implementation to `gpt-reserve` with the existing HTTP 429 fallback to `gpt-6-luna`, both at max reasoning, superseding the former `gpt-5.6-luna` runtime text. Development/orchestration workers use `gpt-6.1-sol`.
 
-This effort's acceptance is green scheduled supervisor cycles plus at least one autonomous issue → PR → completed internal review → merge in each of `ubiquity-sentinel/sentinel` and `ubiquity/ai.ubq.fi`. The ai.ubq.fi scope is issue repairs only for now. The original gateway capture/deployment and extended observation requirements below remain separate scope, with `sentinel-release` disabled.
+This effort's acceptance is green scheduled supervisor cycles plus at least one autonomous issue → PR → completed internal review → merge in each of `ubiquity-sentinel/sentinel`, `ubiquity/ai.ubq.fi`, and `ubiquity/passport.ubq.fi`. The AI and Passport scopes are issue repairs only for now. The public controller's committed target array includes all three; Passport remains private, but selecting it here makes its target state and logs subject to this public controller's visibility. The separate `ubiquity-sentinel/sentinel-passport` controller is not the active three-target controller. The original gateway capture/deployment and extended observation requirements below remain separate scope, with `sentinel-release` disabled.
 
 Current work, readiness and hosted receipts belong in the ledger. The separately owned [memory and self-healing plan](docs/sentinel-memory-plan.md) retains its active implementation contract; this cleanup does not transfer that ownership or establish new live proof.
 
