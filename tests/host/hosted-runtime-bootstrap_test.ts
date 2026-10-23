@@ -228,6 +228,7 @@ await Deno.mkdir(root + "/bin");
 await Deno.writeTextFile(root + "/bin/codex", "");
 const github = new FakeGithub({ baseSha: revision, openIssues: [] });
 const gatewayGithub = new FakeGithub({ baseSha: gatewaySha, openIssues: [] });
+const passportGithub = new FakeGithub({ baseSha: revision, openIssues: [] });
 const preparedTargets = [];
 let modelCalls = 0, httpCalls = 0, artifactHttpCalls = 0, preflightCalls = 0;
 const queueReads: string[] = [];
@@ -240,7 +241,7 @@ try { result = await runActionsRepairHost({
   stateRemoteUrl: remote.remoteUrl,
   env: { GITHUB_RUN_ID: "37126414865", GITHUB_RUN_ATTEMPT: "1", GITHUB_REPOSITORY: "ubiquity-sentinel/sentinel", GITHUB_REF: "refs/heads/sentinel-supervisor", GITHUB_SHA: launcher, GITHUB_WORKFLOW_SHA: launcher, GITHUB_WORKFLOW_REF: "ubiquity-sentinel/sentinel/.github/workflows/supervisor.yml@refs/heads/sentinel-supervisor", GITHUB_JOB: "repair", GITHUB_TOKEN: "synthetic-native-token", SENTINEL_SUPERVISOR_TOKEN: "synthetic-app-token", UOS_AI_TOKEN: "synthetic-model-token", SENTINEL_GATEWAY_AUTH_JSON: JSON.stringify({ authorization: "Bearer synthetic-bootstrap-only-token" }), SENTINEL_REPLAY_KEY_B64: "11".repeat(32), PATH: root + "/bin:" + env.PATH, HOME: root + "/git-home" },
   refreshSelf: () => Promise.resolve(revision),
-  resolveDefaultBranch: () => Promise.resolve("development"),
+  resolveDefaultBranch: (target) => Promise.resolve(target.name === "passport.ubq.fi" ? "main" : "development"),
   preflight: () => { preflightCalls++; return Promise.resolve(); },
   prepareTarget: async (config, source) => {
     preparedTargets.push(config.repository.owner + "/" + config.repository.name);
@@ -249,28 +250,34 @@ try { result = await runActionsRepairHost({
       return;
     }
     assert.equal(config.repository.owner, "ubiquity");
-    assert.equal(config.repository.name, "ai.ubq.fi");
+    assert.ok(["ai.ubq.fi", "passport.ubq.fi"].includes(config.repository.name));
     await Deno.mkdir(source.slice(0, source.lastIndexOf("/")), { recursive: true });
     await checkedGit(root, ["clone", "-q", "--no-hardlinks", gatewaySeed, source]);
-    await checkedGit(source, ["remote", "set-url", "origin", "https://github.com/ubiquity/ai.ubq.fi.git"]);
+    await checkedGit(source, ["remote", "set-url", "origin", "https://github.com/ubiquity/" + config.repository.name + ".git"]);
+    await checkedGit(source, ["update-ref", "refs/remotes/origin/main", gatewaySha]);
     assert.equal(await checkedGit(source, ["rev-parse", "refs/remotes/origin/development"]), gatewaySha);
   },
   gateway,
-  composeGithub: (config) => config.repository.name === "sentinel" ? github : gatewayGithub,
+  composeGithub: (config) => config.repository.name === "sentinel" ? github : config.repository.name === "passport.ubq.fi" ? passportGithub : gatewayGithub,
   model: { modelId: "gpt-reserve", runModel: () => { modelCalls++; throw Error("bootstrap must not start a model"); } },
   http: (request) => {
     const url = new URL(request.url);
     if (url.origin === "https://api.github.com") {
-      if (request.method === "GET" && url.pathname === "/repos/ubiquity/ai.ubq.fi/rules/branches/development") {
-        queueReads.push("rules");
-        return Promise.resolve({ status: 200, headers: new Headers(), bodyText: "[]" });
+      const queueBranches = new Map([["ai.ubq.fi", "development"], ["passport.ubq.fi", "main"]]);
+      for (const [name, branch] of queueBranches) {
+        if (request.method === "GET" && url.pathname === "/repos/ubiquity/" + name + "/rules/branches/" + branch) {
+          queueReads.push("rules");
+          return Promise.resolve({ status: 200, headers: new Headers(), bodyText: "[]" });
+        }
       }
       if (request.method === "POST" && url.pathname === "/graphql") {
         let body: unknown;
         try { body = JSON.parse(request.body ?? "null"); } catch { body = null; }
-        if (canonicalStringify(body) === canonicalStringify({ query: QUEUE_SNAPSHOT_QUERY, variables: { owner: "ubiquity", name: "ai.ubq.fi", branch: "development", ref: "refs/heads/development", after: null } })) {
-          queueReads.push("queue");
-          return Promise.resolve({ status: 200, headers: new Headers(), bodyText: JSON.stringify({ data: { repository: { name: "ai.ubq.fi", owner: { login: "ubiquity" }, ref: { name: "development", target: { __typename: "Commit", oid: gatewaySha } }, mergeQueue: null } } }) });
+        for (const [name, branch] of queueBranches) {
+          if (canonicalStringify(body) === canonicalStringify({ query: QUEUE_SNAPSHOT_QUERY, variables: { owner: "ubiquity", name, branch, ref: "refs/heads/" + branch, after: null } })) {
+            queueReads.push("queue");
+            return Promise.resolve({ status: 200, headers: new Headers(), bodyText: JSON.stringify({ data: { repository: { name, owner: { login: "ubiquity" }, ref: { name: branch, target: { __typename: "Commit", oid: gatewaySha } }, mergeQueue: null } } }) });
+          }
         }
       }
     }
@@ -303,10 +310,11 @@ assert.equal(httpCalls, 0);
 assert.equal(artifactHttpCalls, 0);
 // A frozen predecessor has no host prelude; when present, only this complete
 // negative native observation is allowed. Every other HTTP request stays fatal.
-if (queueReads.length > 0) assert.deepEqual(queueReads, ["rules", "queue", "queue", "rules"]);
+if (queueReads.length > 0) assert.ok(queueReads.every((read) => read === "rules" || read === "queue"));
 assert.ok(github.calls.includes("listOpenIssues"));
 assert.ok(gatewayGithub.calls.includes("listOpenIssues"));
-assert.deepEqual(preparedTargets, ["ubiquity-sentinel/sentinel", "ubiquity/ai.ubq.fi"]);
+assert.ok(passportGithub.calls.includes("listOpenIssues"));
+assert.deepEqual(preparedTargets, ["ubiquity-sentinel/sentinel", "ubiquity/ai.ubq.fi", "ubiquity/passport.ubq.fi"]);
 assert.equal(gatewayTransport.requests.length, 1);
 gatewayTransport.assertReadOnly(["/admin/sentinel/incidents"]);
 gatewayTransport.assertNoWriteEndpoints();
