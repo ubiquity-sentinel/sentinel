@@ -215,6 +215,36 @@ record. No target policy, review cap, charge or state was rewritten.
 
 ## Active task register
 
+Snapshot: 2026-10-23 22:15 UTC. Owner: the current primary integration owner
+(this session). Goal: Sentinel stable in GitHub Actions, repairing every
+outstanding issue in `ubiquity-sentinel/sentinel` and `ubiquity/ai.ubq.fi`
+(Passport a bonus); acceptance is green scheduled cycles and one autonomous
+issue -> PR -> completed native review -> merge per target.
+
+- Published and CI-green on `development`: dispatcher and authority inventory
+  `b7562c3742` (CI `40024444005`), history-cache validity `1dda5f0a1c`,
+  issue-only matrix scoping `77437d8921` (CI `40025261428`, attempt 2),
+  checkpoint CAS retry and `#158` item-1 protections `d32daa1910` (CI
+  `40030055455`). Launcher `sentinel-supervisor` advanced to `d32daa1910` at
+  22:08 UTC; installation of that runtime is the next hosted assertion.
+- Owner decisions open: Passport merge gate on a plan-limited private repository
+  (DECISIONS 2026-10-23); ai.ubq.fi queue custody wedge (`#180`, options
+  recorded there); AI `#1214` hold release; PR `171` (`#169`) task acceptance;
+  `SENTINEL_AUTO_FOLLOW` after the first installed runtime proves.
+- Live proof pending on the installed runtime: `sentinel_premerge_ci` dispatch
+  for AI `1254`/`1255`/`1258`, their Gateway CI, native review and launcher
+  merge; self `#179` (implementation started on base `d32daa19`) to PR, native
+  review and the conditional self merge; self `#173` (PR `174` merged by the
+  owner) and `#164` (prerequisite wait) dispositions from the `40026556144`
+  repair log.
+- Remaining audit findings for later disposition: `composeHostedAppGitHub`
+  installation-id check for foreign targets (latent), self mint grant absent in
+  the repair job, `ciFirstSelfInstalledRuntimeProven` denylist, tautological
+  native findings-rendering parity check, dead review-model selector plumbing,
+  duplicated env block in `hosted-runtime-child.ts`.
+
+### Register snapshot 2026-10-21 15:29 UTC (superseded)
+
 Snapshot: 2026-10-21 15:29 UTC. The original chat owns the active completion
 goal. Canonical `development` contains native review `77a41943`, held-refresh
 reconciliation `bf7b7510`, Passport policy `47a76afe`, and default-public
