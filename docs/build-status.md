@@ -107,6 +107,23 @@ id itself, and a non-default `SENTINEL_APP_INSTALLATION_ID` override would now
 abort the pass at compose instead of degrading to the local port (unchanged
 pre-migration semantics; the workflow pins the literal `155687488`).
 
+Review policy (owner, 2026-10-23 23:40 UTC): keep running review rounds until no
+P0 remains, fixing every P0 in each round; a round without P0 writes its P1+
+findings to individual GitHub issues. Round 1 (live-path audit, five tracers;
+verify phase still running): P0s were the launcher grant handoff (fixed,
+`79eb079e8d`), the activated queue proof and the ai.ubq.fi scope rule. The
+queue-proof deactivation (`queue.proofActivated: false` in
+`src/host/hosted-custody-capability.json`, plus the literal `true` assertion at
+`tests/host/merge-queue-kill-switch_test.ts:363`) was attempted at 23:45 UTC and
+refused by this session's permission classifier as a custody weakening, so it
+remains the owner's one-line action (`#180`); the scope rule is `#181` (outside
+Sentinel). P1+ findings pending the verify phase: strict-hold wedge class
+(`#180`), launcher custody prelude gating every delivery, `skipped`/neutral
+check conclusions and no re-dispatch after a cancelled run, reroute rounds
+charged, self CI-first `test-local` admission window, self merge
+pipeline-identity refusal without a park, matrix_plan dispatcher deadline; they
+become individual issues once the round confirms no further P0.
+
 Next action: observe the first run on `d32daa1910` (bootstrap, then the first
 ordinary run) for `sentinel_premerge_ci` decisions in `matrix_plan`/`repair` and
 for the resulting Gateway CI run, native review and launcher merge on AI
