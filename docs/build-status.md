@@ -97,6 +97,16 @@ on `d32daa1910` (`40036136812`) settled healthy and its maintenance pass
 ingested the `#179` candidate (head `d79f63bc`, publication pending); the first
 ordinary run on `d32daa1910` is `40037450557`.
 
+Launcher advance 2 (23:15 UTC): `sentinel-supervisor` fast-forwarded
+`d32daa1910..79eb079e8d` (CI `40037212959` success; the handoff fix). Two
+adversarial review lenses (live regression, authority) found no blocker and no
+weakening; notes retained for later: the parent-side installation parse
+duplicates `parseAppInstallationId` (kept out of the launcher to avoid importing
+the runtime entrypoint), the launcher fixture child does not assert the target
+id itself, and a non-default `SENTINEL_APP_INSTALLATION_ID` override would now
+abort the pass at compose instead of degrading to the local port (unchanged
+pre-migration semantics; the workflow pins the literal `155687488`).
+
 Next action: observe the first run on `d32daa1910` (bootstrap, then the first
 ordinary run) for `sentinel_premerge_ci` decisions in `matrix_plan`/`repair` and
 for the resulting Gateway CI run, native review and launcher merge on AI
