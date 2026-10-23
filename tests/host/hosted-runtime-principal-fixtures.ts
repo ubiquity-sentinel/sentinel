@@ -16,8 +16,10 @@ export async function principalLauncherFixture(
   grantExpected: boolean,
   job: "repair" | "matrix_plan" | "matrix_cell" = "repair",
   tokenKind: "app" | "native" | "absent" = "app",
+  overrides: { mintGrant?: string; targetInstallationId?: string } = {},
 ) {
   const rig = await principalHostFixture();
+  const mintGrant = overrides.mintGrant ?? rig.hostInput.mintGrant;
   const appToken = tokenKind === "app"
     ? rig.scopeInput.token
     : tokenKind === "native"
@@ -26,9 +28,7 @@ export async function principalLauncherFixture(
   const expected = {
     GITHUB_TOKEN: rig.jobInput.token,
     SENTINEL_SUPERVISOR_TOKEN: appToken,
-    SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: grantExpected
-      ? rig.hostInput.mintGrant
-      : undefined,
+    SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: grantExpected ? mintGrant : undefined,
     SENTINEL_SUPERVISOR_TOKEN_NOT_AFTER:
       appToken !== undefined && job !== "matrix_cell"
         ? String(OBSERVED + 58 * 60_000)
@@ -103,8 +103,11 @@ export async function principalLauncherFixture(
       GITHUB_JOB: job,
       GITHUB_TOKEN: rig.jobInput.token,
       SENTINEL_SUPERVISOR_TOKEN: appToken,
-      SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: rig.hostInput.mintGrant,
+      SENTINEL_SUPERVISOR_TOKEN_MINT_GRANT: mintGrant,
       SENTINEL_SUPERVISOR_TOKEN_MINTED_NOT_BEFORE: String(OBSERVED),
+      ...(overrides.targetInstallationId === undefined ? {} : {
+        SENTINEL_TARGET_INSTALLATION_ID: overrides.targetInstallationId,
+      }),
       UOS_AI_TOKEN: "fixture-model-token",
       PATH: Deno.env.get("PATH") ?? "/usr/local/bin:/usr/bin:/bin",
       HOME: rig.root,

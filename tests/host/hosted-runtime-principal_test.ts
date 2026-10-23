@@ -223,3 +223,55 @@ Deno.test("hosted principal launcher: dormant, forged, native, source and state 
     });
   }
 });
+
+Deno.test("hosted principal launcher: the grant binds to the live target installation the child reads", async (t) => {
+  const live = 173913802;
+  for (
+    const scenario of [
+      {
+        name: "live grant and live id reach the child",
+        expected: true,
+        grant: principalGrant({ installationId: live }),
+        id: String(live),
+      },
+      {
+        name: "durable grant under the live id is stripped",
+        expected: false,
+        grant: principalGrant(),
+        id: String(live),
+      },
+      {
+        name: "live grant under the durable default is stripped",
+        expected: false,
+        grant: principalGrant({ installationId: live }),
+        id: undefined,
+      },
+      {
+        name: "malformed live id strips the grant",
+        expected: false,
+        grant: principalGrant(),
+        id: "17391380x",
+      },
+    ]
+  ) {
+    await t.step(scenario.name, async () => {
+      const rig = await principalLauncherFixture(
+        scenario.expected,
+        "repair",
+        "app",
+        {
+          mintGrant: scenario.grant,
+          targetInstallationId: scenario.id,
+        },
+      );
+      try {
+        const result = await rig.launch();
+        assert.equal(result.status, "healthy", JSON.stringify(result));
+        assert.equal(rig.childCalls().length, 1);
+        assert.equal(rig.state.repairWrites, 0);
+      } finally {
+        await rig.close();
+      }
+    });
+  }
+});

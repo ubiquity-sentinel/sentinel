@@ -14,18 +14,26 @@ continuation.
 `ubiquity/ai.ubq.fi` runs `Gateway CI` (`.github/workflows/deno-deploy.yml`)
 only on a closed pull request or a manual `workflow_dispatch` (its 2026-10-21
 Actions-quota decision), and the workflow exposes `base_ref`,
-`sentinel_pr_author` and `scope_base` inputs that select the complete check set
-for a Sentinel App pull request. Sentinel refuses to review or merge without
-current-head CI, so the trusted repair host now sends at most one
-`workflow_dispatch` per target per pass for a published head whose record waits
-on `ci_pending` (`src/host/actions-premerge-ci.ts`): the live pull request must
-be open, authored by the App login, on the target's own repository, at the
-recorded head SHA, head ref and configured base; any existing run of the
-workflow on that exact head (any event or status) skips it; the dispatching
-token's mint grant must name the repository with `actions: write`; every request
-passes the shared cooldown gate and the absolute run deadline. A dispatch is a
-request for evidence, never evidence: it writes no record, wait, counter or
-receipt, and the delivery gate keeps reading the check runs of the exact head.
+`sentinel_pr_author` and `scope_base` inputs meant to select the complete check
+set for a Sentinel App pull request (correction 2026-10-23 23:00 UTC: at
+`31ba5a15` the workflow maps those inputs onto `GITHUB_BASE_REF` and
+`GITHUB_PR_AUTHOR` only, while `scripts/test-scope.ts` grants the complete set
+for `merge_group`, `push` to `development` and `pull_request` events alone; a
+dispatched run therefore executes the scoped set and reports the other jobs as
+`skipped`, which Sentinel's required-CI gate reads as failed. Extending that
+rule to an opted-in `workflow_dispatch` is an `ubiquity/ai.ubq.fi` change for
+the owner, recorded in Sentinel issue #181; Sentinel does not relax `skipped` to
+green). Sentinel refuses to review or merge without current-head CI, so the
+trusted repair host now sends at most one `workflow_dispatch` per target per
+pass for a published head whose record waits on `ci_pending`
+(`src/host/actions-premerge-ci.ts`): the live pull request must be open,
+authored by the App login, on the target's own repository, at the recorded head
+SHA, head ref and configured base; any existing run of the workflow on that
+exact head (any event or status) skips it; the dispatching token's mint grant
+must name the repository with `actions: write`; every request passes the shared
+cooldown gate and the absolute run deadline. A dispatch is a request for
+evidence, never evidence: it writes no record, wait, counter or receipt, and the
+delivery gate keeps reading the check runs of the exact head.
 `workflow_dispatch` takes a ref, so a head that moves before GitHub resolves it
 yields a run on another SHA, which the exact-head gate ignores and the next pass
 re-dispatches. Only the gateway carries this policy; Passport's CI runs on its
@@ -44,6 +52,19 @@ any kind makes a native review unavailable (Codex owns reviewer selection; a
 gateway failover onto an implementation route is the forbidden substitution),
 and review custody refuses `baseInstructions`/`developerInstructions` on
 `thread/start`.
+
+Launcher handoff correction (2026-10-23 23:00 UTC): the 2026-10-21 migration
+bound the child's grant parse to the live `SENTINEL_TARGET_INSTALLATION_ID` but
+left the launcher's parent-side verification
+(`src/host/hosted-runtime-principal-handoff.ts`) on the durable default, so
+every live grant (installation `173913802`) failed that parse and the grant
+never crossed into the runtime child: the hosted App principal context was never
+composed after the migration and the dispatcher would answer `grant_refused`.
+The launcher now binds the handoff to the same live installation the child reads
+(absent keeps the durable default; a malformed value refuses the grant), and
+`composeHostedAppGitHub` compares a foreign target's durable scope with
+`SENTINEL_APP_INSTALLATION_ID`, as the native membership proof already does,
+instead of with the grant's live installation.
 
 Passport cannot merge under the existing gate: its private repository on the
 current GitHub plan cannot carry branch rules (`/rules/branches/main` answers

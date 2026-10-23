@@ -70,6 +70,22 @@ the runtime (five-minute `unavailable`, no effect authorized, custody facts
 deactivate queue proof in the capability, or populate the pins through the
 canary; `#1214` additionally needs a one-time release of its hold.
 
+Correction (23:00 UTC, from the live-path audit): the dispatcher's preconditions
+do not hold on `d32daa1910` after all. The launcher strips the foreign mint
+grant before the child runs because its handoff verification parses the grant
+against the durable default `155687488` while the live grant names `173913802`
+(`src/host/hosted-runtime-principal-handoff.ts`, missed by the 2026-10-21
+migration commit `889d28de10`); the child would report `grant_refused`. Fixed in
+the candidate after `d32daa1910` together with the child-side scope comparison
+in `composeHostedAppGitHub` (durable scope, not the live installation), with
+launcher tests on the live id. Second blocker, outside Sentinel:
+`ubiquity/ai.ubq.fi` `scripts/test-scope.ts` grants the complete check set only
+to `merge_group`/`push`/`pull_request` events, so a dispatched run reports
+`skipped` jobs that the required-CI gate reads as failed (issue `#181`, owner
+change). Run `40026556144` (generation 92) settled healthy; its cell for self
+`#179` completed a candidate in 140 s (ingested by the next maintenance pass); a
+Passport cell (`#76`) hit `codex_operation_deadline`.
+
 Next action: observe the first run on `d32daa1910` (bootstrap, then the first
 ordinary run) for `sentinel_premerge_ci` decisions in `matrix_plan`/`repair` and
 for the resulting Gateway CI run, native review and launcher merge on AI

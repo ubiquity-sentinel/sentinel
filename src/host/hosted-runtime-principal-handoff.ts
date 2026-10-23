@@ -3,7 +3,11 @@ import { type GitHubCooldownGateV1, portError } from "../contracts/ports.ts";
 import { parseGitHubRateLimitV1 } from "../contracts/github-cooldown.ts";
 import type { HostedExecutionIntentV1 } from "../contracts/hosted-supervisor.ts";
 import { createDeadline, fetchHttpTransport } from "../github/http.ts";
-import { HOSTED_APP_MINT_GRANT_ENV } from "./hosted-app-grant.ts";
+import {
+  HOSTED_APP_MINT_GRANT_ENV,
+  SENTINEL_APP_INSTALLATION_ID,
+  TARGET_INSTALLATION_ID_ENV,
+} from "./hosted-app-grant.ts";
 import { verifyHostedAppPrincipalHandoff } from "./hosted-app-principal.ts";
 import { APP_TOKEN_NOT_AFTER_ENV } from "./hosted-app-token-window.ts";
 import { HostedSupervisorCooldownGate } from "./hosted-cooldown.ts";
@@ -52,6 +56,22 @@ function readOnlyNativeGate(
 }
 
 /**
+ * The live credential installation the child binds this grant to, read by
+ * the child's own rule (`SENTINEL_TARGET_INSTALLATION_ID`; an absent value
+ * keeps the durable default). The grant must name that installation exactly;
+ * a malformed value refuses the grant instead of guessing.
+ */
+function expectedInstallationId(
+  childEnv: Record<string, string>,
+): number | null {
+  const value = childEnv[TARGET_INSTALLATION_ID_ENV];
+  if (value === undefined) return SENTINEL_APP_INSTALLATION_ID;
+  if (!/^[1-9][0-9]*$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+/**
  * Runs only after the launcher has proved exact source and saved execution.
  * A refusal strips this optional grant, leaving ordinary credentials intact.
  * The child independently authenticates the same facts before issuing a port.
@@ -69,6 +89,8 @@ export async function retainVerifiedHostedAppGrant(
   const mintGrant = childEnv[HOSTED_APP_MINT_GRANT_ENV];
   delete childEnv[HOSTED_APP_MINT_GRANT_ENV];
   if (source.identity.job === "matrix_cell" || mintGrant === undefined) return;
+  const installationId = expectedInstallationId(childEnv);
+  if (installationId === null) return;
   const timeout = createDeadline(HANDOFF_TIMEOUT_MS);
   try {
     const deadline = input.clock.now() + HANDOFF_TIMEOUT_MS;
@@ -88,6 +110,7 @@ export async function retainVerifiedHostedAppGrant(
       nativeToken: childEnv.GITHUB_TOKEN,
       appToken: childEnv.SENTINEL_SUPERVISOR_TOKEN,
       mintGrant,
+      expectedInstallationId: installationId,
       appTokenNotAfter: childEnv[APP_TOKEN_NOT_AFTER_ENV],
       deadline,
     }, fixture?.sourceProfiles));
