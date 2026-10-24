@@ -10,6 +10,7 @@
  * path returns the record to `work` with its preserved descriptor. The charge
  * stays as it is; nothing is refunded, started, pushed or published here.
  */
+import { isHostedReleaseTerminal } from "../src/contracts/hosted-supervisor.ts";
 import type { GitSha } from "../src/contracts/brands.ts";
 import { queueRecordProtected } from "./hosted-autonomy-queue-context.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
@@ -62,7 +63,7 @@ export async function restoreExistingCandidateRefs(input: {
       row.execution !== null
     ) ||
     release.value.snapshot.hostedReleases.some((row) =>
-      !["accepted", "rolled_back", "cancelled"].includes(row.phase)
+      !isHostedReleaseTerminal(row.phase)
     )
   ) return null;
   const selected: { record: WorkRecordV1; config: RepositoryConfigV1 }[] = [];

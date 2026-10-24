@@ -16,6 +16,7 @@ import type {
 } from "../contracts/hosted-supervisor.ts";
 import {
   HOSTED_RUNTIME_ID,
+  isHostedReleaseTerminal,
   parseHostedRunProofV1,
 } from "../contracts/hosted-supervisor.ts";
 import { matrixDigestV1 } from "../contracts/matrix.ts";
@@ -755,7 +756,7 @@ export async function ingestClosedCWave(
   if (
     maintenance &&
     live.release.snapshot.hostedReleases.some((row) =>
-      row.phase !== "accepted" && row.phase !== "rolled_back"
+      !isHostedReleaseTerminal(row.phase)
     )
   ) throw new Error("C recovery release is not terminal");
   if (
