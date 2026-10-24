@@ -2822,11 +2822,14 @@ standing approval above. Applied as follows.
 - The head CI read (`readChecks` in `src/github/client-reads.ts`) still folds
   the head's commit statuses into its check runs, and each status context is
   judged by its latest status (newest `created_at`). A context whose latest
-  status is `pending` is advisory once the head reports at least one check run
-  and every check run has completed: it is left out of the read. A third-party
-  status that never reports, such as a stale integration or a preview
-  deployment, therefore no longer holds the CI-first gate in `ci_pending` until
-  the six-hour park, nor the delivery and merge gates that read the same list.
+  status is `pending` is advisory once the head reports at least one check run,
+  every check run has completed, and the last run completed at least 30 minutes
+  ago (`PENDING_STATUS_GRACE_MS`): it is then left out of the read. The grace
+  keeps waiting for a status that resolves shortly after the runs, so one that
+  is about to fail still blocks review and merge. A third-party status that
+  never reports, such as a stale integration or a preview deployment, therefore
+  no longer holds the CI-first gate in `ci_pending` until the six-hour park, nor
+  the delivery and merge gates that read the same list.
 - A failed or errored status still counts as a failure, and a successful one
   still passes. A pending status still waits while any check run is running, and
   when the head has no check run at all, because the statuses are then the only

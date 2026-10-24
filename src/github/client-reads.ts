@@ -42,23 +42,33 @@ import { REVIEW_DECISION_QUERY } from "./client-issue-wire.ts";
  * #192). Each context is judged by its latest status: the newest
  * `created_at`, and on a tie the first listed (GitHub lists newest first),
  * the same recency as the gate's `latestChecks`. A context whose latest status
- * is `pending` is advisory once the head reports at least one check run and
- * every check run has completed: all of its observations are left out, so a
- * third-party status that never reports (a stale integration, a preview
- * deployment) cannot hold a head whose check runs are done. Every other
+ * is `pending` is advisory once the head reports at least one check run,
+ * every check run has completed, and the last one completed at least
+ * `PENDING_STATUS_GRACE_MS` ago: all of its observations are then left out,
+ * so a third-party status that never reports (a stale integration, a preview
+ * deployment) cannot hold a head whose check runs are done, while a status
+ * that resolves soon after the runs (one about to fail) is still waited for. Every other
  * context keeps its whole history exactly as before: a failed or errored
  * status still fails and a successful one still passes. A pending status
  * still waits while any check run runs, and when the head reports no check
  * run at all (its statuses are its only CI). Omitting a status adds no
  * observation, so it never turns a red check run green.
  */
+export const PENDING_STATUS_GRACE_MS = 30 * 60_000;
+
 function headStatuses(
   runs: readonly GitHubCheckV1[],
   statuses: readonly GitHubCheckV1[],
+  now: number,
 ): GitHubCheckV1[] {
-  if (runs.length === 0 || runs.some((run) => run.status !== "completed")) {
+  if (
+    runs.length === 0 ||
+    runs.some((run) => run.status !== "completed" || run.completedAt === null)
+  ) {
     return [...statuses];
   }
+  const lastCompleted = Math.max(...runs.map((run) => run.completedAt!));
+  if (now - lastCompleted < PENDING_STATUS_GRACE_MS) return [...statuses];
   const latest = new Map<string, GitHubCheckV1>();
   const time = (status: GitHubCheckV1) => status.startedAt ?? -1;
   for (const status of statuses) {
@@ -248,7 +258,9 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
     // A name-filtered read (the base attribution of given head failures)
     // judges no other check run of the commit: its statuses are as recorded.
     checks.push(
-      ...(names === undefined ? headStatuses(checks, statuses) : statuses),
+      ...(names === undefined
+        ? headStatuses(checks, statuses, this.options.clock.now())
+        : statuses),
     );
     return portOk({ head: sha, checks });
   }

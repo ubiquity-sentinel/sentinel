@@ -16,6 +16,7 @@ import {
   checkRunWire,
   checksPageWire,
   commitStatusWire,
+  FakeClock,
   httpRespond,
   makePort,
   statusesPageWire,
@@ -41,6 +42,8 @@ function routeCommits(github: GitHubPort, wires: Record<string, CommitWire>) {
     if (wire === undefined) return fake(sha, names);
     const commit = `/commits/${sha}`;
     const { port } = makePort({
+      // An hour after the fixture runs complete (01:00): past the grace.
+      clock: new FakeClock(Date.parse("2026-09-07T02:00:00Z")),
       script: [
         httpRespond(
           "GET",

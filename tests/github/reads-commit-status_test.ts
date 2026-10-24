@@ -17,20 +17,27 @@ import {
   checkRunWire,
   checksPageWire,
   commitStatusWire,
+  FakeClock,
   httpRespond,
   makePort,
   SHA1,
   statusesPageWire,
 } from "./helpers.ts";
+import { PENDING_STATUS_GRACE_MS } from "../../src/github/client-reads.ts";
 
 const COMMIT = `/repos/ubiquity-sentinel/sentinel/commits/${SHA1}`;
+
+/** The fixture runs complete at 01:00; the reads happen an hour later. */
+const RUNS_DONE = Date.parse("2026-09-07T01:00:00Z");
 
 function read(
   runs: unknown[],
   statuses: unknown[],
   names?: ReadonlySet<string>,
+  now = RUNS_DONE + 60 * 60_000,
 ) {
   const { port } = makePort({
+    clock: new FakeClock(now),
     script: [
       httpRespond(
         "GET",
@@ -196,4 +203,28 @@ Deno.test("readChecks (#192): a name-filtered read returns the named statuses as
     result.value.checks.map((check) => [check.name, check.status]),
     [["validate", "completed"], ["preview/deploy", "in_progress"]],
   );
+});
+
+Deno.test("readChecks (#192): a pending status is still waited for within the grace after the last run completes", async () => {
+  const early = await read(
+    GREEN_RUNS,
+    [STALE_PENDING],
+    undefined,
+    RUNS_DONE + PENDING_STATUS_GRACE_MS - 1,
+  );
+  assert.ok(early.ok, JSON.stringify(early));
+  if (!early.ok) return;
+  assert.ok(
+    early.value.checks.some((check) => check.name === "preview/deploy"),
+  );
+  assert.equal(decideCiGate(early.value.checks), "wait");
+  const late = await read(
+    GREEN_RUNS,
+    [STALE_PENDING],
+    undefined,
+    RUNS_DONE + PENDING_STATUS_GRACE_MS,
+  );
+  assert.ok(late.ok, JSON.stringify(late));
+  if (!late.ok) return;
+  assert.equal(decideCiGate(late.value.checks), "proceed");
 });
