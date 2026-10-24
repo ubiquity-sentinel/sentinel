@@ -23,6 +23,10 @@ ownership, authority or acceptance.
 - GitHub's empty job `steps` (about 17:00–17:45 UTC) cleared by itself. Saved
   executions then verified, and run `40116439376` was cancelled by the
   dispatcher's stall recovery while its prepare hung.
+- Autonomous delivery: Sentinel fixed #208 (the flaky heap bound) itself. PR 212
+  was self-merged by `ubiquity-sentinel[bot]` at 18:58 UTC, and the scenario now
+  runs in a fresh `--expose-gc` subprocess with the 32 MiB bound kept. #208 is
+  closed.
 - Open: #183 needs one ai.ubq.fi and one Passport issue checked for progress
   comments (not readable from this session). #159 item 3 and the other owner
   items are unchanged.
