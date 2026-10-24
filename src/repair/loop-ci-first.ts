@@ -262,7 +262,13 @@ export async function gateReviewOnCi(
     );
   }
   const failed = failedChecks(checks);
-  const base = await deps.github.readChecks(record.target.base);
+  // Only the failed names are attributed, so only they are read on the base:
+  // an unrelated base run over the strict bounds (the self `development`
+  // tip's `matrix_cell (<cellId>)` runs) cannot defer a red head forever.
+  const base = await deps.github.readChecks(
+    record.target.base,
+    new Set(failed.map((check) => check.name)),
+  );
   if (!base.ok) return UNAVAILABLE;
   const disposition = decideCiDisposition(
     attributeFailedChecks(failed, base.value.checks),

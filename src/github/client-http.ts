@@ -511,7 +511,10 @@ export abstract class GitHubClientHttp {
     number: number,
   ): Promise<PortResultV1<GitHubReviewDecisionV1>>;
 
-  abstract readChecks(sha: GitSha): Promise<PortResultV1<GitHubChecksV1>>;
+  abstract readChecks(
+    sha: GitSha,
+    names?: ReadonlySet<string>,
+  ): Promise<PortResultV1<GitHubChecksV1>>;
 
   abstract readCheckSuites(
     sha: GitSha,

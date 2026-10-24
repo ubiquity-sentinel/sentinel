@@ -71,7 +71,11 @@ async function attributeAgainstBase(
   record: WorkRecordV1,
   failed: readonly GitHubCheckV1[],
 ): Promise<CiDispositionV1 | null> {
-  const base = await deps.github.readChecks(record.target.base);
+  // Only the failed names are read on the base (see `gateReviewOnCi`).
+  const base = await deps.github.readChecks(
+    record.target.base,
+    new Set(failed.map((check) => check.name)),
+  );
   if (!base.ok) return null;
   return decideCiDisposition(attributeFailedChecks(failed, base.value.checks));
 }

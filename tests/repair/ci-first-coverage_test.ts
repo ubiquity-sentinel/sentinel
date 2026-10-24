@@ -20,6 +20,7 @@ import assert from "node:assert/strict";
 import type { GitSha } from "../../src/contracts/brands.ts";
 import { portError } from "../../src/contracts/ports.ts";
 import type { RepositoryIdentityV1 } from "../../src/contracts/shared.ts";
+import type { GitHubPort } from "../../src/contracts/ports.ts";
 import type { RepairStateSnapshotV1 } from "../../src/contracts/state-snapshots.ts";
 import { preReviewCiParked } from "../../ops/hosted-autonomy-ci-first.ts";
 import { REPO, SHA1, SHA3, T0 } from "../state/helpers.ts";
@@ -258,6 +259,51 @@ for (const { label, live } of LIVE_BASES) {
     assert.ok(reads.length > 0, "the base was read through the real port");
     for (const request of reads) {
       assert.match(request.url, /\/check-runs\?/, "no commit-status read");
+    }
+  });
+}
+
+for (const { label, live } of LIVE_BASES) {
+  Deno.test(`CI first: a red self head on the live sentinel development ${label} is attributed through a name-filtered base read, never deferred forever`, async () => {
+    // Round-2 finding: the red path read the whole base strictly, and the
+    // 78-character `matrix_cell (<cellId>)` runs refused it, so a red self
+    // head was deferred every cycle with no write, no CI fix and no park.
+    const id = "issue-152";
+    const { rig, writes } = await ciFirstRig(
+      `cf-red-self-${live.slice(0, 9)}`,
+      {
+        hosted: true,
+        identity: { repository: SELF, id, issue: 152 },
+        checks: {
+          [SHA3]: [{
+            ...suiteCheck("test-local", SHA3, 105900000001, T0),
+            conclusion: "failure",
+          }],
+        },
+      },
+    );
+    try {
+      routeLiveDevelopment(rig.github, SELF, { [SHA1]: live });
+      const strict = await rig.github.readChecks(SHA1);
+      assert.equal(strict.ok, false, "the unfiltered base read still refuses");
+      const port: GitHubPort = rig.github;
+      const filtered = await port.readChecks(SHA1, new Set(["test-local"]));
+      assert.ok(filtered.ok, JSON.stringify(filtered));
+      assert.deepEqual(
+        filtered.ok ? filtered.value.checks.map((check) => check.name) : [],
+        ["test-local"],
+      );
+      await rig.run();
+      const after = await rig.snapshot();
+      const work = taskRecord(after, id);
+      assert.ok(writes.length > 0, "the red head was routed, not deferred");
+      assert.notEqual(work.nextStep, "review");
+      assert.equal(
+        rig.github.calls.filter((call) => call === "requestReview").length,
+        0,
+      );
+    } finally {
+      await rig.ctx.cleanup();
     }
   });
 }

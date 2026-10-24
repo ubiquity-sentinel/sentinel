@@ -256,8 +256,8 @@ export function routeLiveDevelopment(
   );
   const readChecks = github.readChecks.bind(github);
   const readCheckSuites = github.readCheckSuites.bind(github);
-  github.readChecks = (sha) =>
-    live.get(sha)?.port.readChecks(sha) ?? readChecks(sha);
+  github.readChecks = (sha, names) =>
+    live.get(sha)?.port.readChecks(sha, names) ?? readChecks(sha, names);
   github.readCheckSuites = (sha) =>
     live.get(sha)?.port.readCheckSuites(sha) ?? readCheckSuites(sha);
   return new Map(

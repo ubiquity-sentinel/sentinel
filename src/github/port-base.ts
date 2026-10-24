@@ -187,8 +187,11 @@ export abstract class GitHubPortBase {
     return this.client.readPullRequest(number);
   }
 
-  readChecks(head: GitSha): Promise<PortResultV1<GitHubChecksV1>> {
-    return this.client.readChecks(head);
+  readChecks(
+    head: GitSha,
+    names?: ReadonlySet<string>,
+  ): Promise<PortResultV1<GitHubChecksV1>> {
+    return this.client.readChecks(head, names);
   }
 
   readCheckSuites(head: GitSha): Promise<PortResultV1<GitHubCheckSuitesV1>> {

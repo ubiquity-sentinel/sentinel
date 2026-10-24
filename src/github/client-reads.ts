@@ -150,11 +150,25 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
     );
   }
 
-  async readChecks(sha: GitSha): Promise<PortResultV1<GitHubChecksV1>> {
+  async readChecks(
+    sha: GitSha,
+    names?: ReadonlySet<string>,
+  ): Promise<PortResultV1<GitHubChecksV1>> {
     const collected = await this.collectCheckRuns(sha);
     if (!collected.ok) return collected;
+    // A name filter skips unrelated entries before the strict parse; an entry
+    // whose raw name is not a requested string is never read (`readChecks`
+    // in ports-github.ts).
+    const wanted = (item: unknown, key: "name" | "context") => {
+      if (names === undefined) return true;
+      const raw = typeof item === "object" && item !== null
+        ? (item as Record<string, unknown>)[key]
+        : undefined;
+      return typeof raw === "string" && names.has(raw);
+    };
     const checks = [];
     for (const item of collected.value) {
+      if (!wanted(item, "name")) continue;
       const parsed = parseWith(item, (v) => parseCheckRunWire(v, "$"));
       if (!parsed.ok) return parsed;
       // Every run must be bound to the exact requested head: a run recorded
@@ -182,6 +196,7 @@ export abstract class GitHubClientReads extends GitHubClientIssues {
     );
     if (!statusesCollected.ok) return statusesCollected;
     for (const item of statusesCollected.value) {
+      if (!wanted(item, "context")) continue;
       const parsed = parseWith(item, (v) => parseCommitStatusWire(v, "$", sha));
       if (!parsed.ok) return parsed;
       checks.push(parsed.value);
