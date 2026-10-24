@@ -7,7 +7,28 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-23 22:10 UTC)
+## Latest checkpoint (2026-10-24 01:15 UTC)
+
+- Launcher `sentinel-supervisor` advanced 79eb079e8d → 9b2de3d259 after CI
+  40045951218 passed; bootstrap generation 94 on 79eb079e8d settled healthy (run
+  40045141215, grant retained with the live installation id). Ordinary run
+  40046208972 on 79eb079e8d is in flight.
+- Root cause of the in-flight candidate wedge (Sentinel #179, Passport 77/83;
+  Passport 42/49/50/53/59 share the symptom): maintenance recovery built every
+  target's candidate port with the foreign App token, so self pushes could not
+  happen; the repair job never holds a prior run's objects. Fixed in
+  `ops/hosted-autonomy-matrix-adapters.ts` (`maintenanceTargetToken`), with a
+  regression test (`tests/host/hosted-autonomy-matrix-adapter-tokens_test.ts`,
+  fails on the old wiring) and an unfinished-preservation diagnostic/action.
+  Local proof: the real #179 bundle preserves through the real preserver against
+  a local remote (only my shallow clone broke the fresh-store proof).
+- Remaining in this class: existing-PR successors (42/49/50/53/59) need takeover
+  authority the maintenance port lacks; the walk's 300 s budget processes about
+  one producer wave per maintenance run (`deferred_budget`, 975 history steps).
+- Next: CI on the fix, launcher advance, then watch maintenance preserve #179
+  and Passport 77/83; refresh the status board and dashboard afterwards.
+
+## Prior checkpoint (2026-10-23 22:10 UTC)
 
 Publication: `development` is `d32daa191033cd3e2dbbe9d3778df9c98f6fcc93`
 (`d32daa1910` on top of `324ab60cc0`), CI `40030055455` passed on the first

@@ -43,7 +43,28 @@ import {
 } from "../src/host/local.ts";
 import { HOSTED_HISTORICAL_RELEASE_WITNESSES } from "./hosted-autonomy-matrix-bindings.ts";
 import { createHostedCandidateRecoveryPort } from "./hosted-autonomy-candidate-port.ts";
+import { isHostedSelf } from "./hosted-autonomy-policy.ts";
+import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import { createMaintenanceNativeQueue } from "../src/host/maintenance-native-queue.ts";
+
+/**
+ * The credential a maintenance pass may hold for one committed target. The
+ * `ubiquity` installation token can never reach `ubiquity-sentinel/sentinel`,
+ * so the self repository's candidate reads, pushes and mirror refreshes use
+ * the self token (`token`); every foreign target keeps the App token.
+ */
+export function maintenanceTargetToken(
+  repository: Pick<RepositoryIdentityV1, "owner" | "name" | "installationId">,
+  tokens: { token: string; apiToken: string },
+): string {
+  return isHostedSelf({
+      owner: repository.owner,
+      name: repository.name,
+      installationId: repository.installationId,
+    })
+    ? tokens.token
+    : tokens.apiToken;
+}
 
 /** The maintenance slice has no implementation, review or publication capability. */
 export async function createHostedClosedMatrixRecovery(input: {
@@ -63,13 +84,19 @@ export async function createHostedClosedMatrixRecovery(input: {
   const artifactHttp = input.artifactHttp ??
     createActionsMatrixArtifactHttpTransport();
   const template = createLocalRepositoryConfig();
+  // Each target's default branch is read with the credential that reaches it.
+  const resolvers = {
+    self: createDefaultBranchResolver({ http, token: input.token }),
+    foreign: createDefaultBranchResolver({ http, token: input.apiToken }),
+  };
   const targets = await loadTargetConfigsV1({
     template,
     root: input.sourceDir,
-    resolveDefaultBranch: createDefaultBranchResolver({
-      http,
-      token: input.apiToken,
-    }),
+    resolveDefaultBranch: (target) =>
+      (target.owner === template.repository.owner &&
+          target.name === template.repository.name
+        ? resolvers.self
+        : resolvers.foreign)(target),
   });
   const configs = targets.configs.map((config) =>
     scopeTargetConfigV1(
@@ -126,7 +153,7 @@ export async function createHostedClosedMatrixRecovery(input: {
         clock: input.clock,
         gate,
         config,
-        token: input.apiToken,
+        token: maintenanceTargetToken(config.repository, input),
         http,
         sourcePath: mirror(config),
         scratch: input.scratch,
@@ -150,7 +177,7 @@ export async function createHostedClosedMatrixRecovery(input: {
         stateRoot: input.scratch,
         sourceDir: input.sourceDir,
         controllerSha: CLOSED_C_WAVE.runtimeSha,
-        githubToken: input.apiToken,
+        githubToken: maintenanceTargetToken(config.repository, input),
         modelToken: "",
         codexExecutable: "",
         denoExecutable: Deno.execPath(),

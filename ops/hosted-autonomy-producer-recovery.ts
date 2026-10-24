@@ -488,6 +488,7 @@ async function recoverProducerWithinBudget(
   // a protected entry verdict), reported, never a silent skip.
   let refused = 0;
   let protectedPaths = 0;
+  let unfinished = 0;
   // Output-bound overruns settled as interrupted-output failures.
   let outputBound = 0;
   const selected = new Set<string>();
@@ -666,6 +667,7 @@ async function recoverProducerWithinBudget(
       });
       if (restored === "refused") refused++;
       if (restored === "protected") protectedPaths++;
+      if (restored === null) unfinished++;
       if (restored === "preserved" && entry.disposition === "duplicate") {
         ingested++;
       }
@@ -736,6 +738,9 @@ async function recoverProducerWithinBudget(
           : []),
         ...(protectedPaths > 0
           ? [`current-matrix:preservation-protected:${protectedPaths}`]
+          : []),
+        ...(unfinished > 0
+          ? [`current-matrix:preservation-unfinished:${unfinished}`]
           : []),
         ...(outputBound > 0
           ? [`current-matrix:output-bound:${outputBound}`]

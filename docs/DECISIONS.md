@@ -2625,3 +2625,28 @@ silently disappear from the summary. Only closed reason labels are emitted,
 never raw blocker diagnostics. The summary is a read of final repair state and
 grants no admission or state-write authority; unavailable state is reported
 explicitly, and a summary failure cannot interrupt the live pipeline.
+
+## Maintenance candidate recovery uses each target's own credential
+
+Finding (2026-10-24): every matrix-produced candidate for the Sentinel
+repository itself had stayed in flight (`candidate_preservation` intent,
+`preserved: null`, no ref) since 2026-10-18, while foreign targets' candidates
+from the same waves were preserved. The maintenance current-matrix walk
+([ops/hosted-autonomy-matrix-adapters.ts](../ops/hosted-autonomy-matrix-adapters.ts))
+built every target's candidate-recovery port, mirror refresh and default-branch
+read with the `ubiquity` installation token, which cannot read or push
+`ubiquity-sentinel/sentinel`. The runtime repair job reads only its own run's
+artifacts by design, so its preservation of such a record finds no objects and
+waits `unavailable` forever; maintenance is the only pass that can finish it.
+
+Decision: a maintenance pass binds each committed target to the credential that
+reaches it, `maintenanceTargetToken`: the self scope uses the self token, every
+foreign target keeps the App token. Unfinished preservations are no longer
+silent: the trusted tail logs `sentinel_candidate_preservation_unfinished` (task
+id plus the preserver's static verdict) and the pass reports
+`current-matrix:preservation-unfinished:<n>`. No charge, custody or review
+boundary changes. Still open: an in-flight candidate whose record carries
+existing-PR custody (`publishedHead` set) needs the takeover authority the
+maintenance port deliberately lacks, and the walk's 300-second history budget
+(`deferred_budget`, 975 snapshots read per pass) limits each maintenance run to
+roughly one producer wave.
