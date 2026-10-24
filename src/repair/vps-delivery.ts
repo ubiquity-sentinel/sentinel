@@ -18,6 +18,11 @@ import {
   type VpsReleaseRecordV1,
 } from "../contracts/vps-release.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import {
+  type CarriedReleaseProverV1,
+  carriedReleaseReceipt,
+  proveCarriedRelease,
+} from "./carried-release.ts";
 import { closureIntentKey, releaseRequestId } from "./keys.ts";
 import {
   releaseRequestMatchesDelivery,
@@ -63,6 +68,41 @@ export async function gatewayRequestBindsDelivery(
       !hasBlockingSeverity(review.unresolvedSeverities) &&
       (record.related.issueNumber === null ||
         review.taskAcceptance?.issueNumber === record.related.issueNumber);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The carried variant of `gatewayRequestBindsDelivery` (Sentinel #152). The
+ * durable request of a carried merge names the completed, clean review of an
+ * EARLIER head H0 (on B0) of the same pull request and gives the merged
+ * refreshed head H1 on tip T as its source (`carriedReleaseReceipt`, by the
+ * caller's fixed reviewer). It binds only while the caller's existing patch
+ * proof, re-derived between H0/B0 and H1/T, holds (`proveCarriedRelease`); a
+ * receipt of the record's own head never binds here, so the exact binder
+ * keeps every other request.
+ */
+export async function carriedGatewayRequestBindsDelivery(
+  request: ReleaseRequestV1,
+  record: WorkRecordV1,
+  review: ReviewReceiptV1 | null,
+  carried: CarriedReleaseProverV1,
+  revision: string = request.revision,
+): Promise<boolean> {
+  try {
+    const parsed = parseReleaseRequestV1(request);
+    return isGatewayVpsRepository(record.repository) &&
+      record.repository.installationId > 0 &&
+      (record.nextStep === "delivery" || record.nextStep === "review") &&
+      parsed.revision === revision &&
+      parsed.id === await releaseRequestId(
+          record.repository,
+          parsed.revision,
+          parsed.source.pullRequest,
+        ) &&
+      carriedReleaseReceipt(parsed, record, review, carried.reviewer) &&
+      await proveCarriedRelease(record, review, carried) === "holds";
   } catch {
     return false;
   }
@@ -126,14 +166,27 @@ export type GatewayVpsAcceptanceV1 =
  * Strict r12 parsing preserves candidate/prior/driver/controller, health,
  * telemetry, inference and native settlement provenance; no caller boolean,
  * Deno/hosted receipt or newer descendant revision substitutes for that tuple.
+ * With `carried` (Sentinel #152), a carried request binds through
+ * `carriedGatewayRequestBindsDelivery` instead (its patch proof re-derived);
+ * without it, and for every request the exact binder binds, nothing changes.
  */
 export async function observeGatewayVpsDelivery(
   state: Pick<StateReadView, "readRelease">,
   record: WorkRecordV1,
   request: ReleaseRequestV1,
   review: ReviewReceiptV1 | null,
+  carried?: CarriedReleaseProverV1,
 ): Promise<GatewayVpsAcceptanceV1> {
-  if (!await gatewayRequestBindsDelivery(request, record, review)) {
+  if (
+    !await gatewayRequestBindsDelivery(request, record, review) &&
+    (carried === undefined ||
+      !await carriedGatewayRequestBindsDelivery(
+        request,
+        record,
+        review,
+        carried,
+      ))
+  ) {
     return { kind: "wait" };
   }
   if (request.status === "cancelled" || request.status === "failed") {

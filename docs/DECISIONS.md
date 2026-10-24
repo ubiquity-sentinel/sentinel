@@ -1314,19 +1314,21 @@ a parked record is no delivery-line contender; a record waiting on the launcher
 stops holding the line after 12 polls without progress
 (`DELIVERY_QUEUE_STALL_LIMIT`). No merge intent is written for a carried merge
 (R79 would execute it against a head the receipt does not name and stop with a
-state error). A carried delivery can never be accepted or closed by the release
-path as it stands (round-2 rechecks P3): `gatewayRequestBindsDelivery` requires
-the request's receipt to name the record's own head and base (H0 is not H1), so
-R80's `observeGatewayVpsDelivery` and the launcher's closure gate answer `wait`
-before reading any release state, and for the self scope `acceptRelease` refuses
-through `deliveryTaskRefusal`, whose authorizing receipt needs the exact head,
-and blocks the merged record `missing_evidence`; R79 answers the same. While
-`sentinel-release` is disabled that wait is every request's, but once releases
-are enabled it would be permanent for carried deliveries. Generation-81
-follow-up, required before releases are enabled: release acceptance and closure
-accept a carried request through `carriedRequestBindsDelivery` (the receipt an
-earlier head of the same pull request, the proof re-derived, the task authorized
-as of `reviewedIdentity`). Until then a carried merge's source issue still
+state error). As generation 80 shipped, a carried delivery could never be
+accepted or closed by the release path (round-2 rechecks P3):
+`gatewayRequestBindsDelivery` requires the request's receipt to name the
+record's own head and base (H0 is not H1), so R80's `observeGatewayVpsDelivery`
+and the launcher's closure gate answer `wait` before reading any release state,
+and for the self scope `acceptRelease` refuses through `deliveryTaskRefusal`,
+whose authorizing receipt needs the exact head, and blocks the merged record
+`missing_evidence`; R79 answers the same. While `sentinel-release` is disabled
+that wait is every request's, but once releases are enabled it would be
+permanent for carried deliveries. That required follow-up is done (Sentinel
+#152; "2026-10-24: carried release acceptance and closure" below): release
+acceptance and closure accept a carried request only through the carried
+binders, which re-derive the patch proof and authorize the task as of
+`reviewedIdentity`; R79 and R80 still answer `wait` for a carried Gateway
+request (the rollback answer). Meanwhile a carried merge's source issue still
 closes through GitHub's own closing reference on the merge: the pull request
 body carries `Resolves #<issue>` and the App merges into the default branch, as
 for every launcher merge (verified live 2026-10-17: ai.ubq.fi issues 600, 664,
@@ -2412,7 +2414,7 @@ deferred record out to `done`). Live, fresh state 31e7cc24a (sequence 42434,
 609, 616, 618, 641, 649, 651, 659, 661, 664, 670, 674, 682, 683, 684, 686,
 688, 880) are deferred on the new runtime's first ordinary pass (no hosted step
 limit) and are then not rewritten; 618's request is a carried delivery that does
-not bind until the carried release acceptance follow-up ships.
+not bind under R80; the carried binders bind it (#152, 2026-10-24, below).
 
 ## Durable memory and self-healing
 
@@ -2947,3 +2949,59 @@ standing approval above. Applied as follows.
   that never retried keeps its earlier exact shape. The dispatcher's follow
   reader and the rollback child's projection (which omits installations) read
   retried journals unchanged.
+
+## 2026-10-24: carried release acceptance and closure (#152)
+
+- A carried merge books a production release request that names the receipt of
+  an earlier head H0 on B0 and gives the merged refreshed head H1 on tip T as
+  its source ("Spent records on a moved base" above). Release acceptance and
+  issue closure now accept such a request only through the carried binders:
+  `carriedGatewayRequestBindsDelivery` (Gateway, beside the exact binder in
+  `src/repair/vps-delivery.ts`) and `releaseDeliveryTaskRefusal` (the carried
+  variant of `deliveryTaskRefusal`, `src/repair/carried-release.ts`). The
+  receipt must be a completed review of an earlier head of the same pull request
+  in the same repository, by the fixed reviewer (the runtime port's
+  `reviewerIdentity`; on the launcher, the App), with nothing uncounted and no
+  unresolved P0, that accepted the record's own issue (`carriedReleaseReceipt`).
+- Each binder re-derives the patch proof between H0/B0 and H1/T with the
+  caller's existing proof: the runtime's git proof (`proveCarriedPatch`, decided
+  by `carriedPatchHolds`) or the launcher's exact tree proof
+  (`carriedPatchRefusal` over `mergeBaseTreeChanges`). It then authorizes the
+  task through the shared predicate as of `reviewedIdentity(record, receipt)`
+  and the trusted live task. The runtime derives the proof at most once per
+  step, the launcher at most once per pass.
+- The runtime uses the carried binders in `observeGatewayVpsDelivery` (its
+  optional `carried` prover), in `acceptRelease` for the self and Gateway
+  scopes, and in `retryClosure`. The launcher uses them in `gatewayClosureGate`,
+  and its closure pass authorizes a carried Gateway delivery through
+  `releaseAuthorizingReceipt` (`ops/hosted-autonomy-carried-release.ts`). Every
+  Gateway closure write still follows a `gatewayClosureGate` call that
+  re-derives the proof.
+- A request whose patch no longer proves is refused. This covers changed digests
+  or change sets, a refreshed head that is not on its tip, and on the launcher a
+  protected path. A Gateway request then does not bind and its record waits
+  beside it. A self delivery is blocked `missing_evidence` with
+  `MERGE_WITHOUT_REVIEW_DETAIL`, as any unauthorized delivery is. An unreadable
+  proof waits, and a runtime without the proof capability never binds a carried
+  request.
+- Non-carried requests are unchanged. The exact binders run first, exactly as
+  before. The carried binder never binds a receipt of the record's own head and
+  reads no proof for one.
+- Both new modules (`src/repair/carried-release.ts`,
+  `ops/hosted-autonomy-carried-release.ts`) join the hosted-authority protected
+  paths beside `src/repair/vps-delivery.ts`, the gateway delivery binding #158
+  protects, so a model candidate can neither publish nor merge a change to them.
+- Not changed: the launcher's self closure (`planHostedClosures`) keeps the
+  exact authorization, and the runtime's `acceptRelease` closes a carried self
+  delivery. The native-queue authority keeps the exact binder, because no
+  carried merge goes through the queue.
+- No state shape is added. The writes are the closure intent and the `done` and
+  blocked transitions the exact path already writes. Rollback: R79, R80 and
+  earlier launchers keep their exact binder and answer `wait` for a carried
+  Gateway request before any release read, as before (the runtime re-arms its
+  release wait; a closure intent this runtime wrote is kept and never consumed).
+  For an accepted carried self delivery they block the record
+  `missing_evidence`, as before.
+- `sentinel-release` stays disabled and nothing is enabled. Until the release
+  ref records a carried request, it is release-deferred like any other (JAM
+  B12).

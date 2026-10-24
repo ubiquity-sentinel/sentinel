@@ -30,7 +30,11 @@ import {
 } from "./vps-delivery.ts";
 import { persistWork } from "./loop-state.ts";
 import {
-  deliveryTaskRefusal,
+  type CarriedReleaseProverV1,
+  gitCarriedReleaseProver,
+  releaseDeliveryTaskRefusal,
+} from "./carried-release.ts";
+import {
   readDeliveryTaskContext,
   releaseRequestReceipt,
   semanticRefusalKind,
@@ -306,13 +310,19 @@ export async function observeHostedReleaseAcceptance(
   return waitRelease(deps, context, record, now);
 }
 
-/** Existing accepted behavior: closure intent when an issue is attached. */
+/**
+ * Existing accepted behavior: closure intent when an issue is attached. A
+ * carried delivery (Sentinel #152) is authorized as of its reviewed identity
+ * while its git patch proof holds (`releaseDeliveryTaskRefusal`); `carried`
+ * is the step's one prover.
+ */
 export async function acceptRelease(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
   request: ReleaseRequestV1,
   now: number,
+  carried: CarriedReleaseProverV1 | undefined = gitCarriedReleaseProver(deps),
 ): Promise<StepResultV1> {
   const queueGuard = await guardQueueDelivery(
     deps,
@@ -341,7 +351,13 @@ export async function acceptRelease(
   // delivery, so a missing or non-authorizing reference fails closed instead
   // of persisting a closure intent.
   const referenced = releaseRequestReceipt(context.snapshot.reviews, request);
-  const semantic = await deliveryTaskRefusal(deps, record, referenced);
+  const semantic = await releaseDeliveryTaskRefusal(
+    deps,
+    record,
+    request,
+    referenced,
+    carried,
+  );
   if (semantic === "wait") return waitRelease(deps, context, record, now);
   if (semantic !== null) {
     return persistWork(
@@ -364,7 +380,7 @@ export async function acceptRelease(
   const withIntent = setIntent(record, intent, now);
   const persisted = await persistWork(deps, context, withIntent);
   if (persisted.kind !== "progress") return persisted;
-  return retryClosure(deps, context, withIntent);
+  return retryClosure(deps, context, withIntent, carried);
 }
 
 /** Existing failed/rolled_back behavior: an ordinary blocked record. */
@@ -433,11 +449,15 @@ export async function observeReleaseAcceptance(
         return deferRelease(deps, context, record, now);
       }
     }
+    // A carried request binds only while its git patch proof holds (Sentinel
+    // #152); one prover serves this whole step.
+    const carried = gitCarriedReleaseProver(deps);
     const observed = await observeGatewayVpsDelivery(
       deps.state,
       record,
       request,
       releaseRequestReceipt(context.snapshot.reviews, request),
+      carried,
     );
     if (observed.kind === "blocked") {
       return persistWork(
@@ -451,7 +471,7 @@ export async function observeReleaseAcceptance(
     }
     const checks = await gateDeliveryOnChecks(deps, context, record, now);
     if (checks !== null) return checks;
-    return acceptRelease(deps, context, record, request, now);
+    return acceptRelease(deps, context, record, request, now, carried);
   }
   const release = await deps.state.readRelease();
   if (!release.ok || release.value.status !== "found") {

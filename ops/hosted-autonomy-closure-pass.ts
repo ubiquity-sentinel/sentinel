@@ -8,10 +8,13 @@ import type { GitSha } from "../src/contracts/brands.ts";
 import { canonicalStringify } from "../src/contracts/canonical.ts";
 import { failed, readRepairSafely, skipped } from "./hosted-autonomy-state.ts";
 import {
-  authorizingReceipt,
   historicalMergedPublication,
   readTrustedTask,
 } from "./hosted-autonomy-delivery.ts";
+import {
+  releaseAuthorizingReceipt,
+  treeCarriedReleaseProver,
+} from "./hosted-autonomy-carried-release.ts";
 import {
   hostedDeliveryProofMatches,
   resolveHostedDelivery,
@@ -40,6 +43,7 @@ import type {
   HostedAutonomyResultV1,
 } from "./hosted-autonomy-types.ts";
 import {
+  carriedGatewayRequestBindsDelivery,
   gatewayClosureIntentBindsRequest,
   gatewayReleaseDeferred,
   gatewayRequestBindsDelivery,
@@ -78,11 +82,21 @@ async function gatewayClosureGate(
   const request = requests[0];
   const referenced = releaseRequestReceipt(context.snapshot.reviews, request);
   if (
-    referenced?.id !== proof.reviewReceiptId ||
+    referenced === null || referenced.id !== proof.reviewReceiptId ||
     request.source.reviewRequestId !== proof.reviewRequestId
   ) return "wait";
+  // A carried request (Sentinel #152) binds only while the exact tree proof,
+  // re-derived once in this pass, holds.
+  const carried = treeCarriedReleaseProver(context, scope.surface, referenced);
   if (
-    !await gatewayRequestBindsDelivery(request, record, referenced, revision)
+    !await gatewayRequestBindsDelivery(request, record, referenced, revision) &&
+    !await carriedGatewayRequestBindsDelivery(
+      request,
+      record,
+      referenced,
+      carried,
+      revision,
+    )
   ) return "wait";
   let optedOut: boolean | null = null;
   try {
@@ -91,8 +105,8 @@ async function gatewayClosureGate(
         null;
   } catch { /* missing current source evidence refuses */ }
   if (record.related.issueNumber === null || optedOut !== false) return "wait";
-  const authorized = authorizingReceipt(
-    { ...context.snapshot, reviews: referenced === null ? [] : [referenced] },
+  const authorized = releaseAuthorizingReceipt(
+    { ...context.snapshot, reviews: [referenced] },
     record,
     await readTrustedTask(scope.surface, record),
   );
@@ -102,6 +116,7 @@ async function gatewayClosureGate(
     record,
     request,
     authorized,
+    carried,
   );
   return accepted.kind === "blocked"
     ? { blocked: accepted.reason }
@@ -236,7 +251,7 @@ export async function runHostedClosurePass(
       }
       const scope = await scopeFor(record.repository);
       if (
-        authorizingReceipt(
+        releaseAuthorizingReceipt(
           snapshot,
           record,
           await readTrustedTask(scope.surface, record),
@@ -423,7 +438,7 @@ export async function runHostedClosurePass(
     // The same trusted, immediately-preceding source-issue read authorizes the
     // merge evidence this closure will consume, exactly as it did the merge.
     if (
-      authorizingReceipt(
+      releaseAuthorizingReceipt(
         snapshot,
         record,
         await readTrustedTask(scope.surface, record),
@@ -522,7 +537,7 @@ export async function runHostedClosurePass(
         closureTasks.get(record.id) ?? "unavailable",
       ) ||
       !gatewayIntentClosable(context, record) ||
-      authorizingReceipt(
+      releaseAuthorizingReceipt(
           snapshot,
           record,
           closureTasks.get(record.id) ?? "unavailable",
@@ -574,7 +589,7 @@ export async function runHostedClosurePass(
       // the full receipt/record authorization is re-applied to it: an earlier
       // action in this same pass that changed this issue's text (or an
       // unreadable context) refuses here, so a stale bulk read never closes.
-      const authorized = authorizingReceipt(
+      const authorized = releaseAuthorizingReceipt(
         snapshot,
         record,
         await readTrustedTask(scope.surface, record),
@@ -668,7 +683,7 @@ export async function runHostedClosurePass(
         if (issueOpen === null) continue;
         if (issueOpen === false) {
           if (
-            authorizingReceipt(
+            releaseAuthorizingReceipt(
               snapshot,
               record,
               await readTrustedTask(scope.surface, record),

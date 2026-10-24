@@ -37,6 +37,10 @@ export const HOSTED_AUTHORITY_PROTECTED_PATHS: readonly string[] = Object
     "src/repair/review-gate.ts",
     "src/repair/transitions.ts",
     "src/repair/vps-delivery.ts",
+    // Its carried variant (Sentinel #152): the carried receipt and proof the
+    // gateway binding delegates to, and the launcher's carried authorization.
+    "src/repair/carried-release.ts",
+    "ops/hosted-autonomy-carried-release.ts",
     // Vendored upstream review rubric (read-only boundary).
     "src/github/codex-review-rubric.ts",
     // Native review invocation, lifecycle evidence and completion authority.
