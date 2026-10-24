@@ -651,7 +651,13 @@ export function markTerminalBlocked(
     blocker,
     wait: null,
     intent: null,
-    target: { ...record.target, pr: null },
+    // A self-merge receipt (`target.selfMerge`, stage issue_closed) binds the
+    // merged PR, which is delivered rather than unfinished: clearing the PR
+    // would fail the receipt binding and throw out of the whole repair cycle
+    // (live run 40081911304: a self-merged record reaching `blockRelease`).
+    target: record.target.selfMerge === undefined
+      ? { ...record.target, pr: null }
+      : record.target,
     updatedAt: now,
   });
 }
