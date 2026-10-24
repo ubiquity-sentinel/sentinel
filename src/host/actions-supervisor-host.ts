@@ -30,6 +30,7 @@ import type { ReplayRuntimeV1 } from "../replay/runtime.ts";
 import { createReleaseStateStore, DenoGitRunner } from "../state/mod.ts";
 import { HostedSupervisorCooldownGate } from "./hosted-cooldown.ts";
 import { createActionsMatrixArtifactTransport } from "./matrix-artifacts.ts";
+import { emitRunSummary, type RunSummaryDepsV1 } from "./run-summary.ts";
 import type { MatrixArtifactTransportV1 } from "./matrix-artifact-port.ts";
 import {
   parseHostedEnvironment,
@@ -76,6 +77,8 @@ const SUPERVISOR_REPOSITORY: RepositoryIdentityV1 = HOSTED_CONTROLLER_SELF;
 const NATIVE_TOKEN_ENV = "GITHUB_TOKEN";
 
 const OUTPUT_ENV = "GITHUB_OUTPUT";
+/** Finalize's run summary (#178) appends Markdown here when Actions sets it. */
+const STEP_SUMMARY_ENV = "GITHUB_STEP_SUMMARY";
 
 const PATH_ENV = "PATH";
 
@@ -103,6 +106,15 @@ export interface HostedSupervisorHostInputV1 {
   >;
   /** Prepare-only exact output writer; one key=value record per call. */
   writeOutput?: (name: string, value: string) => Promise<void>;
+  /**
+   * Finalize only (#178): print one run-level summary of the run attempt's
+   * runtime jobs and append it to the step summary. Advisory; absent, no
+   * job log is read.
+   */
+  runSummary?: Pick<
+    RunSummaryDepsV1,
+    "log" | "stepSummaryPath" | "appendFile"
+  >;
 }
 
 export interface HostedSupervisorHostResultV1 {
@@ -233,6 +245,13 @@ export async function runHostedSupervisorHost(
     ? await runHostedSupervisorPrepare(core)
     : await runHostedSupervisorFinalize(core);
   if (job === "finalize") {
+    if (input.runSummary !== undefined) {
+      await emitRunSummary({
+        ...input.runSummary,
+        readJobs: (runId, runAttempt, select) =>
+          client.readRunJobSummaries(runId, runAttempt, select),
+      }, { runId: identity.runId, runAttempt: identity.runAttempt });
+    }
     return {
       job,
       status: outcome.status,
@@ -373,6 +392,9 @@ export async function main(): Promise<void> {
     process,
     writeOutput,
     ownerStartupRecoveryOnly: Deno.args[0] === "--owner-startup-recovery-only",
+    runSummary: job === "finalize"
+      ? { stepSummaryPath: Deno.env.get(STEP_SUMMARY_ENV) }
+      : undefined,
   });
   // Bounded trusted result only; no raw error or credential is ever logged.
   console.log(JSON.stringify({

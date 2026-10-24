@@ -5,11 +5,79 @@ import { portError, portOk, type PortResultV1 } from "../contracts/ports.ts";
 import { GitHubApiClient } from "../github/client.ts";
 import { parseHostedCompare } from "../github/client-hosted-revision-wire.ts";
 import { createDeadline } from "../github/http.ts";
+import type { ChildRuntimeSummaryV1, RunJobSummaryV1 } from "./run-summary.ts";
 
 const ROOT = HOSTED_CONTROLLER_API_PATH;
 const record = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 export class HostedSupervisorGitHubClient extends GitHubApiClient {
+  /**
+   * #178: every completed job of one run attempt with the summary `select`
+   * reads from its bounded signed log (null when the log is unreadable or
+   * has none). Read-only, self scope only, one bounded deadline; only the
+   * selected summary is retained, never the log.
+   */
+  async readRunJobSummaries(
+    runId: number,
+    runAttempt: number,
+    select: (log: string) => ChildRuntimeSummaryV1 | null,
+    budgetMs = 90_000,
+  ): Promise<PortResultV1<RunJobSummaryV1[]>> {
+    if (
+      !this.isHostedSelfScope() || !Number.isSafeInteger(runId) ||
+      runId <= 0 || !Number.isSafeInteger(runAttempt) || runAttempt <= 0
+    ) return portError("invalid", "run summary scope is invalid");
+    const deadline = createDeadline(budgetMs);
+    try {
+      const jobs: { id: number; name: string; conclusion: string | null }[] =
+        [];
+      for (let page = 1; page <= 3; page++) {
+        const response = await this.actionsReleaseGet(
+          `${ROOT}/actions/runs/${runId}/attempts/${runAttempt}/jobs`,
+          { per_page: "100", page: String(page) },
+          deadline,
+        );
+        if (!response.ok) return response;
+        const value = response.value;
+        if (!record(value) || !Array.isArray(value.jobs)) {
+          return portError("invalid", "run job list is malformed");
+        }
+        for (const job of value.jobs) {
+          if (
+            !record(job) || !Number.isSafeInteger(job.id) ||
+            typeof job.name !== "string"
+          ) return portError("invalid", "run job list is malformed");
+          if (job.status !== "completed") continue;
+          jobs.push({
+            id: job.id as number,
+            name: job.name.slice(0, 200),
+            conclusion: typeof job.conclusion === "string"
+              ? job.conclusion
+              : null,
+          });
+        }
+        if (value.jobs.length < 100) break;
+      }
+      const rows: RunJobSummaryV1[] = [];
+      for (const job of jobs) {
+        const log = await this.readHostedRuntimeLog(job.id, deadline);
+        let summary: ChildRuntimeSummaryV1 | null = null;
+        if (log.ok) {
+          try {
+            summary = select(log.value);
+          } catch {
+            summary = null;
+          }
+        }
+        rows.push({ name: job.name, conclusion: job.conclusion, summary });
+      }
+      return portOk(rows);
+    } catch {
+      return portError("unavailable", "run job summaries are unavailable");
+    } finally {
+      deadline.dispose();
+    }
+  }
   async verifyAncestor(
     ancestor: GitSha,
     descendant: GitSha,
