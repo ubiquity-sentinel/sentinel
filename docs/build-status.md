@@ -20,7 +20,7 @@ ownership, authority or acceptance.
   there still waits on #180 (`queue.proofActivated`, owner-only edit).
 - Runtime: every supervisor run since 2026-10-23 22:50 UTC settled `success`,
   including three launcher advances and their model-disabled bootstraps
-  (generations 96 and 97, no rollback). The launcher is `b69a7bf4a5`.
+  (generations 96 and 97, no rollback).
 - Fixed by hand and landed on `development` (`83a308d059`, merged with the self
   merge of #194): #196 and #197 (self-merge transient git reads and proof
   custody, live since `b69a7bf4a5`), #198–#202 (pre-merge rate limit and
@@ -29,16 +29,19 @@ ownership, authority or acceptance.
   unverified round-2 P1 confirmed by reading) and the hosted retirement guard
   for a kept self-merge proof (held-fix review P3). Each change carries a test
   that fails on the previous code. A held-fix adversarial review found no P0, P1
-  or P2. CI `40076814549` failed once in the modules shard on the unrelated
-  `model-port-early-notifications` heap bound (33.7 MB against 32 MB; 3/3 local
-  passes); one re-run is in flight.
+  or P2. CI `40076814549` on `83a308d059` failed twice (one re-run) in the
+  modules shard on the unrelated `model-port-early-notifications` heap bound
+  (33.7 MB against 32 MB; 3/3 local passes); CI `40077892150` on `e39f3f081b`,
+  which differs only in this ledger, passed all seven jobs. The test's GC-timing
+  sensitivity is filed as #208. Launcher `sentinel-supervisor` advanced
+  `b69a7bf4a5` → `e39f3f081b` at 08:39 UTC; #198–#202 are closed with their fix
+  references.
 - Review loop: round 2's nine unverified candidates were re-verified (two
   skeptics each): four survived and are filed as #204–#207; five were refuted or
   split. The self-merge recovery dead end on a non-transient conflict is filed
   as #203.
-- Next: on a green re-run advance `sentinel-supervisor` to `83a308d059` and
-  close #198–#202; watch #195 (issue 187) and the Passport queue; ai.ubq.fi
-  needs #180.
+- Next: watch the generation-98 bootstrap on `e39f3f081b`, #195 (issue 187) and
+  the Passport queue; ai.ubq.fi needs #180.
 
 ## Prior checkpoint (2026-10-24 05:00 UTC)
 
