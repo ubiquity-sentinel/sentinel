@@ -2645,13 +2645,10 @@ foreign target keeps the App token. Unfinished preservations are no longer
 silent: the trusted tail logs `sentinel_candidate_preservation_unfinished` (task
 id plus the preserver's static verdict) and the pass reports
 `current-matrix:preservation-unfinished:<n>`. No charge, custody or review
-boundary changes. Still open (issue #184): a retry admitted on the base for a
-task whose attempt-1 PR is still published yields a successor that does not
-descend from `publishedHead`; the trusted publication validator refuses it
-deterministically (`PUBLICATION_PUBLISHED_HEAD_DETAIL`), so the runtime parks it
-as "candidate preservation validation refused" when it holds the objects and
-maintenance leaves it in flight when it does not (Passport 42/49/50/53/59).
-Owner decision: build retries on the published head, retire the published head
-on retry admission, or park explicitly. Also open (issue #185): the walk's
-300-second history budget (`deferred_budget`, 975 snapshots read per pass)
-limits each maintenance run to roughly one producer wave.
+boundary changes. Correction (02:10 UTC): the Passport retry successors
+(42/49/50/53/59) that looked wedged were preserved by the 00:41 UTC maintenance
+run once its walk reached their producer wave (`current-matrix:ingested:9`), so
+the published-head ancestry theory recorded for #184 was wrong; #184 is closed
+as not a defect and the delay belongs to the walk budget. Also open (issue
+#185): the walk's 300-second history budget (`deferred_budget`, 975 snapshots
+read per pass) limits each maintenance run to roughly one producer wave.

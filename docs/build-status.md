@@ -22,11 +22,13 @@ ownership, authority or acceptance.
   fails on the old wiring) and an unfinished-preservation diagnostic/action.
   Local proof: the real #179 bundle preserves through the real preserver against
   a local remote (only my shallow clone broke the fresh-store proof).
-- Remaining in this class: Passport 42/49/50/53/59 are retry successors that do
-  not descend from their published PR head, which the publication validator
-  refuses deterministically; filed as #184 (owner policy decision). The walk's
-  300 s budget processes about one producer wave per maintenance run
-  (`deferred_budget`, 975 history steps); filed as #185.
+- Correction 02:10 UTC: the 00:41 maintenance run preserved Passport
+  42/49/50/53/59/77/83/84/85 once its walk reached their wave
+  (`current-matrix:ingested:9`); #184 is closed as not a defect. The walk's 300
+  s budget still processes about one producer wave per maintenance run
+  (`deferred_budget`); filed as #185. Run 40046208972 (ordinary, 79eb079e8d)
+  settled healthy; ai.ubq.fi 1212/1229/1250 remain `ci_pending` with refreshed
+  waits; #179 still waits for the fixed launcher's maintenance.
 - 01:45 UTC: CI 40050503785 passed on fdc98f727a (token fix plus the test
   fixture moved under the repository root, which the CI shards can read);
   launcher `sentinel-supervisor` advanced 9b2de3d259 → fdc98f727a. The audit's
