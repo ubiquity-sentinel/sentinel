@@ -647,3 +647,73 @@ Deno.test(
     await Deno.remove(rig.tmp, { recursive: true });
   },
 );
+
+Deno.test(
+  "hosted autonomy: an abandoned hosted release is terminal and defers no pass",
+  async () => {
+    // Live runs 40083925576 and 40085831848: release f42d04c7 was abandoned
+    // as included_in_successor, yet the runner counted only accepted,
+    // rolled_back and owner_superseded as terminal, so every closure, retry
+    // and delivery pass for every target was skipped release_not_terminal.
+    const request = await buildHostedReleaseRequest(
+      SELF_REPO,
+      MERGE,
+      HEAD,
+      BASE,
+      51,
+      authorizingReceipt(),
+      T0 + 2000,
+    );
+    if (request === null) throw new Error("fixture request invalid");
+    const { parseHostedReleaseRecordV1 } = await import(
+      "../../src/contracts/hosted-supervisor.ts"
+    );
+    const requested = {
+      version: "v1",
+      kind: "hosted_release",
+      id: request.id,
+      request,
+      phase: "requested",
+      priorRevision: BASE,
+      priorProof: null,
+      candidateProof: null,
+      rollbackProof: null,
+      pointerIntent: null,
+      createdAt: T0 + 2500,
+      updatedAt: T0 + 2500,
+    } as const;
+    const { rig, github } = await makeRig("autonomy-release-abandoned", {
+      repair: repairSnapshot([blockedRecord()], [authorizingReceipt()]),
+      release: releaseSnapshot([parseHostedReleaseRecordV1(requested)]),
+    });
+    // The validated writer only stores an abandonment with its successor
+    // installation, so the read returns the same record as abandoned.
+    const abandoned = parseHostedReleaseRecordV1({
+      ...requested,
+      phase: "abandoned",
+      abandonment: {
+        executionIds: ["40076699068:1:repair"],
+        fromPhase: "requested",
+        reason: "included_in_successor",
+        recordedAt: T0 + 3000,
+        successorRevision: MERGE,
+      },
+      updatedAt: T0 + 3000,
+    });
+    const readRelease = rig.state.readRelease.bind(rig.state);
+    rig.state.readRelease = async () => {
+      const read = await readRelease();
+      if (!read.ok || read.value.status !== "found") return read;
+      return {
+        ...read,
+        value: {
+          ...read.value,
+          snapshot: { ...read.value.snapshot, hostedReleases: [abandoned] },
+        },
+      };
+    };
+    const result = await run(rig, github);
+    assert.notEqual(result.reason, "release_not_terminal");
+    await Deno.remove(rig.tmp, { recursive: true });
+  },
+);
