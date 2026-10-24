@@ -44,6 +44,32 @@ export const CANDIDATE_PROTECTED_BLOCKER: string = CONFLICT_PROTECTED_DETAIL;
  */
 export type CandidateRestoreV1 = "preserved" | "refused" | "protected" | null;
 
+type PreservationUnfinishedReason =
+  | "binding_mismatch"
+  | "precheck_failed"
+  | "preserver_error"
+  | "ref_mismatch"
+  | "state_unavailable"
+  | "state_changed"
+  | "clock_invalid"
+  | "clock_regressed"
+  | "cas_not_applied";
+
+function reportUnfinishedPreservation(
+  taskId: string,
+  reason: PreservationUnfinishedReason,
+  error?: { kind: string; detail: string },
+): void {
+  console.log(JSON.stringify({
+    kind: "sentinel_candidate_preservation_unfinished",
+    taskId,
+    reason,
+    ...(error === undefined
+      ? {}
+      : { error: error.kind, detail: error.detail.slice(0, 160) }),
+  }));
+}
+
 /**
  * The second closed parked-preservation class: historical matrix custody
  * parked the exact candidate with its submitted admission and a pending
@@ -130,7 +156,10 @@ export async function restoreBlockedCandidate(
     binding.planDigest !== wave.planDigest ||
     binding.plannerJobId !== wave.provenance.plannerJobId ||
     binding.resultDigest !== await matrixDigestV1(result)
-  ) return null;
+  ) {
+    reportUnfinishedPreservation(record.id, "binding_mismatch");
+    return null;
+  }
   return await preserveBlockedCandidate({ ...input, recordRefusal: true });
 }
 
@@ -149,7 +178,10 @@ export async function restoreInflightCandidate(
 ): Promise<CandidateRestoreV1> {
   const { record, wave } = input;
   const intent = record.intent;
-  if (!isInflightPreservation(record) || !intent) return null;
+  if (!isInflightPreservation(record) || !intent) {
+    reportUnfinishedPreservation(record.id, "binding_mismatch");
+    return null;
+  }
   const cells = wave.plan.cells.filter((cell) =>
     cell.reservationId === intent.requestId
   );
@@ -166,7 +198,10 @@ export async function restoreInflightCandidate(
     results[0].taskId !== record.id ||
     results[0].receipt?.candidate?.head !== record.target.head ||
     results[0].bundle?.head !== record.target.head
-  ) return null;
+  ) {
+    reportUnfinishedPreservation(record.id, "binding_mismatch");
+    return null;
+  }
   return await preserveBlockedCandidate(input);
 }
 
@@ -197,15 +232,22 @@ export async function preserveBlockedCandidate(
   const { record, state, github, clock } = input;
   const intent = record.intent;
   if (!restorableCandidate(record) || !intent || !intent.branch) {
+    reportUnfinishedPreservation(record.id, "precheck_failed");
     return null;
   }
   const before = await state.readRepair();
+  if (!before.ok || before.value.status !== "found") {
+    reportUnfinishedPreservation(record.id, "state_unavailable");
+    return null;
+  }
   if (
-    !before.ok || before.value.status !== "found" ||
     canonicalStringify(
-        before.value.snapshot.work.find((row) => row.id === record.id),
-      ) !== canonicalStringify(record)
-  ) return null;
+      before.value.snapshot.work.find((row) => row.id === record.id),
+    ) !== canonicalStringify(record)
+  ) {
+    reportUnfinishedPreservation(record.id, "state_changed");
+    return null;
+  }
   const candidate = {
     operationKey: intent.key,
     base: record.target.base,
@@ -231,32 +273,48 @@ export async function preserveBlockedCandidate(
       // Nothing is written for an unfinished preservation; the bounded
       // diagnostic names the task and the trusted preserver's static verdict
       // so a candidate that never reaches its ref is visible in the job log.
-      console.log(JSON.stringify({
-        kind: "sentinel_candidate_preservation_unfinished",
-        taskId: record.id,
-        error: preserved.error.kind,
-        detail: preserved.error.detail.slice(0, 160),
-      }));
+      reportUnfinishedPreservation(
+        record.id,
+        "preserver_error",
+        preserved.error,
+      );
       return null;
     }
     const observed = await github.readRef(candidate.ref);
-    if (!observed.ok || observed.value !== null) return null;
+    if (!observed.ok || observed.value !== null) {
+      reportUnfinishedPreservation(record.id, "ref_mismatch");
+      return null;
+    }
     refusal = preserved.error.detail === PUBLICATION_PROTECTED_DETAIL
       ? CANDIDATE_PROTECTED_BLOCKER
       : PRESERVATION_VALIDATION_REFUSED;
   } else {
     const observed = await github.readRef(candidate.ref);
-    if (!observed.ok || observed.value?.sha !== candidate.head) return null;
+    if (!observed.ok || observed.value?.sha !== candidate.head) {
+      reportUnfinishedPreservation(record.id, "ref_mismatch");
+      return null;
+    }
   }
   const fresh = await state.readRepair();
+  if (!fresh.ok || fresh.value.status !== "found") {
+    reportUnfinishedPreservation(record.id, "state_unavailable");
+    return null;
+  }
   if (
-    !fresh.ok || fresh.value.status !== "found" ||
     fresh.value.head !== before.value.head ||
     canonicalStringify(fresh.value.snapshot) !==
       canonicalStringify(before.value.snapshot)
-  ) return null;
+  ) {
+    reportUnfinishedPreservation(record.id, "state_changed");
+    return null;
+  }
   const now = clock.now();
-  if (!Number.isSafeInteger(now) || now < fresh.value.snapshot.updatedAt) {
+  if (!Number.isSafeInteger(now)) {
+    reportUnfinishedPreservation(record.id, "clock_invalid");
+    return null;
+  }
+  if (now < fresh.value.snapshot.updatedAt) {
+    reportUnfinishedPreservation(record.id, "clock_regressed");
     return null;
   }
   const next = {
@@ -287,7 +345,10 @@ export async function preserveBlockedCandidate(
     ),
   };
   const written = await state.writeRepair(next, fresh.value.head);
-  if (!written.ok || written.value.status !== "applied") return null;
+  if (!written.ok || written.value.status !== "applied") {
+    reportUnfinishedPreservation(record.id, "cas_not_applied");
+    return null;
+  }
   const readback = await state.readRepair();
   if (
     !readback.ok || readback.value.status !== "found" ||
