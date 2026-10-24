@@ -856,6 +856,10 @@ export async function runActionsRepairHost(
           controllerSha,
           githubCooldown: gate,
           premergeCi: bindings.premergeCi,
+          // #183 progress comments: the trusted host only, never a matrix cell.
+          progressComments: deps.job === "matrix_cell"
+            ? undefined
+            : bindings.progressComments,
           // Legacy callers retain a closed pair; each prepared target resolves its own pair below.
           incidents: unavailableIncidents,
           replay: unavailableReplay,

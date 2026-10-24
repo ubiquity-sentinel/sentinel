@@ -11,6 +11,12 @@ import {
   type PremergeCiReportV1,
 } from "./actions-premerge-ci.ts";
 import { SENTINEL_APP_INSTALLATION_ID } from "./hosted-app-grant.ts";
+import type { WorkRecordV1 } from "../contracts/work-record.ts";
+import {
+  postProgressComments,
+  progressChanges,
+  type ProgressCommentsReportV1,
+} from "./progress-comments.ts";
 
 export interface ActionsTargetBindingsInputV1 {
   selfRepository: RepositoryIdentityV1;
@@ -40,6 +46,15 @@ export interface ActionsTargetBindingsV1 {
    * Sentinel pull request itself, on the target token and its mint grant.
    */
   premergeCi(config: RepositoryConfigV1): Promise<PremergeCiReportV1>;
+  /**
+   * Plain-language progress comments for one target's cycle (#183), posted on
+   * that target's own token through the shared cooldown gate.
+   */
+  progressComments(
+    config: RepositoryConfigV1,
+    before: readonly WorkRecordV1[],
+    after: readonly WorkRecordV1[],
+  ): Promise<ProgressCommentsReportV1>;
 }
 
 export async function createActionsTargetBindings(
@@ -66,10 +81,11 @@ export async function createActionsTargetBindings(
         input.sourceProfiles,
       )
       : Promise.resolve(null);
+  const tokenFor = (config: RepositoryConfigV1): string =>
+    isSelfTarget(config) ? input.selfWriteToken : input.targetToken;
   return {
     isSelfTarget,
-    tokenFor: (config) =>
-      isSelfTarget(config) ? input.selfWriteToken : input.targetToken,
+    tokenFor,
     loginFor: (config) =>
       isSelfTarget(config)
         ? (input.selfToken === undefined ? input.actionsLogin : input.appLogin)
@@ -97,5 +113,17 @@ export async function createActionsTargetBindings(
         trustedAuthor: input.targetLogin,
         deadline: input.auth.deadline,
       }, config),
+    progressComments: (config, before, after) =>
+      postProgressComments(
+        {
+          http: input.auth.http,
+          clock: input.auth.clock,
+          gate: input.auth.gate,
+          token: tokenFor(config),
+          deadline: input.auth.deadline,
+        },
+        config,
+        progressChanges(before, after, config.repository),
+      ),
   };
 }

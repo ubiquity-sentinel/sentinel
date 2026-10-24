@@ -12,6 +12,7 @@ import type {
   StateReadView,
 } from "../contracts/ports.ts";
 import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
+import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { RepositoryIdentityV1 } from "../contracts/shared.ts";
 import type { RepairCycleOutcomeV1 } from "../repair/loop.ts";
 import type { BudgetControllerV1 } from "../budget/mod.ts";
@@ -245,6 +246,16 @@ export interface ActionsTargetCyclesInputV1 {
    */
   premergeCi?: (config: RepositoryConfigV1) => Promise<unknown>;
   /**
+   * Plain-language progress comments (#183): the target's work records before
+   * and after its cycle, posted by the trusted host. Never fatal, never a
+   * state write; omitted in matrix cells.
+   */
+  progressComments?: (
+    config: RepositoryConfigV1,
+    before: readonly WorkRecordV1[],
+    after: readonly WorkRecordV1[],
+  ) => Promise<unknown>;
+  /**
    * A matrix cell's read-only CI failure evidence reader for one target,
    * on the cell's scoped read token (generation 81). Absent elsewhere.
    */
@@ -268,6 +279,20 @@ export interface ActionsTargetCyclesResultV1 {
    * disjoint from `addressed` and `skipped` and is never a success claim.
    */
   readonly failed: readonly string[];
+}
+
+/** The repair state's work records, or null when they cannot be read. */
+async function workSnapshot(
+  state: StateReadView,
+): Promise<readonly WorkRecordV1[] | null> {
+  try {
+    const read = await state.readRepair();
+    return read.ok && read.value.status === "found"
+      ? read.value.snapshot.work
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -363,6 +388,9 @@ export async function runActionsTargetCycles(
         }
       }
       const capabilities = input.resolveTargetCapabilities?.(config) ?? input;
+      const before = input.progressComments === undefined
+        ? null
+        : await workSnapshot(input.state);
       outcome = await runCycle({
         clock: input.clock,
         state: input.state,
@@ -381,6 +409,23 @@ export async function runActionsTargetCycles(
         stepLimit: input.stepLimit,
         modelStartsEnabled: input.modelStartsEnabled,
       });
+      if (input.progressComments !== undefined && before !== null) {
+        try {
+          const after = await workSnapshot(input.state);
+          if (after !== null) {
+            await input.progressComments(config, before, after);
+          }
+        } catch (error) {
+          console.log(JSON.stringify({
+            kind: "sentinel_progress_comments",
+            repository: slug,
+            failed: true,
+            detail: error instanceof Error
+              ? error.message
+              : "progress comments failed",
+          }));
+        }
+      }
     }
   } finally {
     // The advisory report is emitted even when a cycle threw, so the targets
