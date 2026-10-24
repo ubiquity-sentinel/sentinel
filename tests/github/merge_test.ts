@@ -1,8 +1,9 @@
 // mergePullRequest suite: exact-head merge authorization with authoritative
 // re-observation of the current review (exact service-receipt binding and
-// exact GitHub review id), authenticated human resolution, effective strict
-// protections from the actual rules API (active rules + per-ruleset bypass
-// policy), exact required checks, required approvals, candidate base ancestry,
+// exact GitHub review id), authenticated human resolution, the P0-only
+// blocking policy (owner directive 2026-10-24: branch rules are not a merge
+// requirement and unresolved P1/P2/P3 findings never block), the required
+// checks and approvals a target's rules do define, candidate base ancestry,
 // exact merge response reconciliation and REST non-atomic base handling. All
 // fixtures are synthetic and no real external service is contacted.
 import {
@@ -300,18 +301,20 @@ Deno.test("mergePullRequest: already-merged PR reconciles to the exact merge ide
 
 Deno.test("mergePullRequest: malformed or unverifiable requests are invalid", async () => {
   const { port } = mergedPort(happyScript());
+  // An unresolved P0 is the only severity the request contract refuses (owner
+  // directive 2026-10-24); an unresolved P1 merges, see the next test.
   const unresolved = await port.mergePullRequest(mergeRequest({
     review: completedCleanReceipt({
       findings: [{
         id: "github-comment-500",
-        severity: "P1",
+        severity: "P0",
         path: "src/main.ts",
-        message: "[P1] broken error handling",
+        message: "[P0] committed data is lost",
         fingerprint: "a".repeat(64),
         resolved: false,
         resolutionEvidence: null,
       }],
-      unresolvedSeverities: ["P1"],
+      unresolvedSeverities: ["P0"],
     }),
   }));
   assert.equal(unresolved.ok, false);
@@ -333,6 +336,77 @@ Deno.test("mergePullRequest: malformed or unverifiable requests are invalid", as
   }));
   assert.equal(wrongRepo.ok, false);
   if (!wrongRepo.ok) assert.equal(wrongRepo.error.kind, "invalid");
+});
+
+Deno.test("mergePullRequest: unresolved P1 findings never block the exact-head merge", async () => {
+  // Owner directive 2026-10-24: the only internal policy is that every P0 is
+  // resolved. The authoritative evidence is one structured journal carrying an
+  // unresolved P1 finding; the request receipt carries the same finding
+  // unresolved, and the merge proceeds exactly as a clean review would.
+  const evidenceResult: ReviewResultV1 = {
+    verdict: "findings",
+    summary: "one important finding",
+    findings: [{
+      priority: 1,
+      title: "Broken error handling",
+      body: "The error path swallows the failure.",
+      path: "src/main.ts",
+      lineStart: 1,
+      lineEnd: 1,
+    }],
+  };
+  const evidence = await structuredCompletedFixture({
+    result: evidenceResult,
+    operationKey: CLEAN_OPERATION_KEY,
+  });
+  const findingBase = {
+    id: "github-review-100-finding-0",
+    severity: "P1",
+    path: "src/main.ts",
+    message: findingMessage(evidenceResult.findings[0]),
+  };
+  const service = new FakeReviewService();
+  service.readResult = evidence.service;
+  const { port, transport } = makePort({
+    clock: CLOCK,
+    script: [
+      pullEntry(),
+      pullEntry(),
+      reviewsRead([evidence.review]),
+      commentsRead([]),
+      ...rulesRead(),
+      ...checksRead(),
+      httpRespond(
+        "PUT",
+        "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
+        200,
+        mergeResponseWire(SHA3),
+      ),
+    ],
+    review: service,
+  });
+  const result = await port.mergePullRequest(mergeRequest({
+    review: completedCleanReceipt({
+      summary: evidenceResult.summary,
+      findings: [{
+        ...findingBase,
+        fingerprint: asFindingFingerprint(
+          await canonicalStringifySha256(findingBase),
+        ),
+        resolved: false,
+        resolutionEvidence: null,
+      }],
+      unresolvedSeverities: ["P1"],
+    }),
+  }));
+  assert.ok(result.ok, JSON.stringify(result));
+  if (!result.ok) return;
+  assert.deepEqual(result.value, {
+    outcome: "merged",
+    head: SHA1,
+    mergeSha: SHA3,
+  });
+  assert.equal(putCount(transport), 1);
 });
 
 Deno.test("mergePullRequest: authoritative review must be current and match exactly", async () => {
@@ -631,7 +705,7 @@ Deno.test("mergePullRequest: human resolution requires the trusted authenticated
     pullEntry(),
     reviewsRead([evidenceFixture.review]),
     commentsRead([]),
-    ...rulesRead([], []), // No active rules: the protection gate reads empty.
+    ...rulesRead([], []), // No active rules: no required checks or approvals.
     ...checksRead(),
   ];
   const evidenceService = (): FakeReviewService => {
@@ -707,18 +781,33 @@ Deno.test("mergePullRequest: human resolution requires the trusted authenticated
   assert.equal(putCount(forgedPort.transport), 0);
 
   // Trusted authenticated resolver + allowlisted identity: the review gate
-  // passes and the adapter reaches the protection gate (no active rules).
+  // passes and, branch rules being no merge requirement (owner directive
+  // 2026-10-24), the exact-head merge proceeds with no active rules.
   const verifier = new FakeResolutionVerifier(true, "some-human");
   const trustedPort = makePort({
     clock: CLOCK,
-    script: evidenceScript,
+    script: [
+      ...evidenceScript,
+      httpRespond(
+        "PUT",
+        "/repos/ubiquity-sentinel/sentinel/pulls/1/merge",
+        200,
+        mergeResponseWire(SHA3),
+      ),
+    ],
     review: evidenceService(),
     trustedResolutionAuthors: ["some-human"],
     resolutionVerifier: verifier,
   });
   const gate = await trustedPort.port.mergePullRequest(resolvedRequest());
-  assert.equal(blockedReason(gate), "protection_required");
-  assert.equal(putCount(trustedPort.transport), 0);
+  assert.ok(gate.ok, JSON.stringify(gate));
+  if (!gate.ok) return;
+  assert.deepEqual(gate.value, {
+    outcome: "merged",
+    head: SHA1,
+    mergeSha: SHA3,
+  });
+  assert.equal(putCount(trustedPort.transport), 1);
   assert.equal(verifier.checks.length, 1);
   const check = verifier.checks[0];
   assert.deepEqual(check.repository, REPO);
