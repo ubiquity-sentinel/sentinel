@@ -277,7 +277,14 @@ export async function observeReview(
         ),
       );
     }
-    return await recoverFromNoVerdictReview(deps, context, record, pr, value);
+    return await recoverFromNoVerdictReview(
+      deps,
+      context,
+      record,
+      pr,
+      value,
+      observed.value.operationKey,
+    );
   }
   // The receipt of an accepted verdict is derived from the identity the record
   // was actually READ under, so two attempts of the same head can never share

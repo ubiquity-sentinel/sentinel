@@ -37,8 +37,10 @@ import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "./review-round-cap.
  * and parks after `CARRIED_WAIT_BOUND_MS` with a precise blocker, and the
  * carried-merge marker, which restarts on every poll, parks that long after
  * H1's own CI completed. A legacy record whose final round is open and whose
- * red head on a moved base is not the candidate's own failure parks with the
- * non-correctable unattributed CI blocker (`holdUncorrectableLegacyHead`). A
+ * red head on a moved base is not the candidate's own failure takes the same
+ * mechanical refresh once the tip is green, and otherwise waits, bounded, and
+ * parks with a precise non-correctable CI blocker
+ * (`holdUncorrectableLegacyHead`, issue #155). A
  * refresh conflict keeps the refresh's own terminal `base refresh has
  * conflicts at <T>` block; a differing patch, a red H1, the refresh limit or a
  * stalled wait parks under the ceiling prefix. Nothing is ever charged here.
@@ -68,6 +70,7 @@ import {
 } from "./carried-review.ts";
 import {
   absentCheckLabels,
+  baseRedDetail,
   ciCheckLabels,
   failedChecks,
   latestChecks,
@@ -178,9 +181,10 @@ function pendingLabels(checks: readonly GitHubCheckV1[]): string {
  * The delivery step of a spent record whose base moved to `observedBase`
  * (nothing written yet). The reviewed head's own CI is read first: red parks
  * with the merge gate's own `CI checks failed: ...` blocker (the owner's
- * legacy class keeps it), pending (or green while an expected check of its
- * reviewed base does not exist on it yet, or that base's runs cannot be
- * read) waits at `delivery` and parks after
+ * legacy class keeps it; a legacy head red through its base is held instead,
+ * `holdUncorrectableLegacyHead`), pending (or green while an expected check
+ * of its reviewed base does not exist on it yet, or that base's runs cannot
+ * be read) waits at `delivery` and parks after
  * `CARRIED_WAIT_BOUND_MS`. A green head whose latest completed review
  * authorizes it on its base, on a port that can prove the carried patch,
  * waits its turn in the repository's delivery line and then returns null:
@@ -234,8 +238,9 @@ export async function spentOnMovedBase(
         context,
         record,
         observed.value.checks,
+        observedBase,
       );
-      if (held !== null) return held;
+      if (held !== "generic") return held;
     }
     return persistWork(
       deps,
@@ -263,31 +268,44 @@ export async function spentOnMovedBase(
       }`,
     );
   }
-  const reviewer = deps.github.reviewerIdentity;
-  const receipt = latestPullReview(context.snapshot, record, reviewer);
-  if (
-    deps.github.proveCarriedPatch === undefined || receipt === null ||
-    receipt.pullRequest.head !== head ||
-    receipt.pullRequest.base !== record.target.base
-  ) {
-    return parkAtReviewRoundCeiling(
+  const carried = await carryReviewedHead(deps, context, record, observedBase);
+  return carried === "unauthorized"
+    ? parkAtReviewRoundCeiling(
       deps,
       context,
       record,
       REVIEW_ROUND_CEILING_BASE_MOVED,
-    );
-  }
+    )
+    : carried;
+}
+
+/**
+ * The one mechanical refresh of a spent reviewed head onto `observedBase`,
+ * carrying its review: `unauthorized` (nothing read but the task) unless the
+ * latest completed review binds this exact head and base, authorizes its
+ * merge, and the port can prove the carried patch; otherwise its turn in the
+ * repository's delivery line, then null (the caller writes the refresh
+ * intent). Nothing is charged.
+ */
+async function carryReviewedHead(
+  deps: RepairCycleDepsV1,
+  context: LoopContextV1,
+  record: WorkRecordV1,
+  observedBase: GitSha,
+): Promise<StepResultV1 | null | "unauthorized"> {
+  const reviewer = deps.github.reviewerIdentity;
+  const receipt = latestPullReview(context.snapshot, record, reviewer);
+  if (
+    deps.github.proveCarriedPatch === undefined || receipt === null ||
+    receipt.pullRequest.head !== record.target.head ||
+    receipt.pullRequest.base !== record.target.base
+  ) return "unauthorized";
   const task = await readDeliveryTaskContext(deps, record);
   if (task === "unavailable") {
     return { kind: "deferred", detail: "merge task context is unavailable" };
   }
   if (!reviewAuthorizesMerge(receipt, record, reviewer, task)) {
-    return parkAtReviewRoundCeiling(
-      deps,
-      context,
-      record,
-      REVIEW_ROUND_CEILING_BASE_MOVED,
-    );
+    return "unauthorized";
   }
   const deferral = deliveryQueueDeferral(deps, context, record, observedBase);
   // Deliverable now: a `ci_pending` wait left from an earlier poll would read
@@ -307,25 +325,39 @@ export async function spentOnMovedBase(
  * rule's: it re-admitted the record as a CI correction on every pass, and
  * `correctFailedHeadBeforeRefresh` declined the fix every time (no candidate
  * attribution), so each pass took a correction slot and nothing moved. A base
- * check still running is awaited instead (bounded, uncharged, at `delivery`),
- * and every other such failure parks with the runtime's non-correctable
- * `CI checks failed without base evidence: ...` blocker, which only the
- * launcher's green rule re-admits (the class keeps it: `CI_RED_PREFIXES`).
- * Null for a failure the candidate caused (or one no longer observed): the
- * caller keeps the generic blocker the correction rule owns.
+ * check still running is awaited instead (bounded, uncharged, at `delivery`).
+ *
+ * A red reviewed base B0 (or a failure no base evidence attributes) never
+ * turns the head green, and on a moved base no launcher rule re-runs or
+ * re-admits it (issue #155). So once the tip `observedBase` is complete and
+ * green, the head takes the uncharged mechanical refresh a green spent head
+ * takes (`carryReviewedHead`), and the refreshed head's own CI decides
+ * (`executeCarriedDelivery`). While the tip is not green the record waits at
+ * `delivery` (a `ci_pending` wait, so it holds nobody in the line), bounded
+ * by `CARRIED_WAIT_BOUND_MS`. A head its review does not authorize to carry,
+ * or one still waiting at the bound, parks with its precise blocker:
+ * `CI checks failed on the red reviewed base: ...` (base evidence exists) or
+ * `CI checks failed without base evidence: ...`, both in the class
+ * (`CI_RED_PREFIXES`). It then stays parked until the owner acts, and the
+ * launcher reports it on every pass. `generic` for a failure the candidate
+ * caused (or one no longer observed): the caller keeps the generic blocker
+ * the correction rule owns.
  */
 async function holdUncorrectableLegacyHead(
   deps: RepairCycleDepsV1,
   context: LoopContextV1,
   record: WorkRecordV1,
   checks: readonly GitHubCheckV1[],
-): Promise<StepResultV1 | null> {
+  observedBase: GitSha,
+): Promise<StepResultV1 | null | "generic"> {
   const observed = await observeHeadFailure(deps, record);
   if (observed === null) {
     return { kind: "deferred", detail: "CI check observation unavailable" };
   }
-  if (observed.kind === "clean" || observed.kind === "candidate") return null;
-  const detail = unattributedDetail(failedChecks(checks));
+  if (observed.kind === "clean" || observed.kind === "candidate") {
+    return "generic";
+  }
+  const failed = failedChecks(checks);
   if (observed.kind === "base_pending") {
     return boundedWait(
       deps,
@@ -333,13 +365,33 @@ async function holdUncorrectableLegacyHead(
       record,
       "ci_pending",
       CHECK_POLL_MS,
-      detail,
+      unattributedDetail(failed),
     );
   }
+  const park = observed.kind === "base_red"
+    ? baseRedDetail(failed)
+    : unattributedDetail(failed);
+  const tip = await deps.github.readChecks(observedBase);
+  if (!tip.ok) {
+    return { kind: "deferred", detail: "CI check observation unavailable" };
+  }
+  const tipGate = decideCiGate(tip.value.checks);
+  if (tipGate !== "proceed") {
+    return boundedWait(
+      deps,
+      context,
+      record,
+      "ci_pending",
+      tipGate === "wait" ? CHECK_POLL_MS : RED_BASE_RECHECK_MS,
+      park,
+    );
+  }
+  const carried = await carryReviewedHead(deps, context, record, observedBase);
+  if (carried !== "unauthorized") return carried;
   return persistWork(
     deps,
     context,
-    markBlocked(record, "other", detail, deps.clock.now()),
+    markBlocked(record, "other", park, deps.clock.now()),
   );
 }
 

@@ -27,7 +27,9 @@ import {
   type RetryPlanV1,
 } from "./hosted-autonomy-retries.ts";
 import {
+  HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX,
   hostedIssueKey,
+  hostedRepositoryKey,
   isHostedSelf,
   sameRepository,
 } from "./hosted-autonomy-policy.ts";
@@ -39,10 +41,12 @@ import {
 } from "./hosted-autonomy-ci-retries.ts";
 import { readCiRerunSettled } from "./hosted-autonomy-ci-rerun.ts";
 import {
+  legacyFinalRoundOpen,
   legacyReviewRoundClassDrift,
   legacyReviewRoundClassPin,
   ordinaryReviewRoundsSpent,
 } from "../src/repair/review-round-cap.ts";
+import { CI_BASE_RED_DETAIL } from "../src/repair/ci-rejection.ts";
 import {
   ciFirstFixRuntimeProven,
   ciFirstFixSelfInstalledRuntimeProven,
@@ -125,6 +129,52 @@ export function legacyClassDriftActions(
     actions.push(
       `retry:legacy_class:denied:drift_more=${
         drift.length - LEGACY_DRIFT_REPORTS_PER_PASS
+      }`,
+    );
+  }
+  return actions;
+}
+
+/**
+ * The pass's report of legacy heads held on a moved base (issue #155),
+ * state-free. Each record whose final round is still open under the cutoff
+ * and that the runtime parked because its red reviewed head is not its own
+ * change's failure is listed. The two parks are the red reviewed base
+ * (`legacy_base_red`) and no base evidence with its base no longer the tip
+ * (`legacy_unattributed`), where the flake re-run and the green rule cannot
+ * act. No rule re-admits either park and it waits for the owner, so it is
+ * named on every pass (at most `LEGACY_DRIFT_REPORTS_PER_PASS`, then a
+ * count). Nothing is reported without a cutoff.
+ */
+export function legacyHeldHeadActions(
+  snapshot: RepairStateSnapshotV1,
+  cutoff: number | null,
+  tips: ReadonlyMap<string, string | null>,
+): string[] {
+  if (cutoff === null) return [];
+  const held: string[] = [];
+  for (const record of snapshot.work) {
+    const blocker = record.blocker;
+    if (
+      record.nextStep !== "blocked" || blocker === null ||
+      blocker.kind !== "other" ||
+      !legacyFinalRoundOpen(snapshot, record, cutoff)
+    ) continue;
+    if (blocker.message.startsWith(`${CI_BASE_RED_DETAIL}: `)) {
+      held.push(`retry:${record.id}:denied:legacy_base_red`);
+      continue;
+    }
+    const tip = tips.get(hostedRepositoryKey(record.repository)) ?? null;
+    if (
+      blocker.message.startsWith(HOSTED_AUTONOMY_CI_UNATTRIBUTED_PREFIX) &&
+      tip !== null && tip !== record.target.base
+    ) held.push(`retry:${record.id}:denied:legacy_unattributed`);
+  }
+  const actions = held.slice(0, LEGACY_DRIFT_REPORTS_PER_PASS);
+  if (held.length > LEGACY_DRIFT_REPORTS_PER_PASS) {
+    actions.push(
+      `retry:legacy_held:denied:held_more=${
+        held.length - LEGACY_DRIFT_REPORTS_PER_PASS
       }`,
     );
   }
@@ -478,6 +528,7 @@ export async function runHostedRetryPass(
     },
   ));
   actions.push(...legacyClassDriftActions(snapshot, legacyCutoff, ciFirst));
+  actions.push(...legacyHeldHeadActions(snapshot, legacyCutoff, retryTips));
   const plans: RetryPlanV1[] = [];
   // The per-pass CI correction cap counts only corrections this pass admits
   // after the pull request checks below. A plan dropped there (closed,

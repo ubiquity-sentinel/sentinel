@@ -27,6 +27,7 @@ import { ciCorrectable } from "../../src/repair/ci-rejection.ts";
 import {
   CI_FIRST_REVIEW_ROUNDS,
   CI_FIX_ATTEMPTS,
+  ciFixesLeft,
   reviewRoundAvailable,
 } from "../../src/repair/ci-first-policy.ts";
 import {
@@ -44,7 +45,14 @@ import {
   MAX_REVIEW_ROUNDS,
   reviewRoundsLeft,
 } from "../../src/repair/review-round-cap.ts";
-import { reservation, SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
+import {
+  reservation,
+  reviewReceipt,
+  SHA1,
+  SHA2,
+  T0,
+  workRecord,
+} from "../state/helpers.ts";
 import { assertGen79Parses, gen79Available } from "../state/gen77-contracts.ts";
 import { loadGen79Modules } from "../host/gen77-runtime-source.ts";
 import { repairConfigs } from "./helpers.ts";
@@ -210,6 +218,23 @@ Deno.test("CI first x round cap: CI fixes are retry charges and never spend a re
   }
 });
 
+Deno.test("CI first x round cap: a row whose retries an older generation raised starts with those fixes spent (#155)", () => {
+  // Live at state 719d8f30d: sentinel-61 carries retries 3, sentinel-76
+  // retries 2 and sentinel-21 retries 1, none from a CI fix. The budget is
+  // the lifetime counter (no post-activation ledger count: every later
+  // implementation admission is a `retry` charge, CI fix or not).
+  for (const [retries, left] of [[3, 0], [2, 1], [1, 2], [0, 3]] as const) {
+    const record = aiRecord(1583, 2, {
+      counters: { attempts: 3 + retries, retries, reviewRounds: 2 },
+    });
+    // No CI fix charged since the cutoff, whatever the counter says.
+    const ledger = { reservations: reviewCharges(record, 2) };
+    assert.equal(ciFixesLeft(record), left > 0, `retries ${retries}`);
+    assert.equal(CI_FIX_ATTEMPTS - record.counters.retries, left);
+    assert.equal(ciCorrectable(record, ledger, CUT), left > 0);
+  }
+});
+
 /** A legacy CI-fixed head at work whose refresh onto `TIP` conflicted. */
 function conflicted(issue: number, rounds: number): WorkRecordV1 {
   const record = aiRecord(issue, rounds, {
@@ -238,19 +263,32 @@ function conflicted(issue: number, rounds: number): WorkRecordV1 {
 
 /**
  * `reviewRounds` old review admissions and one CI fix charged after the
- * cutoff (it armed the legacy final round); `final` adds that final review.
+ * cutoff (it armed the legacy final round); `final` adds that final review
+ * admission, completed (a receipt of its head) or ended without a verdict.
  */
 function snapshotOf(
   record: WorkRecordV1,
   reviewRounds: number,
-  final = false,
+  final: "completed" | "no_verdict" | null = null,
 ): RepairStateSnapshotV1 {
   return seededSnapshot([record], {
     reservations: [
       ...reviewCharges(record, reviewRounds),
       ...ciFixCharges(record, 1, CUT),
-      ...(final ? [lateReview(record, reviewRounds + 1)] : []),
+      ...(final === null ? [] : [lateReview(record, reviewRounds + 1)]),
     ],
+    reviews: final === "completed"
+      ? [reviewReceipt(`${record.id}-final`, {
+        repository: record.repository,
+        pullRequest: { number: record.target.pr!, head: HEAD, base: SHA2 },
+        outcome: "completed",
+        observedReviewer: "chatgpt-codex-connector[bot]",
+        resultId: "final-result",
+        completedAt: CUT + 70,
+        submittedAt: CUT + 55,
+        observedAt: CUT + 71,
+      })]
+      : [],
   });
 }
 
@@ -270,11 +308,22 @@ Deno.test("CI first x round cap: a legacy CI-fixed head that conflicts on refres
       TIP,
       `${issue} resolution admissible`,
     );
-    const spent = snapshotOf(pending, pin, true);
+    const spent = snapshotOf(pending, pin, "completed");
     assert.equal(
       conflictResolutionShape(pending, spent, CUT),
       false,
       "final spent",
+    );
+    // A final admission that ended without a verdict spends the round too:
+    // the one no-verdict re-request #155 item 2 proposed is not implemented.
+    assert.equal(
+      conflictResolutionShape(
+        pending,
+        snapshotOf(pending, pin, "no_verdict"),
+        CUT,
+      ),
+      false,
+      `${issue} no-verdict final spends the round`,
     );
     // Without a cutoff the record is no legacy record.
     assert.equal(conflictResolutionShape(pending, snapshot, null), false);

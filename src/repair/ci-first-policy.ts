@@ -17,9 +17,12 @@
  * key or enum value. The CI fix count is the existing `counters.retries`
  * (every R79 row carries it, no R79 runtime path writes or reads it beyond
  * change detection, and `countRetry` keeps the parser's `retries <= attempts`
- * rule). The parks are blockers of the existing `other` kind whose messages
- * match no R79 or L79 re-admission prefix, and the fix marker is an existing
- * `backoff` wait whose `since` equals its `until`.
+ * rule). Older generations did write it and nothing reset it at the CI-first
+ * activation, so a live row may start with CI fixes already spent
+ * (`CI_FIX_ATTEMPTS`, issue #155). The parks are blockers of the existing
+ * `other` kind whose messages match no R79 or L79 re-admission prefix, and
+ * the fix marker is an existing `backoff` wait whose `since` equals its
+ * `until`.
  */
 import type { BudgetReservationV1 } from "../contracts/budget-reservation.ts";
 import type { WorkRecordV1, WorkWaitV1 } from "../contracts/work-record.ts";
@@ -40,6 +43,18 @@ export const CI_FIRST_REVIEW_ROUNDS = MAX_REVIEW_ROUNDS;
  * CI fixes one record may spend, counted in `counters.retries` and never
  * lowered. An admission refunded as provably never submitted still counts:
  * at most three fixes ever run.
+ *
+ * The counter is the record's lifetime count, not its count since the
+ * CI-first activation. A row whose `retries` an older generation raised
+ * starts with those fixes spent (issue #155; at state 719d8f30d
+ * issue-ubiquity-sentinel-61 carries 3 and parks
+ * `CI fix attempts exhausted (3 of 3)` without a fix, sentinel-76 carries 2
+ * and gets one, sentinel-21 carries 1 and gets two). This is kept on
+ * purpose: counting only `retry` charges admitted after the activation is
+ * not derivable safely, because every implementation admission after the
+ * first is a `retry` charge (a P0 correction, a conflict resolution, a
+ * retried implementation as well as a CI fix). Resetting such rows is an
+ * owner decision.
  */
 export const CI_FIX_ATTEMPTS = 3;
 
@@ -141,8 +156,8 @@ export function isCiFixMarker(wait: WorkWaitV1 | null): boolean {
  * A review round is left for the head a CI fix (or a correction) produces
  * exactly when that count leaves one: fewer than `CI_FIRST_REVIEW_ROUNDS`
  * spent, or a legacy record whose final round is still open (a CI fix arms
- * it for the fixed head's review). CI fix charges are not `review_request`
- * admissions and never count as review rounds.
+ * it for the fixed head's review). CI fix charges
+ * are not `review_request` admissions and never count as review rounds.
  */
 export function reviewRoundAvailable(
   ledger: { readonly reservations: readonly BudgetReservationV1[] },

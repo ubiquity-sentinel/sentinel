@@ -1153,14 +1153,16 @@ merge gate's `CI checks failed: …` blocker, so a legacy record stays in the
 class (live 649 and 1128 sat spent and red in `delivery` and would otherwise
 have left it as BASE_MOVED parks), except that a legacy record whose final round
 is open and whose red head its own change did not break (its reviewed base red
-too, a base check still running, or no usable base evidence) parks with the
-runtime's non-correctable `CI checks failed without base evidence: …` blocker
-instead, still in the class and re-admitted only by the green rule, after a
-bounded `ci_pending` wait at `delivery` while a base check is still running
-(round-2 recheck P3: with the generic blocker the launcher's correction rule
-re-admitted it as a CI correction on every pass and
-`correctFailedHeadBeforeRefresh` declined the fix every time, one correction
-slot per pass and no progress;
+too, a base check still running, or no usable base evidence) never takes that
+blocker: it waits, bounded, while a base check is still running, takes the
+uncharged carried refresh once the tip is green, and otherwise parks with a
+non-correctable blocker, `CI checks failed on the red reviewed base: …` or
+`CI checks failed without base evidence: …`, still in the class. On a moved base
+no rule re-admits that park, so it parks until the owner acts and the launcher
+reports it on every pass (issue #155, below; round-2 recheck P3: with the
+generic blocker the launcher's correction rule re-admitted it as a CI correction
+on every pass and `correctFailedHeadBeforeRefresh` declined the fix every time,
+one correction slot per pass and no progress;
 `tests/repair/ci-first-legacy-moved-base_test.ts`), a pending head waits in
 `delivery` and parks
 `review round ceiling reached: the reviewed head's required CI did not finish within 6 hours: …`
@@ -3149,3 +3151,56 @@ standing approval above. Applied as follows.
   and review rounds, CI-fix limits and the at-most-once enqueue are unchanged.
   The production queue stays disabled (`queue.proofActivated` off, empty
   authority pins), so this path cannot run until a reviewed queue rollout.
+
+## 2026-10-24: exits from the review ceiling's silent dead ends (#155)
+
+- Legacy head red through its base, on a moved base. This is a legacy record
+  whose final round is open and whose red reviewed head is red because its
+  reviewed base B0 is red, or because no base evidence attributes the failure.
+  B0 is a fixed commit and never turns green. Once the development tip is
+  complete and green, the head takes the same uncharged mechanical refresh a
+  green spent head takes, carrying its review (`holdUncorrectableLegacyHead`,
+  `carryReviewedHead` in `src/repair/loop-carried-delivery.ts`). The refreshed
+  head's own CI then decides through the existing carried delivery: green goes
+  to the launcher's carried merge, and red parks under the ceiling prefix as for
+  every carried head. Nothing is charged and no review round is spent.
+- While the tip is red or pending, the record waits at `delivery` in a
+  `ci_pending` wait, so it holds nobody in the delivery line. The wait is
+  bounded by 6 hours. A head whose latest review does not authorize carrying it,
+  or one still waiting at the bound, parks with a precise blocker:
+  `CI checks failed on the red reviewed base: …` when base evidence exists, or
+  `CI checks failed without base evidence: …`. Both stay in the legacy class
+  shape. No rule re-admits either park on a moved base, so the record parks
+  until the owner acts. Every maintenance pass names it as
+  `retry:<id>:denied:legacy_base_red` or `retry:<id>:denied:legacy_unattributed`
+  (the unattributed one only while its base is not the tip). At most 12 are
+  named per pass, then `retry:legacy_held:denied:held_more=<n>`.
+- Item 2 (a no-verdict attempt spends the legacy final round) is not
+  implemented. A one-re-request rule was built, but its adversarial review (five
+  claims upheld 3 of 3, all P3) found that, combined with the raised-ceiling
+  re-admission of 2026-10-24, it reopened records already parked UNREVIEWED
+  outside the CI-first gating, ran before the final review's own receipt was in
+  the snapshot, and left a concluded intent in place. The legacy final round
+  stays spent by its admission, verdict or not, like every round; the five-round
+  ceiling of CI-first-era records already absorbs no-verdict attempts there.
+  Whether legacy records get the re-request is an owner decision.
+- A review intent in flight at the ceiling no longer defers forever. A
+  `review_request` intent whose own journal concluded without a verdict, or one
+  started 6 hours ago or more, is recovered as `recoverExpiredReviewAttempt`
+  does. Its round is counted once and the intent is cleared, with its charge
+  kept: never refunded or moved. The record parks in the same write with the
+  fixed ceiling message its reviews select (`reviewRoundCeilingGate`,
+  `src/repair/loop-review-round-cap.ts`). Other intents still finish first. This
+  covers live 264's shape (counter 0, three charges) and a 647-shaped record
+  (counter 3, four charges) holding an already counted intent
+  (`tests/repair/review-round-cap-intent_test.ts`).
+- CI fix budgets are lifetime counts. `counters.retries` was written by older
+  generations and was not reset at the CI-first activation. A row that carries
+  retries from them starts generation 80 with those CI fixes spent: at state
+  719d8f30d issue-ubiquity-sentinel-61 (retries 3) gets none, sentinel-76 (2)
+  gets one and sentinel-21 (1) gets two. Counting only `retry` charges admitted
+  after the activation is not derivable safely. Every implementation admission
+  after the first is a `retry` charge, whether it is a P0 correction, a conflict
+  resolution, a retried implementation or a CI fix. The comment in
+  `src/repair/ci-first-policy.ts` is corrected. Resetting such rows is an owner
+  decision.
