@@ -928,6 +928,57 @@ the real loader and controller, so an interface mismatch fails CI. No state
 field, stdout code or bridge result shape changes; `sentinel-release` stays
 disabled.
 
+Bridge acceptance of ai.ubq.fi #1155 and #1162 (2026-10-24, sentinel#161,
+sentinel#162). The pin test now also runs the exact upstream bytes of ai.ubq.fi
+6c3afe42, the #1162 merge, which comes after #1155 (2de00a80). They are vendored
+under `tests/fixtures/vps/ai.ubq.fi/6c3afe42/` and checked against their Git
+blob ids. The installed driver pin is unchanged. The rules:
+
+- Journal runner. The bridge composes the reader with the pinned tree's own
+  `runVpsJournalCommand`, which accepts only the six-argument argv with `--all`
+  that its reader builds. Sentinel neither builds nor checks that argv. The
+  release bridge refuses a capabilities host that carries a `platform`
+  substitute (`capability_unavailable`, before authentication), so a copied
+  five-argument check or a runner from another tree cannot replace it. The pin
+  test fails if the reader's argv, the runner's check, the checkpoint
+  `schema: 2`, the storage signature or the Deno lock changes.
+- Storage. The bridge calls `createVpsJoinFileStorage` with five arguments and
+  accepts the upstream 10 s `stateReadMs` default. It passes one owner
+  `telemetry.retention` to both the storage and the metrics. Each save prunes
+  `.data/sentinel-vps-metrics` by that `evidenceMaxAgeMs`, so every bridge that
+  shares the target root must install the same retention. Schema-1 checkpoints
+  are refused and not migrated. None should exist, because no #1027 driver has
+  run under the bridge.
+- Host grants. These are an owner installation step, not code. The forced
+  command must add `--allow-sys=uid`, unscoped `--allow-run`,
+  `--allow-read=<root>`, `--allow-write=<root>/.data` and
+  `--allow-env=NODE_V8_COVERAGE` (plus `PATH` for sparse preparation). It must
+  also run a Deno with `FsFile.prototype.tryLockSync`. These grants are recorded
+  in `VPS_RELEASE_BRIDGE_DRIVER_GRANTS` (`src/host/release-bridge-grants.ts`)
+  and in the activation checklist.
+  `tests/host/vps-release-bridge-grants_test.ts` runs the exact 6c3afe42 lock,
+  checkpoint storage, journal runner and command runner in a child Deno under
+  exactly those flags, and checks that removing any one fails with `NotCapable`.
+  The read grant on the root (beyond `.data`) covers the release store's
+  `realpath(<root>)` check. It was found by probing, not listed in #162.
+- Preparation. The bridge passes an owner `host.preparePayload` unchanged to
+  `createVpsDeploymentDriver`; a non-function one is unavailable. Release
+  preparation stays Bun-only through 6c3afe42. Until ubiquity/ai.ubq.fi#1178
+  item 1 ships a Deno-safe `preparePayload` and the owner installs it, the
+  bridge can drive only candidates already prepared under
+  `<root>/.data/releases/<sha>`.
+- Not yet adoptable. ai.ubq.fi `development` 3393df1 (2026-10-24) has moved past
+  6c3afe42. Its checkpoint is `schema: 3`. Its Deno lock opens a `/dev/fd/<n>`
+  alias, which Deno 2.9.8 permits only under `--allow-all`. On Deno its store
+  defaults to `bindBunVpsPayload`, which runs the installed Bun runtime in
+  sparse mode with the target root as its working directory. Sparse mode creates
+  its temporary directory there, so it would also need write on the target root.
+  That may be the #1178 item 1 preparation; it is not verified here. Do not
+  re-pin there without a new pin test and an upstream lock that works under the
+  scoped grants.
+
+Re-pinning stays an owner action, and `sentinel-release` stays disabled.
+
 ## Concurrent issue processing
 
 Use isolated concurrent issue workers across configured targets, one trusted

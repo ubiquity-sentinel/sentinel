@@ -58,6 +58,12 @@ import type { VpsReleaseEntrypointDepsV1 } from "../release-main.ts";
 type VpsSampler = {
   sample(input: VpsJournalRequest): Promise<VpsMetricsSample>;
 };
+/** The pinned driver's `VpsPayloadPreparation(root, sha, archive)`. */
+export type VpsPayloadPreparation = (
+  root: string,
+  sha: string,
+  archive: string,
+) => Promise<unknown>;
 
 /** These capabilities belong to the release launcher, never repair/model workers. */
 export interface TrustedVpsReleaseHostOptionsV1 {
@@ -90,7 +96,18 @@ export interface TrustedVpsReleaseHostOptionsV1 {
   telemetry?: { retention: RetentionPolicyV1; cipher: VpsJoinCipher };
   /** Existing authenticated direct Mac-to-VPS proof, privately read by the release owner. */
   readInferenceProof(identity: VpsIdentity): Promise<VpsInferenceProof | null>;
-  /** Only external system/network boundaries are replaceable in local tests. */
+  /**
+   * Owner-supplied release payload preparation, passed to the pinned driver
+   * unchanged (sentinel#162). Without one the driver uses its own, which is
+   * Bun-only through ai.ubq.fi 6c3afe42, so a Deno bridge can then drive only
+   * candidates already prepared under `<root>/.data/releases/<sha>` until
+   * ubiquity/ai.ubq.fi#1178 item 1 ships a Deno-safe preparation.
+   */
+  preparePayload?: VpsPayloadPreparation;
+  /**
+   * Only external system/network boundaries are replaceable in local tests;
+   * the release bridge refuses an owner capabilities host that carries one.
+   */
   platform?: {
     run: VpsCommand;
     fetch: typeof fetch;
@@ -335,6 +352,11 @@ async function composeJoinedVpsMetrics(
     input: VpsJournalRequest,
     saved?: { stateHead: string; stateSequence: number },
   ) => readVpsMetricsScope(stateRead, input, bound, saved);
+  // Five arguments: the bridge accepts the upstream 10 s bound on the release
+  // state read made under the deploy lock (`stateReadMs`, ai.ubq.fi#1155).
+  // Each save prunes `.data/sentinel-vps-metrics` by this one owner retention,
+  // the same policy the metrics receive, so every bridge sharing the target
+  // root must install the identical `telemetry.retention` (sentinel#161).
   const storage = storageModule.createVpsJoinFileStorage(
     options.targetRoot,
     retention,
@@ -347,6 +369,9 @@ async function composeJoinedVpsMetrics(
       }),
     now,
   );
+  // The pinned tree's own runner checks exactly the argv its own reader builds
+  // (six arguments with `--all` since ai.ubq.fi#1155). Sentinel never checks or
+  // rebuilds that argv, and the release bridge refuses a `platform` substitute.
   const reader = module.createVpsJournalReader(
     options.platform?.journal ?? module.runVpsJournalCommand,
     options.targetRoot,
@@ -394,6 +419,8 @@ export async function composeTrustedVpsReleaseHost(
       typeof options.verifySource !== "function" ||
       typeof options.journalCoverage !== "function" ||
       typeof options.readInferenceProof !== "function" ||
+      (options.preparePayload !== undefined &&
+        typeof options.preparePayload !== "function") ||
       typeof options.wait !== "function" ||
       !Number.isSafeInteger(options.deadline) ||
       options.deadline <= options.clock.now()
@@ -447,6 +474,9 @@ export async function composeTrustedVpsReleaseHost(
       environment: options.environment,
       driverSha256,
       run,
+      ...(options.preparePayload === undefined
+        ? {}
+        : { preparePayload: options.preparePayload }),
       fetch: options.platform?.fetch ?? fetch,
       now: () => options.clock.now(),
       verifySource: options.verifySource,
