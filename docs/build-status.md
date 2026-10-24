@@ -7,7 +7,35 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 14:40 UTC)
+## Latest checkpoint (2026-10-24 16:20 UTC)
+
+- Launcher: `e115fb6ac4` at 15:51 UTC (CI `40107905409` green). Its bootstrap
+  `40109314922` settled `success`. Ordinary runs `40106345750` and `40107701392`
+  on `201c65bac5` settled `success`.
+- More hand fixes of reserved files on `development`, each with a test that
+  fails on the previous code:
+  - `c09192c9a9` (#209): Sentinel's own candidate from PR 210, green CI, refused
+    for self merge because it edits `ops/` (the trusted pipeline). Reviewed and
+    cherry-picked; PR 210 and #209 closed.
+  - `bcbefe881b` (#206): a proof-bound checkpoint defers right after a lost CAS.
+  - `5c09895791` (#205): a model-start settlement recomputes after a
+    cooldown-only CAS loss instead of ending the cycle.
+  - `74122774d4` (#204): the ai.ubq.fi pre-merge dispatcher also dispatches a
+    zero-run head parked on the six-hour pre-review CI bound.
+  - `aa021f82f3` (#183 follow-up): progress comments compare against the repair
+    job's start, so ingestion parks and publications report too. Live, Sentinel
+    204–206 parked at 15:59 with no comment.
+- Live: Sentinel 204–206 were re-admitted after their stale intents and parked
+  on protected paths; 207 and 208 wait for the next plan. Sentinel 187 (PR 195)
+  moved to a CI-fix retry once `development` CI was green again.
+- Launcher advanced to `74122774d4` at 16:29 UTC (CI `40110319280` green).
+  `aa021f82f3` failed CI only on the #208 heap bound (33.67 MB), in modules code
+  identical to `74122774d4`, so it waits for the next green SHA. Sentinel
+  re-attempts #208 itself in its next plan.
+- Next: verify the bootstrap and ordinary run on `74122774d4`, then close
+  #204–#206.
+
+## Prior checkpoint (2026-10-24 14:40 UTC)
 
 - Launcher: `1d056586ed` (bootstrap `40100679498` and ordinary run `40101240892`
   settled `success`), then `201c65bac5` at 14:40 UTC, an exact CI-green
