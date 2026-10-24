@@ -125,12 +125,29 @@ export function latestChecks(
   return [...latest.values()];
 }
 
-/** Deduped checks that completed with anything but `success`. */
+/**
+ * Conclusions that are not failures: `success`, and the jobs a workflow
+ * itself chose not to run (`skipped`) or marked informational (`neutral`).
+ * Owner directive 2026-10-24: a job the target's own CI did not run is not a
+ * red check; only a job that ran and did not succeed, timed out, was cancelled
+ * or requires action is.
+ */
+export const GREEN_CONCLUSIONS: readonly string[] = [
+  "success",
+  "skipped",
+  "neutral",
+];
+
+export function isGreenConclusion(conclusion: string | null): boolean {
+  return conclusion !== null && GREEN_CONCLUSIONS.includes(conclusion);
+}
+
+/** Deduped checks that completed with a non-green conclusion. */
 export function failedChecks(
   checks: readonly GitHubCheckV1[],
 ): GitHubCheckV1[] {
   return latestChecks(checks).filter((check) =>
-    check.status === "completed" && check.conclusion !== "success"
+    check.status === "completed" && !isGreenConclusion(check.conclusion)
   );
 }
 
@@ -144,7 +161,7 @@ export interface CiAttributionV1 {
   basePending: GitHubCheckV1[];
   /** Head failure/timed_out with no usable base evidence. */
   unattributed: GitHubCheckV1[];
-  /** Head skipped/cancelled/neutral/action_required: never attributed. */
+  /** Head cancelled/action_required: never attributed. */
   secondary: GitHubCheckV1[];
 }
 

@@ -1,4 +1,5 @@
 import type { TakeoverPublicationProof } from "../src/contracts/existing-pr-takeover.ts";
+import { hasBlockingSeverity } from "../src/contracts/review-receipt.ts";
 import { hasTakeoverCustody } from "../src/github/existing-pr-takeover-provenance.ts";
 import { takeoverPublicationMatches } from "../src/github/existing-pr-publication-proof.ts";
 import type { RepairStateSnapshotV1 } from "../src/contracts/state-snapshots.ts";
@@ -67,7 +68,7 @@ export function boundReviewReceipts(
     review.observedReviewer !== null &&
     review.observedReviewer === review.expectedReviewer &&
     review.findingsUncounted === 0 &&
-    !review.unresolvedSeverities.some((s) => s === "P0" || s === "P1")
+    !hasBlockingSeverity(review.unresolvedSeverities)
   );
 }
 

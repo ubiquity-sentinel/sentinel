@@ -2,6 +2,7 @@ import {
   checkReviewTaskStatement,
   reviewTaskStatementDigest,
 } from "../src/contracts/review-receipt.ts";
+import { isGreenConclusion } from "../src/repair/ci-rejection.ts";
 import type { RepositoryIdentityV1 } from "../src/contracts/shared.ts";
 import {
   type CoverageCheckV1,
@@ -253,13 +254,15 @@ export function createHostedAutonomyGitHub(
       // deterministic signal it can supply, so a head with no CI at all is
       // never delivered, and it is not red either (no CI ran).
       if (runs.length === 0) return null;
-      // Every run on that head must be completed and successful, which also
-      // excludes anything pending, queued or failed — including a failure
-      // that only the last page carries.
+      // Every run on that head must be completed and green (success, or a
+      // job the workflow itself skipped or marked neutral), which excludes
+      // anything pending, queued or failed — including a failure that only
+      // the last page carries (owner directive 2026-10-24).
       const green = runs.every((run) =>
         run["head_sha"] === head &&
         run["status"] === "completed" &&
-        run["conclusion"] === "success"
+        typeof run["conclusion"] === "string" &&
+        isGreenConclusion(run["conclusion"])
       );
       if (!green || base === undefined) return green;
       // The runs that exist are green; a job GitHub creates late (`needs:`)

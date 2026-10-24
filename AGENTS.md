@@ -79,8 +79,11 @@ GitHub `@codex review` reviewer statements are retired for autonomous runtime
 target PRs. The internal runtime review service must invoke native Codex review
 mode and validate its structured result; selecting a gateway model named
 `codex-auto-review` is not a substitute. Runtime code changes require a
-completed current-head receipt with no unresolved P0/P1, passing current CI and
-applicable target branch protections before autonomous merge.
+completed current-head receipt with no unresolved P0 and current-head CI that is
+not red before autonomous merge. Owner directive 2026-10-24: branch protection
+rules and rulesets are not a merge requirement on any target, and the only
+internal review policy is that every P0 is resolved (P1/P2/P3 never block); a
+check the target's own CI skipped or marked neutral is not red.
 Missing/stale/unavailable evidence cannot pass. Development reviews follow the
 separate owner preference above.
 
@@ -224,6 +227,6 @@ checkpoints rather than unchanged polling or full historical dumps.
 
 Acceptance for the 2026-10-20 effort is green scheduled supervisor cycles and at
 least one autonomous issue → PR → completed internal review → merge per target
-(`ubiquity-sentinel/sentinel`, `ubiquity/ai.ubq.fi`, `ubiquity/passport.ubq.fi`).
-The AI and Passport scopes are issue repairs only for now; `sentinel-release`
-stays disabled.
+(`ubiquity-sentinel/sentinel`, `ubiquity/ai.ubq.fi`,
+`ubiquity/passport.ubq.fi`). The AI and Passport scopes are issue repairs only
+for now; `sentinel-release` stays disabled.

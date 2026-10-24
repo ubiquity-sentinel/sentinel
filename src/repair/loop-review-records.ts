@@ -1,4 +1,5 @@
 /** Repair loop internals: review records. */
+import { hasBlockingSeverity } from "../contracts/review-receipt.ts";
 import type { ReviewObservationV1 } from "../contracts/ports.ts";
 import type { ReviewReceiptV1 } from "../contracts/review-receipt.ts";
 import type { RepairStateSnapshotV1 } from "../contracts/state-snapshots.ts";
@@ -59,9 +60,7 @@ export function rejectedReceipt(
 export function hasBlockingFindings(
   receipt: Pick<ReviewReceiptV1, "unresolvedSeverities">,
 ): boolean {
-  return receipt.unresolvedSeverities.some((severity) =>
-    severity === "P0" || severity === "P1"
-  );
+  return hasBlockingSeverity(receipt.unresolvedSeverities);
 }
 
 export function headRejectedByReview(

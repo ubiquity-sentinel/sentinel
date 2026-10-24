@@ -6,6 +6,7 @@ import type {
   PortResultV1,
 } from "../contracts/ports.ts";
 import type { SelfMergeExecutionV1 } from "../contracts/self-merge.ts";
+import type { GitHubEffectiveProtectionsV1 } from "./port-contracts.ts";
 import type { TakeoverEffectAuthorization } from "../contracts/existing-pr-takeover.ts";
 import { executeSelfMerge } from "./port-self-merge.ts";
 import { decideCiGate } from "../repair/loop-checks.ts";
@@ -25,7 +26,7 @@ import { GitHubPortReview } from "./port-review.ts";
 import {
   blocked,
   closingIssueNumber,
-  evaluateEffectiveProtections,
+  noEffectiveProtections,
   requiredChecksState,
 } from "./port-merge-policy.ts";
 
@@ -151,48 +152,38 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     if (!(await this.resolutionsTrusted(merge.review, pull.value))) {
       return blocked("review_required", pull.value.head);
     }
-    // 4. Effective protections are the ACTIVE branch rules (branch-rules
-    // response plus per-ruleset bypass policy) — classic branch protection
-    // alone never proves effective server-enforced strict checks. Unreadable,
-    // unsupported, merge-queue or bypassable policies block.
-    const protections = await this.readEffectiveProtections(pull.value.baseRef);
-    if (!protections.ok) {
+    // 4. Branch protections are NOT a merge requirement (owner directive
+    // 2026-10-24: the only internal policy is that every P0 is resolved). The
+    // active branch rules are still read so that required checks and approvals
+    // a target does configure are honoured; an unreadable, empty, unsupported
+    // or bypassable policy is treated as no protections and never blocks.
+    const protectionsRead = await this.readEffectiveProtections(
+      pull.value.baseRef,
+    );
+    if (!protectionsRead.ok) {
       // Bounded operational diagnostic: the PR number and the typed error kind
       // only; never a message, body, URL or credential.
       console.error(JSON.stringify({
         event: "sentinel_merge_protection_unavailable",
         prNumber: merge.pullRequestNumber,
-        errorKind: protections.error.kind,
+        errorKind: protectionsRead.error.kind,
       }));
-      return blocked("protection_required", pull.value.head);
     }
-    const protectionEvaluation = evaluateEffectiveProtections(
-      protections.value,
-    );
-    const conditionalSelf = this.selfMergeEnabled && execution !== undefined &&
-      protections.value.activeRuleTypes.length === 0 &&
-      protections.value.unsupportedRuleTypes.length === 0 &&
-      !protections.value.bypassUnknown &&
-      protections.value.bypassActors.length === 0;
-    if (!protectionEvaluation.ok && !conditionalSelf) {
-      // Bounded operational diagnostic: the evaluator's own reason plus the
-      // normalized protections record; never raw API bodies or messages.
-      console.error(JSON.stringify({
-        event: "sentinel_merge_protection_blocked",
-        prNumber: merge.pullRequestNumber,
-        reason: protectionEvaluation.reason,
-        protections: protections.value,
-      }));
-      return blocked("protection_required", pull.value.head);
-    }
-    // 5. Required checks all passing on the exact head.
+    const protections: GitHubEffectiveProtectionsV1 = protectionsRead.ok
+      ? protectionsRead.value
+      : noEffectiveProtections(pull.value.baseRef);
+    const conditionalSelf = this.selfMergeEnabled && execution !== undefined;
+    // 5. The checks the target's own rules require must pass on the exact
+    // head (none required when the target has no rules); every check that
+    // ran is additionally judged by the CI gate below through `decideCiGate`
+    // in the self path and by the launcher for foreign targets.
     const checks = await this.client.readChecks(merge.expectedHead);
-    if (!checks.ok) return blocked("protection_required", pull.value.head);
+    if (!checks.ok) return blocked("checks_pending", pull.value.head);
     if (checks.value.head !== merge.expectedHead) {
-      return blocked("protection_required", pull.value.head);
+      return blocked("checks_pending", pull.value.head);
     }
     const checkState = requiredChecksState(
-      protections.value.requiredCheckNames,
+      protections.requiredCheckNames,
       checks.value.checks,
     );
     if (checkState === "pending") {
@@ -204,7 +195,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     // 6. Required GitHub approvals (distinct from the review receipt). The
     // REST pull response does not carry the authoritative approval state;
     // read the exact GraphQL field only when branch policy requires it.
-    if (protections.value.requiredApprovingReviewCount > 0) {
+    if (protections.requiredApprovingReviewCount > 0) {
       const approval = await this.client.readPullRequestReviewDecision(
         merge.pullRequestNumber,
       );
@@ -336,7 +327,7 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
     const checksAfter = await this.client.readChecks(merge.expectedHead);
     if (checksAfter.ok && checksAfter.value.head === merge.expectedHead) {
       const stateAfter = requiredChecksState(
-        protections.value.requiredCheckNames,
+        protections.requiredCheckNames,
         checksAfter.value.checks,
       );
       if (stateAfter === "pending") {
@@ -368,18 +359,9 @@ export abstract class GitHubPortMerge extends GitHubPortReview {
       (!applied &&
         (pull.value.state !== "open" || pull.value.base !== merge.expectedBase))
     ) return portError("conflict", "self merge current PR identity mismatch");
-    const rules = await this.readEffectiveProtections("development");
-    if (!rules.ok) return rules;
-    if (
-      rules.value.activeRuleTypes.length !== 0 ||
-      rules.value.unsupportedRuleTypes.length !== 0 ||
-      rules.value.bypassUnknown || rules.value.bypassActors.length !== 0
-    ) {
-      return portError(
-        "invalid",
-        "self merge requires authenticated empty rules",
-      );
-    }
+    // Branch rules are not a merge requirement (owner directive 2026-10-24);
+    // the self path needs the exact PR identity, the current native review,
+    // green current-head CI and the live task acceptance below.
     const observed = await this.currentReviewEvidence(
       merge.pullRequestNumber,
       merge,

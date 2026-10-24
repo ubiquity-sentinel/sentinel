@@ -2652,3 +2652,34 @@ the published-head ancestry theory recorded for #184 was wrong; #184 is closed
 as not a defect and the delay belongs to the walk budget. Also open (issue
 #185): the walk's 300-second history budget (`deferred_budget`, 975 snapshots
 read per pass) limits each maintenance run to roughly one producer wave.
+
+## Owner directive 2026-10-24: no branch-rule requirement, only P0 blocks
+
+The owner directed (2026-10-24 02:50 UTC): "remove branch rules; the only
+internal policy is resolve all P0". Applied as follows.
+
+- An autonomous merge requires a completed native review receipt for the exact
+  current head with no unresolved P0 finding (`hasBlockingSeverity`,
+  `BLOCKING_SEVERITIES = ["P0"]` in `src/contracts/review-receipt.ts`), the
+  positive task acceptance already required, and current-head CI that is not
+  red. Unresolved P1/P2/P3 findings never block a merge and never spend a
+  correction round.
+- Branch protection rules and rulesets are not required on any target
+  (`src/github/port-merge.ts`): the active rules are still read so required
+  checks and approvals a target does configure are honoured, but an unreadable,
+  empty, unsupported, merge-queue or bypassable policy is treated as no
+  protections (`noEffectiveProtections`) and never refuses a merge. The self
+  path no longer requires authenticated empty rules.
+- A check the target's own CI did not run (`skipped`) or marked `neutral` is
+  green (`GREEN_CONCLUSIONS` in `src/repair/ci-rejection.ts`, used by
+  `failedChecks`, `requiredChecksState` and the launcher's `hasAllChecksGreen`);
+  failure, timed_out, cancelled, action_required and stale stay red; pending
+  still waits. This supersedes the 2026-10-23 note that Sentinel reads
+  ai.ubq.fi's skipped dispatched jobs as failed (#181 becomes an ai.ubq.fi-side
+  improvement, not a Sentinel blocker).
+- The activated merge-queue proof (`queue.proofActivated` in
+  `src/host/hosted-custody-capability.json`, #180) is not part of this policy
+  either; the session's permission layer refuses that one-line edit as a custody
+  weakening, so it remains the owner's edit until it lands.
+- Exact current-head CI, native review receipts, task acceptance, durable
+  accounting and the custody of credentials are unchanged.
