@@ -35,14 +35,16 @@
  * pass's one dispatch may instead go to the base branch for a bound head that
  * already has a run, when the record base is the live pull request base and
  * that base has no run of the workflow (any event, any status) and is still
- * the base branch tip; its `scope_base` is the tip's first parent, and an
- * unreadable tip or parent skips it. The same request-only, binding, grant, gate and deadline rules
+ * the base branch tip; its `scope_base` is the base itself, an empty
+ * changed-path scope the gateway runs as everything (a first-parent scope
+ * would report `success` for gates it never ran), and an unreadable tip
+ * skips it. The same request-only, binding, grant, gate and deadline rules
  * apply; a base ref that moved first yields a run on another SHA, which is
  * reported as `pending_visibility` and never retried in the pass. Like-for-like
- * attribution also needs the owner's ai.ubq.fi change tracked in Sentinel
- * issue #181 (the complete check set for an opted-in dispatch); until then the
- * base run is scoped by its first-parent diff, so a head check the base run
- * skips stays unattributed exactly as before.
+ * attribution of `docs` and `verify-artifact`, which a full-scope run still
+ * skips, also needs the owner's ai.ubq.fi change tracked in Sentinel issue
+ * #181; until then a head check the base run skips stays unattributed exactly
+ * as before.
  */
 import type { Clock, GitHubCooldownGateV1 } from "../contracts/ports.ts";
 import type { StateReadView } from "../contracts/ports-state.ts";
@@ -280,24 +282,20 @@ export async function dispatchPremergeCi(
     return runs.filter((run) => row(run)?.head_sha === sha).length;
   };
   /**
-   * First parent of the base branch tip, read through the branch itself: the
-   * dispatch takes the branch as its ref, so it is sent only while that tip
-   * is still the exact base (`moved` otherwise, so a moved branch never
-   * draws one dispatch per pass for a run that lands on another SHA). Null
-   * when the tip cannot be read or has no parent.
+   * The base branch tip, read through the branch itself: the dispatch takes
+   * the branch as its ref, so it is sent only while that tip is still the
+   * exact base (`moved` otherwise, so a moved branch never draws one dispatch
+   * per pass for a run that lands on another SHA). Null when unreadable.
    */
-  const tipParent = async (
+  const baseTip = async (
     sha: string,
-  ): Promise<string | "moved" | null | Stop> => {
+  ): Promise<"current" | "moved" | null | Stop> => {
     const response = await api("GET", `/commits/${config.baseBranch}`, null);
     if (isStop(response)) return response;
     if (response === "transport" || response.status !== 200) return null;
     const commit = row(json(response.bodyText));
     if (commit === null || !isGitSha(commit.sha)) return null;
-    if (commit.sha !== sha) return "moved";
-    if (!Array.isArray(commit.parents)) return null;
-    const parent = row(commit.parents[0])?.sha;
-    return isGitSha(parent) ? parent : null;
+    return commit.sha === sha ? "current" : "moved";
   };
   /**
    * The pass's one POST, then one read keyed by the exact SHA: a run there
@@ -410,17 +408,21 @@ export async function dispatchPremergeCi(
       decisions.push(`${pr}:base_run_exists`);
       continue;
     }
-    const parent = await tipParent(sha);
-    if (isStop(parent)) return stop(parent);
-    if (parent === "moved") {
+    const tip = await baseTip(sha);
+    if (isStop(tip)) return stop(tip);
+    if (tip === "moved") {
       decisions.push(`${pr}:base_moved`);
       continue;
     }
-    if (parent === null) {
-      decisions.push(`${pr}:base_parent_unreadable`);
+    if (tip === null) {
+      decisions.push(`${pr}:base_tip_unreadable`);
       continue;
     }
-    const sent = await dispatch(config.baseBranch, sha, parent);
+    // `scope_base` is the base itself: an empty changed-path scope, which the
+    // gateway's test scope runs as everything (`runAll`). A scoped base run
+    // would report `success` for gates it never exercised and blame a
+    // pre-existing base failure on the candidate.
+    const sent = await dispatch(config.baseBranch, sha, sha);
     if (isStop(sent)) return stop(sent);
     if ("refused" in sent) {
       decisions.push(`${pr}:base_dispatch_refused:${sent.refused}`);
