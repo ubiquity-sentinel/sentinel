@@ -149,10 +149,14 @@ export async function guardQueueDelivery(
       : releaseRequestReceipt(context.snapshot.reviews, request)
     : receipt;
   const exactRevision = revision ?? request?.revision;
-  if (
-    deps.github.nativeQueue === undefined || exactReceipt === null ||
-    exactRevision === undefined
-  ) return await holdQueueRecord(deps, context, record, true);
+  if (deps.github.nativeQueue === undefined) {
+    return await holdQueueRecord(deps, context, record, true);
+  }
+  // A missing exact receipt or revision is a failed authorization, not an
+  // unavailable queue observation. Keep that custody hold non-expiring.
+  if (exactReceipt === null || exactRevision === undefined) {
+    return await holdQueueRecord(deps, context, record);
+  }
   const proof = await deps.github.nativeQueue.proveDelivery({
     record,
     receipt: exactReceipt,
