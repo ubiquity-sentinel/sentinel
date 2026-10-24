@@ -4,8 +4,12 @@ import {
   expectRecord,
   expectSha256Hex,
   fail,
+  RecordParseError,
 } from "../contracts/validation.ts";
-import { expectEnvelopeJson } from "./native-review-envelope-repair.ts";
+import {
+  expectEnvelopeJson,
+  refuseAsJsonSyntax,
+} from "./native-review-envelope-repair.ts";
 import {
   expectJournalExactKeys,
   parseReviewResultV1,
@@ -48,7 +52,7 @@ export function nativeReviewInstructions(
     JSON.stringify(reviewResultOutputSchema(task)),
     "Set findings to an empty array for a clean or unavailable verdict, and include at least one finding for a findings verdict.",
     "Every finding must satisfy lineStart <= lineEnd.",
-    "Inside RESULT, keep every string value on one line and free of double quote characters; quote code with backticks.",
+    "Keep every RESULT string, and each native finding's title and body, free of double quote characters; quote code with backticks.",
     "Never repeat a finding: every finding must be distinct from every other finding.",
     "Assess taskAcceptance explicitly from the exact supplied task and committed evidence. Never infer fulfilled from a clean code review. Preserve the exact issueNumber and taskDigest; insufficient evidence is uncertain or unavailable.",
     "Mirror every result.findings entry in native findings with identical title/body, code_location.absolute_file_path under the exact checkout, and matching line_range.start/end. Native findings must be empty exactly when result.findings is empty. Do not add prose outside the envelope in overall_explanation.",
@@ -103,10 +107,30 @@ export function parseNativeReviewResult(
     text.indexOf(NATIVE_REVIEW_OPEN, NATIVE_REVIEW_OPEN.length) >= 0 ||
     text.indexOf(NATIVE_REVIEW_CLOSE, end + NATIVE_REVIEW_CLOSE.length) >= 0
   ) fail("$", "invalid_value", "native result envelope unavailable");
-  const envelope = expectRecord(
-    expectEnvelopeJson(text.slice(NATIVE_REVIEW_OPEN.length, end), "$"),
+  const parsed = expectEnvelopeJson(
+    text.slice(NATIVE_REVIEW_OPEN.length, end),
     "$",
   );
+  try {
+    return checkNativeEnvelope(parsed.value, text, end, snapshot, task, cwd);
+  } catch (error) {
+    if (
+      parsed.recovered && error instanceof RecordParseError &&
+      error.issues[0]?.code !== "bound_exceeded"
+    ) refuseAsJsonSyntax("$");
+    throw error;
+  }
+}
+
+function checkNativeEnvelope(
+  value: unknown,
+  text: string,
+  end: number,
+  snapshot: ReviewSnapshotV1,
+  task: ReviewTaskStatementV1 | null,
+  cwd: string,
+): ReviewResultV1 {
+  const envelope = expectRecord(value, "$");
   expectJournalExactKeys(envelope, ["binding", "result"], "$");
   const binding = expectRecord(envelope.binding, "$.binding");
   expectJournalExactKeys(binding, [

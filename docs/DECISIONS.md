@@ -3008,16 +3008,26 @@ standing approval above. Applied as follows.
 - Decision: when the strict parse of the envelope fails, the parser retries it
   on deterministic rewrites of those slips
   ([src/github/native-review-envelope-repair.ts](../src/github/native-review-envelope-repair.ts)):
-  one whole extra layer of string escaping, raw control characters inside a
-  string, a double quote inside a string that no JSON delimiter follows, an
-  invalid escape (kept as a literal backslash), and a trailing comma. Every
-  candidate goes through the same strict parser, so duplicate keys and trailing
-  content still refuse. The exact envelope keys, the snapshot binding, the
-  strict result shape and the native findings cross-check are unchanged, and an
-  unrecovered text keeps the fixed `json_syntax` category.
-- The review request also asks the reviewer to keep every RESULT string on one
-  line with no double quote characters. That request is Sentinel's own text in
-  `review/start`; the vendored rubric and native review mode are unchanged.
+  one whole extra layer of string escaping (decoded tolerantly, so a second slip
+  inside it is still rewritten), raw control characters inside a string, a
+  double quote inside an object member's string value that no JSON delimiter
+  follows, an invalid escape (`\u` without four hex digits included; kept as a
+  literal backslash), and a trailing comma. An unescaped quote inside an array
+  element is not rewritten: it could split or merge `taskAcceptance.evidence`
+  entries, which nothing cross-checks, so such a text stays refused.
+- Every candidate goes through the same strict parser, so duplicate keys and
+  trailing content still refuse. The exact envelope keys, the snapshot binding,
+  the strict result shape and the native findings cross-check are unchanged. A
+  text no rewrite recovers, and a recovered text that a later check refuses,
+  keep the fixed `json_syntax` category.
+- The review request also asks the reviewer to keep every RESULT string, and
+  each native finding's title and body, free of double quote characters. That
+  request is Sentinel's own text in `review/start`; the vendored rubric and
+  native review mode are unchanged.
+- Adversarial review: three lenses with three skeptics per finding upheld eight
+  P3 findings on the first version (array splits, `\u`, category drift, the
+  instruction's scope, a doubled layer with a second slip); all are fixed and
+  each has a regression test that fails without its fix.
 
 ## 2026-10-24: one fresh proof store per target per maintenance pass (#185)
 
