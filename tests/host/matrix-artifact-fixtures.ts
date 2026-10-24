@@ -430,6 +430,8 @@ export async function fixture(paginated = false, partialMismatch = false) {
     repository: paginationRepository,
     truncate: false,
     duplicate: false,
+    /** Listing pages answered 502 before the real answer (server errors). */
+    serverErrors: 0,
     /** Called before each listing page is answered (the listing race). */
     onPage: undefined as
       | ((key: "jobs" | "artifacts", page: number) => void)
@@ -468,6 +470,10 @@ export async function fixture(paginated = false, partialMismatch = false) {
       const rows = key === "jobs" ? jobs : artifacts;
       const page = Number(parsed.searchParams.get("page"));
       pagination.onPage?.(key, page);
+      if (pagination.serverErrors > 0) {
+        pagination.serverErrors--;
+        return Promise.resolve(new Response("{}", { status: 502 }));
+      }
       const nextPath = pagination.numeric
         ? parsed.pathname.replace(
           CONTROLLER.apiPath,

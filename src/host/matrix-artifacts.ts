@@ -24,6 +24,7 @@ import {
 import {
   type MatrixArtifactRequestV1,
   type MatrixArtifactTransportV1,
+  MatrixArtifactUnavailableError,
   type MatrixAuthenticatedWaveV1,
   MatrixMissingCellArtifactError,
   type MatrixRejectedWaveV1,
@@ -403,7 +404,10 @@ export function createActionsMatrixArtifactTransport(
         } catch {
           refuse();
         }
-        if (error instanceof MatrixMissingCellArtifactError) throw error;
+        if (
+          error instanceof MatrixMissingCellArtifactError ||
+          error instanceof MatrixArtifactUnavailableError
+        ) throw error;
         refuse();
       } finally {
         controller.abort();
