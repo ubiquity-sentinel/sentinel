@@ -208,6 +208,9 @@ export async function runActionsMatrixAggregateCycles(
   if (!read.ok || read.value.status !== "found") {
     throw new Error("matrix aggregate cannot read authoritative state");
   }
+  // #183: progress comments compare against the state before this job's
+  // ingestion, so a park or publication made while consuming cells reports.
+  const progressBaseline = read.value.snapshot.work;
   if (closedCWaveNeedsRecovery(read.value.snapshot)) {
     if (!host.readExecution) {
       throw new Error("C recovery native proof reader unavailable");
@@ -387,5 +390,6 @@ export async function runActionsMatrixAggregateCycles(
     ...input,
     modelStartsEnabled: lifecycleModelStarts,
     externalImplementations: true,
+    progressBaseline: input.progressBaseline ?? progressBaseline,
   });
 }

@@ -242,3 +242,26 @@ Deno.test("progress: the target cycle hands its before and after records to the 
   assert.equal(seen[0][0][0].intent?.kind, "implementation");
   assert.equal(seen[0][1][0].target.pr, 1258);
 });
+
+Deno.test("progress: a job-start baseline replaces the pre-cycle read", async () => {
+  const rig = makeTargetHostRig(["sentinel"]);
+  const repo = rig.configs[0].repository;
+  rig.state.repair = seededSnapshot([{ ...opened, repository: repo }]);
+  rig.state.repairHead = SHA1;
+  const seen: Array<readonly WorkRecordV1[]> = [];
+  const input = targetCycleInput(rig, {
+    runCycle: () => Promise.resolve({ status: "idle" } as never),
+    progressComments: (_config, b) => {
+      seen.push(b);
+      return Promise.resolve();
+    },
+    progressBaseline: [{ ...started, repository: repo }],
+  });
+  await runActionsTargetCycles(input);
+  assert.equal(seen.length, 1);
+  assert.equal(
+    seen[0][0].intent?.kind,
+    "implementation",
+    "the reporter compares against the baseline, not the pre-cycle state",
+  );
+});
