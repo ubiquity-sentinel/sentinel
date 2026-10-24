@@ -5,7 +5,6 @@ import { missingExpectedChecks } from "./ci-coverage.ts";
 import { failedChecks, latestChecks } from "./ci-rejection.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { routeFailedDeliveryChecks } from "./loop-ci-correction.ts";
-import { isSelfScopeZero } from "./loop-legacy-loss.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -13,9 +12,6 @@ import type {
   StepResultV1,
 } from "./loop-types.ts";
 import { markBlocked, setWait } from "./transitions.ts";
-
-/** The self scope's one aggregate CI job (`ci.yml`), created only after its `needs:` finish. */
-const SELF_AGGREGATE_CHECK = "test-local";
 
 /**
  * Pure CI gate decision. Returns "proceed" only when every (deduped by name)
@@ -66,24 +62,20 @@ export function decideCiGate(
  * The base read is the port's lenient `readCheckSuites` (name and suite
  * only), not the strict `readChecks`: a base may carry runs no pull request
  * head runs whose names exceed the strict label bound. The sentinel self
- * scope reads no base at all, like the launcher: its gate is the one named
- * `test-local` job (ci.yml), a `needs: [quality, test-shards]` aggregate that
- * GitHub creates only once those jobs finish, so an otherwise green head
- * listing that does not carry it yet is awaited like running CI instead of
- * admitting a review before the aggregate ran; its `development` tip also
- * carries a `dispatch` run per five-minute schedule and the supervisor.yml
- * runs of `sentinel-supervisor`, which is fast-forwarded with it.
+ * scope reads its base like every other target: `ci.yml`'s `test-local` is a
+ * `needs: [quality, test-shards]` aggregate that GitHub creates only once
+ * those jobs finish, so a head whose shards reported but whose aggregate has
+ * not yet been created is awaited like running CI instead of admitting a
+ * review before the aggregate ran. The `development` tip also carries the
+ * five-minute `dispatch` runs and the supervisor.yml runs of
+ * `sentinel-supervisor` (fast-forwarded with it); those suites share no name
+ * with a pull request head and add no expectation.
  */
 export async function absentExpectedChecks(
   deps: RepairCycleDepsV1,
   record: WorkRecordV1,
   head: readonly GitHubCheckV1[],
 ): Promise<string[] | null> {
-  if (isSelfScopeZero(record.repository)) {
-    return head.some((check) => check.name === SELF_AGGREGATE_CHECK)
-      ? []
-      : [SELF_AGGREGATE_CHECK];
-  }
   const observed = await deps.github.readCheckSuites(record.target.base);
   if (!observed.ok) return null;
   return missingExpectedChecks(head, observed.value.checks);

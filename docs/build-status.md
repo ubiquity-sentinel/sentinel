@@ -136,6 +136,16 @@ Actions API by the scratchpad script; Sentinel does not yet publish them itself
 by the owner at the same time: at most five review rounds, and the loop stops at
 the first round that reports no P0; P1+ of that round become individual issues.
 
+Self-path corrections (00:15 UTC): `a3c271be60` (self aggregate expectation,
+parked pre-write self-merge refusals) failed CI `40042505933` in eight host
+tests whose self-scope fixtures carry a generic green check and no `test-local`:
+hard-coding the aggregate name made every fixture head wait. Corrected to the
+generic rule: the self scope now reads its base's check suites like every other
+target, so the real tip's `ci.yml` suite expects `test-local` once a shard
+reported while fixtures without suites add no expectation (reproduced locally on
+the old code, 8 failures; the corrected unit test covers the tip suites, the
+supervisor and dispatcher suites and an unreadable base).
+
 Next action: observe the first run on `d32daa1910` (bootstrap, then the first
 ordinary run) for `sentinel_premerge_ci` decisions in `matrix_plan`/`repair` and
 for the resulting Gateway CI run, native review and launcher merge on AI
