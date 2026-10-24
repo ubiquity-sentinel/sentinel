@@ -126,9 +126,16 @@ export async function runScenario(scenario: Scenario) {
   (globalThis as unknown as { gc?: () => void }).gc?.();
   const before = Deno.memoryUsage().heapUsed;
   let peak = before;
+  // Bounded custody is about LIVE memory: with `--expose-gc` (the fresh
+  // probe process) each sample first collects garbage, so the peak no longer
+  // depends on when V8 happens to collect the streamed output it already
+  // released (CI measured 33.7-35 MB against the 32 MiB bound before this).
+  // Buffering the whole >38 MiB stream would still be live at a sample.
+  const collect = (globalThis as unknown as { gc?: () => void }).gc;
   const sampler = setInterval(() => {
+    collect?.();
     peak = Math.max(peak, Deno.memoryUsage().heapUsed);
-  }, 10);
+  }, 25);
   const port = new CodexImplementationPort({
     openSession: () => Promise.resolve(session),
     checkoutDir: dir,
