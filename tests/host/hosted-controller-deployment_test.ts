@@ -261,7 +261,7 @@ Deno.test("controller deployment: private committed source owns bootstrap, nativ
           rig.clock.advance(5_000);
           rig.evidence.settlements.set(
             candidate.execution.id,
-            proofs.runProof(candidate.execution, "failed"),
+            proofs.startedFailureProof(candidate.execution),
           );
           const rollback = await rig.prepare(2);
           assert(rollback.status === "run");

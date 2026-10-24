@@ -118,6 +118,19 @@ async function moveInstallation(
   records: readonly HostedInstallationRecordV1[],
   saved: HostedInstallationRecordV1,
 ): Promise<"written" | HostedSupervisorOutcomeV1> {
+  if (
+    saved.phase === "bootstrapping" && saved.bootstrapProof === null &&
+    saved.retriedBootstrapProof?.execution.id === saved.bootstrapExecutionId
+  ) {
+    return await retryBootstrap(
+      input,
+      cursor,
+      runtime,
+      releases,
+      records,
+      saved,
+    );
+  }
   const intent = saved.pointerIntent;
   if (
     runtime.execution !== null || intent === null ||
@@ -220,6 +233,62 @@ async function moveInstallation(
       updatedAt: now,
     },
     releasesNext,
+    records.map((r) => r.id === next.id ? next : r),
+  );
+  return applied === "applied" ? "written" : pending(STATIC_CONFLICT);
+}
+
+/**
+ * #191: the single model-disabled retry of a first bootstrap that never
+ * reached startup-ready. It reruns the same candidate at its exact installed
+ * pointer (a revision never changes generation), so the recorded prior
+ * rollback keeps its exact previousGeneration + 2 identity.
+ */
+async function retryBootstrap(
+  input: HostedSupervisorInputV1,
+  cursor: SnapshotCursorV1,
+  runtime: HostedRuntimeRecordV1,
+  releases: readonly HostedReleaseRecordV1[],
+  records: readonly HostedInstallationRecordV1[],
+  saved: HostedInstallationRecordV1,
+): Promise<"written" | HostedSupervisorOutcomeV1> {
+  if (
+    runtime.execution !== null ||
+    releases.some((r) => r.pointerIntent !== null) ||
+    runtime.activeRevision !== saved.candidateRevision ||
+    runtime.generation !== saved.previousGeneration + 1 ||
+    input.run.launcherSha !== saved.candidateRevision
+  ) {
+    return pending(
+      "launcher installation retry is waiting for its exact pointer",
+    );
+  }
+  const now = input.clock.now();
+  const execution = parseHostedExecutionIntentV1({
+    id: executionIdOfRun(input.run),
+    runId: input.run.runId,
+    runAttempt: input.run.runAttempt,
+    launcherSha: input.run.launcherSha,
+    purpose: "bootstrap",
+    revision: saved.candidateRevision,
+    generation: runtime.generation,
+    releaseId: null,
+    createdAt: now,
+  });
+  // A settled attempt is never rebound to the run that settled it.
+  if (execution.id === saved.bootstrapExecutionId) {
+    return pending("launcher installation retry needs a new run");
+  }
+  const next: HostedInstallationRecordV1 = {
+    ...saved,
+    bootstrapExecutionId: execution.id,
+    updatedAt: now,
+  };
+  const applied = await commitHosted(
+    input,
+    cursor,
+    { ...runtime, execution, lastTurn: "verification", updatedAt: now },
+    releases,
     records.map((r) => r.id === next.id ? next : r),
   );
   return applied === "applied" ? "written" : pending(STATIC_CONFLICT);

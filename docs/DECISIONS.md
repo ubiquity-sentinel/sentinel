@@ -2923,3 +2923,27 @@ standing approval above. Applied as follows.
   `existing_candidate_refs` phase and the closed-C ingest) still creates one
   store per proof. The walk budget is unchanged; letting preservation continue
   past the walk deadline under its own bound was not needed.
+
+## 2026-10-24: one in-place retry for a bootstrap that never started (#191)
+
+- A launcher self-install bootstrap that never reached its startup-ready marker
+  no longer burns the SHA. That covers a `not_started` settlement, and a failed
+  run whose child never attested `startupReady`: runner loss, a cancellation
+  before start, a failed fetch or a failed Codex preflight. The installation
+  journals that first settlement as `retriedBootstrapProof` and stays
+  `bootstrapping`, with models still stopped. The next supervisor run of the
+  same launcher starts exactly one more model-disabled bootstrap of the same SHA
+  at the same pointer. The generation stays `previousGeneration + 1`, because a
+  revision never changes generation. A new execution id rebinds
+  `bootstrapExecutionId`.
+- A run that reached startup-ready and then failed actually executed. It
+  journals the exact recorded-prior rollback immediately, as before. The retry
+  journals the rollback on any outcome other than healthy, including a second
+  run that never started. Rollback still restores the recorded prior at
+  `previousGeneration + 2`, and the failed SHA still cannot reinstall.
+- The retry cannot repeat. The state validator rebinds the execution only while
+  the journaled first attempt still owns it, at the exact candidate pointer and
+  with an idle runtime. Once journaled, the retry proof never changes. A record
+  that never retried keeps its earlier exact shape. The dispatcher's follow
+  reader and the rollback child's projection (which omits installations) read
+  retried journals unchanged.

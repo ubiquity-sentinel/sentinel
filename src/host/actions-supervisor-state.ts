@@ -468,6 +468,7 @@ export function settleRuntime(
   );
   const installationSettlement = installations.some((i) =>
     i.bootstrapProof?.execution.id === settlement.execution.id ||
+    i.retriedBootstrapProof?.execution.id === settlement.execution.id ||
     i.rollbackProof?.execution.id === settlement.execution.id
   );
   const runtimeNext: HostedRuntimeRecordV1 = {
