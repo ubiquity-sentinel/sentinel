@@ -550,23 +550,43 @@ export async function preMergeGate(input: {
 /**
  * Every eligible spent record may be read on each pass. A record changed by
  * an earlier phase still waits for the next pass. CI, current-head review,
- * source identity and the one-merge-per-pass gate remain unchanged.
+ * source identity and the one-merge-per-pass gate remain unchanged. With
+ * `onTip` (#156), a record with a review of its own head is left out unless
+ * `onTip` holds for it (`spentOnTip`); a carried head on a moved base keeps
+ * its own exemption.
  */
 export function spentReadWindow(
   snapshot: RepairStateSnapshotV1,
   _now: number,
   settled?: ReadonlySet<string>,
+  onTip?: (record: HostedAutonomyRecordV1) => boolean,
 ): Set<string> {
   return new Set(
     snapshot.work.filter((record) =>
       settled?.has(record.id) !== true &&
       deliveryEligible(record, snapshot) && parkedStep(record) &&
       spentDeliveryAdmissible(record, snapshot) &&
-      (boundReviewReceipts(snapshot, record).length > 0 ||
+      ((boundReviewReceipts(snapshot, record).length > 0 &&
+        onTip?.(record) !== false) ||
         (carriedRecordAwaited(record) &&
           carriedMergeReceipt(snapshot, record) !== null))
     ).map((record) => record.id),
   );
+}
+
+/**
+ * True when the pass can still merge a spent record on `tip` (#156): its
+ * reviewed base is that tip, read once for the pass (an unread tip admits it;
+ * the pass reports the unreadable base), or the moved-base merge (D3)
+ * applies to it. Otherwise `preMergeGate` can only refuse it `base_moved`.
+ */
+export function spentOnTip(
+  record: HostedAutonomyRecordV1,
+  tip: string | null,
+  movedBaseMerge: boolean,
+): boolean {
+  return tip === null || record.target.base === tip ||
+    (movedBaseMerge && isGatewayVpsRepository(record.repository));
 }
 
 // ---- carried merge (owner decision 2026-10-16 (2), option (b)) -----------
@@ -631,9 +651,14 @@ export function carriedMergeAwaited(record: HostedAutonomyRecordV1): boolean {
 }
 
 /**
- * The runtime waits on this pass: for its merge (`carriedMergeAwaited`), or,
- * once the pull request merged, for the bookkeeping (`unavailable`), which
- * this pass adopts only from its own verified merge and the exact proof.
+ * The runtime may wait on this pass: for its merge (`carriedMergeAwaited`),
+ * or with any `unavailable` wait at `work` (#156). The runtime writes that
+ * wait once the pull request merged, for the bookkeeping this pass adopts
+ * only from its own verified merge and the exact proof, but also before any
+ * merge (an unavailable patch proof or base ref, a pull request still
+ * reporting the refreshed-from head), and the record carries no merged fact.
+ * So the pass reads such a record's pull request first and nothing else
+ * unless that pull request is merged (`carried_awaiting_runtime` otherwise).
  */
 export function carriedRecordAwaited(record: HostedAutonomyRecordV1): boolean {
   return carriedMergeAwaited(record) ||

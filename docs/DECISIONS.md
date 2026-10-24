@@ -1249,10 +1249,13 @@ carries H0's authorization only when the pull request's own patch is unchanged:
 the merge-base patches `git diff B0...H0` and `git diff T...H1`, each from its
 unique merge base (a criss-cross history is no proof), rendered with every
 option fixed (`--binary --full-index --no-renames`, no external diff or
-textconv) and compared by the SHA-256 of their raw bytes
-(`src/github/git-carried-patch.ts`). Full blob ids on every index line make
-equal bytes mean equal contents, modes, renames and binary payloads, so a base
-change touching a reviewed path fails the proof even when it merges cleanly. The
+textconv) and compared by the SHA-256 of their raw bytes together with each
+side's raw listing `git diff --raw --no-abbrev -z --no-renames`
+(`src/github/git-carried-patch.ts`). Full blob ids on every index line bind a
+content change, but a mode-only change prints no index line (#156); the listing
+names both modes and both full blob ids of every changed path, so equal digests
+mean equal contents, modes, renames and binary payloads, and a base change
+touching a reviewed path fails the proof even when it merges cleanly. The
 runtime re-derives that proof from git on every step; no state field is added,
 so R79 parses everything generation 80 writes. The merge itself is the
 launcher's (round-2 recheck P1): the runtime's merge port refuses every merge on
@@ -1289,8 +1292,9 @@ parents are not exactly [T, H1] is never booked: the pass reports
 record
 `review round ceiling reached: the carried merge landed off its tip: merge … has parents …, not <T>,<H1>`
 (undeliverable, so later passes leave it alone; a self record is never rewritten
-by the pass, and its runtime parks it once its bounded wait for the delivery
-record ends), the same for a lost-write adoption of such a merge; (c) on H1's
+by the pass, and its runtime reads the merge commit's parents and parks it with
+the same blocker at its next step, #156), the same for a lost-write adoption of
+such a merge, decided on the parents before any patch proof is read; (c) on H1's
 own green required CI (every check run on the exact head completed successfully;
 `test-local` for the self scope); (d) when the exact patch proof re-derived from
 GitHub's Git data holds (round-2 recheck P3: the rendered compare diffs it used
@@ -1305,7 +1309,7 @@ is the refreshed side's own merge base; a tree GitHub truncates (past its entry
 or size limit) or any unreadable answer is no proof
 (`carried_proof_unavailable`). Full blob ids make equal sets mean equal
 contents, text or binary, and modes, and the old side binds the base content
-each change applies to, as the runtime's `--full-index --no-renames` proof does;
+each change applies to, as the runtime's raw listing and patch proof do (#156);
 the merge base is the one GitHub names, and a criss-cross history (several merge
 bases) is refused by the runtime's git proof, which must hold before it writes
 the marker. GitHub's rendered diffs are still read, as evidence only; and (e)
@@ -2823,6 +2827,56 @@ standing approval above. Applied as follows.
   future pin appends to them.
 - Whether the legacy class is the cutoff rule or the owner's list of twelve
   still needs the owner's answer.
+
+## 2026-10-24: carried and spent delivery precision (#156)
+
+- A merge the launcher's delivery pass makes is booked only when the merge
+  commit's parents are exactly [the tip re-read immediately before the merge
+  call, the head] (`mergedExactlyOn`). GitHub has no compare-and-swap on the
+  base, so a commit that lands in between makes the merge a tree no CI ran on;
+  the pass reports `delivery:<id>:merged_off_tip:sha=<merge sha>` and writes
+  nothing. The refusal is durable (review finding, upheld 3 of 3): while the
+  moved-base merge rule (D3) is off, an App-made merge of a non-carried record
+  is booked in any pass only on exactly [its reviewed base, its head], so a
+  later pass never adopts the refused merge as an outside merge. A queue merge
+  keeps its own proof, an owner's merge is not the App's, and with D3 on an App
+  merge onto a moved tip is intended, so only the same-pass check applies.
+- A carried merge already landed off its tip is decided on its parents before
+  the patch proof is read (a queue merge keeps the proof). The runtime reads the
+  merge commit's parents itself (`GitHubPort.readCommitParents`, optional;
+  absent, the bounded wait stays): a merged carried head not booked whose
+  commit's parents are not exactly [T, H1] parks at once with the launcher's own
+  `…the carried merge landed off its tip: merge … has parents …` blocker instead
+  of holding the delivery line for 6 hours and parking as a generic stall. A
+  native queue target (ai.ubq.fi) is left to the launcher, which parks it
+  itself.
+- `carriedRecordAwaited` still counts every `unavailable` wait at `work`: the
+  runtime writes it for a merged pull request awaiting the launcher's record,
+  but also before any merge (an unavailable patch proof or base ref, a pull
+  request still reporting the refreshed-from head), and the record carries no
+  merged fact. The pass therefore reads such a record's pull request first and
+  stops there with `carried_awaiting_runtime` unless it is merged (no task
+  read).
+- The runtime's carried patch digest is the SHA-256 of the length-prefixed raw
+  listing `git diff --raw --no-abbrev -z --no-renames <merge base> <head>`
+  followed by the patch bytes. A mode-only change prints no index line, so the
+  patch alone did not bind that path's content; the listing names both modes and
+  both full blob ids of every changed path, the same sets the launcher's
+  Git-tree proof compares.
+- `executeCarriedDelivery` reads H1's own CI before the tip. A red H1 its own
+  change caused is never refreshed onto a moved tip: it parks
+  `…the refreshed head's required CI failed: …`. A red the base caused, or one
+  no base evidence attributes yet, keeps the refresh path, since a refresh onto
+  a fixed tip can cure it (review finding, upheld 3 of 3); without a moved tip
+  it keeps its bounded wait.
+- Each repository's tip is read once before the spent read window. While D3 is
+  off, a spent record reviewed on its own head whose base is not that tip is
+  left out of the window (`spentOnTip`): only its pull request is read, so the
+  lost write of a merge that moved the tip itself is still adopted, and an
+  unmerged one reports `base_moved` without the task read. A carried head on a
+  moved base keeps its own exemption. Nothing here merges anything the gates
+  refused before, refunds or moves a reservation, or relaxes a review, CI or
+  protected-path gate.
 
 ## 2026-10-24: an unready ai.ubq.fi queue observation no longer holds all maintenance
 

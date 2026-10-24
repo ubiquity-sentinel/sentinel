@@ -1,5 +1,7 @@
 import { guardQueueDelivery } from "./loop-queue-guard.ts";
 import { guardQueueOperation } from "./loop-queue-guard.ts";
+import { isNativeQueueTarget } from "../github/native-queue-guard.ts";
+import { REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX } from "./review-round-cap.ts";
 /**
  * Repair loop internals: spent records on a moved base (owner decision
  * 2026-10-16 (2), "the 3 rounds are spent with no unresolved P0/P1, the PR
@@ -369,11 +371,12 @@ function patchChangedDetail(
  * refresh of an earlier reviewed head. Null when the record is no carried
  * candidate (the caller parks it as before). Otherwise, in order: the patch
  * proof (git only), the pull request (merged at this exact head: the
- * launcher's delivery record; still at the head this one was refreshed from:
- * a bounded wait for GitHub to report the push), the tip (moved again: one
- * more refresh through the line, at most `CARRIED_REFRESH_LIMIT`), the head's
- * own CI (green, with every check T's suites expect present), the live task
- * acceptance of the reviewed identity, and then the
+ * launcher's delivery record, or an off-tip park; still at the head this one
+ * was refreshed from: a bounded wait for GitHub to report the push), the
+ * head's own CI (red: never refreshed, #156), the tip (moved again: one more
+ * refresh of a green or pending head through the line, at most
+ * `CARRIED_REFRESH_LIMIT`), that CI green with every check T's suites expect
+ * present, the live task acceptance of the reviewed identity, and then the
  * carried-merge marker for the launcher's merge, bounded from that CI's
  * completion.
  */
@@ -463,6 +466,32 @@ export async function executeCarriedDelivery(
       `${REVIEW_ROUND_CEILING_CARRIED_STALLED_PREFIX}the pull request still reports ${observed.head}, not ${head}`,
     );
   }
+  // H1's own CI is read before the tip (#156): a red H1 that its own change
+  // caused parks at once instead of being refreshed (a refresh is one more CI
+  // run while the record holds the delivery line, up to
+  // `CARRIED_REFRESH_LIMIT` times). A red the base caused, or one no base
+  // evidence attributes yet, may still be cured by a refresh onto a moved tip,
+  // so it keeps that path (review finding, upheld 3 of 3).
+  const checks = await deps.github.readChecks(head);
+  if (!checks.ok) {
+    return { kind: "deferred", detail: "CI check observation unavailable" };
+  }
+  const decision = decideCiGate(checks.value.checks);
+  if (decision !== "proceed" && decision !== "wait") {
+    const observed = await observeHeadFailure(deps, record);
+    if (observed === null) {
+      return { kind: "deferred", detail: "CI check observation unavailable" };
+    }
+    if (observed.kind === "candidate") {
+      return gateCarriedChecks(
+        deps,
+        context,
+        record,
+        checks.value.checks,
+        decision,
+      );
+    }
+  }
   // The base moved again: one more refresh of this tip, in its turn, unless
   // the reviewed head was already carried through the most refreshes.
   const refresh = await ensureBaseRefreshIntent(
@@ -482,11 +511,6 @@ export async function executeCarriedDelivery(
         ),
   );
   if (refresh !== null) return refresh;
-  const checks = await deps.github.readChecks(head);
-  if (!checks.ok) {
-    return { kind: "deferred", detail: "CI check observation unavailable" };
-  }
-  const decision = decideCiGate(checks.value.checks);
   if (decision !== "proceed") {
     return gateCarriedChecks(
       deps,
@@ -677,6 +701,14 @@ async function carriedMerged(
     request.source.reviewRequestId === receipt.requestId
   );
   if (!booked) {
+    const offTip = await carriedOffTipDetail(deps, record, revision);
+    if (offTip !== null) {
+      return persistWork(
+        deps,
+        context,
+        markBlocked(record, "other", offTip, deps.clock.now()),
+      );
+    }
     return boundedWait(
       deps,
       context,
@@ -691,4 +723,41 @@ async function carriedMerged(
     context,
     advanceToDelivery(record, deps.clock.now()),
   );
+}
+
+/**
+ * The launcher's own off-tip blocker for a carried merge whose commit's
+ * parents are not exactly [T, H1] (#156), or null. The launcher books a
+ * carried merge only on exactly those parents (and never rewrites a self
+ * record), so such a merge can never be booked: the record parks at once,
+ * naming the cause, instead of holding its repository's delivery line until
+ * the 6-hour stall park. A native queue target is the launcher's to park (a
+ * queue merge has the queue's parents); an unreadable or unknown commit
+ * keeps the bounded wait.
+ */
+async function carriedOffTipDetail(
+  deps: RepairCycleDepsV1,
+  record: WorkRecordV1,
+  revision: GitSha,
+): Promise<string | null> {
+  const { head, base } = record.target;
+  const read = deps.github.readCommitParents;
+  if (
+    read === undefined || head === null ||
+    isNativeQueueTarget(record.repository)
+  ) return null;
+  let parents;
+  try {
+    parents = await read.call(deps.github, revision);
+  } catch {
+    return null;
+  }
+  if (!parents.ok || parents.value === null) return null;
+  const listed = parents.value;
+  if (listed.length === 2 && listed[0] === base && listed[1] === head) {
+    return null;
+  }
+  return `${REVIEW_ROUND_CEILING_CARRIED_OFF_TIP_PREFIX}merge ${revision} has parents ${
+    listed.join(",") || "none"
+  }, not ${base},${head}`;
 }

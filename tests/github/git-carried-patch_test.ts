@@ -149,33 +149,51 @@ Deno.test("carried patch: the runtime's mechanical refresh of a reviewed head ca
     assert.match(proof.value.reviewedPatch, /^[0-9a-f]{64}$/);
     assert.equal(proof.value.refreshedPatch, proof.value.reviewedPatch);
     assert.equal(carriedPatchHolds(request(b0, h0, t, h1), proof.value), true);
-    // The digest is SHA-256 of the exact `git diff B0...H0` bytes.
-    const raw = await new Deno.Command("git", {
-      args: [
-        "diff",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--no-color",
-        "--binary",
-        "--full-index",
-        "--no-renames",
-        "--ignore-submodules=none",
-        "--submodule=short",
-        "--src-prefix=a/",
-        "--dst-prefix=b/",
-        "--diff-algorithm=myers",
-        b0,
-        h0,
-        "--",
-      ],
-      cwd: repo.dir,
-      clearEnv: true,
-      env: repo.env,
-      stdout: "piped",
-      stderr: "null",
-    }).output();
+    // The digest is SHA-256 of the exact `git diff --raw --no-abbrev -z
+    // --no-renames B0...H0` listing (length-prefixed) and then the exact
+    // `git diff --binary --full-index --no-renames B0...H0` bytes (#156).
+    const diff = async (args: string[]) =>
+      (await new Deno.Command("git", {
+        args: ["diff", ...args, b0, h0, "--"],
+        cwd: repo.dir,
+        clearEnv: true,
+        env: repo.env,
+        stdout: "piped",
+        stderr: "null",
+      }).output()).stdout;
+    const listing = await diff([
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-color",
+      "--raw",
+      "--no-abbrev",
+      "-z",
+      "--no-renames",
+      "--ignore-submodules=none",
+    ]);
+    const patchBytes = await diff([
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-color",
+      "--binary",
+      "--full-index",
+      "--no-renames",
+      "--ignore-submodules=none",
+      "--submodule=short",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--diff-algorithm=myers",
+    ]);
+    // Every changed path of the reviewed patch is on the listing, the
+    // mode-only one included.
+    assert.match(
+      new TextDecoder().decode(listing),
+      /:100644 100755 [0-9a-f]{40} [0-9a-f]{40} M\0run\.sh\0/,
+    );
+    const header = new TextEncoder().encode(`${listing.byteLength}\n`);
+    const framed = new Uint8Array([...header, ...listing, ...patchBytes]);
     const expected = Array.from(
-      new Uint8Array(await crypto.subtle.digest("SHA-256", raw.stdout)),
+      new Uint8Array(await crypto.subtle.digest("SHA-256", framed)),
       (byte) => byte.toString(16).padStart(2, "0"),
     ).join("");
     assert.equal(proof.value.reviewedPatch, expected);
@@ -252,6 +270,44 @@ Deno.test("carried patch: a base move that touches a reviewed path changes the p
       carriedPatchHolds(request(b0, h0, t, refreshed.value), proof.value),
       false,
     );
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+Deno.test("carried patch: a mode-only change binds the content it applies to (#156)", async () => {
+  const repo = await makeRepo();
+  try {
+    const b0 = await repo.commit({ "s.sh": "echo one\n", "a.txt": LINES });
+    assert.ok((await repo.git(["checkout", "-q", "-b", "candidate"])).ok);
+    await Deno.chmod(`${repo.dir}/s.sh`, 0o755);
+    const h0 = await repo.commit({});
+    assert.ok((await repo.git(["checkout", "-q", "development"])).ok);
+    // The base changes the content the reviewed mode change applies to; the
+    // refresh merges cleanly (the mode from the head, the content from T).
+    const t = await repo.commit({ "s.sh": "echo two\n" });
+    const git = repo.executor();
+    const refreshed = await git.integrateBase(h0, t);
+    assert.ok(refreshed.ok, JSON.stringify(refreshed));
+    const h1 = refreshed.value;
+    // Both merge-base patches are the same bytes: a mode-only change prints
+    // no index line, so the patch alone binds no blob of that path.
+    const patch = async (from: GitSha, to: GitSha) =>
+      (await repo.git([
+        "diff",
+        "--binary",
+        "--full-index",
+        "--no-renames",
+        from,
+        to,
+      ])).stdout;
+    assert.equal(await patch(b0, h0), await patch(t, h1));
+    assert.match(await patch(b0, h0), /^old mode 100644\nnew mode 100755$/m);
+    const proof = await git.carriedPatchProof(request(b0, h0, t, h1));
+    assert.ok(proof.ok, JSON.stringify(proof));
+    assert.equal(proof.value.refreshedMergeBase, t);
+    assert.notEqual(proof.value.refreshedPatch, proof.value.reviewedPatch);
+    assert.equal(carriedPatchHolds(request(b0, h0, t, h1), proof.value), false);
   } finally {
     await repo.cleanup();
   }

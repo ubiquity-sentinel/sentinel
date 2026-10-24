@@ -83,6 +83,12 @@ export interface GitHubPort {
   /** Observe the current head of a ref (exact identity, not list order). */
   readRef(ref: string): Promise<PortResultV1<GitHubRefV1 | null>>;
   /**
+   * Optional exact parents of one commit, in order (null: no such commit).
+   * The carried delivery reads a merge commit's parents to park a merge that
+   * landed off its tip at once (#156); absent, it keeps its bounded wait.
+   */
+  readCommitParents?(sha: GitSha): Promise<PortResultV1<GitSha[] | null>>;
+  /**
    * Optional trusted deterministic candidate-base integration capability.
    *
    * When present, it re-observes the exact open trusted-author PR (state,

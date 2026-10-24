@@ -208,6 +208,10 @@ export abstract class GitHubPortBase {
     return this.client.readRef(ref);
   }
 
+  readCommitParents(sha: GitSha): Promise<PortResultV1<GitSha[] | null>> {
+    return this.client.readCommitParents(sha);
+  }
+
   /**
    * Candidate preservation is a host-composed capability, not a generic port
    * behavior: this instance has no trusted candidate-object loader and no
