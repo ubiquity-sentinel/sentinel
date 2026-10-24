@@ -4,7 +4,7 @@
     "activated": false
   },
   "queue": {
-    "proofActivated": true,
+    "proofActivated": false,
     "revisions": [
       "ff8763f901b6d0bb8b47b0e71a76222e124c2206"
     ],
