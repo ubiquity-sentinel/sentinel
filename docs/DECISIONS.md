@@ -2681,5 +2681,12 @@ internal policy is resolve all P0". Applied as follows.
   `src/host/hosted-custody-capability.json`, #180) is not part of this policy
   either; the session's permission layer refuses that one-line edit as a custody
   weakening, so it remains the owner's edit until it lands.
+- Review follow-up filing (`ops/hosted-autonomy-follow-ups.ts`) now files every
+  unresolved P1/P2/P3 finding of a merged PR as follow-up work; before the
+  directive it filed only P2/P3 because a P1 could not merge.
+- A historical review whose only unresolved finding is a P1 is a clean review
+  under this rule. The legacy base-refresh loss bridge therefore restores only a
+  head an unresolved P0 rejected; a P1-only historical rejection is refused like
+  any other non-rejecting review.
 - Exact current-head CI, native review receipts, task acceptance, durable
   accounting and the custody of credentials are unchanged.

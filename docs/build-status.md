@@ -7,7 +7,46 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 01:15 UTC)
+## Latest checkpoint (2026-10-24 04:40 UTC)
+
+- Publication: `development` is `d1bffb79aa` (`c84aab84a0` P0-only merge policy,
+  `23afdff3dd` contract and port tests, `d1bffb79aa` remaining runtime gates,
+  follow-up filing and their tests). Every affected test file passed locally in
+  bounded batches; `deno task size:check` reports 0 files over the ceiling. CI
+  `40062384705` on `d1bffb79aa` is running. The launcher stays on `fdc98f727a`
+  until that CI passes; the P0-only policy is not live before the advance and
+  its bootstrap.
+- Policy (owner directive 2026-10-24, recorded in DECISIONS.md): only an
+  unresolved P0 blocks a merge; branch rules are not a merge requirement on any
+  target; skipped and neutral checks are green. Unresolved P1/P2/P3 findings of
+  a merged PR are filed as follow-up issues.
+- Live: ordinary run `40053623976` (fdc98f727a) settled healthy and published
+  [#194](https://github.com/ubiquity-sentinel/sentinel/pull/194) for #179 (the
+  first self PR since 2026-10-18, CI green). Run `40059430390` is in flight:
+  #194's head moved to `9cb3d48b80` (base refresh) and the runtime opened
+  [#195](https://github.com/ubiquity-sentinel/sentinel/pull/195) for #187. No
+  target has an autonomous issue closure yet; acceptance is still open.
+- State at 04:18 UTC (407 work records): the most common blocker on every target
+  is "candidate touches a protected path" (Sentinel 32, ai.ubq.fi 42, Passport
+  8): the model's candidate edits a file the target's trusted policy reserves,
+  so the repair needs a development change or an owner decision. ai.ubq.fi has
+  33 records in delivery backoff (merges wait on #180); Passport has 25 in
+  delivery backoff and 22 existing-PR holds on foreign (human) PRs.
+- Review loop: round 2 (adversarial review of every fix since the baseline)
+  completed with no P0, so the loop stopped under the owner's rule (stop at the
+  first round without a P0, cap five). Its seven confirmed findings are filed
+  individually: P1 #196 and #197 (self-merge refusal handling; both sit on the
+  path #194 takes), P2 #198–#201, P3 #202. Twelve further candidate findings
+  were not verified because every verifier agent hit the session's usage limit;
+  they are unverified, not refuted, and were not filed.
+- Owner-only: #180 (`queue.proofActivated`, blocks every ai.ubq.fi merge; the
+  session's permission layer refuses the edit) and, optionally, #181.
+- Next: when CI passes, advance `sentinel-supervisor` to `d1bffb79aa`, let the
+  model-disabled bootstrap settle, then watch the ordinary run review and merge
+  #194 and close #179 (the first autonomous closure). Fix #196/#197 before
+  relying on repeated self merges.
+
+## Prior checkpoint (2026-10-24 01:15 UTC)
 
 - Launcher `sentinel-supervisor` advanced 79eb079e8d → 9b2de3d259 after CI
   40045951218 passed; bootstrap generation 94 on 79eb079e8d settled healthy (run
