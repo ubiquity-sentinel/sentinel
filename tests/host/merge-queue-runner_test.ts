@@ -6,7 +6,10 @@ import { orchestrationRig } from "./merge-queue-orchestration-fixtures.ts";
 import { makeRig, run } from "./actions-supervisor-fixture.ts";
 import { bootstrapHealthy } from "./actions-supervisor-lifecycle-fixture.ts";
 
-Deno.test("queue runner: unavailable custody precedes every prephase and follow-up; healthy runtime survives finalize", async () => {
+Deno.test("queue runner: unprovable custody protects every gateway record while the pass continues; healthy runtime survives finalize", async () => {
+  // Issue #188: an unreadable native queue no longer stops every target. The
+  // pass continues with every ai.ubq.fi record protected, writes none of them
+  // or their charges, and the custody output stays not ready.
   const runtime = await makeRig();
   try {
     await bootstrapHealthy(runtime);
@@ -18,20 +21,14 @@ Deno.test("queue runner: unavailable custody precedes every prephase and follow-
     f.deps.onQueueCustodyReady = (value) => {
       readiness.push(value);
     };
-    f.deps.closedMatrix = () => {
-      throw new Error("matrix must not begin");
-    };
-    f.deps.uncertainMatrix = () => {
-      throw new Error("uncertainty must not begin");
-    };
-    f.deps.githubFor = () => {
-      throw new Error("ordinary/follow-up scopes must not begin");
-    };
     const charges = canonicalStringify(f.state.repair!.reservations);
+    const work = canonicalStringify(f.state.repair!.work);
     const result = await runHostedAutonomy(f.deps);
-    assert.equal(result.status, "skipped");
-    assert.deepEqual(readiness, [false]);
+    assert.notEqual(result.status, "failed", JSON.stringify(result));
+    assert.ok(result.actions.includes("queue:gateway_protected"));
+    assert.deepEqual(readiness, [false, false]);
     assert.equal(canonicalStringify(f.state.repair!.reservations), charges);
+    assert.equal(canonicalStringify(f.state.repair!.work), work);
     assert.equal((await runtime.finalize(run(2))).status, "pending");
     assert.equal(canonicalStringify(await runtime.snapshot()), healthy);
     assert.equal((await runtime.snapshot()).hostedRuntimes[0].execution, null);
