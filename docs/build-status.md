@@ -33,6 +33,17 @@ ownership, authority or acceptance.
   fixture moved under the repository root, which the CI shards can read);
   launcher `sentinel-supervisor` advanced 9b2de3d259 → fdc98f727a. The audit's
   verified P1/P2 risks are filed as #186–#193.
+- 02:20 UTC: review round 1 (the end-to-end live-path audit, 53 agents,
+  adversarial verification) completed: 13 confirmed blocker/risk findings.
+  Blockers: launcher grant handoff (fixed 79eb079e8d), ai.ubq.fi scope rule
+  (#181, owner), activated queue proof blocking launcher delivery and queue
+  booking (#180, owner). Risks fixed: self aggregate gate (9b2de3d259), self
+  merge refusal park (a3c271be60). Risks filed: #187, #188, #191, #193 (plus
+  notes #189, #192). Two drafted findings were refuted by the skeptics and
+  closed: #186 (cancelled-run re-dispatch is recorded design) and #190 (a
+  reroute-ended review charging its round is owner policy). Round 2 (review of
+  every fix since the baseline) is running; the loop stops at the first round
+  with no P0, cap five rounds.
 - Next: CI on the fix, launcher advance, then watch maintenance preserve #179
   and Passport 77/83; refresh the status board and dashboard afterwards.
 
