@@ -3005,3 +3005,42 @@ standing approval above. Applied as follows.
 - `sentinel-release` stays disabled and nothing is enabled. Until the release
   ref records a carried request, it is release-deferred like any other (JAM
   B12).
+
+## 2026-10-24: definitely unsent queue admissions are reconciled without losing custody (#169)
+
+- A gateway queue admission whose every attempt the native client proved
+  `not_submitted` (first admission, no refusal, queue failure, re-admission or
+  dequeue marker, native request or result identity) no longer holds its pull
+  until the six-hour `admission_unresolved` owner park once a later preflight
+  refuses it. When the fresh authorization decision is a refusal (`hold`) and a
+  fresh read of the effective `merge_queue` rule is authenticated negative, the
+  queue prelude (`reconcileNotSubmitted` in
+  `ops/hosted-autonomy-queue-reconcile.ts`) clears the queue intent and returns
+  the open-ended hold to the transient wait #180 uses, so the ordinary runtime
+  path re-observes the record. Under an active or unknown rule the record keeps
+  its retryable unsent custody: the runtime's direct path would refuse it
+  `queue_required` and hold it with no intent for good (review finding, upheld 3
+  of 3). A later native entry is taken into custody again by the next complete
+  scan.
+- The pull must be absent from every read of that pass: the pass's initial queue
+  snapshot, one more fresh queue scan, the membership read and the coordinator's
+  authorization membership (`hasConsistentQueueAbsence` in
+  `ops/hosted-autonomy-queue-policy.ts`). An entry in any one of them, a merged
+  revision, a moved head or another pull identity, an incomplete read or
+  authorization fact, durable queue provenance, a matching release request or
+  the pass deadline keeps strict custody.
+- The submission (`ops/hosted-autonomy-queue-submit.ts`) is the only place that
+  knows no effect followed its freshly committed intent. When its own preflight
+  refuses (an authenticated negative `merge_queue` rule or a `hold` decision)
+  and the same four reads agree on absence, it records `not_submitted` for a
+  first admission or a retry of a not-submitted result; otherwise the pre-effect
+  `unresolved`/`ambiguous` mark stays. An unknown rule, a lost CAS on the
+  recording write and a late enqueue response that could not be recorded after a
+  moved state head stay uncertain, never reconciled, and reach the owner park as
+  before.
+- An authorized unsent admission keeps its bounded retry (six-hour admission
+  age, three definitive refusals); a kill switch alone is not a refusal; elapsed
+  time never clears an intent. Reservations stay charged and are never refunded,
+  and review rounds, CI-fix limits and the at-most-once enqueue are unchanged.
+  The production queue stays disabled (`queue.proofActivated` off, empty
+  authority pins), so this path cannot run until a reviewed queue rollout.
