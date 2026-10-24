@@ -139,12 +139,12 @@ the first round that reports no P0; P1+ of that round become individual issues.
 Self-path corrections (00:15 UTC): `a3c271be60` (self aggregate expectation,
 parked pre-write self-merge refusals) failed CI `40042505933` in eight host
 tests whose self-scope fixtures carry a generic green check and no `test-local`:
-hard-coding the aggregate name made every fixture head wait. Corrected to the
-generic rule: the self scope now reads its base's check suites like every other
-target, so the real tip's `ci.yml` suite expects `test-local` once a shard
-reported while fixtures without suites add no expectation (reproduced locally on
-the old code, 8 failures; the corrected unit test covers the tip suites, the
-supervisor and dispatcher suites and an unreadable base).
+hard-coding the aggregate name made every fixture head wait. A first correction
+read the base's suites for the self scope and broke the three tests that pin
+"the self scope reads no base" (CI `40044270243`). The final rule reads no base
+and expects `test-local` only on a head whose own `ci.yml` jobs (`quality`,
+`test-shards (…)`) already report; generic fixture checks add no expectation
+(reproduced and re-run locally: the 8 host tests and the 3 coverage tests pass).
 
 Next action: observe the first run on `d32daa1910` (bootstrap, then the first
 ordinary run) for `sentinel_premerge_ci` decisions in `matrix_plan`/`repair` and

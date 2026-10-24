@@ -1,13 +1,11 @@
 /**
- * The self scope's CI-first gate reads its base like every other target:
- * `ci.yml`'s `test-local` is a `needs: [quality, test-shards]` aggregate that
- * GitHub creates only once those jobs finish, so a head whose shards reported
- * waits for the aggregate instead of admitting a review before it ran. The
- * supervisor and dispatcher runs on the tip share no name with a head and add
- * no expectation; an unreadable base proves nothing.
+ * The self scope's CI-first gate reads no base; its gate is `ci.yml`'s
+ * `test-local`, a `needs: [quality, test-shards]` aggregate that GitHub
+ * creates only once those jobs finish. A head whose own `ci.yml` jobs report
+ * without the aggregate waits for it; a head without those jobs (another
+ * suite, a fixture's generic check) keeps the old rule and adds no expectation.
  */
 import assert from "node:assert/strict";
-import { portError, portOk } from "../../src/contracts/ports.ts";
 import type { RepairCycleDepsV1 } from "../../src/repair/loop-types.ts";
 import { absentExpectedChecks } from "../../src/repair/loop-checks.ts";
 import { SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
@@ -41,42 +39,22 @@ const self = workRecord("issue-self", {
   target: { base: SHA1, branch: null, checkpoint: null, head: SHA2, pr: 7 },
 });
 
-function depsFor(
-  base: ReturnType<typeof portOk> | ReturnType<typeof portError>,
-) {
-  const reads: string[] = [];
-  return {
-    reads,
-    deps: {
-      github: {
-        readCheckSuites: (sha: string) => {
-          reads.push(sha);
-          return Promise.resolve(base);
-        },
-      },
-    } as unknown as RepairCycleDepsV1,
-  };
-}
+const deps = {
+  github: {
+    readCheckSuites: () => {
+      throw new Error("the self scope reads no base");
+    },
+  },
+} as unknown as RepairCycleDepsV1;
 
-const TIP = portOk({
-  head: SHA1,
-  checks: [
-    ...SHARDS.map((name) => ({ name, suite: 1 })),
-    { name: "test-local", suite: 1 },
-    ...["maintenance", "prepare", "matrix_plan", "repair", "finalize"].map((
-      name,
-    ) => ({ name, suite: 2 })),
-    { name: "dispatch", suite: 3 },
-  ],
-});
-
-Deno.test("self CI-first gate: shards without test-local await the aggregate from the base's suite", async () => {
-  const { deps, reads } = depsFor(TIP);
+Deno.test("self CI-first gate: ci.yml jobs without test-local await the aggregate, without a base read", async () => {
+  assert.deepEqual(await absentExpectedChecks(deps, self, SHARDS.map(check)), [
+    "test-local",
+  ]);
   assert.deepEqual(
-    await absentExpectedChecks(deps, self, SHARDS.map(check)),
+    await absentExpectedChecks(deps, self, [check("quality")]),
     ["test-local"],
   );
-  assert.deepEqual(reads, [SHA1], "the base tip is read once");
   assert.deepEqual(
     await absentExpectedChecks(deps, self, [
       ...SHARDS.map(check),
@@ -86,18 +64,11 @@ Deno.test("self CI-first gate: shards without test-local await the aggregate fro
   );
 });
 
-Deno.test("self CI-first gate: supervisor and dispatcher suites on the tip add no expectation", async () => {
-  const { deps } = depsFor(TIP);
+Deno.test("self CI-first gate: a head without ci.yml's own jobs adds no expectation", async () => {
+  assert.deepEqual(await absentExpectedChecks(deps, self, [check("ci")]), []);
   assert.deepEqual(
-    await absentExpectedChecks(deps, self, [
-      ...SHARDS.map(check),
-      check("test-local"),
-    ]),
+    await absentExpectedChecks(deps, self, [check("test-local")]),
     [],
   );
-});
-
-Deno.test("self CI-first gate: an unreadable base proves nothing", async () => {
-  const { deps } = depsFor(portError("unavailable", "rate limited"));
-  assert.equal(await absentExpectedChecks(deps, self, SHARDS.map(check)), null);
+  assert.deepEqual(await absentExpectedChecks(deps, self, []), []);
 });

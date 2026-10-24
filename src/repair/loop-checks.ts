@@ -5,6 +5,7 @@ import { missingExpectedChecks } from "./ci-coverage.ts";
 import { failedChecks, latestChecks } from "./ci-rejection.ts";
 import { CHECK_POLL_MS, checkGithubCooldown } from "./loop-bounds.ts";
 import { routeFailedDeliveryChecks } from "./loop-ci-correction.ts";
+import { isSelfScopeZero } from "./loop-legacy-loss.ts";
 import { persistWork } from "./loop-state.ts";
 import type {
   LoopContextV1,
@@ -12,6 +13,13 @@ import type {
   StepResultV1,
 } from "./loop-types.ts";
 import { markBlocked, setWait } from "./transitions.ts";
+
+/**
+ * The self scope's `ci.yml`: the jobs the aggregate `needs:` (a shard is
+ * `test-shards (<name>)`) and the aggregate itself.
+ */
+const SELF_SUITE_JOBS = ["quality", "test-shards"] as const;
+const SELF_AGGREGATE_CHECK = "test-local";
 
 /**
  * Pure CI gate decision. Returns "proceed" only when every (deduped by name)
@@ -62,20 +70,29 @@ export function decideCiGate(
  * The base read is the port's lenient `readCheckSuites` (name and suite
  * only), not the strict `readChecks`: a base may carry runs no pull request
  * head runs whose names exceed the strict label bound. The sentinel self
- * scope reads its base like every other target: `ci.yml`'s `test-local` is a
- * `needs: [quality, test-shards]` aggregate that GitHub creates only once
- * those jobs finish, so a head whose shards reported but whose aggregate has
- * not yet been created is awaited like running CI instead of admitting a
- * review before the aggregate ran. The `development` tip also carries the
- * five-minute `dispatch` runs and the supervisor.yml runs of
- * `sentinel-supervisor` (fast-forwarded with it); those suites share no name
- * with a pull request head and add no expectation.
+ * scope reads no base at all, like the launcher: its `development` tip carries
+ * the supervisor.yml runs of `sentinel-supervisor` (fast-forwarded with it)
+ * and the five-minute `dispatch` runs, whose listings are large and share no
+ * name with a pull request head. Its gate is the one named `test-local` job
+ * of `ci.yml`, since 2026-10-20 a `needs: [quality, test-shards]` aggregate
+ * that GitHub creates only once those jobs finish: a head whose own `ci.yml`
+ * jobs already report but whose aggregate does not exist yet is awaited like
+ * running CI instead of admitting a review before the aggregate ran.
  */
 export async function absentExpectedChecks(
   deps: RepairCycleDepsV1,
   record: WorkRecordV1,
   head: readonly GitHubCheckV1[],
 ): Promise<string[] | null> {
+  if (isSelfScopeZero(record.repository)) {
+    const names = new Set(head.map((check) => check.name));
+    const suiteReported = [...names].some((name) =>
+      SELF_SUITE_JOBS.some((job) => name === job || name.startsWith(`${job} (`))
+    );
+    return suiteReported && !names.has(SELF_AGGREGATE_CHECK)
+      ? [SELF_AGGREGATE_CHECK]
+      : [];
+  }
   const observed = await deps.github.readCheckSuites(record.target.base);
   if (!observed.ok) return null;
   return missingExpectedChecks(head, observed.value.checks);
