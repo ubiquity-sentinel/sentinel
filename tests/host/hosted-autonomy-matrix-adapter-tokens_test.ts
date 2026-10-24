@@ -20,6 +20,11 @@ import { FakeClock, MemoryState } from "../repair/helpers.ts";
 import { SHA1, SHA2, T0, workRecord } from "../state/helpers.ts";
 import { snapshot } from "./actions-candidates-fixture.ts";
 
+// CI shards read only the repository root: temp fixtures live under it, like
+// the other credential-free hosted fixtures.
+const ROOT = decodeURIComponent(new URL("../..", import.meta.url).pathname)
+  .replace(/\/$/, "");
+
 const SELF_TOKEN = "fixture-self-token";
 const API_TOKEN = "fixture-ubiquity-token";
 const FOREIGN = {
@@ -88,7 +93,10 @@ Deno.test("maintenance target token: the self repository never falls back to the
 });
 
 Deno.test("current-matrix recovery binds each target's candidate port and branch read to its own credential", async () => {
-  const tmp = await Deno.makeTempDir({ prefix: "sentinel-matrix-tokens-" });
+  const tmp = await Deno.makeTempDir({
+    prefix: "sentinel-matrix-tokens-",
+    dir: ROOT,
+  });
   try {
     await Deno.writeTextFile(
       `${tmp}/sentinel.targets.json`,
