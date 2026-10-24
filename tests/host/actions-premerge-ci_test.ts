@@ -375,3 +375,51 @@ Deno.test("premerge CI: the deadline, cooldown and absent policy refuse before a
   assert.equal((await passport.run(other)).decision, "no_policy");
   assert.equal(passport.http.calls.length, 0);
 });
+
+Deno.test("premerge CI: a rate-limited read is recorded on the gate and ends the pass", async () => {
+  // Issue #198: the limit is persisted before any later request and no
+  // further pending record is read in the same pass.
+  const second = pendingRecord(1258, {
+    target: {
+      base: SHA1,
+      branch: `${BRANCH}x`,
+      checkpoint: null,
+      head: SHA3,
+      pr: 1258,
+    },
+  });
+  const rig = makeRig({ work: [pendingRecord(1254), second] });
+  rig.http.on(
+    "GET",
+    `${REPO_PATH}/pulls/1254`,
+    () =>
+      response(403, { message: "API rate limit exceeded" }, {
+        "x-ratelimit-remaining": "0",
+        "x-ratelimit-reset": String(Math.floor((T0 + 600_000) / 1000)),
+      }),
+  );
+  const report = await rig.run();
+  assert.equal(report.decision, "rate_limited");
+  assert.equal(rig.gate.recorded.length, 1);
+  assert.equal(rig.gate.admissions.length, 1);
+  assert.equal(
+    rig.http.calls.filter((call) => call.url.endsWith("/pulls/1258")).length,
+    0,
+  );
+  assert.equal(rig.http.posts().length, 0);
+});
+
+Deno.test("premerge CI: a deadline crossed mid-pass is reported as a deadline, not a cooldown", async () => {
+  // Issue #199: the pull read succeeds, then the run deadline margin passes
+  // before the runs read; the gate is never consulted for that request.
+  const deadline = T0 + PREMERGE_CI_MARGIN_MS + 1_000;
+  const rig = makeRig({ deadline });
+  rig.http.on("GET", `${REPO_PATH}/pulls/1254`, () => {
+    rig.clock.advance(2_000);
+    return response(200, pullBody());
+  });
+  const report = await rig.run();
+  assert.equal(report.decision, "deadline");
+  assert.equal(rig.gate.admissions.length, 1);
+  assert.equal(rig.http.posts().length, 0);
+});

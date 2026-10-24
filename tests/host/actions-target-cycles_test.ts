@@ -50,13 +50,23 @@ Deno.test("actions host: issue-only repair scopes a gateway target to GitHub", (
   );
   assert.equal(scoped.adapter.kind, "github");
   assert.equal(scoped.repository.installationId, APP_INSTALLATION);
-  const matrix = scopeTargetConfigV1(
+  // Only a host that supplies its own gateway runtime keeps the adapter.
+  const gatewayHost = scopeTargetConfigV1(
     gateway,
     self.repository,
     APP_INSTALLATION,
     { issueOnly: false },
   );
-  assert.equal(matrix.adapter.kind, "gateway");
+  assert.equal(gatewayHost.adapter.kind, "gateway");
+});
+
+Deno.test("actions host: the matrix plan and cell host defaults to issue-only scoping", async () => {
+  // Issue #202: the planner tests still pass with the default flipped, so the
+  // default itself is pinned here.
+  const source = await Deno.readTextFile(
+    new URL("../../src/host/matrix-native-host.ts", import.meta.url),
+  );
+  assert.match(source, /issueOnly: deps\.issueOnly \?\? true,/);
 });
 
 Deno.test("actions host: live App installation ids are explicit while old runs retain the legacy scope", () => {

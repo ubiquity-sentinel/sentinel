@@ -193,25 +193,19 @@ export class RepairHistoryCache {
             Deno.unrefTimer(entry.timer);
           }
           const result = await read(entry.op, true);
-          if (!retained || !result.ok || Date.now() >= entry.expiresAt) {
-            const expired = Date.now() >= entry.expiresAt;
-            await this.discard(entry);
-            if (expired) {
-              return portError(
-                "unavailable",
-                "historical repair cache expired",
-              );
-            }
-          }
+          if (
+            !retained || !result.ok || Date.now() >= entry.expiresAt
+          ) await this.discard(entry);
           return result;
         }
+        // A read entered inside the window keeps its result even when it ends
+        // after `expiresAt`: the bound only limits how long the private
+        // history is retained, and the caller's `ls-remote` checks already
+        // proved the read current (issue #200). The entry is still discarded,
+        // so the next read starts from a fresh fetch.
         const result = await read(entry.op, cold);
         if (!result.ok || Date.now() >= entry.expiresAt) {
-          const expired = Date.now() >= entry.expiresAt;
           await this.discard(entry);
-          if (expired) {
-            return portError("unavailable", "historical repair cache expired");
-          }
         }
         return result;
       } catch {
