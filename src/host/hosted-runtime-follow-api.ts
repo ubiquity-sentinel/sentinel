@@ -195,6 +195,31 @@ export class HostedRuntimeFollowApi {
     throw new FollowError("pagination_limit");
   }
 
+  /**
+   * The `.github/workflows` tree id of an exact commit, or null when the
+   * commit has none. The native dispatcher token cannot move a ref onto a
+   * commit whose workflow files differ, so the follow compares these ids
+   * instead of attempting a write GitHub will refuse.
+   */
+  async workflowsTree(commit: string): Promise<string | null> {
+    const value = record(await this.get(`/git/commits/${commit}`));
+    if (value.sha !== commit) throw new FollowError("commit_identity_mismatch");
+    let tree = sha(record(value.tree).sha);
+    for (const name of [".github", "workflows"]) {
+      const listing = record(await this.get(`/git/trees/${tree}`));
+      if (
+        listing.sha !== tree || listing.truncated === true ||
+        !Array.isArray(listing.tree)
+      ) throw new FollowError("malformed_tree");
+      const entry = listing.tree.map(record).find((item) =>
+        item.path === name && item.type === "tree"
+      );
+      if (entry === undefined) return null;
+      tree = sha(entry.sha);
+    }
+    return tree;
+  }
+
   async ancestor(base: string, head: string): Promise<boolean> {
     if (base === head) return true;
     const value = record(

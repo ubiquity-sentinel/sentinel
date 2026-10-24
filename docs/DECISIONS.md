@@ -2840,3 +2840,25 @@ standing approval above. Applied as follows.
   required (`requiredChecksState`): an omitted pending context reads as absent,
   which is pending. No target configuration names required status contexts. The
   launcher's `hasAllChecksGreen` reads check runs only and is unchanged.
+
+## 2026-10-24: dispatcher auto-follow on by default
+
+- Owner directive (2026-10-24): "make it end to end autonomous". The
+  dispatcher's `auto-follow` input now defaults to `on`
+  (`vars.SENTINEL_AUTO_FOLLOW || 'on'`); setting the repository variable to
+  `off` turns it off again. The condition for enabling it (a verified controlled
+  advance and self-install) has held since generation 100: every manual advance
+  today bootstrapped and ran green.
+- Without auto-follow, every Sentinel self-merge left a `requested` hosted
+  release that only a manual launcher advance cleared, so the runtime never
+  installed its own merged fixes.
+- The 2026-10-22 reason for keeping it off was that the native dispatcher token
+  cannot move a ref onto a commit whose workflow files differ. The follow now
+  compares the `.github/workflows` tree id of the launcher and of each candidate
+  (git trees API) and skips a differing candidate, taking an older eligible one
+  or deferring as `workflow_change_needs_owner_advance`. It never attempts a ref
+  write GitHub would refuse, so the dispatcher stays green and keeps dispatching
+  the current launcher. A workflow change still needs one manual advance.
+- Unchanged: exact first-parent ancestry, complete CI evidence for the exact
+  SHA, failed-bootstrap exclusion, the expected-old non-force ref update and its
+  readback, and the model-disabled bootstrap at generation+1.

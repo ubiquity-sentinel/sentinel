@@ -103,6 +103,11 @@ export async function runHostedRuntimeFollow(
       deps.maxDepth ?? 400,
     );
     let selected: FollowCiProof | null = null;
+    // A candidate whose workflow files differ from the launcher's needs a
+    // workflow-capable owner push: skip it (an older candidate may still
+    // qualify) and defer, never attempt a ref write GitHub refuses.
+    let launcherWorkflows: string | null | undefined;
+    let workflowChanged = false;
     for (const candidate of chain) {
       if (candidate === launcherSha || state.failedRevisions.has(candidate)) {
         continue;
@@ -112,6 +117,13 @@ export async function runHostedRuntimeFollow(
         proof === null ||
         !await api.ancestor(state.installedRevision, candidate)
       ) continue;
+      if (launcherWorkflows === undefined) {
+        launcherWorkflows = await api.workflowsTree(launcherSha);
+      }
+      if (await api.workflowsTree(candidate) !== launcherWorkflows) {
+        workflowChanged = true;
+        continue;
+      }
       journal.candidateSha = candidate;
       journal.ciRunId = proof.runId;
       journal.ciAttempt = proof.attempt;
@@ -122,6 +134,8 @@ export async function runHostedRuntimeFollow(
       journal.decision = chain.length === 1 ? "unchanged" : "deferred";
       journal.reason = chain.length === 1
         ? "launcher_current"
+        : workflowChanged
+        ? "workflow_change_needs_owner_advance"
         : "no_eligible_candidate";
     } else if (deps.flag !== "on") {
       journal.decision = "dry_run";
