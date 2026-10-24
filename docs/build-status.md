@@ -40,8 +40,29 @@ ownership, authority or acceptance.
   158, 146) on the tip, waiting for CI on the apparently red base, holding the
   whole line. They stop holding at stall count 12, around 17:00 UTC. A green
   Passport base is the fix, handed to the Passport agent.
-- Next: verify the bootstrap and ordinary run on `201c65bac5`, the recovery of
-  Sentinel 204–208, the progress comments and the run summary line.
+- Live on `201c65bac5` (checked 15:20 UTC):
+  - Bootstrap `40103710577` (generation 104) and ordinary run `40104416574`
+    settled `success`.
+  - The walk fix works. Bootstrap maintenance applied with
+    `current-matrix:ingested:10`. Passport 87–108 left their preservation
+    intents, and the ordinary run's repair job published PRs 196–204.
+  - Sentinel 204–208 still hold their 09:44 implementation intents, whose
+    producer run crashed. They turn stale and re-admittable at 15:44 UTC.
+  - #178: finalize printed one `hosted_runtime_run_summary` line per run (#178
+    closed).
+  - #193: `sentinel_app_grant_handoff` reads `retained` in the ordinary plan and
+    repair jobs, and `refused`/`source` in the bootstrap, as designed (#193
+    closed).
+  - #183: `ubiquity-sentinel[bot]` posted "Sentinel opened pull request #210 and
+    is waiting for CI on it." on Sentinel issue 209 at 15:03 UTC. The child's
+    report lines are not forwarded to the job log. This session cannot read
+    ai.ubq.fi or Passport issues, so comments there are unverified here. By
+    15:35 issue 209 had two comments for two real stage changes, and issue 187
+    had one: no duplicate.
+- Sentinel 209 (PR 210, green CI) parked on "self merge trusted CI pipeline
+  changed" because the candidate edits `ops/self-defects.ts`, part of the
+  trusted pipeline a model candidate may not self-merge. Its change was reviewed
+  and hand-landed as `c09192c9a9` (owner directive 3).
 
 ## Prior checkpoint (2026-10-24 13:30 UTC)
 
