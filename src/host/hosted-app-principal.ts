@@ -203,34 +203,87 @@ export async function createOptionalHostedAppPrincipalContext(
 }
 
 /** Parent-side read-only check. No context, principal or credential is returned. */
+/**
+ * Bounded classes of a refused parent handoff (#193), so a withheld grant
+ * names why: credentials, a grant for another installation, an otherwise
+ * invalid grant, an unreadable token window, an expired window, unproven
+ * source, an unfresh host check, or an unexpected error.
+ */
+export type HostedAppHandoffRefusalV1 =
+  | "credentials"
+  | "grant_installation"
+  | "grant"
+  | "token_window"
+  | "expired"
+  | "source"
+  | "host"
+  | "error";
+
 export async function verifyHostedAppPrincipalHandoff(
   input: HostedAppPrincipalHandoffInput,
   sourceProfiles?: unknown,
+  onRefusal?: (reason: HostedAppHandoffRefusalV1) => void,
 ): Promise<boolean> {
-  return await readHandoff(input, sourceProfiles) !== null;
+  return await readHandoff(input, sourceProfiles, onRefusal) !== null;
+}
+
+/** True when the grant parses far enough to name a different installation. */
+function grantNamesOtherInstallation(
+  text: string | undefined,
+  expected: number,
+): boolean {
+  try {
+    const value: unknown = JSON.parse(text ?? "");
+    const id = typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>).installationId
+      : undefined;
+    return typeof id === "number" && id !== expected;
+  } catch {
+    return false;
+  }
 }
 
 async function readHandoff<T extends HostedAppPrincipalHandoffInput>(
   input: T,
   sourceProfiles?: unknown,
+  onRefusal?: (reason: HostedAppHandoffRefusalV1) => void,
 ): Promise<PrincipalPrivate<T> | null> {
+  const refuse = (reason: HostedAppHandoffRefusalV1): null => {
+    try {
+      onRefusal?.(reason);
+    } catch {
+      // The refusal class is advisory; it never changes the refusal.
+    }
+    return null;
+  };
   try {
     const now = input.clock.now();
     if (
       typeof input.appToken !== "string" || input.appToken.trim() === "" ||
       input.nativeToken.trim() === "" || input.appToken === input.nativeToken ||
       !Number.isSafeInteger(input.deadline) || input.deadline <= now
-    ) return null;
+    ) return refuse("credentials");
     const grant = parseHostedAppMintGrant(
       input.mintGrant,
       now,
       input.expectedInstallationId,
     );
-    if (grant === null) return null;
+    if (grant === null) {
+      return refuse(
+        grantNamesOtherInstallation(
+            input.mintGrant,
+            input.expectedInstallationId ?? SENTINEL_APP_INSTALLATION_ID,
+          )
+          ? "grant_installation"
+          : "grant",
+      );
+    }
     const conservative = parseAppTokenNotAfterV1(input.appTokenNotAfter);
-    if (conservative === undefined) return null;
+    if (conservative === undefined) return refuse("token_window");
     const notAfter = Math.min(grant.expiresAt, conservative);
-    if (!Number.isSafeInteger(notAfter) || notAfter <= now) return null;
+    if (!Number.isSafeInteger(notAfter) || notAfter <= now) {
+      return refuse("expired");
+    }
     // Capture scalar credentials and identity; retaining a mutable caller object
     // would let the principal and the later REST authorization closure diverge.
     const host = Object.freeze({
@@ -253,7 +306,7 @@ async function readHandoff<T extends HostedAppPrincipalHandoffInput>(
       host.source,
       copiedProfiles,
     );
-    if (source === null) return null;
+    if (source === null) return refuse("source");
     const capability = parseHostedCustodyCapability(
       JSON.parse(source.capabilityText),
     );
@@ -268,10 +321,10 @@ async function readHandoff<T extends HostedAppPrincipalHandoffInput>(
       notAfter,
       profiles: copiedProfiles,
     };
-    if (!await freshHost(value, input.deadline)) return null;
+    if (!await freshHost(value, input.deadline)) return refuse("host");
     return value;
   } catch {
-    return null;
+    return refuse("error");
   }
 }
 

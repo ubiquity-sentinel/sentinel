@@ -8,7 +8,10 @@ import {
   SENTINEL_APP_INSTALLATION_ID,
   TARGET_INSTALLATION_ID_ENV,
 } from "./hosted-app-grant.ts";
-import { verifyHostedAppPrincipalHandoff } from "./hosted-app-principal.ts";
+import {
+  type HostedAppHandoffRefusalV1,
+  verifyHostedAppPrincipalHandoff,
+} from "./hosted-app-principal.ts";
 import { APP_TOKEN_NOT_AFTER_ENV } from "./hosted-app-token-window.ts";
 import { HostedSupervisorCooldownGate } from "./hosted-cooldown.ts";
 import type {
@@ -71,6 +74,29 @@ function expectedInstallationId(
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
+/** What the parent handoff did with the optional mint grant (#193). */
+export type HostedAppGrantHandoffOutcomeV1 =
+  | "retained"
+  | "absent"
+  | "not_applicable"
+  | "installation_invalid"
+  | "refused"
+  | "timeout"
+  | "error";
+
+/**
+ * One bounded advisory line per launch naming whether the grant reached the
+ * child and, when it was withheld, the refusal class. It carries no token,
+ * grant text or environment value and grants no authority.
+ */
+export interface HostedAppGrantHandoffDiagnosticV1 {
+  version: "v1";
+  kind: "sentinel_app_grant_handoff";
+  job: string;
+  outcome: HostedAppGrantHandoffOutcomeV1;
+  refusal: HostedAppHandoffRefusalV1 | null;
+}
+
 /**
  * Runs only after the launcher has proved exact source and saved execution.
  * A refusal strips this optional grant, leaving ordinary credentials intact.
@@ -85,40 +111,70 @@ export async function retainVerifiedHostedAppGrant(
     execution: HostedExecutionIntentV1;
   },
   childEnv: Record<string, string>,
-): Promise<void> {
+): Promise<HostedAppGrantHandoffDiagnosticV1> {
+  let refusal: HostedAppHandoffRefusalV1 | null = null;
+  const report = (
+    outcome: HostedAppGrantHandoffOutcomeV1,
+  ): HostedAppGrantHandoffDiagnosticV1 => {
+    const line: HostedAppGrantHandoffDiagnosticV1 = {
+      version: "v1",
+      kind: "sentinel_app_grant_handoff",
+      job: source.identity.job,
+      outcome,
+      refusal: outcome === "refused" ? refusal : null,
+    };
+    try {
+      console.log(JSON.stringify(line));
+    } catch {
+      // Advisory printing never changes the handoff.
+    }
+    return line;
+  };
   const mintGrant = childEnv[HOSTED_APP_MINT_GRANT_ENV];
   delete childEnv[HOSTED_APP_MINT_GRANT_ENV];
-  if (source.identity.job === "matrix_cell" || mintGrant === undefined) return;
+  if (source.identity.job === "matrix_cell") return report("not_applicable");
+  if (mintGrant === undefined) return report("absent");
   const installationId = expectedInstallationId(childEnv);
-  if (installationId === null) return;
+  if (installationId === null) return report("installation_invalid");
   const timeout = createDeadline(HANDOFF_TIMEOUT_MS);
   try {
     const deadline = input.clock.now() + HANDOFF_TIMEOUT_MS;
     const fixture = input.principalHandoffFixture;
-    const verified = await timeout.race(verifyHostedAppPrincipalHandoff({
-      source: {
-        launcherDir: source.launcher,
-        runtimeDir: source.runtime,
-        identity: source.identity,
-        execution: source.execution,
-        process: input.process,
+    const verified = await timeout.race(verifyHostedAppPrincipalHandoff(
+      {
+        source: {
+          launcherDir: source.launcher,
+          runtimeDir: source.runtime,
+          identity: source.identity,
+          execution: source.execution,
+          process: input.process,
+        },
+        state: { readRelease: input.state.readRelease.bind(input.state) },
+        clock: input.clock,
+        gate: readOnlyNativeGate(input),
+        http: fixture?.http ?? fetchHttpTransport(),
+        nativeToken: childEnv.GITHUB_TOKEN,
+        appToken: childEnv.SENTINEL_SUPERVISOR_TOKEN,
+        mintGrant,
+        expectedInstallationId: installationId,
+        appTokenNotAfter: childEnv[APP_TOKEN_NOT_AFTER_ENV],
+        deadline,
       },
-      state: { readRelease: input.state.readRelease.bind(input.state) },
-      clock: input.clock,
-      gate: readOnlyNativeGate(input),
-      http: fixture?.http ?? fetchHttpTransport(),
-      nativeToken: childEnv.GITHUB_TOKEN,
-      appToken: childEnv.SENTINEL_SUPERVISOR_TOKEN,
-      mintGrant,
-      expectedInstallationId: installationId,
-      appTokenNotAfter: childEnv[APP_TOKEN_NOT_AFTER_ENV],
-      deadline,
-    }, fixture?.sourceProfiles));
+      fixture?.sourceProfiles,
+      (reason) => {
+        refusal = reason;
+      },
+    ));
     if (verified && !timeout.fired() && input.clock.now() < deadline) {
       childEnv[HOSTED_APP_MINT_GRANT_ENV] = mintGrant;
+      return report("retained");
     }
+    return report(
+      timeout.fired() || input.clock.now() >= deadline ? "timeout" : "refused",
+    );
   } catch {
     // Missing/unavailable optional authority cannot disable ordinary work.
+    return report(timeout.fired() ? "timeout" : "error");
   } finally {
     timeout.dispose();
   }
