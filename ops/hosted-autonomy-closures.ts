@@ -183,6 +183,11 @@ export function planHostedRetirements(
       record.blocker?.kind === "other" &&
       record.blocker.message === HOSTED_AUTONOMY_RETIRED
     ) continue;
+    // A self-merge proof (in flight, or kept by `parkSelfMergeRefusal` after
+    // the remote writes began) is the only durable binding of a
+    // `development` write to its task and review (#197): retirement would
+    // clear it, so the record is left for reconciliation.
+    if (record.intent?.selfMerge !== undefined) continue;
     // Retirement clears the intent, so it must never take an unsettled
     // implementation intent away from the runtime's own uncertainty handler.
     // `intentClosable` is that same settled-intent rule; it is consulted only
