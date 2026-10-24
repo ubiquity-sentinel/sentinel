@@ -216,6 +216,27 @@ Deno.test("premerge CI: pending records are the gateway's ci_pending published h
   );
 });
 
+Deno.test("premerge CI: a head parked on the pre-review CI bound is dispatched after live waits (#204)", () => {
+  const config = gatewayConfig();
+  const parked = (pr: number, message: string) =>
+    pendingRecord(pr, {
+      nextStep: "blocked",
+      wait: null,
+      blocker: { kind: "other", message, since: T0 },
+    });
+  const work = [
+    parked(1250, "CI did not finish before review within 6 hours: Gateway CI"),
+    pendingRecord(1258),
+    parked(1251, "CI checks failed: Gateway CI"),
+    parked(1249, "CI did not finish before review within 6 hours: none"),
+  ];
+  assert.deepEqual(
+    pendingPremergeRecords(work, config).map((record) => record.target.pr),
+    [1258, 1249, 1250],
+    "live waits first; a red park is never dispatched",
+  );
+});
+
 Deno.test("premerge CI: one exact dispatch per pass with the workflow's inputs", async () => {
   const rig = makeRig({
     work: [

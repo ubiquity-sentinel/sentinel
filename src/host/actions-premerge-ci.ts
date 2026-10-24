@@ -32,6 +32,7 @@ import type { RepositoryConfigV1 } from "../contracts/repository-config.ts";
 import type { WorkRecordV1 } from "../contracts/work-record.ts";
 import type { HttpResponseV1, HttpTransportV1 } from "../github/http.ts";
 import { classifyGitHubRateLimit } from "../github/rate-limit.ts";
+import { CI_PRE_REVIEW_PENDING_PREFIX } from "../repair/ci-first-policy.ts";
 import { parseHostedAppMintGrant } from "./hosted-app-grant.ts";
 import { premergeCiPolicyV1 } from "./target-policy.ts";
 
@@ -103,24 +104,47 @@ function slugOf(config: RepositoryConfigV1): string {
   return `${config.repository.owner}/${config.repository.name}`;
 }
 
-/** Records whose published head waits on CI the target never starts itself. */
+/**
+ * A head the pre-review gate parked because its CI did not finish within the
+ * bound (#204). On a target whose CI only runs when dispatched, a head that
+ * never got a run there is otherwise never dispatched again (the selector
+ * read only unblocked `ci_pending` waits) and the launcher's green rule never
+ * sees a green head, so it stays parked until the base moves. Dispatching it
+ * once (the dispatcher still skips a head that has any run) lets the
+ * ordinary green re-admission take it back, uncharged.
+ */
+function pendingCiParked(record: WorkRecordV1): boolean {
+  return record.nextStep === "blocked" && record.wait === null &&
+    record.blocker?.kind === "other" &&
+    record.blocker.message.startsWith(CI_PRE_REVIEW_PENDING_PREFIX);
+}
+
+/**
+ * Records whose published head waits on CI the target never starts itself:
+ * live `ci_pending` waits first, then pending-CI parks, each by pull request.
+ */
 export function pendingPremergeRecords(
   work: readonly WorkRecordV1[],
   config: RepositoryConfigV1,
 ): WorkRecordV1[] {
+  const waiting = (record: WorkRecordV1) =>
+    record.blocker === null &&
+    (record.nextStep === "work" || record.nextStep === "delivery") &&
+    record.wait?.reason === "ci_pending";
   return work
     .filter((record) =>
       record.repository.owner === config.repository.owner &&
       record.repository.name === config.repository.name &&
       record.source.kind === "issue" &&
-      record.blocker === null &&
       record.intent === null &&
-      (record.nextStep === "work" || record.nextStep === "delivery") &&
-      record.wait?.reason === "ci_pending" &&
+      (waiting(record) || pendingCiParked(record)) &&
       record.target.pr !== null && record.target.head !== null &&
       record.target.branch !== null
     )
-    .sort((left, right) => left.target.pr! - right.target.pr!);
+    .sort((left, right) =>
+      Number(pendingCiParked(left)) - Number(pendingCiParked(right)) ||
+      left.target.pr! - right.target.pr!
+    );
 }
 
 export async function dispatchPremergeCi(
