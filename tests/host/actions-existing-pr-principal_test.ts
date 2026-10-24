@@ -151,10 +151,13 @@ Deno.test("Actions existing PR principal: stale or unproven authority refuses be
         let observedScope = false;
         await rig.run(async (port) => {
           assert(port.existingPrTakeover !== undefined);
+          // Owner directive 2026-10-24: without an App principal the local
+          // composition keeps existing-PR discovery off; with one, the shipped
+          // capability decides. Either way no effect is granted below.
           assert.equal(
             port.existingPrTakeover.coordinationActivated,
-            true,
-            "missing principal keeps restrictive source routing without granting effects",
+            scenario !== "forged metadata" && scenario !== "native fallback",
+            "discovery is never activated by a missing principal",
           );
           if (scenario === "revoked") rig.controls.revoked = true;
           else if (scenario === "expired") {

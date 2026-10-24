@@ -343,20 +343,31 @@ for (const phases of [1, 3]) {
   });
 }
 
-Deno.test("existing PR dormant coordinator: exact preflight custody remains held in the serial pass", async () => {
+Deno.test("existing PR dormant coordinator: a preflight hold returns to Sentinel's own repair once discovery is off", async () => {
+  // Owner directive 2026-10-24: other people's pull requests never hold or
+  // divert Sentinel's own repair. The takeover preflight hold is released and
+  // Sentinel implements and opens its own PR without any discovery.
   const r = existingPrLifecycleRig("human-owner", false);
   r.queueControls.unavailable = true;
   await r.run();
   const before = await r.snapshot();
+  assert.equal(
+    before.work[0].blocker?.message,
+    "existing PR preflight: native queue observation unavailable",
+  );
   r.takeoverControls.activated = false;
   r.queueControls.unavailable = false;
   r.calls.length = 0;
   await r.run();
   const after = await r.snapshot();
-  assert.deepEqual(after.work, before.work);
-  assert.deepEqual(after.reservations, before.reservations);
+  assert.equal(after.work[0].blocker, null);
+  assert.equal(after.work[0].nextStep, "review");
   assert.equal(r.calls.includes("discover"), false);
-  assert.equal(r.model.requests.length, 0);
+  assert.equal(r.model.requests.length, 1);
+  assert.equal(
+    r.github.calls.filter((call) => call === "createPr").length,
+    1,
+  );
 });
 
 Deno.test("existing PR serial pass refusal: later complete negative discovery permits a fresh retry", async () => {

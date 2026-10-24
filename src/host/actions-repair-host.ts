@@ -106,7 +106,6 @@ import {
   type HostedAppGitHubInput,
 } from "./hosted-app-principal.ts";
 import { createActionsTargetBindings } from "./actions-target-bindings.ts";
-import { readHostedAppTakeoverRouting } from "./hosted-app-takeover-routing.ts";
 import { readHostedSelfDependencyPreparer } from "./hosted-self-dependencies.ts";
 import { createPassportDependencyPreparer } from "./passport-dependencies.ts";
 import {
@@ -386,13 +385,6 @@ export async function runActionsRepairHost(
     execution,
     process: sourceProcess,
   };
-  // Source routing is independent of whether a valid App mint is available.
-  // Active or unknown configured admission must discover/hold an existing PR;
-  // this does not grant a principal, Contents access or any effect capability.
-  const takeoverRouting = await readHostedAppTakeoverRouting(
-    takeoverSource,
-    deps.hostedAppSourceProfiles,
-  );
   const bindings = await createActionsTargetBindings({
     selfRepository: createLocalRepositoryConfig().repository,
     selfToken,
@@ -558,8 +550,11 @@ export async function runActionsRepairHost(
           token: tokenFor(config),
           login: loginFor(config),
         },
+        // Owner directive 2026-10-24: other people's pull requests never
+        // hold or divert Sentinel's own repair, so existing-PR discovery is
+        // never activated here (the hosted App composition ships it off too).
         undefined,
-        { activated: takeoverRouting.status !== "inactive" },
+        { activated: false },
       );
     const context = isSelfTarget(config) ? selfContext : takeoverContext;
     if (context !== null) {
