@@ -7,7 +7,27 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 17:40 UTC)
+## Latest checkpoint (2026-10-24 19:10 UTC)
+
+- Launcher: `31212ac234` at 18:31 UTC (CI `40120108667` green). Its bootstrap
+  `40121335731` and ordinary run `40122100822` settled `success`. Maintenance
+  applied its full chain (129 actions in about 7 minutes), then plan, a
+  16-minute repair job and finalize all succeeded.
+- `31212ac234`: from 16:43 UTC every maintenance job had ended
+  `runtime-compatibility:hold`, so no closure, retry, delivery or follow-up pass
+  ran for any target. A local replay of the preflight against live state showed
+  writer quiescence ready and the ai.ubq.fi queue observation failing. With
+  queue proof off (#180), that observation no longer holds every target. The
+  runner's custody prelude protects ai.ubq.fi's queue records (#188). DECISIONS
+  records it.
+- GitHub's empty job `steps` (about 17:00–17:45 UTC) cleared by itself. Saved
+  executions then verified, and run `40116439376` was cancelled by the
+  dispatcher's stall recovery while its prepare hung.
+- Open: #183 needs one ai.ubq.fi and one Passport issue checked for progress
+  comments (not readable from this session). #159 item 3 and the other owner
+  items are unchanged.
+
+## Prior checkpoint (2026-10-24 17:40 UTC)
 
 - Launcher: `51c7004b5d` at 16:42 UTC, `17d91e3c13` at 17:12 and `b3cede8f71` at
   17:37 UTC, each an exact CI-green `development` SHA with no workflow change.
