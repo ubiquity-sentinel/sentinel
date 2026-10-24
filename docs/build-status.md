@@ -44,6 +44,13 @@ ownership, authority or acceptance.
   reroute-ended review charging its round is owner policy). Round 2 (review of
   every fix since the baseline) is running; the loop stops at the first round
   with no P0, cap five rounds.
+- 02:45 UTC: live proof of the token fix. Bootstrap run 40052681804 on
+  fdc98f727a settled healthy and its maintenance preserved #179's candidate at
+  02:06 UTC (`refs/heads/sentinel-candidates/0868529a…` = d79f63bc now exists on
+  origin; record `work`, `preserved` set, intent cleared). Ordinary run
+  40053623976 on fdc98f727a is in flight and should publish #179's PR. The
+  issues filed from the audit (#185, #187–#189, #191–#193) were admitted as self
+  work records by the same run.
 - Next: CI on the fix, launcher advance, then watch maintenance preserve #179
   and Passport 77/83; refresh the status board and dashboard afterwards.
 
