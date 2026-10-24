@@ -7,15 +7,21 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 04:40 UTC)
+## Latest checkpoint (2026-10-24 05:00 UTC)
 
-- Publication: `development` is `d1bffb79aa` (`c84aab84a0` P0-only merge policy,
-  `23afdff3dd` contract and port tests, `d1bffb79aa` remaining runtime gates,
-  follow-up filing and their tests). Every affected test file passed locally in
-  bounded batches; `deno task size:check` reports 0 files over the ceiling. CI
-  `40062384705` on `d1bffb79aa` is running. The launcher stays on `fdc98f727a`
-  until that CI passes; the P0-only policy is not live before the advance and
-  its bootstrap.
+- Publication: `development` carries the P0-only merge policy (`c84aab84a0`,
+  `23afdff3dd`, `d1bffb79aa`). CI `40062384705` on `d1bffb79aa` failed 13 tests
+  in 9 files the local batches had not covered (fixtures that still rejected a
+  head with a P1, follow-up titles, one renamed merge-block reason); all were
+  test expectations, no production code changed. `5a15839513` aligns them, the
+  nine files pass locally under the CI permission flags, and CI `40063492137`
+  passed on all seven jobs. `deno task size:check` reports 0 files over the
+  ceiling.
+- Launcher: `sentinel-supervisor` advanced `fdc98f727a` → `5a15839513` at 04:57
+  UTC (exact CI-green development descendant, no workflow file changed). Run
+  `40059430390`, in flight at the advance, finishes on `fdc98f727a`; the next
+  dispatch starts the model-disabled bootstrap at generation 96, then ordinary
+  runs apply the P0-only policy.
 - Policy (owner directive 2026-10-24, recorded in DECISIONS.md): only an
   unresolved P0 blocks a merge; branch rules are not a merge requirement on any
   target; skipped and neutral checks are green. Unresolved P1/P2/P3 findings of
@@ -41,10 +47,10 @@ ownership, authority or acceptance.
   they are unverified, not refuted, and were not filed.
 - Owner-only: #180 (`queue.proofActivated`, blocks every ai.ubq.fi merge; the
   session's permission layer refuses the edit) and, optionally, #181.
-- Next: when CI passes, advance `sentinel-supervisor` to `d1bffb79aa`, let the
-  model-disabled bootstrap settle, then watch the ordinary run review and merge
-  #194 and close #179 (the first autonomous closure). Fix #196/#197 before
-  relying on repeated self merges.
+- Next: watch the generation-96 bootstrap settle healthy, then the first
+  ordinary run on `5a15839513` review and merge #194 and close #179 (the first
+  autonomous closure), and Passport's reviewed PRs merge without branch rules.
+  Fix #196/#197 before relying on repeated self merges.
 
 ## Prior checkpoint (2026-10-24 01:15 UTC)
 
