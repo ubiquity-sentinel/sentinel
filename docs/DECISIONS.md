@@ -3003,8 +3003,8 @@ standing approval above. Applied as follows.
   (`final_output_json_schema: None` in `core/src/tasks/review.rs`) and returns
   the reviewer's free-text `overall_explanation`. Sentinel's envelope JSON sits
   inside that string, so the reviewer escapes it by hand. A missed or doubled
-  escape made the strict parse fail (`json_syntax`) on about one review in
-  three today (PR 211 twice, ai.ubq.fi 1258), and each failure spent a round.
+  escape made the strict parse fail (`json_syntax`) on about one review in three
+  today (PR 211 twice, ai.ubq.fi 1258), and each failure spent a round.
 - Decision: when the strict parse of the envelope fails, the parser retries it
   on deterministic rewrites of those slips
   ([src/github/native-review-envelope-repair.ts](../src/github/native-review-envelope-repair.ts)):
@@ -3013,11 +3013,11 @@ standing approval above. Applied as follows.
   invalid escape (kept as a literal backslash), and a trailing comma. Every
   candidate goes through the same strict parser, so duplicate keys and trailing
   content still refuse. The exact envelope keys, the snapshot binding, the
-  strict result shape and the native findings cross-check are unchanged, and
-  an unrecovered text keeps the fixed `json_syntax` category.
+  strict result shape and the native findings cross-check are unchanged, and an
+  unrecovered text keeps the fixed `json_syntax` category.
 - The review request also asks the reviewer to keep every RESULT string on one
-  line with no double quote characters. That request is Sentinel's own text
-  in `review/start`; the vendored rubric and native review mode are unchanged.
+  line with no double quote characters. That request is Sentinel's own text in
+  `review/start`; the vendored rubric and native review mode are unchanged.
 
 ## 2026-10-24: one fresh proof store per target per maintenance pass (#185)
 

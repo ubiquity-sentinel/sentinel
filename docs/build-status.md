@@ -7,7 +7,32 @@ grant. Muse ownership is retired. Current policy belongs in
 checkpoints below retain their original text and do not establish current
 ownership, authority or acceptance.
 
-## Latest checkpoint (2026-10-24 21:15 UTC)
+## Latest checkpoint (2026-10-24 22:40 UTC)
+
+- Runtime: every supervisor run since 17:43 UTC settled green. Launcher
+  `1ebc914d52` (manual, 22:27; CI green on its re-run) is waiting for the next
+  dispatch to bootstrap it, which installs #155 items 1, 3 and 4.
+- Installed since 21:15 by manual advances, each bootstrapped and run green:
+  `434f829e80` (#169, #152, #161/#162, #185, #191, five review rounds) and
+  `d4cd606318` (#156).
+- Closed: #185, #191, #152, #169 (PR 171 closed as superseded), #161, #162 and
+  #156. #155 closes once `1ebc914d52` is installed; its item 2 (one more
+  legacy final round) was dropped after review and stays an owner decision.
+- Reviews (owner report on PR 211): native review mode ran, but its result
+  failed strict parsing (`json_syntax`) on about one review in three. Root
+  cause: Codex 0.154.0 review mode has no output schema, so the reviewer escapes
+  Sentinel's envelope inside `overall_explanation` by hand. `3fe3001044`
+  recovers the deterministic escaping slips and keeps every binding, shape and
+  native findings check; CI is running. With the owner's five review rounds, a
+  remaining parse failure no longer exhausts a record.
+- Test-only: `e4326871da` measures live heap in the >32 MiB custody test (GC
+  before each sample), which fixes the CI flake.
+- Owner actions for full autonomy: set `SENTINEL_AUTO_FOLLOW` to `on` or delete
+  it (until then the primary advances the launcher by hand); #181 (ai.ubq.fi
+  test scope); #159 item 3; #155 item 2; #177 (event-only rule; options on the
+  issue).
+
+## Prior checkpoint (2026-10-24 21:15 UTC)
 
 - Launcher: `34fec27394` (manual, 20:11; it changes `supervisor-dispatch.yml`)
   bootstrapped green (run `40130299983`) and ran an ordinary cycle green
