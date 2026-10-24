@@ -2781,3 +2781,38 @@ standing approval above. Applied as follows.
   protected-write authority (#188).
 - Live, the read failed on every maintenance pass from 16:43 UTC, so no closure,
   retry, delivery or follow-up pass ran for any target.
+
+## 2026-10-24: gateway base CI evidence for check attribution
+
+- `ubiquity/ai.ubq.fi` runs `Gateway CI` only on `pull_request: [closed]` and
+  `workflow_dispatch`, and a closed-PR run reports its check runs on the PR
+  head, not on the merge commit. The `development` tip (`3393df1e`, the merge of
+  PR 1258) had no check run, so the CI-first gate (`attributeFailedChecks` in
+  `src/repair/ci-rejection.ts`) found no same-name check on the record base,
+  every red gateway head stayed `unattributed` and waited `ci_pending` until the
+  6-hour pre-review bound parked it (live: PRs 1295 and 1256).
+- The trusted pre-merge dispatcher (`src/host/actions-premerge-ci.ts`) now also
+  requests base evidence. When no pending head needs a dispatch in the pass, the
+  pass's single dispatch may go to `ref: development` for a bound head that
+  already has a run, when its record base equals the live pull request base and
+  that base SHA has no run of the workflow (any event or status). The inputs are
+  `base_ref: development`, the App login and `scope_base` set to the base
+  commit's first parent. The pass reads the parent through the branch
+  (`GET /commits/development`) and dispatches only while that tip is still the
+  exact base, so a branch that already moved (`<pr>:base_moved`) never draws a
+  dispatch on every pass; an unreadable tip or parent skips the base. Head
+  dispatches keep priority, a base SHA that has any run is never dispatched
+  again, and the same grant, cooldown gate, deadline and refusal-ends-the-pass
+  rules apply. Decisions are `<pr>:base_stale`, `<pr>:base_run_exists`,
+  `<pr>:base_runs_unreadable`, `<pr>:base_moved`, `<pr>:base_parent_unreadable`,
+  `<pr>:base_dispatch_refused:<reason>` and
+  `<pr>:base_dispatched:confirmed|pending_visibility|unconfirmed`; the pass
+  reports `base_dispatched`.
+- A dispatch is a request for evidence, never evidence: it writes no record,
+  wait, counter or receipt. A base branch that moves before GitHub resolves the
+  ref yields a run on another SHA, which is reported as `pending_visibility` and
+  never retried in the pass.
+- Like-for-like attribution additionally needs the owner's ai.ubq.fi change
+  tracked in Sentinel issue #181 (the complete check set for an opted-in
+  dispatch run). Until then the base run is scoped by its first-parent diff, so
+  a head check the base run skips stays unattributed exactly as before.
